@@ -4,7 +4,11 @@ import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.noctus.dev.status import project_status_digest
+from tools.noctus.dev.status import (
+    _collect_status_continuation,
+    _STATUS_RE,
+    project_status_digest,
+)
 
 
 class TestProjectStatusDigest:
@@ -202,6 +206,174 @@ class TestProjectStatusDigest:
         ))])
         result = project_status_digest(repo)
         assert result["shipped_unarchived"] == []
+        assert "clean" in result["next_action"].lower()
+
+    def test_status_line_shapes_all_parsed(self):
+        """`_STATUS_RE` must accept every observed `**Status...**` shape, not
+        just the original `- **Status:**` list form.
+
+        Regression: `projects/one-ops-agents`, `edicao-fotos`,
+        `olx-portal-leads-ingestion`, and `seed-lift-ke-gap-seams` PROJECT.md
+        files were all silently mis-read as `status_icon="none"` with an
+        EMPTY `status_text` because the old regex only matched the list
+        form — a shipped blockquote-form project became invisible to
+        `shipped_unarchived` (the false-green this fix closes)."""
+        repo = self._mk_repo_with_projects([
+            ("blockquote-form", (
+                "# A\n\n> **Status:** Phase A in flight (2026-09-19) · "
+                "**Owner:** tech-lead\n\n## 6.\n### Phase 1 — X\n"
+                "## 11. Change log\n"
+            )),
+            ("blockquote-parenthetical", (
+                "# B\n\n> **Status (2026-09-16, later):**\n"
+                "> - **On `dev`:** some sub-bullet detail.\n\n"
+                "## 6.\n### Phase 1 — X\n## 11. Change log\n"
+            )),
+            ("colon-inside-bold", (
+                "# C\n\n> **Status: BUILT + MCP REGISTERED, not merged, "
+                "not deployed** (2026-08-17).\n\n"
+                "## 6.\n### Phase 1 — X\n## 11. Change log\n"
+            )),
+            ("blockquote-with-icon", (
+                "# D\n\n> **Status:** 📋 filed (N=1 today; lift later).\n\n"
+                "## 6.\n### Phase 1 — X\n## 11. Change log\n"
+            )),
+            ("bare-status-no-marker", (
+                "# E\n\n**Status:** ⏳ mid-flight, no list/blockquote marker.\n\n"
+                "## 6.\n### Phase 1 — X\n## 11. Change log\n"
+            )),
+        ])
+        by_slug = {p["slug"]: p for p in project_status_digest(repo)["projects"]}
+
+        blockquote = by_slug["blockquote-form"]
+        assert blockquote["status_unparsed"] is False
+        assert "Phase A in flight" in blockquote["status_text"]
+
+        parenthetical = by_slug["blockquote-parenthetical"]
+        assert parenthetical["status_unparsed"] is False
+        # Nothing follows "**Status (...):**" on its own line, but the very
+        # next line is a `> - ` continuation bullet — recovered as the real
+        # status text (see test_multiline_blockquote_status_recovers_from_
+        # continuation_bullets for the full edicao-fotos-shaped case).
+        assert "On `dev`" in parenthetical["status_text"]
+
+        colon_inside = by_slug["colon-inside-bold"]
+        assert colon_inside["status_unparsed"] is False
+        assert colon_inside["status_text"] == (
+            "BUILT + MCP REGISTERED, not merged, not deployed"
+        )
+
+        with_icon = by_slug["blockquote-with-icon"]
+        assert with_icon["status_unparsed"] is False
+        assert with_icon["status_icon"] == "📋"
+        assert with_icon["status_bucket"] == "ready / design-locked"
+
+        bare = by_slug["bare-status-no-marker"]
+        assert bare["status_unparsed"] is False
+        assert bare["status_icon"] == "⏳"
+
+    def test_multiline_blockquote_status_recovers_from_continuation_bullets(self):
+        """Pins `projects/edicao-fotos/PROJECT.md`'s exact shape: a `**Status
+        (...):**` header with a parenthetical AND no inline text, followed by
+        several `> - **Label:** ...` continuation bullets, followed by
+        SIBLING `> **Field:**` metadata lines that are NOT part of status.
+
+        Regression (found on review, 2026-09-20): the header-only capture is
+        `""`, and `status_unparsed = m is None` only tested whether the regex
+        matched at all — so this shape reported `status_unparsed=False` with
+        an EMPTY `status_text`, i.e. a confident-looking "pending / nothing
+        happening" read. That is the exact false-green this fix exists to
+        remove, and worse than before: it no longer showed up in
+        `status_unparsed` either. The fix recovers the continuation bullets
+        as the real status text, and would fall back to `status_unparsed`
+        if NO continuation bullets followed (a match that captured nothing
+        is not a successful read — see `_collect_status_continuation`)."""
+        content = (
+            "# Edição de Fotos\n\n"
+            "> **Status (2026-09-16, later):**\n"
+            "> - **On `dev`:** Wave 1 seed organs, S3b `image_edit`.\n"
+            "> - **Migrations applied to prod:** Core `046` and SW `121`-`128`.\n"
+            "> - **In prod:** the seed code shipped; the engine did not.\n"
+            "> - **Not started:** the SW module (W2+), its pages.\n"
+            "> - **Blocked:** the OpenAI account has no credits.\n"
+            "> **Base:** `7e5f5ad6` (origin/dev at 2026-09-16).\n"
+            "> **Spec:** `../../genesis vision/README.md`.\n"
+            "> **Approved plan:** `~/.claude/plans/x.md`.\n"
+            "> **Shape:** seed organs + a social-wiring module.\n\n"
+            "## 6.\n### Phase 1 — X\n## 11. Change log\n"
+        )
+        repo = self._mk_repo_with_projects([("edicao-fotos-shape", content)])
+        result = project_status_digest(repo)
+        proj = result["projects"][0]
+
+        # Recovered, not silently empty-and-confident. `status_text` is
+        # truncated to 120 chars for display (pre-existing, unrelated to this
+        # fix) so only the FIRST couple of bullets survive here — the full,
+        # untruncated recovery (including the later bullets + the stop rule)
+        # is asserted directly against `_collect_status_continuation` below.
+        assert proj["status_unparsed"] is False
+        assert "On `dev`" in proj["status_text"]
+        assert result["status_unparsed"] == []
+
+        # Full, untruncated recovery + the stop rule: sibling `> **Field:**`
+        # metadata lines (Base / Spec / Approved plan / Shape) are NOT status
+        # bullets and must not leak into the recovered text.
+        m = _STATUS_RE.search(content)
+        full_text = _collect_status_continuation(content, m.end())
+        assert "Migrations applied to prod" in full_text
+        assert "Not started" in full_text
+        assert "Blocked" in full_text
+        assert "Base" not in full_text
+        assert "Approved plan" not in full_text
+        assert "Shape" not in full_text
+
+    def test_empty_status_header_with_no_continuation_is_unparsed(self):
+        """A `**Status:**` header that matched but captured NOTHING — and has
+        no `> - ` continuation bullet after it either — must surface as
+        `status_unparsed`, never as a confident empty `none` read. This is
+        option 1 of the edicao-fotos fix: a match that captured nothing is
+        not a successful read."""
+        repo = self._mk_repo_with_projects([("empty-status-no-continuation", (
+            "# X\n\n> **Status (2026-09-16, later):**\n\n"
+            "Just prose after it, no `> - ` bullets.\n\n"
+            "## 6.\n### Phase 1 — X\n## 11. Change log\n"
+        ))])
+        result = project_status_digest(repo)
+        proj = result["projects"][0]
+        assert proj["status_unparsed"] is True
+        assert proj["status_text"] == ""
+        assert result["status_unparsed"] == [
+            "projects/empty-status-no-continuation/PROJECT.md"
+        ]
+
+    def test_no_status_line_reported_as_unparsed_not_silently_pending(self):
+        """A PROJECT.md with NO `**Status:**` line at all (any shape) must
+        surface distinctly via `status_unparsed` — never silently fold into
+        the same `none`/pending bucket as a confidently-parsed "nothing
+        happening" project, and `next_action` must not assert close-out
+        cleanliness while it's outstanding."""
+        repo = self._mk_repo_with_projects([("no-status-at-all", (
+            "# No Status\n\nJust prose, no Status line anywhere.\n\n"
+            "## 6.\n### Phase 1 — X\n## 11. Change log\n"
+        ))])
+        result = project_status_digest(repo)
+        proj = result["projects"][0]
+        assert proj["status_unparsed"] is True
+        assert proj["status_icon"] == "none"
+        assert result["status_unparsed"] == ["projects/no-status-at-all/PROJECT.md"]
+        assert result["shipped_unarchived"] == []
+        assert "clean" not in result["next_action"].lower()
+        assert "no-status-at-all" in result["next_action"]
+
+    def test_status_unparsed_empty_when_all_parsed(self):
+        """The clean-closeout case still says "clean" when every project's
+        Status line parsed (no unparsed entries) — regression guard against
+        the new branch swallowing the pre-existing clean message."""
+        repo = self._mk_repo_with_projects([("active-one", (
+            "# A\n- **Status:** ⏳ executing\n## 6.\n### Phase 1 — A\n- [ ] todo\n## 11. Change log\n"
+        ))])
+        result = project_status_digest(repo)
+        assert result["status_unparsed"] == []
         assert "clean" in result["next_action"].lower()
 
     def test_demoted_shipped_not_flagged_unarchived(self):

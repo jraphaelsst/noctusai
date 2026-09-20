@@ -16,8 +16,12 @@ every PROJECT.md across the three valid locations + emits a summary.
 
 **Digest-level keys:** `buckets` (count per bucket) · `total` · `shipped_unarchived`
 (relative paths of fully-shipped `✅` projects still in the LIVE tree — each owes a
-`noctus.dev.archive` close-out) · `next_action` (the ship→archive **learn-before-archive**
-reminder; the structural nudge so a shipped project is never silently left un-archived).
+`noctus.dev.archive` close-out) · `status_unparsed` (relative paths of PROJECT.md files
+carrying NO regex-matchable `**Status:**` line at all — a parser that cannot read a file
+says so instead of silently defaulting to the `none`/pending bucket as if that were a
+confident read) · `next_action` (the ship→archive **learn-before-archive** reminder when
+something is shipped-and-unarchived; a distinct "verify manually" nudge — never a false
+"clean" claim — when unparsed projects exist instead).
 
 **Sort order:** active first (`⏳`/`📋`), then parked, then blocked, then
 shipped (audit history at the bottom). Most-recently-updated within
@@ -73,6 +77,7 @@ class ProjectSummary:
     phases_shipped: int
     seed_first_section: bool
     icon_demoted: bool  # true when ✅ → ⏳ subtask-sanity demotion fired
+    status_unparsed: bool  # true when NO `**Status:**` line matched at all
     flags: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -87,6 +92,7 @@ class ProjectSummary:
             "status_icon": self.status_icon,
             "status_bucket": _BUCKET_LABEL.get(self.status_icon, "unknown"),
             "status_text": self.status_text,
+            "status_unparsed": self.status_unparsed,
             "last_updated": self.last_updated,
             "subtask_progress": progress,
             "phase_count": self.phase_count,
@@ -98,9 +104,40 @@ class ProjectSummary:
 
 
 _STATUS_RE = re.compile(
-    r"^- \*\*Status:\*\*\s*(.*)$",
+    # Accepts every observed `**Status...**` shape:
+    #   - `- **Status:** text`                          (list form)
+    #   - `> **Status:** text`                           (blockquote form)
+    #   - `**Status:** text`                             (bare, no marker)
+    #   - `> **Status (2026-09-16, later):**`            (parenthetical before the colon)
+    #   - `> **Status: text with the colon INSIDE the bold** (trailer)`
+    # Optional `[-*>]` list/blockquote marker, optional `(...)` parenthetical
+    # between "Status" and the colon, then EITHER the bold closes right after
+    # the colon (`**Status:**` — group "a" captures the rest of the line) OR
+    # the colon sits inside the bold and the bold closes later on the line
+    # (group "b", captured lazily up to that `**`, dropping any trailer that
+    # follows). No `$` anchor on the second branch — the trailer after the
+    # closing `**` (e.g. `(2026-08-17).`) is deliberately left unmatched.
+    # NOTE: `[ \t]*` (never `\s*`) around the closing `**` — `\s` matches `\n`,
+    # so a `**Status (...):**` line with nothing after it would otherwise let
+    # `\s*` swallow the newline and land group "a" on the FOLLOWING line's
+    # text instead of correctly capturing "" for this line. Same reasoning
+    # for `[^)\n]*` in the parenthetical — `[^)]*` alone can run past the end
+    # of the line hunting for a `)` many lines down.
+    r"^[ \t]*(?:[-*>]\s+)?\*\*Status(?:[ \t]*\([^)\n]*\))?:"
+    r"(?:\*\*[ \t]*(?P<a>.*)|(?P<b>.*?)\*\*)",
     re.MULTILINE,
 )
+# A `> **Status (...):**` header can carry NO inline text — the real detail
+# sits on CONTINUATION sub-bullets of the same blockquote (edicao-fotos'
+# shape: header line empty, then `> - **On `dev`:** ...` / `> - **Blocked:**
+# ...` etc.). Only `> - ` bullet lines DIRECTLY following the header count as
+# continuation — the RULE (deliberately conservative): stop at the first line
+# that is not a `[ \t]*>\s*-\s+...` bullet. A blank line, de-dented prose, or
+# a SIBLING `> **Field:**` header in the same blockquote (edicao-fotos has
+# `> **Base:**` / `> **Spec:**` / `> **Approved plan:**` / `> **Shape:**`
+# right after the Status bullets) all end the Status block — those are
+# different metadata fields, not more status. See KB §11.4.
+_STATUS_CONTINUATION_RE = re.compile(r"^[ \t]*>\s*-\s+(.*)$")
 _PHASE_HEADER_RE = re.compile(r'^### Phase\s+(\d+)\b', re.MULTILINE)
 _PHASE_SPLIT_RE = re.compile(r'(?=^### Phase\s+\d+\b)', re.MULTILINE)
 _SUBTASK_RE = re.compile(r'^[ \t]*-\s*\[([ x])\]\s', re.MULTILINE)
@@ -185,6 +222,37 @@ def _count_shipped_phases(content: str) -> int:
     return shipped
 
 
+def _collect_status_continuation(content: str, status_match_end: int) -> str:
+    """Recover status text from `> - ...` CONTINUATION bullets directly below
+    a Status header line that carried no inline text of its own.
+
+    Returns the bullets joined with ` | ` (each bullet's own leading
+    `**Label:**` bold is preserved verbatim), or `""` if the very next line
+    isn't a continuation bullet — the caller treats that as "still nothing
+    recovered" (see `_summarize_one`).
+    """
+    # `status_match_end` sits right after the Status line's own content (no
+    # trailing `$` in `_STATUS_RE` — see its comment); walk forward to that
+    # line's own newline, then start scanning from the line AFTER it.
+    next_nl = content.find("\n", status_match_end)
+    if next_nl == -1:
+        return ""
+    pos = next_nl + 1
+    bullets: list[str] = []
+    n = len(content)
+    while pos < n:
+        line_end = content.find("\n", pos)
+        line = content[pos:] if line_end == -1 else content[pos:line_end]
+        m = _STATUS_CONTINUATION_RE.match(line)
+        if not m:
+            break
+        bullets.append(m.group(1).strip())
+        if line_end == -1:
+            break
+        pos = line_end + 1
+    return " | ".join(bullets)
+
+
 def _location_label(relative_path: str) -> str:
     if relative_path.startswith("products/"):
         return f"products/{relative_path.split('/', 2)[1]}"
@@ -206,9 +274,24 @@ def _summarize_one(project_md: Path, root: Path, flags_per_project: dict) -> Pro
     parent = project_md.parent
     slug = parent.name
 
-    # Status: first `- **Status:**` line in the doc.
+    # Status: first `**Status...**` line in the doc (any shape — see _STATUS_RE).
     m = _STATUS_RE.search(content)
-    status_text = m.group(1).strip() if m else ""
+    if m is None:
+        status_text = ""
+        status_unparsed = True
+    else:
+        raw = m.group("a") if m.group("a") is not None else m.group("b")
+        status_text = (raw or "").strip()
+        if not status_text:
+            # The header line matched but carried NO inline text (e.g.
+            # `> **Status (2026-09-16, later):**` alone) — try to recover
+            # the real detail from continuation bullets (see
+            # _collect_status_continuation). If that ALSO comes up empty,
+            # this is a match that captured nothing: NOT a confident read,
+            # so it must surface as unparsed rather than masquerade as a
+            # legitimately-empty "none" status (KB §11.4).
+            status_text = _collect_status_continuation(content, m.end())
+        status_unparsed = not status_text
 
     # Sub-tasks: across all phase blocks (whole §6 essentially).
     subtasks = _SUBTASK_RE.findall(content)
@@ -251,6 +334,7 @@ def _summarize_one(project_md: Path, root: Path, flags_per_project: dict) -> Pro
         phases_shipped=phases_shipped,
         seed_first_section=seed_first,
         icon_demoted=icon_demoted,
+        status_unparsed=status_unparsed,
         flags=flags_per_project.get(relative, []),
     )
 
@@ -302,6 +386,16 @@ def project_status_digest(repo_root: Path | None = None) -> dict:
     shipped_unarchived = [
         s.relative_path for s in summaries if s.status_icon == "✅"
     ]
+
+    # Projects whose PROJECT.md carries NO regex-matchable `**Status:**` line
+    # at all (as opposed to one that matched but carried no icon — that's the
+    # pre-icon-convention fallback, a legitimate "none" read). A parser that
+    # cannot read a file must say so, not silently fold into the same
+    # `none`/pending bucket as a confidently-read "nothing's happening" — and
+    # `next_action` must never assert close-out cleanliness while any project
+    # is unverifiable this way (no silent errors).
+    status_unparsed = [s.relative_path for s in summaries if s.status_unparsed]
+
     if shipped_unarchived:
         next_action = (
             f"{len(shipped_unarchived)} fully-shipped project(s) still in the "
@@ -309,6 +403,15 @@ def project_status_digest(repo_root: Path | None = None) -> dict:
             "ARCHIVE: first absorb durable data/learnings into KB/memory/seed "
             "so they outlive the non-persisted `archive/`). "
             "See CLAUDE/projects.md § Archive-on-close."
+        )
+    elif status_unparsed:
+        next_action = (
+            "No known-status ✅ project pending archive, but "
+            f"{len(status_unparsed)} project(s) have NO parseable Status line "
+            "(see `status_unparsed`) — their real state is UNVERIFIED, so "
+            "close-out completeness cannot be asserted yet. Read each file "
+            "directly before assuming anything about it: "
+            + ", ".join(status_unparsed) + "."
         )
     else:
         next_action = "Close-out clean — no fully-shipped project left un-archived."
@@ -318,6 +421,7 @@ def project_status_digest(repo_root: Path | None = None) -> dict:
         "buckets": buckets,
         "total": len(summaries),
         "shipped_unarchived": shipped_unarchived,
+        "status_unparsed": status_unparsed,
         "next_action": next_action,
     }
 
@@ -345,8 +449,11 @@ def register(server) -> None:
             "false-positive ✅ was demoted to ⏳), and phase-state-detector flags. "
             "Sorted by bucket (executing → ready → parked → blocked → shipped). "
             "Also returns `shipped_unarchived` (fully-shipped projects still in the "
-            "live tree) + a `next_action` ship→archive close-out nudge "
-            "(learn-before-archive)."
+            "live tree), `status_unparsed` (projects with NO regex-matchable "
+            "`**Status:**` line at all — reported distinctly, never silently folded "
+            "into the pending bucket), and a `next_action` ship→archive close-out "
+            "nudge (learn-before-archive) that refuses to claim clean when any "
+            "project's status is unparsed."
         ),
     )
     def _status() -> dict:

@@ -235,31 +235,6 @@ def _paths_overlap(a: list[str], b: list[str]) -> bool:
 
 
 # ── FF-push-to-dev (shared idiom lifted to _ledger_push, N=3 DRY) ─────────────
-def _ff_or_rebase_push_to_dev(
-    *,
-    run,
-    remote: str,
-    dev_branch: str,
-) -> dict[str, Any]:
-    """Push an ALREADY-committed HEAD ledger commit to dev — a thin wrapper over
-    the shared :func:`commit_and_ff_push_ledger` helper (already_committed=True).
-
-    fetch → divergence-guard → rebase-onto-origin/dev → FF-push, with the single
-    concurrent-push-race retry handled inside the shared helper. Kept as the
-    named entry point for the "push an existing ledger HEAD" shape (the branch-
-    tree pointer + its mirror); the commit is expected to already sit on HEAD.
-    """
-    return commit_and_ff_push_ledger(
-        runner=run,
-        root=None,
-        rel_paths=list(_ledger_rels()),
-        dev_branch=dev_branch,
-        remote=remote,
-        already_committed=True,
-        _log_prefix="branch_pointer",
-    )
-
-
 def _push_ledger_to_dev(
     *,
     commit_msg: str,

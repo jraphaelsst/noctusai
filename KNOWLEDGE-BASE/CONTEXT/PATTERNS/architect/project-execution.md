@@ -1131,6 +1131,7 @@ The tool returns three signals that together make the classification debuggable:
 - `status_icon` — the bucket-driving icon, after demotion.
 - `icon_demoted` — `true` iff a leftmost-`✅` was demoted to `⏳` by rule 2. Future callers can surface this in dashboards so the false-positive shape is visible if it recurs.
 - `phases_shipped` — count of `### Phase N` blocks whose header line or first inner lines carry `✅`. Independent of the top-level icon — lets callers see "5 of 7 phases shipped, project still ⏳" without re-parsing.
+- `status_unparsed` — `true` iff the doc carried NO regex-matchable `**Status:**` line at all, OR the line matched but captured nothing AND no `> - ` continuation bullet recovered it either (any shape — see § 11.4). Distinct from the legitimate no-icon fallback (rule 3 above, which DID find real Status text, just no icon in it) — a parser that found nothing says so instead of silently reading as a confident `pending`.
 
 ### How callers should consume the bucket
 
@@ -1143,6 +1144,8 @@ The tool returns three signals that together make the classification debuggable:
 | `blocked` | Leftmost ❌ | Hard stop — read `status_text` for the cause |
 | `pending` | No icon, no subtasks ticked | Filed but not started, or concept-only |
 
+Separate from the bucket table: a project can also carry `status_unparsed: true` — see § 11.4. It stays in the `pending` bucket for sort purposes, but the digest's top-level `status_unparsed` list + `next_action` refuse to imply confidence about it.
+
 ### Regression test
 
 The slip surfaced because the detector had only happy-path tests (`test_classifies_status_icons` used a clean `"- **Status:** ⏳ executing"` line with no inline phase markers — exactly the case the bug DIDN'T fire on). The fix ships with four new regression tests in `mcp/noctusai/tests/test_status.py`:
@@ -1153,6 +1156,23 @@ The slip surfaced because the detector had only happy-path tests (`test_classifi
 - `test_no_icon_falls_back_to_subtask_state` — older-format projects.
 
 **General lesson** (recurrence-rule-worthy if it fires again): when a detector reads a free-form text field, **don't iterate a fixed enumeration** — iterate by *position* in the input, then validate with an independent signal (sub-task count, phase audit, git state). The fixed-tuple-first-match shape is the same anti-pattern as `if A in text or B in text or ...` without precedence.
+
+## 11.4 Status-line SHAPE coverage + the unparsed-file false-green (2026-09-20)
+
+**The slip.** `_STATUS_RE` only matched the exact list form `- **Status:** text`. Four live PROJECT.md files used a blockquote form (`> **Status:** ...`), a blockquote+parenthetical form (`> **Status (2026-09-16, later):**`), and a colon-INSIDE-the-bold form (`> **Status: BUILT + MCP REGISTERED, not merged, not deployed** (2026-08-17).`) — none matched, so each parsed to `status_icon="none"` with an EMPTY `status_text`, silently indistinguishable from a project that genuinely has nothing to report. Worse: `shipped_unarchived` is computed from `status_icon == "✅"`, so a **shipped** blockquote-form project became invisible and `next_action` claimed a false clean close-out.
+
+**The fix.** `_STATUS_RE` now accepts an optional `[-*>]` list/blockquote marker (or none — a bare `**Status:**` line), an optional `(...)` parenthetical between "Status" and the colon, and either the bold closing right after the colon (`**Status:**` — capture group `a`, the rest of the line) or the colon sitting inside the bold with the bold closing later on the line (group `b`, captured lazily, dropping any trailer after the closing `**`). Two footguns caught mid-fix, both from using `\s` where `[ \t]` was needed: `\s*` after the closing `**` will cross a newline and silently capture the *next* line's text when the Status line itself has nothing after it (`\s` matches `\n`); the same risk applies to `[^)]*` inside the parenthetical hunting for a `)` many lines down. Both now use `[ \t]`/`[^)\n]` — line-scoped, never crossing into the next line.
+
+**The unparsed case stays distinct.** A PROJECT.md with genuinely NO `**Status:**` line (any shape) is NOT silently folded into the same `none`/pending bucket as a confidently-parsed "nothing happening" project — it sets `status_unparsed: true` per-project and lands in the digest's top-level `status_unparsed` list. `next_action` checks this list BEFORE claiming a clean close-out: shipped-and-unarchived takes priority, then unparsed-and-unverifiable, and only when both are empty does it say "Close-out clean." A parser that cannot read a file says so — no-silent-errors, applied to a detector reading free-form prose.
+
+**Round 2 (same day, found on review): a match that captures nothing is not a successful read.** `edicao-fotos`'s Status is `> **Status (2026-09-16, later):**` with NOTHING after the colon on that line — the real detail ("On dev: ...", "Migrations applied to prod: ...", "Not started: ...", "Blocked: ...") sits on `> - ` sub-bullets directly below it, inside the SAME blockquote. The header-only regex fix above correctly matched the header line and correctly captured `""` for it — but `status_unparsed = m is None` only tested whether the regex matched *at all*, so this shape reported `status_unparsed=False` with an EMPTY `status_text`: a confident-looking "pending / nothing happening" read, indistinguishable from a project with genuinely nothing to say — the exact false-green this section exists to remove, now HARDER to spot because it no longer showed up in `status_unparsed` either. Fixed with both of:
+
+1. **Continuation-bullet recovery.** When the header line's own capture is empty, `_collect_status_continuation` walks forward from the header line, collecting `[ \t]*>\s*-\s+...` bullets (joined with ` | `) as the real status text — this is what actually recovers `edicao-fotos`'s real state. The stop rule is deliberate and conservative: the first line that is NOT a `> - ` bullet ends the block. `edicao-fotos`'s blockquote continues past the Status bullets into sibling `> **Base:**` / `> **Spec:**` / `> **Approved plan:**` / `> **Shape:**` metadata fields — those are different fields, not more status, and the stop rule excludes them by construction (a `> **Label:**` line is not a `> - ` bullet).
+2. **Empty-after-recovery ⇒ unparsed.** If continuation-recovery ALSO comes up empty (no `> - ` bullet follows the empty header), `status_unparsed` is set `True` — a match that captured nothing is treated the same as no match at all, never as a confident empty `none`.
+
+**Regression tests** (`mcp/noctusai/tests/test_status.py`): `test_status_line_shapes_all_parsed` pins all 5 original shapes; `test_multiline_blockquote_status_recovers_from_continuation_bullets` pins `edicao-fotos`'s exact shape (parenthetical header, empty inline capture, 5 continuation bullets, then sibling metadata fields that must NOT leak in); `test_empty_status_header_with_no_continuation_is_unparsed` pins the round-2 fallback; `test_no_status_line_reported_as_unparsed_not_silently_pending` pins the distinct-unparsed signal + the `next_action` refusal; `test_status_unparsed_empty_when_all_parsed` guards the pre-existing clean-closeout message.
+
+**Verification note:** all 20 live PROJECT.md files were checked against the fixed detector directly (not just the fixture-based tests) — 19 parse (including `edicao-fotos`'s recovered continuation text), and `codification-backlog-drain` (genuinely no Status line) correctly lands in `status_unparsed`.
 
 ---
 

@@ -4,8 +4,8 @@ fetch → divergence-guard → rebase-onto-origin/dev → FF-push (best-effort, 
 retry on the concurrent-push race)`` idiom.
 
 Two ledger writers hand-replicated this before the lift:
-  * ``branch_pointer._ff_or_rebase_push_to_dev`` — pushes an ALREADY-committed
-    HEAD (the branch-tree pointer ledger + its mirror).
+  * ``branch_pointer._push_ledger_to_dev`` — stage+commit ONLY the branch-tree
+    pointer ledger + its mirror, then push.
   * ``task_branch._push_salvage_ledger_from_primary`` — path-scoped commits the
     worktree-salvage ledger row THEN pushes it.
 

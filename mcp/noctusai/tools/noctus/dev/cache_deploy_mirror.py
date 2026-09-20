@@ -449,47 +449,6 @@ def _mirror_keeper_patterns(local: sqlite3.Connection, pg_conn: Any) -> dict[str
     return {"rows_written": len(rows), "source_total": len(rows)}
 
 
-def _mirror_vector_cache(
-    local: sqlite3.Connection,
-    pg_conn: Any,
-    sqlite_table: str,
-    pg_table: str,
-    columns_local: list[str],
-    pg_insert_cols: list[str],
-    vector_col_idx: int,
-) -> int:
-    """Generic vector-cache transfer. The vector column is the only special
-    handling — sqlite-vec stores as BLOB; we decode to a Python list of
-    floats and let psycopg2/pgvector convert."""
-    cur_pg = pg_conn.cursor()
-    cur_pg.execute(f"TRUNCATE TABLE noctus_cache.{pg_table}")
-    cols_sql = ", ".join(columns_local)
-    rows = local.execute(f"SELECT {cols_sql} FROM {sqlite_table}").fetchall()
-    if not rows:
-        cur_pg.close()
-        return 0
-    import struct
-    converted = []
-    for row in rows:
-        row_list = list(row)
-        blob = row_list[vector_col_idx]
-        if blob is None:
-            row_list[vector_col_idx] = None
-        else:
-            # sqlite-vec stores as raw little-endian float32 array.
-            num_floats = len(blob) // 4
-            row_list[vector_col_idx] = list(struct.unpack(f"<{num_floats}f", blob))
-        converted.append(tuple(row_list))
-    placeholders = ", ".join(["%s"] * len(pg_insert_cols))
-    cur_pg.executemany(
-        f"INSERT INTO noctus_cache.{pg_table} ({', '.join(pg_insert_cols)}) "
-        f"VALUES ({placeholders})",
-        converted
-    )
-    cur_pg.close()
-    return len(rows)
-
-
 def _mirror_chunks_with_embedding(
     local: sqlite3.Connection,
     pg_conn: Any,

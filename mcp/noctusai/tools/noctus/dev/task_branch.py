@@ -303,7 +303,7 @@ def _push_salvage_ledger_from_primary(
 ) -> dict[str, Any]:
     """Commit the dirty salvage ledger from the PRIMARY ``dev`` checkout + FF-push
     it to dev — the robust ``fetch → divergence-guard → rebase-onto-origin/dev →
-    FF-push`` idiom (mirrors ``branch_pointer._ff_or_rebase_push_to_dev``).
+    FF-push`` idiom (mirrors ``branch_pointer._push_ledger_to_dev``).
 
     Why primary-not-worktree (the 2026-06-30 drift fix): the previous leg
     committed the salvage row on the WORKTREE's feature-branch HEAD and pushed
