@@ -10815,6 +10815,167 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_schema_wide_anon_grant` — a schema-wide table GRANT (or default-
+# privilege GRANT) naming `anon` is the BLANKET-EXPOSURE class.
+#
+# THE INCIDENT (2026-09-20): `products/seed/backend/migrations/
+# 001_seed.sql` used to read
+#   `GRANT ALL ON ALL TABLES IN SCHEMA seed TO anon, authenticated, service_role;`
+#   `ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT ALL ON TABLES TO anon, ...;`
+# and this propagated verbatim, via `templates/product-seed/`, into 9
+# product schemas (academia_de_reciclagem, adconnect, agents, community,
+# daily_life, igig, orbity, p_studio, social_wiring). RLS is a ROW-level
+# gate; a table-level GRANT is what lets a role reach a table BEFORE RLS is
+# even consulted. In the live `social_wiring` schema that default let the
+# unauthenticated `anon` PostgREST role read AND write 4 out-of-band backup
+# tables (`_leads_backup_20260902` + 3 siblings — 21,567 rows of names/
+# emails/birthdates) that were created directly against the database,
+# outside any migration, and therefore never got an RLS policy at all.
+#
+# THE CANONICAL SHAPE (this platform's own fix — see `products/seed/
+# backend/migrations/001_seed.sql`): `anon` gets schema USAGE only.
+# `service_role` gets ALL. `authenticated` gets SELECT/INSERT/UPDATE/
+# DELETE. A table that genuinely needs anonymous access (e.g.
+# `status_pagina`'s `todos_veem_producao` policy) re-grants it EXPLICITLY,
+# per table, with a comment — never by widening the schema-wide default.
+#
+# THE RULE IS ABSOLUTE, same posture as this file's `check_storage_bucket_
+# public` (NO allowlist, NO suppression marker): there is no legitimate
+# schema-wide anon-facing TABLE grant on this platform. Two legs, both
+# `critical`:
+#
+#   Leg A — `GRANT <privs> ON ALL TABLES IN SCHEMA <schema> TO <roles>`
+#           where <roles> names `anon`.
+#   Leg B — `ALTER DEFAULT PRIVILEGES IN SCHEMA <schema> GRANT <privs> ON
+#           TABLES TO <roles>` where <roles> names `anon`.
+#
+# Deliberately SEQUENCE-exempt (`ON ALL SEQUENCES` / `ON SEQUENCES` are not
+# matched): a sequence has no row data, only nextval()/currval(), and this
+# platform already grants `anon` sequence USAGE by design on every product
+# (see `001_seed.sql`'s own comment) — flagging that would make this keeper
+# permanently red against the platform's own fix.
+#
+# Comments are STRIPPED before matching (`noctusai_lib.testing.
+# migration_parser._strip_line_comments` / `_strip_block_comments` — the
+# same helper `check_migration_guard_has_probe` uses), so a migration's own
+# prose citing the historical vulnerable shape (exactly what this file's
+# and every lockdown migration's header comments do, quoting `001_seed.sql`
+# BEFORE the fix, for the reader's benefit) can never trip this keeper the
+# way a bare `grep` would.
+# ---------------------------------------------------------------------------
+
+_ANON_GRANT_ALL_TABLES_RE = re.compile(
+    r"GRANT\s+(?P<privs>[\w\s,]+?)\s+ON\s+ALL\s+TABLES\s+IN\s+SCHEMA\s+"
+    # `\S+` (not a narrower `[\w.\"]+`) so a template placeholder schema
+    # name like `{{SCHEMA_NAME}}` (templates/product-seed/) still matches —
+    # bounded on the right by the literal `TO` keyword, so this stays precise.
+    r"(?P<schema>\S+)\s+TO\s+(?P<roles>[^;]+);",
+    re.IGNORECASE | re.DOTALL,
+)
+_ANON_DEFAULT_PRIVILEGES_TABLES_RE = re.compile(
+    r"ALTER\s+DEFAULT\s+PRIVILEGES\s+IN\s+SCHEMA\s+(?P<schema>\S+)\s+"
+    r"GRANT\s+(?P<privs>[\w\s,]+?)\s+ON\s+TABLES\s+TO\s+(?P<roles>[^;]+);",
+    re.IGNORECASE | re.DOTALL,
+)
+_ANON_GRANT_ROLE_RE = re.compile(r"\banon\b", re.IGNORECASE)
+
+_ANON_GRANT_SANCTIONED_ALTERNATIVE = (
+    "`anon` must get schema USAGE only — a table that genuinely needs "
+    "anonymous access gets an EXPLICIT, single-table GRANT with a comment "
+    "saying why (see `status_pagina` in "
+    "products/seed/backend/migrations/001_seed.sql). "
+    "KB § PATTERNS/backend/database-rls.md."
+)
+
+
+def check_schema_wide_anon_grant(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag a schema-wide table GRANT (or default-privilege GRANT on
+    tables) naming `anon`. See the module comment above for the incident
+    and the two legs.
+
+    `paths=None` (default) audits every `products/*/backend/migrations/
+    *.sql` (covers `products/seed/`) plus `templates/product-seed/backend/
+    migrations/*.sql` (the generated mirror — scanned too, since a moment
+    where the mirror has drifted ahead of / independently from the seed is
+    exactly the moment this keeper needs to catch it). `paths=[...]`
+    (pre-commit mode) scopes to the given files — same diff-scoping idiom
+    as `check_storage_bucket_public` / `check_migration_guard_has_probe`,
+    for the same reason: immutable migration HISTORY that already grants
+    `anon` a blanket privilege (the pre-2026-09-20 `001_*.sql` files, which
+    stay on disk forever as a historical record — the fix is a NEW forward
+    migration, never an edit to history) must not permanently block every
+    future commit; a NEWLY staged schema-wide anon grant blocks
+    unconditionally.
+
+    Severity `critical` on both legs — no allowlist, no suppression marker
+    (deliberate, same posture as `check_storage_bucket_public`).
+
+    KB § PATTERNS/backend/database-rls.md.
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    from noctusai_lib.testing.migration_parser import (
+        _strip_block_comments,
+        _strip_line_comments,
+    )
+
+    if paths is not None:
+        candidates = [root / p for p in paths]
+        sql_files = sorted(
+            p for p in candidates
+            if p.suffix == ".sql" and "backend/migrations" in p.as_posix()
+        )
+    else:
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+        template_migrations = root / "templates" / "product-seed" / "backend" / "migrations"
+        if template_migrations.is_dir():
+            sql_files += sorted(template_migrations.glob("*.sql"))
+
+    def _issue(file_rel: str, line: int, detail: str) -> dict:
+        return {
+            "file": file_rel,
+            "line": line,
+            "issue": f"{file_rel}:{line} {detail} {_ANON_GRANT_SANCTIONED_ALTERNATIVE}",
+            "severity": "critical",
+        }
+
+    for sql_file in sql_files:
+        try:
+            raw = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        cleaned = _strip_block_comments(_strip_line_comments(raw))
+        rel = str(sql_file.relative_to(root))
+
+        for m in _ANON_GRANT_ALL_TABLES_RE.finditer(cleaned):
+            if _ANON_GRANT_ROLE_RE.search(m.group("roles")):
+                lineno = cleaned[: m.start()].count("\n") + 1
+                findings.append(_issue(
+                    rel, lineno,
+                    f"`GRANT ... ON ALL TABLES IN SCHEMA {m.group('schema')} "
+                    "TO ...anon...` is a schema-wide table grant naming `anon`.",
+                ))
+
+        for m in _ANON_DEFAULT_PRIVILEGES_TABLES_RE.finditer(cleaned):
+            if _ANON_GRANT_ROLE_RE.search(m.group("roles")):
+                lineno = cleaned[: m.start()].count("\n") + 1
+                findings.append(_issue(
+                    rel, lineno,
+                    f"`ALTER DEFAULT PRIVILEGES IN SCHEMA {m.group('schema')} "
+                    "GRANT ... ON TABLES TO ...anon...` grants anon a table "
+                    "privilege on every FUTURE table by default.",
+                ))
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # `check_storage_bucket_public` — a public Supabase Storage bucket bypasses
 # storage.objects RLS ENTIRELY. THE INCIDENT (2026-09-17): erp-certidoes (102
 # objects / 21MB of CPF-bearing certidões) and erp-geral were declared
@@ -11350,6 +11511,206 @@ def check_migration_guard_has_probe(
                 ),
                 "severity": "high",
             })
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# `check_table_has_rls` — ADVISORY (not blocking; see the function's own
+# docstring for why). Flags a `CREATE TABLE` with no matching
+# `ENABLE ROW LEVEL SECURITY` for the SAME table, static OR dynamic.
+#
+# WHY DYNAMIC MATTERS: this platform very often enables RLS on a BATCH of
+# tables via
+#
+#   DO $$
+#   DECLARE t TEXT;
+#   BEGIN
+#       FOREACH t IN ARRAY ARRAY['campanhas', 'campanha_imoveis', ...]
+#       LOOP
+#           EXECUTE format('ALTER TABLE social_wiring.%I ENABLE ROW LEVEL SECURITY', t);
+#           ...
+#       END LOOP;
+#   END $$;
+#
+# (see `products/social-wiring/backend/migrations/065_campanhas.sql:165-190`
+# and `101_permutas_matching.sql:430-458`). A naive literal
+# `grep "ENABLE ROW LEVEL SECURITY"` cannot see this — it only matches the
+# literal string `%I`, never the table names substituted into it at runtime
+# — and reports every dynamically-protected table as unprotected. That
+# exact naive-grep shape produced a false report of 66 "exposed" tables in
+# this schema when the LIVE number was 4 (2026-09-20). This detector
+# resolves the dynamic form: it correlates a `FOREACH <var> IN ARRAY
+# ARRAY[...]` loop's array literal with an `EXECUTE format('ALTER TABLE
+# <schema>.%I ENABLE ROW LEVEL SECURITY', <var>)` call INSIDE THE SAME `DO`
+# block (matched by loop-variable name, statement-scoped via
+# `noctusai_lib.testing.migration_parser._walk_statements` so an inner `;`
+# inside the `$$ ... $$` body never fools a naive semicolon split), and
+# treats every name in that array literal as RLS-enabled for that schema.
+#
+# WHY ADVISORY, NOT BLOCKING: this is a REGEX-based static scan, not a real
+# SQL parser (same documented-precision-limit convention as
+# `check_storage_bucket_public` / `check_migration_number_collision`). Known
+# gaps: (a) a table created via a form this scanner doesn't recognise
+# (dynamic `CREATE TABLE`, a table created by a function this migration
+# calls) is invisible to the CREATE-side scan and silently never flagged
+# (a false negative, not a false positive — the risk direction is safe);
+# (b) RLS enabled through some OTHER dynamic shape (a different loop
+# variable convention, a schema name passed as a second `%I` rather than a
+# literal) is invisible to the ENABLE-side scan and WOULD be flagged as a
+# false positive. Given (b) is a real, demonstrated failure mode for a
+# naive version of this exact check (the 66-vs-4 incident), this keeper is
+# NOT wired into any blocking gate (CLI/pre-commit) — it is exposed only
+# via `noctus.dev.scan_...`-style direct invocation, an observe-first
+# posture pending validation against more of the corpus. Widen the dynamic
+# pattern coverage before ever promoting this to blocking.
+# ---------------------------------------------------------------------------
+
+_RLS_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"(?:\"?(?P<schema>[\w-]+)\"?\.)?\"?(?P<table>[\w-]+)\"?",
+    re.IGNORECASE,
+)
+_RLS_ALTER_ENABLE_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?:\"?(?P<schema>[\w-]+)\"?\.)?\"?(?P<table>[\w-]+)\"?"
+    r"\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY",
+    re.IGNORECASE,
+)
+#: Two distinct loop shapes are both live on this platform for "iterate a
+#: literal table-name array": `FOREACH t IN ARRAY ARRAY[...]` (social_wiring
+#: 065/101) and `FOR t IN SELECT unnest(ARRAY[...])` (erp-imobiliario 001's
+#: "RLS for expansion tables" block, 40 tables in one loop). Both are tried;
+#: whichever matches wins. A THIRD shape this scanner does not recognise
+#: (e.g. deriving the list from `information_schema.tables` rather than a
+#: literal array) is a documented precision limit, not silently pretended
+#: away — see the module comment above.
+_RLS_FOREACH_ARRAY_RE = re.compile(
+    r"FOREACH\s+(?P<var>\w+)\s+IN\s+ARRAY\s+ARRAY\s*\[(?P<items>.*?)\]",
+    re.IGNORECASE | re.DOTALL,
+)
+_RLS_FOR_UNNEST_ARRAY_RE = re.compile(
+    r"FOR\s+(?P<var>\w+)\s+IN\s+SELECT\s+unnest\s*\(\s*ARRAY\s*\[(?P<items>.*?)\]\s*\)",
+    re.IGNORECASE | re.DOTALL,
+)
+_RLS_DYNAMIC_ENABLE_RE = re.compile(
+    r"EXECUTE\s+format\s*\(\s*'ALTER\s+TABLE\s+(?:\"?(?P<schema>[\w-]+)\"?\.)?%I"
+    r"\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY'\s*,\s*(?P<var>\w+)\s*\)",
+    re.IGNORECASE,
+)
+_RLS_ARRAY_ITEM_RE = re.compile(r"'((?:[^'\\]|'')*)'")
+
+
+def _dynamic_rls_enabled_tables(stmt: str) -> list[tuple[str | None, str]]:
+    """For one `DO $$ ... $$;` statement: if it contains a literal-array
+    loop (`FOREACH <var> IN ARRAY ARRAY[...]` OR `FOR <var> IN SELECT
+    unnest(ARRAY[...])`) whose SAME `<var>` is substituted into an
+    `EXECUTE format('ALTER TABLE <schema>.%I ENABLE ROW LEVEL SECURITY',
+    <var>)` call, return `(schema_or_none, table)` for every array-literal
+    member. Returns `[]` if the block doesn't match either shape (the
+    documented precision limit — see the module comment above)."""
+    enable_m = _RLS_DYNAMIC_ENABLE_RE.search(stmt)
+    if not enable_m:
+        return []
+    loop_m = _RLS_FOREACH_ARRAY_RE.search(stmt) or _RLS_FOR_UNNEST_ARRAY_RE.search(stmt)
+    if not loop_m:
+        return []
+    if loop_m.group("var") != enable_m.group("var"):
+        return []
+    schema = enable_m.group("schema")
+    schema = schema.lower() if schema else None
+    return [
+        (schema, item.replace("''", "'").lower())
+        for item in _RLS_ARRAY_ITEM_RE.findall(loop_m.group("items"))
+    ]
+
+
+def check_table_has_rls(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """ADVISORY — flag a `CREATE TABLE` with no matching `ENABLE ROW LEVEL
+    SECURITY` for the same table (static form, OR the dynamic
+    `DO $$ ... FOREACH t IN ARRAY ARRAY[...] LOOP EXECUTE format('ALTER
+    TABLE %I ENABLE ROW LEVEL SECURITY', t) ... END $$;` shape this platform
+    uses for batch RLS enablement). See the module comment above for the
+    incident this resolves (a naive grep reported 66 "exposed" tables in
+    `social_wiring` when the live number was 4) and for why this keeper is
+    advisory-only rather than a blocking gate.
+
+    `paths=None` (default) audits every `products/*/backend/migrations/
+    *.sql`. `paths=[...]` scopes to the given files.
+
+    Severity `high` (informational — not wired into any blocking gate).
+
+    KB § PATTERNS/backend/database-rls.md.
+    """
+    root = repo_root or REPO_ROOT
+    findings: list[dict] = []
+    if not root.exists():
+        return findings
+
+    from noctusai_lib.testing.migration_parser import (
+        _strip_block_comments,
+        _strip_line_comments,
+        _walk_statements,
+    )
+
+    if paths is not None:
+        candidates = [root / p for p in paths]
+        sql_files = sorted(
+            p for p in candidates
+            if p.suffix == ".sql" and "backend/migrations" in p.as_posix()
+        )
+    else:
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+
+    for sql_file in sql_files:
+        try:
+            raw = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
+            continue
+        cleaned = _strip_block_comments(_strip_line_comments(raw))
+        rel = str(sql_file.relative_to(root))
+
+        created: dict[tuple[str | None, str], int] = {}
+        for m in _RLS_CREATE_TABLE_RE.finditer(cleaned):
+            schema = m.group("schema")
+            key = (schema.lower() if schema else None, m.group("table").lower())
+            lineno = cleaned[: m.start()].count("\n") + 1
+            created.setdefault(key, lineno)
+
+        if not created:
+            continue
+
+        enabled: set[tuple[str | None, str]] = set()
+        for m in _RLS_ALTER_ENABLE_RE.finditer(cleaned):
+            schema = m.group("schema")
+            enabled.add((schema.lower() if schema else None, m.group("table").lower()))
+
+        for stmt in _walk_statements(cleaned):
+            head = stmt.lstrip()[:2].upper()
+            if head != "DO":
+                continue
+            enabled.update(_dynamic_rls_enabled_tables(stmt))
+
+        for (schema, table), lineno in sorted(created.items(), key=lambda kv: kv[1]):
+            if (schema, table) in enabled:
+                continue
+            qualified = f"{schema}.{table}" if schema else table
+            findings.append({
+                "file": rel,
+                "line": lineno,
+                "issue": (
+                    f"{rel}:{lineno} `CREATE TABLE {qualified}` has no matching "
+                    f"`ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY` — static "
+                    "or the dynamic DO-block/FOREACH/ARRAY shape. A table with "
+                    "table-level grants and no RLS is exactly the incident shape "
+                    "the anon-grant lockdown closes. KB § PATTERNS/backend/"
+                    "database-rls.md. (Advisory — verify manually; this is a "
+                    "regex-based scan, not a SQL parser.)"
+                ),
+                "severity": "high",
+            })
+
     return findings
 
 

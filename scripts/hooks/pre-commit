@@ -404,6 +404,38 @@ if [[ -n "$STAGED_MIGRATIONS" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-septies. Schema-wide anon grant gate (blocking, critical, NO ─────
+# allowlist / suppression marker) ──────────────────────────────────────────
+# Keeper `check_schema_wide_anon_grant`. THE INCIDENT (2026-09-20): the
+# seed's own `001_seed.sql` used to grant `ALL` on every current AND future
+# table to `anon` (`GRANT ALL ON ALL TABLES IN SCHEMA seed TO anon, ...` +
+# the matching `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON TABLES TO anon,
+# ...`), propagated verbatim into 9 product schemas. In the live
+# `social_wiring` schema that let the unauthenticated `anon` PostgREST role
+# read+write 4 out-of-band backup tables (21,567 rows of names/emails/
+# birthdates) that never got an RLS policy at all. Two legs, both
+# `critical`, both blocking: (A) `GRANT ... ON ALL TABLES IN SCHEMA <s> TO
+# ...anon...`, (B) `ALTER DEFAULT PRIVILEGES IN SCHEMA <s> GRANT ... ON
+# TABLES TO ...anon...`. Diff-scoped to THIS commit's staged migration
+# files (same idiom as 6b-quinquies/6b-sexies above) — the pre-fix
+# `001_*.sql` history stays on disk forever, so a full-tree sweep would
+# permanently redden this gate.
+STAGED_ANON_GRANT_SURFACE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/migrations/.*\.sql|templates/product-seed/backend/migrations/.*\.sql)$' || true)
+if [[ -n "$STAGED_ANON_GRANT_SURFACE" ]] && have_py; then
+    echo "[pre-commit] Migration staged — checking for a schema-wide anon grant..."
+    STAGED_ANON_GRANT_SURFACE_CSV=$(echo "$STAGED_ANON_GRANT_SURFACE" | paste -sd, -)
+    if ! "$PY" "$CLI" --check-schema-wide-anon-grant --paths "$STAGED_ANON_GRANT_SURFACE_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] schema-wide-anon-grant check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A migration you staged grants anon a schema-wide table privilege" >&2
+        echo "[pre-commit] (GRANT ... ON ALL TABLES / ALTER DEFAULT PRIVILEGES ... ON TABLES)." >&2
+        echo "[pre-commit] anon must get schema USAGE only — grant a specific table" >&2
+        echo "[pre-commit] explicitly, per table, with a comment saying why (see" >&2
+        echo "[pre-commit] status_pagina in products/seed/backend/migrations/001_seed.sql)." >&2
+        echo "[pre-commit] KB § PATTERNS/backend/database-rls.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6c. Prod-exposure consent gate (blocking, only when a prod-exposure ──
 # surface OR a consent record is staged) ─────────────────────────────────
 # Keeper `check_prod_exposure_consent` + `KB § PATTERNS/devops/prod-
