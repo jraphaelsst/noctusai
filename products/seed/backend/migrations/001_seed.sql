@@ -12,11 +12,41 @@ SET search_path = seed, public;
 
 CREATE SCHEMA IF NOT EXISTS seed;
 
--- Grant usage to authenticated users (required for PostgREST)
+-- ============================================================================
+-- Grants — `anon` gets schema USAGE only, NEVER a blanket table grant
+--
+-- 🔴 2026-09-20 incident: this exact migration used to read
+-- `GRANT ALL ON ALL TABLES IN SCHEMA seed TO anon, authenticated, service_role`
+-- + the matching `ALTER DEFAULT PRIVILEGES ... GRANT ALL ... TO anon, ...`.
+-- Propagated verbatim (via templates/product-seed/) into 9 product schemas,
+-- it let the unauthenticated `anon` PostgREST role read AND write every
+-- table in every one of those schemas by default. In the live
+-- `social_wiring` schema that default let `anon` read+write 4 out-of-band
+-- backup tables (`_leads_backup_20260902` + 3 siblings — 21,567 rows of
+-- names/emails/birthdates) that were never routed through any RLS policy at
+-- all. RLS is the ROW-level gate; the GRANT is the TABLE-level gate that
+-- must exist BEFORE RLS is even consulted — a table with no RLS policy yet
+-- (or created out-of-band, like the backups) is fully exposed to any role
+-- the schema-wide grant names.
+--
+-- The fix: `anon` gets USAGE on the schema (routing only, required by
+-- PostgREST) and NOTHING at the table level by default. `service_role` gets
+-- ALL — it's the trusted server-side role and already bypasses RLS.
+-- `authenticated` gets SELECT/INSERT/UPDATE/DELETE — real signed-in users,
+-- gated per table by RLS. A table that genuinely needs anonymous access
+-- (see `status_pagina` below) re-grants it EXPLICITLY, per table, with a
+-- comment saying why — never by widening this schema-wide default again.
+-- Enforced going forward by the `check_schema_wide_anon_grant` keeper.
 GRANT USAGE ON SCHEMA seed TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA seed TO anon, authenticated, service_role;
+
+GRANT ALL ON ALL TABLES IN SCHEMA seed TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA seed TO authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+
+-- Sequences are out of scope for this lockdown (no data, just nextval/
+-- currval) — left as the pre-existing broader grant.
 GRANT ALL ON ALL SEQUENCES IN SCHEMA seed TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT ALL ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 
 
@@ -59,6 +89,13 @@ ALTER TABLE seed.status_pagina ENABLE ROW LEVEL SECURITY;
 -- anonymous-readable policy (anon role too).
 CREATE POLICY "todos_veem_producao" ON seed.status_pagina
     FOR SELECT USING (status = 'producao');
+
+-- `anon` has no blanket table grant any more (see the schema-wide grants
+-- above) — the policy above only decides which ROWS a role may see; a role
+-- still needs a TABLE-level grant before RLS is even consulted. Page
+-- visibility flags (name + status) are not sensitive, so this is a safe,
+-- explicit, per-table exception.
+GRANT SELECT ON seed.status_pagina TO anon;
 
 
 -- ============================================================================
