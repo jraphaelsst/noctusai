@@ -79,6 +79,8 @@ from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
 from .build import _last_meaningful_line
+from .harness_signatures import HARNESS_SIGNATURES as _HARNESS_SIGNATURES
+from .harness_signatures import harness_suspect as _harness_suspect
 from .migrate_product import (
     FakeGitRunner,  # noqa: F401  (re-exported for test convenience)
     GitQueryError,
@@ -235,7 +237,13 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
 #       tool's OWN distinctive setup-failure output on a non-zero exit and
 #       mark the gate `harness_suspect`. Advisory by construction: the
 #       evidence line always rides along, so a wrong guess is visible and
-#       overrulable rather than silently swallowing a real red.
+#       overrulable rather than silently swallowing a real red. The
+#       signature catalog itself (`_HARNESS_SIGNATURES` / `_harness_suspect`)
+#       now lives in the sibling `harness_signatures.py` module — SHARED
+#       with the `claude-guard-harness-signature` PostToolUse Bash hook, so
+#       an ad-hoc Bash call outside this sweep gets the same classification
+#       (2026-09-20: a wrong argparse invocation run directly in Bash, never
+#       through `gate_sweep`, was reported as "6 failing products").
 #
 # The verdict rule that makes this load-bearing: a failing gate that carries
 # a `harness_suspect` is NOT a trustworthy red. If EVERY failure is suspect,
@@ -255,96 +263,6 @@ class Precondition:
     name: str
     path: Path
     remedy: str
-
-
-# (signature, regex, remedy). Conservative on purpose: a pattern that also
-# matches a GENUINE product failure would hide a real red, which is the same
-# class of harm pointed the other way. Every match carries its evidence line.
-_HARNESS_SIGNATURES: tuple[tuple[str, str, str], ...] = (
-    (
-        "playwright_browser_missing",
-        r"Executable doesn't exist at"
-        r"|Please run the following command to download new browsers"
-        r"|browserType\.launch:.*Executable",
-        "npx playwright install chromium — browser binaries are per-VERSION, "
-        "and installing a different @playwright/test version PRUNES the "
-        "revision the old one needs (measured 2026-09-20: a 1.63 install "
-        "silently removed 1.62.1's chromium, and its suite then 'failed').",
-    ),
-    (
-        "webserver_never_started",
-        r"Process from config\.webServer was not able to start"
-        r"|error when starting dev server",
-        "the dev server never booted, so the suite never loaded the app — "
-        "read the [WebServer] lines for the real cause; the test names in "
-        "the report are noise.",
-    ),
-    (
-        "node_deps_missing",
-        r"Cannot find module '(?!\.)"
-        r"|ERR_MODULE_NOT_FOUND"
-        r"|Failed to resolve entry for package"
-        r"|[Ff]ailed to resolve import \"(?!\.)",
-        "a BARE (package) specifier did not resolve — `npm ci "
-        "--legacy-peer-deps` in the package dir, or re-run "
-        "noctus.dev.task_branch action='start' wire_env=True to link a "
-        "worktree's node_modules + @noctusai/* seed deps.",
-    ),
-    (
-        # Found by running this very sweep against the real tree, 2026-09-20:
-        # `pytest:agents` exited 2 on `ModuleNotFoundError: claude_agent_sdk`
-        # and was about to be reported as a plain `red`.
-        "pytest_collection_error",
-        r"Interrupted: \d+ errors? during collection"
-        r"|INTERNALERROR"
-        r"|ERROR: file or directory not found",
-        "pytest exited on a COLLECTION error — NO test ever ran, so this is "
-        "not a verdict about behaviour. Usually a dependency missing from "
-        "the environment (KB § PATTERNS/common/"
-        "silent-test-failure-from-missing-dep.md); read the ImportError to "
-        "tell that apart from a genuinely broken import in shipped code.",
-    ),
-    (
-        # Live in this repo as of 2026-09-20: OpenAI credits are exhausted,
-        # so every embedding-touching call 429s. Found the same day by
-        # running the toolkit suite NON-hermetically (it loads .env, CI does
-        # not) — it blocked ~33min on backoff at 3% CPU. A test that fails
-        # this way is reporting the billing account, not the code.
-        "llm_quota_or_auth",
-        r"You have no credits remaining"
-        r"|Error code: 429"
-        r"|insufficient_quota"
-        r"|Error code: 401.*[Aa]pi.?[Kk]ey",
-        "the LLM provider refused on quota/auth — this is the ENVIRONMENT, "
-        "not the code. CI runs the toolkit suite hermetically (no live key) "
-        "for exactly this reason; reproduce it that way rather than against "
-        "a live account.",
-    ),
-    (
-        "python_env_missing",
-        r"ModuleNotFoundError: No module named 'noctusai_lib'"
-        r"|ModuleNotFoundError: No module named 'seed",
-        "worktrees carry NO venv — run gates through the PRIMARY's: "
-        "<primary>/venv/bin/python <wt>/mcp/noctusai/cli.py --<flag> "
-        "--worktree-path <wt>.",
-    ),
-)
-
-
-def _harness_suspect(output: str) -> dict[str, Any] | None:
-    """Does this failing gate's output carry a known HARNESS-failure
-    signature? Returns the matched evidence line so the call is auditable
-    (and refutable) rather than an opaque reclassification."""
-    for name, pattern, remedy in _HARNESS_SIGNATURES:
-        rx = re.compile(pattern)
-        for line in output.splitlines():
-            if rx.search(line):
-                return {
-                    "signature": name,
-                    "matched_line": line.strip()[:300],
-                    "remedy": remedy,
-                }
-    return None
 
 
 def _pkg_json(pkg_dir: Path) -> dict[str, Any]:
@@ -581,7 +499,7 @@ def _run_gates(
             "duration_s": round(duration, 2),
         }
         if exit_code not in (0, None):
-            suspect = _harness_suspect(output or "")
+            suspect = _harness_suspect(output or "", exit_code)
             if suspect:
                 entry["harness_suspect"] = suspect
         results.append(entry)
