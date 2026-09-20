@@ -370,10 +370,24 @@ def _node_preconditions(pkg_dir: Path, *, playwright: bool = False) -> tuple[Pre
     pres = [
         Precondition(
             name="node_modules",
-            path=pkg_dir / "node_modules",
+            # 🔴 `.package-lock.json`, NOT the directory. `npm ci`/`npm install`
+            # write that file; nothing else does. A bare `node_modules/` proves
+            # only that SOMETHING made a directory — and something does:
+            # `task_branch wire_env` links `node_modules/@noctusai/{lib,seed}`
+            # into a product even when it SKIPPED the base `node_modules` link
+            # (primary had none), leaving a directory holding two symlinks and
+            # no packages. Measured 2026-09-20: that partial dir passed a
+            # dir-exists precondition, so `vite_build:academia-de-reciclagem`
+            # RAN and failed on `Cannot find module 'tailwindcss'` — a red about
+            # the wiring, wearing the clothes of a red about the code. The
+            # marker file is the only thing that distinguishes "installed here"
+            # from "a directory exists here".
+            path=pkg_dir / "node_modules" / ".package-lock.json",
             remedy=(
-                f"npm ci --legacy-peer-deps in {pkg_dir}, or re-run "
-                "noctus.dev.task_branch action='start' wire_env=True for this worktree"
+                f"npm ci --legacy-peer-deps in {pkg_dir} — node_modules/ may "
+                "EXIST but hold only wire_env's @noctusai symlinks; the "
+                "npm-written .package-lock.json marker is absent, so nothing "
+                "is actually installed there"
             ),
         )
     ]

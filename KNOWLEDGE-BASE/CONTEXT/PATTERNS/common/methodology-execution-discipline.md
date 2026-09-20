@@ -375,6 +375,19 @@ added.
   interpreter, `@playwright/test`. Unmet ⇒ the gate is **not run at all**,
   so there is no exit code to misread; it is reported `harness_invalid`
   with the missing path and a remedy.
+
+  🔴 **A precondition must probe the PROPERTY, not a proxy for it.** The
+  `node_modules` check started as "the directory exists" and was wrong
+  within a day: `task_branch`'s `wire_env` links
+  `node_modules/@noctusai/{lib,seed}` into a product even when it SKIPPED
+  the base `node_modules` (the primary had none), so the directory existed
+  holding two symlinks and zero packages. Dir-exists passed,
+  `vite_build:academia-de-reciclagem` ran, and it failed on `Cannot find
+  module 'tailwindcss'` — the precondition had certified a harness that was
+  not there. It now probes `node_modules/.package-lock.json`, which only
+  `npm ci`/`npm install` writes. Both halves were fixed: the probe, and
+  `wire_env`, which must not manufacture a half-state that reads as a whole
+  one (`test_plan_env_wiring_does_not_manufacture_a_partial_node_modules`).
 - **Signature** (advisory, for what preflight cannot know in advance): a
   non-zero gate whose output carries a known setup-failure fingerprint
   (`Executable doesn't exist at`, `Process from config.webServer was not

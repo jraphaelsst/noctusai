@@ -2443,3 +2443,63 @@ class TestWireEnvDefaultCannotSilentlyRegress:
         assert "fn" in captured, "register() did not register noctus.dev.task_branch"
         sig = inspect.signature(captured["fn"])
         assert sig.parameters["wire_env"].default is True
+
+
+def test_plan_env_wiring_does_not_manufacture_a_partial_node_modules(tmp_path):
+    """2026-09-20: when the PRIMARY has no node_modules for a product, the
+    overlay was correctly skipped but the `@noctusai` re-points were still
+    planned — and `_apply_env_wiring` `makedirs` their parent, CREATING a
+    `node_modules/` holding two symlinks and zero packages.
+
+    That half-state reads as installed: it satisfied gate_sweep's
+    `node_modules` precondition, so `vite_build:academia-de-reciclagem` RAN
+    and failed on `Cannot find module 'tailwindcss'` — a red about the
+    wiring wearing the clothes of a red about the code.
+
+    Before the fix this test fails on the FIRST assert (two `@noctusai`
+    specs were planned); the directory must not be conjured at all."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "w"
+    # `academia` declares the seed deps but the PRIMARY was never provisioned.
+    _seed_primary(primary, slugs=("academia",), with_product_nm=False)
+    fe = primary / "products" / "academia" / "frontend"
+    fe.joinpath("package.json").write_text(
+        '{"dependencies": {"@noctusai/lib": "file:../../../seed/lib/frontend",'
+        ' "@noctusai/seed": "file:../../../seed/framework/frontend"}}'
+    )
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+
+    nm = str(wt_root / "products" / "academia" / "frontend" / "node_modules")
+    planned_under_nm = [w for w in wire if w["link"].startswith(nm)]
+    assert planned_under_nm == [], (
+        "nothing may be planned under a node_modules that does not exist — "
+        f"got {[w['link'] for w in planned_under_nm]}"
+    )
+
+    # and it must say so, loudly, per re-point — a silent skip is the same
+    # silent-error shape one level up.
+    reasons = [sk["reason"] for sk in skipped if sk["link"].startswith(nm)]
+    assert any("@noctusai/lib" in sk["link"] for sk in skipped), skipped
+    assert any("partial node_modules" in r for r in reasons), reasons
+    assert any("npm ci" in r for r in reasons), reasons
+
+
+def test_plan_env_wiring_still_repoints_when_node_modules_is_real(tmp_path):
+    """The negative control: a provisioned product still gets its
+    `@noctusai` re-points. The fix must gate on 'is there a real
+    node_modules', not simply stop wiring re-points."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "w"
+    _seed_primary(primary, slugs=("alpha",), with_product_nm=True)
+    fe = primary / "products" / "alpha" / "frontend"
+    fe.joinpath("package.json").write_text(
+        '{"dependencies": {"@noctusai/lib": "file:../../../seed/lib/frontend"}}'
+    )
+    _seed_worktree_tree(wt_root)
+
+    wire, _skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    nm = str(wt_root / "products" / "alpha" / "frontend" / "node_modules")
+    repoints = [w for w in wire if w.get("kind") == "@noctusai" and w["link"].startswith(nm)]
+    assert [w["link"] for w in repoints] == [str(Path(nm) / "@noctusai" / "lib")]

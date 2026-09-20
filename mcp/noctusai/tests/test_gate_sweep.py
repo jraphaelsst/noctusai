@@ -135,6 +135,11 @@ def _make_product(
         (fe / "package.json").write_text("{}")
         if wired:
             (fe / "node_modules").mkdir()
+            # The npm-written marker — what actually distinguishes "installed
+            # here" from "a directory exists here". A `wired=True` fixture must
+            # produce it, or it is modelling the PARTIAL node_modules that
+            # wire_env leaves behind rather than a real install.
+            (fe / "node_modules" / ".package-lock.json").write_text("{}")
         if e2e:
             (fe / "playwright.config.ts").write_text("export default {}")
             (fe / "e2e").mkdir()
@@ -538,6 +543,21 @@ def test_missing_file_linked_seed_dep_is_a_precondition(tmp_path):
     assert not pres[1].path.exists()
     (fe / "node_modules" / "@noctusai" / "lib").mkdir(parents=True)
     assert all(p.path.exists() for p in GS._node_preconditions(fe))
+
+
+def test_partial_node_modules_does_not_satisfy_the_precondition(tmp_path):
+    """THE 2026-09-20 wire_env shape: a `node_modules/` holding only the
+    @noctusai symlinks, with nothing installed. A dir-exists check passes
+    it and the gate then fails on a missing package — a red about the
+    wiring, dressed as a red about the code."""
+    _make_product(tmp_path, "academia-de-reciclagem", wired=False)
+    fe = tmp_path / "products" / "academia-de-reciclagem" / "frontend"
+    (fe / "node_modules" / "@noctusai" / "lib").mkdir(parents=True)
+    assert (fe / "node_modules").is_dir(), "the directory DOES exist"
+    nm = next(p for p in GS._node_preconditions(fe) if p.name == "node_modules")
+    assert not nm.path.exists(), "but it is not an install, and must not pass"
+    (fe / "node_modules" / ".package-lock.json").write_text("{}")
+    assert nm.path.exists(), "and the npm marker is what flips it"
 
 
 def test_all_failures_suspect_is_inconclusive_never_red(tmp_path):

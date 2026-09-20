@@ -774,12 +774,17 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
-    def _link_product_node_modules(rel_fe: str) -> None:
+    def _link_product_node_modules(rel_fe: str) -> bool:
         """Per-entry overlay (the primary-contamination fix). `link_dir`
         becomes a REAL directory in the worktree; every primary top-level
         package gets its own symlink EXCEPT `@noctusai`, wired separately
         below (always worktree-owned) — so no write ever lands through a
-        shared symlink into the primary tree."""
+        shared symlink into the primary tree.
+
+        Returns whether the worktree will end up with a REAL, populated
+        `node_modules` for this product — either overlaid here, or already
+        present. `False` means nothing is installed anywhere, and the
+        caller must NOT then wire the `@noctusai` re-points (see there)."""
         src = os.path.join(primary_root, rel_fe, "node_modules")
         link_dir = os.path.join(wt_root, rel_fe, "node_modules")
         if not fs.exists(src):
@@ -787,12 +792,12 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
                 f"primary node_modules absent: {src} — the PRIMARY checkout "
                 f"itself was never provisioned; run `npm install` in "
                 f"{os.path.join(primary_root, rel_fe)} first")})
-            return
+            return False
         if fs.is_dir(link_dir):  # a REAL node_modules already in the worktree
             # (genuine local install, OR an already-overlaid worktree) — never
             # clobber/nest/re-sync.
             skipped.append({"link": link_dir, "reason": "real node_modules already present in worktree"})
-            return
+            return True
         if fs.is_symlink(link_dir):
             # A stale whole-dir symlink — either left over from the pre-fix
             # scheme, or from a not-yet-re-wired worktree. Convert to a REAL
@@ -805,6 +810,7 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
                 continue  # worktree-owned; wired below via the derived repoints
             wire.append({"link": os.path.join(link_dir, entry),
                         "target": os.path.join(src, entry), "kind": "node_modules_entry"})
+        return True
 
     # seed packages first (the @noctusai re-points below point INTO the WORKTREE's
     # own copies of these, never through the product node_modules symlink).
@@ -818,8 +824,28 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
     # (`_derive_product_repoints`) — never a single fleet-wide assumption.
     for slug in fs.list_product_frontends(primary_root):
         rel_fe = f"products/{slug}/frontend"
-        _link_product_node_modules(rel_fe)
+        has_node_modules = _link_product_node_modules(rel_fe)
         nm = os.path.join(wt_root, rel_fe, "node_modules")
+        if not has_node_modules:
+            # 🔴 Do NOT wire the @noctusai re-points into a node_modules that
+            # does not exist. `_apply_env_wiring` does `os.makedirs` on each
+            # link's parent, so planning them here CREATES
+            # `node_modules/@noctusai/{lib,seed}` and nothing else — a
+            # directory that LOOKS installed while holding two symlinks and
+            # zero packages. Measured 2026-09-20: that partial dir satisfied
+            # gate_sweep's `node_modules` precondition, so
+            # `vite_build:academia-de-reciclagem` ran and failed on
+            # `Cannot find module 'tailwindcss'` — a red about the wiring
+            # wearing the clothes of a red about the code. Manufacturing a
+            # half-state that reads as a whole one is the silent-error shape;
+            # skipping loudly is the honest half.
+            for dep, _seed_rel in _derive_product_repoints(primary_root, rel_fe, fs):
+                skipped.append({"link": os.path.join(nm, dep), "reason": (
+                    f"no node_modules to re-point into for {rel_fe} — wiring "
+                    f"{dep} alone would manufacture a partial node_modules "
+                    f"that reads as installed; run `npm ci` in "
+                    f"{os.path.join(primary_root, rel_fe)} first")})
+            continue
         for dep, seed_rel in _derive_product_repoints(primary_root, rel_fe, fs):
             link = os.path.join(nm, dep)
             target = os.path.join(wt_root, seed_rel)
