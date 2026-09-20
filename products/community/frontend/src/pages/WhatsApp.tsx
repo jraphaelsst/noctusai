@@ -343,7 +343,7 @@ function GrupoDetailDialog({
 }
 
 function GrupoRoster({ grupoId }: { grupoId: string }) {
-  const { data, isPending, isFetching, error } = useGrupoMembros(grupoId, { page_size: 20 });
+  const { data, isPending, isFetching, error } = useGrupoMembros(grupoId);
   const showSkeleton = isPending && !data;
   const isRefreshing = isFetching && !!data;
 
@@ -360,18 +360,28 @@ function GrupoRoster({ grupoId }: { grupoId: string }) {
         <p className="text-sm text-destructive" data-testid="grupo-roster-erro">
           {errorMessage(error)}
         </p>
-      ) : !data || data.items.length === 0 ? (
+      ) : !data || data.length === 0 ? (
         <p className="text-sm text-muted-foreground" data-testid="grupo-roster-vazio">
           Nenhum participante observado ainda. Use "Sincronizar roster".
         </p>
       ) : (
         <ul className="space-y-1.5" data-testid="grupo-roster-lista">
-          {data.items.map((m) => (
-            <li key={m.id} className="flex items-center justify-between text-sm" data-testid={`grupo-roster-item-${m.id}`}>
-              <span className="text-foreground">{m.membro_nome ?? "Não vinculado"}</span>
-              <span className="text-muted-foreground">{maskPhone(m.telefone)}</span>
-            </li>
-          ))}
+          {data.map((m, idx) => {
+            // No roster-row id in the response — `membro_id` is the best
+            // stable key; `participante_jid` (admin-only, D3) is the
+            // fallback, then the index as a last resort.
+            const key = m.membro_id ?? m.participante_jid ?? String(idx);
+            return (
+              <li key={key} className="flex items-center justify-between text-sm" data-testid={`grupo-roster-item-${key}`}>
+                <span className="text-foreground">{m.membro_nome ?? "Não vinculado"}</span>
+                {/* `telefone` (admin, raw) vs `telefone_mascarado`
+                    (moderador, already redacted server-side D3) —
+                    `maskPhone` is idempotent on an already-masked value
+                    (it only ever touches the trailing 4 digits). */}
+                <span className="text-muted-foreground">{maskPhone(m.telefone ?? m.telefone_mascarado)}</span>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

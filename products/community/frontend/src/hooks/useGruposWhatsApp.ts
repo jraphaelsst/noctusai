@@ -1,17 +1,18 @@
 /**
  * Grupos WhatsApp hooks — community-m3-contract.md §3#Grupos.
  *
- * `useGrupoMembros` targets `GET /api/whatsapp/grupos/{id}/membros`, which is
- * NOT in the contract's endpoint list (1-7 cover create/list/detail/patch/
- * sincronizar-roster/convite/sessao only) — the FE spec still asks for "row
- * → detail drawer with roster", so a read path for the observed roster must
- * exist somewhere. This is the same shape of gap amendment A17 closed for
- * module 2 (a public tier-listing endpoint the contract's prose implied but
- * never declared): built to a reasonable, convention-following inference
- * (paginated `{items,total}`, denormalized `membro_nome`/`telefone` exactly
- * like `Membro.plano_nome`/`Assinatura.membro_nome` elsewhere in this
- * product) and flagged in this delivery's `drift-found:` footer for the
- * tech-lead to ratify or redirect.
+ * `useGrupoMembros` used to target `GET /api/whatsapp/grupos/{id}/membros`
+ * — an endpoint that was never built (not in the contract's list, items
+ * 1-7 cover create/list/detail/patch/sincronizar-roster/convite/sessao
+ * only, and no router ever declared it), so the roster drawer 404'd on
+ * every open. The detail endpoint ALREADY embeds the roster
+ * (`app/routers/whatsapp_grupos_router.py::get_grupo` sets
+ * `body["membros"]`, role-filtered — `GrupoRosterItem` for `admin`,
+ * `GrupoRosterItemModerador` for `moderador`, D3's phone-redaction
+ * boundary). `useGrupoMembros` now `select`s that field off the SAME
+ * query `useGrupoWhatsApp` reads (`gruposKeys.detail(id)`) instead of
+ * issuing a second, non-existent request (2026-09-20 wiring audit,
+ * task 7).
  *
  * `useGrupoConvite` is a manual (`enabled: false`) query — "click-to-reveal"
  * per the contract, never fetched on mount, and the whole calling UI is
@@ -41,6 +42,9 @@ export interface Grupo {
   sincronizado_em: string | null;
   created_at: string;
   updated_at: string;
+  /** Only present on the DETAIL fetch (`GET /grupos/{id}`) — the list
+   * endpoint's rows never carry a roster. Role-filtered server-side. */
+  membros?: GrupoMembro[];
 }
 
 export interface GrupoListResponse {
@@ -83,29 +87,27 @@ export interface SessaoWhatsApp {
   sessao: string;
 }
 
-/** One `grupo_membros` roster row (see the module-header note on
- * `GET .../membros` being an inferred, not-yet-contracted endpoint). */
+/** One roster row off `Grupo.membros` — shape mirrors the backend's
+ * `GrupoRosterItem` (`admin`) / `GrupoRosterItemModerador` (`moderador`,
+ * D3): no `id` field (there is no roster-row primary key in the
+ * response), `participante_jid` OMITTED for `moderador` (it embeds the
+ * raw phone digits), and `telefone` (raw) vs `telefone_mascarado`
+ * (pre-redacted server-side) depending on role — never both. */
 export interface GrupoMembro {
-  id: string;
-  participante_jid: string;
+  participante_jid?: string;
   membro_id: string | null;
   /** Denormalized — null when the participant has no matching `membros` row. */
   membro_nome: string | null;
-  telefone: string | null;
+  telefone?: string | null;
+  telefone_mascarado?: string | null;
   papel: "participante" | "admin" | "superadmin";
-  visto_em: string | null;
-}
-
-export interface GrupoMembrosResponse {
-  items: GrupoMembro[];
-  total: number;
+  visto_em: string;
 }
 
 const gruposKeys = {
   all: ["whatsapp", "grupos"] as const,
   list: (params?: GruposParams) => ["whatsapp", "grupos", "list", params ?? {}] as const,
   detail: (id: string) => ["whatsapp", "grupos", "detail", id] as const,
-  membros: (id: string) => ["whatsapp", "grupos", id, "membros"] as const,
   convite: (id: string) => ["whatsapp", "grupos", id, "convite"] as const,
   sessao: ["whatsapp", "sessao"] as const,
 };
@@ -126,15 +128,17 @@ export function useGrupoWhatsApp(id?: string | null) {
   });
 }
 
-/** See the module header — an inferred endpoint, not in the contract's
- * endpoint list. `enabled` defaults to "whenever an id is given" so the
- * detail drawer can fetch it eagerly once open. */
-export function useGrupoMembros(id?: string | null, params?: { page?: number; page_size?: number }) {
+/** See the module header — `select`s `.membros` off the SAME detail
+ * query `useGrupoWhatsApp` reads (identical `queryKey`), so opening the
+ * roster drawer never issues a second request beyond the one the detail
+ * fetch already makes, and a `sincronizar-roster` invalidation of that
+ * query key refreshes both. */
+export function useGrupoMembros(id?: string | null) {
   return useQuery({
-    queryKey: [...gruposKeys.membros(id ?? ""), params ?? {}] as const,
-    queryFn: () => api.get<GrupoMembrosResponse>(`/api/whatsapp/grupos/${id}/membros`, params),
+    queryKey: gruposKeys.detail(id ?? ""),
+    queryFn: () => api.get<Grupo>(`/api/whatsapp/grupos/${id}`),
     enabled: !!id,
-    placeholderData: keepPreviousData,
+    select: (grupo) => grupo.membros ?? [],
   });
 }
 
@@ -160,10 +164,12 @@ export function useSincronizarRoster() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.post<SincronizarRosterResponse>(`/api/whatsapp/grupos/${id}/sincronizar-roster`, {}),
-    onSuccess: (_data, id) => {
-      qc.invalidateQueries({ queryKey: gruposKeys.all });
-      qc.invalidateQueries({ queryKey: gruposKeys.membros(id) });
-    },
+    // `gruposKeys.all` is a PREFIX of both the list AND detail query keys
+    // (`["whatsapp","grupos", ...]`), so this one invalidation already
+    // refreshes `useGrupoMembros`'s query too — it reads the SAME detail
+    // key, not a separate `membros` key (removed, 2026-09-20 wiring
+    // audit task 7).
+    onSuccess: () => qc.invalidateQueries({ queryKey: gruposKeys.all }),
   });
 }
 

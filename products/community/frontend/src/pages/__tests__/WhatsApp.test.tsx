@@ -3,8 +3,10 @@
  *
  * `mockGet` routes by path since the page fires `/api/whatsapp/sessao`,
  * `/api/whatsapp/grupos`, and (once a row is opened) `/api/whatsapp/grupos/
- * {id}/membros` — plus `/api/whatsapp/grupos/{id}/convite` only on an
- * admin's click-to-reveal.
+ * {id}` — the roster ships EMBEDDED in that detail response (`.membros`),
+ * never a separate `/membros` endpoint (2026-09-20 wiring audit, task 7:
+ * that endpoint was never built and 404'd on every drawer open) — plus
+ * `/api/whatsapp/grupos/{id}/convite` only on an admin's click-to-reveal.
  *
  * Proves:
  * 1. Two loading signals (`showSkeleton`/`isRefreshing`), never `isLoading`.
@@ -14,6 +16,8 @@
  *    from the DOM for a moderador (not merely hidden) — asserted via
  *    `queryByTestId` returning null, not a CSS/visibility check.
  * 4. Phones in the roster always render masked to the last 4 digits.
+ * 5. The roster comes from the SAME detail request the drawer already
+ *    makes — no second GET to a `/membros` path (task 7 regression).
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -83,7 +87,6 @@ const GRUPO = {
 };
 
 const ROSTER_ITEM = {
-  id: "gm-1",
   participante_jid: "5511999999999@c.us",
   membro_id: "m-1",
   membro_nome: "Ana",
@@ -100,8 +103,12 @@ function mockRoutes(overrides: Record<string, unknown> = {}) {
     if (path === "/api/whatsapp/grupos") {
       return Promise.resolve(overrides.grupos ?? { items: [GRUPO], total: 1 });
     }
-    if (path === `/api/whatsapp/grupos/${GRUPO.id}/membros`) {
-      return Promise.resolve(overrides.membros ?? { items: [ROSTER_ITEM], total: 1 });
+    // The roster ships embedded in the DETAIL response (`.membros`) — no
+    // separate `/membros` route exists (task 7).
+    if (path === `/api/whatsapp/grupos/${GRUPO.id}`) {
+      return Promise.resolve(
+        overrides.grupoDetail ?? { ...GRUPO, membros: [ROSTER_ITEM] },
+      );
     }
     if (path === `/api/whatsapp/grupos/${GRUPO.id}/convite`) {
       if (overrides.conviteError) return Promise.reject(overrides.conviteError);
@@ -158,9 +165,12 @@ describe("WhatsApp — invite link role gating (D3)", () => {
 
     await waitFor(() => expect(screen.getByTestId("grupo-detail-dialog")).toBeInTheDocument());
     // Roster phone is masked to the last 4 digits, never the raw E.164 value.
-    await waitFor(() => expect(screen.getByTestId("grupo-roster-item-gm-1")).toBeInTheDocument());
-    expect(screen.getByTestId("grupo-roster-item-gm-1")).toHaveTextContent("1234");
-    expect(screen.getByTestId("grupo-roster-item-gm-1")).not.toHaveTextContent("+5511999991234");
+    await waitFor(() => expect(screen.getByTestId("grupo-roster-item-m-1")).toBeInTheDocument());
+    expect(screen.getByTestId("grupo-roster-item-m-1")).toHaveTextContent("1234");
+    expect(screen.getByTestId("grupo-roster-item-m-1")).not.toHaveTextContent("+5511999991234");
+    // The roster came off the SAME detail GET the drawer already makes —
+    // no separate (never-built) `/membros` request (task 7 regression).
+    expect(mockGet).not.toHaveBeenCalledWith(expect.stringContaining("/membros"));
 
     // Invite section exists for an admin.
     expect(screen.getByTestId("grupo-convite-section")).toBeInTheDocument();
