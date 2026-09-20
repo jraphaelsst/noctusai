@@ -29,6 +29,7 @@ from app.routers import (
     vista_showcase,
     negociacoes,
     negociacoes_venda, processos_venda, pipeline_stages,
+    notificacoes_preferencias,
 )
 
 
@@ -211,6 +212,7 @@ app = create_product_app(
         meta_eventos.router,
         vista_showcase.router,
         negociacoes.router,
+        notificacoes_preferencias.router,
     ],
     version="0.2.0",
     limiter=limiter,
