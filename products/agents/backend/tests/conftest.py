@@ -28,6 +28,43 @@ _spec = _ilu.spec_from_file_location(
 _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
+
+# ── the suite must own its env (KB § PATTERNS/compliance/testing.md) ──────
+#
+# `ANTHROPIC_API_KEY` goes in `clear` because for this product its mere
+# PRESENCE is a switch, not a value: `get_slot_pool()` (and every sibling
+# agents runtime factory) hands back the REAL implementation when a key
+# resolves, and `RealSlotPool` sweeps via `RealSweeper`, which spawns
+# `/app/bin/julia-cli-slot` as a per-slot unix user. That path exists only
+# inside the container, so on any developer machine the spawn fails, all
+# three slots are quarantined at startup, and the three slot-pool tests in
+# `test_main.py` fail on `assert [0, 1, 2] == []`.
+#
+# The repo's own `.env` carries a real 108-char ANTHROPIC_API_KEY and
+# `env_bootstrap` loads it, so ANY process that bootstraps — the MCP
+# server, `predeploy_check`, `gate_sweep`, a plain shell after `source` —
+# inherits it. CI has no key, gets `FakeSlotPool`, and is green. That is
+# the p-studio 2026-08-19 shape exactly: a suite reporting on the
+# developer's shell rather than on the code, and green in CI either way.
+#
+# Measured 2026-09-20: 3 failed / 522 passed with the ambient key;
+# 525 passed with it cleared.
+#
+# `APP_ENV` rides along because `is_deploy_context()` keys off it and would
+# force the real pool regardless of the key. (Its other door,
+# `PRODUCT_URL_<SLUG>`, is dynamic and stays owned by that helper.)
+#
+# 🔴 ASSIGNED EMPTY, NOT `clear`ed — this is the load-bearing detail.
+# `clear` does `del os.environ[key]`, which makes the key ABSENT; the next
+# `env_bootstrap` in the process (it runs with `override=False`, i.e.
+# "an already-set var wins") then sees it absent and RELOADS it straight
+# back out of `.env`. Assigning `""` leaves it present-but-empty, which
+# `override=False` treats as already-set and will not overwrite — and
+# `resolve_app_config_value` documents that "an empty-string env value
+# counts as unset". So empty is both stable AND correctly falsy.
+# Measured 2026-09-20: `clear` => still 3 failed; assign-empty => 525 passed.
+_mod.own_test_env({"ANTHROPIC_API_KEY": "", "APP_ENV": ""})
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
