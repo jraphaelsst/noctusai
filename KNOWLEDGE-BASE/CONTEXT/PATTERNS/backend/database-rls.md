@@ -508,6 +508,133 @@ bucket level — every product relies entirely on its own application-layer
 gap, not erp-specific; flagged for a future slice, not expanded into this
 one.
 
+## Schema-wide grants — `anon` gets USAGE only, never a blanket table grant
+
+**The bug (2026-09-20).** `products/seed/backend/migrations/001_seed.sql`
+used to read:
+
+```sql
+GRANT USAGE ON SCHEMA seed TO anon, authenticated, service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA seed TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT ALL ON TABLES TO anon, authenticated, service_role;
+```
+
+Propagated verbatim via `templates/product-seed/` into 9 product schemas
+(`academia_de_reciclagem`, `adconnect`, `agents`, `community`, `daily_life`,
+`igig`, `orbity`, `p_studio`, `social_wiring`). Rule 6 above already says it:
+*"Every product schema is PostgREST-exposed with default grants, so ANY
+table without RLS is readable/writable over REST"* — this is that rule's
+worst-case realization. RLS is the ROW-level gate; a table-level GRANT is
+what lets a role reach a table **before RLS is even consulted**. In the
+live `social_wiring` schema, 4 out-of-band backup tables
+(`_leads_backup_20260902`, `_clientes_orfaos_backup_20260902`,
+`_cliente_merges_backup_20260902`, `_atendimentos_backup_20260902` —
+21,567 rows of names/emails/birthdates) were created directly against the
+database, outside any migration, and therefore never got an RLS policy.
+Because the schema-wide grant gave `anon` full table privileges by
+default, they were readable **and writable** by the unauthenticated
+PostgREST role from the moment they existed. Contained live via a direct
+`REVOKE` + `ENABLE ROW LEVEL SECURITY` against those 4 tables; the fix
+below is the ROOT closure so the class cannot recur.
+
+**The canonical shape** (`products/seed/backend/migrations/001_seed.sql`,
+post-fix):
+
+```sql
+GRANT USAGE ON SCHEMA seed TO anon, authenticated, service_role;
+
+GRANT ALL ON ALL TABLES IN SCHEMA seed TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA seed TO authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA seed GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+
+-- A table that genuinely needs anonymous access re-grants it EXPLICITLY,
+-- per table, with a comment saying why:
+GRANT SELECT ON seed.status_pagina TO anon;  -- todos_veem_producao: page-visibility flags, no PII
+```
+
+`anon` gets schema USAGE (routing only, required by PostgREST) and
+**nothing** at the table level by default. `service_role` gets ALL — the
+trusted server-side role, already bypasses RLS. `authenticated` gets
+SELECT/INSERT/UPDATE/DELETE — real signed-in users, gated per table by
+RLS. **4 products already used a narrower — but still not canonical —
+shape** (`erp`, `therapy`, `personal-finance`: `SELECT, INSERT, UPDATE,
+DELETE` to `anon` + `authenticated` on `ALL TABLES`, reserving `ALL` for
+`postgres`/`service_role`) — narrower than the seed's old `ALL`-to-anon
+default, but still a **blanket** table grant naming `anon`, which the
+canonical shape forbids outright. Fixing those 3 products is out of scope
+for the 2026-09-20 lockdown (flagged, not fixed — same "wider surface,
+flagged not fixed" posture as the storage-buckets audit above).
+
+**Forward fix, immutable history.** Each of the 9 inheriting schemas got
+one new migration (`REVOKE ALL ON ALL TABLES IN SCHEMA <s> FROM anon` +
+the matching `ALTER DEFAULT PRIVILEGES ... REVOKE ALL ... FROM anon`, plus
+an explicit per-table re-grant for any audited anon exception) — **never**
+an edit to `001_*.sql` (a migration is a record of what WAS applied, never
+a mutable snapshot of current intent; see § Migrations above). `community`
+had already closed its own exposure earlier
+(`007_drop_anon_write_policies.sql` / `008_pagamentos.sql` /
+`009_whatsapp.sql`, after `aplicacoes_insert_anon`'s `WITH CHECK (true)`
+was found to let anyone POST arbitrary pre-approved rows) — its lockdown
+migration restates the REVOKE for consistency and deliberately does
+**not** re-open `status_pagina` for `anon` (that surface was closed on
+purpose; re-opening it here would be a regression, not a fix).
+
+**Audited anon exceptions, per schema (grep every migration for `TO anon`,
+`FOR ... anon`, and TO-less/PUBLIC-role policies before writing the
+REVOKE):** the only exception across all 9 schemas is
+`status_pagina.todos_veem_producao` (or, on `p_studio`, the equivalently-
+shaped `status_pagina_select_producao`) — a deliberate TO-less (PUBLIC,
+`anon` included) SELECT policy over page-visibility flags, no PII.
+`agents`' `session_transcript_entries` / `app_integration_config` /
+`runtime_settings` already carry an explicit per-table `REVOKE ALL ...
+FROM anon, authenticated`; `social_wiring`'s `mc_brand_owners_select_own_org`
+is TO-less but keys on `auth.jwt() ->> 'org_id'`, which is `NULL` for an
+unauthenticated request, so `anon` already got zero rows via RLS
+regardless of the grant. Every other policy across the 9 schemas is
+`TO authenticated` / `TO service_role`, or RLS-enabled with zero policies
+(implicit deny) — REVOKE-only is safe everywhere else.
+
+**Static gate** — `noctus.dev.compliance.check_schema_wide_anon_grant`
+(pre-commit, severity `critical`, no allowlist — same posture as
+`check_storage_bucket_public`). Two legs: (A) `GRANT ... ON ALL TABLES IN
+SCHEMA <s> TO ...anon...`; (B) `ALTER DEFAULT PRIVILEGES IN SCHEMA <s>
+GRANT ... ON TABLES TO ...anon...`. Deliberately sequence-exempt (`ON ALL
+SEQUENCES` is not matched — no row data, and every product already grants
+`anon` sequence USAGE by design). Comments are stripped before matching
+(`noctusai_lib.testing.migration_parser`), so a migration's own prose
+citing the historical vulnerable shape (exactly what every lockdown
+migration's header does) can never trip its own keeper. Diff-scoped to
+the files STAGED in the current commit — same reasoning as
+`check_storage_bucket_public`: the pre-fix `001_*.sql` files stay on disk
+forever, so a full-tree audit (`paths=None`) is deliberately NOT wired
+into any blocking gate (it still finds them, on purpose, for an ad-hoc
+audit — including the 3 narrower-but-still-blanket erp/therapy/
+personal-finance grants above).
+
+**Advisory (not blocking) sibling** —
+`noctus.dev.compliance.check_table_has_rls`: flags a `CREATE TABLE` with
+no matching `ENABLE ROW LEVEL SECURITY`, static or the dynamic
+`DO $$ ... FOREACH t IN ARRAY ARRAY[...] LOOP EXECUTE format('ALTER TABLE
+%I ENABLE ROW LEVEL SECURITY', t) ... END $$;` shape (`social-wiring`
+065/101) AND the `FOR t IN SELECT unnest(ARRAY[...])` shape
+(`erp-imobiliario` 001's "RLS for expansion tables" block). A naive
+literal grep sees neither dynamic form and reported 66 "exposed" tables in
+`social_wiring` when the live number was 4 — this detector resolves both
+by correlating the loop's array literal with its `EXECUTE format(...)`
+call by loop-variable name, statement-scoped via `_walk_statements` so an
+inner `;` inside the `DO $$ ... $$` body never confuses it. Validated
+fleet-wide: zero false positives against every `campanhas`/`permuta*`
+table (the shape that produced the 66-vs-4 incident) and against erp's
+40-table `FOR ... unnest` loop; 3 genuine remaining findings platform-wide
+(a `social_wiring.tool_call_audits` cross-file gap closed by a LATER
+migration — a known per-file scope limitation — and 2 real
+`knowledge_extractor` tables with no RLS at all). Not wired into any
+CLI flag or blocking gate — a regex scan is not a SQL parser, and a THIRD
+dynamic-batch shape this scanner doesn't yet recognise would be a false
+positive, not a false negative; promote to blocking only after widening
+coverage further.
+
 ## Provisioning
 
 Trigger `on_license_change` fires when `public.product_licenses` changes. Auto-provisions product defaults (initial teams, seed rows, roles) in the product's schema.
