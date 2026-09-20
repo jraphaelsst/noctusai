@@ -26,7 +26,11 @@ export function useReviewCrisisAlert() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      return api.post(`/api/crisis-alerts/${id}/review`, { status });
+      // Backend route is PATCH (`app/routers/crisis.py::review_alert`) —
+      // a POST here 405'd on every call, so the optimistic update above
+      // always rolled back and no crisis alert was ever actually marked
+      // reviewed (2026-09-20 wiring audit, task 5).
+      return api.patch(`/api/crisis-alerts/${id}/review`, { status });
     },
     // Optimistic — the alert flips to reviewed instantly instead of sitting
     // in "pending" for a full round-trip; a failure rolls every touched
