@@ -78,6 +78,7 @@ from noctusai_lib.integrations.signature.types import (
     SignatarioRemoto,
     SignatureAdapter,
     StatusAssinatura,
+    is_forward_transition,
 )
 
 #: Attribute name → the module it lives in, for the lazy proxy below.
@@ -117,5 +118,6 @@ __all__ = [
     "SignatureError",
     "StatusAssinatura",
     "WebhookInvalido",
+    "is_forward_transition",
     "make_signature_adapter",
 ]
