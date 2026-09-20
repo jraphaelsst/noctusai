@@ -1,21 +1,7 @@
-// Harness smoke test — proves this product's FE vitest stack (vitest + jsdom +
-// @testing-library/react, single React instance) actually RUNS in CI. Born from
-// the unenforced-gate lesson (KB § branching-and-merging §0.2a): social-wiring
-// shipped FE tests that COULD NOT run (missing deps) and nobody noticed because
-// no product ran FE vitest in CI. This minimal test gates that the harness itself
-// is healthy; augment with real component tests as the product grows them.
-import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
-
-afterEach(() => cleanup());
-
-describe("FE harness smoke", () => {
-  it("vitest executes", () => {
-    expect(1 + 1).toBe(2);
-  });
-
-  it("jsdom + testing-library render a single-React tree", () => {
-    const { getByText } = render(<div>noctus-harness-ok</div>);
-    expect(getByText("noctus-harness-ok")).toBeTruthy();
-  });
-});
+// SEED-OWNED — thin re-export shim. The real harness-smoke suite (proves
+// this product's FE vitest stack actually runs in CI) lives at
+// `seed/framework/frontend/src/__harness_smoke__.test.tsx` (absorbed
+// 2026-09-20 — was byte-identical across 3 products' local copies, N>=3
+// recurrence rule). Mirrors how `vite.config.ts`/`vitest.config.ts` consume
+// their seed factories: a thin local file importing the seed implementation.
+import "../../../../seed/framework/frontend/src/__harness_smoke__.test";
