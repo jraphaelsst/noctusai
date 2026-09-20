@@ -53,6 +53,7 @@ from noctusai_lib.integrations.signature import (
     ProvedorNaoConfigurado,
     Signatario,
     SignatureAdapter,
+    is_forward_transition,
 )
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError
@@ -75,6 +76,14 @@ TABLE = "atendimento_contrato_assinaturas"
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 _ENVELOPE_VIVO_STATUSES = ("pendente", "parcial")
+
+#: Statuses `aplicar_evento_webhook` treats as terminal for
+#: `is_forward_transition` — once a row reaches one of these, only a
+#: repeat of the exact same value is accepted (2026-09-20 wiring audit,
+#: task 4; the D4Sign webhook body carries no nonce/timestamp, so a
+#: captured `cancelado` delivery replayed after the row already reached
+#: `concluido` — or the reverse — must not silently win).
+_ENVELOPE_TERMINAL_STATUSES = frozenset({"concluido", "cancelado", "expirado"})
 
 
 def _t(client: Any, name: str = TABLE):
@@ -453,6 +462,14 @@ async def aplicar_evento_webhook(
 
     An unknown `external_id` is NOT re-raised as an error — a retired
     envelope must not make the provider retry forever (contract §3.4).
+
+    🔴 Monotonic once terminal (2026-09-20 wiring audit, task 4).
+    `is_forward_transition` refuses any event that would move a row OFF
+    a terminal status (`_ENVELOPE_TERMINAL_STATUSES`) onto a DIFFERENT
+    value — a captured `cancelado` delivery replayed after `concluido`
+    already landed (or the reverse) is logged loudly and dropped, never
+    applied. A webhook body carries no nonce/timestamp, so `WebhookInvalido`
+    proving the HMAC matched says nothing about the delivery being fresh.
     """
     row = buscar_por_external_id(client, evento.provedor, evento.external_id)
     if row is None:
@@ -464,6 +481,18 @@ async def aplicar_evento_webhook(
 
     if row["status"] == evento.status:
         return {"ok": True}
+
+    if not is_forward_transition(
+        row["status"], evento.status, terminais=_ENVELOPE_TERMINAL_STATUSES
+    ):
+        logger.warning(
+            "assinatura webhook: refusing regressive transition "
+            "external_id=%s provedor=%s atual=%s novo=%s — assinatura_id=%s "
+            "ja esta em estado terminal, evento ignorado",
+            evento.external_id, evento.provedor, row["status"], evento.status,
+            row["id"],
+        )
+        return {"ok": True, "ignorado": True, "motivo": "transicao_regressiva"}
 
     org_id = UUID(str(row["org_id"]))
     contrato_id = UUID(str(row["contrato_id"]))

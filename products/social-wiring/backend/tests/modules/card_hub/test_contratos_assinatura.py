@@ -461,3 +461,30 @@ class TestWebhook:
         assinadas = [v for v in contrato["versoes"] if v["origem"] == "assinado"]
         # A replay must NOT double-process — exactly one signed version, not two.
         assert len(assinadas) == 1
+
+    def test_a_replayed_cancelado_after_concluido_is_refused_not_applied(
+        self, client, scoped, fake_storage, fake_signature_adapter
+    ):
+        """2026-09-20 wiring audit, task 4: a webhook body carries no
+        nonce/timestamp, so a captured `cancelado` delivery replayed AFTER
+        `concluido` already landed must not regress the contract back to
+        cancelled — `is_forward_transition` refuses it."""
+        cid, aid = _seed(scoped)
+        ids = _seed_versao_gerada(scoped, fake_storage, aid)
+        r_env = _enviar(client, cid, ids["contrato_id"], versao_id=ids["versao_id"])
+        external_id = r_env.json()["external_id"]
+
+        fake_signature_adapter.marcar_assinado(external_id, "ana@example.com")
+        r_concluido = _post_webhook(client, "d4sign", {"external_id": external_id, "status": "concluido"})
+        assert r_concluido.status_code == 200
+        assert r_concluido.json() == {"ok": True}
+
+        r_replay = _post_webhook(client, "d4sign", {"external_id": external_id, "status": "cancelado"})
+        assert r_replay.status_code == 200
+        assert r_replay.json() == {"ok": True, "ignorado": True, "motivo": "transicao_regressiva"}
+
+        assinatura = _get(client, cid, ids["contrato_id"]).json()
+        assert assinatura["status"] == "concluido"
+
+        contrato = client.get(f"/api/clientes/{cid}/contratos", headers=_auth()).json()["contratos"][0]
+        assert contrato["status"] == "assinado"
