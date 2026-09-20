@@ -118,13 +118,28 @@ def test_scope_empty_diff():
 # ── gate-spec construction ────────────────────────────────────────
 
 
-def _make_product(root: Path, slug: str, *, backend=True, frontend=True) -> None:
+def _make_product(
+    root: Path, slug: str, *, backend=True, frontend=True, wired=True, e2e=False
+) -> None:
+    """`wired=True` gives the frontend a `node_modules/` — i.e. a VALID
+    harness. It is the default because almost every test here is about
+    verdict logic, and an unwired fixture would make those gates
+    `harness_invalid` (correctly: you cannot build without deps) and mask
+    what they mean to assert. `wired=False` is how the harness-validity
+    tests below get an INVALID one on purpose."""
     if backend:
         (root / "products" / slug / "backend" / "tests").mkdir(parents=True)
     if frontend:
         fe = root / "products" / slug / "frontend"
         fe.mkdir(parents=True)
         (fe / "package.json").write_text("{}")
+        if wired:
+            (fe / "node_modules").mkdir()
+        if e2e:
+            (fe / "playwright.config.ts").write_text("export default {}")
+            (fe / "e2e").mkdir()
+            if wired:
+                (fe / "node_modules" / "@playwright" / "test").mkdir(parents=True)
 
 
 def test_build_gate_specs_product_scope(tmp_path):
@@ -421,3 +436,183 @@ def test_gate_sweep_diff_query_failure_is_a_warning_not_a_crash(tmp_path):
     )
     assert result["ok"] is True
     assert result["warnings"], "diff-query failure must surface as a warning, not be swallowed"
+
+
+# ── harness validity ──────────────────────────────────────────────────────
+#
+# The 2026-09-20 class: a red that is about the HARNESS, not the code. Every
+# `output` below is VERBATIM from a real run in that session.
+
+
+_PLAYWRIGHT_NO_BROWSER = (
+    "Error: browserType.launch: Executable doesn't exist at "
+    "/Users/x/Library/Caches/ms-playwright/chromium-1201/chrome-mac/Chromium.app\n"
+    "Please run the following command to download new browsers:\n"
+    "    npx playwright install\n"
+)
+_WEBSERVER_DEAD = (
+    "[WebServer] error when starting dev server:\n"
+    "Error: Process from config.webServer was not able to start. Exit code: 1\n"
+)
+_UNWIRED_SEED = (
+    '[vite]: Rollup failed to resolve import "@noctusai/lib/design-system" '
+    'from "src/App.tsx"\n'
+)
+_VENVLESS = "ModuleNotFoundError: No module named 'noctusai_lib'\n"
+# Verbatim from running the real sweep over products/agents, 2026-09-20.
+_PYTEST_COLLECTION = (
+    "E   ModuleNotFoundError: No module named 'claude_agent_sdk'\n"
+    "!!!!!!!! Interrupted: 5 errors during collection !!!!!!!!\n"
+)
+
+
+def test_signature_matches_every_real_2026_09_20_harness_fault():
+    """Prove the detector can FIRE — on the actual output each fault
+    produced, not a paraphrase of it."""
+    assert GS._harness_suspect(_PLAYWRIGHT_NO_BROWSER)["signature"] == "playwright_browser_missing"
+    assert GS._harness_suspect(_WEBSERVER_DEAD)["signature"] == "webserver_never_started"
+    assert GS._harness_suspect(_UNWIRED_SEED)["signature"] == "node_deps_missing"
+    assert GS._harness_suspect(_VENVLESS)["signature"] == "python_env_missing"
+    assert GS._harness_suspect(_PYTEST_COLLECTION)["signature"] == "pytest_collection_error"
+
+
+def test_signature_does_not_fire_on_genuine_failures():
+    """Prove it can STAY SILENT. A signature that swallowed a real red
+    would be the same harm pointed the other way — it would hide the bug
+    instead of inventing one."""
+    for genuine in (
+        "Error: expect(locator).toHaveAttribute(expected) failed",
+        "AssertionError: assert 3 == 4",
+        'Failed to resolve import "./components/Missing" from "src/App.tsx"',
+        "ModuleNotFoundError: No module named 'app.services.nope'",
+        "src/App.tsx(12,3): error TS2304: Cannot find name 'foo'.",
+        "  2 failed\n  49 passed (1.7m)",
+        "1 failed, 42 passed in 0.28s",
+        "FAILED tests/test_x.py::test_y - AssertionError",
+    ):
+        assert GS._harness_suspect(genuine) is None, genuine
+
+
+def test_signature_carries_its_evidence_line():
+    """A reclassification you cannot audit is just a different guess."""
+    hit = GS._harness_suspect(_PLAYWRIGHT_NO_BROWSER)
+    assert "Executable doesn't exist" in hit["matched_line"]
+    assert "playwright install" in hit["remedy"]
+
+
+def test_unwired_frontend_gate_is_not_run_at_all(tmp_path):
+    """The precondition leg: no node_modules => the gate never runs, so
+    there is no exit code to mistake for a verdict about the code."""
+    _make_product(tmp_path, "core", backend=False, wired=False)
+    git_runner = _clean_git_runner(diff_files="products/core/frontend/src/App.tsx\n")
+    ran: list[str] = []
+
+    def fake_run(spec):
+        ran.append(spec.gate)
+        return 1, "boom", 0.1, "boom"
+
+    result = GS.gate_sweep(repo_root=str(tmp_path), git_runner=git_runner, run_gate=fake_run)
+    assert "vite_build:core" not in ran, "an invalid harness must not be RUN"
+    entry = next(g for g in result["gates"] if g["gate"] == "vite_build:core")
+    assert entry["ran"] is False
+    assert entry["exit_code"] is None
+    assert entry["harness_invalid"][0]["precondition"] == "node_modules"
+    assert "npm ci" in entry["harness_invalid"][0]["remedy"]
+    assert result["status"] == "inconclusive"
+    assert result["exit_code"] == 1, "not-measured is never a pass"
+    assert result["harness"]["invalid"][0]["gate"] == "vite_build:core"
+
+
+def test_missing_file_linked_seed_dep_is_a_precondition(tmp_path):
+    """Fault #5: `npm ci` does NOT install a `file:`-linked @noctusai dep,
+    so node_modules can exist while the app still cannot build."""
+    _make_product(tmp_path, "core")
+    fe = tmp_path / "products" / "core" / "frontend"
+    fe.joinpath("package.json").write_text('{"dependencies": {"@noctusai/lib": "file:../../../seed/lib/frontend"}}')
+    pres = GS._node_preconditions(fe)
+    assert [p.name for p in pres] == ["node_modules", "@noctusai/lib"]
+    assert not pres[1].path.exists()
+    (fe / "node_modules" / "@noctusai" / "lib").mkdir(parents=True)
+    assert all(p.path.exists() for p in GS._node_preconditions(fe))
+
+
+def test_all_failures_suspect_is_inconclusive_never_red(tmp_path):
+    """The signature leg, and the whole point: when every red carries a
+    harness signature, there is no trustworthy red to report."""
+    _make_product(tmp_path, "core")
+    git_runner = _clean_git_runner(diff_files="products/core/frontend/src/App.tsx\n")
+
+    def fake_run(spec):
+        return 1, "failed", 0.1, _PLAYWRIGHT_NO_BROWSER
+
+    result = GS.gate_sweep(repo_root=str(tmp_path), git_runner=git_runner, run_gate=fake_run)
+    assert result["status"] == "inconclusive"
+    entry = next(g for g in result["gates"] if g["gate"] == "vite_build:core")
+    assert entry["harness_suspect"]["signature"] == "playwright_browser_missing"
+    assert {s["gate"] for s in result["harness"]["suspects"]} == {"pytest:core", "vite_build:core"}
+
+
+def test_a_genuine_red_still_wins_over_a_suspect(tmp_path):
+    """A known real failure stays the headline — downgrading it would hide
+    a real bug behind a setup complaint."""
+    _make_product(tmp_path, "core")
+    git_runner = _clean_git_runner(diff_files="products/core/backend/app/main.py\n")
+
+    def fake_run(spec):
+        if spec.gate == "pytest:core":
+            return 1, "3 failed", 2.0, "AssertionError: assert 3 == 4"
+        return 1, "failed", 0.1, _PLAYWRIGHT_NO_BROWSER
+
+    result = GS.gate_sweep(repo_root=str(tmp_path), git_runner=git_runner, run_gate=fake_run)
+    assert result["status"] == "red"
+    assert len(result["harness"]["suspects"]) == 1
+
+
+def test_e2e_gate_is_derived_for_products_with_playwright(tmp_path):
+    """The suite CI enforces was missing from the local sweep entirely —
+    which is how a Playwright investigation ended up in raw shell."""
+    _make_product(tmp_path, "erp-imobiliario", e2e=True)
+    scope = GS._derive_scope(["products/erp-imobiliario/frontend/e2e/tests/metas.spec.ts"])
+    specs = GS._build_gate_specs(tmp_path, scope)
+    assert "e2e:erp-imobiliario" in {s.gate for s in specs}
+    e2e_spec = next(s for s in specs if s.gate == "e2e:erp-imobiliario")
+    assert e2e_spec.argv == ["npx", "playwright", "test"]
+    assert "@playwright/test" in {p.name for p in e2e_spec.preconditions}
+
+
+def test_e2e_gate_absent_without_playwright_config(tmp_path):
+    _make_product(tmp_path, "core", e2e=False)
+    scope = GS._derive_scope(["products/core/frontend/src/App.tsx"])
+    specs = GS._build_gate_specs(tmp_path, scope)
+    assert not any(s.gate.startswith("e2e:") for s in specs)
+
+
+def test_three_tuple_runner_still_supported(tmp_path):
+    """Back-compat for every pre-existing injected seam."""
+    _make_product(tmp_path, "core")
+    git_runner = _clean_git_runner(diff_files="products/core/backend/app/main.py\n")
+    result = GS.gate_sweep(
+        repo_root=str(tmp_path), git_runner=git_runner, run_gate=lambda spec: (0, "ok", 0.1),
+    )
+    assert result["status"] == "green"
+
+
+def test_verdict_precedence_table():
+    def g(name, ran, code, **extra):
+        return {"gate": name, "ran": ran, "exit_code": code, **extra}
+
+    assert GS._verdict([g("a", True, 0)]) == "green"
+    assert GS._verdict([g("a", True, 1)]) == "red"
+    assert GS._verdict([g("a", False, None)]) == "incomplete"
+    assert GS._verdict([g("a", False, None, harness_invalid=[{"precondition": "node_modules"}])]) == "inconclusive"
+    assert GS._verdict([g("a", True, 1, harness_suspect={"signature": "x"})]) == "inconclusive"
+    # a real red outranks a suspect one
+    assert GS._verdict([
+        g("a", True, 1, harness_suspect={"signature": "x"}),
+        g("b", True, 1),
+    ]) == "red"
+    # nothing measurable at all is still not green
+    assert GS._verdict([
+        g("a", False, None, harness_invalid=[{"precondition": "node_modules"}]),
+        g("b", True, 0),
+    ]) == "inconclusive"

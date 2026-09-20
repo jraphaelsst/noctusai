@@ -67,6 +67,7 @@ derivation per bucket) with zero real subprocesses.
 from __future__ import annotations
 
 import functools
+import json
 import re
 import subprocess
 import time
@@ -199,11 +200,196 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# HARNESS VALIDITY — a verdict is evidence about the SUBJECT only if the
+# harness that produced it was VALID.
+#
+# § 6 (verdict-channel integrity) says: read the exit code that belongs to
+# the thing you are judging. This is the failure ONE STEP EARLIER, and it is
+# NOT fixed by reading more carefully: the exit code genuinely belongs to the
+# command you ran, the command genuinely failed — and the failure is about
+# the HARNESS, not the subject. A missing browser binary, an unwired
+# `node_modules`, a venv-less interpreter and a dev server that never booted
+# all produce an authoritative, correctly-attributed, completely
+# uninformative red.
+#
+# Measured, 2026-09-20, one Playwright investigation, SEVEN of them:
+#   1. browser binary never installed        -> "test failed"
+#   2. browser revision PRUNED by installing
+#      a second @playwright/test version     -> "test failed"
+#   3. tree 41 commits stale                 -> "baseline green"   (§ 7)
+#   4. `tail -8` ate the summary line        -> "1 passed"         (§ 6)
+#   5. worktree seed dirs had no node_modules
+#      so vite never resolved the app        -> "11 tests failed"
+#   6. no env_bootstrap                      -> "predeploy blocked"
+#   7. `start.sh` missing from a staged tree
+#      so the dev server never started       -> "reproduced on Linux"
+# Not one of those verdicts described the code under test. Each looked exactly
+# like one that did.
+#
+# TWO LEGS, because the class has two halves:
+#   (a) PREFLIGHT  — a cheap, definitive path probe asserted BEFORE the gate
+#       runs. Unmet => the gate is NOT RUN AT ALL, so there is no exit code to
+#       misread; the fault is NAMED with a remedy instead of guessed at.
+#   (b) SIGNATURE  — for what preflight cannot know in advance, match the
+#       tool's OWN distinctive setup-failure output on a non-zero exit and
+#       mark the gate `harness_suspect`. Advisory by construction: the
+#       evidence line always rides along, so a wrong guess is visible and
+#       overrulable rather than silently swallowing a real red.
+#
+# The verdict rule that makes this load-bearing: a failing gate that carries
+# a `harness_suspect` is NOT a trustworthy red. If EVERY failure is suspect,
+# the sweep is `inconclusive`, never `red` — because "I could not measure"
+# must never be reported as "it failed". That is the whole bug: a red you
+# cannot trust is worse than no red, because you ACT on it.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Precondition:
+    """One cheap, named, DEFINITIVE assertion about the harness.
+
+    `path` must exist for a run of this gate to say anything about the code.
+    Checked before the gate runs; a miss names itself and its `remedy`."""
+
+    name: str
+    path: Path
+    remedy: str
+
+
+# (signature, regex, remedy). Conservative on purpose: a pattern that also
+# matches a GENUINE product failure would hide a real red, which is the same
+# class of harm pointed the other way. Every match carries its evidence line.
+_HARNESS_SIGNATURES: tuple[tuple[str, str, str], ...] = (
+    (
+        "playwright_browser_missing",
+        r"Executable doesn't exist at"
+        r"|Please run the following command to download new browsers"
+        r"|browserType\.launch:.*Executable",
+        "npx playwright install chromium — browser binaries are per-VERSION, "
+        "and installing a different @playwright/test version PRUNES the "
+        "revision the old one needs (measured 2026-09-20: a 1.63 install "
+        "silently removed 1.62.1's chromium, and its suite then 'failed').",
+    ),
+    (
+        "webserver_never_started",
+        r"Process from config\.webServer was not able to start"
+        r"|error when starting dev server",
+        "the dev server never booted, so the suite never loaded the app — "
+        "read the [WebServer] lines for the real cause; the test names in "
+        "the report are noise.",
+    ),
+    (
+        "node_deps_missing",
+        r"Cannot find module '(?!\.)"
+        r"|ERR_MODULE_NOT_FOUND"
+        r"|Failed to resolve entry for package"
+        r"|[Ff]ailed to resolve import \"(?!\.)",
+        "a BARE (package) specifier did not resolve — `npm ci "
+        "--legacy-peer-deps` in the package dir, or re-run "
+        "noctus.dev.task_branch action='start' wire_env=True to link a "
+        "worktree's node_modules + @noctusai/* seed deps.",
+    ),
+    (
+        # Found by running this very sweep against the real tree, 2026-09-20:
+        # `pytest:agents` exited 2 on `ModuleNotFoundError: claude_agent_sdk`
+        # and was about to be reported as a plain `red`.
+        "pytest_collection_error",
+        r"Interrupted: \d+ errors? during collection"
+        r"|INTERNALERROR"
+        r"|ERROR: file or directory not found",
+        "pytest exited on a COLLECTION error — NO test ever ran, so this is "
+        "not a verdict about behaviour. Usually a dependency missing from "
+        "the environment (KB § PATTERNS/common/"
+        "silent-test-failure-from-missing-dep.md); read the ImportError to "
+        "tell that apart from a genuinely broken import in shipped code.",
+    ),
+    (
+        "python_env_missing",
+        r"ModuleNotFoundError: No module named 'noctusai_lib'"
+        r"|ModuleNotFoundError: No module named 'seed",
+        "worktrees carry NO venv — run gates through the PRIMARY's: "
+        "<primary>/venv/bin/python <wt>/mcp/noctusai/cli.py --<flag> "
+        "--worktree-path <wt>.",
+    ),
+)
+
+
+def _harness_suspect(output: str) -> dict[str, Any] | None:
+    """Does this failing gate's output carry a known HARNESS-failure
+    signature? Returns the matched evidence line so the call is auditable
+    (and refutable) rather than an opaque reclassification."""
+    for name, pattern, remedy in _HARNESS_SIGNATURES:
+        rx = re.compile(pattern)
+        for line in output.splitlines():
+            if rx.search(line):
+                return {
+                    "signature": name,
+                    "matched_line": line.strip()[:300],
+                    "remedy": remedy,
+                }
+    return None
+
+
+def _pkg_json(pkg_dir: Path) -> dict[str, Any]:
+    """Read a package.json. An unreadable/malformed one yields `{}`, which
+    means FEWER preconditions are derived — i.e. it degrades to the exact
+    behaviour this module had before preconditions existed, never to a
+    false green (an underived precondition cannot pass; it simply is not
+    asserted, and the gate still runs and is still judged on its own exit
+    code)."""
+    try:
+        return json.loads((pkg_dir / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _node_preconditions(pkg_dir: Path, *, playwright: bool = False) -> tuple[Precondition, ...]:
+    """Preconditions for any npm-run gate in `pkg_dir`.
+
+    `@noctusai/*` deps are `file:`-linked to the seed and are what an
+    unwired worktree is missing — vite resolves them at BUILD time, so
+    their absence surfaces as an app that renders nothing and a suite that
+    'fails' on every assertion (measured 2026-09-20, 11 'failures')."""
+    pres = [
+        Precondition(
+            name="node_modules",
+            path=pkg_dir / "node_modules",
+            remedy=(
+                f"npm ci --legacy-peer-deps in {pkg_dir}, or re-run "
+                "noctus.dev.task_branch action='start' wire_env=True for this worktree"
+            ),
+        )
+    ]
+    deps = _pkg_json(pkg_dir).get("dependencies") or {}
+    for dep in sorted(k for k in deps if k.startswith("@noctusai/")):
+        pres.append(
+            Precondition(
+                name=dep,
+                path=pkg_dir / "node_modules" / Path(dep),
+                remedy=(
+                    f"{dep} is a file:-linked seed dep that `npm ci` does NOT "
+                    "install — wire it with task_branch wire_env=True"
+                ),
+            )
+        )
+    if playwright:
+        pres.append(
+            Precondition(
+                name="@playwright/test",
+                path=pkg_dir / "node_modules" / "@playwright" / "test",
+                remedy="the e2e runner itself is absent — npm ci in the product frontend",
+            )
+        )
+    return tuple(pres)
+
+
 @dataclass(frozen=True)
 class GateSpec:
     gate: str
     argv: list[str]
     cwd: Path
+    preconditions: tuple[Precondition, ...] = ()
 
 
 def _all_product_slugs(root: Path) -> list[str]:
@@ -224,7 +410,25 @@ def _product_gate_specs(root: Path, slug: str, py: str) -> list[GateSpec]:
         )
     frontend = root / "products" / slug / "frontend"
     if (frontend / "package.json").exists():
-        specs.append(GateSpec(f"vite_build:{slug}", ["npx", "vite", "build"], frontend))
+        specs.append(
+            GateSpec(
+                f"vite_build:{slug}", ["npx", "vite", "build"], frontend,
+                _node_preconditions(frontend),
+            )
+        )
+        # The e2e suite CI runs. It was absent from this sweep until
+        # 2026-09-20 — which is precisely why a Playwright investigation ran
+        # entirely in hand-rolled shell, outside every structural protection
+        # this module provides, and collected seven harness-invalid verdicts.
+        # A gate CI enforces but the local sweep omits is the "incomplete SET"
+        # failure this tool was built for, one directory over.
+        if (frontend / "playwright.config.ts").exists() and (frontend / "e2e").is_dir():
+            specs.append(
+                GateSpec(
+                    f"e2e:{slug}", ["npx", "playwright", "test"], frontend,
+                    _node_preconditions(frontend, playwright=True),
+                )
+            )
     return specs
 
 
@@ -237,7 +441,7 @@ def _seed_gate_specs(root: Path, py: str) -> list[GateSpec]:
     for rel in _SEED_VITEST_ROOTS:
         d = root / rel
         if (d / "package.json").exists():
-            specs.append(GateSpec(f"vitest:{rel}", ["npm", "test"], d))
+            specs.append(GateSpec(f"vitest:{rel}", ["npm", "test"], d, _node_preconditions(d)))
     return specs
 
 
@@ -279,7 +483,12 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
 # whole point of the tool: no pipeline sits between a gate and its verdict.
 # ---------------------------------------------------------------------------
 
-GateRunResult = tuple  # (exit_code: int | None, summary: str, duration_s: float)
+# (exit_code: int | None, summary: str, duration_s: float[, output: str])
+# The 4th element is the FULL captured output, needed to match harness
+# signatures. A 3-tuple runner stays valid (every pre-2026-09-20 test seam
+# injects one): `_run_gates` then matches signatures against the summary
+# line alone — degraded reach, never a wrong answer.
+GateRunResult = tuple
 
 
 def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
@@ -298,33 +507,82 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
     duration = time.time() - start
     combined = (proc.stdout or "") + (proc.stderr or "")
     summary = _last_meaningful_line(combined) if combined.strip() else "(no output)"
-    return proc.returncode, summary, duration
+    return proc.returncode, summary, duration, combined
 
 
 def _run_gates(
     specs: list[GateSpec], run_gate: Callable[[GateSpec], GateRunResult]
 ) -> list[dict[str, Any]]:
+    """Preflight, then run, then classify — in that order.
+
+    A gate whose preconditions are unmet is NOT RUN. That is the point: an
+    unrun gate has no exit code to be mistaken for a verdict about the
+    code. It is recorded `ran=False` with `harness_invalid` naming what is
+    missing and how to fix it."""
     results: list[dict[str, Any]] = []
     for spec in specs:
-        exit_code, summary, duration = run_gate(spec)
-        results.append({
+        unmet = [p for p in spec.preconditions if not p.path.exists()]
+        if unmet:
+            results.append({
+                "gate": spec.gate,
+                "ran": False,
+                "exit_code": None,
+                "summary": (
+                    "HARNESS INVALID — gate NOT run (its result would have "
+                    "described the setup, not the code): "
+                    + ", ".join(p.name for p in unmet)
+                ),
+                "duration_s": 0.0,
+                "harness_invalid": [
+                    {"precondition": p.name, "missing_path": str(p.path), "remedy": p.remedy}
+                    for p in unmet
+                ],
+            })
+            continue
+
+        raw = run_gate(spec)
+        # 3-tuple seams stay supported; see GateRunResult.
+        exit_code, summary, duration, output = raw if len(raw) == 4 else (*raw, raw[1])
+        entry: dict[str, Any] = {
             "gate": spec.gate,
             "ran": exit_code is not None,
             "exit_code": exit_code,
             "summary": summary,
             "duration_s": round(duration, 2),
-        })
+        }
+        if exit_code not in (0, None):
+            suspect = _harness_suspect(output or "")
+            if suspect:
+                entry["harness_suspect"] = suspect
+        results.append(entry)
     return results
 
 
 def _verdict(gates: list[dict[str, Any]]) -> str:
-    """`green` iff every gate ran AND exited 0. A real failure (`red`) is
-    reported ahead of a mere non-run (`incomplete`) when both are present —
-    a known failure is more actionable than an unknown. `green` is the
-    empty-set default (nothing applicable, nothing to fail) — vacuous but
-    never silently wrong, since `gates=[]` rides on the result too."""
-    if any(g["ran"] and g["exit_code"] != 0 for g in gates):
+    """`green` iff every gate ran AND exited 0.
+
+    Precedence, and the reasoning for it:
+
+    - `red` — at least one gate failed on a VALID harness. A known real
+      failure is the most actionable thing there is, so it outranks
+      everything below (unchanged: a known failure beats an unknown).
+    - `inconclusive` — there are failures, but EVERY ONE of them carries a
+      `harness_suspect`; or some gate never ran because a precondition was
+      unmet. No trustworthy red exists, so calling this `red` would assert
+      something about the code that was never measured. **This is the whole
+      point of the state:** a red you cannot trust is worse than no red,
+      because you act on it — a disproven-but-plausible mechanism gets
+      written down, a version gets pinned, and the real bug stays hidden.
+    - `incomplete` — a gate did not run for a reason that is NOT a named
+      harness fault (timeout, unmapped diff).
+    - `green` — every gate ran and passed. Also the empty-set default
+      (vacuous, but `gates=[]` rides on the result, so never silently
+      wrong)."""
+    failed = [g for g in gates if g["ran"] and g["exit_code"] != 0]
+    if any(not g.get("harness_suspect") for g in failed):
         return "red"
+    if failed or any(g.get("harness_invalid") for g in gates):
+        return "inconclusive"
     if any(not g["ran"] for g in gates):
         return "incomplete"
     return "green"
@@ -365,9 +623,18 @@ def gate_sweep(
             `noctus.dev.migrate_product` uses.
 
     Returns:
-        {ok, status ('green'|'red'|'incomplete'|'refused_stale_tree'|
-         'error'), exit_code, base_ref, resolved_root, changed_files,
-         scope, gates, stale_tree, allow_stale_tree, warnings, error?}
+        {ok, status ('green'|'red'|'inconclusive'|'incomplete'|
+         'refused_stale_tree'|'error'), exit_code, harness, base_ref,
+         resolved_root, changed_files, scope, gates, stale_tree,
+         allow_stale_tree, warnings, error?}
+
+        `harness` = {invalid: [...], suspects: [...]} — the gates whose
+        PRECONDITIONS were unmet (never run), and the failing gates whose
+        output carried a known harness-failure signature. Both are the
+        answer to "is this red about my code?", which is the question a
+        red does not answer by itself. `status='inconclusive'` means: no
+        trustworthy red exists — fix the harness, then measure again.
+        Its `exit_code` is 1, never 0: not-measured is not a pass.
     """
     runner_git = git_runner or SubprocessGitRunner()
     if repo_root is not None:
@@ -428,10 +695,23 @@ def gate_sweep(
         })
 
     status = _verdict(gates)
+    harness = {
+        "invalid": [
+            {"gate": g["gate"], **item}
+            for g in gates
+            for item in g.get("harness_invalid", [])
+        ],
+        "suspects": [
+            {"gate": g["gate"], **g["harness_suspect"]}
+            for g in gates
+            if g.get("harness_suspect")
+        ],
+    }
     return {
         "ok": True,
         "status": status,
         "exit_code": 0 if status == "green" else 1,
+        "harness": harness,
         "base_ref": base_ref,
         "resolved_root": str(root),
         "changed_files": changed_files,
@@ -464,6 +744,20 @@ def register(server) -> None:
             "status='green' ONLY when every gate has ran=True AND "
             "exit_code==0; a gate that never ran forces status='incomplete' "
             "(never green); a gate that ran and failed forces status='red'. "
+            "HARNESS VALIDITY (2026-09-20): a gate whose preconditions are "
+            "unmet (no node_modules, an unlinked file:-linked @noctusai/* "
+            "seed dep, no @playwright/test) is NOT RUN — it is reported "
+            "harness_invalid with a remedy, because running it would yield "
+            "a red that describes the SETUP, not the code. A gate that "
+            "fails with a known setup signature in its output (missing "
+            "Playwright browser, dev server never started, bare specifier "
+            "unresolved, venv-less worktree) is marked harness_suspect and "
+            "carries the matched evidence line. When EVERY failure is "
+            "suspect, status='inconclusive' (exit 1) rather than 'red' — "
+            "an unmeasurable gate must never be reported as a measured "
+            "failure. Products with playwright.config.ts + e2e/ now "
+            "contribute an e2e:<slug> gate, so the local sweep covers the "
+            "suite CI actually enforces. "
             "Pass worktree_path when called from inside a git worktree — "
             "same semantics as noctus.dev.migrate_product/predeploy_check, "
             "including its stale-tree refusal posture (status="
@@ -488,6 +782,10 @@ def register(server) -> None:
 
 __all__ = [
     "GateSpec",
+    "Precondition",
+    "_harness_suspect",
+    "_node_preconditions",
+    "_HARNESS_SIGNATURES",
     "gate_sweep",
     "register",
     "_derive_scope",

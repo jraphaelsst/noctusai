@@ -336,3 +336,93 @@ log line instead of an hour of confused debugging. See
 implementation (explicit override → explicit `start`/`module_file` →
 artefact-under-evaluation → ambient cwd, with a loud warning on
 disagreement). — 2026-09-18/19
+
+### 10. Harness validity — a red is evidence about your CODE only if the HARNESS was valid
+
+§ 6 says: read the exit code that belongs to the thing you are judging.
+This is the failure **one step earlier**, and it is the more dangerous one
+because *reading more carefully does not fix it*. The exit code genuinely
+belongs to the command you ran. The command genuinely failed. And the
+failure is about the **harness**, not the subject.
+
+All seven of these are from ONE Playwright investigation, 2026-09-20:
+
+| # | What the harness was missing | What the verdict looked like |
+|---|---|---|
+| 1 | browser binary never installed | "the test fails on 1.62.1" |
+| 2 | browser revision **pruned** by installing a second `@playwright/test` version | "erp fails on 1.62.1 too" |
+| 3 | the tree was 41 commits stale (primary never FF'd after integrate) | "7/7 green baseline" |
+| 4 | my own `tail -8` ate the summary line | "1 passed" (it was `1 passed, 11 failed`) |
+| 5 | worktree's `seed/{lib,framework}/frontend` had no `node_modules`, so vite never resolved the app | "11 tests failed" |
+| 6 | no `env_bootstrap`, so no `SUPABASE_ACCESS_TOKEN` | "predeploy blocked" |
+| 7 | `start.sh` absent from a staged tree, so the dev server never booted | "it reproduces on Linux" |
+
+Not one of those verdicts described the code under test. Every one of them
+looked exactly like one that did. Three of them were written down as
+findings, and one of them — a disproven mechanism ("1.63 stops firing
+`onMouseEnter`") — was shipped to production as a version pin.
+
+**The rule.** A failing measurement asserts something about the subject
+only once its preconditions are known to have held. Until then the honest
+verdict is `inconclusive`, never `red`. *A red you cannot trust is worse
+than no red, because you act on it* — you pin a version, you write down a
+mechanism, and the real bug stays hidden behind the protection you just
+added.
+
+**In practice** — `noctus.dev.gate_sweep` implements both legs:
+- **Preflight** (definitive): each `GateSpec` carries `Precondition`s —
+  `node_modules`, each `file:`-linked `@noctusai/*` seed dep, the
+  interpreter, `@playwright/test`. Unmet ⇒ the gate is **not run at all**,
+  so there is no exit code to misread; it is reported `harness_invalid`
+  with the missing path and a remedy.
+- **Signature** (advisory, for what preflight cannot know in advance): a
+  non-zero gate whose output carries a known setup-failure fingerprint
+  (`Executable doesn't exist at`, `Process from config.webServer was not
+  able to start`, a **bare** specifier failing to resolve,
+  `ModuleNotFoundError: noctusai_lib`) is marked `harness_suspect` and
+  **carries the matched evidence line**, so a wrong guess is visible and
+  overrulable rather than silently swallowing a real red.
+- **Verdict:** any failure on a valid harness ⇒ `red` (a known real
+  failure is still the headline). If **every** failure is suspect, or a
+  precondition was unmet ⇒ `inconclusive`, `exit_code=1`. Not-measured is
+  never a pass.
+
+Signatures are deliberately conservative and tested **in both directions**
+— `test_signature_matches_every_real_2026_09_20_harness_fault` (it can
+fire, on the verbatim output) and `test_signature_does_not_fire_on_genuine_failures`
+(it can stay silent, on real assertion failures). A signature that
+swallowed a genuine red would be the identical harm pointed the other way.
+
+#### 10a. A comparison needs DISCRIMINATING POWER — the null result is the trap
+
+The sharpest instance, and the one no precondition catches.
+
+To test "did Playwright 1.63 break this suite?", the suite was run on
+1.62.1 and on 1.63.0 and the results compared: `sidebar.spec` passed 7/7
+on **both**, so the versions were declared equivalent and the pin was
+reverted. CI then went red on exactly that spec — and the version
+correlation held across every conclusive run (`^1.63.0` red ×2,
+`~1.62.1` green).
+
+The comparison was worthless, and the tell was visible the whole time:
+**that harness never produced a single `sidebar` failure in any
+configuration** — not on either version, not at CI parity (`CI=true`,
+`workers:1`, `retries:2`), not once. A harness that cannot exhibit the
+phenomenon cannot tell you its cause. Its "no difference" was not evidence
+of equivalence; it was **no evidence at all**, wearing the same clothes.
+
+This is § 4 ("prove the check can FAIL") applied to comparison rather
+than to a guard:
+
+> Before believing "A and B behave the same", require the harness to have
+> produced the behaviour **at least once**. If neither arm ever shows the
+> phenomenon you are attributing, you have measured your harness, not the
+> difference.
+
+The fix was to build an arm that *could* fail: the same sha, in
+`mcr.microsoft.com/playwright:v1.63.0-noble` (linux/amd64, as CI runs it)
+rather than on macOS. It reproduced CI's exact two failures on the first
+valid run — and the 1.62.1 image then became a real comparison instead of
+a pair of vacuous greens. **When you cannot reproduce CI, the gap between
+your box and CI is the bug to close first, not an excuse to reason
+without it.** — 2026-09-20
