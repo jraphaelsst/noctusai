@@ -95,7 +95,12 @@ export function useRemoveMember() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      return api.delete(`/api/team/members/${id}`);
+      // The framework only ships `DELETE /api/team/{user_id}`
+      // (`seed/framework/backend/noctusai_seed/routers.py`) — no
+      // `/members/` segment. core's own TeamManagement.tsx calls it
+      // correctly; erp was the lone divergence, 404ing on every attempt
+      // (2026-09-20 wiring audit, task 6).
+      return api.delete(`/api/team/${id}`);
     },
     onSuccess: () => {
       toast.success('Membro removido da equipe.');
