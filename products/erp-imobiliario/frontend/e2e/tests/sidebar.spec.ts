@@ -18,6 +18,26 @@ import { mockSupabaseQueries } from '../fixtures/supabase-mocks';
  */
 async function expandSidebarRail(page: Page) {
   const rail = page.locator('aside[data-rail-expanded]');
+  // 🔴 This mouse.move is LOAD-BEARING. Do not delete it as noise.
+  //
+  // Playwright's pointer starts at (0,0). The collapsed rail is
+  // `fixed inset-y-0 left-0 md:w-16`, i.e. it OCCUPIES x∈[0,64] — so the
+  // pointer is ALREADY INSIDE it before the test does anything. `hover()`
+  // then moves from (0,0) to the rail's centre: a move WITHIN the same
+  // element, crossing no boundary, so Chromium emits no `mouseover` —
+  // and AppShell's rail expands on React's DELEGATED `onMouseEnter`,
+  // which is synthesised from `mouseover`. No crossing, no expansion, and
+  // every text assertion below then fails against a `max-w-0 opacity-0`
+  // label. Parking the pointer in the content area first restores the
+  // boundary crossing.
+  //
+  // Measured 2026-09-20, same sha, `mcr.microsoft.com/playwright:*-noble`
+  // (linux/amd64, as CI runs it): 1.62.1 passed, 1.63.0 failed all 3
+  // retries, and adding this ONE line made 1.63.0 pass. It presents as a
+  // version regression — the erp pin `~1.62.1` was an attempt to treat it
+  // as one — but the latent bug is ours: the test never reliably crossed
+  // into the element it hovers. Pinning only hid it.
+  await page.mouse.move(640, 360);
   await rail.hover();
   await expect(rail).toHaveAttribute('data-rail-expanded', 'true');
 }
