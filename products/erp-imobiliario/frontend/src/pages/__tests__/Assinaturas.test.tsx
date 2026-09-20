@@ -20,6 +20,11 @@ const mockUseResumoAssinaturas = vi.fn();
 vi.mock('@/hooks/useAssinaturas', () => ({
   useAssinaturas: (...args: unknown[]) => mockUseAssinaturas(...args),
   useResumoAssinaturas: (...args: unknown[]) => mockUseResumoAssinaturas(...args),
+  // 2026-09-20 wiring audit, task 2: the provider picker now derives its
+  // options from the backend's `PROVEDORES_SUPORTADOS` mirror instead of
+  // a hardcoded list — default to the one seed-supported provider so
+  // these pre-existing summary-card tests don't need to know about it.
+  useProvedoresAssinatura: () => mockQueryResult({ data: { suportados: ['d4sign'] } }),
   useEnviarAssinatura: () => mockMutationResult(),
   useCancelarAssinatura: () => mockMutationResult(),
 }));

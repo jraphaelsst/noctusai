@@ -26,23 +26,21 @@ itself is delegated to the seed `signature` IO module — see
 --   updated_at timestamptz NOT NULL DEFAULT now()
 -- );
 """
-import json
 import logging
-from typing import Optional, Literal, List
+from typing import Callable, Optional, Literal, List
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request
 from pydantic import Field
 
 from noctusai_lib.integrations.signature import (
+    PROVEDORES_SUPORTADOS,
     EnvelopeRecusado,
     ProvedorIndisponivel,
     ProvedorNaoConfigurado,
-)
-from noctusai_lib.security.webhook_signatures import (
-    ResolvedSecret,
-    VerifiedWebhook,
-    webhook_endpoint,
+    SignatureAdapter,
+    WebhookInvalido,
+    make_signature_adapter,
 )
 
 from app.config import settings
@@ -55,61 +53,38 @@ from noctusai_lib.api import StrictHttpModel
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/assinaturas", tags=["Assinaturas"])
 
+#: Same shape as social-wiring's `card_hub.deps.SignatureAdapterFactory`
+#: (this route's sibling — see `get_signature_adapter_factory` below).
+SignatureAdapterFactory = Callable[[Optional[str]], SignatureAdapter]
 
-async def _resolve_assinatura_secret(request: Request, body: bytes) -> ResolvedSecret:
-    """Resolve the per-org webhook secret for the assinatura referenced
-    in the (unverified) request body.
 
-    Looks up `org_settings.assinatura_webhook_secret` keyed by the
-    `org_id` of the named assinatura. Returns a `None` secret when no
-    config row exists — paired with `bypass_when_unset=True`, that
-    preserves the legacy "no secret configured" pass-through.
+def get_signature_adapter_factory() -> SignatureAdapterFactory:
+    """FastAPI dependency — builds the D4Sign adapter the webhook route
+    verifies `Content-HMAC` against.
+
+    `org_id=None` on purpose: D4Sign registers ONE callback URL per
+    account, not per org (mirrors social-wiring's `card_hub.assinatura_
+    webhook_router`'s documented rationale for the identical call) — so
+    webhook verification always resolves the PLATFORM-tier credential
+    (`resolve_credential`'s `org_settings` tier is skipped;
+    `platform_settings`/env still apply). `AssinaturaService`'s own
+    per-org `adapter_factory` seam (used by `POST /enviar`) is a
+    different call site and is unaffected by this — a org CAN override
+    its own send-time credentials; only the shared webhook signature
+    check reads the platform-tier one.
+
+    A factory, not an eager instance, so `ProvedorNaoConfigurado` surfaces
+    inside the route body (which logs + maps it to 401) rather than as an
+    unhandled dependency-resolution error.
+
+    Tests MUST override this seam
+    (`app.dependency_overrides[get_signature_adapter_factory] = ...`)
+    with one returning a `FakeSignatureAdapter` (`KB § PATTERNS/backend/
+    di-test-seam.md` Class-B) — the real one calls D4Sign / raises on a
+    missing credential, neither of which is the webhook-parsing behaviour
+    under test.
     """
-    try:
-        payload_dict = json.loads(body) if body else {}
-    except (ValueError, TypeError):
-        return ResolvedSecret(secret=None, extras=None)
-
-    assinatura_id = payload_dict.get("assinatura_id")
-    if not assinatura_id:
-        return ResolvedSecret(secret=None, extras=None)
-
-    db = get_admin_client()
-    if not db:
-        return ResolvedSecret(secret=None, extras=None)
-
-    res = (
-        db.table("assinaturas")
-        .select("org_id, provedor")
-        .eq("id", assinatura_id)
-        .execute()
-    )
-    if not res.data:
-        return ResolvedSecret(secret=None, extras={"assinatura_id": assinatura_id, "org_id": None})
-
-    org_id = res.data[0].get("org_id")
-    if not org_id:
-        return ResolvedSecret(secret=None, extras={"assinatura_id": assinatura_id, "org_id": None})
-
-    # org_settings is the cross-product per-org per-key secret store; it
-    # lives in core (see projects/keeper-trio-erp/PROJECT.md §7 Q1 + the
-    # accept-with-rationale catalog). Use `db.schema("core")` so the
-    # admin client reaches the canonical table rather than hitting the
-    # phantom local `erp.org_settings`. The Wave 0 detector tuning
-    # (40269c3) treats `.schema(X).table(Y)` chains as legitimate.
-    secret_res = (
-        db.schema("core")
-        .table("org_settings")
-        .select("value")
-        .eq("org_id", org_id)
-        .eq("key", "assinatura_webhook_secret")
-        .execute()
-    )
-    webhook_secret = secret_res.data[0]["value"] if secret_res.data else None
-    return ResolvedSecret(
-        secret=webhook_secret,
-        extras={"assinatura_id": assinatura_id, "org_id": org_id},
-    )
+    return lambda org_id: make_signature_adapter(real=True, provedor="d4sign", org_id=org_id)
 
 
 # --- Pydantic models ---
@@ -131,12 +106,6 @@ class EnviarAssinaturaRequest(StrictHttpModel):
     # shaped 503 naming the provider (contract §5). Default flips to the
     # one provider that works.
     provedor: Optional[Literal["interno", "clicksign", "docusign", "d4sign"]] = "d4sign"
-
-
-class WebhookPayload(StrictHttpModel):
-    assinatura_id: str = Field(..., description="ID da assinatura")
-    evento: str = Field(..., min_length=1, max_length=100, description="Tipo do evento (ex: assinado, recusado, expirado)")
-    dados: Optional[dict] = Field(default=None, description="Dados adicionais do evento")
 
 
 class AssinaturaUpdate(StrictHttpModel):
@@ -281,6 +250,21 @@ async def resumo_assinaturas(
     return success_response(resumo)
 
 
+@router.get("/provedores")
+async def listar_provedores(auth = Depends(get_current_user)):
+    """List the e-signature providers this deployment actually supports.
+
+    Sourced from `noctusai_lib.integrations.signature.PROVEDORES_SUPORTADOS`
+    (the same constant `AssinaturaService.preparar_envio` validates
+    against) so the FE's provider picker can never drift ahead of what the
+    seed adapter will accept — the failure mode task 2 of the 2026-09-20
+    wiring audit closed (`Assinaturas.tsx` defaulted to `'interno'` and
+    offered 3 providers the seed never shipped, so every untouched send
+    503'd).
+    """
+    return success_response({"suportados": list(PROVEDORES_SUPORTADOS)})
+
+
 @router.get("/{assinatura_id}")
 async def obter_assinatura(assinatura_id: str, auth = Depends(get_current_user)):
     """Get signing details including audit trail."""
@@ -297,41 +281,51 @@ async def obter_assinatura(assinatura_id: str, auth = Depends(get_current_user))
 @limiter.limit(settings.webhook_rate_limit)
 async def processar_webhook(
     request: Request,
-    verified: VerifiedWebhook = webhook_endpoint(
-        secret_resolver=_resolve_assinatura_secret,
-        scheme="sha256_prefixed",
-        signature_header="X-Hub-Signature-256",
-        bypass_when_unset=True,
-        log_prefix="assinaturas-webhook",
-    ),
     service: AssinaturaService = Depends(get_assinatura_service_webhook),
+    adapter_factory: SignatureAdapterFactory = Depends(get_signature_adapter_factory),
 ):
     """
-    Callback endpoint for signing provider events.
+    Callback endpoint for the D4Sign signing provider.
 
-    Unauthenticated — called directly by the signing provider (ClickSign,
-    DocuSign, D4Sign, etc.). Signature verification runs in the
-    `webhook_endpoint(...)` dependency before this body executes; on
-    bypass (no secret configured for the org) the seed-lib helper logs
-    a WARNING and lets the request through.
+    Unauthenticated — called directly by D4Sign, which posts
+    form-urlencoded `uuid` + `type_post` with a `Content-HMAC` header (NOT
+    the generic JSON `{assinatura_id, evento}` shape + `X-Hub-Signature-256`
+    header this endpoint mistakenly accepted before — 2026-09-20 wiring
+    audit, tasks 3+4). Parsing AND signature verification are delegated
+    entirely to the seed adapter's `validar_webhook` (`noctusai_lib.
+    integrations.signature.real.D4SignAdapter`) — this router never parses
+    D4Sign's own wire shape.
+
+    🔴 No unset-credential bypass. A missing/unconfigured platform-tier
+    D4Sign credential is a REFUSAL (401), never a pass-through — the
+    previous `bypass_when_unset=True` (paired with the wrong signature
+    scheme AND a lookup key — `org_settings.assinatura_webhook_secret` —
+    nothing ever wrote to) let anyone who learned an `assinatura_id` POST
+    a status change with zero verification.
     """
+    body = await request.body()
+
     try:
-        payload_dict = json.loads(verified.body) if verified.body else {}
-    except (ValueError, TypeError):
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+        adapter = adapter_factory(None)
+    except ProvedorNaoConfigurado as exc:
+        logger.error(
+            "assinaturas-webhook: D4Sign nao configurado na camada de "
+            "plataforma: %s", exc,
+        )
+        raise HTTPException(status_code=401, detail="Webhook nao autorizado")
 
-    body = WebhookPayload.model_validate(payload_dict)
+    try:
+        evento = adapter.validar_webhook(body, dict(request.headers))
+    except WebhookInvalido as exc:
+        logger.warning("assinaturas-webhook: assinatura invalida: %s", exc)
+        raise HTTPException(status_code=401, detail="Webhook nao autorizado")
 
-    updated = await service.processar_webhook(
-        assinatura_id=body.assinatura_id,
-        evento=body.evento,
-        dados=body.dados,
-    )
+    updated = await service.processar_webhook(evento)
 
     if not updated:
         raise HTTPException(status_code=404, detail="Assinatura nao encontrada para o webhook")
 
-    logger.info(f"Webhook processado: assinatura={body.assinatura_id}, evento={body.evento}")
+    logger.info(f"Webhook processado: external_id={evento.external_id}, status={evento.status}")
 
     return ok_response("Webhook processado com sucesso")
 

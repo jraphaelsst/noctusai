@@ -3,14 +3,20 @@ Tests for Assinaturas (digital signatures) router — /api/assinaturas
 
 Provider-level and side-effect isolation goes through the router's own
 FastAPI dependency seams (`get_assinatura_service` /
-`get_assinatura_service_webhook`, `app.dependency_overrides[...]`) —
-never by patching `AssinaturaService` methods (`KB § PATTERNS/backend/
+`get_assinatura_service_webhook` / `get_signature_adapter_factory`,
+`app.dependency_overrides[...]`) — never by patching `AssinaturaService`
+methods or the seed's `make_signature_adapter` (`KB § PATTERNS/backend/
 di-test-seam.md`; patching our own class would stop exercising it).
 """
+import hashlib
+import json
+
 import pytest
 
 from noctusai_lib.integrations.signature import (
     EnvelopeRecusado,
+    EventoAssinatura,
+    FakeSignatureAdapter,
     ProvedorIndisponivel,
     ProvedorNaoConfigurado,
 )
@@ -41,7 +47,7 @@ class _FakeAssinaturaService:
     async def cancelar(self, assinatura_id):
         return self._cancelar_result
 
-    async def processar_webhook(self, **kwargs):
+    async def processar_webhook(self, evento: EventoAssinatura):
         return self._processar_webhook_result
 
 
@@ -66,6 +72,48 @@ def override_assinatura_service(client):
 
     for dep in applied:
         app.dependency_overrides.pop(dep, None)
+
+
+@pytest.fixture
+def override_signature_adapter_factory(client):
+    """Override `get_signature_adapter_factory` (the webhook route's D4Sign
+    seam) for the duration of one test — same shape as social-wiring's
+    `card_hub` `fake_signature_adapter` fixture."""
+    from app.main import app
+    from app.routers.assinaturas import get_signature_adapter_factory
+
+    prev = app.dependency_overrides.get(get_signature_adapter_factory)
+
+    def _apply(adapter):
+        app.dependency_overrides[get_signature_adapter_factory] = lambda: (
+            lambda org_id: adapter
+        )
+
+    yield _apply
+
+    if prev is not None:
+        app.dependency_overrides[get_signature_adapter_factory] = prev
+    else:
+        app.dependency_overrides.pop(get_signature_adapter_factory, None)
+
+
+@pytest.fixture
+def fake_signature_adapter(override_signature_adapter_factory):
+    """A real `FakeSignatureAdapter` wired as the webhook route's D4Sign
+    adapter — exercises the REAL `validar_webhook` HMAC-check + parsing
+    path (never mocked out), only the underlying secret/provider is a
+    test double."""
+    adapter = FakeSignatureAdapter()
+    override_signature_adapter_factory(adapter)
+    return adapter
+
+
+def _signed_webhook_body(payload: dict) -> tuple[bytes, dict]:
+    """A `FakeSignatureAdapter.validar_webhook`-shaped signed body: JSON
+    `{external_id, status}` + `x-fake-signature` = sha256 hex of the body
+    (mirrors `card_hub`'s `test_contratos_assinatura.py::_fake_webhook_headers`)."""
+    body = json.dumps(payload).encode("utf-8")
+    return body, {"x-fake-signature": hashlib.sha256(body).hexdigest()}
 
 
 class TestListarAssinaturas:
@@ -128,6 +176,25 @@ class TestEnviarAssinatura:
             "signatarios": [],
         })
         assert resp.status_code == 422
+
+    def test_enviar_defaults_to_d4sign(self, client, override_assinatura_service):
+        """2026-09-20 wiring audit, task 2: the untouched form must send
+        via `d4sign` (the only seed-supported provider), never `interno`."""
+        captured = {}
+
+        class _Capturing(_FakeAssinaturaService):
+            async def preparar_envio(self, **kwargs):
+                captured.update(kwargs)
+                return {"id": "a1", "status": "enviado"}
+
+        override_assinatura_service(_Capturing())
+        resp = client.post("/api/assinaturas/enviar", json={
+            "documento_nome": "Contrato.pdf",
+            "documento_url": "https://storage.example.com/contrato.pdf",
+            "signatarios": [{"nome": "X", "email": "x@x.com", "papel": "comprador"}],
+        })
+        assert resp.status_code == 200
+        assert captured["provedor"] == "d4sign"
 
     def test_enviar_unconfigured_provider_returns_503(self, client, override_assinatura_service):
         """No silent fallback: a missing-credential refusal surfaces as a
@@ -207,6 +274,15 @@ class TestEnviarAssinatura:
         assert resp.status_code == 400
 
 
+class TestListarProvedores:
+    def test_returns_only_seed_supported_providers(self, client):
+        """2026-09-20 wiring audit, task 2: the list is derived from the
+        seed's `PROVEDORES_SUPORTADOS`, not a second hand-kept copy."""
+        resp = client.get("/api/assinaturas/provedores")
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {"suportados": ["d4sign"]}
+
+
 class TestObterAssinatura:
     def test_get_by_id(self, client):
         client._mock_supabase.set_table_data("assinaturas", {
@@ -226,31 +302,97 @@ class TestObterAssinatura:
 
 
 class TestWebhook:
-    def test_webhook_success(self, client, override_assinatura_service):
+    """2026-09-20 wiring audit, tasks 3+4: D4Sign posts form-urlencoded
+    `uuid`/`type_post` + `Content-HMAC` — this endpoint delegates BOTH
+    parsing and HMAC verification to the seed adapter's `validar_webhook`,
+    never re-implementing D4Sign's wire shape locally. These tests drive
+    the REAL `FakeSignatureAdapter.validar_webhook` (JSON `{external_id,
+    status}` + `x-fake-signature`) rather than mocking that method out —
+    the seed's Fake stands in for the vendor, `AssinaturaService` is the
+    only thing double'd."""
+
+    def test_invalid_signature_is_strict_401(
+        self, client, override_assinatura_service, fake_signature_adapter
+    ):
+        override_assinatura_service(_FakeAssinaturaService(), webhook=True)
+        body, _headers = _signed_webhook_body({"external_id": "a1", "status": "concluido"})
+        resp = client._tc.post(
+            "/api/assinaturas/webhook",
+            content=body,
+            headers={"x-fake-signature": "0" * 64},
+        )
+        assert resp.status_code == 401
+
+    def test_absent_signature_is_strict_401(
+        self, client, override_assinatura_service, fake_signature_adapter
+    ):
+        override_assinatura_service(_FakeAssinaturaService(), webhook=True)
+        body, _headers = _signed_webhook_body({"external_id": "a1", "status": "concluido"})
+        resp = client._tc.post("/api/assinaturas/webhook", content=body)
+        assert resp.status_code == 401
+
+    def test_provedor_nao_configurado_is_strict_401(
+        self, client, override_assinatura_service, override_signature_adapter_factory
+    ):
+        """No unset-credential bypass (task 4) — a missing platform-tier
+        D4Sign credential refuses, it never lets the (unverifiable) body
+        through."""
+        from app.main import app
+        from app.routers.assinaturas import get_signature_adapter_factory
+
+        def _raising(org_id):
+            raise ProvedorNaoConfigurado(
+                ["d4sign_api_token", "d4sign_crypt_key", "d4sign_safe_uuid"],
+                provedor="d4sign",
+            )
+
+        app.dependency_overrides[get_signature_adapter_factory] = lambda: _raising
+        override_assinatura_service(_FakeAssinaturaService(), webhook=True)
+
+        body, headers = _signed_webhook_body({"external_id": "a1", "status": "concluido"})
+        resp = client._tc.post("/api/assinaturas/webhook", content=body, headers=headers)
+        assert resp.status_code == 401
+
+    def test_webhook_success(
+        self, client, override_assinatura_service, fake_signature_adapter
+    ):
         override_assinatura_service(
             _FakeAssinaturaService(processar_webhook_result={"id": "a1", "status": "assinado"}),
             webhook=True,
         )
-        resp = client._tc.post("/api/assinaturas/webhook", json={
-            "assinatura_id": "a1",
-            "evento": "assinado",
-        })
+        body, headers = _signed_webhook_body({"external_id": "ext-1", "status": "concluido"})
+        resp = client._tc.post("/api/assinaturas/webhook", content=body, headers=headers)
         assert resp.status_code == 200
 
-    def test_webhook_missing_fields(self, client):
-        resp = client._tc.post("/api/assinaturas/webhook", json={})
-        assert resp.status_code == 422
-
-    def test_webhook_unknown_assinatura_returns_404(self, client, override_assinatura_service):
+    def test_webhook_unknown_assinatura_returns_404(
+        self, client, override_assinatura_service, fake_signature_adapter
+    ):
         override_assinatura_service(
             _FakeAssinaturaService(processar_webhook_result=None),
             webhook=True,
         )
-        resp = client._tc.post("/api/assinaturas/webhook", json={
-            "assinatura_id": "does-not-exist",
-            "evento": "assinado",
-        })
+        body, headers = _signed_webhook_body({"external_id": "does-not-exist", "status": "concluido"})
+        resp = client._tc.post("/api/assinaturas/webhook", content=body, headers=headers)
         assert resp.status_code == 404
+
+    def test_webhook_passes_the_verified_event_to_the_service(
+        self, client, override_assinatura_service, fake_signature_adapter
+    ):
+        """The router must hand the SERVICE the parsed `EventoAssinatura`
+        from `validar_webhook` — not re-derive it from the raw body."""
+        captured = {}
+
+        class _Capturing(_FakeAssinaturaService):
+            async def processar_webhook(self, evento: EventoAssinatura):
+                captured["evento"] = evento
+                return {"id": "a1", "status": "assinado"}
+
+        override_assinatura_service(_Capturing(), webhook=True)
+        body, headers = _signed_webhook_body({"external_id": "ext-42", "status": "concluido"})
+        resp = client._tc.post("/api/assinaturas/webhook", content=body, headers=headers)
+        assert resp.status_code == 200
+        assert captured["evento"].external_id == "ext-42"
+        assert captured["evento"].status == "concluido"
 
 
 class TestCancelarAssinatura:
@@ -288,4 +430,3 @@ class TestResumoAssinaturas:
             "canceladas": 0,
             "total": 3,
         }
-

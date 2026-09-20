@@ -12,11 +12,23 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from noctusai_lib.integrations.signature import (
+    EventoAssinatura,
     FakeSignatureAdapter,
     ProvedorNaoConfigurado,
     make_signature_adapter,
 )
 from tests.conftest import MockSupabaseClient, MockSupabaseResponse
+
+
+def _evento(external_id: str = "ext-1", status: str = "concluido") -> EventoAssinatura:
+    from datetime import datetime, timezone
+
+    return EventoAssinatura(
+        external_id=external_id,
+        status=status,
+        provedor="d4sign",
+        ocorrido_em=datetime.now(timezone.utc),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +39,31 @@ def _make_db_with_record(record):
     """Return a MockSupabaseClient whose default query returns *record*."""
     db = MockSupabaseClient(data=record)
     return db
+
+
+def _make_db_for_webhook(record):
+    """A DB double that returns *record* for the SELECT-by-`external_id`
+    lookup and records every `.update(...)` payload in `update_calls` —
+    so a webhook regression test can assert not just "it ran" but WHAT
+    (or whether anything) was persisted, including a refused/no-op
+    transition never issuing an update at all (2026-09-20 wiring audit,
+    task 4: "observe the refusal, don't just assert it runs")."""
+    db = MockSupabaseClient()
+    update_calls: list[dict] = []
+
+    builder = MagicMock()
+    builder.select = MagicMock(return_value=builder)
+    builder.eq = MagicMock(return_value=builder)
+    builder.single = MagicMock(return_value=builder)
+
+    def _update(payload):
+        update_calls.append(payload)
+        return builder
+
+    builder.update = MagicMock(side_effect=_update)
+    builder.execute = MagicMock(return_value=MockSupabaseResponse(data=record))
+    db._tables["assinaturas"] = builder
+    return db, update_calls
 
 
 def _make_db_for_insert(inserted_record):
@@ -81,26 +118,18 @@ def _sem_credenciais_factory():
 
 
 # ---------------------------------------------------------------------------
-# EVENT_STATUS_MAP
+# D4SIGN_STATUS_MAP
 # ---------------------------------------------------------------------------
 
-class TestEventStatusMap:
-    def test_known_events_map_correctly(self):
+class TestD4SignStatusMap:
+    def test_maps_every_seed_status_to_an_erp_status(self):
         from app.services.assinatura_service import AssinaturaService
 
-        assert AssinaturaService.EVENT_STATUS_MAP["assinado"] == "assinado"
-        assert AssinaturaService.EVENT_STATUS_MAP["signed"] == "assinado"
-        assert AssinaturaService.EVENT_STATUS_MAP["refused"] == "recusado"
-        assert AssinaturaService.EVENT_STATUS_MAP["expired"] == "expirado"
-        assert AssinaturaService.EVENT_STATUS_MAP["canceled"] == "cancelado"
-
-    def test_portuguese_and_english_events_are_consistent(self):
-        from app.services.assinatura_service import AssinaturaService
-
-        m = AssinaturaService.EVENT_STATUS_MAP
-        assert m["recusado"] == m["refused"] == m["declined"]
-        assert m["expirado"] == m["expired"]
-        assert m["cancelado"] == m["canceled"]
+        assert AssinaturaService.D4SIGN_STATUS_MAP["concluido"] == "assinado"
+        assert AssinaturaService.D4SIGN_STATUS_MAP["cancelado"] == "cancelado"
+        assert AssinaturaService.D4SIGN_STATUS_MAP["expirado"] == "expirado"
+        assert AssinaturaService.D4SIGN_STATUS_MAP["pendente"] == "enviado"
+        assert AssinaturaService.D4SIGN_STATUS_MAP["parcial"] == "enviado"
 
 
 # ---------------------------------------------------------------------------
@@ -281,68 +310,109 @@ class TestProcessarWebhook:
         from app.services.assinatura_service import AssinaturaService
         svc = AssinaturaService(db, "user-1")
 
-        result = await svc.processar_webhook("missing-id", "assinado")
+        result = await svc.processar_webhook(_evento(external_id="missing-id"))
 
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_signed_event_updates_status(self):
+    async def test_looks_up_by_external_id_not_erps_own_id(self):
+        """2026-09-20 wiring audit, task 3: migration 047's `external_id`
+        column was written at send time and never read by anything —
+        D4Sign has no way to know erp's own `id`."""
+        existing = {"id": "a-1", "external_id": "d4sign-ext-1", "status": "enviado", "historico": []}
+        db, update_calls = _make_db_for_webhook(existing)
+
+        from app.services.assinatura_service import AssinaturaService
+        svc = AssinaturaService(db, "user-1")
+
+        result = await svc.processar_webhook(_evento(external_id="d4sign-ext-1", status="concluido"))
+
+        assert result is not None
+        db._tables["assinaturas"].eq.assert_any_call("external_id", "d4sign-ext-1")
+        assert update_calls[-1]["status"] == "assinado"
+        assert update_calls[-1]["data_assinatura"] is not None
+
+    @pytest.mark.asyncio
+    async def test_concluido_event_sets_assinado_and_data_assinatura(self):
         existing = {
             "id": "a-1",
+            "external_id": "ext-1",
             "status": "enviado",
             "historico": [{"evento": "enviado", "data": "2026-01-01"}],
-            "signatarios": [
-                {"nome": "Joao", "email": "joao@x.com", "status": "pendente", "assinado_em": None},
-            ],
         }
-        db = _make_db_with_record(existing)
+        db, update_calls = _make_db_for_webhook(existing)
 
         from app.services.assinatura_service import AssinaturaService
         svc = AssinaturaService(db, "user-1")
 
-        result = await svc.processar_webhook(
-            "a-1",
-            "signed",
-            dados={"email": "joao@x.com"},
-        )
+        result = await svc.processar_webhook(_evento(status="concluido"))
 
-        # The mock returns the same data, but we verify the code path did not raise
         assert result is not None
+        assert update_calls[-1]["status"] == "assinado"
+        assert update_calls[-1]["data_assinatura"] is not None
 
     @pytest.mark.asyncio
-    async def test_unknown_event_keeps_current_status(self):
-        existing = {
-            "id": "a-1",
-            "status": "enviado",
-            "historico": [],
-            "signatarios": [],
-        }
-        db = _make_db_with_record(existing)
+    async def test_cancelado_event_sets_cancelado(self):
+        existing = {"id": "a-1", "external_id": "ext-1", "status": "enviado", "historico": []}
+        db, update_calls = _make_db_for_webhook(existing)
 
         from app.services.assinatura_service import AssinaturaService
         svc = AssinaturaService(db, "user-1")
 
-        # "desconhecido" is not in the EVENT_STATUS_MAP
-        result = await svc.processar_webhook("a-1", "desconhecido")
+        result = await svc.processar_webhook(_evento(status="cancelado"))
 
         assert result is not None
+        assert update_calls[-1]["status"] == "cancelado"
+        assert "data_assinatura" not in update_calls[-1]
 
     @pytest.mark.asyncio
-    async def test_refused_event_maps_correctly(self):
-        existing = {
-            "id": "a-2",
-            "status": "enviado",
-            "historico": [],
-            "signatarios": [],
-        }
-        db = _make_db_with_record(existing)
+    async def test_unknown_status_is_a_noop_not_a_crash(self):
+        existing = {"id": "a-1", "external_id": "ext-1", "status": "enviado", "historico": []}
+        db, update_calls = _make_db_for_webhook(existing)
 
         from app.services.assinatura_service import AssinaturaService
         svc = AssinaturaService(db, "user-1")
 
-        result = await svc.processar_webhook("a-2", "refused")
+        # "desconhecido" is not a StatusAssinatura the seed adapter would
+        # ever produce, but the map lookup must degrade gracefully anyway.
+        result = await svc.processar_webhook(_evento(status="desconhecido"))
+
+        assert result == existing
+        assert update_calls == []
+
+    @pytest.mark.asyncio
+    async def test_regressive_transition_off_a_terminal_status_is_refused(self):
+        """2026-09-20 wiring audit, task 4 — the exact scenario the audit
+        named: a replayed `type_post=5` ("cancelado") delivered AFTER the
+        contract already reached `concluido` (erp status `assinado`) must
+        NOT regress it. Observe the refusal directly: no `.update(...)`
+        call happens at all, not merely "the call didn't raise"."""
+        existing = {"id": "a-1", "external_id": "ext-1", "status": "assinado", "historico": []}
+        db, update_calls = _make_db_for_webhook(existing)
+
+        from app.services.assinatura_service import AssinaturaService
+        svc = AssinaturaService(db, "user-1")
+
+        result = await svc.processar_webhook(_evento(status="cancelado"))
+
+        assert result == existing  # unchanged row returned, not None and not mutated
+        assert update_calls == []  # the write itself never happened
+
+    @pytest.mark.asyncio
+    async def test_replaying_the_same_terminal_status_is_allowed(self):
+        """The idempotent-replay case (a provider retry of the identical
+        event) must NOT be refused by the monotonic guard — only a
+        DIFFERENT value over a terminal status is a regression."""
+        existing = {"id": "a-1", "external_id": "ext-1", "status": "assinado", "historico": []}
+        db, update_calls = _make_db_for_webhook(existing)
+
+        from app.services.assinatura_service import AssinaturaService
+        svc = AssinaturaService(db, "user-1")
+
+        result = await svc.processar_webhook(_evento(status="concluido"))
 
         assert result is not None
+        assert update_calls[-1]["status"] == "assinado"
 
 
 # ---------------------------------------------------------------------------

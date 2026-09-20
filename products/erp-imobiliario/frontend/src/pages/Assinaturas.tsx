@@ -52,6 +52,7 @@ import { formatDate } from '@/lib/utils';
 import {
   useAssinaturas,
   useResumoAssinaturas,
+  useProvedoresAssinatura,
   useEnviarAssinatura,
   useCancelarAssinatura,
 } from '@/hooks/useAssinaturas';
@@ -72,12 +73,20 @@ const STATUS_CONFIG: Record<StatusAssinatura, { label: string; variant: 'default
   cancelado: { label: 'Cancelado', variant: 'secondary' },
 };
 
-const PROVEDORES: { value: ProvedorAssinatura; label: string }[] = [
-  { value: 'interno', label: 'Interno' },
-  { value: 'clicksign', label: 'ClickSign' },
-  { value: 'docusign', label: 'DocuSign' },
-  { value: 'd4sign', label: 'D4Sign' },
-];
+// Display labels for every provider value the DB CHECK constraint still
+// admits (`migrations/004_mvp_expansion.sql`), so a historical row created
+// before the seed narrowed to D4Sign-only still renders a real label
+// instead of the raw value. This is presentation-only — it never decides
+// which providers are OFFERABLE for a new send; that list comes from
+// `GET /api/assinaturas/provedores` (`useProvedoresAssinatura`, backed by
+// the seed's `PROVEDORES_SUPORTADOS`) so it can't drift from what the
+// seed adapter will actually accept (2026-09-20 wiring audit, task 2).
+const PROVEDOR_LABELS: Record<ProvedorAssinatura, string> = {
+  interno: 'Interno',
+  clicksign: 'ClickSign',
+  docusign: 'DocuSign',
+  d4sign: 'D4Sign',
+};
 
 const emptySignatario: Signatario = {
   nome: '',
@@ -90,7 +99,7 @@ const emptyForm: EnviarAssinaturaData = {
   documento_url: undefined,
   contrato_id: undefined,
   signatarios: [{ ...emptySignatario }],
-  provedor: 'interno',
+  provedor: 'd4sign',
 };
 
 export default function Assinaturas() {
@@ -110,6 +119,17 @@ export default function Assinaturas() {
   const resumoQuery = useResumoAssinaturas();
   const { data: resumo } = resumoQuery;
   const resumoNotArrived = resumoQuery.isPending && !resumoQuery.data;
+
+  // While loading/on error, fall back to `['d4sign']` — the one provider
+  // the seed adapter has ever supported — never to the full label map;
+  // falling back to all four would silently resurrect the original bug
+  // for the duration of that window.
+  const provedoresQuery = useProvedoresAssinatura();
+  const provedoresSuportados = provedoresQuery.data?.suportados ?? ['d4sign'];
+  const PROVEDORES = provedoresSuportados.map((value) => ({
+    value,
+    label: PROVEDOR_LABELS[value] ?? value,
+  }));
 
   const { mutate: enviarAssinatura, isPending: isEnviando } = useEnviarAssinatura();
   const { mutate: cancelarAssinatura } = useCancelarAssinatura();
@@ -283,7 +303,7 @@ export default function Assinaturas() {
                         {assinatura.signatarios.length} signatario{assinatura.signatarios.length !== 1 ? 's' : ''}
                       </TableCell>
                       <TableCell className="capitalize">
-                        {PROVEDORES.find((p) => p.value === assinatura.provedor)?.label || assinatura.provedor}
+                        {PROVEDOR_LABELS[assinatura.provedor] || assinatura.provedor}
                       </TableCell>
                       <TableCell>
                         {assinatura.data_envio ? formatDate(assinatura.data_envio) : '-'}
@@ -352,7 +372,7 @@ export default function Assinaturas() {
               <div className="space-y-2">
                 <Label>Provedor</Label>
                 <Select
-                  value={formData.provedor || 'interno'}
+                  value={formData.provedor || 'd4sign'}
                   onValueChange={(v) => setFormData({ ...formData, provedor: v as ProvedorAssinatura })}
                 >
                   <SelectTrigger>
@@ -475,7 +495,7 @@ export default function Assinaturas() {
                     {STATUS_CONFIG[detailAssinatura.status].label}
                   </Badge>
                   <Badge variant="outline" className="capitalize">
-                    {PROVEDORES.find((p) => p.value === detailAssinatura.provedor)?.label || detailAssinatura.provedor}
+                    {PROVEDOR_LABELS[detailAssinatura.provedor] || detailAssinatura.provedor}
                   </Badge>
                 </div>
                 {detailAssinatura.documento_url && (

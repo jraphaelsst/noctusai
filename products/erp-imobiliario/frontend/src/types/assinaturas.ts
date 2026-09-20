@@ -25,6 +25,10 @@ export interface Assinatura {
   updated_at: string;
 }
 
+export interface ProvedoresAssinaturaSuportados {
+  suportados: ProvedorAssinatura[];
+}
+
 export interface ResumoAssinaturas {
   pendentes: number;
   enviadas: number;

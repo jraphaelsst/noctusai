@@ -32,9 +32,11 @@ from app.dependencies import first_or_none
 from noctusai_lib.integrations.signature import (
     PROVEDORES_SUPORTADOS,
     DocumentoParaAssinar,
+    EventoAssinatura,
     ProvedorNaoConfigurado,
     Signatario,
     SignatureAdapter,
+    is_forward_transition,
     make_signature_adapter,
 )
 
@@ -50,18 +52,38 @@ SignatureAdapterFactory = Callable[..., SignatureAdapter]
 class AssinaturaService:
     """Service for digital signature business logic."""
 
-    # Map provider webhook events to internal status values
-    EVENT_STATUS_MAP = {
-        "assinado": "assinado",
-        "signed": "assinado",
-        "recusado": "recusado",
-        "refused": "recusado",
-        "declined": "recusado",
-        "expirado": "expirado",
-        "expired": "expirado",
+    #: Seed `StatusAssinatura` (`pendente`/`parcial`/`concluido`/
+    #: `cancelado`/`expirado` — `noctusai_lib.integrations.signature.
+    #: types.StatusAssinatura`) -> erp's own `assinaturas.status` CHECK
+    #: vocabulary (`pendente`/`enviado`/`assinado`/`recusado`/`expirado`/
+    #: `cancelado`, `migrations/004_mvp_expansion.sql`).
+    #:
+    #: D4Sign's webhook has no distinct "signer declined" code
+    #: (`real.py::_STATUS_POR_ID` maps every `type_post` onto one of the
+    #: 5 seed statuses only) — a refusal in the D4Sign UI surfaces here as
+    #: the envelope going `cancelado`, so `recusado` is never assigned via
+    #: this path (it stays reachable only through erp's own future
+    #: `AssinaturaUpdate.status` field, if that's ever wired to this
+    #: table). `parcial`/`pendente` (envelope created / partially signed,
+    #: not yet fully done) both land on `enviado` — erp's own vocabulary
+    #: has no partial-signature state, and "sent, awaiting completion" is
+    #: the accurate description of both (2026-09-20 wiring audit, task 3).
+    D4SIGN_STATUS_MAP: Dict[str, str] = {
+        "pendente": "enviado",
+        "parcial": "enviado",
+        "concluido": "assinado",
         "cancelado": "cancelado",
-        "canceled": "cancelado",
+        "expirado": "expirado",
     }
+
+    #: Once an assinatura reaches one of these, `is_forward_transition`
+    #: refuses any webhook event that would move it to a DIFFERENT status
+    #: (2026-09-20 wiring audit, task 4) — a D4Sign webhook body carries
+    #: no nonce/timestamp, so a captured delivery replayed after the row
+    #: already reached a later terminal state would otherwise regress it
+    #: forever (e.g. a replayed `type_post=5` "cancelado" landing after
+    #: `concluido` already flipped the row to `assinado`).
+    TERMINAL_STATUSES = frozenset({"assinado", "recusado", "expirado", "cancelado"})
 
     def __init__(
         self,
@@ -209,56 +231,82 @@ class AssinaturaService:
 
     async def processar_webhook(
         self,
-        assinatura_id: str,
-        evento: str,
-        dados: Optional[Dict] = None,
+        evento: EventoAssinatura,
     ) -> Optional[Dict[str, Any]]:
         """
-        Process a signing provider webhook event.
+        Process a verified D4Sign webhook event.
 
-        Maps the event to an internal status, updates the assinatura record,
-        and appends the event to the audit trail.
+        `evento` is already HMAC-verified + parsed — see
+        `app.routers.assinaturas.processar_webhook`, which delegates both
+        to the seed adapter's `validar_webhook` (`noctusai_lib.
+        integrations.signature.real.D4SignAdapter`) rather than
+        re-implementing D4Sign's form-urlencoded wire shape here
+        (2026-09-20 wiring audit, task 3).
 
-        Note: this only updates erp's own record from the (already
-        HMAC-verified — see `app.routers.assinaturas.webhook_endpoint`)
-        event payload; it does not call back into the seed adapter. Pulling
-        the signed document via `adapter.baixar_assinado` and storing it is
-        out of this slice's scope (`projects/signature-integration-
-        CONTRACT.md` §5 — adapter swap, not a redesign of erp's signing
-        domain).
+        Looks the row up by `external_id` — migration 047's column,
+        written at send time (`preparar_envio` above) and, until this
+        fix, never read by anything — rather than erp's own `id` (D4Sign
+        has no way to know that internal id).
+
+        🔴 Monotonic once terminal (task 4). `is_forward_transition`
+        refuses any event that would move a row OFF a `TERMINAL_STATUSES`
+        member onto a DIFFERENT status — see that constant's docstring
+        for why a captured webhook delivery can otherwise regress a
+        finished contract forever.
+
+        Note: this only updates erp's own record from the verified event;
+        it does not call back into the seed adapter. Pulling the signed
+        document via `adapter.baixar_assinado` and storing it is out of
+        this slice's scope (`projects/signature-integration-CONTRACT.md`
+        §5 — adapter swap, not a redesign of erp's signing domain).
 
         Args:
-            assinatura_id: ID of the assinatura to update
-            evento: Event type from the provider
-            dados: Optional additional event data
+            evento: The verified webhook event.
 
         Returns:
-            Updated assinatura record or None if not found
+            Updated assinatura record, the UNCHANGED record when the
+            transition was refused (regressive) or the status was
+            unrecognised, or None if no row matches `evento.external_id`.
         """
-        # Fetch current record
         result = self.db.table("assinaturas").select("*").eq(
-            "id", assinatura_id
+            "external_id", evento.external_id
         ).single().execute()
 
         if not result.data:
-            logger.warning(f"Webhook: assinatura {assinatura_id} nao encontrada")
+            logger.warning(
+                f"Webhook: assinatura com external_id={evento.external_id} nao encontrada"
+            )
             return None
 
         assinatura = result.data
         now = datetime.now(timezone.utc).isoformat()
 
-        # Map event to status
-        novo_status = self.EVENT_STATUS_MAP.get(evento.lower())
+        novo_status = self.D4SIGN_STATUS_MAP.get(evento.status)
         if not novo_status:
-            logger.warning(f"Webhook: evento desconhecido '{evento}' para assinatura {assinatura_id}")
-            novo_status = assinatura.get("status", "enviado")
+            logger.warning(
+                f"Webhook: status desconhecido '{evento.status}' para "
+                f"external_id={evento.external_id}"
+            )
+            return assinatura
+
+        status_atual = assinatura.get("status")
+        if not is_forward_transition(
+            status_atual, novo_status, terminais=self.TERMINAL_STATUSES
+        ):
+            logger.warning(
+                "Webhook: transicao regressiva recusada para "
+                f"external_id={evento.external_id} "
+                f"(assinatura_id={assinatura.get('id')}): "
+                f"atual={status_atual!r} novo={novo_status!r}"
+            )
+            return assinatura
 
         # Build audit trail entry
         historico = assinatura.get("historico", []) or []
         historico.append({
-            "evento": evento,
-            "descricao": f"Evento de webhook: {evento}",
-            "dados": dados,
+            "evento": evento.status,
+            "descricao": f"Evento de webhook D4Sign: {evento.status}",
+            "dados": None,
             "data": now,
         })
 
@@ -273,17 +321,8 @@ class AssinaturaService:
         if novo_status == "assinado":
             update_data["data_assinatura"] = now
 
-            # Update individual signatario status if email provided in dados
-            if dados and dados.get("email"):
-                signatarios = assinatura.get("signatarios", []) or []
-                for s in signatarios:
-                    if s.get("email") == dados["email"]:
-                        s["status"] = "assinado"
-                        s["assinado_em"] = now
-                update_data["signatarios"] = signatarios
-
         updated = self.db.table("assinaturas").update(update_data).eq(
-            "id", assinatura_id
+            "id", assinatura["id"]
         ).execute()
         row = first_or_none(updated)
 

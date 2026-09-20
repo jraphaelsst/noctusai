@@ -4,6 +4,7 @@ import { api, useAuthStore } from '@noctusai/seed/infra';
 import {
   Assinatura,
   EnviarAssinaturaData,
+  ProvedoresAssinaturaSuportados,
   ResumoAssinaturas,
 } from '@/types/assinaturas';
 
@@ -61,6 +62,27 @@ export function useResumoAssinaturas() {
     },
     enabled: !!user,
     staleTime: 2 * 60 * 1000,
+  });
+}
+
+/**
+ * Providers this deployment's seed signature adapter actually supports
+ * (`noctusai_lib.integrations.signature.PROVEDORES_SUPORTADOS`, mirrored
+ * by `GET /api/assinaturas/provedores`) — never hardcode a second copy of
+ * this list client-side, it can only drift the same way `Assinaturas.tsx`
+ * already did once (2026-09-20 wiring audit, task 2).
+ */
+export function useProvedoresAssinatura() {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ['assinaturas-provedores'],
+    queryFn: async () => {
+      const result = await api.get('/api/assinaturas/provedores');
+      return result.data as ProvedoresAssinaturaSuportados;
+    },
+    enabled: !!user,
+    staleTime: 10 * 60 * 1000,
   });
 }
 
