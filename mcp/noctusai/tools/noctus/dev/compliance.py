@@ -20097,3 +20097,100 @@ def check_mcp_tools_reject_unknown_args(repo_root: Path | None = None) -> list[d
         })
 
     return issues
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stranded branches (2026-09-19).
+#
+# Four branches sat unintegrated for 3 days–3 weeks. By the time anyone looked,
+# every one of them conflicted with `dev`, and the diagnosis cost far more than
+# the merges would have:
+#   - `matricula-ruido-seed` + `contract-f6-termos-fe`: the work was ALREADY in
+#     dev (patch-equivalent / byte-identical files). Nothing to merge; the refs
+#     were pure leftovers that still LOOKED like pending work.
+#   - `abnt-formatting-contract`: 5 real commits from 09-14 whose central
+#     approach (let xhtml2pdf resolve a receipt's remote assets via `<base
+#     href>`) was SUPERSEDED on 09-15 by an incident fix — remote fetching
+#     pinned prod at 95% CPU and social-wiring stopped answering. Merging it
+#     would have reverted that fix.
+#
+# The cost is a function of AGE: a branch integrated the day it is written has
+# no conflicts and no archaeology. This keeper surfaces the age before the
+# conflicts arrive. It is advisory (`warning`) by design — a legitimately
+# long-running branch is not a defect, and a blocking gate here would train
+# people to route around it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STRANDED_BRANCH_AGE_DAYS = 7
+_STRANDED_EXEMPT_PREFIXES = ("dependabot/", "backup/", "revert/")
+
+
+def check_stranded_branches(
+    repo_root: Path | None = None,
+    max_age_days: int = _STRANDED_BRANCH_AGE_DAYS,
+    run: "Callable[..., tuple[int, str, str]] | None" = None,
+) -> list[dict]:
+    """Remote work branches holding commits not in `dev`, older than N days.
+
+    Reports only commits that are NOT patch-equivalent to something already on
+    `dev` (`git cherry`), so a branch whose content landed via another route —
+    the single most common shape here — is correctly reported as carrying
+    nothing, rather than as pending work.
+    """
+    import datetime as _dt
+    import subprocess as _sp
+
+    root = repo_root or REPO_ROOT
+
+    def _run(args: list[str]) -> tuple[int, str, str]:
+        if run is not None:
+            return run(args)
+        p = _sp.run(args, cwd=str(root), capture_output=True, text=True)
+        return p.returncode, p.stdout, p.stderr
+
+    rc, out, _ = _run(["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"])
+    if rc != 0:
+        return [{
+            "product": "<git>", "file": "refs/remotes/origin",
+            "issue": "could not enumerate remote branches — stranded-branch check could not run "
+                     "(a check that cannot run is not a pass).",
+            "severity": "warning",
+        }]
+
+    issues: list[dict] = []
+    for ref in sorted(filter(None, (l.strip() for l in out.splitlines()))):
+        name = ref.removeprefix("origin/")
+        if name in {"HEAD", "dev", "main", "prod", "prod-backup"}:
+            continue
+        if name.startswith(_STRANDED_EXEMPT_PREFIXES):
+            continue
+
+        rc_c, cherry, _ = _run(["git", "cherry", "origin/dev", ref])
+        if rc_c != 0:
+            continue
+        unmerged = [l for l in cherry.splitlines() if l.startswith("+")]
+        if not unmerged:
+            continue  # content already on dev, by patch-id — nothing stranded
+
+        rc_d, when, _ = _run(["git", "log", "-1", "--format=%ct", ref])
+        if rc_d != 0 or not when.strip():
+            continue
+        age_days = (_dt.datetime.now(_dt.timezone.utc).timestamp() - int(when.strip())) / 86400
+        if age_days < max_age_days:
+            continue
+
+        issues.append({
+            "product": name.split("/")[1] if "/" in name else name,
+            "file": ref,
+            "issue": (
+                f"`{ref}` carries {len(unmerged)} commit(s) not on `dev` and its newest "
+                f"commit is {age_days:.0f} days old (threshold {max_age_days}). Integrate it, "
+                f"or delete the ref if its work already landed another way. Branches in this "
+                f"state reliably become conflicted, and the conflict can hide a SUPERSEDED "
+                f"approach — on 2026-09-19 one such branch would have reverted a production "
+                f"incident fix if merged on autopilot."
+            ),
+            "severity": "warning",
+        })
+
+    return issues
