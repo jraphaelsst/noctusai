@@ -474,6 +474,10 @@ def test_signature_matches_every_real_2026_09_20_harness_fault():
     assert GS._harness_suspect(_UNWIRED_SEED)["signature"] == "node_deps_missing"
     assert GS._harness_suspect(_VENVLESS)["signature"] == "python_env_missing"
     assert GS._harness_suspect(_PYTEST_COLLECTION)["signature"] == "pytest_collection_error"
+    assert GS._harness_suspect(
+        "Erro na API Openai: Error code: 429 - {'error': {'message': "
+        "'You have no credits remaining."
+    )["signature"] == "llm_quota_or_auth"
 
 
 def test_signature_does_not_fire_on_genuine_failures():

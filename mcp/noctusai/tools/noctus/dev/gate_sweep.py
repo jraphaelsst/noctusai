@@ -305,6 +305,22 @@ _HARNESS_SIGNATURES: tuple[tuple[str, str, str], ...] = (
         "tell that apart from a genuinely broken import in shipped code.",
     ),
     (
+        # Live in this repo as of 2026-09-20: OpenAI credits are exhausted,
+        # so every embedding-touching call 429s. Found the same day by
+        # running the toolkit suite NON-hermetically (it loads .env, CI does
+        # not) — it blocked ~33min on backoff at 3% CPU. A test that fails
+        # this way is reporting the billing account, not the code.
+        "llm_quota_or_auth",
+        r"You have no credits remaining"
+        r"|Error code: 429"
+        r"|insufficient_quota"
+        r"|Error code: 401.*[Aa]pi.?[Kk]ey",
+        "the LLM provider refused on quota/auth — this is the ENVIRONMENT, "
+        "not the code. CI runs the toolkit suite hermetically (no live key) "
+        "for exactly this reason; reproduce it that way rather than against "
+        "a live account.",
+    ),
+    (
         "python_env_missing",
         r"ModuleNotFoundError: No module named 'noctusai_lib'"
         r"|ModuleNotFoundError: No module named 'seed",
