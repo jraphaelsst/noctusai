@@ -139,6 +139,13 @@ regexes = [
   # developers.grupozap.com/webhooks/security.html (fetched + confirmed
   # 2026-08-26). Used in seed webhook-signature tests to assert we accept the
   # documented credential shape.
+  # D4Sign credential IDENTIFIER NAMES (never values), 2026-09-20.
+  # `ProvedorNaoConfigurado(["d4sign_api_token", "d4sign_crypt_key",
+  # "d4sign_safe_uuid"], ...)` names WHICH credentials are MISSING — the
+  # refusal path's own error payload. generic-api-key fires on the list's
+  # shape. No secret value exists at that site; the test asserts `== 401`.
+  '''d4sign_(api_token|crypt_key|safe_uuid)''',
+
   '''594F803B380A41396ED63DCA39503542''',
 
   # social-wiring test Fernet key (`_ENC_KEY` / `_VALID_ENC_KEY`).

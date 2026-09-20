@@ -262,3 +262,36 @@ class TestNoAllowlistOrSuppression:
 
         assert len(issues) == 2
         assert all(i["severity"] == "critical" for i in issues)
+
+
+class TestSchemaWideAnonGrant:
+    """Convention-named entry point for `check_detector_has_regression_test`.
+
+    That meta-keeper matches a detector to its suite BY CLASS NAME
+    (`"Test" + _camel_case(detector.removeprefix("check_"))`), so the
+    behaviour-named classes above are invisible to it however thorough they
+    are. CI proved it on 2026-09-20: this keeper landed WITH 27 real tests
+    and the suite still failed `Detectors missing regression tests`.
+    Still asserts a real REFUSAL, not just that the detector ran.
+    """
+
+    def test_blanket_anon_grant_is_refused(self, tmp_path):
+        root = _make_products_root(tmp_path)
+        _write(
+            root,
+            "products/demo/backend/migrations/001_demo.sql",
+            "GRANT ALL ON ALL TABLES IN SCHEMA demo TO anon, authenticated, service_role;\n",
+        )
+        issues = check_schema_wide_anon_grant(repo_root=root)
+        assert issues, "a blanket anon table grant must be refused, not passed"
+        assert issues[0]["severity"] == "critical"
+
+    def test_anon_usage_only_is_clean(self, tmp_path):
+        root = _make_products_root(tmp_path)
+        _write(
+            root,
+            "products/demo/backend/migrations/001_demo.sql",
+            "GRANT USAGE ON SCHEMA demo TO anon, authenticated, service_role;\n"
+            "GRANT ALL ON ALL TABLES IN SCHEMA demo TO service_role;\n",
+        )
+        assert check_schema_wide_anon_grant(repo_root=root) == []

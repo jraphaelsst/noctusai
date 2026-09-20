@@ -684,10 +684,14 @@ jobs:
           # auto-detects event shape (push vs pull_request) and
           # scopes the scan accordingly.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # Honour the repo-root `.gitleaks.toml` allowlist for
-          # known-safe public values (Supabase demo JWT, etc.).
-          config-path: .gitleaks.toml
+          # 🔴 MUST be an env var, NOT a `with:` input. gitleaks-action@v3
+          # declares NO inputs (`valid inputs are ['']`) and silently warns
+          # `Unexpected input(s) 'config-path'` — so the repo-root allowlist
+          # was loaded for NOBODY and every triaged false positive in
+          # `.gitleaks.toml` was dead config. Caught 2026-09-20 when a list of
+          # D4Sign credential NAMES (not values) failed the scan despite the
+          # allowlist being present and correct.
+          GITLEAKS_CONFIG: .gitleaks.toml
 
   tooling-tests:
     # The TOOLING half of the repo — everything with a real suite that is

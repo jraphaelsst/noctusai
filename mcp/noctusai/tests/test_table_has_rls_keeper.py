@@ -264,3 +264,41 @@ class TestNoCreateTableIsCheapNoOp:
         )
 
         assert check_table_has_rls(repo_root=root) == []
+
+
+class TestTableHasRls:
+    """Convention-named entry point for `check_detector_has_regression_test`
+    (matches by class name — see the twin note in
+    test_schema_wide_anon_grant_keeper.py::TestSchemaWideAnonGrant).
+
+    Asserts a real finding AND the dynamic-form non-regression that is this
+    detector's whole point: an audit agent reported 66 exposed tables on
+    2026-09-20 because its scanner could not read the
+    `DO $$ ... EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t)`
+    shape this repo uses. The live number was 4.
+    """
+
+    def test_unprotected_table_is_flagged(self, tmp_path):
+        root = _make_products_root(tmp_path)
+        _write(
+            root,
+            "products/demo/backend/migrations/001_demo.sql",
+            "CREATE TABLE demo.widgets (\n    id UUID PRIMARY KEY\n);\n",
+        )
+        issues = check_table_has_rls(repo_root=root)
+        assert issues, "a CREATE TABLE with no RLS must be flagged"
+        assert "demo.widgets" in issues[0]["issue"]
+
+    def test_dynamic_foreach_rls_is_not_a_false_positive(self, tmp_path):
+        root = _make_products_root(tmp_path)
+        _write(
+            root,
+            "products/demo/backend/migrations/001_demo.sql",
+            "CREATE TABLE demo.a (id UUID PRIMARY KEY);\n"
+            "CREATE TABLE demo.b (id UUID PRIMARY KEY);\n"
+            "DO $$\nDECLARE t TEXT;\nBEGIN\n"
+            "    FOREACH t IN ARRAY ARRAY['a', 'b'] LOOP\n"
+            "        EXECUTE format('ALTER TABLE demo.%I ENABLE ROW LEVEL SECURITY', t);\n"
+            "    END LOOP;\nEND $$;\n",
+        )
+        assert check_table_has_rls(repo_root=root) == []
