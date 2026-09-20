@@ -158,6 +158,26 @@ def cleanup_stale_worktrees(
          terminal ``shipped`` — it now writes the distinct non-terminal
          ``integrated-worktree-live`` status instead, which this guard
          refuses exactly like ``on_going``.
+
+         🔴 2026-09-20 — an UNRESOLVABLE pointer is not the SAME thing as an
+         UNKNOWABLE one. 537 rows / 206 branches accumulated in the ledger,
+         yet a branch that was simply never published a pointer for at all
+         is otherwise IMMORTAL under the guard above — 36 of 37 stale
+         worktrees on disk were exactly this shape (6.4 GB), every one of
+         them verifiably merged into ``origin/dev`` by hand
+         (``git merge-base --is-ancestor``). When ``pointer_status is None``
+         (the "never published / unreadable / query failed" case — NOT a
+         live non-terminal status, which is never overridden), a SECOND,
+         independent signal is consulted:
+         ``wts.merged_into_base_confirms_dead`` — the branch is a verified
+         SHA ancestor of ``base`` **and** has genuinely diverged from it
+         (branch tip SHA != base tip SHA). The divergence check is what
+         stops this from reintroducing the 2026-09-16 trivial-self-ancestor
+         false positive above (a freshly-forked, zero-commit worktree is
+         trivially its own "ancestor" and carries zero evidence either
+         way). A candidate authorized this way is still subject to guards 2
+         and 3 below, unchanged. The result names which of the two signals
+         authorized each `stale` entry (`stale_signals`).
       2. **Recent-mtime guard** (``wts.is_recently_active``, default
          ``recent_mtime_minutes``) — a worktree whose most recent tracked
          file mtime is within the window is refused, INDEPENDENT of the
@@ -211,6 +231,19 @@ def cleanup_stale_worktrees(
           "stale": [...],           # safe to auto-remove (merged + clean +
                                      # no live pointer + not recently active
                                      # + old enough)
+          "stale_signals": {path: "ledger_pointer"|"merged_into_base"|
+                             "phantom_worktree_dir_gone"|
+                             "orphan_unregistered_dir", ...},
+                                     # WHICH evidence authorized each `stale`
+                                     # entry's removal — "ledger_pointer" =
+                                     # a resolved (terminal) branch-tree
+                                     # pointer; "merged_into_base" = NO
+                                     # pointer existed at all, but the
+                                     # branch is a verified, diverged SHA
+                                     # ancestor of the base (see
+                                     # wts.merged_into_base_confirms_dead,
+                                     # 2026-09-20 — closes the 6.4 GB
+                                     # ledger-less-branch immortality gap)
           "removed": int,           # 0 when dry_run
           "failed": int,
           "locked_skipped": [...],  # git refused (lock/active) — never rm'd
@@ -243,6 +276,7 @@ def cleanup_stale_worktrees(
             "recently_active": [],
             "too_young": [],
             "stale": [],
+            "stale_signals": {},
             "removed": 0,
             "failed": 0,
             "locked_skipped": [],
@@ -276,6 +310,14 @@ def cleanup_stale_worktrees(
     recently_active: list[dict] = []
     too_young: list[dict] = []
     stale: list[str] = []
+    # Which signal authorized each `stale` entry — "ledger_pointer" (a
+    # resolved branch-tree pointer, terminal or absent-but-fallback-
+    # confirmed) vs "merged_into_base" (no pointer at all; confirmed dead by
+    # SHA-ancestry-with-divergence against the base — see
+    # wts.merged_into_base_confirms_dead) vs "phantom_worktree_dir_gone" /
+    # "orphan_unregistered_dir" for the two branch-less removal paths. The
+    # verdict must name its evidence (2026-09-20 worktree-debt fix).
+    stale_signals: dict[str, str] = {}
 
     worktrees_root = str(worktree_dir) + os.sep
 
@@ -315,6 +357,7 @@ def cleanup_stale_worktrees(
         # Merged + on-disk dir gone → PHANTOM, safe to remove.
         if not wt_path.is_dir():
             stale.append(wt)
+            stale_signals[wt] = "phantom_worktree_dir_gone"
             return
 
         # On-disk + merged. Check uncommitted / stashed / locked.
@@ -347,6 +390,18 @@ def cleanup_stale_worktrees(
             # mtime) are NEVER force-bypassable; guard 3 (min age) is, per
             # the module docstring's rationale.
             blocks, pointer_status = wts.pointer_blocks_removal(branch, wts_run)
+            removal_signal = "ledger_pointer"
+            # 🔴 2026-09-20 — the ledger is a CLAIM; a branch it never heard
+            # of is not thereby proven live. `pointer_status is None` means
+            # NO row resolved at all (never published / unreadable ledger /
+            # query failure) — the ONLY case this second, independent
+            # signal is consulted for. A LIVE non-terminal pointer
+            # (`on_going`, `integrated-worktree-live`, ...) is an explicit
+            # peer claim and is NEVER overridden by this fallback.
+            if blocks and pointer_status is None:
+                if wts.merged_into_base_confirms_dead(wts_run, branch, base):
+                    blocks = False
+                    removal_signal = "merged_into_base"
             if blocks:
                 pointer_blocked.append({
                     "path": wt,
@@ -398,6 +453,7 @@ def cleanup_stale_worktrees(
                 })
                 return
             stale.append(wt)
+            stale_signals[wt] = removal_signal
 
     for wt, branch, is_locked, lock_reason in _registered_worktrees(root):
         classify(wt, branch, is_locked, lock_reason)
@@ -415,6 +471,7 @@ def cleanup_stale_worktrees(
             continue
         if str(child) not in registered_paths:
             stale.append(str(child))
+            stale_signals[str(child)] = "orphan_unregistered_dir"
 
     # Dedupe stale (preserve order).
     seen: set[str] = set()
@@ -430,6 +487,7 @@ def cleanup_stale_worktrees(
             "recently_active": recently_active,
             "too_young": too_young,
             "stale": [],
+            "stale_signals": {},
             "removed": 0,
             "failed": 0,
             "locked_skipped": [],
@@ -449,6 +507,7 @@ def cleanup_stale_worktrees(
             "recently_active": recently_active,
             "too_young": too_young,
             "stale": stale,
+            "stale_signals": stale_signals,
             "removed": 0,
             "failed": 0,
             "locked_skipped": [],
@@ -528,6 +587,7 @@ def cleanup_stale_worktrees(
         "recently_active": recently_active,
         "too_young": too_young,
         "stale": stale,
+        "stale_signals": stale_signals,
         "removed": removed,
         "failed": failed,
         "locked_skipped": locked_skipped,
@@ -559,7 +619,19 @@ def register(server) -> None:
             "branch-tree.ndjson non-terminal status, OR no pointer at all — "
             "unknown liveness is treated as blocking, not permission, per "
             "the 2026-09-17 fix) blocks removal and is NEVER force-"
-            "bypassable — surfaced in `pointer_blocked`; (2) a worktree "
+            "bypassable — surfaced in `pointer_blocked`. 🔴 2026-09-20: when "
+            "NO pointer resolves at all (never published/unreadable/query-"
+            "failed — never a LIVE non-terminal one, which still blocks "
+            "unconditionally), a second independent signal is consulted: a "
+            "branch that is a verified, DIVERGED SHA ancestor of origin/dev "
+            "(tip SHA differs from the base — excludes the 2026-09-16 "
+            "trivial-self-ancestor false positive) is known-dead evidence "
+            "on its own, closing the gap where a ledger-less-but-genuinely-"
+            "merged branch was otherwise immortal (6.4 GB incident). Each "
+            "`stale` entry's authorizing evidence is named in "
+            "`stale_signals` (`ledger_pointer`|`merged_into_base`|"
+            "`phantom_worktree_dir_gone`|`orphan_unregistered_dir`); "
+            "(2) a worktree "
             "whose most recent tracked-file mtime is within "
             "`recent_mtime_minutes` (default 60) is refused, INDEPENDENT of "
             "the ledger (a raw filesystem walk) and NEVER force-bypassable "

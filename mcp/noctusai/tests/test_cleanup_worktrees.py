@@ -174,6 +174,135 @@ class TestMergePredicate:
         )
 
 
+class TestMergedIntoBaseFallback:
+    """2026-09-20 — the second, positive liveness signal that closes the
+    6.4 GB ledger-less-immortal-branch gap: 36 of 37 blocked worktrees
+    carried NO branch-tree pointer at all, yet were fully merged into
+    origin/dev by true SHA ancestry (verified by hand). Consulted ONLY
+    when `pointer_status_for_branch` resolves nothing at all — never when a
+    LIVE non-terminal pointer exists."""
+
+    def test_true_ancestor_diverged_no_pointer_is_removed_via_merged_into_base(
+        self, repo,
+    ):
+        wt = _add_worktree(
+            repo, "agent-ancestor", "wt-ancestor",
+            publish_shipped_pointer=False,
+        )
+        (wt / "i.txt").write_text("real work\n")
+        _git(wt, "add", "i.txt")
+        _git(wt, "commit", "-qm", "feat: real work landed via ff, not cherry")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        # The REAL `task_branch action=integrate` shape: fast-forward-PUSH
+        # the branch's own commit onto dev (true SHA ancestry), not a
+        # cherry-pick.
+        _git(repo, "merge", "--ff-only", sha)
+        # Advance dev one more commit past it so branch-tip != base-tip —
+        # the documented divergence requirement (see
+        # merged_into_base_confirms_dead's docstring for the narrow window
+        # this excludes on purpose).
+        (repo / "j.txt").write_text("later unrelated work\n")
+        _git(repo, "add", "j.txt")
+        _git(repo, "commit", "-qm", "chore: later work landed after wt-ancestor")
+        _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
+        # No pointer was EVER published for wt-ancestor.
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0,
+            recent_mtime_minutes=0,
+        )
+        assert str(wt) not in [p["path"] for p in result["pointer_blocked"]]
+        assert str(wt) in result["stale"]
+        assert result["stale_signals"][str(wt)] == "merged_into_base"
+        assert not wt.exists(), (
+            "confirmed-dead via merged_into_base must actually be removed"
+        )
+
+    def test_dry_run_reports_the_signal_without_removing(self, repo):
+        wt = _add_worktree(
+            repo, "agent-ancestor-dry", "wt-ancestor-dry",
+            publish_shipped_pointer=False,
+        )
+        (wt / "i2.txt").write_text("real work\n")
+        _git(wt, "add", "i2.txt")
+        _git(wt, "commit", "-qm", "feat: real work")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        _git(repo, "merge", "--ff-only", sha)
+        (repo / "j2.txt").write_text("later\n")
+        _git(repo, "add", "j2.txt")
+        _git(repo, "commit", "-qm", "chore: later")
+        _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, min_age_minutes=0, recent_mtime_minutes=0,
+        )
+        assert result["dry_run"] is True
+        assert str(wt) in result["stale"]
+        assert result["stale_signals"][str(wt)] == "merged_into_base"
+        assert wt.exists(), "dry-run must never remove"
+
+    def test_cherry_picked_landing_with_no_pointer_is_NOT_authorized(self, repo):
+        # is_merged() (the FIRST gate, checked before ever reaching the
+        # pointer step) accepts patch-id/cherry-pick equivalence — a
+        # weaker automated signal. merged_into_base_confirms_dead is
+        # deliberately STRICTER (true SHA ancestry only) and must refuse
+        # here, absent a ledger pointer.
+        wt = _add_worktree(
+            repo, "agent-cp-nopointer", "wt-cp-np",
+            publish_shipped_pointer=False,
+        )
+        (wt / "m.txt").write_text("cherry-picked work\n")
+        _git(wt, "add", "m.txt")
+        _git(wt, "commit", "-qm", "feat: will be cherry-picked, not ff-merged")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        _git(repo, "cherry-pick", sha)
+        _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0,
+            recent_mtime_minutes=0,
+        )
+        assert str(wt) not in result["stale"]
+        blocked = next(
+            p for p in result["pointer_blocked"] if p["path"] == str(wt)
+        )
+        assert blocked["status"] is None
+        assert wt.exists(), (
+            "patch-id-only equivalence must NOT authorize removal via the "
+            "stricter merged_into_base fallback"
+        )
+
+    def test_dirty_worktree_with_no_pointer_still_routes_to_dirty(self, repo):
+        wt = _add_worktree(
+            repo, "agent-dirty-nopointer", "wt-dirty-np",
+            publish_shipped_pointer=False,
+        )
+        (wt / "n.txt").write_text("uncommitted\n")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0,
+            recent_mtime_minutes=0,
+        )
+        dirty_paths = [d["path"] for d in result["dirty"]]
+        assert str(wt) in dirty_paths
+        assert str(wt) not in result["stale"]
+        assert wt.exists(), (
+            "a dirty worktree must never reach the merged_into_base "
+            "fallback at all — the dirty gate runs first"
+        )
+
+    def test_unmerged_branch_with_no_pointer_stays_active_not_authorized(
+        self, repo,
+    ):
+        wt = _add_worktree(
+            repo, "agent-unmerged-nopointer", "wt-unmerged-np",
+            publish_shipped_pointer=False,
+        )
+        (wt / "o.txt").write_text("still in progress\n")
+        _git(wt, "add", "o.txt")
+        _git(wt, "commit", "-qm", "feat: not yet landed anywhere")
+        result = cleanup_stale_worktrees(repo_root=repo, force=True)
+        assert str(wt) in result["active"]
+        assert str(wt) not in result["stale"]
+        assert wt.exists()
+
+
 class TestSafetyGates:
     def test_dirty_worktree_routes_to_dirty_not_stale(self, repo):
         wt = _add_worktree(repo, "agent-dirty", "wt-dirty")

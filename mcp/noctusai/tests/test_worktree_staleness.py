@@ -119,6 +119,57 @@ def test_is_ancestor_reflects_returncode():
     assert wts.is_ancestor(no, "a", "b") is False
 
 
+# ═══════════ 2026-09-20 — merged-into-base fallback (ledger-less immortal
+# branches, 6.4 GB incident) ════════════════════════════════════════════════
+class TestMergedIntoBaseFallback:
+    def test_confirms_dead_when_diverged_and_ancestor(self):
+        runner = FakeRunner({
+            ("git", "rev-parse", "br"): (0, "aaaa\n", ""),
+            ("git", "rev-parse", "base"): (0, "bbbb\n", ""),
+            ("git", "merge-base", "--is-ancestor", "br", "base"): (0, "", ""),
+        })
+        assert wts.merged_into_base_confirms_dead(runner, "br", "base") is True
+
+    def test_does_not_confirm_when_not_an_ancestor(self):
+        runner = FakeRunner({
+            ("git", "rev-parse", "br"): (0, "aaaa\n", ""),
+            ("git", "rev-parse", "base"): (0, "bbbb\n", ""),
+            ("git", "merge-base", "--is-ancestor", "br", "base"): (1, "", ""),
+        })
+        assert wts.merged_into_base_confirms_dead(runner, "br", "base") is False
+
+    def test_rejects_the_trivial_self_ancestor_case(self):
+        # 🔴 2026-09-16 false positive: a freshly-forked worktree has the
+        # SAME sha as base (zero commits ahead) — `is_ancestor` alone would
+        # read that as trivially "merged". The fallback must NOT authorize
+        # removal here even though `merge-base --is-ancestor` would return 0
+        # for two identical shas — the divergence check short-circuits
+        # before ever asking ancestry.
+        runner = FakeRunner({
+            ("git", "rev-parse", "br"): (0, "aaaa\n", ""),
+            ("git", "rev-parse", "base"): (0, "aaaa\n", ""),
+            ("git", "merge-base", "--is-ancestor", "br", "base"): (0, "", ""),
+        })
+        assert wts.merged_into_base_confirms_dead(runner, "br", "base") is False
+        # And ancestry must never even have been consulted — the divergence
+        # check short-circuits it.
+        assert not any(c[:3] == ("git", "merge-base", "--is-ancestor") for c in runner.calls)
+
+    def test_unresolvable_branch_sha_refuses(self):
+        runner = FakeRunner({
+            ("git", "rev-parse", "br"): (128, "", "fatal: bad revision"),
+            ("git", "rev-parse", "base"): (0, "bbbb\n", ""),
+        })
+        assert wts.merged_into_base_confirms_dead(runner, "br", "base") is False
+
+    def test_unresolvable_base_sha_refuses(self):
+        runner = FakeRunner({
+            ("git", "rev-parse", "br"): (0, "aaaa\n", ""),
+            ("git", "rev-parse", "base"): (128, "", "fatal: bad revision"),
+        })
+        assert wts.merged_into_base_confirms_dead(runner, "br", "base") is False
+
+
 # ───────────────────── default subprocess runner ───────────────────────
 def _init_repo_on_dev(root: Path) -> None:
     import subprocess

@@ -286,6 +286,76 @@ def pointer_blocks_removal(branch: str, run: GitRunner) -> tuple[bool, str | Non
     return status not in TERMINAL_STATUSES, status
 
 
+def _rev_parse(run: GitRunner, ref: str) -> str | None:
+    """Resolve ``ref`` to its full SHA, or ``None`` when it cannot be
+    resolved (unknown ref, git failure) — never guessed."""
+    rc, out, _err = run(["git", "rev-parse", ref])
+    if rc != 0:
+        return None
+    line = (out or "").strip()
+    return line or None
+
+
+def merged_into_base_confirms_dead(run: GitRunner, branch: str, base: str) -> bool:
+    """Second, POSITIVE liveness signal — consulted ONLY when the ledger has
+    NO pointer for ``branch`` at all (``pointer_status_for_branch`` returned
+    ``None``: never published, unreadable ledger, or the query itself
+    failed — a LIVE non-terminal pointer is a peer claim and is NEVER
+    overridden by this). 537 rows / 206 branches accumulated in
+    ``project-history/branch-tree.ndjson`` since 2026-09-13, yet a branch
+    that was simply never published a pointer for is otherwise IMMORTAL
+    under :func:`pointer_blocks_removal`'s fail-closed "unknown ⇒ blocking"
+    rule — this is the entire 6.4 GB worktree-debt incident (2026-09-20):
+    36 of 37 stale worktrees on disk carried no pointer row whatsoever,
+    every one of them verifiably merged into ``origin/dev`` by hand
+    (``git merge-base --is-ancestor <branch> dev``).
+
+    A branch that is a strict SHA ancestor of ``base`` **and has diverged
+    from it** (``branch``'s tip SHA differs from ``base``'s) is, by
+    definition, already fully represented in ``base``'s history — there is
+    no unique commit content a removal could lose. This is deliberately
+    narrower than :func:`is_merged` (which also accepts patch-id/cherry-pick
+    equivalence, a weaker automated signal this fallback does not trust on
+    its own, absent a ledger corroboration).
+
+    🔴 The divergence check (``branch_sha != base_sha``) is what stops this
+    from reintroducing the 2026-09-16 false positive documented above this
+    function's siblings: a worktree freshly forked via
+    ``git worktree add -b <branch>`` off the current base tip starts with
+    ZERO commits ahead, so ``branch`` and ``base`` are the literal SAME sha
+    — trivially "ancestors" of each other via ``merge-base --is-ancestor``
+    — and that carries ZERO evidence of deadness (it could be someone's
+    brand-new live desk mid-checkout). A branch that has genuinely diverged
+    and is NOW reachable from ``base`` by true SHA ancestry, by contrast, IS
+    positive evidence its content already lives in the integration branch —
+    exactly the shape of the 36 ledger-less worktrees this closes (all
+    verified via ``git merge-base --is-ancestor`` by hand).
+
+    Known, deliberate limitation: a branch whose landing IS the base's
+    current tip (e.g. `task_branch action=integrate` fast-forward-PUSHES an
+    engineer branch's own commits onto dev, so immediately after that FF,
+    branch-tip == base-tip even though real work landed) will NOT be
+    confirmed by this check in that narrow window — it stays
+    ``pointer_blocked`` until either a pointer is published for it or
+    ``base`` advances again (near-certain in an active repo; not a
+    correctness bug, just a deferred sweep). Erring toward a missed sweep
+    over a false "confirmed dead" is the correct trade for a signal that
+    NEVER force-bypasses the pointer guard's caller.
+
+    Returns ``False`` (never "confirms dead") when either SHA cannot be
+    resolved, when the two are identical (no divergence), or when ancestry
+    itself cannot be determined — an indeterminate merge status is
+    refusal, not permission (no-silent-errors, CLAUDE.md §1).
+    """
+    branch_sha = _rev_parse(run, branch)
+    base_sha = _rev_parse(run, base)
+    if branch_sha is None or base_sha is None:
+        return False
+    if branch_sha == base_sha:
+        return False
+    return is_ancestor(run, branch, base)
+
+
 def pointer_block_reason(status: str | None) -> str:
     """Human-readable reason string for a pointer-blocked removal — shared by
     both consumers (``cleanup_worktrees.py``, ``mole.py``) so the wording
@@ -422,4 +492,5 @@ __all__ = [
     "pointer_status_for_branch",
     "pointer_blocks_removal",
     "pointer_block_reason",
+    "merged_into_base_confirms_dead",
 ]
