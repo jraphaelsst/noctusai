@@ -18,8 +18,19 @@ test.describe('Metas', () => {
 
     // MetaCard renders categoriaLabels[meta.categoria] as the title
     // visitas → "Visita", captacao_imoveis → "Captação de Imóveis", fechamento → "Fechamento"
-    await expect(page.getByText('Fechamento').first()).toBeVisible();
-    await expect(page.getByText('Visita').first()).toBeVisible();
+    //
+    // 🔴 `exact: true` is load-bearing, not tidiness. `getByText` matches on
+    // SUBSTRING, and every label here is a prefix of a sidebar nav entry:
+    // "Fechamento" ⊂ "Fechamentos" (App.tsx nav), "Visita" ⊂ "Visitas". Without
+    // it, `.first()` resolves to the SIDEBAR link rather than the card title —
+    // and at desktop width the collapsed rail renders that label
+    // `md:max-w-0 md:opacity-0`, i.e. HIDDEN, so the assertion fails against an
+    // element it was never meant to select. It then passes or fails on DOM
+    // order and rail state rather than on whether the card rendered, which is
+    // exactly the 2026-09-20 CI failure (and it reproduces locally on the
+    // pinned 1.62.1 too — this was never a Playwright-version problem).
+    await expect(page.getByText('Fechamento', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Visita', { exact: true }).first()).toBeVisible();
   });
 
   test('shows meta type sections', async ({ authenticatedPage: page }) => {
