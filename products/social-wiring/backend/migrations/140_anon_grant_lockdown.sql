@@ -1,0 +1,56 @@
+-- ============================================================================
+-- 140_anon_grant_lockdown.sql — Social Wiring (social_wiring)
+--
+-- Closes the schema-wide `anon` exposure inherited from
+-- `001_social-wiring.sql` (via the seed template, before the 2026-09-20 fix
+-- in `templates/product-seed/backend/migrations/001_seed.sql`):
+--
+--   GRANT ALL ON ALL TABLES IN SCHEMA social_wiring TO anon, authenticated, service_role;
+--   ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring GRANT ALL ON TABLES TO anon, ...;
+--
+-- 🔴 This is the schema where that default actually bit: 4 out-of-band
+-- backup tables (`_leads_backup_20260902`, `_clientes_orfaos_backup_20260902`,
+-- `_cliente_merges_backup_20260902`, `_atendimentos_backup_20260902` —
+-- 21,567 rows of names/emails/birthdates) were created directly against
+-- the live database, outside any migration file. They never got an RLS
+-- policy — and because the schema-wide grant above gave `anon` full table
+-- privileges by default, they were readable AND writable by the
+-- unauthenticated PostgREST role the moment they existed. Contained live
+-- via a direct `REVOKE` + `ENABLE ROW LEVEL SECURITY` against those 4
+-- tables (2026-09-20, ahead of this migration); this migration is the
+-- ROOT fix so the class cannot recur — for those 4 tables, for every other
+-- table in this schema, and for every table this schema will ever create.
+-- See `KB § PATTERNS/backend/database-rls.md`.
+--
+-- AUDITED for anon exceptions before writing this file (grepped every
+-- `products/social-wiring/backend/migrations/*.sql` for `TO anon`,
+-- `FOR ... anon`, and TO-less/PUBLIC-role policies). Findings:
+--   * `status_pagina.todos_veem_producao` (001) is a deliberate TO-less
+--     (PUBLIC, anon included) SELECT policy — page-visibility flags, no
+--     PII. Re-granted explicitly below.
+--   * `mc_brand_owners_select_own_org` (003) is also TO-less, but its
+--     predicate is `org_id = (auth.jwt() ->> 'org_id')::uuid` — for an
+--     unauthenticated request `auth.jwt()` is NULL, so the comparison is
+--     never true and anon already gets zero rows via RLS regardless of
+--     the grant. No re-grant needed; this REVOKE only removes a privilege
+--     RLS was already blocking.
+--   * Tables like `jobs` (121) are RLS-enabled with zero anon-matching
+--     policies (service_role-only by design; see 121's own comment).
+--   * `campanhas`/`permutas` tables (065, 101) enable RLS dynamically via
+--     a `DO $$ ... FOREACH t IN ARRAY ARRAY[...] LOOP ... END $$;` block —
+--     already RLS-protected, unaffected by this grant-level change.
+--   * Every other RLS policy in this schema is `TO authenticated` or
+--     `TO service_role`. REVOKE-only is safe for the rest.
+--
+-- Forward-only + idempotent (REVOKE/GRANT are safe to replay whether or
+-- not this migration, or the live hotfix it formalizes, already ran
+-- against a given database).
+-- ============================================================================
+
+REVOKE ALL ON ALL TABLES IN SCHEMA social_wiring FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring REVOKE ALL ON TABLES FROM anon;
+
+-- `todos_veem_producao` (001_social-wiring.sql) is a deliberate PUBLIC-role
+-- SELECT policy — anon needs a table-level grant to actually see the rows
+-- it allows now that the schema-wide grant above is gone.
+GRANT SELECT ON social_wiring.status_pagina TO anon;

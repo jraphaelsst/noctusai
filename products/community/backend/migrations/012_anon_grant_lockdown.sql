@@ -1,0 +1,37 @@
+-- ============================================================================
+-- 012_anon_grant_lockdown.sql — Community (community)
+--
+-- Companion migration for the 2026-09-20 platform-wide anon-grant lockdown
+-- (`KB § PATTERNS/backend/database-rls.md`; the seed's own
+-- `templates/product-seed/backend/migrations/001_seed.sql` was fixed the
+-- same day). `community` already closed its OWN blanket anon exposure
+-- earlier, in `008_pagamentos.sql` and `009_whatsapp.sql`:
+--
+--   REVOKE ALL ON ALL TABLES IN SCHEMA community FROM anon;
+--   ALTER DEFAULT PRIVILEGES IN SCHEMA community REVOKE ALL ON TABLES FROM anon;
+--
+-- This migration only restates that REVOKE, for forward-safety and
+-- consistency with the other 8 schemas that inherited the seed's blanket
+-- grant — it is a no-op on any database where 008/009 already ran.
+--
+-- 🔴 UNLIKE the other 8 inheriting products, this migration does NOT
+-- re-grant `status_pagina` SELECT to `anon`. Migration 007
+-- (`007_drop_anon_write_policies.sql`) deliberately closed community's
+-- entire anon REST surface after `aplicacoes_insert_anon`'s
+-- `WITH CHECK (true)` was found to let anyone POST arbitrary
+-- pre-approved application rows (see that file's header for the full
+-- writeup). Re-opening `status_pagina` for `anon` here would quietly
+-- reintroduce a surface this product closed on purpose. `status_pagina`
+-- stays authenticated-only in `community` — its frontend does not read the
+-- table before login anyway (see
+-- `KB § PATTERNS/frontend/status-pagina-dev-visibility.md`).
+--
+-- AUDITED for anon exceptions before writing this file: no `TO anon` /
+-- TO-less policy survives anywhere in `community`'s migrations after 007 —
+-- confirmed by grep across every `products/community/backend/migrations/*.sql`.
+--
+-- Forward-only + idempotent.
+-- ============================================================================
+
+REVOKE ALL ON ALL TABLES IN SCHEMA community FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA community REVOKE ALL ON TABLES FROM anon;
