@@ -71,6 +71,16 @@ _NAME_LABELS = (
     "NOME",
 )
 
+#: A certidão de casamento's own convention: ONE header over TWO co-equal
+#: names (the spouses), unlike an RG/CNH's singular "NOME" over one. It is a
+#: SEPARATE set, not folded into `_NAME_LABELS`, because it is handled by a
+#: different code path below — see `_MULTI_HOLDER_LABELS`'s use in
+#: `find_name`. `_label_at`'s word-boundary rule already stops "NOME" from
+#: matching inside it, so without this entry a certidão's header is simply
+#: invisible to this parser — see the module's own header comment on the
+#: defect this fixes.
+_MULTI_HOLDER_LABELS = ("NOMES",)
+
 #: Labels that introduce SOMEONE ELSE's name, or a name-shaped value that
 #: is not a person. Longest-first matching is what makes these win over
 #: the bare `NOME` they contain.
@@ -157,7 +167,9 @@ def _label_at(line: str, pos: int) -> tuple[Optional[str], bool]:
     """
     best: tuple[str, bool] | None = None
     for label, is_decoy in (
-        [(x, True) for x in _DECOY_NAME_LABELS] + [(x, False) for x in _NAME_LABELS]
+        [(x, True) for x in _DECOY_NAME_LABELS]
+        + [(x, False) for x in _NAME_LABELS]
+        + [(x, False) for x in _MULTI_HOLDER_LABELS]
     ):
         if not line.startswith(label, pos):
             continue
@@ -213,6 +225,101 @@ def looks_like_a_name(candidate: str) -> bool:
     return True
 
 
+#: A bare CPF-shaped VALUE line (`303.102.653-55` / 11 raw digits), so the
+#: multi-holder scan below can skip over it without stopping. Deliberately
+#: shape-only — this module stays import-free of `cpf.py` (see the module
+#: docstring), so it recognises "this line is a document number", never
+#: verifies the check digits.
+_CPF_SHAPE_RE = re.compile(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$|^\d{11}$")
+
+
+def _coleta_titulares_multiplos(
+    lines: list[str], start: int, label: str
+) -> list[tuple[str, str]]:
+    """Every co-equal name under a MULTI-HOLDER header (`NOMES`), starting
+    right after it.
+
+    A certidão de casamento's holder block interleaves each spouse's name
+    with a `CPF` label and its value (`ALMIR ... / CPF / 303.102.653-55 /
+    MARIANA ... / CPF / 478.982.096-30`). This walks PAST those CPF lines
+    rather than stopping at the first one, so BOTH names are collected as
+    candidates under the SAME label — which is what turns "found nothing"
+    into "found two, cannot choose" (see `find_name_conflitos`). It stops at
+    the first line that is neither a name nor one of those interleaved
+    document-number lines — the next section of the document.
+    """
+    candidatos: list[tuple[str, str]] = []
+    j = start
+    while j < len(lines):
+        linha = lines[j]
+        if looks_like_a_name(linha):
+            candidatos.append((linha.strip(_SEPARATORS).strip(), label))
+            j += 1
+            continue
+        if linha == "CPF" or _CPF_SHAPE_RE.match(linha):
+            j += 1
+            continue
+        break
+    return candidatos
+
+
+def _candidatos(text: str) -> list[tuple[str, str]]:
+    """Every (name, label) candidate on the document, before collapsing more
+    than one distinct reading to absence.
+
+    Shared by `find_name` (which collapses) and `find_name_conflitos`
+    (which reports the collapse's cause) — see that function's docstring
+    for why the split exists.
+    """
+    lines = normalize_lines(text)
+    if not lines:
+        return []
+
+    poisoned_until = -1
+    candidates: list[tuple[str, str]] = []
+
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx]
+        if any(line.startswith(h) for h in _POISONING_HEADERS):
+            poisoned_until = idx + _POISON_SPAN
+            idx += 1
+            continue
+        if idx <= poisoned_until:
+            idx += 1
+            continue
+
+        label, is_decoy, end = _find_label(line)
+        if label is None or is_decoy:
+            idx += 1
+            continue
+
+        if label in _MULTI_HOLDER_LABELS:
+            candidates.extend(_coleta_titulares_multiplos(lines, idx + 1, label))
+            idx += 1
+            continue
+
+        # Value on the same line, e.g. `NOME: FULANO DE TAL`.
+        tail = line[end:].strip(_SEPARATORS).strip()
+        if tail and looks_like_a_name(tail):
+            candidates.append((tail, label))
+            idx += 1
+            continue
+
+        # Value on the NEXT line, e.g. `NOME` / `FULANO DE TAL`. Only when
+        # the label line carried no value of its own — otherwise a label
+        # whose value failed validation would reach past it and claim the
+        # following field.
+        if not tail and idx + 1 < len(lines):
+            nxt = lines[idx + 1]
+            n_label, n_decoy, _ = _find_label(nxt)
+            if n_label is None and looks_like_a_name(nxt):
+                candidates.append((nxt.strip(_SEPARATORS).strip(), label))
+        idx += 1
+
+    return candidates
+
+
 def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract the document holder's full name.
 
@@ -226,52 +333,46 @@ def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
     is not found. Downgrading to `baixa` on account of the TEXT SOURCE is
     the adapter's job, because only the adapter knows whether the text
     came off a PDF text layer or a vision pass.
+
+    🔴 `nenhuma` HAS TWO DIFFERENT CAUSES, INDISTINGUISHABLE HERE
+    ----------------------------------------------------------------
+    "The document does not carry a name" and "the document names MORE THAN
+    ONE person with equal prominence" (a certidão de casamento's two
+    spouses) both collapse to `(None, "nenhuma", None)`. That collapse is
+    the right call for THIS function — writing a coin-flip to a single
+    `nome` column would be worse than writing nothing — but a caller that
+    needs to tell the two apart (to ask "which one?" instead of silently
+    doing nothing) should call `find_name_conflitos` instead.
     """
-    lines = normalize_lines(text)
-    if not lines:
-        return (None, "nenhuma", None)
-
-    poisoned_until = -1
-    candidates: list[tuple[str, str]] = []
-
-    for idx, line in enumerate(lines):
-        if any(line.startswith(h) for h in _POISONING_HEADERS):
-            poisoned_until = idx + _POISON_SPAN
-            continue
-        if idx <= poisoned_until:
-            continue
-
-        label, is_decoy, end = _find_label(line)
-        if label is None or is_decoy:
-            continue
-
-        # Value on the same line, e.g. `NOME: FULANO DE TAL`.
-        tail = line[end:].strip(_SEPARATORS).strip()
-        if tail and looks_like_a_name(tail):
-            candidates.append((tail, label))
-            continue
-
-        # Value on the NEXT line, e.g. `NOME` / `FULANO DE TAL`. Only when
-        # the label line carried no value of its own — otherwise a label
-        # whose value failed validation would reach past it and claim the
-        # following field.
-        if not tail and idx + 1 < len(lines):
-            nxt = lines[idx + 1]
-            n_label, n_decoy, _ = _find_label(nxt)
-            if n_label is None and looks_like_a_name(nxt):
-                candidates.append((nxt.strip(_SEPARATORS).strip(), label))
-
+    candidates = _candidatos(text)
     if not candidates:
         return (None, "nenhuma", None)
 
     distinct = {v for v, _ in candidates}
     if len(distinct) > 1:
         # Two different strings both labelled as the holder's name means
-        # the layout was misread. Report the ambiguity; do not pick.
+        # the layout was misread — or, under `_MULTI_HOLDER_LABELS`, that
+        # the document genuinely names more than one co-equal holder.
+        # Either way this function cannot choose. See `find_name_conflitos`.
         return (None, "nenhuma", None)
 
     value, label = candidates[0]
     return (value, "alta", label)
+
+
+def find_name_conflitos(text: str) -> Optional[list[str]]:
+    """The NAMED reason `find_name` returned `nenhuma`, when the reason is
+    ambiguity rather than absence.
+
+    Returns the sorted distinct candidate names when MORE THAN ONE
+    equally-labelled holder was found (two labelled names disagreeing, or a
+    certidão's `NOMES` block naming two spouses); `None` when there is no
+    such ambiguity — the ordinary "not on the document" case, which
+    `find_name` already reports correctly on its own and which a caller
+    must not re-surface as a fake conflict.
+    """
+    distinct = sorted({v for v, _ in _candidatos(text)})
+    return distinct if len(distinct) > 1 else None
 
 
 __all__ = [
@@ -280,5 +381,6 @@ __all__ = [
     "MIN_NAME_LEN",
     "MIN_WORDS",
     "find_name",
+    "find_name_conflitos",
     "looks_like_a_name",
 ]

@@ -45,11 +45,11 @@ from noctusai_lib.integrations.documents.civil_status import (
     find_estado_civil,
     find_regime_bens,
 )
-from noctusai_lib.integrations.documents.cpf import find_cpf
+from noctusai_lib.integrations.documents.cpf import find_cpf, find_cpf_conflitos
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
-from noctusai_lib.integrations.documents.name import find_name
+from noctusai_lib.integrations.documents.name import find_name, find_name_conflitos
 from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
@@ -134,6 +134,19 @@ class LadderIdentityExtractor:
         rg_conf = self._temper_name_confidence(rg_conf, source)
         rg_orgao, rg_orgao_conf = find_rg_orgao(text)
         rg_orgao_conf = self._temper_name_confidence(rg_orgao_conf, source)
+        if not rg:
+            # 🔴 AN ISSUING BODY WITH NO RG NUMBER BESIDE IT IDENTIFIES
+            # NOTHING. `find_rg_orgao` finds its match by SHAPE alone (an
+            # acronym bound to a UF), independently of whether `find_rg`
+            # found anything at all — so on a document that carries no RG
+            # (a certidão de casamento, say), an unrelated place name in an
+            # `ACRONYM/UF` shape ("Comarca de Cotia/SP") can still match and
+            # get returned as a fabricated issuer. `rg_orgao` TRAVELS WITH
+            # `rg` (see `types.IdentityFields.rg_orgao`'s own comment) — this
+            # is that rule enforced at the point the two are combined, not
+            # merely documented as a persistence-time convention a consumer
+            # might forget to check.
+            rg_orgao, rg_orgao_conf = None, ExtractionConfidence.NENHUMA.value
 
         # Estado civil / regime de bens are NOT tempered by source, for the
         # same reason `genero` is not: both parsers require an explicit
@@ -158,8 +171,47 @@ class LadderIdentityExtractor:
         )
         data_emissao, data_emissao_conf, data_emissao_label = find_data_emissao(text)
 
+        # 🔴 NAMED REFUSAL — SEE THE MODULE DOCSTRING FOR WHY THIS EXISTS
+        # -------------------------------------------------------------------
+        # A certidão de casamento names TWO people with equal prominence
+        # (`NOMES`, both spouses' CPFs), and `nome`/`cpf` above are each
+        # single columns — `find_name`/`find_cpf` correctly decline to guess
+        # which spouse belongs there, but that decline is INDISTINGUISHABLE
+        # from "the document simply does not carry a name/CPF" once it lands
+        # in `nome=None`/`cpf=None`. `find_name_conflitos`/`find_cpf_conflitos`
+        # answer the question those two functions cannot: WHY was it absent.
+        #
+        # No disambiguation hint is implemented here (an `expected_nome` the
+        # caller already knows the cliente_id for would be the better fix —
+        # see the module docstring) because wiring one up requires the
+        # PRODUCT-side caller to supply it, which is out of this module's
+        # scope; a hint parameter with nothing that ever passes it would be
+        # a scaffolded half-feature. Filed as
+        # `NOC-REMEDIATE[identity-extractor-disambiguation-hint]` — 2026-09-21.
+        multiplos_titulares: list[str] = []
+        if nome is None:
+            conflito_nome = find_name_conflitos(text)
+            if conflito_nome:
+                multiplos_titulares.append(f"nome ({len(conflito_nome)} titulares)")
+        if cpf is None:
+            conflito_cpf = find_cpf_conflitos(text)
+            if conflito_cpf:
+                multiplos_titulares.append(f"cpf ({len(conflito_cpf)} titulares)")
+
+        erro: Optional[str] = None
+        erro_mensagem: Optional[str] = None
+        if multiplos_titulares:
+            erro = "titulares_multiplos"
+            erro_mensagem = (
+                "documento nomeia mais de um titular com igual proeminencia "
+                "para: " + ", ".join(multiplos_titulares) + " — nao gravado "
+                "sem escolha explicita de qual titular"
+            )
+
         return IdentityFields(
             kind=kind,
+            error=erro,
+            error_message=erro_mensagem,
             data_nascimento=data,
             data_nascimento_confianca=ExtractionConfidence(data_conf),
             data_nascimento_rotulo=data_label,

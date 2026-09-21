@@ -126,6 +126,17 @@ _ORGAO_NAO = frozenset({
     "BAIRRO", "RUA", "AV", "AVENIDA", "CEP", "UF", "EM", "DE", "DO", "DA",
 })
 
+#: A short window immediately BEFORE an issuer-shaped match. When it carries
+#: one of these, the match is a JURISDICTION reference — the notary office
+#: or comarca administering a document — not an issuing BODY. "Comarca de
+#: Cotia/SP" is the address of the cartório that produced a certidão; it
+#: identifies where the document was made, not who issues an RG. Distinct
+#: from `_ORGAO_NAO` (which rejects by the CAPTURED WORD itself, e.g.
+#: `NATURAL`): this rejects by the WORD BEFORE it, because "COTIA" itself is
+#: an ordinary place name with no reason to be on any blocklist otherwise.
+_ORGAO_CONTEXTO_JURISDICAO = ("COMARCA", "TABELIONATO", "CARTORIO", "SERVENTIA")
+_JURISDICAO_WINDOW = 40
+
 
 def normalize(text: str) -> str:
     """Upper-case, accent-stripped, whitespace-collapsed. As the siblings do."""
@@ -262,6 +273,9 @@ def find_rg_orgao(text: str) -> tuple[Optional[str], str]:
     for m in _ORGAO_RE.finditer(norm):
         orgao, uf = m.group(1), m.group(2)
         if orgao in _ORGAO_NAO or orgao == uf:
+            continue
+        janela = norm[max(0, m.start() - _JURISDICAO_WINDOW) : m.start()]
+        if any(p in janela for p in _ORGAO_CONTEXTO_JURISDICAO):
             continue
         achados.append(f"{orgao}/{uf}")
 

@@ -151,6 +151,32 @@ def _label_before(haystack: str, at: int) -> Achado:
     )
 
 
+def _achados(norm: str) -> list[tuple[str, Optional[str], bool]]:
+    """Every CPF-shaped candidate in already-normalised text, before the
+    three confidence tiers below collapse more-than-one distinct reading to
+    absence.
+
+    Returns `(formatted, label or None, trusted)` — `trusted` folds together
+    the two things that can demote a reading: a failed checksum, and a label
+    sitting inside somebody else's block. Shared by `find_cpf` (which
+    collapses) and `find_cpf_conflitos` (which reports the collapse's
+    cause) — see that function's docstring for why the split exists.
+    """
+    achados: list[tuple[str, Optional[str], bool]] = []
+    for m in _CPF_RE.finditer(norm):
+        bruto = m.group(1)
+        formatado = format_cpf(bruto)
+        if formatado is None:
+            continue
+        achado = _label_before(norm, m.start())
+        if achado.rejeitado:
+            continue
+        achados.append(
+            (formatado, achado.rotulo, is_valid(bruto) and not achado.rebaixado)
+        )
+    return achados
+
+
 def find_cpf(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract the holder's CPF.
 
@@ -166,23 +192,7 @@ def find_cpf(text: str) -> tuple[Optional[str], str, Optional[str]]:
     if not norm:
         return (None, "nenhuma", None)
 
-    #: (formatted, label or None, trusted) — `trusted` folds together the two
-    #: things that can demote a reading: a failed checksum, and a label sitting
-    #: inside somebody else's block.
-    achados: list[tuple[str, Optional[str], bool]] = []
-
-    for m in _CPF_RE.finditer(norm):
-        bruto = m.group(1)
-        formatado = format_cpf(bruto)
-        if formatado is None:
-            continue
-        achado = _label_before(norm, m.start())
-        if achado.rejeitado:
-            continue
-        achados.append(
-            (formatado, achado.rotulo, is_valid(bruto) and not achado.rebaixado)
-        )
-
+    achados = _achados(norm)
     if not achados:
         return (None, "nenhuma", None)
 
@@ -213,4 +223,33 @@ def find_cpf(text: str) -> tuple[Optional[str], str, Optional[str]]:
     return (None, "nenhuma", None)
 
 
-__all__ = ["find_cpf", "format_cpf", "is_valid", "normalize", "only_digits"]
+def find_cpf_conflitos(text: str) -> Optional[list[str]]:
+    """The NAMED reason `find_cpf` returned `nenhuma`, when the reason is
+    ambiguity rather than absence — the TOP tier only.
+
+    A certidão de casamento prints two spouses' CPFs, each correctly
+    labelled `CPF` and each individually check-digit-valid: `find_cpf`'s
+    top (`fortes`) tier finds two DISTINCT, EQUALLY TRUSTED readings and
+    correctly declines to pick one. That is a different, higher-confidence
+    situation than the lower tiers' "disagreement is absence" (an
+    unlabelled/unverified tier disagreeing is ordinary OCR noise, not a
+    second real titular) — so only the top tier is reported here. Returns
+    the sorted distinct CPFs when that top-tier ambiguity exists, `None`
+    otherwise.
+    """
+    norm = normalize(text or "")
+    if not norm:
+        return None
+    fortes = [v for v, r, ok in _achados(norm) if r is not None and ok]
+    distintos = sorted(set(fortes))
+    return distintos if len(distintos) > 1 else None
+
+
+__all__ = [
+    "find_cpf",
+    "find_cpf_conflitos",
+    "format_cpf",
+    "is_valid",
+    "normalize",
+    "only_digits",
+]

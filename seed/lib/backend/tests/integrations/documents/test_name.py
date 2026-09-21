@@ -10,8 +10,28 @@ from __future__ import annotations
 
 import pytest
 
-from noctusai_lib.integrations.documents.name import find_name, looks_like_a_name
+from noctusai_lib.integrations.documents.name import (
+    find_name,
+    find_name_conflitos,
+    looks_like_a_name,
+)
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
+
+#: An anonymised, structurally-faithful excerpt of a certidão de casamento's
+#: `NOMES` holder block — see `civil_status.py`'s and `real.py`'s own
+#: comments on the same real-scan defect this section regression-tests.
+CERTIDAO_NOMES_LAYOUT = """
+CERTIDAO DE CASAMENTO
+NOMES
+ALMIR TEIXEIRA DA COSTA
+CPF
+303.102.653-55
+MARIANA PELLEGRINI RANGEL
+CPF
+478.982.096-30
+MATRICULA
+115568 01 55 2011 2 00198
+"""
 
 
 # ─── Realistic layouts ───────────────────────────────────────────────────
@@ -207,6 +227,59 @@ class TestTextNormalisation:
     def test_empty_input(self):
         assert normalize_lines("") == []
         assert find_name("") == (None, "nenhuma", None)
+
+
+class TestCertidaoDeCasamentoMultiHolderHeader:
+    """🔴 THE BUG THIS CLASS FIXES
+    ------------------------------
+    Before `_MULTI_HOLDER_LABELS`, the `_label_at` word-boundary rule that
+    correctly rejects `NOMEACAO` matching `NOME` ALSO rejected the
+    certidão's own plural header `NOMES` — so this parser found no name
+    label at all on a real certidão de casamento and returned
+    `(None, "nenhuma", None)`, indistinguishable from "the document doesn't
+    carry a name". `find_name` still cannot choose between the two spouses
+    (that decline is correct, see `TestAmbiguityIsReportedNotResolved`
+    above) — but it must at least SEE both of them, and
+    `find_name_conflitos` must be able to report which ones."""
+
+    def test_the_plural_header_is_recognised_and_still_correctly_declines(self):
+        assert find_name(CERTIDAO_NOMES_LAYOUT) == (None, "nenhuma", None)
+
+    def test_conflitos_reports_both_spouses_by_name(self):
+        conflitos = find_name_conflitos(CERTIDAO_NOMES_LAYOUT)
+        assert conflitos == ["ALMIR TEIXEIRA DA COSTA", "MARIANA PELLEGRINI RANGEL"]
+
+    def test_a_single_holder_under_the_plural_header_is_not_a_conflict(self):
+        """Only ONE name follows `NOMES` — no ambiguity to report, and
+        `find_name` should read it normally."""
+        texto = "NOMES\nJOAO PEREIRA DA SILVA\nMATRICULA\n123456\n"
+        assert find_name_conflitos(texto) is None
+        value, confidence, label = find_name(texto)
+        assert value == "JOAO PEREIRA DA SILVA"
+        assert confidence == "alta"
+        assert label == "NOMES"
+
+
+class TestFindNameConflitosIsNoneWhenThereIsNoAmbiguity:
+    def test_an_ordinary_absent_name_is_not_reported_as_a_conflict(self):
+        """`find_name_conflitos` must not manufacture ambiguity out of plain
+        absence — the ordinary "not on the document" case stays `None`."""
+        assert find_name_conflitos("CPF 123.456.789-00\nNOME FULANO") is None
+        assert find_name_conflitos("") is None
+
+    def test_an_ordinary_single_holder_document_is_not_a_conflict(self):
+        assert find_name_conflitos(
+            "NOME: JOAO PEREIRA DA SILVA\nDATA DE NASCIMENTO: 12/05/1980\n"
+        ) is None
+
+    def test_two_disagreeing_nome_labels_are_reported_as_a_conflict_too(self):
+        """The same underlying ambiguity `TestAmbiguityIsReportedNotResolved`
+        already covers at the `find_name` level, now visible by name."""
+        text = "NOME: JOAO PEREIRA DA SILVA\nNOME: CARLOS EDUARDO MENDES\n"
+        assert find_name_conflitos(text) == [
+            "CARLOS EDUARDO MENDES",
+            "JOAO PEREIRA DA SILVA",
+        ]
 
 
 class TestPredicateIsSafeForRawInput:

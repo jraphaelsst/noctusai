@@ -185,6 +185,56 @@ class TestDataEmissaoClosingLineFallback:
         assert rotulo == "EMITIDA EM"
 
 
+class TestDataEmissaoFallbackNeverAssertsADecoysDate:
+    """🔴 THE SIBLING BUG (SEEN ON A REAL CNH SCAN)
+    ------------------------------------------------
+    "The last dated line" is a guess by POSITION. Without excluding dates
+    that are themselves labelled as something else, a CNH whose birthdate
+    happens to sit textually AFTER the card's own emission date gets that
+    birthdate asserted as `data_emissao` — a field asserted from a value
+    that means something else, the same class of bug `rg_orgao`'s fabricated
+    issuer had."""
+
+    def test_a_trailing_birthdate_is_never_promoted_to_data_emissao(self):
+        texto = (
+            "CARTEIRA NACIONAL DE HABILITACAO\n"
+            "CATEGORIA B\n"
+            "VALIDADE 12/05/2030\n"
+            "DATA DE NASCIMENTO\n"
+            "12/05/1980\n"
+        )
+        valor, conf, rotulo = find_data_emissao(texto)
+        assert valor is None
+        assert conf == "nenhuma"
+        assert rotulo is None
+
+    def test_an_unlabelled_trailing_date_is_still_a_valid_fallback(self):
+        """The guard only excludes DECOY-labelled dates — a genuinely
+        unlabelled trailing date is exactly what this fallback exists for,
+        and this is the pre-existing fallback behaviour, unchanged."""
+        valor, conf, rotulo = find_data_emissao(
+            "CERTIDAO DE CASAMENTO\n"
+            "CASARAM-SE EM 12/03/2010\n"
+            "SAO PAULO, DOZE DE MARCO DE DOIS MIL E VINTE E QUATRO.\n"
+        )
+        assert (valor, conf) == (date(2024, 3, 12), "baixa")
+        assert rotulo == "FECHAMENTO_CARTORIO"
+
+    def test_an_earlier_decoy_label_does_not_bleed_into_a_farther_unrelated_date(self):
+        """A decoy label's rejection is bounded to the candidate it actually
+        sits beside — it must not also reject a LATER, unrelated,
+        genuinely-unlabelled date just because both fall inside the same
+        48-character lookback window measured from the far date's own
+        position. Without the fix, `DATA DE NASCIMENTO`'s decoy (correctly
+        excluding the birthdate itself) also excludes the second, unrelated
+        date 21 characters later, leaving nothing for the fallback to pick
+        and reporting `nenhuma` where a genuine unlabelled date exists."""
+        texto = "DATA DE NASCIMENTO 12/05/1980 SAO PAULO DOZE DE MARCO DE DOIS MIL E VINTE E QUATRO"
+        valor, conf, rotulo = find_data_emissao(texto)
+        assert (valor, conf) == (date(2024, 3, 12), "baixa")
+        assert rotulo == "FECHAMENTO_CARTORIO"
+
+
 class TestDataEmissaoAmbiguousLabelWindow:
     def test_two_dates_sharing_one_nearby_label_disagree_and_report_nothing(self):
         """Same 'disagreement is absence' rule every other function in this

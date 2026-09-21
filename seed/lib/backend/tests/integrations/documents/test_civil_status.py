@@ -159,6 +159,72 @@ class TestEstadoCivilAverbacaoOverridesTheRegistro:
         assert (valor, conf) == ("casado", "alta")
 
 
+class TestEstadoCivilNegationDisclaimerDoesNotPoisonARealEvent:
+    """🔴 THE BUG THIS CLASS REGRESSION-TESTS
+    ------------------------------------------
+    A REAL cartório digital certidão routinely certifies "nada consta" by
+    NAMING the very categories it asserts do not apply — a standard
+    disclaimer that mentions multiple event keywords purely to negate them.
+    Before the negation guard, that disclaimer's keyword mentions were
+    counted the same as a genuine event, so a real DIVÓRCIO further down the
+    same flat "averbação zone" disagreed with the disclaimer's phantom
+    ÓBITO/SEPARAÇÃO mentions and the whole reading collapsed to `nenhuma` —
+    silently dropping a real, unambiguous event. This is the exact failure
+    mode observed on a live scan (see `civil_status.py`'s `_clausula_negada`
+    docstring)."""
+
+    def test_a_nada_consta_disclaimer_naming_other_events_does_not_block_the_real_one(self):
+        texto = (
+            REGISTRO_CASADOS
+            + "AVERBACOES\n"
+            + "CERTIFICO que nada consta quanto a separacao, divorcio, obito "
+            "ou interdicao de qualquer das partes ate a presente data. "
+            + "AVERBACAO: CERTIFICO e dou fe que, atraves da ESCRITURA "
+            "PUBLICA de Divorcio Consensual, lavrada aos 08/07/2022, foi "
+            "realizado o DIVORCIO CONSENSUAL do casal.\n"
+        )
+        valor, conf, rotulo = find_estado_civil(texto)
+        assert (valor, conf) == ("divorciado", "alta")
+        assert rotulo is not None and "AVERBACAO" in rotulo
+
+    def test_a_negation_with_no_later_real_event_falls_back_to_the_registro(self):
+        """The disclaimer negates everything and nothing else amends the
+        registro — "casado" still stands, it is not reported as `nenhuma`
+        just because the disclaimer mentioned event words."""
+        texto = (
+            REGISTRO_CASADOS
+            + "AVERBACOES\n"
+            + "CERTIFICO que nada consta quanto a separacao, divorcio ou "
+            "obito de qualquer das partes ate a presente data.\n"
+        )
+        valor, conf, _ = find_estado_civil(texto)
+        assert (valor, conf) == ("casado", "alta")
+
+    def test_a_genuinely_conflicting_pair_with_no_negation_is_still_absence(self):
+        """The guard must not swallow REAL disagreement — only a match
+        governed by an actual negation marker is excluded."""
+        texto = (
+            REGISTRO_CASADOS
+            + "AVERBACAO: DIVORCIO EM 2019. AVERBACAO: OBITO EM 2021.\n"
+        )
+        valor, conf, _ = find_estado_civil(texto)
+        assert valor is None
+        assert conf == "nenhuma"
+
+    def test_a_negation_marker_in_an_earlier_sentence_no_longer_governs(self):
+        """The negation clause is scoped to its own sentence — a full stop
+        closes it, so a real event in the NEXT sentence is not excluded
+        just because an earlier, already-closed sentence used the word
+        'nada consta' about something unrelated."""
+        texto = (
+            REGISTRO_CASADOS
+            + "AVERBACAO: NADA CONSTA QUANTO A ALTERACAO DE NOME. "
+            "AVERBACAO: DIVORCIO AVERBADO EM 10/03/2020, CONFORME SENTENCA.\n"
+        )
+        valor, conf, _ = find_estado_civil(texto)
+        assert (valor, conf) == ("divorciado", "alta")
+
+
 class TestEstadoCivilInferredFromRegimeDeBens:
     def test_a_bare_regime_phrase_infers_casado(self):
         """The one structural inference this module makes — see the module
@@ -191,6 +257,18 @@ class TestRegimeBensUnlabelled:
     def test_separacao_obrigatoria(self):
         valor, conf, _ = find_regime_bens("SEPARACAO OBRIGATORIA DE BENS")
         assert (valor, conf) == ("separacao_obrigatoria", "alta")
+
+    def test_separacao_absoluta_is_the_convencional_family_not_obrigatoria(self):
+        """A REAL cartório certidão's standard wording for a pacto-antenupcial
+        regime — see the pattern's own comment for why this must land in
+        `separacao_total`, not `separacao_obrigatoria` (a different legal
+        regime with no pacto antenupcial to cite)."""
+        valor, conf, rotulo = find_regime_bens(
+            "SEPARACAO ABSOLUTA DE BENS, CONFORME ESCRITURA DE PACTO "
+            "ANTENUPCIAL LAVRADA NO TABELIONATO LOCAL"
+        )
+        assert (valor, conf) == ("separacao_total", "alta")
+        assert "ABSOLUTA" in (rotulo or "")
 
     def test_empty_text(self):
         assert find_regime_bens("") == (None, "nenhuma", None)

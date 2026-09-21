@@ -16,7 +16,12 @@ degrade rather than pass.
 from __future__ import annotations
 
 from noctusai_lib.integrations.documents import find_cpf
-from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid, only_digits
+from noctusai_lib.integrations.documents.cpf import (
+    find_cpf_conflitos,
+    format_cpf,
+    is_valid,
+    only_digits,
+)
 
 #: A real, checksum-valid CPF. Every fixture below derives from it so a change
 #: to the validator shows up as one failure rather than twenty.
@@ -174,3 +179,33 @@ class TestNothing:
 
     def test_a_document_that_simply_has_no_cpf(self):
         assert find_cpf("NOME FULANO DE TAL SEXO M") == (None, "nenhuma", None)
+
+
+class TestFindCpfConflitos:
+    """The NAMED reason behind `TestDisagreement`'s silent `nenhuma` — a
+    certidão de casamento's two labelled, individually check-digit-valid
+    CPFs is a real two-titular document, not OCR noise, and a caller needs
+    to be able to tell the two apart."""
+
+    OUTRO = "529.982.247-25"
+
+    def test_two_labelled_and_verified_cpfs_are_reported_by_name(self):
+        conflitos = find_cpf_conflitos(f"CPF: {VALIDO}\nCPF: {self.OUTRO}")
+        assert conflitos == sorted([VALIDO, self.OUTRO])
+
+    def test_no_conflict_when_there_is_only_one_cpf(self):
+        assert find_cpf_conflitos(f"CPF: {VALIDO}") is None
+
+    def test_no_conflict_when_there_is_no_cpf_at_all(self):
+        assert find_cpf_conflitos("NOME FULANO DE TAL") is None
+        assert find_cpf_conflitos("") is None
+
+    def test_the_same_cpf_twice_is_not_a_conflict(self):
+        assert find_cpf_conflitos(f"CPF: {VALIDO}\nCPF {VALIDO_NU}") is None
+
+    def test_a_lower_tier_disagreement_alone_is_not_reported(self):
+        """Two UNLABELLED bare CPFs disagreeing is ordinary OCR noise per
+        this module's own design (`find_cpf`'s `verificados` tier) — only
+        the TOP (labelled + verified) tier's ambiguity is a real two-titular
+        signal worth naming."""
+        assert find_cpf_conflitos(f"{VALIDO} {self.OUTRO}") is None

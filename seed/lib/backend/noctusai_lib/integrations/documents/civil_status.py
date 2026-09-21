@@ -172,10 +172,26 @@ _ESTADO_CIVIL_VALOR_RE = re.compile(
 _REGIME_BENS_PADROES: tuple[tuple["re.Pattern[str]", str], ...] = (
     (re.compile(r"COMUNHAO\s+PARCIAL(?:\s+DE\s+BENS)?"), "comunhao_parcial"),
     (re.compile(r"COMUNHAO\s+UNIVERSAL(?:\s+DE\s+BENS)?"), "comunhao_universal"),
+    #: `ABSOLUTA` belongs HERE, not in the `OBRIGATORIA` family below — see
+    #: the comment on that pattern for why the distinction is load-bearing,
+    #: not cosmetic. "Separação absoluta de bens" is the cartório's standard
+    #: wording for the CONVENCIONAL regime chosen by pacto antenupcial (CC
+    #: art. 1.687): the couple opted in, in a scrivener's office, the same
+    #: way a `TOTAL`/`CONVENCIONAL` regime is chosen. It is unrelated to
+    #: `separacao_obrigatoria`'s art. 1.641 regime, which the LAW imposes and
+    #: no pacto antenupcial exists for.
     (
-        re.compile(r"SEPARACAO\s+(?:TOTAL|CONVENCIONAL)(?:\s+DE\s+BENS)?"),
+        re.compile(r"SEPARACAO\s+(?:TOTAL|CONVENCIONAL|ABSOLUTA)(?:\s+DE\s+BENS)?"),
         "separacao_total",
     ),
+    #: The art. 1.641 CC regime, imposed BY LAW on certain marriages (a
+    #: spouse over 70, a marriage requiring judicial authorisation, ...) —
+    #: never chosen by a pacto antenupcial. Getting `ABSOLUTA` sorted into
+    #: this family instead of `TOTAL`'s above would be a real-world-consequential
+    #: mistake, not a cosmetic one: `separacao_obrigatoria` is read by
+    #: downstream contract logic as "no pacto antenupcial to cite", while
+    #: `separacao_total` cites one — which is exactly what this document's
+    #: own text does ("CONFORME ESCRITURA DE PACTO ANTENUPCIAL").
     (
         re.compile(r"SEPARACAO\s+(?:OBRIGATORIA|LEGAL)(?:\s+DE\s+BENS)?"),
         "separacao_obrigatoria",
@@ -229,6 +245,41 @@ def _averbacao_start(norm: str) -> Optional[int]:
     or `None` when the document carries no averbação section at all."""
     m = _AVERBACAO_RE.search(norm)
     return m.start() if m else None
+
+
+#: Marks a NEGATION clause — a cartório routinely certifies that nothing of a
+#: given kind is on file by NAMING the very categories it asserts do not
+#: apply ("CERTIFICO que nada consta quanto a separação, divórcio, óbito ou
+#: interdição de qualquer das partes"). A bare keyword search cannot tell
+#: that recital apart from a real event: both contain the word "DIVORCIO".
+_NEGACAO_RE = re.compile(r"NADA\s+CONSTA|NAO\s+CONSTA|SEM\s+AVERBACAO|INEXISTE\s+AVERBACAO")
+
+
+def _clausula_negada(zona: str, at: int) -> bool:
+    """Is the event keyword matched at `at` (an offset into `zona`) governed
+    by a NEGATION marker earlier in the same sentence?
+
+    🔴 THE BUG THIS CLOSES
+    ------------------------
+    `find_estado_civil` used to treat the ENTIRE tail of the document, from
+    the first "AVERBA" marker onward, as one flat zone and count any keyword
+    match anywhere in it as an occurrence. A standard cartório disclaimer —
+    "nada consta quanto a divórcio, óbito ou interdição" — sits in that same
+    flat zone and mentions MULTIPLE event keywords purely to say none of them
+    happened. Counted as occurrences, a genuine later averbação (a real
+    divórcio) now disagrees with the disclaimer's phantom "óbito" mention,
+    `len(eventos) > 1` fires, and the real event is silently dropped —
+    exactly the failure mode this module's docstring calls "how the
+    averbação section is scoped/sliced".
+
+    Scoped to the SENTENCE (the text back to the last `.`): a negation
+    marker in an EARLIER sentence has already been closed by that full stop
+    and no longer governs a keyword in a later one.
+    """
+    prefixo = zona[:at]
+    ultimo_ponto = prefixo.rfind(".")
+    clausula = prefixo[ultimo_ponto + 1 :]
+    return _NEGACAO_RE.search(clausula) is not None
 
 
 def find_regime_bens(text: str) -> tuple[Optional[str], str, Optional[str]]:
@@ -308,19 +359,22 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
     averbacao_pos = _averbacao_start(norm)
     if averbacao_pos is not None:
         zona = norm[averbacao_pos:]
-        eventos = {
-            canonico
-            for padrao, canonico in _AVERBACAO_EVENTOS
-            if padrao.search(zona)
-        }
+        achados_eventos: list[tuple[str, "re.Match[str]"]] = []
+        for padrao, canonico in _AVERBACAO_EVENTOS:
+            for m in padrao.finditer(zona):
+                if _clausula_negada(zona, m.start()):
+                    # "NADA CONSTA quanto a divórcio, óbito, ..." names
+                    # this event only to say it did NOT happen — see
+                    # `_clausula_negada`'s docstring.
+                    continue
+                achados_eventos.append((canonico, m))
+        eventos = {canonico for canonico, _ in achados_eventos}
         if len(eventos) > 1:
             # Conflicting amendments — cannot tell which is real.
             return (None, "nenhuma", None)
         if len(eventos) == 1:
             canonico = next(iter(eventos))
-            padrao = next(p for p, c in _AVERBACAO_EVENTOS if c == canonico)
-            m = padrao.search(zona)
-            assert m is not None  # canonico came from a match in `zona`
+            _, m = next(item for item in achados_eventos if item[0] == canonico)
             return (canonico, "alta", f"AVERBACAO: {m.group(0)}")
         # An averbação zone exists but carries none of the known events —
         # fall through to the registro reading below, unresolved by this
@@ -659,7 +713,40 @@ def find_data_emissao(
             return (rotuladas[0][0], "alta", rotuladas[0][1])
         return (None, "nenhuma", None)
 
-    _ultimo_offset, ultimo_valor = max(candidatas, key=lambda c: c[0])
+    # 🔴 THE SIBLING BUG THIS GUARDS AGAINST
+    # ---------------------------------------
+    # "The LAST dated line" is a guess by POSITION, not by meaning — it must
+    # not win over a date that is itself labelled as something else. Without
+    # this filter, a CNH whose birthdate happens to sit textually AFTER the
+    # card's own "emitida em" date (a different column, a later line) gets
+    # its `data_nascimento` asserted as `data_emissao` — a field asserted
+    # from a value that means something else, the same class of bug
+    # `rg_orgao` had. A date with no label at all is unaffected: it is
+    # exactly the "position-based guess" this fallback exists for.
+    #
+    # The decoy lookback is bounded by the PREVIOUS candidate date's own
+    # position, not the fixed `_LABEL_WINDOW` alone: two dates close enough
+    # together (a marriage date immediately followed by a place/date line)
+    # would otherwise let the FIRST date's own label bleed into the
+    # window checked for the SECOND, unrelated date and reject it too.
+    ordenadas = sorted(offset for offset, _ in candidatas)
+
+    def _tem_decoy_proprio(offset: int) -> bool:
+        anteriores = [o for o in ordenadas if o < offset]
+        piso = anteriores[-1] if anteriores else 0
+        largura = offset - max(0, piso)
+        if largura <= 0:
+            return False
+        achado = label_before(norm, offset, labels=(), valores=_EMISSAO_DECOYS, window=largura)
+        return achado.rejeitado
+
+    sem_decoy = [
+        (offset, valor) for offset, valor in candidatas if not _tem_decoy_proprio(offset)
+    ]
+    if not sem_decoy:
+        return (None, "nenhuma", None)
+
+    _ultimo_offset, ultimo_valor = max(sem_decoy, key=lambda c: c[0])
     return (ultimo_valor, "baixa", "FECHAMENTO_CARTORIO")
 
 

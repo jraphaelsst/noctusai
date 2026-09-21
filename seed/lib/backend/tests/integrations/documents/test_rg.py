@@ -152,6 +152,39 @@ class TestOrgaoExpedidor:
         assert find_rg_orgao(f"RG {SP}") == (None, "nenhuma")
 
 
+class TestOrgaoJurisdictionContextIsNotAnIssuer:
+    """🔴 A FABRICATED ISSUER SEEN ON A REAL CERTIDÃO DE CASAMENTO
+    ---------------------------------------------------------------
+    "Comarca de Cotia/SP" is the jurisdiction of the notary's office that
+    produced the document — an address, not who issues an RG. The document
+    carried no RG at all, yet this shape-only regex matched `COTIA` bound to
+    `SP` and returned a fabricated `rg_orgao`. `COTIA` itself cannot be
+    blocklisted (it is an ordinary place name with no other reason to be
+    rejected) — only the CONTEXT immediately before it tells the two apart."""
+
+    def test_comarca_de_is_not_read_as_an_issuer(self):
+        assert find_rg_orgao("COMARCA DE COTIA/SP") == (None, "nenhuma")
+
+    def test_tabelionato_de_is_not_read_as_an_issuer(self):
+        assert find_rg_orgao("TABELIONATO DE NOTAS DO DISTRITO DE MOGI/SP") == (
+            None,
+            "nenhuma",
+        )
+
+    def test_cartorio_de_is_not_read_as_an_issuer(self):
+        assert find_rg_orgao("CARTORIO DE REGISTRO CIVIL DE COTIA/SP") == (
+            None,
+            "nenhuma",
+        )
+
+    def test_a_real_issuer_elsewhere_in_the_same_document_still_reads(self):
+        """The jurisdiction guard must not blanket-reject the WHOLE
+        document — only the match immediately preceded by a jurisdiction
+        word."""
+        valor, conf = find_rg_orgao("RG 12.345.678-9 SSP/SP ... COMARCA DE COTIA/SP")
+        assert (valor, conf) == ("SSP/SP", "alta")
+
+
 class TestNothing:
     def test_empty_text(self):
         assert find_rg("") == (None, "nenhuma", None)

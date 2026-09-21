@@ -72,6 +72,20 @@ class TextSource(str, Enum):
 #: product's `CampoExtraido` table mirrors it, and adding a field means adding
 #: one entry here plus its three attributes below. Hand-written per-field
 #: predicates were what this replaced — see the class docstring's N=3 note.
+#:
+#: NOC-REMEDIATE[nacionalidade-identity-parser]: `nacionalidade` is NOT a
+#: member — there is no parser for it anywhere in this family (`real.py`,
+#: `civil_status.py`) even though a certidão de casamento routinely asserts
+#: it twice ("de nacionalidade brasileira") and a downstream contract
+#: qualification gate hard-requires the field. `nacionalidade` DOES exist as
+#: a stored concept elsewhere (`social_wiring.clientes.nacionalidade`,
+#: `matricula_qualificacao.py`'s ATO-text extractor for property registries)
+#: — that is a DIFFERENT pipeline, not wired to `LadderIdentityExtractor`.
+#: Adding it here means: a new `nacionalidade.py` parser (label-anchored on
+#: "DE NACIONALIDADE <gentílico>" / "NACIONALIDADE:") plus one `CAMPOS`
+#: entry plus one attribute triple in `IdentityFields` plus wiring into
+#: `real.py` — deliberately not done under this fix's time pressure rather
+#: than shipped half-considered. — 2026-09-21
 CAMPOS: tuple[str, ...] = (
     "data_nascimento", "nome", "genero", "cpf", "rg",
     "estado_civil", "regime_bens", "data_casamento",
