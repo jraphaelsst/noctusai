@@ -15,6 +15,24 @@ from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
 
+# Set by Cloudflare's edge on every proxied request, overwriting any value
+# the client sent — so, unlike X-Forwarded-For, it cannot be spoofed from
+# outside. Prod containers are reachable only through the Cloudflare tunnel.
+_CF_CONNECTING_IP = "cf-connecting-ip"
+
+
+def client_ip_key(request) -> str:
+    """Rate-limit key = the real visitor IP behind the Cloudflare tunnel.
+
+    `get_remote_address` (the default key) returns the socket peer, which in
+    prod is the tunnel connector — every visitor shares ONE bucket. Use this
+    as `@limiter.limit(..., key_func=client_ip_key)` on public routes where a
+    per-visitor limit is the point. Falls back to the socket peer when the
+    header is absent (local dev, tests).
+    """
+    forwarded = request.headers.get(_CF_CONNECTING_IP, "").strip()
+    return forwarded or get_remote_address(request)
+
 
 def create_limiter(
     redis_url: Optional[str] = None,

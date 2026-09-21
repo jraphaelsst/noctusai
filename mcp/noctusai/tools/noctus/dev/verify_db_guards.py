@@ -912,6 +912,56 @@ _STORAGE_BUCKETS_PROBE = GuardProbe(
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — academia_de_reciclagem.interessados unique lower(email)
+# (migration 011).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning: the table has no FK, so the probe inserts its own two
+# rows (same address, different case) — no fixture row needed. Both inserts
+# sit inside the sub-block that always ends in RAISE, so nothing persists.
+
+_ACADEMIA_SCHEMA = "academia_de_reciclagem"
+
+_INTERESSADOS_EMAIL_UNIQUE_PROBE = GuardProbe(
+    id="interessados.email.unique_case_insensitive",
+    product="academia-de-reciclagem",
+    schema=_ACADEMIA_SCHEMA,
+    guard_name="interessados_email_lower_key",
+    kind="write_refusal",
+    migrations=("011_interessados.sql",),
+    rationale=(
+        "One signup per address regardless of case — the public route "
+        "upserts on lower(email) and promises the visitor an identical "
+        "response either way; a second row for 'Maria@x' vs 'maria@x' "
+        "would double every future communication and make the LGPD "
+        "erasure (DELETE by id) leave a copy behind."
+    ),
+    sql=_do_block(f"""
+BEGIN
+  IF to_regclass('{_ACADEMIA_SCHEMA}.interessados') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_ACADEMIA_SCHEMA}.interessados does not exist (migration 011 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO {_ACADEMIA_SCHEMA}.interessados (nome, whatsapp, email, consentimento_versao)
+    VALUES ('NOC probe', '+5511900000000', 'noc-probe@exemplo.invalid', 'probe');
+    INSERT INTO {_ACADEMIA_SCHEMA}.interessados (nome, whatsapp, email, consentimento_versao)
+    VALUES ('NOC probe', '+5511900000000', 'NOC-Probe@Exemplo.invalid', 'probe');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: case-variant duplicate email insert succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%interessados_email_lower_key%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -919,6 +969,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ABERTURA_UNIQUE_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _STORAGE_BUCKETS_PROBE,
+    _INTERESSADOS_EMAIL_UNIQUE_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

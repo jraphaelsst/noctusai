@@ -60,6 +60,7 @@ from cryptography.fernet import Fernet
 
 from app.auth.roles import ADMIN, READ, WRITE
 from app.config import settings
+from app.interessados import InteressadosStore, build_interessados_store
 from app.knowledge import KnowledgeStore, get_knowledge_store
 
 logger = logging.getLogger(__name__)
@@ -335,6 +336,15 @@ require_import_admin = require_scopes(
     get_auth_context=get_auth_context,
     get_core_client=get_core_client,
 )
+# Interessados admin routes (public-signup contract, "Routes" section) --
+# same ADMIN role set as import, distinct scope so a product token minted
+# for one purpose is not silently valid for the other.
+require_interessados_admin = require_scopes(
+    "academia:interessados",
+    user_roles=ADMIN,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+)
 
 
 # ─── Knowledge store seam (contract §A.11) ───────────────────────────────
@@ -414,6 +424,17 @@ def get_store() -> KnowledgeStore:
     return get_knowledge_store(settings)
 
 
+def get_interessados_store() -> InteressadosStore:
+    """FastAPI dependency returning the configured `InteressadosStore`.
+
+    Same DI-seam shape as `get_store` above (tests override via
+    `app.dependency_overrides[get_interessados_store] = lambda: fake`) --
+    stateless per call for `PgInteressadosStore` (a thin Postgres
+    wrapper).
+    """
+    return build_interessados_store(settings)
+
+
 __all__ = [
     "AuthContext",
     "auth_router_deps",
@@ -426,6 +447,7 @@ __all__ = [
     "get_core_client",
     "get_current_user",
     "get_current_user_org",
+    "get_interessados_store",
     "get_org_id",
     "get_store",
     "get_user_client",
@@ -433,6 +455,7 @@ __all__ = [
     "require_content_write",
     "require_decisions_write",
     "require_import_admin",
+    "require_interessados_admin",
     "require_kb_write",
     "require_questions_write",
     "require_read",

@@ -39,6 +39,7 @@ from app.rate_limit import limiter
 from app.routers.content_router import router as content_router
 from app.routers.decisions_router import router as decisions_router
 from app.routers.import_router import router as import_router
+from app.routers.interessados_router import router as interessados_router
 from app.routers.kb_router import router as kb_router
 from app.routers.questions_router import router as questions_router
 from app.routers.roadmap_router import router as roadmap_router
@@ -89,6 +90,7 @@ app = create_product_app(
         timeline_router,
         sources_router,
         import_router,
+        interessados_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     # Contract §D: a missing/empty approval-assertion key list must
