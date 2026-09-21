@@ -19,6 +19,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -512,3 +514,36 @@ class TestRegistrySanity:
         result = run_probe(_ANY_PROBE, ex)
         assert result["id"] == _ANY_PROBE.id
         assert result["probe_id"] == _ANY_PROBE.id
+
+
+class TestAgentsStudioProbes:
+    """Migration 012 (agents Agent Studio) — one self-provisioning probe per
+    guard object `check_migration_guard_has_probe` detects in that file."""
+
+    _GUARDS = {
+        "agent_versions_one_ativa_idx",
+        "agent_versions_one_rascunho_idx",
+        "guard_agent_version_immutable",
+        "guard_version_child_immutable",
+        "guard_skill_file_immutable",
+        "guard_compiled_prompt_immutable",
+    }
+
+    @staticmethod
+    def _probes():
+        return [p for p in DEFAULT_REGISTRY if p.product == "agents"]
+
+    def test_every_012_guard_has_a_probe(self):
+        assert {p.guard_name for p in self._probes()} == self._GUARDS
+
+    def test_probes_self_provision_and_borrow_nothing(self):
+        for p in self._probes():
+            assert "gen_random_uuid()" in p.sql, p.id
+            assert "INSERT INTO agents.agents" in p.sql, p.id
+            assert "to_regclass('agents.agent_versions')" in p.sql, p.id
+            assert p.migrations == ("012_agent_studio_definitions.sql",)
+
+    def test_probe_bodies_parse_as_plpgsql(self):
+        parser = pytest.importorskip("pglast.parser")
+        for p in self._probes():
+            parser.parse_plpgsql_json(p.sql.replace("DO $noc_probe$", "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $noc_probe$", 1))
