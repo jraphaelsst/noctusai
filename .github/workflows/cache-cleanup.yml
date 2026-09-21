@@ -1,0 +1,65 @@
+# Actions cache hygiene (2026-09 CI-cost audit): the repo's Actions cache sat
+# at 10.78GB against the 10GB-per-repo cap (95 npm caches) — once past the
+# cap, GitHub LRU-evicts to make room, which starts evicting caches jobs
+# still want (thrash) instead of the genuinely-superseded ones. Every
+# `actions/cache` key here (npm, the new seed-frontend composite, Playwright)
+# ends in a hash/version that CHANGES when its source changes, so the OLD
+# entry never gets overwritten — only a NEW one gets created next to it,
+# forever, unless something prunes the old ones. This is that something.
+name: Actions Cache Cleanup
+
+on:
+  schedule:
+    - cron: "0 5 * * 0" # weekly, Sunday 05:00 UTC — low-traffic window
+  workflow_dispatch:
+
+permissions:
+  actions: write # `gh cache delete` needs this
+  contents: read
+
+jobs:
+  prune-superseded-caches:
+    name: Delete all but the newest cache per key prefix
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: List + prune
+        run: |
+          set -euo pipefail
+          # Newest-first, one JSON object per line (compact) so a `while read`
+          # loop can walk it safely regardless of key contents.
+          gh cache list --repo "$REPO" --limit 1000 --json id,key,createdAt \
+            | jq -c 'sort_by(.createdAt) | reverse | .[]' > /tmp/caches.jsonl
+
+          total=$(wc -l < /tmp/caches.jsonl)
+          echo "found $total cache(s)"
+
+          # Group by "prefix" — the key with its trailing hash/version
+          # stripped (e.g. `seed-frontend-npm-Linux-<sha256>` ->
+          # `seed-frontend-npm-Linux-`). Newest per prefix is kept (it's
+          # first, since the file is newest-first); every OLDER cache
+          # sharing that prefix is superseded and gets deleted. A key with
+          # no stripped suffix (nothing hash-shaped at the end) is its own
+          # prefix — harmless: it just means "keep this one, no siblings".
+          declare -A seen
+          kept=0
+          deleted=0
+          while IFS= read -r row; do
+            id=$(jq -r '.id' <<<"$row")
+            key=$(jq -r '.key' <<<"$row")
+            prefix=$(sed -E 's/[0-9a-f]{8,64}$//' <<<"$key")
+            if [ -n "${seen[$prefix]:-}" ]; then
+              echo "deleting superseded cache: $key (id=$id)"
+              gh cache delete "$id" --repo "$REPO" || true
+              deleted=$((deleted + 1))
+            else
+              seen[$prefix]=1
+              kept=$((kept + 1))
+              echo "keeping newest for prefix '$prefix': $key"
+            fi
+          done < /tmp/caches.jsonl
+
+          echo "### Actions Cache Cleanup" >> "$GITHUB_STEP_SUMMARY"
+          echo "kept $kept, pruned $deleted of $total cache(s)." >> "$GITHUB_STEP_SUMMARY"

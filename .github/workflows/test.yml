@@ -37,6 +37,96 @@ permissions:
   security-events: write
 
 jobs:
+  # Scope detector (2026-09 CI-cost audit): 43% of dev pushes touch ONLY
+  # `project-history/*.ndjson` (chore(salvage) / branch-pointer / ledger
+  # commits) yet fired all 46 downstream jobs — ~50 runner-minutes/run for
+  # zero code changed. This job ALWAYS runs (no `if:`), so the workflow's
+  # overall conclusion stays `success` (not `skipped`) even when every
+  # downstream job below is gated off by `if:` — GitHub reports a run as
+  # `skipped` only when EVERY job in it skips; one always-green job here is
+  # enough for `release stage='bless'`'s `_ci_verdict` probe
+  # (mcp/noctusai/tools/noctus/dev/release.py) to keep reading `success`.
+  # Mirrors the git-diff → changed-scope pattern `build-and-push.yml`
+  # (lines ~101–182) already uses for per-product image builds — DRY would
+  # extract a shared script under `scripts/ci/` if a THIRD consumer shows up
+  # (N=2 → triage, N=3+ → formalize).
+  changes:
+    name: Detect changed scope
+    runs-on: ubuntu-latest
+    outputs:
+      run_heavy: ${{ steps.classify.outputs.run_heavy }}
+      shared_changed: ${{ steps.classify.outputs.shared_changed }}
+      changed_products: ${{ steps.classify.outputs.changed_products }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # need the diff base (before..sha / PR base) to scope
+
+      - name: Classify the pushed/PR'd diff
+        id: classify
+        run: |
+          set -euo pipefail
+
+          # Release branches + manual re-triggers ALWAYS run the full suite —
+          # bless (push to `main`) and promote-adjacent verification must
+          # never be scoped down, no matter what the diff looks like.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || \
+             [ "${{ github.ref }}" = "refs/heads/main" ] || \
+             [ "${{ github.ref }}" = "refs/heads/prod" ]; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            echo "shared_changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            echo "scope: workflow_dispatch or a release-branch ref → full suite, never scoped down"
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+            echo "shared_changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            echo "scope: no usable diff base ($BASE — new branch or unreachable commit) → full suite"
+            exit 0
+          fi
+
+          CHANGED="$(git diff --name-only "$BASE" "${{ github.sha }}")"
+          echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
+
+          # (a) A diff touching ONLY project-history/*.ndjson needs zero code
+          # verification — every heavy job below skips via job-level `if:`.
+          NON_LEDGER="$(echo "$CHANGED" | grep -vE '^project-history/.*\.ndjson$' || true)"
+          if [ -z "$NON_LEDGER" ]; then
+            echo "run_heavy=false" >> "$GITHUB_OUTPUT"
+            echo "shared_changed=false" >> "$GITHUB_OUTPUT"
+            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            echo "scope: project-history/*.ndjson-only diff → every heavy job skipped"
+            exit 0
+          fi
+          echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+
+          # (b) A shared-root change invalidates every product — same family
+          # of paths build-and-push.yml treats as "rebuild the active set".
+          if echo "$CHANGED" | grep -qE '^(seed/|requirements.*\.txt$|\.github/|scripts/ci/|package(-lock)?\.json$)'; then
+            echo "shared_changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed_products=," >> "$GITHUB_OUTPUT"
+            echo "scope: shared root changed → every product matrix entry runs"
+            exit 0
+          fi
+
+          # (c) Product-scoped diff — only the touched products' matrix
+          # entries run (product-backend-tests / product-frontend-tests).
+          # Comma-wrapped so a downstream `contains(...)` check is an exact
+          # segment match, never a substring false-positive (e.g. `core` vs
+          # `core-x`).
+          SLUGS="$(echo "$CHANGED" | sed -nE 's#^products/([^/]+)/.*#\1#p' | sort -u | tr '\n' ',')"
+          echo "shared_changed=false" >> "$GITHUB_OUTPUT"
+          echo "changed_products=,${SLUGS}" >> "$GITHUB_OUTPUT"
+          echo "scope: product-scoped diff → changed products: ${SLUGS:-none}"
+
   product-backend-tests:
     # Per-product backend pytest. WAS 3 hand-maintained jobs (erp/core/pf) — the
     # OTHER 6 product backends had NO CI job, so KE's missing dep (python-docx,
@@ -50,6 +140,16 @@ jobs:
     # runs that product's suite. fail-fast:false. (Per-product-install for full
     # dev↔prod parity is a tracked follow-up; the keeper makes root-install safe.)
     name: Product Backend Tests (pytest)
+    needs: changes
+    # `matrix` is NOT a valid context in a job-level `if:` (actionlint-verified
+    # — only github/inputs/needs/vars are), so the job only gates on
+    # `run_heavy` here; the PER-PRODUCT scoping (shared root ⇒ all, else only
+    # this matrix entry's own changed product) happens in the "Scope gate"
+    # step below, where `matrix.*` IS valid, and every expensive step after it
+    # is conditioned on that step's output. Matrix list stays static (every
+    # slug still enumerated below) so `check_ci_test_matrix_coverage` /
+    # `check_every_test_file_is_gated` keep working unchanged.
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -75,13 +175,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Scope gate — does this product need to run?
+        id: gate
+        run: |
+          if [ "${{ needs.changes.outputs.shared_changed }}" = "true" ] || \
+             echo "${{ needs.changes.outputs.changed_products }}" | grep -q ",${{ matrix.product }},"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::skipping ${{ matrix.product }} backend tests — unaffected by this diff"
+          fi
+
       - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
 
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
+        if: steps.gate.outputs.run == 'true'
         run: |
           # 🔴 A THIRD-PARTY APT SOURCE MUST NOT BE ABLE TO FAIL THIS BUILD.
           # The runner image ships Google's Chrome repo, so `apt-get update`
@@ -112,16 +225,18 @@ jobs:
             libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
       - name: Install dependencies (root superset)
+        if: steps.gate.outputs.run == 'true'
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
 
       - name: Run tests
+        if: steps.gate.outputs.run == 'true'
         working-directory: products/${{ matrix.product }}/backend
         run: pytest --tb=short -q
 
       - name: FRAMEWORK_DEPS parity (core — needs noctusai_lib from requirements)
-        if: ${{ matrix.product == 'core' }}
+        if: steps.gate.outputs.run == 'true' && matrix.product == 'core'
         run: python mcp/noctusai/cli.py --check-framework-deps
 
   seed-backend-tests:
@@ -150,6 +265,8 @@ jobs:
     # in BLOCKING on day one — a `continue-on-error` warm-up period would only
     # have re-answered a question a local run already answered.
     name: Seed Backend Tests (pytest)
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -195,6 +312,8 @@ jobs:
 
   erp-frontend-build:
     name: ERP Frontend Build
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -207,10 +326,7 @@ jobs:
           cache: npm
           cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
 
-      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
-        run: |
-          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
-          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+      - uses: ./.github/actions/install-seed-frontend
 
       - name: Install dependencies
         working-directory: products/erp-imobiliario/frontend
@@ -226,6 +342,8 @@ jobs:
 
   core-frontend-build:
     name: Core Frontend Build
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -238,10 +356,7 @@ jobs:
           cache: npm
           cache-dependency-path: products/core/frontend/package-lock.json
 
-      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
-        run: |
-          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
-          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+      - uses: ./.github/actions/install-seed-frontend
 
       - name: Install dependencies
         working-directory: products/core/frontend
@@ -272,6 +387,10 @@ jobs:
     # frontend landed its first hook + page test suites.
     # `fail-fast: false` so one product's red doesn't mask others.
     name: Product Frontend Tests (vitest)
+    needs: changes
+    # `matrix` is not valid in a job-level `if:` — see product-backend-tests
+    # above for the full rationale. Same "Scope gate" step pattern here.
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -295,23 +414,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Scope gate — does this product need to run?
+        id: gate
+        run: |
+          if [ "${{ needs.changes.outputs.shared_changed }}" = "true" ] || \
+             echo "${{ needs.changes.outputs.changed_products }}" | grep -q ",${{ matrix.product }},"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::skipping ${{ matrix.product }} frontend tests — unaffected by this diff"
+          fi
+
       - name: Set up Node
+        if: steps.gate.outputs.run == 'true'
         uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
           cache-dependency-path: products/${{ matrix.product }}/frontend/package-lock.json
 
-      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
-        run: |
-          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
-          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+      - uses: ./.github/actions/install-seed-frontend
+        if: steps.gate.outputs.run == 'true'
 
       - name: Install dependencies
+        if: steps.gate.outputs.run == 'true'
         working-directory: products/${{ matrix.product }}/frontend
         run: npm ci
 
       - name: Run FE tests (vitest)
+        if: steps.gate.outputs.run == 'true'
         working-directory: products/${{ matrix.product }}/frontend
         run: npm test
 
@@ -339,6 +470,8 @@ jobs:
     # keeper agreeing with a comment is not evidence when the comment is what
     # the predicate was modelled on.
     name: Seed Frontend Tests (vitest)
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -379,6 +512,8 @@ jobs:
 
   pf-frontend-build:
     name: PF Frontend Build
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -391,10 +526,7 @@ jobs:
           cache: npm
           cache-dependency-path: products/personal-finance/frontend/package-lock.json
 
-      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
-        run: |
-          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
-          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+      - uses: ./.github/actions/install-seed-frontend
 
       - name: Install dependencies
         working-directory: products/personal-finance/frontend
@@ -406,6 +538,8 @@ jobs:
 
   core-e2e-tests:
     name: Core E2E Tests
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -418,16 +552,26 @@ jobs:
           cache: npm
           cache-dependency-path: products/core/frontend/package-lock.json
 
-      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
-        run: |
-          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
-          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+      - uses: ./.github/actions/install-seed-frontend
 
       - name: Install dependencies
         working-directory: products/core/frontend
         run: npm ci
 
-      - name: Install Playwright browsers
+      - name: Resolve installed Playwright version (drives the cache key below)
+        id: pw-version
+        working-directory: products/core/frontend
+        run: echo "version=$(node -e "console.log(require('@playwright/test/package.json').version)")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser binaries
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browsers (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: products/core/frontend
         run: |
           # `--with-deps` shells out to apt-get, which hits the same corrupt
@@ -436,6 +580,18 @@ jobs:
           sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
             | sudo xargs -r rm -f
           npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS deps only (browsers already cached)
+        # The runner VM is fresh every job — the ~/.cache/ms-playwright cache
+        # above covers the (large) browser binary download, but the apt-level
+        # system libs (libnss3 etc.) never persist across jobs and must still
+        # be installed even on a cache hit.
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        working-directory: products/core/frontend
+        run: |
+          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -r rm -f
+          npx playwright install-deps chromium
 
       - name: Run E2E tests
         working-directory: products/core/frontend
@@ -451,6 +607,8 @@ jobs:
 
   erp-e2e-tests:
     name: ERP E2E Tests
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -463,16 +621,26 @@ jobs:
           cache: npm
           cache-dependency-path: products/erp-imobiliario/frontend/package-lock.json
 
-      - name: Install seed frontend deps (file:-linked; product npm ci skips them)
-        run: |
-          (cd seed/framework/frontend && npm install --no-audit --no-fund --include=peer)
-          (cd seed/lib/frontend && npm install --no-audit --no-fund --include=peer)
+      - uses: ./.github/actions/install-seed-frontend
 
       - name: Install dependencies
         working-directory: products/erp-imobiliario/frontend
         run: npm ci --legacy-peer-deps
 
-      - name: Install Playwright browsers
+      - name: Resolve installed Playwright version (drives the cache key below)
+        id: pw-version
+        working-directory: products/erp-imobiliario/frontend
+        run: echo "version=$(node -e "console.log(require('@playwright/test/package.json').version)")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browser binaries
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Install Playwright browsers (cache miss)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: products/erp-imobiliario/frontend
         run: |
           # `--with-deps` shells out to apt-get, which hits the same corrupt
@@ -481,6 +649,14 @@ jobs:
           sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
             | sudo xargs -r rm -f
           npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS deps only (browsers already cached)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        working-directory: products/erp-imobiliario/frontend
+        run: |
+          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
+            | sudo xargs -r rm -f
+          npx playwright install-deps chromium
 
       - name: Run E2E tests
         working-directory: products/erp-imobiliario/frontend
@@ -502,6 +678,8 @@ jobs:
 
   docker-compose-validate:
     name: Docker Compose Validate
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -544,6 +722,8 @@ jobs:
     # do not add a line to `.trivyignore` (14 such lines accumulated between
     # 2026-05-11 and 2026-06-23 and none of them ever got revisited).
     name: Trivy filesystem scan (deps)
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -603,6 +783,8 @@ jobs:
     # Gate: fails on MEDIUM+ severity AND MEDIUM+ confidence.
     # Targets: every product's backend app + the shared seed lib.
     name: Bandit Python SAST
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -667,6 +849,8 @@ jobs:
     # Full-history scan is out-of-scope (would push CI past 10min for
     # zero signal — history is already merged).
     name: Gitleaks secrets scan
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -718,6 +902,8 @@ jobs:
     # run green from a scrubbed `env -i` (no `.env`, no SUPABASE_*) on 3.11 with
     # this exact dependency set, in ~8s total. Blocking from day one.
     name: Tooling Tests (pytest)
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -820,7 +1006,26 @@ jobs:
     # HERMETIC: no live OpenAI key — keyless, the embed tests mock/skip (verified
     # 45/45 keyless), so this stays fast + green on fork PRs (no secrets needed).
     name: MCP Toolkit Tests
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
+    # 4-WAY SHARD (2026-09 CI-cost audit): this suite was the workflow's
+    # critical path — ~2.6k tests, single process, ~10min wall-clock, while
+    # every other job finished by minute 4–5. pytest-xdist was evaluated and
+    # rejected: 31 test files in this suite touch the Tier-1 keeper-mirror
+    # SQLite caches (fixed paths under `<git-common-dir>/noctusai/cache/`,
+    # shared — not per-worker), and several rebuild/force-refresh them
+    # in-test, so concurrent xdist workers hitting the same physical .sqlite
+    # file mid-test is a correctness risk, not just a perf one. A file-level
+    # matrix split carries no such risk (each shard is its own process, its
+    # own runner, its own from-scratch cache prime) and needs no new
+    # dependency. Coverage is PROVED, not assumed, by the
+    # `mcp-toolkit-tests-coverage` job below (derives the same partition
+    # independently and diffs it against the full file list).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     # JOB-level hermetic env so EVERY step (incl. the cache-priming step) inherits
     # it — not just the pytest step. NOCTUS_DISABLE_AUTO_CACHE_PULL is the load-
     # bearing one: without it the structural-cache refreshes try to auto-pull from
@@ -831,6 +1036,7 @@ jobs:
     env:
       NOCTUS_EMBED_MIN_INTERVAL_MS: "0"
       NOCTUS_DISABLE_AUTO_CACHE_PULL: "1"
+      MCP_TEST_TOTAL_SHARDS: "4"
     steps:
       - uses: actions/checkout@v7
 
@@ -923,13 +1129,94 @@ jobs:
           python cli.py --refresh-auto-improvement-cache
           python cli.py --refresh-noc-graph
 
-      - name: Run MCP toolkit suite (hermetic — no live OpenAI key)
+      - name: Compute this shard's test files (derived — never hand-listed)
+        id: shard
+        # Round-robin over the SORTED, git-derived file list (same
+        # derive-don't-hand-maintain discipline `tooling-tests` above already
+        # uses for its connector list): file[i] belongs to shard (i % N).
+        # Deterministic, exhaustive, non-overlapping by construction — proved
+        # independently by the `mcp-toolkit-tests-coverage` job.
+        # `SHARD` is set via `env:` (not interpolated as `${{ matrix.shard }}`
+        # directly into the script) — the standard GH Actions hardening: never
+        # splice an expression straight into `run:` shell text.
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          FILES=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && FILES+=("$line")
+          done < <(git ls-files 'mcp/noctusai/tests/*test_*.py' 'mcp/noctusai/tests/**/test_*.py' | sort -u)
+
+          # 🔴 FLOOR — same shape as the connector-suite floor in `tooling-tests`
+          # above: a derivation that silently comes back near-empty must refuse,
+          # not report green over nothing.
+          if [ "${#FILES[@]}" -lt 100 ]; then
+            echo "::error::only ${#FILES[@]} test file(s) discovered under mcp/noctusai/tests — the derivation is broken, refusing to shard over nothing"
+            exit 1
+          fi
+
+          MINE=()
+          for i in "${!FILES[@]}"; do
+            if [ $(( i % MCP_TEST_TOTAL_SHARDS )) -eq "$SHARD" ]; then
+              MINE+=("${FILES[$i]}")
+            fi
+          done
+          echo "shard $SHARD/${MCP_TEST_TOTAL_SHARDS}: ${#MINE[@]} of ${#FILES[@]} file(s)"
+          printf '%s\n' "${MINE[@]}" > /tmp/mcp-shard-files.txt
+
+      - name: Run MCP toolkit suite — shard ${{ matrix.shard }} (hermetic — no live OpenAI key)
         env:
           NOCTUS_EMBED_MIN_INTERVAL_MS: "0"
           NOCTUS_DISABLE_AUTO_CACHE_PULL: "1"
-        # Full suite, no exclusions. (The 2026-05-31 quarantine of the two
-        # platform-health gate tests was lifted the same day: the social-wiring
-        # YT-OAuth production bug was fixed — 8c800c37 — and the 2 organ-shim
-        # NotificationBell findings were accepted into the refreshed compliance
-        # baseline with rationale.)
-        run: pytest mcp/noctusai/tests/ -q -p no:cacheprovider
+        # Full suite, no exclusions — just partitioned across 4 shards. (The
+        # 2026-05-31 quarantine of the two platform-health gate tests was
+        # lifted the same day: the social-wiring YT-OAuth production bug was
+        # fixed — 8c800c37 — and the 2 organ-shim NotificationBell findings
+        # were accepted into the refreshed compliance baseline with rationale.)
+        run: xargs -a /tmp/mcp-shard-files.txt pytest -q -p no:cacheprovider
+
+  mcp-toolkit-tests-coverage:
+    # Independent proof that the 4 shards above are an exact partition of
+    # every test file under mcp/noctusai/tests/ — no file silently dropped,
+    # none silently doubled. Recomputes the SAME derivation as the shard step
+    # and diffs the union against the full list; this job holds no pytest
+    # dependency at all, so it can never be green for the wrong reason.
+    name: MCP Toolkit Tests — shard coverage proof
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prove the 4 shards union back to the full file set
+        run: |
+          set -euo pipefail
+          git ls-files 'mcp/noctusai/tests/*test_*.py' 'mcp/noctusai/tests/**/test_*.py' | sort -u > /tmp/all.txt
+          TOTAL=$(wc -l < /tmp/all.txt)
+          if [ "$TOTAL" -lt 100 ]; then
+            echo "::error::only $TOTAL test file(s) discovered — refusing to prove coverage over nothing"
+            exit 1
+          fi
+
+          FILES=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && FILES+=("$line")
+          done < /tmp/all.txt
+
+          : > /tmp/union.txt
+          for shard in 0 1 2 3; do
+            for i in "${!FILES[@]}"; do
+              if [ $(( i % 4 )) -eq "$shard" ]; then
+                echo "${FILES[$i]}" >> /tmp/union.txt
+              fi
+            done
+          done
+          sort -u /tmp/union.txt -o /tmp/union.txt
+
+          if ! diff -q /tmp/all.txt /tmp/union.txt >/dev/null; then
+            echo "::error::shard coverage mismatch — the union of the 4 mcp-toolkit-tests shards does not equal the full test-file set"
+            diff /tmp/all.txt /tmp/union.txt || true
+            exit 1
+          fi
+          echo "OK: $TOTAL test files, exactly covered once each by the 4 shards"

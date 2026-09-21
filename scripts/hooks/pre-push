@@ -180,18 +180,25 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         fi
 
         ran=0
-        # The four OpenAI-backed refreshes (kb/code/corpus/memory-embeddings)
-        # run through `_pp_bounded_refresh` — see the wrapper's comment above
-        # for why. keeper/agent-context/auto-improvement/noc-graph are local
-        # computations with no external API call, so they carry no
-        # retry-storm risk and stay unwrapped (unbounded, as before).
+        # ALL EIGHT refreshes now run through `_pp_bounded_refresh` (2026-09
+        # CI-cost audit). Originally only the four OpenAI-backed ones
+        # (kb/code/corpus/memory-embeddings) were wrapped — keeper /
+        # agent-context / auto-improvement / noc-graph carry no network
+        # retry-storm risk, but "no external API" was never the same claim as
+        # "bounded": a local computation can still hang or simply run long
+        # (noc-graph's own rebuild walks the whole repo + re-derives
+        # SEMANTIC_NEIGHBOR/GUARDED_BY edges), and an unbounded step here pays
+        # the exact same "git push never returns" cost the wrapper was built
+        # to eliminate. Same bounded-wrapper semantics apply: `|| true` is no
+        # longer needed on these four (the wrapper always returns 0; see its
+        # definition above), so it's dropped rather than kept as dead belt.
         if [[ $kb     -eq 1 ]]; then echo "[pre-push] kb sources changed → refreshing kb-embeddings";   _pp_bounded_refresh kb-embed     "$PY_PP" "$CLI_PP" --refresh-kb-embeddings;     ran=1; fi
         if [[ $code   -eq 1 ]]; then echo "[pre-push] py changed → refreshing code-embeddings";          _pp_bounded_refresh code-embed   "$PY_PP" "$CLI_PP" --refresh-code-embeddings;   ran=1; fi
         if [[ $md     -eq 1 ]]; then echo "[pre-push] markdown changed → refreshing corpus-embeddings";  _pp_bounded_refresh corpus-embed "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings; ran=1; fi
-        if [[ $comp   -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-keeper-cache           2>&1 | tail -1 | sed 's/^/[pre-push] keeper: /'           || true; ran=1; fi
-        if [[ $agents -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-agent-context-cache    2>&1 | tail -1 | sed 's/^/[pre-push] agent-context: /'    || true; ran=1; fi
-        if [[ $ndjson -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache 2>&1 | tail -1 | sed 's/^/[pre-push] auto-improvement: /' || true; ran=1; fi
-        if [[ $graph  -eq 1 ]]; then "$PY_PP" "$CLI_PP" --refresh-noc-graph              2>&1 | tail -1 | sed 's/^/[pre-push] noc-graph: /'        || true; ran=1; fi
+        if [[ $comp   -eq 1 ]]; then _pp_bounded_refresh keeper           "$PY_PP" "$CLI_PP" --refresh-keeper-cache;           ran=1; fi
+        if [[ $agents -eq 1 ]]; then _pp_bounded_refresh agent-context    "$PY_PP" "$CLI_PP" --refresh-agent-context-cache;    ran=1; fi
+        if [[ $ndjson -eq 1 ]]; then _pp_bounded_refresh auto-improvement "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache; ran=1; fi
+        if [[ $graph  -eq 1 ]]; then _pp_bounded_refresh noc-graph        "$PY_PP" "$CLI_PP" --refresh-noc-graph;              ran=1; fi
         # memory-embeddings is OUT-OF-REPO (the ~/.claude memory dir), so git CANNOT
         # gate it on changed files the way the others are gated — and an agent that
         # edits memory mid-session must never have to refresh it by hand (the
