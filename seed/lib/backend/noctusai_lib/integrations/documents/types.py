@@ -73,22 +73,9 @@ class TextSource(str, Enum):
 #: one entry here plus its three attributes below. Hand-written per-field
 #: predicates were what this replaced — see the class docstring's N=3 note.
 #:
-#: NOC-REMEDIATE[nacionalidade-identity-parser]: `nacionalidade` is NOT a
-#: member — there is no parser for it anywhere in this family (`real.py`,
-#: `civil_status.py`) even though a certidão de casamento routinely asserts
-#: it twice ("de nacionalidade brasileira") and a downstream contract
-#: qualification gate hard-requires the field. `nacionalidade` DOES exist as
-#: a stored concept elsewhere (`social_wiring.clientes.nacionalidade`,
-#: `matricula_qualificacao.py`'s ATO-text extractor for property registries)
-#: — that is a DIFFERENT pipeline, not wired to `LadderIdentityExtractor`.
-#: Adding it here means: a new `nacionalidade.py` parser (label-anchored on
-#: "DE NACIONALIDADE <gentílico>" / "NACIONALIDADE:") plus one `CAMPOS`
-#: entry plus one attribute triple in `IdentityFields` plus wiring into
-#: `real.py` — deliberately not done under this fix's time pressure rather
-#: than shipped half-considered. — 2026-09-21
 CAMPOS: tuple[str, ...] = (
     "data_nascimento", "nome", "genero", "cpf", "rg",
-    "estado_civil", "regime_bens", "data_casamento",
+    "estado_civil", "regime_bens", "data_casamento", "nacionalidade",
 )
 
 
@@ -183,6 +170,21 @@ class IdentityFields:
     not the client. `data_emissao` therefore lives here as a plain triple
     and stays deliberately absent from `CAMPOS`, exactly as `rg_orgao`
     does — see that field's own comment.
+
+    **AND `nacionalidade` ARRIVED, RESOLVING THE `NOC-REMEDIATE` THIS
+    DOCSTRING USED TO CARRY** — one `CAMPOS` entry, one triple, two
+    aliases, `sobrescreve=False`: a REGISTRATION field like `genero` and
+    `estado_civil`, not a document-owned one like `nome_oficial`, for the
+    same reason those two give — no second column holds an operator's own
+    spelling, so a first typed value should not be silently overwritten by
+    a later document read. See `nacionalidade.py` for why this is the
+    first field in the family whose "two labelled readings disagree"
+    check runs over a CANONICALISED value rather than the raw string —
+    grammatical gender ("brasileiro"/"brasileira") is not the same kind of
+    disagreement `estado_civil`'s AVERBAÇÃO timeline is, and collapsing
+    both spouses' readings to the same token BEFORE comparing them is what
+    makes a same-nationality couple's certidão resolve at `alta` instead
+    of `nenhuma`.
     """
 
     kind: IdentityDocumentKind = IdentityDocumentKind.UNKNOWN
@@ -281,6 +283,20 @@ class IdentityFields:
     data_emissao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
     data_emissao_rotulo: Optional[str] = None
 
+    # ─── Nacionalidade ──────────────────────────────────────────────────
+    #: Normalised to the closed gentílico vocabulary
+    #: (`nacionalidade.NACIONALIDADE_VALORES`), always the CANONICAL
+    #: MASCULINE spelling regardless of which grammatical gender the
+    #: document printed — see `nacionalidade.py`'s module docstring for
+    #: why that canonicalisation is what makes a same-nationality couple's
+    #: certidão resolve instead of colliding with the family's usual
+    #: "two labelled readings disagree" rule. `social_wiring.clientes.
+    #: nacionalidade` is unconstrained TEXT, like `estado_civil` — the
+    #: taxonomy lives in the extractor, not in a database CHECK.
+    nacionalidade: Optional[str] = None
+    nacionalidade_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    nacionalidade_rotulo: Optional[str] = None
+
     # ─── Provenance, shared by every field on this result ─────────────
     source: TextSource = TextSource.NENHUMA
     error: Optional[str] = None
@@ -377,6 +393,10 @@ class IdentityFields:
         return self.persistable("data_casamento")
 
     @property
+    def persistable_nacionalidade(self) -> bool:
+        return self.persistable("nacionalidade")
+
+    @property
     def sugestao_data_nascimento(self) -> bool:
         return self.sugestao("data_nascimento")
 
@@ -407,6 +427,10 @@ class IdentityFields:
     @property
     def sugestao_data_casamento(self) -> bool:
         return self.sugestao("data_casamento")
+
+    @property
+    def sugestao_nacionalidade(self) -> bool:
+        return self.sugestao("nacionalidade")
 
 
 @dataclass(frozen=True)

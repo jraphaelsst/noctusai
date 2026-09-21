@@ -20,6 +20,10 @@ from noctusai_lib.domain.texto_ptbr import (
     numero_com_extenso,
 )
 from noctusai_lib.integrations.documents.cpf import format_cpf
+from noctusai_lib.integrations.documents.nacionalidade import (
+    canonico as _nacionalidade_canonica,
+    feminino as _nacionalidade_feminina,
+)
 
 from app.modules.card_hub.contrato_gerador.concordancia import (
     Concordancia,
@@ -83,6 +87,13 @@ def pct_simples(valor: Decimal) -> str:
 
 # ─── qualificação das partes (spec §2.1) ──────────────────────────────────
 
+#: Legacy free-text spellings a human typed BEFORE the extractor could read
+#: `nacionalidade` (migration 145) — "brasileiro(a)"/"brasil" have no
+#: grammatical-gender pair the seed's closed vocabulary recognises
+#: (`nacionalidade.canonico` intentionally does not match parenthesised or
+#: bare-demonym forms; see that function's own test). Checked FIRST, ahead
+#: of the general vocabulary below, so an existing typed value keeps
+#: rendering exactly as it always did.
 _NACIONALIDADE_BR = {"brasileiro", "brasileira", "brasileiro(a)", "brasileira(o)", "brasil"}
 
 _ESTADO_CIVIL_FLEX = {
@@ -108,10 +119,33 @@ def _g(p: Pessoa, m: str, f: str) -> str:
 
 
 def nacionalidade_flex(p: Pessoa) -> str:
+    """The party's nationality, gendered to agree with them (spec §2.0).
+
+    Migration 145 made `nacionalidade` extractable — a new-model CNH prints
+    "BRASILEIRO" for a woman, and a certidão prints each spouse's own
+    grammatical gender. Neither is safe to print verbatim: contract 08 (a
+    human-typed reference) renders "brasileira" for a woman and
+    "brasileiro" for a man regardless of which form the SOURCE document
+    happened to spell, because agreement here is a fact about the PARTY,
+    not about the document.
+
+    So a value is re-genderED, not passed through, once it is recognised —
+    either the legacy `_NACIONALIDADE_BR` set (kept for backward
+    compatibility with a value a human typed before 145 existed) or the
+    seed's closed gentílico vocabulary (`nacionalidade.canonico` /
+    `.feminino` — the same table `find_nacionalidade` uses to extract, so
+    the generator's agreement and the extractor's canonicalisation can
+    never drift apart). A value that matches neither is free text with no
+    known agreement rule — printed exactly as stored, lower-cased, the same
+    fallback this function always had.
+    """
     bruto = (p.nacionalidade or "").strip()
     if bruto.lower() in _NACIONALIDADE_BR:
         return _g(p, "brasileiro", "brasileira")
-    return bruto.lower()
+    canonica = _nacionalidade_canonica(bruto)
+    if canonica is None:
+        return bruto.lower()
+    return _g(p, canonica, _nacionalidade_feminina(canonica) or canonica)
 
 
 def rg_texto(p: Pessoa) -> str:

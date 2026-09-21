@@ -305,6 +305,12 @@ class ClientePatchBody(StrictHttpModel):
     #: The spouse's OWN clientes row, so they get the same checklist, uploads
     #: and extraction as any other signatory. A name in TEXT signs nothing.
     conjuge_cliente_id: Optional[UUID] = None
+    #: Free text since 097; ALSO read off an identity document/certidão
+    #: since migration 145 (`noctusai_lib.integrations.documents.
+    #: nacionalidade`). `nacionalidade_origem` is NOT accepted, exactly like
+    #: `data_casamento_origem`/`genero_origem`: a typed value must outrank
+    #: every later extraction, and that is only safe while the SERVER
+    #: decides a value was typed.
     nacionalidade: Optional[str] = None
 
     # Residential address of the PERSON — not of any imóvel. Structured rather

@@ -805,6 +805,71 @@ class TestDataCasamentoIsExtracted:
         assert _cliente(scoped, cid)["data_casamento"] == "1999-06-05"
 
 
+class TestNacionalidadeIsExtracted:
+    """Migration 145 — resolves NOC-REMEDIATE[nacionalidade-identity-parser].
+    `nacionalidade` is a `CAMPOS` entry on exactly the same terms
+    `genero`/`estado_civil` arrived on (`sobrescreve=False`): a REGISTRATION
+    field, first-writer-wins."""
+
+    @staticmethod
+    def _com_nacionalidade(
+        confianca=ExtractionConfidence.ALTA, value="brasileiro"
+    ) -> IdentityFields:
+        return IdentityFields(
+            nacionalidade=value,
+            nacionalidade_confianca=confianca,
+            nacionalidade_rotulo="NACIONALIDADE",
+            source=TextSource.TEXT_LAYER,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_confident_read_fills_the_column_and_stamps_provenance(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="cnh")
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_nacionalidade()),
+        )
+        assert out["aplicado_ao_cliente"]["nacionalidade"] is True
+
+        row = _cliente(scoped, cid)
+        assert row["nacionalidade"] == "brasileiro"
+        assert row["nacionalidade_origem"] == "cnh"
+        assert row["nacionalidade_documento_id"] == did
+
+    @pytest.mark.asyncio
+    async def test_a_low_confidence_read_stays_on_the_document_as_a_suggestion(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="cnh")
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(
+                self._com_nacionalidade(ExtractionConfidence.BAIXA)
+            ),
+        )
+        assert _cliente(scoped, cid).get("nacionalidade") is None
+        assert _documento(scoped, did)["extracao_nacionalidade"] == "brasileiro"
+
+    @pytest.mark.asyncio
+    async def test_an_existing_value_is_not_overwritten(self, client, scoped):
+        """`sobrescreve=False` — no second column holds an operator's own
+        spelling, so a typed value must outrank a later document reading."""
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh",
+            cliente={
+                "nacionalidade": "italiano",
+                "nacionalidade_origem": "manual",
+            },
+        )
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_nacionalidade()),
+        )
+        assert _cliente(scoped, cid)["nacionalidade"] == "italiano"
+
+
 class TestDataEmissaoRidesTheDocumentNotTheClient:
     """Migration 117. `data_emissao` is deliberately NOT a `CAMPOS` entry —
     it never reaches `clientes`, only `cliente_documentos`."""
@@ -1010,6 +1075,32 @@ class TestDataCasamentoEDataEmissaoViaLadderReal:
         assert doc["extracao_data_emissao"] == "2024-03-12"
         assert doc["extracao_data_emissao_confianca"] == "baixa"
         assert doc["extracao_data_emissao_rotulo"] == "FECHAMENTO_CARTORIO"
+
+
+class TestNacionalidadeViaLadderReal:
+    """Migration 145, wired end to end — the certidão fixture two spouses of
+    the SAME nationality, each printed in their own grammatical gender,
+    resolving through the seed's real parser + this service's storage."""
+
+    @pytest.mark.asyncio
+    async def test_a_real_certidao_naming_two_same_nationality_spouses(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        texto = (
+            "CERTIDAO DE CASAMENTO\n"
+            "ALMIR TEIXEIRA DA COSTA, de nacionalidade brasileira, filho de "
+            "PEDRO TEIXEIRA DA COSTA.\n"
+            "MARIANA PELLEGRINI RANGEL, de nacionalidade brasileira, filha "
+            "de EMILIO RANGEL.\n"
+        )
+        resolver = _StubResolver(_StubResolved(text=texto))
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=LadderIdentityExtractor(resolver=resolver, max_pages=None),
+        )
+        assert out["aplicado_ao_cliente"]["nacionalidade"] is True
+        assert _cliente(scoped, cid)["nacionalidade"] == "brasileiro"
 
 
 class TestACertidaoOfTwoSpousesStillFeedsTheCard:

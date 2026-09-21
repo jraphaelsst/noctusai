@@ -224,6 +224,54 @@ describe("sugestões de estado civil / regime de bens (migration 110)", () => {
     expect(queryByTestId("documento-checklist-estado_civil-sugestao-valor")).toBeNull();
     expect(queryByTestId("documento-checklist-regime_bens-sugestao-valor")).toBeNull();
   });
+
+  it("oferece a sugestão de nacionalidade com o valor capitalizado (migration 145)", async () => {
+    const { getByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        sugestoesExtras: {
+          nacionalidade: {
+            valor: "brasileiro",
+            documento_id: "doc-3",
+            documento_nome: "cnh.pdf",
+            tipo_documento: "cnh",
+            confianca: "alta",
+            fonte: "texto",
+            rotulo: "NACIONALIDADE",
+            valor_atual: null,
+          },
+        },
+      }),
+    );
+    expect(
+      getByTestId("documento-checklist-nacionalidade-sugestao-valor").textContent,
+    ).toContain("Brasileiro");
+  });
+
+  it("oferece a sugestão de data do casamento formatada em pt-BR (migration 117 — encontrado ao lado da 145)", async () => {
+    const { getByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        sugestoesExtras: {
+          data_casamento: {
+            valor: "2010-03-12",
+            documento_id: "doc-4",
+            documento_nome: "certidao.pdf",
+            tipo_documento: "certidao_casamento",
+            confianca: "alta",
+            fonte: "texto",
+            rotulo: "CASARAM-SE EM",
+            valor_atual: null,
+          },
+        },
+      }),
+    );
+    expect(
+      getByTestId("documento-checklist-data_casamento-sugestao-valor").textContent,
+    ).toContain("12/03/2010");
+  });
 });
 
 describe("hideHeader — quando um bloco dobrável já nomeia a seção", () => {

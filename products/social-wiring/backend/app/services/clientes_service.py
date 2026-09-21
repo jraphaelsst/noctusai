@@ -1299,6 +1299,18 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         payload["data_casamento_documento_id"] = None
         payload["data_casamento_em"] = _now() if payload["data_casamento"] else None
 
+    # 🔴 Identical treatment for `nacionalidade` (migration 145, resolves
+    # `NOC-REMEDIATE[nacionalidade-identity-parser]`) — the same "a typed
+    # value must outrank every later extraction" rule every field above
+    # gives, on a field that has been PATCH-able since 097 but only became
+    # ALSO readable off a document with this migration. Pre-145 rows may
+    # carry a `nacionalidade` with no `_origem` at all; a PATCH from here on
+    # is unambiguously the server's own stamp.
+    if "nacionalidade" in payload:
+        payload["nacionalidade_origem"] = "manual" if payload["nacionalidade"] else None
+        payload["nacionalidade_documento_id"] = None
+        payload["nacionalidade_em"] = _now() if payload["nacionalidade"] else None
+
     payload["updated_at"] = _now()
     resp = (
         _t(client, "clientes")

@@ -111,6 +111,14 @@ class FakeIdentityExtractor:
             data_emissao=date(2024, 3, 15),
             data_emissao_confianca=ExtractionConfidence.ALTA,
             data_emissao_rotulo="EMITIDA EM",
+            # `nacionalidade` (resolves `NOC-REMEDIATE[nacionalidade-identity-
+            # parser]`) — same parity rule the F6 note above states: a Fake
+            # that omitted a field the Real adapter populates would let a
+            # consumer's tests pass against behaviour the Real adapter never
+            # exhibits.
+            nacionalidade="brasileiro",
+            nacionalidade_confianca=ExtractionConfidence.ALTA,
+            nacionalidade_rotulo="NACIONALIDADE",
             source=TextSource.TEXT_LAYER,
         )
 

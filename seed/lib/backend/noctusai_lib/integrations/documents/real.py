@@ -54,6 +54,7 @@ from noctusai_lib.integrations.documents.cpf import (
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
+from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
 from noctusai_lib.integrations.documents.name import find_name, find_name_conflitos
 from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
 from noctusai_lib.integrations.documents.types import (
@@ -178,6 +179,19 @@ class LadderIdentityExtractor:
         )
         data_emissao, data_emissao_conf, data_emissao_label = find_data_emissao(text)
 
+        # `nacionalidade` is NOT tempered by source, for the same reason
+        # `genero` and `estado_civil` are not: the parser requires an
+        # explicit `NACIONALIDADE` label AND canonicalises every reading
+        # before comparing, so an OCR misread can only turn a real reading
+        # into nothing (or into a genuine disagreement, already `nenhuma`)
+        # — never into a DIFFERENT valid vocabulary token. See
+        # `nacionalidade.py` for why two spouses' readings are compared
+        # AFTER canonicalising across grammatical gender, and for
+        # `NOC-REMEDIATE[nacionalidade-titular-hint]` — the one case this
+        # leaves unresolved: a genuinely binational couple's certidão,
+        # which reports `nenhuma` here with no `titular`-hint tie-break.
+        nacionalidade, nacionalidade_conf, nacionalidade_label = find_nacionalidade(text)
+
         # 🔴 TWO TITULARES: SELECT WITH THE CALLER'S HINT, ELSE A NOTICE
         # -------------------------------------------------------------------
         # A certidão de casamento names TWO people with equal prominence
@@ -265,6 +279,9 @@ class LadderIdentityExtractor:
             data_emissao=data_emissao,
             data_emissao_confianca=ExtractionConfidence(data_emissao_conf),
             data_emissao_rotulo=data_emissao_label,
+            nacionalidade=nacionalidade,
+            nacionalidade_confianca=ExtractionConfidence(nacionalidade_conf),
+            nacionalidade_rotulo=nacionalidade_label,
             source=source,
         )
 

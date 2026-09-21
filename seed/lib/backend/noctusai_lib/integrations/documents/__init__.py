@@ -70,6 +70,10 @@ from noctusai_lib.integrations.documents.civil_status import (
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
 from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.gender import find_gender
+from noctusai_lib.integrations.documents.nacionalidade import (
+    NACIONALIDADE_VALORES,
+    find_nacionalidade,
+)
 from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao, is_same_as_cpf
 from noctusai_lib.integrations.documents.ladder import (
     DocumentTextLadder,
@@ -209,6 +213,7 @@ __all__ = [
     "MatriculaAto",
     "MatriculaExtractor",
     "MatriculaFields",
+    "NACIONALIDADE_VALORES",
     "Paragraph",
     "ParagraphKind",
     "Qualificacao",
@@ -235,6 +240,7 @@ __all__ = [
     "find_estado_civil",
     "find_gender",
     "find_matricula",
+    "find_nacionalidade",
     "find_name",
     "find_regime_bens",
     "find_rg",

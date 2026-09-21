@@ -296,6 +296,18 @@ CAMPOS: tuple[CampoExtraido, ...] = (
         coluna_rotulo="extracao_data_casamento_rotulo",
         sobrescreve=False,
     ),
+    # Resolves NOC-REMEDIATE[nacionalidade-identity-parser] (migration 145).
+    # `sobrescreve=False`, on the same terms `genero`/`estado_civil` arrived
+    # on: a REGISTRATION field with no second column holding an operator's
+    # own spelling, so a typed value outranks a later document reading —
+    # never overwritten, only offered as a suggestion.
+    CampoExtraido(
+        item_key="nacionalidade",
+        coluna_valor="extracao_nacionalidade",
+        coluna_confianca="extracao_nacionalidade_confianca",
+        coluna_rotulo="extracao_nacionalidade_rotulo",
+        sobrescreve=False,
+    ),
 )
 
 #: 🔴 `data_emissao` (contract F6) is deliberately NOT a member of `CAMPOS` —
@@ -396,6 +408,12 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
             fields.data_casamento_confianca.value,
             fields.data_casamento_rotulo,
             fields.persistable_data_casamento,
+        ),
+        "nacionalidade": (
+            fields.nacionalidade,
+            fields.nacionalidade_confianca.value,
+            fields.nacionalidade_rotulo,
+            fields.persistable_nacionalidade,
         ),
     }
 

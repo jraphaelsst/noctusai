@@ -55,7 +55,11 @@ import type {
   DocumentoChecklistItem,
   ExtracaoSugestao,
 } from "@/types/cardHub";
-import { rotuloEstadoCivil, rotuloRegimeBens } from "@/types/qualificacaoCompletude";
+import {
+  rotuloEstadoCivil,
+  rotuloNacionalidade,
+  rotuloRegimeBens,
+} from "@/types/qualificacaoCompletude";
 
 import { ChecklistItemRow } from "./ChecklistItemRow";
 import type { DadosPessoais } from "./DadosPessoaisForm";
@@ -65,6 +69,15 @@ import { formatarDataISO } from "./format";
  * `sugestoes_extras` entries beyond `nome_oficial` (migration 110) — pt-BR
  * label plus a formatter for the raw value, since `estado_civil` arrives as
  * the extractor's canonical snake_case token (`"casado"`), never prose.
+ *
+ * 🔴 `data_casamento` (migration 117) is included here even though this
+ * component predates it — found while wiring `nacionalidade` (145) below:
+ * `identidade_extracao_service.CAMPOS` has offered a `data_casamento`
+ * suggestion since 117, but this map only iterates its OWN keys
+ * (`Object.entries(EXTRAS_QUALIFICACAO)` further down), so that suggestion
+ * has been silently invisible in this UI ever since. Fixed on contact
+ * rather than left for a second pass — one entry, the same
+ * `formatarDataISO` the checklist rows already use for a date value.
  */
 const EXTRAS_QUALIFICACAO: Record<
   string,
@@ -72,6 +85,8 @@ const EXTRAS_QUALIFICACAO: Record<
 > = {
   estado_civil: { label: "Estado civil", formatar: rotuloEstadoCivil },
   regime_bens: { label: "Regime de bens", formatar: rotuloRegimeBens },
+  data_casamento: { label: "Data do casamento", formatar: formatarDataISO },
+  nacionalidade: { label: "Nacionalidade", formatar: rotuloNacionalidade },
 };
 
 export interface DocumentoChecklistSectionProps {

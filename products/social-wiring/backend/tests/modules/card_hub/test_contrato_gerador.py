@@ -37,7 +37,7 @@ from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
-from app.modules.card_hub.contrato_gerador import derivacao, documento, lint
+from app.modules.card_hub.contrato_gerador import derivacao, documento, frases, lint
 from app.modules.card_hub.contrato_gerador.concordancia import lado
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
@@ -786,3 +786,52 @@ class TestAbntPdf:
         r = _render(1, d)
         with pytest.raises(UnsupportedGlyphError):
             documento.gerar_pdf(r.docx)
+
+
+class TestNacionalidadeFlex:
+    """`frases.nacionalidade_flex` (migration 145) — agreement follows the
+    PARTY's own gender, never the spelling a source document happened to
+    print. Contract 08 (human reference) renders "brasileira" for a woman
+    and "brasileiro" for a man regardless of source spelling; the new-model
+    CNH prints "BRASILEIRO" even for a woman — this is the function that
+    keeps those two facts from leaking into each other.
+    """
+
+    def _pessoa(self, *, genero: str, nacionalidade: str):
+        return fx.pessoa(
+            "cliente-1", "vendedor", "titular", "FULANA DE TAL", genero,
+            "111", "11.111.111-1", nacionalidade=nacionalidade,
+        )
+
+    def test_a_masculine_source_reading_is_regendered_for_a_woman(self):
+        """The exact CNH bug this migration closes: the document printed
+        the masculine form for a woman."""
+        p = self._pessoa(genero="Feminino", nacionalidade="brasileiro")
+        assert frases.nacionalidade_flex(p) == "brasileira"
+
+    def test_a_feminine_source_reading_is_regendered_for_a_man(self):
+        p = self._pessoa(genero="Masculino", nacionalidade="brasileira")
+        assert frases.nacionalidade_flex(p) == "brasileiro"
+
+    def test_a_non_brazilian_gentilico_also_agrees_with_the_party(self):
+        p = self._pessoa(genero="Feminino", nacionalidade="italiano")
+        assert frases.nacionalidade_flex(p) == "italiana"
+
+    def test_a_gentilico_with_no_o_a_ending_still_agrees(self):
+        """"francês"/"francesa" — the family gender.py's own module
+        docstring calls out as carrying no -o/-a agreement signal at all;
+        the closed vocabulary's table (not a suffix rule) is what gets it
+        right."""
+        p = self._pessoa(genero="Feminino", nacionalidade="frances")
+        assert frases.nacionalidade_flex(p) == "francesa"
+
+    def test_the_legacy_parenthetical_form_still_renders(self):
+        """`"Brasileiro(a)"` predates 145 (`contrato_gerador_fixtures.
+        pessoa`'s own default) and must keep working exactly as it always
+        did — this migration is additive, not a breaking rewrite."""
+        p = self._pessoa(genero="Feminino", nacionalidade="Brasileiro(a)")
+        assert frases.nacionalidade_flex(p) == "brasileira"
+
+    def test_free_text_outside_the_vocabulary_passes_through_lowercased(self):
+        p = self._pessoa(genero="Feminino", nacionalidade="Sul-coreana")
+        assert frases.nacionalidade_flex(p) == "sul-coreana"

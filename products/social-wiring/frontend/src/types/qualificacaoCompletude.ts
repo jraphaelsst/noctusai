@@ -63,6 +63,19 @@ export function rotuloRegimeBens(valor: string | null | undefined): string {
 }
 
 /**
+ * Display form of a `nacionalidade` value (migration 145) — a suggested
+ * value arrives lower-case (the extractor's canonical gentílico, e.g.
+ * "brasileiro"); this only capitalises it for display, same fallback shape
+ * as `rotuloEstadoCivil`/`rotuloRegimeBens`. Free text a human typed
+ * (`"Brasileiro(a)"`) is not re-mapped — capitalising an already-cased
+ * string is a no-op on its first letter.
+ */
+export function rotuloNacionalidade(valor: string | null | undefined): string {
+  if (!valor) return "Não informado";
+  return valor.charAt(0).toUpperCase() + valor.slice(1);
+}
+
+/**
  * Every key `completude_contratual`'s `faltando` can name — the ONE party's
  * own fields (`_CAMPOS_QUALIFICACAO_CONTRATO` + `"endereco"` +
  * `"regime_bens"`), plus the two PAIR-level facts (`"conjuge"` — no linked
