@@ -351,7 +351,7 @@ Mutating a non-draft → 409 `version_immutable`. Unknown fields → 422 (`Stric
 | `GET /api/studio/agents/{key}/evals/runs/{run_id}` | — | `EvalRun + {resultados: [{case_id, case_slug, case_titulo, status, score, saida, veredito, notas_juiz, duracao_ms}]}` |
 | `POST /api/studio/agents/{key}/evals/runs/{run_id}/cancel` (admin) | — | `EvalRun` |
 
-### D5 · Import (BE-KE owns the endpoint; the bundle format is §F)
+### D5 · Import (BE-RT owns the endpoint — it needs both the BE-DEF and BE-KE stores; the bundle format is §F)
 `POST /api/studio/agents/{key}/import` (admin) — body = the §F bundle (JSON, ≤ 25 MB; raise the body limit for this route only).
 Query `?dry_run=true` returns the plan without writing. Response:
 `{dry_run, agente: {criado: bool}, rascunho: {version_id, secoes, skills, arquivos}, conhecimento: {colecoes_criadas, documentos_criados, documentos_atualizados, documentos_inalterados}, evals: {criados, atualizados}, clientes: {criados}, avisos: [str]}`.
@@ -476,13 +476,40 @@ Rules: TanStack Query hooks in `src/hooks/studio/*.ts` (one file per resource); 
 | Slice | Owns (creates/edits) | Must not touch |
 |---|---|---|
 | **BE-DEF** | `migrations/012_*`, `app/studio/{__init__,compiler,models}.py`, `app/stores/studio_definitions.py`, `app/routers/studio_agents_router.py`, `app/routers/studio_clients_router.py`, `app/schemas/studio.py`, tests under `tests/studio/def/` | runtime/, conversations_router, 013 |
-| **BE-KE** | `migrations/013_*`, `app/stores/studio_knowledge.py`, `app/stores/studio_evals.py`, `app/routers/studio_knowledge_router.py`, `app/routers/studio_evals_router.py`, `app/routers/studio_import_router.py`, `app/schemas/studio_ke.py`, tests under `tests/studio/ke/` | compiler, runtime/ |
-| **BE-RT** (wave 2) | `runtime/*`, `app/studio/{spec,tools,evals}.py`, `conversations_router.py`, `schemas/agents.py` (additive), `dependencies.py` (additive), `main.py` router registration for all studio routers, tests under `tests/studio/rt/` + existing runtime tests kept green | migrations |
+| **BE-KE** | `migrations/013_*`, `app/stores/studio_knowledge.py`, `app/stores/studio_evals.py`, `app/routers/studio_knowledge_router.py`, `app/routers/studio_evals_router.py`, `app/schemas/studio_ke.py`, tests under `tests/studio/ke/` | compiler, runtime/ |
+| **BE-RT** (wave 2) | `runtime/*`, `app/studio/{spec,tools,evals,importer}.py`, `app/routers/studio_import_router.py`, `conversations_router.py`, `schemas/agents.py` (additive), `dependencies.py` (additive), `main.py` router registration for all studio routers, tests under `tests/studio/rt/` + existing runtime tests kept green | migrations |
 | **FE-DEF** | `src/pages/studio/{StudioList,StudioAgent}.tsx`, `src/pages/studio/tabs/{Overview,Prompt,Skills,Settings,Versions,Compiled}Tab.tsx`, `src/pages/studio/PromptByHash.tsx`, `src/hooks/studio/{useStudioAgents,useVersions,useCompiled,useClients}.ts`, `src/api/studio/types.ts` (the TS mirror of §D — FE-DEF authors it, FE-KE imports), `App.tsx` routes+nav | KE tabs |
 | **FE-KE** | `src/pages/studio/tabs/{Knowledge,Evals,Clients,Chat}Tab.tsx`, `src/hooks/studio/{useKnowledge,useEvals,useStudioChat}.ts`, `src/components/studio/*` it needs | FE-DEF files (imports `types.ts` read-only; if it needs a type added, it adds it in `src/api/studio/types-ke.ts`) |
 | **CONTENT** (orchestrator) | IsaIA bundle JSON — authored OUTSIDE the repo | repo |
 
 `main.py` router registration: BE-DEF and BE-KE each export `router` objects; **BE-RT registers all of them** (single owner of `main.py`) — until then BE-DEF/BE-KE tests mount their routers on a test app.
+
+## §J2 · Cross-slice seams (pinned so wave-1 slices never import each other's unfinished code)
+
+1. **Eval gate** — BE-DEF defines in `app/studio/models.py`:
+   ```python
+   @dataclass(frozen=True)
+   class GateRun: id: UUID; score: float | None; limiar: float; compiled_hash: str; status: str
+   class EvalGate(Protocol):
+       def latest_concluded_run(self, org_id: UUID, version_id: UUID) -> GateRun | None: ...
+   class FakeEvalGate: ...   # in-memory, settable in tests
+   ```
+   BE-DEF's publish route depends on `get_eval_gate_dep` (BE-DEF adds it to its own router module as a
+   FastAPI dependency returning `FakeEvalGate()` ONLY under the test app; the production binding is added by
+   BE-RT). BE-KE implements `SupabaseEvalGate` in `app/stores/studio_evals.py` satisfying that Protocol
+   (it imports `GateRun` from `app.studio.models` — BE-KE copies the 5-field dataclass verbatim into its tests'
+   expectations; the import resolves once BE-DEF merges, and BE-KE's own module must import lazily inside the
+   method so BE-KE's branch builds standalone). Gate rule (BE-DEF): pass ⇔ run exists ∧ status='concluida' ∧
+   run.compiled_hash == draft.compiled_hash ∧ score >= agent.publicacao_limiar.
+2. **Eval scheduling** — BE-KE's `POST .../evals/runs` inserts the run as `pendente` (with the version's current
+   `compiled_hash`; NULL hash → 409 `compile_required`) then calls `scheduler.schedule(run_id)` from dependency
+   `get_eval_scheduler_dep`. BE-KE's default binding raises → 503 `eval_runner_unavailable` (fail closed); BE-RT
+   binds the real runner.
+3. **Router registration** — only BE-RT edits `main.py`. Wave-1 tests mount routers on a local test app.
+4. **Frontend tab modules** — each tab file default-exports `function XTab({ agentKey }: { agentKey: string })`.
+   FE-DEF's shell lazy-imports all ten tab files by the §J names. FE-DEF ships the four KE tab files as minimal
+   compiling stubs ("Disponível em breve") so its branch builds; FE-KE REPLACES those four files wholesale
+   (orchestrator merges FE-DEF first, then takes FE-KE's side for exactly those four paths).
 
 ## §K · Deliberately later (named destinations)
 - Embedding hybrid search over `knowledge_documents` (pgvector + `noctusai_lib.integrations.llm.embeddings`) — trigger: search misses reported in evals ≥ 3.
