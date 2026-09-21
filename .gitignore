@@ -185,3 +185,6 @@ mcp/olx/fixtures/observed/*.json
 # lives in code, anonymized. Never commit the samples: git history cannot
 # honor a deletion request.
 products/*/contracts/
+
+# IsaIA raw source package (third-party course material; repo is public — content lives in the agents DB)
+products/agents/projects/IsaIA/
