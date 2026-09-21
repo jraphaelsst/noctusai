@@ -1,0 +1,302 @@
+/**
+ * TS mirror of the Agent Studio CONTRACT.md slices owned by FE-KE — §D3
+ * (Knowledge), §D4 (Evals), §D2 (Clients — FE-KE builds its own reader
+ * because FE-DEF's `src/api/studio/types.ts` is not on this branch; see
+ * `CONTRACT.md` §J "FE-KE ... prefer naming yours `useClientsKe.ts` to
+ * avoid a path collision"), and the §D6 conversation/message field
+ * additions the Conversar tab needs.
+ *
+ * Field names are copied VERBATIM from CONTRACT.md — never renamed to a
+ * "nicer" JS convention. FE-DEF's `types.ts` is the eventual merge target;
+ * this file is deliberately import-free (no dependency on FE-DEF's file)
+ * so this branch builds standalone (contract §J2.4).
+ */
+
+// ─── §D3 Knowledge ──────────────────────────────────────────────────────────
+
+export interface KnowledgeCollection {
+  id: string;
+  slug: string;
+  nome: string;
+  tag: string | null;
+  descricao: string;
+  ordem: number;
+  total_documentos: number;
+}
+
+export interface KnowledgeCollectionsResponse {
+  colecoes: KnowledgeCollection[];
+}
+
+export type KnowledgeCollectionCreate = {
+  slug: string;
+  nome: string;
+  tag?: string | null;
+  descricao?: string;
+  ordem?: number;
+};
+
+export type KnowledgeCollectionPatch = Partial<
+  Omit<KnowledgeCollectionCreate, "slug">
+>;
+
+export const DOCUMENT_TIPOS = ["fonte", "sintese", "card", "template", "indice", "outro"] as const;
+export type DocumentTipo = (typeof DOCUMENT_TIPOS)[number];
+
+export interface DocumentListItem {
+  id: string;
+  slug: string;
+  titulo: string;
+  tipo: DocumentTipo;
+  resumo: string | null;
+  chars: number;
+  ativo: boolean;
+  updated_at: string;
+}
+
+export interface DocumentListResponse {
+  items: DocumentListItem[];
+  total: number;
+}
+
+export interface Provenance {
+  autor?: string;
+  origem?: string;
+  referencia?: string;
+  pagina?: string;
+  licenca?: string;
+  notas?: string;
+}
+
+export interface Document {
+  id: string;
+  collection_id: string;
+  slug: string;
+  titulo: string;
+  tipo: DocumentTipo;
+  resumo: string | null;
+  conteudo: string;
+  proveniencia: Provenance;
+  ativo: boolean;
+  chars: number;
+  updated_at: string;
+}
+
+export type DocumentCreate = {
+  slug: string;
+  titulo: string;
+  tipo: DocumentTipo;
+  conteudo: string;
+  resumo?: string;
+  proveniencia?: Provenance;
+};
+
+export type DocumentPatch = Partial<Omit<DocumentCreate, "slug">> & {
+  ativo?: boolean;
+  motivo?: string;
+};
+
+export interface DocumentRevision {
+  id: string;
+  op: "create" | "update" | "archive" | "import";
+  motivo: string | null;
+  author_id: string | null;
+  created_at: string;
+}
+
+export interface DocumentRevisionsResponse {
+  items: DocumentRevision[];
+}
+
+export interface KnowledgeSearchResult {
+  doc_id: string;
+  slug: string;
+  titulo: string;
+  colecao: string;
+  tag: string | null;
+  tipo: DocumentTipo;
+  trecho: string;
+  rank: number;
+}
+
+export interface KnowledgeSearchResponse {
+  items: KnowledgeSearchResult[];
+}
+
+// ─── §D4 Evals ──────────────────────────────────────────────────────────────
+
+export interface EvalCriterios {
+  deve: string[];
+  nao_deve: string[];
+}
+
+export interface EvalCase {
+  id: string;
+  slug: string;
+  titulo: string;
+  entrada: string;
+  contexto: string | null;
+  criterios: EvalCriterios;
+  rubrica: string | null;
+  tags: string[];
+  ativo: boolean;
+}
+
+export interface EvalCaseListResponse {
+  items: EvalCase[];
+}
+
+export type EvalCaseCreate = Omit<EvalCase, "id">;
+export type EvalCasePatch = Partial<EvalCaseCreate>;
+
+export type EvalRunStatus = "pendente" | "executando" | "concluida" | "falhou" | "cancelada";
+
+export interface EvalRun {
+  id: string;
+  version_id: string;
+  compiled_hash: string;
+  status: EvalRunStatus;
+  total: number;
+  aprovados: number;
+  score: number | null;
+  limiar: number;
+  started_at: string | null;
+  finished_at: string | null;
+  erro: string | null;
+}
+
+export interface EvalRunListResponse {
+  items: EvalRun[];
+}
+
+export interface EvalVeredito {
+  criterio: string;
+  tipo: "deve" | "nao_deve";
+  ok: boolean;
+  motivo: string;
+}
+
+export interface EvalResult {
+  case_id: string;
+  case_slug: string;
+  case_titulo: string;
+  status: "pendente" | "aprovado" | "reprovado" | "erro";
+  score: number | null;
+  saida: string | null;
+  veredito: EvalVeredito[] | null;
+  notas_juiz: string | null;
+  duracao_ms: number | null;
+}
+
+export interface EvalRunDetail extends EvalRun {
+  resultados: EvalResult[];
+}
+
+export interface EvalRunCreate {
+  version_id: string;
+  case_ids?: string[];
+}
+
+// ─── §D2 Clients (FE-KE's own reader — see file header) ────────────────────
+
+export type ClientEntryTipo =
+  | "marca"
+  | "publico"
+  | "posicionamento"
+  | "trava"
+  | "decisao"
+  | "aprendizado"
+  | "evidencia"
+  | "nota";
+
+export interface ClientEntry {
+  id: string;
+  tipo: ClientEntryTipo;
+  titulo: string;
+  conteudo: string;
+  status: "ativo" | "arquivado";
+  created_at: string;
+}
+
+/** List item shape — `GET .../clients` "omits `entradas`, adds `total_entradas`". */
+export interface ClientListItem {
+  id: string;
+  slug: string;
+  nome: string;
+  resumo: string;
+  ativo: boolean;
+  total_entradas: number;
+}
+
+export interface ClientListResponse {
+  items: ClientListItem[];
+}
+
+/** Detail shape — includes `entradas`. */
+export interface ClientDetail {
+  id: string;
+  slug: string;
+  nome: string;
+  resumo: string;
+  ativo: boolean;
+  entradas: ClientEntry[];
+}
+
+export type ClientCreate = {
+  slug: string;
+  nome: string;
+  resumo?: string;
+};
+
+export type ClientPatch = Partial<{
+  nome: string;
+  resumo: string;
+  ativo: boolean;
+}>;
+
+export type ClientEntryCreate = {
+  tipo: ClientEntryTipo;
+  titulo: string;
+  conteudo: string;
+};
+
+export type ClientEntryPatch = Partial<{
+  titulo: string;
+  conteudo: string;
+  status: "ativo" | "arquivado";
+}>;
+
+// ─── §D6 Conversations/messages — studio field additions ───────────────────
+
+export interface StudioConversation {
+  id: string;
+  agent_id: string;
+  agent_key: string;
+  owner_user_id: string;
+  titulo: string | null;
+  sdk_session_id: string | null;
+  status: string;
+  version_id: string | null;
+  client_id: string | null;
+  last_message_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StudioMessage {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant" | "system";
+  texto: string;
+  blocks: unknown[];
+  version_id: string | null;
+  compiled_hash: string | null;
+  token_usage: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Envelope<T> {
+  items: T[];
+  total: number;
+}

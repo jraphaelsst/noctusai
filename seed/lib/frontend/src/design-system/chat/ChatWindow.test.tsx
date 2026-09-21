@@ -645,3 +645,43 @@ describe("ChatWindow — approval block cards (contract §E.7 / §E.2)", () => {
     expect(screen.queryByTestId("chat-approval-diff-toggle-ap1")).toBeNull();
   });
 });
+
+// ─── Link block (contract §G "Conversar", 2026-09-21) ──────────────────────
+
+describe("ChatWindow — link block (in-app navigation row)", () => {
+  it("renders a link block's label as an anchor pointing at href", () => {
+    const linkBlock: ChatBlock = { kind: "link", label: "versão 3 · prompt sha256:abcd1234", href: "/studio/prompts/sha256:abcd1234" };
+    const adapter = makeAdapter({
+      useMessages: () => ({
+        data: [makeMessage("m1", "inbound", "Aqui está o roteiro.", { blocks: [linkBlock] })],
+        isLoading: false,
+        isError: false,
+      }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    const link = screen.getByTestId("chat-link-block");
+    expect(link.textContent).toBe("versão 3 · prompt sha256:abcd1234");
+    expect(link.getAttribute("href")).toBe("/studio/prompts/sha256:abcd1234");
+  });
+
+  it("a tool block and a link block coexist on the same message", () => {
+    const toolBlock: ChatBlock = { kind: "tool", toolUseId: "tu1", name: "kb_buscar", status: "ok" };
+    const linkBlock: ChatBlock = { kind: "link", label: "versão 1 · prompt sha256:aaaa", href: "/studio/prompts/sha256:aaaa" };
+    const adapter = makeAdapter({
+      useMessages: () => ({
+        data: [makeMessage("m1", "inbound", "Resposta.", { blocks: [toolBlock, linkBlock] })],
+        isLoading: false,
+        isError: false,
+      }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    expect(screen.getByTestId("chat-tool-tu1")).toBeTruthy();
+    expect(screen.getByTestId("chat-link-block")).toBeTruthy();
+  });
+});

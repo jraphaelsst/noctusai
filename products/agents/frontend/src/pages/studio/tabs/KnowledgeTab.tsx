@@ -1,16 +1,455 @@
 /**
- * Agent Studio — "Conhecimento" tab. CONTRACT §J2.4: FE-DEF ships this file as a
- * minimal compiling stub so the shell builds; slice FE-KE REPLACES it
- * wholesale (the orchestrator takes FE-KE's side for this path at merge).
+ * Conhecimento tab — Agent Studio CONTRACT.md §D3, §G "Conhecimento".
+ *
+ * Collections sidebar + documents table (search `q`, tipo filter) + a
+ * document viewer/editor (markdown textarea, provenance fields, revision
+ * list) + a search playground calling `knowledge/search` — "shows exactly
+ * what `kb_buscar` would return" (§G). Page-scoped CRUD: this one tab both
+ * lists AND creates collections/documents
+ * (`KB § PATTERNS/frontend/product-internal-wiring.md`). Admin-only writes
+ * hidden for members (server also enforces via `require_admin`, §H.1).
  */
-export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
+import { useMemo, useState, type FormEvent } from "react";
+import { BookOpen, FilePlus2, FolderPlus, History, Save, Search } from "lucide-react";
+import { toast } from "sonner";
+import { Badge, Button, Input, PageSkeleton } from "@noctusai/lib/design-system";
+import { Card, EmptyState, ErrorState, Field, FormError, Select, Textarea } from "@/components/studio/FormControls";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { errorMessage } from "@/lib/errors";
+import {
+  useCreateDocument,
+  useCreateKnowledgeCollection,
+  useDocument,
+  useDocumentRevisions,
+  useDocuments,
+  useKnowledgeCollections,
+  useKnowledgeSearch,
+  useUpdateDocument,
+} from "@/hooks/studio/useKnowledge";
+import type { DocumentTipo } from "@/api/studio/types-ke";
+import { DOCUMENT_TIPOS } from "@/api/studio/types-ke";
+
+const PAGE_SIZE = 20;
+
+function NewCollectionForm({ agentKey, onDone }: { agentKey: string; onDone: () => void }) {
+  const [slug, setSlug] = useState("");
+  const [nome, setNome] = useState("");
+  const [tag, setTag] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const create = useCreateKnowledgeCollection(agentKey);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await create.mutateAsync({ slug, nome, tag: tag || null });
+      toast.success("Coleção criada.");
+      setSlug("");
+      setNome("");
+      setTag("");
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
   return (
-    <div
-      className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground"
-      data-testid="studio-tab-em-breve"
-      data-agent-key={agentKey}
-    >
-      Conhecimento: disponível em breve.
+    <form onSubmit={handleSubmit} className="space-y-2 border-b border-border pb-3" data-testid="knowledge-new-collection-form">
+      <FormError message={error} />
+      <Field label="Slug" required>
+        <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="audience" required />
+      </Field>
+      <Field label="Nome" required>
+        <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Audiência" required />
+      </Field>
+      <Field label="Tag (proveniência, ex.: AU)">
+        <Input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="AU" maxLength={16} />
+      </Field>
+      <Button type="submit" size="sm" variant="primary" disabled={create.isPending}>
+        <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
+        Criar coleção
+      </Button>
+    </form>
+  );
+}
+
+function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId: string; isAdmin: boolean }) {
+  const { data: doc, showSkeleton, isError, error } = useDocument(agentKey, docId);
+  const { data: revisions } = useDocumentRevisions(agentKey, docId);
+  const update = useUpdateDocument(agentKey, docId);
+  const [conteudo, setConteudo] = useState("");
+  const [resumo, setResumo] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  if (doc && loadedFor !== doc.id) {
+    setConteudo(doc.conteudo);
+    setResumo(doc.resumo ?? "");
+    setLoadedFor(doc.id);
+  }
+
+  async function handleSave() {
+    setSaveError(null);
+    try {
+      await update.mutateAsync({ conteudo, resumo, motivo: motivo || undefined });
+      toast.success("Documento salvo.");
+      setMotivo("");
+    } catch (err) {
+      setSaveError(errorMessage(err));
+    }
+  }
+
+  if (showSkeleton) return <PageSkeleton />;
+  if (isError) return <ErrorState message={errorMessage(error)} />;
+  if (!doc) return null;
+
+  return (
+    <Card className="space-y-3" data-testid="knowledge-document-detail">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="font-semibold text-foreground">{doc.titulo}</h3>
+          <p className="text-xs text-muted-foreground">
+            {doc.slug} · {doc.chars.toLocaleString("pt-BR")} caracteres
+          </p>
+        </div>
+        <Badge variant={doc.ativo ? "default" : "muted"}>{doc.ativo ? "ativo" : "arquivado"}</Badge>
+      </div>
+
+      {doc.proveniencia && Object.keys(doc.proveniencia).length > 0 && (
+        <div className="rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
+          {Object.entries(doc.proveniencia)
+            .filter(([, v]) => !!v)
+            .map(([k, v]) => (
+              <span key={k} className="mr-3">
+                <strong className="text-foreground">{k}:</strong> {String(v)}
+              </span>
+            ))}
+        </div>
+      )}
+
+      <FormError message={saveError} />
+
+      <Field label="Resumo">
+        <Textarea rows={2} value={resumo} onChange={(e) => setResumo(e.target.value)} disabled={!isAdmin} />
+      </Field>
+      <Field label="Conteúdo (markdown)">
+        <Textarea
+          rows={16}
+          monospace
+          value={conteudo}
+          onChange={(e) => setConteudo(e.target.value)}
+          disabled={!isAdmin}
+          data-testid="knowledge-document-content"
+        />
+      </Field>
+      <p className="text-xs text-muted-foreground">{conteudo.length.toLocaleString("pt-BR")} caracteres</p>
+
+      {isAdmin && (
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <Field label="Motivo da alteração (opcional)">
+              <Input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Corrige dado de fonte" />
+            </Field>
+          </div>
+          <Button variant="primary" onClick={handleSave} disabled={update.isPending} data-testid="knowledge-document-save">
+            <Save className="mr-1.5 h-3.5 w-3.5" />
+            Salvar
+          </Button>
+        </div>
+      )}
+
+      {revisions && revisions.length > 0 && (
+        <div className="space-y-1 border-t border-border pt-2">
+          <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <History className="h-3.5 w-3.5" /> Revisões
+          </p>
+          <ul className="space-y-1 text-xs text-muted-foreground">
+            {revisions.map((r) => (
+              <li key={r.id}>
+                {new Date(r.created_at).toLocaleString("pt-BR")} — {r.op}
+                {r.motivo ? ` — ${r.motivo}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SearchPlayground({ agentKey }: { agentKey: string }) {
+  const [qInput, setQInput] = useState("");
+  const [q, setQ] = useState("");
+  const { data: results, showSkeleton, isError } = useKnowledgeSearch(agentKey, q);
+
+  return (
+    <Card className="space-y-3" data-testid="knowledge-search-playground">
+      <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+        <Search className="h-4 w-4" /> Testar busca (o que <code>kb_buscar</code> devolveria)
+      </p>
+      <div className="flex gap-2">
+        <Input
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && setQ(qInput.trim())}
+          placeholder="Consulta…"
+        />
+        <Button variant="outline" onClick={() => setQ(qInput.trim())}>
+          Buscar
+        </Button>
+      </div>
+      {q && showSkeleton ? (
+        <p className="text-xs text-muted-foreground">Buscando…</p>
+      ) : q && isError ? (
+        <ErrorState message="Erro ao buscar." />
+      ) : q && (!results || results.length === 0) ? (
+        <EmptyState message="Nenhum resultado." />
+      ) : (
+        <ul className="space-y-2">
+          {(results ?? []).map((r) => (
+            <li key={r.doc_id} className="rounded-md border border-border p-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-foreground">{r.titulo}</span>
+                {r.tag && <Badge variant="outline">{r.tag}</Badge>}
+                <span className="text-muted-foreground">{r.colecao}</span>
+              </div>
+              <p className="mt-1 text-muted-foreground">{r.trecho}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
+  const isAdmin = useIsAdmin();
+  const { data: collections, showSkeleton, isError, error } = useKnowledgeCollections(agentKey);
+  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
+  const [showNewCollection, setShowNewCollection] = useState(false);
+  const [qInput, setQInput] = useState("");
+  const [filters, setFilters] = useState<{ q?: string; tipo?: DocumentTipo | ""; page: number }>({ page: 1 });
+  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
+  const [showNewDoc, setShowNewDoc] = useState(false);
+
+  const activeCollectionId = selectedCollection ?? collections?.[0]?.id ?? null;
+
+  const { data: docsPage, showSkeleton: docsLoading, isError: docsError } = useDocuments(agentKey, activeCollectionId, {
+    q: filters.q,
+    tipo: filters.tipo,
+    page: filters.page,
+    page_size: PAGE_SIZE,
+  });
+  const createDoc = useCreateDocument(agentKey, activeCollectionId ?? "");
+
+  const totalPages = useMemo(() => (docsPage ? Math.max(1, Math.ceil(docsPage.total / PAGE_SIZE)) : 1), [docsPage]);
+
+  if (showSkeleton) return <PageSkeleton />;
+  if (isError) return <ErrorState message={errorMessage(error)} />;
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[220px_1fr]">
+      <div className="space-y-3">
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+          <BookOpen className="h-4 w-4" /> Coleções
+        </p>
+        {!collections || collections.length === 0 ? (
+          <EmptyState message="Nenhuma coleção ainda." />
+        ) : (
+          <ul className="space-y-1">
+            {collections.map((c) => (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCollection(c.id);
+                    setSelectedDoc(null);
+                    setFilters({ page: 1 });
+                  }}
+                  data-testid={`knowledge-collection-${c.slug}`}
+                  className={`w-full rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent ${
+                    activeCollectionId === c.id ? "bg-accent font-medium" : "text-foreground"
+                  }`}
+                >
+                  {c.nome} <span className="text-xs text-muted-foreground">({c.total_documentos})</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {isAdmin &&
+          (showNewCollection ? (
+            <NewCollectionForm agentKey={agentKey} onDone={() => setShowNewCollection(false)} />
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => setShowNewCollection(true)}>
+              <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
+              Nova coleção
+            </Button>
+          ))}
+      </div>
+
+      <div className="space-y-4">
+        {!activeCollectionId ? (
+          <EmptyState message="Crie uma coleção para começar." />
+        ) : (
+          <>
+            <Card className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  value={qInput}
+                  onChange={(e) => setQInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && setFilters((f) => ({ ...f, q: qInput.trim(), page: 1 }))}
+                  placeholder="Buscar por título ou conteúdo…"
+                  className="max-w-xs"
+                />
+                <Select
+                  value={filters.tipo ?? ""}
+                  onChange={(e) => setFilters((f) => ({ ...f, tipo: (e.target.value || undefined) as DocumentTipo | undefined, page: 1 }))}
+                  className="w-40"
+                >
+                  <option value="">Todos os tipos</option>
+                  {DOCUMENT_TIPOS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </Select>
+                {isAdmin && (
+                  <Button variant="outline" size="sm" onClick={() => setShowNewDoc((v) => !v)} data-testid="knowledge-new-document-toggle">
+                    <FilePlus2 className="mr-1.5 h-3.5 w-3.5" />
+                    Novo documento
+                  </Button>
+                )}
+              </div>
+
+              {isAdmin && showNewDoc && (
+                <NewDocumentForm
+                  onCreate={async (payload) => {
+                    await createDoc.mutateAsync(payload);
+                    setShowNewDoc(false);
+                  }}
+                />
+              )}
+
+              {docsLoading ? (
+                <PageSkeleton />
+              ) : docsError ? (
+                <ErrorState message="Erro ao carregar documentos." />
+              ) : !docsPage || docsPage.items.length === 0 ? (
+                <EmptyState message="Nenhum documento encontrado." />
+              ) : (
+                <div className="divide-y divide-border">
+                  {docsPage.items.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => setSelectedDoc(d.id)}
+                      data-testid={`knowledge-document-row-${d.slug}`}
+                      className={`flex w-full items-center justify-between gap-2 py-2 text-left text-sm hover:bg-accent/50 ${
+                        selectedDoc === d.id ? "bg-accent/40" : ""
+                      }`}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{d.titulo}</span>
+                      <Badge variant="outline">{d.tipo}</Badge>
+                      {!d.ativo && <Badge variant="muted">arquivado</Badge>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {docsPage && totalPages > 1 && (
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>
+                    Página {filters.page} de {totalPages}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" disabled={filters.page <= 1} onClick={() => setFilters((f) => ({ ...f, page: f.page - 1 }))}>
+                      Anterior
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={filters.page >= totalPages}
+                      onClick={() => setFilters((f) => ({ ...f, page: f.page + 1 }))}
+                    >
+                      Próxima
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </Card>
+
+            {selectedDoc && <DocumentDetail agentKey={agentKey} docId={selectedDoc} isAdmin={isAdmin} />}
+
+            <SearchPlayground agentKey={agentKey} />
+          </>
+        )}
+      </div>
     </div>
+  );
+}
+
+function NewDocumentForm({
+  onCreate,
+}: {
+  onCreate: (payload: { slug: string; titulo: string; tipo: DocumentTipo; conteudo: string; resumo?: string }) => Promise<void>;
+}) {
+  const [slug, setSlug] = useState("");
+  const [titulo, setTitulo] = useState("");
+  const [tipo, setTipo] = useState<DocumentTipo>("fonte");
+  const [resumo, setResumo] = useState("");
+  const [conteudo, setConteudo] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      await onCreate({ slug, titulo, tipo, conteudo, resumo: resumo || undefined });
+      setSlug("");
+      setTitulo("");
+      setResumo("");
+      setConteudo("");
+      toast.success("Documento criado.");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2 rounded-md border border-border p-3" data-testid="knowledge-new-document-form">
+      <FormError message={error} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field label="Slug" required>
+          <Input value={slug} onChange={(e) => setSlug(e.target.value)} required />
+        </Field>
+        <Field label="Título" required>
+          <Input value={titulo} onChange={(e) => setTitulo(e.target.value)} required />
+        </Field>
+      </div>
+      <Field label="Tipo" required>
+        <Select value={tipo} onChange={(e) => setTipo(e.target.value as DocumentTipo)}>
+          {DOCUMENT_TIPOS.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Resumo">
+        <Textarea rows={2} value={resumo} onChange={(e) => setResumo(e.target.value)} />
+      </Field>
+      <Field label="Conteúdo (markdown)" required>
+        <Textarea rows={8} monospace value={conteudo} onChange={(e) => setConteudo(e.target.value)} required />
+      </Field>
+      <Button type="submit" variant="primary" size="sm" disabled={saving}>
+        Criar documento
+      </Button>
+    </form>
   );
 }

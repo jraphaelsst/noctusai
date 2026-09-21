@@ -72,6 +72,14 @@ export interface ChatThread {
  * and approval requests (`KB § PATTERNS/frontend/inbox-chat-surface.md`,
  * contract §E.7). Purely additive: a message with no `blocks` renders
  * exactly as before.
+ *
+ * `kind: "link"` (2026-09-21, Agent Studio contract §G "Conversar"): a
+ * single-line in-app navigation row — e.g. an assistant message's
+ * "versão N · prompt sha256:abcd…" pointer to `/studio/prompts/:hash`. A
+ * plain `<a href>` (not react-router's `Link`) so the organ takes on no
+ * router-context dependency for consumers that never use this kind; every
+ * existing consumer (WhatsApp, Instagram DMs, Julia) never emits it, so
+ * their rendering is unaffected.
  */
 export type ChatBlock =
   | {
@@ -87,10 +95,16 @@ export type ChatBlock =
       resumo: string;
       diff?: { antes: string | null; depois: string };
       decision: "pendente" | "aprovada" | "negada" | "expirada";
+    }
+  | {
+      kind: "link";
+      label: string;
+      href: string;
     };
 
 type ChatToolBlock = Extract<ChatBlock, { kind: "tool" }>;
 type ChatApprovalBlock = Extract<ChatBlock, { kind: "approval" }>;
+type ChatLinkBlock = Extract<ChatBlock, { kind: "link" }>;
 
 /** Message rendered in the right-pane thread. */
 export interface ChatMessage {
@@ -528,6 +542,19 @@ function ApprovalCard({
   );
 }
 
+/** Single-line in-app navigation row (contract §G "Conversar", 2026-09-21). */
+function LinkRow({ block }: { block: ChatLinkBlock }) {
+  return (
+    <a
+      href={block.href}
+      className="inline-flex items-center gap-1 text-[10px] font-medium text-primary underline-offset-2 hover:underline"
+      data-testid="chat-link-block"
+    >
+      {block.label}
+    </a>
+  );
+}
+
 function MessageBubble({
   message,
   approvalAction,
@@ -565,11 +592,13 @@ function MessageBubble({
         </p>
         {hasBlocks && (
           <div className="mt-2 space-y-1.5" data-testid="chat-message-blocks">
-            {message.blocks!.map((block) =>
+            {message.blocks!.map((block, idx) =>
               block.kind === "tool" ? (
                 <ToolChip key={block.toolUseId} block={block} />
-              ) : (
+              ) : block.kind === "approval" ? (
                 <ApprovalCard key={block.approvalId} block={block} approvalAction={approvalAction} />
+              ) : (
+                <LinkRow key={`link-${idx}`} block={block} />
               ),
             )}
           </div>

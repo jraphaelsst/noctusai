@@ -1,14 +1,16 @@
 /**
  * JuliaChatWindow — thin adapter wiring `/api/conversations` onto the seed
- * `<ChatWindow>` organ (`@noctusai/lib/design-system`), contract §E.2/§E.3/
- * §E.7. All 2-pane rendering (thread list / thread panel / composer /
- * skeletons / empty / error / tool chips / approval cards) lives in the
- * organ; this file only supplies the adapter (`useJuliaChat.ts`) and the
- * "Nova conversa" action, mirroring
+ * `<ChatWindow>` organ (`@noctusai/lib/design-system`) via the shared
+ * `<AgentChatWindow>` pass-through (`@/components/AgentChatWindow.tsx`,
+ * extracted for Agent Studio's Conversar tab — contract §G, see that
+ * file's header). All 2-pane rendering (thread list / thread panel /
+ * composer / skeletons / empty / error / tool chips / approval cards)
+ * lives in the organ; this file only supplies the adapter
+ * (`useJuliaChat.ts`) and the "Nova conversa" action, mirroring
  * `products/social-wiring/frontend/src/components/WhatsAppChatWindow.tsx`.
  */
 import { useMemo } from "react";
-import { ChatWindow } from "@noctusai/lib/design-system";
+import { AgentChatWindow } from "@/components/AgentChatWindow";
 import { buildJuliaChatAdapter } from "@/hooks/useJuliaChat";
 
 export interface JuliaChatWindowProps {
@@ -23,7 +25,7 @@ export function JuliaChatWindow({ className }: JuliaChatWindowProps) {
   const adapter = useMemo(() => buildJuliaChatAdapter(), []);
 
   return (
-    <ChatWindow
+    <AgentChatWindow
       scopeId="julia"
       adapter={adapter}
       emptyThreadsLabel="Nenhuma conversa ainda. Clique em “Nova conversa” para começar."
