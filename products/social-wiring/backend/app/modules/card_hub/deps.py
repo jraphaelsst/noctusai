@@ -87,16 +87,23 @@ ExtractorFactory = Callable[[Optional[str], Optional[str]], IdentityExtractor]
 
 
 def _build_identity_extractor(
-    org_id: Optional[str], tipo_documento: Optional[str] = None
+    org_id: Optional[str],
+    tipo_documento: Optional[str] = None,
+    *,
+    resolve_provider: Callable[[Optional[str]], str] = resolve_vision_provider,
 ) -> IdentityExtractor:
     """One org's identity extractor, with ITS manually-selected vision
     provider AND the page cap ITS DOCUMENT TYPE requires.
 
     🔴 THE PROVIDER IS RESOLVED PER EXTRACTION, NOT PER PROCESS.
-    `resolve_vision_provider` is called here — inside the factory — so a
-    switch flipped in Settings takes effect on the very next upload, not on
-    the next deploy. Mirrors `matriculas.deps._build_transcriber` for this
-    half.
+    `resolve_provider` (bound to `resolve_vision_provider` by default) is
+    called here — inside the factory — so a switch flipped in Settings
+    takes effect on the very next upload, not on the next deploy. Mirrors
+    `matriculas.deps._build_transcriber` for this half. This was already
+    true before `tipo_documento` existed on this factory — resolving the
+    provider once per factory construction is UNCHANGED behaviour, not
+    something this fix added; the factory is still built once per request
+    (or once per stalled row, in the sweep), exactly as before.
 
     There is NO fallback for the provider: if the selected vendor's key is
     missing or its account is empty, the extraction fails saying so. Before
@@ -106,6 +113,21 @@ def _build_identity_extractor(
     — the exact defect that stranded `social_wiring.cliente_documentos` rows
     behind OpenAI's 2026-09-17 quota exhaustion while the org's Anthropic key
     sat unused.
+
+    `resolve_provider` is an injectable collaborator
+    (`KB § PATTERNS/backend/di-test-seam.md`, "inject the collaborator")
+    for exactly one reason: `resolve_vision_provider`'s tier-1 lookup
+    (`resolve_api_key_detail` -> `build_api_key_store()` ->
+    `get_admin_client()`) constructs a REAL Supabase client whenever no
+    `store=` override reaches it, and that constructor raises
+    (`SupabaseException: supabase_url is required`) in any environment with
+    no Supabase config — CI included. A test that calls this factory
+    directly (to prove `tipo_documento` -> `max_pages` without going through
+    a whole HTTP request) needs a way to skip that chain entirely; a fake
+    `resolve_provider=lambda org_id: "openai"` does that without touching
+    live credentials, real or fake HTTP, or `resolve_vision_provider`'s own
+    internals. No real caller passes this override — every real caller
+    keeps the default, so production resolution is untouched.
 
     🔴 `tipo_documento` CLOSES THE OTHER GAP THE SAME COMMIT FOUND.
     Both real callers of `extrair_identidade` (the upload route and the
@@ -134,7 +156,7 @@ def _build_identity_extractor(
         real=True,
         org_id=org_id,
         max_pages=paginas_maximas(str(tipo_documento or "")),
-        provider=resolve_vision_provider(org_id),
+        provider=resolve_provider(org_id),
     )
 
 

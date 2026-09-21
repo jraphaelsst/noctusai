@@ -86,11 +86,24 @@ class TestDepsFactoryThreadsTipoDocumentoIntoMaxPages:
         # `test_identidade_extracao.py::test_the_cap_reaches_the_extractor_factory`.
         monkeypatch.setattr(deps, "make_identity_extractor", _fabrica)  # self-patch-ok: seed Fake/Real factory swap point, not our own logic
 
-        deps._build_identity_extractor(ORG_ID, tipo)
+        # `resolve_provider` is `_build_identity_extractor`'s own injected
+        # collaborator (see that function's docstring) — NOT a patch of
+        # `resolve_vision_provider`. Its default reaches a real Supabase
+        # client via `resolve_api_key_detail`'s tier-1 lookup
+        # (`build_api_key_store()` -> `get_admin_client()`), which raises
+        # `SupabaseException: supabase_url is required` in any environment
+        # with no Supabase config (CI has none). This test's whole subject
+        # is the `tipo_documento` -> `max_pages` mapping, which has nothing
+        # to do with provider resolution — a fake collaborator proves the
+        # same thing without a live credential chain.
+        deps._build_identity_extractor(
+            ORG_ID, tipo, resolve_provider=lambda _org_id: "openai"
+        )
 
         assert visto.get("max_pages") == esperado
         assert visto.get("org_id") == ORG_ID
         assert visto.get("real") is True
+        assert visto.get("provider") == "openai"
 
 
 class TestRealCallersThreadTipoDocumentoIntoTheFactory:
@@ -296,7 +309,12 @@ class TestContentOnTheLastPageReachesTheExtractedFields:
         self, monkeypatch
     ):
         _patch_media_resolver(monkeypatch)
-        extractor = deps._build_identity_extractor(ORG_ID, "certidao_casamento")
+        # `resolve_provider` is the injected collaborator, not a real
+        # credential lookup — see `_build_identity_extractor`'s docstring.
+        # This test's subject is `max_pages`, not the provider.
+        extractor = deps._build_identity_extractor(
+            ORG_ID, "certidao_casamento", resolve_provider=lambda _org_id: "openai"
+        )
 
         out = await extractor.extract(
             b"\x89PNG", mimetype="image/png", filename="certidao.png"
@@ -317,7 +335,9 @@ class TestContentOnTheLastPageReachesTheExtractedFields:
         `TIPOS_LEITURA_INTEGRAL` — the truncated read this fix must NOT
         change for a type that never needed a whole one."""
         _patch_media_resolver(monkeypatch)
-        extractor = deps._build_identity_extractor(ORG_ID, "rg")
+        extractor = deps._build_identity_extractor(
+            ORG_ID, "rg", resolve_provider=lambda _org_id: "openai"
+        )
 
         out = await extractor.extract(
             b"\x89PNG", mimetype="image/png", filename="rg.png"
