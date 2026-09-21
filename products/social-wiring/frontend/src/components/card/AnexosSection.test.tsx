@@ -14,8 +14,37 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
 
+// The real `Select` is a Radix popover (pointer-capture + portal) that jsdom
+// does not model faithfully — same convention `ContratosPanel.test.tsx`
+// established. This variant renders every `SelectItem` inline (no open/close
+// step) so a click reaches `onValueChange` directly.
+vi.mock("@/components/ui/select", async () => {
+  const React = await import("react");
+  const Ctx = React.createContext<{ onValueChange?: (v: string) => void }>({});
+  return {
+    Select: ({ value, onValueChange, children }: any) =>
+      React.createElement(
+        Ctx.Provider,
+        { value: { onValueChange } },
+        React.createElement("div", { "data-value": value }, children),
+      ),
+    SelectTrigger: ({ children, ...rest }: any) =>
+      React.createElement("div", { role: "combobox", ...rest }, children),
+    SelectValue: () => null,
+    SelectContent: ({ children }: any) => React.createElement("div", null, children),
+    SelectItem: ({ value, children }: any) => {
+      const ctx = React.useContext(Ctx);
+      return React.createElement(
+        "button",
+        { type: "button", onClick: () => ctx.onValueChange?.(value) },
+        children,
+      );
+    },
+  };
+});
+
 import { AnexosSection, type AnexosSectionProps } from "./AnexosSection";
-import type { Documento } from "@/types/cardHub";
+import type { Documento, TipoDocumento } from "@/types/cardHub";
 
 function documento(id: string, over: Partial<Documento> = {}): Documento {
   return {
@@ -29,6 +58,18 @@ function documento(id: string, over: Partial<Documento> = {}): Documento {
     enviado_por: { id: "corretor-1", nome: "Ana Prado" },
     created_at: "2026-08-25T12:00:00+00:00",
     thumbnail_url: null,
+    extracao_status: null,
+    extracao_erro: null,
+    ...over,
+  };
+}
+
+function tipo(tipo_documento: string, over: Partial<TipoDocumento> = {}): TipoDocumento {
+  return {
+    tipo_documento,
+    categoria_lgpd: "contratual",
+    descricao: null,
+    identidade: false,
     ...over,
   };
 }
@@ -85,5 +126,120 @@ describe("AnexosSection — background refetch never unmounts attachments", () =
   it("says so when the server sends an empty list (not loading)", async () => {
     const { getByTestId } = await render(baseProps({ documentos: [] }));
     expect(getByTestId("anexos-empty")).toBeTruthy();
+  });
+});
+
+describe("AnexosSection — the tipo picker (Gap 1: never a silent default)", () => {
+  it("🔴 the upload trigger is disabled until a tipo is picked — no default, silent or otherwise", async () => {
+    const { getByTestId } = await render(
+      baseProps({ tipos: [tipo("contrato", { descricao: "Contrato" })] }),
+    );
+    expect((getByTestId("anexo-enviar-btn") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("picking a tipo enables the trigger, and the chosen file uploads under EXACTLY that tipo", async () => {
+    const onUpload = vi.fn();
+    const { getByTestId, getByText, container } = await render(
+      baseProps({
+        tipos: [
+          tipo("outro", { descricao: "Outro" }),
+          tipo("certidao_casamento", { descricao: "Certidão de casamento", identidade: true }),
+        ],
+        onUpload,
+      }),
+    );
+    const rtl = await import("@testing-library/react");
+
+    // The catalogue's FIRST entry alphabetically/by-array-order is `outro` —
+    // exactly the value the old hardcoded default silently picked. Picking
+    // the IDENTITY type instead and asserting on it is the regression guard:
+    // a leftover `tipos[0]` default would upload as `outro`, not as this.
+    rtl.fireEvent.click(getByText("Certidão de casamento"));
+    expect((getByTestId("anexo-enviar-btn") as HTMLButtonElement).disabled).toBe(false);
+
+    const file = new File(["%PDF-1.4"], "certidao.pdf", { type: "application/pdf" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file] });
+    rtl.fireEvent.change(input);
+
+    expect(onUpload).toHaveBeenCalledWith(file, "certidao_casamento");
+  });
+
+  it("the hidden file input filters by the backend's own allowed MIME types", async () => {
+    const { container } = await render(baseProps());
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input.getAttribute("accept")).toBe(
+      "application/pdf,image/jpeg,image/png,image/webp",
+    );
+  });
+
+  it("groups identity types separately from everything else", async () => {
+    const { getByText } = await render(
+      baseProps({
+        tipos: [
+          tipo("contrato", { descricao: "Contrato" }),
+          tipo("rg", { descricao: "RG", identidade: true }),
+        ],
+      }),
+    );
+    expect(getByText("Identidade")).toBeTruthy();
+    expect(getByText("Outros")).toBeTruthy();
+  });
+});
+
+describe("AnexosSection — a failed extraction is visible (Gap 4)", () => {
+  it("🔴 shows nothing extra for a document that was never meant to be read", async () => {
+    const doc = documento("d1", { tipo_documento: "contrato", extracao_status: null });
+    const { queryByTestId } = await render(baseProps({ documentos: [doc] }));
+    expect(queryByTestId("anexo-extracao-status-d1")).toBeNull();
+  });
+
+  it("surfaces `erro` with the server's own reason, and offers a retry", async () => {
+    const doc = documento("d1", {
+      extracao_status: "erro",
+      extracao_erro: "openai: 429 credit_balance_exhausted",
+    });
+    const onReextrairDocumento = vi.fn();
+    const { getByTestId, getByText } = await render(
+      baseProps({ documentos: [doc], onReextrairDocumento }),
+    );
+    expect(getByTestId("anexo-extracao-status-d1")).toBeTruthy();
+    expect(getByText("openai: 429 credit_balance_exhausted", { exact: false })).toBeTruthy();
+
+    const rtl = await import("@testing-library/react");
+    rtl.fireEvent.click(getByTestId("anexo-reextrair-d1"));
+    expect(onReextrairDocumento).toHaveBeenCalledWith("d1");
+  });
+
+  it("never offers a retry when the caller has not wired the mutation", async () => {
+    const doc = documento("d1", { extracao_status: "erro", extracao_erro: "x" });
+    const { queryByTestId } = await render(baseProps({ documentos: [doc] }));
+    expect(queryByTestId("anexo-reextrair-d1")).toBeNull();
+  });
+
+  it("shows a quiet in-flight indicator for `pendente`/`processando`, with no retry button", async () => {
+    const doc = documento("d1", { extracao_status: "processando" });
+    const onReextrairDocumento = vi.fn();
+    const { getByTestId, queryByTestId } = await render(
+      baseProps({ documentos: [doc], onReextrairDocumento }),
+    );
+    expect(getByTestId("anexo-extracao-status-d1")).toBeTruthy();
+    expect(queryByTestId("anexo-reextrair-d1")).toBeNull();
+  });
+
+  it("disables only the retrying document's own button, never the whole list", async () => {
+    const docs = [
+      documento("d1", { extracao_status: "erro", extracao_erro: "x" }),
+      documento("d2", { extracao_status: "erro", extracao_erro: "y" }),
+    ];
+    const { getByTestId } = await render(
+      baseProps({
+        documentos: docs,
+        onReextrairDocumento: vi.fn(),
+        reextraindoDocumentoId: "d1",
+      }),
+    );
+    expect((getByTestId("anexo-reextrair-d1") as HTMLButtonElement).disabled).toBe(true);
+    expect((getByTestId("anexo-reextrair-d2") as HTMLButtonElement).disabled).toBe(false);
   });
 });

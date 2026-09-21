@@ -130,6 +130,13 @@ def list_tipos_documento(client: Any) -> dict:
             "tipo_documento": r["tipo_documento"],
             "categoria_lgpd": r["categoria_lgpd"],
             "descricao": r.get("descricao"),
+            # 🔴 Added so a tipo picker can group/flag identity types instead
+            # of guessing off `categoria_lgpd` string-matching "identidade"
+            # (which is also true of a certidão, itself an identity document
+            # but not one of THIS flag's original RG/CPF-class rows) — the
+            # column already exists on the catalogue (migration 057); this
+            # was simply never read by the endpoint before.
+            "identidade": bool(r.get("identidade", False)),
         }
         for r in rows
     ]
@@ -186,6 +193,14 @@ def _documento_out(row: dict, resolved_actors: dict) -> dict:
         # contract's `|null` shape explicitly allows. Not a silent gap:
         # surfaced in the delivery note, not hidden behind a fabricated URL.
         "thumbnail_url": None,
+        # 🔴 Extraction state, surfaced. Before this it was written by
+        # `identidade_extracao_service` and read only by the sweep and by
+        # `sugestoes_pendentes` — a document stuck in `erro` (an OpenAI 429,
+        # a corrupt PDF) showed nowhere on the card, indistinguishable from
+        # one that was never meant to be read at all. `None` for a
+        # non-identity type (never queued) is the honest value, not a gap.
+        "extracao_status": row.get("extracao_status"),
+        "extracao_erro": row.get("extracao_erro"),
     }
 
 
@@ -361,6 +376,80 @@ async def delete_documento(
         }
     ).eq("id", str(documento_id)).execute()
     _log_acesso(client, org_id, documento_id, usuario_id, "delete")
+
+
+#: Non-terminal extraction states — mirrors
+#: `identidade_extracao_service._ESTADOS_NAO_TERMINAIS` (not imported: that
+#: name is private to that module, and the two lists are checked for
+#: opposite reasons — the sweep decides what it may STALL-RECOVER, this
+#: decides what it must REFUSE to double-schedule).
+_EXTRACAO_EM_ANDAMENTO = ("pendente", "processando")
+
+
+def reextrair_documento(client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID) -> dict:
+    """Re-queue extraction for a document that was never read, or whose
+    reading ended in `erro` (contract §4 — the re-run endpoint).
+
+    For a document uploaded before its type was reachable (filed as `outro`
+    at the time, or as a since-activated type before this org's LGPD intake
+    closed) or whose extraction ended in `erro` (a transient OpenAI 429, a
+    once-corrupt storage read), the only recovery before this endpoint was
+    delete + re-upload — which destroys the LGPD access history this module
+    exists to keep (`cliente_documento_acessos`). This resets the document's
+    OWN row back to `pendente` and clears the stale `extracao_erro`; the
+    router schedules the SAME background task `upload_documento`'s route
+    schedules for a brand-new upload, immediately, rather than waiting for
+    `identidade_extracao_service.varrer_extracoes_pendentes`'s next pass.
+
+    Refuses (`ValidationError_`, `field="tipo_documento"`) when the
+    document's `tipo_documento` is not one `identidade_svc.deve_extrair`
+    reads at all — re-typing an already-uploaded document is a separate,
+    prerequisite fix this endpoint cannot make for it.
+
+    Refuses (`ValidationError_`, `field="extracao_status"`) when an
+    extraction is already `pendente` or `processando` — a second trigger
+    while one is in flight would race the same document row and pay for a
+    second vision call for nothing.
+
+    🔴 `extracao_tentativas` IS DELIBERATELY NOT RESET.
+    `identidade_extracao_service.MAX_TENTATIVAS` bounds how many times the
+    unattended SWEEP may restart a document that stalled — it is not a limit
+    on a human explicitly asking to retry, and every click here is already a
+    conscious decision, not an automatic loop. Resetting the counter would
+    silently hide from that sweep's own accounting how many times a document
+    has genuinely been attempted; the response's `extracao_tentativas`
+    reports the count UNCHANGED, precisely so this is visible rather than
+    implicit — never a bypass of the accounting, just a deliberate choice not
+    to touch it.
+    """
+    documento = _require_documento(client, org_id, cliente_id, documento_id)
+    tipo_documento = documento["tipo_documento"]
+    if not identidade_svc.deve_extrair(tipo_documento):
+        raise ValidationError_(
+            f"tipo_documento {tipo_documento!r} não é extraível — nenhuma "
+            "leitura de campos está definida para este tipo. Elegíveis: "
+            f"{', '.join(sorted(identidade_svc.TIPOS_EXTRAIVEIS))}",
+            field="tipo_documento",
+        )
+    status_atual = documento.get("extracao_status")
+    if status_atual in _EXTRACAO_EM_ANDAMENTO:
+        raise ValidationError_(
+            f"extração já está {status_atual!r} para este documento — "
+            "aguarde a conclusão antes de reenviar.",
+            field="extracao_status",
+        )
+
+    patch = {
+        "extracao_status": "pendente",
+        "extracao_erro": None,
+        "extracao_em": _now(),
+    }
+    _t(client, "cliente_documentos").update(patch).eq("id", str(documento_id)).execute()
+    documento.update(patch)
+    resolved = _resolve_actors(
+        {documento["enviado_por"]} if documento.get("enviado_por") else set()
+    )
+    return _documento_out(documento, resolved)
 
 
 def list_acessos(client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID) -> dict:

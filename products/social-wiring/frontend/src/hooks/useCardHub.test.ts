@@ -258,6 +258,14 @@ describe("useDocumentoMutations", () => {
     // delete() has no body parameter, but this route no longer needs one.
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
+
+  it("reextrair() POSTs to .../extrair via the normal api.post() — no body, the document id travels in the path", async () => {
+    mockPost.mockResolvedValue({ id: "doc1", extracao_status: "pendente" });
+    const { reextrair } = useDocumentoMutations("cl1");
+    await (reextrair as any).mutateAsync("doc1");
+
+    expect(mockPost).toHaveBeenCalledWith("/api/clientes/cl1/documentos/doc1/extrair");
+  });
 });
 
 describe("useNotaMutations — tipo discriminator (descricao vs. comentario)", () => {

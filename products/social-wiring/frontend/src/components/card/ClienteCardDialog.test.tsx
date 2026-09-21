@@ -196,8 +196,16 @@ describe("ClienteCardDialog — Anexos empty state", () => {
     // Removing the generic `Adicionar` button took the ONLY thing that opened
     // the file input, and nothing replaced it — uploading was unreachable.
     // Icon-only now, so the assertion is on the name it still carries.
+    //
+    // Gap 1 fix: the button carries a REAL accessible name at every moment,
+    // including before a tipo is chosen — `tiposDocumento: []` here (this
+    // file's baseProps default) means no tipo can be picked at all, so the
+    // trigger stays in its "why you can't upload yet" state rather than the
+    // post-pick "Enviar anexo" (see `AnexosSection.test.tsx` for that flow).
     const btn = screen.getByTestId("anexo-enviar-btn");
-    expect(btn.getAttribute("aria-label")).toBe("Enviar anexo");
+    expect(btn.getAttribute("aria-label")).toBe(
+      "Escolha o tipo do documento antes de enviar",
+    );
     // 🔴 The section owns its input, and this assertion says so BY SHAPE
     // rather than by id. It used to look up the shared
     // `card-anexo-file-input`, which was exactly what made per-person Anexos
@@ -1698,9 +1706,13 @@ describe("legendas nos botões (ícone + tooltip)", () => {
     );
     // A tooltip is NOT an accessible name — it is invisible to a screen reader
     // and to a keyboard. Each of these carries the caption on `aria-label` too.
+    //
+    // `anexo-enviar-btn`'s caption here is the NO-TIPO-CHOSEN state (this
+    // test's `tiposDocumento: []` default never offers one to pick) — see
+    // `AnexosSection.test.tsx` for the post-pick "Enviar anexo" assertion.
     const esperado: [string, string][] = [
       ["adicionar-comprador-btn", "Adicionar Comprador"],
-      ["anexo-enviar-btn", "Enviar anexo"],
+      ["anexo-enviar-btn", "Escolha o tipo do documento antes de enviar"],
       ["descricao-editar-btn", "Editar descrição"],
       ["etiquetas-trigger", "Etiquetas"],
       ["agendamento-trigger", "Agendar"],

@@ -625,6 +625,20 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         )
       }
       uploadingDocumento={documentoMutations.upload.isPending}
+      // Gap 3/4 — re-queues a document stuck in `erro` (or never queued at
+      // all) without deleting and re-uploading it, which would destroy the
+      // LGPD access log.
+      onReextrairDocumento={(documentoId) =>
+        documentoMutations.reextrair.mutate(documentoId, {
+          onError: (err) =>
+            toastServerError(err, "Não foi possível reenviar o documento para leitura."),
+        })
+      }
+      reextraindoDocumentoId={
+        documentoMutations.reextrair.isPending
+          ? (documentoMutations.reextrair.variables ?? null)
+          : null
+      }
       dadosPessoais={documentoChecklist.data?.valores ?? {}}
       dadosPessoaisSaving={dadosPessoaisMutation.isPending}
       // The server's own message from the last rejected save (the RG==CPF

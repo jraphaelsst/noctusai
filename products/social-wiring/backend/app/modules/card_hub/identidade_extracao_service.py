@@ -109,11 +109,14 @@ CLIENTES_TABLE = "clientes"
 #: retention policy, this drives a processing decision, and letting one silently
 #: change the other is how a retention edit turns into an unplanned OCR bill.
 #:
-#: `cnh` is listed but is NOT currently a row in `cliente_documento_tipos`
-#: (migration 057 seeds rg/cpf only), so no CNH can be uploaded and this entry
-#: is unreachable today. It is here because the extractor already classifies and
-#: reads one — adding the type later is then a data change, not a code change.
-#: Stated rather than left to be discovered as a puzzling dead branch.
+#: `cnh` was listed here BEFORE it had a row in `cliente_documento_tipos`
+#: (migration 057 seeded rg/cpf only, so no CNH could be uploaded and this
+#: entry was unreachable) — deliberately, because the extractor already
+#: classified and read one, and adding the type later was meant to be a data
+#: change, not a code change. Migration 142 is that data change: it seeds the
+#: `cnh` catalogue row (`ativo = true`) so uploads and this extraction gate
+#: both reach it now. No further change was needed here — this module was
+#: already written against the day it would ship.
 TIPOS_EXTRAIVEIS = frozenset(
     {"rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento"}
 )

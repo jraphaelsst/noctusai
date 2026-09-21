@@ -407,6 +407,11 @@ export interface ClienteCardDialogProps {
   uploadingDocumento?: boolean;
   onOpenDocumento: (documentoId: string) => void;
   onDeleteDocumento: (documentoId: string, motivo: string) => void;
+  /** Re-queues a stuck/never-run extraction (`POST .../extrair`). Optional
+   *  so an older caller (or a test) that has not wired the mutation yet
+   *  simply gets no retry affordance on Anexos. */
+  onReextrairDocumento?: (documentoId: string) => void;
+  reextraindoDocumentoId?: string | null;
 
   // Checklists
   checklists: Checklist[];
@@ -799,17 +804,21 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
 
                   <AnexosSection
                     documentos={props.documentos}
+                    tipos={props.tiposDocumento}
                     loading={props.documentosLoading}
                     refreshing={props.documentosRefreshing}
                     uploading={props.uploadingDocumento}
-                    onUpload={(file) =>
-                      props.onUploadDocumento(
-                        file,
-                        props.tiposDocumento[0]?.tipo_documento ?? "outro",
-                      )
+                    // The operator's OWN pick from this section's own
+                    // `<Select>` — see `AnexosSection`'s module docblock for
+                    // why the tipo no longer travels as a caller-supplied
+                    // default (`tiposDocumento[0] ?? "outro"`).
+                    onUpload={(file, tipoDocumento) =>
+                      props.onUploadDocumento(file, tipoDocumento)
                     }
                     onOpenDocumento={props.onOpenDocumento}
                     onDeleteDocumento={props.onDeleteDocumento}
+                    onReextrairDocumento={props.onReextrairDocumento}
+                    reextraindoDocumentoId={props.reextraindoDocumentoId}
                   />
 
                   {/* g. The user-created working checklists — last, and only

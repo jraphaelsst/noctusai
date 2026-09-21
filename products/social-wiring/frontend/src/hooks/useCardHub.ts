@@ -918,7 +918,17 @@ export function useDocumentoMutations(clienteId: string) {
       ),
   });
 
-  return { upload, remove, getUrl };
+  // Re-queues a stuck/never-run extraction. `POST .../extrair` (contract §4)
+  // — never delete + re-upload, which would destroy the LGPD access log.
+  // Same invalidation set as `upload`: a resolved re-read can fill checklist
+  // fields and the extraction badge alike.
+  const reextrair = useMutation({
+    mutationFn: (documentoId: string) =>
+      api.post<Documento>(`${base}/documentos/${encodeURIComponent(documentoId)}/extrair`),
+    onSuccess: invalidate,
+  });
+
+  return { upload, remove, getUrl, reextrair };
 }
 
 // ─── Documento checklist (migration 067) ──────────────────────────────────

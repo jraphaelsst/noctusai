@@ -169,14 +169,15 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
       <AnexosSection
         testId={`anexos-section-${clienteId}`}
         documentos={documentos.data ?? []}
+        tipos={tipos.data ?? []}
         loading={documentos.isPending || documentos.isFetching}
         uploading={docs.upload.isPending}
-        onUpload={(file) =>
+        // The operator's OWN pick from the section's own `<Select>` — see
+        // `AnexosSection`'s module docblock for why the tipo no longer
+        // travels as a caller-supplied default (`tipos.data?.[0] ?? "outro"`).
+        onUpload={(file, tipoDocumento) =>
           docs.upload.mutate(
-            {
-              file,
-              tipoDocumento: tipos.data?.[0]?.tipo_documento ?? "outro",
-            },
+            { file, tipoDocumento },
             {
               onError: (e) =>
                 toast.error(erro(e, "Não foi possível enviar o anexo.")),
@@ -203,6 +204,15 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
             },
           )
         }
+        // Gap 3/4 — re-queues a document stuck in `erro` (or never queued
+        // at all) without deleting and re-uploading it.
+        onReextrairDocumento={(documentoId) =>
+          docs.reextrair.mutate(documentoId, {
+            onError: (e) =>
+              toast.error(erro(e, "Não foi possível reenviar o documento para leitura.")),
+          })
+        }
+        reextraindoDocumentoId={docs.reextrair.isPending ? (docs.reextrair.variables ?? null) : null}
       />
     </>
   );

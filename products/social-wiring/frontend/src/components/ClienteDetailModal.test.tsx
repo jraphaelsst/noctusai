@@ -140,6 +140,7 @@ vi.mock("@/hooks/useCardHub", () => ({
     upload: { mutate: vi.fn(), isPending: false },
     remove: { mutate: vi.fn() },
     getUrl: { mutate: vi.fn() },
+    reextrair: { mutate: vi.fn(), isPending: false, variables: undefined },
   }),
 }));
 

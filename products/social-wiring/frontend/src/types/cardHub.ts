@@ -147,6 +147,17 @@ export interface Documento {
   enviado_por: AtorRef;
   created_at: string;
   thumbnail_url: string | null;
+  /**
+   * `null` for a type `identidade_extracao_service.deve_extrair` never
+   * reads (a `contrato`, a `foto_imovel`) — the honest value, not a gap.
+   * `"pendente" | "processando"` while a read is queued/in flight,
+   * `"ok" | "sem_dados"` on a terminal success, `"erro"` on a terminal
+   * failure (see `extracao_erro` for why).
+   */
+  extracao_status: string | null;
+  /** The human-readable failure reason, set only when `extracao_status ===
+   *  "erro"`. `POST .../documentos/{id}/extrair` clears both together. */
+  extracao_erro: string | null;
 }
 
 /**
@@ -162,6 +173,10 @@ export interface TipoDocumento {
   tipo_documento: string;
   categoria_lgpd: string;
   descricao: string | null;
+  /** RG/CPF-class — the types a tipo picker must group so an operator can
+   *  actually find them, instead of scanning an alphabetical list for one
+   *  of five names among a dozen. */
+  identidade: boolean;
 }
 
 export type DocumentoAcao = "view" | "download" | "delete";

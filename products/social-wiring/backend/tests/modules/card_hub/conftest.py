@@ -88,6 +88,32 @@ def fake_storage(client):
 
 
 @pytest.fixture
+def fake_identity_extractor(client):
+    """Installs ONE `FakeIdentityExtractor` via `get_identity_extractor_factory`
+    for every org a running HTTP request resolves, so a route that schedules
+    `identidade_extracao_service.extrair_identidade` as a background task
+    (upload, and the `.../extrair` re-run route) never reaches
+    `make_identity_extractor(real=True, ...)` — which would either hit a
+    real vision provider or fail on a missing key, neither the behaviour
+    under test. Per `KB § PATTERNS/backend/di-test-seam.md` Class-B. Yields
+    the extractor so a test can inspect `.calls` after the (synchronous,
+    under `TestClient`) background task has run.
+    """
+    from app.main import app
+    from app.modules.card_hub.deps import get_identity_extractor_factory
+    from noctusai_lib.integrations.documents import FakeIdentityExtractor
+
+    extractor = FakeIdentityExtractor()
+    prev = app.dependency_overrides.get(get_identity_extractor_factory)
+    app.dependency_overrides[get_identity_extractor_factory] = lambda: (lambda org_id: extractor)
+    yield extractor
+    if prev is None:
+        app.dependency_overrides.pop(get_identity_extractor_factory, None)
+    else:
+        app.dependency_overrides[get_identity_extractor_factory] = prev
+
+
+@pytest.fixture
 def fake_signature_adapter(client):
     """Installs ONE `FakeSignatureAdapter` shared across every call the
     running app makes through `get_signature_adapter_factory` — org-scoped
@@ -288,8 +314,8 @@ def checklist_extra_row(
     }
 
 
-def documento_row(id_, cliente_id, *, tipo_documento="contrato", categoria_lgpd="contratual", storage_path=None, deleted_at=None, retencao_ate=None, enviado_por=None, created_at="2026-01-01T00:00:00+00:00") -> dict:
-    return {
+def documento_row(id_, cliente_id, *, tipo_documento="contrato", categoria_lgpd="contratual", storage_path=None, deleted_at=None, retencao_ate=None, enviado_por=None, created_at="2026-01-01T00:00:00+00:00", **extra) -> dict:
+    row = {
         "id": id_,
         "org_id": ORG_ID,
         "cliente_id": cliente_id,
@@ -305,7 +331,14 @@ def documento_row(id_, cliente_id, *, tipo_documento="contrato", categoria_lgpd=
         "delete_motivo": None,
         "delete_solicitado_por": None,
         "created_at": created_at,
+        # `extracao_status`/`extracao_tentativas`/`extracao_erro` are NOT
+        # core columns of a generic attachment — most fixtures never touch
+        # them, so they ride in **extra (e.g. `extracao_status="erro"`)
+        # rather than as named defaults every non-extraction test would
+        # otherwise have to override back to `None`.
     }
+    row.update(extra)
+    return row
 
 
 __all__ = [

@@ -907,6 +907,39 @@ async def upload_documento_route(
     return documento
 
 
+@router.post("/{cliente_id}/documentos/{documento_id}/extrair")
+async def reextrair_documento_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    background: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+    extractor_factory=Depends(get_identity_extractor_factory),
+) -> dict:
+    """Re-queue extraction for a document that was never read, or whose
+    reading ended in `erro`.
+
+    See `documentos_service.reextrair_documento` for the full contract
+    (refusals, and why `extracao_tentativas` is not reset). The background
+    task scheduled below is the SAME call `upload_documento_route` schedules
+    for a brand-new upload — this is a re-run of that job, not a second
+    implementation of it.
+    """
+    _user, org_id = _auth_parts(auth)
+    documento = docs_svc.reextrair_documento(client, org_id, cliente_id, documento_id)
+    background.add_task(
+        identidade_svc.extrair_identidade,
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        documento_id,
+        extractor=extractor_factory(str(org_id)),
+    )
+    return documento
+
+
 @router.get("/{cliente_id}/documentos/{documento_id}/url")
 async def get_documento_url_route(
     cliente_id: UUID,
