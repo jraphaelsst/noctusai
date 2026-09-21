@@ -132,7 +132,7 @@ class LadderIdentityExtractor:
         # five — see `rg.py`.
         rg, rg_conf, rg_label = find_rg(text)
         rg_conf = self._temper_name_confidence(rg_conf, source)
-        rg_orgao, rg_orgao_conf = find_rg_orgao(text)
+        rg_orgao, rg_orgao_conf = find_rg_orgao(text, rg)
         rg_orgao_conf = self._temper_name_confidence(rg_orgao_conf, source)
         if not rg:
             # 🔴 AN ISSUING BODY WITH NO RG NUMBER BESIDE IT IDENTIFIES

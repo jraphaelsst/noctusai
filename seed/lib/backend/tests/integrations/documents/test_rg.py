@@ -212,3 +212,37 @@ class TestIsSameAsCpf:
         assert is_same_as_cpf(SP, None) is False
         assert is_same_as_cpf(None, None) is False
         assert is_same_as_cpf("", CPF) is False
+
+
+class TestOrgaoAnchoredToTheNumber:
+    """The issuer printed beside the RG beats an issuer-SHAPED place name
+    earlier on the card. Layout from a real CNH vision transcript
+    (names invented): field 3 carries "SAO PAULO/SP" above field 4c."""
+
+    CNH = (
+        "2 e 1 NOME E SOBRENOME\nMARIA DAS DORES TESTE\n"
+        "3 DATA, LOCAL E UF DE NASCIMENTO\n20/04/1964 SAO PAULO/SP\n"
+        "4c DOC. IDENTIDADE / ÓRG. EMISSOR / UF\n13032360 SSP/SP\n"
+        "4d CPF\n041.333.248-97\n"
+    )
+
+    def test_the_cnh_issuer_is_the_one_next_to_the_number(self):
+        rg, _, _ = find_rg(self.CNH)
+        assert rg == "13032360"
+        assert find_rg_orgao(self.CNH, rg) == ("SSP/SP", "alta")
+
+    def test_without_the_number_the_shape_scan_is_unchanged(self):
+        # The old contract still holds for callers that pass no RG.
+        assert find_rg_orgao(self.CNH) == ("PAULO/SP", "baixa")
+
+    def test_dash_separated_pair_on_a_qualification_line(self):
+        texto = "portador do RG 13.032.360-3 - SSP-SP e CPF 041.333.248-97"
+        assert find_rg_orgao(texto, "13.032.360-3") == ("SSP/SP", "alta")
+
+    def test_a_word_between_number_and_issuer_is_not_adjacency(self):
+        texto = "RG 13032360 NATURAL DE SAO PAULO/SP"
+        # Falls back to the shape scan: a single issuer-shaped token, so the
+        # pre-existing rule decides — adjacency never claimed it.
+        from noctusai_lib.integrations.documents.rg import normalize, _orgao_adjacente
+
+        assert _orgao_adjacente(normalize(texto), "13032360") is None

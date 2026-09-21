@@ -247,8 +247,62 @@ def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
     return (None, "nenhuma", None)
 
 
-def find_rg_orgao(text: str) -> tuple[Optional[str], str]:
+#: How far AFTER the RG number an issuer may sit and still be "its" issuer.
+#: Every Brazilian layout prints the pair on one line — `13032360 SSP/SP`
+#: (CNH field 4c), `52.179.965-X SSP-SP` (a contract qualification) — so a
+#: short window is enough, and a short window is what keeps a birthplace or
+#: an address line two fields later from being read as the issuer.
+_ADJACENTE_WINDOW = 24
+
+
+def _orgao_valido(norm: str, m: "re.Match[str]") -> Optional[str]:
+    """`ORGAO/UF` for an issuer-shaped match, or None when it is a
+    place name / jurisdiction rather than an issuing body."""
+    orgao, uf = m.group(1), m.group(2)
+    if orgao in _ORGAO_NAO or orgao == uf:
+        return None
+    janela = norm[max(0, m.start() - _JURISDICAO_WINDOW) : m.start()]
+    if any(p in janela for p in _ORGAO_CONTEXTO_JURISDICAO):
+        return None
+    return f"{orgao}/{uf}"
+
+
+def _orgao_adjacente(norm: str, rg: str) -> Optional[str]:
+    """The issuer printed immediately after this RG number, if any.
+
+    🔴 WHY ADJACENCY BEATS "FIRST MATCH". A CNH carries field 3 — "DATA,
+    LOCAL E UF DE NASCIMENTO: 20/04/1964 SAO PAULO/SP" — ABOVE field 4c,
+    "13032360 SSP/SP". Scanning by shape alone, `PAULO/SP` is issuer-shaped
+    and comes first, so the old rule returned a city as the issuing body at
+    `baixa` — which the source-tempering then dropped, storing the RG with
+    NO issuer at all (live: Regina Maria Pelosi's CNH, 2026-09-21). The
+    number itself says where its issuer is: right beside it.
+    """
+    alvo = only_alnum(rg)
+    if not alvo:
+        return None
+    for m in _RG_RE.finditer(norm):
+        if only_alnum(m.group(1)) != alvo:
+            continue
+        fim = m.end()
+        trecho = norm[fim : fim + _ADJACENTE_WINDOW]
+        o = _ORGAO_RE.search(trecho)
+        # Only separators may stand between the number and the issuer —
+        # "13032360 SSP/SP", "52.179.965-X - SSP-SP" — never another word.
+        if o is not None and re.fullmatch(r"[\s\-/,]*", trecho[: o.start()]):
+            valido = _orgao_valido(trecho, o)
+            if valido is not None:
+                return valido
+    return None
+
+
+def find_rg_orgao(text: str, rg: Optional[str] = None) -> tuple[Optional[str], str]:
     """Extract the issuing body and UF — `SSP/SP`.
+
+    When `rg` is given (the number `find_rg` read off the same text), the
+    issuer printed right after that number wins at `alta` — see
+    `_orgao_adjacente`. Only when there is no adjacent issuer does the
+    shape-scan below run.
 
     Returns `(value, confidence)`. No matched label: the issuer is identified
     by its own SHAPE (an acronym bound to a state abbreviation), not by a
@@ -269,15 +323,16 @@ def find_rg_orgao(text: str) -> tuple[Optional[str], str]:
     if not norm:
         return (None, "nenhuma")
 
+    if rg:
+        adjacente = _orgao_adjacente(norm, rg)
+        if adjacente is not None:
+            return (adjacente, "alta")
+
     achados: list[str] = []
     for m in _ORGAO_RE.finditer(norm):
-        orgao, uf = m.group(1), m.group(2)
-        if orgao in _ORGAO_NAO or orgao == uf:
-            continue
-        janela = norm[max(0, m.start() - _JURISDICAO_WINDOW) : m.start()]
-        if any(p in janela for p in _ORGAO_CONTEXTO_JURISDICAO):
-            continue
-        achados.append(f"{orgao}/{uf}")
+        valido = _orgao_valido(norm, m)
+        if valido is not None:
+            achados.append(valido)
 
     if not achados:
         return (None, "nenhuma")
