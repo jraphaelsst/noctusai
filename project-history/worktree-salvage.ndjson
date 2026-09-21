@@ -891,3 +891,4 @@
 {"ts": "2026-09-21", "event": "worktree-sweep", "path": ".claude/worktrees/academia-custom-landing", "branch": "feat/academia-custom-landing", "sha": "b1ed93ae9c45e9c3cb82ea376afd38c7ecb66b26", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-21", "event": "worktree-sweep", "path": ".claude/worktrees/academia-landing-v2", "branch": "feat/academia-landing-v2", "sha": "d120f701ee9037e9190bf0994bb38e7e39117845", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-21", "event": "worktree-sweep", "path": ".claude/worktrees/cnh-orgao-nacionalidade", "branch": "feat/cnh-orgao-nacionalidade", "sha": "019849fe648ad2e06ce91135bceec6c4631dd5b3", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-21", "event": "worktree-sweep", "path": ".claude/worktrees/sw-custos-page", "branch": "feat/sw-custos-page", "sha": "024cce06c924faf19b93cbc343b284b239630124", "reason": "task_branch cleanup (learn-before-delete)"}
