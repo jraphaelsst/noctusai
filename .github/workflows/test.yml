@@ -1009,23 +1009,37 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
     runs-on: ubuntu-latest
-    # 4-WAY SHARD (2026-09 CI-cost audit): this suite was the workflow's
-    # critical path — ~2.6k tests, single process, ~10min wall-clock, while
-    # every other job finished by minute 4–5. pytest-xdist was evaluated and
-    # rejected: 31 test files in this suite touch the Tier-1 keeper-mirror
-    # SQLite caches (fixed paths under `<git-common-dir>/noctusai/cache/`,
-    # shared — not per-worker), and several rebuild/force-refresh them
-    # in-test, so concurrent xdist workers hitting the same physical .sqlite
-    # file mid-test is a correctness risk, not just a perf one. A file-level
-    # matrix split carries no such risk (each shard is its own process, its
-    # own runner, its own from-scratch cache prime) and needs no new
-    # dependency. Coverage is PROVED, not assumed, by the
-    # `mcp-toolkit-tests-coverage` job below (derives the same partition
-    # independently and diffs it against the full file list).
+    # SHARDED (2026-09 CI-cost audit): this suite was the workflow's critical
+    # path — ~2.6k tests, single process, ~10min wall-clock, while every other
+    # job finished by minute 4–5. pytest-xdist was evaluated and rejected: 31
+    # test files in this suite touch the Tier-1 keeper-mirror SQLite caches
+    # (fixed paths under `<git-common-dir>/noctusai/cache/`, shared — not
+    # per-worker), and several rebuild/force-refresh them in-test, so
+    # concurrent xdist workers hitting the same physical .sqlite file mid-test
+    # is a correctness risk, not just a perf one. A file-level matrix split
+    # carries no such risk (each shard is its own process, its own runner, its
+    # own from-scratch cache prime) and needs no new dependency. Coverage is
+    # PROVED, not assumed, by the `mcp-toolkit-tests-coverage` job below
+    # (derives the same partition independently and diffs it against the full
+    # file list).
+    #
+    # 5th shard `compliance` — ONE narrow, MEASURED exception to "never hand-
+    # list": `test_compliance.py` alone was clocked at 8+ minutes standalone in
+    # local verification (killed at 461s, still not done) — by a wide margin
+    # the single most expensive file in the suite (it drives the whole-
+    # platform compliance regression gate across every product) and, at 4350
+    # lines, ~9x the size of the next-largest file here. Plain round-robin by
+    # sorted filename put it in the SAME bucket as several other slow-but-
+    # small files (test_catalog.py, test_server_build.py, test_rollups.py,
+    # test_strict_tool_arguments.py, test_worktree_rollout_phase4.py) purely
+    # by alphabetical coincidence, making that one shard the long pole instead
+    # of ~1/4 of the wall-clock. Isolating it is a name, not a list — if a
+    # future file becomes the new worst offender, re-measure and move the
+    # name, don't grow this into a hand-maintained ranking.
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: ["0", "1", "2", "3", "compliance"]
     # JOB-level hermetic env so EVERY step (incl. the cache-priming step) inherits
     # it — not just the pytest step. NOCTUS_DISABLE_AUTO_CACHE_PULL is the load-
     # bearing one: without it the structural-cache refreshes try to auto-pull from
@@ -1129,11 +1143,13 @@ jobs:
           python cli.py --refresh-auto-improvement-cache
           python cli.py --refresh-noc-graph
 
-      - name: Compute this shard's test files (derived — never hand-listed)
+      - name: Compute this shard's test files (derived — never hand-listed, except the one named isolate)
         id: shard
-        # Round-robin over the SORTED, git-derived file list (same
-        # derive-don't-hand-maintain discipline `tooling-tests` above already
-        # uses for its connector list): file[i] belongs to shard (i % N).
+        # `compliance` shard: just the one measured-heaviest file (see the
+        # strategy comment above). Every OTHER shard round-robins over the
+        # SORTED, git-derived file list MINUS that one file (same derive-
+        # don't-hand-maintain discipline `tooling-tests` above already uses
+        # for its connector list): file[i] belongs to shard (i % 4).
         # Deterministic, exhaustive, non-overlapping by construction — proved
         # independently by the `mcp-toolkit-tests-coverage` job.
         # `SHARD` is set via `env:` (not interpolated as `${{ matrix.shard }}`
@@ -1143,16 +1159,24 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
+          ISOLATED="mcp/noctusai/tests/test_compliance.py"
+
+          if [ "$SHARD" = "compliance" ]; then
+            echo "$ISOLATED" > /tmp/mcp-shard-files.txt
+            echo "shard compliance: 1 file (isolated — see strategy comment)"
+            exit 0
+          fi
+
           FILES=()
           while IFS= read -r line; do
-            [ -n "$line" ] && FILES+=("$line")
+            [ -n "$line" ] && [ "$line" != "$ISOLATED" ] && FILES+=("$line")
           done < <(git ls-files 'mcp/noctusai/tests/*test_*.py' 'mcp/noctusai/tests/**/test_*.py' | sort -u)
 
           # 🔴 FLOOR — same shape as the connector-suite floor in `tooling-tests`
           # above: a derivation that silently comes back near-empty must refuse,
           # not report green over nothing.
-          if [ "${#FILES[@]}" -lt 100 ]; then
-            echo "::error::only ${#FILES[@]} test file(s) discovered under mcp/noctusai/tests — the derivation is broken, refusing to shard over nothing"
+          if [ "${#FILES[@]}" -lt 99 ]; then
+            echo "::error::only ${#FILES[@]} test file(s) discovered under mcp/noctusai/tests (minus the isolated one) — the derivation is broken, refusing to shard over nothing"
             exit 1
           fi
 
@@ -1162,14 +1186,14 @@ jobs:
               MINE+=("${FILES[$i]}")
             fi
           done
-          echo "shard $SHARD/${MCP_TEST_TOTAL_SHARDS}: ${#MINE[@]} of ${#FILES[@]} file(s)"
+          echo "shard $SHARD/${MCP_TEST_TOTAL_SHARDS}: ${#MINE[@]} of ${#FILES[@]} non-isolated file(s)"
           printf '%s\n' "${MINE[@]}" > /tmp/mcp-shard-files.txt
 
       - name: Run MCP toolkit suite — shard ${{ matrix.shard }} (hermetic — no live OpenAI key)
         env:
           NOCTUS_EMBED_MIN_INTERVAL_MS: "0"
           NOCTUS_DISABLE_AUTO_CACHE_PULL: "1"
-        # Full suite, no exclusions — just partitioned across 4 shards. (The
+        # Full suite, no exclusions — just partitioned across 5 shards. (The
         # 2026-05-31 quarantine of the two platform-health gate tests was
         # lifted the same day: the social-wiring YT-OAuth production bug was
         # fixed — 8c800c37 — and the 2 organ-shim NotificationBell findings
@@ -1177,11 +1201,12 @@ jobs:
         run: xargs -a /tmp/mcp-shard-files.txt pytest -q -p no:cacheprovider
 
   mcp-toolkit-tests-coverage:
-    # Independent proof that the 4 shards above are an exact partition of
-    # every test file under mcp/noctusai/tests/ — no file silently dropped,
-    # none silently doubled. Recomputes the SAME derivation as the shard step
-    # and diffs the union against the full list; this job holds no pytest
-    # dependency at all, so it can never be green for the wrong reason.
+    # Independent proof that the 5 shards above (4 round-robin + the 1 named
+    # isolate) are an exact partition of every test file under
+    # mcp/noctusai/tests/ — no file silently dropped, none silently doubled.
+    # Recomputes the SAME derivation as the shard step and diffs the union
+    # against the full list; this job holds no pytest dependency at all, so
+    # it can never be green for the wrong reason.
     name: MCP Toolkit Tests — shard coverage proof
     needs: changes
     if: needs.changes.outputs.run_heavy == 'true'
@@ -1189,22 +1214,28 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Prove the 4 shards union back to the full file set
+      - name: Prove the 5 shards union back to the full file set
         run: |
           set -euo pipefail
+          ISOLATED="mcp/noctusai/tests/test_compliance.py"
           git ls-files 'mcp/noctusai/tests/*test_*.py' 'mcp/noctusai/tests/**/test_*.py' | sort -u > /tmp/all.txt
           TOTAL=$(wc -l < /tmp/all.txt)
           if [ "$TOTAL" -lt 100 ]; then
             echo "::error::only $TOTAL test file(s) discovered — refusing to prove coverage over nothing"
             exit 1
           fi
+          if ! grep -qxF "$ISOLATED" /tmp/all.txt; then
+            echo "::error::the named isolate '$ISOLATED' no longer exists — update the strategy comment + this job's ISOLATED constant together"
+            exit 1
+          fi
 
           FILES=()
           while IFS= read -r line; do
-            [ -n "$line" ] && FILES+=("$line")
+            [ -n "$line" ] && [ "$line" != "$ISOLATED" ] && FILES+=("$line")
           done < /tmp/all.txt
 
           : > /tmp/union.txt
+          echo "$ISOLATED" >> /tmp/union.txt
           for shard in 0 1 2 3; do
             for i in "${!FILES[@]}"; do
               if [ $(( i % 4 )) -eq "$shard" ]; then
@@ -1215,8 +1246,8 @@ jobs:
           sort -u /tmp/union.txt -o /tmp/union.txt
 
           if ! diff -q /tmp/all.txt /tmp/union.txt >/dev/null; then
-            echo "::error::shard coverage mismatch — the union of the 4 mcp-toolkit-tests shards does not equal the full test-file set"
+            echo "::error::shard coverage mismatch — the union of the 5 mcp-toolkit-tests shards does not equal the full test-file set"
             diff /tmp/all.txt /tmp/union.txt || true
             exit 1
           fi
-          echo "OK: $TOTAL test files, exactly covered once each by the 4 shards"
+          echo "OK: $TOTAL test files, exactly covered once each by the 5 shards (1 isolated + 4 round-robin)"
