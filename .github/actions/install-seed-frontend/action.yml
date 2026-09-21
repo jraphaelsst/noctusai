@@ -1,0 +1,31 @@
+name: Install seed frontend deps
+description: >
+  Installs @noctusai/seed (seed/framework/frontend) and @noctusai/lib
+  (seed/lib/frontend) — the file:-linked deps every product frontend job
+  needs before its OWN `npm ci`. This was a 3-line block hand-copied into
+  19 job-runs across test.yml (2026-09 CI-cost audit); a composite action
+  is the DRY fix (`KB § PATTERNS/architect/project-execution.md` § the
+  recurrence rule) and lets `actions/cache` key on the two lockfiles once,
+  instead of re-downloading the same ~700 packages on every job.
+  `npm ci` (not the prior `npm install`): the lockfile IS the freeze
+  (`KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`) — the same
+  reasoning `seed-frontend-tests` already applied to these exact two dirs.
+
+runs:
+  using: composite
+  steps:
+    - name: Cache seed frontend node_modules (keyed on both lockfiles)
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          seed/framework/frontend/node_modules
+          seed/lib/frontend/node_modules
+        key: seed-frontend-npm-${{ runner.os }}-${{ hashFiles('seed/framework/frontend/package-lock.json', 'seed/lib/frontend/package-lock.json') }}
+
+    - name: npm ci (seed/framework/frontend + seed/lib/frontend — cache miss only)
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        (cd seed/framework/frontend && npm ci --no-audit --no-fund --include=peer)
+        (cd seed/lib/frontend && npm ci --no-audit --no-fund --include=peer)
