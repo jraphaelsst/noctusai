@@ -152,7 +152,7 @@ CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "onus_credor_confirmado_em",
 ) + CAMPOS_ENDERECO_CONTRATO
 
-#: Migration 147 — the manual override for the 4 address fields
+#: Migration 149 — the manual override for the 4 address fields
 #: `contrato_gerador.derivacao._imovel` reads (logradouro/número/cidade/UF).
 #: This product has no write-back to the Vista mirror those fields normally
 #: come from (`busca_service.enriquecer`) — see `carregador._endereco_imovel`
@@ -393,7 +393,7 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
             resolved, row.get("endereco_registro_confirmado_por")
         ),
         "endereco_registro_confirmado_em": row.get("endereco_registro_confirmado_em"),
-        # Migration 147 — the manual override for the 4 address fields the
+        # Migration 149 — the manual override for the 4 address fields the
         # contract gate reads. `None` on every field means "use the mirror".
         "endereco_manual_logradouro": row.get("endereco_manual_logradouro"),
         "endereco_manual_numero": row.get("endereco_manual_numero"),
@@ -581,7 +581,7 @@ def gravar_endereco_manual(
     usuario_id: Optional[Any],
 ) -> dict:
     """Manual override for the 4 address fields the contract gate reads
-    (migration 147). Only keys present in `valores` are touched — same
+    (migration 149). Only keys present in `valores` are touched — same
     absence-means-leave-alone / `None`-clears contract `atualizar` uses.
 
     `mirror` is the imóvel's CURRENT read off the Vista/registry mirror

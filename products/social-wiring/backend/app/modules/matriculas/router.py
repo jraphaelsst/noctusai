@@ -385,7 +385,7 @@ async def criar_extracao_manual_route(
     client=Depends(get_matriculas_client),
 ):
     """Create a matrícula transcription straight from typed/pasted text —
-    no PDF, no vision AI (migration 147). Runs synchronously (no background
+    no PDF, no vision AI (migration 149). Runs synchronously (no background
     task): unlike a PDF, there is no I/O-bound step here — it is a plain
     Python segmentation of the text the request already carries."""
     user, _token, org_id = _auth_parts(auth)

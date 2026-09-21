@@ -100,7 +100,7 @@ async def put_endereco_manual_route(
     client=Depends(get_imovel_hub_client),
 ) -> dict:
     """Manual override for the 4 address fields `contrato_gerador.derivacao`
-    reads (migration 147) — see `dados_service.gravar_endereco_manual`."""
+    reads (migration 149) — see `dados_service.gravar_endereco_manual`."""
     user, org_id = _auth_parts(auth)
     codigo_canonico = codigo.upper()
     valores = {

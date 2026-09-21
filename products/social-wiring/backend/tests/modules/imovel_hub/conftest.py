@@ -135,7 +135,7 @@ def imovel_row(codigo=CODIGO, **extra) -> dict:
     row = {
         "org_id": ORG_ID,
         "codigo": codigo,
-        "codigo_norm": codigo.lower(),
+        "codigo_norm": codigo.strip().upper(),  # matches imoveis_service (production writes UPPER)
         "status": "disponivel",
         "categoria": "Apartamento",
         "cidade": "Sao Paulo",

@@ -60,7 +60,7 @@ interface Props {
   error?: string | null;
   onSave: (patch: ImovelDadosPatch) => void;
 
-  // ─── Manual address override (migration 147) ───────────────────────────
+  // ─── Manual address override (migration 149) ───────────────────────────
   // A SEPARATE save (its own PUT, its own confirmation stamp) from `onSave`
   // above — `dados_service.gravar_endereco_manual` is not part of
   // `atualizar`'s `CAMPOS_EDITAVEIS`, because every touched field logs an
@@ -295,7 +295,7 @@ export default function ImovelCartorioCard({
           </p>
         </div>
 
-        {/* ─── Manual address override (migration 147) ───────────────────
+        {/* ─── Manual address override (migration 149) ───────────────────
             This product has no write-back to the Vista mirror the imóvel's
             address normally comes from — the contract gate reads THESE 4
             fields when set, falling back to the mirror otherwise. Every

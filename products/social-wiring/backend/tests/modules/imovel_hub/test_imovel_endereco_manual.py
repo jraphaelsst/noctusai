@@ -1,5 +1,5 @@
 """Manual address override for the 4 fields `contrato_gerador.derivacao`
-gates on (migration 147) — `PUT /{codigo}/endereco-manual`.
+gates on (migration 149) — `PUT /{codigo}/endereco-manual`.
 
 WHAT THESE PIN
 --------------

@@ -46,7 +46,7 @@ class ImovelDadosPatchBody(StrictHttpModel):
 
 class EnderecoManualPatchBody(StrictHttpModel):
     """Manual override for the 4 address fields `contrato_gerador.derivacao`
-    reads (migration 147) — this product has no write-back to the Vista
+    reads (migration 149) — this product has no write-back to the Vista
     mirror those fields normally come from.
 
     Same `model_fields_set` contract as `ImovelDadosPatchBody`: absence means

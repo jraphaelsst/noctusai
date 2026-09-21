@@ -1,4 +1,4 @@
-"""`POST /extracoes/manual` (migration 147) — a matrícula transcribed by
+"""`POST /extracoes/manual` (migration 149) — a matrícula transcribed by
 typing/pasting its text, no PDF, no vision AI.
 
 WHAT THESE PIN

@@ -218,7 +218,7 @@ export function useCriarExtracaoDeDocumento() {
 
 /**
  * A matrícula transcribed by TYPING/PASTING its text — no PDF, no vision AI
- * (migration 147). `POST /api/matriculas/extracoes/manual`. Lands
+ * (migration 149). `POST /api/matriculas/extracoes/manual`. Lands
  * `status='concluida'` SYNCHRONOUSLY (unlike every upload path above): there
  * is no I/O-bound step, so the returned row is already the finished one.
  */

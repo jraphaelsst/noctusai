@@ -1,5 +1,5 @@
 """`GET/PUT /imoveis/{codigo}/endereco-registro` (migration 139 writer,
-migration 147) — the confirmed short address the posse clauses print.
+migration 149) — the confirmed short address the posse clauses print.
 
 WHAT THESE PIN
 --------------

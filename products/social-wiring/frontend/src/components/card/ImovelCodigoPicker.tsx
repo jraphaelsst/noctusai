@@ -133,7 +133,7 @@ export function ImovelCodigoPicker({
           <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
             Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
           </p>
-          {/* 🔴 Migration 147 — an off-market imóvel (no anúncio, being
+          {/* 🔴 Migration 149 — an off-market imóvel (no anúncio, being
               tested manually) has no row in the mirror NOR the registry, so
               it can never turn up here by SEARCHING. This is the only way
               to give one an identity from this picker. */}

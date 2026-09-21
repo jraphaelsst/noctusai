@@ -152,7 +152,7 @@ describe("ImovelCodigoPicker", () => {
     expect(screen.queryByTestId("imovel-picker-vazio")).toBeNull();
   });
 
-  it("offers to register a new imóvel when the search finds nothing (migration 147)", async () => {
+  it("offers to register a new imóvel when the search finds nothing (migration 149)", async () => {
     mockUseImoveisBusca.mockReturnValue(busca([]));
     const { screen } = await render();
 

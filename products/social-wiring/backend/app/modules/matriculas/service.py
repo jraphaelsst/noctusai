@@ -310,7 +310,7 @@ async def processar_extracao(
 
 
 def registrar_transcricao_manual(db, extracao_id: str, org_id: str, texto: str) -> None:
-    """Land a manually-typed/pasted matrícula text (migration 147) through
+    """Land a manually-typed/pasted matrícula text (migration 149) through
     the SAME finalisation `processar_extracao` runs once a transcription's
     text exists: the retention stamp, the raw-markup check, and act
     segmentation — so an `origem='manual'` row is indistinguishable to every

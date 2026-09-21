@@ -631,7 +631,7 @@ def criar_extracao_manual(
     usuario_id: Optional[Any],
 ) -> dict:
     """Create a CONCLUDED extraction straight from typed/pasted matrícula
-    text (migration 147) — the manual path for testing the contract
+    text (migration 149) — the manual path for testing the contract
     generator without an AI transcription. The row is `origem='manual'` and
     otherwise indistinguishable to every downstream reader from an uploaded
     one: `service.registrar_transcricao_manual` (called by the router right

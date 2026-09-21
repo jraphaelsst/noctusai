@@ -137,7 +137,7 @@ export default function Matriculas() {
   const [baixandoPdf, setBaixandoPdf] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [codigoUpload, setCodigoUpload] = useState('');
-  // Migration 147 — transcrição manual (typed/pasted text, no PDF, no vision
+  // Migration 149 — transcrição manual (typed/pasted text, no PDF, no vision
   // AI). Own state, own mutation, own toggle: additive, never touching the
   // upload flow above.
   const [manualAberto, setManualAberto] = useState(false);
@@ -579,7 +579,7 @@ export default function Matriculas() {
         </Card>
       </div>
 
-      {/* Nova transcrição manual (migration 147) — a matrícula typed/pasted
+      {/* Nova transcrição manual (migration 149) — a matrícula typed/pasted
           straight in, no PDF, no vision AI. Feeds the SAME segmenter an
           uploaded PDF's text goes through, so atos/título/ônus selection
           work identically — the only way today to test the contract

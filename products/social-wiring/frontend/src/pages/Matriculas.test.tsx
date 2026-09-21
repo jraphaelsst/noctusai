@@ -316,7 +316,7 @@ describe("Matriculas — upload", () => {
   });
 });
 
-// ─── Transcrição manual (migration 147) ────────────────────────────────────
+// ─── Transcrição manual (migration 149) ────────────────────────────────────
 
 describe("Matriculas — transcrição manual", () => {
   it("is collapsed by default", async () => {

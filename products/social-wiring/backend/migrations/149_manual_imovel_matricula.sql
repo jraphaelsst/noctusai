@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 147 · social_wiring: manual paths for the contract gate's inputs
+-- Migration 149 · social_wiring: manual paths for the contract gate's inputs
 -- ============================================================================
 -- WHAT THIS IS FOR
 -- ----------------
@@ -82,7 +82,7 @@ ALTER TABLE social_wiring.imovel_dados
     ADD COLUMN IF NOT EXISTS endereco_manual_confirmado_em   TIMESTAMPTZ;
 
 COMMENT ON COLUMN social_wiring.imovel_dados.endereco_manual_logradouro IS
-    'Manual override for the CRM/Vista mirror''s logradouro (migration 147) '
+    'Manual override for the CRM/Vista mirror''s logradouro (migration 149) '
     '-- this product has no write-back to Vista, so this is the only way to '
     'correct/supply it. Wins over the mirror per-field when set '
     '(carregador._endereco_imovel). NULL falls back to the mirror.';
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.imovel_endereco_historico (
 );
 
 COMMENT ON TABLE social_wiring.imovel_endereco_historico IS
-    'Append-only log of every manual address-field override (migration 147) '
+    'Append-only log of every manual address-field override (migration 149) '
     '-- the mirror is external/synced data so an override needs no admin '
     'approval, but does need a trail: previous value + who + when. Written '
     'ONLY by dados_service.gravar_endereco_manual.';

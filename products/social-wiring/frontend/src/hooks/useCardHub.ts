@@ -634,7 +634,7 @@ export function useImoveisBusca(termo: string) {
 }
 
 /**
- * `POST /api/imoveis/{codigo}/registrar` (migration 147) — give a código
+ * `POST /api/imoveis/{codigo}/registrar` (migration 149) — give a código
  * neither the Vista mirror nor the registry has ever seen a registry
  * identity, so `ImovelCodigoPicker` can offer it. Idempotent on the server;
  * invalidates every `imoveisBusca` query so a subsequent search (or the

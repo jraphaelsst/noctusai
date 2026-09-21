@@ -97,7 +97,7 @@ export interface ImovelDados {
   titulo_aquisitivo_fonte: ImovelFonteTituloAquisitivo | null;
   onus_fonte: ImovelFonteOnus | null;
 
-  // ─── Manual address override (migration 147) ───────────────────────────
+  // ─── Manual address override (migration 149) ───────────────────────────
   // The 4 fields `contrato_gerador.derivacao` gates on — this product has
   // no write-back to the Vista mirror those normally come from. `null` on
   // every field means "use the mirror". Written ONLY by `PUT .../endereco-
@@ -122,7 +122,7 @@ export interface EnderecoManualPatch {
 }
 
 /** One row of `GET .../endereco-manual/historico` — an append-only log of
- *  every field-level override (migration 147). */
+ *  every field-level override (migration 149). */
 export interface EnderecoManualHistoricoItem {
   campo: "logradouro" | "numero" | "cidade" | "uf";
   valor_anterior: string | null;

@@ -118,7 +118,7 @@ class EnderecoRegistroBody(StrictHttpModel):
 
 class ExtracaoManualBody(StrictHttpModel):
     """A matrícula's text, typed or pasted by a human — no PDF, no vision AI
-    (migration 147). Feeds the exact same segmenter an AI transcription's
+    (migration 149). Feeds the exact same segmenter an AI transcription's
     text goes through (`estrutura_service.persistir_atos`), so acts/título/
     ônus selection work identically. `codigo` must name a known imóvel."""
 
