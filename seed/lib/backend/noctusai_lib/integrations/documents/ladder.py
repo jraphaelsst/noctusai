@@ -72,6 +72,7 @@ class DocumentTextLadder:
         document_prompt: Optional[str] = None,
         resolver=None,
         max_pages: int | None = -1,
+        provider: Optional[str] = None,
     ) -> None:
         self._org_id = org_id
         self._document_prompt = document_prompt
@@ -80,6 +81,10 @@ class DocumentTextLadder:
         # LAST page can reverse its meaning (a certidão's averbação) must pass
         # `None` — see `_RASTERIZE_MAX_PAGES` in the media real adapter.
         self._max_pages = max_pages
+        # Which vendor reads a scanned page. `None` keeps every existing
+        # default (the resolver's own provider/model) — a MANUAL selection,
+        # forwarded verbatim, never a fallback. See `resolve_llm_provider`.
+        self._provider = provider
         # Injected in tests; built lazily otherwise so importing this module
         # never drags in PyMuPDF / the LLM stack.
         self._resolver = resolver
@@ -93,6 +98,7 @@ class DocumentTextLadder:
                 org_id=self._org_id,
                 document_prompt=self._document_prompt,
                 max_pages=self._max_pages,
+                provider=self._provider,
             )
         return self._resolver
 

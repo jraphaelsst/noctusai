@@ -96,6 +96,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
+from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub.services import _now, _t
 
 logger = logging.getLogger(__name__)
@@ -811,10 +812,25 @@ async def extrair_identidade(
     # default — see `TIPOS_LEITURA_INTEGRAL`. A certidão de casamento must be
     # read whole or its averbação (the divorce) never reaches the model, and
     # the answer flips rather than degrades.
+    #
+    # NOC-REMEDIATE[identity-extractor-factory-ignores-tipo-documento]: this
+    # branch is dead in production today. Both real callers
+    # (`router.upload_documento_route` and
+    # `varrer_extracoes_pendentes`'s sweep) already pass a pre-built
+    # `extractor` (via `get_identity_extractor_factory()`, which knows
+    # nothing about `tipo_documento`), so `extractor or ...` always
+    # short-circuits and `paginas_maximas` never runs — a certidão de
+    # casamento uploaded through the real route gets the factory's default
+    # 3-page cap, not `None`. Fixing it needs `ExtractorFactory` to accept
+    # `tipo_documento`/`max_pages` and both call sites (+ the sweep's row
+    # `select`, which does not even fetch `tipo_documento` today) updated
+    # together — out of scope for the 2026-09-20 vision-provider fix this
+    # comment rides in on; see that commit's PR description. — 2026-09-20
     extractor = extractor or make_identity_extractor(
         real=True,
         org_id=str(org_id),
         max_pages=paginas_maximas(str(doc.get("tipo_documento") or "")),
+        provider=resolve_vision_provider(str(org_id)),
     )
     fields: IdentityFields = await extractor.extract(
         blob.data,

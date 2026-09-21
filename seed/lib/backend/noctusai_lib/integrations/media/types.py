@@ -73,8 +73,8 @@ class MediaResolver(Protocol):
     """Resolve inbound media to enriched chatbot-readable text.
 
     Implementations: `FakeMediaResolver` (deterministic, no IO — dev/test
-    default) and `OpenAIMediaResolver` (Whisper + vision + ffmpeg keyframes
-    + PyMuPDF). Selected via `get_media_resolver()`.
+    default) and `RealMediaResolver` (Whisper + vision + ffmpeg keyframes
+    + PyMuPDF, multi-provider). Selected via `get_media_resolver()`.
     """
 
     async def resolve(self, media: InboundMedia) -> ResolvedMedia: ...

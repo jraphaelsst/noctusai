@@ -97,12 +97,12 @@ class TestGetMediaResolverFactory:
         assert isinstance(get_media_resolver(), MediaResolver)
 
     def test_real_constructs_openai_resolver_lazily(self) -> None:
-        # real=True imports OpenAIMediaResolver lazily; constructing it must
+        # real=True imports RealMediaResolver lazily; constructing it must
         # not require ffmpeg/PyMuPDF (heavy deps are lazy at resolve-time).
         from noctusai_lib.integrations.media.real_adapter import (
-            OpenAIMediaResolver,
+            RealMediaResolver,
         )
 
         resolver = get_media_resolver(real=True, org_id="org-1")
-        assert isinstance(resolver, OpenAIMediaResolver)
+        assert isinstance(resolver, RealMediaResolver)
         assert isinstance(resolver, MediaResolver)

@@ -19,7 +19,11 @@ via ffmpeg, and refusal-retry on every vision call.
 - `InboundMedia` / `ResolvedMedia` / `MediaKind` value objects.
 - `MediaResolver` Protocol + `classify_media_kind` pure classifier.
 - `FakeMediaResolver` — deterministic, no IO (dev/test default).
-- `OpenAIMediaResolver` — Whisper + vision + ffmpeg + PyMuPDF (Real).
+- `RealMediaResolver` — Whisper + vision + ffmpeg + PyMuPDF (Real). Renamed
+  2026-09-20 from `OpenAIMediaResolver`: it now accepts a `provider=` (any
+  `documents.transcription.OCR_MODELS` key), so the OpenAI-only name would
+  lie about scope. Mirrors the sibling `RealImagingAdapter` naming in
+  `integrations/imaging/real_adapter.py`.
 - `get_media_resolver()` factory — Fake by default; Real when `real=True`.
 
 **Output contract the chatbot consumes:** `ResolvedMedia.text` is ALWAYS a
@@ -59,16 +63,17 @@ def get_media_resolver(
     scene_prompt: str | None = None,
     org_id: str | None = None,
     max_pages: int | None = -1,
+    provider: str | None = None,
 ) -> MediaResolver:
     """Return a media resolver.
 
     `FakeMediaResolver` by default (dev/test — deterministic, no IO). Pass
-    `real=True` for `OpenAIMediaResolver` (composes the seed LLM entry
+    `real=True` for `RealMediaResolver` (composes the seed LLM entry
     points + ffmpeg + PyMuPDF). The real adapter is imported lazily so the
     Fake path is importable without ffmpeg/PyMuPDF present.
 
     Args:
-        real: Select the OpenAI-backed resolver.
+        real: Select the real, multi-provider-capable resolver.
         document_prompt: Product-specific document/vision framing override
             (kept type-first to avoid pathological prompt-obedience —
             see `real_adapter` docstring). Real only.
@@ -80,22 +85,27 @@ def get_media_resolver(
             a document whose later pages can reverse its meaning needs — a
             certidão's averbação, for instance. The sentinel `-1` means
             "not specified" so `None` can keep its own meaning. Real only.
+        provider: Which vendor reads a scanned page / image — any key of
+            `documents.transcription.OCR_MODELS`. `None` keeps every
+            existing default (behaviour-preserving for a caller that has
+            not opted into the per-org vision-provider switch). Real only.
     """
     if not real:
         return FakeMediaResolver()
 
     # Lazy import — keeps the Fake path importable in slim environments
     # where ffmpeg / PyMuPDF are absent (mirrors google_calendar factory).
-    from noctusai_lib.integrations.media.real_adapter import OpenAIMediaResolver
+    from noctusai_lib.integrations.media.real_adapter import RealMediaResolver
 
     kwargs = {
         "document_prompt": document_prompt,
         "scene_prompt": scene_prompt,
         "org_id": org_id,
+        "provider": provider,
     }
     if max_pages != -1:
         kwargs["max_pages"] = max_pages
-    return OpenAIMediaResolver(**kwargs)
+    return RealMediaResolver(**kwargs)
 
 
 __all__ = [

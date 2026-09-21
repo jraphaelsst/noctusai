@@ -28,6 +28,20 @@ shelled lazily so the Fake path stays importable in slim environments.
 Every external failure degrades to a truthful fallback sentence + error
 code (the contract in `ResolvedMedia`) — the resolver never raises into
 the chatbot loop.
+
+🔴 RENAMED 2026-09-20: `OpenAIMediaResolver` → `RealMediaResolver`.
+-------------------------------------------------------------------
+This class now accepts a `provider=` override (any
+`documents.transcription.OCR_MODELS` key — `"openai"` / `"anthropic"` /
+`"gemini"`), the fix for the 2026-09-18 incident where an org's
+`llm_vision_provider="anthropic"` setting was silently ignored by every
+document/vision call this resolver makes, while OpenAI's account sat at
+zero credit. An `OpenAI`-prefixed name lying about being single-vendor is
+exactly the kind of drift `check_canonical_organ_consumption`-adjacent
+naming discipline exists to catch. Renamed rather than left undocumented,
+mirroring the sibling `RealImagingAdapter` in
+`integrations/imaging/real_adapter.py` (same `real_adapter.py` filename
+convention, same vendor-neutral `Real<Domain>Adapter` shape).
 """
 from __future__ import annotations
 
@@ -37,7 +51,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from noctusai_lib.integrations.llm import (
     analyze_image_with_refusal_retry,
@@ -51,6 +65,12 @@ from noctusai_lib.integrations.media.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: `(image, prompt, **kwargs) -> description`, the shape
+#: `analyze_image_with_refusal_retry` already has. Bound-default DI seam
+#: (`KB § PATTERNS/backend/di-test-seam.md` Class-B) — a test injects a
+#: fake analyzer instead of patching this module's imported name.
+AnalyzeFn = Callable[..., Awaitable[str]]
 
 # Generic, type-first document/vision prompt. The workspace learned the
 # hard way (commit `72f70bf`) that a domain-narrow prompt makes the model
@@ -83,11 +103,18 @@ _KEYFRAME_FRACTIONS = (0.10, 0.30, 0.60, 0.90)
 #: does not lose detail; it inverts the answer, and reads as a confident
 #: "casado, comunhão parcial" for someone who has been divorced for years.
 #: Callers that read those pass `max_pages=None` for no cap.
+#:
+#: 🔴 THIS ONLY BOUNDS VISION SPEND — IT NO LONGER BOUNDS WHICH PAGES ARE
+#: READ. Before 2026-09-20, `_resolve_pdf` rasterized up to this many pages
+#: and then described ONLY `page_images[0]` — every scanned PDF, regardless
+#: of `max_pages`, effectively read page 1 alone. It now delegates to
+#: `documents.make_document_transcriber`, whose `max_vision_pages` this
+#: value feeds: pages with a real text layer are still read for free, and
+#: up to this many of the REMAINING pages get a vision call, in order.
 _RASTERIZE_MAX_PAGES = 3
-_RASTERIZE_TARGET_PX = 1024
 
 
-class OpenAIMediaResolver:
+class RealMediaResolver:
     """Real media resolver. Composes seed LLM entry points + ffmpeg +
     PyMuPDF. Construct via `get_media_resolver(...)`.
 
@@ -98,6 +125,17 @@ class OpenAIMediaResolver:
         scene_prompt: Override the video scene-description prompt.
         org_id: Forwarded to the seed LLM entry points for per-org key
             resolution + budget accounting.
+        provider: Which vendor answers a vision call — any key of
+            `documents.transcription.OCR_MODELS`. `None` (the default)
+            changes NOTHING: every call site keeps using
+            `LLMConfig.default_vision_model` exactly as before, which is
+            what makes this behaviour-preserving for a caller that has not
+            opted into the per-org switch. A NON-default provider always
+            gets paired with that provider's OCR_MODELS pin — never the
+            OpenAI-tuned default model, which is not portable across
+            vendors (see `OCR_MODELS`'s own docstring).
+        analyze: Test seam — bound default `analyze_image_with_refusal_retry`
+            (`KB § PATTERNS/backend/di-test-seam.md` Class-B).
     """
 
     def __init__(
@@ -107,6 +145,9 @@ class OpenAIMediaResolver:
         scene_prompt: Optional[str] = None,
         org_id: Optional[str] = None,
         max_pages: Optional[int] = _RASTERIZE_MAX_PAGES,
+        provider: Optional[str] = None,
+        analyze: Optional[AnalyzeFn] = None,
+        document_transcriber: Optional[Any] = None,
     ) -> None:
         self._doc_prompt = document_prompt or _DEFAULT_DOCUMENT_PROMPT
         self._scene_prompt = scene_prompt or _DEFAULT_SCENE_PROMPT
@@ -115,6 +156,15 @@ class OpenAIMediaResolver:
         # caller reading averbações opts IN to the bill rather than inheriting
         # a truncation it cannot see.
         self._max_pages = max_pages
+        # `None` = "not specified" — every `analyze_image_with_refusal_retry`
+        # call below omits `provider=`/`model=` entirely in that case, so an
+        # unset org is byte-identical to before this parameter existed.
+        self._provider = provider
+        self._analyze: AnalyzeFn = analyze or analyze_image_with_refusal_retry
+        # Injected in tests; built lazily otherwise (see
+        # `_get_document_transcriber`) so importing this module never drags
+        # in `documents.transcription`'s own dependency graph.
+        self._document_transcriber = document_transcriber
 
     async def resolve(self, media: InboundMedia) -> ResolvedMedia:
         kind = classify_media_kind(media.mimetype, media.filename)
@@ -180,8 +230,12 @@ class OpenAIMediaResolver:
         prompt = self._doc_prompt
         if media.filename:
             prompt = f"{prompt}\n(nome do arquivo: {media.filename})"
-        described = await analyze_image_with_refusal_retry(
-            media.content, prompt, org_id=self._org_id
+        described = await self._analyze(
+            media.content,
+            prompt,
+            provider=self._provider,
+            model=self._model_for_provider(),
+            org_id=self._org_id,
         )
         return ResolvedMedia(kind=kind, text=f"[descrição da imagem] {described.strip()}")
 
@@ -262,10 +316,12 @@ class OpenAIMediaResolver:
         # sampled keyframe series — keeps the seed surface unchanged while
         # preserving the scene-narrative intent.
         primary = frame_paths[len(frame_paths) // 2]
-        described = await analyze_image_with_refusal_retry(
+        described = await self._analyze(
             primary.read_bytes(),
             f"{self._scene_prompt} (frame {len(frame_paths)//2 + 1} de "
             f"{len(frame_paths)} keyframes)",
+            provider=self._provider,
+            model=self._model_for_provider(),
             org_id=self._org_id,
         )
         return described.strip()
@@ -316,7 +372,7 @@ class OpenAIMediaResolver:
             return False
 
     # ------------------------------------------------------------------
-    # PDF → PyMuPDF get_text(); rasterize→vision fallback for scanned docs
+    # PDF → PyMuPDF get_text(); page-complete transcription for scanned docs
     # ------------------------------------------------------------------
     async def _resolve_pdf(
         self, media: InboundMedia, kind: MediaKind
@@ -329,7 +385,6 @@ class OpenAIMediaResolver:
         if camada.is_substantive:
             return ResolvedMedia(kind=kind, text=f"[documento PDF]\n{camada.text}")
 
-        # No text layer — scanned doc. Rasterize pages 1-3 → vision.
         if not fitz_ok:
             return ResolvedMedia(
                 kind=kind,
@@ -337,25 +392,40 @@ class OpenAIMediaResolver:
                 error="pdf_tooling_unavailable",
                 error_message="neither PyMuPDF nor pdfminer importable",
             )
-        page_images = await asyncio.to_thread(
-            self._pdf_rasterize, media.content, self._max_pages
+
+        # No text layer — scanned doc. EVERY page can matter: an averbação
+        # (a divorce, a name change) can sit on a LATER page than this
+        # resolver would otherwise ever rasterize, and truncating does not
+        # lose detail — it returns the opposite answer (see
+        # `_RASTERIZE_MAX_PAGES`). Delegating to the seed's page-complete
+        # transcriber — rather than rasterizing here and describing only
+        # the first image — is what fixes that: it reads every page up to
+        # its own cap, brings the correct provider→model pairing, and
+        # classifies a quota failure instead of a generic one.
+        transcricao = await self._get_document_transcriber().transcribe(
+            media.content, mimetype=media.mimetype, filename=media.filename
         )
-        if not page_images:
+        if not transcricao.ok:
             return ResolvedMedia(
                 kind=kind,
-                text="[PDF recebido — sem camada de texto e não foi possível rasterizar]",
-                error="pdf_no_text",
-                error_message="no text layer; rasterize produced no pages",
+                text=(
+                    "[PDF recebido — não foi possível transcrever as páginas "
+                    f"digitalizadas ({transcricao.error})]"
+                ),
+                error=transcricao.error,
+                error_message=transcricao.error_message,
             )
-        prompt = self._doc_prompt
-        if media.filename:
-            prompt = f"{prompt}\n(nome do arquivo: {media.filename})"
-        described = await analyze_image_with_refusal_retry(
-            page_images[0], prompt, org_id=self._org_id
-        )
+        texto = transcricao.text.strip()
+        if not texto:
+            return ResolvedMedia(
+                kind=kind,
+                text="[PDF recebido — sem texto legível nas páginas digitalizadas]",
+                error="pdf_no_text",
+                error_message="scanned pages produced no readable text",
+            )
         return ResolvedMedia(
             kind=kind,
-            text=f"[documento PDF digitalizado] {described.strip()}",
+            text=f"[documento PDF digitalizado] {texto}",
         )
 
     @staticmethod
@@ -374,35 +444,58 @@ class OpenAIMediaResolver:
 
         return classify_pdf_text_layer(content)
 
-    @staticmethod
-    def _pdf_rasterize(
-        content: bytes, max_pages: Optional[int] = _RASTERIZE_MAX_PAGES
-    ) -> list[bytes]:
-        """Rasterize the first `max_pages` pages at ~1024px → PNG bytes.
+    def _get_document_transcriber(self):
+        """The page-complete transcriber `_resolve_pdf` delegates to for a
+        scanned document. Injected in tests; built lazily otherwise so
+        importing this module never drags in `documents.transcription`'s
+        own dependency graph for a caller who only ever resolves
+        audio/image/video.
 
-        `max_pages=None` rasterizes EVERY page — for documents whose meaning
-        can be reversed by a later page (see `_RASTERIZE_MAX_PAGES`).
+        `max_vision_pages` mirrors `self._max_pages`: `None` keeps the
+        transcriber's own generous safety cap (`MAX_VISION_PAGES`, pages
+        NEEDING vision — free text-layer pages are unlimited either way);
+        a concrete N (the resolver's own default of 3) caps vision spend at
+        N pages rather than, as before this delegation existed, silently
+        describing page 1 alone regardless of N.
         """
-        try:
-            import fitz  # type: ignore
+        if self._document_transcriber is None:
+            from noctusai_lib.integrations.documents.transcription import (
+                MAX_VISION_PAGES,
+                make_document_transcriber,
+            )
 
-            doc = fitz.open(stream=content, filetype="pdf")
-            images: list[bytes] = []
-            try:
-                for i in range(min(len(doc), _RASTERIZE_MAX_PAGES)):
-                    page = doc[i]
-                    rect = page.rect
-                    longest = max(rect.width, rect.height) or 1.0
-                    zoom = _RASTERIZE_TARGET_PX / longest
-                    mat = fitz.Matrix(zoom, zoom)
-                    pix = page.get_pixmap(matrix=mat)
-                    images.append(pix.tobytes("png"))
-            finally:
-                doc.close()
-            return images
-        except Exception:  # noqa: BLE001 — rasterize is best-effort
-            logger.debug("PyMuPDF rasterize failed", exc_info=True)
-            return []
+            kwargs: dict[str, Any] = {
+                "real": True,
+                "org_id": self._org_id,
+                "provider": self._provider,
+            }
+            if self._max_pages is not None:
+                kwargs["max_vision_pages"] = self._max_pages
+            else:
+                kwargs["max_vision_pages"] = MAX_VISION_PAGES
+            self._document_transcriber = make_document_transcriber(**kwargs)
+        return self._document_transcriber
+
+    def _model_for_provider(self) -> Optional[str]:
+        """The OCR model paired with `self._provider`, or `None`.
+
+        `None` when `self._provider` is unset OR is `"openai"` — both cases
+        keep `analyze_image`'s own default (`LLMConfig.default_vision_model`,
+        `gpt-4o`), unchanged, so an org that has not opted into the switch
+        (or has explicitly picked OpenAI) sees byte-identical behaviour.
+
+        A NON-OpenAI provider has no such tuned default at this layer, so
+        this borrows the seed's canonical per-provider OCR pin
+        (`documents.transcription.OCR_MODELS` — the SAME pin
+        `make_document_transcriber` uses for the PDF rung) rather than
+        sending an OpenAI-only model name to a different vendor's API,
+        which is a 404, not a degraded answer.
+        """
+        if self._provider is None or self._provider == "openai":
+            return None
+        from noctusai_lib.integrations.documents.transcription import OCR_MODELS
+
+        return OCR_MODELS.get(self._provider)
 
 
-__all__ = ["OpenAIMediaResolver"]
+__all__ = ["RealMediaResolver"]

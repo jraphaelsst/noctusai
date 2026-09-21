@@ -168,11 +168,13 @@ class LadderMatriculaExtractor:
         org_id: Optional[str] = None,
         document_prompt: Optional[str] = None,
         resolver=None,
+        provider: Optional[str] = None,
     ) -> None:
         self._ladder = DocumentTextLadder(
             org_id=org_id,
             document_prompt=document_prompt,
             resolver=resolver,
+            provider=provider,
         )
 
     async def extract(
@@ -231,16 +233,26 @@ def make_matricula_extractor(
     real: bool = False,
     org_id: Optional[str] = None,
     document_prompt: Optional[str] = None,
+    provider: Optional[str] = None,
 ) -> MatriculaExtractor:
     """Return a matrícula extractor.
 
     Fake-by-default, the posture every seed IO module takes: a consumer that
     forgets to configure the real adapter gets deterministic behaviour, not a
     surprise LLM bill or an import error in a slim image.
+
+    Args:
+        provider: Which vendor reads a scanned page — any key of
+            `documents.transcription.OCR_MODELS`. `None` (the default)
+            changes nothing — see `LadderIdentityExtractor`'s sibling
+            parameter for the full reasoning; this extractor shares the
+            same `DocumentTextLadder`.
     """
     if not real:
         return FakeMatriculaExtractor()
-    return LadderMatriculaExtractor(org_id=org_id, document_prompt=document_prompt)
+    return LadderMatriculaExtractor(
+        org_id=org_id, document_prompt=document_prompt, provider=provider
+    )
 
 
 __all__ = [

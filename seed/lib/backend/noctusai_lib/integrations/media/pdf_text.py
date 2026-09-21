@@ -2,10 +2,10 @@
 
 Lifted 2026-05-19 by `social-wiring-google-seed-consume` Phase 6a-drive
 from the social-wiring `media_service._extract_pdf_text` + reconciled
-with `OpenAIMediaResolver._pdf_text_layer` (the existing private
+with `RealMediaResolver._pdf_text_layer` (the existing private
 implementation inside this seed module — same logic, now single-sourced
 and public). Becomes the canonical PDF→text helper for both the
-multimodal `OpenAIMediaResolver` document path AND non-resolver
+multimodal `RealMediaResolver` document path AND non-resolver
 consumers (e.g. `DriveFileContent.text` for `application/pdf`).
 
 Implementation order (matches the absorbed product + ERP `certidoes_service`
@@ -14,15 +14,16 @@ convention):
 1. **PyMuPDF (`fitz`) `page.get_text()` per page**, joined with newlines
    between non-empty pages. Faster than pdfminer for the text-layer case
    and we already depend on it for the rasterize fallback inside
-   `OpenAIMediaResolver`.
+   `RealMediaResolver`.
 2. **`pdfminer.high_level.extract_text(...)` fallback** when PyMuPDF
    is unavailable (slim envs) — defensive: both ship in social-wiring's
    `requirements.txt`. Used to be the primary in the absorbed product;
    demoted per the W1.E5 reconcile (commit `61d684f`).
 3. **Returns `""` on any failure** (no PyMuPDF *and* no pdfminer; corrupted
    PDF; empty text layer of a scanned doc). Callers can fall through to
-   rasterize-then-vision (`OpenAIMediaResolver._pdf_rasterize` +
-   `analyze_image_with_refusal_retry`).
+   page-complete transcription (`documents.make_document_transcriber`,
+   which `RealMediaResolver._resolve_pdf` itself delegates to since
+   2026-09-20 — see that method).
 
 Tooling-availability signal: `pdf_text_tooling_available()` returns
 False when both libs are absent so a consumer can distinguish

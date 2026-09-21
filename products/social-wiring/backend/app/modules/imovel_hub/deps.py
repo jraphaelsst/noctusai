@@ -33,6 +33,7 @@ from noctusai_lib.integrations.storage import (
 )
 
 from app.dependencies import get_admin_client, get_scoped_admin_client
+from app.services.api_keys_store import resolve_vision_provider
 
 
 def get_imovel_hub_client() -> Any:
@@ -78,6 +79,21 @@ def get_storage_backend() -> StorageBackend:
 MatriculaExtractorFactory = Callable[[Optional[str]], MatriculaExtractor]
 
 
+def _build_matricula_extractor(org_id: Optional[str]) -> MatriculaExtractor:
+    """One org's matrícula extractor, with ITS manually-selected vision
+    provider — mirrors `card_hub.deps._build_identity_extractor` /
+    `matriculas.deps._build_transcriber`.
+
+    Before this wiring existed, `make_matricula_extractor` was called with
+    no `provider=` at all, so an org's `llm_vision_provider` setting was
+    silently ignored here exactly as it was in `card_hub` — the SAME gap,
+    on the sibling extractor that shares `DocumentTextLadder`.
+    """
+    return make_matricula_extractor(
+        real=True, org_id=org_id, provider=resolve_vision_provider(org_id)
+    )
+
+
 def get_matricula_extractor_factory() -> MatriculaExtractorFactory:
     """FastAPI dependency — builds the matrícula extractor for one org.
 
@@ -92,7 +108,7 @@ def get_matricula_extractor_factory() -> MatriculaExtractorFactory:
     provider or fail on a missing key, and neither is the behaviour under
     test.
     """
-    return lambda org_id: make_matricula_extractor(real=True, org_id=org_id)
+    return _build_matricula_extractor
 
 
 __all__ = [

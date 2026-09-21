@@ -5,11 +5,19 @@ WHY THIS IS NOT `DocumentTextLadder`
 The ladder answers "what text is in these bytes, and how sure can you be of
 it" for an EXTRACTOR — something that wants one field (a birthdate, a
 matrícula number) and stops as soon as it can read it. Its vision rung
-delegates to `OpenAIMediaResolver`, which rasterizes at most
-`_RASTERIZE_MAX_PAGES` (3) and describes only `page_images[0]`. That is the
-right shape for "what is this document", and the wrong shape for "give me
-every word of it": a 7-page matrícula would come back as a prose summary of
-its first page.
+delegates to `RealMediaResolver`, which describes what a scanned page shows
+rather than transcribing it verbatim. That is the right shape for "what is
+this document", and the wrong shape for "give me every word of it": a
+7-page matrícula needs its exact text, not a prose description of it.
+
+🔴 AS OF 2026-09-20 `RealMediaResolver._resolve_pdf` DELEGATES ITS OWN
+SCANNED-DOCUMENT BRANCH TO THIS MODULE (`make_document_transcriber`) —
+see that method. The relationship above still holds for WHY the two
+modules exist (a description vs. a transcription are different jobs); it
+no longer means `RealMediaResolver` reads only its first page. Prefer THIS
+module directly when a caller can (as `identity`/`matricula` extraction and
+`certidoes`/`matriculas` already do) — going through the resolver adds an
+extra hop for the identical result.
 
 Transcription is the other question. It is page-complete by definition, it
 has to interleave rungs (a typeset body with a scanned averbação stapled on

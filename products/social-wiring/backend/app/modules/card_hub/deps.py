@@ -26,6 +26,7 @@ from noctusai_lib.integrations.storage import (
 )
 
 from app.dependencies import get_admin_client
+from app.services.api_keys_store import resolve_vision_provider
 
 _SCHEMA = "social_wiring"
 
@@ -85,6 +86,28 @@ def get_storage_backend() -> StorageBackend:
 ExtractorFactory = Callable[[Optional[str]], IdentityExtractor]
 
 
+def _build_identity_extractor(org_id: Optional[str]) -> IdentityExtractor:
+    """One org's identity extractor, with ITS manually-selected vision
+    provider — mirrors `matriculas.deps._build_transcriber` exactly.
+
+    🔴 THE PROVIDER IS RESOLVED PER EXTRACTION, NOT PER PROCESS.
+    `resolve_vision_provider` is called here — inside the factory — so a
+    switch flipped in Settings takes effect on the very next upload, not on
+    the next deploy.
+
+    There is NO fallback: if the selected vendor's key is missing or its
+    account is empty, the extraction fails saying so. Before this wiring
+    existed, `make_identity_extractor` was called with no `provider=` at
+    all, so an org's `llm_vision_provider` setting was silently ignored and
+    every identity read kept hitting OpenAI regardless — the exact defect
+    that stranded `social_wiring.cliente_documentos` rows behind OpenAI's
+    2026-09-17 quota exhaustion while the org's Anthropic key sat unused.
+    """
+    return make_identity_extractor(
+        real=True, org_id=org_id, provider=resolve_vision_provider(org_id)
+    )
+
+
 def get_identity_extractor_factory() -> ExtractorFactory:
     """FastAPI dependency — builds the identity extractor for one org.
 
@@ -100,7 +123,7 @@ def get_identity_extractor_factory() -> ExtractorFactory:
     vision model: an un-overridden test would either hit a provider or fail
     on a missing key, and neither is the behaviour under test.
     """
-    return lambda org_id: make_identity_extractor(real=True, org_id=org_id)
+    return _build_identity_extractor
 
 
 SignatureAdapterFactory = Callable[[Optional[str]], SignatureAdapter]

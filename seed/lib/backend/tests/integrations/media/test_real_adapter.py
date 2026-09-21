@@ -1,0 +1,251 @@
+"""`RealMediaResolver` — the per-org vision-provider switch + the
+page-complete scanned-PDF delegation.
+
+Two 2026-09-18/20 production defects, both fixed here:
+
+1. **The provider was ignored.** `org_settings.llm_vision_provider` was set
+   for an org, OpenAI's account was out of credit, Anthropic's key worked —
+   and every extraction still hit OpenAI, because no `provider=` parameter
+   existed anywhere between `make_identity_extractor` and the vision call.
+2. **A scanned PDF was read from page 1 only.** `_resolve_pdf` rasterized up
+   to `max_pages` pages and then described `page_images[0]` alone,
+   regardless of `max_pages` — a certidão de casamento's AVERBAÇÃO (a later
+   page) never reached the model, and the answer inverted rather than
+   degraded.
+
+These tests exercise `RealMediaResolver` directly via its `analyze=` /
+`document_transcriber=` DI seams (`KB § PATTERNS/backend/di-test-seam.md`
+Class-B) — never by patching this module's own functions.
+"""
+from __future__ import annotations
+
+import pytest
+
+from noctusai_lib.integrations.documents import TranscribedPage, Transcription, TextSource
+from noctusai_lib.integrations.media import InboundMedia
+from noctusai_lib.integrations.media.real_adapter import RealMediaResolver
+
+
+class _FakeAnalyze:
+    """Records every call; returns a canned, obviously-synthetic answer."""
+
+    def __init__(self, answer: str = "[FAKE] descricao") -> None:
+        self.answer = answer
+        self.calls: list[dict] = []
+
+    async def __call__(self, image, prompt, **kwargs):
+        self.calls.append({"prompt": prompt, **kwargs})
+        return self.answer
+
+
+class _FakeTranscriber:
+    """Stands in for `documents.make_document_transcriber(real=True, ...)`."""
+
+    def __init__(self, transcricao: Transcription) -> None:
+        self._transcricao = transcricao
+        self.calls: list[dict] = []
+
+    async def transcribe(self, content, *, mimetype=None, filename=None):
+        self.calls.append(
+            {"content": content, "mimetype": mimetype, "filename": filename}
+        )
+        return self._transcricao
+
+
+def _scanned_pdf(num_pages: int) -> bytes:
+    """A PDF with `num_pages` pages, each a page-sized raster image and NO
+    extractable text — `classify_pdf_text_layer` reports `is_substantive`
+    False for every page, exactly like a photographed cartório document.
+    Mirrors `tests/integrations/media/test_pdf_text.py::_pdf`.
+    """
+    fitz = pytest.importorskip("fitz")
+
+    doc = fitz.open()
+    for _ in range(num_pages):
+        page = doc.new_page()
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 200, 280))
+        pix.set_rect(pix.irect, (128, 128, 128))
+        page.insert_image(page.rect, pixmap=pix)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+class TestProviderIsBehaviourPreservingByDefault:
+    """(b) An org that never touched `llm_vision_provider` must see NO
+    change: no `provider=`/`model=` divergence from before this parameter
+    existed."""
+
+    @pytest.mark.asyncio
+    async def test_unset_provider_passes_none_through(self) -> None:
+        analyze = _FakeAnalyze()
+        resolver = RealMediaResolver(org_id="org-1", analyze=analyze)
+
+        await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
+
+        assert len(analyze.calls) == 1
+        assert analyze.calls[0]["provider"] is None
+        assert analyze.calls[0]["model"] is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_openai_also_keeps_the_tuned_default_model(self) -> None:
+        """OpenAI explicitly chosen (the switch's own documented default)
+        must not move off the already-tuned `gpt-4o` onto the OCR pin —
+        only a NON-OpenAI vendor has no tuned default at this layer."""
+        analyze = _FakeAnalyze()
+        resolver = RealMediaResolver(org_id="org-1", provider="openai", analyze=analyze)
+
+        await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
+
+        assert analyze.calls[0]["provider"] == "openai"
+        assert analyze.calls[0]["model"] is None
+
+
+class TestProviderRoutesVendorAndModelTogether:
+    """(a) `documents.transcription.OCR_MODELS` says the model is NOT
+    portable across providers — selecting a provider must select its model
+    too, or a switch to Anthropic sends it OpenAI's model name."""
+
+    @pytest.mark.asyncio
+    async def test_anthropic_selects_its_own_model(self) -> None:
+        analyze = _FakeAnalyze()
+        resolver = RealMediaResolver(org_id="org-1", provider="anthropic", analyze=analyze)
+
+        await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
+
+        assert analyze.calls[0]["provider"] == "anthropic"
+        assert analyze.calls[0]["model"] == "claude-opus-5"
+
+    @pytest.mark.asyncio
+    async def test_gemini_selects_its_own_model(self) -> None:
+        analyze = _FakeAnalyze()
+        resolver = RealMediaResolver(org_id="org-1", provider="gemini", analyze=analyze)
+
+        await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
+
+        assert analyze.calls[0]["provider"] == "gemini"
+        assert analyze.calls[0]["model"] == "gemini-2.0-flash"
+
+
+class TestScannedPdfDelegatesInsteadOfDescribingPageOne:
+    """(c) The averbação-inversion regression: a multi-page scanned PDF
+    must yield text from EVERY page, not a description of the first."""
+
+    @pytest.mark.asyncio
+    async def test_last_page_content_reaches_the_output(self) -> None:
+        transcricao = Transcription(
+            pages=(
+                TranscribedPage(number=1, text="CASAMENTO: JOAO E MARIA", source=TextSource.OCR),
+                TranscribedPage(number=2, text="REGIME: COMUNHAO PARCIAL", source=TextSource.OCR),
+                TranscribedPage(
+                    number=3,
+                    text="AVERBACAO Nº 1: DIVORCIO AVERBADO EM 2020",
+                    source=TextSource.OCR,
+                ),
+            ),
+            num_paginas=3,
+        )
+        transcriber = _FakeTranscriber(transcricao)
+        resolver = RealMediaResolver(
+            org_id="org-1", max_pages=None, document_transcriber=transcriber
+        )
+
+        pdf_bytes = _scanned_pdf(3)
+        out = await resolver.resolve(
+            InboundMedia(content=pdf_bytes, mimetype="application/pdf", filename="certidao.pdf")
+        )
+
+        assert out.error is None
+        assert "AVERBACAO" in out.text
+        assert "DIVORCIO" in out.text
+        # the whole document reached the transcriber, not a truncated slice
+        assert transcriber.calls[0]["content"] == pdf_bytes
+
+    @pytest.mark.asyncio
+    async def test_a_substantive_text_layer_still_short_circuits(self) -> None:
+        """The free rung is untouched by this change: a digitally-issued
+        PDF never reaches the transcriber at all."""
+        transcriber = _FakeTranscriber(Transcription(error="should_not_be_called"))
+        resolver = RealMediaResolver(org_id="org-1", document_transcriber=transcriber)
+
+        fitz = pytest.importorskip("fitz")
+        doc = fitz.open()
+        page = doc.new_page()
+        # Above `MIN_CHARS_PER_PAGE` (100) so the classifier calls this page
+        # substantive rather than "below char floor".
+        texto = "TEXTO DIGITAL REAL. " * 10
+        page.insert_textbox(fitz.Rect(20, 20, 500, 500), texto, fontsize=10)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        out = await resolver.resolve(
+            InboundMedia(content=pdf_bytes, mimetype="application/pdf")
+        )
+
+        assert out.error is None
+        assert "TEXTO DIGITAL REAL" in out.text
+        assert transcriber.calls == []
+
+
+class TestQuotaFailurePropagates:
+    """(d) `insufficient_quota` must reach the caller as that exact code —
+    not folded into a generic `resolve_failed`/`pdf_no_text`."""
+
+    @pytest.mark.asyncio
+    async def test_insufficient_quota_is_not_genericised(self) -> None:
+        transcriber = _FakeTranscriber(
+            Transcription(
+                error="insufficient_quota",
+                error_message="Error code: 429 - insufficient_quota",
+            )
+        )
+        resolver = RealMediaResolver(org_id="org-1", document_transcriber=transcriber)
+
+        pdf_bytes = _scanned_pdf(1)
+        out = await resolver.resolve(
+            InboundMedia(content=pdf_bytes, mimetype="application/pdf")
+        )
+
+        assert out.error == "insufficient_quota"
+        assert "429" in out.error_message
+
+
+class TestMaxPagesMapsToMaxVisionPages:
+    """`self._max_pages` (a page-count cap) feeds the transcriber's
+    `max_vision_pages` (a cap on pages NEEDING vision) — the fix does not
+    just delegate, it maps the two knobs onto each other correctly."""
+
+    def test_none_keeps_the_transcribers_own_safety_cap(self) -> None:
+        from noctusai_lib.integrations.documents.transcription import (
+            MAX_VISION_PAGES,
+            LadderDocumentTranscriber,
+        )
+
+        resolver = RealMediaResolver(org_id="org-1", max_pages=None)
+        transcriber = resolver._get_document_transcriber()
+
+        assert isinstance(transcriber, LadderDocumentTranscriber)
+        assert transcriber._max_vision_pages == MAX_VISION_PAGES
+
+    def test_a_concrete_cap_is_forwarded_verbatim(self) -> None:
+        from noctusai_lib.integrations.documents.transcription import (
+            LadderDocumentTranscriber,
+        )
+
+        resolver = RealMediaResolver(org_id="org-1", max_pages=3)
+        transcriber = resolver._get_document_transcriber()
+
+        assert isinstance(transcriber, LadderDocumentTranscriber)
+        assert transcriber._max_vision_pages == 3
+
+    def test_provider_reaches_the_delegated_transcriber_too(self) -> None:
+        from noctusai_lib.integrations.documents.transcription import (
+            LadderDocumentTranscriber,
+        )
+
+        resolver = RealMediaResolver(org_id="org-1", provider="anthropic")
+        transcriber = resolver._get_document_transcriber()
+
+        assert isinstance(transcriber, LadderDocumentTranscriber)
+        assert transcriber._provider == "anthropic"
+        assert transcriber._ocr_model == "claude-opus-5"

@@ -73,12 +73,14 @@ class LadderIdentityExtractor:
         document_prompt: Optional[str] = None,
         resolver=None,
         max_pages: int | None = -1,
+        provider: Optional[str] = None,
     ) -> None:
         self._ladder = DocumentTextLadder(
             org_id=org_id,
             document_prompt=document_prompt,
             resolver=resolver,
             max_pages=max_pages,
+            provider=provider,
         )
 
     async def extract(

@@ -1,6 +1,6 @@
 """Tests for the public `extract_pdf_text(...)` helper (lifted
 2026-05-19 from social-wiring `media_service._extract_pdf_text`,
-single-sourced with `OpenAIMediaResolver._pdf_text_layer`)."""
+single-sourced with `RealMediaResolver._pdf_text_layer`)."""
 
 from __future__ import annotations
 
