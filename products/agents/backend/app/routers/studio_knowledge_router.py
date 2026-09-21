@@ -1,0 +1,333 @@
+"""``/api/studio/agents/{key}/knowledge`` + ``.../documents`` (contract
+§D3, slice BE-KE).
+
+Auth: ``require_member`` for reads, ``require_admin`` for writes (the
+SAME deps every other studio router uses — contract §D intro "existing
+deps"). Every route resolves the agent by ``(ctx.org_id, key)`` via
+:func:`app.stores.studio_knowledge.get_agent_lookup` — 404
+``agent_not_found`` for an unknown key, 409 ``not_studio_agent`` for a
+legacy agent (contract §D intro). A foreign ``col_id``/``doc_id`` 404s,
+never 403-leaks (contract §H.1).
+
+Not registered on ``app/main.py`` yet — router registration is BE-RT's
+(contract §J2.3); this module only exports ``router`` for a local test
+app (``tests/studio/ke/conftest.py``) until BE-RT merges.
+"""
+from __future__ import annotations
+
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from app.dependencies import require_admin, require_member
+from app.schemas.studio_ke import (
+    CollectionCreateRequest,
+    CollectionListOut,
+    CollectionOut,
+    CollectionUpdateRequest,
+    DocumentCreateRequest,
+    DocumentListItemOut,
+    DocumentListOut,
+    DocumentOut,
+    DocumentUpdateRequest,
+    RevisionListOut,
+    RevisionOut,
+    SearchItemOut,
+    SearchOut,
+)
+from app.stores.errors import NotFound
+from app.stores.studio_knowledge import (
+    CollectionInput,
+    DocumentInput,
+    StudioAgentRef,
+    _UNSET,
+)
+from noctusai_lib.api.auth.session import AuthContext
+
+router = APIRouter(prefix="/api/studio/agents", tags=["studio-knowledge"])
+
+
+# ── DI seams (local to this slice — see app/dependencies.py's module
+# docstring for why: BE-RT owns the production wiring in main.py; wave-1
+# routers build their own dependency accessors so their branch runs
+# standalone, contract §J2.3) ────────────────────────────────────────────
+
+
+def get_studio_knowledge_store_dep():
+    from app.config import settings
+    from app.stores.studio_knowledge import get_studio_knowledge_store
+
+    return get_studio_knowledge_store(settings)
+
+
+def get_agent_lookup_dep():
+    from app.config import settings
+    from app.stores.studio_knowledge import get_agent_lookup
+
+    return get_agent_lookup(settings)
+
+
+def _resolve_studio_agent(agent_lookup, org_id: UUID, key: str) -> StudioAgentRef:
+    try:
+        agent = agent_lookup.get_by_key(org_id, key)
+    except NotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"detail": "Agente não encontrado.", "code": "agent_not_found"},
+        ) from exc
+    if agent.definition_mode != "studio":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"detail": "Agente não é um agente Studio.", "code": "not_studio_agent"},
+        )
+    return agent
+
+
+def _not_found(detail: str = "Recurso não encontrado.", code: str = "not_found") -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"detail": detail, "code": code})
+
+
+def _invalid_field(exc: ValueError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"detail": str(exc), "code": "invalid_field"},
+    )
+
+
+def _collection_out(record, total_documentos: int) -> CollectionOut:
+    return CollectionOut(
+        id=record.id, slug=record.slug, nome=record.nome, tag=record.tag,
+        descricao=record.descricao, ordem=record.ordem, total_documentos=total_documentos,
+    )
+
+
+def _document_list_item_out(record) -> DocumentListItemOut:
+    return DocumentListItemOut(
+        id=record.id, slug=record.slug, titulo=record.titulo, tipo=record.tipo,
+        resumo=record.resumo, chars=len(record.conteudo), ativo=record.ativo,
+        updated_at=record.updated_at,
+    )
+
+
+def _document_out(record) -> DocumentOut:
+    return DocumentOut(
+        id=record.id, collection_id=record.collection_id, slug=record.slug, titulo=record.titulo,
+        tipo=record.tipo, resumo=record.resumo, conteudo=record.conteudo,
+        proveniencia=record.proveniencia, ativo=record.ativo, chars=len(record.conteudo),
+        updated_at=record.updated_at,
+    )
+
+
+# ── Collections ────────────────────────────────────────────────────────
+
+
+@router.get("/{key}/knowledge", response_model=CollectionListOut)
+async def list_collections(
+    key: str,
+    ctx: AuthContext = Depends(require_member),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> CollectionListOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    records = store.list_collections(ctx.org_id, agent.id)
+    colecoes = [
+        _collection_out(r, store.count_documents(ctx.org_id, agent.id, r.id))
+        for r in records
+    ]
+    return CollectionListOut(colecoes=colecoes)
+
+
+@router.post("/{key}/knowledge", response_model=CollectionOut, status_code=status.HTTP_201_CREATED)
+async def create_collection(
+    key: str,
+    payload: CollectionCreateRequest,
+    ctx: AuthContext = Depends(require_admin),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> CollectionOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    try:
+        record = store.create_collection(
+            ctx.org_id, agent.id,
+            CollectionInput(slug=payload.slug, nome=payload.nome, tag=payload.tag,
+                             descricao=payload.descricao, ordem=payload.ordem),
+        )
+    except ValueError as exc:
+        raise _invalid_field(exc) from exc
+    return _collection_out(record, 0)
+
+
+@router.patch("/{key}/knowledge/{col_id}", response_model=CollectionOut)
+async def update_collection(
+    key: str,
+    col_id: UUID,
+    payload: CollectionUpdateRequest,
+    ctx: AuthContext = Depends(require_admin),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> CollectionOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    fields = payload.model_dump(exclude_unset=True)
+    try:
+        record = store.update_collection(
+            ctx.org_id, agent.id, col_id,
+            nome=fields.get("nome", _UNSET), tag=fields.get("tag", _UNSET),
+            descricao=fields.get("descricao", _UNSET), ordem=fields.get("ordem", _UNSET),
+        )
+    except NotFound as exc:
+        raise _not_found("Coleção não encontrada.", "collection_not_found") from exc
+    total = store.count_documents(ctx.org_id, agent.id, col_id)
+    return _collection_out(record, total)
+
+
+# ── Documents ──────────────────────────────────────────────────────────
+
+
+@router.get("/{key}/knowledge/{col_id}/documents", response_model=DocumentListOut)
+async def list_documents(
+    key: str,
+    col_id: UUID,
+    q: str | None = Query(None),
+    tipo: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    ctx: AuthContext = Depends(require_member),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> DocumentListOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    try:
+        store.get_collection(ctx.org_id, agent.id, col_id)
+    except NotFound as exc:
+        raise _not_found("Coleção não encontrada.", "collection_not_found") from exc
+    records, total = store.list_documents(
+        ctx.org_id, agent.id, col_id, q=q, tipo=tipo, page=page, page_size=page_size,
+    )
+    return DocumentListOut(items=[_document_list_item_out(r) for r in records], total=total)
+
+
+@router.post(
+    "/{key}/knowledge/{col_id}/documents", response_model=DocumentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_document(
+    key: str,
+    col_id: UUID,
+    payload: DocumentCreateRequest,
+    ctx: AuthContext = Depends(require_admin),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> DocumentOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    try:
+        store.get_collection(ctx.org_id, agent.id, col_id)
+    except NotFound as exc:
+        raise _not_found("Coleção não encontrada.", "collection_not_found") from exc
+    try:
+        record = store.create_document(
+            ctx.org_id, agent.id, col_id,
+            DocumentInput(
+                slug=payload.slug, titulo=payload.titulo, tipo=payload.tipo,
+                conteudo=payload.conteudo, resumo=payload.resumo, proveniencia=payload.proveniencia,
+            ),
+            author_id=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise _invalid_field(exc) from exc
+    return _document_out(record)
+
+
+@router.get("/{key}/documents/{doc_id}", response_model=DocumentOut)
+async def get_document(
+    key: str,
+    doc_id: UUID,
+    ctx: AuthContext = Depends(require_member),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> DocumentOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    try:
+        record = store.get_document(ctx.org_id, agent.id, doc_id)
+    except NotFound as exc:
+        raise _not_found("Documento não encontrado.", "document_not_found") from exc
+    return _document_out(record)
+
+
+@router.patch("/{key}/documents/{doc_id}", response_model=DocumentOut)
+async def update_document(
+    key: str,
+    doc_id: UUID,
+    payload: DocumentUpdateRequest,
+    ctx: AuthContext = Depends(require_admin),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> DocumentOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    fields = payload.model_dump(exclude_unset=True)
+    motivo = fields.pop("motivo", None)
+    try:
+        record = store.update_document(
+            ctx.org_id, agent.id, doc_id, author_id=ctx.user_id, motivo=motivo,
+            titulo=fields.get("titulo", _UNSET), tipo=fields.get("tipo", _UNSET),
+            resumo=fields.get("resumo", _UNSET), conteudo=fields.get("conteudo", _UNSET),
+            proveniencia=fields.get("proveniencia", _UNSET), ativo=fields.get("ativo", _UNSET),
+        )
+    except NotFound as exc:
+        raise _not_found("Documento não encontrado.", "document_not_found") from exc
+    except ValueError as exc:
+        raise _invalid_field(exc) from exc
+    return _document_out(record)
+
+
+@router.get("/{key}/documents/{doc_id}/revisions", response_model=RevisionListOut)
+async def list_revisions(
+    key: str,
+    doc_id: UUID,
+    ctx: AuthContext = Depends(require_member),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> RevisionListOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    try:
+        records = store.list_revisions(ctx.org_id, agent.id, doc_id)
+    except NotFound as exc:
+        raise _not_found("Documento não encontrado.", "document_not_found") from exc
+    return RevisionListOut(items=[
+        RevisionOut(id=r.id, op=r.op, motivo=r.motivo, author_id=r.author_id, created_at=r.created_at)
+        for r in records
+    ])
+
+
+# ── Search — the SAME function `kb_buscar` calls (contract §D3) ─────────
+
+
+@router.get("/{key}/knowledge/search", response_model=SearchOut)
+async def search_knowledge(
+    key: str,
+    q: str = Query(..., min_length=1),
+    colecao: str | None = Query(None),
+    limite: int = Query(8, ge=1, le=20),
+    ctx: AuthContext = Depends(require_member),
+    store=Depends(get_studio_knowledge_store_dep),
+    agent_lookup=Depends(get_agent_lookup_dep),
+) -> SearchOut:
+    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    results = store.search(ctx.org_id, agent.id, q, colecao=colecao, limite=limite)
+    return SearchOut(items=[
+        SearchItemOut(
+            doc_id=r.doc_id, slug=r.slug, titulo=r.titulo, colecao=r.colecao,
+            tag=r.tag, tipo=r.tipo, trecho=r.trecho, rank=r.rank,
+        )
+        for r in results
+    ])
+
+
+# Public aliases — `studio_evals_router.py` shares these two helpers
+# (both routers are BE-KE's own files; this is an intra-slice import, not
+# the cross-slice "wave-1 slices never import each other's unfinished
+# code" shape contract §J2.3 warns about).
+resolve_studio_agent = _resolve_studio_agent
+not_found_error = _not_found
+
+
+__all__ = ["router", "resolve_studio_agent", "not_found_error", "get_agent_lookup_dep"]

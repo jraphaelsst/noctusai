@@ -962,6 +962,84 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — agents.eval_runs one active run per version (migration 013,
+# Agent Studio slice BE-KE, contract §B2/§D4).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning, three tables deep: borrows an existing `agents.agents`
+# org_id, then INSERTs a throwaway agent + a throwaway `agent_versions` row
+# (needed only for its `id` — 012_agent_studio_definitions.sql, a PARALLEL
+# migration not necessarily applied yet in every environment this probe
+# might run against) before the two `eval_runs` inserts that trip the
+# guard. `to_regclass('agents.agent_versions') IS NULL` is checked FIRST
+# and classified `no_fixture` (never a crash, never a false `permitted`) —
+# 013 is numbered after 012 so a real deploy always has both, but this
+# probe must not blow up if it is ever run against a database that has 013
+# without 012 (e.g. mid-development, before the two migrations land
+# together).
+
+_AGENTS_SCHEMA = "agents"
+
+_EVAL_RUNS_ONE_ACTIVE_PER_VERSION_PROBE = GuardProbe(
+    id="agents.eval_runs.one_active_per_version",
+    product="agents",
+    schema=_AGENTS_SCHEMA,
+    guard_name="eval_runs_one_active_per_version_idx",
+    kind="write_refusal",
+    migrations=("013_agent_studio_knowledge_evals.sql",),
+    rationale=(
+        "At most one `pendente`/`executando` eval run per version — "
+        "`POST .../evals/runs` maps a second concurrent request into 409 "
+        "`run_in_progress` (contract §D4). Without this partial unique "
+        "index two runs could race: both write `eval_results` for the "
+        "same version, and the publish gate (contract §J2.1's "
+        "`latest_concluded_run`) would read whichever finished last as "
+        "the answer, silently discarding the other run's verdict."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_agent_id uuid;
+  v_version_id uuid;
+BEGIN
+  IF to_regclass('{_AGENTS_SCHEMA}.agent_versions') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_versions does not exist yet (012_agent_studio_definitions.sql not applied)';
+  END IF;
+  SELECT org_id INTO v_org_id FROM {_AGENTS_SCHEMA}.agents LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no existing {_AGENTS_SCHEMA}.agents row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+
+  INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode)
+  VALUES (v_org_id, 'noc-probe-agent', 'NOC Probe Agent', 'claude_sdk', 'studio')
+  RETURNING id INTO v_agent_id;
+
+  INSERT INTO {_AGENTS_SCHEMA}.agent_versions (org_id, agent_id, versao, status, model, effort, created_by)
+  VALUES (v_org_id, v_agent_id, 1, 'rascunho', 'claude-opus-5', 'high', v_org_id)
+  RETURNING id INTO v_version_id;
+
+  INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by)
+  VALUES (v_org_id, v_agent_id, v_version_id, 'sha256:noc-probe-1', 'pendente', 0.8, v_org_id);
+
+  BEGIN
+    INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by)
+    VALUES (v_org_id, v_agent_id, v_version_id, 'sha256:noc-probe-2', 'executando', 0.8, v_org_id);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a second pendente/executando eval_runs row for the same version_id was accepted — eval_runs_one_active_per_version_idx did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%eval_runs_one_active_per_version_idx%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -970,6 +1048,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ENDERECO_REGISTRO_PROBE,
     _STORAGE_BUCKETS_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
+    _EVAL_RUNS_ONE_ACTIVE_PER_VERSION_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
