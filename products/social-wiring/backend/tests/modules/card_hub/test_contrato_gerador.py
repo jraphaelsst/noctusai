@@ -34,7 +34,6 @@ from reportlab.lib.units import cm
 
 from noctusai_lib.domain.texto_ptbr import dias_por_extenso, parse_brl, reais_por_extenso
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
-from noctusai_lib.integrations.documents.cpf import format_cpf
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
@@ -610,16 +609,48 @@ class TestQ13Permuta:
 
 
 class TestQ14Assinaturas:
-    def test_witnesses_need_a_cpf_not_an_rg(self):
+    def test_witnesses_need_an_rg_not_a_cpf(self):
+        """[Q14 revisited] Contract 08's own witnesses carry only RG — RG is
+        the hard-required identifying document (f5-template-spec.md §5.1:
+        "exactly 2 org_testemunhas with nome + rg"), CPF is optional."""
         d = fx.variante(1)
         t1, t2 = d.testemunhas
-        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, cpf=None), replace(t2, rg=None)]))
-        assert _campos(av) == [("imobiliaria.testemunha.1.cpf", None)]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, rg=None), replace(t2, cpf=None)]))
+        assert _campos(av) == [("imobiliaria.testemunha.1.rg", None)]
 
-    def test_witnesses_print_cpf_and_signatories_keep_their_email(self):
-        r = _render(1)
-        assert f"CPF {format_cpf(fx.cpf_sintetico('321654987'))}" in r.paragrafos
-        assert not any(p.startswith("RG ") for p in r.paragrafos)
+    def test_an_invalid_cpf_still_blocks_even_though_cpf_is_optional(self):
+        """Optional ≠ unchecked: a CPF that IS supplied must still pass
+        mod-11."""
+        d = fx.variante(1)
+        t1, t2 = d.testemunhas
+        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, cpf="111.111.111-11"), t2]))
+        assert any(b["codigo"] == "CPF_INVALIDO" for b in av.bloqueios)
+
+    def test_a_witness_with_no_email_is_an_aviso_not_a_blocker(self):
+        """A witness with no e-mail can still generate the document (it is
+        needed only to SEND for digital signature) — `av.pronto` must not
+        depend on it."""
+        d = fx.variante(1)
+        t1, t2 = d.testemunhas
+        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, email=None), t2]))
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert any(a["codigo"] == "TESTEMUNHA_SEM_EMAIL" for a in av.avisos)
+
+    def test_witnesses_print_rg_and_email_beside_the_name_never_cpf(self):
+        """Contract 08's exact witness-block shape: NOME + E-MAIL (when
+        present) + RG. Signatories (compradores/vendedores) are unaffected."""
+        d = fx.variante(1)
+        t1, t2 = d.testemunhas
+        d = replace(d, testemunhas=[replace(t1, email="testemunha.um@exemplo.test"), t2])
+
+        r = _render(1, d)
+        assert "TESTEMUNHA UM    testemunha.um@exemplo.test" in r.paragrafos
+        assert "RG 33.333.333-3" in r.paragrafos
+        # t2 has no e-mail set in the fixture — bare name, no dangling blank.
+        assert "TESTEMUNHA DOIS" in r.paragrafos
+        assert "RG 44.444.444-4" in r.paragrafos
+        assert not any(p.startswith("CPF ") for p in r.paragrafos)
+        # Signatories keep printing their own e-mail exactly as before.
         assert "FULANO DE TAL    v1@exemplo.test" in r.paragrafos
 
 

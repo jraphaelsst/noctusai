@@ -1643,19 +1643,25 @@ def update_dados_imobiliaria(
 
 _TESTEMUNHAS_TABLE = "org_testemunhas"
 _TESTEMUNHAS_MAX = 2
-_TESTEMUNHAS_CAMPOS: tuple[str, ...] = ("nome", "cpf", "rg")
+_TESTEMUNHAS_CAMPOS: tuple[str, ...] = ("nome", "cpf", "rg", "email")
 
 
 class TestemunhaCreateBody(StrictHttpModel):
     nome: str = Field(min_length=1, max_length=255)
     cpf: Optional[str] = Field(default=None, max_length=32)
     rg: Optional[str] = Field(default=None, max_length=32)
+    #: [migration 143] Optional at the row level — only required to add this
+    #: witness to a D4Sign envelope (`assinatura_service.enviar`); the
+    #: contract print + readiness gate never need it. Loosely typed on
+    #: purpose, same call `assinatura_router.SignatarioBody.email` makes.
+    email: Optional[str] = Field(default=None, max_length=255)
 
 
 class TestemunhaPatchBody(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
     cpf: Optional[str] = Field(default=None, max_length=32)
     rg: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=255)
 
 
 def _testemunha_out(row: dict) -> dict:
@@ -1712,6 +1718,7 @@ def create_testemunha(
         "nome": body.nome,
         "cpf": body.cpf,
         "rg": body.rg,
+        "email": body.email,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     if getattr(user, "id", None):

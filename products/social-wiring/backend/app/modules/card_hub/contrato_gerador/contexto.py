@@ -476,9 +476,13 @@ def montar_contexto(
             "plataforma_nome": d.imobiliaria.plataforma_assinatura_nome,
             "plataforma_url": d.imobiliaria.plataforma_assinatura_url,
         },
-        # [Q14] witnesses print their CPF.
+        # [Q14 revisited] witnesses print NOME + E-MAIL (when present) + RG —
+        # Contract 08's own reference block, never CPF (f5-template-spec.md
+        # §2.17/§5.1). `linha` reuses the same NOME/e-mail shape a
+        # comprador/vendedor signatário line already prints.
         "testemunhas": [
-            {"nome": (t.nome or "").upper(), "cpf": frases.documento(t.cpf)[1]} for t in d.testemunhas
+            {"linha": frases.nome_email_linha(t.nome, t.email), "rg": (t.rg or "").strip()}
+            for t in d.testemunhas
         ],
     }
 

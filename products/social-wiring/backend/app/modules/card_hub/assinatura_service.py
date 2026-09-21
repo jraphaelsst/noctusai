@@ -244,6 +244,47 @@ def buscar_por_external_id(client: Any, provedor: str, external_id: str) -> Opti
     return rows[0] if rows else None
 
 
+def _resolver_testemunhas_do_registro(
+    client: Any, org_id: UUID, signatarios: Sequence[dict]
+) -> list[dict]:
+    """[papel='testemunha' only] `org_testemunhas` (migration 108/143) is the
+    org's STANDING witness registry — reused across every contract, unlike a
+    comprador/vendedor's per-deal `nome`/`email`/`cpf` — so once the office
+    has filled in a witness's e-mail there, THAT value is authoritative over
+    whatever this one send happened to carry inline, never the reverse.
+    Matched by `nome` (trimmed, case-folded): `SignatarioBody` carries no
+    `testemunha_id` to key on directly. A witness with no matching registry
+    row, or no e-mail/cpf there yet, is left exactly as submitted —
+    `_validar_signatarios` below stays the one 400 authority for "this
+    e-mail/cpf doesn't work."
+    """
+    alvos = [i for i, s in enumerate(signatarios) if s.get("papel") == "testemunha"]
+    if not alvos:
+        return list(signatarios)
+
+    linhas = (
+        client.table("org_testemunhas")
+        .select("nome, email, cpf")
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    registro = {(row.get("nome") or "").strip().casefold(): row for row in linhas}
+
+    resolvidos = list(signatarios)
+    for i in alvos:
+        s = resolvidos[i]
+        row = registro.get((s.get("nome") or "").strip().casefold())
+        if row is None:
+            continue
+        atualizado = dict(s)
+        if row.get("email"):
+            atualizado["email"] = row["email"]
+        if row.get("cpf"):
+            atualizado["cpf"] = row["cpf"]
+        resolvidos[i] = atualizado
+    return resolvidos
+
+
 def _validar_signatarios(signatarios: Sequence[dict]) -> None:
     if not signatarios:
         raise AssinaturaSemSignatarios()
@@ -292,6 +333,7 @@ async def enviar(
     mensagem: Optional[str],
     usuario_id: Optional[Any],
 ) -> dict:
+    signatarios = _resolver_testemunhas_do_registro(client, org_id, signatarios)
     _validar_signatarios(signatarios)
 
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))

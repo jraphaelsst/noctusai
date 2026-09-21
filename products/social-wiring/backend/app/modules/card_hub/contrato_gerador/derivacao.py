@@ -1194,11 +1194,27 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     for i, t in enumerate(d.testemunhas, start=1):
         if not t.nome:
             av.falta(f"imobiliaria.testemunha.{i}.nome", f"Nome da testemunha {i}", "imobiliaria")
-        # [Q14] witnesses print their CPF.
-        if not t.cpf:
-            av.falta(f"imobiliaria.testemunha.{i}.cpf", f"CPF da testemunha {i}", "imobiliaria")
-        elif not cpf_valido(t.cpf):
+        # [Q14 revisited] The contract prints RG, not CPF (Contract 08's own
+        # witnesses only carry RG — f5-template-spec.md §5.1 lists "nome +
+        # rg" as the hard-required pair) — RG is required, not optional.
+        if not t.rg:
+            av.falta(f"imobiliaria.testemunha.{i}.rg", f"RG da testemunha {i}", "imobiliaria")
+        # CPF stays OPTIONAL — an office may or may not hold one for a given
+        # witness — but a CPF that IS supplied must still pass mod-11, same
+        # "check what's given, never require what isn't there" posture
+        # `posse_multa_diaria`/`prazo_pendencias` take below.
+        if t.cpf and not cpf_valido(t.cpf):
             av.bloqueia("CPF_INVALIDO", f"O CPF da testemunha {i} não confere (dígitos verificadores).")
+        # E-mail is required to SEND for signature (`assinatura_service.
+        # enviar` / D4Sign), never to GENERATE the document — an aviso, not a
+        # faltando, so a witness the office hasn't e-mail'd yet never blocks
+        # `av.pronto` (readiness), only surfaces before the operator tries to
+        # send it.
+        if not t.email:
+            av.avisa(
+                "TESTEMUNHA_SEM_EMAIL",
+                f"A testemunha {i} não tem e-mail cadastrado — necessário apenas para o envio de assinatura digital.",
+            )
     if not org.plataforma_assinatura_nome or not org.plataforma_assinatura_url:
         av.falta(
             "imobiliaria.plataforma_assinatura",

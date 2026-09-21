@@ -43,9 +43,10 @@ interface Draft {
   nome: string;
   cpf: string;
   rg: string;
+  email: string;
 }
 
-const EMPTY_DRAFT: Draft = { nome: "", cpf: "", rg: "" };
+const EMPTY_DRAFT: Draft = { nome: "", cpf: "", rg: "", email: "" };
 
 function errorMessage(err: unknown, fallback: string): string {
   return (err as { message?: string } | null)?.message ?? fallback;
@@ -75,7 +76,7 @@ export function TestemunhasSection() {
 
   function abrirEdicao(t: Testemunha) {
     setEditando(t);
-    setDraft({ nome: t.nome, cpf: t.cpf ?? "", rg: t.rg ?? "" });
+    setDraft({ nome: t.nome, cpf: t.cpf ?? "", rg: t.rg ?? "", email: t.email ?? "" });
     setOpen(true);
   }
 
@@ -84,6 +85,7 @@ export function TestemunhasSection() {
       nome: draft.nome.trim(),
       cpf: draft.cpf.trim() || null,
       rg: draft.rg.trim() || null,
+      email: draft.email.trim() || null,
     };
     const onSuccess = () => {
       setOpen(false);
@@ -161,7 +163,7 @@ export function TestemunhasSection() {
                 <div>
                   <p className="text-sm font-medium">{t.nome}</p>
                   <p className="text-xs text-muted-foreground">
-                    {[t.cpf, t.rg].filter(Boolean).join(" · ") || "—"}
+                    {[t.rg, t.cpf, t.email].filter(Boolean).join(" · ") || "—"}
                   </p>
                 </div>
                 <div className="flex gap-1">
@@ -227,6 +229,21 @@ export function TestemunhasSection() {
                   }
                 />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="test-email">E-mail</Label>
+              <Input
+                id="test-email"
+                type="email"
+                value={draft.email}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, email: e.target.value }))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Opcional — necessário apenas para enviar esta testemunha para
+                assinatura digital.
+              </p>
             </div>
           </div>
           <DialogFooter>

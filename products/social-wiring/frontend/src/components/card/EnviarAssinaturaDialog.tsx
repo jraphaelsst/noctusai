@@ -65,12 +65,14 @@ function deParte(p: Comprador, papel: PapelSignatario): SignatarioInput {
 
 function deTestemunha(t: Testemunha): SignatarioInput {
   return {
-    // 🔴 `org_testemunhas` (migration 108) carries nome/cpf/rg — NO e-mail
-    // column. Every testemunha prefills with an EMPTY e-mail on purpose; the
-    // operator types it in, and "empty e-mail blocks submit" below is what
-    // makes that mandatory rather than silently skippable.
+    // `org_testemunhas` (migration 143) now carries an e-mail column —
+    // prefill it when the office has set one. A witness the office hasn't
+    // e-mail'd yet still prefills EMPTY on purpose; "empty e-mail blocks
+    // submit" below is what makes filling it in mandatory rather than
+    // silently skippable (the server also re-resolves it authoritatively
+    // from the registry by nome, see `assinatura_service.enviar`).
     nome: t.nome,
-    email: "",
+    email: t.email ?? "",
     cpf: apenasDigitos(t.cpf),
     papel: "testemunha",
   };

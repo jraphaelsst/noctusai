@@ -66,6 +66,7 @@ function testemunha(over: Partial<Testemunha> = {}): Testemunha {
     nome: "João Testemunha",
     cpf: "987.654.321-00",
     rg: null,
+    email: null,
     created_at: null,
     updated_at: null,
     ...over,
@@ -94,20 +95,25 @@ async function render(over: Record<string, unknown> = {}) {
 }
 
 describe("partesParaSignatarios", () => {
-  it("compradores → papel comprador, vendedores → papel vendedor, testemunhas last with EMPTY e-mail", () => {
+  it("compradores → papel comprador, vendedores → papel vendedor, testemunhas last, prefilled from the registry e-mail", () => {
     const lista = partesParaSignatarios(
       [comprador({ cliente: { ...comprador().cliente!, email: "comprador@x.com", cpf: "111.111.111-11" } })],
       [comprador({ id: "p2", cliente: { ...comprador().cliente!, nome_completo: "Vitor Vendedor", email: "vendedor@x.com", cpf: "222.222.222-22" } })],
-      [testemunha()],
+      [testemunha({ email: "joao.testemunha@exemplo.test" })],
     );
     expect(lista.map((s) => s.papel)).toEqual(["comprador", "vendedor", "testemunha"]);
     expect(lista[0].email).toBe("comprador@x.com");
     // 🔴 CPF normalized to digits only.
     expect(lista[0].cpf).toBe("11111111111");
     expect(lista[1].nome).toBe("Vitor Vendedor");
-    // 🔴 org_testemunhas carries no e-mail column — prefills empty.
-    expect(lista[2].email).toBe("");
+    // migration 143 — `org_testemunhas.email` prefills straight through.
+    expect(lista[2].email).toBe("joao.testemunha@exemplo.test");
     expect(lista[2].nome).toBe("João Testemunha");
+  });
+
+  it("uma testemunha sem e-mail cadastrado ainda prefila vazio", () => {
+    const lista = partesParaSignatarios([], [], [testemunha({ email: null })]);
+    expect(lista[0].email).toBe("");
   });
 });
 
@@ -124,10 +130,21 @@ describe("EnviarAssinaturaDialog", () => {
     expect(
       (screen.getByTestId("assinatura-signatario-email-0") as HTMLInputElement).value,
     ).toBe("ana@example.com");
-    // Testemunha row (index 2) has no e-mail column — prefills empty.
+    // This testemunha fixture has no e-mail set in the registry — prefills empty.
     expect(
       (screen.getByTestId("assinatura-signatario-email-2") as HTMLInputElement).value,
     ).toBe("");
+  });
+
+  it("prefills a testemunha row from the registry's e-mail when one is set", async () => {
+    const { screen } = await render({
+      compradores: [],
+      vendedores: [],
+      testemunhas: [testemunha({ email: "joao.testemunha@exemplo.test" })],
+    });
+    expect(
+      (screen.getByTestId("assinatura-signatario-email-0") as HTMLInputElement).value,
+    ).toBe("joao.testemunha@exemplo.test");
   });
 
   it("🔴 an empty testemunha e-mail blocks submit until the operator fills it in", async () => {

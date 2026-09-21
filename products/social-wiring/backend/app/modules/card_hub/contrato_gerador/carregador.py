@@ -357,7 +357,10 @@ def _imobiliaria(client: Any, org_id: UUID) -> tuple[Imobiliaria, list[Testemunh
             plataforma_assinatura_url=org.get("plataforma_assinatura_url"),
             prazo_pendencias_padrao_dias=_int(org.get("prazo_pendencias_padrao_dias")),
         ),
-        [Testemunha(nome=t.get("nome"), rg=t.get("rg"), cpf=t.get("cpf")) for t in testemunhas],
+        [
+            Testemunha(nome=t.get("nome"), rg=t.get("rg"), cpf=t.get("cpf"), email=t.get("email"))
+            for t in testemunhas
+        ],
     )
 
 

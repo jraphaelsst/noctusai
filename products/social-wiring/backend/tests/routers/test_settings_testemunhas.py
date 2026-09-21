@@ -54,16 +54,31 @@ class TestListAndCreate:
     def test_creating_a_testemunha_round_trips(self, client, testemunhas_scoped):
         r = client.post(
             "/api/settings/imobiliaria/testemunhas",
-            json={"nome": "João Silva", "cpf": "123.456.789-00", "rg": "MG-1234567"},
+            json={
+                "nome": "João Silva", "cpf": "123.456.789-00", "rg": "MG-1234567",
+                "email": "joao.silva@exemplo.test",
+            },
         )
         assert r.status_code == 201, r.text
         body = r.json()
         assert body["nome"] == "João Silva"
         assert body["cpf"] == "123.456.789-00"
+        assert body["email"] == "joao.silva@exemplo.test"
 
         listado = client.get("/api/settings/imobiliaria/testemunhas").json()
         assert listado["total"] == 1
         assert listado["items"][0]["nome"] == "João Silva"
+        assert listado["items"][0]["email"] == "joao.silva@exemplo.test"
+
+    def test_a_testemunha_without_an_email_is_accepted(self, client, testemunhas_scoped):
+        """[migration 143] e-mail is optional — Contract 08's real witnesses
+        only carry nome/rg; the registry must not force one."""
+        r = client.post(
+            "/api/settings/imobiliaria/testemunhas",
+            json={"nome": "Sem E-mail", "rg": "MG-0000000"},
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["email"] is None
 
     def test_a_second_testemunha_is_accepted(self, client, testemunhas_scoped):
         client.post(
@@ -99,6 +114,18 @@ class TestUpdateAndDelete:
         assert r.status_code == 200, r.text
         assert r.json()["rg"] == "MG-9999999"
         assert r.json()["nome"] == "João"
+
+    def test_updating_a_testemunhas_email(self, client, testemunhas_scoped):
+        created = client.post(
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "João"}
+        ).json()
+        assert created["email"] is None
+        r = client.patch(
+            f"/api/settings/imobiliaria/testemunhas/{created['id']}",
+            json={"email": "joao@exemplo.test"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["email"] == "joao@exemplo.test"
 
     def test_an_unknown_testemunha_patch_is_404(self, client, testemunhas_scoped):
         import uuid

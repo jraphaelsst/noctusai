@@ -344,9 +344,15 @@ class Imobiliaria:
 @dataclass
 class Testemunha:
     nome: Optional[str]
+    #: The document the contract prints and the readiness gate requires —
+    #: Contract 08's real witnesses have only this, never a CPF.
     rg: Optional[str]
-    #: [Q14] Printed under the witness's name and required by the gate.
+    #: Optional — an office MAY hold one, validated (mod-11) when present,
+    #: but never required and never printed (migration 108/143 revisited).
     cpf: Optional[str] = None
+    #: [migration 143] Optional at readiness (an aviso, not a faltando) —
+    #: required only to add this witness to a D4Sign envelope.
+    email: Optional[str] = None
 
 
 @dataclass

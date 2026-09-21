@@ -214,8 +214,8 @@ exists for them in any sample contract). See §4 for the full ranked gap list.
 
 | placeholder | clause | source document type | extractor code path | confirmed storage | confirm/promote step | status |
 |---|---|---|---|---|---|---|
-| `testemunhas[].nome` / `.rg` | §2.17 | none | — | `org_testemunhas.{nome,rg}` | `POST/PATCH /api/settings/imobiliaria/testemunhas[/{testemunha_id}]` (`settings_router.py:1687`/`:1729`) | `manual_entry_only` |
-| `testemunhas[].cpf` [Q14] | §2.17 | none | — | `org_testemunhas.cpf` (migration 117) | same endpoints | `manual_entry_only` — was spec §6.1 #27 (spec imagined optional e-mail; the office instead answered [Q14] "print CPF", never wired an e-mail field) |
+| `testemunhas[].nome` / `.rg` | §2.17 | none | — | `org_testemunhas.{nome,rg}` | `POST/PATCH /api/settings/imobiliaria/testemunhas[/{testemunha_id}]` (`settings_router.py:1687`/`:1729`) | `manual_entry_only` — RG is hard-required (§5.1), never CPF |
+| `testemunhas[].email` [Q14 revisited] | §2.17 | none | — | `org_testemunhas.email` (migration 143) | same endpoints | `manual_entry_only` — optional; printed beside the name when present, and is what `assinatura_service.enviar` resolves a `papel='testemunha'` signatário's e-mail from. `org_testemunhas.cpf` stays a separate, OPTIONAL field (validated mod-11 when present, never required, never printed) — see the F5 clause template's `RG {{ t.rg }}` line; this row corrects the prior entry here, which had the code's then-current (and since-fixed) CPF-printing defect backwards from spec §2.17/§5.1's own already-written "nome + rg" answer |
 
 ### Financiamento (spec row 90; validation only, no clause text)
 
@@ -418,8 +418,8 @@ pre-composed strings are themselves covered by the `certidoes.grupos` /
 | `rescisao` | Rescisão / resolutiva |
 | `rescisao.cura_frase` | Rescisão / resolutiva |
 | `resolutiva_notificacao_email` | Rescisão / resolutiva |
-| `t.cpf` | Testemunhas |
-| `t.nome` | Testemunhas |
+| `t.linha` | Testemunhas |
+| `t.rg` | Testemunhas |
 | `tem_confissao` | Contrato / assinatura (§1.1 switches) |
 | `tem_declaracao_partes` | Contrato / assinatura (§1.1 switches) |
 | `tem_fgts` | Contrato / assinatura (§1.1 switches) |
@@ -498,7 +498,7 @@ THIS contract to generate:
 7. **Qualify every signatory.** Confirm CPF/RG/gênero/estado civil (AI-suggest+confirm or direct `PATCH /clientes/{id}`) for every vendedor and comprador on the card; enter every party's endereço manually (gap (iii) #10 — no shortcut exists); enter `data_casamento` for any casado party.
 8. **Certify every signatory.** All 12 PF certidão types per vendedor (and per comprador if this deal turns out to have `tem_permuta` — card 08's real contract did not), each with a confirmed `PATCH /certidoes/resultados/{id}`.
 9. **Enter the deal terms.** `valor_negociado`, parcelas (with a single `sinal`, each with `favorecido_id`+conta/PIX), `posse_marco`/`posse_prazo_dias`, `itens_integrantes`/`ad_corpus` if applicable (08 is `V3 = V1 − itens + ad corpus` per spec §1.3 — `ad_corpus=true`, `itens_integrantes` empty is the EXPECTED shape for this exact card, not a gap).
-10. **Confirm the org is configured once**: `razao_social`/`cnpj`/`responsavel_*`/`endereco_cidade`, 2 testemunhas with nome+RG+CPF, signing-platform name/URL, `posse_multa_diaria` — all org-level, done once, not per-deal.
+10. **Confirm the org is configured once**: `razao_social`/`cnpj`/`responsavel_*`/`endereco_cidade`, 2 testemunhas with nome+RG (CPF and e-mail optional — e-mail only matters for sending), signing-platform name/URL, `posse_multa_diaria` — all org-level, done once, not per-deal.
 11. Only then does `avaliar()` return `pronto=True` and `service.gerar` can render.
 
 ## 5 · Keeper — `check_contract_field_provenance_map`

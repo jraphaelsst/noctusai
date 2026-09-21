@@ -50,6 +50,7 @@ function testemunha(over: Partial<Record<string, unknown>> = {}) {
     nome: "Maria Souza",
     cpf: "111.222.333-44",
     rg: null,
+    email: null,
     created_at: null,
     updated_at: null,
     ...over,
@@ -99,6 +100,16 @@ describe("os quatro estados", () => {
     expect(getByText("Maria Souza")).toBeTruthy();
   });
 
+  it("mostra o e-mail cadastrado, quando houver (migration 143)", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({
+        data: { items: [testemunha({ email: "maria@exemplo.test" })], total: 1 },
+      }),
+    );
+    const { getByText } = await render();
+    expect(getByText(/maria@exemplo\.test/)).toBeTruthy();
+  });
+
   it("🔴 um refetch não desmonta a lista existente", async () => {
     // isFetching true WITH data present — the lying-loading-state trap.
     mockUseTestemunhas.mockReturnValue(
@@ -107,6 +118,39 @@ describe("os quatro estados", () => {
     const { getByTestId, getByText } = await render();
     expect(getByText("Maria Souza")).toBeTruthy();
     expect(getByTestId("testemunhas-refreshing")).toBeTruthy();
+  });
+});
+
+describe("e-mail (migration 143)", () => {
+  it("envia o e-mail digitado no payload de criação", async () => {
+    const { getByTestId, getByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("testemunha-nova"));
+    fireEvent.change(getByLabelText("Nome"), { target: { value: "Nova Pessoa" } });
+    fireEvent.change(getByLabelText("E-mail"), {
+      target: { value: "nova@exemplo.test" },
+    });
+    fireEvent.click(getByTestId("testemunha-salvar"));
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "nova@exemplo.test" }),
+      expect.anything(),
+    );
+  });
+
+  it("um e-mail vazio vira null, nunca string vazia", async () => {
+    const { getByTestId, getByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("testemunha-nova"));
+    fireEvent.change(getByLabelText("Nome"), { target: { value: "Nova Pessoa" } });
+    fireEvent.click(getByTestId("testemunha-salvar"));
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ email: null }),
+      expect.anything(),
+    );
   });
 });
 

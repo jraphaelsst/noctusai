@@ -190,12 +190,21 @@ def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
     return ", e ".join(textos)
 
 
+def nome_email_linha(nome: Optional[str], email: Optional[str]) -> str:
+    """[Q14] NOME (upper) + the e-mail spaced beside it when present — the
+    shape both the signing platform and Contract 08's own witness block need
+    (`PRISCILA ANTONIA HIJAZI              priscilahijazi@hotmail.com`).
+    Falls back to the bare name when there is no e-mail to show — never a
+    blank/placeholder value in a legal instrument."""
+    n = (nome or "").upper()
+    if email:
+        return f"{n}    {email.strip().lower()}"
+    return n
+
+
 def signatario_linha(p: Pessoa) -> str:
     """[Q14] The e-mail stays beside the name (the signing platform needs it)."""
-    nome = (p.nome or "").upper()
-    if p.email:
-        return f"{nome}    {p.email.strip().lower()}"
-    return nome
+    return nome_email_linha(p.nome, p.email)
 
 
 # ─── preço / parcelas (spec §2.3) ─────────────────────────────────────────

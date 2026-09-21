@@ -15,6 +15,10 @@ export interface Testemunha {
   nome: string;
   cpf: string | null;
   rg: string | null;
+  /** Optional — only required to send this witness for digital signature
+   *  (`papel: "testemunha"` in `EnviarAssinaturaDialog`); the contract print
+   *  and its readiness gate never need it (migration 143). */
+  email: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -23,6 +27,7 @@ export interface TestemunhaCreate {
   nome: string;
   cpf?: string | null;
   rg?: string | null;
+  email?: string | null;
 }
 
 export type TestemunhaPatch = Partial<TestemunhaCreate>;
