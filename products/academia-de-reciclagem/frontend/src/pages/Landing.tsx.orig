@@ -2,9 +2,8 @@
  * Public landing for academia.noctusai.com — the seed `Landing` slot
  * (`createProductApp({ Landing })`), rendered at `/` for signed-out visitors.
  *
- * Ported from the designer repo (github.com/jraphaelsst/academia-de-reciclagem @ f1247bf,
- * `artifacts/academia-da-reciclagem/src/App.tsx` → `Home`; re-port = apply the designer's
- * App.tsx diff since that sha here, and regenerate landing.css from their index.css). Content and markup are
+ * Ported from the designer repo (github.com/jraphaelsst/academia-de-reciclagem,
+ * `artifacts/academia-da-reciclagem/src/App.tsx` → `Home`). Content and markup are
  * kept as designed; the only additions are the `.academia-landing` style scope and the
  * "Entrar" link into the seed `/login`. Its providers (QueryClient, Tooltip, Toaster,
  * wouter, NotFound) are dropped — the seed app shell already supplies all of them.
@@ -13,8 +12,6 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowDownRight, ArrowRight, BookOpen, ChevronDown, Circle, CircleDot, Factory, HandHeart, Leaf, LogIn, Menu, Recycle, School, Sparkles, Users, X } from 'lucide-react';
 
-import logo from '@/assets/landing/logo-academia-da-reciclagem.png';
-import oneLogo from '@/assets/landing/logo-one-consultoria.png';
 import './landing.css';
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
@@ -48,9 +45,8 @@ function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; 
 function Brand() {
   return (
     <a className="brand" href="#inicio" data-testid="link-brand">
-      <span className="brand-logo-frame">
-        <img className="brand-logo" src={logo} alt="Academia da Reciclagem" />
-      </span>
+      <span className="brand-mark" aria-hidden="true"><Recycle /></span>
+      <span className="brand-name">Academia da<br />Reciclagem<small>aprender · agir · circular</small></span>
     </a>
   );
 }
@@ -81,7 +77,6 @@ export default function Landing() {
             <a className="nav-link" href="#projeto" onClick={closeMenu} data-testid="link-projeto">O projeto</a>
             <a className="nav-link" href="#como-funciona" onClick={closeMenu} data-testid="link-como-funciona">Como funciona</a>
             <a className="nav-link" href="#impacto" onClick={closeMenu} data-testid="link-impacto">Impacto</a>
-            <a className="nav-link" href="#pilares" onClick={closeMenu} data-testid="link-pilares">Pilares</a>
             <a className="nav-cta" href="#participar" onClick={closeMenu} data-testid="link-participar">Quero participar <ArrowRight size={14} /></a>
             <Link className="nav-login" to="/login" onClick={closeMenu} data-testid="link-entrar">Entrar <LogIn size={14} /></Link>
           </nav>
@@ -230,45 +225,10 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="pilares" className="section pillars-section" aria-labelledby="pillars-title">
-        <div className="container-xl">
-          <div className="pillars-intro">
-            <Reveal>
-              <div className="eyebrow">05 / o que sustenta o projeto</div>
-              <h2 id="pillars-title" className="display section-title">Um propósito.<br /><em>Três caminhos.</em></h2>
-            </Reveal>
-            <Reveal className="pillars-context" delay={150}>
-              <div className="sponsor-label">patrocínio que acredita no futuro</div>
-              <p><strong>Este projeto tem como patrocinadora a One Consultoria Imobiliária</strong> e nasce de um propósito transformador: unir conhecimento, responsabilidade e ação social para mudar realidades, criar oportunidades e construir um futuro mais sustentável.</p>
-            </Reveal>
-          </div>
-          <div className="pillars-grid">
-            <Reveal className="pillar-card" delay={80}>
-              <div className="pillar-topline"><span>01</span><Recycle size={23} strokeWidth={1.5} /></div>
-              <h3>Economia<br />circular</h3>
-              <p>Valorizar materiais que ainda são vistos como lixo e devolver a eles um novo significado.</p>
-              <div className="pillar-highlight">Resíduo pode virar matéria-prima, oportunidade, trabalho e renda.</div>
-            </Reveal>
-            <Reveal className="pillar-card" delay={160}>
-              <div className="pillar-topline"><span>02</span><BookOpen size={23} strokeWidth={1.5} /></div>
-              <h3>Educação e<br />responsabilidade</h3>
-              <p>Mobilizar condomínios, escolas, empresas e comunidades para aprender, praticar e multiplicar a separação correta.</p>
-              <div className="pillar-highlight">Cada escolha faz diferença. Cada atitude inspira outra.</div>
-            </Reveal>
-            <Reveal className="pillar-card" delay={240}>
-              <div className="pillar-topline"><span>03</span><Sparkles size={23} strokeWidth={1.5} /></div>
-              <h3>O belo</h3>
-              <p>A síntese do projeto: o mundo que queremos construir e deixar como legado para as próximas gerações.</p>
-              <div className="pillar-highlight">O Brasil recicla menos de 10%. Não falta material: falta estrutura, educação ambiental e participação.</div>
-            </Reveal>
-          </div>
-        </div>
-      </section>
-
       <section className="section story-section">
         <div className="container-xl story-grid">
           <Reveal>
-            <div className="eyebrow">06 / uma outra narrativa</div>
+            <div className="eyebrow">05 / uma outra narrativa</div>
             <p className="story-quote">O que era “lixo” pode ser <em>começo</em> de muita coisa.</p>
           </Reveal>
           <Reveal className="story-detail" delay={170}>
@@ -281,7 +241,7 @@ export default function Landing() {
       <section id="participar" className="join-section">
         <div className="container-xl join-content">
           <Reveal>
-            <div className="eyebrow">07 / vem com a gente</div>
+            <div className="eyebrow">06 / vem com a gente</div>
             <h2 className="display join-title">Toda mudança<br />precisa de uma primeira volta.</h2>
           </Reveal>
           <Reveal delay={170}>
@@ -293,26 +253,10 @@ export default function Landing() {
         </div>
       </section>
 
-      <footer id="footer" className="site-footer">
+      <footer className="site-footer">
         <div className="container-xl footer-inner">
-          <div className="footer-brand-group">
-            <div className="footer-brand-row">
-              <Brand />
-              <a
-                className="footer-sponsor"
-                href="https://oneconsultoriaimobiliaria.com.br/"
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Patrocínio: One Consultoria Imobiliária — abrir site oficial"
-                data-testid="link-one-sponsor"
-              >
-                <img className="footer-sponsor-logo" src={oneLogo} alt="One Consultoria Imobiliária" />
-                <span className="footer-sponsor-copy">
-                  <span>patrocínio</span>
-                  <strong>One Consultoria Imobiliária</strong>
-                </span>
-              </a>
-            </div>
+          <div>
+            <Brand />
             <p className="footer-brand-note">Conhecimento que circula. Valor que permanece.</p>
           </div>
           <div className="footer-meta">

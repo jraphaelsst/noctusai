@@ -54,6 +54,15 @@ describe("Landing", () => {
     expect(screen.getByText("login page")).toBeInTheDocument();
   });
 
+  it("links the sponsor out in a new tab, without leaking the opener", () => {
+    renderAt("/");
+    const sponsor = screen.getByTestId("link-one-sponsor");
+    expect(sponsor).toHaveAttribute("href", "https://oneconsultoriaimobiliaria.com.br/");
+    expect(sponsor).toHaveAttribute("target", "_blank");
+    expect(sponsor).toHaveAttribute("rel", "noreferrer");
+    expect(screen.getByTestId("link-pilares")).toHaveAttribute("href", "#pilares");
+  });
+
   it("restores the page's scroll behaviour when it unmounts", () => {
     document.documentElement.style.scrollBehavior = "";
     const { unmount } = renderAt("/");
