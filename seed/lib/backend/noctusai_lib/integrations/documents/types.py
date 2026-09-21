@@ -285,6 +285,18 @@ class IdentityFields:
     source: TextSource = TextSource.NENHUMA
     error: Optional[str] = None
     error_message: Optional[str] = None
+    #: 🔴 A NOTICE, NOT A FAILURE. `error` means "could not read this
+    #: document" and a consumer discards the result. `aviso` means "read it;
+    #: some per-person fields were withheld" — today only
+    #: `"titulares_multiplos"`: a certidão de casamento names two spouses
+    #: with equal prominence and no `titular` hint picked one. The
+    #: couple-level facts on the same result (estado_civil, regime_bens,
+    #: data_casamento, data_emissao) are valid regardless of whose card it
+    #: is, and carrying the ambiguity in `error` made every consumer throw
+    #: them away (live, 2026-09-21: a divorced seller's certidão extracted
+    #: nothing at all).
+    aviso: Optional[str] = None
+    aviso_mensagem: Optional[str] = None
 
     def _valor(self, campo: str) -> object:
         return getattr(self, campo)
@@ -397,6 +409,24 @@ class IdentityFields:
         return self.sugestao("data_casamento")
 
 
+@dataclass(frozen=True)
+class TitularEsperado:
+    """Who the caller already knows this document belongs to.
+
+    A certidão de casamento names two people; the extractor cannot tell
+    which one is "the" holder, but the caller can — it uploaded the document
+    onto one person's card. Passing that person's registered name and/or
+    CPF lets the extractor pick the matching spouse instead of declining.
+
+    It is a SELECTOR, never a source: a hinted value is only ever returned
+    when the document itself printed it. A hint that matches nothing on the
+    document changes nothing.
+    """
+
+    nome: Optional[str] = None
+    cpf: Optional[str] = None
+
+
 @runtime_checkable
 class IdentityExtractor(Protocol):
     """Bytes + mimetype → typed identity fields.
@@ -412,6 +442,7 @@ class IdentityExtractor(Protocol):
         *,
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
+        titular: Optional[TitularEsperado] = None,
     ) -> IdentityFields:
         ...
 
@@ -422,4 +453,5 @@ __all__ = [
     "IdentityExtractor",
     "IdentityFields",
     "TextSource",
+    "TitularEsperado",
 ]

@@ -164,10 +164,14 @@ class TestRealCertidaoDeCasamentoEndToEnd:
         )
         assert out.nome is None
         assert out.cpf is None
-        assert out.error == "titulares_multiplos"
-        assert out.error_message is not None
-        assert "nome" in out.error_message
-        assert "cpf" in out.error_message
+        # A NOTICE, not a failure: the couple-level facts on the same result
+        # must survive for the consumer to persist them.
+        assert out.error is None
+        assert out.aviso == "titulares_multiplos"
+        assert out.aviso_mensagem is not None
+        assert "nome" in out.aviso_mensagem
+        assert "cpf" in out.aviso_mensagem
+        assert out.estado_civil == "divorciado"
 
     @pytest.mark.asyncio
     async def test_dates_and_source_are_unaffected_by_any_of_the_above(self):
@@ -236,3 +240,50 @@ class TestTitularesMultiplosDoesNotFireOnOrdinaryDocuments:
         assert out.nome is None
         assert out.cpf is None
         assert out.error is None
+
+
+
+class TestTitularHintSelectsTheCardHolder:
+    """The caller knows whose card the certidão was uploaded to."""
+
+    @pytest.mark.asyncio
+    async def test_hinted_cpf_selects_that_spouse(self):
+        from noctusai_lib.integrations.documents import TitularEsperado
+
+        resolver = _StubResolver(_StubResolved(text=CERTIDAO_ANONIMIZADA))
+        out = await LadderIdentityExtractor(resolver=resolver).extract(
+            b"x",
+            mimetype="image/png",
+            titular=TitularEsperado(cpf="47898209630"),
+        )
+        assert out.cpf == "478.982.096-30"
+        assert out.cpf_confianca is ExtractionConfidence.ALTA
+
+    @pytest.mark.asyncio
+    async def test_hinted_name_selects_the_printed_spelling(self):
+        from noctusai_lib.integrations.documents import TitularEsperado
+
+        resolver = _StubResolver(_StubResolved(text=CERTIDAO_ANONIMIZADA))
+        out = await LadderIdentityExtractor(resolver=resolver).extract(
+            b"x",
+            mimetype="image/png",
+            titular=TitularEsperado(nome="Mariana Pellegrini Rangel", cpf="478.982.096-30"),
+        )
+        assert out.nome == "MARIANA PELLEGRINI RANGEL"
+        # Vision read: the hint picked WHICH name, not how well it was read.
+        assert out.nome_confianca is not ExtractionConfidence.ALTA
+        assert out.aviso is None
+
+    @pytest.mark.asyncio
+    async def test_a_hint_matching_nobody_changes_nothing(self):
+        from noctusai_lib.integrations.documents import TitularEsperado
+
+        resolver = _StubResolver(_StubResolved(text=CERTIDAO_ANONIMIZADA))
+        out = await LadderIdentityExtractor(resolver=resolver).extract(
+            b"x",
+            mimetype="image/png",
+            titular=TitularEsperado(nome="FULANO DE TAL", cpf="412.954.238-98"),
+        )
+        assert out.nome is None
+        assert out.cpf is None
+        assert out.aviso == "titulares_multiplos"

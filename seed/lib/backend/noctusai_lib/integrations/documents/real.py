@@ -36,6 +36,7 @@ correctable rather than becoming an anonymous fact in a column.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.birthdate import find_birthdate
@@ -45,7 +46,11 @@ from noctusai_lib.integrations.documents.civil_status import (
     find_estado_civil,
     find_regime_bens,
 )
-from noctusai_lib.integrations.documents.cpf import find_cpf, find_cpf_conflitos
+from noctusai_lib.integrations.documents.cpf import (
+    find_cpf,
+    find_cpf_conflitos,
+    only_digits,
+)
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
@@ -55,6 +60,7 @@ from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
     IdentityFields,
     TextSource,
+    TitularEsperado,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,6 +95,7 @@ class LadderIdentityExtractor:
         *,
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
+        titular: Optional[TitularEsperado] = None,
     ) -> IdentityFields:
         kind = classify_kind(mimetype, filename)
         if not content:
@@ -171,47 +178,64 @@ class LadderIdentityExtractor:
         )
         data_emissao, data_emissao_conf, data_emissao_label = find_data_emissao(text)
 
-        # 🔴 NAMED REFUSAL — SEE THE MODULE DOCSTRING FOR WHY THIS EXISTS
+        # 🔴 TWO TITULARES: SELECT WITH THE CALLER'S HINT, ELSE A NOTICE
         # -------------------------------------------------------------------
         # A certidão de casamento names TWO people with equal prominence
         # (`NOMES`, both spouses' CPFs), and `nome`/`cpf` above are each
         # single columns — `find_name`/`find_cpf` correctly decline to guess
-        # which spouse belongs there, but that decline is INDISTINGUISHABLE
-        # from "the document simply does not carry a name/CPF" once it lands
-        # in `nome=None`/`cpf=None`. `find_name_conflitos`/`find_cpf_conflitos`
-        # answer the question those two functions cannot: WHY was it absent.
+        # which spouse belongs there. `find_name_conflitos`/
+        # `find_cpf_conflitos` name the candidates.
         #
-        # No disambiguation hint is implemented here (an `expected_nome` the
-        # caller already knows the cliente_id for would be the better fix —
-        # see the module docstring) because wiring one up requires the
-        # PRODUCT-side caller to supply it, which is out of this module's
-        # scope; a hint parameter with nothing that ever passes it would be
-        # a scaffolded half-feature. Filed as
-        # `NOC-REMEDIATE[identity-extractor-disambiguation-hint]` — 2026-09-21.
+        # The caller usually KNOWS whose card the document was uploaded to,
+        # and passes that person as `titular`. The hint only SELECTS among
+        # values the document itself printed — see `_selecionar_titular`.
+        # (Was NOC-REMEDIATE[identity-extractor-disambiguation-hint].)
+        #
+        # Whatever the hint cannot resolve is reported as an `aviso`, NOT as
+        # `error`: the couple-level readings on this same result (estado
+        # civil, regime, datas) are valid whoever the holder is, and an
+        # `error` makes every consumer discard them.
         multiplos_titulares: list[str] = []
         if nome is None:
             conflito_nome = find_name_conflitos(text)
             if conflito_nome:
-                multiplos_titulares.append(f"nome ({len(conflito_nome)} titulares)")
+                escolhido = _selecionar_nome(conflito_nome, titular)
+                if escolhido is not None:
+                    # The name's own policy still applies: a vision-read name
+                    # is a suggestion. The hint chose WHICH printed name, it
+                    # did not make the transcription exact.
+                    nome = escolhido
+                    nome_conf = self._temper_name_confidence("alta", source)
+                    nome_label = "NOMES (titular do card)"
+                else:
+                    multiplos_titulares.append(f"nome ({len(conflito_nome)} titulares)")
         if cpf is None:
             conflito_cpf = find_cpf_conflitos(text)
             if conflito_cpf:
-                multiplos_titulares.append(f"cpf ({len(conflito_cpf)} titulares)")
+                escolhido_cpf = _selecionar_cpf(conflito_cpf, titular)
+                if escolhido_cpf is not None:
+                    # Not tempered, same as every CPF here: both candidates
+                    # already passed the check-digit gate to be in the list.
+                    cpf = escolhido_cpf
+                    cpf_conf = "alta"
+                    cpf_label = "CPF (titular do card)"
+                else:
+                    multiplos_titulares.append(f"cpf ({len(conflito_cpf)} titulares)")
 
-        erro: Optional[str] = None
-        erro_mensagem: Optional[str] = None
+        aviso: Optional[str] = None
+        aviso_mensagem: Optional[str] = None
         if multiplos_titulares:
-            erro = "titulares_multiplos"
-            erro_mensagem = (
+            aviso = "titulares_multiplos"
+            aviso_mensagem = (
                 "documento nomeia mais de um titular com igual proeminencia "
-                "para: " + ", ".join(multiplos_titulares) + " — nao gravado "
-                "sem escolha explicita de qual titular"
+                "para: " + ", ".join(multiplos_titulares) + " — esses campos "
+                "nao foram gravados; os demais (estado civil, regime, datas) sim"
             )
 
         return IdentityFields(
             kind=kind,
-            error=erro,
-            error_message=erro_mensagem,
+            aviso=aviso,
+            aviso_mensagem=aviso_mensagem,
             data_nascimento=data,
             data_nascimento_confianca=ExtractionConfidence(data_conf),
             data_nascimento_rotulo=data_label,
@@ -286,6 +310,56 @@ class LadderIdentityExtractor:
         if confidence == "alta" and source is not TextSource.TEXT_LAYER:
             return "baixa"
         return confidence
+
+
+
+
+def _chave_nome(valor: str) -> str:
+    """Accent-stripped, upper-cased, whitespace-collapsed — for MATCHING."""
+    decomposto = unicodedata.normalize("NFKD", valor or "")
+    sem_acento = "".join(c for c in decomposto if not unicodedata.combining(c))
+    return " ".join(sem_acento.upper().split())
+
+
+def _selecionar_nome(
+    candidatos: list[str], titular: Optional[TitularEsperado]
+) -> Optional[str]:
+    """The ONE printed candidate that is the hinted person, else None.
+
+    Exact match first. Then containment of every word of one name in the
+    other — a registered "REGINA MARIA PELOSI" against a maiden name
+    printed as "REGINA MARIA PELOSI RANGEL" — accepted only when it picks
+    out exactly one candidate. Returns the document's spelling, never the
+    hint's.
+    """
+    if titular is None or not titular.nome:
+        return None
+    alvo = _chave_nome(titular.nome)
+    if not alvo:
+        return None
+    exatos = [c for c in candidatos if _chave_nome(c) == alvo]
+    if len(exatos) == 1:
+        return exatos[0]
+    palavras_alvo = {p for p in alvo.split() if len(p) > 2}
+    contidos = []
+    for c in candidatos:
+        palavras = {p for p in _chave_nome(c).split() if len(p) > 2}
+        if palavras_alvo and palavras and (
+            palavras_alvo <= palavras or palavras <= palavras_alvo
+        ):
+            contidos.append(c)
+    return contidos[0] if len(contidos) == 1 else None
+
+
+def _selecionar_cpf(
+    candidatos: list[str], titular: Optional[TitularEsperado]
+) -> Optional[str]:
+    """The printed CPF equal (digits only) to the hinted one, else None."""
+    if titular is None or not titular.cpf:
+        return None
+    alvo = only_digits(titular.cpf)
+    iguais = [c for c in candidatos if only_digits(c) == alvo]
+    return iguais[0] if len(iguais) == 1 else None
 
 
 __all__ = ["LadderIdentityExtractor"]

@@ -15,6 +15,7 @@ from noctusai_lib.integrations.documents.types import (
     IdentityDocumentKind,
     IdentityFields,
     TextSource,
+    TitularEsperado,
 )
 
 
@@ -49,6 +50,9 @@ class FakeIdentityExtractor:
     def __init__(self, result: Optional[IdentityFields] = None) -> None:
         self._result = result
         self.calls: list[tuple[int, Optional[str], Optional[str]]] = []
+        #: The `titular` hint each call received, in call order — lets a
+        #: consumer test assert it passed the card's own identity.
+        self.titulares: list[Optional[TitularEsperado]] = []
 
     async def extract(
         self,
@@ -56,7 +60,9 @@ class FakeIdentityExtractor:
         *,
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
+        titular: Optional[TitularEsperado] = None,
     ) -> IdentityFields:
+        self.titulares.append(titular)
         self.calls.append((len(content or b""), mimetype, filename))
         if self._result is not None:
             return self._result

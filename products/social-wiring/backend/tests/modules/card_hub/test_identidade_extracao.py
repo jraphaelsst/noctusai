@@ -1010,3 +1010,43 @@ class TestDataCasamentoEDataEmissaoViaLadderReal:
         assert doc["extracao_data_emissao"] == "2024-03-12"
         assert doc["extracao_data_emissao_confianca"] == "baixa"
         assert doc["extracao_data_emissao_rotulo"] == "FECHAMENTO_CARTORIO"
+
+
+class TestACertidaoOfTwoSpousesStillFeedsTheCard:
+    """A certidão de casamento names two people. The card knows which one it
+    belongs to (the titular hint), and a result that could not pick a spouse
+    is a NOTICE — the couple-level facts on it must still reach the card."""
+
+    @pytest.mark.asyncio
+    async def test_the_card_holder_is_passed_as_the_titular_hint(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"nome": "REGINA TESTE", "cpf": "041.333.248-97"},
+        )
+        fake = FakeIdentityExtractor(_alta())
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did), extractor=fake,
+        )
+        assert len(fake.titulares) == 1
+        assert fake.titulares[0].cpf == "041.333.248-97"
+        assert fake.titulares[0].nome == "REGINA TESTE"
+
+    @pytest.mark.asyncio
+    async def test_an_aviso_does_not_discard_the_estado_civil(self, client, scoped):
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        resultado = IdentityFields(
+            estado_civil="divorciado",
+            estado_civil_confianca=ExtractionConfidence.ALTA,
+            estado_civil_rotulo="AVERBACAO",
+            source=TextSource.OCR,
+            aviso="titulares_multiplos",
+            aviso_mensagem="nome (2 titulares), cpf (2 titulares)",
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(resultado),
+        )
+        assert out["status"] != "erro"
+        d = _documento(scoped, did)
+        assert d["extracao_status"] == "ok"
+        assert d["extracao_estado_civil"] == "divorciado"

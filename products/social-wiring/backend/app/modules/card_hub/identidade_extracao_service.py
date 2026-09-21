@@ -88,6 +88,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
     IdentityFields,
+    TitularEsperado,
     is_same_as_cpf,
     make_identity_extractor,
     strip_accents_upper,
@@ -742,6 +743,38 @@ def resolver_conflito(
     return {**conflito, **patch}
 
 
+def _titular_do_card(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> Optional[TitularEsperado]:
+    """The card's own person, as the extractor's titular hint.
+
+    `nome_oficial` (a document-read spelling) before `nome` (whatever the
+    operator typed), plus the CPF when one is on file. A lookup failure
+    returns None — the extraction then runs exactly as it did before the
+    hint existed — but it is logged, never swallowed.
+    """
+    try:
+        rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("nome, nome_oficial, cpf")
+            .eq("org_id", str(org_id))
+            .eq("id", str(cliente_id))
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - detached job; degrade, log
+        logger.warning("extracao: titular lookup failed for %s: %s", cliente_id, exc)
+        return None
+    if not rows:
+        return None
+    row = rows[0]
+    nome = row.get("nome_oficial") or row.get("nome")
+    cpf = row.get("cpf")
+    if not nome and not cpf:
+        return None
+    return TitularEsperado(nome=nome, cpf=cpf)
+
+
 async def extrair_identidade(
     client: Any,
     storage: StorageBackend,
@@ -831,11 +864,23 @@ async def extrair_identidade(
         max_pages=paginas_maximas(str(doc.get("tipo_documento") or "")),
         provider=resolve_vision_provider(str(org_id)),
     )
+    # The document was uploaded onto ONE person's card — tell the extractor
+    # who, so a two-titular certidão de casamento selects that spouse's name
+    # and CPF instead of declining both. A selector only: the extractor
+    # returns a hinted value solely when the document printed it.
     fields: IdentityFields = await extractor.extract(
         blob.data,
         mimetype=doc.get("mime_type"),
         filename=doc.get("nome_original"),
+        titular=_titular_do_card(client, org_id, cliente_id),
     )
+    if fields.aviso:
+        # Not a failure — the result is persisted below. Recorded so the
+        # withheld fields are explainable from the logs.
+        logger.info(
+            "extracao %s: aviso %s — %s",
+            documento_id, fields.aviso, fields.aviso_mensagem,
+        )
 
     if fields.error:
         _marcar(

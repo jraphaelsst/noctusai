@@ -147,6 +147,7 @@ from noctusai_lib.integrations.documents.types import (
     IdentityExtractor,
     IdentityFields,
     TextSource,
+    TitularEsperado,
 )
 from noctusai_lib.integrations.documents.formatting import (
     FormatRange,
@@ -217,6 +218,7 @@ __all__ = [
     "RuidoSpan",
     "Run",
     "TextSource",
+    "TitularEsperado",
     "TranscribedPage",
     "Transcription",
     "UnsupportedGlyphError",
