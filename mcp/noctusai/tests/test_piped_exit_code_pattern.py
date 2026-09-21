@@ -269,6 +269,119 @@ class TestPipedExitCodePattern:
     def test_no_scripts_dir_returns_empty(self, tmp_path):
         assert check_piped_exit_code_pattern(tmp_path) == []
 
+    # ── worktree / archive de-duplication (2026-09-20) ──────────────
+    #
+    # Each `.claude/worktrees/<slug>/` is a FULL checkout — an unscoped
+    # `root.rglob("*.sh")` re-counts the same real site once PER LIVE
+    # WORKTREE. Measured on the real tree: 130 raw findings, 114 of them
+    # exactly this duplication (16 real sites × ~7 checkouts).
+
+    def test_dot_claude_worktrees_are_not_walked(self, tmp_path):
+        _write_sh(tmp_path, "a.sh", (
+            "#!/usr/bin/env bash\ncmd | tail\necho $?\n"
+        ))
+        real = check_piped_exit_code_pattern(tmp_path)
+        assert real, "sanity: the top-level site itself must still be found"
+
+        nested = tmp_path / ".claude" / "worktrees" / "some-slug" / "scripts"
+        nested.mkdir(parents=True)
+        (nested / "a.sh").write_text("#!/usr/bin/env bash\ncmd | tail\necho $?\n")
+
+        after = check_piped_exit_code_pattern(tmp_path)
+        assert len(after) == len(real), (
+            "a duplicate copy inside .claude/worktrees/ must not double-count"
+        )
+
+    def test_archive_directory_is_not_walked(self, tmp_path):
+        archived = tmp_path / "archive" / "projects" / "2026-01-01" / "scripts"
+        archived.mkdir(parents=True)
+        (archived / "old.sh").write_text("#!/usr/bin/env bash\ncmd | tail\necho $?\n")
+        assert check_piped_exit_code_pattern(tmp_path) == []
+
+    # ── `paths=` scoping (pre-commit staged-files idiom) ─────────────
+
+    def test_paths_scoping_ignores_an_untouched_offender(self, tmp_path):
+        """The pre-commit mode: a pre-existing offending file that was NOT
+        staged in this commit must not re-block it — mirrors
+        `check_storage_bucket_public`'s 001/011-immutable-history reasoning."""
+        _write_sh(tmp_path, "untouched.sh", (
+            "#!/usr/bin/env bash\ncmd | tail\necho $?\n"
+        ))
+        assert check_piped_exit_code_pattern(tmp_path, paths=["scripts/other.sh"]) == []
+
+    def test_paths_scoping_flags_a_staged_offender(self, tmp_path):
+        offender = _write_sh(tmp_path, "staged.sh", (
+            "#!/usr/bin/env bash\ncmd | tail\necho $?\n"
+        ))
+        rel = str(offender.relative_to(tmp_path))
+        issues = check_piped_exit_code_pattern(tmp_path, paths=[rel])
+        assert issues
+        assert issues[0]["file"] == rel
+
+    def test_paths_scoping_covers_the_hooks_and_workflow_surfaces_too(self, tmp_path):
+        hooks_dir = tmp_path / "scripts" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        hook = hooks_dir / "pre-commit"
+        hook.write_text("#!/usr/bin/env bash\ncmd | tail\necho $?\n")
+
+        wf_dir = tmp_path / ".github" / "workflows"
+        wf_dir.mkdir(parents=True)
+        wf = wf_dir / "ci.yml"
+        wf.write_text(
+            "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: |\n          cmd | tail\n          echo $?\n"
+        )
+
+        both_paths = [
+            str(hook.relative_to(tmp_path)),
+            str(wf.relative_to(tmp_path)),
+        ]
+        issues = check_piped_exit_code_pattern(tmp_path, paths=both_paths)
+        surfaces = {i["file"] for i in issues}
+        assert any("pre-commit" in s for s in surfaces)
+        assert any("ci.yml" in s for s in surfaces)
+
+    def test_paths_scoping_empty_list_finds_nothing(self, tmp_path):
+        _write_sh(tmp_path, "a.sh", "#!/usr/bin/env bash\ncmd | tail\necho $?\n")
+        assert check_piped_exit_code_pattern(tmp_path, paths=[]) == []
+
+    # ── root-is-itself-a-worktree (2026-09-20 regression) ────────────
+    #
+    # `--worktree-path .../.claude/worktrees/<slug>` is the standard call
+    # shape (same as pre-commit's `--worktree-path "$REPO_ROOT"`) — `root`
+    # is very often ITSELF a path whose own ancestry contains
+    # `.claude/worktrees/`. An absolute-path substring exclusion check
+    # silently matched that ancestry and zeroed every finding; the fix
+    # checks the path RELATIVE TO root instead.
+
+    def test_root_itself_under_dot_claude_worktrees_is_still_scanned(self, tmp_path):
+        fake_worktree_root = tmp_path / ".claude" / "worktrees" / "some-slug"
+        fake_worktree_root.mkdir(parents=True)
+        _write_sh(fake_worktree_root, "a.sh", (
+            "#!/usr/bin/env bash\ncmd | tail\necho $?\n"
+        ))
+        issues = check_piped_exit_code_pattern(fake_worktree_root)
+        assert issues, (
+            "a file INSIDE the scanned root must be found even though root's "
+            "own absolute path contains '.claude/worktrees/' in its ancestry"
+        )
+
+    def test_root_itself_under_dot_claude_worktrees_still_excludes_a_nested_sibling(self, tmp_path):
+        fake_worktree_root = tmp_path / ".claude" / "worktrees" / "some-slug"
+        fake_worktree_root.mkdir(parents=True)
+        _write_sh(fake_worktree_root, "real.sh", (
+            "#!/usr/bin/env bash\ncmd | tail\necho $?\n"
+        ))
+        nested_sibling = fake_worktree_root / ".claude" / "worktrees" / "nested-slug"
+        nested_sibling.mkdir(parents=True)
+        _write_sh(nested_sibling, "dup.sh", (
+            "#!/usr/bin/env bash\ncmd | tail\necho $?\n"
+        ))
+        issues = check_piped_exit_code_pattern(fake_worktree_root)
+        files = {i["file"] for i in issues}
+        assert any("real.sh" in f for f in files)
+        assert not any("dup.sh" in f for f in files)
+
 
 class TestScanShellTextForPipedExitCode:
     """Unit tests for the line-scanner in isolation (no filesystem)."""

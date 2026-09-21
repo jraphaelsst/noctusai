@@ -436,6 +436,41 @@ if [[ -n "$STAGED_ANON_GRANT_SURFACE" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-octies. Piped-exit-code-pattern gate (ADVISORY, non-blocking) ────
+# Keeper `check_piped_exit_code_pattern` (KB § PATTERNS/common/methodology-
+# execution-discipline.md § 6, "verdict-channel integrity"). Flags `$?` (or
+# an if/&&/|| condition) read off a PIPELINE, which reads the LAST stage's
+# exit status, never the command actually being judged — the exact class
+# behind two real 2026-09-17 incidents (`if git merge ... | tail -1; then`
+# read tail's status on a clean merge; `npx tsc --noEmit | tail -5 && echo
+# "rc=$?"` printed tail's $?, not tsc's). Diff-scoped to THIS commit's
+# staged shell/hook/workflow surface (same idiom as 6b-quinquies/6b-sexies/
+# 6b-septies above). Wired at WARNING severity (never blocks): every real
+# finding on this tree today is `warning` — the `.sh`/hook surface here
+# already sets `set -o pipefail`, so a `high` (no-pipefail) finding would
+# be a genuinely new, riskier pattern; wiring this BLOCKING today would
+# hard-fail the repo on findings that are correct-but-unreadable, not
+# wrong. `noctus.dev.gate_sweep` is the structural replacement for the
+# orchestrated-gate case (own subprocess, own returncode, per gate); this
+# gate is for everything gate_sweep cannot reach — an ad-hoc `.sh`/hook/
+# workflow line.
+STAGED_PIPED_EXIT_SURFACE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '\.sh$|^scripts/hooks/[^/.]+$|^\.github/workflows/.*\.ya?ml$' || true)
+if [[ -n "$STAGED_PIPED_EXIT_SURFACE" ]] && have_py; then
+    echo "[pre-commit] Checking staged shell/hook/workflow surface for piped-exit-code patterns..."
+    STAGED_PIPED_EXIT_SURFACE_CSV=$(echo "$STAGED_PIPED_EXIT_SURFACE" | paste -sd, -)
+    if ! "$PY" "$CLI" --check-piped-exit-code-pattern --paths "$STAGED_PIPED_EXIT_SURFACE_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] piped-exit-code-pattern check FAILED. Commit aborted." >&2
+        echo "[pre-commit] A staged .sh/hook/workflow line reads \$? (or an if/&&/||" >&2
+        echo "[pre-commit] condition) off a PIPELINE with no effective pipefail backing it" >&2
+        echo "[pre-commit] — that exit code is DEFINITELY the last pipeline stage's, not the" >&2
+        echo "[pre-commit] command being judged. Capture it inside the pipeline's own" >&2
+        echo "[pre-commit] subshell (out=\$(cmd); rc=\$?), add 'set -o pipefail', or drop the" >&2
+        echo "[pre-commit] pipe. Opt-out (only when genuinely intentional): a trailing" >&2
+        echo "[pre-commit] '# noctusai-keeper: allow-piped-exit-code' comment on the line." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6c. Prod-exposure consent gate (blocking, only when a prod-exposure ──
 # surface OR a consent record is staged) ─────────────────────────────────
 # Keeper `check_prod_exposure_consent` + `KB § PATTERNS/devops/prod-

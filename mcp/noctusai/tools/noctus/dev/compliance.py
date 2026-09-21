@@ -4620,16 +4620,66 @@ def _scan_shell_text_for_piped_exit_code(text: str) -> dict[str, list]:
     return {"shape1": shape1, "shape2": shape2}
 
 
-def _iter_shell_scripts(root: Path):
+def _shell_script_excluded(p: Path, root: Path, skip_dirs: set[str]) -> bool:
+    """Shared exclusion predicate for both the full-tree and `paths=`-scoped
+    walk modes below.
+
+    Checked against the path RELATIVE TO `root`, never the absolute path —
+    `root` is frequently itself a linked worktree (e.g. `--worktree-path
+    .../.claude/worktrees/<slug>`), whose own absolute path already
+    CONTAINS `.claude/worktrees/` in its ancestry. An absolute-path check
+    would exclude the ENTIRE tree being scanned in that case (measured
+    2026-09-20: it silently zeroed every finding when this checker ran with
+    `--worktree-path` pointed at a worktree — the exact call shape
+    pre-commit and the CLI both use). Only a `.claude/worktrees/` segment
+    appearing INSIDE `root`'s own tree (a NESTED sibling worktree) is a
+    real duplicate; `root`'s own ancestry never is.
+
+    `.claude/worktrees/<slug>/...` is checked as a two-segment PREFIX of
+    the relative path (`rel.parts[0:2]`), not a `skip_dirs`-style bare-name
+    membership test or a substring on `rel.as_posix()` — a relative
+    POSIX path never starts with `/`, so a leading-slash substring check
+    (the first version of this fix) silently matches NOTHING and lets
+    every nested worktree's copy back in undetected."""
+    rel = p.relative_to(root)
+    if any(part in skip_dirs for part in rel.parts):
+        return True
+    return rel.parts[:2] == (".claude", "worktrees")
+
+
+def _iter_shell_scripts(root: Path, paths: list[str] | None = None):
     """Yield ``(relative_path, text)`` for every ``.sh`` file repo-wide plus
     the extensionless git-hook entrypoints under ``scripts/hooks/`` — the
-    shell surfaces the rule names (``scripts/``, git hooks, any ``.sh``)."""
+    shell surfaces the rule names (``scripts/``, git hooks, any ``.sh``).
+
+    Excludes ``.claude/worktrees/**`` and top-level ``archive/**``: each
+    linked worktree is a FULL checkout, so an unscoped ``root.rglob`` counts
+    the same 16 real sites once PER LIVE WORKTREE — measured 2026-09-20,
+    130 raw findings of which 114 were exactly this duplication (a compliance
+    audit almost read that as "the fleet is riddled with this bug" instead
+    of "there are 7 checkouts of the same 16 lines").
+
+    ``paths=None`` (default) is the full-tree audit mode above. ``paths=
+    [...]`` — the pre-commit staged-files idiom shared with
+    `check_storage_bucket_public` — scopes the scan to EXACTLY those files
+    instead of a full-tree `rglob`, so an immutable pre-existing hook/script
+    never re-blocks a commit that never touches it."""
     skip_dirs = {
         "node_modules", ".venv", "venv", "dist", "build", "__pycache__",
-        ".git", ".pytest_cache", ".mypy_cache",
+        ".git", ".pytest_cache", ".mypy_cache", "archive",
     }
-    for p in sorted(root.rglob("*.sh")):
-        if any(part in skip_dirs for part in p.parts):
+    hooks_dir = root / "scripts" / "hooks"
+
+    if paths is not None:
+        candidates = sorted(root / p for p in paths)
+        sh_candidates = [p for p in candidates if p.suffix == ".sh"]
+        hook_candidates = [p for p in candidates if not p.suffix and p.parent == hooks_dir]
+    else:
+        sh_candidates = sorted(root.rglob("*.sh"))
+        hook_candidates = sorted(hooks_dir.iterdir()) if hooks_dir.exists() else []
+
+    for p in sh_candidates:
+        if _shell_script_excluded(p, root, skip_dirs):
             continue
         try:
             text = p.read_text(encoding="utf-8")
@@ -4637,20 +4687,19 @@ def _iter_shell_scripts(root: Path):
             logger.debug("compliance: cannot read %s (%s)", p, exc)
             continue
         yield str(p.relative_to(root)), text
-    hooks_dir = root / "scripts" / "hooks"
-    if hooks_dir.exists():
-        for p in sorted(hooks_dir.iterdir()):
-            if not p.is_file() or p.suffix:
-                continue  # `.sh`/.py hooks are handled by the glob above / excluded
-            try:
-                text = p.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError) as exc:
-                logger.debug("compliance: cannot read %s (%s)", p, exc)
-                continue
-            first_line = text.splitlines()[0] if text else ""
-            if not first_line.startswith("#!") or "sh" not in first_line:
-                continue  # not a shell script (e.g. a python hook entrypoint)
-            yield str(p.relative_to(root)), text
+
+    for p in hook_candidates:
+        if not p.is_file() or p.suffix or _shell_script_excluded(p, root, skip_dirs):
+            continue  # `.sh`/.py hooks are handled by the glob above / excluded
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", p, exc)
+            continue
+        first_line = text.splitlines()[0] if text else ""
+        if not first_line.startswith("#!") or "sh" not in first_line:
+            continue  # not a shell script (e.g. a python hook entrypoint)
+        yield str(p.relative_to(root)), text
 
 
 def _gha_effective_shell_has_pipefail(step: dict, job: dict, doc: dict) -> bool:
@@ -4683,18 +4732,30 @@ def _gha_effective_shell_has_pipefail(step: dict, job: dict, doc: dict) -> bool:
     return shell_str not in _GHA_NON_PIPEFAIL_SHELLS
 
 
-def _iter_workflow_run_steps(root: Path):
+def _iter_workflow_run_steps(root: Path, paths: list[str] | None = None):
     """Yield ``(label, run_text, effective_pipefail)`` for every ``run:``
     step in ``.github/workflows/*.yml``. PyYAML-parsed (already a toolkit
     dependency — see `check_ci_test_matrix_coverage` et al.) rather than a
     line-based block-scalar heuristic, so indentation quirks can't
-    misparse which lines belong to the `run:` block."""
+    misparse which lines belong to the `run:` block.
+
+    ``paths=[...]`` (the pre-commit staged-files idiom — see
+    `_iter_shell_scripts`) scopes this to only the workflow file(s) actually
+    staged in this commit, instead of every workflow in the tree."""
     wf_dir = root / ".github" / "workflows"
     if not wf_dir.exists():
         return
     import yaml
 
-    for wf_path in sorted(wf_dir.glob("*.yml")):
+    if paths is not None:
+        wf_files = sorted(
+            root / p for p in paths
+            if (root / p).parent == wf_dir and p.endswith((".yml", ".yaml"))
+        )
+    else:
+        wf_files = sorted(wf_dir.glob("*.yml"))
+
+    for wf_path in wf_files:
         try:
             doc = yaml.safe_load(wf_path.read_text(encoding="utf-8")) or {}
         except (yaml.YAMLError, OSError) as exc:
@@ -4791,7 +4852,9 @@ def _piped_exit_code_findings(
     return findings
 
 
-def check_piped_exit_code_pattern(repo_root: Path | None = None) -> list[dict]:
+def check_piped_exit_code_pattern(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
     """Detect the verdict-channel-integrity footgun: `$?` (or an
     `if`/`&&`/`||` condition) read off a PIPELINE — which reads the LAST
     stage's exit status, never the command whose result is actually being
@@ -4802,7 +4865,9 @@ def check_piped_exit_code_pattern(repo_root: Path | None = None) -> list[dict]:
 
     Scans every ``.sh`` file repo-wide, the extensionless git-hook
     entrypoints under ``scripts/hooks/``, and every ``run:`` step in
-    ``.github/workflows/*.yml``.
+    ``.github/workflows/*.yml`` — see `_iter_shell_scripts` for the
+    `.claude/worktrees/**` + `archive/**` exclusion (each linked worktree is
+    a full checkout; an unscoped walk over-counts by ~7x).
 
     Three finding kinds per surface (see `_piped_exit_code_findings`):
       - `$?` read after a bare pipe (shape 1);
@@ -4818,7 +4883,16 @@ def check_piped_exit_code_pattern(repo_root: Path | None = None) -> list[dict]:
     Severity: `high` when there is no effective pipefail; `warning` when
     pipefail IS effectively active (the construct is technically correct
     but unreadable at a glance — a reviewer can't tell it's safe without
-    checking).
+    checking). Measured on this tree 2026-09-20: every real (non-worktree-
+    duplicate) finding is `warning` — every `.sh`/hook surface here already
+    sets pipefail — which is exactly why pre-commit wires this at
+    warning/non-blocking severity rather than hard-failing the commit.
+
+    ``paths=None`` (default, full-tree audit mode) vs. ``paths=[...]``
+    (the pre-commit staged-files idiom, same as `check_storage_bucket_public`)
+    — scopes the scan to EXACTLY the given files, so an immutable
+    pre-existing script/hook/workflow never re-blocks a commit that never
+    touches it.
 
     Opt-out: a `# noctusai-keeper: allow-piped-exit-code` comment on the
     offending line suppresses it (mirrors the
@@ -4830,12 +4904,12 @@ def check_piped_exit_code_pattern(repo_root: Path | None = None) -> list[dict]:
     if not root.exists():
         return issues
 
-    for rel, text in _iter_shell_scripts(root):
+    for rel, text in _iter_shell_scripts(root, paths):
         hits = _scan_shell_text_for_piped_exit_code(text)
         has_pipefail = bool(_PIPEFAIL_RE.search(text))
         issues.extend(_piped_exit_code_findings(rel, hits, has_pipefail))
 
-    for label, run_text, has_pipefail in _iter_workflow_run_steps(root):
+    for label, run_text, has_pipefail in _iter_workflow_run_steps(root, paths):
         hits = _scan_shell_text_for_piped_exit_code(run_text)
         issues.extend(_piped_exit_code_findings(label, hits, has_pipefail))
 
