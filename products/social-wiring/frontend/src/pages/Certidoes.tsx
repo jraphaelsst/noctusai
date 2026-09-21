@@ -109,6 +109,7 @@ import {
   useCertidaoConsultas,
   useCopiarTranscricao,
   useCreateConsulta,
+  useCriarConsultaManual,
   useDeleteConsulta,
   useDownloadTranscricaoPdf,
   useMintResultadoUrl,
@@ -171,6 +172,11 @@ export default function Certidoes() {
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [dialogAberto, setDialogAberto] = useState(false);
+  // "automatico" (default): calls InfoSimples, billable. "manual": creates
+  // the same placeholder resultados with no InfoSimples call and no token
+  // requirement — for testing with fictional people or recording a
+  // certidão the office already holds elsewhere.
+  const [modoNovaConsulta, setModoNovaConsulta] = useState<"automatico" | "manual">("automatico");
   const [detalheId, setDetalheId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [expandedAnalise, setExpandedAnalise] = useState<string | null>(null);
@@ -199,6 +205,7 @@ export default function Certidoes() {
 
   const { data: tjspFila } = useTjspFila();
   const createMutation = useCreateConsulta();
+  const createManualMutation = useCriarConsultaManual();
   const reprocessarMutation = useReprocessarConsulta();
   const deleteMutation = useDeleteConsulta();
   const cancelarMutation = useCancelarProcessamento();
@@ -284,12 +291,16 @@ export default function Certidoes() {
       nome_mae: data.nome_mae || undefined,
       nome_pai: data.nome_pai || undefined,
     };
-    createMutation.mutate(payload, {
-      onSuccess: () => {
-        setDialogAberto(false);
-        reset();
-      },
-    });
+    const onSuccess = () => {
+      setDialogAberto(false);
+      setModoNovaConsulta("automatico");
+      reset();
+    };
+    if (modoNovaConsulta === "manual") {
+      createManualMutation.mutate(payload, { onSuccess });
+    } else {
+      createMutation.mutate(payload, { onSuccess });
+    }
   };
 
   const handleDelete = () => {
@@ -418,6 +429,7 @@ export default function Certidoes() {
           <Button
             onClick={() => {
               reset();
+              setModoNovaConsulta("automatico");
               setDialogAberto(true);
             }}
           >
@@ -744,9 +756,27 @@ export default function Certidoes() {
           <DialogHeader>
             <DialogTitle>Nova Consulta de Certidões</DialogTitle>
             <DialogDescription>
-              Preencha os dados para emitir as certidões negativas automaticamente.
+              {modoNovaConsulta === "manual"
+                ? "Cria as certidões desta pessoa sem consultar o InfoSimples — use para pessoas fictícias de teste ou para registrar certidões já obtidas por outro meio."
+                : "Preencha os dados para emitir as certidões negativas automaticamente."}
             </DialogDescription>
           </DialogHeader>
+          <div className="grid grid-cols-2 gap-2" data-testid="nova-consulta-modo">
+            <Button
+              type="button"
+              variant={modoNovaConsulta === "automatico" ? "default" : "outline"}
+              onClick={() => setModoNovaConsulta("automatico")}
+            >
+              Emitir automaticamente (InfoSimples, pago)
+            </Button>
+            <Button
+              type="button"
+              variant={modoNovaConsulta === "manual" ? "default" : "outline"}
+              onClick={() => setModoNovaConsulta("manual")}
+            >
+              Registrar manualmente
+            </Button>
+          </div>
           <form onSubmit={handleSubmit(handleCreate)} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -822,19 +852,29 @@ export default function Certidoes() {
             )}
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setDialogAberto(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setDialogAberto(false);
+                  setModoNovaConsulta("automatico");
+                }}
+              >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
-                {createMutation.isPending ? (
+              <Button
+                type="submit"
+                disabled={createMutation.isPending || createManualMutation.isPending}
+              >
+                {createMutation.isPending || createManualMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Iniciando...
+                    {modoNovaConsulta === "manual" ? "Registrando..." : "Iniciando..."}
                   </>
                 ) : (
                   <>
                     <FileCheck className="h-4 w-4 mr-2" />
-                    Emitir Certidões
+                    {modoNovaConsulta === "manual" ? "Registrar Certidões" : "Emitir Certidões"}
                   </>
                 )}
               </Button>

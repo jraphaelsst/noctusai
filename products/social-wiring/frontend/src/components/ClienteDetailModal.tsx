@@ -694,8 +694,11 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       )}
       // Keyed by the atendimento PARTE id: certidões are linked to the
       // person's role in this deal (migration 107), not to the person.
-      renderCertidoesDaParte={(parteId, nome) => (
-        <CertidoesPartePanel atendimentoParteId={parteId} nomeParte={nome} />
+      // `documento` (the party's own CPF/CNPJ, when on file) prefills the
+      // "registrar certidões manualmente" dialog so the operator does not
+      // retype it.
+      renderCertidoesDaParte={(parteId, nome, documento) => (
+        <CertidoesPartePanel atendimentoParteId={parteId} nomeParte={nome} documento={documento} />
       )}
       // Keyed by cliente_id — migration 110's qualificação is a fact about
       // the PERSON, same reasoning as `renderDocumentosDePessoa` above it.
@@ -712,8 +715,14 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       // `atendimento_partes` row (migration 073's header), so it reaches the
       // sibling cliente-scoped certidões routes (migration 116) instead of
       // `renderCertidoesDaParte`'s per-parte ones.
-      renderCertidoesDoTitular={() =>
-        id && <CertidoesPartePanel clienteId={id} nomeParte={card.data?.cliente.nome ?? undefined} />
+      renderCertidoesDoTitular={(documento) =>
+        id && (
+          <CertidoesPartePanel
+            clienteId={id}
+            nomeParte={card.data?.cliente.nome ?? undefined}
+            documento={documento}
+          />
+        )
       }
       renderQualificacaoDoTitular={() =>
         id && (

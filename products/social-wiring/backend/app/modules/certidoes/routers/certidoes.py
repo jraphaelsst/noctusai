@@ -3,6 +3,7 @@
     GET    /api/certidoes/tipos                          the catalogue
     GET    /api/certidoes/consultas                      list + per-consulta counts
     POST   /api/certidoes/consultas                      create + fan out + process
+    POST   /api/certidoes/consultas/manual                create + fan out, no InfoSimples
     GET    /api/certidoes/consultas/{id}                 detail + resultados
     POST   /api/certidoes/consultas/{id}/reprocessar     retry the failed ones
     POST   /api/certidoes/consultas/{id}/cancelar        stop what is in flight
@@ -97,6 +98,7 @@ from app.modules.certidoes.registry import (
 )
 from app.modules.certidoes.schemas import (
     ConsultaCreate,
+    ConsultaManualCreate,
     ResultadoPatch,
     SituacaoCadastralPatch,
     VincularClienteRequest,
@@ -242,6 +244,38 @@ def _fan_out_tipos_manuais(db, consulta_id: str, org_id) -> None:
         db.table(RESULTADOS).insert(novos).execute()
 
 
+def _resolve_parte_cliente_id(db, org_id, atendimento_parte_id: str) -> Optional[str]:
+    """The `cliente_id` behind one `atendimento_partes` row of THIS org, or a
+    404 — never trust a caller-supplied `cliente_id` for a party, so a
+    caller cannot link a consulta to a person who is not actually party to
+    this atendimento. Shared by `vincular_parte` and `criar_consulta_manual`.
+    """
+    parte_rows = (
+        db.table("atendimento_partes")
+        .select("id, cliente_id")
+        .eq("id", atendimento_parte_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not parte_rows:
+        raise HTTPException(status_code=404, detail="Parte não encontrada")
+    return parte_rows[0]["cliente_id"]
+
+
+def _validar_cliente_id(db, org_id, cliente_id: str) -> None:
+    """404 unless `cliente_id` names a `clientes` row of THIS org. Shared by
+    `vincular_cliente` and `criar_consulta_manual`."""
+    cliente_rows = (
+        db.table("clientes")
+        .select("id")
+        .eq("id", cliente_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not cliente_rows:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+
 # --------------- Endpoints ---------------
 
 
@@ -372,6 +406,117 @@ async def criar_consulta(
     # `criar_consulta` inserts exactly `len(CERTIDOES_CONFIG)` of them and the
     # FK cascades with the consulta.
     # postgrest-unbounded-ok: bounded at 10 rows by that fan-out, not 1 000.
+    resultados = (
+        db.table(RESULTADOS)
+        .select(service.RESULTADO_COLUNAS_SEM_TEXTO)
+        .eq("consulta_id", consulta["id"])
+        .eq("org_id", str(org_id))
+        .order("ordem")
+        .execute()
+    )
+    consulta["resultados"] = resultados.data or []
+    return success_response(consulta)
+
+
+@router.post("/consultas/manual")
+async def criar_consulta_manual(
+    body: ConsultaManualCreate,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+):
+    """Create a consultation the SAME shape `criar_consulta` produces — one
+    `pendente` placeholder resultado per type the office checklist names,
+    thirteen total (`CERTIDOES_CONFIG`'s ten PLUS `get_manual_tipos()`'s
+    three) — but NEVER calls InfoSimples and never requires its token.
+
+    Two real needs this answers where the automated path cannot: testing the
+    contract-automation pipeline against a FICTIONAL person without ever
+    sending a fake CPF to a government lookup system, and recording a
+    certidão the office already holds (obtained elsewhere, or issued before
+    this product existed) without paying InfoSimples again for it. Every
+    resultado this creates is filled by hand through the EXISTING
+    `PATCH /resultados/{id}` confirm/correct flow — nothing new there.
+
+    🔴 NO `background_tasks.add_task(svc.processar_consulta, ...)` — the one
+    line that fires InfoSimples calls and lands a `cost_ledger` row (via
+    `_process_single_certidao` → `cost_ledger.book_infosimples_cost`) is
+    simply never reached, by construction, not by a runtime flag a bug could
+    flip. Also no `svc.check_required_credentials` pre-flight: this path has
+    no credential to be missing.
+
+    Optionally links the new consulta to a party or a card's titular in the
+    SAME request — `atendimento_parte_id` resolved via `_resolve_parte_
+    cliente_id` (never a caller-supplied `cliente_id` for a party, exactly
+    like `vincular_parte`), `cliente_id` validated via `_validar_cliente_id`
+    (exactly like `vincular_cliente`). Sending both is refused: an ambiguous
+    link the caller could not have meant is worse than picking one silently.
+    """
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    if body.atendimento_parte_id and body.cliente_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Envie apenas um vínculo: atendimento_parte_id OU cliente_id, não os dois.",
+        )
+
+    resolved_cliente_id: Optional[str] = None
+    if body.atendimento_parte_id:
+        resolved_cliente_id = _resolve_parte_cliente_id(
+            db, org_id, str(body.atendimento_parte_id)
+        )
+    elif body.cliente_id:
+        _validar_cliente_id(db, org_id, str(body.cliente_id))
+        resolved_cliente_id = str(body.cliente_id)
+
+    consulta_data = {
+        **body.model_dump(
+            exclude_none=True, exclude={"atendimento_parte_id", "cliente_id"}
+        ),
+        "org_id": str(org_id),
+        "created_by": str(user.id),
+        "status": "pendente",
+        "origem": "manual",
+        "total_certidoes": len(CERTIDOES_CONFIG) + len(get_manual_tipos()),
+        "concluidas": 0,
+    }
+    if body.atendimento_parte_id:
+        consulta_data["atendimento_parte_id"] = str(body.atendimento_parte_id)
+    if resolved_cliente_id:
+        consulta_data["cliente_id"] = resolved_cliente_id
+
+    consulta_result = db.table(CONSULTAS).insert(consulta_data).execute()
+    if not consulta_result.data:
+        raise HTTPException(status_code=500, detail="Erro ao criar consulta")
+    consulta = consulta_result.data[0]
+
+    # Same thirteen types `criar_consulta`'s ten plus a `vincular_parte`/
+    # `vincular_cliente`-linked consulta's three end up carrying — see this
+    # function's own docstring.
+    resultados_data = [
+        {
+            "consulta_id": consulta["id"],
+            "org_id": str(org_id),
+            "tipo": config["tipo"],
+            "nome_display": config["nome"],
+            "ordem": config["ordem"],
+            "status": "pendente",
+        }
+        for config in CERTIDOES_CONFIG
+    ] + [
+        {
+            "consulta_id": consulta["id"],
+            "org_id": str(org_id),
+            "tipo": tipo["tipo"],
+            "nome_display": tipo["nome"],
+            "ordem": tipo["ordem"],
+            "status": "pendente",
+        }
+        for tipo in get_manual_tipos()
+    ]
+    db.table(RESULTADOS).insert(resultados_data).execute()
+
+    # postgrest-unbounded-ok: bounded at 13 rows by the fan-out above.
     resultados = (
         db.table(RESULTADOS)
         .select(service.RESULTADO_COLUNAS_SEM_TEXTO)
@@ -809,16 +954,9 @@ async def vincular_parte(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    parte_rows = (
-        db.table("atendimento_partes")
-        .select("id, cliente_id")
-        .eq("id", str(body.atendimento_parte_id))
-        .eq("org_id", str(org_id))
-        .execute()
-    ).data or []
-    if not parte_rows:
-        raise HTTPException(status_code=404, detail="Parte não encontrada")
-    parte = parte_rows[0]
+    resolved_cliente_id = _resolve_parte_cliente_id(
+        db, org_id, str(body.atendimento_parte_id)
+    )
 
     _get_consulta_or_404(db, consulta_id, org_id, select="id")
 
@@ -826,7 +964,7 @@ async def vincular_parte(
         db.table(CONSULTAS)
         .update({
             "atendimento_parte_id": str(body.atendimento_parte_id),
-            "cliente_id": parte["cliente_id"],
+            "cliente_id": resolved_cliente_id,
         })
         .eq("id", consulta_id)
         .eq("org_id", str(org_id))
@@ -876,15 +1014,7 @@ async def vincular_cliente(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    cliente_rows = (
-        db.table("clientes")
-        .select("id")
-        .eq("id", str(body.cliente_id))
-        .eq("org_id", str(org_id))
-        .execute()
-    ).data or []
-    if not cliente_rows:
-        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    _validar_cliente_id(db, org_id, str(body.cliente_id))
 
     _get_consulta_or_404(db, consulta_id, org_id, select="id")
 

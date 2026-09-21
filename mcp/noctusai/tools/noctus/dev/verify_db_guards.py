@@ -962,6 +962,44 @@ END;
 )
 
 
+_CERTIDAO_CONSULTA_ORIGEM_PROBE = GuardProbe(
+    id="certidao_consultas.origem.closed_vocabulary",
+    product="social-wiring",
+    schema="social_wiring",
+    guard_name="certidao_consultas_origem_check",
+    kind="write_refusal",
+    migrations=("147_certidoes_origem_manual.sql",),
+    rationale=(
+        "`origem` decides whether a consulta is billable InfoSimples work "
+        "or a manual registration that must never be billed or re-fetched; "
+        "a value outside the two the code branches on would be treated as "
+        "neither, silently."
+    ),
+    sql=_do_block("""
+DECLARE
+  alvo uuid;
+BEGIN
+  SELECT id INTO alvo FROM social_wiring.certidao_consultas LIMIT 1;
+  IF alvo IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.certidao_consultas has no row to probe';
+  END IF;
+  BEGIN
+    UPDATE social_wiring.certidao_consultas SET origem = 'noc_probe_invalida' WHERE id = alvo;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: origem accepted a value outside automatica|manual';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%certidao_consultas_origem_check%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -970,6 +1008,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ENDERECO_REGISTRO_PROBE,
     _STORAGE_BUCKETS_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
+    _CERTIDAO_CONSULTA_ORIGEM_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

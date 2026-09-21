@@ -434,6 +434,119 @@ class TestCriarConsulta:
 
 
 # ---------------------------------------------------------------------------
+# POST /consultas/manual
+# ---------------------------------------------------------------------------
+
+
+class TestCriarConsultaManual:
+    def _payload(self, **overrides):
+        body = {
+            "tipo_documento": "cpf",
+            "documento": "12345678901",
+            "nome": "Pessoa Fictícia de Teste",
+        }
+        body.update(overrides)
+        return body
+
+    def test_cria_sem_token_infosimples(self, client, certidoes_db):
+        """🔴 THE point of this endpoint: no `_CRED` patch anywhere in this
+        test — a missing/absent InfoSimples token must never block it,
+        unlike `TestCriarConsulta.test_recusa_sem_token_infosimples_antes_
+        de_gravar`."""
+        db, _ = certidoes_db
+        _seed(db)
+        resp = client.post(f"{BASE}/consultas/manual", json=self._payload())
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["origem"] == "manual"
+        assert data["status"] == "pendente"
+        assert data["total_certidoes"] == 13
+
+    def test_nao_dispara_processamento_em_background(self, client, certidoes_db, override_service):
+        db, _ = certidoes_db
+        _seed(db)
+        proc = AsyncMock()
+        override_service(processar_consulta=proc)
+        client.post(f"{BASE}/consultas/manual", json=self._payload())
+        proc.assert_not_awaited()
+
+    def test_fan_out_grava_treze_resultados(self, client, certidoes_db):
+        """The ten automated types PLUS the three manual-only ones —
+        `vincular_parte`'s eventual shape, produced up front instead of
+        lazily on link."""
+        db, _ = certidoes_db
+        _seed(db)
+        client.post(f"{BASE}/consultas/manual", json=self._payload())
+        inserted = db.table("certidao_resultados").inserted_payloads
+        assert len(inserted) == 13
+        tipos = {r["tipo"] for r in inserted}
+        assert tipos == {c["tipo"] for c in service.CERTIDOES_CONFIG} | {
+            "serasa", "tjsp_esaj", "tjsp_eproc",
+        }
+        assert all(r["status"] == "pendente" for r in inserted)
+        assert all(r["org_id"] == CALLER_ORG for r in inserted)
+
+    def test_vincula_a_parte_no_mesmo_passo(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("atendimento_partes", [_parte()])
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json=self._payload(atendimento_parte_id=PARTE_ID),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["atendimento_parte_id"] == PARTE_ID
+        assert data["cliente_id"] == "cliente-001"
+
+    def test_parte_inexistente_e_404_nada_e_gravado(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("atendimento_partes", [])
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json=self._payload(atendimento_parte_id=PARTE_ID),
+        )
+        assert resp.status_code == 404
+        assert db.table("certidao_consultas").inserted_payloads == []
+
+    def test_vincula_ao_titular_no_mesmo_passo(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("clientes", [_cliente()])
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json=self._payload(cliente_id=CLIENTE_ID),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["cliente_id"] == CLIENTE_ID
+
+    def test_cliente_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("clientes", [])
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json=self._payload(cliente_id=CLIENTE_ID),
+        )
+        assert resp.status_code == 404
+
+    def test_ambos_os_vinculos_e_422(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json=self._payload(atendimento_parte_id=PARTE_ID, cliente_id=CLIENTE_ID),
+        )
+        assert resp.status_code == 422
+        assert db.table("certidao_consultas").inserted_payloads == []
+
+    def test_campo_desconhecido_e_recusado(self, client, certidoes_db):
+        resp = client.post(f"{BASE}/consultas/manual", json=self._payload(nomeMae="Maria"))
+        assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # GET /consultas/{id}
 # ---------------------------------------------------------------------------
 

@@ -33,6 +33,7 @@ import { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
+  ClipboardEdit,
   Copy,
   Download,
   Eye,
@@ -78,6 +79,7 @@ import {
   useCertidaoConsultas,
   useConfirmarResultado,
   useCopiarTranscricao,
+  useCriarConsultaManual,
   useDownloadTranscricaoPdf,
   useMintResultadoUrl,
   useResultadosPorCliente,
@@ -131,11 +133,18 @@ export interface CertidoesPartePanelProps {
   /** Optional label for the empty-state copy; the panel works without it —
    * a linked consulta's own `nome`/`documento` cover the rest once one exists. */
   nomeParte?: string;
+  /** This person's own CPF/CNPJ, when the caller already has one on file
+   * (`ClienteCardDialog`'s `parte.cliente?.cpf` for a party, `dadosPessoais?.
+   * cpf` for the titular) — prefills "Registrar certidões manualmente" so
+   * the operator does not retype it. Still fully editable; `undefined`
+   * simply leaves the field blank, exactly as before this prop existed. */
+  documento?: string;
 }
 
 export function CertidoesPartePanel({
   atendimentoParteId,
   clienteId,
+  documento,
   nomeParte,
 }: CertidoesPartePanelProps) {
   // See this file's docblock: both hooks always run; only the one matching
@@ -151,6 +160,7 @@ export function CertidoesPartePanel({
   const confirmar = useConfirmarResultado({ atendimentoParteId, clienteId });
   const upload = useUploadResultadoManual({ atendimentoParteId, clienteId });
   const situacaoCadastral = useAtualizarSituacaoCadastral({ atendimentoParteId, clienteId });
+  const criarManual = useCriarConsultaManual();
   const mintUrl = useMintResultadoUrl();
   // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6) —
   // shared with `pages/Certidoes.tsx`'s own detail table so the fetch +
@@ -163,6 +173,10 @@ export function CertidoesPartePanel({
   const [editando, setEditando] = useState<CertidaoResultado | null>(null);
   const [uploadAlvo, setUploadAlvo] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [manualAberto, setManualAberto] = useState(false);
+  const [manualNome, setManualNome] = useState(nomeParte ?? "");
+  const [manualTipoDocumento, setManualTipoDocumento] = useState<"cpf" | "cnpj">("cpf");
+  const [manualDocumento, setManualDocumento] = useState(documento ?? "");
 
   const handleCopiarTranscricao = (resultadoId: string) => {
     copiarTranscricao(resultadoId, () => {
@@ -215,6 +229,27 @@ export function CertidoesPartePanel({
         { onSuccess },
       );
     }
+  };
+
+  const handleAbrirRegistroManual = () => {
+    setManualNome(nomeParte ?? "");
+    setManualTipoDocumento("cpf");
+    setManualDocumento(documento ?? "");
+    setManualAberto(true);
+  };
+
+  const handleRegistrarManual = () => {
+    if (!manualNome.trim() || !manualDocumento.trim()) return;
+    criarManual.mutate(
+      {
+        tipo_documento: manualTipoDocumento,
+        documento: manualDocumento.trim(),
+        nome: manualNome.trim(),
+        atendimentoParteId,
+        clienteId,
+      },
+      { onSuccess: () => setManualAberto(false) },
+    );
   };
 
   const handleUploadClick = (resultadoId: string) => {
@@ -311,10 +346,16 @@ export function CertidoesPartePanel({
               ? `Nenhuma certidão vinculada a ${nomeParte} ainda.`
               : "Nenhuma certidão vinculada a esta parte ainda."}
           </p>
-          <Button size="sm" onClick={() => setVincularAberto(true)}>
-            <Link2 className="h-3.5 w-3.5 mr-2" />
-            Vincular consulta
-          </Button>
+          <div className="flex justify-center gap-2">
+            <Button size="sm" onClick={() => setVincularAberto(true)}>
+              <Link2 className="h-3.5 w-3.5 mr-2" />
+              Vincular consulta
+            </Button>
+            <Button size="sm" variant="outline" onClick={handleAbrirRegistroManual}>
+              <ClipboardEdit className="h-3.5 w-3.5 mr-2" />
+              Registrar certidões manualmente
+            </Button>
+          </div>
         </div>
       ) : (
         <>
@@ -578,6 +619,70 @@ export function CertidoesPartePanel({
         </DialogContent>
       </Dialog>
 
+      {/* Registrar certidões manualmente — no InfoSimples call, no token
+          needed. Creates + links a consulta in one step; see
+          `useCriarConsultaManual`. */}
+      <Dialog open={manualAberto} onOpenChange={setManualAberto}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Registrar certidões manualmente</DialogTitle>
+            <DialogDescription>
+              Cria as certidões desta pessoa sem consultar o InfoSimples — use para pessoas
+              fictícias de teste ou para registrar certidões já obtidas por outro meio. Cada
+              certidão fica pronta para edição em "Editar / confirmar".
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="certidoes-parte-manual-nome">Nome completo / Razão social</Label>
+              <Input
+                id="certidoes-parte-manual-nome"
+                value={manualNome}
+                onChange={(e) => setManualNome(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Tipo de documento</Label>
+                <Select
+                  value={manualTipoDocumento}
+                  onValueChange={(v) => setManualTipoDocumento(v as "cpf" | "cnpj")}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cpf">CPF - Pessoa Física</SelectItem>
+                    <SelectItem value="cnpj">CNPJ - Pessoa Jurídica</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="certidoes-parte-manual-documento">Documento</Label>
+                <Input
+                  id="certidoes-parte-manual-documento"
+                  value={manualDocumento}
+                  onChange={(e) => setManualDocumento(e.target.value)}
+                  placeholder="Apenas números"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setManualAberto(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleRegistrarManual}
+              disabled={!manualNome.trim() || !manualDocumento.trim() || criarManual.isPending}
+            >
+              {criarManual.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Registrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit + confirm dialog */}
       <Dialog open={!!editando} onOpenChange={(open) => !open && setEditando(null)}>
         <DialogContent>
@@ -607,6 +712,18 @@ export function CertidoesPartePanel({
   );
 }
 
+/** `YYYY-MM-DD` for the browser's local date — the office fills a dozen
+ * rows per person in one sitting; prefilling "Emitida em" with today means
+ * confirming a row that already has the right date takes zero clicks
+ * instead of re-picking the same date twelve times. Still fully editable —
+ * only the INITIAL value changes, never a forced value. */
+function hojeIso(): string {
+  const d = new Date();
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mes}-${dia}`;
+}
+
 function ResultadoEditForm({
   resultado,
   saving,
@@ -619,7 +736,10 @@ function ResultadoEditForm({
   onConfirm: (patch: ResultadoPatchInput) => void;
 }) {
   const [numero, setNumero] = useState(resultado.numero ?? "");
-  const [emitidaEm, setEmitidaEm] = useState(resultado.emitida_em ?? "");
+  // A never-yet-set resultado defaults to TODAY rather than blank — see
+  // `hojeIso`'s own docstring. One that already carries a date (an
+  // automated hit, or a previous manual save) keeps its own value.
+  const [emitidaEm, setEmitidaEm] = useState(resultado.emitida_em ?? hojeIso());
   const [validadeAte, setValidadeAte] = useState(resultado.validade_ate ?? "");
   const [valor, setValor] = useState<ResultadoValor | "">(
     (resultado.resultado as ResultadoValor) || "",

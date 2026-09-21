@@ -40,6 +40,7 @@ const mockReprocessar = vi.fn();
 const mockDelete = vi.fn();
 const mockCancelar = vi.fn();
 const mockMintUrl = vi.fn();
+const mockCreateManual = vi.fn();
 
 const mockDownloadTranscricaoPdf = vi.fn();
 const mockCopiarTranscricao = vi.fn();
@@ -50,6 +51,7 @@ vi.mock("@/hooks/useCertidoes", () => ({
   useCertidaoConsulta: (...a: any[]) => mockUseCertidaoConsulta(...a),
   useTjspFila: (...a: any[]) => mockUseTjspFila(...a),
   useCreateConsulta: () => ({ mutate: mockCreate, isPending: false }),
+  useCriarConsultaManual: () => ({ mutate: mockCreateManual, isPending: false }),
   useReprocessarConsulta: () => ({ mutate: mockReprocessar, isPending: false }),
   useDeleteConsulta: () => ({ mutate: mockDelete, isPending: false }),
   useCancelarProcessamento: () => ({ mutate: mockCancelar, isPending: false }),
@@ -641,5 +643,39 @@ describe("Certidoes — nova consulta form", () => {
     expect(payload.genero).toBeUndefined();
     expect(payload.rg).toBeUndefined();
     expect(payload.data_nascimento).toBeUndefined();
+  });
+
+  it("routes through the manual-registration mutation when 'Registrar manualmente' is chosen", async () => {
+    const { getByText, getByPlaceholderText, fireEvent, waitFor } = await renderCertidoes();
+    fireEvent.click(getByText("Nova Consulta"));
+    fireEvent.click(getByText("Registrar manualmente"));
+    expect(
+      getByText(/sem consultar o InfoSimples/),
+    ).toBeTruthy();
+    fireEvent.change(getByPlaceholderText("Apenas números"), {
+      target: { value: "12345678901" },
+    });
+    fireEvent.change(getByPlaceholderText("Nome completo ou razão social"), {
+      target: { value: "Pessoa Fictícia" },
+    });
+    fireEvent.click(getByText("Registrar Certidões"));
+
+    await waitFor(() => expect(mockCreateManual).toHaveBeenCalled());
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockCreateManual.mock.calls[0][0]).toMatchObject({
+      tipo_documento: "cpf",
+      documento: "12345678901",
+      nome: "Pessoa Fictícia",
+    });
+  });
+
+  it("defaults back to 'Emitir automaticamente' every time the dialog is (re)opened", async () => {
+    const { getByText, fireEvent } = await renderCertidoes();
+    fireEvent.click(getByText("Nova Consulta"));
+    fireEvent.click(getByText("Registrar manualmente"));
+    expect(getByText("Registrar Certidões")).toBeTruthy();
+    fireEvent.click(getByText("Cancelar"));
+    fireEvent.click(getByText("Nova Consulta"));
+    expect(getByText("Emitir Certidões")).toBeTruthy();
   });
 });

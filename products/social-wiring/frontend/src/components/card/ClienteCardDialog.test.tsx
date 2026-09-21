@@ -1097,8 +1097,27 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
 
     fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
     // The PARTE id, not the cliente_id — certidões hang off the role in the deal.
-    expect(renderCertidoes).toHaveBeenCalledWith("parte-1", expect.any(String));
+    // Third arg is the party's own CPF — `undefined` here since the default
+    // `parte()` fixture's `cliente` carries none.
+    expect(renderCertidoes).toHaveBeenCalledWith("parte-1", expect.any(String), undefined);
     expect(screen.getByTestId("certidoes-da-parte")).toBeTruthy();
+  });
+
+  it("passes the party's own CPF as the third arg, when the party has one on file", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderCertidoes = vi.fn(() => <div data-testid="certidoes-da-parte" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [
+            parte({ cliente: { id: "cli-esposa", nome: "Maria", nome_completo: "Maria Mauricio", celular: null, email: null, cpf: "12345678901" } }),
+          ],
+          renderCertidoesDaParte: renderCertidoes,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
+    expect(renderCertidoes).toHaveBeenCalledWith("parte-1", expect.any(String), "12345678901");
   });
 
   it("🔴 renders a party's qualificação civil by CLIENTE id, only once expanded (migration 110)", async () => {
@@ -1889,6 +1908,23 @@ describe("a aba Dados do cliente ganhou um editor", () => {
     fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
     expect(renderCertidoes).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("certidoes-do-titular")).toBeTruthy();
+  });
+
+  it("passes the titular's own CPF from dadosPessoais (the same value DadosPessoaisForm edits), not a second fetch", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderCertidoes = vi.fn(() => <div data-testid="certidoes-do-titular" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          ...COM_REGISTRO,
+          dadosPessoais: { cpf: "98765432100" },
+          onSaveDadosPessoais: vi.fn(),
+          renderCertidoesDoTitular: renderCertidoes,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+    expect(renderCertidoes).toHaveBeenCalledWith("98765432100");
   });
 
   it("surfaces the server's message when a save is rejected", async () => {

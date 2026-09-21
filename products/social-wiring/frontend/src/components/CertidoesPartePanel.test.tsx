@@ -41,6 +41,7 @@ const mockVincularCliente = vi.fn();
 const mockConfirmar = vi.fn();
 const mockUpload = vi.fn();
 const mockAtualizarSituacaoCadastral = vi.fn();
+const mockCriarManual = vi.fn();
 const mockMintUrl = vi.fn();
 const mockDownloadTranscricaoPdf = vi.fn();
 const mockCopiarTranscricao = vi.fn();
@@ -53,6 +54,7 @@ vi.mock("@/hooks/useCertidoes", () => ({
   useVincularCliente: () => ({ mutate: mockVincularCliente, isPending: false }),
   useConfirmarResultado: () => ({ mutate: mockConfirmar, isPending: false }),
   useUploadResultadoManual: () => ({ mutate: mockUpload, isPending: false }),
+  useCriarConsultaManual: () => ({ mutate: mockCriarManual, isPending: false }),
   useAtualizarSituacaoCadastral: () => ({
     mutate: mockAtualizarSituacaoCadastral,
     isPending: false,
@@ -275,7 +277,13 @@ describe("CertidoesPartePanel — vincular consulta", () => {
 
 describe("CertidoesPartePanel — edit + confirm", () => {
   it("submits an empty patch when the form is untouched (reviewed-and-correct confirmation)", async () => {
-    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [makeResultado()] }));
+    // `emitida_em` already set — the "untouched submit" invariant this test
+    // pins only holds for a row that already has a date. A never-yet-set
+    // one gets today's date prefilled (see the next test) and therefore
+    // does NOT round-trip to an empty patch untouched.
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ emitida_em: "2026-08-20" })] }),
+    );
     const { getByTestId, getByLabelText, fireEvent } = await renderPanel();
     fireEvent.click(getByLabelText("Editar Certidão TJSP"));
     fireEvent.submit(getByTestId("certidoes-parte-edit-form"));
@@ -286,13 +294,118 @@ describe("CertidoesPartePanel — edit + confirm", () => {
   });
 
   it("submits only the fields the user changed", async () => {
-    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [makeResultado()] }));
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ emitida_em: "2026-08-20" })] }),
+    );
     const { getByTestId, getByLabelText, fireEvent } = await renderPanel();
     fireEvent.click(getByLabelText("Editar Certidão TJSP"));
     fireEvent.change(getByLabelText("Número"), { target: { value: "999" } });
     fireEvent.submit(getByTestId("certidoes-parte-edit-form"));
     expect(mockConfirmar).toHaveBeenCalledWith(
       { resultadoId: "res-1", patch: { numero: "999" } },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("prefills a never-yet-set 'emitida em' with today, so confirming it untouched still stamps a date", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ emitida_em: null })] }),
+    );
+    const { getByTestId, getByLabelText, fireEvent } = await renderPanel();
+    fireEvent.click(getByLabelText("Editar Certidão TJSP"));
+    // Local date, matching the component's own `hojeIso()` — NOT
+    // `toISOString()`, which is UTC and can disagree with the local date
+    // near midnight in any timezone west of UTC.
+    const agora = new Date();
+    const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
+    expect((getByLabelText("Emitida em") as HTMLInputElement).value).toBe(hoje);
+    fireEvent.submit(getByTestId("certidoes-parte-edit-form"));
+    expect(mockConfirmar).toHaveBeenCalledWith(
+      { resultadoId: "res-1", patch: { emitida_em: hoje } },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("still lets the prefilled 'emitida em' be changed to a different date", async () => {
+    mockUseResultadosPorParte.mockReturnValue(
+      queryStub({ data: [makeResultado({ emitida_em: null })] }),
+    );
+    const { getByTestId, getByLabelText, fireEvent } = await renderPanel();
+    fireEvent.click(getByLabelText("Editar Certidão TJSP"));
+    fireEvent.change(getByLabelText("Emitida em"), { target: { value: "2026-01-05" } });
+    fireEvent.submit(getByTestId("certidoes-parte-edit-form"));
+    expect(mockConfirmar).toHaveBeenCalledWith(
+      { resultadoId: "res-1", patch: { emitida_em: "2026-01-05" } },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+});
+
+describe("CertidoesPartePanel — registrar certidões manualmente", () => {
+  it("offers the manual-registration action alongside vincular consulta in the empty state", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    const { getByText } = await renderPanel();
+    expect(getByText("Registrar certidões manualmente")).toBeTruthy();
+  });
+
+  it("creates + links a manual consulta with the person's name/documento, no InfoSimples involved", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    const { getByTestId, getByText, getByLabelText, fireEvent } = await renderPanel({
+      atendimentoParteId: "parte-1",
+      nomeParte: "Maria de Teste",
+    });
+    fireEvent.click(getByText("Registrar certidões manualmente"));
+    // Nome is prefilled from `nomeParte` — the office does not retype it.
+    expect((getByLabelText("Nome completo / Razão social") as HTMLInputElement).value).toBe(
+      "Maria de Teste",
+    );
+    fireEvent.change(getByLabelText("Documento"), { target: { value: "12345678901" } });
+    fireEvent.click(getByTestId("dialog").querySelectorAll("button")[1]);
+    expect(mockCriarManual).toHaveBeenCalledWith(
+      {
+        tipo_documento: "cpf",
+        documento: "12345678901",
+        nome: "Maria de Teste",
+        atendimentoParteId: "parte-1",
+        clienteId: undefined,
+      },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("prefills the documento field from the `documento` prop, still editable", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    const { getByText, getByLabelText, fireEvent } = await renderPanel({
+      atendimentoParteId: "parte-1",
+      nomeParte: "Maria de Teste",
+      documento: "12345678901",
+    });
+    fireEvent.click(getByText("Registrar certidões manualmente"));
+    const documentoInput = getByLabelText("Documento") as HTMLInputElement;
+    expect(documentoInput.value).toBe("12345678901");
+    // Still editable — the prefill is not read-only.
+    fireEvent.change(documentoInput, { target: { value: "99988877766" } });
+    expect(documentoInput.value).toBe("99988877766");
+  });
+
+  it("leaves documento blank when the caller has none on file", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    const { getByText, getByLabelText, fireEvent } = await renderPanel();
+    fireEvent.click(getByText("Registrar certidões manualmente"));
+    expect((getByLabelText("Documento") as HTMLInputElement).value).toBe("");
+  });
+
+  it("routes the titular's manual registration through clienteId, not atendimentoParteId", async () => {
+    mockUseResultadosPorCliente.mockReturnValue(queryStub({ data: [] }));
+    const { getByTestId, getByText, getByLabelText, fireEvent } = await renderPanel({
+      clienteId: "cliente-1",
+      nomeParte: "Titular de Teste",
+    });
+    fireEvent.click(getByText("Registrar certidões manualmente"));
+    fireEvent.change(getByLabelText("Documento"), { target: { value: "98765432100" } });
+    fireEvent.click(getByTestId("dialog").querySelectorAll("button")[1]);
+    expect(mockCriarManual).toHaveBeenCalledWith(
+      expect.objectContaining({ atendimentoParteId: undefined, clienteId: "cliente-1" }),
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });

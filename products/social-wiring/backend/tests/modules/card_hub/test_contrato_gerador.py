@@ -37,7 +37,7 @@ from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
-from app.modules.card_hub.contrato_gerador import derivacao, documento, frases, lint
+from app.modules.card_hub.contrato_gerador import carregador, derivacao, documento, frases, lint
 from app.modules.card_hub.contrato_gerador.concordancia import lado
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
@@ -297,6 +297,36 @@ class TestGate:
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
         assert [(f["campo"], f["parte_id"], f["onde"]) for f in av.faltando] == [
             ("certidao.serasa", "parte-v1", "certidoes")
+        ]
+
+    def test_a_manually_registered_certidao_closes_the_gap_even_while_status_stays_pendente(self):
+        """The manual-registration path (`POST /consultas/manual` + a
+        human's `PATCH /resultados/{id}` confirm) never advances
+        `certidao_resultados.status` past `'pendente'` — no automation ever
+        runs for it. This proves the gate does not care: `carregador.
+        _certidao` reads only the structured fields (`numero`/`emitida_em`/
+        `validade_ate`/`resultado`), never `status` and never `resultado_
+        origem`, so a resultado a human filled by hand satisfies the gate
+        exactly like an automated `status='sucesso'` one would."""
+        d = fx.variante(1)
+        registrado_a_mao = {
+            "tipo": "serasa",
+            "status": "pendente",  # never advanced — no automation ran for it
+            "resultado_origem": "manual",
+            "resultado": "negativa",
+            "numero": "MANUAL-0001",
+            "emitida_em": "2026-09-01",
+            "validade_ate": "2026-12-01",
+        }
+        v = replace(
+            d.vendedores[0],
+            certidoes=[
+                c for c in d.vendedores[0].certidoes if c.tipo != "serasa"
+            ] + [carregador._certidao(registrado_a_mao)],
+        )
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
+        assert ("certidao.serasa", "parte-v1", "certidoes") not in [
+            (f["campo"], f["parte_id"], f["onde"]) for f in av.faltando
         ]
 
     def test_a_married_seller_without_the_spouse_on_the_same_side_blocks(self):
