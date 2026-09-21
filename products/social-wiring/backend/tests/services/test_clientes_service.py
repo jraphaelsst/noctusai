@@ -1129,3 +1129,106 @@ class TestReviewGroupsBatching:
         assert ".in_(\"cliente_id\", ids)" not in src, (
             "the unbounded in_(ids) call is back — this is the 2026-08-14 outage"
         )
+
+
+# ── attach_lead_now — synchronous per-lead attach on create ────────────────
+#
+# `create_lead` used to rely entirely on the (background-tasked,
+# eventually-consistent) `clientes_backfill` sweep to attach
+# `atendimentos.cliente_id`. `contato_norm` is already resolvable at create
+# time, so this closes even the couple-of-seconds background-task window —
+# see `clientes_service.attach_lead_now`'s docstring.
+
+
+def _fresh_atendimento_scope(*, lead_id="L1"):
+    """A brand-new lead + its migration-034-spawned card, nothing else in
+    the org yet — the exact shape `create_lead` hands `attach_lead_now`."""
+    client = _scoped_client()
+    client.set_table_data("leads", [])
+    client.set_table_data("meta_ads_leads", [])
+    client.set_table_data("atendimentos", [_atendimento("N1", lead_id=lead_id)])
+    return client
+
+
+class TestAttachLeadNow:
+    def test_keyed_lead_gets_a_cliente_and_atendimento_synchronously(self):
+        client = _fresh_atendimento_scope()
+        lead = _lead("L1", "Ana Silva", K1)
+
+        cliente_id = svc.attach_lead_now(client, ORG, lead)
+
+        assert cliente_id is not None
+        [cliente] = _clientes(client)
+        assert cliente["id"] == cliente_id
+        assert cliente["chave_canonica"] == K1
+        assert cliente["identidade_incerta"] is False
+        [atendimento] = client.table("atendimentos").select("*").execute().data
+        assert atendimento["cliente_id"] == cliente_id
+
+    def test_keyed_lead_attaches_to_an_existing_cliente_for_the_same_key(self):
+        """The second lead from a returning person reconciles onto the
+        SAME cliente `_resolve_group` already resolved — never a second
+        identity for one canonical key."""
+        client = _fresh_atendimento_scope(lead_id="L1")
+        first_id = svc.attach_lead_now(client, ORG, _lead("L1", "Ana Silva", K1))
+
+        client.set_table_data(
+            "atendimentos",
+            client.table("atendimentos").select("*").execute().data
+            + [_atendimento("N2", lead_id="L2")],
+        )
+        second_id = svc.attach_lead_now(client, ORG, _lead("L2", "Ana Silva", K1))
+
+        assert second_id == first_id
+        assert len(_clientes(client)) == 1
+        assert len(_touches(client)) == 2
+
+    def test_keyless_lead_still_gets_attached_not_left_unresolved(self):
+        """§A's keyless case: no usable `contato_norm` must not mean 'no
+        cliente' — it means an uncertain-identity cliente, exactly like
+        `run_backfill`'s own keyless branch, so the card is workable."""
+        client = _fresh_atendimento_scope()
+        lead = {
+            "id": "L1", "org_id": ORG, "cliente_nome": "Sem Telefone",
+            "contato": "não informado", "contato_norm": None,
+            "contato_tipo": "desconhecido", "data_entrada": "2026-09-21",
+        }
+
+        cliente_id = svc.attach_lead_now(client, ORG, lead)
+
+        assert cliente_id is not None
+        [cliente] = _clientes(client)
+        assert cliente["identidade_incerta"] is True
+        assert cliente["chave_canonica"] is None
+        [atendimento] = client.table("atendimentos").select("*").execute().data
+        assert atendimento["cliente_id"] == cliente_id
+
+    def test_never_raises_and_leaves_the_sweep_to_reconcile(self):
+        """`create_lead` must not fail because attachment did. Drives the
+        real failure branch — a malformed row `identidade_service` cannot
+        turn into a `SourceRow` (missing `id`) — rather than substituting a
+        double for our own collaborator (no monkey-patching our own code,
+        per `KB § PATTERNS/compliance/testing.md`)."""
+        client = _fresh_atendimento_scope()
+        malformed_lead = {"org_id": ORG, "cliente_nome": "Ana Silva", "contato_norm": K1}
+
+        result = svc.attach_lead_now(client, ORG, malformed_lead)
+
+        assert result is None
+        assert _clientes(client) == []
+
+    def test_run_backfill_afterwards_finds_nothing_left_to_do(self):
+        """The sweep must remain correct AND idempotent once this has
+        already attached the lead — a repeat pass is a clean no-op, not a
+        duplicate cliente/touch."""
+        client = _fresh_atendimento_scope()
+        lead = _lead("L1", "Ana Silva", K1)
+        svc.attach_lead_now(client, ORG, lead)
+        client.set_table_data("leads", [lead])
+
+        report = svc.run_backfill(client, ORG)
+
+        assert report.clientes_created == 0
+        assert report.touches_created == 0
+        assert len(_clientes(client)) == 1
+        assert len(_touches(client)) == 1

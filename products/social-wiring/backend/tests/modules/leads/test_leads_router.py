@@ -283,6 +283,51 @@ class TestOrgIsolation:
         assert "OrgB" not in names
 
 
+class TestCreateAttachesTheClienteSynchronously:
+    """🔴 The couple-of-seconds background-task window still bought nothing.
+
+    `contato_norm` is already resolvable at the moment `POST /api/leads`
+    handles the request — `clientes_service.attach_lead_now` runs BEFORE the
+    201 is returned, so a hand-created lead's person is attached in the same
+    request, not a background tick later (found live 2026-09-21)."""
+
+    def test_a_keyed_lead_gets_its_cliente_before_the_response(self, http_client, leads_client):
+        resp = http_client.post(
+            "/api/leads",
+            json={
+                "data_entrada": "2026-07-01",
+                "cliente_nome": "Ana Silva",
+                "contato": "+5511988770001",
+            },
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 201, resp.text
+
+        clientes = leads_client.table("clientes").select("*").execute().data
+        assert len(clientes) == 1
+        assert clientes[0]["chave_canonica"] == "+5511988770001"
+        assert clientes[0]["identidade_incerta"] is False
+
+        touches = leads_client.table("cliente_touches").select("*").execute().data
+        assert len(touches) == 1
+        assert touches[0]["origem_id"] == resp.json()["data"]["id"]
+
+    def test_a_keyless_lead_still_gets_an_uncertain_identity_cliente(self, http_client, leads_client):
+        """§A's keyless case must not fail the create and must not leave the
+        lead unresolved either — same rule `run_backfill` applies."""
+        resp = http_client.post(
+            "/api/leads",
+            json={"data_entrada": "2026-07-01", "cliente_nome": "Sem Contato"},
+            headers=auth_headers(),
+        )
+        assert resp.status_code == 201, resp.text
+
+        clientes = leads_client.table("clientes").select("*").execute().data
+        assert len(clientes) == 1
+        assert clientes[0]["identidade_incerta"] is True
+        assert clientes[0]["chave_canonica"] is None
+
+
 class TestCreateSchedulesPersonLayerSweep:
     """🔴 A created lead must become WORKABLE, not merely visible.
 

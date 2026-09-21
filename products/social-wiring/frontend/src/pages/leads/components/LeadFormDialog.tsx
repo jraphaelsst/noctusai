@@ -174,13 +174,25 @@ export function LeadFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="lead-cliente">Cliente</Label>
+            {/* 🔴 `cliente_nome` IS the person's name — it feeds the funil
+             * card's title (migration 034's trigger) and the identity
+             * resolver's dedupe-by-name rules (`identidade_service`)
+             * directly, exactly like `clientes.nome` everywhere else in
+             * this product. The label used to read "Cliente" with a
+             * placeholder of "Nome da marca", which reads as the AD
+             * CAMPAIGN'S brand — not this product's other, unrelated
+             * "marca" concept (`marcas_service`/`marcas_router`), but close
+             * enough in wording that a hand-created lead came back from
+             * prod with `cliente_nome` NULL (2026-09-21): the operator had
+             * nothing marca-shaped to type, so the field that actually
+             * captures the buyer's name went unfilled. */}
+            <Label htmlFor="lead-cliente">Nome do cliente</Label>
             <Input
               id="lead-cliente"
               value={form.cliente_nome ?? ""}
               onChange={(e) => setForm({ ...form, cliente_nome: e.target.value })}
               disabled={isPending}
-              placeholder="Nome da marca"
+              placeholder="Nome completo do cliente"
               data-testid="lead-form-cliente"
             />
           </div>

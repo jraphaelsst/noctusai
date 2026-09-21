@@ -24,7 +24,7 @@ from app.modules.leads.routers.params import get_lead_filters
 from app.modules.leads.schemas import LeadCreate, LeadOut, LeadUpdate
 from app.modules.leads.services import leads_service
 from app.modules.leads.services.query import LeadFilters
-from app.services import clientes_backfill_job
+from app.services import clientes_backfill_job, clientes_service
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
@@ -73,27 +73,41 @@ def create_lead(
 ) -> dict:
     """Create a lead. Migration 034's trigger spawns its funil card.
 
-    🔴 The card is spawned, but it is NOT yet WORKABLE, and that is why this
-    route schedules a person-layer sweep (found in prod 2026-08-31).
+    🔴 The card is spawned, but it is NOT yet WORKABLE by itself, and that is
+    why this route attaches the cliente ITSELF (found in prod 2026-08-31,
+    tightened 2026-09-21).
 
-    `atendimentos.cliente_id` is attached only by `clientes_backfill`, an
-    interval job — no trigger does it. So a hand-created lead got a card that
-    `stage_gate` then refused to move, for up to
-    `clientes_backfill_interval_hours`, while the operator looked at a name and
-    a phone they had just typed in. Scheduling the sweep here closes that
-    window to the couple of seconds the sweep takes.
+    `atendimentos.cliente_id` used to be attached only by `clientes_backfill`,
+    an interval job — no trigger does it. So a hand-created lead got a card
+    that `stage_gate` refused to move, for up to
+    `clientes_backfill_interval_hours`, while the operator looked at a name
+    and a phone they had just typed in. Scheduling the sweep as a
+    `BackgroundTask` (still done below) closed that window to the couple of
+    seconds the sweep takes — but `contato_norm` is already resolvable right
+    here, in this request, so even that couple-of-seconds wait bought
+    nothing. `clientes_service.attach_lead_now` resolves and attaches the
+    cliente SYNCHRONOUSLY, reusing the exact building blocks `run_backfill`
+    uses (no second person-resolution implementation) — so by the time this
+    responds 201, the card already has its titular. It never raises: a
+    keyless lead still gets an uncertain-identity cliente (same as the
+    sweep's own keyless branch), and any other failure is logged and left for
+    the sweep below to reconcile — creating the lead must never fail because
+    attaching its person did.
 
-    Scheduled as a BackgroundTask, so it runs AFTER the 201 is returned and
-    never delays lead creation. It is lease-guarded (`run_now`), so repeated
-    creates coalesce into one pass instead of piling up sweeps — which is what
-    makes it safe to hang off a per-row write at all. The BULK paths (the
-    workbook importer, the Meta Lead-Ads sync) deliberately do NOT do this:
-    one sweep per imported row would be quadratic, and they are already
-    covered by the scheduled pass plus the startup catch-up.
+    The `BackgroundTask` sweep stays as the safety net for everything this
+    synchronous call does NOT cover: portal/campaign leads and WhatsApp/Meta
+    Ads intake landing on OTHER rows in this org between sweeps, and the
+    documented in-flight-arrival race (`NOC-REMEDIATE[backfill-inflight-
+    arrival]`). It is lease-guarded (`run_now`), so repeated creates coalesce
+    into one pass instead of piling up. The BULK paths (the workbook
+    importer, the Meta Lead-Ads sync) deliberately do neither of these: one
+    synchronous attach or sweep per imported row would be quadratic, and they
+    are already covered by the scheduled pass plus the startup catch-up.
     """
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     row = leads_service.create_lead(client, org_id, body.model_dump(exclude_unset=True))
+    clientes_service.attach_lead_now(client, org_id, row)
     refs = leads_service.build_refs(client, org_id)
     background.add_task(sweep)
     return success_response(_out(row, refs))

@@ -99,6 +99,7 @@ __all__ = [
     "MergeAlreadyUndone",
     "BackfillReport",
     "run_backfill",
+    "attach_lead_now",
     "list_clientes",
     "get_cliente",
     "get_touches",
@@ -357,6 +358,108 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         _collapse_atendimentos(client, org_id, report)
 
     return report
+
+
+def attach_lead_now(client: Any, org_id: UUID, lead_row: dict) -> Optional[str]:
+    """Resolve + attach ONE just-created `leads` row's cliente SYNCHRONOUSLY.
+
+    🔴 Why this exists (found 2026-09-21, verified live). `create_lead`
+    already schedules `clientes_backfill_job.run_now` as a `BackgroundTask` —
+    but that closes the gap to "a couple of seconds", and `contato_norm` is
+    already present and fully resolvable at the moment this function is
+    called: deferring it to ANY sweep, even a fast one, buys nothing. This
+    runs BEFORE the 201 is returned, so a hand-created lead's card is
+    workable (has a titular `stage_gate` will accept) the instant the
+    operator sees it, not a background-task tick later.
+
+    NOT a second person-resolution implementation. A keyed source reuses
+    `_resolve_group` — the exact function `run_backfill` groups keyed
+    sources through, called here with a group of one — so dedupe-by-key,
+    the C1-C6 name classification, and `cliente_touches`/merge bookkeeping
+    are the identical code path the steady-state sweep uses. A keyless
+    source reuses `_create_clientes_for_cluster` with
+    `identidade_incerta=True` — `run_backfill`'s own keyless branch — so a
+    lead with no usable `contato_norm` still gets an uncertain-identity
+    cliente attached (a titular `stage_gate` accepts) rather than being left
+    unresolved; "could not resolve to a canonical key" is NOT "attachment
+    failed" and must never block or fail lead creation.
+
+    Only the FINAL step — pointing `atendimentos.cliente_id` at the result
+    — is written narrowly here rather than via `_repoint_atendimentos`:
+    that helper scans the ORG'S ENTIRE `atendimentos` table, which is the
+    right cost for a periodic sweep and the wrong cost to add to every
+    single `POST /api/leads`. This looks up and repoints only the one row
+    migration 034's trigger just spawned for `lead_row["id"]`.
+
+    Never raises. `create_lead` must not fail because identity resolution
+    did — a rare race (two leads sharing one `contato_norm` created in the
+    same instant, unleased, unlike the sweep) can trip a unique-constraint
+    error on `clientes`; the lead itself is already saved by the time this
+    runs, so a failure here is swallowed, logged, and left for the next
+    `clientes_backfill` sweep (background task on this request, or the
+    scheduled steady-state pass) to reconcile — which it can, because this
+    function's writes are the SAME idempotent operations that sweep already
+    performs. Returns the attached `cliente_id`, or `None` when nothing was
+    attached (logged, not raised).
+    """
+    try:
+        source = ident.leads_row_to_source(lead_row)
+        report = BackfillReport(org_id=str(org_id), dry_run=False)
+        if source.chave_canonica:
+            _resolve_group(client, org_id, [source], report, dry_run=False)
+        else:
+            report.keyless_clientes += 1
+            _create_clientes_for_cluster(
+                client, org_id,
+                nome=ident.longest_raw_name([source]),
+                chave_canonica=None, chave_tipo=None, identidade_incerta=True,
+                members=[source], report=report, dry_run=False,
+            )
+        cliente_id = _cliente_id_for_source(client, org_id, source)
+        if cliente_id:
+            _repoint_one_atendimento(client, org_id, source, cliente_id)
+        return cliente_id
+    except Exception:
+        logger.error(
+            "clientes_service.attach_lead_now: failed to attach lead %s "
+            "(org %s) synchronously — the card stays unworkable until the "
+            "next clientes_backfill sweep picks it up.",
+            lead_row.get("id"), org_id, exc_info=True,
+        )
+        return None
+
+
+def _cliente_id_for_source(client: Any, org_id: UUID, source: SourceRow) -> Optional[str]:
+    """The `cliente_id` a resolved source's touch was just written under.
+
+    Single-row, indexed lookup — not `_existing_touch_keys`'s org-wide scan
+    — since the caller already knows exactly which `(origem_tabela,
+    origem_id)` it just resolved."""
+    rows = (
+        _t(client, "cliente_touches")
+        .select("cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("origem_tabela", source.origem_tabela)
+        .eq("origem_id", source.origem_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0]["cliente_id"] if rows else None
+
+
+def _repoint_one_atendimento(
+    client: Any, org_id: UUID, source: SourceRow, cliente_id: str
+) -> None:
+    """`_repoint_atendimentos`'s update, scoped to the ONE `atendimentos` row
+    migration 034's trigger spawned for this source — never a full-table
+    scan (see `attach_lead_now`'s docstring for why that cost does not
+    belong on the create-lead request path). The `cliente_id IS NULL`
+    guard makes this idempotent against a concurrent sweep that already
+    repointed the same row."""
+    origem_col = "lead_id" if source.origem_tabela == "leads" else "meta_ads_lead_id"
+    _t(client, "atendimentos").update({"cliente_id": cliente_id}).eq(
+        "org_id", str(org_id)
+    ).eq(origem_col, source.origem_id).is_("cliente_id", "null").execute()
 
 
 def _existing_touch_keys(client: Any, org_id: UUID) -> set[tuple[str, str]]:

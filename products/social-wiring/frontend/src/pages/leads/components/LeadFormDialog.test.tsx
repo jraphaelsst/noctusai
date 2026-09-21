@@ -107,3 +107,37 @@ describe("LeadFormDialog — o código do imóvel", () => {
     expect(values.codigo_imovel).toBeNull();
   });
 });
+
+/**
+ * 🔴 THE BUG THIS SUITE EXISTS FOR. The field bound to `cliente_nome` — the
+ * PERSON's name, read directly by `identidade_service`'s dedupe rules and by
+ * migration 034's funil-card-title trigger — was labelled "Cliente" with a
+ * placeholder of "Nome da marca" (brand name). A hand-created lead had
+ * nothing marca-shaped to type, so it went unfilled and the person's name
+ * never reached `leads.cliente_nome` (found live 2026-09-21, `cliente_nome`
+ * NULL on a lead created with a valid, resolvable phone). This asserts the
+ * label/placeholder unambiguously names the PERSON, matching "cliente" =
+ * person everywhere else in this product (`/clientes`, `cliente_id`).
+ */
+describe("LeadFormDialog — o nome do cliente (pessoa), não da marca", () => {
+  it("labels the field as the client's name, not a brand", async () => {
+    const rtl = await import("@testing-library/react");
+    await abrir();
+
+    expect(rtl.screen.getByText("Nome do cliente")).toBeTruthy();
+    expect(rtl.screen.queryByText("Cliente")).toBeNull();
+    expect(rtl.screen.queryByPlaceholderText("Nome da marca")).toBeNull();
+  });
+
+  it("still sends the typed value as cliente_nome", async () => {
+    const rtl = await import("@testing-library/react");
+    const { onSubmit } = await abrir();
+
+    const input = rtl.screen.getByTestId("lead-form-cliente");
+    rtl.fireEvent.change(input, { target: { value: "Maria Silva" } });
+    await salvar();
+
+    const values = onSubmit.mock.calls[0][0];
+    expect(values.cliente_nome).toBe("Maria Silva");
+  });
+});
