@@ -113,6 +113,28 @@ export interface NegociacaoCompletude {
   faltando: string[];
 }
 
+/**
+ * Every key `negociacao_estruturada_service._completude`'s `faltando` can
+ * name (backend `negociacao_estruturada_service.py::_completude`) — same
+ * label-map-with-fallback treatment `qualificacaoCompletude.ts`'s
+ * `FALTANDO_LABELS`/`rotuloFaltando` already established for the (unrelated)
+ * qualificação-civil completude, so a raw backend key never reaches the
+ * operator as literal text.
+ */
+export const NEGOCIACAO_FALTANDO_LABELS: Record<string, string> = {
+  valor_negociado: "Valor negociado não informado",
+  parcelas: "Nenhuma parcela cadastrada",
+  parcelas_nao_cobrem_valor_negociado: "As parcelas não cobrem o valor negociado",
+  posse: "Termos de posse não preenchidos",
+  parcela_permuta_sem_imoveis: "Parcela de permuta sem imóveis de permuta vinculados",
+};
+
+/** pt-BR label for one `faltando` entry, falling back to the raw key so an
+ *  unrecognised (future) key is still visible rather than silently dropped. */
+export function rotuloNegociacaoFaltando(chave: string): string {
+  return NEGOCIACAO_FALTANDO_LABELS[chave] ?? chave;
+}
+
 // ─── Termos do negócio (migration 114) — the contract clauses no document
 // carries. `TermosNegocioPutBody` on the backend: PUT replaces this WHOLE
 // object, an absent key is stored as null — every field here is nullable and

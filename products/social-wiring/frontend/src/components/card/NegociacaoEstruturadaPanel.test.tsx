@@ -267,20 +267,25 @@ describe("o indicador de saldo não alocado", () => {
 });
 
 describe("completude", () => {
-  it("lista o que falta quando incompleto", async () => {
+  it("lista o que falta quando incompleto, traduzido para pt-BR", async () => {
+    // 🔴 Real backend keys (`negociacao_estruturada_service._completude`),
+    // not raw literals — the operator must never see `parcelas_nao_cobrem_
+    // valor_negociado` printed verbatim. An UNRECOGNISED key still falls back
+    // to itself (never silently dropped) — `rotuloNegociacaoFaltando`.
     mockUseNegociacaoEstruturada.mockReturnValue(
       query({
         data: aggregate({
           completude: {
             completo: false,
-            faltando: ["valor_negociado", "ao menos 1 parcela"],
+            faltando: ["valor_negociado", "posse", "chave_desconhecida"],
           },
         }),
       }),
     );
     const { getByText } = await render();
-    expect(getByText("valor_negociado")).toBeTruthy();
-    expect(getByText("ao menos 1 parcela")).toBeTruthy();
+    expect(getByText("Valor negociado não informado")).toBeTruthy();
+    expect(getByText("Termos de posse não preenchidos")).toBeTruthy();
+    expect(getByText("chave_desconhecida")).toBeTruthy();
     expect(getByText("Pendente")).toBeTruthy();
   });
 
@@ -295,7 +300,7 @@ describe("completude", () => {
 });
 
 describe("dividir saldo — o caminho de erro 400", () => {
-  it("🔴 o 400 do backend ('sem valor_negociado ou sem saldo') chega via toast", async () => {
+  it("🔴 o 400 do backend ('sem valor_negociado ou sem saldo') chega via toast E no diálogo", async () => {
     mockDividirSaldo.mockImplementation(
       (_payload: unknown, opts?: { onError?: (e: unknown) => void }) => {
         opts?.onError?.({
@@ -315,6 +320,73 @@ describe("dividir saldo — o caminho de erro 400", () => {
     const call = (toast.error as unknown as { mock: { calls: unknown[][] } })
       .mock.calls[0];
     expect(String(call[0])).toContain("saldo não alocado para dividir");
+    // 🔴 A toast alone can be missed (behind the dialog overlay, or timed
+    // out by the time the operator looks back) — the dialog STAYS OPEN and
+    // renders the same message inline.
+    expect(getByTestId("negest-dividir-saldo-erro").textContent).toContain(
+      "saldo não alocado para dividir",
+    );
+  });
+});
+
+describe("nova parcela — o 422 do backend é renderizado NO DIÁLOGO (não só toast)", () => {
+  it("🔴 um 422 real (forma_pagamento > 50 chars) fica visível no diálogo, que permanece aberto", async () => {
+    mockCreateParcela.mockImplementation(
+      (_payload: unknown, opts?: { onError?: (e: unknown) => void }) => {
+        opts?.onError?.({
+          message:
+            "[422] String should have at most 50 characters",
+        });
+      },
+    );
+
+    const { getByTestId, queryByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+    fireEvent.change(getByTestId("parc-valor"), { target: { value: "1000" } });
+    fireEvent.click(getByTestId("negest-parcela-salvar"));
+
+    expect(mockCreateParcela).toHaveBeenCalledTimes(1);
+    // The dialog is STILL OPEN (onSuccess never fires on a mutation error) —
+    // this is the whole point: an operator watching only the dialog (no
+    // devtools) must see why nothing happened, without it silently closing.
+    expect(queryByTestId("negest-parcela-erro")).toBeTruthy();
+    expect(getByTestId("negest-parcela-erro").textContent).toContain(
+      "at most 50 characters",
+    );
+    const { toast } = await import("sonner");
+    expect(toast.error).toHaveBeenCalled();
+  });
+
+  it("reopening the dialog for a new parcela clears a previous error", async () => {
+    mockCreateParcela.mockImplementation(
+      (_payload: unknown, opts?: { onError?: (e: unknown) => void }) => {
+        opts?.onError?.({ message: "[422] erro qualquer" });
+      },
+    );
+    const { getByTestId, queryByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+    fireEvent.change(getByTestId("parc-valor"), { target: { value: "1000" } });
+    fireEvent.click(getByTestId("negest-parcela-salvar"));
+    expect(getByTestId("negest-parcela-erro")).toBeTruthy();
+
+    // Close (Radix Dialog's onOpenChange(false) — simulated by re-clicking
+    // "Nova parcela", which this component always treats as a fresh open).
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+    expect(queryByTestId("negest-parcela-erro")).toBeNull();
+  });
+
+  it("🔴 forma_pagamento e evento carregam o mesmo cap do backend (max_length) — não dá para digitar além dele", async () => {
+    const { getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+
+    expect(getByTestId("parc-forma")).toHaveProperty("maxLength", 50);
+    expect(getByTestId("parc-evento")).toHaveProperty("maxLength", 200);
   });
 });
 

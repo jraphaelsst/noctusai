@@ -180,7 +180,11 @@ describe("marco = 'parcela' exige uma parcela", () => {
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByText("No pagamento de uma parcela"));
-    fireEvent.click(getByText("p1 — 1000.00"));
+    // 🔴 Formatted BRL, not the raw Decimal string — see
+    // `ParcelaMarcoSelect`'s `formatBRL` fix (the picker used to print
+    // "p1 — 1000.00" instead of "R$ 1.000,00", the same raw-float class the
+    // parcelas table three inches above never had).
+    fireEvent.click(getByText("p1 — R$ 1.000,00"));
 
     expect(queryByTestId("termos-posse-parcela-erro")).toBeNull();
     expect(getByTestId("negest-termos-salvar")).toHaveProperty("disabled", false);

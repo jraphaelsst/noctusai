@@ -546,7 +546,6 @@ class ParcelaCreateBody(StrictHttpModel):
     #: `tipo='permuta'` only — the `permuta_ativos` (natureza permuta_imovel)
     #: this parcela is paid with. One swap can hand over several matrículas.
     permuta_ativo_ids: list[UUID] = Field(default_factory=list, max_length=20)
-    ordem: int = 0
 
 
 class ParcelaPatchBody(StrictHttpModel):

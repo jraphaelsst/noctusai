@@ -727,6 +727,18 @@ def criar_parcela(
         raise ValidationError_(_MSG_ATIVOS_SO_EM_PERMUTA, field="permuta_ativo_ids")
     ativos = _validar_ativos_permuta(client, org_id, atendimento_id, ativos_pedidos)
 
+    # 🔴 `ordem` is ALWAYS server-computed on create — same "next slot after
+    # the current max" rule `dividir_saldo_em_parcelas` already uses for its
+    # batch insert (`ordem_base = max(existing) + 1`). Every parcela created
+    # through THIS path used to land at the schema default `ordem=0`
+    # (`ParcelaCreateBody` never accepted the field, so every single-create
+    # parcela tied at 0) — see migration 108's header for why the printed
+    # "Parcela 01/02/03" numbering, the `VENCIMENTOS_FORA_DE_ORDEM` derivação
+    # blocker, and `posse_marco_parcela_id` all rest on this column actually
+    # being distinct per parcela (see migration 144's backfill for existing rows).
+    parcelas_atuais = _listar_parcelas_rows(client, org_id, atendimento_id)
+    ordem = max((p.get("ordem", 0) for p in parcelas_atuais), default=-1) + 1
+
     row = {
         "id": str(uuid4()),
         "org_id": str(org_id),
@@ -741,7 +753,7 @@ def criar_parcela(
         ),
         "confissao_divida": bool(valores.get("confissao_divida", False)),
         "dispara_corretagem": bool(valores.get("dispara_corretagem", False)),
-        "ordem": valores.get("ordem", 0),
+        "ordem": ordem,
         "created_at": _now(),
         "created_por": str(usuario_id) if usuario_id else None,
     }

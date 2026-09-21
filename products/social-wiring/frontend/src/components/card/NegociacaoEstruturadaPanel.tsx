@@ -93,12 +93,37 @@ import {
   type ParcelaCreate,
   type ParcelaTipo,
   type PessoaTipo,
+  rotuloNegociacaoFaltando,
 } from "@/types/negociacaoEstruturada";
 import TermosNegocioSection from "@/components/card/TermosNegocioSection";
 
 interface Props {
   clienteId: string;
 }
+
+// ─── Backend `max_length` caps, mirrored so a 422 can't be hit by typing ───
+// (`ParcelaCreateBody`/`ParcelaPatchBody`, `FavorecidoCreateBody`/
+// `FavorecidoPatchBody`, `_IntermediarioQualificacao` — card_hub/schemas.py).
+// `maxLength` on the `<Input>`/`<Textarea>` truncates on type AND on paste,
+// so these are a hard prevention, not just a hint.
+const PARCELA_EVENTO_MAX = 200;
+const PARCELA_FORMA_PAGAMENTO_MAX = 50;
+const FAVORECIDO_NOME_MAX = 255;
+const FAVORECIDO_CPF_CNPJ_MAX = 32;
+const FAVORECIDO_BANCO_MAX = 120;
+const FAVORECIDO_AGENCIA_MAX = 32;
+const FAVORECIDO_CONTA_MAX = 32;
+const FAVORECIDO_PIX_MAX = 140;
+const INTERMEDIARIO_NOME_MAX = 255;
+const INTERMEDIARIO_CRECI_MAX = 64;
+const INTERMEDIARIO_EMAIL_MAX = 254;
+const INTERMEDIARIO_CEP_MAX = 16;
+const INTERMEDIARIO_LOGRADOURO_MAX = 255;
+const INTERMEDIARIO_NUMERO_MAX = 32;
+const INTERMEDIARIO_COMPLEMENTO_MAX = 120;
+const INTERMEDIARIO_BAIRRO_MAX = 120;
+const INTERMEDIARIO_CIDADE_MAX = 120;
+const INTERMEDIARIO_REPRESENTANTE_NOME_MAX = 255;
 
 function errorMessage(err: unknown, fallback: string): string {
   return (err as { message?: string } | null)?.message ?? fallback;
@@ -232,9 +257,13 @@ function CompletudeCard({ completude }: { completude: NegociacaoCompletude }) {
         <CardContent>
           <ul className="space-y-1 text-sm text-muted-foreground">
             {completude.faltando.map((item) => (
-              <li key={item} className="flex items-center gap-2">
+              <li
+                key={item}
+                className="flex items-center gap-2"
+                data-testid={`negest-completude-faltando-${item}`}
+              >
                 <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
-                {item}
+                {rotuloNegociacaoFaltando(item)}
               </li>
             ))}
           </ul>
@@ -263,7 +292,12 @@ function ParcelasSection({
 
   const [formOpen, setFormOpen] = useState(false);
   const [editando, setEditando] = useState<NegociacaoParcela | null>(null);
+  // 🔴 Rendered ON THE DIALOG, not just a toast — a toast can be missed
+  // behind the modal overlay or time out before the operator looks back;
+  // the dialog stays open on a 422/409/etc, so the banner stays with it.
+  const [formError, setFormError] = useState<string | null>(null);
   const [dividirOpen, setDividirOpen] = useState(false);
+  const [dividirError, setDividirError] = useState<string | null>(null);
 
   const favorecidoNome = (id: string | null) =>
     data.favorecidos.find((f) => f.id === id)?.nome ?? "—";
@@ -273,11 +307,13 @@ function ParcelasSection({
 
   function abrirNova() {
     setEditando(null);
+    setFormError(null);
     setFormOpen(true);
   }
 
   function abrirEdicao(p: NegociacaoParcela) {
     setEditando(p);
+    setFormError(null);
     setFormOpen(true);
   }
 
@@ -306,7 +342,10 @@ function ParcelasSection({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setDividirOpen(true)}
+            onClick={() => {
+              setDividirError(null);
+              setDividirOpen(true);
+            }}
             data-testid="negest-dividir-saldo-abrir"
           >
             <Scissors className="mr-1 h-4 w-4" />
@@ -389,15 +428,23 @@ function ParcelasSection({
 
       <ParcelaFormDialog
         open={formOpen}
-        onOpenChange={setFormOpen}
+        onOpenChange={(v) => {
+          setFormOpen(v);
+          if (!v) setFormError(null);
+        }}
         parcela={editando}
         favorecidos={data.favorecidos}
         permutaAtivos={permutaAtivos.data ?? []}
         saving={criar.isPending || atualizar.isPending}
+        error={formError}
         onSubmit={(payload) => {
+          setFormError(null);
           const onSuccess = () => setFormOpen(false);
-          const onError = (err: unknown) =>
-            toast.error(errorMessage(err, "Não foi possível salvar a parcela."));
+          const onError = (err: unknown) => {
+            const msg = errorMessage(err, "Não foi possível salvar a parcela.");
+            setFormError(msg);
+            toast.error(msg);
+          };
           if (editando) {
             atualizar.mutate(
               { id: editando.id, patch: payload },
@@ -411,14 +458,22 @@ function ParcelasSection({
 
       <DividirSaldoDialog
         open={dividirOpen}
-        onOpenChange={setDividirOpen}
+        onOpenChange={(v) => {
+          setDividirOpen(v);
+          if (!v) setDividirError(null);
+        }}
         favorecidos={data.favorecidos}
         saving={dividir.isPending}
+        error={dividirError}
         onSubmit={(payload) => {
+          setDividirError(null);
           dividir.mutate(payload, {
             onSuccess: () => setDividirOpen(false),
-            onError: (err: unknown) =>
-              toast.error(errorMessage(err, "Não foi possível dividir o saldo.")),
+            onError: (err: unknown) => {
+              const msg = errorMessage(err, "Não foi possível dividir o saldo.");
+              setDividirError(msg);
+              toast.error(msg);
+            },
           });
         }}
       />
@@ -460,6 +515,7 @@ function ParcelaFormDialog({
   permutaAtivos,
   onSubmit,
   saving,
+  error,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -468,6 +524,7 @@ function ParcelaFormDialog({
   permutaAtivos: PermutaAtivo[];
   onSubmit: (payload: ParcelaCreate) => void;
   saving: boolean;
+  error: string | null;
 }) {
   const [draft, setDraft] = useState<ParcelaDraft>(() => toParcelaDraft(parcela));
 
@@ -593,7 +650,9 @@ function ParcelaFormDialog({
               <Label htmlFor="parc-evento">Evento</Label>
               <Input
                 id="parc-evento"
+                data-testid="parc-evento"
                 value={draft.evento}
+                maxLength={PARCELA_EVENTO_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, evento: e.target.value }))
                 }
@@ -605,7 +664,9 @@ function ParcelaFormDialog({
             <Label htmlFor="parc-forma">Forma de pagamento</Label>
             <Input
               id="parc-forma"
+              data-testid="parc-forma"
               value={draft.forma_pagamento}
+              maxLength={PARCELA_FORMA_PAGAMENTO_MAX}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, forma_pagamento: e.target.value }))
               }
@@ -658,6 +719,17 @@ function ParcelaFormDialog({
               Pagamento dispara a corretagem
             </Label>
           </div>
+          {error && (
+            <div
+              className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
+              data-testid="negest-parcela-erro"
+            >
+              <p className="flex items-center gap-1.5 text-destructive">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {error}
+              </p>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button
@@ -695,12 +767,14 @@ function DividirSaldoDialog({
   favorecidos,
   onSubmit,
   saving,
+  error,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   favorecidos: NegociacaoFavorecido[];
   onSubmit: (payload: DividirSaldoPayload) => void;
   saving: boolean;
+  error: string | null;
 }) {
   const [draft, setDraft] = useState<DividirDraft>(DIVIDIR_DRAFT_INICIAL);
 
@@ -767,6 +841,7 @@ function DividirSaldoDialog({
             <Input
               id="div-forma"
               value={draft.forma_pagamento}
+              maxLength={PARCELA_FORMA_PAGAMENTO_MAX}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, forma_pagamento: e.target.value }))
               }
@@ -807,6 +882,17 @@ function DividirSaldoDialog({
               }
             />
           </div>
+          {error && (
+            <div
+              className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
+              data-testid="negest-dividir-saldo-erro"
+            >
+              <p className="flex items-center gap-1.5 text-destructive">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {error}
+              </p>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button
@@ -837,6 +923,7 @@ function FavorecidosSection({
 
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState<NegociacaoFavorecido | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [revelados, setRevelados] = useState<Set<string>>(new Set());
 
   function alternarRevelar(id: string) {
@@ -850,11 +937,13 @@ function FavorecidosSection({
 
   function abrirNovo() {
     setEditando(null);
+    setFormError(null);
     setOpen(true);
   }
 
   function abrirEdicao(f: NegociacaoFavorecido) {
     setEditando(f);
+    setFormError(null);
     setOpen(true);
   }
 
@@ -935,13 +1024,21 @@ function FavorecidosSection({
 
       <FavorecidoFormDialog
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setFormError(null);
+        }}
         favorecido={editando}
         saving={criar.isPending || atualizar.isPending}
+        error={formError}
         onSubmit={(payload) => {
+          setFormError(null);
           const onSuccess = () => setOpen(false);
-          const onError = (err: unknown) =>
-            toast.error(errorMessage(err, "Não foi possível salvar o favorecido."));
+          const onError = (err: unknown) => {
+            const msg = errorMessage(err, "Não foi possível salvar o favorecido.");
+            setFormError(msg);
+            toast.error(msg);
+          };
           if (editando) {
             atualizar.mutate(
               { id: editando.id, patch: payload },
@@ -982,12 +1079,14 @@ function FavorecidoFormDialog({
   favorecido,
   onSubmit,
   saving,
+  error,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   favorecido: NegociacaoFavorecido | null;
   onSubmit: (payload: FavorecidoCreate) => void;
   saving: boolean;
+  error: string | null;
 }) {
   const [draft, setDraft] = useState<FavorecidoDraft>(() =>
     toFavorecidoDraft(favorecido),
@@ -1022,6 +1121,7 @@ function FavorecidoFormDialog({
             <Input
               id="fav-nome"
               value={draft.nome}
+              maxLength={FAVORECIDO_NOME_MAX}
               onChange={(e) => setDraft((d) => ({ ...d, nome: e.target.value }))}
             />
           </div>
@@ -1030,6 +1130,7 @@ function FavorecidoFormDialog({
             <Input
               id="fav-doc"
               value={draft.cpf_cnpj}
+              maxLength={FAVORECIDO_CPF_CNPJ_MAX}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, cpf_cnpj: e.target.value }))
               }
@@ -1041,6 +1142,7 @@ function FavorecidoFormDialog({
               <Input
                 id="fav-banco"
                 value={draft.banco}
+                maxLength={FAVORECIDO_BANCO_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, banco: e.target.value }))
                 }
@@ -1051,6 +1153,7 @@ function FavorecidoFormDialog({
               <Input
                 id="fav-agencia"
                 value={draft.agencia}
+                maxLength={FAVORECIDO_AGENCIA_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, agencia: e.target.value }))
                 }
@@ -1063,6 +1166,7 @@ function FavorecidoFormDialog({
               <Input
                 id="fav-conta"
                 value={draft.conta}
+                maxLength={FAVORECIDO_CONTA_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, conta: e.target.value }))
                 }
@@ -1073,10 +1177,22 @@ function FavorecidoFormDialog({
               <Input
                 id="fav-pix"
                 value={draft.pix}
+                maxLength={FAVORECIDO_PIX_MAX}
                 onChange={(e) => setDraft((d) => ({ ...d, pix: e.target.value }))}
               />
             </div>
           </div>
+          {error && (
+            <div
+              className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
+              data-testid="negest-favorecido-erro"
+            >
+              <p className="flex items-center gap-1.5 text-destructive">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {error}
+              </p>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button
@@ -1109,14 +1225,17 @@ function IntermediariosSection({
 
   const [open, setOpen] = useState(false);
   const [editando, setEditando] = useState<NegociacaoIntermediario | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   function abrirNovo() {
     setEditando(null);
+    setFormError(null);
     setOpen(true);
   }
 
   function abrirEdicao(i: NegociacaoIntermediario) {
     setEditando(i);
+    setFormError(null);
     setOpen(true);
   }
 
@@ -1193,16 +1312,22 @@ function IntermediariosSection({
 
       <IntermediarioFormDialog
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={(v) => {
+          setOpen(v);
+          if (!v) setFormError(null);
+        }}
         intermediario={editando}
         favorecidos={favorecidos}
         saving={criar.isPending || atualizar.isPending}
+        error={formError}
         onSubmit={(payload) => {
+          setFormError(null);
           const onSuccess = () => setOpen(false);
-          const onError = (err: unknown) =>
-            toast.error(
-              errorMessage(err, "Não foi possível salvar o intermediário."),
-            );
+          const onError = (err: unknown) => {
+            const msg = errorMessage(err, "Não foi possível salvar o intermediário.");
+            setFormError(msg);
+            toast.error(msg);
+          };
           if (editando) {
             atualizar.mutate(
               { id: editando.id, patch: payload },
@@ -1302,6 +1427,7 @@ function IntermediarioFormDialog({
   favorecidos,
   onSubmit,
   saving,
+  error,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -1309,6 +1435,7 @@ function IntermediarioFormDialog({
   favorecidos: NegociacaoFavorecido[];
   onSubmit: (payload: IntermediarioCreate) => void;
   saving: boolean;
+  error: string | null;
 }) {
   const [draft, setDraft] = useState<IntermediarioDraft>(() =>
     toIntermediarioDraft(intermediario),
@@ -1363,6 +1490,7 @@ function IntermediarioFormDialog({
             <Input
               id="int-nome"
               value={draft.nome}
+              maxLength={INTERMEDIARIO_NOME_MAX}
               onChange={(e) => setDraft((d) => ({ ...d, nome: e.target.value }))}
             />
           </div>
@@ -1371,6 +1499,7 @@ function IntermediarioFormDialog({
             <Input
               id="int-creci"
               value={draft.creci}
+              maxLength={INTERMEDIARIO_CRECI_MAX}
               onChange={(e) => setDraft((d) => ({ ...d, creci: e.target.value }))}
             />
           </div>
@@ -1473,6 +1602,7 @@ function IntermediarioFormDialog({
               id="int-email"
               type="email"
               value={draft.email}
+              maxLength={INTERMEDIARIO_EMAIL_MAX}
               onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
             />
           </div>
@@ -1483,6 +1613,7 @@ function IntermediarioFormDialog({
                 <Input
                   id="int-rep-nome"
                   value={draft.representante_nome}
+                  maxLength={INTERMEDIARIO_REPRESENTANTE_NOME_MAX}
                   onChange={(e) =>
                     setDraft((d) => ({ ...d, representante_nome: e.target.value }))
                   }
@@ -1506,6 +1637,7 @@ function IntermediarioFormDialog({
               <Input
                 id="int-cep"
                 value={draft.endereco_cep}
+                maxLength={INTERMEDIARIO_CEP_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, endereco_cep: e.target.value }))
                 }
@@ -1529,6 +1661,7 @@ function IntermediarioFormDialog({
               <Input
                 id="int-logradouro"
                 value={draft.endereco_logradouro}
+                maxLength={INTERMEDIARIO_LOGRADOURO_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, endereco_logradouro: e.target.value }))
                 }
@@ -1539,6 +1672,7 @@ function IntermediarioFormDialog({
               <Input
                 id="int-numero"
                 value={draft.endereco_numero}
+                maxLength={INTERMEDIARIO_NUMERO_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, endereco_numero: e.target.value }))
                 }
@@ -1551,6 +1685,7 @@ function IntermediarioFormDialog({
               <Input
                 id="int-complemento"
                 value={draft.endereco_complemento}
+                maxLength={INTERMEDIARIO_COMPLEMENTO_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, endereco_complemento: e.target.value }))
                 }
@@ -1561,6 +1696,7 @@ function IntermediarioFormDialog({
               <Input
                 id="int-bairro"
                 value={draft.endereco_bairro}
+                maxLength={INTERMEDIARIO_BAIRRO_MAX}
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, endereco_bairro: e.target.value }))
                 }
@@ -1572,11 +1708,23 @@ function IntermediarioFormDialog({
             <Input
               id="int-cidade"
               value={draft.endereco_cidade}
+              maxLength={INTERMEDIARIO_CIDADE_MAX}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, endereco_cidade: e.target.value }))
               }
             />
           </div>
+          {error && (
+            <div
+              className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
+              data-testid="negest-intermediario-erro"
+            >
+              <p className="flex items-center gap-1.5 text-destructive">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {error}
+              </p>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button

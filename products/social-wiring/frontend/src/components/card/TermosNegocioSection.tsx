@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
+import { formatBRL } from "@/hooks/useNegociacao";
 import { useAtualizarTermos } from "@/hooks/useNegociacaoEstruturada";
 import {
   CORRETAGEM_CONTRATANTES,
@@ -190,7 +191,7 @@ function ParcelaMarcoSelect({
         <SelectItem value={NENHUMA_PARCELA}>Nenhuma</SelectItem>
         {parcelas.map((p) => (
           <SelectItem key={p.id} value={p.id}>
-            {p.evento ?? p.vencimento ?? p.id} — {p.valor}
+            {p.evento ?? p.vencimento ?? p.id} — {formatBRL(p.valor)}
           </SelectItem>
         ))}
       </SelectContent>

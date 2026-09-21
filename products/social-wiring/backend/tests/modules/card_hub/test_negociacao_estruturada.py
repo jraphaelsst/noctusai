@@ -203,6 +203,79 @@ class TestParcelasDoNotBlockAPartialSave:
         assert r.status_code == 404
 
 
+class TestParcelaOrdemIsServerComputed:
+    """`criar_parcela` used to write `ordem=0` for EVERY new parcela
+    (`ParcelaCreateBody` never accepted the field from the client, and the
+    service fell back to the schema default) — every parcela created through
+    the single-create endpoint tied at `ordem=0`, so the printed contract
+    numbering ("Parcela 01/02/03") + `VENCIMENTOS_FORA_DE_ORDEM` + the
+    `posse_marco_parcela_id` marco all silently rested on `created_at`
+    instead. `ordem` is now `max(existing) + 1`, same rule
+    `dividir_saldo_em_parcelas` already used for its batch insert."""
+
+    def test_three_sequential_creates_get_three_distinct_increasing_ordens(
+        self, client, scoped
+    ):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r1 = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "sinal", "valor": "100000.00"},
+            headers=_auth(),
+        )
+        r2 = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "intermediaria", "valor": "190000.00"},
+            headers=_auth(),
+        )
+        r3 = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "financiamento", "valor": "1160000.00"},
+            headers=_auth(),
+        )
+        assert r1.status_code == r2.status_code == r3.status_code == 201
+
+        parcelas = {p["tipo"]: p["ordem"] for p in r3.json()["parcelas"]}
+        assert parcelas["sinal"] == 0
+        assert parcelas["intermediaria"] == 1
+        assert parcelas["financiamento"] == 2
+
+    def test_a_client_supplied_ordem_on_create_is_ignored(self, client, scoped):
+        """`ParcelaCreateBody` does not even accept `ordem` — `extra='forbid'`
+        (`StrictHttpModel`) refuses it as an UNKNOWN field, same as any other
+        field this endpoint does not own."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "sinal", "valor": "100000.00", "ordem": 7},
+            headers=_auth(),
+        )
+        assert r.status_code == 422, r.text
+
+    def test_ordem_still_increments_past_an_existing_gap(self, client, scoped):
+        """A PATCH-reordered gap (e.g. ordem bumped to 5) must not be
+        overwritten by the next create landing back at a low number."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        primeira = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "sinal", "valor": "50000.00"},
+            headers=_auth(),
+        ).json()["parcelas"][0]
+        client.patch(
+            f"/api/clientes/{cid}/negociacao/parcelas/{primeira['id']}",
+            json={"ordem": 5},
+            headers=_auth(),
+        )
+
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/parcelas",
+            json={"tipo": "saldo", "valor": "450000.00"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        nova = next(p for p in r.json()["parcelas"] if p["tipo"] == "saldo")
+        assert nova["ordem"] == 6
+
+
 class TestFavorecidoScoping:
     """🔴 A parcela's favorecido must belong to the SAME atendimento."""
 
