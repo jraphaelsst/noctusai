@@ -15,7 +15,7 @@ export default function Login() {
       <LoginForm
         brandIcon={Recycle}
         brandTitle="Academia de Reciclagem"
-        brandSubtitle="A minimal NoctusAI product"
+        brandSubtitle="aprender · agir · circular"
         supabase={supabase}
         onSuccess={() => navigate("/")}
         showForgotPassword
