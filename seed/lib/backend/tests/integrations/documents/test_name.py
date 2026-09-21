@@ -306,3 +306,28 @@ class TestPredicateIsSafeForRawInput:
     def test_normalisation_is_idempotent(self):
         once = strip_accents_upper("José da Silva")
         assert looks_like_a_name(once) is looks_like_a_name("José da Silva")
+
+
+class TestNomeAtualDosConjugesHeader:
+    """Newer CRC certidão layout (structure from a real document, names
+    invented): the spouses' block is headed "Nome atual dos cônjuges" and
+    both CPFs follow under ONE "Número do CPF" label."""
+
+    TEXTO = (
+        "CERTIDÃO DE CASAMENTO\n\nNome atual dos cônjuges\n\n"
+        "JOAO PEREIRA DA SILVA\n\nMARIA SOUZA DA SILVA\n\n"
+        "Número do CPF\n\n412.954.238-98\n\n303.102.653-55\n\nMatrícula\n\n"
+        "122788 01 55 2008 3 00017 077 0004843 71\n"
+    )
+
+    def test_the_heading_tail_is_never_read_as_a_name(self):
+        valor, _, _ = find_name(self.TEXTO)
+        assert valor != "ATUAL DOS CONJUGES"
+
+    def test_both_spouses_are_the_named_conflict(self):
+        assert find_name_conflitos(self.TEXTO) == [
+            "JOAO PEREIRA DA SILVA", "MARIA SOUZA DA SILVA",
+        ]
+
+    def test_a_cpf_label_is_not_name_shaped(self):
+        assert looks_like_a_name("Número do CPF") is False

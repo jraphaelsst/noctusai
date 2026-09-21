@@ -79,7 +79,17 @@ _NAME_LABELS = (
 #: matching inside it, so without this entry a certidão's header is simply
 #: invisible to this parser — see the module's own header comment on the
 #: defect this fixes.
-_MULTI_HOLDER_LABELS = ("NOMES",)
+_MULTI_HOLDER_LABELS = (
+    "NOMES",
+    # Newer CRC layouts head the same block "Nome atual dos cônjuges". Without
+    # these, longest-match found only the bare `NOME` and read the heading's
+    # own tail — "ATUAL DOS CONJUGES" — as the holder's name (live, a real
+    # certidão, 2026-09-21).
+    "NOME ATUAL DOS CONJUGES",
+    "NOMES ATUAIS DOS CONJUGES",
+    "NOME DOS CONJUGES",
+    "NOMES DOS CONJUGES",
+)
 
 #: Labels that introduce SOMEONE ELSE's name, or a name-shaped value that
 #: is not a person. Longest-first matching is what makes these win over
@@ -147,6 +157,9 @@ _INSTITUTIONAL_TOKENS = frozenset(
         "EMISSAO", "VALIDADE", "NATURALIDADE", "FILIACAO", "ORGAO", "EMISSOR",
         "ESTADO", "MUNICIPIO", "COMARCA", "CARTORIO", "LIVRO", "FOLHA", "TERMO",
         "OBSERVACOES", "ASSINADO", "DIGITALMENTE",
+        # Field labels that are name-SHAPED ("Número do CPF" is three
+        # letters-only words) and sit inside a certidão's holder block.
+        "CPF", "NUMERO", "MATRICULA",
     }
 )
 
