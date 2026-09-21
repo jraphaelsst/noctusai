@@ -26,12 +26,12 @@
  * value in, `onChange` out.
  */
 import { useState } from "react";
-import { Check, Loader2, Search, X } from "lucide-react";
+import { Check, Loader2, Plus, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useImoveisBusca } from "@/hooks/useCardHub";
+import { useImoveisBusca, useRegistrarImovelManual } from "@/hooks/useCardHub";
 import { cn } from "@/lib/utils";
 import type { ImovelBusca } from "@/types/cardHub";
 
@@ -60,6 +60,7 @@ export function ImovelCodigoPicker({
   const [termo, setTermo] = useState("");
   const termoDebounced = useDebouncedValue(termo, 250);
   const busca = useImoveisBusca(termoDebounced);
+  const registrar = useRegistrarImovelManual();
 
   // 🔴 `isPending || isFetching`, never `isLoading`: v5's `isLoading` is false
   // during a background refetch, so a "nenhum imóvel" branch keyed off it
@@ -128,9 +129,39 @@ export function ImovelCodigoPicker({
           Digite ao menos 2 caracteres.
         </p>
       ) : resultados.length === 0 && !buscando ? (
-        <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
-          Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
-        </p>
+        <div className="space-y-1.5">
+          <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
+            Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
+          </p>
+          {/* 🔴 Migration 147 — an off-market imóvel (no anúncio, being
+              tested manually) has no row in the mirror NOR the registry, so
+              it can never turn up here by SEARCHING. This is the only way
+              to give one an identity from this picker. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            disabled={disabled || registrar.isPending}
+            onClick={() => {
+              const codigo = termoDebounced.trim().toUpperCase();
+              registrar.mutate(codigo, {
+                onSuccess: (res) => {
+                  onChange(res.codigo);
+                  setTermo("");
+                },
+              });
+            }}
+            data-testid={`${testId}-cadastrar-novo`}
+          >
+            {registrar.isPending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Plus className="h-3 w-3" />
+            )}
+            Cadastrar “{termoDebounced.trim()}” como imóvel novo
+          </Button>
+        </div>
       ) : (
         <ul className="max-h-56 divide-y overflow-y-auto rounded-md border">
           {resultados.map((imovel) => (

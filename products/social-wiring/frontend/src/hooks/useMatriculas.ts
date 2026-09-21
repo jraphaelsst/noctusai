@@ -216,6 +216,33 @@ export function useCriarExtracaoDeDocumento() {
   });
 }
 
+/**
+ * A matrícula transcribed by TYPING/PASTING its text — no PDF, no vision AI
+ * (migration 147). `POST /api/matriculas/extracoes/manual`. Lands
+ * `status='concluida'` SYNCHRONOUSLY (unlike every upload path above): there
+ * is no I/O-bound step, so the returned row is already the finished one.
+ */
+export function useCriarExtracaoManual() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { codigo: string; texto: string }): Promise<MatriculaExtracao> => {
+      const result = await api.post('/api/matriculas/extracoes/manual', {
+        codigo: input.codigo,
+        texto: input.texto,
+      });
+      return result.data as MatriculaExtracao;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
+      toast.success('Transcrição manual criada!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao criar transcrição manual', { description: readableError(error) });
+    },
+  });
+}
+
 export function useDeleteExtracao() {
   const queryClient = useQueryClient();
 

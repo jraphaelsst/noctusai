@@ -152,6 +152,32 @@ CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "onus_credor_confirmado_em",
 ) + CAMPOS_ENDERECO_CONTRATO
 
+#: Migration 147 — the manual override for the 4 address fields
+#: `contrato_gerador.derivacao._imovel` reads (logradouro/número/cidade/UF).
+#: This product has no write-back to the Vista mirror those fields normally
+#: come from (`busca_service.enriquecer`) — see `carregador._endereco_imovel`
+#: for where the override wins per-field over the mirror. Written ONLY by
+#: `gravar_endereco_manual`, which also logs every change to
+#: `imovel_endereco_historico` — a human overriding synced/external data
+#: needs no approval, but does need a trail.
+CAMPOS_ENDERECO_MANUAL: tuple[str, ...] = (
+    "endereco_manual_logradouro",
+    "endereco_manual_numero",
+    "endereco_manual_cidade",
+    "endereco_manual_uf",
+)
+
+#: The mirror-facing field name for each override column — what
+#: `imovel_endereco_historico.campo` and the `Endereco` dataclass both use.
+_CAMPO_MIRROR = {
+    "endereco_manual_logradouro": "logradouro",
+    "endereco_manual_numero": "numero",
+    "endereco_manual_cidade": "cidade",
+    "endereco_manual_uf": "uf",
+}
+
+HISTORICO_ENDERECO_TABLE = "imovel_endereco_historico"
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -367,6 +393,16 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
             resolved, row.get("endereco_registro_confirmado_por")
         ),
         "endereco_registro_confirmado_em": row.get("endereco_registro_confirmado_em"),
+        # Migration 147 — the manual override for the 4 address fields the
+        # contract gate reads. `None` on every field means "use the mirror".
+        "endereco_manual_logradouro": row.get("endereco_manual_logradouro"),
+        "endereco_manual_numero": row.get("endereco_manual_numero"),
+        "endereco_manual_cidade": row.get("endereco_manual_cidade"),
+        "endereco_manual_uf": row.get("endereco_manual_uf"),
+        "endereco_manual_confirmado_por": table_reads.actor(
+            resolved, row.get("endereco_manual_confirmado_por")
+        ),
+        "endereco_manual_confirmado_em": row.get("endereco_manual_confirmado_em"),
         "updated_at": row.get("updated_at"),
     }
 
@@ -383,6 +419,7 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("titulo_aquisitivo_texto_confirmado_por"),
         (row or {}).get("onus_credor_confirmado_por"),
         (row or {}).get("endereco_registro_confirmado_por"),
+        (row or {}).get("endereco_manual_confirmado_por"),
     }
     return _saida(codigo, row, table_reads.resolve_actors(ids))
 
@@ -534,6 +571,103 @@ def gravar_texto_contrato(
     _gravar(client, org_id, codigo, linha(client, org_id, codigo), patch)
 
 
+def gravar_endereco_manual(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    valores: dict,
+    mirror: dict,
+    usuario_id: Optional[Any],
+) -> dict:
+    """Manual override for the 4 address fields the contract gate reads
+    (migration 147). Only keys present in `valores` are touched — same
+    absence-means-leave-alone / `None`-clears contract `atualizar` uses.
+
+    `mirror` is the imóvel's CURRENT read off the Vista/registry mirror
+    (`busca_service.enriquecer`'s row for this código), supplied by the
+    caller rather than fetched here — this module does not import
+    `busca_service`, so the coupling stays one-directional. It is used ONLY
+    to log what an override REPLACED the first time a field is set; once a
+    field already carries an override, the previous OVERRIDE value is what
+    gets logged, not the mirror again.
+
+    Every touched field whose effective value actually changes appends one
+    row to `imovel_endereco_historico` — the mirror is external/synced data,
+    not an official document, so an override needs no admin approval, but
+    IS logged: previous value + who + when.
+    """
+    ensure_imovel(client, org_id, codigo)
+    recusados = sorted(set(valores) - set(CAMPOS_ENDERECO_MANUAL))
+    if recusados:
+        raise ValidationError_(
+            f"Campos de endereço inválidos: {', '.join(recusados)}",
+            field=recusados[0],
+        )
+    if not valores:
+        return obter(client, org_id, codigo)
+
+    # 🔴 `None`, not `{}`, when there is no row yet — `_gravar` (the ONE write
+    # shape every author of this table uses) decides INSERT vs UPDATE off
+    # this exact sentinel, same as `atualizar`/`gravar_fontes_matricula`.
+    # Coercing it to `{}` here would make `_gravar` UPDATE a row that does
+    # not exist, which the mock (and Postgres) silently no-ops.
+    atual = linha(client, org_id, codigo)
+    patch: dict = {}
+    historico: list[dict] = []
+    for coluna, bruto in valores.items():
+        novo = (bruto or "").strip() or None if isinstance(bruto, str) else bruto
+        campo = _CAMPO_MIRROR[coluna]
+        anterior_override = (atual or {}).get(coluna)
+        anterior_efetivo = (
+            anterior_override if anterior_override is not None else mirror.get(campo)
+        )
+        if anterior_efetivo != novo:
+            historico.append(
+                {
+                    "org_id": str(org_id),
+                    "codigo": codigo,
+                    "campo": campo,
+                    "valor_anterior": anterior_efetivo,
+                    "valor_novo": novo,
+                    "alterado_por": str(usuario_id) if usuario_id else None,
+                    "alterado_em": _now(),
+                }
+            )
+        patch[coluna] = novo
+
+    patch["endereco_manual_confirmado_por"] = str(usuario_id) if usuario_id else None
+    patch["endereco_manual_confirmado_em"] = _now()
+    _gravar(client, org_id, codigo, atual, patch)
+    if historico:
+        _t(client, HISTORICO_ENDERECO_TABLE).insert(historico).execute()
+    return obter(client, org_id, codigo)
+
+
+def historico_endereco(client: Any, org_id: UUID, codigo: str) -> list[dict]:
+    """Every field-level address override for this imóvel, newest first."""
+    ensure_imovel(client, org_id, codigo)
+    rows = (
+        _t(client, HISTORICO_ENDERECO_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("codigo", codigo)
+        .order("alterado_em", desc=True)
+        .execute()
+    ).data or []
+    resolved = table_reads.resolve_actors({r.get("alterado_por") for r in rows} - {None})
+    return [
+        {
+            "campo": r["campo"],
+            "valor_anterior": r.get("valor_anterior"),
+            "valor_novo": r.get("valor_novo"),
+            "alterado_por": table_reads.actor(resolved, r.get("alterado_por")),
+            "alterado_em": r.get("alterado_em"),
+        }
+        for r in rows
+    ]
+
+
 def extracao_referenciada(client: Any, org_id: UUID, extracao_id: Any) -> bool:
     """Does any imóvel's título/ônus pointer quote this matrícula extraction?"""
     for coluna in ("titulo_aquisitivo_extracao_id", "onus_fonte_extracao_id"):
@@ -553,17 +687,21 @@ def extracao_referenciada(client: Any, org_id: UUID, extracao_id: Any) -> bool:
 __all__ = [
     "CAMPOS_EDITAVEIS",
     "CAMPOS_ENDERECO_CONTRATO",
+    "CAMPOS_ENDERECO_MANUAL",
     "CAMPOS_ONUS_FONTE",
     "CAMPOS_PROVENIENCIA",
     "CAMPOS_TEXTO_CONTRATO",
     "CAMPOS_TITULO_AQUISITIVO",
+    "HISTORICO_ENDERECO_TABLE",
     "TABLE",
     "aplicar_matricula_extraida",
     "atualizar",
     "ensure_imovel",
     "extracao_referenciada",
+    "gravar_endereco_manual",
     "gravar_fontes_matricula",
     "gravar_texto_contrato",
+    "historico_endereco",
     "linha",
     "obter",
 ]

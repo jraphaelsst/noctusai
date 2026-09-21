@@ -224,6 +224,61 @@ def confirmar_titulo(
     return obter_titulo(client, org_id, codigo, usuario_id=usuario_id)
 
 
+# ─── endereço do registro (migration 139) ─────────────────────────────────
+
+
+def obter_endereco_registro(client: Any, org_id: UUID, codigo: str) -> dict:
+    """The operator's confirmed short address ("situado à ...") — NEVER a
+    recomputed suggestion (see `imovel_dados.endereco_registro_texto`'s
+    column comment): a wrong split of free legal prose into a compact
+    address is exactly the guess this feature must not make.
+
+    🔴 Does NOT reuse `_confirmacao`/`_patch_confirmacao`: those assume the
+    confirmation columns are `{coluna}_confirmado_por/em` — true for
+    `titulo_aquisitivo_texto`/`onus_credor`, but migration 139 named this
+    pair `endereco_registro_confirmado_por/em`, dropping the `_texto`
+    infix. Reusing the generic helper here reached for a column
+    (`endereco_registro_texto_confirmado_por`) that does not exist —
+    `dados_service.gravar_texto_contrato`'s own refusal-by-name caught it.
+    """
+    codigo = _codigo(codigo)
+    dados_service.ensure_imovel(client, org_id, codigo)
+    linha = dados_service.linha(client, org_id, codigo) or {}
+    valor = linha.get("endereco_registro_texto")
+    confirmado = None
+    if valor is not None:
+        resolved = table_reads.resolve_actors(
+            {linha.get("endereco_registro_confirmado_por")} - {None}
+        )
+        confirmado = {
+            "texto": valor,
+            "confirmado_por": table_reads.actor(
+                resolved, linha.get("endereco_registro_confirmado_por")
+            ),
+            "confirmado_em": linha.get("endereco_registro_confirmado_em"),
+        }
+    return {"codigo": codigo, "confirmado": confirmado}
+
+
+def confirmar_endereco_registro(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    texto: Optional[str],
+    usuario_id: Optional[Any],
+) -> dict:
+    codigo = _codigo(codigo)
+    valor = (texto or "").strip() or None
+    patch = {
+        "endereco_registro_texto": valor,
+        "endereco_registro_confirmado_por": str(usuario_id) if valor and usuario_id else None,
+        "endereco_registro_confirmado_em": now_iso() if valor else None,
+    }
+    dados_service.gravar_texto_contrato(client, org_id, codigo, patch)
+    return obter_endereco_registro(client, org_id, codigo)
+
+
 # ─── ônus creditor ────────────────────────────────────────────────────────
 
 

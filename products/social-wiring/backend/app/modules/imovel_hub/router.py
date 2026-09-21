@@ -28,12 +28,14 @@ from fastapi import (
     Depends,
     File,
     Form,
+    HTTPException,
     Query,
     UploadFile,
     status,
 )
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.modules.imovel_hub import busca_service
 from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.imovel_hub import matricula_extracao_service as matricula_svc
@@ -43,6 +45,7 @@ from app.modules.imovel_hub.deps import (
     get_storage_backend,
 )
 from app.modules.imovel_hub.schemas import (
+    EnderecoManualPatchBody,
     ImovelDadosPatchBody,
     ImovelDocumentoExtracaoPatchBody,
 )
@@ -87,6 +90,66 @@ async def patch_dados_route(
         valores=valores,
         usuario_id=getattr(user, "id", None),
     )
+
+
+@router.put("/{codigo}/endereco-manual")
+async def put_endereco_manual_route(
+    codigo: str,
+    body: EnderecoManualPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Manual override for the 4 address fields `contrato_gerador.derivacao`
+    reads (migration 147) — see `dados_service.gravar_endereco_manual`."""
+    user, org_id = _auth_parts(auth)
+    codigo_canonico = codigo.upper()
+    valores = {
+        f"endereco_manual_{k}": getattr(body, k) for k in body.model_fields_set
+    }
+    catalogo = (
+        busca_service.enriquecer(client, org_id, [codigo_canonico]).get(
+            busca_service.canonical(codigo_canonico)
+        )
+        or {}
+    )
+    return dados_svc.gravar_endereco_manual(
+        client,
+        org_id,
+        codigo_canonico,
+        valores=valores,
+        mirror=catalogo,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.get("/{codigo}/endereco-manual/historico")
+async def get_endereco_manual_historico_route(
+    codigo: str,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    itens = dados_svc.historico_endereco(client, org_id, codigo.upper())
+    return {"items": itens, "total": len(itens)}
+
+
+@router.post("/{codigo}/registrar")
+async def registrar_imovel_route(
+    codigo: str,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Give a brand-new código (never seen in the Vista mirror nor the
+    registry) a registry identity, so it becomes pickable everywhere
+    `imovel_registry` is the FK target — `ImovelCodigoPicker`'s "cadastrar
+    novo imóvel" affordance for a property that has no anúncio at all
+    (off-market, being tested manually). Idempotent — `registrar_imovel`
+    itself already is."""
+    _user, org_id = _auth_parts(auth)
+    canonico = dados_svc.registrar_imovel(client, org_id, codigo, origem="manual")
+    if not canonico:
+        raise HTTPException(status_code=400, detail="Código do imóvel é obrigatório.")
+    return {"codigo": canonico}
 
 
 # ─── Documents ────────────────────────────────────────────────────────────

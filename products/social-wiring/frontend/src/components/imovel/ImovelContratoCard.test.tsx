@@ -86,6 +86,7 @@ async function render(props: Record<string, unknown> = {}) {
   const rtl = await import("@testing-library/react");
   const { MemoryRouter } = await import("react-router-dom");
   const onConfirmarTitulo = vi.fn();
+  const onConfirmarEnderecoRegistro = vi.fn();
   const onConfirmarOnusCredor = vi.fn();
   const view = rtl.render(
     React.createElement(
@@ -99,6 +100,12 @@ async function render(props: Record<string, unknown> = {}) {
         tituloIsError: false,
         savingTitulo: false,
         onConfirmarTitulo,
+        enderecoRegistro: { codigo: "AP1234", confirmado: null },
+        enderecoRegistroShowSkeleton: false,
+        enderecoRegistroIsRefreshing: false,
+        enderecoRegistroIsError: false,
+        savingEnderecoRegistro: false,
+        onConfirmarEnderecoRegistro,
         onus: onus(),
         onusShowSkeleton: false,
         onusIsRefreshing: false,
@@ -112,7 +119,7 @@ async function render(props: Record<string, unknown> = {}) {
       } as never),
     ),
   );
-  return { ...rtl, ...view, onConfirmarTitulo, onConfirmarOnusCredor };
+  return { ...rtl, ...view, onConfirmarTitulo, onConfirmarEnderecoRegistro, onConfirmarOnusCredor };
 }
 
 describe("ImovelContratoCard — título aquisitivo", () => {
@@ -186,6 +193,49 @@ describe("ImovelContratoCard — título aquisitivo", () => {
       }),
     });
     expect(getByTestId("imovel-titulo-confirmado").textContent).toContain("Ana");
+  });
+});
+
+describe("ImovelContratoCard — endereço do registro", () => {
+  it("has no suggestion affordance — never a recomputed guess", async () => {
+    const { queryByTestId } = await render();
+    expect(queryByTestId("imovel-endereco-registro-sugestao")).toBeNull();
+    expect(queryByTestId("imovel-endereco-registro-usar-sugestao")).toBeNull();
+  });
+
+  it("confirms the address the operator actually has on screen", async () => {
+    const { getByTestId, fireEvent, onConfirmarEnderecoRegistro } = await render();
+    fireEvent.change(getByTestId("imovel-endereco-registro-texto"), {
+      target: { value: "  Rua Fictícia, nº 100  " },
+    });
+    fireEvent.click(getByTestId("imovel-endereco-registro-confirmar"));
+    expect(onConfirmarEnderecoRegistro).toHaveBeenCalledWith("Rua Fictícia, nº 100");
+  });
+
+  it("🔴 confirming an empty field CLEARS, sending null rather than \"\"", async () => {
+    const { getByTestId, fireEvent, onConfirmarEnderecoRegistro } = await render({
+      enderecoRegistro: {
+        codigo: "AP1234",
+        confirmado: { texto: "antigo", confirmado_por: null, confirmado_em: null },
+      },
+    });
+    fireEvent.change(getByTestId("imovel-endereco-registro-texto"), { target: { value: "" } });
+    fireEvent.click(getByTestId("imovel-endereco-registro-confirmar"));
+    expect(onConfirmarEnderecoRegistro).toHaveBeenCalledWith(null);
+  });
+
+  it("names who confirmed the address in force", async () => {
+    const { getByTestId } = await render({
+      enderecoRegistro: {
+        codigo: "AP1234",
+        confirmado: {
+          texto: "Rua Fictícia, nº 100",
+          confirmado_por: { id: "u1", nome: "Ana" },
+          confirmado_em: "2026-03-01T10:00:00Z",
+        },
+      },
+    });
+    expect(getByTestId("imovel-endereco-registro-confirmado").textContent).toContain("Ana");
   });
 });
 

@@ -634,6 +634,27 @@ export function useImoveisBusca(termo: string) {
 }
 
 /**
+ * `POST /api/imoveis/{codigo}/registrar` (migration 147) — give a código
+ * neither the Vista mirror nor the registry has ever seen a registry
+ * identity, so `ImovelCodigoPicker` can offer it. Idempotent on the server;
+ * invalidates every `imoveisBusca` query so a subsequent search (or the
+ * SAME search, re-typed) finds it.
+ */
+export function useRegistrarImovelManual() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (codigo: string) =>
+      api.post<{ codigo: string }>(
+        `/api/imoveis/${encodeURIComponent(codigo)}/registrar`,
+        {},
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [...ROOT_KEY, "imoveisBusca"] });
+    },
+  });
+}
+
+/**
  * Create / rename / delete a roteiro, reorder it, and record each visita's
  * outcome.
  *

@@ -168,6 +168,25 @@ def _pessoa(
     )
 
 
+def _endereco_manual(catalogo: dict, dados: dict) -> Endereco:
+    """The imóvel's address for the contract: a manual override (migration
+    147) wins PER-FIELD over the CRM/Vista mirror for the 4 fields
+    `derivacao._imovel` gates on — logradouro/número/cidade/UF. This product
+    has no write-back to Vista (see `dados_service.CAMPOS_ENDERECO_MANUAL`'s
+    docstring), so the override is the only correction path for those 4;
+    `complemento`/`bairro`/`cep` stay mirror-only — nothing gates on them."""
+    base = _endereco(catalogo, prefixo="")
+    return Endereco(
+        logradouro=dados.get("endereco_manual_logradouro") or base.logradouro,
+        numero=dados.get("endereco_manual_numero") or base.numero,
+        complemento=base.complemento,
+        bairro=base.bairro,
+        cidade=dados.get("endereco_manual_cidade") or base.cidade,
+        uf=dados.get("endereco_manual_uf") or base.uf,
+        cep=base.cep,
+    )
+
+
 def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -> Imovel:
     canonico = busca_service.canonical(codigo)
     catalogo = busca_service.enriquecer(client, org_id, [codigo]).get(canonico) or {}
@@ -197,7 +216,7 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
         codigo=codigo,
         titulo=catalogo.get("titulo"),
         empreendimento=catalogo.get("empreendimento"),
-        endereco=_endereco(catalogo, prefixo=""),
+        endereco=_endereco_manual(catalogo, dados),
         # Migration 093 — the CRM/Vista mirror's own m², used only by the
         # `derivacao` coherence check (never printed) — see `dados.Imovel
         # .area_total`'s docstring.

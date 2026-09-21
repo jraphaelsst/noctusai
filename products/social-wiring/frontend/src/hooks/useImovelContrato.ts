@@ -131,6 +131,14 @@ export interface UltimaTransferencia {
   detalhes_origem: "sugestao" | "confirmado" | null;
 }
 
+/** `GET/PUT .../endereco-registro` (migration 139/147) — the operator's
+ *  confirmed short address the posse clauses print. 🔴 NO `sugestao` field
+ *  here, unlike título/ônus: this value is NEVER a recomputed guess. */
+export interface EnderecoRegistroResponse {
+  codigo: string;
+  confirmado: ConfirmacaoTexto | null;
+}
+
 export interface AntigosProprietariosResponse {
   codigo: string;
   extracao_id: string | null;
@@ -259,6 +267,8 @@ export function certidaoDesatualizada(
  *  them stale at once. */
 const FAMILY_KEY = (codigo: string) => ["sw", "imovel-contrato", codigo] as const;
 const TITULO_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "titulo"] as const;
+const ENDERECO_REGISTRO_KEY = (codigo: string) =>
+  [...FAMILY_KEY(codigo), "endereco-registro"] as const;
 const ONUS_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "onus-credor"] as const;
 const ANTIGOS_KEY = (codigo: string) =>
   [...FAMILY_KEY(codigo), "antigos-proprietarios"] as const;
@@ -276,6 +286,17 @@ export function useTituloAquisitivo(codigo: string | null) {
     queryFn: async () => {
       const result = await api.get(`${matriculasBase(codigo as string)}/titulo-aquisitivo`);
       return result.data as TituloAquisitivoResponse;
+    },
+    enabled: !!codigo,
+  });
+}
+
+export function useEnderecoRegistro(codigo: string | null) {
+  return useQuery({
+    queryKey: ENDERECO_REGISTRO_KEY(codigo ?? "__none__"),
+    queryFn: async () => {
+      const result = await api.get(`${matriculasBase(codigo as string)}/endereco-registro`);
+      return result.data as EnderecoRegistroResponse;
     },
     enabled: !!codigo,
   });
@@ -336,6 +357,25 @@ export function useConfirmarTitulo(codigo: string) {
     onSuccess: (data) => qc.setQueryData(TITULO_KEY(codigo), data),
     onError: (error: Error) => {
       toast.error("Não foi possível salvar o título aquisitivo", {
+        description: readableError(error),
+      });
+    },
+  });
+}
+
+/** `PUT .../endereco-registro` — `texto: null` clears the confirmation. */
+export function useConfirmarEnderecoRegistro(codigo: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (texto: string | null): Promise<EnderecoRegistroResponse> => {
+      const result = await api.put(`${matriculasBase(codigo)}/endereco-registro`, {
+        texto,
+      });
+      return result.data as EnderecoRegistroResponse;
+    },
+    onSuccess: (data) => qc.setQueryData(ENDERECO_REGISTRO_KEY(codigo), data),
+    onError: (error: Error) => {
+      toast.error("Não foi possível salvar o endereço do registro", {
         description: readableError(error),
       });
     },

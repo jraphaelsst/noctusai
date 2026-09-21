@@ -11,19 +11,35 @@
  * component's behaviour given a result set, and driving react-query + a
  * debounce timer through it would put neither in the assertions.
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockUseImoveisBusca } = vi.hoisted(() => ({
-  mockUseImoveisBusca: vi.fn(),
+const { mockUseImoveisBusca, mockUseRegistrarImovelManual, mockRegistrarMutate } = vi.hoisted(
+  () => ({
+    mockUseImoveisBusca: vi.fn(),
+    mockRegistrarMutate: vi.fn(),
+    mockUseRegistrarImovelManual: vi.fn(),
+  }),
+);
+vi.mock("@/hooks/useCardHub", () => ({
+  useImoveisBusca: mockUseImoveisBusca,
+  useRegistrarImovelManual: mockUseRegistrarImovelManual,
 }));
-vi.mock("@/hooks/useCardHub", () => ({ useImoveisBusca: mockUseImoveisBusca }));
 vi.mock("@/hooks/useDebouncedValue", () => ({
   useDebouncedValue: (v: string) => v,
 }));
 
+beforeEach(() => {
+  mockUseRegistrarImovelManual.mockReturnValue({
+    mutate: mockRegistrarMutate,
+    isPending: false,
+  });
+});
+
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
   mockUseImoveisBusca.mockReset();
+  mockUseRegistrarImovelManual.mockReset();
+  mockRegistrarMutate.mockReset();
 });
 
 import { ImovelCodigoPicker } from "./ImovelCodigoPicker";
@@ -134,6 +150,29 @@ describe("ImovelCodigoPicker", () => {
 
     expect(screen.getByText(/ao menos 2 caracteres/i)).toBeTruthy();
     expect(screen.queryByTestId("imovel-picker-vazio")).toBeNull();
+  });
+
+  it("offers to register a new imóvel when the search finds nothing (migration 147)", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    const { screen } = await render();
+
+    await digitar("OFFMKT01");
+
+    expect(screen.getByTestId("imovel-picker-cadastrar-novo")).toBeTruthy();
+  });
+
+  it("registering picks the newly-given identity as the chosen imóvel", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    mockRegistrarMutate.mockImplementation((codigo: string, opts: { onSuccess: (r: { codigo: string }) => void }) => {
+      opts.onSuccess({ codigo });
+    });
+    const { screen, fireEvent, onChange } = await render();
+
+    await digitar("offmkt01");
+    fireEvent.click(screen.getByTestId("imovel-picker-cadastrar-novo"));
+
+    expect(mockRegistrarMutate).toHaveBeenCalledWith("OFFMKT01", expect.anything());
+    expect(onChange).toHaveBeenCalledWith("OFFMKT01");
   });
 
   it("does not claim 'nenhum imóvel' while a fetch is still in flight", async () => {

@@ -52,6 +52,7 @@ import {
   useSolicitarCampanha,
 } from "@/hooks/useCampanhas";
 import {
+  useEnderecoManualMutation,
   useImovelDados,
   useImovelDadosMutation,
   useImovelDocumentoMutations,
@@ -74,6 +75,7 @@ export default function ImovelDetalhes() {
   const dadosQuery = useImovelDados(codigo ?? null);
   const documentosQuery = useImovelDocumentos(codigo ?? null);
   const dadosMutation = useImovelDadosMutation(codigo ?? "");
+  const enderecoManualMutation = useEnderecoManualMutation(codigo ?? "");
   const documentoMutations = useImovelDocumentoMutations(codigo ?? "");
   const teamQuery = useTeamMembers();
 
@@ -364,6 +366,14 @@ export default function ImovelDetalhes() {
             saving={dadosMutation.isPending}
             error={dadosMutation.error?.message ?? null}
             onSave={(patch) => dadosMutation.mutate(patch)}
+            mirror={{
+              logradouro: imovel.logradouro,
+              numero: imovel.numero,
+              cidade: imovel.cidade,
+              uf: imovel.uf,
+            }}
+            savingEnderecoManual={enderecoManualMutation.isPending}
+            onSaveEnderecoManual={(patch) => enderecoManualMutation.mutate(patch)}
           />
 
           <ImovelDocumentosCard

@@ -18,8 +18,10 @@ import ImovelContratoCard from "@/components/imovel/ImovelContratoCard";
 import {
   useAntigosProprietarios,
   useConfirmarDocumentoExtracao,
+  useConfirmarEnderecoRegistro,
   useConfirmarOnusCredor,
   useConfirmarTitulo,
+  useEnderecoRegistro,
   useImovelCertidoes,
   useOnusCredor,
   useTituloAquisitivo,
@@ -28,11 +30,13 @@ import { useImovelDocumentoMutations } from "@/hooks/useImovelDados";
 
 export function ImovelContratoContainer({ codigo }: { codigo: string }) {
   const tituloQuery = useTituloAquisitivo(codigo);
+  const enderecoRegistroQuery = useEnderecoRegistro(codigo);
   const onusQuery = useOnusCredor(codigo);
   const antigosQuery = useAntigosProprietarios(codigo);
   const certidoesQuery = useImovelCertidoes(codigo);
 
   const confirmarTitulo = useConfirmarTitulo(codigo);
+  const confirmarEnderecoRegistro = useConfirmarEnderecoRegistro(codigo);
   const confirmarOnus = useConfirmarOnusCredor(codigo);
   const confirmarExtracao = useConfirmarDocumentoExtracao(codigo);
   const documentoMutations = useImovelDocumentoMutations(codigo);
@@ -51,6 +55,14 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
         tituloIsError={tituloQuery.isError && !tituloQuery.data}
         savingTitulo={confirmarTitulo.isPending}
         onConfirmarTitulo={(texto) => confirmarTitulo.mutate(texto)}
+        enderecoRegistro={enderecoRegistroQuery.data}
+        enderecoRegistroShowSkeleton={enderecoRegistroQuery.isPending && !enderecoRegistroQuery.data}
+        enderecoRegistroIsRefreshing={
+          enderecoRegistroQuery.isFetching && !!enderecoRegistroQuery.data
+        }
+        enderecoRegistroIsError={enderecoRegistroQuery.isError && !enderecoRegistroQuery.data}
+        savingEnderecoRegistro={confirmarEnderecoRegistro.isPending}
+        onConfirmarEnderecoRegistro={(texto) => confirmarEnderecoRegistro.mutate(texto)}
         onus={onusQuery.data}
         onusShowSkeleton={onusQuery.isPending && !onusQuery.data}
         onusIsRefreshing={onusQuery.isFetching && !!onusQuery.data}

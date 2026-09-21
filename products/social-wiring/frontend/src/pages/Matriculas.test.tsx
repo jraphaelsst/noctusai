@@ -47,6 +47,7 @@ afterEach(async () => {
 const mockUseExtracoes = vi.fn();
 const mockUseExtracao = vi.fn();
 const mockUseUpload = vi.fn();
+const mockUseCriarManual = vi.fn();
 const mockUseDelete = vi.fn();
 const mockUseRetranscrever = vi.fn();
 const mockUseArquivoOriginal = vi.fn();
@@ -55,6 +56,7 @@ vi.mock("@/hooks/useMatriculas", () => ({
   useMatriculaExtracoes: mockUseExtracoes,
   useMatriculaExtracao: mockUseExtracao,
   useUploadMatricula: mockUseUpload,
+  useCriarExtracaoManual: mockUseCriarManual,
   useDeleteExtracao: mockUseDelete,
   useRetranscreverExtracao: mockUseRetranscrever,
   useArquivoOriginalExtracao: mockUseArquivoOriginal,
@@ -160,6 +162,7 @@ function makeQuery(overrides: Record<string, unknown> = {}) {
 }
 
 const mockUploadMutate = vi.fn();
+const mockCriarManualMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockRefetch = vi.fn();
 const mockDefinirFontesMutate = vi.fn();
@@ -172,6 +175,7 @@ beforeEach(() => {
   mockUseExtracoes.mockReturnValue(makeQuery({ data: [], refetch: mockRefetch }));
   mockUseExtracao.mockReturnValue(makeQuery({ data: null }));
   mockUseUpload.mockReturnValue({ mutate: mockUploadMutate, isPending: false });
+  mockUseCriarManual.mockReturnValue({ mutate: mockCriarManualMutate, isPending: false });
   mockUseDelete.mockReturnValue({ mutate: mockDeleteMutate, isPending: false });
   mockUseRetranscrever.mockReturnValue({ mutate: mockRetranscreverMutate, isPending: false });
   mockUseArquivoOriginal.mockReturnValue({ mutate: mockArquivoOriginalMutate, isPending: false });
@@ -309,6 +313,61 @@ describe("Matriculas — upload", () => {
 
     expect(mockUploadMutate).toHaveBeenCalledTimes(1);
     expect(mockUploadMutate.mock.calls[0][0].name).toBe("arrastado.pdf");
+  });
+});
+
+// ─── Transcrição manual (migration 147) ────────────────────────────────────
+
+describe("Matriculas — transcrição manual", () => {
+  it("is collapsed by default", async () => {
+    const { queryByTestId, getByTestId } = await renderPage();
+
+    expect(getByTestId("matricula-manual-toggle")).toBeTruthy();
+    expect(queryByTestId("matricula-manual-criar")).toBeNull();
+  });
+
+  it("creates a manual transcription with the typed código + texto and auto-selects it", async () => {
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matricula-manual-toggle"));
+    fireEvent.change(getByTestId("matricula-manual-codigo-input"), {
+      target: { value: "ONE9001" },
+    });
+    fireEvent.change(getByTestId("matricula-manual-texto-input"), {
+      target: { value: "MATRÍCULA Nº 1..." },
+    });
+    fireEvent.click(getByTestId("matricula-manual-criar"));
+
+    expect(mockCriarManualMutate).toHaveBeenCalledTimes(1);
+    const [input, opts] = mockCriarManualMutate.mock.calls[0];
+    expect(input).toEqual({ codigo: "ONE9001", texto: "MATRÍCULA Nº 1..." });
+    expect(typeof opts.onSuccess).toBe("function");
+  });
+
+  it("the button stays disabled until both código and texto are filled", async () => {
+    const { getByTestId, fireEvent } = await renderPage();
+    fireEvent.click(getByTestId("matricula-manual-toggle"));
+    const botao = () => getByTestId("matricula-manual-criar") as HTMLButtonElement;
+
+    expect(botao().disabled).toBe(true);
+
+    fireEvent.change(getByTestId("matricula-manual-codigo-input"), {
+      target: { value: "ONE9001" },
+    });
+    expect(botao().disabled).toBe(true);
+
+    fireEvent.change(getByTestId("matricula-manual-texto-input"), {
+      target: { value: "algum texto" },
+    });
+    expect(botao().disabled).toBe(false);
+  });
+
+  it("shows the pending state while the mutation is in flight", async () => {
+    mockUseCriarManual.mockReturnValue({ mutate: mockCriarManualMutate, isPending: true });
+    const { getByTestId, fireEvent } = await renderPage();
+    fireEvent.click(getByTestId("matricula-manual-toggle"));
+
+    expect((getByTestId("matricula-manual-criar") as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

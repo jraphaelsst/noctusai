@@ -111,7 +111,9 @@ from app.modules.matriculas.deps import (
 )
 from app.modules.matriculas.schemas import (
     DetalhesAtoBody,
+    EnderecoRegistroBody,
     ExtracaoDeDocumentoBody,
+    ExtracaoManualBody,
     FontesMatriculaBody,
     OnusCredorBody,
     SelecaoAtosBody,
@@ -122,6 +124,7 @@ from app.modules.matriculas.service import (
     check_required_credentials,
     processar_extracao,
     processar_extracao_de_documento,
+    registrar_transcricao_manual,
     renderizar_extracao_pdf,
     texto_html_da_extracao,
 )
@@ -373,6 +376,30 @@ async def extrair_de_documento(
         transcriber_factory,
     )
     return success_response(extracao)
+
+
+@router.post("/extracoes/manual")
+async def criar_extracao_manual_route(
+    body: ExtracaoManualBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Create a matrícula transcription straight from typed/pasted text —
+    no PDF, no vision AI (migration 147). Runs synchronously (no background
+    task): unlike a PDF, there is no I/O-bound step here — it is a plain
+    Python segmentation of the text the request already carries."""
+    user, _token, org_id = _auth_parts(auth)
+    extracao = estrutura_svc.criar_extracao_manual(
+        client,
+        UUID(org_id),
+        codigo=body.codigo,
+        texto=body.texto,
+        usuario_id=getattr(user, "id", None),
+    )
+    registrar_transcricao_manual(client, extracao["id"], org_id, body.texto)
+    return success_response(
+        estrutura_svc.exigir_extracao(client, UUID(org_id), UUID(extracao["id"]))
+    )
 
 
 @router.get("/extracoes")
@@ -758,6 +785,35 @@ async def confirmar_titulo_route(
     user, _token, org_id = _auth_parts(auth)
     return success_response(
         titulo_svc.confirmar_titulo(
+            client, UUID(org_id), codigo, texto=body.texto, usuario_id=getattr(user, "id", None)
+        )
+    )
+
+
+@router.get("/imoveis/{codigo}/endereco-registro")
+async def obter_endereco_registro_route(
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """The operator's confirmed short address (migration 139) — never a
+    recomputed suggestion."""
+    _user, _token, org_id = _auth_parts(auth)
+    return success_response(titulo_svc.obter_endereco_registro(client, UUID(org_id), codigo))
+
+
+@router.put("/imoveis/{codigo}/endereco-registro")
+async def confirmar_endereco_registro_route(
+    body: EnderecoRegistroBody,
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Confirm the short address the posse clauses print (`texto: null`
+    clears it)."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.confirmar_endereco_registro(
             client, UUID(org_id), codigo, texto=body.texto, usuario_id=getattr(user, "id", None)
         )
     )

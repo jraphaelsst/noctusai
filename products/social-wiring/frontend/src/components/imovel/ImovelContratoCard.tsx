@@ -43,6 +43,7 @@ import {
   ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS,
   motivoSemSugestaoTexto,
   type AntigosProprietariosResponse,
+  type EnderecoRegistroResponse,
   type OnusCredorResponse,
   type TituloAquisitivoResponse,
 } from "@/hooks/useImovelContrato";
@@ -56,6 +57,13 @@ export interface ImovelContratoCardProps {
   tituloIsError: boolean;
   savingTitulo: boolean;
   onConfirmarTitulo: (texto: string | null) => void;
+
+  enderecoRegistro: EnderecoRegistroResponse | undefined;
+  enderecoRegistroShowSkeleton: boolean;
+  enderecoRegistroIsRefreshing: boolean;
+  enderecoRegistroIsError: boolean;
+  savingEnderecoRegistro: boolean;
+  onConfirmarEnderecoRegistro: (texto: string | null) => void;
 
   onus: OnusCredorResponse | undefined;
   onusShowSkeleton: boolean;
@@ -139,6 +147,12 @@ export default function ImovelContratoCard({
   tituloIsError,
   savingTitulo,
   onConfirmarTitulo,
+  enderecoRegistro,
+  enderecoRegistroShowSkeleton,
+  enderecoRegistroIsRefreshing,
+  enderecoRegistroIsError,
+  savingEnderecoRegistro,
+  onConfirmarEnderecoRegistro,
   onus,
   onusShowSkeleton,
   onusIsRefreshing,
@@ -153,12 +167,18 @@ export default function ImovelContratoCard({
   // suggestion is one click away via "Usar sugestão", and pre-filling with it
   // would make an unreviewed reading look like a decision already taken.
   const [tituloDraft, setTituloDraft] = useState("");
+  const [enderecoRegistroDraft, setEnderecoRegistroDraft] = useState("");
   const [credorDraft, setCredorDraft] = useState("");
 
   const tituloConfirmado = titulo?.confirmado?.texto ?? "";
   useEffect(() => {
     setTituloDraft(tituloConfirmado);
   }, [tituloConfirmado]);
+
+  const enderecoRegistroConfirmado = enderecoRegistro?.confirmado?.texto ?? "";
+  useEffect(() => {
+    setEnderecoRegistroDraft(enderecoRegistroConfirmado);
+  }, [enderecoRegistroConfirmado]);
 
   const credorConfirmado = onus?.confirmado?.credor ?? "";
   useEffect(() => {
@@ -171,7 +191,7 @@ export default function ImovelContratoCard({
         <CardTitle className="flex items-center gap-2 text-base">
           <FileSignature className="h-4 w-4" />
           Para o contrato
-          {(tituloIsRefreshing || onusIsRefreshing) && (
+          {(tituloIsRefreshing || enderecoRegistroIsRefreshing || onusIsRefreshing) && (
             // Indicator only — never an early return: the content below is
             // still good to read while it refreshes.
             // KB § PATTERNS/frontend/lying-loading-state.md
@@ -261,6 +281,76 @@ export default function ImovelContratoCard({
                     disabled={savingTitulo}
                     onClick={() => onConfirmarTitulo(null)}
                     data-testid="imovel-titulo-limpar"
+                  >
+                    Limpar
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+
+        {/* ─── Endereço do registro (migration 139/147) ──────────────────
+            🔴 NO suggestion here, unlike título/ônus above — this value is
+            NEVER a recomputed guess (see `imovel_dados.endereco_registro_
+            texto`'s column comment). Only a confirm/clear textarea. */}
+        <section className="space-y-2 border-t pt-4" data-testid="imovel-endereco-registro">
+          <Label className="text-sm font-semibold">Endereço do registro</Label>
+          <p className="text-xs text-muted-foreground">
+            O endereço confirmado a partir da matrícula — nunca o endereço público
+            do CRM, que pode ser o da portaria em vez do imóvel.
+          </p>
+
+          {enderecoRegistroShowSkeleton ? (
+            <div data-testid="imovel-endereco-registro-skeleton">
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : enderecoRegistroIsError ? (
+            <p className="text-xs text-destructive" data-testid="imovel-endereco-registro-erro">
+              Não foi possível carregar o endereço do registro.
+            </p>
+          ) : (
+            <>
+              <Textarea
+                rows={2}
+                value={enderecoRegistroDraft}
+                placeholder="Ex.: Rua Fictícia, nº 100"
+                disabled={savingEnderecoRegistro}
+                onChange={(e) => setEnderecoRegistroDraft(e.target.value)}
+                data-testid="imovel-endereco-registro-texto"
+              />
+              {enderecoRegistro?.confirmado && (
+                <Confirmacao
+                  nome={enderecoRegistro.confirmado.confirmado_por?.nome}
+                  em={enderecoRegistro.confirmado.confirmado_em}
+                  testId="imovel-endereco-registro-confirmado"
+                />
+              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={savingEnderecoRegistro}
+                  onClick={() =>
+                    onConfirmarEnderecoRegistro(
+                      enderecoRegistroDraft.trim() === "" ? null : enderecoRegistroDraft.trim(),
+                    )
+                  }
+                  data-testid="imovel-endereco-registro-confirmar"
+                >
+                  {savingEnderecoRegistro && (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Confirmar
+                </Button>
+                {enderecoRegistro?.confirmado && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={savingEnderecoRegistro}
+                    onClick={() => onConfirmarEnderecoRegistro(null)}
+                    data-testid="imovel-endereco-registro-limpar"
                   >
                     Limpar
                   </Button>

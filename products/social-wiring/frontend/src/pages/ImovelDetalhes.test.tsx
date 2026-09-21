@@ -29,6 +29,10 @@ vi.mock("@/hooks/useCampanhas", () => ({
 
 const mockUseImovelDados = vi.fn();
 const mockUseImovelDadosMutation = vi.fn();
+const mockUseEnderecoManualMutation = vi.fn(() => ({
+  mutate: vi.fn(),
+  isPending: false,
+}));
 const mockUseImovelDocumentoMutations = vi.fn();
 const mockUseImovelDocumentos = vi.fn();
 vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
@@ -37,6 +41,7 @@ vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
     ...actual,
     useImovelDados: mockUseImovelDados,
     useImovelDadosMutation: mockUseImovelDadosMutation,
+    useEnderecoManualMutation: mockUseEnderecoManualMutation,
     useImovelDocumentoMutations: mockUseImovelDocumentoMutations,
     useImovelDocumentos: mockUseImovelDocumentos,
   };
@@ -63,10 +68,12 @@ vi.mock("@/hooks/useImovelContrato", async (importOriginal) => {
   return {
     ...actual,
     useTituloAquisitivo: query,
+    useEnderecoRegistro: query,
     useOnusCredor: query,
     useAntigosProprietarios: query,
     useImovelCertidoes: query,
     useConfirmarTitulo: mutation,
+    useConfirmarEnderecoRegistro: mutation,
     useConfirmarOnusCredor: mutation,
     useConfirmarDocumentoExtracao: mutation,
   };

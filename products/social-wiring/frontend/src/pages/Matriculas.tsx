@@ -41,6 +41,7 @@ import {
   useMatriculaExtracoes,
   useMatriculaExtracao,
   useUploadMatricula,
+  useCriarExtracaoManual,
   useDeleteExtracao,
   useRetranscreverExtracao,
   useArquivoOriginalExtracao,
@@ -58,6 +59,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Collapsible,
@@ -103,6 +105,7 @@ import {
   Eye,
   FileUp,
   ChevronDown,
+  PenLine,
   Sparkles,
   AlertTriangle,
   ExternalLink,
@@ -134,6 +137,12 @@ export default function Matriculas() {
   const [baixandoPdf, setBaixandoPdf] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [codigoUpload, setCodigoUpload] = useState('');
+  // Migration 147 — transcrição manual (typed/pasted text, no PDF, no vision
+  // AI). Own state, own mutation, own toggle: additive, never touching the
+  // upload flow above.
+  const [manualAberto, setManualAberto] = useState(false);
+  const [codigoManual, setCodigoManual] = useState('');
+  const [textoManual, setTextoManual] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const extracoesQuery = useMatriculaExtracoes();
@@ -145,6 +154,7 @@ export default function Matriculas() {
   const showExtracoesError = extracoesQuery.isError && !extracoesQuery.data;
   const { data: selected } = useMatriculaExtracao(selectedId || undefined);
   const uploadMutation = useUploadMatricula();
+  const criarManualMutation = useCriarExtracaoManual();
   const deleteMutation = useDeleteExtracao();
   const retranscreverMutation = useRetranscreverExtracao();
   const arquivoOriginalMutation = useArquivoOriginalExtracao();
@@ -196,6 +206,23 @@ export default function Matriculas() {
   const handleDragLeave = useCallback(() => {
     setIsDragOver(false);
   }, []);
+
+  const handleCriarManual = useCallback(() => {
+    const codigo = codigoManual.trim();
+    const texto = textoManual.trim();
+    if (!codigo || !texto) return;
+    criarManualMutation.mutate(
+      { codigo, texto },
+      {
+        onSuccess: (data) => {
+          setSelectedId(data.id);
+          setCodigoManual('');
+          setTextoManual('');
+          setManualAberto(false);
+        },
+      },
+    );
+  }, [codigoManual, textoManual, criarManualMutation]);
 
   // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6):
   // the seed's `copyRichText` carries bold/underline into the clipboard via
@@ -551,6 +578,77 @@ export default function Matriculas() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Nova transcrição manual (migration 147) — a matrícula typed/pasted
+          straight in, no PDF, no vision AI. Feeds the SAME segmenter an
+          uploaded PDF's text goes through, so atos/título/ônus selection
+          work identically — the only way today to test the contract
+          generator end to end with no AI transcription in the loop. */}
+      <Collapsible open={manualAberto} onOpenChange={setManualAberto}>
+        <Card>
+          <CollapsibleTrigger asChild>
+            <CardHeader
+              className="cursor-pointer select-none"
+              data-testid="matricula-manual-toggle"
+            >
+              <CardTitle className="flex items-center gap-2 text-base">
+                <PenLine className="h-4 w-4" />
+                Nova transcrição manual
+                <ChevronDown
+                  className={`ml-auto h-4 w-4 transition-transform ${manualAberto ? 'rotate-180' : ''}`}
+                />
+              </CardTitle>
+            </CardHeader>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Cole ou digite o texto da matrícula — sem PDF, sem IA. Útil para
+                testar a geração do contrato com dados 100% manuais.
+              </p>
+              <div className="space-y-1">
+                <label htmlFor="matricula-manual-codigo" className="text-xs font-medium text-muted-foreground">
+                  Imóvel
+                </label>
+                <Input
+                  id="matricula-manual-codigo"
+                  value={codigoManual}
+                  onChange={(e) => setCodigoManual(e.target.value)}
+                  placeholder="Ex.: ONE9001"
+                  disabled={criarManualMutation.isPending}
+                  data-testid="matricula-manual-codigo-input"
+                />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="matricula-manual-texto" className="text-xs font-medium text-muted-foreground">
+                  Texto da matrícula
+                </label>
+                <Textarea
+                  id="matricula-manual-texto"
+                  rows={10}
+                  value={textoManual}
+                  onChange={(e) => setTextoManual(e.target.value)}
+                  placeholder="Cole aqui o texto completo da matrícula..."
+                  disabled={criarManualMutation.isPending}
+                  data-testid="matricula-manual-texto-input"
+                />
+              </div>
+              <Button
+                onClick={handleCriarManual}
+                disabled={
+                  criarManualMutation.isPending || !codigoManual.trim() || !textoManual.trim()
+                }
+                data-testid="matricula-manual-criar"
+              >
+                {criarManualMutation.isPending && (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                )}
+                Criar transcrição manual
+              </Button>
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
 
       {/* Atos + Fontes — only once the transcription is usable for them. */}
       {isComplete && selected && <MatriculaAtosEFontes extracaoId={selected.id} />}

@@ -97,7 +97,38 @@ export interface ImovelDados {
   titulo_aquisitivo_fonte: ImovelFonteTituloAquisitivo | null;
   onus_fonte: ImovelFonteOnus | null;
 
+  // ─── Manual address override (migration 147) ───────────────────────────
+  // The 4 fields `contrato_gerador.derivacao` gates on — this product has
+  // no write-back to the Vista mirror those normally come from. `null` on
+  // every field means "use the mirror". Written ONLY by `PUT .../endereco-
+  // manual` (`useEnderecoManualMutation`), never by the PATCH route above.
+  endereco_manual_logradouro: string | null;
+  endereco_manual_numero: string | null;
+  endereco_manual_cidade: string | null;
+  endereco_manual_uf: string | null;
+  endereco_manual_confirmado_por: Ator | null;
+  endereco_manual_confirmado_em: string | null;
+
   updated_at: string | null;
+}
+
+/** `PUT .../endereco-manual` body — absence means "leave alone", `null`
+ *  means "clear the override and fall back to the mirror". */
+export interface EnderecoManualPatch {
+  logradouro?: string | null;
+  numero?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+}
+
+/** One row of `GET .../endereco-manual/historico` — an append-only log of
+ *  every field-level override (migration 147). */
+export interface EnderecoManualHistoricoItem {
+  campo: "logradouro" | "numero" | "cidade" | "uf";
+  valor_anterior: string | null;
+  valor_novo: string | null;
+  alterado_por: Ator | null;
+  alterado_em: string;
 }
 
 /**
@@ -187,6 +218,8 @@ const FAMILY_KEY = (codigo: string) => ["sw", "imovel-dados", codigo] as const;
 const DADOS_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "dados"] as const;
 const DOCUMENTOS_KEY = (codigo: string) =>
   [...FAMILY_KEY(codigo), "documentos"] as const;
+const ENDERECO_MANUAL_HISTORICO_KEY = (codigo: string) =>
+  [...FAMILY_KEY(codigo), "endereco-manual-historico"] as const;
 
 const base = (codigo: string) => `/api/imoveis/${encodeURIComponent(codigo)}`;
 
@@ -250,6 +283,32 @@ export function useImovelDadosMutation(codigo: string) {
       // Seed the cache from the response rather than only invalidating —
       // the PATCH already returns the full, freshly-read row.
       qc.setQueryData(DADOS_KEY(codigo), data);
+    },
+  });
+}
+
+/** `GET .../endereco-manual/historico` — the override audit trail. */
+export function useEnderecoManualHistorico(codigo: string | null) {
+  return useQuery({
+    queryKey: ENDERECO_MANUAL_HISTORICO_KEY(codigo ?? "__none__"),
+    queryFn: async () => {
+      const res = await api.get<ItemsEnvelope<EnderecoManualHistoricoItem>>(
+        `${base(codigo as string)}/endereco-manual/historico`,
+      );
+      return res?.items ?? [];
+    },
+    enabled: !!codigo,
+  });
+}
+
+export function useEnderecoManualMutation(codigo: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: EnderecoManualPatch) =>
+      api.put<ImovelDados>(`${base(codigo)}/endereco-manual`, patch),
+    onSuccess: (data) => {
+      qc.setQueryData(DADOS_KEY(codigo), data);
+      qc.invalidateQueries({ queryKey: ENDERECO_MANUAL_HISTORICO_KEY(codigo) });
     },
   });
 }

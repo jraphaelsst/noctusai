@@ -44,6 +44,22 @@ class ImovelDadosPatchBody(StrictHttpModel):
     captador_user_id: Optional[UUID] = None
 
 
+class EnderecoManualPatchBody(StrictHttpModel):
+    """Manual override for the 4 address fields `contrato_gerador.derivacao`
+    reads (migration 147) — this product has no write-back to the Vista
+    mirror those fields normally come from.
+
+    Same `model_fields_set` contract as `ImovelDadosPatchBody`: absence means
+    "leave alone", `None` means "clear the override and fall back to the
+    mirror".
+    """
+
+    logradouro: Optional[str] = Field(default=None, max_length=200)
+    numero: Optional[str] = Field(default=None, max_length=20)
+    cidade: Optional[str] = Field(default=None, max_length=120)
+    uf: Optional[str] = Field(default=None, max_length=2)
+
+
 class ImovelDocumentoExtracaoPatchBody(StrictHttpModel):
     """The operator's confirmation/edit of one document's structured
     extraction (migration 118) — `PATCH .../documentos/{id}/extracao`.
@@ -66,4 +82,8 @@ class ImovelDocumentoExtracaoPatchBody(StrictHttpModel):
     inscricao_imobiliaria: Optional[str] = Field(default=None, max_length=64)
 
 
-__all__ = ["ImovelDadosPatchBody", "ImovelDocumentoExtracaoPatchBody"]
+__all__ = [
+    "EnderecoManualPatchBody",
+    "ImovelDadosPatchBody",
+    "ImovelDocumentoExtracaoPatchBody",
+]

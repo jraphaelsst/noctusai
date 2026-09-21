@@ -74,6 +74,7 @@ import {
   readableError,
   useArquivoOriginalExtracao,
   useCriarExtracaoDeDocumento,
+  useCriarExtracaoManual,
   useDeleteExtracao,
   useMatriculaExtracoes,
   useRetranscreverExtracao,
@@ -151,6 +152,22 @@ describe("useCriarExtracaoDeDocumento", () => {
       codigo: "ONE9001",
       imovel_documento_id: "doc-1",
     });
+  });
+});
+
+describe("useCriarExtracaoManual", () => {
+  it("POSTs codigo + texto to the manual route", async () => {
+    mockPost.mockResolvedValue({ data: { id: "e-manual", status: "concluida", origem: "manual" } });
+    const hook = useCriarExtracaoManual() as any;
+    hook.mutate({ codigo: "ONE9001", texto: "MATRÍCULA Nº 1..." });
+    await vi.waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost).toHaveBeenCalledWith("/api/matriculas/extracoes/manual", {
+      codigo: "ONE9001",
+      texto: "MATRÍCULA Nº 1...",
+    });
+    await vi.waitFor(() =>
+      expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["matricula-extracoes"] }),
+    );
   });
 });
 

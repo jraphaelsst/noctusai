@@ -622,6 +622,49 @@ def criar_extracao_de_documento(
     return {**row, "storage_path": documento["storage_path"]}
 
 
+def criar_extracao_manual(
+    client: Any,
+    org_id: UUID,
+    *,
+    codigo: str,
+    texto: str,
+    usuario_id: Optional[Any],
+) -> dict:
+    """Create a CONCLUDED extraction straight from typed/pasted matrícula
+    text (migration 147) — the manual path for testing the contract
+    generator without an AI transcription. The row is `origem='manual'` and
+    otherwise indistinguishable to every downstream reader from an uploaded
+    one: `service.registrar_transcricao_manual` (called by the router right
+    after this) runs the SAME `persistir_atos` segmenter an AI
+    transcription's text goes through, so acts/título/ônus selection work
+    identically.
+
+    No collision check against an existing extraction for this código —
+    same posture the plain PDF-upload route (`POST /extrair` with a
+    `codigo`) already takes; only the imóvel-linked re-transcription
+    (`criar_extracao_de_documento`) refuses a duplicate, because THAT one is
+    scoped to one specific stored document.
+    """
+    codigo = codigo.strip().upper()
+    texto = (texto or "").strip()
+    if not texto:
+        raise ValidationError_("O texto da matrícula é obrigatório.", field="texto")
+    dados_service.ensure_imovel(client, org_id, codigo)
+
+    row = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        "user_id": str(usuario_id) if usuario_id else None,
+        "nome_arquivo": f"Transcrição manual — {codigo}",
+        "status": "pendente",
+        "origem": "manual",
+        "codigo": codigo,
+        "created_at": now_iso(),
+    }
+    _t(client, EXTRACOES_TABLE).insert(row).execute()
+    return row
+
+
 def criar_retranscricao(
     client: Any, org_id: UUID, extracao_id: str, *, usuario_id: Optional[Any]
 ) -> dict:

@@ -107,10 +107,31 @@ class OnusCredorBody(StrictHttpModel):
     credor: Optional[str] = Field(..., max_length=300)
 
 
+class EnderecoRegistroBody(StrictHttpModel):
+    """The short address ("situado à ...") an operator confirms after
+    reading the matrícula (migration 139). Required key; `null` clears.
+    NEVER a recomputed suggestion — see `imovel_dados.endereco_registro_
+    texto`'s column comment."""
+
+    texto: Optional[str] = Field(..., max_length=2000)
+
+
+class ExtracaoManualBody(StrictHttpModel):
+    """A matrícula's text, typed or pasted by a human — no PDF, no vision AI
+    (migration 147). Feeds the exact same segmenter an AI transcription's
+    text goes through (`estrutura_service.persistir_atos`), so acts/título/
+    ônus selection work identically. `codigo` must name a known imóvel."""
+
+    codigo: str = Field(min_length=1, max_length=64)
+    texto: str = Field(min_length=1)
+
+
 __all__ = [
     "AtoReferidoBody",
     "DetalhesAtoBody",
+    "EnderecoRegistroBody",
     "ExtracaoDeDocumentoBody",
+    "ExtracaoManualBody",
     "FontesMatriculaBody",
     "InstrumentoBody",
     "OnusCredorBody",

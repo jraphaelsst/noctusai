@@ -309,6 +309,51 @@ async def processar_extracao(
         _registrar_erro(db, extracao_id, org_id, f"Erro inesperado: {e}", e)
 
 
+def registrar_transcricao_manual(db, extracao_id: str, org_id: str, texto: str) -> None:
+    """Land a manually-typed/pasted matrícula text (migration 147) through
+    the SAME finalisation `processar_extracao` runs once a transcription's
+    text exists: the retention stamp, the raw-markup check, and act
+    segmentation — so an `origem='manual'` row is indistinguishable to every
+    downstream reader (`estrutura_service`, `titulo_service`,
+    `contrato_gerador`) from an AI-transcribed one.
+
+    🔴 `ruido` (migration 136) is deliberately `[]`, not recomputed. Page
+    furniture (running headers/footers) is a property of a MULTI-PAGE scan
+    (`detectar_ruido` needs `TranscribedPage`s to find a block that repeats
+    at more than one page boundary) — a human pasting the whole matrícula's
+    text has no page structure at all, so there is nothing here for that
+    detector to find. Runs on the request path, not detached, so unlike
+    `processar_extracao` an exception here IS allowed to propagate — the
+    caller (the router) is still holding an HTTP response to answer.
+    """
+    dias = documento_retencao.dias_para(db, org_id, "imovel", "texto_extraido")
+    retencao_ate = (
+        (datetime.now(timezone.utc).date() + timedelta(days=dias)).isoformat()
+        if dias
+        else None
+    )
+    possui_marcacao_bruta = has_raw_markup(texto)
+    _marcar(
+        db, extracao_id, org_id,
+        status="concluida",
+        texto_extraido=texto,
+        formatacao=ranges_to_json(()),
+        num_paginas=None,
+        retencao_ate=retencao_ate,
+        possui_marcacao_bruta=possui_marcacao_bruta,
+        ruido=[],
+    )
+    try:
+        escritos = estrutura_service.persistir_atos(db, extracao_id, org_id, texto)
+        logger.info("Matrícula %s (manual): %d acts persisted", extracao_id, escritos)
+    except Exception as falha_atos:  # noqa: BLE001 - text landed; acts heal on read
+        logger.error(
+            "Matrícula %s (manual): text saved but its acts were not persisted (%s) — "
+            "they are re-segmented on the first GET .../atos",
+            extracao_id, falha_atos, exc_info=True,
+        )
+
+
 def _registrar_erro(db, extracao_id: str, org_id: str, mensagem: str, causa) -> None:
     """Write `erro` onto the row — the last thing a detached task can do.
 
