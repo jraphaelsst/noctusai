@@ -63,7 +63,7 @@ export function rotuloRegimeBens(valor: string | null | undefined): string {
 }
 
 /**
- * Display form of a `nacionalidade` value (migration 145) — a suggested
+ * Display form of a `nacionalidade` value (migration 146) — a suggested
  * value arrives lower-case (the extractor's canonical gentílico, e.g.
  * "brasileiro"); this only capitalises it for display, same fallback shape
  * as `rotuloEstadoCivil`/`rotuloRegimeBens`. Free text a human typed

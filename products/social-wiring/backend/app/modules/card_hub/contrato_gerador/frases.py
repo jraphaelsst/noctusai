@@ -88,7 +88,7 @@ def pct_simples(valor: Decimal) -> str:
 # ─── qualificação das partes (spec §2.1) ──────────────────────────────────
 
 #: Legacy free-text spellings a human typed BEFORE the extractor could read
-#: `nacionalidade` (migration 145) — "brasileiro(a)"/"brasil" have no
+#: `nacionalidade` (migration 146) — "brasileiro(a)"/"brasil" have no
 #: grammatical-gender pair the seed's closed vocabulary recognises
 #: (`nacionalidade.canonico` intentionally does not match parenthesised or
 #: bare-demonym forms; see that function's own test). Checked FIRST, ahead
@@ -121,7 +121,7 @@ def _g(p: Pessoa, m: str, f: str) -> str:
 def nacionalidade_flex(p: Pessoa) -> str:
     """The party's nationality, gendered to agree with them (spec §2.0).
 
-    Migration 145 made `nacionalidade` extractable — a new-model CNH prints
+    Migration 146 made `nacionalidade` extractable — a new-model CNH prints
     "BRASILEIRO" for a woman, and a certidão prints each spouse's own
     grammatical gender. Neither is safe to print verbatim: contract 08 (a
     human-typed reference) renders "brasileira" for a woman and

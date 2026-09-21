@@ -225,7 +225,7 @@ describe("sugestões de estado civil / regime de bens (migration 110)", () => {
     expect(queryByTestId("documento-checklist-regime_bens-sugestao-valor")).toBeNull();
   });
 
-  it("oferece a sugestão de nacionalidade com o valor capitalizado (migration 145)", async () => {
+  it("oferece a sugestão de nacionalidade com o valor capitalizado (migration 146)", async () => {
     const { getByTestId } = await renderSection(
       baseProps({
         items: [],

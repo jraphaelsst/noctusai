@@ -1299,7 +1299,7 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         payload["data_casamento_documento_id"] = None
         payload["data_casamento_em"] = _now() if payload["data_casamento"] else None
 
-    # 🔴 Identical treatment for `nacionalidade` (migration 145, resolves
+    # 🔴 Identical treatment for `nacionalidade` (migration 146, resolves
     # `NOC-REMEDIATE[nacionalidade-identity-parser]`) — the same "a typed
     # value must outrank every later extraction" rule every field above
     # gives, on a field that has been PATCH-able since 097 but only became

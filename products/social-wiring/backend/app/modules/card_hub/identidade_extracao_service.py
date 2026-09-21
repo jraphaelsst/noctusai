@@ -296,7 +296,7 @@ CAMPOS: tuple[CampoExtraido, ...] = (
         coluna_rotulo="extracao_data_casamento_rotulo",
         sobrescreve=False,
     ),
-    # Resolves NOC-REMEDIATE[nacionalidade-identity-parser] (migration 145).
+    # Resolves NOC-REMEDIATE[nacionalidade-identity-parser] (migration 146).
     # `sobrescreve=False`, on the same terms `genero`/`estado_civil` arrived
     # on: a REGISTRATION field with no second column holding an operator's
     # own spelling, so a typed value outranks a later document reading —
