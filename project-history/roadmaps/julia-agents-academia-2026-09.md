@@ -421,6 +421,12 @@ The decision log keeps every step.
   - **Fake-vs-real drift, twice:** the fake store accepted NULLs Postgres refuses, and duplicated timeline events because it compared a date string with a `date`. Both are fixed (`d02c9b7d`, `04b6a15a`), with regression tests.
   - **How it ran:** an agent ran `run_import` inside the prod container for org `6dd73140…` as the platform owner. `POST /api/import` only accepts a signed-in admin, and the user asked the agent to execute. The container's rootfs is read-only, so the bundle went in over stdin.
 
+- **2026-09-21 (public landing page)**:
+  - **User decision:** `academia.noctusai.com` shows a custom public landing page the user is designing in a separate codebase. It is to be ported into noc exactly as designed.
+  - **Seam check:** no exception is needed. The seed frontend's `createProductApp({ Landing })` slot (`seed/framework/frontend/src/app.tsx`) renders the product's own `pages/Landing.tsx` at `/` for signed-out visitors; extra public pages go through `publicRoutes`. Five products already ship customised landings (therapy-platform, personal-finance, core, orbity, erp-imobiliario). `check_canonical_organ_consumption` and `check_product_container_shape` do not flag a custom Landing.
+  - **Constraints for the port:** assets go in `frontend/public/`; styles must not leak into the signed-in app; the `/consent*` routes stay seed-mounted; outbound links use `env.CORE_URL` (`KB § PATTERNS/frontend/core-url-routing.md`); no client/company facts beyond what the public page itself shows (the repo is public). Known seam limit: the Landing renders after auth initialises (brief `PageSkeleton`), and there is no SSR.
+  - **Exception path, only if the design cannot live in the seam** (e.g. a non-React build): serve it as static files from `frontend/public/`, recorded as an accept-with-rationale entry scoped to this one product.
+
 ## Retrospective (filled at first trigger fire)
 
 *To be filled when T1–T6 fire.*
