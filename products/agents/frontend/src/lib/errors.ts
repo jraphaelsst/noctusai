@@ -36,10 +36,14 @@
  * `CODE_FALLBACKS` carries that per-code fallback, checked after the
  * backend's `detail` and before the status table.
  *
- * The seed `ApiError` (`seed/lib/frontend/src/api.ts`) does not expose
- * response headers, so `Retry-After` is not surfaced here — the countdown
- * called for in §E.11 is out of scope for this slice (see
- * `scoped-improvement:` in the delivery note).
+ * The `Retry-After` countdown called for in §E.11 does NOT live here — the
+ * seed `ApiError` (`seed/lib/frontend/src/api.ts`) now parses it onto
+ * `ApiError.retryAfterSeconds`, and `useJuliaSendAdapter`
+ * (`hooks/useJuliaChat.ts`) reads that field to drive the composer's
+ * countdown via `ChatSendResult.retryAfterSeconds`
+ * (`@noctusai/lib/design-system`'s `<ChatWindow>`). This module only ever
+ * resolves the STATIC PT-BR text; the live "tente novamente em Ns" is a
+ * concern of the send adapter + organ, not the message mapper.
  */
 import { ApiError } from "@noctusai/lib";
 

@@ -160,6 +160,19 @@ export interface ChatReadStateResult {
 export interface ChatSendResult {
   mutateAsync: (input: { text: string }) => Promise<unknown>;
   isPending: boolean;
+  /**
+   * Seconds remaining before the composer may send again, when the adapter
+   * is throttling behind a server-side cooldown (e.g. a 429 carrying
+   * `Retry-After` — `ApiError.retryAfterSeconds` from `@noctusai/lib`'s
+   * `api.ts`). OPTIONAL and REACTIVE: an adapter that owns a countdown ticks
+   * this value down on its own re-render cadence (its own `useState` +
+   * timer); ChatWindow only reads it each render — it disables the composer
+   * while it is a positive number and appends a live "tente novamente em Ns"
+   * suffix to the send-error banner. Omit (or always `null`) ⇒ the composer
+   * disables/re-enables exactly as before (`isPending` only) — every
+   * pre-existing adapter (WhatsApp, Instagram DMs) is unaffected.
+   */
+  retryAfterSeconds?: number | null;
 }
 
 export interface ChatAutoReplyResult {
@@ -593,6 +606,11 @@ function ThreadPanel({
   const readState = adapter.useReadState?.(scopeId);
   const pagination = adapter.useLoadMore?.(scopeId, thread.id);
   const approvalAction = adapter.useApprovalAction?.(scopeId);
+  // Reactive cooldown, owned entirely by the adapter (see `ChatSendResult`)
+  // — ChatWindow never runs its own timer, it just reads the number the
+  // adapter ticks down on its own state and re-renders on.
+  const retryAfterSeconds = sendMutation.retryAfterSeconds ?? null;
+  const cooldownActive = retryAfterSeconds !== null && retryAfterSeconds > 0;
 
   // Mark read exactly once per opened thread. ChatWindow mounts ThreadPanel
   // with key={thread.id}, so this effect runs on open and never again for the
@@ -743,6 +761,11 @@ function ThreadPanel({
           <div className="flex items-center gap-1 px-3 pt-1.5 text-xs text-destructive" data-testid="chat-send-error">
             <AlertCircle className="h-3 w-3" />
             {sendError}
+            {cooldownActive && (
+              <span data-testid="chat-send-retry-countdown">
+                {" "}Tente novamente em {retryAfterSeconds}s.
+              </span>
+            )}
           </div>
         )}
         <div className="flex items-center gap-2 p-2">
@@ -751,13 +774,13 @@ function ThreadPanel({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Digite uma mensagem..."
-            disabled={sendMutation.isPending}
+            disabled={sendMutation.isPending || cooldownActive}
             className="h-8 flex-1 text-sm"
             aria-label="Mensagem"
           />
           <Button
             onClick={handleSend}
-            disabled={sendMutation.isPending || !text.trim()}
+            disabled={sendMutation.isPending || cooldownActive || !text.trim()}
             variant="primary"
             size="icon"
             className="h-8 w-8"

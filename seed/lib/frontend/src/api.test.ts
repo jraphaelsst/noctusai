@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { createApiClient, ApiError, type CreateApiClientOptions } from './api';
+import { createApiClient, parseRetryAfterSeconds, ApiError, type CreateApiClientOptions } from './api';
 
 function jsonResponse(status: number, body: unknown = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -193,6 +193,74 @@ describe('ApiError — structured status', () => {
     const err = await client.get('/api/x').catch((e) => e);
     expect(err.body).toBeUndefined();
     expect(err.code).toBeNull();
+  });
+});
+
+describe('parseRetryAfterSeconds — RFC 9110 §10.2.3 (delta-seconds or HTTP-date)', () => {
+  it('parses a delta-seconds value', () => {
+    expect(parseRetryAfterSeconds('10')).toBe(10);
+    expect(parseRetryAfterSeconds('0')).toBe(0);
+  });
+
+  it('parses an HTTP-date value in the future as a whole-second delta', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.400Z'));
+    // "now" sits 400ms into the second — the 30s-ahead date is therefore
+    // 29.6s away, and the delta rounds UP (ceil) so the client never tells
+    // the user it is safe to retry a fraction of a second early.
+    expect(parseRetryAfterSeconds('Thu, 01 Jan 2026 00:00:30 GMT')).toBe(30);
+    vi.useRealTimers();
+  });
+
+  it('resolves an HTTP-date already in the past to 0 — honest, not null', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:01:00Z'));
+    expect(parseRetryAfterSeconds('Thu, 01 Jan 2026 00:00:00 GMT')).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('returns null for absent/empty/unparseable values — never a made-up number', () => {
+    expect(parseRetryAfterSeconds(null)).toBeNull();
+    expect(parseRetryAfterSeconds(undefined)).toBeNull();
+    expect(parseRetryAfterSeconds('')).toBeNull();
+    expect(parseRetryAfterSeconds('nao-e-um-numero-nem-uma-data')).toBeNull();
+  });
+});
+
+describe('ApiError.retryAfterSeconds — carried from the response Retry-After header', () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('parses a delta-seconds Retry-After header onto the thrown ApiError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'ocupado', code: 'julia_capacidade' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '10' },
+      }),
+    );
+    const { client } = make();
+    const err = await client.post('/api/x', {}).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.retryAfterSeconds).toBe(10);
+  });
+
+  it('is null when the response carries no Retry-After header', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(429, { detail: 'muitas mensagens' }));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err.retryAfterSeconds).toBeNull();
+  });
+
+  it('is null for a transport-level failure (no HTTP response, no headers to read)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'));
+    const { client } = make();
+    const err = await client.get('/api/x').catch((e) => e);
+    expect(err.retryAfterSeconds).toBeNull();
+  });
+
+  it('defaults to null on a bare 2/3-arg construction — every pre-existing call site unaffected', () => {
+    const err = new ApiError(429, 'ocupado', { code: 'julia_capacidade' });
+    expect(err.retryAfterSeconds).toBeNull();
   });
 });
 

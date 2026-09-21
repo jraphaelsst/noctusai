@@ -18,8 +18,9 @@
  * ChatWindow only calls the fake adapter object passed in per-test.
  */
 /// <reference types="@testing-library/jest-dom" />
+import { useState } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 
 import { ChatWindow } from "./ChatWindow";
 import type { ChatBlock, ChatWindowAdapter, ChatMessage, ChatThread } from "./ChatWindow";
@@ -237,6 +238,59 @@ describe("ChatWindow — composer", () => {
     fireEvent.click(screen.getByLabelText("Enviar mensagem"));
     await waitFor(() => expect(screen.getByTestId("chat-send-error")).toBeTruthy());
     expect(screen.getByText("Requer Revisão do app Meta.")).toBeTruthy();
+  });
+
+  // Contract: `ChatSendResult.retryAfterSeconds` (optional, REACTIVE — the
+  // adapter owns the countdown state/timer; ChatWindow only reads it each
+  // render). Ticking itself is tested where it lives, in the Julia adapter
+  // (`useJuliaChat.test.ts`, fake timers) — here it's the seed contract:
+  // disable the composer while positive, show a live suffix, re-enable at 0.
+  it("disables the composer and shows a live countdown while the adapter reports retryAfterSeconds > 0, and re-enables at 0", async () => {
+    const setCooldownRef: { current: (n: number | null) => void } = { current: () => {} };
+    function useSend() {
+      const [retryAfterSeconds, setRetryAfterSeconds] = useState<number | null>(null);
+      setCooldownRef.current = setRetryAfterSeconds;
+      return {
+        mutateAsync: async () => {
+          setRetryAfterSeconds(5);
+          throw new Error("A Julia está atendendo o número máximo de conversas agora.");
+        },
+        isPending: false,
+        retryAfterSeconds,
+      };
+    }
+    render(<ChatWindow scopeId="scope-1" adapter={makeAdapter({ useSend })} />);
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+    fireEvent.change(screen.getByLabelText("Mensagem"), { target: { value: "Oi" } });
+    fireEvent.click(screen.getByLabelText("Enviar mensagem"));
+
+    await waitFor(() => expect(screen.getByTestId("chat-send-error")).toBeTruthy());
+    expect(screen.getByTestId("chat-send-retry-countdown").textContent).toContain("5s");
+    expect((screen.getByLabelText("Enviar mensagem") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Mensagem") as HTMLInputElement).disabled).toBe(true);
+
+    act(() => setCooldownRef.current(0));
+
+    expect(screen.queryByTestId("chat-send-retry-countdown")).toBeNull();
+    expect((screen.getByLabelText("Mensagem") as HTMLInputElement).disabled).toBe(false);
+    expect((screen.getByLabelText("Enviar mensagem") as HTMLButtonElement).disabled).toBe(true); // empty input
+  });
+
+  it("an adapter that never sets retryAfterSeconds behaves exactly as before (WhatsApp/IG — no countdown seam)", async () => {
+    const mutateAsync = vi.fn().mockRejectedValue(new Error("Falha ao enviar."));
+    render(
+      <ChatWindow
+        scopeId="scope-1"
+        adapter={makeAdapter({ useSend: () => ({ mutateAsync, isPending: false }) })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+    fireEvent.change(screen.getByLabelText("Mensagem"), { target: { value: "Oi" } });
+    fireEvent.click(screen.getByLabelText("Enviar mensagem"));
+
+    await waitFor(() => expect(screen.getByTestId("chat-send-error")).toBeTruthy());
+    expect(screen.queryByTestId("chat-send-retry-countdown")).toBeNull();
+    expect((screen.getByLabelText("Mensagem") as HTMLInputElement).disabled).toBe(false);
   });
 });
 

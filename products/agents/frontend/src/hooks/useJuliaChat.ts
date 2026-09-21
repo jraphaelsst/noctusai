@@ -34,10 +34,10 @@
  *     conversation's messages query once, reconciling anything missed
  *     during a reconnect.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
+import { ApiError, errorMessage } from "@/lib/errors";
 import { getAuthToken } from "@noctusai/seed/infra";
 import { useRealtimeStream, type RealtimeMessage } from "@noctusai/lib";
 import type {
@@ -303,6 +303,27 @@ export function useJuliaMessagesAdapter(conversationId: string | null) {
 
 export function useJuliaSendAdapter(conversationId: string | null) {
   const qc = useQueryClient();
+  // Capacity countdown (contract §E.11 "Capacity") — seconds remaining
+  // before the composer may send again, or `null` when there is no active
+  // cooldown. Owned entirely here: the seed `<ChatWindow>` organ's
+  // `ChatSendResult.retryAfterSeconds` contract is purely REACTIVE (it reads
+  // this value every render and never runs its own timer), so ticking it
+  // down lives in this adapter, not the shared organ.
+  const [retryAfterSeconds, setRetryAfterSeconds] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (retryAfterSeconds === null) return;
+    if (retryAfterSeconds <= 0) {
+      // Re-enables the composer — `ChatWindow` disables Send/Input only
+      // while `retryAfterSeconds` is a positive number.
+      setRetryAfterSeconds(null);
+      return;
+    }
+    const id = setTimeout(() => {
+      setRetryAfterSeconds((prev) => (prev === null ? null : prev - 1));
+    }, 1000);
+    return () => clearTimeout(id);
+  }, [retryAfterSeconds]);
 
   const mutation = useMutation<
     { mensagem: RawMessage; status: string },
@@ -327,12 +348,26 @@ export function useJuliaSendAdapter(conversationId: string | null) {
       try {
         return await mutation.mutateAsync({ text });
       } catch (err) {
+        // A capacity 429 carries `Retry-After`, parsed by the seed
+        // `ApiClient` onto `ApiError.retryAfterSeconds` — start the
+        // countdown only off a genuinely positive, actually-parsed value.
+        // No header / an unparsed header / a non-429 rejection all leave
+        // it untouched — never a made-up countdown.
+        if (
+          err instanceof ApiError &&
+          err.status === 429 &&
+          typeof err.retryAfterSeconds === "number" &&
+          err.retryAfterSeconds > 0
+        ) {
+          setRetryAfterSeconds(err.retryAfterSeconds);
+        }
         // ChatWindow surfaces this verbatim as the composer's inline error —
         // never faked as a success.
         throw new Error(errorMessage(err));
       }
     },
     isPending: mutation.isPending,
+    retryAfterSeconds,
   };
 }
 

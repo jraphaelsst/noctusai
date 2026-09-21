@@ -26,6 +26,29 @@ export function extractErrorMessage(data: any, status: number): string {
 }
 
 /**
+ * Parse an HTTP `Retry-After` header value into a whole number of seconds to
+ * wait before retrying. The header is legal in TWO shapes (RFC 9110 §10.2.3):
+ * delta-seconds (`"10"`) or an HTTP-date (`"Wed, 21 Oct 2026 07:28:00 GMT"`).
+ * A date already in the past resolves to `0` (retry is allowed NOW — that is
+ * information, not an error). Returns `null` for anything absent or that
+ * parses as neither shape — callers must never invent a made-up countdown
+ * for a header they could not actually read.
+ */
+export function parseRetryAfterSeconds(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^\d+$/.test(trimmed)) {
+    const seconds = Number(trimmed);
+    return Number.isFinite(seconds) ? seconds : null;
+  }
+  const dateMs = Date.parse(trimmed);
+  if (Number.isNaN(dateMs)) return null;
+  const deltaMs = dateMs - Date.now();
+  return deltaMs > 0 ? Math.ceil(deltaMs / 1000) : 0;
+}
+
+/**
  * Error thrown by the API client, carrying the HTTP status as a STRUCTURED
  * field so consumers branch on `err.status` (409/422/424/502 UX) instead of
  * regex-parsing the message prefix. The message keeps the historical
@@ -42,15 +65,25 @@ export function extractErrorMessage(data: any, status: number): string {
  * needs the structured refusal — a field list, a conflict id — branches on
  * them instead of re-implementing the fetch to see the body the message
  * extraction used to discard.
+ *
+ * `retryAfterSeconds` is the response's `Retry-After` header, parsed via
+ * `parseRetryAfterSeconds` — `null` when the response carried no such header
+ * (or its own transport-level failure had no headers at all) or it did not
+ * parse as delta-seconds/an HTTP-date. A 4th, OPTIONAL constructor
+ * parameter — every pre-existing 2/3-arg call site (products' own tests
+ * included) keeps constructing a valid `ApiError` with `retryAfterSeconds:
+ * null`, unchanged.
  */
 export class ApiError extends Error {
   readonly status: number | null;
   readonly body: unknown;
-  constructor(status: number | null, message: string, body?: unknown) {
+  readonly retryAfterSeconds: number | null;
+  constructor(status: number | null, message: string, body?: unknown, retryAfterSeconds: number | null = null) {
     super(status === null ? message : `[${status}] ${message}`);
     this.name = 'ApiError';
     this.status = status;
     this.body = body;
+    this.retryAfterSeconds = retryAfterSeconds;
     // Restore prototype chain — required when extending built-ins under the
     // TS `target` this lib compiles to, so `err instanceof ApiError` holds.
     Object.setPrototypeOf(this, ApiError.prototype);
@@ -173,7 +206,8 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       const message = data
         ? extractErrorMessage(data, response.status)
         : `Erro HTTP ${response.status}`;
-      throw new ApiError(response.status, message, data ?? undefined);
+      const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
+      throw new ApiError(response.status, message, data ?? undefined, retryAfterSeconds);
     }
     if (response.status === 204) return null as T;
     // 200 OK with non-JSON body is the classic SPA-fallback-eats-API shape
@@ -320,7 +354,8 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
         const message = data
           ? extractErrorMessage(data, response.status)
           : `Erro HTTP ${response.status}`;
-        throw new ApiError(response.status, message, data ?? undefined);
+        const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('retry-after'));
+        throw new ApiError(response.status, message, data ?? undefined, retryAfterSeconds);
       }
       return response.blob();
     },

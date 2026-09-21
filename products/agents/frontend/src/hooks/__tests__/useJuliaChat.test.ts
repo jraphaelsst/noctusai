@@ -19,7 +19,7 @@
 import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import escritaTurnFixture from "../../../../contract-fixtures/escrita-turn.events.json";
 
 const mockGet = vi.fn();
@@ -459,6 +459,90 @@ describe("useJuliaSendAdapter", () => {
     // never a phantom user bubble for the message the backend refused to
     // persist.
     expect(qc.getQueryData(messagesKey)).toEqual(initial);
+  });
+
+  // Contract §E.11 "Capacity" countdown — the seed `ApiClient` parses the
+  // 429's `Retry-After` header onto `ApiError.retryAfterSeconds`; this
+  // adapter turns that into a live, ticking `retryAfterSeconds` the seed
+  // `<ChatWindow>` organ reads reactively to disable/re-enable the
+  // composer (`ChatSendResult.retryAfterSeconds`, `@noctusai/lib`).
+  describe("retryAfterSeconds countdown", () => {
+    afterEach(() => vi.useRealTimers());
+
+    it("starts the countdown from ApiError.retryAfterSeconds, ticks down once per second, and clears (re-enables) at 0", async () => {
+      vi.useFakeTimers();
+      const { ApiError } = await import("@/lib/errors");
+      mockPost.mockRejectedValue(
+        new ApiError(
+          429,
+          "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+          {
+            detail: "A Julia está atendendo o número máximo de conversas agora. Tente novamente em instantes.",
+            code: "julia_capacidade",
+          },
+          3,
+        ),
+      );
+      const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+      const qc = newClient();
+      const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+
+      expect(result.current.retryAfterSeconds).toBeNull();
+
+      await act(async () => {
+        await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow();
+      });
+      expect(result.current.retryAfterSeconds).toBe(3);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(result.current.retryAfterSeconds).toBe(2);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(result.current.retryAfterSeconds).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      // Re-enabled — the seed organ disables the composer only while this
+      // is a positive number.
+      expect(result.current.retryAfterSeconds).toBeNull();
+    });
+
+    it("does NOT start a countdown when the 429's Retry-After header was absent/unparsed (retryAfterSeconds null)", async () => {
+      const { ApiError } = await import("@/lib/errors");
+      // No 4th constructor arg — the honest "could not read a real
+      // Retry-After" shape, e.g. slowapi's own rate-limit 429.
+      mockPost.mockRejectedValue(
+        new ApiError(429, "Muitas mensagens em pouco tempo.", { detail: "Muitas mensagens em pouco tempo." }),
+      );
+      const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+      const qc = newClient();
+      const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+
+      await act(async () => {
+        await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow();
+      });
+      expect(result.current.retryAfterSeconds).toBeNull();
+    });
+
+    it("does NOT start a countdown for a non-429 rejection even when a stray retryAfterSeconds is present", async () => {
+      const { ApiError } = await import("@/lib/errors");
+      mockPost.mockRejectedValue(
+        new ApiError(409, "Já existe um turno em andamento.", { code: "turn_in_progress" }, 5),
+      );
+      const { useJuliaSendAdapter } = await import("@/hooks/useJuliaChat");
+      const qc = newClient();
+      const { result } = renderHook(() => useJuliaSendAdapter("c1"), { wrapper: wrapper(qc) });
+
+      await act(async () => {
+        await expect(result.current.mutateAsync({ text: "Oi" })).rejects.toThrow();
+      });
+      expect(result.current.retryAfterSeconds).toBeNull();
+    });
   });
 });
 
