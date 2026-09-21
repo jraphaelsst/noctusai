@@ -427,6 +427,8 @@ The decision log keeps every step.
   - **Constraints for the port:** assets go in `frontend/public/`; styles must not leak into the signed-in app; the `/consent*` routes stay seed-mounted; outbound links use `env.CORE_URL` (`KB § PATTERNS/frontend/core-url-routing.md`); no client/company facts beyond what the public page itself shows (the repo is public). Known seam limit: the Landing renders after auth initialises (brief `PageSkeleton`), and there is no SSR.
   - **Exception path, only if the design cannot live in the seam** (e.g. a non-React build): serve it as static files from `frontend/public/`, recorded as an accept-with-rationale entry scoped to this one product.
 
+- **2026-09-21 (landing shipped)**: the designer's page is live at `https://academia.noctusai.com` (prod `83775576`, `feat(academia)` commit of the same sha). Ported through the seed `Landing` slot as decided above — no exception was needed. Its stylesheet is scoped under `.academia-landing` by a postcss pass, and an "Entrar" link (desktop nav + mobile menu) goes to the seed `/login`. Post-deploy: `deploy_verify` verified 6/6 live products, 14/14 containers healthy, and the edge serves the shell, bundle, `/login`, `/api/health` and the Landing chunks with 200. The same session also redeployed core, community and seed onto `a3907266`, a peer's promote that had not been deployed. Julia's five runtime secrets are confirmed set in the agents container, so the two M6 browser checks are the only items still owed.
+
 ## Retrospective (filled at first trigger fire)
 
 *To be filled when T1–T6 fire.*
