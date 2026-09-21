@@ -276,3 +276,46 @@
 @media (max-width: 800px) {
   .academia-landing .nav-links.is-open .nav-login { justify-content:center; }
 }
+
+/* ── noc addition: /como-funciona + /a-carta — a dark top band so the
+   header's light nav text stays legible without the landing's hero image
+   behind it (the header is position:absolute; this is its own section). ── */
+.academia-landing .sub-hero { position:relative; background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); padding:190px 0 68px; }
+.academia-landing .sub-hero .eyebrow { color:var(--brand-gold); margin-bottom:18px; }
+.academia-landing .sub-hero .section-title { color:hsl(var(--primary-foreground)); margin-bottom:16px; }
+.academia-landing .sub-hero .section-intro { color:hsl(42 25% 82%); max-width:620px; }
+
+/* ── noc addition: /como-funciona accordion ── */
+.academia-landing .como-funciona-section { padding-top:66px; }
+.academia-landing .accordion-list { display:flex; flex-direction:column; gap:14px; max-width:860px; margin-inline:auto; }
+.academia-landing .accordion-item { border:1px solid hsl(var(--border)); border-radius:14px; background:hsl(var(--card)); overflow:hidden; }
+.academia-landing .accordion-trigger { width:100%; display:flex; align-items:center; gap:18px; padding:22px 26px; background:transparent; border:0; text-align:left; cursor:pointer; font-family:inherit; color:hsl(var(--primary)); }
+.academia-landing .accordion-numero { font-family:var(--app-font-mono); font-size:.72rem; letter-spacing:.1em; color:hsl(var(--accent)); flex-shrink:0; }
+.academia-landing .accordion-titulo { flex:1; font-family:var(--app-font-serif); font-weight:600; font-size:1.28rem; letter-spacing:-.02em; }
+.academia-landing .accordion-chevron { flex-shrink:0; color:hsl(var(--muted-foreground)); transition:transform .25s ease; }
+.academia-landing .accordion-trigger[data-state="open"] .accordion-chevron { transform:rotate(180deg); }
+.academia-landing .accordion-panel { padding:0 26px 26px; }
+.academia-landing .accordion-panel-inner > * + * { margin-top:14px; }
+
+/* content blocks — shared by /como-funciona (inside each accordion panel)
+   and /a-carta (the full letter body). */
+.academia-landing .content-paragrafo { color:hsl(var(--muted-foreground)); font-size:.95rem; line-height:1.75; margin:0; }
+.academia-landing .content-destaque { color:hsl(var(--primary)); font-family:var(--app-font-serif); font-weight:600; font-size:1.15rem; line-height:1.45; letter-spacing:-.015em; margin:0; padding-left:16px; border-left:2px solid hsl(var(--accent)); }
+.academia-landing .content-figure { margin:22px 0; }
+.academia-landing .content-figure img { width:100%; border-radius:10px; display:block; }
+.academia-landing .content-figure figcaption { margin-top:10px; font-size:.72rem; color:hsl(var(--muted-foreground)); font-family:var(--app-font-mono); }
+
+/* ── noc addition: /a-carta letter page ── */
+.academia-landing .carta-section { background:hsl(var(--background)); }
+.academia-landing .carta-page { max-width:680px; margin-inline:auto; display:flex; flex-direction:column; gap:20px; }
+.academia-landing .carta-page .content-paragrafo { font-size:1.02rem; line-height:1.85; }
+.academia-landing .carta-page .content-destaque { font-size:1.35rem; }
+.academia-landing .carta-signature { margin-top:12px; padding-top:26px; border-top:1px solid hsl(var(--border)); }
+.academia-landing .carta-signature .content-destaque { border-left:0; padding-left:0; font-family:var(--app-font-serif); font-size:1.7rem; font-style:italic; }
+.academia-landing .carta-signature .content-paragrafo { color:hsl(var(--muted-foreground)); font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; font-family:var(--app-font-mono); }
+
+@media (max-width: 800px) {
+  .academia-landing .sub-hero { padding:150px 0 54px; }
+  .academia-landing .accordion-trigger { padding:18px; gap:12px; }
+  .academia-landing .accordion-panel { padding:0 18px 22px; }
+}

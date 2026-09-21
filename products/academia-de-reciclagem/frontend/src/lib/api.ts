@@ -17,4 +17,37 @@
  * `src/hooks/` then call these wrappers instead of `api.get(url)`
  * directly — keeps URL strings + payload shapes in one place.
  */
-export { api } from "@noctusai/seed/infra";
+import { api } from "@noctusai/seed/infra";
+
+export { api };
+
+/**
+ * `POST /api/public/interessados` — no auth (`projects/interessados-
+ * CONTRACT.md`). The fleet's first unauthenticated write route: the seed
+ * `ApiClient` sends it token-less (`getAuthToken()` resolves `null` for a
+ * signed-out visitor and the request still goes out — see
+ * `seed/lib/frontend/src/api.ts` `CreateApiClientOptions.getAuthToken`), so
+ * no seed change was needed to call this from a public page.
+ *
+ * A typed wrapper (rather than an inline `api.post` in the popup component,
+ * per this file's TODO) because the wire shape is awkward: `consentimento`
+ * must be the literal `true`, and the caller has no reason to see that shape
+ * more than once.
+ */
+export interface CreateInteressadoInput {
+  nome: string;
+  whatsapp: string;
+  email: string;
+  /** The act of opting in — always `true` on submit (§ contract). */
+  consentimento: true;
+  /** Public page path the popup was submitted from (`/`, `/como-funciona`, `/a-carta`). */
+  origem?: string;
+}
+
+export interface CreateInteressadoResult {
+  ok: true;
+}
+
+export function createInteressado(input: CreateInteressadoInput): Promise<CreateInteressadoResult> {
+  return api.post<CreateInteressadoResult>("/api/public/interessados", input);
+}

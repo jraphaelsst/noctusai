@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Recycle, BookOpen, Scale, HelpCircle, ListTodo } from "lucide-react";
+import { LayoutDashboard, Users, Home, Recycle, BookOpen, Scale, HelpCircle, ListTodo, UserPlus } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -26,6 +26,10 @@ const KbDetail = lazy(() => import("@/pages/KbDetail"));
 const Decisoes = lazy(() => import("@/pages/Decisoes"));
 const Perguntas = lazy(() => import("@/pages/Perguntas"));
 const Roadmap = lazy(() => import("@/pages/Roadmap"));
+// Public site — contract `projects/interessados-CONTRACT.md`.
+const ComoFunciona = lazy(() => import("@/pages/ComoFunciona"));
+const ACarta = lazy(() => import("@/pages/ACarta"));
+const Interessados = lazy(() => import("@/pages/Interessados"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -41,6 +45,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Perguntas abertas", href: "/perguntas", icon: HelpCircle, route: "perguntas" },
       { name: "Roadmap e tarefas", href: "/roadmap", icon: ListTodo, route: "roadmap" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Interessados", href: "/interessados", icon: UserPlus, route: "interessados" },
     ],
   },
 ];
@@ -58,6 +63,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Perguntas abertas", href: "/perguntas", icon: HelpCircle },
       { name: "Roadmap e tarefas", href: "/roadmap", icon: ListTodo },
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Interessados", href: "/interessados", icon: UserPlus },
     ],
   },
 ];
@@ -80,6 +86,14 @@ export default createProductApp({
     { path: "/perguntas", component: Perguntas },
     { path: "/roadmap", component: Roadmap },
     { path: "/equipe", component: Equipe },
+    { path: "/interessados", component: Interessados },
+  ],
+  // Public site — reachable regardless of auth state (contract `projects/
+  // interessados-CONTRACT.md`). Header/footer/nav are shared with `Landing`
+  // via `components/site/`.
+  publicRoutes: [
+    { path: "/como-funciona", component: ComoFunciona },
+    { path: "/a-carta", component: ACarta },
   ],
   Layout,
   ...infra.appConfig,

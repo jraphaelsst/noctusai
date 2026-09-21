@@ -8,13 +8,21 @@
  * kept as designed; the only additions are the `.academia-landing` style scope and the
  * "Entrar" link into the seed `/login`. Its providers (QueryClient, Tooltip, Toaster,
  * wouter, NotFound) are dropped — the seed app shell already supplies all of them.
+ *
+ * Header + footer live in `components/site/` (`SiteHeader`/`SiteFooter`) —
+ * shared verbatim with `/como-funciona` and `/a-carta` so the public site
+ * presents one identical nav everywhere. `useHashScroll` is what makes those
+ * two pages' "back to a landing section" links (`/#pilares`, etc.) actually
+ * land on the section: a client-side route change does not trigger the
+ * browser's native on-navigation hash-scroll.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import { ArrowDownRight, ArrowRight, BookOpen, ChevronDown, Circle, CircleDot, Factory, HandHeart, Leaf, LogIn, Menu, Recycle, School, Sparkles, Users, X } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { ArrowDownRight, ArrowRight, BookOpen, Circle, CircleDot, Factory, HandHeart, Leaf, Recycle, School, Sparkles, Users } from 'lucide-react';
 
-import logo from '@/assets/landing/logo-academia-da-reciclagem.png';
-import oneLogo from '@/assets/landing/logo-one-consultoria.png';
+import { SiteHeader } from '@/components/site/SiteHeader';
+import { SiteFooter } from '@/components/site/SiteFooter';
+import { InterestPopup } from '@/components/InterestPopup';
 import './landing.css';
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
@@ -45,16 +53,6 @@ function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; 
   );
 }
 
-function Brand() {
-  return (
-    <a className="brand" href="#inicio" data-testid="link-brand">
-      <span className="brand-logo-frame">
-        <img className="brand-logo" src={logo} alt="Academia da Reciclagem" />
-      </span>
-    </a>
-  );
-}
-
 /** The design's `html { scroll-behavior: smooth }`, applied only while the landing is mounted. */
 function useSmoothScroll() {
   useEffect(() => {
@@ -65,31 +63,32 @@ function useSmoothScroll() {
   }, []);
 }
 
-export default function Landing() {
-  const [menuOpen, setMenuOpen] = useState(false);
-  useSmoothScroll();
+/**
+ * Scrolls to `location.hash`'s target on mount/change — what makes
+ * `/#pilares`-style links from the sub-pages (`SectionLink`) actually land
+ * on the section. A full page navigation does this natively via the
+ * browser; a client-side route change does not.
+ */
+function useHashScroll() {
+  const location = useLocation();
+  useEffect(() => {
+    if (!location.hash) return;
+    const id = location.hash.slice(1);
+    const el = document.getElementById(id);
+    // `scrollIntoView` doesn't exist in jsdom (test env only — every real
+    // browser has it); the optional call guards that gap, not an error.
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [location.hash]);
+}
 
-  const closeMenu = () => setMenuOpen(false);
+export default function Landing() {
+  useSmoothScroll();
+  useHashScroll();
 
   return (
     <div className="academia-landing">
     <main className="site-shell">
-      <header className="site-header">
-        <div className="container-xl nav-inner">
-          <Brand />
-          <nav className={`nav-links ${menuOpen ? 'is-open' : ''}`} aria-label="Navegação principal">
-            <a className="nav-link" href="#projeto" onClick={closeMenu} data-testid="link-projeto">O projeto</a>
-            <a className="nav-link" href="#como-funciona" onClick={closeMenu} data-testid="link-como-funciona">Como funciona</a>
-            <a className="nav-link" href="#impacto" onClick={closeMenu} data-testid="link-impacto">Impacto</a>
-            <a className="nav-link" href="#pilares" onClick={closeMenu} data-testid="link-pilares">Pilares</a>
-            <a className="nav-cta" href="#participar" onClick={closeMenu} data-testid="link-participar">Quero participar <ArrowRight size={14} /></a>
-            <Link className="nav-login" to="/login" onClick={closeMenu} data-testid="link-entrar">Entrar <LogIn size={14} /></Link>
-          </nav>
-          <button className="menu-toggle" type="button" aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} data-testid="button-menu">
-            {menuOpen ? <X size={22} /> : <Menu size={22} />}
-          </button>
-        </div>
-      </header>
+      <SiteHeader />
 
       <section id="inicio" className="hero">
         <div className="container-xl hero-content">
@@ -103,7 +102,7 @@ export default function Landing() {
             </Reveal>
             <Reveal className="hero-actions" delay={350}>
               <a className="button-primary" href="#participar" data-testid="button-conhecer">Conheça a iniciativa <ArrowDownRight size={16} /></a>
-              <a className="button-quiet" href="#como-funciona" data-testid="button-ver-metodo">Ver como funciona</a>
+              <Link className="button-quiet" to="/como-funciona" data-testid="button-ver-metodo">Ver como funciona</Link>
             </Reveal>
             <Reveal className="hero-footnote" delay={470}>
               <span className="hero-footnote-line" aria-hidden="true" />
@@ -293,35 +292,9 @@ export default function Landing() {
         </div>
       </section>
 
-      <footer id="footer" className="site-footer">
-        <div className="container-xl footer-inner">
-          <div className="footer-brand-group">
-            <div className="footer-brand-row">
-              <Brand />
-              <a
-                className="footer-sponsor"
-                href="https://oneconsultoriaimobiliaria.com.br/"
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Patrocínio: One Consultoria Imobiliária — abrir site oficial"
-                data-testid="link-one-sponsor"
-              >
-                <img className="footer-sponsor-logo" src={oneLogo} alt="One Consultoria Imobiliária" />
-                <span className="footer-sponsor-copy">
-                  <span>patrocínio</span>
-                  <strong>One Consultoria Imobiliária</strong>
-                </span>
-              </a>
-            </div>
-            <p className="footer-brand-note">Conhecimento que circula. Valor que permanece.</p>
-          </div>
-          <div className="footer-meta">
-            <span>projeto público independente</span>
-            <a href="#inicio" data-testid="link-voltar-topo">voltar ao início <ChevronDown size={11} style={{ transform: 'rotate(180deg)', verticalAlign: 'middle' }} /></a>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
+    <InterestPopup />
     </div>
   );
 }
