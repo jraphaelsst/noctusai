@@ -67,6 +67,7 @@ from noctusai_lib.primitives.tasks import schedule_coro
 from xhtml2pdf import pisa
 from xhtml2pdf.config.resources import ResourceAccessPolicy
 
+from app.modules.certidoes import cost_ledger
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
     provider_api_key,
@@ -947,6 +948,7 @@ async def _process_single_certidao(
     analyze: Optional[Callable[..., Any]] = None,
     analyze_estrutura: Optional[Callable[..., Any]] = None,
     extract_text: Optional[Callable[..., Any]] = None,
+    core_db: Any = None,
 ) -> None:
     """Process a single certificate: fetch → download → store → analyze → update.
 
@@ -965,6 +967,12 @@ async def _process_single_certidao(
     reads the API's own response summary, never the PDF text, so
     `extract_text`'s only job here is persisting `texto_extraido` /
     `formatacao` for the `.../transcricao` routes.
+    `core_db` is the Custos-page cost-booking seam (`cost_ledger.
+    book_infosimples_cost`) — the `public.cost_ledger` client, DIFFERENT
+    from `db` above (social_wiring schema). Same DI-seam shape: `None`
+    (every existing caller) lazily resolves `app.database.get_core_client()`
+    at call time, matching production; a test injects a fake instead of
+    patching our own `get_core_client` out of the module.
     → KB § PATTERNS/backend/di-test-seam.md
     """
     analyze = analyze or _analyze_with_ai
@@ -999,6 +1007,25 @@ async def _process_single_certidao(
 
     # Fetch from InfoSimples
     result = await _fetch_certidao(config, consulta, infosimples_token, http_client)
+
+    # Book the InfoSimples spend regardless of success/erro — a "nada
+    # consta" (612) or a definitive 4xx API error still consumed a billed
+    # call at the source; only a call that never got a parseable response
+    # (raw_response=None — network/timeout on every retry) has nothing to
+    # bill. Never breaks certidão issuance: `book_infosimples_cost` never
+    # raises and every skip path is a WARNING log, not a silent no-op.
+    if result.get("raw_response") is not None:
+        _core_db = core_db
+        if _core_db is None:
+            from app.database import get_core_client
+            _core_db = get_core_client()
+        cost_ledger.book_infosimples_cost(
+            _core_db,
+            org_id=org_id,
+            tipo=config["tipo"],
+            raw_response=result["raw_response"],
+            reference_id=resultado_id,
+        )
 
     if not result["success"]:
         db.table(RESULTADOS).update({

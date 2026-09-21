@@ -21,6 +21,18 @@ class SocialWiringSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:social-wiring"
 
+    # ─── LLM usage/cost tracking (Custos page) ─────────────────────────
+    # Repo-level default ON for this product (unlike the platform's
+    # opt-in-via-env default): social-wiring's `122_llm_usage.sql` is the
+    # WIDE-shape table, so both the sink AND its extra image-token/
+    # model_version/batch columns are safe to enable unconditionally here
+    # rather than depending on a VPS-side `LLM_USAGE_TRACKING=1` env var
+    # nobody set (see `GET /api/custos` — a page over an empty table lies).
+    # `LLM_USAGE_TRACKING=0` / `LLM_USAGE_WIDE_COLUMNS=0` in the environment
+    # still overrides these, same as any other pydantic-settings field.
+    llm_usage_tracking: bool = True
+    llm_usage_wide_columns: bool = True
+
     # ─── YouTube OAuth ─────────────────────────────────────────────────
     youtube_client_id: str = ""
     youtube_client_secret: str = ""

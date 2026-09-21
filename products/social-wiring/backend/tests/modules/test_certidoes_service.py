@@ -1334,6 +1334,57 @@ class TestProcessSingleCertidao:
         assert row["status"] == "erro"
         assert row["api_requested_at"] is not None
 
+    @pytest.mark.asyncio
+    async def test_infosimples_spend_is_booked_to_cost_ledger(self):
+        """Custos-page slice: a successful call with a `header.price` books
+        one `public.cost_ledger` row via the injected `core_db` seam
+        (DIFFERENT client from `db`, which stays social_wiring-scoped)."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado()],
+        )
+        core_db = MockSupabaseClient(schema="public")
+        http = _FakeHttp(
+            {**_api_ok(), "header": {"price": "1.23"}},
+            file_body=b"%PDF-1.4 real",
+        )
+
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-001", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=core_db,
+        )
+
+        rows = core_db.table("cost_ledger").select("*").execute().data
+        assert len(rows) == 1
+        assert rows[0]["org_id"] == ORG
+        assert rows[0]["category"] == "infosimples"
+        assert rows[0]["step"] == "certidoes.cnd_federal"
+        assert rows[0]["reference_id"] == "resultado-001"
+        assert rows[0]["amount_native"] == "1.23"
+
+    @pytest.mark.asyncio
+    async def test_no_header_price_never_invents_a_cost_row(self):
+        """`_api_ok()` (the real InfoSimples 200 envelope this suite ports
+        from) carries no `header` — confirms the honest-skip path, not a
+        guessed price."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(id="resultado-noheader")],
+        )
+        core_db = MockSupabaseClient(schema="public")
+        http = _FakeHttp(_api_ok(), file_body=b"%PDF-1.4 real")
+
+        await service._process_single_certidao(
+            CONFIG_FEDERAL, _consulta_row(), "tok", db,
+            "resultado-noheader", http, FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=core_db,
+        )
+
+        assert core_db.table("cost_ledger").select("*").execute().data == []
+
 
 # ---------------------------------------------------------------------------
 # _atualizar_status_consulta

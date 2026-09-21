@@ -67,6 +67,7 @@ import {
   Cpu,
   Plus,
   UserCog,
+  Wallet,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -79,6 +80,7 @@ const ForgotPassword = lazyWithReload(() => import("@/pages/ForgotPassword"));
 const Chat = lazyWithReload(() => import("@/pages/Chat"));
 const Dashboard = lazyWithReload(() => import("@/pages/Dashboard"));
 const Equipe = lazyWithReload(() => import("@/pages/Equipe"));
+const Custos = lazyWithReload(() => import("@/pages/Custos"));
 const Permutas = lazyWithReload(() => import("@/pages/Permutas"));
 const Settings = lazyWithReload(() => import("@/pages/Settings"));
 const YouTube = lazyWithReload(() => import("@/pages/YouTube"));
@@ -313,6 +315,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Custos", href: "/custos", icon: Wallet, route: "custos" },
     ],
   },
 ];
@@ -443,6 +446,7 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
       { name: "Equipe", href: "/equipe", icon: Users },
+      { name: "Custos", href: "/custos", icon: Wallet },
     ],
   },
 ];
@@ -515,6 +519,7 @@ export default createProductApp({
     { path: "/whatsapp-chat", component: WhatsAppChat },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Settings },
+    { path: "/custos", component: Custos },
   ],
   // /chat is public — the backend chat router is unauthenticated by
   // current product direction, so the frontend route matches that

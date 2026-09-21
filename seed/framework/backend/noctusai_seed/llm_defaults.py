@@ -33,6 +33,7 @@ def default_llm_config(
     redis_url: str | None = None,
     usage_tracking_db: Any = None,
     usage_tracking_schema: str | None = None,
+    usage_tracking_supports_image_columns: bool = False,
     **overrides: Any,
 ) -> LLMConfig:
     """Build an LLMConfig using platform defaults, with optional overrides.
@@ -42,6 +43,15 @@ def default_llm_config(
     - `usage_tracking_db` + `usage_tracking_schema`: when both set, attaches
       a `SupabaseUsageSink(db, schema)` that writes to `<schema>.llm_usage`.
       The framework passes these when `settings.llm_usage_tracking=True`.
+    - `usage_tracking_supports_image_columns`: forwarded verbatim to
+      `SupabaseUsageSink(supports_image_columns=...)` — set True ONLY when
+      the product's own `<schema>.llm_usage` table was created from the
+      WIDE `noctusai_lib/integrations/llm/migrations/llm_usage.sql.template`
+      shape (image_input_tokens / image_output_tokens / model_version /
+      batch columns present). The framework passes
+      `settings.llm_usage_wide_columns`. Default False keeps every
+      pre-existing consumer's insert shape byte-identical — see
+      `SupabaseUsageSink`'s docstring for the narrow-vs-wide history.
 
     Usage:
         default_llm_config()
@@ -72,6 +82,7 @@ def default_llm_config(
         defaults["usage_sink"] = SupabaseUsageSink(
             db_client=usage_tracking_db,
             schema=usage_tracking_schema,
+            supports_image_columns=usage_tracking_supports_image_columns,
         )
 
     defaults.update(overrides)

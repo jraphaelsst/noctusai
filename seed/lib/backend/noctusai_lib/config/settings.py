@@ -67,6 +67,13 @@ class BaseAppSettings(BaseSettings):
     # When true, create_product_app() constructs a SupabaseUsageSink that
     # writes every `UsageEvent` to `<schema>.llm_usage`.
     llm_usage_tracking: bool = False
+    # Set True ONLY when this product's `<schema>.llm_usage` table was
+    # created from the WIDE `llm_usage.sql.template` shape (image_input_
+    # tokens / image_output_tokens / model_version / batch columns present
+    # — social-wiring's `122_llm_usage.sql` is the first instance). No-op
+    # when `llm_usage_tracking` is False. See `SupabaseUsageSink.
+    # supports_image_columns` docstring for the narrow-vs-wide history.
+    llm_usage_wide_columns: bool = False
 
     # Pagination defaults
     default_page_size: int = 50

@@ -143,6 +143,9 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.painel_router import (
         router as painel_router,
     )
+    from app.routers.custos_router import (
+        router as custos_router,
+    )
     from app.services.meta import scheduler as meta_insights_scheduler
     from app.services import (
         clientes_backfill_job,
@@ -230,6 +233,7 @@ def _register_media_wiring() -> ModuleRegistration:
             portal_roi_router,
             clientes_router,
             painel_router,
+            custos_router,
         ],
         standard_routers=("health", "notificacoes", "team"),
     )

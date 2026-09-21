@@ -253,6 +253,9 @@ def create_product_app(
         redis_url=getattr(settings, "redis_url", None),
         usage_tracking_db=usage_db,
         usage_tracking_schema=schema if usage_db is not None else None,
+        usage_tracking_supports_image_columns=getattr(
+            settings, "llm_usage_wide_columns", False
+        ),
     )
     configure_llm(effective_llm_config)
 
