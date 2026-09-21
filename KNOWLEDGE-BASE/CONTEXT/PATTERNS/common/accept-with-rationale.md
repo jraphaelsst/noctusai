@@ -729,6 +729,30 @@ state change, not a removal.
 - **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke
   MCP directly flips this to formalize.
 
+### 9c `claude-guard-harness-signature.py` retains shell (`[carve:hook]`, 2026-09-20)
+
+- **Subject:** a third `scripts/hooks/*.py` adapter — this one `PostToolUse`
+  rather than `PreToolUse` — surfaces a harness-failure-signature advisory
+  after a `Bash` call, per `KB § PATTERNS/common/methodology-execution-
+  discipline.md` § 10 ("harness validity").
+- **Decision `[A]`:** stays a script, same `[carve:hook]` bucket and the
+  same structural reason as 9a/9b — the harness invokes it as a process on
+  every `Bash` call; the MCP server is not reachable from that path and a
+  round-trip would not fit the per-call budget. The DECISION logic lives in
+  the toolkit (`tools/noctus/dev/harness_signatures.py`, stdlib-only,
+  imported BY PATH — the same idiom 9a/9b already use, and for the same
+  reason: this hook fires on every Bash call in the session, so its import
+  cost is paid hundreds of times); only the protocol adapter is shell-shaped.
+- **Why a THIRD adapter rather than a branch inside 9a/9b:** same reasoning
+  as 9b's — independent failure isolation, and both fail OPEN by design.
+  This one is also structurally different in EVENT (`PostToolUse` vs.
+  `PreToolUse`) and TARGET (`Bash` only, not `Edit`/`Write`), so folding it
+  into an existing hook would conflate two different harness protocols.
+- **Scope:** the one file, carrying its `[carve:hook]` row in
+  `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke
+  MCP directly flips this to formalize.
+
 ### Recurrence-expansion stays product-local across daily-life/erp/PF — domain-divergent, no `N≥3` unifiable contract
 
 - **Subject:** §3a seed-first audit of the daily-life recurring-events gap asked whether windowed recurrence-expansion is `N≥3`-duplicated → a seed primitive (`noctusai_lib.domain.scheduling`).
