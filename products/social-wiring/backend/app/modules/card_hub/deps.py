@@ -83,38 +83,74 @@ def get_storage_backend() -> StorageBackend:
     return backend
 
 
-ExtractorFactory = Callable[[Optional[str]], IdentityExtractor]
+ExtractorFactory = Callable[[Optional[str], Optional[str]], IdentityExtractor]
 
 
-def _build_identity_extractor(org_id: Optional[str]) -> IdentityExtractor:
+def _build_identity_extractor(
+    org_id: Optional[str], tipo_documento: Optional[str] = None
+) -> IdentityExtractor:
     """One org's identity extractor, with ITS manually-selected vision
-    provider — mirrors `matriculas.deps._build_transcriber` exactly.
+    provider AND the page cap ITS DOCUMENT TYPE requires.
 
     🔴 THE PROVIDER IS RESOLVED PER EXTRACTION, NOT PER PROCESS.
     `resolve_vision_provider` is called here — inside the factory — so a
     switch flipped in Settings takes effect on the very next upload, not on
-    the next deploy.
+    the next deploy. Mirrors `matriculas.deps._build_transcriber` for this
+    half.
 
-    There is NO fallback: if the selected vendor's key is missing or its
-    account is empty, the extraction fails saying so. Before this wiring
-    existed, `make_identity_extractor` was called with no `provider=` at
-    all, so an org's `llm_vision_provider` setting was silently ignored and
-    every identity read kept hitting OpenAI regardless — the exact defect
-    that stranded `social_wiring.cliente_documentos` rows behind OpenAI's
-    2026-09-17 quota exhaustion while the org's Anthropic key sat unused.
+    There is NO fallback for the provider: if the selected vendor's key is
+    missing or its account is empty, the extraction fails saying so. Before
+    this wiring existed, `make_identity_extractor` was called with no
+    `provider=` at all, so an org's `llm_vision_provider` setting was
+    silently ignored and every identity read kept hitting OpenAI regardless
+    — the exact defect that stranded `social_wiring.cliente_documentos` rows
+    behind OpenAI's 2026-09-17 quota exhaustion while the org's Anthropic key
+    sat unused.
+
+    🔴 `tipo_documento` CLOSES THE OTHER GAP THE SAME COMMIT FOUND.
+    Both real callers of `extrair_identidade` (the upload route and the
+    recovery sweep) pre-build the extractor through this factory BEFORE
+    `extrair_identidade` ever loads the document row — so
+    `extrair_identidade`'s own `extractor or make_identity_extractor(...,
+    max_pages=paginas_maximas(tipo_documento))` fallback always
+    short-circuits in production and the type-driven page cap never ran.
+    `paginas_maximas` stays the ONE place that policy lives
+    (`identidade_extracao_service.TIPOS_LEITURA_INTEGRAL`); this factory
+    only looks it up, keyed on the type its caller already has in hand.
+
+    The import is deferred, not module-level: `identidade_extracao_service`
+    imports `BUCKET` from THIS module, and importing it back at module scope
+    here would close that cycle — same shape, same reason, as
+    `certidoes.deps._build_default_service`'s own lazy `import service`.
+
+    `tipo_documento=None` (or any type outside `TIPOS_LEITURA_INTEGRAL`)
+    resolves to `paginas_maximas`'s own "not specified" sentinel (`-1`),
+    which lets the seed adapter apply its unchanged 3-page default —
+    behaviour-preserving for every type that does not need a whole read.
     """
+    from app.modules.card_hub.identidade_extracao_service import paginas_maximas
+
     return make_identity_extractor(
-        real=True, org_id=org_id, provider=resolve_vision_provider(org_id)
+        real=True,
+        org_id=org_id,
+        max_pages=paginas_maximas(str(tipo_documento or "")),
+        provider=resolve_vision_provider(org_id),
     )
 
 
 def get_identity_extractor_factory() -> ExtractorFactory:
-    """FastAPI dependency — builds the identity extractor for one org.
+    """FastAPI dependency — builds the identity extractor for one org AND
+    one document type.
 
     A FACTORY rather than an instance because the extractor is org-bound
-    (per-org LLM key resolution + budget accounting) while the dependency is
-    resolved once per request, and because the extraction itself runs as a
-    detached background task after the response is sent.
+    (per-org LLM key resolution + budget accounting) — AND, since this fix,
+    type-bound (the page-cap policy) — while the dependency is resolved once
+    per request, and because the extraction itself runs as a detached
+    background task after the response is sent. Callers pass
+    `(org_id, tipo_documento)`; `tipo_documento` may be omitted (`None`)
+    only where the caller has not resolved the document row yet — every real
+    caller in this module has it in hand by the time it builds the
+    extractor.
 
     Tests MUST override this seam
     (`app.dependency_overrides[get_identity_extractor_factory] = ...`)

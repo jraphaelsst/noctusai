@@ -235,7 +235,7 @@ class TestStalledExtractionSweep:
         )
         result = await svc.varrer_extracoes_pendentes(
             scoped, storage,
-            extractor_factory=lambda _org: FakeIdentityExtractor(_com_nome()),
+            extractor_factory=lambda _org, _tipo=None: FakeIdentityExtractor(_com_nome()),
         )
         assert result["encontrados"] == 1
         assert result["retomados"] == 1
@@ -263,7 +263,7 @@ class TestStalledExtractionSweep:
         )
         result = await svc.varrer_extracoes_pendentes(
             scoped, storage,
-            extractor_factory=lambda _org: FakeIdentityExtractor(_com_nome()),
+            extractor_factory=lambda _org, _tipo=None: FakeIdentityExtractor(_com_nome()),
         )
         doc = _documento(scoped, did)
 

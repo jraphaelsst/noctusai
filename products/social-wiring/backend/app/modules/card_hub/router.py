@@ -902,7 +902,7 @@ async def upload_documento_route(
             org_id,
             cliente_id,
             UUID(documento["id"]),
-            extractor=extractor_factory(str(org_id)),
+            extractor=extractor_factory(str(org_id), tipo_documento),
         )
     return documento
 
@@ -935,7 +935,7 @@ async def reextrair_documento_route(
         org_id,
         cliente_id,
         documento_id,
-        extractor=extractor_factory(str(org_id)),
+        extractor=extractor_factory(str(org_id), documento["tipo_documento"]),
     )
     return documento
 

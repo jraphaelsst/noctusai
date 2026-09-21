@@ -816,19 +816,15 @@ async def extrair_identidade(
     # read whole or its averbação (the divorce) never reaches the model, and
     # the answer flips rather than degrades.
     #
-    # NOC-REMEDIATE[identity-extractor-factory-ignores-tipo-documento]: this
-    # branch is dead in production today. Both real callers
-    # (`router.upload_documento_route` and
-    # `varrer_extracoes_pendentes`'s sweep) already pass a pre-built
-    # `extractor` (via `get_identity_extractor_factory()`, which knows
-    # nothing about `tipo_documento`), so `extractor or ...` always
-    # short-circuits and `paginas_maximas` never runs — a certidão de
-    # casamento uploaded through the real route gets the factory's default
-    # 3-page cap, not `None`. Fixing it needs `ExtractorFactory` to accept
-    # `tipo_documento`/`max_pages` and both call sites (+ the sweep's row
-    # `select`, which does not even fetch `tipo_documento` today) updated
-    # together — out of scope for the 2026-09-20 vision-provider fix this
-    # comment rides in on; see that commit's PR description. — 2026-09-20
+    # This fallback is exercised directly by a caller with no pre-built
+    # extractor (a test, or a future caller with none to offer) — every REAL
+    # caller today (`router.upload_documento_route`,
+    # `router.reextrair_documento_route`, and `varrer_extracoes_pendentes`'s
+    # sweep) instead passes one pre-built through
+    # `deps.get_identity_extractor_factory()`, which is ALSO keyed on
+    # `tipo_documento` (2026-09-20 fix) — so both paths apply the same
+    # `paginas_maximas` policy, and a certidão de casamento is read whole
+    # regardless of which one built the extractor.
     extractor = extractor or make_identity_extractor(
         real=True,
         org_id=str(org_id),
@@ -954,7 +950,10 @@ async def varrer_extracoes_pendentes(
     """
     rows = (
         _t(client, DOCUMENTOS_TABLE)
-        .select("id,org_id,cliente_id,extracao_status,extracao_tentativas,extracao_em")
+        .select(
+            "id,org_id,cliente_id,tipo_documento,extracao_status,"
+            "extracao_tentativas,extracao_em"
+        )
         .in_("extracao_status", list(_ESTADOS_NAO_TERMINAIS))
         .is_("deleted_at", "null")
         .lte("extracao_em", _stale_cutoff())
@@ -987,7 +986,12 @@ async def varrer_extracoes_pendentes(
         try:
             org_id = UUID(str(row["org_id"]))
             cliente_id = UUID(str(row["cliente_id"]))
-            extractor = extractor_factory(str(org_id)) if extractor_factory else None
+            tipo_documento = str(row.get("tipo_documento") or "")
+            extractor = (
+                extractor_factory(str(org_id), tipo_documento)
+                if extractor_factory
+                else None
+            )
             await extrair_identidade(
                 client, storage, org_id, cliente_id, documento_id,
                 extractor=extractor,

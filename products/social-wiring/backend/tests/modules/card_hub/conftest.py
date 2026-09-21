@@ -105,7 +105,9 @@ def fake_identity_extractor(client):
 
     extractor = FakeIdentityExtractor()
     prev = app.dependency_overrides.get(get_identity_extractor_factory)
-    app.dependency_overrides[get_identity_extractor_factory] = lambda: (lambda org_id: extractor)
+    app.dependency_overrides[get_identity_extractor_factory] = (
+        lambda: (lambda org_id, tipo_documento=None: extractor)
+    )
     yield extractor
     if prev is None:
         app.dependency_overrides.pop(get_identity_extractor_factory, None)
