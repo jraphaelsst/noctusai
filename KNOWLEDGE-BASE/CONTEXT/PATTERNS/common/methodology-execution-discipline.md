@@ -439,3 +439,60 @@ valid run — and the 1.62.1 image then became a real comparison instead of
 a pair of vacuous greens. **When you cannot reproduce CI, the gap between
 your box and CI is the bug to close first, not an excuse to reason
 without it.** — 2026-09-20
+
+#### 10b. A detector's blind spot is a harness-validity fault too — "I looked and it's absent" vs. "I could not read this shape"
+
+§ 10 is about a *runtime* harness (browser/venv/dev-server) producing a red
+that describes the setup, not the code. The identical failure mode exists
+one layer down, in a *static* detector — and it is more dangerous there,
+because it never even attempts a subprocess: a regex/AST scan either
+matches a construct or it silently does not, with no exit code to be
+suspicious of.
+
+**The incident (2026-09-20, same session as § 10):** an audit agent grepped
+migrations for the literal `ALTER TABLE x ENABLE ROW LEVEL SECURITY` and
+reported **66 exposed tables, including 7 live-PII**. The live number was
+**4**. This platform enables RLS on a batch of tables *dynamically* —
+`DO $$ ... FOREACH t IN ARRAY ARRAY[...] LOOP EXECUTE format('ALTER TABLE
+%I ENABLE ROW LEVEL SECURITY', t) ... END $$;` (`products/social-wiring/
+backend/migrations/065_campanhas.sql`, `101_permutas_matching.sql`) — a
+shape the literal grep structurally cannot see. It did not find "no RLS
+enabled"; it found "no line matching this exact string", and reported the
+second as if it were the first.
+
+**The rule.** A detector has exactly two honest outcomes for a given
+input, not one: *"I looked and the property is absent"* and *"I could not
+parse this input's shape, so I don't know."* Collapsing the second into
+the first — reporting "absent" when the true state is "unparseable" — is
+`§ 10`'s harness-invalid failure with the runtime swapped for the parser.
+The fix is never "write a cleverer regex and declare victory silently" —
+it is to make the detector say **which** of the two outcomes it reached,
+the same way `gate_sweep` says `harness_invalid` instead of guessing a
+verdict from an unmet precondition.
+
+**Two exemplars, same session, both already load-bearing:**
+- `noctus.dev.compliance.check_table_has_rls` resolves BOTH dynamic-RLS
+  forms this platform actually uses (the `FOREACH`/`EXECUTE format(...)`
+  shape above, and `erp-imobiliario`'s `FOR t IN SELECT unnest(ARRAY[...])`
+  shape) by correlating each loop's array literal with its `EXECUTE`
+  call — closing the 66-vs-4 gap. It is still kept **advisory, not a
+  blocking gate**, precisely because a regex scan is not a SQL parser: a
+  *third* dynamic-batch shape it does not yet recognise would silently
+  reproduce the identical bug it was built to fix, one shape later. See
+  `KB § PATTERNS/backend/database-rls.md` § "Advisory (not blocking)
+  sibling" for the full detector + its documented residual limitation.
+- `noctus.dev.status` reports a dedicated `status_unparsed` field on a
+  `PROJECT.md` whose `**Status:**` line matched no known pattern at all —
+  never silently defaulting that project to "not started" or dropping it
+  from the digest. A row you cannot classify must read as *unclassified*,
+  not as whichever classification happens to be the code's fallback
+  branch.
+
+⇒ **A regex/AST scan that cannot recognize a construct has not proven the
+construct absent — it has proven nothing about that input, and must say
+so.** This composes with § 8 (existence ≠ behaviour) from the opposite
+direction: § 8 is a check that CAN see the object and wrongly credits its
+mere presence; § 10b is a check that CANNOT see the object at all and
+wrongly credits its apparent absence. Both convert "I don't actually know"
+into a confident wrong answer unless the detector is built to say
+`unparsed`/`inconclusive`/advisory-only instead.
