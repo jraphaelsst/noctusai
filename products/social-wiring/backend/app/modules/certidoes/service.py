@@ -1017,8 +1017,20 @@ async def _process_single_certidao(
     if result.get("raw_response") is not None:
         _core_db = core_db
         if _core_db is None:
-            from app.database import get_core_client
-            _core_db = get_core_client()
+            # 🔴 Resolved INSIDE the never-break boundary. Outside it, a
+            # ledger client that cannot be built (no SUPABASE_URL — CI) raised
+            # straight through and failed the certidão itself: 17 red tests on
+            # 922c6831, green locally only because a worktree's .env symlink
+            # supplied the URL. Booking a cost must never cost the certidão.
+            try:
+                from app.database import get_core_client
+                _core_db = get_core_client()
+            except Exception as exc:  # noqa: BLE001 - booking is best-effort
+                logger.warning(
+                    "infosimples cost_ledger: core client unavailable, consulta %s "
+                    "not booked: %s", resultado_id, exc,
+                )
+    if result.get("raw_response") is not None and _core_db is not None:
         cost_ledger.book_infosimples_cost(
             _core_db,
             org_id=org_id,

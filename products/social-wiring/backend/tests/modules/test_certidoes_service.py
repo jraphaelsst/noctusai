@@ -1071,6 +1071,7 @@ class TestProcessSingleCertidao:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, storage,
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -1103,6 +1104,7 @@ class TestProcessSingleCertidao:
             config_for("cenprot"), _consulta_row(), "tok", db,
             "r-html", http, storage,
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -1132,6 +1134,7 @@ class TestProcessSingleCertidao:
             config_for("cenprot"), _consulta_row(), "tok", db,
             "r-cenprot", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
         assert http.downloaded == ["https://x/cenprot.html"]
 
@@ -1166,6 +1169,7 @@ class TestProcessSingleCertidao:
             config_for("cenprot"), _consulta_row(), "tok", db,
             "r-protocolo", http, storage,
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -1203,6 +1207,7 @@ class TestProcessSingleCertidao:
             config_for("cenprot"), _consulta_row(), "tok", db,
             "r-612", http, storage,
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -1229,6 +1234,7 @@ class TestProcessSingleCertidao:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, storage,
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
 
         row = db.table("certidao_resultados").select("*").eq(
@@ -1248,6 +1254,7 @@ class TestProcessSingleCertidao:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -1282,6 +1289,7 @@ class TestProcessSingleCertidao:
             config_for("cenprot"), _consulta_row(), "tok", db,
             "r-cenprot", http, storage,
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-cenprot"
@@ -1305,6 +1313,7 @@ class TestProcessSingleCertidao:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -1327,6 +1336,7 @@ class TestProcessSingleCertidao:
                 "resultado-001", _FakeHttp({"code": 400, "errors": ["x"]}),
                 FakeStorageBackend(),
                 analyze=_noop_analyze, extract_text=_noop_extract_text,
+                core_db=MockSupabaseClient(schema="public"),
             )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -2583,6 +2593,7 @@ class TestProcessSingleCertidaoEstruturado:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -2606,6 +2617,7 @@ class TestProcessSingleCertidaoEstruturado:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -2629,6 +2641,7 @@ class TestProcessSingleCertidaoEstruturado:
 
             analyze=_noop_analyze, extract_text=_noop_extract_text,
             analyze_estrutura=estrutura_ia,
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -3083,6 +3096,7 @@ class TestProcessSingleCertidaoTranscricao:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=AsyncMock(return_value=extraido),
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -3115,6 +3129,7 @@ class TestProcessSingleCertidaoTranscricao:
             config_for("cenprot"), _consulta_row(), "tok", db,
             "r-cenprot", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=AsyncMock(return_value=extraido),
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-cenprot"
@@ -3136,6 +3151,7 @@ class TestProcessSingleCertidaoTranscricao:
             extract_text=AsyncMock(
                 return_value=service.ExtractedPdfText(para_ia=None)
             ),
+            core_db=MockSupabaseClient(schema="public"),
         )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
@@ -3159,6 +3175,7 @@ class TestProcessSingleCertidaoTranscricao:
             CONFIG_FEDERAL, _consulta_row(), "tok", db,
             "resultado-001", http, FakeStorageBackend(),
             analyze=_noop_analyze, extract_text=extract,
+            core_db=MockSupabaseClient(schema="public"),
         )
         extract.assert_not_awaited()
 
