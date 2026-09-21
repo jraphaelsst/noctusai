@@ -45,10 +45,35 @@
  *
  * Consequence, accepted: a CLOSED group contributes only its own group icon to
  * the rail. Hovering reveals the label and the user opens it exactly as today.
+ *
+ * ## Collapsed-by-construction nav groups (2026-09-21)
+ *
+ * DECISION: every group starts CLOSED. There is no per-group opt-in that
+ * defaults a group to open — a new entry appended to a product's
+ * `navGroups` array is collapsed with zero extra code, by construction, and
+ * stays that way even if the product author reaches for `defaultOpen: true`
+ * (see below).
+ *
+ * Two things keep the user oriented despite everything starting closed:
+ *   1. The group that CONTAINS the currently-active route auto-opens (see
+ *      `findActiveGroupKey`) — landing on a page always shows its own group
+ *      expanded, so the user can see where they are.
+ *   2. Once a user opens/closes a group by hand, that choice is persisted to
+ *      `localStorage` (read/write wrapped in try/catch — a disabled/private
+ *      localStorage degrades to "nothing persists", never a crash) so it
+ *      survives a reload.
+ *
+ * `NavGroup.defaultOpen` is now IGNORED by this component. It is kept in the
+ * type only so the ~15 products that still set it (mostly `true`) keep
+ * type-checking without a synchronized fleet-wide edit — every one of those
+ * call sites is dead configuration now, not a live per-product override.
+ * Removing the field outright is the correct long-term move (nothing should
+ * read a field it doesn't honour); flagged as a scoped follow-up rather than
+ * done here as a fan-out edit across every product's `NAV_GROUPS`.
  */
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
 
 import { cn } from "../../utils";
@@ -65,8 +90,50 @@ export interface NavGroup {
   key: string;
   label: string;
   icon: React.ElementType;
+  /**
+   * @deprecated IGNORED as of 2026-09-21 — every group now starts closed by
+   * construction (see the module docblock's "Collapsed-by-construction nav
+   * groups" section). Kept only so existing product `navGroups` literals
+   * that still set this keep type-checking; it has no runtime effect.
+   */
   defaultOpen?: boolean;
   items: NavItem[];
+}
+
+/** localStorage key for persisted per-group expand/collapse choices. */
+const OPEN_GROUPS_STORAGE_KEY = "noctus.sidebar.openGroups";
+
+/** Best-effort read — a disabled/private localStorage yields "nothing persisted". */
+function readPersistedOpenGroups(): Record<string, boolean> {
+  try {
+    const raw = window.localStorage.getItem(OPEN_GROUPS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Best-effort write — never throws (private mode / storage disabled / quota). */
+function writePersistedOpenGroups(state: Record<string, boolean>): void {
+  try {
+    window.localStorage.setItem(OPEN_GROUPS_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // localStorage unavailable — render/toggle correctly, just don't persist.
+  }
+}
+
+/** Is `href` the currently active route? Mirrors `NavLink`'s own `end`-less matching. */
+function isItemActive(href: string, pathname: string): boolean {
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** Which group (if any) contains the currently active route — auto-expand target. */
+function findActiveGroupKey(navGroups: NavGroup[], pathname: string): string | null {
+  const group = navGroups.find((g) => g.items.some((item) => isItemActive(item.href, pathname)));
+  return group ? group.key : null;
 }
 
 export interface SidebarProps {
@@ -108,12 +175,35 @@ export function Sidebar({
   // the same DOM is the off-canvas drawer and every `md:` class is inert.
   const { collapsed } = useSidebarRail();
 
-  const initialOpenState: Record<string, boolean> = {};
-  navGroups.forEach((g) => {
-    initialOpenState[g.key] = g.defaultOpen ?? false;
+  // Which group holds the current route — the one exception to "starts
+  // closed" (see the module docblock's "Collapsed-by-construction" section).
+  const { pathname } = useLocation();
+  const activeGroupKey = findActiveGroupKey(navGroups, pathname);
+
+  // Lazy init: every group starts closed UNLESS a prior visit persisted a
+  // choice for it, or it holds the active route on this very first render.
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const persisted = readPersistedOpenGroups();
+    if (activeGroupKey && persisted[activeGroupKey] === undefined) {
+      return { ...persisted, [activeGroupKey]: true };
+    }
+    return persisted;
   });
 
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(initialOpenState);
+  // Navigating into a different group's route auto-opens that group without
+  // touching any other group's state — a manual close of the CURRENT active
+  // group is respected (this effect only re-fires when `activeGroupKey`
+  // itself changes, i.e. on navigation, not on every render).
+  useEffect(() => {
+    if (!activeGroupKey) return;
+    setOpenGroups((prev) => (prev[activeGroupKey] ? prev : { ...prev, [activeGroupKey]: true }));
+  }, [activeGroupKey]);
+
+  // Persist every change (manual toggle or the auto-open above) so choices
+  // survive a reload. Best-effort — see `writePersistedOpenGroups`.
+  useEffect(() => {
+    writePersistedOpenGroups(openGroups);
+  }, [openGroups]);
 
   const toggleGroup = (key: string) => {
     setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -204,7 +294,9 @@ export function Sidebar({
           {navGroups.map((group) => {
             if (group.items.length === 0) return null;
 
-            const isOpen = openGroups[group.key] ?? group.defaultOpen ?? false;
+            // `defaultOpen` is deliberately NOT consulted here — see the
+            // "Collapsed-by-construction" module docblock section.
+            const isOpen = openGroups[group.key] ?? false;
 
             return (
               <CollapsiblePrimitive.Root

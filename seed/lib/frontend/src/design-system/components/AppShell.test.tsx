@@ -18,9 +18,13 @@
  *
  * Dual-React gap: resolved in this package (NOC-REMEDIATE[harness-vitest-dual-react]
  * RESOLVED 2026-05-29) — full render tests are safe.
+ *
+ * Also covers: collapsed-by-construction nav groups (2026-09-21) — every
+ * group starts closed, `defaultOpen` is ignored, the active-route group
+ * auto-opens, and a manual choice persists across a remount via localStorage.
  */
 /// <reference types="@testing-library/jest-dom" />
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { Home, LayoutDashboard, Users, Zap } from "lucide-react";
@@ -44,9 +48,12 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-function renderShell(railMode?: "hover-expand" | "expanded") {
+function renderShell(
+  railMode?: "hover-expand" | "expanded",
+  opts?: { navGroups?: NavGroup[]; initialEntries?: string[] },
+) {
   const view = render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={opts?.initialEntries ?? ["/"]}>
       <AppShell
         railMode={railMode}
         sidebar={
@@ -54,7 +61,7 @@ function renderShell(railMode?: "hover-expand" | "expanded") {
             brandIcon={Zap}
             brandTitle="NoctusAI"
             brandSubtitle="Testes"
-            navGroups={NAV_GROUPS}
+            navGroups={opts?.navGroups ?? NAV_GROUPS}
           />
         }
         header={({ onMenuToggle }) => (
@@ -249,8 +256,11 @@ describe("Sidebar collapsed rendering", () => {
   it("renders nav destinations in the collapsed rail (group open-state untouched)", () => {
     renderShell();
 
-    // `defaultOpen` group stays open while collapsed — the rail shows the
-    // destination icons, not just category headers.
+    // The active-route group ("/" ⇒ "principal") auto-opens and stays open
+    // while the rail is collapsed — the rail shows the destination icons, not
+    // just category headers. (`defaultOpen: true` on this fixture group is
+    // NOT why it's open — see the "collapsed-by-construction" describe block
+    // below, which pins a `defaultOpen: true` group closed when inactive.)
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Equipe" })).toBeInTheDocument();
   });
@@ -270,5 +280,153 @@ describe("Sidebar collapsed rendering", () => {
     const link = screen.getByRole("link", { name: "Dashboard" });
     expect(link).not.toHaveAttribute("title");
     expect(screen.getByText("Dashboard").className).not.toContain("md:max-w-0");
+  });
+});
+
+/**
+ * Collapsed-by-construction nav groups (2026-09-21).
+ *
+ * These pin the behaviour described in Sidebar.tsx's module docblock: every
+ * group starts closed, `defaultOpen` has no effect, the group holding the
+ * active route auto-opens, and a manual choice survives across a remount
+ * (the localStorage-backed persistence a reload relies on).
+ */
+/**
+ * Minimal in-memory Storage polyfill for these tests.
+ *
+ * Node 22+'s experimental built-in `globalThis.localStorage` (SQLite-backed,
+ * requires `--localstorage-file`) can shadow jsdom's own Storage and leave
+ * `window.localStorage` as an inert object with none of getItem/setItem/clear
+ * — exactly the "storage unavailable" case Sidebar.tsx's try/catch is built
+ * to survive, but it makes the HAPPY-PATH persistence tests unwritable
+ * against the real global. Installing a real, working Storage here tests the
+ * happy path on its own terms; the "localStorage throws" test below
+ * separately proves the try/catch degrades gracefully.
+ */
+function createMemoryStorage(): Storage {
+  let store: Record<string, string> = {};
+  return {
+    getItem: (key: string) => (key in store ? store[key] : null),
+    setItem: (key: string, value: string) => {
+      store[key] = String(value);
+    },
+    removeItem: (key: string) => {
+      delete store[key];
+    },
+    clear: () => {
+      store = {};
+    },
+    key: (index: number) => Object.keys(store)[index] ?? null,
+    get length() {
+      return Object.keys(store).length;
+    },
+  } as Storage;
+}
+
+describe("Sidebar collapsed-by-construction nav groups", () => {
+  const MULTI_GROUPS: NavGroup[] = [
+    {
+      key: "principal",
+      label: "Principal",
+      icon: Home,
+      items: [{ name: "Dashboard", href: "/", icon: LayoutDashboard }],
+    },
+    {
+      key: "equipe",
+      label: "Equipe",
+      icon: Users,
+      // `defaultOpen: true` — must be IGNORED. This group holds no active
+      // route in most of these tests, so it must render CLOSED regardless.
+      defaultOpen: true,
+      items: [{ name: "Membros", href: "/equipe", icon: Users }],
+    },
+  ];
+
+  beforeEach(() => {
+    Object.defineProperty(window, "localStorage", {
+      value: createMemoryStorage(),
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  it("starts every group closed by default, including one with defaultOpen: true", () => {
+    renderShell("expanded", { navGroups: MULTI_GROUPS, initialEntries: ["/nowhere"] });
+
+    // No route matches any group's item ⇒ nothing auto-opens ⇒ both closed.
+    expect(screen.queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Membros" })).not.toBeInTheDocument();
+
+    const equipeTrigger = screen.getByRole("button", { name: "Equipe" });
+    expect(equipeTrigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("auto-opens the group containing the active route, and only that one", () => {
+    renderShell("expanded", { navGroups: MULTI_GROUPS, initialEntries: ["/equipe"] });
+
+    expect(screen.getByRole("link", { name: "Membros" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Equipe" })).toHaveAttribute("aria-expanded", "true");
+
+    // The OTHER group (not on the active route) stays closed.
+    expect(screen.queryByRole("link", { name: "Dashboard" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Principal" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("is a keyboard-operable button with aria-expanded that toggles on click", () => {
+    renderShell("expanded", { navGroups: MULTI_GROUPS, initialEntries: ["/nowhere"] });
+
+    const trigger = screen.getByRole("button", { name: "Equipe" });
+    expect(trigger.tagName).toBe("BUTTON");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("link", { name: "Membros" })).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("link", { name: "Membros" })).not.toBeInTheDocument();
+  });
+
+  it("persists a manual expand/collapse choice across a remount (reload)", () => {
+    const { unmount } = renderShell("expanded", {
+      navGroups: MULTI_GROUPS,
+      initialEntries: ["/nowhere"],
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Equipe" }));
+    expect(screen.getByRole("link", { name: "Membros" })).toBeInTheDocument();
+    unmount();
+
+    // Simulates a page reload: a fresh mount reads the same localStorage key.
+    renderShell("expanded", { navGroups: MULTI_GROUPS, initialEntries: ["/nowhere"] });
+    expect(screen.getByRole("link", { name: "Membros" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Equipe" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("renders collapsed and persists correctly when localStorage throws (private mode)", () => {
+    const original = window.localStorage.getItem;
+    const spy = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
+      throw new DOMException("blocked");
+    });
+    const setSpy = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new DOMException("blocked");
+    });
+
+    expect(() =>
+      renderShell("expanded", { navGroups: MULTI_GROUPS, initialEntries: ["/equipe"] }),
+    ).not.toThrow();
+
+    // Active-route auto-open still works even though persistence is dead.
+    expect(screen.getByRole("link", { name: "Membros" })).toBeInTheDocument();
+
+    expect(() => fireEvent.click(screen.getByRole("button", { name: "Principal" }))).not.toThrow();
+
+    spy.mockRestore();
+    setSpy.mockRestore();
+    void original;
   });
 });

@@ -55,6 +55,16 @@ Never inline hooks in page components, even for simple products. Products grow �
 
 > Follow-up (open): `ts-morph` is NOT in the seed FE base devDeps (`seed/lib/frontend` · `seed/framework/frontend`) — add it so TypeScript AST edits (AST-first rule) work in product frontends without a per-product install. Surfaced by the same 2026-05-25 dispatch; see `project-history/worktree-salvage.ndjson` (`feat/sw-frontend-verify`).
 
+## Sidebar nav groups — collapsed by construction
+
+The canonical `Sidebar` organ (`@noctusai/lib/design-system` → `seed/lib/frontend/src/design-system/components/Sidebar.tsx`) starts **every** `NavGroup` closed. This is not a per-product convention to remember — it's baked into the organ: `NavGroup.defaultOpen` is `@deprecated` and **ignored** at render time, so a new group appended to a product's `navGroups` array is collapsed with zero extra code, and setting `defaultOpen: true` on it does nothing.
+
+Two things keep the user oriented despite starting closed:
+- The group containing the **currently active route** auto-expands (computed from `location.pathname` vs. each item's `href`).
+- A user's manual expand/collapse choice **persists to `localStorage`** (best-effort, try/catch-wrapped — degrades to "nothing persists" if storage is disabled, never a crash) and survives a reload.
+
+Don't hand-roll a `useState(true)` / `open` prop on a new nav-group-shaped component — consume `Sidebar`'s `NavGroup[]` via `navGroups` (products consume canonical organs). See `Sidebar.tsx`'s module docblock ("Collapsed-by-construction nav groups") for the full rationale, and its colocated `AppShell.test.tsx` for the behavioral tests (starts closed / active-route auto-open / toggle / persistence / localStorage-unavailable degrade).
+
 ## Token refresh
 
 Two complementary mechanisms:
