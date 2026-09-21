@@ -225,6 +225,88 @@ class TestEstadoCivilNegationDisclaimerDoesNotPoisonARealEvent:
         assert (valor, conf) == ("divorciado", "alta")
 
 
+#: The exact seven-line CNJ-standard "book type" legend a real certidão's
+#: trailing "DETALHAMENTO DA MATRÍCULA" appendix carries (Provimento CNJ
+#: 63/2017). `4. Livro C (Obito)` is what actually broke `estado_civil` on
+#: a live production document — see this class's own docstring.
+LEGENDA_DETALHAMENTO_MATRICULA = (
+    "DETALHAMENTO DA MATRICULA\n"
+    "115568 01 55 2011 2 00198 278 0059433-91\n"
+    "Onde:\n"
+    "e (1) Tipo do livro, sendo:\n"
+    "1. Livro A (Nascimento)\n"
+    "2. Livro B (Casamento)\n"
+    "3. Livro B Auxiliar (Registro de casamento religioso para fins civis)\n"
+    "4. Livro C (Obito)\n"
+    "5. Livro C Auxiliar (Registro de Natimortos)\n"
+    "6. Livro D (Registro de Proclamas)\n"
+    "7. Livro E (Demais atos relativos ao Registro Civil)\n"
+)
+
+
+class TestEstadoCivilDetalhamentoMatriculaLegendIsNotAnEvent:
+    """🔴 THE BUG THIS CLASS REGRESSION-TESTS (found by the tech-lead, not
+    caught by the negation guard above)
+    ------------------------------------------------------------------------
+    A real certidão's trailing "DETALHAMENTO DA MATRÍCULA" appendix
+    explains the matrícula NUMBER FORMAT by enumerating registry BOOK TYPES
+    — `4. Livro C (Óbito)` is a LIST ITEM describing a book, not negated and
+    not an event about the holder, so the negation guard (scoped to "nada
+    consta"-style clauses) does not catch it. Counted as a real occurrence,
+    it disagreed with a genuine DIVÓRCIO averbação elsewhere in the same
+    flat zone and collapsed the whole reading to `nenhuma` — reproduced
+    deterministically, parser-only, no vision call, on a live production
+    document's real structure. Two independent guards fix it: the averbação
+    zone is clipped before the "DETALHAMENTO" heading, AND a "LIVRO X
+    (Evento)" legend entry is excluded even where the heading itself does
+    not survive transcription intact."""
+
+    def test_the_legend_alone_does_not_manufacture_an_event(self):
+        texto = REGISTRO_CASADOS + LEGENDA_DETALHAMENTO_MATRICULA
+        valor, conf, _ = find_estado_civil(texto)
+        assert (valor, conf) == ("casado", "alta")
+
+    def test_a_real_averbacao_still_resolves_with_the_legend_appended(self):
+        """The exact failure mode: a genuine DIVÓRCIO averbação, followed
+        by the standard trailing legend, must still read as `divorciado` —
+        not collapse to `nenhuma` because `Livro C (Óbito)` looks like a
+        second, conflicting event."""
+        texto = (
+            REGISTRO_CASADOS
+            + "AVERBACAO: DIVORCIO AVERBADO EM 10/03/2020, CONFORME SENTENCA\n"
+            + LEGENDA_DETALHAMENTO_MATRICULA
+        )
+        valor, conf, rotulo = find_estado_civil(texto)
+        assert (valor, conf) == ("divorciado", "alta")
+        assert rotulo is not None and "AVERBACAO" in rotulo
+
+    def test_the_legend_without_the_detalhamento_heading_is_still_excluded(self):
+        """The second, independent guard: even if the "DETALHAMENTO"
+        heading is missing or mis-transcribed, the "LIVRO X (Evento)"
+        structural shape alone is enough to exclude a legend entry."""
+        texto = (
+            REGISTRO_CASADOS
+            + "AVERBACAO: DIVORCIO AVERBADO EM 10/03/2020, CONFORME SENTENCA\n"
+            + "1. Livro A (Nascimento)\n2. Livro B (Casamento)\n"
+            "4. Livro C (Obito)\n"
+        )
+        valor, conf, _ = find_estado_civil(texto)
+        assert (valor, conf) == ("divorciado", "alta")
+
+    def test_a_genuine_obito_averbacao_is_unaffected_by_the_legend_guard(self):
+        """The guard excludes a keyword only INSIDE the "Livro X (...)"
+        parenthetical shape — a real narrative averbação event must still
+        resolve normally even when the same document also carries the
+        legend."""
+        texto = (
+            REGISTRO_CASADOS
+            + "AVERBACAO: OBITO DO CONJUGE EM 01/01/2021\n"
+            + LEGENDA_DETALHAMENTO_MATRICULA
+        )
+        valor, conf, _ = find_estado_civil(texto)
+        assert (valor, conf) == ("viuvo", "alta")
+
+
 class TestEstadoCivilInferredFromRegimeDeBens:
     def test_a_bare_regime_phrase_infers_casado(self):
         """The one structural inference this module makes — see the module

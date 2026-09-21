@@ -14,6 +14,15 @@ shape and wording are faithful — see the dispatch brief for the full
 provenance note. `FakeIdentityExtractor`'s scripted married-reading is
 `test_civil_status.py`'s `TestCivilStatusWiring`; this file is the
 divorced-with-two-titulars case that scripted fixture does not cover.
+
+🔴 THE FIXTURE'S TAIL MATTERS AS MUCH AS ITS HEAD
+---------------------------------------------------
+The trailing "DETALHAMENTO DA MATRÍCULA" book-type legend below is not
+decorative — an EARLIER, truncated version of this fixture (missing that
+legend) let `estado_civil` pass while the real document still failed,
+because the legend is exactly what breaks it (see
+`test_civil_status.py`'s `TestEstadoCivilDetalhamentoMatriculaLegendIsNotAnEvent`
+for the isolated bare-parser regression). Do not trim it back.
 """
 from __future__ import annotations
 
@@ -78,6 +87,18 @@ CARAPICUÍBA, 17 de agosto de 2022
 AVERBAÇÕES/ANOTAÇÕES
 
 AVERBAÇÃO: CERTIFICO e dou fé que, através da ESCRITURA PÚBLICA de Divórcio Consensual, lavrada aos 08/07/2022, no Livro N° 310, Páginas 373/376, do Tabelião de Notas do Distrito Caucaia do Alto, Comarca de Cotia/SP, foi realizado o DIVÓRCIO CONSENSUAL do casal ALMIR TEIXEIRA DA COSTA e MARIANA PELLEGRINI RANGEL. Não houve alteração no nome das partes. O referido é verdade e dou fé. Carapicuíba, 17/08/2022.
+
+DETALHAMENTO DA MATRÍCULA
+115568 01 55 2011 2 00198 278 0059433-91
+Onde:
+e (1) Tipo do livro, sendo:
+1. Livro A (Nascimento)
+2. Livro B (Casamento)
+3. Livro B Auxiliar (Registro de casamento religioso para fins civis)
+4. Livro C (Obito)
+5. Livro C Auxiliar (Registro de Natimortos)
+6. Livro D (Registro de Proclamas)
+7. Livro E (Demais atos relativos ao Registro Civil)
 """
 
 

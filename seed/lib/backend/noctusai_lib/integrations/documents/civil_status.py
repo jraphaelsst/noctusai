@@ -282,6 +282,46 @@ def _clausula_negada(zona: str, at: int) -> bool:
     return _NEGACAO_RE.search(clausula) is not None
 
 
+#: Standard trailing appendix on a CNJ-format certidão (Provimento CNJ
+#: 63/2017's matrícula-numbering standard): explains the matrícula NUMBER
+#: FORMAT by enumerating registry BOOK TYPES ("4. Livro C (Óbito)"). It is
+#: document METADATA about how to read a serial number, never part of the
+#: civil-registry narrative — and every REAL averbação event in a
+#: CNJ-format certidão precedes it, so clipping the averbação zone here
+#: cannot lose a genuine amendment. Matches both "DETALHAMENTO DA
+#: MATRICULA" and "DETALHAMENTO DO NUMERO DA MATRICULA" phrasings seen
+#: across cartório templates.
+_DETALHAMENTO_MATRICULA_RE = re.compile(
+    r"DETALHAMENTO\s+D[AO]\s+(?:NUMERO\s+D[AE]\s+)?MATRICULA"
+)
+
+
+def _sem_apendice_de_detalhamento(zona: str) -> str:
+    """`zona`, clipped before a trailing "DETALHAMENTO DA MATRÍCULA"
+    appendix when one is present — see the pattern's own comment."""
+    m = _DETALHAMENTO_MATRICULA_RE.search(zona)
+    return zona[: m.start()] if m else zona
+
+
+#: A registry BOOK TYPE legend entry ("4. Livro C (Óbito)", "2. Livro B
+#: (Casamento)") — a NUMBERED LIST ITEM describing which physical book a
+#: matrícula number's second segment refers to, never a narrative clause
+#: about this document's holder. Structural (bound to the fixed "LIVRO
+#: <letter>" shape CNJ's own numbering standard uses), not a blocklist of
+#: every possible book-name synonym — the reason it generalises across the
+#: fleet rather than fitting only the one document that motivated it: the
+#: matrícula format is regulated, not free prose, so this shape recurs
+#: verbatim on every CNJ-format certidão regardless of whether its
+#: "DETALHAMENTO" HEADING survives transcription intact.
+_LIVRO_LEGENDA_RE = re.compile(r"LIVRO\s+[A-Z]+(?:\s+AUXILIAR)?\s*\([^)]*\)")
+
+
+def _dentro_de_legenda_de_livro(zona: str, at: int) -> bool:
+    """Is the event keyword matched at `at` sitting inside a "LIVRO X
+    (Evento)" book-type legend entry?"""
+    return any(m.start() <= at < m.end() for m in _LIVRO_LEGENDA_RE.finditer(zona))
+
+
 def find_regime_bens(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract the marital property regime.
 
@@ -358,7 +398,9 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
 
     averbacao_pos = _averbacao_start(norm)
     if averbacao_pos is not None:
-        zona = norm[averbacao_pos:]
+        # Clipped BEFORE any trailing "DETALHAMENTO DA MATRÍCULA" appendix —
+        # see `_sem_apendice_de_detalhamento`'s comment for why that is safe.
+        zona = _sem_apendice_de_detalhamento(norm[averbacao_pos:])
         achados_eventos: list[tuple[str, "re.Match[str]"]] = []
         for padrao, canonico in _AVERBACAO_EVENTOS:
             for m in padrao.finditer(zona):
@@ -366,6 +408,15 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
                     # "NADA CONSTA quanto a divórcio, óbito, ..." names
                     # this event only to say it did NOT happen — see
                     # `_clausula_negada`'s docstring.
+                    continue
+                if _dentro_de_legenda_de_livro(zona, m.start()):
+                    # "4. Livro C (Óbito)" is a book-TYPE legend entry, not
+                    # an event about the holder — see
+                    # `_dentro_de_legenda_de_livro`'s docstring. Kept as a
+                    # SECOND, independent guard alongside the zone clip
+                    # above: it also protects a "DETALHAMENTO" appendix
+                    # whose heading did not survive transcription intact,
+                    # or a legend printed without that heading at all.
                     continue
                 achados_eventos.append((canonico, m))
         eventos = {canonico for canonico, _ in achados_eventos}
