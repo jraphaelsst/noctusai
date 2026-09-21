@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -28,6 +28,10 @@ const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
 // Platform-admin pages (server-enforced by `require_platform_admin`).
 const Credenciais = lazy(() => import("@/pages/Credenciais"));
 const ConfiguracoesAgente = lazy(() => import("@/pages/ConfiguracoesAgente"));
+// Agent Studio — `products/agents/projects/agent-studio-isaia/CONTRACT.md` §G.
+const StudioList = lazy(() => import("@/pages/studio/StudioList"));
+const StudioAgent = lazy(() => import("@/pages/studio/StudioAgent"));
+const PromptByHash = lazy(() => import("@/pages/studio/PromptByHash"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -40,6 +44,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Julia", href: "/julia", icon: MessageCircle, route: "julia" },
       { name: "Agentes", href: "/agentes", icon: Bot, route: "agentes" },
+      { name: "Agent Studio", href: "/studio", icon: Boxes, route: "studio" },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal, route: "configuracoes-agente" },
@@ -58,6 +63,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Julia", href: "/julia", icon: MessageCircle },
       { name: "Agentes", href: "/agentes", icon: Bot },
+      { name: "Agent Studio", href: "/studio", icon: Boxes },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal },
@@ -85,6 +91,11 @@ export default createProductApp({
     { path: "/equipe", component: Equipe },
     { path: "/credenciais", component: Credenciais },
     { path: "/configuracoes-agente", component: ConfiguracoesAgente },
+    { path: "/studio", component: StudioList },
+    // Declared before `/studio/:key` for readability; react-router ranks the
+    // static `prompts` segment above the `:key` param regardless.
+    { path: "/studio/prompts/:hash", component: PromptByHash },
+    { path: "/studio/:key", component: StudioAgent },
   ],
   Layout,
   ...infra.appConfig,
