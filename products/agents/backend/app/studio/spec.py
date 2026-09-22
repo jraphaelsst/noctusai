@@ -24,6 +24,7 @@ from uuid import UUID
 
 from app.runtime.types import AgentSpec
 from app.stores.errors import NotFound
+from app.studio.bundles import client_bundle, compile_version
 from app.studio.tools import studio_allowed_tools
 
 __all__ = [
@@ -78,11 +79,6 @@ def build_studio_spec(
     DRAFT, and a stored prompt referencing the draft would make it
     undiscardable (``draft_referenced``) for no proof-of-use benefit (the run
     itself records the judged ``compiled_hash``)."""
-    # Lazy: the compile helpers live beside BE-DEF's inspector/publish routes
-    # (the ONE composition path, §A4); importing them at module scope would
-    # pull the router into every runtime import.
-    from app.routers.studio_agents_router import client_bundle, compile_version
-
     org_id = conversation.org_id
     if conversation.version_id is None:
         raise StudioSpecError("no_active_version", "O agente não tem versão publicada.")

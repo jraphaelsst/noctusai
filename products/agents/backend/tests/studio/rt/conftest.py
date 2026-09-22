@@ -18,8 +18,8 @@ import pytest
 
 from app.routers.studio_agents_router import get_studio_definition_store_dep
 from app.routers.studio_evals_router import get_eval_store_dep
-from app.routers.studio_knowledge_router import get_agent_lookup_dep, get_studio_knowledge_store_dep
-from app.stores.studio_definitions import SectionInput
+from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
+from app.stores.studio_definitions import FakeStudioDefinitionStore, SectionInput
 from app.stores.studio_eval_runs import FakeEvalRunWriter
 from app.stores.studio_evals import FakeEvalStore
 from app.stores.studio_knowledge import FakeStudioKnowledgeStore
@@ -30,7 +30,7 @@ from tests.routers.conftest import (  # noqa: F401 — `agents_client` is a fixt
     agents_client,
     seed_org_role,
 )
-from tests.studio.rt.fakes import DefinitionsAgentLookup, FakeStudioStore, ScriptedJudge
+from tests.studio.rt.fakes import ScriptedJudge, publish
 
 _MISSING = object()
 
@@ -41,7 +41,7 @@ class RtHarness:
         self.stores = client.stores
         self.org_id: UUID = DEFAULT_ORG_ID
         self.user_id: UUID = DEFAULT_USER_ID
-        self.studio = FakeStudioStore()
+        self.studio = FakeStudioDefinitionStore()
         self.knowledge = FakeStudioKnowledgeStore()
         self.evals = FakeEvalStore()
         self.runs = FakeEvalRunWriter(self.evals)
@@ -56,6 +56,12 @@ class RtHarness:
 
     def put(self, url, **kw):
         return self.client.put(url, **kw)
+
+    def publish(self, agent, version_id):
+        from app.studio.catalog import StoreKnowledgeCatalog
+
+        return publish(self.studio, self.org_id, agent, version_id, self.user_id,
+                       catalog=StoreKnowledgeCatalog(self.knowledge))
 
     def make_agent(
         self,
@@ -90,7 +96,7 @@ class RtHarness:
                 store.upsert_skill_file(self.org_id, rec.id, caminho=caminho, titulo=None, conteudo=conteudo)
         version = store.get_version(self.org_id, draft.id)
         if publish:
-            version = store.publish_version(self.org_id, draft.id, self.user_id, None, "publicação de teste do BE-RT")
+            version = self.publish(agent, draft.id)
         return store.get_agent(self.org_id, key), version
 
 
@@ -103,7 +109,6 @@ def rt(agents_client):
         get_studio_definition_store_dep: lambda: h.studio,
         get_studio_knowledge_store_dep: lambda: h.knowledge,
         get_eval_store_dep: lambda: h.evals,
-        get_agent_lookup_dep: lambda: DefinitionsAgentLookup(h.studio),
         get_eval_run_writer_dep: lambda: h.runs,
         get_eval_judge_dep: lambda: h.judge,
     }

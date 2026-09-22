@@ -8,6 +8,10 @@ exact ``/api/studio/agents/*/import`` wildcard pattern in
 ``max_body_path_overrides`` (a whole-segment wildcard, never a prefix, so no
 sibling route inherits the raised cap). Never publishes. ``?dry_run=true``
 returns the plan with zero writes.
+
+Errors: store ``StudioConflict`` codes map to 409 through ``store_errors``
+(notably ``slug_in_other_collection`` — an import never moves a document
+between collections), ``ValueError`` to 422 ``invalid_field``.
 """
 from __future__ import annotations
 

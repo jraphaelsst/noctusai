@@ -114,7 +114,7 @@ class TestImport:
         _import(rt)
         body = copy.deepcopy(BUNDLE)
         body["conhecimento"][0]["documentos"][0]["conteudo"] = "mudou"
-        reads = {"get_agent", "get_draft", "list_collections", "get_document_by_slug", "list_cases", "list_clients"}
+        reads = {"list_agents", "get_draft", "list_collections", "find_document_by_slug", "list_cases", "list_clients"}
         out = import_bundle(
             AgentBundle.model_validate(body), org_id=rt.org_id, key="isa", user_id=rt.user_id, dry_run=True,
             definitions=ReadOnlyProxy(rt.studio, reads), knowledge=ReadOnlyProxy(rt.knowledge, reads),
@@ -122,6 +122,24 @@ class TestImport:
         )
         assert out["conhecimento"]["documentos_atualizados"] == 1
         assert out["rascunho"]["version_id"] is not None
+
+    def test_dry_run_counts_an_archived_document_as_existing(self, rt):
+        _import(rt)
+        agent = rt.studio.get_agent(rt.org_id, "isa")
+        doc = rt.knowledge.get_document_by_slug(rt.org_id, agent.id, "ganchos")
+        rt.knowledge.update_document(rt.org_id, agent.id, doc.id, author_id=rt.user_id, ativo=False)
+        out = _import(rt, dry_run=True).json()
+        assert out["conhecimento"]["documentos_criados"] == 0
+        assert out["conhecimento"]["documentos_inalterados"] == 2
+
+    def test_slug_living_in_another_collection_is_a_409(self, rt):
+        _import(rt)
+        body = copy.deepcopy(BUNDLE)
+        body["conhecimento"].append({"slug": "outra", "nome": "Outra", "documentos": [
+            body["conhecimento"][0]["documentos"].pop(0)]})
+        resp = _import(rt, body)
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "slug_in_other_collection"
 
     def test_the_read_only_proxy_really_refuses_writes(self, rt):
         with pytest.raises(WriteForbidden):

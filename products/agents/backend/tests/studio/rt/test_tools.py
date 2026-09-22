@@ -9,10 +9,10 @@ from uuid import uuid4
 
 import pytest
 
-from app.stores.studio_definitions import SectionInput
+from app.stores.studio_definitions import FakeStudioDefinitionStore, SectionInput
 from app.stores.studio_knowledge import CollectionInput, DocumentInput, FakeStudioKnowledgeStore
 from app.studio.tools import MAX_RESULT_CHARS, studio_allowed_tools, studio_tool_specs
-from tests.studio.rt.fakes import FakeStudioStore
+from tests.studio.rt.fakes import publish
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,7 +28,7 @@ def _payload(result):
 
 class _World:
     def __init__(self, *, knowledge_enabled=True, big_corpo=False):
-        self.defs = FakeStudioStore()
+        self.defs = FakeStudioDefinitionStore()
         self.kb = FakeStudioKnowledgeStore()
         self.agent = self.defs.create_studio_agent(ORG, "isa", "Isa", None)
         v = self.defs.create_draft(ORG, self.agent.id, None, USER)
@@ -37,7 +37,7 @@ class _World:
         self.roteiro = self.defs.create_skill(ORG, v.id, nome="roteiro-reels", descricao="Roteiros", corpo=corpo)
         self.defs.upsert_skill_file(ORG, self.roteiro.id, caminho="references/arquiteturas.md", titulo="Arq", conteudo="ARQ")
         self.defs.create_skill(ORG, v.id, nome="desligada", descricao="off", corpo="nunca", ativo=False)
-        self.v1 = self.defs.publish_version(ORG, v.id, USER, None, "publicação de teste do BE-RT")
+        self.v1 = publish(self.defs, ORG, self.agent, v.id, USER)
         # A newer draft with a skill the pinned v1 does NOT have.
         v2 = self.defs.create_draft(ORG, self.agent.id, self.v1.id, USER)
         self.defs.create_skill(ORG, v2.id, nome="so-no-rascunho", descricao="d", corpo="c")
@@ -117,7 +117,7 @@ class TestKnowledge:
         specs = {
             s.name: s for s in studio_tool_specs(
                 org_id=ORG, agent_id=uuid4(), version_id=uuid4(), knowledge_enabled=True,
-                definitions=FakeStudioStore(), knowledge=SpyKb(),
+                definitions=FakeStudioDefinitionStore(), knowledge=SpyKb(),
             )
         }
         await specs["kb_buscar"].handler({"consulta": "a", "limite": 500})
@@ -140,7 +140,7 @@ class TestKnowledge:
 
 
 async def test_a_store_failure_is_a_payload_never_an_exception():
-    class Boom(FakeStudioStore):
+    class Boom(FakeStudioDefinitionStore):
         def list_skills(self, org_id, version_id):
             raise RuntimeError("db exploded: secret detail")
 
