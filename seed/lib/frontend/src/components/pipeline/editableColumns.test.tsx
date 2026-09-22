@@ -75,12 +75,14 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   api = {
+    // Cast to the client's own generic method types: a concrete vi.fn()
+    // return can't satisfy `<T>(…) => Promise<T>` (CI seed typecheck).
     get: vi.fn(async (path: string) =>
       path === '/api/board' ? { data: board() } : { data: [S_A, S_B, stage('x', 3, { ativo: false }), S_C] },
-    ),
-    post: vi.fn(async () => ({ data: null })),
-    patch: vi.fn(async () => ({ data: null })),
-    delete: vi.fn(async () => ({ data: { cards_movidos: 0 } })),
+    ) as unknown as PipelineApi['get'],
+    post: vi.fn(async () => ({ data: null })) as unknown as PipelineApi['post'],
+    patch: vi.fn(async () => ({ data: null })) as unknown as PipelineApi['patch'],
+    delete: vi.fn(async () => ({ data: { cards_movidos: 0 } })) as unknown as PipelineApi['delete'],
   };
 });
 
