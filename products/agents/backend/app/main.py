@@ -33,6 +33,7 @@ below as a ``liveness_hooks`` entry on ``/_health``, never a fork of
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from noctusai_seed import HealthEndpointConfig, create_product_app
@@ -79,33 +80,73 @@ _auth_router = create_auth_router(
 )
 
 
+#: Backoff for a startup step's transient failure (a PostgREST hiccup in the
+#: first seconds of a container's life — seen live 2026-09-21).
+_STARTUP_RETRY_DELAYS = (1.0, 3.0, 9.0)
+
+
+async def _startup_step(name: str, step, failures: list[str], *, delays: tuple[float, ...] = _STARTUP_RETRY_DELAYS) -> None:
+    """Run one startup step with bounded retries. A step that still fails is
+    logged with its traceback and recorded — it never skips the steps after
+    it (each is independent maintenance; one transient error must not leave
+    slots unswept or eval runs stuck)."""
+    for attempt, delay in enumerate((*delays, None), 1):
+        try:
+            await step()
+            return
+        except Exception:
+            if delay is None:
+                logger.exception("agents.startup.step_failed step=%s attempts=%d", name, attempt)
+                failures.append(name)
+                return
+            logger.warning("agents.startup.step_retry step=%s attempt=%d", name, attempt, exc_info=True)
+            await asyncio.sleep(delay)
+
+
 async def on_startup() -> None:
-    """Contract §E.2 "Startup": every `pendente` approval row whose
-    `instance_id` equals THIS instance becomes `expirada` — never other
-    instances' rows (security finding 5). Then contract §E.11 "Every slot
-    is swept once at startup": kill+sweep+unlink every non-quarantined
-    slot before serving a single turn."""
+    """Startup maintenance, each step independent (2026-09-21: a transient
+    PostgREST error in the approvals step used to skip the slot sweep and the
+    eval-run sweep behind it).
+
+    1. Contract §E.11 "Every slot is swept once at startup" — FIRST: local,
+       network-free, and the isolation guarantee depends on it.
+    2. Contract §E.2 "Startup": every `pendente` approval row whose
+       `instance_id` equals THIS instance becomes `expirada` — never other
+       instances' rows (security finding 5).
+    3. Agent Studio §E6: eval runs a previous life of this process left
+       pendente/executando can never finish — fail them with a clear erro.
+
+    Any step that still fails after its retries is re-raised as ONE error at
+    the end, so the seed parks it on `startup_hook_error` (`/api/health`)."""
     from app.dependencies import get_approval_broker_dep
-
-    broker = get_approval_broker_dep()
-    expired = await broker.expire_orphans_on_startup()
-    logger.info("agents.startup.expired_orphan_approvals count=%s", expired)
-
-    slot_pool = get_slot_pool(settings)
-    await slot_pool.sweep_all_on_startup()
-    logger.info("agents.startup.slot_pool_swept health=%s", slot_pool.health())
-
-    # Agent Studio §E6: eval runs a previous life of this process left
-    # pendente/executando can never finish — fail them with a clear erro.
     from app.stores.studio_eval_runs import get_eval_run_writer
     from app.studio.evals import sweep_orphaned_runs
 
-    failed = sweep_orphaned_runs(get_eval_run_writer(settings))
-    logger.info("agents.startup.orphaned_eval_runs_failed count=%s", failed)
+    failures: list[str] = []
+
+    async def sweep_slots() -> None:
+        slot_pool = get_slot_pool(settings)
+        await slot_pool.sweep_all_on_startup()
+        logger.info("agents.startup.slot_pool_swept health=%s", slot_pool.health())
+
+    async def expire_approvals() -> None:
+        expired = await get_approval_broker_dep().expire_orphans_on_startup()
+        logger.info("agents.startup.expired_orphan_approvals count=%s", expired)
+
+    async def fail_orphan_eval_runs() -> None:
+        failed = sweep_orphaned_runs(get_eval_run_writer(settings))
+        logger.info("agents.startup.orphaned_eval_runs_failed count=%s", failed)
+
+    await _startup_step("slot_sweep", sweep_slots, failures)
+    await _startup_step("expire_orphan_approvals", expire_approvals, failures)
+    await _startup_step("fail_orphan_eval_runs", fail_orphan_eval_runs, failures)
 
     # Daily credential maintenance (expiry notifications + §D ring prune).
     # Fires only where `NOCTUS_SCHEDULERS_ENABLED` is set (prod compose).
     start_scheduler()
+
+    if failures:
+        raise RuntimeError(f"agents startup steps failed after retries: {', '.join(failures)}")
 
 
 async def on_shutdown() -> None:
