@@ -73,11 +73,19 @@ def _drop_modeb_tooling_meta_findings(issues: list[dict]) -> list[dict]:
     (`TestLyingLoadingStateModeB::test_modeb_bootstrap_error_surfaces_as_one_explicit_finding`)
     — filtering it out HERE does not hide it from the suite, it just keeps
     the Mode-A assertions from depending on Node tooling they don't need.
+
+    Matched STRUCTURALLY (the meta-finding is the only one whose `file` is
+    the scanner script itself), not by prose: the previous version matched
+    the strings "AST scan could not run"/"could not parse", and when the
+    detector's wording moved to "could not complete — ts_morph_not_installed"
+    the filter silently stopped matching. The Mode-A tests then failed in any
+    tree without `mcp/noctusai/node/node_modules` — a fresh worktree, or CI,
+    which provisions node but never installs that package (2026-09-22: the
+    third false-red-from-an-unprovisioned-tree of the day). A filter keyed on
+    a message can drift out from under its own test; the emitted `file` is
+    part of the finding's shape.
     """
-    return [
-        i for i in issues
-        if "AST scan could not run" not in i["issue"] and "AST scan could not parse" not in i["issue"]
-    ]
+    return [i for i in issues if not i.get("file", "").endswith("lying_loading_scan.mjs")]
 
 
 # The exact pre-fix ChartCard usage — `git show ae9087ce:products/
