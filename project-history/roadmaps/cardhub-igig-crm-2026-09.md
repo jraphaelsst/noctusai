@@ -80,6 +80,11 @@ Bugfixes 1–8; data model: `lead`, `negocio`(funnel card), `cliente` enrichment
 - **2026-09-22**: Calendar generates pautas only; esteira tasks on demand (owner).
 - **2026-09-22**: CardHub extraction + SW swap first, igig after (owner, overriding "igig first").
 - **2026-09-22**: Mobile-first is a hard requirement (owner).
+- **2026-09-22**: Reply watch = Gmail API **push** (users.watch → Pub/Sub push → our webhook; weekly watch renewal, no inbox polling). Provider-global DNS/MX inbound = later phase (owner). Resolves Q1.
+- **2026-09-22**: Orçamento v1 includes validity/auto-expiry (no date = never expires), versions (only one acceptable), scope limits + excedentes, live estimated margin (owner). Resolves Q3.
+- **2026-09-22**: Lost deals = "Marcar como perdido" archive with required reason + stage-lost + value + dwell time recorded (tech-lead rec; owner wants loss statistics — archive gives cleaner funnel math than a column).
+- **2026-09-22**: Lead sources v1: form, manual, WAHA (configured exactly like SW), Meta Lead Ads; One Chat agent reads/answers WhatsApp and feeds the system (owner).
+- **2026-09-22**: Wave A design → `cardhub-igig-crm-2026-09.wave-a-design.md` (D-A1 PostgREST seam, D-A2 desktop-identical/mobile additive, D-A3 SW contract byte-identical).
 
 ## Composes with
 
