@@ -40,6 +40,10 @@ class MessageRecord:
     token_usage: dict[str, Any] | None = None
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)
+    #: Agent Studio §A7/§E4 (012 columns): the version + exact compiled
+    #: prompt hash an assistant message of a studio agent ran with.
+    version_id: UUID | None = None
+    compiled_hash: str | None = None
 
 
 class MessageStore(Protocol):
@@ -52,6 +56,8 @@ class MessageStore(Protocol):
         *,
         blocks: list[dict[str, Any]] | None = None,
         token_usage: dict[str, Any] | None = None,
+        version_id: UUID | None = None,
+        compiled_hash: str | None = None,
     ) -> MessageRecord:
         ...
 
@@ -102,6 +108,8 @@ class FakeMessageStore:
         *,
         blocks: list[dict[str, Any]] | None = None,
         token_usage: dict[str, Any] | None = None,
+        version_id: UUID | None = None,
+        compiled_hash: str | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -116,6 +124,8 @@ class FakeMessageStore:
             "token_usage": token_usage,
             "created_at": now,
             "updated_at": now,
+            "version_id": version_id,
+            "compiled_hash": compiled_hash,
         }
         self._rows.setdefault((org_id, conversation_id), []).append(row)
         return self._to_record(row)
@@ -177,6 +187,8 @@ class SupabaseMessageStore:
         *,
         blocks: list[dict[str, Any]] | None = None,
         token_usage: dict[str, Any] | None = None,
+        version_id: UUID | None = None,
+        compiled_hash: str | None = None,
     ) -> MessageRecord:
         if role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}; got {role!r}")
@@ -188,6 +200,11 @@ class SupabaseMessageStore:
             "blocks": list(blocks or []),
             "token_usage": token_usage,
         }
+        # Studio-only columns — omitted for Julia (her insert is unchanged).
+        if version_id is not None:
+            payload["version_id"] = str(version_id)
+        if compiled_hash is not None:
+            payload["compiled_hash"] = compiled_hash
         resp = self._table().insert(payload).execute()
         rows = resp.data or []
         return self._record(rows[0] if rows else payload)
@@ -254,6 +271,8 @@ class SupabaseMessageStore:
             token_usage=row.get("token_usage"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            version_id=UUID(str(row["version_id"])) if row.get("version_id") else None,
+            compiled_hash=row.get("compiled_hash"),
         )
 
 

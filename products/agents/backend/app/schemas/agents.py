@@ -89,6 +89,10 @@ class ConversationOut(BaseModel):
     last_message_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Agent Studio §D6 (additive).
+    agent_key: str
+    version_id: UUID | None = None
+    client_id: UUID | None = None
 
 
 class ConversationListOut(BaseModel):
@@ -98,6 +102,10 @@ class ConversationListOut(BaseModel):
 
 class ConversationCreateRequest(StrictHttpModel):
     titulo: str | None = None
+    # Agent Studio §D6: which agent; omitted ⇒ Julia (her page sends nothing).
+    agent_key: str = Field(default="julia", min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
+    #: Studio agents only; must belong to that agent AND be active.
+    client_id: UUID | None = None
 
 
 # ── Messages (§E.2) ──────────────────────────────────────────────────────
@@ -112,6 +120,9 @@ class MessageOut(BaseModel):
     token_usage: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
+    # Agent Studio §D6/§A7 (additive): set on a studio agent's assistant messages.
+    version_id: UUID | None = None
+    compiled_hash: str | None = None
 
 
 class MessageListOut(BaseModel):

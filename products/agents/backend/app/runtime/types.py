@@ -38,22 +38,46 @@ class TurnContext:
     requested_by: UUID  # the conversation owner (E.2)
     instance_id: str  # this process; stored on approvals + turn lock
     sdk_session_id: str | None  # conversations.sdk_session_id, for resume
+    #: Agent Studio §E6: an eval case's turn runs under a context that is
+    #: NOT a user conversation — ``conversation_id`` is a throwaway id with
+    #: no ``agents.conversations`` row, so the real runtime must neither
+    #: resume nor mirror a durable transcript for it (the transcript table
+    #: FKs the conversation). ``False`` for every route-driven turn.
+    ephemeral: bool = False
 
 
 @dataclass(frozen=True)
 class AgentSpec:
-    """The fully-resolved shape ``build_julia_spec(persona_row)`` returns —
-    everything ``ClaudeAgentSdkRuntime`` needs to launch a turn, already
-    merged from the active persona row plus Julia's static spec (contract
-    §E.5/§E.9)."""
+    """Everything ``ClaudeAgentSdkRuntime`` needs to launch a turn.
 
-    key: Literal["julia"]
-    model: str  # from the active persona, already allowlist-checked
+    Two producers (Agent Studio contract §E1 — generic, backward
+    compatible): ``build_julia_spec(persona_row)`` (Julia, the legacy
+    path: ``prompt_mode="preset_append"``, ``toolset="academia"`` — every
+    field below that has a default keeps Julia's launch byte-identical)
+    and ``app.studio.spec.build_studio_spec`` (a studio agent:
+    ``prompt_mode="custom"``, ``toolset="studio"``, the pinned version's
+    compiled prompt in ``prompt_append``)."""
+
+    key: str
+    model: str  # allowlist-checked by the producer (persona / studio version)
     effort: Literal["low", "medium", "high", "xhigh", "max"]
-    prompt_append: str  # JULIA.md + persona fields, composed by build_julia_spec()
-    skills: tuple[str, ...]  # explicit ar-* list (E.5)
-    tools: tuple[str, ...]  # exactly the E.4 leitura + escrita names
+    prompt_append: str  # the text written to the slot's append.md handoff
+    skills: tuple[str, ...]  # SDK plugin skills (Julia's ar-* list); () for studio
+    tools: tuple[str, ...]  # the tool names this spec may call
     max_turns: int  # default 40
+    prompt_mode: Literal["preset_append", "custom"] = "preset_append"
+    toolset: Literal["academia", "studio"] = "academia"
+    agent_id: UUID | None = None
+    version_id: UUID | None = None
+    #: ``"sha256:<hex>"`` of EXACTLY ``prompt_append`` (studio) — the value
+    #: stamped on the assistant message (§A7 proof of use).
+    compiled_hash: str | None = None
+    web_search: bool = True
+    #: Studio ``tool_policy.knowledge`` — when ``False`` the ``kb_*`` tools
+    #: are not registered at all (additive to §E1).
+    knowledge: bool = True
+    #: The conversation's client brain, when one is bound (studio only).
+    client_id: UUID | None = None
 
 
 # `event` is exactly one of the E.3 names. `payload` has exactly the E.3 shape.

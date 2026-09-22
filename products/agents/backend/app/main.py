@@ -51,6 +51,14 @@ from app.routers.agents_router import router as agents_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.persona_router import router as persona_router
+from app.routers.studio_agents_router import router as studio_agents_router
+from app.routers.studio_clients_router import router as studio_clients_router
+from app.routers.studio_evals_router import router as studio_evals_router
+from app.routers.studio_import_router import IMPORT_BODY_LIMIT_PATTERN
+from app.routers.studio_import_router import router as studio_import_router
+from app.routers.studio_knowledge_router import router as studio_knowledge_router
+from app.studio.importer import MAX_BUNDLE_BYTES
+from app.studio.wiring import install_studio_seams, register_anthropic_credential_override
 from app.runtime.slots import get_slot_pool
 from app.scheduler import configure as configure_scheduler
 from noctusai_lib.api.scheduler import start_scheduler, stop_scheduler
@@ -87,6 +95,14 @@ async def on_startup() -> None:
     await slot_pool.sweep_all_on_startup()
     logger.info("agents.startup.slot_pool_swept health=%s", slot_pool.health())
 
+    # Agent Studio §E6: eval runs a previous life of this process left
+    # pendente/executando can never finish — fail them with a clear erro.
+    from app.stores.studio_eval_runs import get_eval_run_writer
+    from app.studio.evals import sweep_orphaned_runs
+
+    failed = sweep_orphaned_runs(get_eval_run_writer(settings))
+    logger.info("agents.startup.orphaned_eval_runs_failed count=%s", failed)
+
     # Daily credential maintenance (expiry notifications + §D ring prune).
     # Fires only where `NOCTUS_SCHEDULERS_ENABLED` is set (prod compose).
     start_scheduler()
@@ -109,6 +125,8 @@ async def _slot_pool_health() -> tuple[bool, str | None]:
 
 
 configure_scheduler()
+# Agent Studio: the eval judge's Anthropic key resolves DB-first, like the runtime's.
+register_anthropic_credential_override()
 
 app = create_product_app(
     name="Agentes",
@@ -125,6 +143,12 @@ app = create_product_app(
         approvals_router,
         admin_credentials_router,
         agent_settings_router,
+        # Agent Studio (contract §D, §J2.3 — BE-RT registers every studio router).
+        studio_agents_router,
+        studio_clients_router,
+        studio_knowledge_router,
+        studio_evals_router,
+        studio_import_router,
     ],
     lifespan_startup=on_startup,
     lifespan_shutdown=on_shutdown,
@@ -138,4 +162,11 @@ app = create_product_app(
     # flow's ability to ever call academia (§D), and would let the
     # product boot with no way to reach social-wiring's One Chat bridge.
     required_prod_config=["APPROVAL_ASSERTION_SECRETS", "SOCIAL_WIRING_API_TOKEN"],
+    # Agent Studio §D5: the bundle import is the ONE route above the 1 MB
+    # default — an exact whole-segment wildcard, never a prefix.
+    max_body_path_overrides={IMPORT_BODY_LIMIT_PATTERN: MAX_BUNDLE_BYTES},
 )
+
+# Agent Studio §J2: bind the fail-closed seams (eval gate, knowledge
+# catalog, eval scheduler) to their production implementations.
+install_studio_seams(app)

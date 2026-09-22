@@ -21,7 +21,12 @@ from app.runtime.broker import StoreApprovalBroker
 from app.runtime.fake_runtime import FakeAgentRuntime
 from app.runtime.types import AgentRuntime, AgentSpec, ApprovalBroker
 
-__all__ = ["get_agent_runtime", "get_approval_broker", "build_julia_spec"]
+__all__ = [
+    "get_agent_runtime",
+    "get_approval_broker",
+    "build_julia_spec",
+    "make_studio_tools_factory",
+]
 
 _JULIA_DIR = Path(__file__).resolve().parent.parent / "agents" / "julia"
 _JULIA_PLUGIN_PATH = str(_JULIA_DIR / "plugin")
@@ -150,7 +155,36 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         # Config-wired (roadmap D1) — see `SeedSettings.julia_cli_path`'s
         # docstring for why this must not be a second hardcoded literal.
         cli_path=getattr(settings, "julia_cli_path", "") or DEFAULT_CLI_PATH,
+        # Agent Studio §E3 — the per-turn read-only `studio` MCP server.
+        studio_tools_factory=make_studio_tools_factory(settings),
     )
+
+
+def make_studio_tools_factory(settings: Any):
+    """``(spec, ctx) -> McpSdkServerConfig`` over the studio stores (Agent
+    Studio §E3). Every id the tools use comes from the SERVER-built spec +
+    the route-resolved ``TurnContext`` — never from the model."""
+    from app.stores.studio_definitions import get_studio_definition_store
+    from app.stores.studio_knowledge import get_studio_knowledge_store
+
+    definitions = get_studio_definition_store(settings)
+    knowledge = get_studio_knowledge_store(settings)
+
+    def _factory(spec: AgentSpec, ctx: Any) -> Any:
+        from app.studio.tools import build_studio_tools
+
+        if spec.agent_id is None or spec.version_id is None:
+            raise RuntimeError("a studio spec must carry agent_id and version_id")
+        return build_studio_tools(
+            org_id=ctx.org_id,
+            agent_id=spec.agent_id,
+            version_id=spec.version_id,
+            knowledge_enabled=spec.knowledge,
+            definitions=definitions,
+            knowledge=knowledge,
+        )
+
+    return _factory
 
 
 #: `JULIA_AGENT_ID` — the `agents.agents` row id for the `julia` key,
@@ -217,4 +251,8 @@ def build_julia_spec(persona_row: Any, *, max_turns: int | None = None) -> Agent
         tools=tools,
         # An admin override (Configurações do agente) wins over spec.yaml.
         max_turns=int(max_turns) if max_turns else int(spec_data.get("max_turns", 40)),
+        # Agent Studio §E1: Julia's defaults, stated explicitly — the
+        # claude_code preset + JULIA.md appended, the academia toolset.
+        prompt_mode="preset_append",
+        toolset="academia",
     )

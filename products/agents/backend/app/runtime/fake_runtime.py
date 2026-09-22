@@ -23,7 +23,7 @@ from app.runtime.types import (
 )
 from app.stores.approvals import ApprovalRecord
 
-__all__ = ["FakeAgentRuntime"]
+__all__ = ["FakeAgentRuntime", "studio_echo_text"]
 
 # A scripted entry is either a ready-made event, or a 3-/4-tuple describing
 # an escrita tool call the fake should route through the real broker. The
@@ -35,6 +35,11 @@ ScriptItem = (
     | tuple[str, str, dict[str, Any]]
     | tuple[str, str, dict[str, Any], "dict[str, Any] | None"]
 )
+
+
+def studio_echo_text(spec: AgentSpec, prompt: str) -> str:
+    """The deterministic reply :class:`FakeAgentRuntime` gives a studio spec."""
+    return f"[{spec.key} · {(spec.compiled_hash or '')[:40]}] {prompt}"
 
 
 class FakeAgentRuntime:
@@ -54,6 +59,10 @@ class FakeAgentRuntime:
     def __init__(self, script: list[ScriptItem], *, capacity: int = DEFAULT_SLOT_COUNT) -> None:
         self._script = list(script)
         self._pool = FakeSlotPool(capacity)
+        #: Every ``(spec, ctx, prompt)`` this fake ran, in order — lets route
+        #: and eval-runner tests assert WHAT was launched (the studio spec's
+        #: compiled hash, the ephemeral eval context) without a real CLI.
+        self.calls: list[tuple[AgentSpec, TurnContext, str]] = []
 
     def try_reserve(self) -> TurnSlot | None:
         return self._pool.try_reserve()
@@ -66,6 +75,20 @@ class FakeAgentRuntime:
         broker: ApprovalBroker,
         slot: TurnSlot | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        self.calls.append((spec, ctx, prompt))
+        # `getattr`: existing tests drive this fake with `spec=None`.
+        if getattr(spec, "toolset", None) == "studio" and not self._script:
+            # Agent Studio §E5 — an echo-style reply naming the spec key and
+            # the first 40 chars of the compiled hash, so route tests can
+            # see WHICH compiled prompt ran without the SDK.
+            yield {
+                "event": "message.new",
+                "payload": {
+                    "role": "assistant",
+                    "texto": studio_echo_text(spec, prompt),
+                    "blocks": [],
+                },
+            }
         for item in self._script:
             if isinstance(item, tuple):
                 async for event in self._drive_escrita(item, ctx, broker):

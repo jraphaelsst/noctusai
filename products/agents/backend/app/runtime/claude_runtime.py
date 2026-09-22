@@ -52,7 +52,7 @@ import dataclasses
 import json
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from typing import Any
 from uuid import UUID
@@ -87,10 +87,16 @@ from app.runtime.types import (
 )
 from app.stores.approvals import ApprovalStore
 from app.stores.transcripts import TranscriptStore
+from app.studio.tools import STUDIO_SERVER_NAME, studio_allowed_tools
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["build_launch_options", "ClaudeAgentSdkRuntime"]
+__all__ = [
+    "build_launch_options",
+    "ClaudeAgentSdkRuntime",
+    "STUDIO_DISALLOWED_TOOLS",
+    "STUDIO_SYSTEM_PROMPT",
+]
 
 #: Contract §E.11 "Launch options" — the persona/JULIA.md text goes in a
 #: group-only file inside the slot's handoff dir, never on argv.
@@ -124,6 +130,39 @@ DISALLOWED_TOOLS: tuple[str, ...] = (
     "WebFetch",
 )
 
+#: Agent Studio §E3 + security review of wave 1: a studio agent disallows
+#: every built-in Julia disallows PLUS the SDK ``Skill`` tool (studio skills
+#: load through ``mcp__studio__abrir_skill``, never the plugin loader),
+#: ``Agent`` (the sub-agent tool — ``Task``'s newer name) and ``TodoWrite``.
+#: Defence in depth only: the load-bearing control is ``can_use_tool``'s
+#: exact-name allowlist (``_TurnDriver``), never this list or
+#: ``allowed_tools`` (which the SDK auto-approves).
+STUDIO_DISALLOWED_TOOLS: tuple[str, ...] = DISALLOWED_TOOLS + ("Skill", "Agent", "TodoWrite")
+
+#: Agent Studio §A5/§E3 — the ``system_prompt`` value that yields NO Claude
+#: Code preset. Verified 2026-09-21 against the installed SDK 0.2.152 and its
+#: bundled CLI 2.1.259 (``_internal/transport/subprocess_cli.py::_build_command``
+#: + an empirical capture of the request body the CLI sends):
+#:
+#: * ``{"type": "preset", "preset": "claude_code"}`` (Julia) emits NO
+#:   ``--system-prompt`` flag, so the CLI uses its default ~8 800-char coding
+#:   preset, with ``append.md`` appended after it;
+#: * ``None`` emits ``--system-prompt ""`` — an EMPTY custom prompt that
+#:   replaces the preset. With ``--append-system-prompt-file append.md`` the
+#:   request's ``system`` is exactly: the CLI's billing header block, its
+#:   fixed one-line attribution ("You are Claude Code, Anthropic's official
+#:   CLI for Claude, running within the Claude Agent SDK."), then the
+#:   compiled prompt verbatim. The CLI also still injects a short
+#:   ``# Environment`` block (cwd, platform, model id) as a system message.
+#:   Those are CLI-owned and not configurable through the SDK.
+#: * a ``str`` would put the text on argv (``/proc/<pid>/cmdline`` is
+#:   world-readable — §E.11 forbids it); ``{"type": "file", ...}`` emits
+#:   ``--system-prompt-file`` (attribution line "You are a Claude agent,
+#:   built on Anthropic's Claude Agent SDK.") — an alternative, but the
+#:   contract keeps the compiled text on the existing ``append-system-prompt-file``
+#:   handoff, so ``None`` is the form used here.
+STUDIO_SYSTEM_PROMPT: None = None
+
 _ACADEMIA_AUD = "academia-de-reciclagem"
 
 # Sentinel telling run_turn's queue-drain loop the message pump is done.
@@ -151,12 +190,13 @@ def build_launch_options(
     can_use_tool: Any,
     approvals: ApprovalStore,
     slot: TurnSlot,
-    mirror: ConversationTranscriptMirror,
+    mirror: ConversationTranscriptMirror | None,
     resume: str | None,
     cli_path: str = DEFAULT_CLI_PATH,
     plugin_path: str,
     approval_use_window_seconds: int = 120,
     anthropic_api_key: str | None = None,
+    studio_tools: Any = None,
 ) -> ClaudeAgentOptions:
     """Build the exact ``ClaudeAgentOptions`` for one turn — pure,
     synchronous, no subprocess spawned. ``can_use_tool`` is threaded in
@@ -189,7 +229,23 @@ def build_launch_options(
     (``ClaudeAgentSdkRuntime._resolve_resume``) — never a bare
     ``ctx.sdk_session_id`` passthrough, since an unusable transcript must
     never reach the CLI as a resume attempt.
+
+    **Agent Studio §E3** — ``spec.toolset == "studio"`` branches to
+    :func:`_build_studio_launch_options` (no preset, no plugin, no SDK
+    skills, only the ``studio`` MCP server); the Julia path below is
+    untouched.
     """
+    if spec.toolset == "studio":
+        return _build_studio_launch_options(
+            spec=spec,
+            can_use_tool=can_use_tool,
+            slot=slot,
+            mirror=mirror,
+            resume=resume,
+            cli_path=cli_path,
+            anthropic_api_key=anthropic_api_key,
+            studio_tools=studio_tools,
+        )
     allowed_tools = list(BASE_TOOLS) + [
         f"mcp__academia__{n}" for n in _leitura_short_names()
     ]
@@ -227,6 +283,65 @@ def build_launch_options(
         max_turns=spec.max_turns,
         resume=resume,
         model=spec.model,
+        session_store=mirror,
+        session_store_flush="batched",
+    )
+
+
+def _build_studio_launch_options(
+    *,
+    spec: AgentSpec,
+    can_use_tool: Any,
+    slot: TurnSlot,
+    mirror: ConversationTranscriptMirror | None,
+    resume: str | None,
+    cli_path: str,
+    anthropic_api_key: str | None,
+    studio_tools: Any,
+) -> ClaudeAgentOptions:
+    """Agent Studio §A5/§E3 launch options — a fully custom system prompt.
+
+    * ``system_prompt`` = :data:`STUDIO_SYSTEM_PROMPT` (no preset; see its
+      comment for the verified SDK/CLI behaviour) and the compiled prompt
+      still arrives through the SAME per-slot ``append.md`` handoff
+      (``extra_args["append-system-prompt-file"]``) — never argv.
+    * ``plugins=[]``, ``skills=[]``, ``setting_sources=[]``, only the
+      ``studio`` MCP server with ``strict_mcp_config`` — no other server,
+      plugin, hook or settings source.
+    * ``tools`` = ``["WebSearch"]`` iff ``spec.web_search``.
+    * ``allowed_tools`` = the exact studio allowlist; ``disallowed_tools`` =
+      :data:`STUDIO_DISALLOWED_TOOLS`. ``can_use_tool`` (the caller's
+      ``_TurnDriver``, built with the same allowlist) denies everything else.
+    * ``env`` is the SAME explicit allowlist Julia uses (:func:`_launch_env`).
+    """
+    if studio_tools is None:
+        raise RuntimeError(
+            "a studio spec needs the `studio` MCP server (build_studio_tools) — "
+            "refusing to launch a studio agent without its tools"
+        )
+    allowed = list(studio_allowed_tools(knowledge=spec.knowledge, web_search=spec.web_search))
+    return ClaudeAgentOptions(
+        cli_path=cli_path,
+        tools=["WebSearch"] if spec.web_search else [],
+        setting_sources=[],
+        system_prompt=STUDIO_SYSTEM_PROMPT,
+        extra_args={
+            "append-system-prompt-file": os.path.join(slot.handoff_dir, _HANDOFF_APPEND_FILENAME)
+        },
+        plugins=[],
+        skills=[],
+        mcp_servers={STUDIO_SERVER_NAME: studio_tools},
+        strict_mcp_config=True,
+        allowed_tools=allowed,
+        disallowed_tools=list(STUDIO_DISALLOWED_TOOLS),
+        can_use_tool=can_use_tool,
+        env=_launch_env(slot, anthropic_api_key),
+        user=slot.user_name,
+        include_partial_messages=True,
+        max_turns=spec.max_turns,
+        resume=resume,
+        model=spec.model,
+        effort=spec.effort,
         session_store=mirror,
         session_store_flush="batched",
     )
@@ -323,11 +438,20 @@ class _TurnDriver:
     """
 
     def __init__(
-        self, *, ctx: TurnContext, broker: ApprovalBroker, academia_api: AcademiaApi
+        self,
+        *,
+        ctx: TurnContext,
+        broker: ApprovalBroker,
+        academia_api: AcademiaApi,
+        allowlist: frozenset[str] | None = None,
     ) -> None:
         self._ctx = ctx
         self._broker = broker
         self._academia_api = academia_api
+        # Agent Studio §H2: for a studio turn, the EXACT-name allowlist is
+        # the whole policy — deny by default, no approval flow (there are no
+        # studio write tools). `None` = Julia's gate table (unchanged).
+        self._allowlist = allowlist
         self.queue: "asyncio.Queue[AgentEvent]" = asyncio.Queue()
         self._tool_names: dict[str, str] = {}
         self._denied_tool_use_ids: set[str] = set()
@@ -336,6 +460,12 @@ class _TurnDriver:
         self, tool_name: str, tool_input: dict[str, Any], context: Any
     ) -> Any:
         tool_use_id = getattr(context, "tool_use_id", None) or ""
+        if self._allowlist is not None:
+            if tool_name in self._allowlist:
+                return PermissionResultAllow()
+            self._denied_tool_use_ids.add(tool_use_id)
+            return PermissionResultDeny(message=f"{tool_name} não é uma ferramenta permitida.")
+
         cls = gate.classify(tool_name)
 
         if cls == "deny":
@@ -514,6 +644,16 @@ RESUME_TRUNCATED_TEXT = (
 #: and has nothing to delete.
 _ABANDONED_ESTADOS = ("truncado", "incompleto", "invalido")
 
+#: Studio agents are not Julia — same meaning, agent-neutral wording.
+STUDIO_RESUME_LOST_CONTEXT_TEXT = (
+    "O contexto anterior desta conversa não está mais disponível; "
+    "o agente começou uma nova sessão."
+)
+STUDIO_RESUME_TRUNCATED_TEXT = (
+    "O histórico desta conversa ficou muito longo; o agente começou uma "
+    "nova sessão e não tem mais acesso ao contexto anterior."
+)
+
 
 class ClaudeAgentSdkRuntime:
     """Real :class:`~app.runtime.types.AgentRuntime`."""
@@ -532,8 +672,13 @@ class ClaudeAgentSdkRuntime:
         approval_use_window_seconds: int = 120,
         transport_factory: Any = None,
         anthropic_api_key: str | None = None,
+        studio_tools_factory: Callable[[AgentSpec, TurnContext], Any] | None = None,
     ) -> None:
         self._anthropic_api_key = anthropic_api_key
+        # Agent Studio §E3: builds the per-turn `studio` MCP server from the
+        # server-side spec (`app.studio.tools.build_studio_tools` over the
+        # studio stores). `None` ⇒ this runtime refuses studio specs.
+        self._studio_tools_factory = studio_tools_factory
         self._academia_api = academia_api
         self._agent_id = agent_id
         self._approval_secret = approval_secret
@@ -746,7 +891,31 @@ class ClaudeAgentSdkRuntime:
                 "pool exists to guarantee."
             )
 
-        mirror, handoff_entries, fallback_text = self._resolve_resume(ctx)
+        studio = spec.toolset == "studio"
+        studio_tools = None
+        allowlist: frozenset[str] | None = None
+        if studio:
+            if self._studio_tools_factory is None:
+                raise RuntimeError("this runtime was built without a studio tools factory")
+            studio_tools = self._studio_tools_factory(spec, ctx)
+            allowlist = frozenset(
+                studio_allowed_tools(knowledge=spec.knowledge, web_search=spec.web_search)
+            )
+
+        if ctx.ephemeral:
+            # Agent Studio §E6 (eval case): no conversation row exists for
+            # `ctx.conversation_id`, so there is nothing to resume and no
+            # durable transcript to mirror into (the table FKs it).
+            mirror: ConversationTranscriptMirror | None = None
+            handoff_entries, fallback_text = None, None
+        else:
+            mirror, handoff_entries, fallback_text = self._resolve_resume(ctx)
+            if studio and fallback_text is not None:
+                fallback_text = (
+                    STUDIO_RESUME_TRUNCATED_TEXT
+                    if fallback_text == RESUME_TRUNCATED_TEXT
+                    else STUDIO_RESUME_LOST_CONTEXT_TEXT
+                )
         resume_session_id = ctx.sdk_session_id if handoff_entries is not None else None
 
         _write_turn_handoff(
@@ -756,7 +925,9 @@ class ClaudeAgentSdkRuntime:
             resume_session_id=resume_session_id,
         )
 
-        driver = _TurnDriver(ctx=ctx, broker=broker, academia_api=self._academia_api)
+        driver = _TurnDriver(
+            ctx=ctx, broker=broker, academia_api=self._academia_api, allowlist=allowlist
+        )
         options = build_launch_options(
             spec=spec,
             ctx=ctx,
@@ -772,6 +943,7 @@ class ClaudeAgentSdkRuntime:
             plugin_path=self._plugin_path,
             approval_use_window_seconds=self._approval_use_window_seconds,
             anthropic_api_key=self._anthropic_api_key,
+            studio_tools=studio_tools,
         )
 
         client, resumed_fresh, active_mirror = await self._connect_or_fresh(
@@ -788,7 +960,9 @@ class ClaudeAgentSdkRuntime:
         elif resumed_fresh:
             yield {
                 "event": "session.resume_fallback",
-                "payload": {"texto": RESUME_LOST_CONTEXT_TEXT},
+                "payload": {
+                    "texto": STUDIO_RESUME_LOST_CONTEXT_TEXT if studio else RESUME_LOST_CONTEXT_TEXT
+                },
             }
 
         async def pump() -> None:
@@ -799,7 +973,8 @@ class ClaudeAgentSdkRuntime:
                         # incompleto." Non-fatal — the CLI's own local
                         # transcript write already succeeded; only the
                         # durable mirror copy missed this batch.
-                        active_mirror.on_mirror_error()
+                        if active_mirror is not None:
+                            active_mirror.on_mirror_error()
                         continue
                     for event in driver.translate(message):
                         await driver.queue.put(event)
@@ -835,7 +1010,9 @@ class ClaudeAgentSdkRuntime:
         # ever observed) has nothing to finalize against — logged, never
         # silently ignored, but not a crash on the success path either.
         final_session_id = result_holder["sdk_session_id"]
-        if final_session_id is not None:
+        if active_mirror is None:
+            pass  # ephemeral (eval) turn — no durable transcript to finalize
+        elif final_session_id is not None:
             active_mirror.finalize(final_session_id)
         else:
             logger.warning(
