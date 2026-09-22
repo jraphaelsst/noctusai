@@ -175,13 +175,13 @@ class TestDirectWrapperUnit:
 
     def test_table_pins_before_delegating(self):
         raw = self._FakeClient()
-        wrapped = _SchemaPinnedAdminClient(raw, "agents")
+        wrapped = _SchemaPinnedAdminClient(lambda: raw, "agents")
         result = wrapped.table("app_integration_config")
         assert result == ("table", "agents", "app_integration_config")
 
     def test_schema_other_does_not_change_the_wrapper_s_own_schema(self):
         raw = self._FakeClient()
-        wrapped = _SchemaPinnedAdminClient(raw, "agents")
+        wrapped = _SchemaPinnedAdminClient(lambda: raw, "agents")
         wrapped.schema("academia_de_reciclagem").table("api_tokens")
         # the wrapper still re-pins to ITS OWN schema on the next bare call
         result = wrapped.table("app_integration_config")
@@ -189,7 +189,7 @@ class TestDirectWrapperUnit:
 
     def test_rpc_and_from_also_pin(self):
         raw = self._FakeClient()
-        wrapped = _SchemaPinnedAdminClient(raw, "mailing")
+        wrapped = _SchemaPinnedAdminClient(lambda: raw, "mailing")
         raw.schema("other")  # simulate poisoning from an unrelated caller
         assert wrapped.rpc("fn", {"a": 1}) == ("rpc", "mailing", "fn", {"a": 1})
         raw.schema("other")
@@ -198,12 +198,12 @@ class TestDirectWrapperUnit:
     def test_getattr_passes_through_unknown_attributes(self):
         raw = self._FakeClient()
         raw.auth = object()
-        wrapped = _SchemaPinnedAdminClient(raw, "agents")
+        wrapped = _SchemaPinnedAdminClient(lambda: raw, "agents")
         assert wrapped.auth is raw.auth
 
     def test_missing_attribute_raises_like_a_normal_object(self):
         raw = self._FakeClient()
-        wrapped = _SchemaPinnedAdminClient(raw, "agents")
+        wrapped = _SchemaPinnedAdminClient(lambda: raw, "agents")
         with pytest.raises(AttributeError):
             wrapped.definitely_not_a_real_attribute
 
@@ -215,7 +215,8 @@ class TestDirectWrapperUnit:
         # (2026-09-22) minutes after this wrapper shipped.
         import weakref
 
-        wrapped = _SchemaPinnedAdminClient(self._FakeClient(), "agents")
+        raw = self._FakeClient()
+        wrapped = _SchemaPinnedAdminClient(lambda: raw, "agents")
         assert weakref.ref(wrapped)() is wrapped
         cache: "weakref.WeakKeyDictionary[object, str]" = weakref.WeakKeyDictionary()
         cache[wrapped] = "backend"

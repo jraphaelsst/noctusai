@@ -17,7 +17,7 @@ Usage::
     admin = db.get_admin_client()        # service role
     core = db.get_core_client()          # public schema
 """
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from supabase import Client
 from noctusai_lib.integrations.database import make_supabase_client
 
@@ -82,11 +82,20 @@ class _SchemaPinnedAdminClient:
     #: ``GET /api/certidoes/consultas`` + ``/fila-tjsp`` to 500 in prod on
     #: 2026-09-22, minutes after this wrapper shipped. A wrapper must keep
     #: every capability of what it wraps, weak-referenceability included.
-    __slots__ = ("_client", "_schema", "__weakref__")
+    __slots__ = ("_resolve_client", "_schema", "__weakref__")
 
-    def __init__(self, client: Client, schema: str) -> None:
-        self._client = client
+    def __init__(self, resolve_client: "Callable[[], Client]", schema: str) -> None:
+        #: Resolved per call, never captured: the owning ``DatabaseModule``
+        #: caches ONE wrapper, but its underlying raw client can still be
+        #: replaced (a test swapping the module's ``_admin`` slot — the seam
+        #: several products' tests use — or a future reconnect). A captured
+        #: client would go stale and silently serve the old connection.
+        self._resolve_client = resolve_client
         self._schema = schema
+
+    @property
+    def _client(self) -> Client:
+        return self._resolve_client()
 
     def _pinned(self) -> Client:
         """Re-pin the underlying client to this wrapper's schema and
@@ -172,11 +181,17 @@ class DatabaseModule:
         actually uses (``.table()``/``.rpc()``/``.from_()``/``.schema()``
         plus passthrough of everything else) — no consumer needs to change.
         """
+        if self._admin_pinned is None:
+            self._admin_pinned = _SchemaPinnedAdminClient(self._raw_admin, self._schema)
+        return self._admin_pinned
+
+    def _raw_admin(self) -> Client:
+        """The cached raw client, built on first use. The wrapper calls this
+        on every access instead of holding the client, so replacing
+        ``self._admin`` is honoured immediately."""
         if self._admin is None:
             self._admin = self.get_client()
-        if self._admin_pinned is None:
-            self._admin_pinned = _SchemaPinnedAdminClient(self._admin, self._schema)
-        return self._admin_pinned
+        return self._admin
 
 
 def create_database_module(settings, schema: str) -> DatabaseModule:
