@@ -152,6 +152,10 @@ def test_real_uncommitted_work_blocks_loudly_instead_of_diverging_silently(
     as an explicit dirty_blocked naming the file, not a mystery divergence."""
     _origin, primary = stale_primary_with_dirty_hook_artifact
     pathlib.Path(primary, "REAL_WORK.py").write_text("x = 1\n")
+    # TRACKED (staged) work — the kind a rebase actually refuses on. A merely
+    # untracked file never blocks a rebase; that case must go through untouched
+    # (test_unrelated_untracked_file_does_not_strand_the_row).
+    _git("add", "REAL_WORK.py", cwd=primary)
 
     res = commit_and_ff_push_ledger(
         runner=_runner_for(primary), root=primary, rel_paths=[LEDGER],
@@ -533,3 +537,30 @@ def test_kb_counts_regen_rider_no_longer_strands_the_commit(
     assert counts.strip() == "0\t0", (
         f"primary is diverged from origin/dev ({counts.strip()!r}) — the "
         "self-latching loop the fix exists to close")
+
+
+def test_unrelated_untracked_file_does_not_strand_the_row(
+    stale_primary_with_dirty_hook_artifact,
+):
+    """2026-09-22 regression: one stray UNTRACKED, non-benign file (a user's
+    .docx) was classified as "real dirt" and returned `dirty_blocked` on every
+    ledger push for a whole session — 22 commits piled up unpushed. `git rebase`
+    never refuses because of untracked files, so it must not block; and it must
+    be left exactly where it was (not stashed, not committed)."""
+    origin, primary = stale_primary_with_dirty_hook_artifact
+    stray = pathlib.Path(primary, "products", "x", "05 - Indicadores.docx")
+    stray.parent.mkdir(parents=True)
+    stray.write_bytes(b"user content, not ours")
+
+    res = commit_and_ff_push_ledger(
+        runner=_runner_for(primary), root=primary, rel_paths=[LEDGER],
+        commit_msg="chore(salvage): record recovery pointer",
+        already_committed=False,
+    )
+
+    assert res.get("pushed") is True, f"row stranded by an untracked file: {res!r}"
+    _rc, out, _ = _git("show", f"dev:{LEDGER}", cwd=origin)
+    assert "recovery" in out
+    assert stray.read_bytes() == b"user content, not ours"
+    _rc, status, _ = _git("status", "--porcelain", "--", str(stray.relative_to(primary)), cwd=primary)
+    assert status.startswith("??"), f"stray file was touched: {status!r}"

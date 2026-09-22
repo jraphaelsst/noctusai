@@ -456,3 +456,16 @@ class TestWidenedGlobStillBlocksRealWork:
             "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/self-branching-mode.md",
         ):
             assert BS.is_benign(path) is False, f"{path} must never classify as benign"
+
+
+def test_untracked_non_benign_is_neither_real_nor_benign():
+    """`git rebase` ignores untracked files, so an unrelated `??` path must not
+    be reported as blocking dirt (2026-09-22 stranded-ledger regression) —
+    while a TRACKED modification still is."""
+    out = (
+        '?? "products/x/05 - Indicadores.docx"\n'
+        " M mcp/noctusai/catalog.md\n"
+    )
+    benign, real = BS.classify_porcelain(out)
+    assert real == ["mcp/noctusai/catalog.md"]
+    assert not any("Indicadores" in p for p in benign + real)

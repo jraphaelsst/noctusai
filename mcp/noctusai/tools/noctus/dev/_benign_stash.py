@@ -308,14 +308,29 @@ def strip_status_code(raw: str) -> str:
 def classify_porcelain(
     out: str, patterns: tuple[str, ...] = BENIGN_REFRESH_PATTERNS
 ) -> tuple[list[str], list[str]]:
-    """Split ``git status --porcelain`` output into ``(benign, real)`` paths."""
+    """Split ``git status --porcelain`` output into ``(benign, real)`` paths.
+
+    An UNTRACKED path (``??``) that is not a known-benign artifact is neither:
+    ``git rebase`` never refuses because of untracked files, so it cannot be
+    what blocks the rebase these callers are clearing the way for — and it is
+    usually someone's unrelated, uncommitted file that is not ours to move.
+    Counting it as ``real`` stranded every ledger push behind one stray
+    untracked ``.docx`` for a whole session (2026-09-21/22: 22 commits queued
+    on the primary). The one case where it does matter — an incoming commit
+    ADDS that same path — makes git abort the rebase with "untracked working
+    tree files would be overwritten", which the push leg already reports as
+    a failed rebase; nothing is lost or clobbered.
+    """
     benign: list[str] = []
     real: list[str] = []
     for raw in out.splitlines():
         if not raw.strip():
             continue
         path = strip_status_code(raw)
-        (benign if is_benign(path, patterns) else real).append(path)
+        if is_benign(path, patterns):
+            benign.append(path)
+        elif not raw.startswith("??"):
+            real.append(path)
     return benign, real
 
 
