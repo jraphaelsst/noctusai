@@ -14,9 +14,8 @@
 import { useMemo, useState } from "react";
 import { MessageCircle, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@noctusai/lib/design-system";
+import { Button, Select } from "@noctusai/lib/design-system";
 import { AgentChatWindow } from "@/components/AgentChatWindow";
-import { Select } from "@/components/studio/FormControls";
 import { buildStudioChatAdapter, useCreateStudioConversation } from "@/hooks/studio/useStudioChat";
 import { useClientsKe } from "@/hooks/studio/useClientsKe";
 import { errorMessage } from "@/lib/errors";

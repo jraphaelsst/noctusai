@@ -19,8 +19,23 @@ import { Link } from "react-router-dom";
 import { Loader2, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button, Input, PageSkeleton, Badge, Dialog, DialogHeader, DialogBody, DialogFooter } from "@noctusai/lib/design-system";
-import { Card, Select, Field, FormError, EmptyState, ErrorState, Textarea } from "@/components/FormControls";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  EmptyState,
+  ErrorState,
+  Field,
+  FormError,
+  Input,
+  PageSkeleton,
+  Select,
+  Textarea,
+} from "@noctusai/lib/design-system";
 import { errorMessage } from "@/lib/errors";
 import { KB_CATEGORIAS, useCreateKb, useKbList, type KbCreateInput } from "@/hooks/useKb";
 

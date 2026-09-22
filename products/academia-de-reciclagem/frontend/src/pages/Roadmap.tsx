@@ -10,9 +10,24 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button, Badge, Input, PageSkeleton, Dialog, DialogHeader, DialogBody, DialogFooter } from "@noctusai/lib/design-system";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  EmptyState,
+  ErrorState,
+  Field,
+  FormError,
+  Input,
+  PageSkeleton,
+  Select,
+  Textarea,
+} from "@noctusai/lib/design-system";
 import { KanbanBoard } from "@noctusai/lib/components";
-import { Card, Select, Field, FormError, EmptyState, ErrorState, Textarea } from "@/components/FormControls";
 import { errorMessage } from "@/lib/errors";
 import {
   FASE_ESTADOS,

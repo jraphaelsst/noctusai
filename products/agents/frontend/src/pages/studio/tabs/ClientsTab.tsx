@@ -11,8 +11,19 @@
 import { useState, type FormEvent } from "react";
 import { Plus, Users } from "lucide-react";
 import { toast } from "sonner";
-import { Badge, Button, Input, PageSkeleton } from "@noctusai/lib/design-system";
-import { Card, EmptyState, ErrorState, Field, FormError, Select, Textarea } from "@/components/studio/FormControls";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Field,
+  FormError,
+  Input,
+  PageSkeleton,
+  Select,
+  Textarea,
+} from "@noctusai/lib/design-system";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
 import {

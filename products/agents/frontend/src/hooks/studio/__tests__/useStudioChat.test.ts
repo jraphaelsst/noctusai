@@ -121,7 +121,9 @@ describe("useStudioMessagesAdapter — versão/hash link block", () => {
     const linkBlock = result.current.data[0].blocks?.[0] as { kind: string; label: string; href: string };
     expect(linkBlock.kind).toBe("link");
     expect(linkBlock.label).toBe("versão 3 · prompt sha256:1a2b3c4d…");
-    expect(linkBlock.href).toBe("/studio/prompts/sha256:1a2b3c4d5e6f");
+    // encodeURIComponent-escaped (the ":" in "sha256:..." is not a URL-safe
+    // path-segment char) — see useStudioChat.ts's toChatMessage for why.
+    expect(linkBlock.href).toBe("/studio/prompts/sha256%3A1a2b3c4d5e6f");
   });
 
   it("mounts the realtime stream naming every STUDIO_STREAM_EVENTS entry", async () => {

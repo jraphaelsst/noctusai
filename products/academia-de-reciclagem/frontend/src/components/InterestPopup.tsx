@@ -24,10 +24,11 @@ import {
   DialogBody,
   DialogFooter,
   DialogHeader,
+  Field,
+  FormError,
   Input,
 } from '@noctusai/lib/design-system';
 import { isValidPhone } from '@noctusai/lib';
-import { Field, FormError } from '@/components/FormControls';
 import { createInteressado } from '@/lib/api';
 import { ApiError, errorMessage } from '@/lib/errors';
 

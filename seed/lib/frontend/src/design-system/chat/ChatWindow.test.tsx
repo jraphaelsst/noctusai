@@ -684,4 +684,65 @@ describe("ChatWindow — link block (in-app navigation row)", () => {
     expect(screen.getByTestId("chat-tool-tu1")).toBeTruthy();
     expect(screen.getByTestId("chat-link-block")).toBeTruthy();
   });
+
+  it("an https:// href renders as an anchor with rel=noopener noreferrer + target=_blank", () => {
+    const linkBlock: ChatBlock = { kind: "link", label: "ver documentação", href: "https://example.com/docs" };
+    const adapter = makeAdapter({
+      useMessages: () => ({
+        data: [makeMessage("m1", "inbound", "Veja.", { blocks: [linkBlock] })],
+        isLoading: false,
+        isError: false,
+      }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    const link = screen.getByTestId("chat-link-block");
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toBe("https://example.com/docs");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it("a same-origin relative path renders as an anchor with no target/rel", () => {
+    const linkBlock: ChatBlock = { kind: "link", label: "ver versão", href: "/studio/prompts/sha256:aaaa" };
+    const adapter = makeAdapter({
+      useMessages: () => ({
+        data: [makeMessage("m1", "inbound", "Veja.", { blocks: [linkBlock] })],
+        isLoading: false,
+        isError: false,
+      }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    const link = screen.getByTestId("chat-link-block");
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("target")).toBeNull();
+    expect(link.getAttribute("rel")).toBeNull();
+  });
+
+  it.each([
+    ["javascript: URI", "javascript:alert(1)"],
+    ["protocol-relative (off-origin) URL", "//evil.example.com/phish"],
+    ["data: URI", "data:text/html,<script>alert(1)</script>"],
+  ])("renders %s as inert plain text, never an anchor", (_label, href) => {
+    const linkBlock: ChatBlock = { kind: "link", label: "clique aqui", href };
+    const adapter = makeAdapter({
+      useMessages: () => ({
+        data: [makeMessage("m1", "inbound", "Cuidado.", { blocks: [linkBlock] })],
+        isLoading: false,
+        isError: false,
+      }),
+    });
+
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    fireEvent.click(screen.getByText("João Raphael"));
+
+    const block = screen.getByTestId("chat-link-block");
+    expect(block.tagName).not.toBe("A");
+    expect(block.textContent).toBe("clique aqui");
+  });
 });

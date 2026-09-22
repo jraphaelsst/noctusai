@@ -76,7 +76,10 @@ function toChatMessage(m: StudioMessage, versao: number | null): ChatMessage {
   const blocks: ChatBlock[] = Array.isArray(m.blocks) ? [...(m.blocks as ChatBlock[])] : [];
   if (m.role === "assistant" && m.compiled_hash) {
     const label = versao != null ? `versão ${versao} · prompt ${shortHash(m.compiled_hash)}` : `prompt ${shortHash(m.compiled_hash)}`;
-    blocks.push({ kind: "link", label, href: `/studio/prompts/${m.compiled_hash}` });
+    // `compiled_hash` is server data, not user input, but it still lands in a URL
+    // path segment — encode it so a stray "/", "?", or "#" in the hash can never
+    // reroute the link off `/studio/prompts/:hash` (path traversal / open redirect).
+    blocks.push({ kind: "link", label, href: `/studio/prompts/${encodeURIComponent(m.compiled_hash)}` });
   }
   return {
     id: m.id,

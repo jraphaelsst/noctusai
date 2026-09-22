@@ -16,6 +16,8 @@
  *   HoverCard     — Radix-backed hover card (pre-existing)
  *   Skeleton      — canonical loading-placeholder block (announce + reduced-motion aware)
  *   TableSkeleton — table-shaped loading placeholder composed from Skeleton
+ *   Card / Textarea / Select / Field / FormError / EmptyState / ErrorState
+ *                 — small form/layout primitives (see FormControls.tsx)
  */
 export { Badge } from "./Badge";
 export type { BadgeProps, BadgeVariant } from "./Badge";
@@ -41,3 +43,6 @@ export type { SkeletonProps, SkeletonRounded } from "./Skeleton";
 
 export { TableSkeleton } from "./TableSkeleton";
 export type { TableSkeletonProps } from "./TableSkeleton";
+
+export { Card, Textarea, Select, Field, FormError, EmptyState, ErrorState } from "./FormControls";
+export type { CardProps, TextareaProps, SelectProps } from "./FormControls";
