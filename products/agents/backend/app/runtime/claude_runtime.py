@@ -95,7 +95,8 @@ __all__ = [
     "build_launch_options",
     "ClaudeAgentSdkRuntime",
     "STUDIO_DISALLOWED_TOOLS",
-    "STUDIO_SYSTEM_PROMPT",
+    "STUDIO_PROMPT_ATTRIBUTION",
+    "studio_system_prompt",
 ]
 
 #: Contract §E.11 "Launch options" — the persona/JULIA.md text goes in a
@@ -139,29 +140,34 @@ DISALLOWED_TOOLS: tuple[str, ...] = (
 #: ``allowed_tools`` (which the SDK auto-approves).
 STUDIO_DISALLOWED_TOOLS: tuple[str, ...] = DISALLOWED_TOOLS + ("Skill", "Agent", "TodoWrite")
 
-#: Agent Studio §A5/§E3 — the ``system_prompt`` value that yields NO Claude
-#: Code preset. Verified 2026-09-21 against the installed SDK 0.2.152 and its
-#: bundled CLI 2.1.259 (``_internal/transport/subprocess_cli.py::_build_command``
-#: + an empirical capture of the request body the CLI sends):
+#: Agent Studio §A5/§E3 — how the compiled prompt becomes the system prompt.
+#: Verified 2026-09-21 against the installed SDK 0.2.152 and its bundled CLI
+#: 2.1.259 (``_internal/transport/subprocess_cli.py::_build_command`` + an
+#: empirical capture of the request body the CLI sends):
 #:
 #: * ``{"type": "preset", "preset": "claude_code"}`` (Julia) emits NO
-#:   ``--system-prompt`` flag, so the CLI uses its default ~8 800-char coding
-#:   preset, with ``append.md`` appended after it;
-#: * ``None`` emits ``--system-prompt ""`` — an EMPTY custom prompt that
-#:   replaces the preset. With ``--append-system-prompt-file append.md`` the
-#:   request's ``system`` is exactly: the CLI's billing header block, its
-#:   fixed one-line attribution ("You are Claude Code, Anthropic's official
-#:   CLI for Claude, running within the Claude Agent SDK."), then the
-#:   compiled prompt verbatim. The CLI also still injects a short
-#:   ``# Environment`` block (cwd, platform, model id) as a system message.
-#:   Those are CLI-owned and not configurable through the SDK.
-#: * a ``str`` would put the text on argv (``/proc/<pid>/cmdline`` is
-#:   world-readable — §E.11 forbids it); ``{"type": "file", ...}`` emits
-#:   ``--system-prompt-file`` (attribution line "You are a Claude agent,
-#:   built on Anthropic's Claude Agent SDK.") — an alternative, but the
-#:   contract keeps the compiled text on the existing ``append-system-prompt-file``
-#:   handoff, so ``None`` is the form used here.
-STUDIO_SYSTEM_PROMPT: None = None
+#:   ``--system-prompt`` flag → the CLI's ~8 800-char coding preset, with
+#:   ``append.md`` appended after it;
+#: * ``None`` emits ``--system-prompt ""`` → the CLI still opens with the
+#:   attribution line "You are Claude Code, Anthropic's official CLI for
+#:   Claude, running within the Claude Agent SDK." — a wrong identity for a
+#:   non-coding agent;
+#: * ``{"type": "file", "path": <append.md>}`` emits ``--system-prompt-file``
+#:   → the request's ``system`` is the CLI billing header, the neutral line
+#:   "You are a Claude agent, built on Anthropic's Claude Agent SDK.", then
+#:   the file verbatim. This is the form used: the compiled prompt IS the
+#:   system prompt, read from the same per-slot handoff file (never argv —
+#:   ``/proc/<pid>/cmdline`` is world-readable, §E.11), with no extra
+#:   ``append-system-prompt-file`` (that would duplicate it).
+#: The CLI also injects a short ``# Environment`` block (cwd, platform, model
+#: id); CLI-owned, not configurable. The inspector shows the fixed line and
+#: that block as runtime-owned (frontend ``components/studio/runtimePreamble.ts``).
+STUDIO_PROMPT_ATTRIBUTION = "You are a Claude agent, built on Anthropic's Claude Agent SDK."
+
+
+def studio_system_prompt(handoff_dir: str) -> dict[str, str]:
+    """The studio ``system_prompt`` option: the per-slot handoff file."""
+    return {"type": "file", "path": os.path.join(handoff_dir, _HANDOFF_APPEND_FILENAME)}
 
 _ACADEMIA_AUD = "academia-de-reciclagem"
 
@@ -301,7 +307,7 @@ def _build_studio_launch_options(
 ) -> ClaudeAgentOptions:
     """Agent Studio §A5/§E3 launch options — a fully custom system prompt.
 
-    * ``system_prompt`` = :data:`STUDIO_SYSTEM_PROMPT` (no preset; see its
+    * ``system_prompt`` = :func:`studio_system_prompt` (no preset; see its
       comment for the verified SDK/CLI behaviour) and the compiled prompt
       still arrives through the SAME per-slot ``append.md`` handoff
       (``extra_args["append-system-prompt-file"]``) — never argv.
@@ -324,10 +330,7 @@ def _build_studio_launch_options(
         cli_path=cli_path,
         tools=["WebSearch"] if spec.web_search else [],
         setting_sources=[],
-        system_prompt=STUDIO_SYSTEM_PROMPT,
-        extra_args={
-            "append-system-prompt-file": os.path.join(slot.handoff_dir, _HANDOFF_APPEND_FILENAME)
-        },
+        system_prompt=studio_system_prompt(slot.handoff_dir),
         plugins=[],
         skills=[],
         mcp_servers={STUDIO_SERVER_NAME: studio_tools},

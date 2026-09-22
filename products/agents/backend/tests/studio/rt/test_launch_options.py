@@ -84,13 +84,16 @@ def _build(spec: AgentSpec, **overrides):
 class TestStudioLaunchOptions:
     def test_no_claude_code_preset(self):
         opts, _ = _build(_studio_spec())
-        assert opts.system_prompt is None  # SDK: `--system-prompt ""`, no preset
+        # SDK `--system-prompt-file`: the compiled prompt IS the system prompt.
+        assert opts.system_prompt["type"] == "file"
         assert "preset" not in repr(opts.system_prompt)
 
-    def test_compiled_prompt_still_rides_the_append_file_handoff(self):
+    def test_compiled_prompt_rides_the_handoff_file_never_argv(self):
         spec = _studio_spec(prompt_append="SEKRIT COMPILED PROMPT")
         opts, slot = _build(spec)
-        assert opts.extra_args == {"append-system-prompt-file": os.path.join(slot.handoff_dir, _HANDOFF_APPEND_FILENAME)}
+        assert opts.system_prompt == {"type": "file", "path": os.path.join(slot.handoff_dir, _HANDOFF_APPEND_FILENAME)}
+        # no append flag too — that would send the compiled prompt twice
+        assert "append-system-prompt-file" not in (opts.extra_args or {})
         assert "SEKRIT" not in repr(opts.extra_args) and "SEKRIT" not in repr(opts.system_prompt)
 
     def test_no_plugins_no_skills_no_settings_only_the_studio_server(self):

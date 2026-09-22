@@ -63,7 +63,14 @@ _mod.purge_shadowing_editable_finders(_LIB)
 # `resolve_app_config_value` documents that "an empty-string env value
 # counts as unset". So empty is both stable AND correctly falsy.
 # Measured 2026-09-20: `clear` => still 3 failed; assign-empty => 525 passed.
-_mod.own_test_env({"ANTHROPIC_API_KEY": "", "APP_ENV": ""})
+#
+# `SUPABASE_SERVICE_ROLE_KEY` rides along for the same reason (2026-09-21,
+# Agent Studio): every store factory here returns its REAL Supabase store
+# when the key resolves, and the developer `.env` carries the real key of the
+# SHARED (prod) project. A binding that reaches a factory directly (the eval
+# gate did) sent a test's reads to the live DB. Empty ⇒ every factory hands
+# back its Fake — the suite can never touch the shared database.
+_mod.own_test_env({"ANTHROPIC_API_KEY": "", "APP_ENV": "", "SUPABASE_SERVICE_ROLE_KEY": ""})
 
 import pytest
 from unittest.mock import MagicMock, patch
