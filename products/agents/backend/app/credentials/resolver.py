@@ -86,12 +86,20 @@ class ConfigStoreHandle:
 class _LazyAgentsTable:
     """``.table()`` resolved per call against the product's admin client
     (schema ``agents``) — nothing is built at import, and a test that swaps
-    the database module's client is honoured."""
+    the database module's client is honoured.
+
+    ``get_admin_client()`` already re-pins to ``agents`` on every ``.table()``
+    call (``noctusai_seed.database._SchemaPinnedAdminClient`` — see that
+    class's docstring for the outage this closed). The explicit
+    ``.schema("agents")`` here is defense in depth for exactly the call site
+    the outage traced to, not a substitute for the seed-level fix: this
+    store is the one every ``GET /api/agents`` page load reads, so it must
+    never again depend on ambient client state, even indirectly."""
 
     def table(self, name: str):
         from app.dependencies import get_admin_client
 
-        return get_admin_client().table(name)
+        return get_admin_client().schema("agents").table(name)
 
 
 #: One handle per settings object (the app's is a process singleton — the
