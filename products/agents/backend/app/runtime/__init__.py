@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -25,6 +26,7 @@ __all__ = [
     "get_agent_runtime",
     "get_approval_broker",
     "build_julia_spec",
+    "make_academia_launch_provider",
     "make_studio_tools_factory",
 ]
 
@@ -88,29 +90,30 @@ def get_approval_broker(settings: Any) -> ApprovalBroker:
 def get_agent_runtime(settings: Any) -> AgentRuntime:
     """``ClaudeAgentSdkRuntime`` when the Anthropic key resolves,
     ``FakeAgentRuntime`` in tests/dev. In a deploy context an unresolvable
-    key (or approval signing key / ``ACADEMIA_API_TOKEN`` /
-    ``JULIA_AGENT_ID``) raises — there is no silent Fake in prod (contract
-    §E.9).
+    Anthropic key raises here — there is no silent Fake in prod (contract
+    §E.9). The Julia-only config (approval signing key /
+    ``ACADEMIA_API_TOKEN`` / ``JULIA_AGENT_ID`` / academia URL) is NOT
+    resolved here: :func:`make_academia_launch_provider` resolves it when an
+    academia-toolset turn launches, failing closed there — a studio turn
+    builds and runs with none of it configured.
 
     Built per request (``get_agent_runtime_dep``), so every secret below is
     resolved at USE time, DB-first with env fallback
     (``app/credentials/resolver.py``) — a value changed on the Credenciais
     page reaches the next turn without a redeploy."""
-    from app.credentials.resolver import get_credential_resolver, require_resolved_prod_config
+    from app.credentials.resolver import get_credential_resolver, require_resolved_runtime_config
 
     credentials = get_credential_resolver(settings)
-    require_resolved_prod_config(credentials)
+    require_resolved_runtime_config(credentials)
 
     anthropic_key = credentials.anthropic_api_key() or ""
     if not anthropic_key:
         return FakeAgentRuntime([])
 
-    from app.runtime.academia_api import make_academia_api
     from app.runtime.claude_runtime import DEFAULT_CLI_PATH, ClaudeAgentSdkRuntime
     from app.runtime.slots import get_slot_pool
     from app.stores.approvals import get_approval_store
     from app.stores.transcripts import get_transcript_store
-    from noctusai_lib.config.product_urls import resolve_product_url
 
     slot_pool = get_slot_pool(settings)
     if not slot_pool.isolated:
@@ -122,22 +125,9 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
             "agents process after configuring the Anthropic key."
         )
 
-    # NOC-REMEDIATE[studio-runtime-julia-coupling]: the approval key + academia
-    # client below are Julia-only (academia write gate); studio agents never use
-    # them, yet a missing value refuses EVERY turn, studio included. Resolve them
-    # lazily at the first academia-toolset launch — 2026-09-21
-    signing_secret = credentials.approval_signing_secret()
-    if not signing_secret:
-        raise RuntimeError("no active approval assertion key (contract §D)")
-    academia_api = make_academia_api(
-        base_url=resolve_product_url("academia-de-reciclagem"),
-        token=credentials.academia_api_token() or "",
-    )
-
     return ClaudeAgentSdkRuntime(
-        academia_api=academia_api,
-        agent_id=credentials.julia_agent_id() or _NIL_AGENT_ID,
-        approval_secret=signing_secret,
+        # Julia-only inputs, resolved lazily per academia turn (see above).
+        academia_config=make_academia_launch_provider(credentials),
         anthropic_api_key=anthropic_key,
         plugin_path=_JULIA_PLUGIN_PATH,
         # Contract §E.10 — the escrita handler (app/runtime/tools.py) needs
@@ -162,6 +152,38 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
         # Agent Studio §E3 — the per-turn read-only `studio` MCP server.
         studio_tools_factory=make_studio_tools_factory(settings),
     )
+
+
+def make_academia_launch_provider(credentials: Any) -> Callable[[], Any]:
+    """Zero-arg provider of the Julia-only launch inputs
+    (:class:`~app.runtime.claude_runtime.AcademiaLaunchConfig`), called by
+    the runtime only when an academia-toolset turn launches. Fails closed
+    with the same errors the runtime factory used to raise eagerly: the
+    deploy guard (``MissingProdConfigError``), then a missing approval
+    signing key (``RuntimeError``), then an unresolvable academia URL
+    (``ValueError`` from ``resolve_product_url``)."""
+
+    def _resolve() -> Any:
+        from app.credentials.resolver import require_resolved_academia_config
+        from app.runtime.academia_api import make_academia_api
+        from app.runtime.claude_runtime import AcademiaLaunchConfig
+        from noctusai_lib.config.product_urls import resolve_product_url
+
+        require_resolved_academia_config(credentials)
+        signing_secret = credentials.approval_signing_secret()
+        if not signing_secret:
+            raise RuntimeError("no active approval assertion key (contract §D)")
+        academia_api = make_academia_api(
+            base_url=resolve_product_url(_ACADEMIA_AUD),
+            token=credentials.academia_api_token() or "",
+        )
+        return AcademiaLaunchConfig(
+            academia_api=academia_api,
+            agent_id=credentials.julia_agent_id() or _NIL_AGENT_ID,
+            approval_secret=signing_secret,
+        )
+
+    return _resolve
 
 
 def make_studio_tools_factory(settings: Any):
@@ -195,9 +217,9 @@ def make_studio_tools_factory(settings: Any):
 #: contract §D `sub`. A process-WIDE constant, not per-org: `agents` holds
 #: exactly ONE `ACADEMIA_API_TOKEN` (contract §B.0) whose
 #: `principal_agent_id` was set when it was minted, and the resolved value
-#: must equal it exactly. `require_resolved_prod_config` refuses a deploy
-#: context without it, so this visibly-fake nil UUID only ever reaches a
-#: dev/test runtime.
+#: must equal it exactly. `require_resolved_academia_config` refuses a
+#: deploy context's academia turn without it, so this visibly-fake nil
+#: UUID only ever reaches a dev/test runtime.
 _NIL_AGENT_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
