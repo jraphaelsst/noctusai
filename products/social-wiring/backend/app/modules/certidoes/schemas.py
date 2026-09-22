@@ -35,24 +35,11 @@ class ConsultaCreate(StrictHttpModel):
     rg: Optional[str] = None
     nome_mae: Optional[str] = None
     nome_pai: Optional[str] = None
-
-
-class ConsultaManualCreate(ConsultaCreate):
-    """`POST /consultas/manual` — same shape as `ConsultaCreate`, plus an
-    OPTIONAL, mutually exclusive link to a party or a card's titular, done
-    atomically at creation time rather than in a second `vincular-*` call.
-
-    Both `atendimento_parte_id` and `cliente_id` are optional and neither is
-    required: the "record a certidão obtained elsewhere" use case creates an
-    unlinked ad-hoc consulta exactly like `ConsultaCreate` always could, and
-    `routers/certidoes.py::criar_consulta_manual` still fans out one
-    placeholder resultado per required type either way. See that function's
-    own docstring for why sending BOTH is refused rather than one silently
-    winning.
-    """
-
-    atendimento_parte_id: Optional[UUID] = None
-    cliente_id: Optional[UUID] = None
+    # TJSP is opt-in, off by default: the office does not use the TJSP
+    # automation yet (it needs RG, a 45-min per-email cooldown and delivers by
+    # email). Off ⇒ no TJSP resultado is created, so nothing is queued or
+    # billed for it. The Nova Consulta modal carries the on/off switch.
+    incluir_tjsp: bool = False
 
 
 class VincularParteRequest(StrictHttpModel):
@@ -122,7 +109,6 @@ class SituacaoCadastralPatch(StrictHttpModel):
 
 __all__ = [
     "ConsultaCreate",
-    "ConsultaManualCreate",
     "ResultadoPatch",
     "SituacaoCadastralPatch",
     "VincularClienteRequest",

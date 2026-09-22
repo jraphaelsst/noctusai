@@ -95,6 +95,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -109,7 +110,6 @@ import {
   useCertidaoConsultas,
   useCopiarTranscricao,
   useCreateConsulta,
-  useCriarConsultaManual,
   useDeleteConsulta,
   useDownloadTranscricaoPdf,
   useMintResultadoUrl,
@@ -172,11 +172,9 @@ export default function Certidoes() {
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [dialogAberto, setDialogAberto] = useState(false);
-  // "automatico" (default): calls InfoSimples, billable. "manual": creates
-  // the same placeholder resultados with no InfoSimples call and no token
-  // requirement — for testing with fictional people or recording a
-  // certidão the office already holds elsewhere.
-  const [modoNovaConsulta, setModoNovaConsulta] = useState<"automatico" | "manual">("automatico");
+  // TJSP automation is opt-in per consulta and OFF by default — the office
+  // does not use it yet. Off ⇒ the backend creates no TJSP resultado at all.
+  const [incluirTjsp, setIncluirTjsp] = useState(false);
   const [detalheId, setDetalheId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [expandedAnalise, setExpandedAnalise] = useState<string | null>(null);
@@ -205,7 +203,6 @@ export default function Certidoes() {
 
   const { data: tjspFila } = useTjspFila();
   const createMutation = useCreateConsulta();
-  const createManualMutation = useCriarConsultaManual();
   const reprocessarMutation = useReprocessarConsulta();
   const deleteMutation = useDeleteConsulta();
   const cancelarMutation = useCancelarProcessamento();
@@ -290,17 +287,14 @@ export default function Certidoes() {
       rg: data.rg || undefined,
       nome_mae: data.nome_mae || undefined,
       nome_pai: data.nome_pai || undefined,
+      incluir_tjsp: incluirTjsp,
     };
-    const onSuccess = () => {
-      setDialogAberto(false);
-      setModoNovaConsulta("automatico");
-      reset();
-    };
-    if (modoNovaConsulta === "manual") {
-      createManualMutation.mutate(payload, { onSuccess });
-    } else {
-      createMutation.mutate(payload, { onSuccess });
-    }
+    createMutation.mutate(payload, {
+      onSuccess: () => {
+        setDialogAberto(false);
+        reset();
+      },
+    });
   };
 
   const handleDelete = () => {
@@ -429,7 +423,7 @@ export default function Certidoes() {
           <Button
             onClick={() => {
               reset();
-              setModoNovaConsulta("automatico");
+              setIncluirTjsp(false);
               setDialogAberto(true);
             }}
           >
@@ -756,27 +750,9 @@ export default function Certidoes() {
           <DialogHeader>
             <DialogTitle>Nova Consulta de Certidões</DialogTitle>
             <DialogDescription>
-              {modoNovaConsulta === "manual"
-                ? "Cria as certidões desta pessoa sem consultar o InfoSimples — use para pessoas fictícias de teste ou para registrar certidões já obtidas por outro meio."
-                : "Preencha os dados para emitir as certidões negativas automaticamente."}
+              Preencha os dados para emitir as certidões negativas automaticamente.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-2" data-testid="nova-consulta-modo">
-            <Button
-              type="button"
-              variant={modoNovaConsulta === "automatico" ? "default" : "outline"}
-              onClick={() => setModoNovaConsulta("automatico")}
-            >
-              Emitir automaticamente (InfoSimples, pago)
-            </Button>
-            <Button
-              type="button"
-              variant={modoNovaConsulta === "manual" ? "default" : "outline"}
-              onClick={() => setModoNovaConsulta("manual")}
-            >
-              Registrar manualmente
-            </Button>
-          </div>
           <form onSubmit={handleSubmit(handleCreate)} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -851,30 +827,36 @@ export default function Certidoes() {
               </>
             )}
 
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="nova-consulta-incluir-tjsp">Certidão TJSP (automação)</Label>
+                <p className="text-xs text-muted-foreground">
+                  {incluirTjsp
+                    ? "Ativada — a certidão TJSP será solicitada ao InfoSimples (exige RG)."
+                    : "Desativada — a certidão TJSP não será solicitada nesta consulta."}
+                </p>
+              </div>
+              <Switch
+                id="nova-consulta-incluir-tjsp"
+                checked={incluirTjsp}
+                onCheckedChange={setIncluirTjsp}
+              />
+            </div>
+
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setDialogAberto(false);
-                  setModoNovaConsulta("automatico");
-                }}
-              >
+              <Button type="button" variant="outline" onClick={() => setDialogAberto(false)}>
                 Cancelar
               </Button>
-              <Button
-                type="submit"
-                disabled={createMutation.isPending || createManualMutation.isPending}
-              >
-                {createMutation.isPending || createManualMutation.isPending ? (
+              <Button type="submit" disabled={createMutation.isPending}>
+                {createMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    {modoNovaConsulta === "manual" ? "Registrando..." : "Iniciando..."}
+                    Iniciando...
                   </>
                 ) : (
                   <>
                     <FileCheck className="h-4 w-4 mr-2" />
-                    {modoNovaConsulta === "manual" ? "Registrar Certidões" : "Emitir Certidões"}
+                    Emitir Certidões
                   </>
                 )}
               </Button>

@@ -40,7 +40,6 @@ const mockReprocessar = vi.fn();
 const mockDelete = vi.fn();
 const mockCancelar = vi.fn();
 const mockMintUrl = vi.fn();
-const mockCreateManual = vi.fn();
 
 const mockDownloadTranscricaoPdf = vi.fn();
 const mockCopiarTranscricao = vi.fn();
@@ -51,7 +50,6 @@ vi.mock("@/hooks/useCertidoes", () => ({
   useCertidaoConsulta: (...a: any[]) => mockUseCertidaoConsulta(...a),
   useTjspFila: (...a: any[]) => mockUseTjspFila(...a),
   useCreateConsulta: () => ({ mutate: mockCreate, isPending: false }),
-  useCriarConsultaManual: () => ({ mutate: mockCreateManual, isPending: false }),
   useReprocessarConsulta: () => ({ mutate: mockReprocessar, isPending: false }),
   useDeleteConsulta: () => ({ mutate: mockDelete, isPending: false }),
   useCancelarProcessamento: () => ({ mutate: mockCancelar, isPending: false }),
@@ -644,38 +642,36 @@ describe("Certidoes — nova consulta form", () => {
     expect(payload.rg).toBeUndefined();
     expect(payload.data_nascimento).toBeUndefined();
   });
+});
 
-  it("routes through the manual-registration mutation when 'Registrar manualmente' is chosen", async () => {
-    const { getByText, getByPlaceholderText, fireEvent, waitFor } = await renderCertidoes();
-    fireEvent.click(getByText("Nova Consulta"));
-    fireEvent.click(getByText("Registrar manualmente"));
-    expect(
-      getByText(/sem consultar o InfoSimples/),
-    ).toBeTruthy();
-    fireEvent.change(getByPlaceholderText("Apenas números"), {
+describe("Certidoes — TJSP on/off switch in Nova Consulta", () => {
+  async function abrirEPreencher() {
+    const r = await renderCertidoes();
+    r.fireEvent.click(r.getAllByText("Nova Consulta")[0]);
+    const form = document.querySelector("form") as HTMLFormElement;
+    r.fireEvent.change(form.querySelector('input[name="documento"]')!, {
       target: { value: "12345678901" },
     });
-    fireEvent.change(getByPlaceholderText("Nome completo ou razão social"), {
-      target: { value: "Pessoa Fictícia" },
+    r.fireEvent.change(form.querySelector('input[name="nome"]')!, {
+      target: { value: "João da Silva" },
     });
-    fireEvent.click(getByText("Registrar Certidões"));
+    return { ...r, form };
+  }
 
-    await waitFor(() => expect(mockCreateManual).toHaveBeenCalled());
-    expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockCreateManual.mock.calls[0][0]).toMatchObject({
-      tipo_documento: "cpf",
-      documento: "12345678901",
-      nome: "Pessoa Fictícia",
-    });
+  it("is OFF by default and sends incluir_tjsp=false", async () => {
+    const { getByRole, fireEvent, waitFor, form } = await abrirEPreencher();
+    expect(getByRole("switch").getAttribute("aria-checked")).toBe("false");
+    fireEvent.submit(form);
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].incluir_tjsp).toBe(false);
   });
 
-  it("defaults back to 'Emitir automaticamente' every time the dialog is (re)opened", async () => {
-    const { getByText, fireEvent } = await renderCertidoes();
-    fireEvent.click(getByText("Nova Consulta"));
-    fireEvent.click(getByText("Registrar manualmente"));
-    expect(getByText("Registrar Certidões")).toBeTruthy();
-    fireEvent.click(getByText("Cancelar"));
-    fireEvent.click(getByText("Nova Consulta"));
-    expect(getByText("Emitir Certidões")).toBeTruthy();
+  it("turned ON sends incluir_tjsp=true", async () => {
+    const { getByRole, fireEvent, waitFor, form } = await abrirEPreencher();
+    fireEvent.click(getByRole("switch"));
+    expect(getByRole("switch").getAttribute("aria-checked")).toBe("true");
+    fireEvent.submit(form);
+    await waitFor(() => expect(mockCreate).toHaveBeenCalled());
+    expect(mockCreate.mock.calls[0][0].incluir_tjsp).toBe(true);
   });
 });

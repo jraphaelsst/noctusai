@@ -216,13 +216,8 @@ export interface ClienteCardDialogProps {
    * resultado) under their documents panel — same render-prop reasoning as
    * `renderDocumentosDePessoa`, but keyed by the atendimento PARTE id, because
    * a certidão is linked to the person's role in this deal, not to the person.
-   *
-   * Third arg `documento` — the party's own CPF/CNPJ (`parte.cliente?.cpf`),
-   * when this party has one on file. Lets a "registrar certidões manualmente"
-   * flow prefill the document instead of asking the operator to retype it;
-   * `undefined` when the party has none (still fully input-driven then).
    */
-  renderCertidoesDaParte?: (parteId: string, nome: string, documento?: string) => ReactNode;
+  renderCertidoesDaParte?: (parteId: string, nome: string) => ReactNode;
   /**
    * Renders one party's contract qualification completeness (migration 110)
    * — same render-prop reasoning as `renderDocumentosDePessoa`, and keyed
@@ -243,18 +238,13 @@ export interface ClienteCardDialogProps {
   /**
    * The TITULAR's own structured certidões (contract automation F6,
    * migration 116) — `renderCertidoesDaParte`'s titular sibling, keyed the
-   * same way `renderQualificacaoDoTitular` is: this component is never
-   * handed the titular's raw id, only their `nome`. The titular has no
-   * `atendimento_partes` row to key a per-parte fetch off (migration 073's
-   * header), which is exactly why migration 116 added the sibling
-   * cliente-scoped routes this panel reaches instead.
-   *
-   * The single `documento` arg is the titular's own CPF/CNPJ, sourced from
-   * `props.dadosPessoais?.cpf` (the SAME document-checklist value
-   * `DadosPessoaisForm` already reads/edits on this tab) — never a second,
-   * independently-fetched copy. `undefined` when not on file yet.
+   * same way `renderQualificacaoDoTitular` is: a thunk, because this
+   * component is never handed the titular's raw id, only their `nome`. The
+   * titular has no `atendimento_partes` row to key a per-parte fetch off
+   * (migration 073's header), which is exactly why migration 116 added the
+   * sibling cliente-scoped routes this panel reaches instead.
    */
-  renderCertidoesDoTitular?: (documento?: string) => ReactNode;
+  renderCertidoesDoTitular?: () => ReactNode;
   /**
    * The TITULAR's own admin-decide surface (owner directive, 2026-09-19) —
    * `ConflitosPendentesCard`, same thunk reasoning as
@@ -811,11 +801,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                           {() => (
                             <>
                               {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
-                              {props.renderCertidoesDaParte?.(
-                                parte.id,
-                                nomeDaParte(parte),
-                                parte.cliente?.cpf ?? undefined,
-                              ) ?? null}
+                              {props.renderCertidoesDaParte?.(parte.id, nomeDaParte(parte)) ?? null}
                               {props.renderQualificacaoDaParte?.(
                                 parte.cliente_id,
                                 nomeDaParte(parte),
@@ -940,7 +926,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     pendenteConfirmacao={props.dadosPessoaisPendente}
                   />
                   {props.renderConflitosPendentes?.() ?? null}
-                  {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
+                  {props.renderCertidoesDoTitular?.() ?? null}
                   {props.renderQualificacaoDoTitular?.() ?? null}
                 </>
               )}
@@ -1018,11 +1004,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                         {() => (
                           <>
                             {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
-                            {props.renderCertidoesDaParte?.(
-                              parte.id,
-                              nomeDaParte(parte),
-                              parte.cliente?.cpf ?? undefined,
-                            ) ?? null}
+                            {props.renderCertidoesDaParte?.(parte.id, nomeDaParte(parte)) ?? null}
                             {props.renderQualificacaoDaParte?.(
                               parte.cliente_id,
                               nomeDaParte(parte),
