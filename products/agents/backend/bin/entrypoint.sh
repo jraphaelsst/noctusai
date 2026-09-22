@@ -121,9 +121,16 @@ _opts_has "$handoff_opts" "mode=711" || fail "/run/julia-handoff: expected mode=
 
 umask 077
 
+# `--loop asyncio` (2026-09-21): `uvicorn[standard]` installs uvloop and
+# `--loop auto` picks it, but uvloop's subprocess_exec REJECTS the `user=`
+# kwarg (`ValueError: unexpected kwargs: user`) that the slot sweeper and the
+# Agent SDK's CLI spawn both rely on for per-conversation uid isolation
+# (§E.11) — every slot was quarantined at startup. The stdlib asyncio loop
+# supports `user=`/`group=` (Python >= 3.9). Pinned by
+# tests/runtime/test_entrypoint_loop.py.
 exec /usr/bin/setpriv \
   --reuid=1000 --regid=1000 --init-groups \
   --inh-caps=-all,+setuid,+setgid,+kill --ambient-caps=-all,+setuid,+setgid,+kill \
   --no-new-privs \
   -- \
-  uvicorn app.main:app --host 0.0.0.0 --port 8016 --app-dir products/agents/backend --workers 1
+  uvicorn app.main:app --host 0.0.0.0 --port 8016 --app-dir products/agents/backend --workers 1 --loop asyncio
