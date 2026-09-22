@@ -54,7 +54,7 @@ def _active_product_dirs(products_dir: Path) -> list[Path]:
 
     THE CHOKE POINT (2026-09-22). Every per-product compliance walk that
     means "check this product's code" should route through this instead of
-    a bare `products_dir.iterdir()` + `is_dir()`/hidden-dir filter (the
+    a bare `products_dir.iterdir()` + `is_dir()`/hidden-dir filter (product-scope: n/a, prose) (the
     pattern this repeats, verbatim, dozens of times across this file). An
     asleep product (`ativo=false` in the catalog, i.e. absent from
     `deploy/fleet/active-scope.txt`) gets NO CI job, keeper, or hook per the
@@ -78,7 +78,7 @@ def _active_product_dirs(products_dir: Path) -> list[Path]:
     if not products_dir.exists():
         return []
     dirs = sorted(
-        d for d in products_dir.iterdir()
+        d for d in products_dir.iterdir()  # product-scope: active (THE choke point)
         if d.is_dir() and not d.name.startswith(".")
     )
     from .product_scope import filter_active
@@ -1399,7 +1399,7 @@ def _find_all_project_md(repo_root: Path) -> list[Path]:
                 candidates.append(d / "PROJECT.md")
     products_dir = repo_root / "products"
     if products_dir.exists():
-        for product_dir in sorted(products_dir.iterdir()):
+        for product_dir in sorted(products_dir.iterdir()):  # product-scope: all — PROJECT.md doc discovery, not a product check
             projects_dir = product_dir / "projects"
             if not projects_dir.exists():
                 continue
@@ -5987,7 +5987,7 @@ def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]
 
     from .product_scope import filter_active
 
-    pkg_paths = sorted(root.glob("products/*/frontend/package.json"))
+    pkg_paths = sorted(root.glob("products/*/frontend/package.json"))  # product-scope: active (filtered below)
     active_slugs = set(filter_active([p.parent.parent.name for p in pkg_paths], root))
     pkg_paths = [p for p in pkg_paths if p.parent.parent.name in active_slugs]
 
@@ -11080,7 +11080,7 @@ def check_schema_wide_anon_grant(
             if p.suffix == ".sql" and "backend/migrations" in p.as_posix()
         )
     else:
-        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))  # product-scope: all — applied migration SQL describes the LIVE shared DB regardless of ativo (security)
         template_migrations = root / "templates" / "product-seed" / "backend" / "migrations"
         if template_migrations.is_dir():
             sql_files += sorted(template_migrations.glob("*.sql"))
@@ -11405,7 +11405,7 @@ def check_storage_bucket_public(
             if p.suffix in (".py", ".ts", ".tsx") and "node_modules" not in p.parts
         )
     else:
-        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))  # product-scope: all — applied migration SQL describes the LIVE shared DB regardless of ativo (security)
         src_files = []
         for pattern in ("*.py", "*.ts", "*.tsx"):
             src_files += list(root.glob(f"products/**/{pattern}"))
@@ -11635,7 +11635,7 @@ def check_migration_guard_has_probe(
             if (root / p).suffix == ".sql" and "backend/migrations" in (root / p).as_posix()
         )
     else:
-        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))  # product-scope: all — applied migration SQL describes the LIVE shared DB regardless of ativo (security)
 
     allowlisted = {(f, name) for f, name, _r in _GUARD_PROBE_ALLOWLIST}
 
@@ -11824,7 +11824,7 @@ def check_table_has_rls(
             if p.suffix == ".sql" and "backend/migrations" in p.as_posix()
         )
     else:
-        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))
+        sql_files = sorted((root / "products").glob("*/backend/migrations/*.sql"))  # product-scope: all — applied migration SQL describes the LIVE shared DB regardless of ativo (security)
 
     for sql_file in sql_files:
         try:
@@ -11974,8 +11974,10 @@ def check_migration_applied_ledger_drift(
     if not products_root.exists():
         return findings
 
+    # product-scope: active — ledger bookkeeping of a sleeping product is not
+    # worked on until it wakes (KB § PATTERNS/architect/product-working-scope.md § 4c).
     candidates = [
-        p for p in sorted(products_root.glob("*"))
+        p for p in _active_product_dirs(products_root)
         if (p / "backend" / "migrations").is_dir()
     ]
     if not candidates:
@@ -12930,7 +12932,7 @@ def check_conftest_env_setdefault(
         from .product_scope import filter_active
 
         conftests = {}
-        paths = sorted((root / "products").glob("*/backend/tests/conftest.py"))
+        paths = sorted((root / "products").glob("*/backend/tests/conftest.py"))  # product-scope: active (filtered below)
         active = set(filter_active(
             [p.relative_to(root).parts[1] for p in paths], root,
         ))
@@ -18011,7 +18013,7 @@ def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict
     root_text = root_req.read_text()
     root_pkgs = {_norm(p) for p in _parse_requirements(root_text).keys()}
     root_edit = _editables(root_text)
-    for prod_req in sorted(products_dir.glob("*/backend/requirements.txt")):
+    for prod_req in sorted(products_dir.glob("*/backend/requirements.txt")):  # product-scope: all — superset completeness; over-inclusion is harmless, narrowing breaks reactivation
         product = prod_req.parts[-3]
         if product == "seed":
             continue
@@ -18229,7 +18231,7 @@ def _check_post_scaffold(
     )
     found_insert = False
     insert_paths_searched = []
-    for product_dir in base_products_dir.iterdir():
+    for product_dir in base_products_dir.iterdir():  # product-scope: all — searches for a NEW product's catalog INSERT row
         if not product_dir.is_dir() or product_dir.name.startswith("."):
             continue
         migrations = product_dir / "backend" / "migrations"

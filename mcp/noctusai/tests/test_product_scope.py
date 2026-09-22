@@ -8,6 +8,7 @@ the gates skip would ship untested. → KB § PATTERNS/architect/product-working
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -92,3 +93,31 @@ def test_every_gate_surface_agrees_with_active_scope():
     active = set(ps.read_active_scope(REPO) or [])
     for slug, row in rep["products"].items():
         assert row["verdict"] == ("awake" if slug in active else "asleep"), (slug, row)
+
+
+_WALK = re.compile(
+    r"(PRODUCTS_DIR|products_root|products_dir|base_products_dir|eff_products_dir|"
+    r"/ \"products\"\))[^#\n]*\.(iterdir|glob)\(|glob\([\"']products/\*"
+)
+
+
+def test_every_products_walk_declares_its_scope():
+    """Compliance by construction: a walk over `products/` in the toolkit must say
+    whether it skips asleep products (`# product-scope: active`) or deliberately
+    sees all of them (`# product-scope: all — <reason>`), on the line or up to 2
+    lines above. A new unmarked walk is exactly how therapy-platform leaked into
+    the pre-push ledger check after the first sweep — this fails CI instead.
+    """
+    tools = REPO / "mcp" / "noctusai" / "tools" / "noctus" / "dev"
+    unmarked = []
+    for path in sorted(tools.glob("*.py")):
+        if path.name == "product_scope.py":
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for i, line in enumerate(lines):
+            if line.lstrip().startswith("#") or not _WALK.search(line):
+                continue
+            window = "\n".join(lines[max(0, i - 2): i + 1])
+            if "product-scope:" not in window:
+                unmarked.append(f"{path.name}:{i + 1}: {line.strip()}")
+    assert not unmarked, "products/ walks without a `# product-scope:` marker:\n" + "\n".join(unmarked)

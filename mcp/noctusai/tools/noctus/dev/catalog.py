@@ -373,7 +373,7 @@ def _iter_products(
     eff_products_dir = products_dir if products_dir is not None else PRODUCTS_DIR
     if not eff_products_dir.exists():
         return
-    for d in sorted(eff_products_dir.iterdir()):
+    for d in sorted(eff_products_dir.iterdir()):  # product-scope: all — organ catalog inventory, not a check
         if d.is_dir() and not d.name.startswith("."):
             yield d.name, d
 

@@ -208,8 +208,13 @@ def verify_master_prompt(
 
     if all_products:
         products: list[dict] = []
+        from .product_scope import is_active
+
+        # product-scope: active — never regenerate a sleeping product's files.
         for d in sorted(base_products_dir.iterdir()):
             if not d.is_dir() or d.name.startswith("."):
+                continue
+            if not is_active(d.name, base_products_dir.parent):
                 continue
             if (d / "MASTER-PROMPT.md").exists():
                 products.append(

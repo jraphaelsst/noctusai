@@ -349,7 +349,7 @@ def _all_product_slugs(root: Path) -> list[str]:
     if not products_dir.exists():
         return []
     return sorted(
-        d.name for d in products_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
+        d.name for d in products_dir.iterdir() if d.is_dir() and not d.name.startswith(".")  # product-scope: all — raw list; callers filter_active (seed fan-out) or flag explicit requests
     )
 
 

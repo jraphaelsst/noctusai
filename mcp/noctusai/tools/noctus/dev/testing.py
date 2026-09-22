@@ -127,7 +127,7 @@ def run_all_tests(timeout: int = 300, worktree_path: str | None = None) -> dict:
     products_dir = _products_dir_for(worktree_path)
     root = products_dir.parent
     candidates = sorted(
-        d.name for d in products_dir.iterdir()
+        d.name for d in products_dir.iterdir()  # product-scope: active (filtered below)
         if d.is_dir() and not d.name.startswith(".") and (d / "backend" / "tests").exists()
     )
     active = set(filter_active(candidates, root=root))
@@ -210,7 +210,7 @@ def build_all_frontends(timeout: int = 120, worktree_path: str | None = None) ->
     products_dir = _products_dir_for(worktree_path)
     root = products_dir.parent
     candidates = sorted(
-        d.name for d in products_dir.iterdir()
+        d.name for d in products_dir.iterdir()  # product-scope: active (filtered below)
         if d.is_dir() and not d.name.startswith(".") and (d / "frontend" / "vite.config.ts").exists()
     )
     active = set(filter_active(candidates, root=root))

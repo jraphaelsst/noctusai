@@ -772,7 +772,7 @@ def _assemble_incremental(repo_root: Path):
     walk_kb(graph, kb_root, repo_root=repo_root)
     walk_kb_chapters(graph, kb_root, repo_root=repo_root)
     walk_projects(graph, repo_root / "projects", repo_root=repo_root)
-    for products_projects in (repo_root / "products").glob("*/projects"):
+    for products_projects in (repo_root / "products").glob("*/projects"):  # product-scope: all — knowledge graph indexes every doc
         walk_projects(graph, products_projects, repo_root=repo_root)
     walk_findings(graph, repo_root)
     memory_root = _discover_memory_root(repo_root)

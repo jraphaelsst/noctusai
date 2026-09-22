@@ -8,7 +8,7 @@ from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 def list_products() -> list[dict]:
     """List all products with their structure summary."""
     products = []
-    for d in sorted(PRODUCTS_DIR.iterdir()):
+    for d in sorted(PRODUCTS_DIR.iterdir()):  # product-scope: all — product listing tool (reports ativo itself)
         if not d.is_dir() or d.name.startswith("."):
             continue
         products.append(get_product_summary(d.name))

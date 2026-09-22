@@ -242,7 +242,7 @@ def _audit(root: Path) -> tuple[dict[str, list[str]], int, int, list[str]]:
     skipped: list[str] = []
     from .product_scope import filter_active
 
-    pkg_paths = sorted(root.glob("products/*/frontend/package.json"))
+    pkg_paths = sorted(root.glob("products/*/frontend/package.json"))  # product-scope: active (filtered below)
     active_slugs = set(filter_active(
         [p.parent.parent.name for p in pkg_paths], root,
     ))

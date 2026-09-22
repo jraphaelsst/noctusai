@@ -38,11 +38,16 @@ class AnalyzePatternsOutput(BaseModel):
 
 
 def _list_products():
+    """Products the analyzers audit — ACTIVE only (asleep products are not audited
+    or "fixed" until they wake; KB § PATTERNS/architect/product-working-scope.md § 4c)."""
+    from .product_scope import filter_active
+
     results = []
-    for d in sorted(PRODUCTS_DIR.iterdir()):
+    for d in sorted(PRODUCTS_DIR.iterdir()):  # product-scope: active (filtered below)
         if d.is_dir() and not d.name.startswith("."):
             results.append({"name": d.name, "path": d})
-    return results
+    keep = set(filter_active([r["name"] for r in results], PRODUCTS_DIR.parent))
+    return [r for r in results if r["name"] in keep]
 
 
 def _read(path):

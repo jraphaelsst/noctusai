@@ -631,7 +631,7 @@ def list_proposals(agent=None, product=None):
     if product:
         search_dirs = [_product_proposals_dir(product)]
     else:
-        search_dirs = sorted(PRODUCTS_DIR.glob("*/proposals"))
+        search_dirs = sorted(PRODUCTS_DIR.glob("*/proposals"))  # product-scope: all — proposal inventory, not a check
 
     results = []
     for d in search_dirs:
