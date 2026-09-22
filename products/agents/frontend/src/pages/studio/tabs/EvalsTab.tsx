@@ -28,9 +28,24 @@
  * population "Rodar avaliação" (no `case_ids`) would have used. A run
  * against every active case never gets the label, even if cases were
  * archived afterwards; that's an acceptable drift for a display-only badge.
+ *
+ * Controle de custo (contract §L, 2026-09-22): "Rodar avaliação" opens a
+ * "Nova execução" form (mirrors the "Novo caso" toggle below it) instead of
+ * firing immediately — a model override (`modelo_geracao`, cheaper-iteration
+ * draft models only) and an optional `limite_usd` cap are both opt-in, never
+ * silently defaulted client-side (an omitted `limite_usd` is sent as
+ * `undefined`, letting the backend's `STUDIO_EVAL_RUN_BUDGET_USD` default
+ * apply — the placeholder merely SHOWS that default, it is never submitted
+ * as a value). `EvalRunModel` is deliberately narrower than the agent's own
+ * model allowlist (§L3) — see `types-ke.ts`. A run with `modelo_geracao` set
+ * can never satisfy the publish gate (`SupabaseEvalGate.latest_concluded_run`
+ * filters it out server-side), so every run carrying one gets a "rascunho ·
+ * <modelo>" badge here — the FE never re-derives gate eligibility, it only
+ * labels what the backend already excluded, so a draft run is never
+ * mistaken for a gating one at a glance.
  */
 import { useState, type FormEvent } from "react";
-import { CheckCircle2, ClipboardList, Pencil, Play, Plus, StopCircle, XCircle } from "lucide-react";
+import { Ban, CheckCircle2, ClipboardList, Pencil, Play, Plus, RotateCcw, StopCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge,
@@ -42,10 +57,12 @@ import {
   FormError,
   Input,
   PageSkeleton,
+  Select,
   Textarea,
 } from "@noctusai/lib/design-system";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { ApiError, errorMessage } from "@/lib/errors";
+import { formatUsdCost } from "@/lib/utils";
 import { useStudioAgent } from "@/hooks/studio/useStudioAgents";
 import {
   useCancelEvalRun,
@@ -57,9 +74,34 @@ import {
   useEvalRuns,
   useUpdateEvalCase,
 } from "@/hooks/studio/useEvals";
-import type { EvalCase, EvalCaseCreate, EvalRun, EvalRunStatus } from "@/api/studio/types-ke";
+import type {
+  EvalCase,
+  EvalCaseCreate,
+  EvalRun,
+  EvalRunCreate,
+  EvalRunModel,
+  EvalRunStatus,
+} from "@/api/studio/types-ke";
 
 const IN_FLIGHT_RUN: EvalRunStatus[] = ["pendente", "executando"];
+
+/** Contract §L: the run's cost cap was reached and every still-pending case
+ * was flipped to `pulado` — the runner's fixed reason string, byte-identical
+ * to `app.studio.models.BUDGET_EXCEEDED_NOTA` (backend, `evals.py`). */
+const BUDGET_EXCEEDED_NOTA = "limite de custo atingido";
+
+/** Contract §L3 — display labels for the cheaper-iteration model override. */
+const MODEL_LABELS: Record<EvalRunModel, string> = {
+  "claude-sonnet-5": "Sonnet 5",
+  "claude-haiku-4-5": "Haiku 4.5",
+};
+
+/** A run is eligible for "Repetir só as falhas" once it has settled
+ * (contract §L4 reads `status != 'aprovado'` results of a resolved run) —
+ * in-flight runs have no stable result set to repeat yet. */
+function isRunFinished(status: EvalRunStatus): boolean {
+  return !IN_FLIGHT_RUN.includes(status);
+}
 
 /** See file header. */
 function useDraftVersion(agentKey: string) {
@@ -339,16 +381,117 @@ function CaseEditForm({ agentKey, caseData, onDone }: { agentKey: string; caseDa
   );
 }
 
+/** Client-side mirror of contract §L5's `0 < limite_usd <= 50` CHECK — the
+ * server re-validates regardless, this only spares a round-trip for the
+ * obvious case. Empty input ⇒ `undefined` (server default applies), never a
+ * client-invented default value. */
+function parseLimiteUsd(raw: string): { value: number | undefined; error: string | null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { value: undefined, error: null };
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n <= 0 || n > 50) {
+    return { value: undefined, error: "Informe um limite entre 0 e 50 (US$)." };
+  }
+  return { value: n, error: null };
+}
+
+/** "Nova execução" form (contract §L3/§L5) — toggled by "Rodar avaliação",
+ * mirrors the "Novo caso" toggle immediately below it in the tree. */
+function NewRunForm({
+  agentKey,
+  versionId,
+  onDone,
+}: {
+  agentKey: string;
+  versionId: string;
+  onDone: (runId: string) => void;
+}) {
+  const [modelo, setModelo] = useState<"" | EvalRunModel>("");
+  const [limite, setLimite] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const createRun = useCreateEvalRun(agentKey);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const { value: limiteUsd, error: limiteError } = parseLimiteUsd(limite);
+    if (limiteError) {
+      setError(limiteError);
+      return;
+    }
+    const payload: EvalRunCreate = {
+      version_id: versionId,
+      modelo_geracao: modelo || undefined,
+      limite_usd: limiteUsd,
+    };
+    try {
+      const run = await createRun.mutateAsync(payload);
+      toast.success("Avaliação iniciada.");
+      onDone(run.id);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2 rounded-md border border-border p-3" data-testid="evals-new-run-form">
+      <FormError message={error} />
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field label="Modelo">
+          <Select
+            value={modelo}
+            onChange={(e) => setModelo(e.target.value as "" | EvalRunModel)}
+            data-testid="evals-run-modelo"
+          >
+            <option value="">Modelo do agente (padrão da versão)</option>
+            <option value="claude-sonnet-5">Sonnet 5 — rascunho, mais barato</option>
+            <option value="claude-haiku-4-5">Haiku 4.5 — rascunho, o mais barato</option>
+          </Select>
+        </Field>
+        <Field label="Limite de custo (US$)">
+          <Input
+            type="number"
+            step="0.01"
+            min="0.01"
+            max="50"
+            placeholder="2.00"
+            value={limite}
+            onChange={(e) => setLimite(e.target.value)}
+            data-testid="evals-run-limite"
+          />
+        </Field>
+      </div>
+      <p className="text-xs text-muted-foreground" data-testid="evals-run-draft-hint">
+        Execuções com modelo de rascunho (Sonnet 5/Haiku 4.5 acima) nunca liberam a publicação — só uma
+        execução com "Modelo do agente" satisfaz o portão de avaliação.
+      </p>
+      <div className="flex gap-2">
+        <Button type="submit" variant="primary" size="sm" disabled={createRun.isPending} data-testid="evals-run-submit">
+          <Play className="mr-1.5 h-3.5 w-3.5" />
+          {createRun.isPending ? "Iniciando…" : "Iniciar avaliação"}
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => onDone("")} disabled={createRun.isPending}>
+          Cancelar
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function RunDetailPanel({
   agentKey,
   runId,
   isAdmin,
   activeCasesCount,
+  onRepeatFailures,
+  repeatPending,
 }: {
   agentKey: string;
   runId: string;
   isAdmin: boolean;
   activeCasesCount: number;
+  onRepeatFailures: (runId: string) => void;
+  repeatPending: boolean;
 }) {
   const { data: run, showSkeleton, isError } = useEvalRun(agentKey, runId);
   const cancelRun = useCancelEvalRun(agentKey);
@@ -365,6 +508,9 @@ function RunDetailPanel({
     }
   }
 
+  const semFalhas = run.resultados.every((r) => r.status === "aprovado");
+  const orcamentoEstourado = run.erro === BUDGET_EXCEEDED_NOTA;
+
   return (
     <Card className="space-y-3" data-testid="evals-run-detail">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -373,16 +519,36 @@ function RunDetailPanel({
             Execução {run.id.slice(0, 8)} — {run.aprovados}/{run.total} aprovados
           </p>
           <p className="text-xs text-muted-foreground">
-            score {run.score != null ? run.score.toFixed(3) : "—"} · limiar {run.limiar.toFixed(3)}
+            score {run.score != null ? run.score.toFixed(3) : "—"} · limiar {run.limiar.toFixed(3)} · custo{" "}
+            {formatUsdCost(run.custo_usd)}
+            {run.limite_usd != null ? ` / limite ${formatUsdCost(run.limite_usd)}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {run.modelo_geracao && (
+            <Badge variant="outline" data-testid="evals-run-model-badge">
+              rascunho · {MODEL_LABELS[run.modelo_geracao]}
+            </Badge>
+          )}
           {isPartialRun(run, activeCasesCount) && (
             <Badge variant="outline" data-testid="evals-run-partial">
               parcial (não vale para publicar)
             </Badge>
           )}
           <Badge variant={RUN_STATUS_VARIANT[run.status]}>{run.status}</Badge>
+          {isAdmin && isRunFinished(run.status) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onRepeatFailures(run.id)}
+              disabled={repeatPending || semFalhas}
+              title={semFalhas ? "Esta execução não tem resultados reprovados/pulados/em erro." : undefined}
+              data-testid="evals-run-repeat-detail"
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              Repetir só as falhas
+            </Button>
+          )}
           {isAdmin && IN_FLIGHT_RUN.includes(run.status) && (
             <Button
               size="sm"
@@ -397,7 +563,19 @@ function RunDetailPanel({
           )}
         </div>
       </div>
-      {run.erro && <FormError message={run.erro} />}
+      {orcamentoEstourado ? (
+        <div
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700"
+          role="alert"
+          data-testid="evals-run-budget-banner"
+        >
+          Execução interrompida: limite de custo atingido
+          {run.limite_usd != null ? ` (limite ${formatUsdCost(run.limite_usd)})` : ""}. Os casos restantes foram
+          marcados como "pulado" — não entram no score, nem contam contra o portão de publicação.
+        </div>
+      ) : (
+        run.erro && <FormError message={run.erro} />
+      )}
       <div className="space-y-2">
         {run.resultados.map((r) => (
           <div key={r.case_id} className="rounded-md border border-border p-2 text-xs" data-testid={`evals-result-${r.case_id}`}>
@@ -406,12 +584,25 @@ function RunDetailPanel({
                 <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
               ) : r.status === "reprovado" || r.status === "erro" ? (
                 <XCircle className="h-3.5 w-3.5 text-destructive" />
+              ) : r.status === "pulado" ? (
+                <Ban className="h-3.5 w-3.5 text-amber-600" data-testid={`evals-result-pulado-icon-${r.case_id}`} />
               ) : (
                 <span className="h-3.5 w-3.5 rounded-full border border-muted-foreground/40" />
               )}
               <span className="font-medium text-foreground">{r.case_titulo}</span>
-              <span className="text-muted-foreground">{r.status}</span>
+              <span className={r.status === "pulado" ? "font-medium text-amber-700" : "text-muted-foreground"}>
+                {r.status}
+              </span>
               {r.score != null && <span className="text-muted-foreground">score {r.score.toFixed(2)}</span>}
+            </div>
+            <div
+              className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground"
+              data-testid={`evals-result-cost-${r.case_id}`}
+            >
+              <span>custo {formatUsdCost(r.custo_usd)}</span>
+              <span>
+                tokens {r.tokens_entrada ?? "—"} in / {r.tokens_saida ?? "—"} out
+              </span>
             </div>
             {r.saida && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{r.saida}</p>}
             {r.veredito && r.veredito.length > 0 && (
@@ -437,9 +628,10 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
   const { data: cases, showSkeleton, isError, error } = useEvalCases(agentKey);
   const { data: runs } = useEvalRuns(agentKey);
   const draft = useDraftVersion(agentKey);
-  const createRun = useCreateEvalRun(agentKey);
+  const repeatRun = useCreateEvalRun(agentKey);
   const deleteCase = useDeleteEvalCase(agentKey);
   const updateCase = useUpdateEvalCase(agentKey);
+  const [showNewRun, setShowNewRun] = useState(false);
   const [showNewCase, setShowNewCase] = useState(false);
   const [editingCase, setEditingCase] = useState<string | null>(null);
   const [inUseCase, setInUseCase] = useState<EvalCase | null>(null);
@@ -447,12 +639,19 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
 
   const activeCasesCount = cases?.filter((c) => c.ativo).length ?? 0;
 
-  async function handleRun() {
+  function handleRunCreated(runId: string) {
+    setShowNewRun(false);
+    if (runId) setSelectedRun(runId);
+  }
+
+  /** Contract §L4 — resolves the run's failing cases server-side; the FE
+   * only needs the source run's id. */
+  async function handleRepeatFailures(runId: string) {
     if (!draft) return;
     try {
-      const run = await createRun.mutateAsync({ version_id: draft.id });
+      const run = await repeatRun.mutateAsync({ version_id: draft.id, repetir_falhas_de: runId });
       setSelectedRun(run.id);
-      toast.success("Avaliação iniciada.");
+      toast.success("Nova execução iniciada com as falhas.");
     } catch (err) {
       toast.error(errorMessage(err));
     }
@@ -498,8 +697,8 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
             <Button
               variant="primary"
               size="sm"
-              onClick={handleRun}
-              disabled={!draft || createRun.isPending || !cases || cases.length === 0}
+              onClick={() => setShowNewRun((v) => !v)}
+              disabled={!draft || !cases || cases.length === 0}
               data-testid="evals-run-button"
               title={!draft ? "Crie um rascunho para rodar avaliações." : undefined}
             >
@@ -513,6 +712,8 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
           </div>
         )}
       </div>
+
+      {isAdmin && showNewRun && draft && <NewRunForm agentKey={agentKey} versionId={draft.id} onDone={handleRunCreated} />}
 
       {isAdmin && showNewCase && <CaseForm agentKey={agentKey} onDone={() => setShowNewCase(false)} />}
 
@@ -593,36 +794,83 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
           <EmptyState message="Nenhuma execução ainda." />
         ) : (
           <div className="divide-y divide-border rounded-md border border-border">
-            {runs.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => setSelectedRun(r.id)}
-                data-testid={`evals-run-row-${r.id}`}
-                className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs hover:bg-accent/50 ${
-                  selectedRun === r.id ? "bg-accent/40" : ""
-                }`}
-              >
-                <span>{new Date(r.started_at ?? r.finished_at ?? "").toLocaleString("pt-BR")}</span>
-                <span className="text-muted-foreground">
-                  {r.aprovados}/{r.total}
-                </span>
-                <div className="flex items-center gap-2">
-                  {isPartialRun(r, activeCasesCount) && (
-                    <Badge variant="outline" data-testid={`evals-run-partial-${r.id}`}>
-                      parcial
-                    </Badge>
-                  )}
-                  <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+            {runs.map((r) => {
+              const finished = isRunFinished(r.status);
+              // Row-level proxy for "has non-aprovado results" — `EvalRun`
+              // (list shape) carries no per-result breakdown, only
+              // `total`/`aprovados`; the detail panel uses the precise
+              // `resultados` array instead (see `RunDetailPanel`).
+              const temFalhas = r.total - r.aprovados > 0;
+              return (
+                <div
+                  key={r.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedRun(r.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedRun(r.id);
+                    }
+                  }}
+                  data-testid={`evals-run-row-${r.id}`}
+                  className={`flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2 text-left text-xs hover:bg-accent/50 ${
+                    selectedRun === r.id ? "bg-accent/40" : ""
+                  }`}
+                >
+                  <span>{new Date(r.started_at ?? r.finished_at ?? "").toLocaleString("pt-BR")}</span>
+                  <span className="text-muted-foreground">
+                    {r.aprovados}/{r.total}
+                  </span>
+                  <span className="text-muted-foreground" data-testid={`evals-run-custo-${r.id}`}>
+                    {formatUsdCost(r.custo_usd)}
+                    {r.limite_usd != null ? ` / ${formatUsdCost(r.limite_usd)}` : ""}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {r.modelo_geracao && (
+                      <Badge variant="outline" data-testid={`evals-run-model-badge-${r.id}`}>
+                        rascunho · {MODEL_LABELS[r.modelo_geracao]}
+                      </Badge>
+                    )}
+                    {isPartialRun(r, activeCasesCount) && (
+                      <Badge variant="outline" data-testid={`evals-run-partial-${r.id}`}>
+                        parcial
+                      </Badge>
+                    )}
+                    <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                    {isAdmin && finished && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!draft || !temFalhas || repeatRun.isPending}
+                        title={!temFalhas ? "Esta execução não tem resultados reprovados/pulados/em erro." : undefined}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRepeatFailures(r.id);
+                        }}
+                        data-testid={`evals-run-repeat-${r.id}`}
+                      >
+                        <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                        Repetir só as falhas
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
       {selectedRun && (
-        <RunDetailPanel agentKey={agentKey} runId={selectedRun} isAdmin={isAdmin} activeCasesCount={activeCasesCount} />
+        <RunDetailPanel
+          agentKey={agentKey}
+          runId={selectedRun}
+          isAdmin={isAdmin}
+          activeCasesCount={activeCasesCount}
+          onRepeatFailures={handleRepeatFailures}
+          repeatPending={repeatRun.isPending}
+        />
       )}
     </div>
   );

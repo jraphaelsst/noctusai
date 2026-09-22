@@ -126,6 +126,68 @@ describe("useStudioMessagesAdapter — versão/hash link block", () => {
     expect(linkBlock.href).toBe("/studio/prompts/sha256%3A1a2b3c4d5e6f");
   });
 
+  it("contract §L: appends a discreet cost suffix to the link label when custo_usd is set", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/api/conversations") return Promise.resolve({ items: [CONVERSATION], total: 1 });
+      if (path === "/api/conversations/c1/messages") {
+        return Promise.resolve({
+          items: [
+            {
+              id: "m1", conversation_id: "c1", role: "assistant", texto: "Aqui está.", blocks: [],
+              version_id: "v1", compiled_hash: "sha256:1a2b3c4d5e6f", token_usage: null, created_at: "t", updated_at: "t",
+              custo_usd: 0.0123, tokens_entrada: 10, tokens_saida: 5,
+            },
+          ],
+          total: 1,
+        });
+      }
+      if (path === "/api/studio/agents/isaia/versions/v1") return Promise.resolve({ versao: 3 });
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+
+    const { useStudioThreads, useStudioMessagesAdapter } = await import("@/hooks/studio/useStudioChat");
+    const qc = newClient();
+    renderHook(() => useStudioThreads("isaia"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useStudioMessagesAdapter("isaia", "c1"), { wrapper: wrapper(qc) });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() => expect(result.current.data[0]?.blocks?.length).toBeGreaterThan(0));
+
+    const linkBlock = result.current.data[0].blocks?.[0] as { kind: string; label: string };
+    expect(linkBlock.label).toBe("versão 3 · prompt sha256:1a2b3c4d… · US$0.0123");
+  });
+
+  it("contract §L: leaves the label untouched when custo_usd is null (no fabricated cost)", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/api/conversations") return Promise.resolve({ items: [CONVERSATION], total: 1 });
+      if (path === "/api/conversations/c1/messages") {
+        return Promise.resolve({
+          items: [
+            {
+              id: "m1", conversation_id: "c1", role: "assistant", texto: "Aqui está.", blocks: [],
+              version_id: "v1", compiled_hash: "sha256:1a2b3c4d5e6f", token_usage: null, created_at: "t", updated_at: "t",
+              custo_usd: null, tokens_entrada: null, tokens_saida: null,
+            },
+          ],
+          total: 1,
+        });
+      }
+      if (path === "/api/studio/agents/isaia/versions/v1") return Promise.resolve({ versao: 3 });
+      return Promise.reject(new Error(`unexpected GET ${path}`));
+    });
+
+    const { useStudioThreads, useStudioMessagesAdapter } = await import("@/hooks/studio/useStudioChat");
+    const qc = newClient();
+    renderHook(() => useStudioThreads("isaia"), { wrapper: wrapper(qc) });
+    const { result } = renderHook(() => useStudioMessagesAdapter("isaia", "c1"), { wrapper: wrapper(qc) });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() => expect(result.current.data[0]?.blocks?.length).toBeGreaterThan(0));
+
+    const linkBlock = result.current.data[0].blocks?.[0] as { kind: string; label: string };
+    expect(linkBlock.label).toBe("versão 3 · prompt sha256:1a2b3c4d…");
+  });
+
   it("mounts the realtime stream naming every STUDIO_STREAM_EVENTS entry", async () => {
     mockGet.mockImplementation((path: string) => {
       if (path === "/api/conversations") return Promise.resolve({ items: [], total: 0 });

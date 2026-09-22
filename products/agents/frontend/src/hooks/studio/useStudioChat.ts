@@ -19,6 +19,15 @@
  *     NUMBER is resolved separately (`useVersionNumber`, below) because
  *     `StudioMessage`/`StudioConversation` only carry the version's UUID,
  *     never its `versao` int; the hash itself already lives on the message.
+ *   - Contract §L "Controle de custo": when that same turn also carries a
+ *     `custo_usd`, its label grows a discreet ` · US$0.0123` suffix (the
+ *     seed `ChatWindow` organ's `LinkRow` already renders this block's
+ *     label as small muted text — no organ change needed, see
+ *     `KB § PATTERNS/architect/products-consume-canonical-organs.md`).
+ *     `custo_usd == null` (no `ResultMessage` observed for the turn) ⇒ the
+ *     label is left exactly as before — never a fabricated "US$0.00".
+ *     There is deliberately no cost shown for a turn with NO compiled_hash
+ *     (no link block to attach it to) — an edge case the contract accepts.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -33,6 +42,7 @@ import type {
   ChatWindowAdapter,
 } from "@noctusai/lib/design-system";
 import type { Envelope, StudioConversation, StudioMessage } from "@/api/studio/types-ke";
+import { formatUsdCost } from "@/lib/utils";
 
 /** Every event name the studio conversation stream emits — mirrors
  * `JULIA_STREAM_EVENTS` minus `approval.*` (no write tools, §E.3). The
@@ -75,7 +85,10 @@ function shortHash(hash: string): string {
 function toChatMessage(m: StudioMessage, versao: number | null): ChatMessage {
   const blocks: ChatBlock[] = Array.isArray(m.blocks) ? [...(m.blocks as ChatBlock[])] : [];
   if (m.role === "assistant" && m.compiled_hash) {
-    const label = versao != null ? `versão ${versao} · prompt ${shortHash(m.compiled_hash)}` : `prompt ${shortHash(m.compiled_hash)}`;
+    let label = versao != null ? `versão ${versao} · prompt ${shortHash(m.compiled_hash)}` : `prompt ${shortHash(m.compiled_hash)}`;
+    // Contract §L: discreet cost suffix on the same row — `null` (no
+    // ResultMessage observed) leaves the label untouched.
+    if (m.custo_usd != null) label += ` · ${formatUsdCost(m.custo_usd)}`;
     // `compiled_hash` is server data, not user input, but it still lands in a URL
     // path segment — encode it so a stray "/", "?", or "#" in the hash can never
     // reroute the link off `/studio/prompts/:hash` (path traversal / open redirect).
