@@ -270,7 +270,15 @@ class TestGcalCallback:
     @pytest.mark.asyncio
     async def test_happy_path_persists_encrypted_token(self, client):
         _seed_minimum(client)
-        client.mock_supabase.set_rpc_data("encrypt_gcal_token", b"\xde\xad\xbe\xef")
+        # `therapy.encrypt_gcal_token` RETURNS BYTEA (migration 011), and
+        # PostgREST serialises a bytea as its hex TEXT form — the client
+        # receives the string "\\xdeadbeef", never Python `bytes`. The
+        # fixture used to hand back raw bytes, which no real call can
+        # produce and which the router would then have tried to JSON-encode
+        # on the way back into `therapist_profiles`. MockSupabaseClient's
+        # `_validate_json_serializable` guard now rejects that, correctly:
+        # the fixture was the unrealistic half, not the router.
+        client.mock_supabase.set_rpc_data("encrypt_gcal_token", r"\xdeadbeef")
 
         async def _fake_post(self, url, **kwargs):  # noqa: ARG001
             request = httpx.Request("POST", url)
@@ -298,10 +306,19 @@ class TestGcalCallback:
             )
 
         assert resp.status_code == 200, resp.text
-        # The mock doesn't capture updates the way it captures inserts —
-        # success status + 200 is the assertion floor here.
         data = resp.json().get("data", {})
         assert data.get("connected") is True
+
+        # The mock DOES capture updates now (`updated_payloads`, mirroring
+        # `inserted_payloads`), so assert what actually reached the column
+        # rather than treating 200 as the ceiling: a callback that answers
+        # "connected" without persisting the ciphertext is the failure this
+        # test exists to catch.
+        updates = client.mock_supabase.table("therapist_profiles").updated_payloads
+        persisted = [p for p in updates if "gcal_refresh_token_encrypted" in p]
+        assert len(persisted) == 1, updates
+        assert persisted[0]["gcal_refresh_token_encrypted"] == r"\xdeadbeef"
+        assert persisted[0]["gcal_authorized_at"]
 
     @pytest.mark.asyncio
     async def test_502_when_google_returns_no_refresh_token(self, client):
