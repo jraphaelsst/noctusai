@@ -78,6 +78,37 @@ def format_bytes_human(n: int) -> str:
     return f"{n / 1024:.0f}KB"
 
 
+@dataclass(frozen=True)
+class SidecarArquivo:
+    """A second object uploaded as a SIBLING of the main upload, merged into
+    the SAME insert payload — never a follow-up UPDATE.
+
+    🔴 WHY THIS EXISTS: a row born via insert-then-update can be born
+    incomplete. `atendimento_contrato_versoes`'s per-origem CHECK
+    (migrations 120/134 — `origem='gerado' AND docx_storage_path IS NOT
+    NULL AND docx_tamanho_bytes IS NOT NULL`) is checked on EVERY INSERT,
+    `NOT VALID` only grandfathers pre-existing rows. `guardar` used to
+    insert the row with neither docx column, then `UPDATE` them in —
+    which the real database has never accepted, only the mock (which never
+    modeled this class of CHECK) let through. A `sidecar` uploads before
+    the insert and its two column names ride in the SAME payload the main
+    row does, so the row is either born complete or not born at all.
+
+    `storage_path_col`/`tamanho_bytes_col` name the two columns the caller's
+    table carries for this sidecar (e.g. `docx_storage_path`/
+    `docx_tamanho_bytes`); `suffix` is appended to the main object's own
+    storage key (e.g. `.docx`) — the sibling-key convention every caller of
+    this already followed by hand.
+    """
+
+    data: bytes
+    content_type: str
+    nome_original: str
+    suffix: str
+    storage_path_col: str
+    tamanho_bytes_col: str
+
+
 def documento_base(row: dict, resolved_actors: dict) -> dict:
     """The 7-field core every documento-listing surface starts from.
 
@@ -220,8 +251,18 @@ class DocumentoStore:
         tipo_documento: str,
         enviado_por: Optional[UUID],
         extra: Optional[dict] = None,
+        sidecar: Optional[SidecarArquivo] = None,
     ) -> dict:
-        """Validate → put → insert. Returns the inserted row."""
+        """Validate → put [→ put sidecar] → insert. Returns the inserted row.
+
+        `sidecar`, when given, is uploaded as a SIBLING object right after
+        the main one, and its two columns ride in the SAME insert payload —
+        never a follow-up UPDATE. See `SidecarArquivo` for why: a row a
+        caller's CHECK constraint requires be born complete must actually be
+        born complete, not completed a statement later. If the sidecar
+        upload fails, the main object is removed too — no orphan row, and no
+        orphan main object either.
+        """
         self.validar(
             tipo_documento=tipo_documento,
             content_type=content_type,
@@ -241,6 +282,28 @@ class DocumentoStore:
             metadata={"nome_original": filename},
         )
 
+        sidecar_columns: dict[str, Any] = {}
+        if sidecar is not None:
+            sidecar_path = f"{storage_path}{sidecar.suffix}"
+            try:
+                await storage.put(
+                    bucket=self.bucket,
+                    key=sidecar_path,
+                    data=sidecar.data,
+                    content_type=sidecar.content_type,
+                    metadata={"nome_original": sidecar.nome_original},
+                )
+            except Exception:
+                # No orphan row without both objects — and no orphan main
+                # object either, since the row that would have named it is
+                # never inserted.
+                await storage.delete(bucket=self.bucket, key=storage_path)
+                raise
+            sidecar_columns = {
+                sidecar.storage_path_col: sidecar_path,
+                sidecar.tamanho_bytes_col: len(sidecar.data),
+            }
+
         row = {
             "id": str(documento_id),
             "org_id": str(org_id),
@@ -254,6 +317,7 @@ class DocumentoStore:
             "deleted_at": None,
             "delete_motivo": None,
             "created_at": now_iso(),
+            **sidecar_columns,
             **(extra or {}),
         }
         table_reads.table(client, self.table).insert(row).execute()
@@ -440,6 +504,7 @@ def log_acesso_extracao(
 __all__ = [
     "SIGNED_URL_TTL_SECONDS",
     "DocumentoStore",
+    "SidecarArquivo",
     "documento_base",
     "format_bytes_human",
     "log_acesso_extracao",

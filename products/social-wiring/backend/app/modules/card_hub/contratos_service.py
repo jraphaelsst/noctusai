@@ -39,6 +39,7 @@ from app.services import table_reads
 from app.services.documento_store import (
     SIGNED_URL_TTL_SECONDS,
     DocumentoStore,
+    SidecarArquivo,
     documento_base,
     now_iso,
 )
@@ -504,12 +505,22 @@ async def _guardar_versao(
     rotulo: Optional[str],
     usuario_id: Optional[UUID],
     extra: dict,
+    docx: Optional[bytes] = None,
 ) -> tuple[dict, dict]:
     """The ONE version-write path, upload or gerado: cancelado refusal ->
     validate -> next never-reused numero -> `DocumentoStore.guardar` (same
     bucket, same LGPD access-log table) -> bump the contract's updated_at.
     Returns (inserted version row, refreshed contract row). `filename=None`
-    names the file from its numero (a generated version has no upload name)."""
+    names the file from its numero (a generated version has no upload name).
+
+    `docx`, when given (only `nova_versao_gerada`'s path), is the F5
+    generator's editable rendering — uploaded as a SIBLING object of the PDF
+    and inserted in the SAME row via `DocumentoStore.guardar`'s `sidecar`
+    parameter, never a follow-up UPDATE. Migration 120's per-origem CHECK
+    (`origem='gerado' AND docx_storage_path IS NOT NULL AND
+    docx_tamanho_bytes IS NOT NULL`) is enforced on every INSERT — a row
+    inserted without it and updated in afterward is a write the real
+    database has never accepted."""
     row = exigir_contrato(client, org_id, atendimento_id, contrato_id)
     if row["status"] == "cancelado":
         raise ConflictError(
@@ -524,6 +535,16 @@ async def _guardar_versao(
 
     owner = UUID(str(contrato_id))
     numero = _proximo_numero(client, org_id, owner)
+    sidecar = None
+    if docx is not None:
+        sidecar = SidecarArquivo(
+            data=docx,
+            content_type=MIME_DOCX,
+            nome_original=f"contrato-gerado-v{numero}.docx",
+            suffix=".docx",
+            storage_path_col="docx_storage_path",
+            tamanho_bytes_col="docx_tamanho_bytes",
+        )
     inserida = await VERSOES_STORE.guardar(
         client,
         storage,
@@ -535,6 +556,7 @@ async def _guardar_versao(
         tipo_documento=TIPO_VERSAO,
         enviado_por=usuario_id,
         extra={"numero": numero, "rotulo": rotulo, **extra},
+        sidecar=sidecar,
     )
     _t(client, TABLE).update({"updated_at": now_iso()}).eq(
         "id", str(contrato_id)
@@ -569,6 +591,16 @@ async def nova_versao_gerada(
     that migration's header for why this is one row with two artifacts
     rather than two version rows.
 
+    🔴 Both artifacts are uploaded and inserted in ONE `_guardar_versao`
+    call (`docx=docx`, `DocumentoStore.guardar`'s `sidecar` parameter) —
+    never insert-then-update. Migration 120's per-origem CHECK is checked
+    on every INSERT (`NOT VALID` only grandfathers pre-existing rows), so a
+    row born without `docx_storage_path`/`docx_tamanho_bytes` can never be
+    completed by a later `UPDATE`; the real database has never accepted
+    that write (2026-09-22, RODRIGO MORASCHI ENRIQUEZ's contrato — every
+    `.../gerar` call failed 500 in production, `atendimento_
+    contrato_versoes` had never held a single row of any origem).
+
     Returns the version in the same shape `listar` returns it."""
     inserida, _ = await _guardar_versao(
         client,
@@ -582,21 +614,8 @@ async def nova_versao_gerada(
         rotulo=None,
         usuario_id=usuario_id,
         extra={"origem": "gerado", "contexto_sha256": contexto_sha256},
+        docx=docx,
     )
-
-    docx_path = f"{inserida['storage_path']}.docx"
-    await storage.put(
-        bucket=VERSOES_STORE.bucket,
-        key=docx_path,
-        data=docx,
-        content_type=MIME_DOCX,
-        metadata={"nome_original": f"contrato-gerado-v{inserida['numero']}.docx"},
-    )
-    _t(client, VERSOES_STORE.table).update(
-        {"docx_storage_path": docx_path, "docx_tamanho_bytes": len(docx)}
-    ).eq("id", inserida["id"]).execute()
-    inserida["docx_storage_path"] = docx_path
-    inserida["docx_tamanho_bytes"] = len(docx)
 
     resolved = table_reads.resolve_actors({inserida["enviado_por"]} - {None})
     return _versao_out(inserida, resolved)

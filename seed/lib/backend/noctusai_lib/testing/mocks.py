@@ -122,6 +122,21 @@ def _in_filter_url_bytes(value: Any) -> int:
 # the client; qualified keys match exactly. Resolution prefers qualified.
 CheckManifest = dict[str, dict[str, tuple]]
 
+# Type alias: per-product CONDITIONAL-PRESENCE manifest — the companion
+# `CheckManifest` cannot express. `CheckManifest` validates "this column's
+# value is one of these" (a single-column enum CHECK); a `_por_origem`-shaped
+# CHECK (migrations 112/120/134 in `social-wiring`:
+# `(origem = 'gerado' AND docx_storage_path IS NOT NULL AND
+# docx_tamanho_bytes IS NOT NULL) OR (origem = 'upload' AND ... IS NULL)...`)
+# is cross-column: whether OTHER columns may/must be NULL depends on THIS
+# row's value in a discriminant column. Maps
+#   {table_name: [(discriminant_col, discriminant_value, {col: must_be_present}), ...]}
+# For each rule whose `discriminant_col` is present in the payload AND equals
+# `discriminant_value`, every `col` in the rule must be present-and-non-None
+# when `must_be_present` is True, or absent-or-None when False. Keys may be
+# bare or schema-qualified, same resolution as `CheckManifest`.
+ConditionalPresenceManifest = dict[str, list[tuple[str, Any, dict[str, bool]]]]
+
 logger = logging.getLogger(__name__)
 
 
@@ -377,6 +392,98 @@ def _validate_check_constraints(
                     column=col,
                     invalid_value=value,
                     allowed_values=allowed,
+                    operation=operation,
+                )
+
+
+def _resolve_presence_rules(
+    manifest: Optional["ConditionalPresenceManifest"],
+    schema: Optional[str],
+    table: Optional[str],
+) -> list[tuple[str, Any, dict[str, bool]]]:
+    """Resolve `(schema, table) → [(discriminant_col, value, {col: bool}), ...]`.
+
+    Same qualified-over-bare resolution `_resolve_constraint_entry` uses.
+    Returns an empty list if no entry exists — caller treats that as "no
+    conditional-presence rules for this table".
+    """
+    if not manifest or not table:
+        return []
+    if schema:
+        qualified = f"{schema}.{table}"
+        if qualified in manifest:
+            return manifest[qualified]
+    return manifest.get(table, [])
+
+
+def _validate_conditional_presence(
+    manifest: Optional["ConditionalPresenceManifest"],
+    schema: Optional[str],
+    table: Optional[str],
+    payload,
+    operation: str,
+) -> None:
+    """Raise `MockCheckViolation` when a payload violates a `_por_origem`-
+    shaped CHECK — a discriminant column's value determines whether OTHER
+    columns must be NULL or NOT NULL. `_validate_check_constraints`'s
+    single-column allowed-value manifest cannot express this (it has no way
+    to say "column B's NULL-ness depends on column A's value"); this is the
+    companion validator for that class of CHECK.
+
+    No-op when `manifest` is falsy, when the table has no entry, or when a
+    row doesn't carry the discriminant column (an UPDATE payload that never
+    mentions the discriminant can't be judged against it — same posture
+    `_validate_check_constraints` takes for a column absent from the row).
+    A required column ABSENT from an INSERT payload counts as NULL (the row
+    would be born without it); on UPDATE, an absent column is a column this
+    call leaves untouched, not asserted about, so it is skipped instead of
+    flagged — the caller can't tell "left as NULL" from "left as whatever it
+    already was" from the payload alone.
+    """
+    if not manifest:
+        return
+    rules = _resolve_presence_rules(manifest, schema, table)
+    if not rules:
+        return
+    if isinstance(payload, Mapping):
+        rows = [payload]
+    elif isinstance(payload, (list, tuple)):
+        rows = [r for r in payload if isinstance(r, Mapping)]
+    else:
+        return
+    for row in rows:
+        for discriminant_col, discriminant_value, required in rules:
+            if discriminant_col not in row:
+                continue
+            if row[discriminant_col] != discriminant_value:
+                continue
+            for col, must_be_present in required.items():
+                if col not in row:
+                    if operation != "insert":
+                        continue  # UPDATE: untouched column, not judgeable
+                    is_present = False
+                else:
+                    is_present = row[col] is not None
+                if is_present == must_be_present:
+                    continue
+                if must_be_present:
+                    raise MockCheckViolation(
+                        schema=schema,
+                        table=table or "",
+                        column=col,
+                        invalid_value=row.get(col),
+                        allowed_values=(
+                            f"<NOT NULL — required when {discriminant_col}="
+                            f"{discriminant_value!r}>",
+                        ),
+                        operation=operation,
+                    )
+                raise MockCheckViolation(
+                    schema=schema,
+                    table=table or "",
+                    column=col,
+                    invalid_value=row.get(col),
+                    allowed_values=(None,),
                     operation=operation,
                 )
 
@@ -1062,6 +1169,7 @@ class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
         update_payload: Optional[Mapping] = None,
         validate_constraints: bool = False,
         constraint_manifest: Optional["CheckManifest"] = None,
+        presence_manifest: Optional["ConditionalPresenceManifest"] = None,
     ):
         self._data = data if data is not None else []
         self._single_mode = False
@@ -1077,6 +1185,7 @@ class MockFilterBuilder(_FilterMixin, _MockExecuteMixin):
         self._update_payload = update_payload
         self._validate_constraints = validate_constraints
         self._constraint_manifest = constraint_manifest
+        self._presence_manifest = presence_manifest
 
     def _apply_mutation(self) -> list[dict]:
         """Evaluate predicates against the shared list and apply the mutation.
@@ -1200,6 +1309,7 @@ class MockRequestBuilder:
         strict_unknown_tables: bool = False,
         validate_constraints: bool = False,
         constraint_manifest: Optional["CheckManifest"] = None,
+        presence_manifest: Optional["ConditionalPresenceManifest"] = None,
     ):
         self.inserted_payloads: list = []
         # Mirror of `inserted_payloads` for `.update(...)` calls. Tests
@@ -1235,6 +1345,7 @@ class MockRequestBuilder:
         self._strict_unknown_tables = strict_unknown_tables
         self._validate_constraints = validate_constraints
         self._constraint_manifest = constraint_manifest
+        self._presence_manifest = presence_manifest
         # Running counter for auto-id generation. Incremented per row
         # appended via insert; survives across calls so successive inserts
         # get distinct ids (mock-<table>-1, mock-<table>-2, ...).
@@ -1264,6 +1375,7 @@ class MockRequestBuilder:
             **self._builder_kwargs(),
             "validate_constraints": self._validate_constraints,
             "constraint_manifest": self._constraint_manifest,
+            "presence_manifest": self._presence_manifest,
         }
 
     def _check_table_known(self, op: str) -> None:
@@ -1365,6 +1477,13 @@ class MockRequestBuilder:
                 data,
                 operation="insert",
             )
+            _validate_conditional_presence(
+                self._presence_manifest,
+                self._schema,
+                self._table,
+                data,
+                operation="insert",
+            )
 
         # Normalize to list-of-dicts.
         if isinstance(data, list):
@@ -1421,6 +1540,13 @@ class MockRequestBuilder:
         if self._validate_constraints:
             _validate_check_constraints(
                 self._constraint_manifest,
+                self._schema,
+                self._table,
+                data,
+                operation="update",
+            )
+            _validate_conditional_presence(
+                self._presence_manifest,
                 self._schema,
                 self._table,
                 data,
@@ -1486,6 +1612,13 @@ class MockRequestBuilder:
         if self._validate_constraints:
             _validate_check_constraints(
                 self._constraint_manifest,
+                self._schema,
+                self._table,
+                data,
+                operation="upsert",
+            )
+            _validate_conditional_presence(
+                self._presence_manifest,
                 self._schema,
                 self._table,
                 data,
@@ -1594,6 +1727,15 @@ class MockSupabaseClient:
             absent from the manifest impose no constraints; columns absent
             from a table entry impose no constraints. NULL values are
             ignored unless `None` appears in the allowed tuple.
+        presence_manifest: per-table CONDITIONAL-PRESENCE catalog for the
+            `_por_origem`-shaped CHECK `manifest` cannot express (a
+            discriminant column's value determines whether OTHER columns
+            must be NULL or NOT NULL — e.g. `atendimento_contrato_versoes`
+            migrations 120/134: `docx_storage_path`/`docx_tamanho_bytes` are
+            required when `origem='gerado'`, forbidden otherwise). Governed
+            by the SAME `validate_schema_constraints` flag as `manifest`.
+            Form: `{table_or_qualified: [(discriminant_col, value,
+            {col: must_be_present}), ...]}`. See `ConditionalPresenceManifest`.
     """
 
     def __init__(
@@ -1605,6 +1747,7 @@ class MockSupabaseClient:
         strict_unknown_tables: bool = False,
         validate_schema_constraints: bool = False,
         manifest: Optional["CheckManifest"] = None,
+        presence_manifest: Optional["ConditionalPresenceManifest"] = None,
     ):
         self._data = data
         self.auth = MagicMock()
@@ -1616,6 +1759,7 @@ class MockSupabaseClient:
         self._strict_unknown_tables = strict_unknown_tables
         self._validate_constraints = validate_schema_constraints
         self._constraint_manifest = manifest
+        self._presence_manifest = presence_manifest
 
     def _builder_for(self, name: str, data=None) -> MockRequestBuilder:
         # If the caller passes "schema.table", split it; otherwise use bound schema.
@@ -1632,6 +1776,7 @@ class MockSupabaseClient:
             strict_unknown_tables=self._strict_unknown_tables,
             validate_constraints=self._validate_constraints,
             constraint_manifest=self._constraint_manifest,
+            presence_manifest=self._presence_manifest,
         )
 
     def table(self, name):
@@ -1652,6 +1797,7 @@ class MockSupabaseClient:
             strict_unknown_tables=self._strict_unknown_tables,
             validate_schema_constraints=self._validate_constraints,
             manifest=self._constraint_manifest,
+            presence_manifest=self._presence_manifest,
         )
         scoped.auth = self.auth
         scoped.storage = self.storage

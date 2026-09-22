@@ -73,6 +73,30 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
 )
 from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
 
+# 🔴 HAND-MAINTAINED — not derived from the migration files. `noctusai_lib.
+# testing.mocks.ConditionalPresenceManifest` closes the gap
+# `CheckManifest` (also hand-maintained, and unused fleet-wide before this)
+# cannot express: a `_por_origem`-shaped CHECK, where a discriminant column
+# (`origem`) decides whether OTHER columns must be NULL or NOT NULL, is
+# cross-column — `CheckManifest`'s shape is "this column's value is one of
+# these", a single column in isolation. This entry mirrors migrations
+# 120 + 134's `atendimento_contrato_versoes_docx_por_origem` CHECK exactly
+# (three branches, one per `origem`): `docx_storage_path`/
+# `docx_tamanho_bytes` are required for 'gerado', forbidden for 'upload'
+# and 'assinado'. Add a sibling entry here — never weaken the SQL — the
+# next time a real per-origem CHECK ships without one; a mock that doesn't
+# know about a CHECK constraint is a mock the CHECK cannot fail in, which is
+# exactly how `contratos_service.nova_versao_gerada`'s insert-then-update
+# shipped green while failing 500 in production on every real call
+# (2026-09-22).
+_ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
+    "atendimento_contrato_versoes": [
+        ("origem", "gerado", {"docx_storage_path": True, "docx_tamanho_bytes": True}),
+        ("origem", "upload", {"docx_storage_path": False, "docx_tamanho_bytes": False}),
+        ("origem", "assinado", {"docx_storage_path": False, "docx_tamanho_bytes": False}),
+    ],
+}
+
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
@@ -161,7 +185,10 @@ def override_upload_service():
 
 @pytest.fixture
 def client():
-    mock_sb = MockSupabaseClient()
+    mock_sb = MockSupabaseClient(
+        validate_schema_constraints=True,
+        presence_manifest=_ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST,
+    )
     mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(
         MockUser(org_id="test-org-123")
     ))
@@ -255,7 +282,10 @@ def anon_client():
 
     from fastapi.testclient import TestClient
 
-    mock_sb = MockSupabaseClient()
+    mock_sb = MockSupabaseClient(
+        validate_schema_constraints=True,
+        presence_manifest=_ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST,
+    )
     mock_sb.auth.get_user = MagicMock(
         return_value=MockUserResponse(MockUser(org_id="test-org-123"))
     )
