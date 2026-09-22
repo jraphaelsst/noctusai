@@ -20,9 +20,13 @@ Seed IO shape: ``EvalRunWriter`` Protocol + ``FakeEvalRunWriter`` +
 """
 from __future__ import annotations
 
+import logging
+import time
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from uuid import UUID
+
+import httpx
 
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
@@ -156,12 +160,49 @@ class FakeEvalRunWriter:
         return n
 
 
+logger = logging.getLogger(__name__)
+
+#: Transient transport failures retried on the runner's writes. A single eval
+#: case can hold its turn + judge for minutes, and the idle keep-alive
+#: connection to PostgREST gets dropped server-side — the next write then
+#: fails with ``httpx.ReadError: Broken pipe`` (live run 2026-09-21: one such
+#: error aborted a 32-case run at 14/32). Every write here is an idempotent,
+#: status-conditional UPDATE, so a retry is safe.
+_RETRY_DELAYS = (0.25, 1.0, 3.0)
+
+
+def _with_retry(
+    what: str, call: Callable[[], Any], *, delays: tuple[float, ...] = _RETRY_DELAYS,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[Any, bool]:
+    """Run ``call``; on a transport error retry per :data:`_RETRY_DELAYS`.
+    Returns ``(result, retried)`` — ``retried`` tells a conditional UPDATE that
+    came back empty to check whether the lost first attempt already landed.
+    Re-raises the last error when every attempt failed (the runner then fails
+    the run loudly — never a silent skip)."""
+    retried = False
+    for attempt, delay in enumerate((*delays, None)):
+        try:
+            return call(), retried
+        except httpx.TransportError as exc:
+            if delay is None:
+                raise
+            logger.warning("agents.eval_runs.transport_retry what=%s attempt=%d: %s", what, attempt + 1, exc)
+            retried = True
+            sleep(delay)
+    raise AssertionError("unreachable")
+
+
 class SupabaseEvalRunWriter:
     """Real :class:`EvalRunWriter` — conditional PostgREST UPDATEs (one
     request = one statement, so each transition is atomic)."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, *, retry_delays: tuple[float, ...] = _RETRY_DELAYS) -> None:
         self._client = client
+        self._retry_delays = retry_delays
+
+    def _retry(self, what: str, call: Callable[[], Any]) -> tuple[Any, bool]:
+        return _with_retry(what, call, delays=self._retry_delays)
 
     def _runs(self):
         return self._client.schema(_SCHEMA).table(_RUNS_TABLE)
@@ -170,21 +211,27 @@ class SupabaseEvalRunWriter:
         return self._client.schema(_SCHEMA).table(_RESULTS_TABLE)
 
     def claim_run(self, org_id: UUID, run_id: UUID) -> EvalRunRecord | None:
-        resp = (
+        resp, retried = self._retry("claim_run", lambda: (
             self._runs().update({"status": "executando", "updated_at": utcnow_iso()})
             .eq("org_id", str(org_id)).eq("id", str(run_id)).eq("status", "pendente")
             .execute()
-        )
+        ))
         rows = resp.data or []
         if rows:
             return SupabaseEvalStore._run_record(rows[0])
-        self.get_run_status(org_id, run_id)  # NotFound for an unknown id
+        status = self.get_run_status(org_id, run_id)  # NotFound for an unknown id
+        if retried and status == "executando":
+            # The lost first attempt claimed it — this runner owns the run.
+            row = self._retry("claim_run.reread", lambda: (
+                self._runs().select("*").eq("org_id", str(org_id)).eq("id", str(run_id)).execute()
+            ))[0].data[0]
+            return SupabaseEvalStore._run_record(row)
         return None
 
     def get_run_status(self, org_id: UUID, run_id: UUID) -> str:
-        resp = (
+        resp, _ = self._retry("get_run_status", lambda: (
             self._runs().select("status").eq("org_id", str(org_id)).eq("id", str(run_id)).execute()
-        )
+        ))
         rows = resp.data or []
         if not rows:
             raise NotFound(f"eval run {run_id} not found")
@@ -196,7 +243,7 @@ class SupabaseEvalRunWriter:
         duracao_ms: int | None,
     ) -> bool:
         _check(status, RESULT_FINAL_STATUSES, "result")
-        resp = (
+        resp, retried = self._retry("set_result", lambda: (
             self._results().update({
                 "status": status, "saida": saida, "score": score, "veredito": veredito,
                 "notas_juiz": notas_juiz, "duracao_ms": duracao_ms, "updated_at": utcnow_iso(),
@@ -204,8 +251,17 @@ class SupabaseEvalRunWriter:
             .eq("org_id", str(org_id)).eq("run_id", str(run_id)).eq("case_id", str(case_id))
             .eq("status", "pendente")
             .execute()
-        )
-        return bool(resp.data)
+        ))
+        if resp.data:
+            return True
+        if retried:
+            # Did the lost first attempt land? Then it IS written (same values).
+            row = self._retry("set_result.reread", lambda: (
+                self._results().select("status").eq("org_id", str(org_id)).eq("run_id", str(run_id))
+                .eq("case_id", str(case_id)).execute()
+            ))[0].data
+            return bool(row) and row[0]["status"] == status
+        return False
 
     def finish_run(
         self, org_id: UUID, run_id: UUID, *, status: str, aprovados: int, score: float | None,
@@ -213,15 +269,17 @@ class SupabaseEvalRunWriter:
     ) -> bool:
         _check(status, RUN_FINAL_STATUSES, "run")
         now = utcnow_iso()
-        resp = (
+        resp, retried = self._retry("finish_run", lambda: (
             self._runs().update({
                 "status": status, "aprovados": aprovados, "score": score, "erro": erro,
                 "finished_at": now, "updated_at": now,
             })
             .eq("org_id", str(org_id)).eq("id", str(run_id)).eq("status", "executando")
             .execute()
-        )
-        return bool(resp.data)
+        ))
+        if resp.data:
+            return True
+        return retried and self.get_run_status(org_id, run_id) == status
 
     def fail_orphaned_runs(self, *, started_before: datetime, erro: str) -> int:
         now = utcnow_iso()
