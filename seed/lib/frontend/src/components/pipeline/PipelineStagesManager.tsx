@@ -8,21 +8,23 @@
  * board's would be a genuine source of pointer-capture bugs for no gain.
  *
  * DELETION asks where the cards should go. The API refuses to delete a
- * non-empty stage without a target, and this dialog is how the user supplies
- * one — the alternative (cascade) silently destroys deals.
+ * non-empty stage without a target, and `DeleteStageDialog` (shared with the
+ * board's column-header menu) is how the user supplies one — the alternative
+ * (cascade) silently destroys deals.
  */
 import * as React from 'react';
 
 import { Badge } from '../../design-system/ui/Badge';
 import { Button } from '../../design-system/ui/Button';
 import { Input } from '../../design-system/ui/Input';
+import { DeleteStageDialog } from './DeleteStageDialog';
 import {
   STAGE_COLOR_OPTIONS,
   STAGE_ROLE_LABELS,
   stageColorClasses,
 } from './stageTokens';
 import type { PipelineHooks } from './createPipelineHooks';
-import type { PipelineStage, StageColor } from './types';
+import type { PipelineStage, StageColor, StageRoleLabels } from './types';
 
 export interface PipelineStagesManagerProps<TCard> {
   hooks: PipelineHooks<TCard>;
@@ -30,6 +32,8 @@ export interface PipelineStagesManagerProps<TCard> {
   cardCounts?: Record<string, number>;
   onClose?: () => void;
   title?: string;
+  /** Role → label descriptor. Defaults to the seed's two default roles. */
+  roleLabels?: StageRoleLabels;
 }
 
 export function PipelineStagesManager<TCard>({
@@ -37,6 +41,7 @@ export function PipelineStagesManager<TCard>({
   cardCounts = {},
   onClose,
   title = 'Configurar etapas',
+  roleLabels = STAGE_ROLE_LABELS,
 }: PipelineStagesManagerProps<TCard>) {
   const { data: stages, isPending, isFetching, error } = hooks.useStages();
   const createStage = hooks.useCreateStage();
@@ -48,7 +53,6 @@ export function PipelineStagesManager<TCard>({
   const [editandoId, setEditandoId] = React.useState<string | null>(null);
   const [editLabel, setEditLabel] = React.useState('');
   const [excluindo, setExcluindo] = React.useState<PipelineStage | null>(null);
-  const [destino, setDestino] = React.useState<string>('');
 
   const ordered = React.useMemo(
     () => [...(stages ?? [])].sort((a, b) => a.posicao - b.posicao),
@@ -171,7 +175,7 @@ export function PipelineStagesManager<TCard>({
                   <span className="text-xs text-muted-foreground">{count} carta{count === 1 ? '' : 's'}</span>
                   {stage.papel && (
                     <Badge variant="muted" title="Outras funcionalidades dependem deste papel">
-                      {STAGE_ROLE_LABELS[stage.papel] ?? stage.papel}
+                      {roleLabels[stage.papel] ?? stage.papel}
                     </Badge>
                   )}
                 </div>
@@ -204,10 +208,7 @@ export function PipelineStagesManager<TCard>({
                     ? 'Esta etapa tem um papel do qual outras funcionalidades dependem'
                     : 'Excluir etapa'
                 }
-                onClick={() => {
-                  setExcluindo(stage);
-                  setDestino(ordered.find((s) => s.id !== stage.id)?.id ?? '');
-                }}
+                onClick={() => setExcluindo(stage)}
               >
                 Excluir
               </Button>
@@ -237,52 +238,20 @@ export function PipelineStagesManager<TCard>({
       </form>
 
       {excluindo && (
-        <div className="rounded-md border border-destructive p-3 space-y-2" role="alertdialog">
-          <p className="text-sm">
-            Excluir <strong>{excluindo.label}</strong>?
-            {(cardCounts[excluindo.id] ?? 0) > 0 && (
-              <>
-                {' '}Esta etapa tem {cardCounts[excluindo.id]} carta
-                {cardCounts[excluindo.id] === 1 ? '' : 's'}. Escolha para onde movê-las:
-              </>
-            )}
-          </p>
-          {(cardCounts[excluindo.id] ?? 0) > 0 && (
-            <select
-              className="w-full rounded-md border bg-background p-2 text-sm"
-              aria-label="Mover cartas para"
-              value={destino}
-              onChange={(e) => setDestino(e.target.value)}
-            >
-              {ordered
-                .filter((s) => s.id !== excluindo.id)
-                .map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-            </select>
-          )}
-          <div className="flex gap-2">
-            <Button
-              variant="primary"
-              size="sm"
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={busy}
-              onClick={() =>
-                deleteStage.mutate(
-                  { id: excluindo.id, reassignTo: destino || undefined },
-                  { onSuccess: () => setExcluindo(null) },
-                )
-              }
-            >
-              Confirmar exclusão
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setExcluindo(null)}>
-              Cancelar
-            </Button>
-          </div>
-        </div>
+        <DeleteStageDialog
+          stage={excluindo}
+          stages={ordered}
+          cardCount={cardCounts[excluindo.id] ?? 0}
+          busy={busy}
+          roleLabels={roleLabels}
+          onCancel={() => setExcluindo(null)}
+          onConfirm={(reassignTo) =>
+            deleteStage.mutate(
+              { id: excluindo.id, reassignTo },
+              { onSuccess: () => setExcluindo(null) },
+            )
+          }
+        />
       )}
     </div>
   );

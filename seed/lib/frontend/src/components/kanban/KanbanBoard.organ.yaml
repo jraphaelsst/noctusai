@@ -17,9 +17,21 @@ known_facts:
   *rendering* is always the consumer''s own component via `renderCard`; the
   organ owns sensors, droppable columns, drag overlay, and computing
   `(cardId, fromStage, toStage, toIndex)` for `onMove`.'
-- 'Accessible by construction: `PointerSensor` (8px activation distance, so a
-  button click inside a card is not swallowed as a drag) + `KeyboardSensor`
-  (sortableKeyboardCoordinates) — not pointer-only.'
+- 'Accessible AND phone-usable by construction (2026-09-22, `sensors.ts`):
+  `MouseSensor` (8px activation distance, so a button click inside a card is
+  not swallowed as a drag) + `TouchSensor` (press-and-hold 250ms, 8px
+  tolerance, so a swipe scrolls the board natively instead of dragging) +
+  `KeyboardSensor` (sortableKeyboardCoordinates). Replaced a single
+  `PointerSensor` whose 8px distance made the first 8px of a phone swipe a
+  drag start. `KanbanCard`''s click slop imports the same constant.'
+- 'Opt-in column drag-reorder (`onColumnReorder`, 2026-09-22): columns join a
+  horizontal `SortableContext` INSIDE the single `DndContext` (never nested);
+  a column registers as `kanban-column:<stageId>` with `data.type=column`,
+  its card drop zone keeps the raw stage id. `kanbanCollisionDetection`
+  narrows collisions to the drag''s own kind; `computeMove` ignores column
+  drags; `computeColumnReorder` returns the FULL new order. Without
+  `onColumnReorder` no sortable column mounts (existing consumers unchanged).
+  `renderTrailingColumn` adds one non-draggable slot after the last column.'
 - 'Move-resolution logic (`computeMove`) is extracted as a pure function so
   it is unit-testable without simulating real `@dnd-kit` pointer/keyboard
   events in jsdom (dnd-kit sensors depend on real layout geometry —
@@ -71,4 +83,8 @@ e2e_test:
   status: pending
   last_run: null
   runs_in_ci: false
-bugs_fixed_during_dev: []
+bugs_fixed_during_dev:
+- 'Phone drag (2026-09-22): the PointerSensor distance constraint treated a
+  finger like a mouse, so a vertical swipe on a card either started a drag
+  (hijacking the page scroll) or lost the race to the browser''s
+  pointercancel. Fixed with the Mouse + Touch(delay) split in `sensors.ts`.'

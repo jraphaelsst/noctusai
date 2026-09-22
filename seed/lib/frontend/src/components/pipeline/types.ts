@@ -19,9 +19,11 @@ export interface PipelineStage {
   cor: StageColor;
   posicao: number;
   /**
-   * Semantic role the CODE keys on, so features survive a rename:
+   * Semantic role the CODE keys on, so features survive a rename. The default
+   * set (seed `PipelineConfig.stage_roles`):
    * - `proposta_aceite` — the stage a proposal may be accepted from
    * - `final` — the pipeline's terminal stage
+   * A board may declare its own roles server-side; see `StageRole`.
    */
   papel: StageRole | null;
   ativo: boolean;
@@ -35,7 +37,21 @@ export type StageColor =
   | 'destructive'
   | 'muted';
 
-export type StageRole = 'proposta_aceite' | 'final';
+/**
+ * A stage's semantic role. OPEN: the set is declared per pipeline by the
+ * backend (`PipelineConfig.stage_roles`, served at `GET <stages>/opcoes`), so
+ * the frontend cannot close it. The two default roles stay spelled out for
+ * editor autocompletion; `(string & {})` keeps any other string assignable
+ * without collapsing the union to plain `string`. Human labels come from a
+ * `roleLabels` descriptor (default `STAGE_ROLE_LABELS`), never from here.
+ */
+export type StageRole = DefaultStageRole | (string & {});
+
+/** The roles every pipeline has unless it declares its own. */
+export type DefaultStageRole = 'proposta_aceite' | 'final';
+
+/** Role → human label. Unknown roles render as the raw role string. */
+export type StageRoleLabels = Record<string, string>;
 
 /** One column as the board endpoint returns it. */
 export interface PipelineColumn<TCard> {

@@ -39,3 +39,25 @@ export type KanbanOnMove<TStageId extends string = string> = (
   toStage: TStageId,
   toIndex: number,
 ) => void;
+
+/**
+ * Fired when the user drags a COLUMN to a new position. Receives the FULL new
+ * column order (every rendered stage id), not a `(id, index)` pair — a partial
+ * reorder forces every receiver to re-derive the rest, and two receivers
+ * deriving differently is how column order flickers between users.
+ */
+export type KanbanOnColumnReorder<TStageId extends string = string> = (
+  orderedStageIds: TStageId[],
+) => void;
+
+/**
+ * Third argument of `renderColumnHeader`. Present only when columns are
+ * drag-reorderable (`onColumnReorder` set); a consumer header that ignores it
+ * still works — the whole header area is the drag handle.
+ */
+export interface KanbanColumnHeaderContext {
+  /** True while THIS column is being dragged. */
+  isColumnDragging: boolean;
+  /** True when the board lets columns be dragged. */
+  columnsReorderable: boolean;
+}

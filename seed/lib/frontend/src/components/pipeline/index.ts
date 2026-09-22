@@ -14,6 +14,18 @@ export type { PipelineBoardProps } from './PipelineBoard';
 export { PipelineStagesManager } from './PipelineStagesManager';
 export type { PipelineStagesManagerProps } from './PipelineStagesManager';
 
+export { StageHeaderMenu } from './StageHeaderMenu';
+export type { StageHeaderMenuProps } from './StageHeaderMenu';
+
+export { DeleteStageDialog } from './DeleteStageDialog';
+export type { DeleteStageDialogProps } from './DeleteStageDialog';
+
+export { AddStageColumn } from './AddStageColumn';
+export type { AddStageColumnProps } from './AddStageColumn';
+
+export { mergeVisibleStageOrder } from './stageOrder';
+export type { OrderableStage } from './stageOrder';
+
 export { createPipelineHooks } from './createPipelineHooks';
 export type {
   PipelineHooks,
@@ -37,4 +49,6 @@ export type {
   PipelineStage,
   StageColor,
   StageRole,
+  DefaultStageRole,
+  StageRoleLabels,
 } from './types';

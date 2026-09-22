@@ -237,27 +237,43 @@ export function createPipelineHooks<TCard>(
       // snapshot, patch, restore the snapshot on error.
       onMutate: async (vars) => {
         await queryClient.cancelQueries({ queryKey: stagesKey });
+        await queryClient.cancelQueries({ queryKey: [queryKey] });
         const previous = queryClient.getQueryData<PipelineStage[]>(stagesKey);
+        // `StageUpdateInput.cor` is a plain `string` (the raw value out of a
+        // colour picker, unvalidated) while `PipelineStage.cor` is the narrower
+        // `StageColor` union — the cast is safe because this merge is a
+        // TRANSIENT optimistic snapshot, immediately either confirmed by the
+        // settle-time refetch or rolled back via `context` on error; it never
+        // persists as-is.
+        const patch = (s: PipelineStage) =>
+          s.id === vars.id ? ({ ...s, ...vars.input } as PipelineStage) : s;
         if (previous) {
-          queryClient.setQueryData<PipelineStage[]>(
-            stagesKey,
-            previous.map((s) =>
-              // `StageUpdateInput.cor` is a plain `string` (the raw value out
-              // of a colour picker, unvalidated) while `PipelineStage.cor` is
-              // the narrower `StageColor` union — the cast is safe because
-              // this merge is a TRANSIENT optimistic snapshot, immediately
-              // either confirmed by the settle-time refetch or rolled back
-              // via `context.previous` on error; it never persists as-is.
-              s.id === vars.id ? ({ ...s, ...vars.input } as PipelineStage) : s,
-            ),
-          );
+          queryClient.setQueryData<PipelineStage[]>(stagesKey, previous.map(patch));
         }
-        return { previous };
+        // The BOARD too: column headers read `coluna.stage`, so a rename or
+        // recolour made from a column header (`editableHeaders`) must land on
+        // the header immediately, not one round trip later. Same
+        // getQueriesData discipline as `useMoveCard` — the board key carries
+        // the filters.
+        const previousBoard = queryClient.getQueriesData({ queryKey: [queryKey] });
+        queryClient.setQueriesData(
+          { queryKey: [queryKey] },
+          (old: PipelineColumn<TCard>[] | undefined) =>
+            old?.map((coluna) =>
+              coluna.stage && coluna.stage.id === vars.id
+                ? { ...coluna, stage: patch(coluna.stage) }
+                : coluna,
+            ),
+        );
+        return { previous, previousBoard };
       },
       onError: (error: Error, _vars, context) => {
         if (context?.previous) {
           queryClient.setQueryData(stagesKey, context.previous);
         }
+        context?.previousBoard?.forEach(([key, data]) => {
+          queryClient.setQueryData(key, data);
+        });
         toast.error('Erro ao atualizar etapa', { description: error.message });
       },
       onSuccess: (stage) => {
@@ -308,9 +324,10 @@ export function createPipelineHooks<TCard>(
       // error is exact, not a guess.
       onMutate: async (ordem: string[]) => {
         await queryClient.cancelQueries({ queryKey: stagesKey });
+        await queryClient.cancelQueries({ queryKey: [queryKey] });
         const previous = queryClient.getQueryData<PipelineStage[]>(stagesKey);
+        const posicaoById = new Map(ordem.map((id, index) => [id, index]));
         if (previous) {
-          const posicaoById = new Map(ordem.map((id, index) => [id, index]));
           queryClient.setQueryData<PipelineStage[]>(
             stagesKey,
             previous.map((s) =>
@@ -318,12 +335,32 @@ export function createPipelineHooks<TCard>(
             ),
           );
         }
-        return { previous };
+        // The BOARD's column order too, so a column dragged on the board
+        // (`PipelineBoard reorderableColumns`) stays where it was dropped
+        // instead of snapping back until the refetch lands. Columns the order
+        // does not mention keep their relative place at the end.
+        const previousBoard = queryClient.getQueriesData({ queryKey: [queryKey] });
+        queryClient.setQueriesData(
+          { queryKey: [queryKey] },
+          (old: PipelineColumn<TCard>[] | undefined) => {
+            if (!old) return old;
+            const rank = (c: PipelineColumn<TCard>) =>
+              posicaoById.get(c.etapa) ?? Number.MAX_SAFE_INTEGER;
+            return old
+              .map((coluna, index) => ({ coluna, index }))
+              .sort((a, b) => rank(a.coluna) - rank(b.coluna) || a.index - b.index)
+              .map(({ coluna }) => coluna);
+          },
+        );
+        return { previous, previousBoard };
       },
       onError: (error: Error, _vars, context) => {
         if (context?.previous) {
           queryClient.setQueryData(stagesKey, context.previous);
         }
+        context?.previousBoard?.forEach(([key, data]) => {
+          queryClient.setQueryData(key, data);
+        });
         toast.error('Erro ao reordenar etapas', { description: error.message });
       },
       onSuccess: () => {

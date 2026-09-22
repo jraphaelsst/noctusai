@@ -8,7 +8,7 @@
  * CLICK-TO-OPEN LIVES HERE, NOT IN THE CARD CONTENT
  * -------------------------------------------------
  * A card that opens a detail view on click is competing with the drag
- * listeners on the same element. The board's PointerSensor only starts a
+ * listeners on the same element. The board's mouse sensor only starts a
  * drag after 8px of movement, so a still-pointer click never becomes a
  * drag — but the reverse is NOT free: releasing a drag fires a trailing
  * `click` on the element, so a naive `onClick` opens a modal every time
@@ -23,12 +23,15 @@ import * as React from 'react';
 import type { ReactNode } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { KANBAN_MOUSE_DISTANCE_PX } from './sensors';
 
 /**
- * Must match the board's `PointerSensor` activation distance. Below it the
- * gesture was never a drag, so it was a click.
+ * The board's mouse activation distance (`sensors.ts`) — imported, not
+ * copied, so the two can never drift. Below it the gesture was never a drag,
+ * so it was a click. (A touch drag needs a press-and-hold; a tap that moved
+ * less than this is a click for the same reason.)
  */
-const CLICK_SLOP_PX = 8;
+const CLICK_SLOP_PX = KANBAN_MOUSE_DISTANCE_PX;
 
 export interface KanbanCardProps {
   /** The card's stable id — must match `getCardId(card)` in the board. */
@@ -50,6 +53,8 @@ export interface KanbanCardProps {
 export function KanbanCard({ id, children, className, onActivate }: KanbanCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
+    // Lets the board tell a card drag from a column drag by `data.type`.
+    data: { type: 'card' },
   });
 
   const pressOrigin = React.useRef<{ x: number; y: number } | null>(null);
@@ -60,8 +65,10 @@ export function KanbanCard({ id, children, className, onActivate }: KanbanCardPr
     opacity: isDragging ? 0.5 : 1,
   };
 
-  // `listeners` carries dnd-kit's own onPointerDown; compose rather than
-  // replace, or the card stops being draggable.
+  // `listeners` carries dnd-kit's activator handlers (onMouseDown /
+  // onTouchStart / onKeyDown with the board's sensor set; onPointerDown for a
+  // consumer board still wired to a PointerSensor). Spread them untouched and
+  // COMPOSE the one we also need, or the card stops being draggable.
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     // Record the origin ONLY when it is usable. An event without real
     // coordinates (a synthetic dispatch, an environment with no

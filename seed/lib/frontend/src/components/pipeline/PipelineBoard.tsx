@@ -11,6 +11,19 @@
  * renaming, recolouring, reordering, adding or removing a stage is reflected on
  * the next refresh with no code change and no deploy.
  *
+ * EDITING ON THE BOARD ITSELF (all opt-in; omit them and the board renders
+ * exactly as before):
+ *  - `editableHeaders` — each column title becomes a `StageHeaderMenu`
+ *    (inline rename, recolour, delete with a target stage), and a trailing
+ *    "+ coluna" slot adds a stage.
+ *  - `reorderableColumns` — columns drag horizontally (mouse, touch
+ *    press-and-hold, keyboard) and the new order persists via
+ *    `useReorderStages`; pass `onColumnReorder` to handle it yourself.
+ *  - `canEditStages={false}` — the viewer may not reshape the pipeline: every
+ *    stage-editing affordance (the two above AND "Configurar etapas") is
+ *    withheld. The server-side twin is `pipeline_stages_router(...,
+ *    require_stage_admin=...)`; this prop only hides what the API would refuse.
+ *
  * Usage:
  * ```tsx
  * const pipeline = createPipelineHooks<NegociacaoVenda>({
@@ -35,10 +48,13 @@ import * as React from 'react';
 import { KanbanBoard } from '../kanban';
 import type { KanbanCardRenderState } from '../kanban';
 import { Button } from '../../design-system/ui/Button';
+import { AddStageColumn } from './AddStageColumn';
 import { PipelineStagesManager } from './PipelineStagesManager';
-import { stageColorClasses } from './stageTokens';
+import { StageHeaderMenu } from './StageHeaderMenu';
+import { mergeVisibleStageOrder } from './stageOrder';
+import { STAGE_ROLE_LABELS, stageColorClasses } from './stageTokens';
 import type { PipelineHooks } from './createPipelineHooks';
-import type { PipelineColumn } from './types';
+import type { PipelineColumn, PipelineStage, StageRoleLabels } from './types';
 
 export interface PipelineBoardProps<TCard> {
   hooks: PipelineHooks<TCard>;
@@ -73,6 +89,30 @@ export interface PipelineBoardProps<TCard> {
   onLoadMore?: () => void;
   /** Label for the load-more control. */
   loadMoreLabel?: string;
+  /**
+   * Opt-in: edit stages from the column headers (rename / recolour / delete)
+   * and add one from a trailing "+ coluna" slot. Needs `stagesEndpoint`.
+   */
+  editableHeaders?: boolean;
+  /**
+   * Opt-in: drag columns to reorder the stages. Persists through
+   * `useReorderStages` unless `onColumnReorder` is given. Needs
+   * `stagesEndpoint` (or `onColumnReorder`).
+   */
+  reorderableColumns?: boolean;
+  /**
+   * Take over a column reorder. Receives the new order of the VISIBLE
+   * (active) stage ids. Implies `reorderableColumns`.
+   */
+  onColumnReorder?: (orderedStageIds: string[]) => void;
+  /**
+   * May this viewer reshape the pipeline? Default `true`. `false` withholds
+   * every stage-editing affordance — header editing, column drag, the
+   * trailing add slot and "Configurar etapas".
+   */
+  canEditStages?: boolean;
+  /** Role → label descriptor for the stage editors. Default: seed defaults. */
+  roleLabels?: StageRoleLabels;
 }
 
 const DEFAULT_COLUMN_CLASS =
@@ -93,14 +133,60 @@ export function PipelineBoard<TCard>({
   toolbar,
   onLoadMore,
   loadMoreLabel = 'Carregar mais',
+  editableHeaders = false,
+  reorderableColumns = false,
+  onColumnReorder,
+  canEditStages = true,
+  roleLabels = STAGE_ROLE_LABELS,
 }: PipelineBoardProps<TCard>) {
   const { descriptor } = hooks;
   const { data: colunas, isPending, isFetching, error } = hooks.useBoard(filtros);
   const moveCard = hooks.useMoveCard();
   const [configurando, setConfigurando] = React.useState(false);
 
-  const editable = allowStageEditing ?? Boolean(descriptor.stagesEndpoint);
+  const hasStagesApi = Boolean(descriptor.stagesEndpoint);
+  const editable = canEditStages && (allowStageEditing ?? hasStagesApi);
+  const headersEditable = canEditStages && editableHeaders && hasStagesApi;
+  const columnsReorderable =
+    canEditStages && (Boolean(onColumnReorder) || (reorderableColumns && hasStagesApi));
   const columns = React.useMemo(() => colunas ?? [], [colunas]);
+
+  // Stage mutations are idle hooks (no request until `.mutate`), so calling
+  // them unconditionally costs nothing on a board that never edits. The stage
+  // LIST is only fetched when a column reorder needs it (the API wants the
+  // full order, inactive stages included — see `mergeVisibleStageOrder`).
+  const { data: allStages } = hooks.useStages({
+    enabled: columnsReorderable && !onColumnReorder && hasStagesApi,
+  });
+  const createStage = hooks.useCreateStage();
+  const updateStage = hooks.useUpdateStage();
+  const deleteStage = hooks.useDeleteStage();
+  const reorderStages = hooks.useReorderStages();
+  const stageBusy =
+    createStage.isPending ||
+    updateStage.isPending ||
+    deleteStage.isPending ||
+    reorderStages.isPending;
+
+  // Delete targets offered from a header: the stages the user can SEE.
+  const boardStages = React.useMemo(
+    () =>
+      columns
+        .map((c) => c.stage)
+        .filter((stage): stage is PipelineStage => Boolean(stage)),
+    [columns],
+  );
+
+  const handleColumnReorder = React.useCallback(
+    (visibleOrder: string[]) => {
+      if (onColumnReorder) {
+        onColumnReorder(visibleOrder);
+        return;
+      }
+      reorderStages.mutate(mergeVisibleStageOrder(allStages ?? [], visibleOrder));
+    },
+    [allStages, onColumnReorder, reorderStages],
+  );
 
   // Card counts per stage, so the stage editor can warn before a delete that
   // would strand cards.
@@ -194,12 +280,33 @@ export function PipelineBoard<TCard>({
           const classes = stageColorClasses(coluna?.stage?.cor);
           const truncada =
             coluna?.exibidos !== undefined && coluna.exibidos < (coluna.total ?? 0);
+          const colunaStage = coluna?.stage;
           return (
             <div className={`p-4 border-b ${classes.bgColor} ${classes.borderColor}`}>
               <div className="flex items-center justify-between mb-2 gap-2">
-                <h3 className={`font-semibold text-sm min-w-0 truncate ${classes.color}`}>
-                  {coluna?.stage?.label ?? stage.label}
-                </h3>
+                {headersEditable && colunaStage ? (
+                  <StageHeaderMenu
+                    stage={colunaStage}
+                    stages={boardStages}
+                    cardCount={coluna?.total ?? coluna?.cards.length ?? 0}
+                    busy={stageBusy}
+                    roleLabels={roleLabels}
+                    titleClassName={classes.color}
+                    onRename={(label) =>
+                      updateStage.mutate({ id: colunaStage.id, input: { label } })
+                    }
+                    onRecolor={(cor) =>
+                      updateStage.mutate({ id: colunaStage.id, input: { cor } })
+                    }
+                    onDelete={(reassignTo) =>
+                      deleteStage.mutate({ id: colunaStage.id, reassignTo })
+                    }
+                  />
+                ) : (
+                  <h3 className={`font-semibold text-sm min-w-0 truncate ${classes.color}`}>
+                    {coluna?.stage?.label ?? stage.label}
+                  </h3>
+                )}
                 <span
                   className="text-xs rounded-full bg-background/60 px-2 py-0.5 whitespace-nowrap"
                   title={
@@ -245,6 +352,17 @@ export function PipelineBoard<TCard>({
           moveCard.mutate({ cardId, toStageId: toStage, toIndex });
         }}
         columnClassName={columnClassName}
+        onColumnReorder={columnsReorderable ? handleColumnReorder : undefined}
+        renderTrailingColumn={
+          headersEditable
+            ? () => (
+                <AddStageColumn
+                  busy={stageBusy}
+                  onCreate={(label) => createStage.mutate({ label })}
+                />
+              )
+            : undefined
+        }
       />
     </div>
   );
