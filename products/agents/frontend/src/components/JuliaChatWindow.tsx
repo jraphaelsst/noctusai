@@ -15,9 +15,17 @@ import { buildJuliaChatAdapter } from "@/hooks/useJuliaChat";
 
 export interface JuliaChatWindowProps {
   className?: string;
+  /**
+   * Optional CONTROLLED selection — forwarded to `AgentChatWindow`/seed
+   * `ChatWindow` (2026-09-22, fixes "Nova conversa" not opening the
+   * conversation it just created). Omit both ⇒ unchanged internal-state
+   * behaviour.
+   */
+  selectedThreadId?: string | null;
+  onSelectThread?: (threadId: string | null) => void;
 }
 
-export function JuliaChatWindow({ className }: JuliaChatWindowProps) {
+export function JuliaChatWindow({ className, selectedThreadId, onSelectThread }: JuliaChatWindowProps) {
   // Stable identity across renders — ChatWindow calls each adapter hook by
   // reference every render; rebuilding this object would not itself break
   // anything (the hooks are plain functions, not memoized closures), but a
@@ -31,6 +39,8 @@ export function JuliaChatWindow({ className }: JuliaChatWindowProps) {
       emptyThreadsLabel="Nenhuma conversa ainda. Clique em “Nova conversa” para começar."
       emptySelectionLabel="Selecione uma conversa"
       className={className}
+      selectedThreadId={selectedThreadId}
+      onSelectThread={onSelectThread}
     />
   );
 }

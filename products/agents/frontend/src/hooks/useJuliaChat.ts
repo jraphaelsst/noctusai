@@ -43,6 +43,7 @@ import { useRealtimeStream, type RealtimeMessage } from "@noctusai/lib";
 import type {
   ChatBlock,
   ChatMessage,
+  ChatRenameThreadResult,
   ChatThread,
   ChatWindowAdapter,
 } from "@noctusai/lib/design-system";
@@ -186,6 +187,60 @@ export function useCreateConversation() {
       qc.invalidateQueries({ queryKey: CONVERSATIONS_KEY });
     },
   });
+}
+
+/**
+ * Rename — contract §E.2 `PATCH /api/conversations/{id}` (`titulo`, 1..120
+ * chars trimmed). Optimistic + rollback, same shape as `useToggleAgent`
+ * (`useAgents.ts`): patches the cached `titulo` immediately so the thread
+ * row's pencil-edit closes instantly, and restores the previous envelope
+ * if the server 422s/404s.
+ */
+export function useRenameConversation() {
+  const qc = useQueryClient();
+  return useMutation<RawConversation, unknown, { id: string; titulo: string }>({
+    mutationFn: ({ id, titulo }) => api.patch<RawConversation>(`/api/conversations/${id}`, { titulo }),
+    onMutate: async ({ id, titulo }) => {
+      await qc.cancelQueries({ queryKey: CONVERSATIONS_KEY });
+      const previous = qc.getQueryData<Envelope<RawConversation>>(CONVERSATIONS_KEY);
+      if (previous) {
+        qc.setQueryData<Envelope<RawConversation>>(CONVERSATIONS_KEY, {
+          ...previous,
+          items: previous.items.map((c) => (c.id === id ? { ...c, titulo } : c)),
+        });
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      const ctx = context as { previous?: Envelope<RawConversation> } | undefined;
+      if (ctx?.previous) qc.setQueryData(CONVERSATIONS_KEY, ctx.previous);
+    },
+    onSuccess: (updated) => {
+      qc.setQueryData<Envelope<RawConversation>>(CONVERSATIONS_KEY, (prev) =>
+        prev
+          ? { ...prev, items: prev.items.map((c) => (c.id === updated.id ? updated : c)) }
+          : prev,
+      );
+    },
+  });
+}
+
+/** `ChatWindow`'s `useRenameThread` seam (contract-free, seed
+ * `ChatWindowAdapter` addition, 2026-09-22) — `rename` MUST throw a
+ * user-facing `Error`, same contract as `useSend`, so the inline pencil
+ * editor can show WHY a rename failed instead of silently reverting. */
+export function useJuliaRenameConversationAdapter(): ChatRenameThreadResult {
+  const mutation = useRenameConversation();
+  return {
+    rename: async (threadId, titulo) => {
+      try {
+        await mutation.mutateAsync({ id: threadId, titulo });
+      } catch (err) {
+        throw new Error(errorMessage(err));
+      }
+    },
+    isPending: mutation.isPending,
+  };
 }
 
 // ─── Messages + realtime (per opened conversation) ──────────────────────────
@@ -407,5 +462,6 @@ export function buildJuliaChatAdapter(): ChatWindowAdapter {
     useMessages: (_scopeId, threadId) => useJuliaMessagesAdapter(threadId),
     useSend: (_scopeId, threadId) => useJuliaSendAdapter(threadId),
     useApprovalAction: () => useJuliaApprovalActionAdapter(),
+    useRenameThread: () => useJuliaRenameConversationAdapter(),
   };
 }

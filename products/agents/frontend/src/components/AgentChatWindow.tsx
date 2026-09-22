@@ -23,6 +23,14 @@ export interface AgentChatWindowProps {
   emptyThreadsLabel?: string;
   emptySelectionLabel?: string;
   className?: string;
+  /**
+   * Optional CONTROLLED selection pass-through (seed `ChatWindow`,
+   * 2026-09-22 addition) — omit either prop and this stays byte-identical
+   * to before (`ChatWindow`'s own internal `useState`). First user: Julia's
+   * page auto-opens a conversation right after "Nova conversa" creates it.
+   */
+  selectedThreadId?: string | null;
+  onSelectThread?: (threadId: string | null) => void;
 }
 
 export function AgentChatWindow({
@@ -31,6 +39,8 @@ export function AgentChatWindow({
   emptyThreadsLabel,
   emptySelectionLabel,
   className,
+  selectedThreadId,
+  onSelectThread,
 }: AgentChatWindowProps) {
   return (
     <ChatWindow
@@ -39,6 +49,8 @@ export function AgentChatWindow({
       emptyThreadsLabel={emptyThreadsLabel}
       emptySelectionLabel={emptySelectionLabel}
       className={className}
+      selectedThreadId={selectedThreadId}
+      onSelectThread={onSelectThread}
     />
   );
 }

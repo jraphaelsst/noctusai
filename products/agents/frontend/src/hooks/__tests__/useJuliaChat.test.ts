@@ -24,9 +24,10 @@ import escritaTurnFixture from "../../../../contract-fixtures/escrita-turn.event
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
+const mockPatch = vi.fn();
 
 vi.mock("@/lib/api", () => ({
-  api: { get: mockGet, post: mockPost, put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  api: { get: mockGet, post: mockPost, put: vi.fn(), patch: mockPatch, delete: vi.fn() },
 }));
 
 vi.mock("@noctusai/seed/infra", () => ({
@@ -569,5 +570,90 @@ describe("useJuliaApprovalActionAdapter", () => {
     await expect(result.current.decide("ap1", true)).rejects.toThrow(
       "Esta aprovação já foi decidida.",
     );
+  });
+});
+
+// ─── Rename (contract §E.2 PATCH /api/conversations/{id}, 2026-09-22) ──────
+
+const CONVERSATIONS_KEY = ["agents", "julia", "conversations"] as const;
+
+function seedConversationsCache(qc: QueryClient) {
+  qc.setQueryData(CONVERSATIONS_KEY, {
+    items: [
+      { id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Original", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t" },
+    ],
+    total: 1,
+  });
+}
+
+describe("useRenameConversation", () => {
+  it("PATCHes /api/conversations/{id} with {titulo} and optimistically patches the cache", async () => {
+    mockPatch.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Renomeada", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t2" }), 10)),
+    );
+
+    const { useRenameConversation } = await import("@/hooks/useJuliaChat");
+    const qc = newClient();
+    seedConversationsCache(qc);
+    const { result } = renderHook(() => useRenameConversation(), { wrapper: wrapper(qc) });
+
+    act(() => {
+      result.current.mutate({ id: "c1", titulo: "Renomeada" });
+    });
+
+    // Optimistic — the cache already reflects the new title before the
+    // (deliberately delayed) PATCH resolves.
+    await waitFor(() => {
+      const cached: any = qc.getQueryData(CONVERSATIONS_KEY);
+      expect(cached.items[0].titulo).toBe("Renomeada");
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockPatch).toHaveBeenCalledWith("/api/conversations/c1", { titulo: "Renomeada" });
+  });
+
+  it("rolls back the cache to the previous titulo on error", async () => {
+    mockPatch.mockRejectedValue(new Error("boom"));
+
+    const { useRenameConversation } = await import("@/hooks/useJuliaChat");
+    const qc = newClient();
+    seedConversationsCache(qc);
+    const { result } = renderHook(() => useRenameConversation(), { wrapper: wrapper(qc) });
+
+    act(() => {
+      result.current.mutate({ id: "c1", titulo: "Vai falhar" });
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    const cached: any = qc.getQueryData(CONVERSATIONS_KEY);
+    expect(cached.items[0].titulo).toBe("Original");
+  });
+});
+
+describe("useJuliaRenameConversationAdapter", () => {
+  it("rename() calls the mutation with {id, titulo}", async () => {
+    mockPatch.mockResolvedValue({
+      id: "c1", agent_id: "a1", owner_user_id: "u1", titulo: "Nova", sdk_session_id: null, status: "ativa", last_message_at: null, created_at: "t", updated_at: "t",
+    });
+
+    const { useJuliaRenameConversationAdapter } = await import("@/hooks/useJuliaChat");
+    const qc = newClient();
+    seedConversationsCache(qc);
+    const { result } = renderHook(() => useJuliaRenameConversationAdapter(), { wrapper: wrapper(qc) });
+
+    await result.current.rename("c1", "Nova");
+    expect(mockPatch).toHaveBeenCalledWith("/api/conversations/c1", { titulo: "Nova" });
+  });
+
+  it("rename() rejects with the mapped error message on a 422 (blank-after-trim)", async () => {
+    const { ApiError } = await import("@/lib/errors");
+    mockPatch.mockRejectedValue(new ApiError(422, "titulo não pode ficar em branco"));
+
+    const { useJuliaRenameConversationAdapter } = await import("@/hooks/useJuliaChat");
+    const qc = newClient();
+    seedConversationsCache(qc);
+    const { result } = renderHook(() => useJuliaRenameConversationAdapter(), { wrapper: wrapper(qc) });
+
+    await expect(result.current.rename("c1", "")).rejects.toThrow("titulo não pode ficar em branco");
   });
 });
