@@ -1013,8 +1013,18 @@ class ClaudeAgentSdkRuntime:
         client, resumed_fresh, active_mirror = await self._connect_or_fresh(
             options, prompt, ctx, mirror
         )
-        result_holder: dict[str, str | None] = {
-            "sdk_session_id": None if resumed_fresh else resume_session_id
+        # Contract §L "Controle de custo": the SDK's own `ResultMessage`
+        # carries `total_cost_usd` + `usage` (input/output/cache-read token
+        # counts) for the WHOLE turn — no separate pricing lookup needed on
+        # this side (unlike the judge's `noctusai_lib` call, §L). Absent
+        # from every observed `ResultMessage` (or no `ResultMessage` at
+        # all) stays `None` — never a silent 0 — and is logged once below.
+        result_holder: dict[str, Any] = {
+            "sdk_session_id": None if resumed_fresh else resume_session_id,
+            "custo_usd": None,
+            "tokens_entrada": None,
+            "tokens_saida": None,
+            "tokens_cache_leitura": None,
         }
         if fallback_text is not None:
             yield {
@@ -1046,6 +1056,11 @@ class ClaudeAgentSdkRuntime:
                         result_holder["sdk_session_id"] = (
                             message.session_id or result_holder["sdk_session_id"]
                         )
+                        result_holder["custo_usd"] = message.total_cost_usd
+                        usage = message.usage or {}
+                        result_holder["tokens_entrada"] = usage.get("input_tokens")
+                        result_holder["tokens_saida"] = usage.get("output_tokens")
+                        result_holder["tokens_cache_leitura"] = usage.get("cache_read_input_tokens")
             finally:
                 await driver.queue.put(_PUMP_DONE)  # type: ignore[arg-type]
 
@@ -1086,6 +1101,14 @@ class ClaudeAgentSdkRuntime:
                 ctx.org_id,
             )
 
+        if result_holder["custo_usd"] is None:
+            logger.info(
+                "run_turn: no ResultMessage.total_cost_usd observed; cost stays "
+                "null for this turn (conversation=%s, org=%s)",
+                ctx.conversation_id,
+                ctx.org_id,
+            )
+
         # Guarantee (contract §E.9): the last event is always session.status
         # on the success path — the SAME guarantee on the FAILURE path is
         # fulfilled by the caller (contract §E.9 "What the routes must do"
@@ -1093,5 +1116,14 @@ class ClaudeAgentSdkRuntime:
         # itself), not by this generator yielding after an exception.
         yield {
             "event": "session.status",
-            "payload": {"status": "ociosa", "sdk_session_id": final_session_id},
+            "payload": {
+                "status": "ociosa",
+                "sdk_session_id": final_session_id,
+                # Contract §L: additive to §E.3's payload — the turn's total
+                # cost/token counts, straight off the SDK's ResultMessage.
+                "custo_usd": result_holder["custo_usd"],
+                "tokens_entrada": result_holder["tokens_entrada"],
+                "tokens_saida": result_holder["tokens_saida"],
+                "tokens_cache_leitura": result_holder["tokens_cache_leitura"],
+            },
         }

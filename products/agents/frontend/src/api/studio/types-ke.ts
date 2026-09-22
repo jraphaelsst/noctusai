@@ -164,9 +164,26 @@ export interface EvalRun {
   /** Additive (backend hardening, not yet in §D4's table) — true once every
    * case in the run has a terminal result (`aprovado`/`reprovado`/`erro`),
    * distinct from `status === "concluida"` when the run itself was
-   * cancelled mid-way with some results already in. */
+   * cancelled mid-way with some results already in. Also `false` for a run
+   * the cost cap cut short (§L), even one created over every active case. */
   completa?: boolean;
+  /** Contract §L (additive): `null` = the version's own model ran (the
+   * publish-gate-eligible shape); otherwise the cheaper-iteration override
+   * — a run with this set never satisfies the publish gate. */
+  modelo_geracao: EvalRunModel | null;
+  /** Contract §L (additive): this run's cost cap in USD. */
+  limite_usd: number | null;
+  /** Contract §L (additive): the run's accumulated cost (generator + judge,
+   * summed over every result) — `null` until the runner has written at
+   * least one result. */
+  custo_usd: number | null;
 }
+
+/** Contract §L — deliberately NARROWER than `StudioModel` (`../types.ts`):
+ * exists to let a cheaper-iteration run cost LESS than the version's own
+ * model, never more. */
+export const EVAL_RUN_MODELS = ["claude-sonnet-5", "claude-haiku-4-5"] as const;
+export type EvalRunModel = (typeof EVAL_RUN_MODELS)[number];
 
 export interface EvalRunListResponse {
   items: EvalRun[];
@@ -183,12 +200,19 @@ export interface EvalResult {
   case_id: string;
   case_slug: string;
   case_titulo: string;
-  status: "pendente" | "aprovado" | "reprovado" | "erro";
+  /** `"pulado"` (§L, additive) — the run's cost cap was reached before this
+   * case started; `notas_juiz` carries the fixed reason string. */
+  status: "pendente" | "aprovado" | "reprovado" | "erro" | "pulado";
   score: number | null;
   saida: string | null;
   veredito: EvalVeredito[] | null;
   notas_juiz: string | null;
   duracao_ms: number | null;
+  /** Contract §L (additive): generator + judge cost of this case, summed. */
+  custo_usd: number | null;
+  tokens_entrada: number | null;
+  tokens_saida: number | null;
+  tokens_cache_leitura: number | null;
 }
 
 export interface EvalRunDetail extends EvalRun {
@@ -197,7 +221,16 @@ export interface EvalRunDetail extends EvalRun {
 
 export interface EvalRunCreate {
   version_id: string;
+  /** Mutually exclusive with `repetir_falhas_de` (422). */
   case_ids?: string[];
+  /** Contract §L: the cheaper-iteration model override. */
+  modelo_geracao?: EvalRunModel;
+  /** Contract §L: this run's cost cap in USD — omitted ⇒ the backend's
+   * `STUDIO_EVAL_RUN_BUDGET_USD` default. */
+  limite_usd?: number;
+  /** Contract §L: rerun only the failures of a prior run of this agent.
+   * Mutually exclusive with `case_ids` (422). */
+  repetir_falhas_de?: string;
 }
 
 // §D2 Clients: collapsed into FE-DEF's `../types.ts` (`Client`,
@@ -237,6 +270,12 @@ export interface StudioMessage {
   token_usage: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  /** Contract §L (additive): an assistant message's turn cost/token counts
+   * (SDK ResultMessage) — `null` for user/system rows and for any turn
+   * that reported no ResultMessage. */
+  custo_usd: number | null;
+  tokens_entrada: number | null;
+  tokens_saida: number | null;
 }
 
 export interface Envelope<T> {

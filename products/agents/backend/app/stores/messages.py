@@ -44,6 +44,14 @@ class MessageRecord:
     #: prompt hash an assistant message of a studio agent ran with.
     version_id: UUID | None = None
     compiled_hash: str | None = None
+    #: Contract §L "Controle de custo" (014 columns): an assistant message's
+    #: turn cost + token counts, straight off the SDK's `ResultMessage`
+    #: (`app.runtime.claude_runtime.run_turn`'s final `session.status`
+    #: event). `None` for `user`/`system` rows and for every Julia message
+    #: whose turn reported no `ResultMessage`.
+    custo_usd: float | None = None
+    tokens_entrada: int | None = None
+    tokens_saida: int | None = None
 
 
 class MessageStore(Protocol):
@@ -89,6 +97,25 @@ class MessageStore(Protocol):
         the whole list back; there is no partial-append at the store layer.
         Raises :class:`~app.stores.errors.NotFound` if the message doesn't
         exist for this org/conversation."""
+        ...
+
+    def set_turn_cost(
+        self,
+        org_id: UUID,
+        conversation_id: UUID,
+        message_id: UUID,
+        *,
+        custo_usd: float | None,
+        tokens_entrada: int | None,
+        tokens_saida: int | None,
+    ) -> MessageRecord:
+        """Contract §L: stamps the turn's cost/token counts on the assistant
+        message the turn loop persisted (`app.routers.conversations_router.
+        _run_turn_background`, on the final `session.status` event).
+        Overwrites wholesale, like :meth:`update_blocks` — there is only
+        ever one turn's cost per message. Raises
+        :class:`~app.stores.errors.NotFound` if the message doesn't exist
+        for this org/conversation."""
         ...
 
 
@@ -160,6 +187,26 @@ class FakeMessageStore:
         for row in rows:
             if row["id"] == message_id:
                 row["blocks"] = list(blocks)
+                row["updated_at"] = utcnow()
+                return self._to_record(row)
+        raise NotFound(f"message {message_id} not found for conversation {conversation_id}")
+
+    def set_turn_cost(
+        self,
+        org_id: UUID,
+        conversation_id: UUID,
+        message_id: UUID,
+        *,
+        custo_usd: float | None,
+        tokens_entrada: int | None,
+        tokens_saida: int | None,
+    ) -> MessageRecord:
+        rows = self._rows.get((org_id, conversation_id), [])
+        for row in rows:
+            if row["id"] == message_id:
+                row["custo_usd"] = custo_usd
+                row["tokens_entrada"] = tokens_entrada
+                row["tokens_saida"] = tokens_saida
                 row["updated_at"] = utcnow()
                 return self._to_record(row)
         raise NotFound(f"message {message_id} not found for conversation {conversation_id}")
@@ -259,6 +306,33 @@ class SupabaseMessageStore:
             )
         return self._record(rows[0])
 
+    def set_turn_cost(
+        self,
+        org_id: UUID,
+        conversation_id: UUID,
+        message_id: UUID,
+        *,
+        custo_usd: float | None,
+        tokens_entrada: int | None,
+        tokens_saida: int | None,
+    ) -> MessageRecord:
+        resp = (
+            self._table()
+            .update({
+                "custo_usd": custo_usd, "tokens_entrada": tokens_entrada, "tokens_saida": tokens_saida,
+            })
+            .eq("id", str(message_id))
+            .eq("org_id", str(org_id))
+            .eq("conversation_id", str(conversation_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(
+                f"message {message_id} not found for conversation {conversation_id}"
+            )
+        return self._record(rows[0])
+
     @staticmethod
     def _record(row: dict[str, Any]) -> MessageRecord:
         return MessageRecord(
@@ -273,6 +347,9 @@ class SupabaseMessageStore:
             updated_at=row["updated_at"],
             version_id=UUID(str(row["version_id"])) if row.get("version_id") else None,
             compiled_hash=row.get("compiled_hash"),
+            custo_usd=float(row["custo_usd"]) if row.get("custo_usd") is not None else None,
+            tokens_entrada=row.get("tokens_entrada"),
+            tokens_saida=row.get("tokens_saida"),
         )
 
 

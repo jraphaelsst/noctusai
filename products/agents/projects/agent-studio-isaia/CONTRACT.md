@@ -566,3 +566,89 @@ Rules: TanStack Query hooks in `src/hooks/studio/*.ts` (one file per resource); 
 - Embedding hybrid search over `knowledge_documents` (pgvector + `noctusai_lib.integrations.llm.embeddings`) — trigger: search misses reported in evals ≥ 3.
 - Studio write tools (client-brain writeback through the approval gate) — trigger: first request to let the agent record decisions.
 - Migrating Julia to `definition_mode='studio'` — trigger: owner decision.
+
+## §L · Controle de custo
+
+**WHY.** 2026-09-21: 5 eval runs (160 cases — Opus-5 generator via the Claude Agent SDK + Sonnet-5
+judge via `noctusai_lib`) cost ~$20 of Anthropic credit while nothing in this product recorded what
+a turn or a case cost. This section makes cost visible, bounded, and cheap to iterate on. Migration
+`014_agent_studio_cost.sql` (additive, written not applied — shared prod DB, tech-lead applies with
+user consent).
+
+**L1 · Schema additions (014).**
+- `agents.eval_results`: `custo_usd numeric(10,4) null` (generator + judge, summed), `tokens_entrada
+  int null`, `tokens_saida int null`, `tokens_cache_leitura int null` (the generator turn's SDK
+  `ResultMessage.usage` counts). `status` CHECK gains `'pulado'` — a case the runner never started
+  because the run's `limite_usd` was already reached; `notas_juiz` carries
+  `app.studio.models.BUDGET_EXCEEDED_NOTA` (`"limite de custo atingido"`). Distinct from `'erro'`
+  (the turn or judge actually failed).
+- `agents.eval_runs`: `modelo_geracao text null` (cheaper-iteration override, CHECK `IN
+  ('claude-sonnet-5','claude-haiku-4-5')` — narrower than `agent_versions.model`'s allowlist; `NULL` =
+  the version's own model), `limite_usd numeric(10,2) null` (CHECK `0 < x <= 50`), `custo_usd
+  numeric(10,4) null` (accumulated over every result).
+- `agents.messages` (assistant turns): `custo_usd numeric(10,4) null`, `tokens_entrada int null`,
+  `tokens_saida int null` — straight off the same SDK `ResultMessage`, stamped by the turn loop
+  (`app/routers/conversations_router.py`) on the last assistant message a turn persisted.
+- `agents.create_eval_run` (013) gains trailing `p_modelo_geracao text default null`, `p_limite_usd
+  numeric default null`, stamped in the same one-transaction insert (L6). The 7-parameter overload is
+  dropped first (Postgres treats a different parameter list as a distinct function identity).
+
+**L2 · Cost capture.**
+- **Generator** — `app.runtime.claude_runtime.run_turn` reads `total_cost_usd` + `usage` (input/
+  output/cache-read tokens) off the SDK's `ResultMessage` and surfaces them on the turn's final
+  `session.status` event (additive fields `custo_usd`/`tokens_entrada`/`tokens_saida`/
+  `tokens_cache_leitura`). No pricing lookup on this side. Absent (no `ResultMessage` observed) stays
+  `null` — logged, never a silent 0. `FakeAgentRuntime` accepts the same four as constructor kwargs
+  (default `None`, byte-identical to every pre-existing script) so tests can drive a fixed per-turn cost.
+- **Judge** — `noctusai_lib.integrations.llm.chat_completion` only ever returns text; usage is reported
+  to a `UsageSink` the caller never sees back. `app.studio.evals._call_with_usage` installs a small
+  composing capture sink on `get_llm_config().usage_sink` (wraps — never replaces — any real sink),
+  serialized by one process-wide `asyncio.Lock` (correctness of per-call attribution over judge-call
+  parallelism; `EVAL_CONCURRENCY=2` and only the short judge call is serialized, not the generator
+  turn). Reads `UsageEvent.cost_estimate_usd` (already computed by the provider via
+  `noctusai_lib.integrations.llm.usage.estimate_cost_usd` against `models.py` pricing — no
+  reimplementation). `eval_results.custo_usd` = generator + judge (`app.studio.evals.combine_cost`,
+  field-by-field sum, `None` only when BOTH legs are `None`).
+- **Chat messages** — the same generator capture, persisted via `app.stores.messages.MessageStore.
+  set_turn_cost` on the last assistant message the turn loop wrote, when the final `session.status`
+  event carries cost/token keys.
+
+**L3 · Cheaper iteration mode.** `POST .../evals/runs` body gains optional `modelo_geracao ∈
+{"claude-sonnet-5","claude-haiku-4-5"}` (422 `invalid_modelo_geracao`-shaped `ValueError` outside the
+allowlist). The runner (`app.studio.evals.EvalRunner._execute_claimed`) applies it via
+`dataclasses.replace(spec, model=...)` right after `build_studio_spec` — `AgentSpec` is frozen, and the
+compiled hash (unaffected by which model runs) is checked before the override, so this never disturbs
+the hash-match guard. **A run with `modelo_geracao` set can never satisfy the publish gate** —
+`app.stores.studio_evals.SupabaseEvalGate.latest_concluded_run` filters `.is_("modelo_geracao",
+"null")` in addition to `completa`/`status`.
+
+**L4 · Rerun only failures.** `POST .../evals/runs` body gains optional `repetir_falhas_de: uuid` —
+the router resolves it into `case_ids` server-side (`status != 'aprovado'` results of that run, same
+org+agent via the existing `get_run` resolver — 404 `eval_run_not_found` otherwise) before calling
+`store.create_run`. Mutually exclusive with `case_ids` (422, `EvalRunCreateRequest`'s
+`model_validator`).
+
+**L5 · Budget cap per run.** Optional `limite_usd` (`0 < x <= 50`); omitted ⇒
+`settings.studio_eval_run_budget_usd` (env `STUDIO_EVAL_RUN_BUDGET_USD`, default `2.00`). The runner's
+`_CostTracker` accumulates `custo_usd` (deliberately UN-locked — every read/write happens with no
+`await` in between, so `asyncio`'s cooperative scheduling already serializes it across the
+concurrency-2 workers); once `total >= limite_usd` a worker takes no further case (same "no await
+between check and take" invariant the pre-existing empty-queue check uses). The run then:
+`app.stores.studio_eval_runs.EvalRunWriter.skip_pending_results` flips every still-`pendente` result to
+`'pulado'`; `finish_run` is called with `status="falhou"`, `erro=BUDGET_EXCEEDED_NOTA`,
+`custo_usd=<accumulated>`, and **`completa=False`** — even a run created over every active case (whose
+`completa` 013's `create_eval_run` stamped `True` at creation) is downgraded so it can never satisfy
+the publish gate once the cap cut it short. `GET .../evals/runs/{id}` exposes `run.custo_usd` (the
+sum) and every result's `custo_usd`/`tokens_*`.
+
+**L6 · HTTP additions (all additive; existing fields/shapes unchanged).**
+- `POST .../evals/runs` body: `+ modelo_geracao?, limite_usd?, repetir_falhas_de?` (still mutually
+  exclusive with `case_ids`).
+- `EvalRun`/`EvalRunOut`: `+ modelo_geracao, limite_usd, custo_usd`.
+- `EvalResult`/`EvalResultOut`: `+ custo_usd, tokens_entrada, tokens_saida, tokens_cache_leitura`.
+- `MessageOut`: `+ custo_usd, tokens_entrada, tokens_saida` (assistant messages; null otherwise).
+
+**L7 · Not in this slice (named destination).** Frontend surfacing (cost badges, a budget-cap banner,
+a "cheaper iteration" model picker in the run-launch UI) — trigger: the next Agent Studio FE slice.
+`products/agents/frontend/src/api/studio/types-ke.ts` already mirrors L6's `EvalRun`/`EvalResult`
+additions (and `StudioMessage` mirrors the message ones) so that slice starts from a synced contract.

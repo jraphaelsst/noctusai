@@ -123,6 +123,12 @@ class MessageOut(BaseModel):
     # Agent Studio §D6/§A7 (additive): set on a studio agent's assistant messages.
     version_id: UUID | None = None
     compiled_hash: str | None = None
+    # Contract §L "Controle de custo" (additive): an assistant message's turn
+    # cost/token counts (SDK ResultMessage) — null for user/system rows and
+    # for any turn that reported no ResultMessage.
+    custo_usd: float | None = None
+    tokens_entrada: int | None = None
+    tokens_saida: int | None = None
 
 
 class MessageListOut(BaseModel):

@@ -19,9 +19,14 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.studio.models import LIMITS, RUN_CASE_IDS_MAX
+from app.studio.models import (
+    EVAL_RUN_BUDGET_USD_MAX,
+    EVAL_RUN_MODEL_ALLOWLIST,
+    LIMITS,
+    RUN_CASE_IDS_MAX,
+)
 from noctusai_lib.api import StrictHttpModel
 
 #: M3 — collection metadata is compiled into EVERY prompt of the agent (a
@@ -225,6 +230,16 @@ class EvalRunOut(BaseModel):
     #: Additive (H1): ``True`` only for a run over every active case — the
     #: only kind the publish gate accepts. Subset runs are for iteration.
     completa: bool = False
+    #: Contract §L (additive): ``None`` ⇒ the version's own model ran (the
+    #: publish-gate-eligible shape); otherwise the cheaper-iteration
+    #: override the runner used instead.
+    modelo_geracao: str | None = None
+    #: Contract §L (additive): the run's cost cap in USD.
+    limite_usd: float | None = None
+    #: Contract §L (additive): the run's accumulated cost (generator +
+    #: judge, summed over every result) — ``None`` until the runner has
+    #: written at least one result.
+    custo_usd: float | None = None
 
 
 class EvalRunListOut(BaseModel):
@@ -234,8 +249,37 @@ class EvalRunListOut(BaseModel):
 class EvalRunCreateRequest(StrictHttpModel):
     version_id: UUID
     #: Omitted ⇒ every active case (a COMPLETE run). A list is deduped and
-    #: capped (L6) — and never satisfies the publish gate (H1).
+    #: capped (L6) — and never satisfies the publish gate (H1). Mutually
+    #: exclusive with ``repetir_falhas_de`` (422 ``case_ids_conflict``).
     case_ids: list[UUID] | None = Field(default=None, max_length=RUN_CASE_IDS_MAX)
+    #: Contract §L: the cheaper-iteration model override — ``None`` ⇒ the
+    #: version's own model. Typed ``str`` (not ``Literal``) — same
+    #: `tipo`/`status`-style convention this module's header documents —
+    #: validated against `EVAL_RUN_MODEL_ALLOWLIST` below (422
+    #: `invalid_modelo_geracao`), intentionally NARROWER than
+    #: `agent_versions.model`'s allowlist.
+    modelo_geracao: str | None = None
+    #: Contract §L: this run's cost cap in USD — omitted ⇒ the settings
+    #: default (`STUDIO_EVAL_RUN_BUDGET_USD`, `app.config.settings.
+    #: studio_eval_run_budget_usd`).
+    limite_usd: float | None = Field(default=None, gt=0, le=EVAL_RUN_BUDGET_USD_MAX)
+    #: Contract §L: rerun only the failures of a prior run of THIS agent —
+    #: resolved server-side into ``case_ids`` (404 if the run doesn't
+    #: belong to this org/agent). Mutually exclusive with ``case_ids``.
+    repetir_falhas_de: UUID | None = None
+
+    @field_validator("modelo_geracao")
+    @classmethod
+    def _modelo_geracao_allowlist(cls, value: str | None) -> str | None:
+        if value is not None and value not in EVAL_RUN_MODEL_ALLOWLIST:
+            raise ValueError(f"modelo_geracao must be one of {EVAL_RUN_MODEL_ALLOWLIST}")
+        return value
+
+    @model_validator(mode="after")
+    def _case_ids_xor_repetir_falhas_de(self) -> "EvalRunCreateRequest":
+        if self.case_ids is not None and self.repetir_falhas_de is not None:
+            raise ValueError("case_ids and repetir_falhas_de are mutually exclusive")
+        return self
 
 
 class EvalResultOut(BaseModel):
@@ -248,6 +292,11 @@ class EvalResultOut(BaseModel):
     veredito: list[VereditoOut] | None
     notas_juiz: str | None
     duracao_ms: int | None
+    #: Contract §L (additive): generator + judge cost of this case, summed.
+    custo_usd: float | None = None
+    tokens_entrada: int | None = None
+    tokens_saida: int | None = None
+    tokens_cache_leitura: int | None = None
 
 
 class EvalRunDetailOut(EvalRunOut):

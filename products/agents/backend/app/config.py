@@ -170,6 +170,15 @@ class SeedSettings(ProductSettings):
     # construction, instead of scattered across call sites.
     turn_lock_ttl_seconds: int = 900
 
+    # ── Agent Studio — eval run cost cap (contract §L "Controle de
+    # custo") ─────────────────────────────────────────────────────────
+    # Default `limite_usd` for `POST .../evals/runs` when the request omits
+    # it — `app.studio.evals.EvalRunner` stops starting new cases once the
+    # run's accumulated `custo_usd` reaches this. `STUDIO_EVAL_RUN_BUDGET_
+    # USD` env override; the request body can still set a higher (<= 50,
+    # migration 014 CHECK) or lower per-run value.
+    studio_eval_run_budget_usd: float = 2.00
+
     @model_validator(mode="after")
     def _turn_lock_ttl_outlives_turn_timeout(self) -> "SeedSettings":
         """Fail loud at boot (contract §E.11 "Route order": "`_TURN_LOCK_

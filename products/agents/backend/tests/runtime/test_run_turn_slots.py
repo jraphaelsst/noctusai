@@ -290,7 +290,14 @@ class TestFreshTurnHappyPath:
 
         assert events[-1] == {
             "event": "session.status",
-            "payload": {"status": "ociosa", "sdk_session_id": "fresh-1"},
+            "payload": {
+                "status": "ociosa",
+                "sdk_session_id": "fresh-1",
+                "custo_usd": None,
+                "tokens_entrada": None,
+                "tokens_saida": None,
+                "tokens_cache_leitura": None,
+            },
         }
         # No resume was attempted — no resume_fallback event on this path.
         assert not any(e["event"] == "session.resume_fallback" for e in events)
@@ -585,5 +592,12 @@ class TestFullTurnSurvivesADeleteFailure:
         }
         assert events[-1] == {
             "event": "session.status",
-            "payload": {"status": "ociosa", "sdk_session_id": "fresh-despite-failure"},
+            "payload": {
+                "status": "ociosa",
+                "sdk_session_id": "fresh-despite-failure",
+                "custo_usd": None,
+                "tokens_entrada": None,
+                "tokens_saida": None,
+                "tokens_cache_leitura": None,
+            },
         }

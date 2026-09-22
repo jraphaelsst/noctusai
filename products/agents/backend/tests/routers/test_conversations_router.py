@@ -497,6 +497,72 @@ class TestSlotCapacityAndReleaseEveryPath:
         )
 
 
+class TestCostControl:
+    """Contract §L: the turn loop stamps the SDK's cost/token counts (off
+    ``run_turn``'s final ``session.status`` event) on the assistant message
+    that turn persisted."""
+
+    def test_turn_cost_lands_on_the_assistant_message(self, agents_client):
+        from app.runtime.fake_runtime import FakeAgentRuntime
+        from app.runtime.broker import StoreApprovalBroker
+        from app.main import app
+
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+
+        script = [{"event": "message.new", "payload": {"texto": "Olá!"}}]
+        runtime = FakeAgentRuntime(
+            script, custo_usd=0.0042, tokens_entrada=300, tokens_saida=90, tokens_cache_leitura=15,
+        )
+        broker = StoreApprovalBroker(agents_client.stores.approvals, instance_id="test-instance")
+        app.dependency_overrides[get_agent_runtime_dep] = lambda: runtime
+        app.dependency_overrides[get_approval_broker_dep] = lambda: broker
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "Oi"}
+        )
+        assert resp.status_code == 202, resp.text
+
+        conv_store = agents_client.stores.conversations
+        assert wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+
+        messages = agents_client.stores.messages.list(DEFAULT_ORG_ID, conv.id, limite=50)
+        assistant_message = next(m for m in messages if m.role == "assistant")
+        assert assistant_message.custo_usd == 0.0042
+        assert assistant_message.tokens_entrada == 300
+        assert assistant_message.tokens_saida == 90
+
+        # And the GET response surfaces it (§L: "make cost visible").
+        listed = agents_client.get(f"/api/conversations/{conv.id}/messages")
+        assert listed.status_code == 200, listed.text
+        out = next(m for m in listed.json()["items"] if m["role"] == "assistant")
+        assert out["custo_usd"] == 0.0042
+        assert out["tokens_entrada"] == 300
+        assert out["tokens_saida"] == 90
+
+    def test_no_cost_reported_stays_null(self, agents_client):
+        """No `ResultMessage` (or no cost fields on it) -> null, never 0."""
+        seed_org_role(agents_client, role="member")
+        agent = seed_active_agent_and_persona(agents_client)
+        conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, DEFAULT_USER_ID)
+
+        script = [{"event": "message.new", "payload": {"texto": "Olá!"}}]
+        install_runtime(agents_client, script)  # default FakeAgentRuntime — no cost scripted
+
+        resp = agents_client.post(
+            f"/api/conversations/{conv.id}/messages", json={"texto": "Oi"}
+        )
+        assert resp.status_code == 202, resp.text
+        conv_store = agents_client.stores.conversations
+        assert wait_turn_released(conv_store, DEFAULT_ORG_ID, conv.id)
+
+        messages = agents_client.stores.messages.list(DEFAULT_ORG_ID, conv.id, limite=50)
+        assistant_message = next(m for m in messages if m.role == "assistant")
+        assert assistant_message.custo_usd is None
+        assert assistant_message.tokens_entrada is None
+
+
 class TestSSEStreamAuth:
     """Only the boundary (401 / 404) is exercised here — the 200 success
     path establishes a genuine ``StreamingResponse`` whose body never

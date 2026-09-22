@@ -33,7 +33,15 @@ from uuid import UUID, uuid4
 from app.stores._db_errors import StudioConflict, exec_query, exec_rpc
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
-from app.studio.models import RUN_CASE_IDS_MAX, EvalGate, FakeEvalGate, GateRun
+from app.studio.models import (
+    EVAL_RUN_BUDGET_USD_MAX,
+    EVAL_RUN_BUDGET_USD_MIN,
+    EVAL_RUN_MODEL_ALLOWLIST,
+    RUN_CASE_IDS_MAX,
+    EvalGate,
+    FakeEvalGate,
+    GateRun,
+)
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 __all__ = [
@@ -62,8 +70,10 @@ _RESULTS_TABLE = "eval_results"
 
 #: Contract §B2 `eval_runs.status` CHECK.
 RUN_STATUSES = ("pendente", "executando", "concluida", "falhou", "cancelada")
-#: Contract §B2 `eval_results.status` CHECK.
-RESULT_STATUSES = ("pendente", "aprovado", "reprovado", "erro")
+#: Contract §B2 `eval_results.status` CHECK, extended by migration 014 with
+#: `'pulado'` — a case the runner never started because the run's cost cap
+#: (`eval_runs.limite_usd`, contract §L) was already reached.
+RESULT_STATUSES = ("pendente", "aprovado", "reprovado", "erro", "pulado")
 #: Statuses the "one run per version" partial unique index covers.
 ACTIVE_RUN_STATUSES = ("pendente", "executando")
 
@@ -84,6 +94,19 @@ def _validate_criterios(criterios: dict[str, Any]) -> None:
         raise ValueError("criterios.deve / criterios.nao_deve must be lists")
     if len(deve) + len(nao_deve) < 1:
         raise ValueError("criterios must contain at least one item across deve/nao_deve")
+
+
+def _validate_modelo_geracao(modelo_geracao: str | None) -> None:
+    if modelo_geracao is not None and modelo_geracao not in EVAL_RUN_MODEL_ALLOWLIST:
+        raise ValueError(f"modelo_geracao must be one of {EVAL_RUN_MODEL_ALLOWLIST} or None; got {modelo_geracao!r}")
+
+
+def _validate_limite_usd(limite_usd: float | None) -> None:
+    if limite_usd is not None and not (EVAL_RUN_BUDGET_USD_MIN < limite_usd <= EVAL_RUN_BUDGET_USD_MAX):
+        raise ValueError(
+            f"limite_usd must be in ({EVAL_RUN_BUDGET_USD_MIN}, {EVAL_RUN_BUDGET_USD_MAX}] or None; "
+            f"got {limite_usd!r}"
+        )
 
 
 def normalize_case_ids(case_ids: list[UUID] | None) -> list[UUID] | None:
@@ -153,6 +176,17 @@ class EvalRunRecord:
     #: H1: ``True`` only for a run over every active case at run time
     #: (``case_ids`` omitted) — the only kind the publish gate accepts.
     completa: bool = False
+    #: Contract §L: ``None`` ⇒ the version's own model (the publish-gate-
+    #: eligible shape); otherwise the cheaper-iteration override the runner
+    #: used instead of ``spec.model`` — never satisfies the publish gate.
+    modelo_geracao: str | None = None
+    #: Contract §L: the run's cost cap in USD (``None`` ⇒ the caller didn't
+    #: set one — the router stamps the settings default before create_run).
+    limite_usd: float | None = None
+    #: Contract §L: the run's accumulated cost (sum of every result's
+    #: ``custo_usd``) — ``None`` until the runner has written at least one
+    #: result.
+    custo_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -169,6 +203,14 @@ class EvalResultRecord:
     duracao_ms: int | None
     created_at: datetime
     updated_at: datetime
+    #: Contract §L: generator + judge cost of THIS case, summed.
+    custo_usd: float | None = None
+    #: Contract §L: the generator turn's token counts (Claude Agent SDK
+    #: ``ResultMessage.usage``) — ``None`` when the SDK never reported a
+    #: ``ResultMessage`` for this case (logged, never silently defaulted).
+    tokens_entrada: int | None = None
+    tokens_saida: int | None = None
+    tokens_cache_leitura: int | None = None
 
 
 @dataclass(frozen=True)
@@ -207,13 +249,15 @@ class EvalStore(Protocol):
     def create_run(
         self, org_id: UUID, agent_id: UUID, version_id: UUID, *, compiled_hash: str, limiar: float,
         case_ids: list[UUID] | None, started_by: UUID,
+        modelo_geracao: str | None = None, limite_usd: float | None = None,
     ) -> EvalRunRecord:
         """ONE transaction (``agents.create_eval_run``): resolves the case
         set (``case_ids`` deduped+capped, else every active case →
         ``completa=True``), inserts the run and its pending results. Raises
         :class:`NotFound` for a foreign case id, :class:`ValueError` for an
-        empty set / too many ids, ``StudioConflict('run_in_progress')`` when
-        a pendente/executando run already exists for ``version_id``."""
+        empty set / too many ids / an invalid ``modelo_geracao``/
+        ``limite_usd``, ``StudioConflict('run_in_progress')`` when a
+        pendente/executando run already exists for ``version_id``."""
         ...
 
     def list_runs(self, org_id: UUID, agent_id: UUID, version_id: UUID | None = None) -> list[EvalRunRecord]: ...
@@ -325,7 +369,10 @@ class FakeEvalStore:
     def create_run(
         self, org_id: UUID, agent_id: UUID, version_id: UUID, *, compiled_hash: str, limiar: float,
         case_ids: list[UUID] | None, started_by: UUID,
+        modelo_geracao: str | None = None, limite_usd: float | None = None,
     ) -> EvalRunRecord:
+        _validate_modelo_geracao(modelo_geracao)
+        _validate_limite_usd(limite_usd)
         explicit = normalize_case_ids(case_ids)
         if explicit is None:
             resolved = [
@@ -353,6 +400,7 @@ class FakeEvalStore:
             "score": None, "limiar": limiar, "started_by": started_by, "started_at": now,
             "finished_at": None, "erro": None, "created_at": now, "updated_at": now,
             "completa": explicit is None,
+            "modelo_geracao": modelo_geracao, "limite_usd": limite_usd, "custo_usd": None,
         }
         self._runs[row["id"]] = row
         self._results[row["id"]] = [
@@ -360,6 +408,7 @@ class FakeEvalStore:
                 "id": uuid4(), "org_id": org_id, "run_id": row["id"], "case_id": cid, "status": "pendente",
                 "saida": None, "score": None, "veredito": None, "notas_juiz": None, "duracao_ms": None,
                 "created_at": now, "updated_at": now,
+                "custo_usd": None, "tokens_entrada": None, "tokens_saida": None, "tokens_cache_leitura": None,
             }
             for cid in resolved
         ]
@@ -533,13 +582,17 @@ class SupabaseEvalStore:
     def create_run(
         self, org_id: UUID, agent_id: UUID, version_id: UUID, *, compiled_hash: str, limiar: float,
         case_ids: list[UUID] | None, started_by: UUID,
+        modelo_geracao: str | None = None, limite_usd: float | None = None,
     ) -> EvalRunRecord:
+        _validate_modelo_geracao(modelo_geracao)
+        _validate_limite_usd(limite_usd)
         explicit = normalize_case_ids(case_ids)
         resp = exec_rpc(self._client, _SCHEMA, "create_eval_run", {
             "p_org_id": str(org_id), "p_agent_id": str(agent_id), "p_version_id": str(version_id),
             "p_compiled_hash": compiled_hash, "p_limiar": limiar,
             "p_case_ids": [str(c) for c in explicit] if explicit is not None else None,
             "p_started_by": str(started_by),
+            "p_modelo_geracao": modelo_geracao, "p_limite_usd": limite_usd,
         }, unique_code="run_in_progress")
         run_id = resp.data
         if isinstance(run_id, list):
@@ -638,6 +691,9 @@ class SupabaseEvalStore:
             started_at=row.get("started_at"), finished_at=row.get("finished_at"), erro=row.get("erro"),
             created_at=row["created_at"], updated_at=row["updated_at"],
             completa=bool(row.get("completa", False)),
+            modelo_geracao=row.get("modelo_geracao"),
+            limite_usd=float(row["limite_usd"]) if row.get("limite_usd") is not None else None,
+            custo_usd=float(row["custo_usd"]) if row.get("custo_usd") is not None else None,
         )
 
     @staticmethod
@@ -648,6 +704,9 @@ class SupabaseEvalStore:
             score=float(row["score"]) if row.get("score") is not None else None,
             veredito=row.get("veredito"), notas_juiz=row.get("notas_juiz"),
             duracao_ms=row.get("duracao_ms"), created_at=row["created_at"], updated_at=row["updated_at"],
+            custo_usd=float(row["custo_usd"]) if row.get("custo_usd") is not None else None,
+            tokens_entrada=row.get("tokens_entrada"), tokens_saida=row.get("tokens_saida"),
+            tokens_cache_leitura=row.get("tokens_cache_leitura"),
         )
 
 
@@ -675,6 +734,10 @@ class SupabaseEvalGate:
             .select("id, score, limiar, compiled_hash, status, completa, total")
             .eq("org_id", str(org_id)).eq("version_id", str(version_id))
             .eq("status", "concluida").eq("completa", True)
+            # Contract §L: a run started with a cheaper-iteration
+            # `modelo_geracao` override never satisfies the publish gate —
+            # only a run over the version's OWN model counts.
+            .is_("modelo_geracao", "null")
             .order("finished_at", desc=True)
             .limit(1)
             .execute()

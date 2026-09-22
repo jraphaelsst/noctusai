@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from dataclasses import replace
+
 from app.stores.errors import NotFound
-from app.studio.evals import Criterion, JudgeVerdict, parse_judge_output
+from app.studio.evals import Criterion, JudgeVerdict, TurnCost, parse_judge_output
 
 
 def publish(defs: Any, org_id: UUID, agent: Any, version_id: UUID, user_id: UUID, *, catalog: Any = None) -> Any:
@@ -34,10 +36,16 @@ class ScriptedJudge:
     criterion — rendered as valid judge JSON, with a bogus judge ``score``
     the runner must ignore), or an Exception to raise."""
 
-    def __init__(self, answers: dict[str, Any] | None = None, default: Any = True) -> None:
+    def __init__(
+        self, answers: dict[str, Any] | None = None, default: Any = True, *, custo_usd: float | None = None,
+    ) -> None:
         self.answers = dict(answers or {})
         self.default = default
         self.calls: list[dict[str, Any]] = []
+        #: Contract §L test seam: every verdict this fake returns carries
+        #: this cost (``None`` — the pre-existing default — matches every
+        #: test that doesn't care about cost byte-for-byte: `TurnCost()`).
+        self.custo_usd = custo_usd
 
     async def judge(
         self, *, org_id: UUID, entrada: str, contexto: str | None, criterios: list[Criterion],
@@ -48,19 +56,23 @@ class ScriptedJudge:
         if isinstance(answer, Exception):
             raise answer
         if isinstance(answer, str):
-            return parse_judge_output(answer, criterios)
-        oks = [answer] * len(criterios) if isinstance(answer, bool) else list(answer)
-        import json
+            verdict = parse_judge_output(answer, criterios)
+        else:
+            oks = [answer] * len(criterios) if isinstance(answer, bool) else list(answer)
+            import json
 
-        raw = json.dumps({
-            "veredito": [
-                {"n": i, "ok": ok, "motivo": "ok" if ok else "falhou"}
-                for i, (c, ok) in enumerate(zip(criterios, oks), 1)
-            ],
-            "score": 0.99,
-            "notas": "notas do juiz",
-        })
-        return parse_judge_output(raw, criterios)
+            raw = json.dumps({
+                "veredito": [
+                    {"n": i, "ok": ok, "motivo": "ok" if ok else "falhou"}
+                    for i, (c, ok) in enumerate(zip(criterios, oks), 1)
+                ],
+                "score": 0.99,
+                "notas": "notas do juiz",
+            })
+            verdict = parse_judge_output(raw, criterios)
+        if self.custo_usd is not None:
+            verdict = replace(verdict, custo=TurnCost(custo_usd=self.custo_usd))
+        return verdict
 
 
 class WriteForbidden(AssertionError):

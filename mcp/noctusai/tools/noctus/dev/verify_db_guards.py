@@ -1053,6 +1053,8 @@ DECLARE
   v_skill uuid;
   v_file uuid;
   v_client uuid;
+  v_case uuid;
+  v_run uuid;
 BEGIN
   IF to_regclass('{_AGENTS_SCHEMA}.agent_versions') IS NULL THEN
     RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_versions does not exist (migration 012 not applied)';
@@ -1318,6 +1320,73 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "index two runs could race: both write `eval_results` for the "
             "same version, and the publish gate would read whichever finished "
             "last as the answer, silently discarding the other run's verdict."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="eval_results.status_check",
+        guard_name="eval_results_status_check",
+        migrations=_AGENTS_KE_MIGRATIONS,
+        requires_table="eval_results",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_cases (org_id, agent_id, slug, titulo, entrada, criterios) "
+            "VALUES (v_org, v_agent, 'noc-probe', 'NOC probe', 'entrada', '{\"deve\": [\"x\"]}'::jsonb) "
+            "RETURNING id INTO v_case;\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by) "
+            "VALUES (v_org, v_agent, v_version, 'sha256:noc-probe', 'pendente', 0.8, v_org) "
+            "RETURNING id INTO v_run;\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_results (org_id, run_id, case_id, status) "
+            "VALUES (v_org, v_run, v_case, 'lixo');"
+        ),
+        guard_fragment="eval_results_status_check",
+        what="an eval_results row with a status outside the CHECK's allowlist",
+        rationale=(
+            "Contract §L: `'pulado'` (the cost-cap skip status) joins "
+            "pendente/aprovado/reprovado/erro — the CHECK must still reject "
+            "anything outside that fixed set, including a typo that would "
+            "otherwise silently corrupt the run's aprovados/score math."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="eval_runs.modelo_geracao_allowlist",
+        guard_name="eval_runs_modelo_geracao_check",
+        migrations=(*_AGENTS_KE_MIGRATIONS, "014_agent_studio_cost.sql"),
+        requires_table="eval_runs",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_runs "
+            "(org_id, agent_id, version_id, compiled_hash, status, limiar, started_by, modelo_geracao) "
+            "VALUES (v_org, v_agent, v_version, 'sha256:noc-probe', 'pendente', 0.8, v_org, 'claude-opus-5');"
+        ),
+        guard_fragment="eval_runs_modelo_geracao_check",
+        what="an eval run whose modelo_geracao is outside the cheaper-iteration allowlist",
+        rationale=(
+            "Contract §L: the cheaper-iteration override exists to let a run "
+            "cost LESS than the version's own model, never more — the "
+            "allowlist (claude-sonnet-5/claude-haiku-4-5) is deliberately "
+            "narrower than `agent_versions.model`'s, and this CHECK is the "
+            "only thing stopping a request from naming `claude-opus-5` here "
+            "and defeating that intent."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="eval_runs.limite_usd_cap",
+        guard_name="eval_runs_limite_usd_check",
+        migrations=(*_AGENTS_KE_MIGRATIONS, "014_agent_studio_cost.sql"),
+        requires_table="eval_runs",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_runs "
+            "(org_id, agent_id, version_id, compiled_hash, status, limiar, started_by, limite_usd) "
+            "VALUES (v_org, v_agent, v_version, 'sha256:noc-probe', 'pendente', 0.8, v_org, 50.01);"
+        ),
+        guard_fragment="eval_runs_limite_usd_check",
+        what="a run limite_usd above the $50 cap",
+        rationale=(
+            "Contract §L: the per-run cost cap only protects the org's "
+            "wallet if it is itself bounded — an unbounded `limite_usd` "
+            "would let one run authorize an unlimited Anthropic bill, the "
+            "exact failure mode this feature exists to prevent."
         ),
     ),
 )

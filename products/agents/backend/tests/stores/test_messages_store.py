@@ -65,3 +65,33 @@ def test_blocks_and_token_usage_default_safely(store):
 
     assert msg.blocks == []
     assert msg.token_usage is None
+
+
+def test_custo_usd_and_tokens_default_to_none(store):
+    org_id, conv_id = uuid4(), uuid4()
+    msg = store.add(org_id, conv_id, "assistant", "ok")
+    assert (msg.custo_usd, msg.tokens_entrada, msg.tokens_saida) == (None, None, None)
+
+
+def test_set_turn_cost_stamps_the_message_contract_l(store):
+    """Contract §L: the turn loop stamps cost/tokens on the assistant
+    message it persisted, off the SDK ResultMessage."""
+    org_id, conv_id = uuid4(), uuid4()
+    msg = store.add(org_id, conv_id, "assistant", "ok")
+
+    updated = store.set_turn_cost(
+        org_id, conv_id, msg.id, custo_usd=0.0456, tokens_entrada=200, tokens_saida=80,
+    )
+
+    assert (updated.custo_usd, updated.tokens_entrada, updated.tokens_saida) == (0.0456, 200, 80)
+    # Round-trips through list() too — not just the returned record.
+    reread = store.list(org_id, conv_id)[0]
+    assert reread.custo_usd == 0.0456
+
+
+def test_set_turn_cost_unknown_message_raises_not_found(store):
+    from app.stores.errors import NotFound
+
+    org_id, conv_id = uuid4(), uuid4()
+    with pytest.raises(NotFound):
+        store.set_turn_cost(org_id, conv_id, uuid4(), custo_usd=1.0, tokens_entrada=1, tokens_saida=1)

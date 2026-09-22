@@ -26,6 +26,42 @@ Binding rules (contract §E6 + security review of wave 1):
   cancelled mid-flight stops picking cases and is never flipped to
   ``concluida``.
 
+Cost control (contract §L "Controle de custo", added after a 2026-09-21 run
+of 160 cases cost ~$20 with nothing recording it):
+
+* **Generator cost** comes straight off the Claude Agent SDK's
+  ``ResultMessage`` (``total_cost_usd`` + ``usage``), surfaced through
+  ``run_turn``'s final ``session.status`` event — no pricing lookup on this
+  side. **Judge cost** is captured via a small process-local usage-sink
+  wrapper around the ONE ``noctusai_lib.integrations.llm.chat_completion``
+  call the judge makes (see :func:`_call_with_usage`) — that module reports
+  usage to a sink, never back through its own return value, and this
+  product configures no sink of its own (``get_llm_config().usage_sink`` is
+  ``None`` by default), so nothing else in this product's ``chat_completion``
+  traffic shares that sink.
+* Both legs are summed into ``eval_results.custo_usd``/``tokens_*``
+  (:func:`_combine_cost`) and rolled into ``eval_runs.custo_usd`` via
+  ``_CostTracker`` — a plain (un-locked) accumulator: every read/write of it
+  happens with NO ``await`` in between, so `asyncio`'s cooperative scheduling
+  (a task switch can only happen AT an ``await``) already serializes it
+  across the two concurrency-2 workers; an explicit lock would be inert.
+* **The budget cap** (``run.limite_usd``, contract §L) is checked before a
+  worker takes its next case (same "no await between check and take"
+  invariant the existing empty-queue check already relies on). Once
+  reached, the run stops taking new cases, every still-``pendente`` result
+  becomes ``pulado`` (``app.stores.studio_eval_runs.skip_pending_results``),
+  and the run finishes ``falhou`` / ``completa=False`` (contract §L: "not
+  completa" — even a run created over every active case, whose stored
+  ``completa`` the DB stamped ``True`` at creation, must not satisfy the
+  publish gate once the cap cut it short) with
+  ``erro=app.studio.models.BUDGET_EXCEEDED_NOTA`` (the same fixed string
+  the skipped results' ``notas_juiz`` carries). A cheaper-iteration run
+  (``modelo_geracao`` set) never satisfies the gate
+  either way (``app.stores.studio_evals.SupabaseEvalGate`` filters
+  ``modelo_geracao IS NULL``) — the spec override happens once, right after
+  ``build_studio_spec``, via ``dataclasses.replace`` (``AgentSpec`` is
+  frozen).
+
 Scheduling: :meth:`EvalRunner.schedule` starts :meth:`EvalRunner.execute` as
 an ``asyncio`` task (the caller keeps a strong reference, like the turn loop's
 ``_track_background_task``). :func:`sweep_orphaned_runs` fails, at startup,
@@ -39,12 +75,13 @@ import logging
 import secrets
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from app.runtime.types import AgentSpec, TurnContext
 from app.stores._util import utcnow
+from app.studio.models import BUDGET_EXCEEDED_NOTA
 from app.studio.spec import StudioSpecError, StudioTurnTarget, build_studio_spec
 
 logger = logging.getLogger(__name__)
@@ -66,6 +103,8 @@ __all__ = [
     "EvalRunner",
     "sweep_orphaned_runs",
     "ORPHAN_ERRO",
+    "TurnCost",
+    "combine_cost",
 ]
 
 JUDGE_PROVIDER = "anthropic"
@@ -103,9 +142,50 @@ class CriterionVerdict:
 
 
 @dataclass(frozen=True)
+class TurnCost:
+    """Contract §L: one call's cost + token counts — the generator's (off
+    the SDK ``ResultMessage``) and the judge's (off its ``UsageEvent``)
+    share this shape so :func:`combine_cost` can sum them field-by-field.
+    A ``None`` field means "not reported" (never a silent 0)."""
+
+    custo_usd: float | None = None
+    tokens_entrada: int | None = None
+    tokens_saida: int | None = None
+    tokens_cache_leitura: int | None = None
+
+
+def _sum_optional(a: float | None, b: float | None) -> float | None:
+    """``None`` only when BOTH are ``None`` — one leg reporting and the
+    other not still gives a real (partial) total, never a silent null."""
+    if a is None and b is None:
+        return None
+    return (a or 0) + (b or 0)
+
+
+def combine_cost(a: TurnCost, b: TurnCost) -> TurnCost:
+    """Field-by-field sum of two :class:`TurnCost` (generator + judge,
+    contract §L "eval_results.custo_usd = generator + judge")."""
+    return TurnCost(
+        custo_usd=_sum_optional(a.custo_usd, b.custo_usd),
+        tokens_entrada=_sum_optional(a.tokens_entrada, b.tokens_entrada),
+        tokens_saida=_sum_optional(a.tokens_saida, b.tokens_saida),
+        # Judge calls pass `cache=False` (no response cache) but MAY still
+        # report a prompt-cache read on the (fixed) judge system prompt —
+        # the generator's cache-read leg is the one that matters most, but
+        # summing both is correct either way.
+        tokens_cache_leitura=_sum_optional(a.tokens_cache_leitura, b.tokens_cache_leitura),
+    )
+
+
+@dataclass(frozen=True)
 class JudgeVerdict:
     veredito: list[CriterionVerdict]
     notas: str
+    #: Contract §L (additive): the judge call's own cost — `TurnCost()`
+    #: (every field `None`) when the caller didn't capture usage (e.g.
+    #: `parse_judge_output` alone, used directly in tests, never attaches
+    #: cost).
+    custo: TurnCost = field(default_factory=TurnCost)
 
 
 class JudgeError(Exception):
@@ -222,6 +302,88 @@ def score_case(verdict: JudgeVerdict) -> tuple[bool, float]:
     return oks == total, round(oks / total, 3)
 
 
+class _CapturingUsageSink:
+    """Wraps whatever ``noctusai_lib`` ``usage_sink`` is already configured
+    (contract §L) — forwards every event to it unchanged, so composing this
+    in NEVER silently drops a real production sink — and also buffers every
+    event here for :func:`_call_with_usage` to drain. Nothing else in this
+    product calls ``chat_completion`` (only :class:`LlmJudge` does), so in
+    practice this product configures no sink of its own and ``_inner`` is
+    ``None``."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.events: list[Any] = []
+
+    async def record(self, event: Any) -> None:
+        if self._inner is not None:
+            await self._inner.record(event)
+        self.events.append(event)
+
+
+_usage_capture_lock = asyncio.Lock()
+_installed_usage_sink: _CapturingUsageSink | None = None
+
+
+def _ensure_usage_capture_sink() -> _CapturingUsageSink:
+    """Installs (once) or reuses :data:`_installed_usage_sink` as
+    ``get_llm_config().usage_sink``. MUST be called only from inside
+    :func:`_call_with_usage`'s lock — mutating the process-wide
+    ``LLMConfig.usage_sink`` is not itself safe to race."""
+    global _installed_usage_sink
+    from noctusai_lib.integrations.llm import get_llm_config
+
+    config = get_llm_config()
+    if _installed_usage_sink is None or config.usage_sink is not _installed_usage_sink:
+        _installed_usage_sink = _CapturingUsageSink(config.usage_sink)
+        config.usage_sink = _installed_usage_sink
+    return _installed_usage_sink
+
+
+async def _call_with_usage(
+    call: Callable[[], Any], *, provider: str, model: str, org_id: UUID,
+) -> tuple[str, TurnCost]:
+    """Runs ONE ``chat_completion``-shaped ``call()`` and returns
+    ``(text, TurnCost)`` — ``chat_completion`` itself only ever returns
+    text (contract §L module docstring), so this is the seam that recovers
+    the ``UsageEvent`` a provider records for the call.
+
+    Serialized process-wide (:data:`_usage_capture_lock`): the buffer is
+    shared across every concurrent judge call (``EVAL_CONCURRENCY=2``), and
+    correctness of the per-call cost attribution matters more than judge
+    calls running fully in parallel — the generator turns (the actually
+    slow part of a case) still run concurrently; only this one short LLM
+    call gets serialized. Missing/ambiguous usage (no event, or more than
+    one — a sink some OTHER caller shares, defensively handled even though
+    nothing else in this product calls ``chat_completion`` today) is
+    logged and treated as ``TurnCost()`` (every field ``None``), never a
+    silent 0 or a crashed case."""
+    async with _usage_capture_lock:
+        sink = _ensure_usage_capture_sink()
+        text = await call()
+        events, sink.events = sink.events, []
+        matches = [e for e in events if e.provider == provider and e.model == model]
+        if not matches:
+            logger.warning(
+                "agents.eval.judge_usage_missing org_id=%s provider=%s model=%s",
+                org_id, provider, model,
+            )
+            return text, TurnCost()
+        if len(matches) > 1:
+            logger.warning(
+                "agents.eval.judge_usage_ambiguous org_id=%s provider=%s model=%s count=%d — "
+                "using the last event",
+                org_id, provider, model, len(matches),
+            )
+        event = matches[-1]
+        return text, TurnCost(
+            custo_usd=event.cost_estimate_usd,
+            tokens_entrada=event.prompt_tokens,
+            tokens_saida=event.completion_tokens,
+            tokens_cache_leitura=None,  # Anthropic usage doesn't surface this leg via UsageEvent today.
+        )
+
+
 class LlmJudge:
     """The production :class:`Judge` — ``noctusai_lib`` ``chat_completion``
     (§A10: judge = ``claude-sonnet-5``, never the generator's own model
@@ -242,8 +404,9 @@ class LlmJudge:
         messages, _nonce = build_judge_messages(
             entrada=entrada, contexto=contexto, criterios=criterios, rubrica=rubrica, saida=saida
         )
-        try:
-            raw = await chat_completion(
+
+        def _call() -> Any:
+            return chat_completion(
                 messages,
                 model=self._model,
                 provider=self._provider,
@@ -252,10 +415,16 @@ class LlmJudge:
                 response_format={"type": "json_object"},
                 cache=False,
             )
+
+        try:
+            raw, custo = await _call_with_usage(
+                _call, provider=self._provider, model=self._model, org_id=org_id,
+            )
         except Exception as exc:
             logger.warning("agents.eval.judge_call_failed org_id=%s", org_id, exc_info=True)
             raise JudgeError("falha ao chamar o avaliador") from exc
-        return parse_judge_output(raw, criterios)
+        verdict = parse_judge_output(raw, criterios)
+        return replace(verdict, custo=custo)
 
 
 # ── runner ──────────────────────────────────────────────────────────────────
@@ -269,6 +438,26 @@ class _CaseError(Exception):
 class _CaseOutcome:
     passed: bool
     score: float
+
+
+class _CostTracker:
+    """Contract §L: the run's accumulated ``custo_usd``, checked before a
+    worker takes its next case and updated after each case completes.
+    Deliberately NOT ``asyncio.Lock``-protected — every method here runs
+    with no ``await`` inside it, and `asyncio` only switches tasks AT an
+    ``await``, so two concurrency-2 workers can never interleave a
+    read/write of :attr:`total` (see module docstring, "Cost control")."""
+
+    def __init__(self, limite_usd: float | None) -> None:
+        self.limite_usd = limite_usd
+        self.total = 0.0
+
+    def has_room(self) -> bool:
+        return self.limite_usd is None or self.total < self.limite_usd
+
+    def add(self, custo_usd: float | None) -> None:
+        if custo_usd:
+            self.total += custo_usd
 
 
 class EvalRunner:
@@ -342,6 +531,12 @@ class EvalRunner:
             )
             self._runs.finish_run(org_id, run.id, status="falhou", aprovados=0, score=None, erro="hash_mismatch")
             return
+        # Contract §L: the cheaper-iteration override — the runner uses it
+        # INSTEAD of the version's own model. `AgentSpec` is frozen; the
+        # compiled hash (already checked above) is unaffected by which
+        # model runs it, so this never disturbs the hash-match guard.
+        if run.modelo_geracao:
+            spec = replace(spec, model=run.modelo_geracao)
 
         pending = [
             r.result for r in self._evals.list_results_with_cases(org_id, run.agent_id, run.id)
@@ -352,15 +547,22 @@ class EvalRunner:
         for result in pending:
             queue.put_nowait(result)
         outcomes: list[_CaseOutcome] = []
+        budget = _CostTracker(run.limite_usd)
+        budget_hit = False
 
         async def worker() -> None:
+            nonlocal budget_hit
             while True:
                 if self._runs.get_run_status(org_id, run.id) != "executando":
                     return  # cancelled (or failed elsewhere): pick no new case
                 if queue.empty():
                     return  # every case taken (no await between check and take)
+                if not budget.has_room():
+                    budget_hit = True
+                    return  # cost cap reached: pick no new case (no await before this check either)
                 result = queue.get_nowait()
-                outcome = await self._run_case(org_id, run, spec, result.case_id)
+                outcome, custo_usd = await self._run_case(org_id, run, spec, result.case_id)
+                budget.add(custo_usd)
                 if outcome is not None:
                     outcomes.append(outcome)
 
@@ -371,7 +573,25 @@ class EvalRunner:
             return
         aprovados = sum(1 for o in outcomes if o.passed)
         score = round(sum(o.score for o in outcomes) / total, 3) if total else 0.0
-        self._runs.finish_run(org_id, run.id, status="concluida", aprovados=aprovados, score=score)
+        custo_usd = round(budget.total, 4) if budget.total else (budget.total or None)
+        if budget_hit:
+            skipped = self._runs.skip_pending_results(org_id, run.id, nota=BUDGET_EXCEEDED_NOTA)
+            logger.warning(
+                "agents.eval.budget_exceeded org_id=%s run_id=%s limite_usd=%s custo_usd=%s skipped=%d",
+                org_id, run.id, run.limite_usd, custo_usd, len(skipped),
+            )
+            # Contract §L: "runs finished by the cap are not completa" —
+            # even a run created over every active case (whose `completa`
+            # the DB stamped `True` at creation) must not satisfy the
+            # publish gate once the cap cut it short.
+            self._runs.finish_run(
+                org_id, run.id, status="falhou", aprovados=aprovados, score=score,
+                erro=BUDGET_EXCEEDED_NOTA, custo_usd=custo_usd, completa=False,
+            )
+            return
+        self._runs.finish_run(
+            org_id, run.id, status="concluida", aprovados=aprovados, score=score, custo_usd=custo_usd,
+        )
 
     def _agent_by_id(self, org_id: UUID, agent_id: UUID) -> Any:
         for agent in self._definitions.list_agents(org_id):
@@ -379,16 +599,25 @@ class EvalRunner:
                 return agent
         raise LookupError(f"agent {agent_id} not found for org {org_id}")
 
-    async def _run_case(self, org_id: UUID, run: Any, spec: AgentSpec, case_id: UUID) -> _CaseOutcome | None:
+    async def _run_case(
+        self, org_id: UUID, run: Any, spec: AgentSpec, case_id: UUID,
+    ) -> tuple[_CaseOutcome | None, float | None]:
+        """Returns ``(outcome, custo_usd)`` — ``custo_usd`` is whatever cost
+        was captured even on a failed case (contract §L: the user is billed
+        regardless of outcome), so the caller's budget tracker always sees
+        it, not just successful cases."""
         started = time.monotonic()
 
         def _ms() -> int:
             return int((time.monotonic() - started) * 1000)
 
-        def _erro(nota: str, saida: str | None = None) -> _CaseOutcome | None:
+        def _erro(nota: str, saida: str | None = None, custo: TurnCost | None = None) -> _CaseOutcome | None:
+            custo = custo or TurnCost()
             written = self._runs.set_result(
                 org_id, run.id, case_id, status="erro", saida=saida, score=None, veredito=None,
                 notas_juiz=nota, duracao_ms=_ms(),
+                custo_usd=custo.custo_usd, tokens_entrada=custo.tokens_entrada,
+                tokens_saida=custo.tokens_saida, tokens_cache_leitura=custo.tokens_cache_leitura,
             )
             return _CaseOutcome(passed=False, score=0.0) if written else None
 
@@ -396,19 +625,19 @@ class EvalRunner:
             case = self._evals.get_case(org_id, run.agent_id, case_id)
         except Exception:
             logger.exception("agents.eval.case_load_failed run_id=%s case_id=%s", run.id, case_id)
-            return _erro("Caso de avaliação indisponível.")
+            return _erro("Caso de avaliação indisponível."), None
         criterios = criteria_of(case.criterios)
         if not criterios:
-            return _erro("Caso sem critérios.")
+            return _erro("Caso sem critérios."), None
 
         try:
-            saida = await self._agent_answer(org_id, run, spec, case)
+            saida, gen_custo = await self._agent_answer(org_id, run, spec, case)
         except _CaseError as exc:
             logger.warning("agents.eval.case_no_answer run_id=%s case_id=%s: %s", run.id, case_id, exc)
-            return _erro(str(exc))
+            return _erro(str(exc)), None
         except Exception:
             logger.exception("agents.eval.turn_failed run_id=%s case_id=%s", run.id, case_id)
-            return _erro("O turno do agente falhou.")
+            return _erro("O turno do agente falhou."), None
 
         try:
             verdict = await self._judge.judge(
@@ -418,17 +647,23 @@ class EvalRunner:
             passed, score = score_case(verdict)
         except JudgeError as exc:
             logger.warning("agents.eval.judge_unusable run_id=%s case_id=%s: %s", run.id, case_id, exc)
-            return _erro(f"Falha do avaliador: {exc}", saida)
+            # Only the generator's cost is known — the judge call that
+            # raised may or may not have been billed; §L accepts this as
+            # the honest lower bound rather than guessing.
+            return _erro(f"Falha do avaliador: {exc}", saida, custo=gen_custo), gen_custo.custo_usd
         except Exception:
             logger.exception("agents.eval.judge_failed run_id=%s case_id=%s", run.id, case_id)
-            return _erro("Falha do avaliador.", saida)
+            return _erro("Falha do avaliador.", saida, custo=gen_custo), gen_custo.custo_usd
 
+        custo = combine_cost(gen_custo, verdict.custo)
         written = self._runs.set_result(
             org_id, run.id, case_id, status="aprovado" if passed else "reprovado", saida=saida,
             score=score, veredito=[v.to_dict() for v in verdict.veredito], notas_juiz=verdict.notas,
             duracao_ms=_ms(),
+            custo_usd=custo.custo_usd, tokens_entrada=custo.tokens_entrada,
+            tokens_saida=custo.tokens_saida, tokens_cache_leitura=custo.tokens_cache_leitura,
         )
-        return _CaseOutcome(passed=passed, score=score) if written else None
+        return (_CaseOutcome(passed=passed, score=score) if written else None), custo.custo_usd
 
     async def _reserve_slot(self) -> Any:
         deadline = time.monotonic() + self._slot_wait
@@ -440,7 +675,7 @@ class EvalRunner:
                 raise _CaseError("Nenhuma vaga livre no executor do agente dentro do tempo limite.")
             await asyncio.sleep(self._slot_poll)
 
-    async def _agent_answer(self, org_id: UUID, run: Any, spec: AgentSpec, case: Any) -> str:
+    async def _agent_answer(self, org_id: UUID, run: Any, spec: AgentSpec, case: Any) -> tuple[str, TurnCost]:
         prompt = case.entrada
         if case.contexto:
             prompt = f"<nota do sistema>\n{case.contexto}\n</nota do sistema>\n\n{case.entrada}"
@@ -454,6 +689,7 @@ class EvalRunner:
         )
         slot = await self._reserve_slot()
         textos: list[str] = []
+        custo = TurnCost()
         try:
             async with asyncio.timeout(self._turn_timeout):
                 async for event in self._runtime.run_turn(spec, ctx, prompt, self._broker, slot=slot):
@@ -461,13 +697,23 @@ class EvalRunner:
                         texto = (event.get("payload") or {}).get("texto") or ""
                         if texto.strip():
                             textos.append(texto)
+                    elif event.get("event") == "session.status":
+                        # Contract §L: the turn's cost/tokens, straight off
+                        # the SDK ResultMessage (run_turn's final event).
+                        payload = event.get("payload") or {}
+                        custo = TurnCost(
+                            custo_usd=payload.get("custo_usd"),
+                            tokens_entrada=payload.get("tokens_entrada"),
+                            tokens_saida=payload.get("tokens_saida"),
+                            tokens_cache_leitura=payload.get("tokens_cache_leitura"),
+                        )
         except TimeoutError as exc:
             raise _CaseError("O turno do agente excedeu o tempo limite.") from exc
         finally:
             await slot.release()
         if not textos:
             raise _CaseError("O agente não produziu resposta.")
-        return textos[-1][:MAX_SAIDA_CHARS]
+        return textos[-1][:MAX_SAIDA_CHARS], custo
 
 
 def sweep_orphaned_runs(runs: Any, *, started_before: Any = None) -> int:

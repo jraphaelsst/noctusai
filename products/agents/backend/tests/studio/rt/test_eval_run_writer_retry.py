@@ -119,3 +119,59 @@ def test_a_real_conflict_is_still_not_written():
     writer, org, run, case, results, _ = _setup()
     results.rows[0]["status"] = "reprovado"
     assert _write(writer, org, run, case) is False
+
+
+def test_set_result_carries_cost_and_token_fields():
+    writer, org, run, case, results, _ = _setup()
+    written = writer.set_result(
+        org, run, case, status="aprovado", saida="x", score=1.0, veredito=[], notas_juiz="",
+        duracao_ms=1, custo_usd=0.0321, tokens_entrada=100, tokens_saida=40, tokens_cache_leitura=5,
+    )
+    assert written is True
+    assert results.rows[0]["custo_usd"] == 0.0321
+    assert results.rows[0]["tokens_entrada"] == 100
+    assert results.rows[0]["tokens_cache_leitura"] == 5
+
+
+def test_finish_run_carries_custo_usd_and_optional_completa_downgrade():
+    writer, org, run, _case, _, runs = _setup()
+    assert writer.finish_run(
+        org, run, status="falhou", aprovados=2, score=0.667, erro="limite de custo atingido",
+        custo_usd=2.0, completa=False,
+    ) is True
+    assert runs.rows[0]["custo_usd"] == 2.0
+    assert runs.rows[0]["completa"] is False
+
+
+def test_finish_run_omits_completa_key_entirely_when_not_given():
+    """`completa=None` (the default) must NEVER appear in the UPDATE
+    payload — a real PostgREST `.update({"completa": None})` would NULL the
+    column, corrupting the H1 flag 013 stamped at creation."""
+    writer, org, run, _case, _, runs = _setup()
+    runs.rows[0]["completa"] = True
+    assert writer.finish_run(org, run, status="concluida", aprovados=1, score=1.0) is True
+    assert runs.rows[0]["completa"] is True  # untouched
+
+
+def test_skip_pending_results_flips_only_pendente_rows_and_returns_their_case_ids():
+    org, run, other_case = uuid4(), uuid4(), uuid4()
+    pending_case, already_done_case = uuid4(), uuid4()
+    results = _Table(
+        [
+            {"org_id": org, "run_id": run, "case_id": pending_case, "status": "pendente"},
+            {"org_id": org, "run_id": run, "case_id": already_done_case, "status": "aprovado"},
+            {"org_id": org, "run_id": run, "case_id": other_case, "status": "pendente"},
+        ],
+        [],
+    )
+    runs = _Table([{"org_id": org, "id": run, "status": "executando"}], [])
+    writer = SupabaseEvalRunWriter(_Client({"eval_results": results, "eval_runs": runs}), retry_delays=(0.0, 0.0, 0.0))
+
+    skipped = writer.skip_pending_results(org, run, nota="limite de custo atingido")
+
+    assert set(skipped) == {pending_case, other_case}
+    statuses = {r["case_id"]: r["status"] for r in results.rows}
+    assert statuses[pending_case] == "pulado"
+    assert statuses[other_case] == "pulado"
+    assert statuses[already_done_case] == "aprovado"  # never touched — was not pendente
+    assert all(r.get("notas_juiz") == "limite de custo atingido" for r in results.rows if r["status"] == "pulado")

@@ -50,6 +50,10 @@ _SCHEMA = "agents"
 _RUNS_TABLE = "eval_runs"
 _RESULTS_TABLE = "eval_results"
 
+#: Contract §L: `'pulado'` (a case the runner never started — the run's
+#: cost cap was already reached) is written by `skip_pending_results`, not
+#: `set_result` — `set_result` still only accepts the three judged
+#: outcomes.
 RESULT_FINAL_STATUSES = ("aprovado", "reprovado", "erro")
 RUN_FINAL_STATUSES = ("concluida", "falhou")
 
@@ -68,18 +72,36 @@ class EvalRunWriter(Protocol):
     def set_result(
         self, org_id: UUID, run_id: UUID, case_id: UUID, *, status: str, saida: str | None,
         score: float | None, veredito: list[dict[str, Any]] | None, notas_juiz: str | None,
-        duracao_ms: int | None,
+        duracao_ms: int | None, custo_usd: float | None = None, tokens_entrada: int | None = None,
+        tokens_saida: int | None = None, tokens_cache_leitura: int | None = None,
     ) -> bool:
         """UPDATE the pre-created ``pendente`` result row of ``(run_id,
-        case_id)`` — never an insert. ``False`` when it was not ``pendente``."""
+        case_id)`` — never an insert. ``False`` when it was not ``pendente``.
+        Contract §L: ``custo_usd`` is generator + judge cost combined;
+        ``tokens_*`` are the generator turn's counts (absent from the SDK
+        ``ResultMessage`` ⇒ ``None``, never a silent 0)."""
         ...
 
     def finish_run(
         self, org_id: UUID, run_id: UUID, *, status: str, aprovados: int, score: float | None,
-        erro: str | None = None,
+        erro: str | None = None, custo_usd: float | None = None, completa: bool | None = None,
     ) -> bool:
         """``executando → concluida|falhou`` (conditional). ``False`` when the
-        run is no longer ``executando`` (e.g. cancelled mid-run)."""
+        run is no longer ``executando`` (e.g. cancelled mid-run). ``custo_usd``
+        (contract §L) is the run's accumulated cost at the moment it finished.
+        ``completa`` is ``None`` (leave the value 013's ``create_eval_run``
+        stamped untouched) unless the runner needs to DOWNGRADE it — a run
+        created over every active case that the cost cap then cut short is
+        no longer eligible for the publish gate (contract §L)."""
+        ...
+
+    def skip_pending_results(
+        self, org_id: UUID, run_id: UUID, *, nota: str,
+    ) -> list[UUID]:
+        """Contract §L: flips every still-``pendente`` result of the run to
+        ``pulado`` (the run's cost cap was reached before those cases
+        started) — ``notas_juiz=nota``. Returns the ``case_id`` of every row
+        it flipped (``[]`` when none were pending)."""
         ...
 
     def fail_orphaned_runs(self, *, started_before: datetime, erro: str) -> int:
@@ -120,7 +142,8 @@ class FakeEvalRunWriter:
     def set_result(
         self, org_id: UUID, run_id: UUID, case_id: UUID, *, status: str, saida: str | None,
         score: float | None, veredito: list[dict[str, Any]] | None, notas_juiz: str | None,
-        duracao_ms: int | None,
+        duracao_ms: int | None, custo_usd: float | None = None, tokens_entrada: int | None = None,
+        tokens_saida: int | None = None, tokens_cache_leitura: int | None = None,
     ) -> bool:
         _check(status, RESULT_FINAL_STATUSES, "result")
         self._run_row(org_id, run_id)
@@ -131,13 +154,15 @@ class FakeEvalRunWriter:
                 row.update({
                     "status": status, "saida": saida, "score": score, "veredito": veredito,
                     "notas_juiz": notas_juiz, "duracao_ms": duracao_ms, "updated_at": utcnow(),
+                    "custo_usd": custo_usd, "tokens_entrada": tokens_entrada,
+                    "tokens_saida": tokens_saida, "tokens_cache_leitura": tokens_cache_leitura,
                 })
                 return True
         raise NotFound(f"eval result ({run_id}, {case_id}) not found")
 
     def finish_run(
         self, org_id: UUID, run_id: UUID, *, status: str, aprovados: int, score: float | None,
-        erro: str | None = None,
+        erro: str | None = None, custo_usd: float | None = None, completa: bool | None = None,
     ) -> bool:
         _check(status, RUN_FINAL_STATUSES, "run")
         row = self._run_row(org_id, run_id)
@@ -146,9 +171,21 @@ class FakeEvalRunWriter:
         now = utcnow()
         row.update({
             "status": status, "aprovados": aprovados, "score": score, "erro": erro,
-            "finished_at": now, "updated_at": now,
+            "finished_at": now, "updated_at": now, "custo_usd": custo_usd,
         })
+        if completa is not None:
+            row["completa"] = completa
         return True
+
+    def skip_pending_results(self, org_id: UUID, run_id: UUID, *, nota: str) -> list[UUID]:
+        self._run_row(org_id, run_id)
+        skipped: list[UUID] = []
+        now = utcnow()
+        for row in self._store._results.get(run_id, []):
+            if row["org_id"] == org_id and row["status"] == "pendente":
+                row.update({"status": "pulado", "notas_juiz": nota, "updated_at": now})
+                skipped.append(row["case_id"])
+        return skipped
 
     def fail_orphaned_runs(self, *, started_before: datetime, erro: str) -> int:
         n = 0
@@ -240,13 +277,16 @@ class SupabaseEvalRunWriter:
     def set_result(
         self, org_id: UUID, run_id: UUID, case_id: UUID, *, status: str, saida: str | None,
         score: float | None, veredito: list[dict[str, Any]] | None, notas_juiz: str | None,
-        duracao_ms: int | None,
+        duracao_ms: int | None, custo_usd: float | None = None, tokens_entrada: int | None = None,
+        tokens_saida: int | None = None, tokens_cache_leitura: int | None = None,
     ) -> bool:
         _check(status, RESULT_FINAL_STATUSES, "result")
         resp, retried = self._retry("set_result", lambda: (
             self._results().update({
                 "status": status, "saida": saida, "score": score, "veredito": veredito,
                 "notas_juiz": notas_juiz, "duracao_ms": duracao_ms, "updated_at": utcnow_iso(),
+                "custo_usd": custo_usd, "tokens_entrada": tokens_entrada,
+                "tokens_saida": tokens_saida, "tokens_cache_leitura": tokens_cache_leitura,
             })
             .eq("org_id", str(org_id)).eq("run_id", str(run_id)).eq("case_id", str(case_id))
             .eq("status", "pendente")
@@ -263,17 +303,30 @@ class SupabaseEvalRunWriter:
             return bool(row) and row[0]["status"] == status
         return False
 
+    def skip_pending_results(self, org_id: UUID, run_id: UUID, *, nota: str) -> list[UUID]:
+        # postgrest-unbounded-ok: one run's results are capped at
+        # RUN_CASE_IDS_MAX (200, L6) — never an unbounded page.
+        resp, _ = self._retry("skip_pending_results", lambda: (
+            self._results().update({"status": "pulado", "notas_juiz": nota, "updated_at": utcnow_iso()})
+            .eq("org_id", str(org_id)).eq("run_id", str(run_id)).eq("status", "pendente")
+            .execute()
+        ))
+        return [UUID(str(row["case_id"])) for row in (resp.data or [])]
+
     def finish_run(
         self, org_id: UUID, run_id: UUID, *, status: str, aprovados: int, score: float | None,
-        erro: str | None = None,
+        erro: str | None = None, custo_usd: float | None = None, completa: bool | None = None,
     ) -> bool:
         _check(status, RUN_FINAL_STATUSES, "run")
         now = utcnow_iso()
+        payload: dict[str, Any] = {
+            "status": status, "aprovados": aprovados, "score": score, "erro": erro,
+            "finished_at": now, "updated_at": now, "custo_usd": custo_usd,
+        }
+        if completa is not None:
+            payload["completa"] = completa
         resp, retried = self._retry("finish_run", lambda: (
-            self._runs().update({
-                "status": status, "aprovados": aprovados, "score": score, "erro": erro,
-                "finished_at": now, "updated_at": now,
-            })
+            self._runs().update(payload)
             .eq("org_id", str(org_id)).eq("id", str(run_id)).eq("status", "executando")
             .execute()
         ))

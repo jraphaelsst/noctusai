@@ -118,6 +118,50 @@ class TestCreateRun:
         assert second.id != first.id
 
 
+class TestCreateRunCostControl:
+    """Contract §L — `modelo_geracao` / `limite_usd` on `create_run`."""
+
+    def test_modelo_geracao_and_limite_usd_round_trip(self, store):
+        store.create_case(ORG, AGENT, _case_input())
+        run = store.create_run(
+            ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
+            case_ids=None, started_by=USER, modelo_geracao="claude-haiku-4-5", limite_usd=1.5,
+        )
+        assert run.modelo_geracao == "claude-haiku-4-5"
+        assert run.limite_usd == 1.5
+        assert run.custo_usd is None
+
+    def test_modelo_geracao_defaults_to_none(self, store):
+        store.create_case(ORG, AGENT, _case_input())
+        run = store.create_run(
+            ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
+            case_ids=None, started_by=USER,
+        )
+        assert run.modelo_geracao is None
+        assert run.limite_usd is None
+
+    def test_modelo_geracao_outside_allowlist_rejected(self, store):
+        store.create_case(ORG, AGENT, _case_input())
+        with pytest.raises(ValueError):
+            store.create_run(
+                ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
+                case_ids=None, started_by=USER, modelo_geracao="claude-opus-5",
+            )
+
+    def test_limite_usd_out_of_range_rejected(self, store):
+        store.create_case(ORG, AGENT, _case_input())
+        with pytest.raises(ValueError):
+            store.create_run(
+                ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
+                case_ids=None, started_by=USER, limite_usd=0,
+            )
+        with pytest.raises(ValueError):
+            store.create_run(
+                ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
+                case_ids=None, started_by=USER, limite_usd=50.01,
+            )
+
+
 class TestRunLifecycle:
     def test_mark_run_failed(self, store):
         store.create_case(ORG, AGENT, _case_input())
@@ -165,6 +209,9 @@ class TestSupabaseEvalGateShape:
             def eq(self, *_a, **_k):
                 return self
 
+            def is_(self, *_a, **_k):
+                return self
+
             def order(self, *_a, **_k):
                 return self
 
@@ -197,6 +244,9 @@ class TestSupabaseEvalGateShape:
             def eq(self, *_a, **_k):
                 return self
 
+            def is_(self, *_a, **_k):
+                return self
+
             def order(self, *_a, **_k):
                 return self
 
@@ -227,3 +277,54 @@ class TestSupabaseEvalGateShape:
         assert result.score == 0.9
         assert result.compiled_hash == "sha256:abc123"
         assert (result.completa, result.total) == (True, 4)
+
+    def test_filters_out_a_cheaper_iteration_run_via_modelo_geracao_is_null(self):
+        """Contract §L: the gate query itself excludes a run started with a
+        `modelo_geracao` override — the SPY records the exact filter chain
+        (rather than trying to simulate real PostgREST filtering in this
+        hand-rolled stub) so the assertion fails loudly if the `.is_(...)`
+        call is ever dropped."""
+
+        class _SpyTable:
+            def __init__(self):
+                self.calls: list[tuple[str, tuple, dict]] = []
+
+            def _record(self, name, *a, **k):
+                self.calls.append((name, a, k))
+                return self
+
+            def select(self, *a, **k):
+                return self._record("select", *a, **k)
+
+            def eq(self, *a, **k):
+                return self._record("eq", *a, **k)
+
+            def is_(self, *a, **k):
+                return self._record("is_", *a, **k)
+
+            def order(self, *a, **k):
+                return self._record("order", *a, **k)
+
+            def limit(self, *a, **k):
+                return self._record("limit", *a, **k)
+
+            def execute(self):
+                class _Resp:
+                    data = []
+
+                return _Resp()
+
+        class _SpyClient:
+            def __init__(self):
+                self.table_obj = _SpyTable()
+
+            def schema(self, _name):
+                return self
+
+            def table(self, _name):
+                return self.table_obj
+
+        client = _SpyClient()
+        gate = SupabaseEvalGate(client)
+        gate.latest_concluded_run(ORG, VERSION)
+        assert ("is_", ("modelo_geracao", "null"), {}) in client.table_obj.calls

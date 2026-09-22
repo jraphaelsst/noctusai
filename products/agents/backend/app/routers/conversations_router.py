@@ -114,6 +114,9 @@ def _message_out(record: MessageRecord) -> MessageOut:
         updated_at=record.updated_at,
         version_id=record.version_id,
         compiled_hash=record.compiled_hash,
+        custo_usd=record.custo_usd,
+        tokens_entrada=record.tokens_entrada,
+        tokens_saida=record.tokens_saida,
     )
 
 
@@ -736,6 +739,25 @@ async def _run_turn_background(
                     )
                 elif kind == "session.status":
                     sdk_session_id = evt_payload.get("sdk_session_id")
+                    if current_message_id is not None and (
+                        "custo_usd" in evt_payload
+                        or "tokens_entrada" in evt_payload
+                        or "tokens_saida" in evt_payload
+                    ):
+                        # Contract §L: the turn's cost/tokens (SDK
+                        # ResultMessage, run_turn's final event) land on the
+                        # LAST assistant message this turn persisted — a
+                        # turn writes at most one such message today (no
+                        # multi-message studio turns yet), so "the last one"
+                        # is unambiguous. Absent (no ResultMessage observed)
+                        # stays null — never a silent 0 (run_turn already
+                        # logged that case).
+                        msg_store.set_turn_cost(
+                            org_id, conversation_id, current_message_id,
+                            custo_usd=evt_payload.get("custo_usd"),
+                            tokens_entrada=evt_payload.get("tokens_entrada"),
+                            tokens_saida=evt_payload.get("tokens_saida"),
+                        )
                     await publish_event(conversation_id, "session.status", evt_payload, bus=bus)
                     if sdk_session_id:
                         # Canonical fixture: `conversation.upsert` follows the

@@ -33,6 +33,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.config import settings
 from app.dependencies import require_admin, require_member
 from app.routers.studio_agents_router import (
     get_studio_definition_store_dep,
@@ -116,6 +117,7 @@ def _run_out(record) -> EvalRunOut:
         status=record.status, total=record.total, aprovados=record.aprovados, score=record.score,
         limiar=record.limiar, started_at=record.started_at, finished_at=record.finished_at,
         erro=record.erro, completa=record.completa,
+        modelo_geracao=record.modelo_geracao, limite_usd=record.limite_usd, custo_usd=record.custo_usd,
     )
 
 
@@ -214,11 +216,28 @@ async def create_run(
     agent = resolve_studio_agent(defs, ctx.org_id, key)
     version = resolve_version(defs, ctx.org_id, agent, payload.version_id)
     compiled_hash = current_hash(ctx.org_id, agent, version)
+
+    case_ids = payload.case_ids
+    if payload.repetir_falhas_de is not None:
+        # Contract §L: rerun only the failures of a prior run of THIS agent
+        # (org-scoped by `get_run`, which 404s a foreign/unknown run id —
+        # same resolver every studio route uses).
+        try:
+            prior = store.get_run(ctx.org_id, agent.id, payload.repetir_falhas_de)
+        except NotFound as exc:
+            raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
+        case_ids = [
+            r.result.case_id for r in store.list_results_with_cases(ctx.org_id, agent.id, prior.id)
+            if r.result.status != "aprovado"
+        ]
+
+    limite_usd = payload.limite_usd if payload.limite_usd is not None else settings.studio_eval_run_budget_usd
     try:
         run = store.create_run(
             ctx.org_id, agent.id, version.id,
             compiled_hash=compiled_hash, limiar=agent.publicacao_limiar,
-            case_ids=payload.case_ids, started_by=ctx.user_id,
+            case_ids=case_ids, started_by=ctx.user_id,
+            modelo_geracao=payload.modelo_geracao, limite_usd=limite_usd,
         )
     except NotFound as exc:
         raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
@@ -274,6 +293,8 @@ async def get_run(
                 status=r.result.status, score=r.result.score, saida=r.result.saida,
                 veredito=r.result.veredito, notas_juiz=r.result.notas_juiz,
                 duracao_ms=r.result.duracao_ms,
+                custo_usd=r.result.custo_usd, tokens_entrada=r.result.tokens_entrada,
+                tokens_saida=r.result.tokens_saida, tokens_cache_leitura=r.result.tokens_cache_leitura,
             )
             for r in results
         ],

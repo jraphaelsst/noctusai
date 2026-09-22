@@ -26,6 +26,7 @@ from app.studio.evals import (
     parse_judge_output,
     sweep_orphaned_runs,
 )
+from app.studio.models import BUDGET_EXCEEDED_NOTA
 from app.studio.spec import StudioTurnTarget, build_studio_spec
 from tests.studio.rt.fakes import ScriptedJudge
 
@@ -54,10 +55,10 @@ class World:
         self.runtime = runtime or FakeAgentRuntime([])
         self.judge = judge or ScriptedJudge()
 
-    def new_run(self, compiled_hash=None):
+    def new_run(self, compiled_hash=None, *, modelo_geracao=None, limite_usd=None, case_ids=None):
         return self.evals.create_run(
             ORG, self.agent.id, self.draft.id, compiled_hash=compiled_hash or self.hash, limiar=0.8,
-            case_ids=None, started_by=USER,
+            case_ids=case_ids, started_by=USER, modelo_geracao=modelo_geracao, limite_usd=limite_usd,
         )
 
     def runner(self, **kw):
@@ -240,6 +241,114 @@ def test_orphan_sweep_fails_runs_from_before_boot_only():
     fresh = w.new_run()
     assert sweep_orphaned_runs(w.runs, started_before=utcnow() - timedelta(hours=1)) == 0
     assert w.run_row(fresh.id).status == "pendente"
+
+
+class TestCostControl:
+    """Contract §L — the runner's cost tracking, the `modelo_geracao`
+    override, and the per-run budget cap."""
+
+    @pytest.mark.asyncio
+    async def test_modelo_geracao_override_is_used_instead_of_the_versions_model(self):
+        w = World(runtime=FakeAgentRuntime([]))
+        version = w.defs.get_version(ORG, w.draft.id)
+        assert version.model != "claude-haiku-4-5"  # the version's own model, for contrast
+        run = w.new_run(modelo_geracao="claude-haiku-4-5")
+        await w.runner().execute(ORG, run.id)
+        (spec, _ctx, _prompt), = w.runtime.calls
+        assert spec.model == "claude-haiku-4-5"
+        # The override never disturbs the hash-match guard.
+        assert spec.compiled_hash == w.hash
+
+    @pytest.mark.asyncio
+    async def test_no_override_runs_the_versions_own_model(self):
+        w = World(runtime=FakeAgentRuntime([]))
+        version = w.defs.get_version(ORG, w.draft.id)
+        run = w.new_run()
+        await w.runner().execute(ORG, run.id)
+        (spec, _ctx, _prompt), = w.runtime.calls
+        assert spec.model == version.model
+
+    @pytest.mark.asyncio
+    async def test_case_cost_combines_generator_and_judge(self):
+        w = World(
+            runtime=FakeAgentRuntime(
+                [], custo_usd=0.01, tokens_entrada=100, tokens_saida=50, tokens_cache_leitura=10,
+            ),
+            judge=ScriptedJudge(custo_usd=0.02),
+        )
+        run = w.new_run()
+        await w.runner().execute(ORG, run.id)
+        result = w.results(run.id)["c1"]
+        assert result.custo_usd == pytest.approx(0.03)
+        assert result.tokens_entrada == 100  # generator-only leg; judge reported none
+        assert result.tokens_saida == 50
+        assert result.tokens_cache_leitura == 10
+        assert w.run_row(run.id).custo_usd == pytest.approx(0.03)
+
+    @pytest.mark.asyncio
+    async def test_missing_cost_stays_null_never_a_silent_zero(self):
+        w = World(runtime=FakeAgentRuntime([]))  # no custo_usd scripted
+        run = w.new_run()
+        await w.runner().execute(ORG, run.id)
+        result = w.results(run.id)["c1"]
+        assert result.custo_usd is None
+        assert w.run_row(run.id).custo_usd is None
+
+    @pytest.mark.asyncio
+    async def test_budget_cap_stops_new_cases_skips_the_rest_and_downgrades_completa(self):
+        w = World(
+            cases=[
+                ("c1", "P1", {"deve": ["a"]}),
+                ("c2", "P2", {"deve": ["a"]}),
+                ("c3", "P3", {"deve": ["a"]}),
+            ],
+            runtime=FakeAgentRuntime([], custo_usd=1.0),
+        )
+        run = w.new_run(limite_usd=1.5)
+        assert run.completa is True  # every active case, at creation
+        # concurrency=1: deterministic case order for the cap assertion.
+        await w.runner(concurrency=1).execute(ORG, run.id)
+
+        row = w.run_row(run.id)
+        assert row.status == "falhou"
+        assert row.completa is False  # contract §L: downgraded — never satisfies the publish gate
+        assert row.erro == BUDGET_EXCEEDED_NOTA
+        assert row.custo_usd == pytest.approx(2.0)
+        assert row.aprovados == 2
+
+        res = w.results(run.id)
+        assert res["c1"].status == "aprovado" and res["c1"].custo_usd == pytest.approx(1.0)
+        assert res["c2"].status == "aprovado" and res["c2"].custo_usd == pytest.approx(1.0)
+        assert res["c3"].status == "pulado"
+        assert res["c3"].notas_juiz == BUDGET_EXCEEDED_NOTA
+        assert res["c3"].custo_usd is None
+
+    @pytest.mark.asyncio
+    async def test_no_limite_usd_never_caps_the_run(self):
+        w = World(
+            cases=[("c1", "P1", {"deve": ["a"]}), ("c2", "P2", {"deve": ["a"]})],
+            runtime=FakeAgentRuntime([], custo_usd=10.0),  # would blow any real budget
+        )
+        run = w.new_run()  # limite_usd omitted -> None -> unbounded
+        assert run.limite_usd is None
+        await w.runner(concurrency=1).execute(ORG, run.id)
+        row = w.run_row(run.id)
+        assert row.status == "concluida"
+        assert row.completa is True
+        assert row.custo_usd == pytest.approx(20.0)
+
+    @pytest.mark.asyncio
+    async def test_partial_cost_is_kept_even_when_the_judge_fails(self):
+        w = World(
+            runtime=FakeAgentRuntime([], custo_usd=0.05),
+            judge=ScriptedJudge(default=JudgeError("sem json")),
+        )
+        run = w.new_run()
+        await w.runner().execute(ORG, run.id)
+        result = w.results(run.id)["c1"]
+        assert result.status == "erro"
+        assert result.custo_usd == pytest.approx(0.05)  # the generator turn WAS billed
+        assert w.run_row(run.id).custo_usd == pytest.approx(0.05)
 
 
 class TestJudgeParsing:

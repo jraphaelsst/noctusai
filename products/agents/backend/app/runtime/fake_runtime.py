@@ -56,13 +56,26 @@ class FakeAgentRuntime:
     it has nothing to do with the slot beyond accepting it.
     """
 
-    def __init__(self, script: list[ScriptItem], *, capacity: int = DEFAULT_SLOT_COUNT) -> None:
+    def __init__(
+        self, script: list[ScriptItem], *, capacity: int = DEFAULT_SLOT_COUNT,
+        custo_usd: float | None = None, tokens_entrada: int | None = None,
+        tokens_saida: int | None = None, tokens_cache_leitura: int | None = None,
+    ) -> None:
         self._script = list(script)
         self._pool = FakeSlotPool(capacity)
         #: Every ``(spec, ctx, prompt)`` this fake ran, in order — lets route
         #: and eval-runner tests assert WHAT was launched (the studio spec's
         #: compiled hash, the ephemeral eval context) without a real CLI.
         self.calls: list[tuple[AgentSpec, TurnContext, str]] = []
+        #: Contract §L: the cost/token counts this fake reports on every
+        #: turn's final ``session.status`` (mirrors the real runtime's
+        #: ``ResultMessage`` fields) — ``None`` by default, matching every
+        #: pre-existing script byte-for-byte; eval-cost-cap tests set a
+        #: fixed per-turn cost here.
+        self._custo_usd = custo_usd
+        self._tokens_entrada = tokens_entrada
+        self._tokens_saida = tokens_saida
+        self._tokens_cache_leitura = tokens_cache_leitura
 
     def try_reserve(self) -> TurnSlot | None:
         return self._pool.try_reserve()
@@ -101,6 +114,10 @@ class FakeAgentRuntime:
             "payload": {
                 "status": "ociosa",
                 "sdk_session_id": ctx.sdk_session_id or f"fake-session-{uuid4().hex[:8]}",
+                "custo_usd": self._custo_usd,
+                "tokens_entrada": self._tokens_entrada,
+                "tokens_saida": self._tokens_saida,
+                "tokens_cache_leitura": self._tokens_cache_leitura,
             },
         }
 

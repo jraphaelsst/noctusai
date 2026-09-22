@@ -1,7 +1,7 @@
 """Router tests for `/api/studio/agents/{key}/evals/*` (contract §D4)."""
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -220,3 +220,128 @@ def test_default_scheduler_dependency_is_fail_closed():
     scheduler = get_eval_scheduler_dep()
     with pytest.raises(EvalSchedulerUnavailable):
         scheduler(uuid4())
+
+
+class TestCostControl:
+    """Contract §L — `modelo_geracao` / `limite_usd` / `repetir_falhas_de`."""
+
+    def _seed_agent_case_version(self, ke_client):
+        agent = seed_studio_agent(ke_client)
+        version_id = seed_draft(ke_client, agent).id
+        ke_client.stores.evals.create_case(
+            DEFAULT_ORG_ID, agent.id,
+            EvalCaseInput(
+                slug="case-1", titulo="Caso 1", entrada="entrada",
+                criterios={"deve": ["x"], "nao_deve": []},
+            ),
+        )
+        return agent, version_id
+
+    def _with_available_scheduler(self, ke_client, body):
+        app = ke_client.raw().app
+        app.dependency_overrides[get_eval_scheduler_dep] = lambda: (lambda run_id: None)
+        try:
+            return ke_client.post("/api/studio/agents/isaia/evals/runs", json=body)
+        finally:
+            app.dependency_overrides.pop(get_eval_scheduler_dep, None)
+
+    def test_modelo_geracao_outside_allowlist_422s(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        _agent, version_id = self._seed_agent_case_version(ke_client)
+        resp = ke_client.post(
+            "/api/studio/agents/isaia/evals/runs",
+            json={"version_id": str(version_id), "modelo_geracao": "claude-opus-5"},
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_modelo_geracao_is_stamped_and_returned(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        _agent, version_id = self._seed_agent_case_version(ke_client)
+        resp = self._with_available_scheduler(
+            ke_client, {"version_id": str(version_id), "modelo_geracao": "claude-haiku-4-5"},
+        )
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["modelo_geracao"] == "claude-haiku-4-5"
+
+    def test_limite_usd_defaults_from_settings_when_omitted(self, ke_client):
+        from app.config import settings
+
+        seed_org_role(ke_client, role="owner")
+        _agent, version_id = self._seed_agent_case_version(ke_client)
+        resp = self._with_available_scheduler(ke_client, {"version_id": str(version_id)})
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["limite_usd"] == settings.studio_eval_run_budget_usd
+
+    def test_limite_usd_explicit_value_round_trips(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        _agent, version_id = self._seed_agent_case_version(ke_client)
+        resp = self._with_available_scheduler(
+            ke_client, {"version_id": str(version_id), "limite_usd": 5.0},
+        )
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["limite_usd"] == 5.0
+
+    def test_limite_usd_above_cap_422s(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        _agent, version_id = self._seed_agent_case_version(ke_client)
+        resp = ke_client.post(
+            "/api/studio/agents/isaia/evals/runs",
+            json={"version_id": str(version_id), "limite_usd": 50.01},
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_case_ids_and_repetir_falhas_de_are_mutually_exclusive(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        _agent, version_id = self._seed_agent_case_version(ke_client)
+        resp = ke_client.post(
+            "/api/studio/agents/isaia/evals/runs",
+            json={
+                "version_id": str(version_id), "case_ids": [str(uuid4())],
+                "repetir_falhas_de": str(uuid4()),
+            },
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_repetir_falhas_de_unknown_run_404s(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        _agent, version_id = self._seed_agent_case_version(ke_client)
+        resp = ke_client.post(
+            "/api/studio/agents/isaia/evals/runs",
+            json={"version_id": str(version_id), "repetir_falhas_de": str(uuid4())},
+        )
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["code"] == "eval_run_not_found"
+
+    def test_repetir_falhas_de_reruns_only_non_aprovado_cases(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        agent, version_id = self._seed_agent_case_version(ke_client)
+        # A second, passing case on the same agent/version.
+        passing_case = ke_client.stores.evals.create_case(
+            DEFAULT_ORG_ID, agent.id,
+            EvalCaseInput(slug="case-2", titulo="Caso 2", entrada="entrada", criterios={"deve": ["x"], "nao_deve": []}),
+        )
+        prior = self._with_available_scheduler(ke_client, {"version_id": str(version_id)})
+        assert prior.status_code == 202, prior.text
+        prior_run_id = UUID(prior.json()["id"])
+
+        # Mark case-1's result reprovado, case-2's aprovado — direct store
+        # introspection (no public "set result" surface on this slice's own
+        # store; the runner's writer is BE-RT's `FakeEvalRunWriter`, mirrors
+        # the internal-introspection idiom this suite already uses).
+        for row in ke_client.stores.evals._results[prior_run_id]:
+            row["status"] = "aprovado" if row["case_id"] == passing_case.id else "reprovado"
+        # Free the version's one-active-run slot (013 partial unique index)
+        # — the HTTP-created run never got claimed by a real runner here.
+        ke_client.stores.evals._runs[prior_run_id]["status"] = "concluida"
+
+        rerun = self._with_available_scheduler(
+            ke_client, {"version_id": str(version_id), "repetir_falhas_de": str(prior_run_id)},
+        )
+        assert rerun.status_code == 202, rerun.text
+        rerun_id = UUID(rerun.json()["id"])
+        results = ke_client.stores.evals._results[rerun_id]
+        assert len(results) == 1
+        assert results[0]["case_id"] != passing_case.id
+        # A rerun over a SUBSET is never `completa` (H1) regardless of it
+        # having been derived from a full prior run.
+        assert rerun.json()["completa"] is False

@@ -161,7 +161,7 @@
     },
     {
       "event": "session.status",
-      "payload": { "status": "ociosa", "sdk_session_id": "sess-fixture" }
+      "payload": { "status": "ociosa", "sdk_session_id": "sess-fixture", "custo_usd": null, "tokens_entrada": null, "tokens_saida": null, "tokens_cache_leitura": null }
     },
     {
       "event": "conversation.upsert",
