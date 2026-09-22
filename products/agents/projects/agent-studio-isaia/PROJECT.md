@@ -4,7 +4,7 @@
 
 - **Created:** 2026-09-21
 - **Last updated:** 2026-09-21
-- **Status:** Design locked → Wave 1 dispatching
+- **Status:** On `dev` (5626935dc) — live-verified in the prod image; prod promotion awaits the owner
 - **Owner / stakeholders:** repo owner (product decisions) · tech-lead session (orchestration)
 - **Related docs:** `CONTRACT.md` (this folder — the binding shape) · `products/agents/MASTER-PROMPT.md` · `project-history/roadmaps/julia-agents-academia-2026-09.md` (Julia's plan; Julia stays untouched here) · `KB § PATTERNS/frontend/lying-loading-state.md` · `KB § PATTERNS/backend/database-rls.md`
 - **Project slug:** `agent-studio-isaia` (single-product → `products/agents/projects/`)
@@ -119,29 +119,29 @@ A better route than the brief ⇒ STOP and report (no silent divergence).
 
 **Improvements:** Julia's `spec.yaml` lists bare skill names while the SDK docs namespace plugin skills as `plugin:skill` — possible live defect in Julia's skill loading; recorded here, verification deferred → Phase 3 (a live check of the `init` message's `skills` array during local runtime testing).
 
-### Phase 1 — Wave 1 (parallel): BE-DEF · BE-KE · FE-DEF · FE-KE · CONTENT
-- [ ] BE-DEF merged
-- [ ] BE-KE merged
-- [ ] FE-DEF merged
-- [ ] FE-KE merged
-- [ ] IsaIA bundle v1 authored (outside repo)
+### Phase 1 — Wave 1 (parallel): BE-DEF · BE-KE · FE-DEF · FE-KE · CONTENT ✅
+- [x] BE-DEF merged
+- [x] BE-KE merged
+- [x] FE-DEF merged
+- [x] FE-KE merged
+- [x] IsaIA bundle v1 authored (outside repo)
 
 **Improvements:** none identified.
 
-### Phase 2 — Wave 2: BE-RT (runtime, studio tools, conversations, eval runner, router registration)
-- [ ] BE-RT merged; Julia runtime tests green untouched
+### Phase 2 — Wave 2: BE-RT (runtime, studio tools, conversations, eval runner, router registration) ✅
+- [x] BE-RT merged; Julia runtime tests green untouched
 
 **Improvements:** none identified.
 
-### Phase 3 — Integrate, verify, refine (dev)
-- [ ] Full gate on merged tip (backend pytest, vite build, vitest, keeper)
-- [ ] Security + compliance advisor pass; findings fixed
-- [ ] Owner go for migrations on the shared DB → apply 012/013
-- [ ] Local run: import IsaIA bundle, publish via eval gate, chat, inspector verified
-- [ ] Refinement loop; integrate to `dev`
+### Phase 3 — Integrate, verify, refine (dev) ⏳
+- [x] Full gate on merged tip (backend 1157 · agents FE 150 · seed lib 516 · academia FE 73 · toolkit 351)
+- [x] Security + compliance advisor pass; findings fixed (BE-HARDEN, FE-FIX, reconcile)
+- [x] Owner go for migrations on the shared DB → 012/013 applied via migrate_product; 15/15 live guard probes pass
+- [ ] Local run: import ✅ · compile ✅ · eval gate ✅ (0.881 → 0.974) · publish + chat + inspector-by-hash — blocked: Anthropic account credit exhausted mid-run 3
+- [x] Refinement loop; integrate to `dev`
 - [ ] Report to owner (prod = owner's call)
 
-**Improvements:** none identified.
+**Improvements:** applied — uvicorn `--loop asyncio` (uvloop rejected subprocess `user=`, every slot quarantined in the prod image); studio system prompt via `{type:file}` (neutral identity line); judge aligns by criterion number; eval-run writes retry transient transport errors; startup steps independent + retried; studio turns decoupled from Julia-only config; trigram index dropped (pg_trgm lives in another product's schema); tests can never reach the shared DB (conftest blanks the service key); pre-commit always refreshes the shared auto-improvement cache; `cli.py --validate` no longer crashes on global issues. Deferred → owner decision: prod promotion; Julia migration to studio (CONTRACT §K).
 
 ## 7. Open questions
 - Rights to use the third-party course material in a commercial agent — owner's call; content stays DB-only regardless.
@@ -163,3 +163,5 @@ Read `CONTRACT.md` first. Backend: `cd products/agents/backend && pytest`. Front
 
 ## 11. Change log
 - 2026-09-21 — Project created; contract v1 locked; Wave 1 dispatch.
+- 2026-09-21 — Waves 1+2 merged; security/compliance hardening; 012/013 applied (owner go); integrated to dev.
+- 2026-09-22 — Live verification in the prod image (QA org): 3 eval rounds, 5 production bugs found and fixed; paused on Anthropic credit exhaustion.
