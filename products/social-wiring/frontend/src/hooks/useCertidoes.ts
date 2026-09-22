@@ -158,6 +158,11 @@ export interface CertidaoConsulta {
   situacao_cadastral?: SituacaoCadastral | null;
   data_situacao?: string | null; // YYYY-MM-DD
   situacao_origem?: ResultadoOrigem | null;
+  /** Migration 147 — `"automatica"`: created via `POST /consultas`, billed
+   * through InfoSimples. `"manual"`: created via `POST /consultas/manual`,
+   * never calls InfoSimples, never billed. Absent on rows created before
+   * the migration is treated as `"automatica"` by the backend default. */
+  origem?: "automatica" | "manual";
 }
 
 export interface ConsultaCreateData {
@@ -171,6 +176,15 @@ export interface ConsultaCreateData {
   nome_pai?: string;
   /** Opt-in TJSP automation — omitted/false ⇒ no TJSP resultado is created. */
   incluir_tjsp?: boolean;
+}
+
+/** `POST /consultas/manual`'s body — `ConsultaCreateData` plus an optional,
+ * mutually exclusive link to a party or a card's titular, done in the SAME
+ * request `useVincularParte`/`useVincularCliente` would otherwise need a
+ * second call for. See `routers/certidoes.py::criar_consulta_manual`. */
+export interface ConsultaManualCreateData extends ConsultaCreateData {
+  atendimentoParteId?: string;
+  clienteId?: string;
 }
 
 export interface FiltrosConsultas {
@@ -467,6 +481,45 @@ function invalidateCertidoesScope(
       queryKey: ["certidao-resultados-cliente", scope.clienteId],
     });
   }
+}
+
+/**
+ * `POST /consultas/manual` — creates a consulta the SAME shape the automated
+ * path does (ten + three placeholder resultados) but never calls
+ * InfoSimples and never requires its token, optionally linking it to a
+ * party/titular in the same request. Reached from a person's own card
+ * (`CertidoesPartePanel`'s "Registrar certidões manualmente") — for
+ * certidões the office already holds on paper (old processes, cards that
+ * will never go through InfoSimples). NOT offered in the Nova Consulta
+ * modal (owner decision, 2026-09-22): that path always requests for real.
+ *
+ * Invalidation mirrors `useVincularParte`/`useVincularCliente` — same shape
+ * of cache is affected whether the link happened in one call (here) or two.
+ */
+export function useCriarConsultaManual() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (data: ConsultaManualCreateData) => {
+      const { atendimentoParteId, clienteId, ...consultaFields } = data;
+      const body: Record<string, unknown> = { ...consultaFields };
+      if (atendimentoParteId) body.atendimento_parte_id = atendimentoParteId;
+      if (clienteId) body.cliente_id = clienteId;
+      const result = await api.post("/api/certidoes/consultas/manual", body);
+      return result.data as CertidaoConsulta;
+    },
+    onSuccess: (_data, variables) => {
+      invalidateCertidoesScope(queryClient, {
+        atendimentoParteId: variables.atendimentoParteId,
+        clienteId: variables.clienteId,
+      });
+      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+      toast.success("Certidões registradas manualmente!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao registrar certidões manualmente", { description: error.message });
+    },
+  });
 }
 
 /** `scope` scopes cache invalidation only — the mutation itself targets a

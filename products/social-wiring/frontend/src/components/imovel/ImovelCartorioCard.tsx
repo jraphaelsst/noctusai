@@ -259,14 +259,27 @@ export default function ImovelCartorioCard({
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="prefeitura">Prefeitura do cadastro imobiliário</Label>
+          {/* 🔴 THE NUMBER, NOT THE CITY. `prefeitura_cadastro_imobiliario`
+              (the DB column name — migration 075, unchanged, still applied
+              in prod and read by `carregador.py`) holds the município's
+              cadastro/inscrição NUMBER, never the city name: the contract
+              template prints "cadastrado pela Prefeitura Municipal de
+              {imovel.cidade} sob nº {imovel.inscricao_municipal}" — the city
+              comes from Vista's own `cidade` field, and this column supplies
+              only the "nº" part. A label reading "Prefeitura do cadastro
+              imobiliário" with a "Ex.: São Paulo" placeholder led an
+              operator to type a city here, which then printed "sob nº São
+              Paulo" in a signed contract. The gate (`derivacao.py`) already
+              calls this field "Inscrição municipal (cadastro na
+              prefeitura)" — this label now matches it. */}
+          <Label htmlFor="prefeitura">Inscrição municipal (cadastro na prefeitura)</Label>
           <Input
             id="prefeitura"
             value={draft.prefeitura_cadastro_imobiliario}
             onChange={(e) =>
               set("prefeitura_cadastro_imobiliario")(e.target.value)
             }
-            placeholder="Ex.: São Paulo"
+            placeholder="Ex.: 23231.42.11.0377.00.000"
             disabled={loading}
           />
         </div>

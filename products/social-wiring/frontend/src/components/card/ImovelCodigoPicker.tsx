@@ -179,18 +179,33 @@ export function ImovelCodigoPicker({
                 <span className="min-w-0 flex-1 truncate">
                   {rotuloDoImovel(imovel)}
                 </span>
-                {!imovel.ativo_no_vista && (
-                  // 🔴 Labelled, never filtered out. A sold imóvel is the
-                  // RIGHT answer on a closing deal — but the operator has to
-                  // see which of two similar códigos is the live listing.
+                {imovel.origem === "manual" ? (
+                  // 🔴 A hand-registered código was NEVER in the catálogo —
+                  // "fora do catálogo" would claim it left one it never
+                  // entered. Distinct badge, distinct fact.
                   <span
                     className={cn(
                       "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-                      "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+                      "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
                     )}
                   >
-                    fora do catálogo
+                    cadastrado manualmente
                   </span>
+                ) : (
+                  !imovel.ativo_no_vista && (
+                    // 🔴 Labelled, never filtered out. A sold imóvel is the
+                    // RIGHT answer on a closing deal — but the operator has
+                    // to see which of two similar códigos is the live
+                    // listing.
+                    <span
+                      className={cn(
+                        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                        "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200",
+                      )}
+                    >
+                      fora do catálogo
+                    </span>
+                  )
                 )}
               </button>
             </li>

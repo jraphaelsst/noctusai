@@ -61,6 +61,39 @@ export interface Cliente {
   };
   data_entrega?: string | null;
   entrega_concluida?: boolean;
+
+  // ─── Qualificação civil (migration 097/117/148) ────────────────────────
+  //
+  // 🔴 REAL COLUMNS, not decoration: `GET /api/clientes` (this file's own
+  // list route) never selects them, but `GET /api/clientes/{id}`,
+  // `GET /api/clientes/{id}/card` (`card.cliente`, via `ensure_cliente` →
+  // `clientes_service.get_cliente`) and `atendimento_partes.cliente` (see
+  // `CompradorPessoa`) all read the SAME `clientes` row with `select("*")`,
+  // so a caller holding one of THOSE already has every field below at
+  // runtime — this type used to lag that fact, which is exactly why
+  // `ClienteDetailModal`'s "Dados do cliente" tab prefilled blank for a
+  // titular whose qualificação was already on file (only the CHECKLIST's
+  // narrower `valores` — nome_completo/celular/email/data_nascimento/
+  // profissao/genero/rg/cpf — fed the form; `card.data.cliente` had the
+  // rest all along, untyped). Optional because the list route genuinely
+  // omits them — never claim a value the response did not send. */
+  nome_oficial?: string | null;
+  cpf?: string | null;
+  rg?: string | null;
+  rg_orgao_expedidor?: string | null;
+  estado_civil?: string | null;
+  regime_bens?: string | null;
+  nacionalidade?: string | null;
+  conjuge_cliente_id?: string | null;
+  data_casamento?: string | null;
+  certidao_estado_civil_emitida_em?: string | null;
+  endereco_cep?: string | null;
+  endereco_logradouro?: string | null;
+  endereco_numero?: string | null;
+  endereco_complemento?: string | null;
+  endereco_bairro?: string | null;
+  endereco_cidade?: string | null;
+  endereco_uf?: string | null;
 }
 
 export interface ClientesFiltros {

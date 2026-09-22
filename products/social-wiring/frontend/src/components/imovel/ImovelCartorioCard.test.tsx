@@ -109,3 +109,18 @@ describe("ImovelCartorioCard — matrícula source badges", () => {
     expect(badge.textContent).toContain("manual");
   });
 });
+
+describe("ImovelCartorioCard — prefeitura_cadastro_imobiliario field label", () => {
+  it("labels the field as the municipal registration NUMBER, not the city", async () => {
+    // 🔴 The contract template prints "cadastrado pela Prefeitura Municipal
+    // de {cidade} sob nº {inscricao_municipal}" — the city comes from
+    // elsewhere, and this DB column supplies only the "nº" part. A label
+    // reading "Prefeitura do cadastro imobiliário" with a city placeholder
+    // led an operator to type a city here, which printed "sob nº São Paulo"
+    // in a signed contract.
+    const { screen } = await render();
+    const input = screen.getByLabelText("Inscrição municipal (cadastro na prefeitura)");
+    expect(input).toBeTruthy();
+    expect(input.getAttribute("placeholder")).not.toMatch(/São Paulo/);
+  });
+});

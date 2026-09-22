@@ -189,6 +189,15 @@ def _imovel_out(
         # there, and an operator naming the imóvel of a CLOSED deal needs to
         # know the opposite — that "not in the catalog" is the expected state.
         "ativo_no_vista": bool((reg or {}).get("ativo_no_vista")),
+        # 🔴 `origem_descoberta` (063's vocabulary), passed through verbatim
+        # so the picker can tell "never listed, hand-registered" apart from
+        # "was listed, sold" — BOTH read `ativo_no_vista: False` and BOTH
+        # read `fonte: "registry"`, but they are not the same fact and the
+        # picker used to badge them identically ("fora do catálogo"), which
+        # is simply wrong for a property that was never in the catálogo to
+        # begin with. `None` when there is no registry row at all (`fonte:
+        # "nenhuma"`) — nothing discovered it, so there is no origin to name.
+        "origem": (reg or {}).get("origem_descoberta"),
         # Does this código have a registry identity? Every FK in this schema
         # points at `imovel_registry`, so this is precisely "can it be SAVED".
         # A caller offering the código as a choice must consult it first —

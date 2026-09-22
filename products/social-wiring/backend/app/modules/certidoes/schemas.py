@@ -42,6 +42,40 @@ class ConsultaCreate(StrictHttpModel):
     incluir_tjsp: bool = False
 
 
+class ConsultaManualCreate(ConsultaCreate):
+    """`POST /consultas/manual` — same shape as `ConsultaCreate`, plus an
+    OPTIONAL, mutually exclusive link to a party or a card's titular, done
+    atomically at creation time rather than in a second `vincular-*` call.
+
+    🔴 CARD-ONLY BY OWNER DECISION (2026-09-22). This endpoint exists so a
+    person can manually register certidões the office already holds on
+    paper — old processes, cards that will never go through InfoSimples —
+    from that person's own card. It is NOT offered as a chooser next to the
+    automated path in the Nova Consulta modal: an earlier version of this
+    feature put "automatic" and "manual" side by side there, the office
+    picked "manual" by mistake, and a real certidão need went unrequested
+    with no error to catch it. `criar_consulta`/`ConsultaCreate` — Nova
+    Consulta's ONLY path — always requests for real; nothing about that path
+    changes here.
+
+    Both `atendimento_parte_id` and `cliente_id` are optional and neither is
+    required: the "record a certidão obtained elsewhere" use case creates an
+    unlinked ad-hoc consulta exactly like `ConsultaCreate` always could, and
+    `routers/certidoes.py::criar_consulta_manual` still fans out one
+    placeholder resultado per required type either way. See that function's
+    own docstring for why sending BOTH is refused rather than one silently
+    winning.
+
+    `incluir_tjsp` is inherited from `ConsultaCreate` but ignored here — the
+    manual fan-out always includes a TJSP placeholder resultado (the office
+    may already hold a paper TJSP certidão for an old process), so there is
+    no "opt in to a paid automated call" decision for this path to carry.
+    """
+
+    atendimento_parte_id: Optional[UUID] = None
+    cliente_id: Optional[UUID] = None
+
+
 class VincularParteRequest(StrictHttpModel):
     """Attach a consulta to one party of an atendimento.
 
@@ -109,6 +143,7 @@ class SituacaoCadastralPatch(StrictHttpModel):
 
 __all__ = [
     "ConsultaCreate",
+    "ConsultaManualCreate",
     "ResultadoPatch",
     "SituacaoCadastralPatch",
     "VincularClienteRequest",

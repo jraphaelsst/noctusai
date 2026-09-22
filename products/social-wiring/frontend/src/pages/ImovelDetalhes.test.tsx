@@ -340,6 +340,34 @@ describe("ImovelDetalhes — manually-registered código (mirror 404, registry 2
     expect(queryByText("Imóvel AP1234 não encontrado.")).toBeNull();
   });
 
+  it("🔴 also renders 'Para o contrato' — título/endereço do registro/ônus have no OTHER reachable input for a manually registered property", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    mockUseImovel.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new ApiError(404, "Imóvel não encontrado"),
+    });
+    mockUseImovelRegistro.mockReturnValue({
+      data: {
+        codigo: "AP1234",
+        registrado: true,
+        origem: "manual",
+        criado_em: "2026-09-01T00:00:00Z",
+      },
+      isPending: false,
+      isError: false,
+    });
+    const { getByText, getByTestId } = await renderDetalhes();
+
+    expect(getByTestId("imovel-manual-layout")).toBeTruthy();
+    // All three cards the manual layout owes a manually-registered código:
+    // cartório/registro, documentos, AND the contract's título/endereço/ônus.
+    expect(getByText("Cartório e registro")).toBeTruthy();
+    expect(getByText("Documentos do imóvel")).toBeTruthy();
+    expect(getByText("Para o contrato")).toBeTruthy();
+  });
+
   it("shows the skeleton while either the mirror or the registry is still resolving", async () => {
     const { ApiError } = await import("@noctusai/lib");
     mockUseImovel.mockReturnValue({

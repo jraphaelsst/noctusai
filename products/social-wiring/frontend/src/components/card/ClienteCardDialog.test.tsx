@@ -1097,7 +1097,9 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
 
     fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
     // The PARTE id, not the cliente_id — certidões hang off the role in the deal.
-    expect(renderCertidoes).toHaveBeenCalledWith("parte-1", expect.any(String));
+    // Third arg is the party's own CPF/CNPJ, when on file — `undefined` here
+    // since this fixture's `cliente` carries none.
+    expect(renderCertidoes).toHaveBeenCalledWith("parte-1", expect.any(String), undefined);
     expect(screen.getByTestId("certidoes-da-parte")).toBeTruthy();
   });
 

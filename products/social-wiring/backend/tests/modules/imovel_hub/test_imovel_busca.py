@@ -55,14 +55,14 @@ def mirror_row(codigo: str, **over) -> dict:
     return row
 
 
-def registry_row(codigo: str, *, ativo=True, **snap) -> dict:
+def registry_row(codigo: str, *, ativo=True, origem_descoberta="vista_sync", **snap) -> dict:
     row = {
         "id": str(uuid4()),
         "org_id": ORG_ID,
         "codigo_canonical": codigo,
         "codigo_display": codigo,
         "ativo_no_vista": ativo,
-        "origem_descoberta": "vista_sync",
+        "origem_descoberta": origem_descoberta,
         "snap_titulo": snap.get("titulo"),
         "snap_bairro": snap.get("bairro"),
         "snap_cidade": snap.get("cidade"),
@@ -148,6 +148,51 @@ class TestRegistryOnlyIsFindable:
         resp = client.get("/api/imoveis", params={"search": "ONE4770"}, headers=auth())
         assert resp.status_code == 200, resp.text
         assert resp.json()["items"] == []
+
+
+class TestOrigemMarksAHandRegisteredCodigo:
+    """`POST /api/imoveis/{codigo}/registrar` (migration 149) writes
+    `origem_descoberta='manual'`. A registry-only hit needs to say so —
+    distinct from a genuinely delisted (`origem_descoberta='vista_sync'`)
+    one, which is a DIFFERENT fact ("was listed, sold" vs. "never listed,
+    hand-registered") the picker must not badge identically."""
+
+    def test_a_hand_registered_codigo_carries_origem_manual(self, client, scoped):
+        seed_busca(
+            scoped,
+            registry=[registry_row("EUROVILLE-535", ativo=False, origem_descoberta="manual")],
+            mirror=[],
+        )
+        item = buscar(client, "EUROVILLE-535")["items"][0]
+        assert item["fonte"] == "registry"
+        assert item["origem"] == "manual"
+
+    def test_a_vista_sync_delisted_codigo_carries_no_manual_origem(self, client, scoped):
+        seed_busca(
+            scoped,
+            registry=[registry_row("ONE4770", ativo=False, titulo="Casa vendida")],
+            mirror=[],
+        )
+        item = buscar(client, "ONE4770")["items"][0]
+        assert item["origem"] == "vista_sync"
+
+    def test_a_hand_registered_codigo_with_no_snapshot_falls_back_to_the_codigo_itself(
+        self, client, scoped
+    ):
+        """`registrar_imovel` writes no `snap_*` at registration time (there
+        is nothing to snapshot yet) — `titulo` stays `None`, and it is the
+        FRONTEND's `rotuloDoImovel` that falls back to the código. This pins
+        the backend half: `titulo` really is `None`, not an empty string a
+        naive `Boolean("")` check would also treat as falsy but that a
+        stricter check might not."""
+        seed_busca(
+            scoped,
+            registry=[registry_row("EUROVILLE-535", ativo=False, origem_descoberta="manual")],
+            mirror=[],
+        )
+        item = buscar(client, "EUROVILLE-535")["items"][0]
+        assert item["titulo"] is None
+        assert item["codigo"] == "EUROVILLE-535"
 
 
 class TestMirrorPreferredWithSnapFallback:

@@ -469,10 +469,15 @@ export default function ImovelDetalhes() {
  * The surface for a código the Vista mirror has never seen but the registry
  * has (`origem: "manual"`, migration 149) — every input a contract needs
  * from a property BEFORE it ever syncs: cartório/registro data, the manual
- * address override, and its documents. Reuses `ImovelCartorioCard` and
- * `ImovelDocumentosCard` verbatim (both are already codigo-scoped, not
- * imóvel-object-scoped) — no forked copies. `ImovelRegistroSection` and the
- * CONTRACT § 5 Vista-field sections above are deliberately absent: they
+ * address override, its documents, AND "Para o contrato" (título
+ * aquisitivo / endereço do registro / credor do ônus + the CND group) —
+ * `ImovelContratoContainer`'s own surface, so a manually registered
+ * property has a reachable input for `matricula.titulo_aquisitivo_texto`
+ * and `matricula.ultima_transferencia` too, the very gap this layout
+ * exists to close. Reuses `ImovelCartorioCard`, `ImovelDocumentosCard` and
+ * `ImovelContratoContainer` verbatim (all three are already codigo-scoped,
+ * not imóvel-object-scoped) — no forked copies. `ImovelRegistroSection` and
+ * the CONTRACT § 5 Vista-field sections above are deliberately absent: they
  * render facts this record does not have.
  *
  * Every query/mutation is a prop, not a hook call in here — `ImovelDetalhes`
@@ -558,6 +563,8 @@ function ImovelManualLayout({
               if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
             }}
           />
+
+          <ImovelContratoContainer codigo={codigo} />
         </div>
       </div>
     </div>

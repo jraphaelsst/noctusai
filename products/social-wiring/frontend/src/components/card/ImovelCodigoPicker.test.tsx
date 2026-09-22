@@ -102,6 +102,21 @@ describe("ImovelCodigoPicker", () => {
     expect(opcao.textContent).toContain("fora do catálogo");
   });
 
+  it("labels a manually-registered imóvel as such, not as out of the catalog", async () => {
+    mockUseImoveisBusca.mockReturnValue(
+      busca([
+        hit("EUROVILLE-535", { ativo_no_vista: false, fonte: "registry", origem: "manual" }),
+      ]),
+    );
+    const { screen } = await render();
+
+    await digitar("EUROVILLE-535");
+
+    const opcao = screen.getByTestId("imovel-picker-opcao-EUROVILLE-535");
+    expect(opcao.textContent).toContain("cadastrado manualmente");
+    expect(opcao.textContent).not.toContain("fora do catálogo");
+  });
+
   it("does not badge a listed imóvel", async () => {
     mockUseImoveisBusca.mockReturnValue(busca([hit("ONE9001")]));
     const { screen } = await render();

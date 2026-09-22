@@ -350,6 +350,13 @@ export interface ImovelVisita {
    *  about to drive there, not bookkeeping. */
   ativo_no_vista: boolean;
   fonte: FonteImovel;
+  /** `imovel_registry.origem_descoberta` (migration 063), passed through so
+   *  a hand-registered código (`"manual"` — migration 149's "cadastrar
+   *  novo imóvel") reads differently from a genuinely delisted one
+   *  (`"vista_sync"`): both carry `ativo_no_vista: false` and
+   *  `fonte: "registry"`, but "never listed" and "was listed, sold" are not
+   *  the same fact. `null`/absent when there is no registry row at all. */
+  origem?: string | null;
 }
 
 export interface Visita {

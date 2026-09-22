@@ -24,10 +24,15 @@ vi.mock("@/hooks/useLeadsCorretores", () => ({
   useLeadCorretores: () => ({ data: [] }),
 }));
 
-const { mockCreate, mockUpdate, mockCardResumo } = vi.hoisted(() => ({
+const { mockCreate, mockUpdate, mockCardResumo, mockDocumentoChecklist } = vi.hoisted(() => ({
   mockCreate: { mutate: vi.fn(), isPending: false },
   mockUpdate: { mutate: vi.fn(), isPending: false },
   mockCardResumo: vi.fn(),
+  mockDocumentoChecklist: vi.fn(() => ({
+    data: { items: [], total: 0, concluidos: 0, valores: {} as Record<string, unknown> },
+    isPending: false,
+    isFetching: false,
+  })),
 }));
 
 const documentosIds: (string | null)[] = [];
@@ -53,11 +58,7 @@ vi.mock("@/hooks/useCardHub", () => ({
     documentosIds.push(id);
     return { data: [], isPending: false, isFetching: false };
   },
-  useDocumentoChecklist: () => ({
-    data: { items: [], total: 0, concluidos: 0 },
-    isPending: false,
-    isFetching: false,
-  }),
+  useDocumentoChecklist: () => mockDocumentoChecklist(),
   useDocumentoChecklistMutation: () => ({ mutate: vi.fn(), isPending: false }),
   // Checklist extras — the operator-created rows the remodel added beside the
   // server-defined six. Records its id for the tab-scoping assertion below.
@@ -190,6 +191,11 @@ vi.mock("@/components/card/ClienteCardDialog", async () => {
           "post",
         ),
         React.createElement("span", { "data-testid": "descricao-corpo" }, props.descricaoCorpo),
+        React.createElement(
+          "span",
+          { "data-testid": "dados-pessoais-probe" },
+          JSON.stringify(props.dadosPessoais ?? null),
+        ),
       ),
   };
 });
@@ -392,5 +398,73 @@ describe("ClienteDetailModal — só busca a aba que foi aberta", () => {
 
     expect(documentosIds.some((id) => id === "cl1")).toBe(true);
     expect(extrasIds.some((id) => id === "cl1")).toBe(true);
+  });
+});
+
+describe("ClienteDetailModal — dadosPessoais prefill (qualificação civil)", () => {
+  it("🔴 prefills qualificação civil fields the checklist never tracks, from the already-fetched cliente row", async () => {
+    // The bug: `documentoChecklist.data?.valores` alone (the OLD prop value)
+    // only ever carries the checklist's own eight items
+    // (nome_completo/celular/email/data_nascimento/profissao/genero/rg/cpf)
+    // — nome_oficial, rg_orgao_expedidor, nacionalidade, estado_civil,
+    // regime_bens and endereço were NEVER in it, so a cliente with all of
+    // them already on file reopened to a blank form.
+    mockCardResumo.mockReturnValue({
+      data: {
+        cliente: {
+          id: "cl1",
+          nome: "Maria Silva",
+          nome_oficial: "Maria da Silva Santos",
+          rg: "12.345.678-9",
+          rg_orgao_expedidor: "IIGDR-SP",
+          nacionalidade: "brasileira",
+          estado_civil: "Casado(a)",
+          regime_bens: "Comunhão parcial de bens",
+          endereco_cep: "01310-100",
+          endereco_logradouro: "Av. Paulista",
+          endereco_numero: "1000",
+          endereco_bairro: "Bela Vista",
+          endereco_cidade: "São Paulo",
+          endereco_uf: "SP",
+        },
+        tags: [],
+        membros: [],
+        descricao: null,
+        datas: {},
+        badges: {},
+        atendimentos: [],
+      },
+      isPending: false,
+      isFetching: false,
+      isError: false,
+    });
+    mockDocumentoChecklist.mockReturnValue({
+      data: {
+        items: [],
+        total: 0,
+        concluidos: 0,
+        valores: { nome_completo: "Maria Silva", celular: "+5511999999999" },
+      },
+      isPending: false,
+      isFetching: false,
+    });
+
+    const { getByTestId } = await render();
+    const probe = JSON.parse(getByTestId("dados-pessoais-probe").textContent ?? "null");
+
+    // From the checklist (its own derivation precedence — never overridden
+    // by the raw cliente row).
+    expect(probe.nome_completo).toBe("Maria Silva");
+    expect(probe.celular).toBe("+5511999999999");
+    // From `card.data.cliente` — absent from the checklist's `valores`
+    // entirely, and this is what used to come back blank.
+    expect(probe.nome_oficial).toBe("Maria da Silva Santos");
+    expect(probe.rg).toBe("12.345.678-9");
+    expect(probe.rg_orgao_expedidor).toBe("IIGDR-SP");
+    expect(probe.nacionalidade).toBe("brasileira");
+    expect(probe.estado_civil).toBe("Casado(a)");
+    expect(probe.regime_bens).toBe("Comunhão parcial de bens");
+    expect(probe.endereco_logradouro).toBe("Av. Paulista");
+    expect(probe.endereco_cidade).toBe("São Paulo");
   });
 });
