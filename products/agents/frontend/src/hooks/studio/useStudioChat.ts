@@ -162,10 +162,15 @@ export function useStudioThreads(agentKey: string) {
 
   return {
     data: sorted.map(toChatThread),
-    // ChatWindow scopes "loading" to `data.length === 0` internally, so
-    // `isPending` (no data ever landed) is the correct signal here, never a
-    // bare `isFetching` (`KB § PATTERNS/frontend/lying-loading-state.md`).
-    isLoading: query.isPending,
+    // The field is named `isLoading` because `ChatWindowAdapter.useThreads`
+    // (seed `ChatWindow.tsx`) requires exactly that name — it is NOT the
+    // lying-loading-state anti-pattern under a different name: the VALUE is
+    // still the non-lying `isPending && !data` shape
+    // (`KB § PATTERNS/frontend/lying-loading-state.md`), never a bare
+    // `isFetching`. No `placeholderData` on this query, so `isPending`
+    // alone already implies `!data`; spelled out so the invariant survives
+    // if one gets added later.
+    isLoading: query.isPending && !query.data,
     isError: query.isError,
   };
 }
@@ -271,7 +276,10 @@ export function useStudioMessagesAdapter(agentKey: string, conversationId: strin
 
   return {
     data: liveBubble ? [...mapped, liveBubble] : mapped,
-    isLoading: query.isPending,
+    // See `useStudioThreads` above: `isLoading` is the seed
+    // `ChatWindowAdapter` contract's required field name, not the
+    // lying-loading anti-pattern; the value is still `isPending && !data`.
+    isLoading: query.isPending && !query.data,
     isError: query.isError,
   };
 }

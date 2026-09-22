@@ -1,25 +1,26 @@
 /**
  * ClientsTab.tsx tests — Agent Studio CONTRACT.md §G "Clientes". Stubs
- * `useClientsKe.ts` + `useIsAdmin`.
+ * `useClients.ts` (the ONE client hooks module, FE-DEF's — `useClientsKe.ts`
+ * was collapsed into it) + `useIsAdmin`.
  */
 import React from "react";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockUseClientsKe = vi.fn();
-const mockUseClientKe = vi.fn();
-const mockUseCreateClientKe = vi.fn();
-const mockUseUpdateClientKe = vi.fn();
+const mockUseClients = vi.fn();
+const mockUseClient = vi.fn();
+const mockUseCreateClient = vi.fn();
+const mockUseUpdateClient = vi.fn();
 const mockUseCreateClientEntry = vi.fn();
 const mockUseUpdateClientEntry = vi.fn();
 const mockUseDeleteClientEntry = vi.fn();
 const mockUseIsAdmin = vi.fn();
 
-vi.mock("@/hooks/studio/useClientsKe", () => ({
-  useClientsKe: () => mockUseClientsKe(),
-  useClientKe: () => mockUseClientKe(),
-  useCreateClientKe: () => mockUseCreateClientKe(),
-  useUpdateClientKe: () => mockUseUpdateClientKe(),
+vi.mock("@/hooks/studio/useClients", () => ({
+  useClients: () => mockUseClients(),
+  useClient: () => mockUseClient(),
+  useCreateClient: () => mockUseCreateClient(),
+  useUpdateClient: () => mockUseUpdateClient(),
   useCreateClientEntry: () => mockUseCreateClientEntry(),
   useUpdateClientEntry: () => mockUseUpdateClientEntry(),
   useDeleteClientEntry: () => mockUseDeleteClientEntry(),
@@ -39,10 +40,10 @@ const CLIENT_DETAIL = {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseIsAdmin.mockReturnValue(false);
-  mockUseClientsKe.mockReturnValue({ data: [CLIENT_LIST_ITEM], showSkeleton: false, isError: false, error: null });
-  mockUseClientKe.mockReturnValue({ data: CLIENT_DETAIL, showSkeleton: false, isError: false, error: null });
-  mockUseCreateClientKe.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-  mockUseUpdateClientKe.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  mockUseClients.mockReturnValue({ data: [CLIENT_LIST_ITEM], showSkeleton: false, isError: false, error: null });
+  mockUseClient.mockReturnValue({ data: CLIENT_DETAIL, showSkeleton: false, isError: false, error: null });
+  mockUseCreateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  mockUseUpdateClient.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseCreateClientEntry.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseUpdateClientEntry.mockReturnValue({ mutate: vi.fn(), isPending: false });
   mockUseDeleteClientEntry.mockReturnValue({ mutate: vi.fn(), isPending: false });
@@ -57,19 +58,19 @@ async function renderTab() {
 
 describe("ClientsTab — loading/empty/error", () => {
   it("shows a skeleton while clients load", async () => {
-    mockUseClientsKe.mockReturnValue({ data: undefined, showSkeleton: true, isError: false, error: null });
+    mockUseClients.mockReturnValue({ data: undefined, showSkeleton: true, isError: false, error: null });
     await renderTab();
     expect(screen.queryByTestId("clients-row-cliente-a")).toBeNull();
   });
 
   it("shows an error state when clients fail to load", async () => {
-    mockUseClientsKe.mockReturnValue({ data: undefined, showSkeleton: false, isError: true, error: new Error("boom") });
+    mockUseClients.mockReturnValue({ data: undefined, showSkeleton: false, isError: true, error: new Error("boom") });
     await renderTab();
     expect(screen.getByRole("alert")).toBeTruthy();
   });
 
   it("shows an empty client list and an empty selection placeholder", async () => {
-    mockUseClientsKe.mockReturnValue({ data: [], showSkeleton: false, isError: false, error: null });
+    mockUseClients.mockReturnValue({ data: [], showSkeleton: false, isError: false, error: null });
     await renderTab();
     expect(screen.getByText("Nenhum cliente ainda.")).toBeTruthy();
     expect(screen.getByText("Selecione um cliente.")).toBeTruthy();

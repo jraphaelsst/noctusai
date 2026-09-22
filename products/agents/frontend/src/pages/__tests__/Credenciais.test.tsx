@@ -1,9 +1,20 @@
 /**
  * Credenciais.tsx + ConfiguracoesAgente.tsx page tests — rendering only
  * (hooks stubbed; the hooks have their own tests).
+ *
+ * Isolation: every query is scoped to THIS test's own `render()` result
+ * (`within(container)`), never the ambient `screen` (= the whole
+ * `document.body`). `screen` matches across every node currently attached
+ * to the document, so under a full parallel run — many files, some sharing
+ * a worker — a still-mounting/unmounting neighbour can transiently leave a
+ * second node with the same `data-testid` in the body between this file's
+ * own `cleanup()` calls; the flake this fixes ("multiple elements found")
+ * is exactly that cross-render ambiguity, not a bug in either page.
+ * Scoping to the container makes the assertion correct regardless of what
+ * else is attached to `document.body` at that instant.
  */
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@noctusai/lib";
@@ -75,9 +86,12 @@ const RING = {
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => cleanup());
 
+/** Renders and returns queries SCOPED to this render's own container (see
+ * file header) — never the ambient `screen`. */
 async function renderCredenciais() {
   const Page = (await import("@/pages/Credenciais")).default;
-  render(React.createElement(MemoryRouter, null, React.createElement(Page)));
+  const { container } = render(React.createElement(MemoryRouter, null, React.createElement(Page)));
+  return within(container);
 }
 
 describe("Credenciais", () => {
@@ -87,21 +101,21 @@ describe("Credenciais", () => {
       showSkeleton: false,
       isError: false,
     });
-    await renderCredenciais();
-    expect(screen.getByTestId("credential-prefix-academia_api_token").textContent).toBe("pk_aaaaaaaa");
-    expect(screen.getByTestId("credential-days-academia_api_token").textContent).toBe("15");
-    expect(screen.getByTestId("credential-warnings-academia_api_token").textContent).toContain("15 dia");
-    expect(screen.getByTestId("credential-renew-academia_api_token")).toBeTruthy();
-    expect(screen.getByTestId("credentials-alert-banner")).toBeTruthy();
-    expect(screen.getByTestId("ring-keys").textContent).toContain("assinando");
-    expect(screen.getByTestId("ring-rotate")).toBeTruthy();
+    const view = await renderCredenciais();
+    expect(view.getByTestId("credential-prefix-academia_api_token").textContent).toBe("pk_aaaaaaaa");
+    expect(view.getByTestId("credential-days-academia_api_token").textContent).toBe("15");
+    expect(view.getByTestId("credential-warnings-academia_api_token").textContent).toContain("15 dia");
+    expect(view.getByTestId("credential-renew-academia_api_token")).toBeTruthy();
+    expect(view.getByTestId("credentials-alert-banner")).toBeTruthy();
+    expect(view.getByTestId("ring-keys").textContent).toContain("assinando");
+    expect(view.getByTestId("ring-rotate")).toBeTruthy();
   });
 
   it("shows the skeleton only while nothing is loaded", async () => {
     mockUseCredentials.mockReturnValue({ data: undefined, showSkeleton: true, isError: false });
-    await renderCredenciais();
-    expect(screen.getByTestId("credentials-skeleton")).toBeTruthy();
-    expect(screen.queryByTestId("credentials-list")).toBeNull();
+    const view = await renderCredenciais();
+    expect(view.getByTestId("credentials-skeleton")).toBeTruthy();
+    expect(view.queryByTestId("credentials-list")).toBeNull();
   });
 
   it("explains a 403 as platform-admin only", async () => {
@@ -111,8 +125,8 @@ describe("Credenciais", () => {
       showSkeleton: false,
       isError: true,
     });
-    await renderCredenciais();
-    expect(screen.getByTestId("credentials-error").textContent).toContain("administradores da plataforma");
+    const view = await renderCredenciais();
+    expect(view.getByTestId("credentials-error").textContent).toContain("administradores da plataforma");
   });
 });
 
@@ -127,11 +141,12 @@ describe("ConfiguracoesAgente", () => {
       isError: false,
     });
     const Page = (await import("@/pages/ConfiguracoesAgente")).default;
-    render(React.createElement(MemoryRouter, null, React.createElement(Page)));
-    const slots = screen.getByLabelText("Conversas simultâneas (slots)") as HTMLInputElement;
+    const { container } = render(React.createElement(MemoryRouter, null, React.createElement(Page)));
+    const view = within(container);
+    const slots = view.getByLabelText("Conversas simultâneas (slots)") as HTMLInputElement;
     expect(slots.disabled).toBe(true);
     expect(slots.value).toBe("3");
-    const timeout = screen.getByLabelText("Tempo limite de aprovação (segundos)") as HTMLInputElement;
+    const timeout = view.getByLabelText("Tempo limite de aprovação (segundos)") as HTMLInputElement;
     expect(timeout.disabled).toBe(false);
     expect(timeout.value).toBe("300");
   });

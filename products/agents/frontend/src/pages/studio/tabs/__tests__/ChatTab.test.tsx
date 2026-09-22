@@ -1,8 +1,9 @@
 /**
  * ChatTab.tsx tests — Agent Studio CONTRACT.md §G "Conversar". Stubs
  * `useStudioChat.ts` (adapter builder + create-conversation mutation) and
- * `useClientsKe.ts` (client selector); the seed `<ChatWindow>` organ itself
- * renders for real (its own states are covered by its colocated test).
+ * `useClients.ts` (client selector — the ONE client hooks module now that
+ * `useClientsKe.ts` was collapsed into it); the seed `<ChatWindow>` organ
+ * itself renders for real (its own states are covered by its colocated test).
  */
 import React from "react";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
@@ -10,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockBuildStudioChatAdapter = vi.fn();
 const mockUseCreateStudioConversation = vi.fn();
-const mockUseClientsKe = vi.fn();
+const mockUseClients = vi.fn();
 
 vi.mock("@/hooks/studio/useStudioChat", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/studio/useStudioChat")>();
@@ -20,7 +21,7 @@ vi.mock("@/hooks/studio/useStudioChat", async (importOriginal) => {
     useCreateStudioConversation: () => mockUseCreateStudioConversation(),
   };
 });
-vi.mock("@/hooks/studio/useClientsKe", () => ({ useClientsKe: () => mockUseClientsKe() }));
+vi.mock("@/hooks/studio/useClients", () => ({ useClients: () => mockUseClients() }));
 
 const NOOP_ADAPTER = {
   useThreads: () => ({ data: [], isLoading: false, isError: false }),
@@ -32,7 +33,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockBuildStudioChatAdapter.mockReturnValue(NOOP_ADAPTER);
   mockUseCreateStudioConversation.mockReturnValue({ mutateAsync: vi.fn().mockResolvedValue({ id: "c1" }) });
-  mockUseClientsKe.mockReturnValue({ data: [], showSkeleton: false, isError: false, error: null });
+  mockUseClients.mockReturnValue({ data: [], showSkeleton: false, isError: false, error: null });
 });
 
 afterEach(() => cleanup());
@@ -56,7 +57,7 @@ describe("ChatTab", () => {
   });
 
   it("shows a client selector and passes the selected client_id on conversation creation", async () => {
-    mockUseClientsKe.mockReturnValue({
+    mockUseClients.mockReturnValue({
       data: [{ id: "cl1", slug: "cliente-a", nome: "Cliente A", resumo: "", ativo: true, total_entradas: 0 }],
       showSkeleton: false,
       isError: false,

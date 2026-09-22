@@ -13,12 +13,12 @@
 import { useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Layers } from "lucide-react";
-import { Badge } from "@noctusai/lib/design-system";
+import { Badge, EmptyState } from "@noctusai/lib/design-system";
 import type { OnDemandItem } from "@/api/studio/types";
 import { CompiledPromptView, type CompiledPromptViewHandle } from "@/components/studio/CompiledPromptView";
 import { CopyTextButton } from "@/components/studio/CopyTextButton";
 import { SectionTokenBar } from "@/components/studio/SectionTokenBar";
-import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { VersionDiffSummary } from "@/components/studio/VersionDiffSummary";
 import { shortHash, type SourceTarget } from "@/components/studio/compiledSegments";
 import { VersionStatusBadge } from "@/components/studio/VersionStatusBadge";
@@ -66,7 +66,7 @@ export default function CompiledTab({ agentKey }: { agentKey: string }) {
 
   if (refs.showSkeleton) return <StudioLoading rows={4} />;
   if (refs.isError) return <StudioError error={refs.error} onRetry={refs.refetch} />;
-  if (!selected) return <StudioEmpty titulo="Este agente ainda não tem versões para compilar." />;
+  if (!selected) return <EmptyState message="Este agente ainda não tem versões para compilar." />;
 
   const data = compiled.data;
   const bloqueantes = data?.avisos.filter((a) => a.bloqueante) ?? [];

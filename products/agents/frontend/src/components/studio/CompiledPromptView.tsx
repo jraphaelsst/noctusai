@@ -5,11 +5,12 @@
  * edits it. Used by the inspector tab AND `/studio/prompts/:hash`.
  */
 import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
-import { AlertTriangle, ExternalLink } from "lucide-react";
+import { AlertTriangle, ExternalLink, Info } from "lucide-react";
 import { Badge } from "@noctusai/lib/design-system";
 import type { ManifestSection } from "@/api/studio/types";
 import { cn } from "@/lib/utils";
 import { sectionColor, segmentCompiled, sourceTarget, type SourceTarget } from "./compiledSegments";
+import { RUNTIME_PREAMBLE_TOKEN_ESTIMATE, RUNTIME_PREFIX_LINE, RUNTIME_SUFFIX_DESCRIPTION } from "./runtimePreamble";
 
 export interface CompiledPromptViewHandle {
   scrollToSection: (indice: number) => void;
@@ -33,6 +34,16 @@ export const CompiledPromptView = forwardRef<CompiledPromptViewHandle, CompiledP
 
     return (
       <div className="space-y-3" data-testid="compiled-prompt-view">
+        <section
+          className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/20"
+          data-testid="runtime-prefix-block"
+        >
+          <header className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+            <Info className="h-3.5 w-3.5" />
+            Prefixo do runtime (fixo) <Badge variant="muted">não faz parte do hash</Badge>
+          </header>
+          <pre className="whitespace-pre-wrap break-words p-3 font-mono text-xs text-muted-foreground">{RUNTIME_PREFIX_LINE}</pre>
+        </section>
         {problemas.length > 0 && (
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700" role="alert">
             <p className="flex items-center gap-1 font-semibold">
@@ -105,6 +116,19 @@ export const CompiledPromptView = forwardRef<CompiledPromptViewHandle, CompiledP
             </section>
           );
         })}
+        <section
+          className="rounded-lg border border-dashed border-muted-foreground/40 bg-muted/20"
+          data-testid="runtime-suffix-block"
+        >
+          <header className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+            <Info className="h-3.5 w-3.5" />
+            Bloco de ambiente (gerado pelo runtime) <Badge variant="muted">não faz parte do hash</Badge>
+          </header>
+          <p className="p-3 text-xs text-muted-foreground">{RUNTIME_SUFFIX_DESCRIPTION}</p>
+          <p className="border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground" data-testid="runtime-preamble-tokens">
+            ≈ +{RUNTIME_PREAMBLE_TOKEN_ESTIMATE.toLocaleString("pt-BR")} tokens do runtime
+          </p>
+        </section>
       </div>
     );
   },

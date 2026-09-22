@@ -1,7 +1,17 @@
 /**
- * Loading / error / empty blocks shared by the Agent Studio pages and tabs.
- * Product-local: thin compositions over `@noctusai/lib` `Skeleton` + `Button`
- * with studio copy — not a generic primitive.
+ * Loading / error / empty blocks shared by the Agent Studio pages and tabs —
+ * ONLY the shapes `@noctusai/lib/design-system`'s `EmptyState`/`ErrorState`
+ * don't cover; every call site that needed nothing more than a message was
+ * switched to the lib components directly (no product-local fork of an
+ * equivalent). What stays here, and why the lib doesn't have it:
+ *   - `StudioLoading` — a row-COUNT-configurable skeleton (`rows`); the lib's
+ *     only skeletons are the fixed-shape `PageSkeleton` and the raw
+ *     `Skeleton` primitive.
+ *   - `StudioError` — every call site passes `onRetry` and/or a `mensagem`
+ *     override; the lib's `ErrorState` is message-only, no retry action.
+ *   - `StudioEmpty` — some call sites pass `children` (a CTA below the
+ *     title, e.g. "Novo agente"/"Criar rascunho"); the lib's `EmptyState`
+ *     takes a single `message` string only.
  */
 import type { ReactNode } from "react";
 import { AlertTriangle, Inbox } from "lucide-react";

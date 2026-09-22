@@ -9,6 +9,11 @@
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`,
  * never a bare `isLoading`. The documents list is key-changing (collection,
  * search, filter, page) so it carries `placeholderData: (prev) => prev`.
+ *
+ * `# Base de conhecimento` (§C.3) lists each collection's `doc_count`, so any
+ * mutation that can move that count (a collection's own fields, a document
+ * created/edited/(de)activated) also invalidates `studioKeys.compiledAll` —
+ * otherwise the inspector shows a stale count until an unrelated refetch.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -24,6 +29,7 @@ import type {
   KnowledgeCollectionsResponse,
   KnowledgeSearchResponse,
 } from "@/api/studio/types-ke";
+import { studioKeys } from "./keys";
 
 const collectionsKey = (agentKey: string) => ["studio", agentKey, "knowledge", "collections"] as const;
 const documentsKey = (
@@ -60,7 +66,10 @@ export function useCreateKnowledgeCollection(agentKey: string) {
   return useMutation({
     mutationFn: (payload: KnowledgeCollectionCreate) =>
       api.post(`/api/studio/agents/${agentKey}/knowledge`, payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: collectionsKey(agentKey) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });
+      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
+    },
   });
 }
 
@@ -69,7 +78,10 @@ export function useUpdateKnowledgeCollection(agentKey: string) {
   return useMutation({
     mutationFn: ({ collectionId, patch }: { collectionId: string; patch: KnowledgeCollectionPatch }) =>
       api.patch(`/api/studio/agents/${agentKey}/knowledge/${collectionId}`, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: collectionsKey(agentKey) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });
+      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
+    },
   });
 }
 
@@ -115,6 +127,7 @@ export function useCreateDocument(agentKey: string, collectionId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["studio", agentKey, "knowledge", "collections", collectionId, "documents"] });
       qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });
+      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
     },
   });
 }
@@ -143,6 +156,7 @@ export function useUpdateDocument(agentKey: string, docId: string) {
       qc.setQueryData(documentKey(agentKey, docId), updated);
       qc.invalidateQueries({ queryKey: ["studio", agentKey, "knowledge"] });
       qc.invalidateQueries({ queryKey: revisionsKey(agentKey, docId) });
+      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
     },
   });
 }

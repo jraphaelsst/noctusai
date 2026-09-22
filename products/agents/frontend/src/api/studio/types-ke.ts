@@ -1,15 +1,12 @@
 /**
  * TS mirror of the Agent Studio CONTRACT.md slices owned by FE-KE — §D3
- * (Knowledge), §D4 (Evals), §D2 (Clients — FE-KE builds its own reader
- * because FE-DEF's `src/api/studio/types.ts` is not on this branch; see
- * `CONTRACT.md` §J "FE-KE ... prefer naming yours `useClientsKe.ts` to
- * avoid a path collision"), and the §D6 conversation/message field
- * additions the Conversar tab needs.
+ * (Knowledge), §D4 (Evals), and the §D6 conversation/message field
+ * additions the Conversar tab needs. §D2 (Clients) is FE-DEF's — see
+ * `../types.ts` — now that both slices share one tree (FE-FIX collapse,
+ * `hooks/studio/useClients.ts` is the one client hooks module).
  *
  * Field names are copied VERBATIM from CONTRACT.md — never renamed to a
- * "nicer" JS convention. FE-DEF's `types.ts` is the eventual merge target;
- * this file is deliberately import-free (no dependency on FE-DEF's file)
- * so this branch builds standalone (contract §J2.4).
+ * "nicer" JS convention.
  */
 
 // ─── §D3 Knowledge ──────────────────────────────────────────────────────────
@@ -147,7 +144,8 @@ export interface EvalCaseListResponse {
 }
 
 export type EvalCaseCreate = Omit<EvalCase, "id">;
-export type EvalCasePatch = Partial<EvalCaseCreate>;
+/** Slug identifies the case and is never patched (§D4 `PATCH .../evals/cases/{case_id}`). */
+export type EvalCasePatch = Partial<Omit<EvalCaseCreate, "slug">>;
 
 export type EvalRunStatus = "pendente" | "executando" | "concluida" | "falhou" | "cancelada";
 
@@ -163,6 +161,11 @@ export interface EvalRun {
   started_at: string | null;
   finished_at: string | null;
   erro: string | null;
+  /** Additive (backend hardening, not yet in §D4's table) — true once every
+   * case in the run has a terminal result (`aprovado`/`reprovado`/`erro`),
+   * distinct from `status === "concluida"` when the run itself was
+   * cancelled mid-way with some results already in. */
+  completa?: boolean;
 }
 
 export interface EvalRunListResponse {
@@ -197,74 +200,14 @@ export interface EvalRunCreate {
   case_ids?: string[];
 }
 
-// ─── §D2 Clients (FE-KE's own reader — see file header) ────────────────────
-
-export type ClientEntryTipo =
-  | "marca"
-  | "publico"
-  | "posicionamento"
-  | "trava"
-  | "decisao"
-  | "aprendizado"
-  | "evidencia"
-  | "nota";
-
-export interface ClientEntry {
-  id: string;
-  tipo: ClientEntryTipo;
-  titulo: string;
-  conteudo: string;
-  status: "ativo" | "arquivado";
-  created_at: string;
-}
-
-/** List item shape — `GET .../clients` "omits `entradas`, adds `total_entradas`". */
-export interface ClientListItem {
-  id: string;
-  slug: string;
-  nome: string;
-  resumo: string;
-  ativo: boolean;
-  total_entradas: number;
-}
-
-export interface ClientListResponse {
-  items: ClientListItem[];
-}
-
-/** Detail shape — includes `entradas`. */
-export interface ClientDetail {
-  id: string;
-  slug: string;
-  nome: string;
-  resumo: string;
-  ativo: boolean;
-  entradas: ClientEntry[];
-}
-
-export type ClientCreate = {
-  slug: string;
-  nome: string;
-  resumo?: string;
-};
-
-export type ClientPatch = Partial<{
-  nome: string;
-  resumo: string;
-  ativo: boolean;
-}>;
-
-export type ClientEntryCreate = {
-  tipo: ClientEntryTipo;
-  titulo: string;
-  conteudo: string;
-};
-
-export type ClientEntryPatch = Partial<{
-  titulo: string;
-  conteudo: string;
-  status: "ativo" | "arquivado";
-}>;
+// §D2 Clients: collapsed into FE-DEF's `../types.ts` (`Client`,
+// `ClientSummary`, `ClientCreateInput`, `ClientPatchInput`, `ClientEntry`,
+// `ClientEntryTipo`, `ClientEntryCreateInput`, `ClientEntryPatchInput`) now
+// that both slices share one tree — see `hooks/studio/useClients.ts`. The
+// duplicate reader (`ClientListItem`/`ClientDetail`/`ClientCreate`/
+// `ClientPatch`/`ClientEntryCreate`/`ClientEntryPatch`, and the
+// now-superseded `useClientsKe.ts`) is gone; every consumer imports the
+// FE-DEF shapes directly.
 
 // ─── §D6 Conversations/messages — studio field additions ───────────────────
 

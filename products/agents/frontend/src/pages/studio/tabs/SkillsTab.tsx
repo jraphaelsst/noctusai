@@ -9,7 +9,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { FileText, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge, Button } from "@noctusai/lib/design-system";
+import { Badge, Button, EmptyState } from "@noctusai/lib/design-system";
 import {
   CAMINHO_RE,
   SKILL_DESCRICAO_MAX,
@@ -19,7 +19,7 @@ import {
   type SkillFileSummary,
 } from "@/api/studio/types";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
-import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import {
   useAgentVersionRefs,
   useCreateSkill,
@@ -257,7 +257,7 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
   if (refs.showSkeleton || (target && version.showSkeleton)) return <StudioLoading rows={4} />;
   if (refs.isError) return <StudioError error={refs.error} onRetry={refs.refetch} />;
   if (version.isError) return <StudioError error={version.error} onRetry={version.refetch} />;
-  if (!target) return <StudioEmpty titulo="Este agente ainda não tem versões." />;
+  if (!target) return <EmptyState message="Este agente ainda não tem versões." />;
 
   async function handleSave() {
     const problem = validateSkill(form);
@@ -316,7 +316,7 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
           </p>
         )}
         {skills.length === 0 ? (
-          <StudioEmpty titulo="Nenhuma skill nesta versão." />
+          <EmptyState message="Nenhuma skill nesta versão." />
         ) : (
           <ul className="divide-y divide-border rounded-lg border border-border bg-card">
             {skills.map((s) => (
@@ -342,7 +342,7 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
 
       <section className="min-w-0">
         {!selected && !creating ? (
-          <StudioEmpty titulo="Selecione uma skill para ver ou editar." />
+          <EmptyState message="Selecione uma skill para ver ou editar." />
         ) : (
           <div className="space-y-3 rounded-lg border border-border bg-card p-4" data-testid="skill-editor">
             <div className="grid gap-3 sm:grid-cols-[1fr_100px_auto]">

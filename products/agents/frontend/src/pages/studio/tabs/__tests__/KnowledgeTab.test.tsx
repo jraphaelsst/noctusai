@@ -5,7 +5,7 @@
  * not the hooks themselves (covered by `useKnowledge.test.ts`).
  */
 import React from "react";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockUseKnowledgeCollections = vi.fn();
@@ -98,5 +98,62 @@ describe("KnowledgeTab — success + role gating", () => {
     });
     await renderTab();
     expect(screen.getByTestId("knowledge-search-playground")).toBeTruthy();
+  });
+});
+
+describe("KnowledgeTab — document editor: provenance + content guard", () => {
+  const DOC_DETAIL = {
+    id: "d1",
+    collection_id: "c1",
+    slug: "doc-1",
+    titulo: "Doc 1",
+    tipo: "fonte" as const,
+    resumo: "resumo",
+    conteudo: "Conteúdo original.",
+    proveniencia: { autor: "Fonte X", origem: "livro" },
+    ativo: true,
+    chars: 120,
+    updated_at: "t",
+  };
+
+  it("admin: edits provenance fields and the save payload carries them", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    mockUseDocument.mockReturnValue({ data: DOC_DETAIL, showSkeleton: false, isError: false, error: null });
+    const mutateAsync = vi.fn().mockResolvedValue(DOC_DETAIL);
+    mockUseUpdateDocument.mockReturnValue({ mutateAsync, isPending: false });
+    await renderTab();
+
+    fireEvent.click(screen.getByTestId("knowledge-document-row-doc-1"));
+    const autor = (await screen.findByTestId("knowledge-provenance-autor")) as HTMLInputElement;
+    expect(autor.value).toBe("Fonte X");
+    const referencia = screen.getByTestId("knowledge-provenance-referencia") as HTMLInputElement;
+    fireEvent.change(referencia, { target: { value: "p. 12" } });
+
+    fireEvent.click(screen.getByTestId("knowledge-document-save"));
+
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proveniencia: expect.objectContaining({ autor: "Fonte X", origem: "livro", referencia: "p. 12" }),
+      }),
+    );
+    const [[payload]] = mutateAsync.mock.calls;
+    expect(payload.proveniencia).not.toHaveProperty("pagina");
+  });
+});
+
+describe("KnowledgeTab — new document form: content required non-empty", () => {
+  it("blocks submit with only whitespace content, never calls the mutation", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    const mutateAsync = vi.fn();
+    mockUseCreateDocument.mockReturnValue({ mutateAsync, isPending: false });
+    await renderTab();
+
+    fireEvent.click(screen.getByTestId("knowledge-new-document-toggle"));
+    const form = await screen.findByTestId("knowledge-new-document-form");
+    fireEvent.change(within(form).getAllByRole("textbox")[0], { target: { value: "titulo" } });
+    fireEvent.submit(form);
+
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByText("Informe o conteúdo do documento.")).toBeTruthy();
   });
 });

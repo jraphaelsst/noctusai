@@ -82,6 +82,54 @@ describe("segmentCompiled", () => {
     expect(problemas.some((p) => p.includes("sobrepõe"))).toBe(true);
     expect(problemas.some((p) => p.includes("limites inválidos"))).toBe(true);
   });
+
+  // The backend counts offsets as Python `len(str)` — Unicode CODE POINTS.
+  // An astral character (e.g. most emoji) is a surrogate PAIR in JS: 2 UTF-16
+  // units but 1 backend offset. These fixtures build offsets the same way the
+  // backend does (code-point counting), independent of `assembleCompiled`
+  // (whose ASCII-only fixtures never exercise this).
+  const cpLen = (s: string) => Array.from(s).length;
+
+  it("slices correctly when an astral character (emoji) sits before the section", () => {
+    const emoji = "🎉"; // U+1F389 — 2 UTF-16 code units, 1 code point
+    const pre = `${emoji} nota solta`;
+    const corpo = "Conteúdo normal da seção.";
+    const bloco = `# Titulo\n\n${corpo}`;
+    const texto = `${pre}\n\n${bloco}`;
+    const inicio = cpLen(`${pre}\n\n`);
+    const fim = cpLen(texto);
+    const manifest: ManifestSection[] = [
+      { chave: "sec", titulo: "Titulo", origem: { tipo: "secao", id: SEC_ID, campo: null }, inicio, fim, chars: fim - inicio, tokens: 1 },
+    ];
+
+    // A naive `texto.slice(inicio, fim)` (UTF-16 units) would land 1 unit
+    // short of the block because of the surrogate pair — proving the fix
+    // matters, not just that it "still works".
+    expect(texto.slice(inicio, fim)).not.toBe(bloco);
+
+    const { segmentos, problemas } = segmentCompiled(texto, manifest);
+    expect(problemas).toEqual([]);
+    const [orphan, secao] = segmentos;
+    expect(orphan.tipo).toBe("orfao");
+    expect(orphan.tipo === "orfao" && orphan.texto.trim()).toBe(pre);
+    expect(secao.tipo === "secao" && secao.texto).toBe(bloco);
+  });
+
+  it("slices correctly when astral characters sit INSIDE the section body", () => {
+    const emoji = "🎉🚀"; // two astral characters = 4 UTF-16 units, 2 code points
+    const corpo = `Antes ${emoji} depois`;
+    const bloco = `# Titulo\n\n${corpo}`;
+    const texto = bloco;
+    const manifest: ManifestSection[] = [
+      { chave: "sec", titulo: "Titulo", origem: { tipo: "secao", id: SEC_ID, campo: null }, inicio: 0, fim: cpLen(texto), chars: cpLen(texto), tokens: 1 },
+    ];
+
+    const { segmentos, problemas } = segmentCompiled(texto, manifest);
+    expect(problemas).toEqual([]);
+    expect(segmentos).toHaveLength(1);
+    const [secao] = segmentos;
+    expect(secao.tipo === "secao" && secao.texto).toBe(bloco);
+  });
 });
 
 describe("sourceTarget", () => {
@@ -122,6 +170,21 @@ describe("CompiledPromptView", () => {
     render(<CompiledPromptView texto={COMPILED_DRAFT.texto} manifest={COMPILED_DRAFT.manifest} onOpenSource={onOpen} />);
     fireEvent.click(screen.getAllByTestId("compiled-open-source")[0]);
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ tab: "prompt", params: { secao: SEC_ID, chave: "identidade" } }));
+  });
+
+  // The Agent SDK wraps every launch with a fixed identity line + a
+  // generated `# Environment` block that the compiler cannot see or hash
+  // (tech-lead runtime finding) — the inspector must show both, honestly
+  // labelled as outside the hash/token count.
+  it("renders the runtime prefix and suffix blocks, outside the manifest sections", () => {
+    render(<CompiledPromptView texto={COMPILED_DRAFT.texto} manifest={COMPILED_DRAFT.manifest} />);
+    const prefix = screen.getByTestId("runtime-prefix-block");
+    expect(prefix.textContent).toContain("You are a Claude agent, built on Anthropic's Claude Agent SDK.");
+    expect(prefix.textContent).toContain("não faz parte do hash");
+    const suffix = screen.getByTestId("runtime-suffix-block");
+    expect(suffix.textContent).toContain("Environment");
+    expect(suffix.textContent).toContain("não faz parte do hash");
+    expect(screen.getByTestId("runtime-preamble-tokens").textContent).toContain("+60");
   });
 });
 
