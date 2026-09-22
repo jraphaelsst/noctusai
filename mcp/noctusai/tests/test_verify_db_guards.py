@@ -535,8 +535,15 @@ class TestAgentsStudioProbes:
         "agents_publicacao_limiar_floor",
         "agent_versions_override_reason_len",
         "eval_runs_one_active_per_version_idx",
+        "eval_results_status_check",
+        "eval_runs_modelo_geracao_check",
+        "eval_runs_limite_usd_check",
     }
-    _MIGRATIONS = {("012_agent_studio_definitions.sql",), ("013_agent_studio_knowledge_evals.sql",)}
+    _MIGRATIONS = {
+        ("012_agent_studio_definitions.sql",),
+        ("013_agent_studio_knowledge_evals.sql",),
+        ("013_agent_studio_knowledge_evals.sql", "014_agent_studio_cost.sql"),
+    }
 
     @staticmethod
     def _probes():
@@ -545,11 +552,11 @@ class TestAgentsStudioProbes:
     def test_every_studio_guard_has_a_probe(self):
         assert {p.guard_name for p in self._probes()} == self._GUARDS
 
-    def test_every_detected_guard_in_012_and_013_is_registered(self):
+    def test_every_detected_guard_in_012_to_014_is_registered(self):
         from tools.noctus.dev.compliance import _detect_guard_objects
 
         root = Path(__file__).resolve().parents[3] / "products" / "agents" / "backend" / "migrations"
-        for name in ("012_agent_studio_definitions.sql", "013_agent_studio_knowledge_evals.sql"):
+        for name in ("012_agent_studio_definitions.sql", "013_agent_studio_knowledge_evals.sql", "014_agent_studio_cost.sql"):
             detected = {g["guard_name"] for g in _detect_guard_objects((root / name).read_text())}
             assert detected <= self._GUARDS, (name, detected - self._GUARDS)
 

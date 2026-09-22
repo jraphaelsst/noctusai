@@ -1325,7 +1325,7 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
     _agents_studio_probe(
         probe_id="eval_results.status_check",
         guard_name="eval_results_status_check",
-        migrations=_AGENTS_KE_MIGRATIONS,
+        migrations=(*_AGENTS_KE_MIGRATIONS, "014_agent_studio_cost.sql"),
         requires_table="eval_results",
         attack_sql=(
             f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
