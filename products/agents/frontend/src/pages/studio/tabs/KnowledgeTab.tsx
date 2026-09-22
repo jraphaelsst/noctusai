@@ -37,8 +37,21 @@ import {
   useKnowledgeSearch,
   useUpdateDocument,
 } from "@/hooks/studio/useKnowledge";
-import type { DocumentTipo } from "@/api/studio/types-ke";
+import type { DocumentTipo, Provenance } from "@/api/studio/types-ke";
 import { DOCUMENT_TIPOS } from "@/api/studio/types-ke";
+
+const PROVENANCE_FIELDS: { key: keyof Provenance; label: string }[] = [
+  { key: "autor", label: "Autor" },
+  { key: "origem", label: "Origem" },
+  { key: "referencia", label: "Referência" },
+  { key: "pagina", label: "Página" },
+  { key: "licenca", label: "Licença" },
+  { key: "notas", label: "Notas" },
+];
+
+function emptyProvenance(): Provenance {
+  return { autor: "", origem: "", referencia: "", pagina: "", licenca: "", notas: "" };
+}
 
 const PAGE_SIZE = 20;
 
@@ -90,6 +103,7 @@ function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId:
   const update = useUpdateDocument(agentKey, docId);
   const [conteudo, setConteudo] = useState("");
   const [resumo, setResumo] = useState("");
+  const [proveniencia, setProveniencia] = useState<Provenance>(emptyProvenance());
   const [motivo, setMotivo] = useState("");
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -97,13 +111,17 @@ function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId:
   if (doc && loadedFor !== doc.id) {
     setConteudo(doc.conteudo);
     setResumo(doc.resumo ?? "");
+    setProveniencia({ ...emptyProvenance(), ...doc.proveniencia });
     setLoadedFor(doc.id);
   }
 
   async function handleSave() {
     setSaveError(null);
+    const provenienciaPayload = Object.fromEntries(
+      Object.entries(proveniencia).filter(([, v]) => !!v),
+    ) as Provenance;
     try {
-      await update.mutateAsync({ conteudo, resumo, motivo: motivo || undefined });
+      await update.mutateAsync({ conteudo, resumo, proveniencia: provenienciaPayload, motivo: motivo || undefined });
       toast.success("Documento salvo.");
       setMotivo("");
     } catch (err) {
@@ -127,19 +145,20 @@ function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId:
         <Badge variant={doc.ativo ? "default" : "muted"}>{doc.ativo ? "ativo" : "arquivado"}</Badge>
       </div>
 
-      {doc.proveniencia && Object.keys(doc.proveniencia).length > 0 && (
-        <div className="rounded-md border border-border bg-muted/30 p-2 text-xs text-muted-foreground">
-          {Object.entries(doc.proveniencia)
-            .filter(([, v]) => !!v)
-            .map(([k, v]) => (
-              <span key={k} className="mr-3">
-                <strong className="text-foreground">{k}:</strong> {String(v)}
-              </span>
-            ))}
-        </div>
-      )}
-
       <FormError message={saveError} />
+
+      <div className="grid gap-2 rounded-md border border-border bg-muted/30 p-2 sm:grid-cols-3" data-testid="knowledge-document-provenance">
+        {PROVENANCE_FIELDS.map(({ key, label }) => (
+          <Field key={key} label={label}>
+            <Input
+              value={proveniencia[key] ?? ""}
+              onChange={(e) => setProveniencia((p) => ({ ...p, [key]: e.target.value }))}
+              disabled={!isAdmin}
+              data-testid={`knowledge-provenance-${key}`}
+            />
+          </Field>
+        ))}
+      </div>
 
       <Field label="Resumo">
         <Textarea rows={2} value={resumo} onChange={(e) => setResumo(e.target.value)} disabled={!isAdmin} />
@@ -417,6 +436,13 @@ function NewDocumentForm({
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    // `DocumentCreate.conteudo` is required non-empty (§B2 `not null`); HTML
+    // `required` alone lets a whitespace-only value through, and does
+    // nothing at all in a test's `fireEvent.submit`.
+    if (conteudo.trim().length === 0) {
+      setError("Informe o conteúdo do documento.");
+      return;
+    }
     setSaving(true);
     try {
       await onCreate({ slug, titulo, tipo, conteudo, resumo: resumo || undefined });

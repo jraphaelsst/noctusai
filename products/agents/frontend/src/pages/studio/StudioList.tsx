@@ -6,15 +6,17 @@
  */
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Boxes, Plus } from "lucide-react";
+import { Boxes, Plus, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
 import { SLUG_RE, type AgentSummary } from "@/api/studio/types";
 import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
 import { useCreateStudioAgent, useStudioAgents, useUpdateStudioAgent } from "@/hooks/studio/useStudioAgents";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
+import { studioTabHref } from "./studioTabs";
 
 const INPUT_CLASS =
   "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
@@ -151,6 +153,8 @@ export default function StudioList() {
   const isAdmin = useIsAdmin();
   const { data: agents, showSkeleton, isRefreshing, isError, error, refetch } = useStudioAgents();
   const [novoOpen, setNovoOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <div className="space-y-6">
@@ -164,9 +168,14 @@ export default function StudioList() {
         </div>
         {isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
         {isAdmin && (
-          <Button variant="primary" className="ml-auto" onClick={() => setNovoOpen(true)} data-testid="studio-novo-agente">
-            <Plus className="mr-1 h-4 w-4" /> Novo agente
-          </Button>
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="studio-importar-pacote">
+              <Upload className="mr-1 h-4 w-4" /> Importar pacote
+            </Button>
+            <Button variant="primary" onClick={() => setNovoOpen(true)} data-testid="studio-novo-agente">
+              <Plus className="mr-1 h-4 w-4" /> Novo agente
+            </Button>
+          </div>
         )}
       </div>
 
@@ -231,6 +240,16 @@ export default function StudioList() {
       )}
 
       {isAdmin && <NovoAgenteDialog open={novoOpen} onClose={() => setNovoOpen(false)} />}
+      {isAdmin && importOpen && (
+        <ImportBundleDialog
+          onClose={() => setImportOpen(false)}
+          onImported={(key) => {
+            setImportOpen(false);
+            toast.success("Pacote importado.");
+            navigate(studioTabHref(key, "versoes"));
+          }}
+        />
+      )}
     </div>
   );
 }

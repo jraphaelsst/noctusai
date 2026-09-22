@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@noctusai/lib/design-system";
+import { Button, EmptyState } from "@noctusai/lib/design-system";
 import {
   MAX_TURNS_MAX,
   MAX_TURNS_MIN,
@@ -18,7 +18,7 @@ import {
   type VersionDetail,
 } from "@/api/studio/types";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
-import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { useUpdateStudioAgent } from "@/hooks/studio/useStudioAgents";
 import { useAgentVersionRefs, useUpdateDraft, useVersion } from "@/hooks/studio/useVersions";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
@@ -138,7 +138,7 @@ export default function SettingsTab({ agentKey }: { agentKey: string }) {
           Versão {target ? `v${target.versao}` : ""} {data?.status === "rascunho" ? "(rascunho)" : ""}
         </h2>
         {!target || !form ? (
-          <StudioEmpty titulo="Este agente ainda não tem versões." />
+          <EmptyState message="Este agente ainda não tem versões." />
         ) : (
           <>
             {!editable && (

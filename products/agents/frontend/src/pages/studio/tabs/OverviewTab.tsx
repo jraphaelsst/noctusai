@@ -4,13 +4,14 @@
  * inspector), and the agent's nome/descrição (admin-editable, §D1 PATCH).
  */
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { FilePlus2, Rocket, ScanSearch } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { FilePlus2, Rocket, ScanSearch, Upload } from "lucide-react";
 import { toast } from "sonner";
-import { Badge, Button } from "@noctusai/lib/design-system";
+import { Badge, Button, EmptyState } from "@noctusai/lib/design-system";
 import type { VersionSummary } from "@/api/studio/types";
+import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
-import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { shortHash } from "@/components/studio/compiledSegments";
 import { VersionStatusBadge } from "@/components/studio/VersionStatusBadge";
 import { useUpdateStudioAgent } from "@/hooks/studio/useStudioAgents";
@@ -52,12 +53,14 @@ function VersionCard({ titulo, versao, agentKey }: { titulo: string; versao: Ver
 
 export default function OverviewTab({ agentKey }: { agentKey: string }) {
   const isAdmin = useIsAdmin();
+  const navigate = useNavigate();
   const { data: agent, draft, ativa, showSkeleton, isError, error, refetch, isPlaceholderData } =
     useAgentVersionRefs(agentKey);
   const createDraft = useCreateDraft(agentKey);
   const updateAgent = useUpdateStudioAgent(agentKey);
   const [nome, setNome] = useState("");
   const [descricao, setDescricao] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
     if (!agent || isPlaceholderData) return;
@@ -67,7 +70,7 @@ export default function OverviewTab({ agentKey }: { agentKey: string }) {
 
   if (showSkeleton) return <StudioLoading rows={3} />;
   if (isError) return <StudioError error={error} onRetry={refetch} />;
-  if (!agent) return <StudioEmpty titulo="Agente sem dados." />;
+  if (!agent) return <EmptyState message="Agente sem dados." />;
 
   const ultimaAvaliacao = draft?.eval_score ?? ativa?.eval_score ?? null;
   const gateOk = ultimaAvaliacao !== null && ultimaAvaliacao >= agent.publicacao_limiar;
@@ -146,7 +149,24 @@ export default function OverviewTab({ agentKey }: { agentKey: string }) {
         >
           <ScanSearch className="mr-1 h-4 w-4" /> Abrir inspector
         </Link>
+        {isAdmin && (
+          <Button variant="outline" onClick={() => setImportOpen(true)} data-testid="overview-importar-pacote">
+            <Upload className="mr-1 h-4 w-4" /> Importar pacote
+          </Button>
+        )}
       </div>
+
+      {isAdmin && importOpen && (
+        <ImportBundleDialog
+          expectedAgentKey={agentKey}
+          onClose={() => setImportOpen(false)}
+          onImported={(key) => {
+            setImportOpen(false);
+            toast.success("Pacote importado.");
+            navigate(studioTabHref(key, "versoes"));
+          }}
+        />
+      )}
 
       <div className="space-y-3 rounded-lg border border-border bg-card p-4">
         <h2 className="text-sm font-semibold">Identificação</h2>

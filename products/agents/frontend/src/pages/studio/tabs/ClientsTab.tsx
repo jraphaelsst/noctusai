@@ -27,15 +27,15 @@ import {
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
 import {
-  useClientKe,
-  useClientsKe,
+  useClient,
+  useClients,
+  useCreateClient,
   useCreateClientEntry,
-  useCreateClientKe,
   useDeleteClientEntry,
+  useUpdateClient,
   useUpdateClientEntry,
-  useUpdateClientKe,
-} from "@/hooks/studio/useClientsKe";
-import type { ClientEntryTipo } from "@/api/studio/types-ke";
+} from "@/hooks/studio/useClients";
+import type { ClientEntryTipo } from "@/api/studio/types";
 
 const ENTRY_TIPOS: ClientEntryTipo[] = [
   "marca",
@@ -64,7 +64,7 @@ function NewClientForm({ agentKey, onDone }: { agentKey: string; onDone: (id: st
   const [nome, setNome] = useState("");
   const [resumo, setResumo] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const create = useCreateClientKe(agentKey);
+  const create = useCreateClient(agentKey);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -104,13 +104,13 @@ function EntryForm({ agentKey, clientId, onDone }: { agentKey: string; clientId:
   const [titulo, setTitulo] = useState("");
   const [conteudo, setConteudo] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const create = useCreateClientEntry(agentKey, clientId);
+  const create = useCreateClientEntry(agentKey);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
     try {
-      await create.mutateAsync({ tipo, titulo, conteudo });
+      await create.mutateAsync({ clientId, entry: { tipo, titulo, conteudo } });
       setTitulo("");
       setConteudo("");
       toast.success("Entrada adicionada.");
@@ -143,10 +143,10 @@ function EntryForm({ agentKey, clientId, onDone }: { agentKey: string; clientId:
 }
 
 function ClientDetail({ agentKey, clientId, isAdmin }: { agentKey: string; clientId: string; isAdmin: boolean }) {
-  const { data: client, showSkeleton, isError } = useClientKe(agentKey, clientId);
-  const updateClient = useUpdateClientKe(agentKey);
-  const updateEntry = useUpdateClientEntry(agentKey, clientId);
-  const deleteEntry = useDeleteClientEntry(agentKey, clientId);
+  const { data: client, showSkeleton, isError } = useClient(agentKey, clientId);
+  const updateClient = useUpdateClient(agentKey);
+  const updateEntry = useUpdateClientEntry(agentKey);
+  const deleteEntry = useDeleteClientEntry(agentKey);
   const [resumo, setResumo] = useState("");
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
@@ -209,14 +209,14 @@ function ClientDetail({ agentKey, clientId, isAdmin }: { agentKey: string; clien
                         <button
                           type="button"
                           className="text-muted-foreground hover:underline"
-                          onClick={() => updateEntry.mutate({ entryId: entry.id, patch: { status: "arquivado" } })}
+                          onClick={() => updateEntry.mutate({ clientId, entryId: entry.id, patch: { status: "arquivado" } })}
                         >
                           Arquivar
                         </button>
                         <button
                           type="button"
                           className="text-destructive hover:underline"
-                          onClick={() => deleteEntry.mutate(entry.id)}
+                          onClick={() => deleteEntry.mutate({ clientId, entryId: entry.id })}
                         >
                           Excluir
                         </button>
@@ -236,7 +236,7 @@ function ClientDetail({ agentKey, clientId, isAdmin }: { agentKey: string; clien
 
 export default function ClientsTab({ agentKey }: { agentKey: string }) {
   const isAdmin = useIsAdmin();
-  const { data: clients, showSkeleton, isError, error } = useClientsKe(agentKey);
+  const { data: clients, showSkeleton, isError, error } = useClients(agentKey);
   const [selected, setSelected] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 

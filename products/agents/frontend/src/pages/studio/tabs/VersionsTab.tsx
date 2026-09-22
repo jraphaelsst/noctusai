@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, FilePlus2, Rocket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Button, Dialog, DialogBody, DialogFooter, DialogHeader } from "@noctusai/lib/design-system";
+import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, EmptyState } from "@noctusai/lib/design-system";
 import {
   OVERRIDE_REASON_MIN,
   type CompileWarning,
@@ -17,7 +17,7 @@ import {
   type VersionSummary,
 } from "@/api/studio/types";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
-import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { VersionDiffSummary } from "@/components/studio/VersionDiffSummary";
 import { shortHash } from "@/components/studio/compiledSegments";
 import { VersionStatusBadge } from "@/components/studio/VersionStatusBadge";
@@ -87,6 +87,15 @@ function PublishDialog({
       if (err instanceof ApiError && err.status === 409 && err.body && typeof err.body === "object") {
         const body = err.body as PublishErrorBody;
         if (body.code === "eval_required" || body.code === "compile_blocked") setServerGate(body);
+        if (body.code === "draft_changed") {
+          // The draft's hash moved between the gating eval run and this
+          // publish call — the server refuses rather than gate a stale
+          // hash. Recompile so "Hash atual" (and the gate check above it)
+          // reflects the draft NOW, and let the admin retry from there.
+          setErro("O rascunho mudou desde a última compilação — recompile e tente de novo.");
+          void compiled.refetch();
+          return;
+        }
       }
       setErro(errorMessage(err));
     }
@@ -229,7 +238,7 @@ export default function VersionsTab({ agentKey }: { agentKey: string }) {
 
   if (showSkeleton) return <StudioLoading rows={4} />;
   if (isError) return <StudioError error={error} onRetry={refetch} />;
-  if (!agent || versoes.length === 0) return <StudioEmpty titulo="Este agente ainda não tem versões." />;
+  if (!agent || versoes.length === 0) return <EmptyState message="Este agente ainda não tem versões." />;
 
   async function handleRestore(v: VersionSummary) {
     try {

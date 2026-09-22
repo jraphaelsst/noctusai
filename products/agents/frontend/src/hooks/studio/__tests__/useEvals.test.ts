@@ -82,6 +82,60 @@ describe("useCreateEvalRun", () => {
   });
 });
 
+describe("studioKeys.detail invalidation (score-affecting events)", () => {
+  it("useCreateEvalRun invalidates the agent detail query", async () => {
+    mockPost.mockResolvedValue({ id: "r1", version_id: "v1", compiled_hash: "sha256:aaaa", status: "pendente", total: 0, aprovados: 0, score: null, limiar: 0.8, started_by: "u1", started_at: null, finished_at: null, erro: null });
+    const { useCreateEvalRun } = await import("@/hooks/studio/useEvals");
+    const qc = newClient();
+    qc.setQueryData(["studio", "isaia", "detail"], { key: "isaia" });
+    const { result } = renderHook(() => useCreateEvalRun("isaia"), { wrapper: wrapper(qc) });
+
+    await result.current.mutateAsync({ version_id: "v1" });
+
+    const detailQuery = qc.getQueryCache().find({ queryKey: ["studio", "isaia", "detail"] });
+    expect(detailQuery?.state.isInvalidated).toBe(true);
+  });
+
+  it("useCancelEvalRun invalidates the agent detail query", async () => {
+    mockPost.mockResolvedValue({ id: "r1", version_id: "v1", compiled_hash: "sha256:aaaa", status: "cancelada", total: 0, aprovados: 0, score: null, limiar: 0.8, started_by: "u1", started_at: null, finished_at: null, erro: null });
+    const { useCancelEvalRun } = await import("@/hooks/studio/useEvals");
+    const qc = newClient();
+    qc.setQueryData(["studio", "isaia", "detail"], { key: "isaia" });
+    const { result } = renderHook(() => useCancelEvalRun("isaia"), { wrapper: wrapper(qc) });
+
+    await result.current.mutateAsync("r1");
+
+    const detailQuery = qc.getQueryCache().find({ queryKey: ["studio", "isaia", "detail"] });
+    expect(detailQuery?.state.isInvalidated).toBe(true);
+  });
+
+  it("useEvalRun invalidates the agent detail query the moment a poll observes a terminal status", async () => {
+    mockGet.mockResolvedValueOnce({
+      id: "r1", version_id: "v1", compiled_hash: "h", status: "executando", total: 1, aprovados: 0, score: null, limiar: 0.8, started_at: "t", finished_at: null, erro: null, resultados: [],
+    });
+    const { useEvalRun } = await import("@/hooks/studio/useEvals");
+    const qc = newClient();
+    qc.setQueryData(["studio", "isaia", "detail"], { key: "isaia" });
+    const { result } = renderHook(() => useEvalRun("isaia", "r1"), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.data?.status).toBe("executando"));
+
+    // Still in flight — no premature invalidation.
+    let detailQuery = qc.getQueryCache().find({ queryKey: ["studio", "isaia", "detail"] });
+    expect(detailQuery?.state.isInvalidated).toBe(false);
+
+    mockGet.mockResolvedValueOnce({
+      id: "r1", version_id: "v1", compiled_hash: "h", status: "concluida", total: 1, aprovados: 1, score: 0.95, limiar: 0.8, started_at: "t", finished_at: "t2", erro: null, resultados: [],
+    });
+    await qc.invalidateQueries({ queryKey: ["studio", "isaia", "evals", "runs", "detail", "r1"] });
+    await waitFor(() => expect(result.current.data?.status).toBe("concluida"));
+
+    await waitFor(() => {
+      detailQuery = qc.getQueryCache().find({ queryKey: ["studio", "isaia", "detail"] });
+      expect(detailQuery?.state.isInvalidated).toBe(true);
+    });
+  });
+});
+
 describe("useEvalRuns polling", () => {
   it("polls every 3s while a run is executando", async () => {
     mockGet.mockResolvedValue({

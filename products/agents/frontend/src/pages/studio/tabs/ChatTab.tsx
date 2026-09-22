@@ -17,12 +17,12 @@ import { toast } from "sonner";
 import { Button, Select } from "@noctusai/lib/design-system";
 import { AgentChatWindow } from "@/components/AgentChatWindow";
 import { buildStudioChatAdapter, useCreateStudioConversation } from "@/hooks/studio/useStudioChat";
-import { useClientsKe } from "@/hooks/studio/useClientsKe";
+import { useClients } from "@/hooks/studio/useClients";
 import { errorMessage } from "@/lib/errors";
 
 export default function ChatTab({ agentKey }: { agentKey: string }) {
   const adapter = useMemo(() => buildStudioChatAdapter(agentKey), [agentKey]);
-  const { data: clients } = useClientsKe(agentKey);
+  const { data: clients } = useClients(agentKey);
   const activeClients = useMemo(() => (clients ?? []).filter((c) => c.ativo), [clients]);
   const [clientId, setClientId] = useState<string>("");
   const createConversation = useCreateStudioConversation(agentKey);

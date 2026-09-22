@@ -149,6 +149,11 @@ export interface VersionDetail extends VersionSummary {
   eval_run_id: string | null;
   secoes: Section[];
   skills: Skill[];
+  /** Additive (backend hardening, not yet in §D1's table) — the
+   * `publicacao_limiar` value the gate actually compared `eval_score`
+   * against at publish time (the agent-level limiar can change after
+   * publish; this is the frozen value for THIS version). */
+  limiar_aplicado?: number | null;
 }
 
 export interface DraftCreateInput {
@@ -216,7 +221,15 @@ export interface ManifestOrigin {
   campo: string | null;
 }
 
-/** `inicio`/`fim` are character offsets into `texto` (`texto.slice(inicio, fim)`). */
+/**
+ * `inicio`/`fim` are character offsets into `texto`, counted as Python
+ * `len(str)` does — Unicode CODE POINTS. JS `.slice`/`.length` count UTF-16
+ * code UNITS instead (an astral character, e.g. most emoji, is a surrogate
+ * pair — 2 JS units, 1 backend offset), so `texto.slice(inicio, fim)` drifts
+ * once an astral character precedes the offset. Slice with
+ * `Array.from(texto).slice(inicio, fim).join("")` (see `segmentCompiled` in
+ * `components/studio/compiledSegments.ts`), never `texto.slice` directly.
+ */
 export interface ManifestSection {
   chave: string;
   titulo: string;
@@ -289,7 +302,10 @@ export interface GateLastRun {
 
 export interface PublishErrorBody {
   detail: string;
-  code: "eval_required" | "compile_blocked" | "version_immutable" | string;
+  /** `draft_changed` (backend hardening, additive): the draft's
+   * `compiled_hash` moved between the eval run that satisfied the gate and
+   * the publish call — recompiling produces a fresh hash to re-gate. */
+  code: "eval_required" | "compile_blocked" | "version_immutable" | "draft_changed" | string;
   hash_atual?: string;
   ultima_execucao?: GateLastRun | null;
   avisos?: CompileWarning[];
@@ -340,7 +356,7 @@ export interface ClientCreateInput {
   ativo?: boolean;
 }
 
-export type ClientPatchInput = Partial<Pick<Client, "nome" | "resumo" | "ativo">>;
+export type ClientPatchInput = Partial<Pick<Client, "slug" | "nome" | "resumo" | "ativo">>;
 
 export interface ClientEntryCreateInput {
   tipo: ClientEntryTipo;

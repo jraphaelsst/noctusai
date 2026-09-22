@@ -2,25 +2,35 @@
  * Avaliações tab — Agent Studio CONTRACT.md §D4, §G "Avaliações".
  *
  * Cases list/editor (entrada, contexto, deve[]/nao_deve[] editable lists,
- * rubrica, tags) + runs list + "Rodar avaliação" on the draft + run detail
- * (per-case pass/fail, score, saída, veredito per criterion, judge notes),
- * polling while `executando` (`useEvalRun`, `KB §
+ * rubrica, tags, ativo) + runs list + "Rodar avaliação" on the draft + run
+ * detail (per-case pass/fail, score, saída, veredito per criterion, judge
+ * notes), polling while `executando` (`useEvalRun`, `KB §
  * PATTERNS/frontend/lying-loading-state.md`-compliant: `showSkeleton =
  * isPending && !data`, never a bare `isLoading`). Page-scoped CRUD: cases
- * are created/edited/run from this one tab.
+ * are created/edited/(de)activated/run from this one tab.
  *
  * "The draft" version — §D4's "Rodar avaliação" runs against
  * `agent.versoes[status='rascunho'].id`, which lives on `AgentDetail`
- * (contract §D1, FE-DEF's `useStudioAgents`/`useVersions.ts`, not on this
- * branch — contract §J2.4). `useDraftVersion` below is FE-KE's own,
- * narrowly-scoped read of the SAME already-specified `GET
- * /api/studio/agents/{key}` endpoint — it exists only to find the draft's
- * `id`/`versao` for the "Rodar avaliação" button, not to re-implement
- * FE-DEF's Versões tab.
+ * (contract §D1). `useDraftVersion` below reads it off the SAME
+ * `useStudioAgent`/`studioKeys.detail` query the rest of the shell uses
+ * (`hooks/studio/useStudioAgents.ts`) — one cache entry per agent, never a
+ * second `AgentDetail`-shaped query under its own key.
+ *
+ * Case delete conflict: a case with results attached is protected by the
+ * backend (409 `case_in_use`, since deleting it would orphan
+ * `eval_results` rows referenced by past runs). The UI never dead-ends the
+ * admin there — it offers "Desativar" (`PATCH {ativo: false}`), which keeps
+ * the case's history but excludes it from future runs.
+ *
+ * Partial-run labelling: `EvalRun` carries no explicit "ran a case subset"
+ * flag (contract §D4), so a run is treated as partial when its `total` is
+ * smaller than the agent's ACTIVE case count at render time — the same
+ * population "Rodar avaliação" (no `case_ids`) would have used. A run
+ * against every active case never gets the label, even if cases were
+ * archived afterwards; that's an acceptable drift for a display-only badge.
  */
 import { useState, type FormEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, ClipboardList, Play, Plus, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardList, Pencil, Play, Plus, StopCircle, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge,
@@ -35,36 +45,31 @@ import {
   Textarea,
 } from "@noctusai/lib/design-system";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
-import { api } from "@/lib/api";
-import { errorMessage } from "@/lib/errors";
+import { ApiError, errorMessage } from "@/lib/errors";
+import { useStudioAgent } from "@/hooks/studio/useStudioAgents";
 import {
+  useCancelEvalRun,
   useCreateEvalCase,
   useCreateEvalRun,
   useDeleteEvalCase,
   useEvalCases,
   useEvalRun,
   useEvalRuns,
+  useUpdateEvalCase,
 } from "@/hooks/studio/useEvals";
-import type { EvalCase, EvalRunStatus } from "@/api/studio/types-ke";
+import type { EvalCase, EvalCaseCreate, EvalRun, EvalRunStatus } from "@/api/studio/types-ke";
 
-interface AgentVersionSummaryLite {
-  id: string;
-  versao: number;
-  status: "rascunho" | "ativa" | "substituida";
-}
+const IN_FLIGHT_RUN: EvalRunStatus[] = ["pendente", "executando"];
 
-interface AgentDetailLite {
-  versoes: AgentVersionSummaryLite[];
-}
-
-/** Narrow read of `GET /api/studio/agents/{key}` — see file header. */
+/** See file header. */
 function useDraftVersion(agentKey: string) {
-  const query = useQuery<AgentDetailLite>({
-    queryKey: ["studio", agentKey, "agent-detail-lite"],
-    queryFn: () => api.get<AgentDetailLite>(`/api/studio/agents/${agentKey}`),
-    enabled: !!agentKey,
-  });
-  return query.data?.versoes.find((v) => v.status === "rascunho") ?? null;
+  const { data: agent } = useStudioAgent(agentKey);
+  return agent?.versoes.find((v) => v.status === "rascunho") ?? null;
+}
+
+/** See file header ("Partial-run labelling"). */
+function isPartialRun(run: EvalRun, activeCasesCount: number): boolean {
+  return activeCasesCount > 0 && run.total > 0 && run.total < activeCasesCount;
 }
 
 const RUN_STATUS_VARIANT: Record<EvalRunStatus, "default" | "muted" | "destructive" | "outline"> = {
@@ -75,37 +80,201 @@ const RUN_STATUS_VARIANT: Record<EvalRunStatus, "default" | "muted" | "destructi
   cancelada: "outline",
 };
 
+/** One `deve`/`não deve` criterion list — items are added and removed one at
+ * a time, never edited as a single blob of text. */
+function CriteriaListField({
+  label,
+  items,
+  onChange,
+  testId,
+}: {
+  label: string;
+  items: string[];
+  onChange: (items: string[]) => void;
+  testId: string;
+}) {
+  const [draft, setDraft] = useState("");
+  function add() {
+    const v = draft.trim();
+    if (!v) return;
+    onChange([...items, v]);
+    setDraft("");
+  }
+  return (
+    <Field label={label}>
+      <div className="space-y-1.5" data-testid={testId}>
+        {items.length > 0 && (
+          <ul className="space-y-1">
+            {items.map((item, i) => (
+              <li
+                key={`${i}-${item}`}
+                className="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1 text-xs"
+              >
+                <span className="break-words">{item}</span>
+                <button
+                  type="button"
+                  className="flex-shrink-0 text-muted-foreground hover:text-destructive hover:underline"
+                  onClick={() => onChange(items.filter((_, idx) => idx !== i))}
+                  data-testid={`${testId}-remove-${i}`}
+                >
+                  Remover
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex gap-2">
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Adicionar critério"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add();
+              }
+            }}
+            data-testid={`${testId}-draft`}
+          />
+          <Button type="button" size="sm" variant="outline" onClick={add} data-testid={`${testId}-add`}>
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    </Field>
+  );
+}
+
+interface CaseFormValue {
+  slug: string;
+  titulo: string;
+  entrada: string;
+  contexto: string;
+  deve: string[];
+  naoDeve: string[];
+  rubrica: string;
+  tags: string;
+  ativo: boolean;
+}
+
+function emptyCaseForm(): CaseFormValue {
+  return { slug: "", titulo: "", entrada: "", contexto: "", deve: [], naoDeve: [], rubrica: "", tags: "", ativo: true };
+}
+
+function caseToForm(c: EvalCase): CaseFormValue {
+  return {
+    slug: c.slug,
+    titulo: c.titulo,
+    entrada: c.entrada,
+    contexto: c.contexto ?? "",
+    deve: c.criterios.deve,
+    naoDeve: c.criterios.nao_deve,
+    rubrica: c.rubrica ?? "",
+    tags: c.tags.join(", "),
+    ativo: c.ativo,
+  };
+}
+
+function formToPayload(f: CaseFormValue): EvalCaseCreate {
+  return {
+    slug: f.slug,
+    titulo: f.titulo,
+    entrada: f.entrada,
+    contexto: f.contexto || null,
+    criterios: { deve: f.deve, nao_deve: f.naoDeve },
+    rubrica: f.rubrica || null,
+    tags: f.tags
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+    ativo: f.ativo,
+  };
+}
+
+/** Shared fields for both "Novo caso" (create) and "Editar caso" (patch). */
+function CaseFormFields({
+  value,
+  onChange,
+  slugEditable,
+  showAtivo,
+}: {
+  value: CaseFormValue;
+  onChange: (v: CaseFormValue) => void;
+  slugEditable: boolean;
+  showAtivo: boolean;
+}) {
+  return (
+    <>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field label="Slug" required>
+          <Input
+            value={value.slug}
+            onChange={(e) => onChange({ ...value, slug: e.target.value })}
+            required
+            disabled={!slugEditable}
+          />
+        </Field>
+        <Field label="Título" required>
+          <Input value={value.titulo} onChange={(e) => onChange({ ...value, titulo: e.target.value })} required />
+        </Field>
+      </div>
+      <Field label="Entrada (mensagem enviada ao agente)" required>
+        <Textarea rows={3} value={value.entrada} onChange={(e) => onChange({ ...value, entrada: e.target.value })} required />
+      </Field>
+      <Field label="Contexto (opcional)">
+        <Textarea rows={2} value={value.contexto} onChange={(e) => onChange({ ...value, contexto: e.target.value })} />
+      </Field>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <CriteriaListField
+          label="Deve"
+          items={value.deve}
+          onChange={(deve) => onChange({ ...value, deve })}
+          testId="evals-criteria-deve"
+        />
+        <CriteriaListField
+          label="Não deve"
+          items={value.naoDeve}
+          onChange={(naoDeve) => onChange({ ...value, naoDeve })}
+          testId="evals-criteria-nao-deve"
+        />
+      </div>
+      <Field label="Rubrica (opcional)">
+        <Textarea rows={2} value={value.rubrica} onChange={(e) => onChange({ ...value, rubrica: e.target.value })} />
+      </Field>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field label="Tags (separadas por vírgula)">
+          <Input value={value.tags} onChange={(e) => onChange({ ...value, tags: e.target.value })} />
+        </Field>
+        {showAtivo && (
+          <label className="flex items-end gap-1.5 pb-2 text-xs">
+            <input
+              type="checkbox"
+              checked={value.ativo}
+              onChange={(e) => onChange({ ...value, ativo: e.target.checked })}
+              data-testid="evals-case-ativo"
+            />
+            ativo (entra nas próximas execuções)
+          </label>
+        )}
+      </div>
+    </>
+  );
+}
+
 function CaseForm({ agentKey, onDone }: { agentKey: string; onDone: () => void }) {
-  const [titulo, setTitulo] = useState("");
-  const [slug, setSlug] = useState("");
-  const [entrada, setEntrada] = useState("");
-  const [contexto, setContexto] = useState("");
-  const [deve, setDeve] = useState("");
-  const [naoDeve, setNaoDeve] = useState("");
-  const [rubrica, setRubrica] = useState("");
+  const [value, setValue] = useState<CaseFormValue>(emptyCaseForm());
   const [error, setError] = useState<string | null>(null);
   const create = useCreateEvalCase(agentKey);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const deveList = deve.split("\n").map((s) => s.trim()).filter(Boolean);
-    const naoDeveList = naoDeve.split("\n").map((s) => s.trim()).filter(Boolean);
-    if (deveList.length === 0 && naoDeveList.length === 0) {
+    if (value.deve.length === 0 && value.naoDeve.length === 0) {
       setError("Informe ao menos um critério (deve ou não deve).");
       return;
     }
     try {
-      await create.mutateAsync({
-        slug,
-        titulo,
-        entrada,
-        contexto: contexto || null,
-        criterios: { deve: deveList, nao_deve: naoDeveList },
-        rubrica: rubrica || null,
-        tags: [],
-        ativo: true,
-      });
+      await create.mutateAsync(formToPayload(value));
       toast.success("Caso criado.");
       onDone();
     } catch (err) {
@@ -116,31 +285,7 @@ function CaseForm({ agentKey, onDone }: { agentKey: string; onDone: () => void }
   return (
     <form onSubmit={handleSubmit} className="space-y-2 rounded-md border border-border p-3" data-testid="evals-new-case-form">
       <FormError message={error} />
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Field label="Slug" required>
-          <Input value={slug} onChange={(e) => setSlug(e.target.value)} required />
-        </Field>
-        <Field label="Título" required>
-          <Input value={titulo} onChange={(e) => setTitulo(e.target.value)} required />
-        </Field>
-      </div>
-      <Field label="Entrada (mensagem enviada ao agente)" required>
-        <Textarea rows={3} value={entrada} onChange={(e) => setEntrada(e.target.value)} required />
-      </Field>
-      <Field label="Contexto (opcional)">
-        <Textarea rows={2} value={contexto} onChange={(e) => setContexto(e.target.value)} />
-      </Field>
-      <div className="grid gap-2 sm:grid-cols-2">
-        <Field label="Deve (uma por linha)">
-          <Textarea rows={3} value={deve} onChange={(e) => setDeve(e.target.value)} />
-        </Field>
-        <Field label="Não deve (uma por linha)">
-          <Textarea rows={3} value={naoDeve} onChange={(e) => setNaoDeve(e.target.value)} />
-        </Field>
-      </div>
-      <Field label="Rubrica (opcional)">
-        <Textarea rows={2} value={rubrica} onChange={(e) => setRubrica(e.target.value)} />
-      </Field>
+      <CaseFormFields value={value} onChange={setValue} slugEditable showAtivo={false} />
       <Button type="submit" variant="primary" size="sm" disabled={create.isPending}>
         Criar caso
       </Button>
@@ -148,15 +293,81 @@ function CaseForm({ agentKey, onDone }: { agentKey: string; onDone: () => void }
   );
 }
 
-function RunDetailPanel({ agentKey, runId }: { agentKey: string; runId: string }) {
+/** The case editor (§G): entrada, contexto, deve[]/nao_deve[], rubrica,
+ * tags, ativo — full patch via `useUpdateEvalCase`. Slug is immutable once
+ * created (it identifies the case; `EvalCasePatch` never carries it). */
+function CaseEditForm({ agentKey, caseData, onDone }: { agentKey: string; caseData: EvalCase; onDone: () => void }) {
+  const [value, setValue] = useState<CaseFormValue>(() => caseToForm(caseData));
+  const [error, setError] = useState<string | null>(null);
+  const update = useUpdateEvalCase(agentKey);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (value.deve.length === 0 && value.naoDeve.length === 0) {
+      setError("Informe ao menos um critério (deve ou não deve).");
+      return;
+    }
+    const { slug: _slug, ...patch } = formToPayload(value);
+    void _slug;
+    try {
+      await update.mutateAsync({ caseId: caseData.id, patch });
+      toast.success("Caso salvo.");
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-2 rounded-md border border-border p-3"
+      data-testid={`evals-edit-case-form-${caseData.slug}`}
+    >
+      <FormError message={error} />
+      <CaseFormFields value={value} onChange={setValue} slugEditable={false} showAtivo />
+      <div className="flex gap-2">
+        <Button type="submit" variant="primary" size="sm" disabled={update.isPending}>
+          Salvar
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onDone}>
+          Cancelar edição
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function RunDetailPanel({
+  agentKey,
+  runId,
+  isAdmin,
+  activeCasesCount,
+}: {
+  agentKey: string;
+  runId: string;
+  isAdmin: boolean;
+  activeCasesCount: number;
+}) {
   const { data: run, showSkeleton, isError } = useEvalRun(agentKey, runId);
+  const cancelRun = useCancelEvalRun(agentKey);
 
   if (showSkeleton) return <PageSkeleton />;
   if (isError || !run) return <ErrorState message="Erro ao carregar a execução." />;
 
+  async function handleCancel() {
+    try {
+      await cancelRun.mutateAsync(run!.id);
+      toast.success("Avaliação cancelada.");
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  }
+
   return (
     <Card className="space-y-3" data-testid="evals-run-detail">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-semibold text-foreground">
             Execução {run.id.slice(0, 8)} — {run.aprovados}/{run.total} aprovados
@@ -165,7 +376,26 @@ function RunDetailPanel({ agentKey, runId }: { agentKey: string; runId: string }
             score {run.score != null ? run.score.toFixed(3) : "—"} · limiar {run.limiar.toFixed(3)}
           </p>
         </div>
-        <Badge variant={RUN_STATUS_VARIANT[run.status]}>{run.status}</Badge>
+        <div className="flex items-center gap-2">
+          {isPartialRun(run, activeCasesCount) && (
+            <Badge variant="outline" data-testid="evals-run-partial">
+              parcial (não vale para publicar)
+            </Badge>
+          )}
+          <Badge variant={RUN_STATUS_VARIANT[run.status]}>{run.status}</Badge>
+          {isAdmin && IN_FLIGHT_RUN.includes(run.status) && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleCancel}
+              disabled={cancelRun.isPending}
+              data-testid="evals-run-cancel"
+            >
+              <StopCircle className="mr-1.5 h-3.5 w-3.5" />
+              Cancelar
+            </Button>
+          )}
+        </div>
       </div>
       {run.erro && <FormError message={run.erro} />}
       <div className="space-y-2">
@@ -209,8 +439,13 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
   const draft = useDraftVersion(agentKey);
   const createRun = useCreateEvalRun(agentKey);
   const deleteCase = useDeleteEvalCase(agentKey);
+  const updateCase = useUpdateEvalCase(agentKey);
   const [showNewCase, setShowNewCase] = useState(false);
+  const [editingCase, setEditingCase] = useState<string | null>(null);
+  const [inUseCase, setInUseCase] = useState<EvalCase | null>(null);
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
+
+  const activeCasesCount = cases?.filter((c) => c.ativo).length ?? 0;
 
   async function handleRun() {
     if (!draft) return;
@@ -218,6 +453,32 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
       const run = await createRun.mutateAsync({ version_id: draft.id });
       setSelectedRun(run.id);
       toast.success("Avaliação iniciada.");
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  }
+
+  async function handleDelete(c: EvalCase) {
+    setInUseCase(null);
+    try {
+      await deleteCase.mutateAsync(c.id);
+      toast.success("Caso excluído.");
+    } catch (err) {
+      // §G: a case with attached results can't be deleted (409 case_in_use)
+      // — offer deactivation instead of dead-ending the admin on an error.
+      if (err instanceof ApiError && err.code === "case_in_use") {
+        setInUseCase(c);
+      } else {
+        toast.error(errorMessage(err));
+      }
+    }
+  }
+
+  async function handleDeactivate(c: EvalCase) {
+    try {
+      await updateCase.mutateAsync({ caseId: c.id, patch: { ativo: false } });
+      toast.success("Caso desativado.");
+      setInUseCase(null);
     } catch (err) {
       toast.error(errorMessage(err));
     }
@@ -259,27 +520,70 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
         <EmptyState message="Nenhum caso de avaliação ainda." />
       ) : (
         <div className="grid gap-2 sm:grid-cols-2">
-          {cases.map((c: EvalCase) => (
-            <Card key={c.id} className="space-y-1" data-testid={`evals-case-${c.slug}`}>
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-sm font-medium text-foreground">{c.titulo}</p>
-                {isAdmin && (
-                  <button
-                    type="button"
-                    className="text-xs text-destructive hover:underline"
-                    onClick={() => deleteCase.mutate(c.id)}
+          {cases.map((c: EvalCase) =>
+            editingCase === c.id ? (
+              <CaseEditForm key={c.id} agentKey={agentKey} caseData={c} onDone={() => setEditingCase(null)} />
+            ) : (
+              <Card key={c.id} className="space-y-1" data-testid={`evals-case-${c.slug}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium text-foreground">{c.titulo}</p>
+                  {isAdmin && (
+                    <div className="flex flex-shrink-0 items-center gap-2">
+                      {!c.ativo && <Badge variant="muted">inativo</Badge>}
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:underline"
+                        onClick={() => setEditingCase(c.id)}
+                        data-testid={`evals-case-edit-${c.slug}`}
+                      >
+                        <Pencil className="h-3 w-3" /> Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs text-destructive hover:underline"
+                        onClick={() => handleDelete(c)}
+                        data-testid={`evals-case-delete-${c.slug}`}
+                      >
+                        Excluir
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <p className="line-clamp-2 text-xs text-muted-foreground">{c.entrada}</p>
+                <div className="flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                  {c.criterios.deve.length > 0 && <span>{c.criterios.deve.length} deve</span>}
+                  {c.criterios.nao_deve.length > 0 && <span>{c.criterios.nao_deve.length} não deve</span>}
+                  {c.tags.map((t) => (
+                    <span key={t} className="rounded-full bg-accent px-1.5">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+                {inUseCase?.id === c.id && (
+                  <div
+                    className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700"
+                    role="alert"
+                    data-testid={`evals-case-in-use-${c.slug}`}
                   >
-                    Excluir
-                  </button>
+                    <p>
+                      Este caso já tem resultados de avaliações anteriores e não pode ser excluído. Você pode
+                      desativá-lo para tirá-lo das próximas execuções sem perder o histórico.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-1.5"
+                      onClick={() => handleDeactivate(c)}
+                      disabled={updateCase.isPending}
+                      data-testid={`evals-case-deactivate-${c.slug}`}
+                    >
+                      Desativar
+                    </Button>
+                  </div>
                 )}
-              </div>
-              <p className="line-clamp-2 text-xs text-muted-foreground">{c.entrada}</p>
-              <div className="flex flex-wrap gap-1 text-[10px] text-muted-foreground">
-                {c.criterios.deve.length > 0 && <span>{c.criterios.deve.length} deve</span>}
-                {c.criterios.nao_deve.length > 0 && <span>{c.criterios.nao_deve.length} não deve</span>}
-              </div>
-            </Card>
-          ))}
+              </Card>
+            ),
+          )}
         </div>
       )}
 
@@ -303,14 +607,23 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
                 <span className="text-muted-foreground">
                   {r.aprovados}/{r.total}
                 </span>
-                <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                <div className="flex items-center gap-2">
+                  {isPartialRun(r, activeCasesCount) && (
+                    <Badge variant="outline" data-testid={`evals-run-partial-${r.id}`}>
+                      parcial
+                    </Badge>
+                  )}
+                  <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                </div>
               </button>
             ))}
           </div>
         )}
       </div>
 
-      {selectedRun && <RunDetailPanel agentKey={agentKey} runId={selectedRun} />}
+      {selectedRun && (
+        <RunDetailPanel agentKey={agentKey} runId={selectedRun} isAdmin={isAdmin} activeCasesCount={activeCasesCount} />
+      )}
     </div>
   );
 }

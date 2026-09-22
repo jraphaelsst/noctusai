@@ -4,6 +4,16 @@
  * offsets into `texto`). The UI never re-composes the prompt (§A4) — it cuts
  * the server's text where the server says the sections are.
  *
+ * The server counts characters as Python `len(str)` — Unicode CODE POINTS,
+ * one per character regardless of plane. JS string indexing/`.length`/`.slice`
+ * count UTF-16 CODE UNITS instead: any astral character (most emoji, some
+ * rare CJK/historic scripts) is a surrogate PAIR, i.e. 2 JS units but 1
+ * backend offset. Using `.slice`/`.length` directly on `texto` would
+ * therefore drift the cut point after the first astral character in the
+ * text. We slice on `Array.from(texto)` instead — it iterates by code point,
+ * matching the backend's counting — and compare lengths against that array's
+ * length, never `texto.length`.
+ *
  * Everything between two sections is also returned: the `\n\n` separators are
  * dropped as whitespace, but any NON-whitespace text outside every manifest
  * range is surfaced as an `orfao` segment. The inspector's promise is "what
@@ -25,6 +35,9 @@ export interface SegmentResult {
 export function segmentCompiled(texto: string, manifest: ManifestSection[]): SegmentResult {
   const problemas: string[] = [];
   const segmentos: CompiledSegment[] = [];
+  // Code-point array: `cp[i]` is the backend's i-th character, so `inicio`/
+  // `fim` index directly into it (see file header — never `texto.slice`).
+  const cp = Array.from(texto);
   const ordered = manifest
     .map((secao, indice) => ({ secao, indice }))
     .sort((x, y) => x.secao.inicio - y.secao.inicio);
@@ -32,15 +45,15 @@ export function segmentCompiled(texto: string, manifest: ManifestSection[]): Seg
   let cursor = 0;
   const pushGap = (inicio: number, fim: number) => {
     if (fim <= inicio) return;
-    const gap = texto.slice(inicio, fim);
+    const gap = cp.slice(inicio, fim).join("");
     if (gap.trim()) segmentos.push({ tipo: "orfao", texto: gap, inicio, fim });
   };
 
   for (const { secao, indice } of ordered) {
     const { inicio, fim } = secao;
-    if (inicio < 0 || fim > texto.length || fim < inicio) {
+    if (inicio < 0 || fim > cp.length || fim < inicio) {
       problemas.push(
-        `Seção "${secao.titulo}" tem limites inválidos (${inicio}–${fim}) para um texto de ${texto.length} caracteres.`,
+        `Seção "${secao.titulo}" tem limites inválidos (${inicio}–${fim}) para um texto de ${cp.length} caracteres.`,
       );
       continue;
     }
@@ -49,10 +62,10 @@ export function segmentCompiled(texto: string, manifest: ManifestSection[]): Seg
     } else {
       pushGap(cursor, inicio);
     }
-    segmentos.push({ tipo: "secao", secao, texto: texto.slice(inicio, fim), indice });
+    segmentos.push({ tipo: "secao", secao, texto: cp.slice(inicio, fim).join(""), indice });
     cursor = Math.max(cursor, fim);
   }
-  pushGap(cursor, texto.length);
+  pushGap(cursor, cp.length);
 
   return { segmentos, problemas };
 }
