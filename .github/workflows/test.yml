@@ -57,6 +57,7 @@ jobs:
       run_heavy: ${{ steps.classify.outputs.run_heavy }}
       shared_changed: ${{ steps.classify.outputs.shared_changed }}
       changed_products: ${{ steps.classify.outputs.changed_products }}
+      active_products: ${{ steps.classify.outputs.active_products }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -66,6 +67,29 @@ jobs:
         id: classify
         run: |
           set -euo pipefail
+
+          # ASLEEP-product gate (2026-09-22). `deploy/fleet/active-scope.txt`
+          # is the GENERATED, catalog-derived list of awake slugs (`core` +
+          # every `ativo=true` product) — never hand-maintain the awake/asleep
+          # sets here (KB § PATTERNS/devops/product-lockfile-and-slug-drift.md
+          # "derive, don't sync by hand"). Comma-wrapped like
+          # `changed_products` so a downstream `grep -q ",<slug>,"` is an
+          # exact-segment match. Computed ONCE, up front, so every branch
+          # below (including the always-exit-0 ones) carries it.
+          #
+          # FAIL TOWARD COVERAGE: a missing scope file must never silently
+          # narrow the gates — `active_products=ALL` is a sentinel every
+          # downstream "Scope gate" / job-level `if:` treats as "run
+          # everything", matching `product_scope.filter_active`'s own
+          # fail-open contract (mcp/noctusai/tools/noctus/dev/product_scope.py).
+          if [ -f deploy/fleet/active-scope.txt ]; then
+            ACTIVE="$(grep -vE '^\s*#' deploy/fleet/active-scope.txt | grep -vE '^\s*$' | sort -u | tr '\n' ',')"
+            echo "active_products=,${ACTIVE}" >> "$GITHUB_OUTPUT"
+            echo "active scope (deploy/fleet/active-scope.txt): ${ACTIVE:-none}"
+          else
+            echo "active_products=ALL" >> "$GITHUB_OUTPUT"
+            echo "::warning::deploy/fleet/active-scope.txt is missing — every product is being treated as active (fail toward coverage, never silently narrowed)"
+          fi
 
           # Release branches + manual re-triggers ALWAYS run the full suite —
           # bless (push to `main`) and promote-adjacent verification must
@@ -110,7 +134,11 @@ jobs:
 
           # (b) A shared-root change invalidates every product — same family
           # of paths build-and-push.yml treats as "rebuild the active set".
-          if echo "$CHANGED" | grep -qE '^(seed/|requirements.*\.txt$|\.github/|scripts/ci/|package(-lock)?\.json$)'; then
+          # `deploy/fleet/active-scope.txt` itself is IN this set: waking a
+          # product (editing the file, or the commit that regenerates it) must
+          # re-test it immediately, not wait for a diff that happens to touch
+          # its own `products/<slug>/` tree.
+          if echo "$CHANGED" | grep -qE '^(seed/|requirements.*\.txt$|\.github/|scripts/ci/|package(-lock)?\.json$|deploy/fleet/active-scope\.txt$)'; then
             echo "shared_changed=true" >> "$GITHUB_OUTPUT"
             echo "changed_products=," >> "$GITHUB_OUTPUT"
             echo "scope: shared root changed → every product matrix entry runs"
@@ -178,6 +206,18 @@ jobs:
       - name: Scope gate — does this product need to run?
         id: gate
         run: |
+          # ASLEEP products are out of the process entirely, on every event
+          # type — checked BEFORE the changed/shared diff logic, which only
+          # decides whether an AWAKE product runs on this particular diff.
+          # `active_products=ALL` (scope file missing) skips this check, same
+          # fail-toward-coverage sentinel the `changes` job emits.
+          ACTIVE="${{ needs.changes.outputs.active_products }}"
+          if [ "$ACTIVE" != "ALL" ] && ! echo "$ACTIVE" | grep -q ",${{ matrix.product }},"; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::skipping ${{ matrix.product }} — asleep (not in deploy/fleet/active-scope.txt)"
+            exit 0
+          fi
+
           if [ "${{ needs.changes.outputs.shared_changed }}" = "true" ] || \
              echo "${{ needs.changes.outputs.changed_products }}" | grep -q ",${{ matrix.product }},"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -313,7 +353,13 @@ jobs:
   erp-frontend-build:
     name: ERP Frontend Build
     needs: changes
-    if: needs.changes.outputs.run_heavy == 'true'
+    # erp-imobiliario is ASLEEP (deploy/fleet/active-scope.txt) — this job is
+    # not matrixed, so there is no per-entry "Scope gate" step to hang the
+    # check off (that pattern needs a `matrix.product`, and `matrix` is not a
+    # valid job-level `if:` context — see product-backend-tests above); gate
+    # here at job level instead, directly on `needs.changes.outputs.active_products`.
+    # `== 'ALL'` is the fail-toward-coverage sentinel for a missing scope file.
+    if: needs.changes.outputs.run_heavy == 'true' && (needs.changes.outputs.active_products == 'ALL' || contains(needs.changes.outputs.active_products, ',erp-imobiliario,'))
     runs-on: ubuntu-latest
 
     steps:
@@ -417,6 +463,18 @@ jobs:
       - name: Scope gate — does this product need to run?
         id: gate
         run: |
+          # ASLEEP products are out of the process entirely, on every event
+          # type — checked BEFORE the changed/shared diff logic, which only
+          # decides whether an AWAKE product runs on this particular diff.
+          # `active_products=ALL` (scope file missing) skips this check, same
+          # fail-toward-coverage sentinel the `changes` job emits.
+          ACTIVE="${{ needs.changes.outputs.active_products }}"
+          if [ "$ACTIVE" != "ALL" ] && ! echo "$ACTIVE" | grep -q ",${{ matrix.product }},"; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::skipping ${{ matrix.product }} — asleep (not in deploy/fleet/active-scope.txt)"
+            exit 0
+          fi
+
           if [ "${{ needs.changes.outputs.shared_changed }}" = "true" ] || \
              echo "${{ needs.changes.outputs.changed_products }}" | grep -q ",${{ matrix.product }},"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -521,7 +579,9 @@ jobs:
   pf-frontend-build:
     name: PF Frontend Build
     needs: changes
-    if: needs.changes.outputs.run_heavy == 'true'
+    # personal-finance is ASLEEP (deploy/fleet/active-scope.txt) — same
+    # job-level gate rationale as erp-frontend-build above.
+    if: needs.changes.outputs.run_heavy == 'true' && (needs.changes.outputs.active_products == 'ALL' || contains(needs.changes.outputs.active_products, ',personal-finance,'))
     runs-on: ubuntu-latest
 
     steps:
@@ -616,7 +676,9 @@ jobs:
   erp-e2e-tests:
     name: ERP E2E Tests
     needs: changes
-    if: needs.changes.outputs.run_heavy == 'true'
+    # erp-imobiliario is ASLEEP (deploy/fleet/active-scope.txt) — same
+    # job-level gate rationale as erp-frontend-build above.
+    if: needs.changes.outputs.run_heavy == 'true' && (needs.changes.outputs.active_products == 'ALL' || contains(needs.changes.outputs.active_products, ',erp-imobiliario,'))
     runs-on: ubuntu-latest
 
     steps:
@@ -699,13 +761,30 @@ jobs:
       - name: Ensure external noctus-net (compose references it as external)
         run: docker network inspect noctus-net >/dev/null 2>&1 || docker network create noctus-net
       - name: Validate noctusai-products (root, resolves all includes)
+        # Deliberately left UNSCOPED — verified 2026-09-22 that a dormant
+        # product's `include:` entry does not fail this (root compose config
+        # resolved clean with every dormant product still included); this
+        # step is cheap and its whole point is proving the INCLUDE GRAPH
+        # (docker-compose.yml's `include:` list) still resolves, which is
+        # exactly as true for a dormant product's entry as an active one's.
         run: docker compose -f docker-compose.yml config --quiet
       - name: Validate noctusai-infra
         run: docker compose -f docker-compose.infra.yml config --quiet
       - name: Validate each per-product compose standalone
+        # ASLEEP products are skipped here (unlike the root/infra steps
+        # above): this is the per-slug loop the "product treatment" applies
+        # to, and it is the surface `deploy/fleet/active-scope.txt` exists to
+        # gate — a dormant product's compose is out of the process, same as
+        # its test jobs.
         run: |
           set -e
+          ACTIVE="${{ needs.changes.outputs.active_products }}"
           for compose in products/*/docker-compose.yml; do
+            slug="$(basename "$(dirname "$compose")")"
+            if [ "$ACTIVE" != "ALL" ] && ! echo "$ACTIVE" | grep -q ",${slug},"; then
+              echo "::notice::skipping $compose — asleep (not in deploy/fleet/active-scope.txt)"
+              continue
+            fi
             echo "→ $compose"
             (cd "$(dirname "$compose")" && docker compose config --quiet)
           done
@@ -738,6 +817,31 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
+
+      - name: Compute dormant product dirs to exclude (derived, never hand-listed)
+        # ASLEEP products (deploy/fleet/active-scope.txt) are out of the
+        # process — their lockfiles' CVEs are not this repo's live dependency
+        # debt until reactivated. Computed at runtime from disk ∩ the scope
+        # file (same derive-don't-hand-maintain discipline as the connector
+        # list in `tooling-tests` and the shard list in `mcp-toolkit-tests`),
+        # never a literal dormant-slug list in this workflow.
+        id: dormant
+        run: |
+          set -euo pipefail
+          ACTIVE="${{ needs.changes.outputs.active_products }}"
+          SKIP="projects,archive,migratingDB"
+          if [ "$ACTIVE" = "ALL" ]; then
+            echo "::warning::deploy/fleet/active-scope.txt unavailable upstream — scanning every products/<slug> dir (fail toward coverage)"
+          else
+            for d in products/*/; do
+              slug="$(basename "$d")"
+              if ! echo "$ACTIVE" | grep -q ",${slug},"; then
+                SKIP="${SKIP},products/${slug}"
+              fi
+            done
+          fi
+          echo "skip_dirs=$SKIP" >> "$GITHUB_OUTPUT"
+          echo "trivy skip-dirs: $SKIP"
 
       - name: Trivy filesystem scan — HIGH/CRITICAL, ignore-unfixed
         # `scan-type: fs` reads requirements*.txt / package-lock.json etc.
@@ -773,7 +877,9 @@ jobs:
           # Django/JS app's old deps — gating noc CI on a non-deployed reference
           # app's CVEs is a scan-scope error, NOT noc dependency debt.
           # Verified 2026-05-22: deployable code = 0 HIGH/CRITICAL (trivy v0.70.0 DB).
-          skip-dirs: 'projects,archive,migratingDB'
+          # PLUS every dormant `products/<slug>` dir — see the "Compute
+          # dormant product dirs" step above; derived, not hardcoded here.
+          skip-dirs: ${{ steps.dormant.outputs.skip_dirs }}
 
       - name: Upload Trivy SARIF to GH Security tab
         # `if: always()` so the report uploads even when the scan
@@ -812,13 +918,46 @@ jobs:
         # can read pyproject-style configs alongside its own YAML.
         run: pip install 'bandit[toml]==1.9.4' bandit-sarif-formatter
 
+      - name: Compute active product backend dirs to scan (derived, never hand-listed)
+        # ASLEEP products (deploy/fleet/active-scope.txt) are out of the
+        # process — restrict the `products/*/backend/app/` glob to AWAKE
+        # products only. `bandit-baseline.json`'s grandfathered findings are
+        # all under `products/social-wiring/` (an awake product), so shrinking
+        # scope cannot turn this gate red: `--baseline` only fails on findings
+        # NEW to the current scan, and this scan is a strict SUBSET of the
+        # unscoped one — it can only drop findings, never add them.
+        id: scope
+        run: |
+          set -euo pipefail
+          ACTIVE="${{ needs.changes.outputs.active_products }}"
+          DIRS=()
+          for d in products/*/backend/app; do
+            [ -d "$d" ] || continue
+            slug="$(basename "$(dirname "$(dirname "$d")")")"
+            if [ "$ACTIVE" = "ALL" ] || echo "$ACTIVE" | grep -q ",${slug},"; then
+              DIRS+=("$d")
+            fi
+          done
+          if [ "${#DIRS[@]}" -eq 0 ]; then
+            echo "::error::no active product backend dirs discovered — refusing to report green over nothing"
+            exit 1
+          fi
+          echo "dirs=${DIRS[*]}" >> "$GITHUB_OUTPUT"
+          echo "bandit scope: ${DIRS[*]}"
+
       - name: Run bandit (SARIF output)
         # `--exit-zero` here so we can run BOTH the SARIF report
         # (always uploaded) and the gate (next step) without short-
         # circuiting on first failure. Same split-pattern as the
         # Trivy job above.
+        env:
+          BANDIT_DIRS: ${{ steps.scope.outputs.dirs }}
         run: |
-          bandit -r products/*/backend/app/ seed/lib/backend/noctusai_lib/ \
+          # BANDIT_DIRS is deliberately word-split below: it is a
+          # space-separated list of dirs, each meant as its own -r
+          # argument, not one quoted string.
+          # shellcheck disable=SC2086
+          bandit -r $BANDIT_DIRS seed/lib/backend/noctusai_lib/ \
             -c bandit.yml \
             --severity-level medium \
             --confidence-level medium \
@@ -841,8 +980,12 @@ jobs:
         # findings introduced by a PR cause a non-zero exit and
         # fail the job. Same config so the report above and the
         # gate here surface identical NEW findings.
+        env:
+          BANDIT_DIRS: ${{ steps.scope.outputs.dirs }}
         run: |
-          bandit -r products/*/backend/app/ seed/lib/backend/noctusai_lib/ \
+          # Same deliberate word-split as above.
+          # shellcheck disable=SC2086
+          bandit -r $BANDIT_DIRS seed/lib/backend/noctusai_lib/ \
             -c bandit.yml \
             --severity-level medium \
             --confidence-level medium \
