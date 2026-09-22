@@ -435,6 +435,15 @@ def antigos_proprietarios_texto(pessoas: Sequence[Pessoa]) -> str:
     """[Q9] "o antigo proprietário" / "a antiga proprietária" / "os antigos
     proprietários" / "as antigas proprietárias" (a mixed group is masculine)."""
     generos = [normalizar_genero(p.genero) or "m" for p in pessoas]
+    if not generos:
+        # Refuse rather than invent a gender for nobody: an empty group means
+        # the CALLER decided wrongly that previous owners take part. Silently
+        # returning "o antigo proprietário" would put a party in the contract
+        # that does not exist in the deal.
+        raise ValueError(
+            "antigos_proprietarios_texto: nenhum antigo proprietário — "
+            "o chamador não deve pedir a frase quando a lista está vazia."
+        )
     if len(generos) > 1:
         return "as antigas proprietárias" if all(g == "f" for g in generos) else "os antigos proprietários"
     return "a antiga proprietária" if generos[0] == "f" else "o antigo proprietário"

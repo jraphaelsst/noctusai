@@ -691,6 +691,35 @@ class TestProcessoLegado:
         assert not any(f["campo"] == "partes.antigo_proprietario" for f in av.faltando)
         assert "ANTIGO_PROPRIETARIO_PROCESSO_LEGADO" in _codigos(av.avisos)
 
+    def test_a_legacy_contract_with_a_recent_transfer_RENDERS(self):
+        """🔴 The 500 this class caused, live on prod 2026-09-22.
+
+        Every test above stops at `avaliar()`. The gate said `pronto`, the
+        operator pressed "Gerar versão", and POST .../gerar answered 500:
+        `IndexError: list index out of range` in
+        `frases.antigos_proprietarios_texto`. `montar_contexto` asked for a
+        phrase naming the previous owners because the transfer IS recent,
+        while the legacy flag had (correctly) skipped ever collecting them —
+        gate and template disagreed about who exists. A gate verdict of
+        `pronto` is only worth what the RENDER does with it, so this asserts
+        the document, not the verdict."""
+        d = fx.variante(1)
+        d = replace(
+            d,
+            processo_legado=True,
+            imovel=replace(d.imovel, ultima_transferencia_em=date(2021, 9, 15)),
+        )
+        texto = _texto(1, d)
+        assert "antigo proprietário" not in texto
+        assert "antiga proprietária" not in texto
+        assert "antigos proprietários" not in texto
+
+    def test_the_phrase_refuses_an_empty_group(self):
+        """The helper itself must not invent a party for nobody — a silent
+        default would put a person in the contract who is not in the deal."""
+        with pytest.raises(ValueError):
+            frases.antigos_proprietarios_texto([])
+
     def test_a_non_legacy_contract_still_demands_the_previous_owner(self):
         """Regression: the downgrade never applies to an ordinary contract —
         only `processo_legado=True` triggers it."""

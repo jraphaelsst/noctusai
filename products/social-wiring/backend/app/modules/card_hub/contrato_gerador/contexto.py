@@ -326,9 +326,21 @@ def montar_contexto(
         apresentantes_lista, plural_apres = [f"{V.ART} {V.NOME}", f"{C.art} {C.NOME}"], True
     else:
         apresentantes_lista, plural_apres = [f"{V.ART} {V.NOME}"], V.plural
-    if exige_antigo_proprietario(d, assinatura, politica):
+    antigos = antigos_proprietarios(d)
+    if antigos and exige_antigo_proprietario(d, assinatura, politica):
         # [Q9] the previous owner(s) present certidões too.
-        apresentantes_lista.append(frases.antigos_proprietarios_texto(antigos_proprietarios(d)))
+        #
+        # 🔴 `antigos` MUST be checked here, not only the window predicate.
+        # The two disagree by design since migration 151: a contract flagged
+        # `processo_legado` skips the antigo-proprietário GATE entirely (the
+        # deal predates the platform, so nobody ever recorded those parties),
+        # while `exige_antigo_proprietario` still answers True because the
+        # registered transfer really is recent. Rendering then asked for a
+        # phrase naming an EMPTY list and died with `IndexError: list index
+        # out of range` inside `frases.antigos_proprietarios_texto` — a 500
+        # on POST .../gerar, live 2026-09-22, on a contract the gate had just
+        # declared `pronto`. Gate and template must agree on who exists.
+        apresentantes_lista.append(frases.antigos_proprietarios_texto(antigos))
         plural_apres = True
     apresentantes = juntar(apresentantes_lista)
     certidoes = {
