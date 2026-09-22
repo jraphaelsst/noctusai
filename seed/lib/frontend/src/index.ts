@@ -93,6 +93,27 @@ export type {
 export { useEnvMode } from './hooks/useEnvMode';
 export type { EnvMode, EnvModeResult, VendorMode } from './hooks/useEnvMode';
 
+// Card hub organ — the full surface lives on `@noctusai/lib/components`;
+// the entry points are re-exported here.
+export {
+  CardHubDialog,
+  CardHubFace,
+  GeralSubpage,
+  GeralActions,
+  createCardHubHooks,
+  cardHubLoadingState,
+} from './components/index';
+export type {
+  CardHubDialogProps,
+  CardSubpage,
+  CardHubRenderCtx,
+  CardHubFaceProps,
+  CardHubHooks,
+  CardHubApi,
+  CardHubDescriptor,
+  CardResumoBase,
+} from './components/index';
+
 // Integration card organ — config-driven card for provider integration accounts.
 // YouTube + WhatsApp configs shipped; extend PROVIDER_CARD_CONFIG for more.
 // Consuming product wires mutations; the organ is purely presentational.
