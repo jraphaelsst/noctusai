@@ -54,8 +54,8 @@ class ScriptedJudge:
 
         raw = json.dumps({
             "veredito": [
-                {"criterio": c.texto, "tipo": c.tipo, "ok": ok, "motivo": "ok" if ok else "falhou"}
-                for c, ok in zip(criterios, oks)
+                {"n": i, "ok": ok, "motivo": "ok" if ok else "falhou"}
+                for i, (c, ok) in enumerate(zip(criterios, oks), 1)
             ],
             "score": 0.99,
             "notas": "notas do juiz",

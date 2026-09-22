@@ -122,6 +122,10 @@ def get_agent_runtime(settings: Any) -> AgentRuntime:
             "agents process after configuring the Anthropic key."
         )
 
+    # NOC-REMEDIATE[studio-runtime-julia-coupling]: the approval key + academia
+    # client below are Julia-only (academia write gate); studio agents never use
+    # them, yet a missing value refuses EVERY turn, studio included. Resolve them
+    # lazily at the first academia-toolset launch — 2026-09-21
     signing_secret = credentials.approval_signing_secret()
     if not signing_secret:
         raise RuntimeError("no active approval assertion key (contract §D)")

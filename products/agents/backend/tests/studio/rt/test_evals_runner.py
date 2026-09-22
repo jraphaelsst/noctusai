@@ -249,18 +249,29 @@ class TestJudgeParsing:
         return json.dumps({"veredito": items, "notas": "n", **extra})
 
     def test_valid_and_fenced(self):
-        items = [{"criterio": "x", "tipo": "deve", "ok": True, "motivo": "m"}, {"criterio": "y", "tipo": "nao_deve", "ok": False}]
+        items = [{"n": 1, "ok": True, "motivo": "m"}, {"n": 2, "ok": False}]
         v = parse_judge_output("```json\n" + self._raw(items) + "\n```", self.CRIT)
-        assert [(c.criterio, c.ok) for c in v.veredito] == [("ser claro", True), ("inventar", False)]
+        # criterio + tipo come from OUR list, never from the judge
+        assert [(c.criterio, c.tipo, c.ok) for c in v.veredito] == [
+            ("ser claro", "deve", True), ("inventar", "nao_deve", False)]
+
+    def test_judge_echoed_labels_are_ignored(self):
+        # 2026-09-21 live run: the judge mislabelled a nao_deve criterion's
+        # tipo — that must not error a case whose numbering is aligned.
+        items = [{"n": 1, "tipo": "nao_deve", "ok": True}, {"n": 2, "tipo": None, "criterio": "?", "ok": True}]
+        v = parse_judge_output(self._raw(items), self.CRIT)
+        assert [c.tipo for c in v.veredito] == ["deve", "nao_deve"]
 
     @pytest.mark.parametrize(
         "raw",
         [
             "não é json",
             "[]",
-            json.dumps({"veredito": [{"tipo": "deve", "ok": True}]}),  # count
-            json.dumps({"veredito": [{"tipo": "deve", "ok": "true"}, {"tipo": "nao_deve", "ok": True}]}),  # bool
-            json.dumps({"veredito": [{"tipo": "nao_deve", "ok": True}, {"tipo": "deve", "ok": True}]}),  # order
+            json.dumps({"veredito": [{"n": 1, "ok": True}]}),  # count
+            json.dumps({"veredito": [{"n": 1, "ok": "true"}, {"n": 2, "ok": True}]}),  # bool
+            json.dumps({"veredito": [{"n": 2, "ok": True}, {"n": 1, "ok": True}]}),  # order
+            json.dumps({"veredito": [{"ok": True}, {"ok": True}]}),  # missing n
+            json.dumps({"veredito": [{"n": True, "ok": True}, {"n": 2, "ok": True}]}),  # bool is not a number
         ],
     )
     def test_strict_rejections(self, raw):

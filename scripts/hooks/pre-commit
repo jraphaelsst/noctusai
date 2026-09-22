@@ -866,12 +866,17 @@ fi
 :  # noc-graph refresh intentionally NOT run on intermediate commits
 
 # ─── 10. Auto-improvement cache auto-refresh (Phase B 2026-05-26) ──
-# Third in the keeper-mirror family. When the auto-improvement ndjson is
-# staged, the cache MUST refresh so consult-before-editing returns live
+# Third in the keeper-mirror family: consult-before-editing must return live
 # observations. KB § PATTERNS/scoped-auto-improvement.md.
-STAGED_AUTO_IMPROVEMENT=$(git diff --cached --name-only 2>/dev/null | grep -E '^project-history/auto-improvement\.ndjson$' || true)
-if [[ -n "$STAGED_AUTO_IMPROVEMENT" ]] && have_py; then
-    echo "[pre-commit] auto-improvement.ndjson staged — refreshing auto-improvement cache (mirror contract)..."
+#
+# ALWAYS refreshed for the COMMITTING tree (2026-09-21), not only when the
+# ndjson is staged: the cache is ONE sqlite shared by every worktree
+# (<git-common-dir>/noctusai/cache/), while each worktree carries its OWN copy
+# of the ledger it mirrors. Any refresh from tree A therefore makes the cache
+# "stale" for tree B, and the freshness gate below blocked B's unrelated
+# commits — hit 3× in one parallel session (two engineers + the tech-lead),
+# each "fixed" by a hand refresh. The refresh is idempotent and ~0.4s.
+if have_py; then
     if ! "$PY" "$CLI" --refresh-auto-improvement-cache --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] auto-improvement-cache refresh FAILED — investigate before committing." >&2
         exit 1

@@ -139,8 +139,8 @@ Para CADA critério, na MESMA ordem da lista, decida `ok`:
 - critério "nao_deve": ok = true se a resposta NÃO faz o que o critério proíbe.
 
 Responda SOMENTE com um objeto JSON, sem texto fora dele, exatamente neste formato:
-{{"veredito": [{{"criterio": "<texto do critério>", "tipo": "deve" | "nao_deve", "ok": true | false, "motivo": "<uma frase>"}}], "notas": "<observações gerais curtas>"}}
-O array "veredito" deve ter exatamente {n} itens, um por critério, na ordem dada."""
+{{"veredito": [{{"n": <número do critério>, "ok": true | false, "motivo": "<uma frase>"}}], "notas": "<observações gerais curtas>"}}
+O array "veredito" deve ter exatamente {n} itens, um por critério, na ordem dada, com "n" = 1, 2, 3…"""
 
 
 def build_judge_messages(
@@ -178,9 +178,11 @@ def _strip_fence(raw: str) -> str:
 
 def parse_judge_output(raw: str, criterios: list[Criterion]) -> JudgeVerdict:
     """Strict parse: a JSON object whose ``veredito`` has exactly one entry
-    per criterion, in order, each with the matching ``tipo`` and a boolean
-    ``ok``. The stored ``criterio`` is OUR text (the model's echo is not
-    trusted). Anything else raises :class:`JudgeError`."""
+    per criterion, in order, each carrying its 1-based number ``n`` (== its
+    position — the alignment check) and a boolean ``ok``. ``criterio`` and
+    ``tipo`` are attached from OUR list, never from the model: asking the
+    judge to echo ``tipo`` made it mislabel a ``nao_deve`` criterion and erred
+    2/32 live cases (2026-09-21). Anything else raises :class:`JudgeError`."""
     try:
         data = json.loads(_strip_fence(raw))
     except (ValueError, TypeError) as exc:
@@ -197,8 +199,9 @@ def parse_judge_output(raw: str, criterios: list[Criterion]) -> JudgeVerdict:
     for i, (item, crit) in enumerate(zip(items, criterios), 1):
         if not isinstance(item, dict):
             raise JudgeError(f"veredito {i} não é um objeto")
-        if item.get("tipo") != crit.tipo:
-            raise JudgeError(f"veredito {i}: tipo {item.get('tipo')!r} ≠ {crit.tipo!r}")
+        n = item.get("n")
+        if isinstance(n, bool) or not isinstance(n, int) or n != i:
+            raise JudgeError(f"veredito {i}: n={n!r} fora de ordem (esperado {i})")
         ok = item.get("ok")
         if not isinstance(ok, bool):
             raise JudgeError(f"veredito {i}: 'ok' não é booleano")
