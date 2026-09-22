@@ -15,7 +15,7 @@
 - **`KB § CONTEXT/03-SEED-ARCHITECTURE.md`** → the spine; the single most load-bearing architectural rule.
 - **`KB § CONTEXT/04-SHARED-LIBRARY.md`** → reusable components catalog (`noctusai_lib` + `@noctusai/lib`).
 - **`KB § CONTEXT/05-INFRASTRUCTURE.md`** → deployment + self-hosted services + the VPS fleet.
-- **`KB § CONTEXT/06-AGENTS.md`** → the MCP dev toolkit (197 tools) + Claude-side agents.
+- **`KB § CONTEXT/06-AGENTS.md`** → the MCP dev toolkit (live tool count = its derived `kb-counts:mcp_tools` block) + Claude-side agents.
 - **`KB § INDEX.md`** → the full KB catalog; where depth lives (pull on-demand, never cover-to-cover).
 - **`MEMORY.md`** → working-agreement ROUTER (auto-loaded; one line per TOPIC). Open the
   `MEMORY-<topic>.md` your task touches — they are not auto-loaded. Don't know the topic?
@@ -39,7 +39,7 @@
 - **Persistent-files absorption + storage hygiene** — durable content in `projects/`/`worktrees/` is absorbed to KB/memory BEFORE archive/teardown; salvage-before-delete via `noctus.dev.task_branch action=cleanup`. → `KB § PATTERNS/common/persistent-files-absorption.md` · `KB § PATTERNS/common/storage-hygiene.md`
 - **Remediation markers + no silent errors** — `NOC-REMEDIATE[<class>]` for named-destination deferrals; no `except: pass`, no silent fallbacks. → `KB § PATTERNS/common/remediation-markers.md`
 - **NEVER `--no-verify` (commit OR push)** — pre-commit hooks fire on `commit` NOT `push`; bypassing commit skips ALL keepers (the larger bypass, not the smaller). 5 forbidden rationalizations catalogued (commit-only-harmless · I'm-fixing-the-tool · false-positive · no-impact · surface-after) — match any ⇒ STOP + file `kind="surface"` proposal + return `status=blocked`; tech-lead resolves. Worked example: `ea7514e7` build-learn-cache slip (2026-05-29). → `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`
-- **Empersonate the tech-lead from contextualize-completion onward.** A freshly-oriented agent IS the orchestrator — dispatching-branching-first by default: PROACTIVELY decompose into file-disjoint non-collision slices and dispatch engineers in parallel whenever wall-clock can be saved; inline only when the task is specific AND parallelizing offers no gain. The 9 specialist agents + 14 procedure skills exist so parallel is the cheap default, not the special case. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`
+- **Empersonate the tech-lead from contextualize-completion onward.** A freshly-oriented agent IS the orchestrator — dispatching-branching-first by default: PROACTIVELY decompose into file-disjoint non-collision slices and dispatch engineers in parallel whenever wall-clock can be saved; inline only when the task is specific AND parallelizing offers no gain. The specialist agents + procedure skills (§4) exist so parallel is the cheap default, not the special case. → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · skill `noc-branch-dispatch`
 
 ## 3 · Domain map (high-traffic patterns by area — first stop when working in that domain)
 
@@ -55,7 +55,7 @@
 
 - **Specialist subagents** (`.claude/agents/`) — advisors `architect` · `security` · `compliance-reviewer` (read-only); executors `backend-engineer` · `frontend-engineer` · `devops-engineer` · `engineer-seed` (worktree + commit-own-branch-only); meta `skill-scout` · `orchestrator-operator`. **Tech-lead = the orchestrator** (the conversational session that owns all git/merge/deploy; no agent file).
 - **Procedure skills** (`.claude/skills/`, auto-trigger on phrases) — `noc-contextualize` · `noc-new-product` · `noc-absorb-product` · `noc-ship` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `noc-organ-consume-check` · `noc-contract-first` · `noc-mcp-tool` · `noc-archive-absorb` · `noc-dep-update` · `noc-refs-sheet` · `skill-creator`.
-- **Slash commands** (`.claude/commands/`, user-invoked via `/<name>`) — `/contextualize` · `/codify` · `/vector-status` · `/baselines` · `/codification-radar` · `/cost-report` · `/verify-pass` · `/refresh-caches`. (7th sync surface — first-class per `KB § PATTERNS/common/eight-way-sync.md`.)
+- **Slash commands** (`.claude/commands/`, user-invoked via `/<name>`) — `/contextualize` · `/codify` · `/gc` · `/vector-status` · `/baselines` · `/codification-radar` · `/cost-report` · `/verify-pass` · `/refresh-caches`. (7th sync surface — first-class per `KB § PATTERNS/common/eight-way-sync.md`.)
 - **Keeper-mirror caches** (`.claude/cache/`) — the 8th sync surface: live agent read path. Eight caches mirror docs+code+memory+graph: `keeper-patterns` · `agent-context` · `auto-improvement` · `kb-embeddings` · `code-embeddings` · `corpus-embeddings` · `memory-embeddings` · `noc-graph`. Structural mirror enforced by the 4 git hooks + `check_all_cache_freshness`. → `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/eight-way-sync.md`.
 
 ## 5 · Conditional reads (only if the task is that)

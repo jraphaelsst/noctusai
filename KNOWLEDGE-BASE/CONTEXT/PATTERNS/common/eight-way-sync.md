@@ -50,7 +50,7 @@ Adding or modifying a methodology rule MUST touch all surfaces where it applies,
 **What it checks** (per the canonical surface predicates):
 
 1. **`CLAUDE.md`**: every `KB §` pointer resolves to a real file under `KNOWLEDGE-BASE/`.
-2. **`CONTEXTUALIZE.md`**: every canonical-core entry in compliance.py's `_CONTEXTUALIZE_CANONICAL_CORES` is referenced.
+2. **`CONTEXTUALIZE.md`**: every canonical-core entry in compliance.py's `_CONTEXTUALIZE_CANONICAL_CORES` is referenced (shape) **and the content is fresh** (2026-09-21): the §4 roster lines list every on-disk skill · slash command · agent and nothing that isn't on disk (both directions, via the shared `_harness_roster`); any count next to "specialist agents" / "procedure skills" / "slash commands" equals the derived roster size; a hand-written MCP tool count is forbidden (it lives in the derived `kb-counts:mcp_tools` block of `06-AGENTS.md`); every `KB § …` pointer resolves (`kb_sync` scans CONTEXTUALIZE.md). Pre-commit fires it when any harness surface is staged; `test_contextualize_alignment.py::test_the_live_tree_is_clean` re-runs it on the merged tip in CI. **Not covered:** whether the prose rules still describe the methodology — that stays a review duty (re-run the clean-context self-test after material changes).
 3. **`KNOWLEDGE-BASE/INDEX.md`**: every KB doc on disk is indexed (via the existing `kb_sync` gate).
 4. **`.claude/agents/<name>.md`**: every `owns_kb:` entry resolves; not in `_AGENT_KB_UNOWNED_ALLOWLIST` unless commons.
 5. **`.claude/skills/<name>/SKILL.md`**: every skill listed in CLAUDE.md §2 maps to a directory containing `SKILL.md`.

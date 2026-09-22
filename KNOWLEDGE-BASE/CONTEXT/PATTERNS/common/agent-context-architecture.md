@@ -25,7 +25,7 @@ L2  KB § <domain>/...                            ← loaded ON-DEMAND via Read
     depth bodies                                  (or Phase B cache lookup)
        │
 L3  per-dispatch brief                           ← architect inlines per call
-    tight files + acceptance                      (already codified — engineer-seed §11)
+    tight files + acceptance                      (already codified — dispatch-engineer-tuning §4d)
 ```
 
 The cache boundary (L0 + L1 = stable / cacheable; L2 + L3 = variable) maps directly to Claude Code's globally-cacheable system prompt vs per-turn content split — staying lean on L1 keeps the cache hot.

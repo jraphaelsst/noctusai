@@ -21,6 +21,8 @@ Live engineer (`ae6ef9672df957715`, 2026-05-25) booted at **~65k tokens** before
 | `engineer-seed.md` | 3k | ✅ |
 | MCP-server instructions + brief | ~2k | ✅ |
 
+*`engineer-seed.md` since grew to 236 lines / ~30 KB (≈7.5k tok) by accretion; the 2026-09-22 slim cut it to 76 lines / ~9 KB (≈2.3k tok, chars÷4) — depth moved behind `→` pointers, the architect-only half to §4d.*
+
 The **deferred-tool list** looked like the cheapest waste to kill — every engineer is handed the names of `mcp__docker__*`, `mcp__cloudflare__*`, `mcp__n8n__*`, `mcp__waha__*`, `mcp__supabase__*`, all `claude_ai_*` connectors (**104 names!**), Chrome, Stripe, Figma, Gmail… ~300 tools it never invokes. **⚠️ MEASURED CORRECTION (2026-05-25, §3): a per-agent `tools:` allowlist does NOT remove these.** The deferred-name list is **session/connector-global** — a function of the *connected* MCP servers (`.mcp.json`) + the user's claude.ai account connectors — independent of any agent's `tools:`. A scoped engineer's first delta still carried 295 names (docker 19 · cloudflare 26 · claude_ai_* 104 · waha/n8n/supabase 38 · noctusai 126). So cutting this bloat is a **session/account lever** (disable unused connectors — see L7), NOT a per-agent one. `engineer-seed.md` having shipped without a `tools:` allowlist was still worth fixing — for **least-privilege/safety**, not tokens.
 
 ---
@@ -71,7 +73,7 @@ A dispatched engineer that opens `grep` / `Read` / `Glob` before a single MCP ca
 
 The cache-first discipline is therefore **in the standing protocol**, not in each brief:
 
-- `engineer-seed.md §0` is the top-of-protocol reflex (cache before grep/Read; depth at `KB § PATTERNS/common/cache-as-agent-tool.md`).
+- `engineer-seed.md §2` (first bullet) is the top-of-protocol reflex (cache before grep/Read; depth at `KB § PATTERNS/common/cache-as-agent-tool.md`).
 - Every executor specialist's L1 (`backend-engineer` / `frontend-engineer` / `devops-engineer`) and every advisor's L1 (`architect` / `compliance-reviewer` / `security`) carries the same rule as a domain-bullet, and `cache-as-agent-tool.md` is in each `owns_kb:` so the agent-context cache pulls the depth into the engineer's compact bundle at spawn.
 
 **Brief-author rule (the corollary).** If you find yourself writing *"use `noctus.graph.report` for orientation"* or *"start with `kb_search`…"* in a brief, **the agent definition is the surface to fix, not the brief**. The whole point of the agent layer is to make these reflexes default by construction — re-spelling them per dispatch is the brief defeating itself. Symptom: the same cache-first reminder copied across 3+ briefs ⇒ the rule belongs in `.claude/agents/<lens>.md` (or the standing protocol if cross-lens), not in brief boilerplate.
@@ -86,8 +88,7 @@ surface round-trip is one tool call away (not a manual process):
 ```
 ## Safety rules (non-negotiable)
 - Worktree isolation: stay in YOUR worktree, never the primary checkout.
-- Stage-only: `git add <explicit paths>` — never `-A` or `.`.
-- No commit, no push — architect-only.
+- Commit your own worker branch: `git add <explicit paths>` (never `-A` or `.`) + `git commit`; never push, never touch `dev`/`main`/a peer's branch.
 - 🔴 NEVER `--no-verify`. If a hook fails or you hit a genuine blocker:
     call `noctus.dev.surface_to_tech_lead(reason, proposal_md, current_state_md, attempted_resolution_md)`
     print the returned `exit_marker_msg` as your FINAL output line and stop.
@@ -98,27 +99,53 @@ surface round-trip is one tool call away (not a manual process):
 
 The tool names (`surface_to_tech_lead` / `respond_and_resume` / `dispatch_resume_brief`)
 are what make the round-trip ergonomic. Without them in the brief, engineers may not know
-the tools exist. Brief author rule: include this block OR reference `engineer-seed §1c`
-(which now contains the same pointer). Don't spell out the tool names PER dispatch — point
+the tools exist. Brief author rule: include this block OR reference `engineer-seed §2`
+(its "Blocked, or you see a better route" bullet carries the same pointer). Don't spell out the tool names PER dispatch — point
 to the standing protocol instead to stay DRY.
 
 ---
 
 ## 4c · Mandatory brief language for safety (closing the `--no-verify` commit loophole)
 
-§4b above describes the **mechanics** (which tools the engineer uses to surface). This section pins the **verbatim language** the brief MUST carry so the engineer can't claim "the brief didn't say." The standing protocol (`engineer-seed.md §9` Bash safety + the 5-rationalization catalog at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`) IS the contract; the brief language is the audit trail that the tech-lead surfaced it at dispatch time.
+§4b above describes the **mechanics** (which tools the engineer uses to surface). This section pins the **verbatim language** the brief MUST carry so the engineer can't claim "the brief didn't say." The standing protocol (`engineer-seed.md §5` Safety + the 5-rationalization catalog at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`) IS the contract; the brief language is the audit trail that the tech-lead surfaced it at dispatch time.
 
 **Verbatim phrase the brief MUST contain** (copy as-is into every engineer brief):
 
 > **NEVER use `--no-verify` (commit OR push). NEVER `--force`. If a hook fails or any safety gate refuses (even a known false-positive), STOP and surface as a surface-note (`kind="surface"`); return blocked. The "commit-only is harmless" rationalization is forbidden.** Tech-lead resolves.
 
-That single block routes to the 5 rationalization anti-patterns + the surface protocol + ea7514e7 worked example at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` via the standing protocol. Brief authors MAY add slice-specific overrides (e.g., "this slice IS authorized to commit `--no-verify` for the KB-autostage-hook bypass per `engineer-seed.md §2`; rationale must be in commit message") — but the verbatim block stays as the baseline.
+That single block routes to the 5 rationalization anti-patterns + the surface protocol + ea7514e7 worked example at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` via the standing protocol. Brief authors MAY add slice-specific overrides — but never one that authorizes `--no-verify`: there is no such carve-out any more (retired 2026-09-22 with stage-only; its one use, the architect's scoped commit in a dirty multi-agent tree, cannot arise when every engineer commits in its own worktree). The verbatim block is the floor, not a default.
 
 **Why the dual coverage (commit AND push) is load-bearing.** Pre-commit hooks fire on `git commit`, NOT on `git push`. Bypassing commit = bypassing every keeper (`kb_sync` · `check_claude_md_router` · `check_eight_way_sync` · keeper-pattern-cache refresh). The "commit-only is the smaller bypass" intuition has the direction backwards: a `commit --no-verify` skips strictly more guarantees than a `push --no-verify` does. The `ea7514e7` build-learn-cache codification slip (2026-05-29, see `bypass-rationalization-anti-patterns.md § 3`) is the canonical evidence — agent rationalized "commit-only, not push, so it's fine" and silently shipped a `--no-verify` commit to its worktree branch, which was then pushed unverified.
 
-**Why mandatory in the brief AND in the agent.** The standing protocol (`engineer-seed.md §9`) IS the contract. The brief carries it for two reasons: (a) **audit trail** — `git log --grep "NEVER use --no-verify"` shows the tech-lead surfaced the discipline at every dispatch, closing the "I didn't know" silent-error shape; (b) **future keeper detection** — a `check_dispatch_brief_carries_safety_language` keeper (s4 candidate, deferred to N≥2 measured brief drift) scans the briefs for the verbatim string. Born 2026-05-29 after the `ea7514e7` post-hoc-detected slip forced the rule's codification.
+**Why mandatory in the brief AND in the agent.** The standing protocol (`engineer-seed.md §5`) IS the contract. The brief carries it for two reasons: (a) **audit trail** — `git log --grep "NEVER use --no-verify"` shows the tech-lead surfaced the discipline at every dispatch, closing the "I didn't know" silent-error shape; (b) **future keeper detection** — a `check_dispatch_brief_carries_safety_language` keeper (s4 candidate, deferred to N≥2 measured brief drift) scans the briefs for the verbatim string. Born 2026-05-29 after the `ea7514e7` post-hoc-detected slip forced the rule's codification.
 
-**Composes with:** §4b above (mechanics — `surface_to_tech_lead` round-trip) · `engineer-seed.md §9 Bash safety` (standing protocol — the contract IS) · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` (the 5 rationalization shapes + surface protocol + ea7514e7 worked example) · `KB § PATTERNS/common/drift-fix-on-contact.md` (Roles split sibling) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (surface-note infra the engineer uses).
+**Composes with:** §4b above (mechanics — `surface_to_tech_lead` round-trip) · `engineer-seed.md §5 Safety` (standing protocol — the contract IS) · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` (the 5 rationalization shapes + surface protocol + ea7514e7 worked example) · `KB § PATTERNS/common/drift-fix-on-contact.md` (Roles split sibling) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (surface-note infra the engineer uses).
+
+## 4d · The architect's half — brief shape, dispatch knobs, integration
+
+*(Moved here from `engineer-seed.md` §11 on 2026-09-22: the engineer never needs it at cold start, so it no longer rides every dispatch.)*
+
+**Minimum-viable brief** (~15 lines; everything else is a slice-specific override of the standing protocol):
+
+```
+You are Engineer <X>. Apply engineer-seed protocol.
+
+Goal: <one sentence>
+Reference: <commit SHA / file path of the canonical pattern>
+Scope: <files-to-modify>
+Acceptance: <what "done" looks like — tests pass + a specific grep returns zero / etc.>
+```
+
+**Tight brief = the real speed lever.** Exact files + a grep/test Acceptance removes the engineer's exploration phase — that, not raw model speed, is where dispatch wall-clock is won (§1 measurement method).
+
+**Dispatch knobs** (set on the call, not in the brief text):
+- **`model`** — Sonnet by default (frontmatter). `model: opus` only for ambiguous / architectural / judgment-heavy slices.
+- **Isolation** — `noctus.dev.task_branch action=start slug=<slug>` per engineer, then pass the worktree path in the brief. **Never** the Agent tool's `isolation: "worktree"` — it forks from an arbitrary base, not `origin/dev` (`KB § PATTERNS/architect/parallelization-first-orchestration.md`). `run_in_background: true` for parallel waves.
+- **`wire_env`** — defaults to `True` on `task_branch action=start`; pass `False` only for a doc-only/no-FE slice where the symlink pass is pure overhead.
+
+**Integration — engineers commit, the tech-lead verifies from its own shell.** Since 2026-09-22 each engineer commits its own `feat/<slug>` (`engineer-seed.md` §3). The tech-lead's check is one command from its OWN Bash context (true disk, outside the engineer's overlay): `git -C <wt> log --oneline origin/dev..HEAD` must list the SHAs the return claims, and `git -C <wt> show --stat <sha>` must show only the brief's files. An empty log against a `Status: ready` return ⇒ the harness-overlay divergence ate the work (`KB § PATTERNS/common/harness-overlay-worktree-divergence.md`); re-apply the well-specified change inline, don't loop-redispatch. Then merge/rebase, re-run the gates on the MERGED tip, push.
+
+**Why stage-only was retired.** Stage-only existed because `scripts/hooks/pre-commit` once `git add`-ed *every* modified KB/CLAUDE doc on *every* commit, so any commit in a shared dirty tree swept in a peer's edits (cc9e69b, 2026-05-17). The hook was fixed on 2026-06-01 (it now restages only files already in the commit, or count blocks it regenerated from a clean file, and loudly SKIPs a pre-dirty doc), and every engineer works in its own worktree anyway — so the hazard cannot occur, and stage-only only moved the keeper run from the author (who can fix the red) to the tech-lead (who can't, cheaply). The same change retired the one `--no-verify` carve-out, which existed solely for that hazard.
 
 ## 5 · Provenance
 

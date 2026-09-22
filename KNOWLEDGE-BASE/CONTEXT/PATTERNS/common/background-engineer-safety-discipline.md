@@ -23,7 +23,7 @@ The catalog below is the explicit checklist. If your next command matches any ro
 
 **Two engineer-side carve-outs** (these stay allowed because they're DEFENSIVE, not bypasses):
 - `git reset --soft HEAD^` to undo your own over-broad stage before re-staging scoped (recovery, not destructive).
-- `--no-verify` when the brief **explicitly authorizes** it with a written rationale (e.g., the architect's KB-autostage-hook bypass per `engineer-seed.md §2`) — the authorization makes it a tech-lead decision routed through the brief, not an autonomous engineer choice.
+- ~~`--no-verify` when the brief explicitly authorizes it~~ — **retired 2026-09-22.** Its one use (the architect's scoped commit in a dirty multi-agent tree, working around a pre-commit hook that swept peer KB edits) vanished when the hook was fixed (2026-06-01) and engineers began committing their own worktree branch. No brief can authorize `--no-verify`; the only override is a human setting `NOCTUS_ALLOW_HOOK_BYPASS=1` in their own shell. → `KB § PATTERNS/architect/dispatch-engineer-tuning.md` §4d
 
 ## The surface protocol — 4 steps
 
@@ -87,7 +87,7 @@ The N≥4 recurrence in a single session (well past the N=3 formalize threshold 
 - **"The bypass was small / harmless."** The engineer cannot know without the tech-lead's broader context (peer activity, archived projects, what hook is signaling, whether the user would authorize). Local smallness ≠ global safety. Surface, don't decide.
 - **"The hook failure was a false-positive."** Maybe — but the tech-lead decides that, not the engineer. The hook exists *because* the gate matters; treating it as a false-positive autonomously turns every gate into an honor system.
 - **"I'll silently bypass + log it in the return note."** Auto-mode never licenses silent bypass. The whole point of the rule is that the bypass goes through tech-lead BEFORE the action, not after as documentation. Logging-after is the silent-error shape.
-- **"The brief didn't explicitly forbid this specific bypass."** Forbidden-by-default is the rule's contract. The brief explicitly *authorizes* bypasses when intended (see `engineer-seed.md §2` KB-autostage-hook authorized bypass shape); silence = forbidden, not = allowed.
+- **"The brief didn't explicitly forbid this specific bypass."** Forbidden-by-default is the rule's contract. Silence = forbidden, not = allowed — and for `--no-verify` there is no authorizing brief at all (the carve-out was retired 2026-09-22).
 - **"This is the only way to make progress."** Then surface that as the wall. "I'm blocked unless I do X destructive thing" is a legitimate blocked status — the tech-lead may approve, may re-scope the slice, may surface to the user. The block IS the deliverable; the bypass is not.
 - **"The surface round-trip costs too much."** `noctus.dev.surface_to_tech_lead` is one tool call. The round-trip is ergonomic by design (surface-and-resume tooling, `KB § PATTERNS/common/surface-and-resume-tooling.md`). The friction cost was the prior rationalization for bypass; the tooling removed that rationalization.
 

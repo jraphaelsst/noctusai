@@ -56,14 +56,13 @@ The on-contact drill **splits by role** so dispatched background agents don't ex
 
 ```
 Status: ready
-Files: <explicit list>
+Commits: <sha> <subject>   ← one per commit on your worker branch
 Tests: <pass/fail count if relevant>
 drift-found: <observed leftover — path + shape + suspected cause>
 drift-found: <... another, if any ...>
-Commit msg: <2-5 line draft>
 ```
 
-Mirrors [[no-silent-errors]] (surface ≠ resolve, but surface is mandatory) + `engineer-seed § 4` file-disjoint discipline (no scope expansion) + [[parallel-agent collision protocol]] (engineer doesn't litigate parallel state).
+Mirrors [[no-silent-errors]] (surface ≠ resolve, but surface is mandatory) + `engineer-seed § 2` file-disjoint discipline (no scope expansion) + [[parallel-agent collision protocol]] (engineer doesn't litigate parallel state).
 
 ## Scoped auto-improvement — the engine behind surface-don't-resolve
 
@@ -72,11 +71,10 @@ Every agent dispatch is also a **scoped auto-improvement pass**, not just a feat
 - **Engineer (scoped — slice-local)** — evaluates what slipped within the brief's scope: a regex that should have been AST, a Pydantic model that silent-dropped, a Read that should have hit the cache, a missed test, an N=2 recurrence the slice surfaced. The engineer **does NOT codify** (that's the tech-lead's broader-context job) — instead, the engineer returns those observations in the short-form's findings footer alongside `drift-found:` lines:
   ```
   Status: ready
-  Files: <list>
+  Commits: <sha> <subject>
   Tests: <pass/fail>
   drift-found: <leftover — path + shape + suspected cause>
   scoped-improvement: <mistake/slip/pattern observed in MY slice → suggested codification>
-  Commit msg: <draft>
   ```
 - **Tech-lead (broad — cross-cutting)** — auto-improves at the methodology level. Receives engineer surfaces + their own session observations + safety-net firings → routes through the codification pipeline (s1 emergent → s2 memory → s3 KB+CLAUDE.md → s4 keeper detector) per [[methodology-codification-pipeline]]. The tech-lead is the one who decides WHICH observations cross the N≥2-triage / N≥3-must-formalize bar AND owns the durable doc-update.
 
@@ -99,9 +97,12 @@ Absence of both legs is a positive claim (nothing observed) — quote it explici
 **Observed.** A backend-engineer dispatch follows `KB § PATTERNS/backend/seed-fake-real-adapter.md` and gets a 404 (file renamed, pointer not updated).
 **On-contact resolution.** (a) Stop. (b) Find the new path (`git log --all -- '*seed-fake*'`). (c) Fix the agent body pointer. (d) Run `noctus.dev.kb_sync` to surface any other dangling pointers. (e) If found ⇒ batch-fix all in this commit (same-shape drift = same-commit fix). (f) Continue the original backend dispatch.
 
-### Example 3 — peer-tree residue from KB-autostage hook
+### Example 3 — peer-tree residue from KB-autostage hook *(historical — hazard retired)*
+
+> The hook that caused this was fixed 2026-06-01 (it now restages only files already in the commit, or count blocks it regenerated from a clean file), and since 2026-09-22 every engineer commits in its own worktree — so this shape should not recur. Kept because the recovery drill (a)(b)(d) still applies to any over-broad commit.
+
 **Observed.** Primary checkout shows 7 staged KB files you didn't author — the KB-autostage hook absorbed a peer's mid-flight work under your scoped commit.
-**On-contact resolution.** (a) `git reset --soft HEAD^` to undo the over-broad commit. (b) Re-stage scoped explicit paths only. (c) `git commit --no-verify <paths>` with rationale in the message ("KB-autostage hook bypass — peer mid-flight on KB/<other>"). (d) Verify `git show --stat HEAD` shows only your authored files. (e) Surface the bypass to the user. (f) Continue.
+**On-contact resolution.** (a) `git reset --soft HEAD^` to undo the over-broad commit. (b) Re-stage scoped explicit paths only. (c) `git commit` the scoped paths normally — never `--no-verify` (no carve-out exists; if a hook blocks on a peer's file, surface it). (d) Verify `git show --stat HEAD` shows only your authored files. (e) Continue.
 
 ### Example 4 — methodology rule discovered without doc-write
 **Observed.** You're implementing a feature and notice that two products keep needing the same shape (N=2 → triage). You apply the fix locally and move on.

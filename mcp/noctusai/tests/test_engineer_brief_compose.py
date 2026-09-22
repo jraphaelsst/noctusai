@@ -315,3 +315,35 @@ class TestAutoImprovementRendered:
         assert result["auto_improvement_context"] == ai_entries
         assert "Auto-improvement context" in result["brief"]
         assert "vector routing" in result["brief"]
+
+
+# ── 2026-09-22: brief footer follows engineer-seed §3/§4 (commit own branch) ──
+# `_render_brief` is pure, so these call it directly — no patching needed.
+
+def _rendered(**over) -> str:
+    from tools.noctus.dev.engineer_brief_compose import _render_brief
+    kw = dict(
+        description="Add a bounded pagination helper to the seed data layer",
+        target_files=["seed/lib/backend/noctusai_lib/data/paging.py"],
+        agent="backend-engineer",
+        kb_references=[],
+        auto_improvement_context=[],
+    )
+    kw.update(over)
+    return _render_brief(**kw)
+
+
+class TestBriefFooterContract:
+    def test_leg2_says_commit_own_branch_not_stage_only(self):
+        brief = _rendered()
+        assert "Commit your own worker branch" in brief
+        assert "never push" in brief
+        assert "Stage-only" not in brief and "no commit" not in brief
+
+    def test_acceptance_is_an_explicit_todo_not_foreign_criteria(self):
+        """The composer used to paste ITS OWN acceptance lines into every brief."""
+        brief = _rendered()
+        acceptance = brief.split("### Acceptance", 1)[1].split("---", 1)[0]
+        assert "TODO(architect)" in acceptance
+        assert "engineer_brief_compose" not in acceptance
+        assert "--compose-brief" not in acceptance

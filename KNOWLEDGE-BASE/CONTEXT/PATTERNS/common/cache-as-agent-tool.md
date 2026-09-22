@@ -126,7 +126,7 @@ The principle is **search to discover, grep/read to verify**.
 
 The cache-first rule is not a per-brief reminder; it lives in **every executor and advisor agent definition** so the discipline is the default by construction:
 
-- **`.claude/agents/engineer-seed.md` §0** — the standing-protocol top-of-stack reflex (before `verify-first`). Every brief that references engineer-seed inherits it.
+- **`.claude/agents/engineer-seed.md` §2 (first bullet)** — the standing-protocol top-of-stack reflex (before `verify-first`). Every brief that references engineer-seed inherits it.
 - **Executor specialist L1 rules** — `backend-engineer.md` / `frontend-engineer.md` / `devops-engineer.md` carry the cache-first bullet in their `## Domain rules (specialist L1)` block.
 - **Advisor specialist L1 rules** — `architect.md` / `compliance-reviewer.md` / `security.md` carry the same bullet, scoped to their lens (orientation / recurrence-review / threat-model-research).
 - **Canonical owner.** `devops-engineer.md` owns this KB doc in `owns_kb:` (single owner per KB path — the platform's exclusive-ownership rule until shared-multi-domain frontmatter ships). Every other executor + advisor cites it via `→` pointer in their L1 rule + lists it under `Composes-with` so the discipline appears in the spawn-time L1 read even without `owns_kb` mirror. (Once Phase B multi-owner frontmatter ships, this doc moves to the universal-pattern allowlist or gains explicit multi-owner declaration.)

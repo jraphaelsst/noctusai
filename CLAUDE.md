@@ -108,8 +108,8 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 
 CLAUDE.md, `CLAUDE/<topic>.md`, `.claude/skills/`, `.claude/agents/`, and `KB § INDEX.md` stay in sync — add/rename/delete a KB file or a skill/agent and every referencing layer updates the same commit.
 
-**Pre-commit hook enforces it** (`scripts/hooks/pre-commit`): syncs `products/seed/`→`templates/product-seed/` if staged; runs `noctus.dev.kb_sync` to regenerate counts + **block** on any unresolved `KB § …` pointer in `CLAUDE.md`/`CLAUDE/*.md`/`.claude/{agents,skills,commands}/`/`KB/**`, any KB doc missing from `INDEX.md`, or any `products/<slug>/` lacking a `02-LANDSCAPE.md` roster row; and runs `check_claude_md_router` (`--check-claude-md-router`) to **block** a re-bloated router when `CLAUDE.md` is staged — word budget, per-rule shape, **and the §1 rule-COUNT ceiling** (`KB § PATTERNS/common/claude-md-router-discipline.md` · `KB § PATTERNS/common/methodology-gc.md`).
+**Pre-commit hook enforces it** (`scripts/hooks/pre-commit`): syncs `products/seed/`→`templates/product-seed/` if staged; runs `noctus.dev.kb_sync` to regenerate counts + **block** on any unresolved `KB § …` pointer in `CLAUDE.md`/`CONTEXTUALIZE.md`/`CLAUDE/*.md`/`.claude/{agents,skills,commands}/`/`KB/**`, any KB doc missing from `INDEX.md`, or any `products/<slug>/` lacking a `02-LANDSCAPE.md` roster row; and runs `check_claude_md_router` (`--check-claude-md-router`) to **block** a re-bloated router when `CLAUDE.md` is staged — word budget, per-rule shape, **and the §1 rule-COUNT ceiling** (`KB § PATTERNS/common/claude-md-router-discipline.md` · `KB § PATTERNS/common/methodology-gc.md`).
 
-Manual: `python mcp/noctusai/cli.py --verify-kb-sync` · `--check-claude-md-router` · `--update-kb-counts [--check]`. Fresh clone: `bash scripts/install-hooks.sh`. Bypass (rarely correct): `git commit --no-verify`.
+Manual: `python mcp/noctusai/cli.py --verify-kb-sync` · `--check-claude-md-router` · `--update-kb-counts [--check]`. Fresh clone: `bash scripts/install-hooks.sh`. No bypass — `--no-verify` is never sanctioned (§1).
 
 > Throughout, `KB § X` = `KNOWLEDGE-BASE/X`.

@@ -672,3 +672,35 @@ def test_render_kb_counts_unknown_target_is_returned_unchanged(tmp_path, monkeyp
     source = _counts_doc("| stale | 1 |")
 
     assert kb_sync.render_kb_counts(other, source) == source
+
+
+# ──────────────────────────────────────────────────────────────────
+# CONTEXTUALIZE.md is a scanned methodology surface
+# (2026-09-21 contextualize-freshness-gate)
+#
+# The fresh-agent front door is surface #5 of the eight, yet this gate never
+# opened it — a broken `KB § …` pointer there reached every fresh agent green.
+# ──────────────────────────────────────────────────────────────────
+
+def test_contextualize_surface_is_in_scanned_set(tmp_path):
+    """A bad `KB § …` ref inside CONTEXTUALIZE.md is reported."""
+    from tools.kb_sync import methodology_reference_gaps
+    (tmp_path / "KNOWLEDGE-BASE").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "KNOWLEDGE-BASE" / "INDEX.md").write_text("# Index\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("clean\n", encoding="utf-8")
+    (tmp_path / "CONTEXTUALIZE.md").write_text(
+        "- read → `KB § PATTERNS/common/does-not-exist.md`\n", encoding="utf-8",
+    )
+    gaps = methodology_reference_gaps(tmp_path)
+    assert any(g.startswith("CONTEXTUALIZE.md") for g in gaps), gaps
+
+
+def test_resolving_kb_ref_in_contextualize_passes(tmp_path):
+    """Guard the other direction — a correct ref must not false-positive."""
+    from tools.kb_sync import methodology_reference_gaps
+    (tmp_path / "KNOWLEDGE-BASE" / "CONTEXT").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "KNOWLEDGE-BASE" / "INDEX.md").write_text("# Index\n", encoding="utf-8")
+    (tmp_path / "KNOWLEDGE-BASE" / "CONTEXT" / "01-PHILOSOPHY.md").write_text("# P\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("clean\n", encoding="utf-8")
+    (tmp_path / "CONTEXTUALIZE.md").write_text("- `KB § 01-PHILOSOPHY.md`\n", encoding="utf-8")
+    assert methodology_reference_gaps(tmp_path) == []

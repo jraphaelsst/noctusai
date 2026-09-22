@@ -1211,11 +1211,13 @@ function, not a module: separate concern, same file, zero extra import.
 above (a PreToolUse hook reads its OWN process's `os.environ`, so this is
 unreachable from inside the denied command itself; see the module docstring's
 🔴 note, which applies here verbatim). There genuinely is no scripted
-legitimate use of `-c core.hooksPath=`/`--no-verify` in THIS repo — the one
-sanctioned `--no-verify` shape (`engineer-seed.md` §2, the architect's scoped
-commit in a dirty multi-agent tree) is a rare, deliberate, human-reviewed act,
-which is exactly what an env var — set once, by a person, in their own shell —
-is for.
+legitimate use of `-c core.hooksPath=`/`--no-verify` in THIS repo — there is
+no agent-sanctioned shape at all since 2026-09-22 (the former `engineer-seed.md`
+§2 carve-out, the architect's scoped commit in a dirty multi-agent tree, was
+retired with stage-only: every engineer commits in its own worktree, and the
+pre-commit hook no longer sweeps peer edits). What remains is a rare,
+deliberate, human act, which is exactly what an env var — set once, by a
+person, in their own shell — is for.
 """
 
 #: The config KEY this gate exists to protect, lower-cased for comparison
@@ -1480,10 +1482,9 @@ def decide_git_bypass(
             f'`ls -la "$(git config core.hooksPath)"` — if that is empty or '
             f"missing, the fix is `bash scripts/install-hooks.sh`, not a "
             f"per-invocation override.\n"
-            f"If a real, human-authorized bypass is needed (e.g. the architect's "
-            f"scoped KB-autostage-hook exception, `engineer-seed.md` §2), the "
-            f"rationale belongs in the commit message and the ONLY sanctioned "
-            f"mechanism is `{HOOK_BYPASS_ALLOW_ENV}=1` set in the launching "
+            f"No agent or brief can authorize a bypass. If a human genuinely "
+            f"needs one, the rationale belongs in the commit message and the "
+            f"ONLY mechanism is `{HOOK_BYPASS_ALLOW_ENV}=1` set in the launching "
             f"shell's environment — never inside the command being refused."
         ),
     }
@@ -1541,8 +1542,8 @@ there, mode notwithstanding).
 **Same escape hatch, deliberately.** `HOOK_BYPASS_ALLOW_ENV` — this is the
 SAME category of bypass as `decide_git_bypass`'s (disabling a hook), just
 aimed at the file instead of the git invocation; a second, differently-named
-env var would only fragment the one legitimate override path documented in
-`engineer-seed.md` §2.
+env var would only fragment the one human-only override path (see
+`KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`).
 """
 
 #: Chmod's own recognized flags — never a mode, never a path.

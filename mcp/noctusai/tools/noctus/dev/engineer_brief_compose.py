@@ -14,13 +14,13 @@ or a cache is empty the tool gracefully degrades: `kb_references` and
 
 Output shape:
   {
-    brief: str,                      # rendered brief in engineer-seed §11 shape
+    brief: str,                      # rendered brief in dispatch-engineer-tuning §4d shape
     suggested_agent: str,            # agent slug (picked or passed)
     auto_improvement_context: list,  # [{ts, kind, target, description, status}]
     kb_references: list,             # [{path, chunk_text, score}]
   }
 
-Render shape (engineer-seed §11):
+Render shape (dispatch-engineer-tuning §4d):
   ## Engineer Brief — <description[:60]>
   ### Goal
   <description>
@@ -29,15 +29,13 @@ Render shape (engineer-seed §11):
   ### Scope
   <target_files list>
   ### Acceptance
-  - MCP / CLI round-trip is importable and exercised by tests.
-  - Tests pass (`cd mcp/noctusai && pytest tests/ -q`).
-  - Existing keeper tests still pass.
+  - TODO(architect) placeholder — the composer cannot derive "done" for a slice.
   ---
   Two-leg footer:
-    Leg 1: write a /tmp/*.patch file early so your work survives harness kill.
-    Leg 2: stage-only (no commit) — return short-form per engineer-seed §3+§7.
+    Leg 1: commit early on the worker branch — a commit survives a harness kill.
+    Leg 2: commit own branch, never push — return short-form per engineer-seed §4.
 
-KB § PATTERNS/dispatch-engineer-tuning.md.
+KB § PATTERNS/architect/dispatch-engineer-tuning.md.
 """
 from __future__ import annotations
 
@@ -243,7 +241,7 @@ def _render_brief(
     kb_references: list[dict],
     auto_improvement_context: list[dict],
 ) -> str:
-    """Render the brief in engineer-seed §11 shape."""
+    """Render the brief in dispatch-engineer-tuning §4d shape."""
     title_slug = description[:60].rstrip()
     lines: list[str] = [
         f"## Engineer Brief — {title_slug}",
@@ -275,25 +273,28 @@ def _render_brief(
     for tf in target_files:
         lines.append(f"- `{tf}`")
 
+    # The composer cannot know what "done" means for an arbitrary slice, so the
+    # Acceptance block is an explicit TODO for the architect — never criteria
+    # borrowed from some other feature (it used to ship this tool's OWN
+    # acceptance lines in every brief it composed).
     lines += [
         "",
         "### Acceptance",
-        "- MCP tool `noctus.dev.engineer_brief_compose(target_files, description, agent=None)` returns the dict.",
-        "- CLI command works: `python mcp/noctusai/cli.py --compose-brief --files X,Y --description \"...\"`.",
-        "- Tests pass (`cd mcp/noctusai && pytest tests/ -q`).",
-        "- Existing keeper tests (test_agent_kb_alignment, test_agent_context_cache) still pass.",
+        "- TODO(architect): the narrowest check that proves this slice — one test "
+        "file / one product build / one grep that must return zero. Fill in before "
+        "dispatch.",
         "",
         "---",
         "",
         f"**Suggested agent:** `{agent}`",
         "",
-        "**Leg 1 (harness safety):** Write a `/tmp/<slug>.patch` early via "
-        "`git diff HEAD > /tmp/<slug>.patch` — the harness watchdog kills stalled agents "
-        "and the patch survives.",
+        "**Leg 1 (harness safety):** Commit early on your worker branch — a commit "
+        "survives a harness kill; tidy un-reported commits with `git commit --amend` / "
+        "`git reset --soft` before you return.",
         "",
-        "**Leg 2 (return shape):** Stage-only, no commit. Return short-form per "
-        "engineer-seed §3+§7: staged files, test command, pass/fail, findings.md entry "
-        "(if any). The architect integrates.",
+        "**Leg 2 (return shape):** Commit your own worker branch (engineer-seed §3), "
+        "never push. Return short-form per engineer-seed §4: commit SHAs, the scoped "
+        "check + pass/fail, the three footer legs. The architect integrates.",
     ]
     return "\n".join(lines)
 
@@ -311,7 +312,7 @@ def compose_brief(
       2. Query auto-improvement.ndjson cache for related open surfaces.
       3. Query kb-embeddings cache for top-3 related KB chunks.
       4. If `agent` is None, cosine-pick best agent from agent-context cache.
-      5. Render the brief in engineer-seed §11 shape.
+      5. Render the brief in dispatch-engineer-tuning §4d shape.
 
     Graceful-degrade: if the embedding provider is unreachable or any cache
     is missing, returns the brief with `kb_references=[]` and/or
@@ -366,7 +367,7 @@ def register(server) -> None:
             "keeper-mirror caches (kb-embeddings, auto-improvement, agent-context). "
             "Returns {brief, suggested_agent, auto_improvement_context, kb_references}. "
             "Graceful-degrade when embedding provider is unreachable. "
-            "KB § PATTERNS/dispatch-engineer-tuning.md."
+            "KB § PATTERNS/architect/dispatch-engineer-tuning.md."
         ),
     )
     def _compose(

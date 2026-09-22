@@ -77,7 +77,7 @@ The brief itself is now lean — references PROJECT.md instead of inlining all t
    - `adapted` (rationale recorded; re-dispatch follows with the adapted brief)
 5. Resume execution only after the surface note's status is set.
 
-**Why block-on-surface (not proceed-then-review):** an engineer's worktree doesn't see the broad picture (peer activity, cross-product impact, batched resolution); silent fix-and-continue muddies file-disjoint commit hygiene by mixing route changes into a feature commit. Block-on-surface mirrors `engineer-seed.md §7` (`drift-found:` rule — "you CONTINUE your own slice — tech-lead resolves at integration") applied to route alternatives.
+**Why block-on-surface (not proceed-then-review):** an engineer's worktree doesn't see the broad picture (peer activity, cross-product impact, batched resolution); silent fix-and-continue muddies file-disjoint commit hygiene by mixing route changes into a feature commit. Block-on-surface mirrors `engineer-seed.md §4` (`drift-found:` rule — "you CONTINUE your own slice — tech-lead resolves at integration") applied to route alternatives.
 
 ### 4. Engineer writes delivery note at end
 
