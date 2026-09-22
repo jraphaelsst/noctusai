@@ -113,6 +113,43 @@ class TestWriting:
         assert r.status_code == 200
         assert r.json()["numero_registro_imoveis"] == "2º RI"
 
+    def test_the_onus_certidao_date_saves(self, client, scoped):
+        """🔴 Live 2026-09-22: this returned [500] Erro interno do servidor.
+
+        The body model parses `onus_certidao_em` into a `datetime.date`, and
+        the write handed that object straight to PostgREST's JSON encoder:
+        `TypeError: Object of type date is not JSON serializable`. The column
+        shipped with migration 099 and had been unwritable ever since —
+        `situacao_onus` (a plain string) saved fine, so the block looked
+        healthy right up to the field a contract actually needs.
+        """
+        seed(scoped, dados=[dados_row()])
+        r = client.patch(
+            f"/api/imoveis/{CODIGO}/dados",
+            json={
+                "situacao_onus": "livre_desembaracado",
+                "onus_certidao_em": "2026-08-24",
+            },
+            headers=auth(),
+        )
+        assert r.status_code == 200
+        assert r.json()["onus_certidao_em"] == "2026-08-24"
+
+    def test_the_onus_date_also_saves_on_the_row_creating_patch(
+        self, client, scoped
+    ):
+        """The insert branch encodes its payload too — `_gravar` has two
+        write shapes and only the update one would have been exercised by
+        the test above on a pre-existing row."""
+        seed(scoped)
+        r = client.patch(
+            f"/api/imoveis/{CODIGO}/dados",
+            json={"onus_certidao_em": "2026-08-24"},
+            headers=auth(),
+        )
+        assert r.status_code == 200
+        assert r.json()["onus_certidao_em"] == "2026-08-24"
+
     def test_a_second_patch_updates_without_clobbering_the_first(
         self, client, scoped
     ):

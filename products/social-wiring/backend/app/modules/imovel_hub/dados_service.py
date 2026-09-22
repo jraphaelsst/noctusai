@@ -29,7 +29,7 @@ verified for one nobody can check.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -544,6 +544,25 @@ def atualizar(
     return obter(client, org_id, codigo)
 
 
+def _json_seguro(patch: dict) -> dict:
+    """Render `date`/`datetime` values as ISO strings before they reach PostgREST.
+
+    🔴 THE BUG THIS FIXES (live, 2026-09-22): saving the ônus block with a
+    `Data da certidão` filled returned `[500] Erro interno do servidor` —
+    `TypeError: Object of type date is not JSON serializable`. The body model
+    parses `onus_certidao_em` into a real `datetime.date`, and httpx's JSON
+    encoder (which PostgREST's client hands the payload to) refuses it. Every
+    author of this table funnels through `_gravar`, so the coercion belongs
+    here and nowhere else — a per-caller `.isoformat()` is the shape that let
+    this reach production in the first place (the date column has been
+    unwritable since migration 099 shipped it).
+    """
+    return {
+        chave: (valor.isoformat() if isinstance(valor, (date, datetime)) else valor)
+        for chave, valor in patch.items()
+    }
+
+
 def _gravar(
     client: Any, org_id: UUID, codigo: str, atual: Optional[dict], patch: dict
 ) -> None:
@@ -557,10 +576,12 @@ def _gravar(
     """
     if atual is None:
         _t(client, TABLE).insert(
-            {"org_id": str(org_id), "codigo": codigo, **patch, "created_at": _now()}
+            _json_seguro(
+                {"org_id": str(org_id), "codigo": codigo, **patch, "created_at": _now()}
+            )
         ).execute()
     else:
-        _t(client, TABLE).update({**patch, "updated_at": _now()}).eq(
+        _t(client, TABLE).update(_json_seguro({**patch, "updated_at": _now()})).eq(
             "org_id", str(org_id)
         ).eq("codigo", codigo).execute()
 

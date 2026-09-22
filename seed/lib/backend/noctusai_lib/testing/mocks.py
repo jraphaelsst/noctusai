@@ -61,9 +61,11 @@ Write-to-read propagation (added 2026-05-10):
 """
 from __future__ import annotations
 
+import json as _json
 import logging
 from typing import Any, Iterable, Mapping, Optional
 from unittest.mock import MagicMock
+from unittest.mock import Base as _MockBase  # noqa: F401
 
 from postgrest.exceptions import APIError as _PostgrestAPIError
 
@@ -237,6 +239,46 @@ def _validate_select_cols(
             schema, table, col, operation="select",
             strict_unknown_tables=strict_unknown_tables,
         )
+
+
+def _validate_json_serializable(table: Optional[str], payload, operation: str) -> None:
+    """Refuse a write payload the REAL client could not send.
+
+    🔴 THE BUG CLASS THIS CATCHES (found live 2026-09-22, social-wiring
+    `imovel_dados`): a service handed PostgREST a `datetime.date` straight
+    off a pydantic body. postgrest-py passes the payload to httpx as
+    `json=`, which encodes with the STDLIB encoder and no `default=`, so the
+    live call died with `TypeError: Object of type date is not JSON
+    serializable` — a 500 for the user. The mock stored the object happily,
+    so the write tested green and stayed broken for as long as the column
+    existed. Storing what the wire cannot carry is a false green by
+    construction; every date/UUID/Decimal must be stringified by the
+    service, exactly as production code already does with `str(org_id)`.
+    """
+    if payload is None:
+        return
+    linhas = payload if isinstance(payload, (list, tuple)) else [payload]
+    for linha in linhas:
+        if not isinstance(linha, Mapping):
+            continue
+        for chave, valor in linha.items():
+            # A Mock is a TEST artifact — it cannot reach production, where
+            # the same expression yields a real str (e.g. `user.id` off a
+            # live Supabase auth response). Flagging it would report the
+            # fixture's shape, not a wire defect, and the real hazards
+            # (date/datetime/UUID/Decimal) stay refused below.
+            if isinstance(valor, _MockBase):
+                continue
+            try:
+                _json.dumps(valor)
+            except TypeError:
+                raise AssertionError(
+                    f"{operation} on '{table}': column '{chave}' carries "
+                    f"{type(valor).__name__}, which the real PostgREST client "
+                    f"cannot JSON-encode (httpx uses the stdlib encoder). The "
+                    f"service must serialise it — e.g. `.isoformat()` for a "
+                    f"date, `str(...)` for a UUID — before the write."
+                ) from None
 
 
 def _validate_payload_keys(
@@ -1309,6 +1351,7 @@ class MockRequestBuilder:
         NOT influence insert response (use the queue for that).
         """
         self._check_table_known("insert")
+        _validate_json_serializable(self._table, data, "insert")
         if self._validate_schema:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="insert",
@@ -1369,6 +1412,7 @@ class MockRequestBuilder:
 
     def update(self, data=None, *a, **k):
         self._check_table_known("update")
+        _validate_json_serializable(self._table, data, "update")
         if self._validate_schema:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="update",
@@ -1433,6 +1477,7 @@ class MockRequestBuilder:
         `.upsert(...).eq(...)` in the real API.
         """
         self._check_table_known("upsert")
+        _validate_json_serializable(self._table, data, "upsert")
         if self._validate_schema:
             _validate_payload_keys(
                 self._schema, self._table, data, operation="upsert",
