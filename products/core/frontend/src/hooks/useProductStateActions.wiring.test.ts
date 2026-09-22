@@ -7,25 +7,23 @@
  * hook, which is exactly how the two surfaces drifted before (dashboard
  * toast vs. admin blocking `alert()`).
  */
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+/// <reference types="vite/client" />
+// Sources come in through Vite's `?raw` import, not `node:fs`: core's tsconfig
+// carries no Node types, so `node:*` imports fail `tsc --noEmit` in CI.
 import { describe, it, expect } from 'vitest';
+import dashboardSrc from '../pages/Dashboard.tsx?raw';
+import adminProductsSrc from '../pages/admin/AdminProducts.tsx?raw';
+import hookSrc from './useProductStateActions.ts?raw';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = resolve(HERE, '..');
-
-const PAGES = [
-  resolve(SRC, 'pages/Dashboard.tsx'),
-  resolve(SRC, 'pages/admin/AdminProducts.tsx'),
+const PAGES: Array<[string, string]> = [
+  ['pages/Dashboard.tsx', dashboardSrc],
+  ['pages/admin/AdminProducts.tsx', adminProductsSrc],
 ];
 
 const DIRECT_MUTATION_CALL = /api\.post\(\s*[`'"][^`'"]*\/(activation|deploy-scope)/;
 
 describe('product status/deploy-scope toggles wire through the shared hook', () => {
-  for (const path of PAGES) {
-    const src = readFileSync(path, 'utf-8');
-    const label = path.split('/src/')[1];
+  for (const [label, src] of PAGES) {
 
     it(`${label} imports useProductStateActions`, () => {
       expect(src).toMatch(/import\s*\{\s*useProductStateActions\s*\}\s*from\s*['"].*useProductStateActions['"]/);
@@ -37,7 +35,6 @@ describe('product status/deploy-scope toggles wire through the shared hook', () 
   }
 
   it('the mutation calls actually live in the shared hook itself', () => {
-    const hookSrc = readFileSync(resolve(SRC, 'hooks/useProductStateActions.ts'), 'utf-8');
     expect(hookSrc).toMatch(/\/activation/);
     expect(hookSrc).toMatch(/\/deploy-scope/);
   });
