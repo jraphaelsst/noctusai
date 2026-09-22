@@ -78,3 +78,17 @@ def test_checked_in_active_scope_names_real_products():
     active = ps.read_active_scope(REPO) or []
     ghosts = [s for s in active if not (REPO / "products" / s).is_dir()]
     assert not ghosts, f"active-scope.txt lists {ghosts} with no products/<slug>/ dir"
+
+
+def test_every_gate_surface_agrees_with_active_scope():
+    """The guarantee: no gate surface checks an asleep product or skips an awake one.
+
+    A new gate that walks `products/*` without `filter_active` turns its product
+    `MIXED` here and fails CI — the scope cannot leak silently.
+    """
+    rep = ps.product_scope_report(root=REPO, catalog=False)
+    mixed = {s: r["surfaces"] for s, r in rep["products"].items() if r["verdict"] == "MIXED"}
+    assert not mixed, f"gate surfaces disagree with active-scope.txt: {mixed}"
+    active = set(ps.read_active_scope(REPO) or [])
+    for slug, row in rep["products"].items():
+        assert row["verdict"] == ("awake" if slug in active else "asleep"), (slug, row)

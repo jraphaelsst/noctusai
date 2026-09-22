@@ -75,6 +75,7 @@ def register_all(server) -> None:
     from . import keeper_pattern
     from . import knowledge_bundle_export
     from . import build_scope
+    from . import product_scope
     from . import spa_smoke
     from . import ensure_product_url_roster
     from . import ensure_schema_exposure
@@ -203,6 +204,7 @@ def register_all(server) -> None:
     keeper_pattern.register(server)
     knowledge_bundle_export.register(server)
     build_scope.register(server)
+    product_scope.register(server)
     spa_smoke.register(server)
     ensure_product_url_roster.register(server)
     ensure_schema_exposure.register(server)

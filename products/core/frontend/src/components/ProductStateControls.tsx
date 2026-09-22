@@ -6,14 +6,16 @@
  *     ativo + dev  → work it in DEV only
  *     inativo      → do not touch the product at all
  *
- * These live in one module because THREE surfaces render them (the admin
- * products table, the centralized control panel, and the dashboard cards).
- * If each surface hand-rolled its own toggle, the transition rules would drift
+ * These live in one module because TWO surfaces render them (the
+ * /admin/products table + detail pane, and the core dashboard cards). If each
+ * surface hand-rolled its own toggle, the transition rules would drift
  * between them — and a guide that disagrees with itself is worse than none.
+ * The MUTATION is shared too: both pages call `hooks/useProductStateActions`,
+ * the single path to `/activation` + `/deploy-scope` (2026-09-22).
  *
  * The components are presentational + callback-driven on purpose: each host
- * page owns its own data fetching (the admin table uses local state, the panel
- * refetches a list), so the shared piece is the RULES and the affordance, not
+ * page owns its own data fetching (the admin table uses local state, the
+ * dashboard re-reads /api/auth/me), so the shared piece is the RULES and the affordance, not
  * a data layer none of them share.
  */
 import React, { useEffect, useRef, useState } from 'react';

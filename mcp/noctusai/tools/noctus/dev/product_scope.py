@@ -147,6 +147,95 @@ def refresh_active_scope(write: bool = True, _active: list[str] | None = None,
     return {**result, "status": "written"}
 
 
+
+# ─── Evaluation: ask every REAL gate code path, not the file ─────────────────
+def product_scope_report(slug: str | None = None, root: Path | None = None,
+                         catalog: bool = True) -> dict:
+    """Per product: is it CHECKED or SKIPPED by each gate surface?
+
+    Each surface is answered by calling that surface's own product-listing code
+    (the same function the gate runs), so a gate that bypassed `filter_active`
+    shows up here as `MIXED`, not as a false "skipped". Verdict per product:
+    `asleep` (every surface skips) · `awake` (every surface checks) · `MIXED`.
+    `catalog=True` also reads `ativo` live and flags `STALE` when the file
+    disagrees (the catalog trigger → `sync-product-scope.yml` has not landed yet, or failed).
+    """
+    from . import compliance, dependabot_sync, gate_sweep, propagate
+
+    base = root if root is not None else REPO_ROOT
+    on_disk = sorted(p.name for p in (base / "products").iterdir() if p.is_dir())
+    targets = [slug] if slug else on_disk
+
+    ativo: dict[str, bool] | None = None
+    catalog_error = None
+    if catalog:
+        from . import build_scope as bs
+        try:
+            live_rows = bs._active_catalog_rows()
+            ativo = {s: False for s in on_disk}
+            ativo.update({s: True for s, _ in live_rows})
+            ativo["core"] = True
+        except Exception as exc:  # reported in the payload, never swallowed
+            catalog_error = f"{type(exc).__name__}: {exc}"
+
+    file_active = set(read_active_scope(root) or on_disk)
+    compliance_set = {d.name for d in compliance._active_product_dirs(base / "products")}
+    fe_products = {s for s in on_disk if (base / "products" / s / "frontend" / "package.json").exists()}
+    dependabot_set = set(dependabot_sync._on_disk_product_slugs(base))
+    from noctusai_lib.config.cors_registry import parse_products_registry
+    registry_all = {e["slug"] for e in parse_products_registry(base / "start.sh")}
+    propagate_set = {s for s, _ in propagate._load_products(base)}
+    sweep_scope = gate_sweep._derive_scope(["seed/lib/backend/noctusai_lib/__init__.py"])
+    gate_sweep._build_gate_specs(base, sweep_scope)
+    sweep_skipped = set(sweep_scope.get("skipped_asleep", []))
+
+    rows = {}
+    for s in targets:
+        surf: dict[str, str] = {}
+        surf["ci_test_jobs"] = "checked" if s in file_active else "skipped"
+        surf["run_all_tests/build/smoke/predeploy"] = (
+            "checked" if filter_active([s], root) else "skipped")
+        surf["compliance_keepers"] = "checked" if s in compliance_set else "skipped"
+        surf["gate_sweep_seed_fanout"] = "skipped" if s in sweep_skipped else "checked"
+        if s in fe_products:
+            surf["dependabot"] = "checked" if s in dependabot_set else "skipped"
+        # seed is propagate's SOURCE, never a target (`propagate._load_products` drops it).
+        if s in registry_all and s != "seed":
+            surf["propagate"] = "checked" if s in propagate_set else "skipped"
+        vals = set(surf.values())
+        verdict = "awake" if vals == {"checked"} else "asleep" if vals == {"skipped"} else "MIXED"
+        row = {"verdict": verdict, "in_active_scope": s in file_active, "surfaces": surf}
+        if ativo is not None:
+            row["catalog_ativo"] = ativo.get(s, False)
+            if row["catalog_ativo"] != (s in file_active):
+                row["verdict"] = "STALE"
+        rows[s] = row
+
+    bad = {s: r["verdict"] for s, r in rows.items() if r["verdict"] in ("MIXED", "STALE")}
+    return {"ok": not bad, "products": rows, "problems": bad,
+            "catalog_error": catalog_error,
+            "always_global": [
+                "migration-SQL security keepers (table_has_rls, schema_wide_anon_grant, "
+                "storage_bucket_public, migration_guard_has_probe) — the shared DB is live "
+                "regardless of ativo",
+                "check_hardcoded_product_slug_set recognizer corpus (detects literals, checks nothing)",
+            ]}
+
+
+def register(server) -> None:
+    @server.tool(
+        name="noctus.dev.product_scope_report",
+        description=(
+            "Per product, ask every gate surface's REAL listing code whether it checks or "
+            "skips the product (CI jobs, compliance keepers, gate_sweep seed fan-out, "
+            "run_all_tests/build/smoke/predeploy, dependabot, propagate). Verdict "
+            "awake | asleep | MIXED (a gate bypasses the scope) | STALE (file ≠ live "
+            "catalog). Use to prove a deactivated product is out of the process."
+        ),
+    )
+    def _report(slug: str | None = None, catalog: bool = True) -> dict:
+        return product_scope_report(slug=slug, catalog=catalog)
+
 __all__ = [
     "ACTIVE_SCOPE_PATH",
     "ACTIVE_SCOPE_REL",
@@ -155,5 +244,7 @@ __all__ = [
     "filter_active",
     "is_active",
     "read_active_scope",
+    "product_scope_report",
     "refresh_active_scope",
+    "register",
 ]
