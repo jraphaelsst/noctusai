@@ -1,4 +1,4 @@
-# Canonical per-product compose fragment — SINGLE CONTAINER.
+# community compose — SINGLE CONTAINER (generated from products/seed/docker-compose.yml; edit there + re-propagate).
 #
 # Project: containerization-single-container. This file at products/community/
 # is the reference; every other product's docker-compose.yml is generated
