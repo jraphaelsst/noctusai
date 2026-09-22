@@ -5,9 +5,22 @@
  * synced 404s rather than silently falling back to a live Vista call, so the
  * page never disagrees with the catalog it was reached from.
  *
- * CONTRACT § 5 — the 13-section display, in order. Everything past the
- * header is a small presentational component under `components/imovel/`,
- * each deciding for itself whether it has ≥1 non-null field to show.
+ * 🔴 A MANUALLY-REGISTERED CÓDIGO IS A 404 ON THIS MIRROR, NOT A DEAD END
+ * -------------------------------------------------------------------------
+ * `ImovelCodigoPicker`'s "Cadastrar como imóvel novo" (`POST
+ * /{codigo}/registrar`, migration 149) gives a código a REGISTRY identity —
+ * it does not, and cannot, put a row in the Vista MIRROR this page's main
+ * query reads. `useImovelRegistro` (`GET /{codigo}/registro`) answers that
+ * separate question; when the mirror 404s but the registry says
+ * `origem: "manual"`, this page renders the cartório/documentos surfaces
+ * (the same components/hooks the full page uses — codigo-scoped, not
+ * imóvel-object-scoped) instead of the not-found card. Both 404ing is what
+ * genuinely means "unknown código".
+ *
+ * CONTRACT § 5 — the 13-section display, in order, for a MIRRORED imóvel.
+ * Everything past the header is a small presentational component under
+ * `components/imovel/`, each deciding for itself whether it has ≥1 non-null
+ * field to show.
  *
  * Rendering decisions that encode measured wire facts:
  *   · Counts use formatCount so a genuine 0 (terreno) reads "0", while
@@ -26,6 +39,8 @@ import {
   Star,
   Sparkles,
 } from "lucide-react";
+
+import { ApiError } from "@noctusai/lib";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,11 +74,12 @@ import {
   useImovelDocumentos,
 } from "@/hooks/useImovelDados";
 import { useTeamMembers } from "@/hooks/useTeam";
-import { formatValor, useImovel } from "@/hooks/useImoveis";
+import { formatValor, useImovel, useImovelRegistro } from "@/hooks/useImoveis";
 
 export default function ImovelDetalhes() {
   const { codigo } = useParams<{ codigo: string }>();
   const query = useImovel(codigo ?? null);
+  const registroQuery = useImovelRegistro(codigo ?? null);
   const solicitacao = useSolicitacaoDoImovel(codigo ?? null);
   const solicitar = useSolicitarCampanha(codigo ?? null);
   const [erroSolicitacao, setErroSolicitacao] = useState<string | null>(null);
@@ -83,7 +99,14 @@ export default function ImovelDetalhes() {
   // ENTIRE detail page; the old gate replaced header/ficha/sidebar with a
   // skeleton on every background refetch of `query` (e.g. window refocus),
   // collapsing then restoring the whole layout under the user.
-  const loading = query.isPending && !query.data;
+  //
+  // Waits on BOTH `query` and `registroQuery` — deciding "not found" vs.
+  // "manually registered" off only the first to settle would flash the wrong
+  // branch on most visits (the mirror 404 settles fast now that it no
+  // longer retries; the registry check is a second, independent request).
+  const loading =
+    (query.isPending && !query.data) ||
+    (registroQuery.isPending && !registroQuery.data);
   const imovel = query.data;
 
   if (loading) {
@@ -96,7 +119,30 @@ export default function ImovelDetalhes() {
     );
   }
 
-  if (query.isError || !imovel) {
+  const imovelAusente = query.isError || !imovel;
+  // `useImovel` 404ing specifically (not a 5xx/network error) is what makes
+  // the registry check meaningful — any other failure keeps the original
+  // "não encontrado" messaging rather than claiming a manual record exists.
+  const imovelMirror404 =
+    query.error instanceof ApiError && query.error.status === 404;
+  const registrado = registroQuery.data?.registrado === true;
+
+  if (imovelAusente && imovelMirror404 && registrado) {
+    return (
+      <ImovelManualLayout
+        codigo={codigo as string}
+        criadoEm={registroQuery.data?.criado_em ?? null}
+        dadosQuery={dadosQuery}
+        documentosQuery={documentosQuery}
+        dadosMutation={dadosMutation}
+        enderecoManualMutation={enderecoManualMutation}
+        documentoMutations={documentoMutations}
+        teamQuery={teamQuery}
+      />
+    );
+  }
+
+  if (imovelAusente) {
     return (
       <div className="p-6">
         <Card>
@@ -412,6 +458,105 @@ export default function ImovelDetalhes() {
             dataAtualizacao={imovel.data_atualizacao}
             diasDesdeAtualizacao={imovel.dias_desde_atualizacao}
             sincronizadoEm={imovel.sincronizado_em}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The surface for a código the Vista mirror has never seen but the registry
+ * has (`origem: "manual"`, migration 149) — every input a contract needs
+ * from a property BEFORE it ever syncs: cartório/registro data, the manual
+ * address override, and its documents. Reuses `ImovelCartorioCard` and
+ * `ImovelDocumentosCard` verbatim (both are already codigo-scoped, not
+ * imóvel-object-scoped) — no forked copies. `ImovelRegistroSection` and the
+ * CONTRACT § 5 Vista-field sections above are deliberately absent: they
+ * render facts this record does not have.
+ *
+ * Every query/mutation is a prop, not a hook call in here — `ImovelDetalhes`
+ * already calls them all unconditionally (rules-of-hooks; see its own
+ * top-of-function comment), so this component only renders what it is
+ * handed.
+ */
+function ImovelManualLayout({
+  codigo,
+  criadoEm,
+  dadosQuery,
+  documentosQuery,
+  dadosMutation,
+  enderecoManualMutation,
+  documentoMutations,
+  teamQuery,
+}: {
+  codigo: string;
+  criadoEm: string | null;
+  dadosQuery: ReturnType<typeof useImovelDados>;
+  documentosQuery: ReturnType<typeof useImovelDocumentos>;
+  dadosMutation: ReturnType<typeof useImovelDadosMutation>;
+  enderecoManualMutation: ReturnType<typeof useEnderecoManualMutation>;
+  documentoMutations: ReturnType<typeof useImovelDocumentoMutations>;
+  teamQuery: ReturnType<typeof useTeamMembers>;
+}) {
+  return (
+    <div className="space-y-6 p-6" data-testid="imovel-manual-layout">
+      <Button asChild variant="ghost" size="sm" className="-ml-2">
+        <Link to="/imoveis">
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Imóveis
+        </Link>
+      </Button>
+
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">{codigo}</Badge>
+          <Badge variant="outline" data-testid="imovel-manual-badge">
+            Cadastrado manualmente
+          </Badge>
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">{codigo}</h1>
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Este código foi cadastrado manualmente e ainda não tem um registro
+          espelhado do Vista/CRM — os dados de cartório, endereço e
+          documentos abaixo já podem ser preenchidos normalmente.
+          {criadoEm &&
+            ` Cadastrado em ${new Date(criadoEm).toLocaleDateString("pt-BR")}.`}
+        </p>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2 lg:col-start-2">
+          <ImovelCartorioCard
+            dados={dadosQuery.data}
+            membros={teamQuery.data ?? []}
+            loading={dadosQuery.isPending && !dadosQuery.data}
+            saving={dadosMutation.isPending}
+            error={dadosMutation.error?.message ?? null}
+            onSave={(patch) => dadosMutation.mutate(patch)}
+            savingEnderecoManual={enderecoManualMutation.isPending}
+            onSaveEnderecoManual={(patch) => enderecoManualMutation.mutate(patch)}
+          />
+
+          <ImovelDocumentosCard
+            documentos={documentosQuery.data ?? []}
+            loading={documentosQuery.isPending && !documentosQuery.data}
+            uploading={documentoMutations.upload.isPending}
+            error={
+              documentoMutations.upload.error?.message ??
+              documentoMutations.remove.error?.message ??
+              null
+            }
+            onUpload={(file, tipoDocumento) =>
+              documentoMutations.upload.mutate({ file, tipoDocumento })
+            }
+            onRemove={(documentoId, motivo) =>
+              documentoMutations.remove.mutate({ documentoId, motivo })
+            }
+            onOpen={async (documentoId) => {
+              const res = await documentoMutations.getUrl.mutateAsync(documentoId);
+              if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
+            }}
           />
         </div>
       </div>

@@ -45,8 +45,16 @@ import {
   useDeleteExtracao,
   useRetranscreverExtracao,
   useArquivoOriginalExtracao,
+  useVincularExtracaoImovel,
   readableError,
 } from '@/hooks/useMatriculas';
+import { ImovelCodigoPicker } from '@/components/card/ImovelCodigoPicker';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   useConfirmarDetalhesAto,
   useDefinirFontes,
@@ -110,6 +118,7 @@ import {
   AlertTriangle,
   ExternalLink,
   RefreshCw,
+  Link2,
 } from 'lucide-react';
 import { TableSkeleton } from '@noctusai/lib/design-system';
 import { copyRichText } from '@noctusai/lib/clipboard';
@@ -143,6 +152,11 @@ export default function Matriculas() {
   const [manualAberto, setManualAberto] = useState(false);
   const [codigoManual, setCodigoManual] = useState('');
   const [textoManual, setTextoManual] = useState('');
+  // Bug H — "Vincular a imóvel" row action (migration 149's manual-imóvel
+  // paths): which unlinked row's picker dialog is open, if any. A separate
+  // dialog rather than an inline field on the row — `ImovelCodigoPicker` is
+  // a full search-and-register control, not a single input.
+  const [vincularId, setVincularId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const extracoesQuery = useMatriculaExtracoes();
@@ -158,6 +172,7 @@ export default function Matriculas() {
   const deleteMutation = useDeleteExtracao();
   const retranscreverMutation = useRetranscreverExtracao();
   const arquivoOriginalMutation = useArquivoOriginalExtracao();
+  const vincularMutation = useVincularExtracaoImovel();
 
   // 🔴 DEEP-LINK: `ImovelCartorioCard`'s título-aquisitivo/ônus badges land
   // here as `/matriculas?extracao=<id>` — auto-open that extraction once,
@@ -778,6 +793,23 @@ export default function Matriculas() {
                               <RefreshCw className="h-3 w-3 text-muted-foreground" />
                             </Button>
                           )}
+                          {/* Bug H — the only way, besides the contract
+                              panel's own secondary section, to attach an
+                              EXISTING unlinked transcription to an imóvel
+                              after the fact. Only rows with no codigo at
+                              all offer it — a linked row already has its
+                              imóvel. */}
+                          {!ext.codigo && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => setVincularId(ext.id)}
+                              title="Vincular a imóvel"
+                              data-testid={`matricula-row-${ext.id}-vincular`}
+                            >
+                              <Link2 className="h-3 w-3 text-muted-foreground" />
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="ghost"
@@ -814,6 +846,28 @@ export default function Matriculas() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Bug H — "Vincular a imóvel" row action. `ImovelCodigoPicker`'s value
+          is always null here: this dialog exists to CHOOSE a target, not to
+          show/clear an already-chosen one. */}
+      <Dialog open={!!vincularId} onOpenChange={(open) => !open && setVincularId(null)}>
+        <DialogContent data-testid="matricula-vincular-dialog">
+          <DialogHeader>
+            <DialogTitle>Vincular a um imóvel</DialogTitle>
+          </DialogHeader>
+          <ImovelCodigoPicker
+            value={null}
+            disabled={vincularMutation.isPending}
+            onChange={(codigo) => {
+              if (!vincularId || !codigo) return;
+              vincularMutation.mutate(
+                { extracaoId: vincularId, codigo },
+                { onSuccess: () => setVincularId(null) },
+              );
+            }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

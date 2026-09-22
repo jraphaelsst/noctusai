@@ -15,9 +15,14 @@ afterEach(async () => {
 });
 
 const mockUseImovel = vi.fn();
+const mockUseImovelRegistro = vi.fn();
 vi.mock("@/hooks/useImoveis", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useImoveis")>();
-  return { ...actual, useImovel: mockUseImovel };
+  return {
+    ...actual,
+    useImovel: mockUseImovel,
+    useImovelRegistro: mockUseImovelRegistro,
+  };
 });
 
 const mockUseSolicitacaoDoImovel = vi.fn();
@@ -169,6 +174,10 @@ beforeEach(() => {
   });
   mockUseImovelDocumentos.mockReturnValue({ data: undefined, isPending: false });
   mockUseTeamMembers.mockReturnValue({ data: [] });
+  // Default: not registered — every existing test's `mockUseImovel` already
+  // returns a real imóvel, so this branch is never reached by them; only
+  // the manual-layout tests below override it.
+  mockUseImovelRegistro.mockReturnValue({ data: undefined, isPending: false, isError: false });
 });
 
 async function renderDetalhes(codigo = "AP1234") {
@@ -279,5 +288,72 @@ describe("ImovelDetalhes — section-hidden-when-empty", () => {
 
     expect(getByText("Metadados")).toBeTruthy();
     expect(getByText(/há 15 dias/)).toBeTruthy();
+  });
+});
+
+describe("ImovelDetalhes — manually-registered código (mirror 404, registry 200)", () => {
+  it("🔴 renders the not-found card when BOTH the mirror and the registry 404", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    mockUseImovel.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new ApiError(404, "Imóvel não encontrado"),
+    });
+    mockUseImovelRegistro.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+    });
+    const { getByText, queryByTestId } = await renderDetalhes();
+
+    expect(getByText("Imóvel AP1234 não encontrado.")).toBeTruthy();
+    expect(queryByTestId("imovel-manual-layout")).toBeNull();
+  });
+
+  it("🔴 renders the manual layout when the mirror 404s but the registry says manual", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    mockUseImovel.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new ApiError(404, "Imóvel não encontrado"),
+    });
+    mockUseImovelRegistro.mockReturnValue({
+      data: {
+        codigo: "AP1234",
+        registrado: true,
+        origem: "manual",
+        criado_em: "2026-09-01T00:00:00Z",
+      },
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, queryByText, getByText } = await renderDetalhes();
+
+    expect(getByTestId("imovel-manual-layout")).toBeTruthy();
+    expect(getByTestId("imovel-manual-badge").textContent).toContain(
+      "Cadastrado manualmente",
+    );
+    // The same cartório card the full page renders — codigo-scoped, no fork.
+    expect(getByText("Cartório e registro")).toBeTruthy();
+    expect(queryByText("Imóvel AP1234 não encontrado.")).toBeNull();
+  });
+
+  it("shows the skeleton while either the mirror or the registry is still resolving", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    mockUseImovel.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new ApiError(404, "Imóvel não encontrado"),
+    });
+    // Mirror already 404'd, but the registry hasn't answered yet — must not
+    // flash "não encontrado" before the registry check settles.
+    mockUseImovelRegistro.mockReturnValue({ data: undefined, isPending: true, isError: false });
+    const { queryByText, queryByTestId } = await renderDetalhes();
+
+    expect(queryByText("Imóvel AP1234 não encontrado.")).toBeNull();
+    expect(queryByTestId("imovel-manual-layout")).toBeNull();
   });
 });

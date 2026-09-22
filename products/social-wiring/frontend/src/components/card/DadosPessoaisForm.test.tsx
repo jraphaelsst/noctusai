@@ -1,13 +1,15 @@
 /**
  * DadosPessoaisForm — the fields the checklist derives from.
  *
- * The assertions worth having here are about the GÊNERO DEFAULT, because that
- * is the one place this form can quietly lie. The dropdown shows "Masculino"
- * pre-selected as a convenience; if that counted as data before anyone saved,
- * the Gênero item would read green for every existing cliente the day it
- * shipped and could never again answer "who still needs checking" — the
- * permanently-GREEN twin of the permanently-red `nome_completo` bug migration
- * 068 had to fix.
+ * The assertions worth having here are about GÊNERO HAVING NO DEFAULT,
+ * because that is the one place this form used to quietly lie: a pre-picked
+ * "Masculino" read as answered on screen while the checklist (driven by the
+ * same null column) correctly read it as missing, and confirming Save with
+ * no interaction at all silently wrote "Masculino" onto a record nobody
+ * ever stated the gênero of (live-tested, contract-gate audit, 2026-09-22).
+ * The box now shows an empty "Selecione" placeholder for null and sends
+ * exactly what the operator picked, never a default — the permanently-GREEN
+ * twin of the permanently-red `nome_completo` bug migration 068 had to fix.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -147,16 +149,20 @@ describe("DadosPessoaisForm", () => {
     expect(onSave).toHaveBeenCalledTimes(1);
   });
 
-  it("🔴 sends Masculino only once the operator saves, never before", async () => {
-    const { onSave, fireEvent, screen } = await abrir();
-    // Pre-selected in the UI…
+  it("🔴 shows an empty placeholder for a null gênero, never a default", async () => {
+    const { screen } = await abrir();
     expect(screen.getByTestId("dados-pessoais-genero").textContent).toContain(
-      "Masculino",
+      "Selecione",
     );
-    // …but it is a convenience, not a value, until this click.
-    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("🔴 saving without touching gênero sends null, never Masculino", async () => {
+    // `genero: null` — the realistic shape a record with no gênero ever
+    // recorded arrives in (a DB column, not an absent JS key).
+    const { onSave, fireEvent, screen } = await abrir({ valores: { genero: null } });
     fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
-    expect(onSave.mock.calls[0][0].genero).toBe("Masculino");
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].genero).toBeNull();
   });
 
   it("keeps an already-saved gênero rather than resetting it to the default", async () => {
@@ -196,8 +202,8 @@ describe("DadosPessoaisForm", () => {
   });
 });
 
-describe("DadosPessoaisForm — RG não pode ser igual ao CPF (migration 110)", () => {
-  it("🔴 mostra o aviso ao vivo quando RG e CPF colapsam no mesmo documento", async () => {
+describe("DadosPessoaisForm — RG igual ao CPF é uma notícia, não um erro (CIN)", () => {
+  it("🔴 mostra o aviso âmbar ao vivo quando RG e CPF colapsam no mesmo documento", async () => {
     const { fireEvent, screen } = await abrir();
     fireEvent.change(screen.getByTestId("dados-pessoais-cpf"), {
       target: { value: "412.954.238-98" },
@@ -208,10 +214,13 @@ describe("DadosPessoaisForm — RG não pode ser igual ao CPF (migration 110)", 
       // punctuation-blind on both sides.
       target: { value: "412.954.238-98" },
     });
-    expect(screen.getByTestId("dados-pessoais-rg-igual-cpf")).toBeTruthy();
+    const aviso = screen.getByTestId("dados-pessoais-rg-igual-cpf");
+    expect(aviso.textContent).toContain("Carteira de Identidade Nacional");
+    // Never `text-destructive` — this is informational, not a rejection.
+    expect(aviso.className).not.toContain("text-destructive");
   });
 
-  it("não bloqueia o envio — é consultivo, quem recusa é o servidor", async () => {
+  it("🔴 nunca bloqueia o envio — RG==CPF é normal para a CIN", async () => {
     const { onSave, fireEvent, screen } = await abrir();
     fireEvent.change(screen.getByTestId("dados-pessoais-cpf"), {
       target: { value: "41295423898" },
@@ -221,6 +230,7 @@ describe("DadosPessoaisForm — RG não pode ser igual ao CPF (migration 110)", 
     });
     fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
     expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].rg).toBe("41295423898");
   });
 
   it("some quando um dos dois deixa de bater", async () => {
@@ -243,18 +253,19 @@ describe("DadosPessoaisForm — surfacing a rejected save (migration 110)", () =
   it("🔴 mostra a mensagem do servidor mesmo depois do editor fechar", async () => {
     // `submit()` fecha o editor de imediato; a rejeição chega DEPOIS,
     // assíncrona — um caller que só mostrasse `saveError` enquanto aberto não
-    // mostraria a ninguém.
+    // mostraria a ninguém. RG==CPF is no longer a rejection example — the
+    // server accepts it now — so a generic validation message stands in.
     const { render, screen } = await import("@testing-library/react");
     const onSave = vi.fn();
     render(
       <DadosPessoaisForm
         valores={{}}
         onSave={onSave}
-        saveError="[400] RG não pode ser igual ao CPF."
+        saveError="[400] CPF inválido."
       />,
     );
     expect(screen.getByTestId("dados-pessoais-erro").textContent).toContain(
-      "RG não pode ser igual ao CPF.",
+      "CPF inválido.",
     );
   });
 

@@ -239,7 +239,7 @@ export function AnexosSection({
                 {rotulo && (
                   <p
                     className={
-                      "mt-0.5 flex items-center gap-1 text-xs " +
+                      "mt-0.5 flex min-w-0 items-center gap-1 text-xs " +
                       (rotulo.tom === "erro" ? "text-destructive" : "text-muted-foreground")
                     }
                     data-testid={`anexo-extracao-status-${doc.id}`}
@@ -250,9 +250,18 @@ export function AnexosSection({
                     ) : (
                       <Loader2 className="h-3 w-3 shrink-0 animate-spin" aria-hidden="true" />
                     )}
-                    {rotulo.texto}
+                    <span className="shrink-0">{rotulo.texto}</span>
+                    {/* An extraction error (e.g. a raw OpenAI 400 body) can run
+                        hundreds of characters. `min-w-0` is load-bearing here:
+                        without it a flex child ignores `truncate`'s ellipsis
+                        and keeps its full one-line width, pushing the whole
+                        card into a horizontal scrollbar and shoving every
+                        field to its right off-screen. The full text stays
+                        reachable via the `<p>`'s own `title` above. */}
                     {rotulo.tom === "erro" && doc.extracao_erro && (
-                      <span className="truncate italic">— {doc.extracao_erro}</span>
+                      <span className="min-w-0 flex-1 truncate italic">
+                        — {doc.extracao_erro}
+                      </span>
                     )}
                   </p>
                 )}

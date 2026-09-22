@@ -106,6 +106,14 @@ const CAMPO_POR_ITEM: Record<string, { campo: keyof DadosPessoais; tipo: CampoTi
 /** The two satisfied by a FILE rather than by typing. */
 const ITENS_DOCUMENTO = new Set(["rg", "cpf"]);
 
+/** Sentinel for "not set" in the gênero `Select` — Radix treats `value=""`
+ *  as uncontrolled, so a real token is needed and is mapped back to `""`
+ *  (then to `null` in `salvar`) rather than ever displaying a real option
+ *  as though it had been picked. Mirrors `DadosPessoaisForm`'s own
+ *  `NAO_INFORMADO` sentinel — not shared across the two files because
+ *  neither exports it today. */
+const SEM_VALOR = "__sem_valor__";
+
 export interface ChecklistItemRowProps {
   item: DocumentoChecklistItem;
   /** The record's current value behind a text item, from the checklist
@@ -164,19 +172,11 @@ export function ChecklistItemRow({
   function salvar() {
     if (!campo || !onSaveCampo) return;
     const limpo = rascunho.trim();
-    // 🔴 A `select` field (today only `genero`) always DISPLAYS a value —
-    // the dropdown below falls back to `GENEROS[0]` ("Masculino") when
-    // `rascunho` is still empty, exactly like `DadosPessoaisForm`'s default.
-    // Until this line, Save sent the RAW `rascunho` instead of what was on
-    // screen: opening the editor on an unset gênero shows "Masculino" from
-    // that same fallback, but `rascunho` itself stays `""` unless the
-    // operator actually clicks the dropdown — so confirming the visible
-    // default with no interaction sent `null`, silently clearing the field,
-    // while picking "Feminino" always fires `onValueChange` and worked. The
-    // fallback must be applied HERE too, or Save can send something other
-    // than what the operator just confirmed.
-    const valorFinal =
-      campo.tipo === "select" ? limpo || GENEROS[0] : limpo === "" ? null : limpo;
+    // No field is ever defaulted — a `select` item (today only `genero`)
+    // shows an empty "Selecione" placeholder for an unset value, same as
+    // `DadosPessoaisForm`, and confirming with no interaction sends exactly
+    // what was on screen: null.
+    const valorFinal = limpo === "" ? null : limpo;
     onSaveCampo({ [campo.campo]: valorFinal } as DadosPessoais);
     setEditando(false);
   }
@@ -216,11 +216,15 @@ export function ChecklistItemRow({
       {editando && campo ? (
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {campo.tipo === "select" ? (
-            <Select value={rascunho || GENEROS[0]} onValueChange={setRascunho}>
+            <Select
+              value={rascunho || SEM_VALOR}
+              onValueChange={(v) => setRascunho(v === SEM_VALOR ? "" : v)}
+            >
               <SelectTrigger className="h-7 flex-1" data-testid={`${tid}-input`}>
-                <SelectValue />
+                <SelectValue placeholder="Selecione" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={SEM_VALOR}>Selecione</SelectItem>
                 {GENEROS.map((g) => (
                   <SelectItem key={g} value={g}>
                     {g}

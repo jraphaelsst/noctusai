@@ -24,7 +24,11 @@ import {
   MatriculaPermutasSecao,
   type PermutaDraft,
 } from "@/components/MatriculaPermutasSecao";
-import { readableError, useMatriculaExtracoes } from "@/hooks/useMatriculas";
+import {
+  readableError,
+  useMatriculaExtracoes,
+  useVincularExtracaoImovel,
+} from "@/hooks/useMatriculas";
 import {
   useContratoAtos,
   useDefinirContratoAtos,
@@ -66,9 +70,16 @@ export function MatriculaAtosContainer({
   const [permutaDrafts, setPermutaDrafts] = useState<Record<string, PermutaDraft>>({});
 
   const extracoesQuery = useMatriculaExtracoes(codigo ? { codigo } : undefined);
+  // Bug H — an existing transcription may predate this imóvel getting a
+  // registry identity, or was uploaded standalone; the scoped query above
+  // can never surface it (it has no `codigo` to match). Always fetched
+  // (bounded, same cost class as `extracoesQuery`); only usable once
+  // `codigo` is known, since linking one needs a target.
+  const extracoesSemImovelQuery = useMatriculaExtracoes({ semImovel: true });
   const selecaoQuery = useContratoAtos(contratoId);
   const atosQuery = useMatriculaAtos(extracaoSelecionadaId);
   const definirMutation = useDefinirContratoAtos(contratoId);
+  const vincularMutation = useVincularExtracaoImovel();
   const estruturadaQuery = useNegociacaoEstruturada(clienteId ?? null);
 
   // Default the browsed extraction to the contract's PERSISTED one, once it
@@ -152,11 +163,23 @@ export function MatriculaAtosContainer({
     });
   }
 
+  // Attach an unlinked transcription to THIS imóvel, then behave exactly
+  // like picking one from the scoped list: browse its acts and select it.
+  function vincular(extracaoId: string) {
+    if (!codigo) return;
+    vincularMutation.mutate(
+      { extracaoId, codigo },
+      { onSuccess: () => setExtracaoSelecionadaId(extracaoId) },
+    );
+  }
+
   // Two signals off `data`, never `isLoading` — false mid-refetch, so a
   // skeleton/error branch keyed off it would lie over data still good to
   // look at (`KB § PATTERNS/frontend/lying-loading-state.md`).
   const extracoesLoading = extracoesQuery.isPending && !extracoesQuery.data;
   const extracoesError = extracoesQuery.isError && !extracoesQuery.data;
+  const extracoesSemImovelLoading =
+    extracoesSemImovelQuery.isPending && !extracoesSemImovelQuery.data;
   const atosLoading = atosQuery.isPending && !atosQuery.data;
   const atosError = atosQuery.isError && !atosQuery.data;
   const selecaoLoading = selecaoQuery.isPending && !selecaoQuery.data;
@@ -175,6 +198,19 @@ export function MatriculaAtosContainer({
         }))}
         extracoesLoading={extracoesLoading}
         extracoesError={extracoesError}
+        extracoesSemImovel={
+          codigo
+            ? (extracoesSemImovelQuery.data ?? []).map((e) => ({
+                id: e.id,
+                nome_arquivo: e.nome_arquivo,
+                status: e.status,
+                created_at: e.created_at,
+              }))
+            : []
+        }
+        extracoesSemImovelLoading={codigo ? extracoesSemImovelLoading : false}
+        onVincularExtracao={vincular}
+        vinculando={vincularMutation.isPending}
         buscaExtracao={buscaExtracao}
         onBuscaExtracaoChange={setBuscaExtracao}
         extracaoSelecionadaId={extracaoSelecionadaId}

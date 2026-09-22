@@ -51,6 +51,7 @@ const mockUseCriarManual = vi.fn();
 const mockUseDelete = vi.fn();
 const mockUseRetranscrever = vi.fn();
 const mockUseArquivoOriginal = vi.fn();
+const mockUseVincular = vi.fn();
 
 vi.mock("@/hooks/useMatriculas", () => ({
   useMatriculaExtracoes: mockUseExtracoes,
@@ -60,6 +61,28 @@ vi.mock("@/hooks/useMatriculas", () => ({
   useDeleteExtracao: mockUseDelete,
   useRetranscreverExtracao: mockUseRetranscrever,
   useArquivoOriginalExtracao: mockUseArquivoOriginal,
+  useVincularExtracaoImovel: mockUseVincular,
+}));
+
+// Bug H's row action mounts `ImovelCodigoPicker` inside a Dialog — the real
+// component fires `useQuery`/`useMutation` (`useCardHub`'s busca/registrar
+// hooks) and this file renders with no QueryClientProvider (see the module
+// docblock: only the base `@/components/ui/*` primitives stay real). Stubbed
+// to a single button so opening the dialog cannot crash on a missing client.
+const mockOnChangeCodigo = vi.fn();
+vi.mock("@/components/card/ImovelCodigoPicker", () => ({
+  ImovelCodigoPicker: ({ onChange }: { onChange: (codigo: string | null) => void }) => (
+    <button
+      type="button"
+      data-testid="imovel-codigo-picker-stub"
+      onClick={() => {
+        mockOnChangeCodigo("ONE9001");
+        onChange("ONE9001");
+      }}
+    >
+      Escolher ONE9001
+    </button>
+  ),
 }));
 
 // ─── F2: atos + fontes hook mocks ────────────────────────────────────────────
@@ -128,6 +151,8 @@ type Extracao = {
   arquivo_origem_id?: string | null;
   substituida_por?: string | null;
   possui_marcacao_bruta?: boolean;
+  /** Bug H — `null` is what makes "Vincular a imóvel" offer itself. */
+  codigo?: string | null;
   created_at: string;
 };
 
@@ -145,6 +170,7 @@ function makeExtracao(overrides: Partial<Extracao> = {}): Extracao {
     arquivo_origem_id: null,
     substituida_por: null,
     possui_marcacao_bruta: false,
+    codigo: null,
     created_at: "2026-01-15T10:00:00Z",
     ...overrides,
   };
@@ -169,6 +195,7 @@ const mockDefinirFontesMutate = vi.fn();
 const mockConfirmarDetalhesMutate = vi.fn();
 const mockRetranscreverMutate = vi.fn();
 const mockArquivoOriginalMutate = vi.fn();
+const mockVincularMutate = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -179,6 +206,7 @@ beforeEach(() => {
   mockUseDelete.mockReturnValue({ mutate: mockDeleteMutate, isPending: false });
   mockUseRetranscrever.mockReturnValue({ mutate: mockRetranscreverMutate, isPending: false });
   mockUseArquivoOriginal.mockReturnValue({ mutate: mockArquivoOriginalMutate, isPending: false });
+  mockUseVincular.mockReturnValue({ mutate: mockVincularMutate, isPending: false });
   mockUseAtos.mockReturnValue(makeQuery({ data: { atos: [] } }));
   mockUseFontes.mockReturnValue(
     makeQuery({ data: { sugestoes: { titulo_aquisitivo: null, onus: [] }, titulo_aquisitivo: null, onus: null } }),
@@ -838,5 +866,52 @@ describe("Matriculas — Atos + Fontes (only once concluída)", () => {
 
     expect(getByTestId("matriculas-atos-erro")).toBeTruthy();
     expect(getByTestId("matriculas-fontes-erro")).toBeTruthy();
+  });
+});
+
+describe("Matriculas — Bug H: 'Vincular a imóvel' row action", () => {
+  it("🔴 offers the action only for a row with no codigo", async () => {
+    mockUseExtracoes.mockReturnValue(
+      makeQuery({
+        data: [
+          makeExtracao({ id: "sem-codigo", codigo: null }),
+          makeExtracao({ id: "com-codigo", codigo: "ONE9001" }),
+        ],
+      }),
+    );
+    const { getByTestId, queryByTestId } = await renderPage();
+
+    expect(getByTestId("matricula-row-sem-codigo-vincular")).toBeTruthy();
+    expect(queryByTestId("matricula-row-com-codigo-vincular")).toBeNull();
+  });
+
+  it("🔴 opens the picker dialog and links the chosen imóvel", async () => {
+    mockUseExtracoes.mockReturnValue(
+      makeQuery({ data: [makeExtracao({ id: "sem-codigo", codigo: null })] }),
+    );
+    const { getByTestId, queryByTestId, fireEvent } = await renderPage();
+
+    expect(queryByTestId("matricula-vincular-dialog")).toBeNull();
+    fireEvent.click(getByTestId("matricula-row-sem-codigo-vincular"));
+    expect(getByTestId("matricula-vincular-dialog")).toBeTruthy();
+
+    fireEvent.click(getByTestId("imovel-codigo-picker-stub"));
+    expect(mockVincularMutate).toHaveBeenCalledWith(
+      { extracaoId: "sem-codigo", codigo: "ONE9001" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("closes the dialog once the link succeeds", async () => {
+    mockUseExtracoes.mockReturnValue(
+      makeQuery({ data: [makeExtracao({ id: "sem-codigo", codigo: null })] }),
+    );
+    mockVincularMutate.mockImplementation((_vars, opts) => opts?.onSuccess?.());
+    const { getByTestId, queryByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matricula-row-sem-codigo-vincular"));
+    fireEvent.click(getByTestId("imovel-codigo-picker-stub"));
+
+    expect(queryByTestId("matricula-vincular-dialog")).toBeNull();
   });
 });

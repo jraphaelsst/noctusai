@@ -127,11 +127,13 @@ export interface QualificacaoCompletude {
  * Does this RG collapse onto this CPF once punctuation is dropped?
  *
  * Client-side mirror of `noctusai_lib.integrations.documents.rg.is_same_as_cpf`
- * — an ADVISORY warning shown while typing, never a substitute for the
- * server's own 400 (`PATCH /api/clientes/{id}` refuses the write outright).
- * Same normalisation: the RG's own comparison form keeps digits AND letters
- * (a check-digit RG like "52.179.965-X"), a CPF's only punctuation is dots
- * and a dash so stripping to digits reduces it the same way.
+ * — an INFORMATIONAL flag shown while typing. The coincidence is EXPECTED and
+ * correct for the Carteira de Identidade Nacional (CIN), which prints the CPF
+ * number as the RG — the server does not refuse the write for it (see
+ * `DadosPessoaisForm`'s amber notice, not an error). Same normalisation: the
+ * RG's own comparison form keeps digits AND letters (a check-digit RG like
+ * "52.179.965-X"), a CPF's only punctuation is dots and a dash so stripping
+ * to digits reduces it the same way.
  */
 export function rgIgualAoCpf(
   rg: string | null | undefined,

@@ -1,17 +1,15 @@
 /**
  * ChecklistItemRow — the inline per-item editor (`salvar()`).
  *
- * 🔴 THE LOAD-BEARING TEST is "confirming the visible Gênero default sends
- * Masculino, not null" — a live bug report ("gênero not setting masculino,
- * only feminino"). The `Select` for a `select`-typed field (today only
- * `genero`) DISPLAYS `rascunho || GENEROS[0]`, so an unset item shows
- * "Masculino" the moment the editor opens — but `rascunho` itself only
- * changes if the operator actually clicks the dropdown. Confirming what
- * is already on screen with no interaction used to send the RAW `rascunho`
- * (still `""`), which `salvar()` then nulled — silently clearing the field
- * instead of saving the value the operator just confirmed. Picking
- * "Feminino" always fires `onValueChange` first, which is why only
- * Masculino ever failed to round-trip.
+ * 🔴 THE LOAD-BEARING TEST is "an unset Gênero shows an empty placeholder and
+ * confirms as null" — a live bug report (contract-gate audit, 2026-09-22):
+ * the `Select` for a `select`-typed field (today only `genero`) used to
+ * DISPLAY `rascunho || GENEROS[0]`, so an unset item showed "Masculino" the
+ * moment the editor opened even though nothing had been picked — and
+ * confirming that visible default with no interaction at all WROTE
+ * "Masculino" onto a record nobody ever stated the gênero of. The dropdown
+ * now shows "Selecione" for an unset value and Save sends exactly what was
+ * on screen: null, unless the operator actually picks one.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -51,23 +49,37 @@ async function renderRow(props: Partial<ChecklistItemRowProps> & { item: Documen
 }
 
 describe("ChecklistItemRow — gênero inline editor", () => {
-  it("🔴 sends Masculino when the operator confirms the shown default without touching the dropdown", async () => {
+  it("🔴 shows an empty placeholder for an unset gênero, never Masculino", async () => {
+    const rtl = await import("@testing-library/react");
+    const { getByTestId } = await renderRow({
+      item: item("genero", "Gênero"),
+      valor: null,
+      onSaveCampo: vi.fn(),
+    });
+
+    rtl.fireEvent.click(getByTestId("documento-checklist-genero-editar"));
+    expect(getByTestId("documento-checklist-genero-input").textContent).toContain(
+      "Selecione",
+    );
+  });
+
+  it("🔴 confirming with no interaction sends null, never Masculino", async () => {
     const rtl = await import("@testing-library/react");
     const onSaveCampo = vi.fn();
     const { getByTestId } = await renderRow({
       item: item("genero", "Gênero"),
-      valor: null, // never set — the row shows the "Masculino" fallback
+      valor: null, // never set
       onSaveCampo,
     });
 
     // Open the inline editor…
     rtl.fireEvent.click(getByTestId("documento-checklist-genero-editar"));
     // …and immediately Salvar, with no click on the dropdown at all — the
-    // exact operator action the bug report describes.
+    // exact operator action the original bug report describes.
     rtl.fireEvent.click(getByTestId("documento-checklist-genero-salvar"));
 
     expect(onSaveCampo).toHaveBeenCalledTimes(1);
-    expect(onSaveCampo).toHaveBeenCalledWith({ genero: "Masculino" });
+    expect(onSaveCampo).toHaveBeenCalledWith({ genero: null });
   });
 
   it("still sends Feminino when the operator does pick it", async () => {

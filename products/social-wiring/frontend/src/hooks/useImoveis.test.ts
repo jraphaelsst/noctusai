@@ -1,12 +1,16 @@
 /**
- * useImoveis — display-helper tests.
+ * useImoveis — display-helper tests, plus `useImovel`'s 404-does-not-retry
+ * contract (Bug A: a manually-registered código's mirror 404 is a STABLE
+ * state, retrying it three times just stretches the skeleton for an answer
+ * that will not change).
  *
- * Not the query hooks themselves (TanStack wiring is exercised by the page
- * tests); this covers the pure functions the CONTRACT's field surface leans
- * on: the amenity label map (every CONTRACT § 3 missing key), the
- * genuine-0-vs-null distinction, and the boolean/absent-amenity helpers.
+ * The display helpers are covered against the pure functions directly (no
+ * TanStack wiring needed); the retry contract mocks `@tanstack/react-query`
+ * to capture the options object `useQuery` receives, same convention
+ * `useMatriculas.test.ts`/`useN8nWorkflows.test.ts` use — no
+ * QueryClientProvider needed to inspect a `retry` function's own logic.
  */
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   caracteristicaLabel,
@@ -116,5 +120,48 @@ describe("caracteristicasAusentes", () => {
   it("is case-insensitive against the present list", () => {
     const ausentes = caracteristicasAusentes(["PISCINA"]);
     expect(ausentes).not.toContain("piscina");
+  });
+});
+
+// ─── useImovel — Bug A: a 404 on the Vista mirror never retries ────────────
+
+describe("useImovel — 404 does not retry", () => {
+  it("does not retry a 404 — a manually-registered código's stable mirror-miss", async () => {
+    const capturedOptions: Array<{ retry?: (failureCount: number, error: unknown) => boolean }> = [];
+    vi.doMock("@noctusai/seed/infra", () => ({
+      api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
+    }));
+    vi.doMock("@tanstack/react-query", () => ({
+      useQuery: (opts: (typeof capturedOptions)[number]) => {
+        capturedOptions.push(opts);
+        return { data: undefined, isPending: false, isError: false };
+      },
+      useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+      useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+    }));
+    vi.resetModules();
+    const { useImovel } = await import("./useImoveis");
+    const { ApiError } = await import("@noctusai/lib");
+
+    useImovel("AP1234");
+    const { retry } = capturedOptions[capturedOptions.length - 1];
+
+    expect(retry?.(0, new ApiError(404, "não encontrado"))).toBe(false);
+    expect(retry?.(2, new ApiError(404, "não encontrado"))).toBe(false);
+
+    // Any other status still gets react-query's normal (default 3) retry —
+    // only a 404 is treated as a stable, non-transient state.
+    expect(retry?.(0, new ApiError(500, "erro"))).toBe(true);
+    expect(retry?.(2, new ApiError(500, "erro"))).toBe(true);
+    expect(retry?.(3, new ApiError(500, "erro"))).toBe(false);
+
+    // A non-ApiError failure (network drop, `safeFetch`'s own throw shape)
+    // also keeps the default retry — the 404 carve-out is specific to a
+    // real HTTP 404, never a blanket "stop retrying on any error".
+    expect(retry?.(0, new Error("network"))).toBe(true);
+
+    vi.doUnmock("@noctusai/seed/infra");
+    vi.doUnmock("@tanstack/react-query");
+    vi.resetModules();
   });
 });

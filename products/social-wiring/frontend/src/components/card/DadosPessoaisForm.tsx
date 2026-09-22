@@ -23,13 +23,17 @@
  * conversation goes. RG and CPF are absent because they are satisfied by
  * UPLOADING a document, not by typing — they live in Anexos below.
  *
- * 🔴 GÊNERO'S DEFAULT IS A CONVENIENCE, NOT A VALUE
- * -------------------------------------------------
- * The dropdown shows "Masculino" pre-selected so the common case is one click.
- * Nothing is written until Save, and the checkbox does not tick before then —
- * if an unsaved default counted as data, this item would read green for every
- * existing cliente the day it shipped and could never again answer "who still
- * needs checking".
+ * 🔴 GÊNERO HAS NO DEFAULT — A PRE-PICKED DROPDOWN LIES OVER MISSING DATA
+ * ------------------------------------------------------------------------
+ * It used to show "Masculino" pre-selected as a one-click convenience, with
+ * the value only written at Save. That still lied on screen: the checklist
+ * (driven by the SAME null column) correctly read the item as missing while
+ * this box showed "Masculino" as if answered — and confirming Save with no
+ * interaction at all silently WROTE "Masculino" onto a record nobody ever
+ * actually stated the gênero of (live-tested, contract-gate audit,
+ * 2026-09-22). The box now shows an empty "Selecione" placeholder for a null
+ * genero, exactly like Estado civil/Regime de bens below it, and nothing is
+ * ever defaulted — only what the operator explicitly picks is sent.
  */
 import { useEffect, useState } from "react";
 import { Check, Pencil, X } from "lucide-react";
@@ -50,8 +54,6 @@ import { TooltipIconButton } from "./TooltipIconButton";
  *  (migration 068) — a CHECK would freeze a product decision into the schema —
  *  so widening this list needs no migration. */
 export const GENEROS = ["Masculino", "Feminino"] as const;
-
-export const GENERO_PADRAO = GENEROS[0];
 
 export interface DadosPessoais {
   nome_completo?: string | null;
@@ -137,9 +139,10 @@ export interface DadosPessoaisFormProps {
   onSave: (valores: DadosPessoais) => void;
   saving?: boolean;
   /**
-   * The server's own message from the last rejected save (migration 110's
-   * `PATCH /api/clientes/{id}` 400 when RG collapses onto CPF, e.g.) — the
-   * container reads it off its mutation's `error` and hands it back here.
+   * The server's own message from the last rejected save (a malformed CPF,
+   * e.g.) — the container reads it off its mutation's `error` and hands it
+   * back here. RG==CPF is no longer one of these: the server accepts it, and
+   * the RG field's own amber notice covers it non-blockingly instead.
    * Rendered in BOTH the open and the collapsed state, because `submit()`
    * closes the editor immediately (optimistic-looking, though the mutation
    * itself is not) and the async rejection lands after that — a caller that
@@ -217,11 +220,10 @@ export function DadosPessoaisForm({
   }
 
   function submit() {
-    onSave({
-      ...draft,
-      // The displayed default becomes a real value only here, at Save.
-      genero: draft.genero ?? GENERO_PADRAO,
-    });
+    // No field here is ever defaulted — `draft` carries exactly what the
+    // operator typed or picked. A null `genero` (never touched) is sent as
+    // null, same as any other untouched field.
+    onSave(draft);
     setAberto(false);
   }
 
@@ -325,13 +327,16 @@ export function DadosPessoaisForm({
 
       <Campo rotulo="Gênero" htmlFor={`${testId}-genero`}>
         <Select
-          value={draft.genero ?? GENERO_PADRAO}
-          onValueChange={(v) => campo("genero", v)}
+          value={draft.genero ?? NAO_INFORMADO}
+          onValueChange={(v) =>
+            campo("genero", v === NAO_INFORMADO ? "" : v)
+          }
         >
           <SelectTrigger id={`${testId}-genero`} data-testid={`${testId}-genero`}>
-            <SelectValue />
+            <SelectValue placeholder="Selecione" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={NAO_INFORMADO}>Selecione</SelectItem>
             {GENEROS.map((g) => (
               <SelectItem key={g} value={g}>
                 {g}
@@ -383,16 +388,19 @@ export function DadosPessoaisForm({
             placeholder="52.179.965-X"
             data-testid={`${testId}-rg`}
           />
-          {/* Advisory only — the server's own 400 (`_validar_rg_diferente_cpf`)
-              is what actually refuses the write. This is the client-side
-              mirror of the SAME comparison, shown while typing so the
-              operator catches a copy-paste mistake before Save round-trips. */}
+          {/* Informational, never blocking — the Carteira de Identidade
+              Nacional (CIN) legitimately prints the CPF number as the RG, so
+              this coincidence is a normal, correct state for a growing share
+              of documents, not an error. The server no longer refuses the
+              write for it either; this is just a nudge to double-check the
+              document when the two numbers happen to match. */}
           {rgIgualCpf && (
             <p
-              className="mt-1 text-xs text-destructive"
+              className="mt-1 rounded border border-amber-400/50 bg-amber-50 p-1.5 text-xs text-amber-800"
               data-testid={`${testId}-rg-igual-cpf`}
             >
-              RG não pode ser igual ao CPF.
+              RG igual ao CPF — correto apenas para a Carteira de Identidade
+              Nacional (CIN). Confira o documento.
             </p>
           )}
           <PendenteAviso ativo={pendente("rg")} testId={`${testId}-rg`} />

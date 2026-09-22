@@ -105,19 +105,37 @@ export interface MatriculaExtracoesFiltro {
   codigo?: string;
   /** Substring match on `nome_arquivo`. */
   busca?: string;
+  /**
+   * Only transcriptions with NO `codigo` — a transcription uploaded before
+   * an imóvel had a registry identity yet, or standalone (migration 135).
+   * `MatriculaAtosSelector`'s "Matrículas sem imóvel vinculado" section reads
+   * this so an operator can attach an existing unlinked transcription to a
+   * negociação's imóvel instead of it being permanently unreachable from any
+   * codigo-scoped search. Mutually exclusive with `codigo` in practice — the
+   * backend param name (`sem_imovel`) mirrors the boolean intent, ASSUMED
+   * from the brief (no existing param to read off the primary checkout's
+   * `listar_extracoes` at the time this shipped — confirm against the live
+   * router if this 422s).
+   */
+  semImovel?: boolean;
 }
 
 export function useMatriculaExtracoes(filtro?: MatriculaExtracoesFiltro) {
   const { user } = useAuthStore();
   const codigo = filtro?.codigo;
   const busca = filtro?.busca;
+  const semImovel = filtro?.semImovel;
 
   return useQuery({
-    // `codigo`/`busca` join the key so switching either refetches instead of
-    // reusing a stale page cached under the unfiltered key.
-    queryKey: ['matricula-extracoes', codigo ?? null, busca ?? null],
+    // `codigo`/`busca`/`semImovel` join the key so switching any of them
+    // refetches instead of reusing a stale page cached under a different key.
+    queryKey: ['matricula-extracoes', codigo ?? null, busca ?? null, semImovel ?? null],
     queryFn: async () => {
-      const result = await api.get('/api/matriculas/extracoes', { codigo, busca });
+      const result = await api.get('/api/matriculas/extracoes', {
+        codigo,
+        busca,
+        ...(semImovel ? { sem_imovel: true } : {}),
+      });
       return (result.data || []) as MatriculaExtracao[];
     },
     enabled: !!user,
@@ -239,6 +257,47 @@ export function useCriarExtracaoManual() {
     },
     onError: (error: Error) => {
       toast.error('Erro ao criar transcrição manual', { description: readableError(error) });
+    },
+  });
+}
+
+/**
+ * Link an EXISTING, previously-unlinked transcription to an imóvel —
+ * `PUT /api/matriculas/extracoes/{id}/imovel` (migration 149's manual-imóvel
+ * paths, contract-gate follow-up). The counterpart to `useUploadMatricula`'s
+ * `codigo` field for a transcription that predates the imóvel having one, or
+ * that was uploaded standalone — without this there was no way to attach it
+ * after the fact, so it sat in "Matrículas sem imóvel vinculado" forever.
+ *
+ * 422 when `codigo` has no registry identity; 409 when the extraction is
+ * already linked to a DIFFERENT codigo and `substituir` was not set — both
+ * surface the server's own sentence, same as every other mutation here.
+ */
+export function useVincularExtracaoImovel() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      extracaoId: string;
+      codigo: string;
+      substituir?: boolean;
+    }): Promise<MatriculaExtracao> => {
+      const result = await api.put(`/api/matriculas/extracoes/${input.extracaoId}/imovel`, {
+        codigo: input.codigo,
+        ...(input.substituir ? { substituir: true } : {}),
+      });
+      return result.data as MatriculaExtracao;
+    },
+    onSuccess: (data) => {
+      // Every list this could now appear in/disappear from: the codigo-scoped
+      // list it just joined, the unlinked list it just left, and its own
+      // single-extraction cache.
+      queryClient.invalidateQueries({ queryKey: ['matricula-extracoes'] });
+      queryClient.invalidateQueries({ queryKey: ['matricula-extracao', data.id] });
+      toast.success('Matrícula vinculada ao imóvel!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao vincular matrícula', { description: readableError(error) });
     },
   });
 }

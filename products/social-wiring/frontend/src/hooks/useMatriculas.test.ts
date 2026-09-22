@@ -10,19 +10,20 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockGet, mockUpload, mockDelete, mockPost, invalidateQueriesMock, toastError, toastSuccess } =
+const { mockGet, mockUpload, mockDelete, mockPost, mockPut, invalidateQueriesMock, toastError, toastSuccess } =
   vi.hoisted(() => ({
     mockGet: vi.fn(),
     mockUpload: vi.fn(),
     mockDelete: vi.fn(),
     mockPost: vi.fn(),
+    mockPut: vi.fn(),
     invalidateQueriesMock: vi.fn(),
     toastError: vi.fn(),
     toastSuccess: vi.fn(),
   }));
 
 vi.mock("@noctusai/seed/infra", () => ({
-  api: { get: mockGet, upload: mockUpload, delete: mockDelete, post: mockPost },
+  api: { get: mockGet, upload: mockUpload, delete: mockDelete, post: mockPost, put: mockPut },
   useAuthStore: () => ({ user: { id: "u1" } }),
 }));
 
@@ -79,6 +80,7 @@ import {
   useMatriculaExtracoes,
   useRetranscreverExtracao,
   useUploadMatricula,
+  useVincularExtracaoImovel,
 } from "./useMatriculas";
 
 beforeEach(() => {
@@ -116,6 +118,67 @@ describe("useMatriculaExtracoes", () => {
       codigo: "ONE9001",
       busca: undefined,
     });
+  });
+
+  it("🔴 Bug H — passes sem_imovel=true when narrowing to unlinked transcriptions", async () => {
+    mockGet.mockResolvedValue({ data: [] });
+    const hook = useMatriculaExtracoes({ semImovel: true }) as any;
+    await hook._queryFn();
+    expect(mockGet).toHaveBeenCalledWith("/api/matriculas/extracoes", {
+      codigo: undefined,
+      busca: undefined,
+      sem_imovel: true,
+    });
+  });
+
+  it("omits sem_imovel entirely when false/unset — never sends a falsy filter", async () => {
+    mockGet.mockResolvedValue({ data: [] });
+    const hook = useMatriculaExtracoes({ codigo: "ONE9001", semImovel: false }) as any;
+    await hook._queryFn();
+    expect(mockGet).toHaveBeenCalledWith("/api/matriculas/extracoes", {
+      codigo: "ONE9001",
+      busca: undefined,
+    });
+  });
+});
+
+describe("useVincularExtracaoImovel — Bug H, link an existing unlinked transcription", () => {
+  it("🔴 PUTs codigo to .../imovel and invalidates every list this could move between", async () => {
+    mockPut.mockResolvedValue({ data: { id: "e9", codigo: "ONE9001" } });
+    const hook = useVincularExtracaoImovel() as any;
+    hook.mutate({ extracaoId: "e9", codigo: "ONE9001" });
+    await vi.waitFor(() => expect(mockPut).toHaveBeenCalled());
+
+    expect(mockPut).toHaveBeenCalledWith("/api/matriculas/extracoes/e9/imovel", {
+      codigo: "ONE9001",
+    });
+    await vi.waitFor(() => expect(invalidateQueriesMock).toHaveBeenCalled());
+    const keys = invalidateQueriesMock.mock.calls.map(([arg]: any[]) => JSON.stringify(arg.queryKey));
+    expect(keys).toContain(JSON.stringify(["matricula-extracoes"]));
+    expect(keys).toContain(JSON.stringify(["matricula-extracao", "e9"]));
+  });
+
+  it("sends substituir only when explicitly set — the 409-override case", async () => {
+    mockPut.mockResolvedValue({ data: { id: "e9", codigo: "ONE9001" } });
+    const hook = useVincularExtracaoImovel() as any;
+    hook.mutate({ extracaoId: "e9", codigo: "ONE9001", substituir: true });
+    await vi.waitFor(() => expect(mockPut).toHaveBeenCalled());
+    expect(mockPut).toHaveBeenCalledWith("/api/matriculas/extracoes/e9/imovel", {
+      codigo: "ONE9001",
+      substituir: true,
+    });
+  });
+
+  it("surfaces the server's 422/409 sentence via toast, [status] prefix stripped", async () => {
+    mockPut.mockRejectedValue(new Error("[422] Código não cadastrado."));
+    const hook = useVincularExtracaoImovel() as any;
+    hook.mutate({ extracaoId: "e9", codigo: "GHOST" });
+    await vi.waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Erro ao vincular matrícula",
+        expect.objectContaining({ description: "Código não cadastrado." }),
+      ),
+    );
   });
 });
 

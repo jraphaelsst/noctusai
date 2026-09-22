@@ -211,6 +211,28 @@ describe("AnexosSection — a failed extraction is visible (Gap 4)", () => {
     expect(onReextrairDocumento).toHaveBeenCalledWith("d1");
   });
 
+  it("🔴 a long error string truncates (min-w-0) instead of forcing horizontal overflow", async () => {
+    // A raw provider error can run hundreds of characters (e.g. an
+    // `insufficient_quota` Anthropic body) — without `min-w-0` on this flex
+    // child, `truncate`'s own ellipsis never engages and the row (then the
+    // whole card) grows a horizontal scrollbar, shoving every field to the
+    // right off-screen.
+    const longo =
+      "insufficient_quota: Erro na API Anthropic: Error code: 400 - " +
+      "{'error': {'message': 'a very long json body that keeps going on and on " +
+      "well past what any card row should ever render inline'}}";
+    const doc = documento("d1", { extracao_status: "erro", extracao_erro: longo });
+    const { getByTestId } = await render(baseProps({ documentos: [doc] }));
+
+    const linha = getByTestId("anexo-extracao-status-d1");
+    expect(linha.className).toContain("min-w-0");
+    expect(linha.title).toBe(longo);
+
+    const textoSpan = linha.querySelector("span.truncate");
+    expect(textoSpan).toBeTruthy();
+    expect(textoSpan!.className).toContain("min-w-0");
+  });
+
   it("never offers a retry when the caller has not wired the mutation", async () => {
     const doc = documento("d1", { extracao_status: "erro", extracao_erro: "x" });
     const { queryByTestId } = await render(baseProps({ documentos: [doc] }));

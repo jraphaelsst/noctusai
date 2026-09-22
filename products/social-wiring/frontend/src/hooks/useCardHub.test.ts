@@ -102,6 +102,8 @@ import {
   useCardResumo,
   useChecklistMutations,
   useCompradorMutations,
+  useDadosPessoaisMutation,
+  useDecidirConflitoMutation,
   useDocumentoMutations,
   useNotaMutations,
   useSetClienteTagsMutation,
@@ -332,5 +334,35 @@ describe("useCompradorMutations.atualizarPapel — o papel da parte", () => {
     await expect(
       (atualizarPapel as any).mutateAsync({ parteId: "p1", papel: "conjuge" }),
     ).rejects.toThrow("outro cônjuge vinculado");
+  });
+});
+
+describe("useDadosPessoaisMutation — Bug F: a save must not leave Qualificação stale", () => {
+  it("🔴 invalidates the qualificação-completude key on save success", async () => {
+    mockPatch.mockResolvedValue({ nome_completo: "Ana" });
+    const mutation = useDadosPessoaisMutation("cl1") as any;
+    await mutation.mutateAsync({ nome_completo: "Ana" });
+
+    // Rooted, not per-cliente-exact — invalidating the ROOT key is what
+    // reaches every party's cached `QualificacaoCompletudePanel` entry, not
+    // only the titular's.
+    const keys = invalidateQueriesMock.mock.calls.map(([arg]: any[]) =>
+      JSON.stringify(arg.queryKey),
+    );
+    expect(keys).toContain(JSON.stringify(["sw", "cardHub", "qualificacao"]));
+    expect(keys).toContain(JSON.stringify(["sw", "cardHub", "cl1", "card"]));
+  });
+});
+
+describe("useDecidirConflitoMutation — Bug F, reverse direction (admin decision)", () => {
+  it("🔴 invalidates the qualificação-completude key when a conflict is decided", async () => {
+    mockPut.mockResolvedValue({ id: "cf1", cliente_id: "cl1" });
+    const mutation = useDecidirConflitoMutation() as any;
+    await mutation.mutateAsync({ conflitoId: "cf1", aceitar: true });
+
+    const keys = invalidateQueriesMock.mock.calls.map(([arg]: any[]) =>
+      JSON.stringify(arg.queryKey),
+    );
+    expect(keys).toContain(JSON.stringify(["sw", "cardHub", "qualificacao"]));
   });
 });

@@ -1928,19 +1928,21 @@ describe("a aba Dados do cliente ganhou um editor", () => {
   });
 
   it("surfaces the server's message when a save is rejected", async () => {
+    // RG==CPF is no longer a rejection example — the server accepts it now
+    // (CIN) — so a generic validation message stands in.
     const { fireEvent, render, screen } = await import("@testing-library/react");
     render(
       <ClienteCardDialog
         {...baseProps({
           ...COM_REGISTRO,
           onSaveDadosPessoais: vi.fn(),
-          dadosPessoaisError: "[400] RG não pode ser igual ao CPF.",
+          dadosPessoaisError: "[400] CPF inválido.",
         })}
       />,
     );
     fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
     expect(screen.getByTestId("dados-pessoais-erro").textContent).toContain(
-      "RG não pode ser igual ao CPF.",
+      "CPF inválido.",
     );
   });
 });

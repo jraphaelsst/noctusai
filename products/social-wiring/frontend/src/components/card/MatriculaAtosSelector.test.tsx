@@ -263,3 +263,51 @@ describe("MatriculaAtosSelector — select / reorder / save", () => {
     expect(screen.getByTestId("matricula-atos-erro")).toBeTruthy();
   });
 });
+
+describe("MatriculaAtosSelector — Bug H: matrículas sem imóvel vinculado", () => {
+  it("renders nothing when there is nothing unlinked and nothing loading", async () => {
+    const { screen } = await render({ extracoesSemImovel: [] });
+    expect(screen.queryByTestId("matricula-atos-sem-imovel")).toBeNull();
+    expect(screen.queryByText("Matrículas sem imóvel vinculado")).toBeNull();
+  });
+
+  it("🔴 lists an unlinked transcription alongside the scoped search, not only when it is empty", async () => {
+    const { screen } = await render({
+      extracoes: [extracao({ id: "extracao-1" })], // the scoped search HAS a result
+      extracoesSemImovel: [extracao({ id: "extracao-9", nome_arquivo: "matricula-solta.pdf" })],
+    });
+    expect(screen.getByTestId("matricula-atos-extracao-extracao-1")).toBeTruthy();
+    expect(screen.getByTestId("matricula-atos-sem-imovel")).toBeTruthy();
+    expect(screen.getByText("matricula-solta.pdf")).toBeTruthy();
+  });
+
+  it("🔴 vincular calls back with the extraction id", async () => {
+    const onVincularExtracao = vi.fn();
+    const { screen, fireEvent } = await render({
+      extracoesSemImovel: [extracao({ id: "extracao-9" })],
+      onVincularExtracao,
+    });
+    fireEvent.click(screen.getByTestId("matricula-atos-vincular-extracao-9"));
+    expect(onVincularExtracao).toHaveBeenCalledWith("extracao-9");
+  });
+
+  it("disables every vincular button while a link is in flight", async () => {
+    const { screen } = await render({
+      extracoesSemImovel: [extracao({ id: "extracao-9" })],
+      onVincularExtracao: vi.fn(),
+      vinculando: true,
+    });
+    const botao = screen.getByTestId("matricula-atos-vincular-extracao-9") as HTMLButtonElement;
+    expect(botao.disabled).toBe(true);
+  });
+
+  it("shows the loading line (not the empty list) while the unlinked list is still resolving", async () => {
+    const { screen } = await render({
+      extracoesSemImovel: [],
+      extracoesSemImovelLoading: true,
+    });
+    expect(screen.getByText("Matrículas sem imóvel vinculado")).toBeTruthy();
+    expect(screen.getByText("Carregando...")).toBeTruthy();
+    expect(screen.queryByTestId("matricula-atos-sem-imovel")).toBeNull();
+  });
+});

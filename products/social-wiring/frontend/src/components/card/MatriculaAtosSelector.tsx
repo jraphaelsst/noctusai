@@ -34,6 +34,7 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronDown,
+  Link2,
   Loader2,
   Search,
   X,
@@ -78,6 +79,22 @@ export interface MatriculaAtosSelectorProps {
    *  operator picks one (or it defaults to the persisted selection's). */
   extracaoSelecionadaId: string | null;
   onSelecionarExtracao: (id: string) => void;
+
+  /**
+   * Bug H — existing transcriptions with NO `codigo` at all (predate this
+   * imóvel's registry identity, or uploaded standalone) — the scoped search
+   * above can never surface them, since they have nothing to match `codigo`
+   * against. A secondary section, offered ALONGSIDE the scoped results (not
+   * only when they come up empty) — an operator may not know yet that the
+   * matrícula they want is sitting unlinked. Empty array when `codigo` is
+   * unknown (nothing to link TO).
+   */
+  extracoesSemImovel?: MatriculaExtracaoOpcao[];
+  extracoesSemImovelLoading?: boolean;
+  /** Links one unlinked extraction to THIS imóvel, then selects it — the
+   *  container's job (it owns the mutation + `codigo`). */
+  onVincularExtracao?: (extracaoId: string) => void;
+  vinculando?: boolean;
 
   atos: MatriculaAto[];
   atosLoading: boolean;
@@ -136,6 +153,10 @@ export default function MatriculaAtosSelector({
   onBuscaExtracaoChange,
   extracaoSelecionadaId,
   onSelecionarExtracao,
+  extracoesSemImovel = [],
+  extracoesSemImovelLoading = false,
+  onVincularExtracao,
+  vinculando = false,
   atos,
   atosLoading,
   atosError,
@@ -298,6 +319,55 @@ export default function MatriculaAtosSelector({
           </ul>
         )}
       </div>
+
+      {/* ─── Matrículas sem imóvel vinculado (Bug H) ────────────────────
+          Offered alongside the scoped search, not only when it comes up
+          empty — the operator does not need to already know a matrícula
+          is unlinked to find it here. Absent entirely when the container
+          has no `codigo` to link TO (nothing shows). */}
+      {(extracoesSemImovel.length > 0 || extracoesSemImovelLoading) && (
+        <div className="space-y-1.5 border-t pt-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Matrículas sem imóvel vinculado
+          </p>
+          {extracoesSemImovelLoading && (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Carregando...
+            </p>
+          )}
+          {!extracoesSemImovelLoading && extracoesSemImovel.length > 0 && (
+            <ul
+              className="max-h-32 divide-y overflow-y-auto rounded-md border text-sm"
+              data-testid="matricula-atos-sem-imovel"
+            >
+              {extracoesSemImovel.map((ext) => (
+                <li
+                  key={ext.id}
+                  className="flex items-center justify-between gap-2 px-2.5 py-1.5"
+                >
+                  <span className="min-w-0 flex-1 truncate">{ext.nome_arquivo}</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-6 shrink-0 gap-1 px-2 text-[11px]"
+                    disabled={vinculando || !onVincularExtracao}
+                    onClick={() => onVincularExtracao?.(ext.id)}
+                    data-testid={`matricula-atos-vincular-${ext.id}`}
+                  >
+                    {vinculando ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Link2 className="h-3 w-3" />
+                    )}
+                    Vincular
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {!extracaoSelecionadaId && (
         <p className="text-xs text-muted-foreground" data-testid="matricula-atos-vazio">

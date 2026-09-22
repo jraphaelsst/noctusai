@@ -16,6 +16,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { ApiError } from "@noctusai/lib";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,22 @@ export interface Imovel {
   orientacao_solar: string[];
 }
 
+/**
+ * `GET /api/imoveis/{codigo}/registro` — does a REGISTRY identity exist for
+ * this código, independent of the Vista mirror `useImovel` reads? A manually
+ * registered imóvel (`useRegistrarImovelManual`, migration 149) answers 200
+ * here with `origem: "manual"` long before (if ever) Vista's own sync mirrors
+ * it — that gap is exactly what leaves `useImovel` 404ing on a código the
+ * operator DID create. 404 here too means neither the mirror nor the
+ * registry has ever seen this código.
+ */
+export interface ImovelRegistro {
+  codigo: string;
+  registrado: boolean;
+  origem: "manual" | "vista";
+  criado_em: string | null;
+}
+
 export interface ImovelPage {
   items: Imovel[];
   total: number;
@@ -155,6 +172,8 @@ export interface SyncResult {
 
 const IMOVEIS_KEY = (f: ImovelFilters) => ["sw", "imoveis", f] as const;
 const IMOVEL_KEY = (codigo: string) => ["sw", "imoveis", "detail", codigo] as const;
+const IMOVEL_REGISTRO_KEY = (codigo: string) =>
+  ["sw", "imoveis", "registro", codigo] as const;
 const FILTROS_KEY = ["sw", "imoveis", "filtros"] as const;
 const CARACTERISTICAS_KEY = ["sw", "imoveis", "caracteristicas"] as const;
 
@@ -195,6 +214,32 @@ export function useImovel(codigo: string | null) {
     queryKey: IMOVEL_KEY(codigo ?? ""),
     queryFn: async () => api.get<Imovel>(`/api/imoveis/${codigo}`),
     enabled: Boolean(codigo),
+    // A 404 here means "this código was never synced from Vista" — a
+    // manually-registered imóvel (`useRegistrarImovelManual`) is the common
+    // case, and it is a STABLE state, not a transient failure. Retrying it
+    // 3x just stretches the skeleton for an answer that will not change;
+    // `ImovelDetalhes` reads `useImovelRegistro` to tell that state apart
+    // from a genuinely unknown código. Any other status (5xx, network) still
+    // gets react-query's normal retry.
+    retry: (failureCount, error) =>
+      error instanceof ApiError && error.status === 404 ? false : failureCount < 3,
+  });
+}
+
+/**
+ * The registry-identity check `ImovelDetalhes` falls back to when
+ * `useImovel` 404s — see `ImovelRegistro` above. Deliberately NOT `enabled`
+ * on `useImovel`'s own error: both queries fire together (cheap, parallel,
+ * and both are needed anyway to tell "manually registered, not yet mirrored"
+ * apart from "genuinely unknown código" without an extra render round-trip).
+ */
+export function useImovelRegistro(codigo: string | null) {
+  return useQuery({
+    queryKey: IMOVEL_REGISTRO_KEY(codigo ?? ""),
+    queryFn: async () => api.get<ImovelRegistro>(`/api/imoveis/${codigo}/registro`),
+    enabled: Boolean(codigo),
+    retry: (failureCount, error) =>
+      error instanceof ApiError && error.status === 404 ? false : failureCount < 3,
   });
 }
 
