@@ -20,7 +20,7 @@
 
 // ── Enumerations (contract §B1 CHECKs / §A10 allowlist) ───────────────────────
 
-export const STUDIO_MODELS = ["claude-opus-5", "claude-sonnet-5"] as const;
+export const STUDIO_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] as const;
 export type StudioModel = (typeof STUDIO_MODELS)[number];
 
 export const STUDIO_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;

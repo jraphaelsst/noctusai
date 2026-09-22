@@ -36,8 +36,11 @@ __all__ = [
 _SCHEMA = "agents"
 _TABLE = "agent_personas"
 
-#: Contract §E.1 `model` CHECK.
-MODELS = ("claude-opus-5", "claude-sonnet-5")
+#: Contract §E.1 `model` CHECK. Widened by migration 015 to add
+#: `claude-haiku-4-5` (cheapest/fastest option) alongside opus-5/sonnet-5 —
+#: the DB CHECK is the enforcement, this tuple is the single source the
+#: store and the HTTP schema both validate against.
+MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
 #: Contract §E.1 `effort` CHECK.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 

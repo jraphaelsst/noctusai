@@ -12,7 +12,7 @@ import { ApiError } from "@/lib/errors";
 
 const PERSONA_KEY = ["agents", "julia", "persona"] as const;
 
-export const PERSONA_MODELS = ["claude-opus-5", "claude-sonnet-5"] as const;
+export const PERSONA_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] as const;
 export const PERSONA_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export interface Persona {

@@ -31,6 +31,14 @@ const EFFORT_LABELS: Record<string, string> = {
   max: "Máximo",
 };
 
+/** Display labels for `PERSONA_MODELS` — same tone as Agent Studio's eval
+ * run model override (`EvalsTab.tsx`'s `MODEL_LABELS`). */
+const MODEL_LABELS: Record<string, string> = {
+  "claude-opus-5": "Opus 5",
+  "claude-sonnet-5": "Sonnet 5",
+  "claude-haiku-4-5": "Haiku 4.5 — mais rápido e barato",
+};
+
 // Defaults for the very first persona (no row yet, contract §E.2 404 →
 // "nenhuma persona ainda"). `nome`/`model`/`effort`/`idioma` use the
 // backend's own canonical values (never invented — `model`/`effort` are
@@ -178,7 +186,7 @@ export default function JuliaPersona() {
               >
                 {PERSONA_MODELS.map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {MODEL_LABELS[m] ?? m}
                   </option>
                 ))}
               </select>

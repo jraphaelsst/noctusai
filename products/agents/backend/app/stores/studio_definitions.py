@@ -86,8 +86,11 @@ __all__ = [
 
 _SCHEMA = "agents"
 
-#: 012 `model` CHECK (§A10 — same allowlist as personas).
-MODELS = ("claude-opus-5", "claude-sonnet-5")
+#: 012 `model` CHECK (§A10 — same allowlist as personas). Widened by
+#: migration 015 to add `claude-haiku-4-5` (cheapest/fastest option); the
+#: DRAFT_DEFAULTS model below stays `claude-opus-5` — this only adds an
+#: option, it does not change anyone's current default.
+MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
 #: 012 `effort` CHECK.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 VERSION_STATUSES = ("rascunho", "ativa", "substituida")

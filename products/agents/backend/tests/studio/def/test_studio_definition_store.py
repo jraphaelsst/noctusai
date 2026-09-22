@@ -16,6 +16,7 @@ import pytest
 
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import (
+    MODELS,
     FakeStudioDefinitionStore,
     SectionInput,
     StudioConflict,
@@ -105,6 +106,19 @@ class TestDrafts:
         with pytest.raises(StudioConflict) as exc:
             store.create_draft(ORG, agent.id, None, USER)
         assert exc.value.code == "draft_exists"
+
+    def test_models_allowlist_includes_haiku_as_the_cheapest_fastest_option(self):
+        """Migration 015 widens `agent_versions.model`'s CHECK to add
+        `claude-haiku-4-5` alongside opus-5/sonnet-5 — this tuple is the
+        store's single source of truth for that allowlist. DRAFT_DEFAULTS'
+        model stays `claude-opus-5` (see `test_empty_draft_defaults`
+        above) — this only adds an option, never changes the default."""
+        assert MODELS == ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+
+    def test_update_draft_accepts_haiku_model(self, store, agent):
+        d = store.create_draft(ORG, agent.id, None, USER)
+        updated = store.update_draft(ORG, d.id, {"model": "claude-haiku-4-5"})
+        assert updated.model == "claude-haiku-4-5"
 
     def test_clone_deep_copies_settings_sections_skills_files(self, store, agent):
         v1 = store.create_draft(ORG, agent.id, None, USER)

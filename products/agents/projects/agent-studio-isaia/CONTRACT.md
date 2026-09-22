@@ -28,7 +28,7 @@ The first studio agent is **IsaIA** (Instagram content strategist). Julia is unt
 | A7 | Every turn records `version_id` + `compiled_hash`; the exact compiled text is stored once per hash in `compiled_prompts`. | "Proof of use": open the exact prompt any turn ran with. |
 | A8 | Publishing requires a concluded eval run on the draft's **current** compiled hash with `score >= agents.publicacao_limiar` — or an admin override with a written reason (recorded). | The eval gate is the substitute for code review now that prompt/skills are data. |
 | A9 | Knowledge search v1 = Postgres full-text (`portuguese` config, weighted title/resumo/body; no trigram index — pg_trgm lives in another product's schema on this project). Embeddings are a later hybrid leg (§K). | Deterministic, zero cost, no new provider dependency; the corpus is navigated mostly by structure (cards/registry/indices). |
-| A10 | Model allowlist stays `claude-opus-5` / `claude-sonnet-5` (same CHECK as personas). Eval judge = `claude-sonnet-5` via `noctusai_lib` LLM layer, generator = the version's model. | Reuse the existing allowlist; judge ≠ generator where possible. |
+| A10 | Model allowlist: `claude-opus-5` / `claude-sonnet-5` (same CHECK as personas), widened by `015_haiku_model.sql` to add `claude-haiku-4-5` (cheapest/fastest option — already proven by `eval_runs.modelo_geracao`'s narrower allowlist, §L). Eval judge = `claude-sonnet-5` via `noctusai_lib` LLM layer, generator = the version's model. | Reuse the existing allowlist; judge ≠ generator where possible. |
 
 ---
 
@@ -73,7 +73,7 @@ agents.agent_versions (
   versao int not null,                       -- 1..n per agent, assigned by functions
   status text not null check (status in ('rascunho','ativa','substituida')),
   notas text null,                           -- changelog note for this version
-  model text not null check (model in ('claude-opus-5','claude-sonnet-5')),
+  model text not null check (model in ('claude-opus-5','claude-sonnet-5')),  -- widened to add 'claude-haiku-4-5' by 015_haiku_model.sql (§A10); this literal block stays as 012 shipped it
   effort text not null check (effort in ('low','medium','high','xhigh','max')),
   max_turns int not null default 40 check (max_turns between 1 and 200),
   idioma text not null default 'pt-BR',

@@ -35,6 +35,14 @@ const EFFORT_LABELS: Record<StudioEffort, string> = {
   max: "Máximo",
 };
 
+/** Display labels for `STUDIO_MODELS` — same tone as Agent Studio's eval
+ * run model override (`EvalsTab.tsx`'s `MODEL_LABELS`). */
+const MODEL_LABELS: Record<StudioModel, string> = {
+  "claude-opus-5": "Opus 5",
+  "claude-sonnet-5": "Sonnet 5",
+  "claude-haiku-4-5": "Haiku 4.5 — mais rápido e barato",
+};
+
 interface Form {
   model: StudioModel;
   effort: StudioEffort;
@@ -160,7 +168,7 @@ export default function SettingsTab({ agentKey }: { agentKey: string }) {
                 >
                   {STUDIO_MODELS.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {MODEL_LABELS[m]}
                     </option>
                   ))}
                 </select>

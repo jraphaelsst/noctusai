@@ -1552,6 +1552,44 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "exact failure mode this feature exists to prevent."
         ),
     ),
+    _agents_studio_probe(
+        probe_id="agent_personas.model_allowlist",
+        guard_name="agent_personas_model_check",
+        migrations=("006_agents.sql", "015_haiku_model.sql"),
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_personas "
+            "(org_id, agent_id, versao, nome, papel, model, effort, created_by) "
+            "VALUES (v_org, v_agent, 1, 'NOC probe', 'papel', 'claude-invalid-model', 'high', v_org);"
+        ),
+        guard_fragment="agent_personas_model_check",
+        what="a Julia persona whose model is outside the allowlist",
+        rationale=(
+            "Contract §E.1: `agent_personas.model` is a closed vocabulary — "
+            "widened by migration 015 to add `claude-haiku-4-5` alongside "
+            "claude-opus-5/claude-sonnet-5 — and this CHECK is the only "
+            "thing stopping a request from writing a value the runtime has "
+            "no dispatch for."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_versions.model_allowlist",
+        guard_name="agent_versions_model_check",
+        migrations=("012_agent_studio_definitions.sql", "015_haiku_model.sql"),
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET model = 'claude-invalid-model' WHERE id = v_version;"
+        ),
+        guard_fragment="agent_versions_model_check",
+        what="an agent_versions row whose model is outside the allowlist",
+        rationale=(
+            "Contract §A10/§B1: `agent_versions.model` is a closed "
+            "vocabulary — widened by migration 015 to add "
+            "`claude-haiku-4-5` alongside claude-opus-5/claude-sonnet-5 — "
+            "and this CHECK is the only thing stopping a published version "
+            "from carrying a model id the Claude Agent SDK runtime cannot "
+            "launch."
+        ),
+    ),
 )
 
 

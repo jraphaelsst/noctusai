@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.stores.errors import NotFound
-from app.stores.personas import FakePersonaStore, PersonaInput
+from app.stores.personas import MODELS, FakePersonaStore, PersonaInput
 
 
 @pytest.fixture
@@ -80,3 +80,18 @@ def test_create_version_rejects_bad_model_and_effort(store):
 
     with pytest.raises(ValueError):
         store.create_version(org_id, agent_id, _input(effort="ultra"), created_by)
+
+
+def test_models_allowlist_includes_haiku_as_the_cheapest_fastest_option():
+    """Migration 015 widens `agent_personas.model`'s CHECK to add
+    `claude-haiku-4-5` alongside opus-5/sonnet-5 — this tuple is the store's
+    single source of truth for that allowlist (see MODELS's own docstring)."""
+    assert MODELS == ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+
+
+def test_create_version_accepts_haiku_model(store):
+    org_id, agent_id, created_by = uuid4(), uuid4(), uuid4()
+
+    persona = store.create_version(org_id, agent_id, _input(model="claude-haiku-4-5"), created_by)
+
+    assert persona.model == "claude-haiku-4-5"

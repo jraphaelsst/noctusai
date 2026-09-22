@@ -93,11 +93,13 @@ RUN_CASE_IDS_MAX = 200
 
 #: The cheaper-iteration model override an eval run may request instead of
 #: the version's own model (contract §L). Deliberately NARROWER than
-#: `agents.agent_versions.model`'s `claude-opus-5`/`claude-sonnet-5`
-#: allowlist (012) — this exists to let an iteration run cost LESS than the
-#: version's own model, never more. Mirrored by the migration 014 CHECK
-#: (`eval_runs_modelo_geracao_check`) — this tuple is the single source the
-#: HTTP schema and the store both validate against.
+#: `agents.agent_versions.model`'s allowlist (012, widened by 015 to add
+#: `claude-haiku-4-5` alongside `claude-opus-5`/`claude-sonnet-5`) — this
+#: exists to let an iteration run cost LESS than the version's own model,
+#: never more, so it stays the two cheapest models even after 015. Mirrored
+#: by the migration 014 CHECK (`eval_runs_modelo_geracao_check`) — this
+#: tuple is the single source the HTTP schema and the store both validate
+#: against.
 EVAL_RUN_MODEL_ALLOWLIST: tuple[str, ...] = ("claude-sonnet-5", "claude-haiku-4-5")
 #: Migration 014 CHECK floor/ceiling on `eval_runs.limite_usd`.
 EVAL_RUN_BUDGET_USD_MIN = 0.0

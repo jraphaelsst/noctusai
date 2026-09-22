@@ -24,7 +24,7 @@ const mockUseIsAdmin = vi.fn();
 vi.mock("@/hooks/usePersona", () => ({
   usePersona: () => mockUsePersona(),
   useUpdatePersona: () => mockUseUpdatePersona(),
-  PERSONA_MODELS: ["claude-opus-5", "claude-sonnet-5"],
+  PERSONA_MODELS: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
   PERSONA_EFFORTS: ["low", "medium", "high", "xhigh", "max"],
 }));
 
@@ -111,8 +111,26 @@ describe("JuliaPersona — no persona yet (404, contract §E.2 not_found)", () =
     // The backend's CHECK constraints (`MODELS`/`EFFORTS`,
     // `app/stores/personas.py`) only allow the values above — never an
     // invented default.
-    expect(["claude-opus-5", "claude-sonnet-5"]).toContain(payload.model);
+    expect(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]).toContain(payload.model);
     expect(["low", "medium", "high", "xhigh", "max"]).toContain(payload.effort);
+  });
+
+  it("offers all three allowed models, Haiku labelled as the cheapest/fastest option", async () => {
+    mockUsePersona.mockReturnValue({
+      data: undefined,
+      showSkeleton: false,
+      isRefreshing: false,
+      isError: false,
+      isNotFound: true,
+    });
+    await renderPage();
+
+    const select = screen.getByTestId("persona-model-select") as HTMLSelectElement;
+    const options = Array.from(select.options);
+    expect(options.map((o) => o.value)).toEqual(["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]);
+    const haiku = options.find((o) => o.value === "claude-haiku-4-5")!;
+    expect(haiku.textContent).toMatch(/haiku/i);
+    expect(haiku.textContent).toMatch(/rápido|barato/i);
   });
 });
 
