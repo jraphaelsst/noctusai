@@ -104,6 +104,17 @@ const COMPRADORES_KEY = (clienteId: string, lado: LadoParte = "comprador") =>
   [...FAMILY_KEY(clienteId), "compradores", lado] as const;
 const TAGS_KEY = [...ROOT_KEY, "tags"] as const;
 const TIPOS_DOC_KEY = [...ROOT_KEY, "tiposDocumento"] as const;
+/**
+ * 🔴 NOT nested under `FAMILY_KEY`, same reasoning `QUALIFICACAO_ROOT_KEY`
+ * gives: the org-wide admin queue (`useConflitosPendentes()`, no
+ * `clienteId`) and a per-person read (`useConflitosPendentes(clienteId)`)
+ * are two different queries under ONE root, so deciding a conflict can
+ * invalidate BOTH with a single root-prefix `invalidateQueries` call
+ * regardless of which one the caller currently has mounted.
+ */
+const CONFLITOS_ROOT_KEY = [...ROOT_KEY, "conflitos"] as const;
+const CONFLITOS_KEY = (clienteId?: string) =>
+  [...CONFLITOS_ROOT_KEY, clienteId ?? "__org__"] as const;
 
 function invalidateEverything(qc: QueryClient) {
   return qc.invalidateQueries({ queryKey: ROOT_KEY });
@@ -1342,6 +1353,17 @@ export function useCompradorMutations(clienteId: string) {
  * flipping green before the server agreed is the one moment a rejected save
  * looks like a successful one.
  */
+/**
+ * The PATCH response `clientes_service.update_cliente` (owner directive,
+ * 2026-09-19) always returns: the updated cliente row PLUS
+ * `pendente_confirmacao` — item_keys THIS save deferred to admin
+ * confirmation (empty when nothing was). `DadosPessoaisForm`'s
+ * `pendenteConfirmacao` prop reads off `mutation.data?.pendente_confirmacao`.
+ */
+export type DadosPessoaisSaveResult = DadosPessoais & {
+  pendente_confirmacao?: string[];
+};
+
 export function useDadosPessoaisMutation(clienteId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -1350,7 +1372,7 @@ export function useDadosPessoaisMutation(clienteId: string) {
     // stray key would be refused by StrictHttpModel at runtime rather than
     // caught here.
     mutationFn: (body: DadosPessoais) =>
-      api.patch(`${clienteBase(clienteId)}`, body),
+      api.patch<DadosPessoaisSaveResult>(`${clienteBase(clienteId)}`, body),
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) }),
@@ -1358,6 +1380,84 @@ export function useDadosPessoaisMutation(clienteId: string) {
         qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
         qc.invalidateQueries({ queryKey: ["sw", "clientes"] }),
         qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY }),
+        // The DURABLE pending-state read (owner directive, 2026-09-19) —
+        // a save that just opened (or found) a pending conflict must show
+        // up on the very next read, not only in THIS mutation's own
+        // transient `data.pendente_confirmacao`.
+        qc.invalidateQueries({ queryKey: CONFLITOS_KEY(clienteId) }),
       ]),
+  });
+}
+
+// ─── Admin-adjudicated field conflicts (migration 138 + its reverse
+//     direction, owner directive 2026-09-19) ───────────────────────────
+//
+// `identidade_extracao_service.CampoExtraido`/`clientes_service
+// .update_cliente`'s `_CAMPOS_COM_ORIGEM` on the backend — this is the
+// read/decide surface for the SAME `cliente_campo_conflitos` rows,
+// whichever direction opened them (an extraction disagreeing with a
+// human value, OR a human editing a document-sourced value without being
+// an admin).
+
+export interface ConflitoCampo {
+  id: string;
+  cliente_id: string;
+  campo: string;
+  valor_anterior: string | null;
+  origem_anterior: string | null;
+  valor_proposto: string;
+  origem_proposto: string;
+  confianca_proposta: string | null;
+  status: "pendente" | "aceito" | "rejeitado";
+  created_at: string;
+}
+
+/**
+ * `clienteId` omitted: every pending conflict in the org — the admin
+ * queue (`Settings.tsx`'s "Pendências de dados" tab). `clienteId` set:
+ * just this person's — the DURABLE source `DadosPessoaisForm`'s
+ * `pendenteConfirmacao` prop reads (survives a reload, unlike the last
+ * mutation's own transient response).
+ *
+ * `enabled` defaults to `true` — a per-cliente caller whose id is not
+ * READY YET (the card isn't open, `shouldFetch` is false) MUST pass
+ * `enabled: false` explicitly, or an `undefined` `clienteId` reads as
+ * "org-wide" and fires the wrong query.
+ */
+export function useConflitosPendentes(
+  clienteId?: string,
+  { enabled = true }: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: CONFLITOS_KEY(clienteId),
+    queryFn: () => {
+      const qs = clienteId
+        ? `?${new URLSearchParams({ cliente_id: clienteId }).toString()}`
+        : "";
+      return api.get<ConflitoCampo[]>(`/api/clientes/conflitos${qs}`);
+    },
+    enabled,
+  });
+}
+
+/** Owner/admin only on the server (`decidir_conflito_route`) — this
+ *  mutation itself is unguarded; a non-admin's attempt simply 403s and
+ *  surfaces through `onError`, same as any other write this file has. */
+export function useDecidirConflitoMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ conflitoId, aceitar }: { conflitoId: string; aceitar: boolean }) =>
+      api.put<ConflitoCampo>(`/api/clientes/conflitos/${conflitoId}/decidir`, {
+        aceitar,
+      }),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: CONFLITOS_ROOT_KEY });
+      // Accepting writes the field for real — the same surfaces a normal
+      // `DadosPessoaisForm` save touches.
+      void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(result.cliente_id) });
+      void qc.invalidateQueries({ queryKey: CARD_KEY(result.cliente_id) });
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes"] });
+      void qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY });
+    },
   });
 }

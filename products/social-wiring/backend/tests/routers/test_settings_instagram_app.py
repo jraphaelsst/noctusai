@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from noctusai_lib.security.app_config import FakeAppConfigStore
-from noctusai_lib.testing import MockSupabaseClient, MockUser, MockUserResponse
+from noctusai_lib.testing import TEST_USER_ID, MockSupabaseClient, MockUser, MockUserResponse
 
 
 def _make_client(*, org_role: str | None = None):
@@ -32,6 +32,14 @@ def _make_client(*, org_role: str | None = None):
         return_value=MockUserResponse(
             MockUser(org_id="test-org-123", org_role=org_role)
         )
+    )
+    # 🔴 The admin gate now reads the TRUSTED `public.noctus_users` row,
+    # never `user_metadata.org_role` (spoofable via `auth.updateUser`) —
+    # see `test_auth_router.py`'s established pattern for the same class
+    # of trusted-DB check.
+    mock_sb.set_table_data(
+        "noctus_users",
+        [{"id": TEST_USER_ID, "org_id": "test-org-123", "org_role": org_role}],
     )
     return mock_sb
 

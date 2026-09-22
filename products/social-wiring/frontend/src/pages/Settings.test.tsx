@@ -146,6 +146,26 @@ vi.mock("@/hooks/useMarcas", () => ({
   }),
 }));
 
+// "Pendências de dados" tab (owner directive, 2026-09-19). Defaults to
+// "nothing pending" so every OTHER suite in this file renders the tab
+// (when it's even mounted — owner/admin only) without caring about it;
+// the pendências tests below override per-case.
+const mockUseConflitosPendentes = vi.fn(() => ({
+  data: [],
+  isPending: false,
+  isError: false,
+  refetch: vi.fn(),
+}));
+const mockDecidirConflito = vi.fn();
+vi.mock("@/hooks/useCardHub", () => ({
+  useConflitosPendentes: mockUseConflitosPendentes,
+  useDecidirConflitoMutation: () => ({
+    mutate: mockDecidirConflito,
+    isPending: false,
+    variables: undefined,
+  }),
+}));
+
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // ─── @/components/ui/tabs — structural pass-through ─────────────────────
@@ -1417,5 +1437,87 @@ describe("DadosImobiliariaTab", () => {
     expect(mockSalvarImob).toHaveBeenCalledTimes(1);
     const payload = mockSalvarImob.mock.calls[0][0];
     expect(payload).toEqual({ posse_multa_diaria: null });
+  });
+});
+
+describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", () => {
+  it("the tab is hidden for a member", async () => {
+    setUser("member");
+    const { queryByText } = await renderSettingsOnKeysTab();
+    expect(queryByText("Pendências")).toBeNull();
+  });
+
+  it("the tab is hidden for a dev role (narrower than isAdminOrDev, matches decidir_conflito_route's own gate)", async () => {
+    setUser("dev");
+    const { queryByText } = await renderSettingsOnKeysTab();
+    expect(queryByText("Pendências")).toBeNull();
+  });
+
+  it("shows the empty state when nothing is pending", async () => {
+    setUser("owner");
+    mockUseConflitosPendentes.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByText } = await renderSettingsOnKeysTab();
+    expect(getByText("Nenhuma pendência de confirmação no momento.")).toBeTruthy();
+  });
+
+  it("lists a pending conflict with the cliente_id shown (no name resolver wired here)", async () => {
+    setUser("admin");
+    mockUseConflitosPendentes.mockReturnValue({
+      data: [
+        {
+          id: "conflito-1",
+          cliente_id: "cliente-abc",
+          campo: "estado_civil",
+          valor_anterior: "Casado(a)",
+          origem_anterior: "certidao_casamento",
+          valor_proposto: "Solteiro(a)",
+          origem_proposto: "manual",
+          confianca_proposta: null,
+          status: "pendente",
+          created_at: "2026-09-20T00:00:00Z",
+        },
+      ],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, getByText } = await renderSettingsOnKeysTab();
+    expect(getByTestId("pendencias-dados-tab")).toBeTruthy();
+    expect(getByText("Estado civil")).toBeTruthy();
+    expect(getByText("cliente-abc")).toBeTruthy();
+  });
+
+  it("Aprovar calls the decide mutation with aceitar=true", async () => {
+    setUser("owner");
+    mockUseConflitosPendentes.mockReturnValue({
+      data: [
+        {
+          id: "conflito-2",
+          cliente_id: "cliente-xyz",
+          campo: "cpf",
+          valor_anterior: "111",
+          origem_anterior: "cpf",
+          valor_proposto: "222",
+          origem_proposto: "manual",
+          confianca_proposta: null,
+          status: "pendente",
+          created_at: "2026-09-20T00:00:00Z",
+        },
+      ],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    fireEvent.click(getByTestId("pendencias-dados-tab-item-conflito-2-aprovar"));
+    expect(mockDecidirConflito).toHaveBeenCalledWith(
+      { conflitoId: "conflito-2", aceitar: true },
+      expect.anything(),
+    );
   });
 });

@@ -1011,6 +1011,245 @@ class TestRgDiferenteDeCpf:
         assert updated["nome"] == "Ana Maria"
 
 
+class TestEdicaoManualDeCampoDocumental:
+    """The owner's provenance directive (2026-09-19), quoted in this
+    dispatch's brief: "humans input data, extracted from official files are
+    the truth. if a robot input a data, then a human edits an extracted-
+    data, human overwrites with admin confirmation and logs for history and
+    rollback." A human PATCH touching a field whose CURRENT value came from
+    a document must never silently overwrite it.
+    """
+
+    def _cliente_documental(self, cid, **extra) -> dict:
+        return {
+            "id": cid, "org_id": ORG, "nome": "Ana",
+            "estado_civil": "Casado(a)", "estado_civil_origem": "certidao_casamento",
+            "cpf": None, "rg": None,
+            **extra,
+        }
+
+    def test_non_admin_edit_of_a_document_sourced_field_is_held_back(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente_documental(cid)])
+
+        resultado = svc.update_cliente(
+            client, ORG, cid, is_admin=False, estado_civil="Solteiro(a)",
+        )
+        # The document's value keeps prevailing — nothing was written.
+        assert resultado["estado_civil"] == "Casado(a)"
+        assert resultado["pendente_confirmacao"] == ["estado_civil"]
+        row = _clientes(client)[0]
+        assert row["estado_civil"] == "Casado(a)"
+
+        conflitos = client.table("cliente_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 1
+        c = conflitos[0]
+        assert c["campo"] == "estado_civil"
+        assert c["valor_anterior"] == "Casado(a)"
+        assert c["origem_anterior"] == "certidao_casamento"
+        assert c["valor_proposto"] == "Solteiro(a)"
+        assert c["origem_proposto"] == "manual"
+        assert c["status"] == "pendente"
+        assert c["decidido_por"] is None
+
+    def test_repeating_the_same_pending_edit_does_not_duplicate_the_conflict(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente_documental(cid)])
+
+        svc.update_cliente(client, ORG, cid, is_admin=False, estado_civil="Solteiro(a)")
+        svc.update_cliente(client, ORG, cid, is_admin=False, estado_civil="Divorciado(a)")
+
+        conflitos = client.table("cliente_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 1
+
+    def test_admin_edit_applies_immediately_and_logs_the_previous_value(self):
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente_documental(cid)])
+        admin_id = str(uuid4())
+
+        resultado = svc.update_cliente(
+            client, ORG, cid,
+            is_admin=True, acting_user_id=admin_id,
+            estado_civil="Solteiro(a)",
+        )
+        assert resultado["estado_civil"] == "Solteiro(a)"
+        assert resultado["pendente_confirmacao"] == []
+        row = _clientes(client)[0]
+        assert row["estado_civil"] == "Solteiro(a)"
+        assert row["estado_civil_origem"] == "manual"
+
+        conflitos = client.table("cliente_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 1
+        c = conflitos[0]
+        assert c["status"] == "aceito"
+        assert c["valor_anterior"] == "Casado(a)"
+        assert c["origem_anterior"] == "certidao_casamento"
+        assert c["valor_proposto"] == "Solteiro(a)"
+        assert c["decidido_por"] == admin_id
+        assert c["decidido_em"] is not None
+
+    def test_an_empty_or_manual_origin_value_is_never_gated(self):
+        """Bullet 1's other half: nothing to protect when the current value
+        is empty, or already the server's own manual stamp."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data(
+            "clientes",
+            [self._cliente_documental(cid, estado_civil=None, estado_civil_origem=None)],
+        )
+        resultado = svc.update_cliente(
+            client, ORG, cid, is_admin=False, estado_civil="Casado(a)",
+        )
+        assert resultado["estado_civil"] == "Casado(a)"
+        assert resultado["pendente_confirmacao"] == []
+        assert not client.table("cliente_campo_conflitos").select("*").execute().data
+
+        cid2 = str(uuid4())
+        client.set_table_data(
+            "clientes",
+            [self._cliente_documental(
+                cid2, estado_civil="Casado(a)", estado_civil_origem="manual",
+            )],
+        )
+        resultado2 = svc.update_cliente(
+            client, ORG, cid2, is_admin=False, estado_civil="Divorciado(a)",
+        )
+        assert resultado2["estado_civil"] == "Divorciado(a)"
+        assert resultado2["pendente_confirmacao"] == []
+
+    def test_rg_orgao_expedidor_rides_with_a_deferred_rg(self):
+        """`rg_orgao_expedidor` has no provenance of its own — it must not
+        apply on its own while the `rg` it travels with is held back."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data(
+            "clientes",
+            [self._cliente_documental(
+                cid, cpf=None, rg="12.345.678-9", rg_origem="rg",
+                rg_orgao_expedidor="SSP/SP", estado_civil=None, estado_civil_origem=None,
+            )],
+        )
+        resultado = svc.update_cliente(
+            client, ORG, cid, is_admin=False,
+            rg="98.765.432-1", rg_orgao_expedidor="SSP/RJ",
+        )
+        assert resultado["pendente_confirmacao"] == ["rg"]
+        row = _clientes(client)[0]
+        assert row["rg"] == "12.345.678-9"
+        assert row["rg_orgao_expedidor"] == "SSP/SP"
+
+    def test_a_field_still_applies_alongside_a_deferred_one(self):
+        """A PATCH touching both a gated (deferred) field and a plain one
+        must still write the plain one — the hold-back is per-field."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente_documental(cid)])
+
+        resultado = svc.update_cliente(
+            client, ORG, cid, is_admin=False,
+            nome="Ana Maria", estado_civil="Solteiro(a)",
+        )
+        assert resultado["nome"] == "Ana Maria"
+        assert resultado["pendente_confirmacao"] == ["estado_civil"]
+        row = _clientes(client)[0]
+        assert row["nome"] == "Ana Maria"
+        assert row["estado_civil"] == "Casado(a)"
+
+    def test_rg_cpf_collision_guard_uses_the_effective_post_patch_values(self):
+        """`cpf` is deferred (document-sourced, non-admin); `rg` is new and
+        must be validated against the CURRENT (unclaimed) `cpf`, not the
+        one the request asked for and that never landed."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data(
+            "clientes",
+            [self._cliente_documental(
+                cid, cpf="412.954.238-98", cpf_origem="cpf",
+                rg=None, estado_civil=None, estado_civil_origem=None,
+            )],
+        )
+        # The new rg differs from the CURRENT cpf (412...), even though it
+        # equals the (deferred, never-applied) proposed cpf — no collision.
+        resultado = svc.update_cliente(
+            client, ORG, cid, is_admin=False,
+            cpf="052.999.999-01", rg="052.999.999-01",
+        )
+        assert resultado["pendente_confirmacao"] == ["cpf"]
+        assert resultado["rg"] == "052.999.999-01"
+
+    def test_nome_oficial_is_gated_the_same_way(self):
+        """071's document-owned name — now human-editable (owner
+        directive), on the same admin-confirmation terms as every other
+        identity field."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data(
+            "clientes",
+            [self._cliente_documental(
+                cid, cpf=None, estado_civil=None, estado_civil_origem=None,
+                nome_oficial="ANA DA SILVA", nome_oficial_origem="rg",
+            )],
+        )
+        resultado = svc.update_cliente(
+            client, ORG, cid, is_admin=False, nome_oficial="ANA MARIA DA SILVA",
+        )
+        assert resultado["nome_oficial"] == "ANA DA SILVA"
+        assert resultado["pendente_confirmacao"] == ["nome_oficial"]
+
+        admin_id = str(uuid4())
+        admin_resultado = svc.update_cliente(
+            client, ORG, cid, is_admin=True, acting_user_id=admin_id,
+            nome_oficial="ANA MARIA DA SILVA",
+        )
+        assert admin_resultado["nome_oficial"] == "ANA MARIA DA SILVA"
+        assert admin_resultado["pendente_confirmacao"] == []
+
+        # The earlier pending proposal is now stale (it proposed
+        # overwriting a value the admin's own edit already replaced a
+        # different way) — closed, not left dangling in the admin queue.
+        conflitos = client.table("cliente_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 2
+        superseded = [c for c in conflitos if c["status"] == "rejeitado"]
+        aceito = [c for c in conflitos if c["status"] == "aceito"]
+        assert len(superseded) == 1
+        assert superseded[0]["valor_proposto"] == "ANA MARIA DA SILVA"
+        assert superseded[0]["decidido_por"] == admin_id
+        assert len(aceito) == 1
+        assert aceito[0]["valor_proposto"] == "ANA MARIA DA SILVA"
+
+    def test_admin_edit_supersedes_a_stale_pending_conflict_on_the_same_field(self):
+        """🔴 The gap the owner's directive's "logs for history and
+        rollback" would otherwise leave open: without this, the pending
+        row from the FIRST (held-back) edit keeps sitting in the admin
+        queue offering a decision about a value the admin's own edit has
+        already moved past."""
+        client = _scoped_client()
+        cid = str(uuid4())
+        client.set_table_data("clientes", [self._cliente_documental(cid)])
+
+        svc.update_cliente(client, ORG, cid, is_admin=False, estado_civil="Solteiro(a)")
+        pendente_id = client.table("cliente_campo_conflitos").select("*").execute().data[0]["id"]
+
+        admin_id = str(uuid4())
+        svc.update_cliente(
+            client, ORG, cid, is_admin=True, acting_user_id=admin_id,
+            estado_civil="Divorciado(a)",
+        )
+
+        conflitos = {
+            c["id"]: c
+            for c in client.table("cliente_campo_conflitos").select("*").execute().data
+        }
+        assert conflitos[pendente_id]["status"] == "rejeitado"
+        assert conflitos[pendente_id]["decidido_por"] == admin_id
+        novo = [c for c in conflitos.values() if c["id"] != pendente_id][0]
+        assert novo["status"] == "aceito"
+        assert novo["valor_proposto"] == "Divorciado(a)"
+
+
 # ─── PostgREST 1 000-row cap — the bug class the shared mock cannot see ────
 #
 # 🔴 `MockSupabaseClient.range()` is a NO-OP (`seed/lib/backend/noctusai_lib/

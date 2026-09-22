@@ -982,6 +982,68 @@ class TestCertidaoEstadoCivilMaisRecente:
             scoped, ORG_UUID, UUID(cid)
         ) is None
 
+    @pytest.mark.asyncio
+    async def test_the_manual_date_alone_is_reported_with_no_documento_id(
+        self, client, scoped
+    ):
+        """Migration 148 — a certidão nobody has uploaded, only typed in."""
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, certidao_estado_civil_emitida_em="2025-02-20")],
+        )
+        scoped.set_table_data("cliente_documentos", [])
+        out = svc.certidao_estado_civil_mais_recente(scoped, ORG_UUID, UUID(cid))
+        assert out is not None
+        assert out["documento_id"] is None
+        assert out["emitida_em"] == "2025-02-20"
+
+    @pytest.mark.asyncio
+    async def test_the_more_recent_of_manual_and_document_wins(self, client, scoped):
+        """The SAME 'freshest reading wins' comparison already run across
+        multiple uploaded certidões, extended to a manually-typed one."""
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, certidao_estado_civil_emitida_em="2026-01-01")],
+        )
+        antigo = str(uuid4())
+        scoped.set_table_data("cliente_documentos", [
+            {
+                "id": antigo, "org_id": ORG_ID, "cliente_id": cid,
+                "tipo_documento": "certidao_casamento", "deleted_at": None,
+                "extracao_descartada_em": None,
+                "extracao_data_emissao": "2020-01-10",
+            },
+        ])
+        out = svc.certidao_estado_civil_mais_recente(scoped, ORG_UUID, UUID(cid))
+        assert out is not None
+        assert out["documento_id"] is None
+        assert out["emitida_em"] == "2026-01-01"
+
+    @pytest.mark.asyncio
+    async def test_a_fresher_uploaded_document_wins_over_an_older_manual_date(
+        self, client, scoped
+    ):
+        cid = str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, certidao_estado_civil_emitida_em="2018-05-05")],
+        )
+        novo = str(uuid4())
+        scoped.set_table_data("cliente_documentos", [
+            {
+                "id": novo, "org_id": ORG_ID, "cliente_id": cid,
+                "tipo_documento": "certidao_casamento", "deleted_at": None,
+                "extracao_descartada_em": None,
+                "extracao_data_emissao": "2024-03-15",
+            },
+        ])
+        out = svc.certidao_estado_civil_mais_recente(scoped, ORG_UUID, UUID(cid))
+        assert out is not None
+        assert out["documento_id"] == novo
+        assert out["emitida_em"] == "2024-03-15"
+
 
 # ─── End-to-end through the REAL ladder (B5 — the wiring this slice finishes) ──
 #

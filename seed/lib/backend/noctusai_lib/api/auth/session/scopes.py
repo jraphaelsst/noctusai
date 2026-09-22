@@ -83,6 +83,106 @@ def resolve_org_role(core_client: Any, user_id: Any) -> str | None:
     return rows[0].get("org_role")
 
 
+#: The canonical "admin-equivalent" org-role set — the same two values
+#: ``noctusai_seed.auth_router._require_org_admin`` and every product-level
+#: org-admin gate compare against.
+ADMIN_ORG_ROLES: frozenset[str] = frozenset({"owner", "admin"})
+
+
+def is_org_admin(
+    core_client: Any,
+    user_id: Any,
+    *,
+    admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+) -> bool:
+    """Trusted-DB bool predicate — "does this user have an admin-equivalent
+    org_role" — never raises, and NEVER reads ``user_metadata`` (that
+    column is user-writable via ``auth.updateUser({data})``; see
+    :func:`resolve_org_role`'s own docstring for the exact spoof class this
+    closes — the SAME class ``products/core/backend/app/routers
+    /admin_llm_usage.py`` documents).
+
+    The shared N=3 predicate behind (as of this dispatch, 2026-09-2x):
+    ``noctusai_seed.auth_router._require_org_admin`` (raises 403 directly,
+    ``AuthContext``-shaped), and social-wiring's own
+    ``settings_router._require_admin`` + ``clientes_router._is_org_admin``
+    — both of which previously read the spoofable
+    ``user_metadata.org_role``/``role`` and are fixed, this same dispatch,
+    to call THIS instead. New product code should call this (or
+    :func:`require_org_admin_role` / :func:`make_require_org_admin` below)
+    rather than hand-rolling a fourth copy.
+
+    Args:
+        core_client: A ``public``-schema-scoped Supabase client
+            (``deps.get_core_client()``) — ``noctus_users`` lives in
+            ``public``, never a product's own schema.
+        user_id: The caller's user id. ``None`` is a legitimate input
+            (``resolve_org_role`` returns ``None`` for it, which never
+            matches ``admin_roles``, so this returns ``False`` — fails
+            closed, never raises).
+        admin_roles: The role set that counts as "admin". Defaults to the
+            platform's own ``("owner", "admin")``.
+    """
+    return resolve_org_role(core_client, user_id) in admin_roles
+
+
+def require_org_admin_role(
+    core_client: Any,
+    user_id: Any,
+    context: str,
+    *,
+    admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+) -> None:
+    """Imperative 403 gate — the drop-in replacement for a hand-rolled
+    ``if role not in (...): raise HTTPException(403, ...)`` block INSIDE an
+    already-authenticated route body. This is the shape every legacy
+    ``get_current_user_org``-based product route needs: those routes
+    resolve ``user``/``org_id`` themselves (a plain tuple, not a
+    ``Depends()``-composed ``AuthContext``), so the gate has to be callable
+    imperatively rather than only as a dependency — see
+    :func:`make_require_org_admin` for the dependency-shaped alternative
+    when a route CAN afford to resolve auth entirely through ``Depends()``.
+
+    ``context`` names the action being gated (e.g. ``"Chaves de API"``),
+    so the 403 detail stays specific per call site — mirrors the
+    ``context`` parameter every pre-existing hand-rolled gate this
+    replaces already took.
+    """
+    if not is_org_admin(core_client, user_id, admin_roles=admin_roles):
+        raise HTTPException(
+            status_code=403, detail=f"{context} restrito a administradores."
+        )
+
+
+def make_require_org_admin(
+    get_current_user_org: Callable[..., Awaitable[tuple]],
+    get_core_client: Callable[[], Any],
+    *,
+    admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+    detail: str = "Ação restrita a administradores.",
+) -> Callable[..., Awaitable[tuple]]:
+    """FastAPI dependency FACTORY for the legacy ``(user, token, org_id)``
+    auth shape (``noctusai_lib.api.auth.make_get_current_user_org``'s
+    return value) — binds a product's own ``get_current_user_org`` +
+    ``get_core_client`` ONCE, returns a ``Depends()``-able async dependency
+    that resolves auth THEN 403s unless the caller is a trusted-DB org
+    admin/owner. A route can ``Depends()`` this INSTEAD OF
+    ``get_current_user_org`` directly and get both auth AND the admin gate
+    from one dependency; the (unchanged) auth tuple is returned on
+    success, so no route body needs to change shape.
+    """
+
+    async def _dependency(auth: tuple = Depends(get_current_user_org)) -> tuple:
+        user, _token, _org_id = auth
+        if not is_org_admin(
+            get_core_client(), getattr(user, "id", None), admin_roles=admin_roles
+        ):
+            raise HTTPException(status_code=403, detail=detail)
+        return auth
+
+    return _dependency
+
+
 def require_scopes(
     *scopes: str,
     user_roles: frozenset[str] = frozenset(),
@@ -180,7 +280,11 @@ def require_scopes(
 
 
 __all__ = [
+    "ADMIN_ORG_ROLES",
     "CallerRestriction",
+    "is_org_admin",
+    "make_require_org_admin",
+    "require_org_admin_role",
     "require_scopes",
     "resolve_org_role",
 ]

@@ -33,6 +33,7 @@
 import { toast } from "sonner";
 
 import {
+  useConflitosPendentes,
   useDocumentoChecklist,
   useDocumentoChecklistMutation,
   useDocumentoMutations,
@@ -46,6 +47,7 @@ import { AnexosSection } from "@/components/card/AnexosSection";
 import { DocumentoChecklistSection } from "@/components/card/DocumentoChecklistSection";
 import { DadosPessoaisForm } from "@/components/card/DadosPessoaisForm";
 import { baixarArquivo } from "@/components/card/format";
+import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 
 export interface PessoaDocumentosPanelProps {
   clienteId: string;
@@ -64,6 +66,10 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
   const sugestao = useExtracaoSugestaoMutation(clienteId);
   const docs = useDocumentoMutations(clienteId);
   const dados = useDadosPessoaisMutation(clienteId);
+  // Durable pending-state read (owner directive, 2026-09-19) —
+  // `DadosPessoaisForm`'s notice must survive a reload, unlike the last
+  // mutation's own transient response.
+  const conflitosPendentes = useConflitosPendentes(clienteId);
 
   return (
     <>
@@ -78,6 +84,11 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         // The RG==CPF 400 (migration 110) surfaced inline, same reasoning as
         // the titular's own form in `ClienteDetailModal`.
         saveError={dados.isError ? erro(dados.error, "Não foi possível salvar os dados.") : null}
+        // Owner directive, 2026-09-19 — the DURABLE read, not the last
+        // mutation's own transient response (see `conflitosPendentes` above).
+        pendenteConfirmacao={conflitosPendentes.data
+          ?.filter((c) => c.status === "pendente")
+          .map((c) => c.campo)}
         onSave={(valores) =>
           dados.mutate(valores, {
             onError: (e) =>
@@ -85,6 +96,7 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
           })
         }
       />
+      <ConflitosPendentesPanel clienteId={clienteId} />
       <DocumentoChecklistSection
         // Scoped to THIS person. The titular's checklist is on the same screen
         // now (Geral absorbed the Documentos tab), so an unprefixed testid

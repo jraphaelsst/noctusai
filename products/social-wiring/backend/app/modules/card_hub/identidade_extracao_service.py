@@ -1362,8 +1362,17 @@ def certidao_estado_civil_mais_recente(
     reading a human turned down, cannot go on answering a freshness
     question.
 
-    Returns `None` when no qualifying document has a recorded emission date
-    yet — legible with the fact simply absent, never an error.
+    🔴 Migration 148 — ALSO compares against
+    `clientes.certidao_estado_civil_emitida_em`, the human-typed emission
+    date for a certidão nobody has uploaded (yet, or ever). Same "freshest
+    reading wins" comparison this function already runs across multiple
+    *uploaded* certidões, just extended to include the manual one; when the
+    manual date wins, `documento_id` is `None` — there is no
+    `cliente_documentos` row backing it, and callers (`contrato_gerador
+    .derivacao`'s [Q11]) never dereference it, only `emitida_em`/`dias`.
+
+    Returns `None` when neither source has a recorded emission date yet —
+    legible with the fact simply absent, never an error.
     """
     rows = (
         _t(client, DOCUMENTOS_TABLE)
@@ -1376,15 +1385,35 @@ def certidao_estado_civil_mais_recente(
         .not_.is_("extracao_data_emissao", "null")
         .execute()
     ).data or []
-    if not rows:
+
+    candidatos: list[dict] = [
+        {"documento_id": r["id"], "emitida_em": r["extracao_data_emissao"]}
+        for r in rows
+    ]
+
+    cliente_rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("certidao_estado_civil_emitida_em")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    manual = (cliente_rows[0] if cliente_rows else {}).get(
+        "certidao_estado_civil_emitida_em"
+    )
+    if manual:
+        candidatos.append({"documento_id": None, "emitida_em": manual})
+
+    if not candidatos:
         return None
 
-    mais_recente = max(rows, key=lambda r: r["extracao_data_emissao"])
-    emitida_em = date.fromisoformat(mais_recente["extracao_data_emissao"])
+    mais_recente = max(candidatos, key=lambda c: c["emitida_em"])
+    emitida_em = date.fromisoformat(mais_recente["emitida_em"])
     dias = (datetime.now(timezone.utc).date() - emitida_em).days
     return {
-        "documento_id": mais_recente["id"],
-        "emitida_em": mais_recente["extracao_data_emissao"],
+        "documento_id": mais_recente["documento_id"],
+        "emitida_em": mais_recente["emitida_em"],
         "dias": dias,
     }
 

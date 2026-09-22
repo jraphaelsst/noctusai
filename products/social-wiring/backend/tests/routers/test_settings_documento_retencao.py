@@ -23,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from noctusai_lib.testing import (
+    TEST_USER_ID,
     MockSupabaseClient,
     MockUser,
     MockUserResponse,
@@ -58,6 +59,17 @@ def _mock_client(*, org_role: str | None = None) -> MockSupabaseClient:
     mock_sb = MockSupabaseClient()
     mock_sb.auth.get_user = MagicMock(
         return_value=MockUserResponse(MockUser(org_id="test-org-123", org_role=org_role))
+    )
+    # 🔴 The admin gate (`settings_router._require_admin`) now reads the
+    # TRUSTED `public.noctus_users` row, never `user_metadata.org_role` —
+    # a user can rewrite their own metadata via `auth.updateUser({data})`,
+    # so that spoofable read is exactly what a security fix closed
+    # (2026-09-2x). Seed the row it actually reads, mirroring
+    # `test_auth_router.py`'s established pattern for the same trusted-DB
+    # check (`noctusai_seed.auth_router._require_org_admin`).
+    mock_sb.set_table_data(
+        "noctus_users",
+        [{"id": TEST_USER_ID, "org_id": "test-org-123", "org_role": org_role}],
     )
     return mock_sb
 

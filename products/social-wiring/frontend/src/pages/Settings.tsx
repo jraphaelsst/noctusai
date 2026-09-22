@@ -79,6 +79,8 @@ import {
 } from "@/hooks/useSettings";
 import { useMarcas, type Marca } from "@/hooks/useMarcas";
 import { rotuloTipo } from "@/lib/documentoTipos";
+import { useConflitosPendentes, useDecidirConflitoMutation } from "@/hooks/useCardHub";
+import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -2098,6 +2100,78 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
   );
 }
 
+/**
+ * "Pendências de dados" — the org-wide admin queue (owner directive,
+ * 2026-09-19): every `cliente_campo_conflitos` row still `pendente`,
+ * across every card, findable without opening each one. `ConflitosPendentesCard`
+ * (`components/card/**`, presentational) is the SAME component
+ * `ConflitosPendentesPanel` mounts per-card — `mostrarCliente` is the only
+ * thing this call site sets differently, since there is no single person
+ * already in view here.
+ */
+function PendenciasDadosTab() {
+  const conflitos = useConflitosPendentes();
+  const decidir = useDecidirConflitoMutation();
+
+  if (conflitos.isPending) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center p-12">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (conflitos.isError) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
+          <p className="text-sm text-muted-foreground">
+            Não foi possível carregar as pendências de confirmação.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => conflitos.refetch()}>
+            Tentar novamente
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!conflitos.data?.length) {
+    return (
+      <Card>
+        <CardContent className="p-12 text-center text-sm text-muted-foreground">
+          Nenhuma pendência de confirmação no momento.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <ConflitosPendentesCard
+      conflitos={conflitos.data}
+      isAdmin
+      mostrarCliente
+      decidingId={decidir.isPending ? decidir.variables?.conflitoId ?? null : null}
+      onDecidir={(conflitoId, aceitar) =>
+        decidir.mutate(
+          { conflitoId, aceitar },
+          {
+            onError: (e) =>
+              toast.error(
+                e instanceof Error && e.message
+                  ? e.message
+                  : "Não foi possível decidir a pendência.",
+              ),
+          },
+        )
+      }
+      testId="pendencias-dados-tab"
+    />
+  );
+}
+
   const { user } = useAuthStore();
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const isAdminOrDev =
@@ -2124,7 +2198,7 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
       <Tabs defaultValue="notifications" className="w-full">
         <TabsList
           className={`grid w-full ${
-            isAdminOrDev ? "grid-cols-6 sm:max-w-3xl" : "grid-cols-5 sm:max-w-2xl"
+            isAdminOrDev ? "grid-cols-7 sm:max-w-4xl" : "grid-cols-5 sm:max-w-2xl"
           }`}
         >
           <TabsTrigger value="imobiliaria">Imobiliária</TabsTrigger>
@@ -2132,6 +2206,12 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
           <TabsTrigger value="keys">Chaves API</TabsTrigger>
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
           <TabsTrigger value="retencao">Retenção</TabsTrigger>
+          {/* Owner/admin only — matches the backend's `decidir_conflito
+              _route` gate exactly (not "dev"), same terms as
+              `canEditClientesInactivity` below. */}
+          {canEditClientesInactivity && (
+            <TabsTrigger value="pendencias">Pendências</TabsTrigger>
+          )}
           {isAdminOrDev && (
             <TabsTrigger value="visibilidade">Visibilidade</TabsTrigger>
           )}
@@ -2159,6 +2239,11 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
         <TabsContent value="retencao" className="mt-6">
           <DocumentoRetencaoTab canEdit={canEditClientesInactivity} />
         </TabsContent>
+        {canEditClientesInactivity && (
+          <TabsContent value="pendencias" className="mt-6">
+            <PendenciasDadosTab />
+          </TabsContent>
+        )}
         {isAdminOrDev && (
           <TabsContent value="visibilidade" className="mt-6">
             <VisibilidadeTab />
