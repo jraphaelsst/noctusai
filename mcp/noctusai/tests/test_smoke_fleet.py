@@ -41,8 +41,11 @@ def test_all_healthy_exit_0():
 
 
 def test_one_backend_down_exit_1():
+    # port 8013 = igig, an ACTIVE product (deploy/fleet/active-scope.txt) —
+    # an asleep product's port would never be checked at all (see the
+    # skipped_asleep tests below), so it cannot stand in as "the one down".
     def fetcher(url: str) -> str:
-        return "FAIL" if ":8001/" in url else "200"
+        return "FAIL" if ":8013/" in url else "200"
 
     res = SF.smoke_fleet(fetch_status=fetcher, repo_root=str(REPO))
     assert res["status"] == "degraded"
@@ -50,7 +53,7 @@ def test_one_backend_down_exit_1():
     assert res["failed"] == 1
     assert res["passed"] == res["total"] - 1
     down = [b for b in res["backends"] if not b["ok"]]
-    assert len(down) == 1 and down[0]["port"] == "8001"
+    assert len(down) == 1 and down[0]["port"] == "8013"
 
 
 def test_non_200_counts_as_fail():
@@ -76,3 +79,61 @@ def test_missing_start_sh(tmp_path):
     assert res["ok"] is False
     assert res["status"] == "error"
     assert res["exit_code"] == 1
+
+
+# ── ASLEEP-product skip (deploy/fleet/active-scope.txt) ────────────
+
+
+def _make_fleet(tmp_path: Path, active: list[str]) -> Path:
+    """A synthetic repo_root with a 3-slug start.sh registry (two of which
+    are asleep) + an explicit active-scope.txt — hermetic, so this suite
+    never depends on the real fleet's current awake/asleep split."""
+    (tmp_path / "start.sh").write_text(
+        "#!/bin/bash\n"
+        "# BEGIN_PRODUCTS_REGISTRY\n"
+        "PRODUCTS=(\n"
+        '  "core:Core:8000:5173"\n'
+        '  "awake-one:Awake One:8001:5174"\n'
+        '  "asleep-one:Asleep One:8002:5175"\n'
+        ")\n"
+        "# END_PRODUCTS_REGISTRY\n"
+    )
+    fleet_dir = tmp_path / "deploy" / "fleet"
+    fleet_dir.mkdir(parents=True)
+    (fleet_dir / "active-scope.txt").write_text("\n".join(active) + "\n")
+    return tmp_path
+
+
+def test_asleep_backend_skipped_never_fetched(tmp_path):
+    root = _make_fleet(tmp_path, ["core", "awake-one"])  # asleep-one omitted
+    fetched: list[str] = []
+
+    def fetcher(url: str) -> str:
+        fetched.append(url)
+        return "200"
+
+    res = SF.smoke_fleet(fetch_status=fetcher, repo_root=str(root))
+    assert res["ok"] is True
+    assert {b["slug"] for b in res["backends"]} == {"core", "awake-one"}
+    assert res["skipped_asleep"] == ["asleep-one"]
+    assert not any(":8002/" in u for u in fetched)  # never even hit
+    assert res["total"] == 2
+
+
+def test_asleep_backend_down_does_not_degrade_the_sweep(tmp_path):
+    root = _make_fleet(tmp_path, ["core", "awake-one"])
+
+    def fetcher(url: str) -> str:
+        return "FAIL" if ":8002/" in url else "200"  # asleep-one's port down
+
+    res = SF.smoke_fleet(fetch_status=fetcher, repo_root=str(root))
+    assert res["status"] == "healthy"
+    assert res["exit_code"] == 0
+    assert res["skipped_asleep"] == ["asleep-one"]
+
+
+def test_all_active_reports_empty_skipped_asleep(tmp_path):
+    root = _make_fleet(tmp_path, ["core", "awake-one", "asleep-one"])
+    res = SF.smoke_fleet(fetch_status=lambda u: "200", repo_root=str(root))
+    assert res["skipped_asleep"] == []
+    assert {b["slug"] for b in res["backends"]} == {"core", "awake-one", "asleep-one"}

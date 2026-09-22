@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 from workspace import resolve_caller_root  # noqa: E402
 
+from .product_scope import filter_active  # noqa: E402
+
 # Products that don't have a frontend (backend-only). Skip in build sweeps
 # to avoid noisy "no package.json" errors. Empty today; populate if a
 # backend-only product is added.
@@ -191,8 +193,11 @@ def build_products(
     """Build N product frontends in parallel.
 
     Args:
-        slugs: explicit product slugs to build. If None, builds all (or
-            uses `changed_only` filter).
+        slugs: explicit product slugs to build. If None, builds all ACTIVE
+            products (or uses `changed_only` filter, also ACTIVE-only) —
+            see `product_scope.filter_active`. An explicitly-passed asleep
+            slug is still built (the caller may be deliberately waking one)
+            but is flagged in the result's `asleep_requested`.
         changed_only: when True + `slugs` is None, scope to products with
             changes since HEAD.
         repo_root: repo root override (test seam). When set, wins over
@@ -210,7 +215,12 @@ def build_products(
 
     Returns:
         `{"requested": [slug, ...], "results": [{...BuildResult.to_dict()},
-          ...], "total_duration_seconds": ..., "all_green": bool}`.
+          ...], "total_duration_seconds": ..., "all_green": bool,
+          "skipped_asleep": [slug, ...] (implicit modes, asleep products
+          dropped from an otherwise fleet-wide sweep — never silent),
+          "asleep_requested": [slug, ...] (explicit `slugs=`, an asleep one
+          was named on purpose and built anyway)}`. Both keys are present
+          only when non-empty.
 
     Raises:
         ValueError: ``worktree_path`` is given but does not look like a
@@ -223,13 +233,18 @@ def build_products(
         root = resolve_caller_root(worktree_path)
     else:
         root = REPO_ROOT
+    skipped_asleep: list[str] = []
+    asleep_requested: list[str] = []
     if slugs is None:
-        targets = _detect_changed_products(root) if changed_only else _list_all_product_slugs(root)
+        raw = _detect_changed_products(root) if changed_only else _list_all_product_slugs(root)
+        targets = filter_active(raw, root=root)
+        skipped_asleep = sorted(set(raw) - set(targets))
     else:
         targets = list(slugs)
+        asleep_requested = sorted(set(targets) - set(filter_active(targets, root=root)))
 
     if not targets:
-        return {
+        result: dict = {
             "requested": [],
             "results": [],
             "total_duration_seconds": 0.0,
@@ -239,6 +254,9 @@ def build_products(
                 "no buildable frontends found)."
             ),
         }
+        if skipped_asleep:
+            result["skipped_asleep"] = skipped_asleep
+        return result
 
     import time
     overall_start = time.time()
@@ -253,12 +271,17 @@ def build_products(
     order_index = {s: i for i, s in enumerate(targets)}
     results.sort(key=lambda r: order_index.get(r.product, len(targets)))
 
-    return {
+    result = {
         "requested": targets,
         "results": [r.to_dict() for r in results],
         "total_duration_seconds": round(overall_duration, 2),
         "all_green": all(r.success for r in results),
     }
+    if skipped_asleep:
+        result["skipped_asleep"] = skipped_asleep
+    if asleep_requested:
+        result["asleep_requested"] = asleep_requested
+    return result
 
 
 def register(server) -> None:

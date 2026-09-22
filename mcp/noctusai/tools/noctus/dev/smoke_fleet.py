@@ -25,6 +25,8 @@ from typing import Any, Callable
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
 
+from .product_scope import filter_active
+
 # Frontend smoke sample — verbatim from smoke-fleet.sh
 # (`for entry in "core:5173" "seed:8100"`). slug → frontend port.
 FRONTEND_SAMPLE: list[tuple[str, str]] = [("core", "5173"), ("seed", "8100")]
@@ -85,6 +87,13 @@ def smoke_fleet(
       • frontend sample (core:5173, seed:8100) is reported, NOT counted
         toward pass/fail (the script only sums backend fails).
       • empty registry ⇒ the script's `exit 1` + ERRO message.
+
+    The `start.sh` registry lists the WHOLE fleet, awake ∨ asleep — an
+    asleep product (`deploy/fleet/active-scope.txt`,
+    `product_scope.filter_active`) is never running, so hitting its
+    `/api/health` would always report a fail unrelated to the fleet's real
+    health. Asleep slugs are skipped for the healthy/degraded verdict and
+    named in `skipped_asleep`, never dropped silently.
     """
     fetch = fetch_status or _default_fetch_status
     if repo_root is not None:
@@ -110,9 +119,15 @@ def smoke_fleet(
             "exit_code": 1,
         }
 
+    registry_slugs = [entry[0] for entry in registry]
+    active_slugs = set(filter_active(registry_slugs, root=root))
+    skipped_asleep = sorted(s for s in registry_slugs if s not in active_slugs)
+
     backends: list[dict[str, Any]] = []
     fails = 0
     for slug, _name, bport, _fport in registry:
+        if slug not in active_slugs:
+            continue
         url = f"http://{host}:{bport}/api/health"
         status = fetch(url)
         ok = status == "200"
@@ -141,11 +156,12 @@ def smoke_fleet(
         "ok": True,
         "status": "healthy" if healthy else "degraded",
         "exit_code": 0 if healthy else 1,
-        "total": len(registry),
-        "passed": len(registry) - fails,
+        "total": len(backends),
+        "passed": len(backends) - fails,
         "failed": fails,
         "backends": backends,
         "frontends": frontends,
+        "skipped_asleep": skipped_asleep,
     }
 
 
@@ -154,9 +170,11 @@ def register(server) -> None:
         name="noctus.dev.smoke_fleet",
         description=(
             "Post-fleet-up smoke test (port of scripts/smoke-fleet.sh). "
-            "Hits /api/health on every backend in the start.sh PRODUCTS "
-            "registry + samples the core/seed frontends; aggregates "
-            "pass/fail. status='healthy' (every backend 200, exit 0) | "
+            "Hits /api/health on every ACTIVE backend in the start.sh "
+            "PRODUCTS registry (deploy/fleet/active-scope.txt — asleep "
+            "products skipped + named in skipped_asleep, never silently) "
+            "+ samples the core/seed frontends; aggregates pass/fail. "
+            "status='healthy' (every checked backend 200, exit 0) | "
             "'degraded' (≥1 failed, exit 1). Run AFTER ./start.sh; "
             "idempotent. Pass worktree_path when called from inside a git "
             "worktree. See KB § PATTERNS/containerization.md."

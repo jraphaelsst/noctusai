@@ -10,6 +10,8 @@ logger = logging.getLogger(__name__)
 from settings import REPO_ROOT, PRODUCTS_DIR, resolve_test_python  # noqa: E402  (path constants)
 from workspace import resolve_caller_root  # noqa: E402
 
+from .product_scope import filter_active, is_active  # noqa: E402
+
 
 def _products_dir_for(worktree_path: str | None) -> Path:
     """Resolve the `products/` tree this run is scoped to.
@@ -53,12 +55,22 @@ def run_product_tests(slug: str, timeout: int = 120, worktree_path: str | None =
     exists); `PYTHONPATH` is prepended with the resolved tree's own seed
     dirs so the code under test imports THAT tree's lib/framework, not the
     venv's editable-installed primary copy. The response always includes
-    `resolved_root` so the answer is never silently about the wrong tree."""
+    `resolved_root` so the answer is never silently about the wrong tree.
+
+    `slug` is run regardless of catalog `ativo` status — a direct call
+    names ONE product on purpose. An asleep one (`product_scope.is_active`)
+    still runs, flagged with `asleep: True` in the result — never silently
+    (the caller may be deliberately waking it). `run_all_tests` is the
+    fleet sweep that actually SKIPS asleep products."""
     products_dir = _products_dir_for(worktree_path)
     root = products_dir.parent
     backend = products_dir / slug / "backend"
+    asleep = not is_active(slug, root=root)
     if not (backend / "tests").exists():
-        return {"product": slug, "error": "no tests directory", "resolved_root": str(root)}
+        result: dict = {"product": slug, "error": "no tests directory", "resolved_root": str(root)}
+        if asleep:
+            result["asleep"] = True
+        return result
 
     env = {**os.environ, "PYTHONPATH": _worktree_pythonpath(root)}
     try:
@@ -77,7 +89,7 @@ def run_product_tests(slug: str, timeout: int = 120, worktree_path: str | None =
             m = re.search(r"(\d+) error", line)
             if m: errors = int(m.group(1))
 
-        return {
+        out: dict = {
             "product": slug,
             "passed": passed,
             "failed": failed,
@@ -89,49 +101,75 @@ def run_product_tests(slug: str, timeout: int = 120, worktree_path: str | None =
             "output": output[-2000:] if len(output) > 2000 else output,
             "resolved_root": str(root),
         }
+        if asleep:
+            out["asleep"] = True
+        return out
     except subprocess.TimeoutExpired:
         logger.warning("testing: pytest for %s timed out after %ds", slug, timeout)
-        return {"product": slug, "error": "timeout", "resolved_root": str(root)}
+        result = {"product": slug, "error": "timeout", "resolved_root": str(root)}
+        if asleep:
+            result["asleep"] = True
+        return result
     except Exception as e:
         logger.warning("testing: pytest for %s failed unexpectedly: %s", slug, e)
-        return {"product": slug, "error": str(e), "resolved_root": str(root)}
+        result = {"product": slug, "error": str(e), "resolved_root": str(root)}
+        if asleep:
+            result["asleep"] = True
+        return result
 
 
 def run_all_tests(timeout: int = 300, worktree_path: str | None = None) -> dict:
-    """Run tests for all products. See `run_product_tests` for `worktree_path`."""
+    """Run tests for all ACTIVE products (`product_scope.filter_active`) —
+    an asleep product (`deploy/fleet/active-scope.txt`) is skipped and
+    named in `skipped_asleep`, never silently dropped. See
+    `run_product_tests` for `worktree_path`; pass `slug=` there to still
+    run one asleep product on purpose."""
     products_dir = _products_dir_for(worktree_path)
+    root = products_dir.parent
+    candidates = sorted(
+        d.name for d in products_dir.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and (d / "backend" / "tests").exists()
+    )
+    active = set(filter_active(candidates, root=root))
+    skipped_asleep = sorted(set(candidates) - active)
+
     results = []
     total_passed = total_failed = 0
-
-    for d in sorted(products_dir.iterdir()):
-        if not d.is_dir() or d.name.startswith("."):
+    for slug in candidates:
+        if slug not in active:
             continue
-        if not (d / "backend" / "tests").exists():
-            continue
-        r = run_product_tests(d.name, timeout=timeout, worktree_path=worktree_path)
+        r = run_product_tests(slug, timeout=timeout, worktree_path=worktree_path)
         results.append(r)
         total_passed += r.get("passed", 0)
         total_failed += r.get("failed", 0)
 
-    return {
+    out = {
         "products": results,
         "total_passed": total_passed,
         "total_failed": total_failed,
         "all_green": total_failed == 0,
-        "resolved_root": str(products_dir.parent),
+        "resolved_root": str(root),
+        "skipped_asleep": skipped_asleep,
     }
+    return out
 
 
 def build_product_frontend(slug: str, timeout: int = 60, worktree_path: str | None = None) -> dict:
     """Build a product's frontend and return result. See `run_product_tests`
     for `worktree_path` — the same primary-default / caller-worktree-explicit
     resolution applies here (no interpreter/PYTHONPATH concern for a FE build;
-    only `cwd` scoping matters)."""
+    only `cwd` scoping matters). `slug` runs regardless of catalog `ativo`
+    status; an asleep one is flagged with `asleep: True`, never silently —
+    `build_all_frontends` is the fleet sweep that SKIPS asleep products."""
     products_dir = _products_dir_for(worktree_path)
     root = products_dir.parent
     frontend = products_dir / slug / "frontend"
+    asleep = not is_active(slug, root=root)
     if not frontend.exists():
-        return {"product": slug, "error": "no frontend directory", "resolved_root": str(root)}
+        result: dict = {"product": slug, "error": "no frontend directory", "resolved_root": str(root)}
+        if asleep:
+            result["asleep"] = True
+        return result
 
     try:
         result = subprocess.run(
@@ -140,35 +178,54 @@ def build_product_frontend(slug: str, timeout: int = 60, worktree_path: str | No
             capture_output=True, text=True, timeout=timeout,
         )
         success = "built in" in result.stdout.lower() or result.returncode == 0
-        return {
+        out: dict = {
             "product": slug,
             "success": success,
             "output": (result.stdout + result.stderr)[-1000:],
             "resolved_root": str(root),
         }
+        if asleep:
+            out["asleep"] = True
+        return out
     except subprocess.TimeoutExpired:
         logger.warning("testing: vite build for %s timed out after %ds", slug, timeout)
-        return {"product": slug, "error": "timeout", "resolved_root": str(root)}
+        result = {"product": slug, "error": "timeout", "resolved_root": str(root)}
+        if asleep:
+            result["asleep"] = True
+        return result
     except Exception as e:
         logger.warning("testing: vite build for %s failed unexpectedly: %s", slug, e)
-        return {"product": slug, "error": str(e), "resolved_root": str(root)}
+        result = {"product": slug, "error": str(e), "resolved_root": str(root)}
+        if asleep:
+            result["asleep"] = True
+        return result
 
 
 def build_all_frontends(timeout: int = 120, worktree_path: str | None = None) -> dict:
-    """Build all product frontends. See `run_product_tests` for `worktree_path`."""
+    """Build all ACTIVE product frontends (`product_scope.filter_active`) —
+    an asleep product is skipped and named in `skipped_asleep`, never
+    silently dropped. See `run_product_tests` for `worktree_path`; pass
+    `slug=` to `build_product_frontend` to still build one asleep product
+    on purpose."""
     products_dir = _products_dir_for(worktree_path)
-    results = []
-    for d in sorted(products_dir.iterdir()):
-        if not d.is_dir() or d.name.startswith("."):
-            continue
-        if not (d / "frontend" / "vite.config.ts").exists():
-            continue
-        results.append(build_product_frontend(d.name, timeout=timeout, worktree_path=worktree_path))
+    root = products_dir.parent
+    candidates = sorted(
+        d.name for d in products_dir.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and (d / "frontend" / "vite.config.ts").exists()
+    )
+    active = set(filter_active(candidates, root=root))
+    skipped_asleep = sorted(set(candidates) - active)
+
+    results = [
+        build_product_frontend(slug, timeout=timeout, worktree_path=worktree_path)
+        for slug in candidates if slug in active
+    ]
 
     return {
         "products": results,
         "all_success": all(r.get("success", False) for r in results),
-        "resolved_root": str(products_dir.parent),
+        "resolved_root": str(root),
+        "skipped_asleep": skipped_asleep,
     }
 
 

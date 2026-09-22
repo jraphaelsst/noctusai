@@ -133,3 +133,93 @@ class TestViteBuildWorktreeScoping:
         assert captured["cwd"] == str(wt / "products" / "alpha" / "frontend")
         assert r["resolved_root"] == str(wt)
         assert r["success"] is True
+
+
+# ── ASLEEP-product skip (deploy/fleet/active-scope.txt) ────────────
+
+
+def _write_active_scope(root: Path, active: list[str]) -> None:
+    fleet_dir = root / "deploy" / "fleet"
+    fleet_dir.mkdir(parents=True, exist_ok=True)
+    (fleet_dir / "active-scope.txt").write_text("\n".join(active) + "\n")
+
+
+class TestAsleepProductSkip:
+    def _fake_run_pytest(self, cmd, cwd, capture_output, text, timeout, env):
+        return _FakeCompletedProcess(stdout="1 passed")
+
+    def _fake_run_vite(self, cmd, cwd, capture_output, text, timeout):
+        return _FakeCompletedProcess(stdout="built in 10ms")
+
+    def test_run_all_tests_skips_asleep_product(self, tmp_path, monkeypatch):
+        wt = _make_fake_worktree(tmp_path, "wt", slug="awake-one")
+        (wt / "products" / "asleep-one" / "backend" / "tests").mkdir(parents=True)
+        _write_active_scope(wt, ["awake-one"])
+
+        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        r = T.run_all_tests(worktree_path=str(wt))
+
+        assert [p["product"] for p in r["products"]] == ["awake-one"]
+        assert r["skipped_asleep"] == ["asleep-one"]
+
+    def test_run_all_tests_no_scope_file_checks_everyone(self, tmp_path, monkeypatch):
+        """Missing active-scope.txt fails toward COVERAGE — nobody is
+        silently dropped just because the scope file hasn't been generated."""
+        wt = _make_fake_worktree(tmp_path, "wt", slug="alpha")
+        (wt / "products" / "beta" / "backend" / "tests").mkdir(parents=True)
+
+        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        r = T.run_all_tests(worktree_path=str(wt))
+
+        assert {p["product"] for p in r["products"]} == {"alpha", "beta"}
+        assert r["skipped_asleep"] == []
+
+    def test_run_product_tests_explicit_asleep_still_runs_but_flagged(self, tmp_path, monkeypatch):
+        wt = _make_fake_worktree(tmp_path, "wt", slug="asleep-one")
+        _write_active_scope(wt, ["core"])  # asleep-one not active
+
+        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        r = T.run_product_tests("asleep-one", worktree_path=str(wt))
+
+        assert r["passed"] == 1
+        assert r["asleep"] is True
+
+    def test_run_product_tests_active_product_no_asleep_flag(self, tmp_path, monkeypatch):
+        wt = _make_fake_worktree(tmp_path, "wt", slug="awake-one")
+        _write_active_scope(wt, ["awake-one"])
+
+        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        r = T.run_product_tests("awake-one", worktree_path=str(wt))
+
+        assert "asleep" not in r
+
+    def test_build_all_frontends_skips_asleep_product(self, tmp_path, monkeypatch):
+        wt = tmp_path / "wt"
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: /nowhere\n")
+        (wt / ".noctusai-workspace").write_text("test\n")
+        for slug in ("awake-one", "asleep-one"):
+            fe = wt / "products" / slug / "frontend"
+            fe.mkdir(parents=True)
+            (fe / "vite.config.ts").write_text("export default {}")
+        _write_active_scope(wt, ["awake-one"])
+
+        monkeypatch.setattr(T.subprocess, "run", self._fake_run_vite)
+        r = T.build_all_frontends(worktree_path=str(wt))
+
+        assert [p["product"] for p in r["products"]] == ["awake-one"]
+        assert r["skipped_asleep"] == ["asleep-one"]
+
+    def test_build_product_frontend_explicit_asleep_still_runs_but_flagged(self, tmp_path, monkeypatch):
+        wt = tmp_path / "wt"
+        wt.mkdir(parents=True)
+        (wt / ".git").write_text("gitdir: /nowhere\n")
+        (wt / ".noctusai-workspace").write_text("test\n")
+        (wt / "products" / "asleep-one" / "frontend").mkdir(parents=True)
+        _write_active_scope(wt, ["core"])
+
+        monkeypatch.setattr(T.subprocess, "run", self._fake_run_vite)
+        r = T.build_product_frontend("asleep-one", worktree_path=str(wt))
+
+        assert r["success"] is True
+        assert r["asleep"] is True

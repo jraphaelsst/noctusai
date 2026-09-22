@@ -45,6 +45,7 @@ from workspace import resolve_caller_root
 from . import check_framework_deps as _cfd
 from . import phase_learnings as _pl
 from . import toolkit_freshness as _toolkit_freshness
+from .product_scope import filter_active
 
 # Default deploy-relevant checks, in run order. Each is (name, kind).
 DEFAULT_CHECKS: list[str] = [
@@ -765,13 +766,20 @@ def _default_run_check(
                 "prod_config_parity SKIPPED — empty product roster "
                 "(start.sh registry unreadable from here)."
             )
+        # start.sh lists the WHOLE fleet, awake ∨ asleep. An asleep product
+        # never gets a prod URL provisioned (deploy/fleet/active-scope.txt),
+        # so auditing it here would fail on a product nobody deployed —
+        # active only, skipped ones named, never dropped silently.
+        active_roster = filter_active(roster, root=root)
+        skipped_asleep = sorted(set(roster) - set(active_roster))
         env = _parse_env_file(env_path.read_text(encoding="utf-8"))
-        audit = audit_prod_config_parity(roster, env)
+        audit = audit_prod_config_parity(active_roster, env)
+        skipped_note = f" (skipped asleep: {', '.join(skipped_asleep)})" if skipped_asleep else ""
         if audit["violations"]:
-            return False, "prod-config parity VIOLATED: " + "; ".join(audit["violations"])
+            return False, "prod-config parity VIOLATED: " + "; ".join(audit["violations"]) + skipped_note
         return True, (
             f"prod-config parity ok — {audit['checked']} product(s) resolve a "
-            f"non-localhost prod URL ({env_path.name})"
+            f"non-localhost prod URL ({env_path.name}){skipped_note}"
         )
     if check == "required_prod_env_present":
         # Two sources folded together (the same two the boot guard folds):
@@ -838,13 +846,19 @@ def _default_run_check(
                 "cors_roster_complete SKIPPED — empty product roster "
                 "(start.sh registry unreadable from here)."
             )
+        # Same active-only reasoning as prod_config_parity above: an asleep
+        # product has no CORS origin to resolve by design, so it must not
+        # drag this backstop down — skipped ones are named, never silent.
+        active_roster = filter_active(roster, root=root)
+        skipped_asleep = sorted(set(roster) - set(active_roster))
         env = _parse_env_file(env_path.read_text(encoding="utf-8"))
-        audit = audit_cors_roster_complete(roster, env)
+        audit = audit_cors_roster_complete(active_roster, env)
+        skipped_note = f" (skipped asleep: {', '.join(skipped_asleep)})" if skipped_asleep else ""
         if audit["violations"]:
-            return False, "cors_roster_complete VIOLATED: " + "; ".join(audit["violations"])
+            return False, "cors_roster_complete VIOLATED: " + "; ".join(audit["violations"]) + skipped_note
         return True, (
             f"cors_roster_complete ok — {audit['checked']} product(s) have a "
-            f"resolvable CORS origin ({env_path.name})"
+            f"resolvable CORS origin ({env_path.name}){skipped_note}"
         )
     if check == "schema_exposure":
         # Scoped to THIS product only (products=[product] bypasses the

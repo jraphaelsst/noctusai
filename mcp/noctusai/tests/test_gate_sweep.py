@@ -204,6 +204,69 @@ def test_build_gate_specs_seed_fleet_wide_includes_seed_roots_and_every_product(
     assert "pytest:b-product" in names and "vite_build:b-product" not in names
 
 
+# ── ASLEEP-product skip (deploy/fleet/active-scope.txt) ────────────
+
+
+def _write_active_scope(root: Path, active: list[str]) -> None:
+    fleet_dir = root / "deploy" / "fleet"
+    fleet_dir.mkdir(parents=True, exist_ok=True)
+    (fleet_dir / "active-scope.txt").write_text("\n".join(active) + "\n")
+
+
+def test_build_gate_specs_seed_fleet_wide_skips_asleep_product(tmp_path):
+    (tmp_path / "seed" / "lib" / "backend" / "tests").mkdir(parents=True)
+    _make_product(tmp_path, "awake-one")
+    _make_product(tmp_path, "asleep-one")
+    _write_active_scope(tmp_path, ["awake-one"])  # asleep-one omitted
+
+    scope = GS._derive_scope(["seed/lib/backend/noctusai_lib/x.py"])
+    specs = GS._build_gate_specs(tmp_path, scope)
+    names = {s.gate for s in specs}
+
+    assert "pytest:awake-one" in names and "vite_build:awake-one" in names
+    assert "pytest:asleep-one" not in names and "vite_build:asleep-one" not in names
+    assert scope["skipped_asleep"] == ["asleep-one"]
+
+
+def test_build_gate_specs_seed_fleet_wide_no_scope_file_checks_everyone(tmp_path):
+    """Missing active-scope.txt fails toward COVERAGE — every product still
+    runs, per `product_scope.filter_active`'s documented posture."""
+    (tmp_path / "seed" / "lib" / "backend" / "tests").mkdir(parents=True)
+    _make_product(tmp_path, "a-product")
+
+    scope = GS._derive_scope(["seed/lib/backend/noctusai_lib/x.py"])
+    specs = GS._build_gate_specs(tmp_path, scope)
+    names = {s.gate for s in specs}
+
+    assert "pytest:a-product" in names
+    assert scope["skipped_asleep"] == []
+
+
+def test_build_gate_specs_explicit_asleep_product_still_runs_but_flagged(tmp_path):
+    """A diff that actually touches an asleep product's files is an
+    explicit signal — the gate still runs, but the sweep flags it (the
+    user may be deliberately waking it)."""
+    _make_product(tmp_path, "asleep-one")
+    _write_active_scope(tmp_path, ["core"])  # asleep-one NOT active
+
+    scope = GS._derive_scope(["products/asleep-one/backend/app/main.py"])
+    specs = GS._build_gate_specs(tmp_path, scope)
+    names = {s.gate for s in specs}
+
+    assert "pytest:asleep-one" in names  # still runs — never silently dropped
+    assert scope["asleep_requested"] == ["asleep-one"]
+
+
+def test_build_gate_specs_explicit_active_product_no_flag(tmp_path):
+    _make_product(tmp_path, "awake-one")
+    _write_active_scope(tmp_path, ["awake-one"])
+
+    scope = GS._derive_scope(["products/awake-one/backend/app/main.py"])
+    GS._build_gate_specs(tmp_path, scope)
+
+    assert "asleep_requested" not in scope
+
+
 # ── verdict ────────────────────────────────────────────────────────
 
 

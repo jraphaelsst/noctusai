@@ -88,6 +88,7 @@ from .migrate_product import (
     SubprocessGitRunner,
     _check_tree_staleness,
 )
+from .product_scope import filter_active
 
 # ---------------------------------------------------------------------------
 # Scope derivation — a changed path buckets into exactly one gate-family.
@@ -191,6 +192,9 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
         "doc_files": sorted(doc_files),
         "unmapped_files": sorted(other_files),
         "claude_md_touched": "CLAUDE.md" in files,
+        # Populated by `_build_gate_specs` — ASLEEP products dropped from a
+        # `seed_fleet_wide` fan-out (never silently; see `product_scope.py`).
+        "skipped_asleep": [],
     }
 
 
@@ -399,9 +403,25 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
 
     if scope["seed_fleet_wide"]:
         specs.extend(_seed_gate_specs(root, py))
-        for slug in _all_product_slugs(root):
+        # A seed change fans out to every product's own gates — but only
+        # the ACTIVE (awake) ones. An asleep product (dormant_slugs, per
+        # deploy/fleet/active-scope.txt) is surfaced in `skipped_asleep`,
+        # never dropped silently (see product_scope.py's module docstring).
+        all_slugs = _all_product_slugs(root)
+        active_slugs = filter_active(all_slugs, root=root)
+        scope["skipped_asleep"] = sorted(set(all_slugs) - set(active_slugs))
+        for slug in active_slugs:
             specs.extend(_product_gate_specs(root, slug, py))
     else:
+        # Products here come from an ACTUAL diff under products/<slug>/ —
+        # already an explicit signal (someone is touching that product's
+        # code). Never filtered out, but an asleep one is flagged: the
+        # user may be deliberately waking it.
+        asleep_requested = sorted(
+            set(scope["products"]) - set(filter_active(scope["products"], root=root))
+        )
+        if asleep_requested:
+            scope["asleep_requested"] = asleep_requested
         for slug in scope["products"]:
             specs.extend(_product_gate_specs(root, slug, py))
 

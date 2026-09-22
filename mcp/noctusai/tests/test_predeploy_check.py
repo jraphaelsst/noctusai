@@ -402,6 +402,39 @@ def test_prod_config_parity_runner_audits_snapshot_and_blocks(tmp_path, monkeypa
     assert ok is False and "erp-imobiliario" in out and "VIOLATED" in out
 
 
+def _write_active_scope(root: Path, active: list[str]) -> None:
+    """A minimal `deploy/fleet/active-scope.txt` — the ASLEEP-skip source
+    of truth (`product_scope.filter_active`). Absent from most fixtures
+    here on purpose (missing file ⇒ fail toward coverage, everyone active
+    — the default the other predeploy tests already rely on)."""
+    fleet_dir = root / "deploy" / "fleet"
+    fleet_dir.mkdir(parents=True, exist_ok=True)
+    (fleet_dir / "active-scope.txt").write_text("\n".join(active) + "\n")
+
+
+def test_prod_config_parity_runner_skips_asleep_roster_slug(tmp_path, monkeypatch):
+    """erp-imobiliario is on the start.sh roster but ASLEEP (not in
+    active-scope.txt) — it must not block prod_config_parity, and the skip
+    must be named in the message, never silent."""
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    (tmp_path / ".env.prod").write_text("PRODUCT_URL_CORE=https://noctusai.com\n")
+    _write_active_scope(tmp_path, ["core"])
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: ["core", "erp-imobiliario"])
+    ok, out = PC._default_run_check("prod_config_parity", "core", tmp_path)
+    assert ok is True and "parity ok" in out
+    assert "erp-imobiliario" in out and "skipped asleep" in out
+
+
+def test_prod_config_parity_runner_still_active_only_checked_count(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOCTUS_PROD_ENV_FILE", raising=False)
+    (tmp_path / ".env.prod").write_text("PRODUCT_URL_CORE=https://noctusai.com\n")
+    _write_active_scope(tmp_path, ["core"])
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: ["core", "erp-imobiliario"])
+    ok, out = PC._default_run_check("prod_config_parity", "core", tmp_path)
+    assert ok is True
+    assert "1 product(s)" in out  # only 'core' actually audited
+
+
 def test_prod_config_parity_blocks_and_classifies_via_injected_run_check():
     r = PC.predeploy_check(
         "core",
@@ -523,6 +556,34 @@ def test_cors_roster_runner_blocks_on_missing_origin(monkeypatch, tmp_path):
     ok, msg = PC._default_run_check("cors_roster_complete", "core", tmp_path)
     assert ok is False
     assert "orbity" in msg
+
+
+def test_cors_roster_runner_skips_asleep_roster_slug(tmp_path, monkeypatch):
+    """orbity active, erp-imobiliario asleep — the roster slug with no
+    resolvable CORS origin is asleep, so it must not VIOLATE the backstop."""
+    snap = tmp_path / ".env.prod"
+    snap.write_text("PRODUCT_URL_CORE=https://noctusai.com\n")
+    _write_active_scope(tmp_path, ["core"])
+    monkeypatch.setattr(PC, "_load_roster_slugs", lambda root: ["core", "erp-imobiliario"])
+    ok, msg = PC._default_run_check("cors_roster_complete", "core", tmp_path)
+    assert ok is True
+    assert "erp-imobiliario" not in msg.split("skipped asleep")[0]  # not a violation
+    assert "skipped asleep" in msg and "erp-imobiliario" in msg
+
+
+def test_cors_roster_runner_asleep_slug_does_not_mask_a_real_violation(tmp_path, monkeypatch):
+    """An asleep roster slug is skipped, but an ACTIVE slug missing its CORS
+    origin must still VIOLATE — asleep-skip is not a blanket pass."""
+    snap = tmp_path / ".env.prod"
+    snap.write_text("PRODUCT_URL_CORE=https://noctusai.com\n")  # orbity has none
+    _write_active_scope(tmp_path, ["core", "orbity"])
+    monkeypatch.setattr(
+        PC, "_load_roster_slugs", lambda root: ["core", "orbity", "erp-imobiliario"]
+    )
+    ok, msg = PC._default_run_check("cors_roster_complete", "core", tmp_path)
+    assert ok is False
+    assert "orbity" in msg and "VIOLATED" in msg
+    assert "erp-imobiliario" not in msg.split("skipped asleep")[0]
 
 
 def test_load_roster_slugs_returns_list_against_real_tree():
