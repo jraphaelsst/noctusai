@@ -11,6 +11,7 @@ import {
   StatusToggle,
   type DeployScope,
 } from '../../components/ProductStateControls';
+import { useProductStateActions } from '../../hooks/useProductStateActions';
 
 interface Product {
   id: string;
@@ -119,10 +120,11 @@ export function AdminProducts() {
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [productForm, setProductForm] = useState(EMPTY_PRODUCT_FORM);
-  // Per-row in-flight guard: the guide toggles write to the server, so the row
-  // being mutated disables its own controls rather than letting a double-click
-  // race two transitions against each other.
-  const [busyId, setBusyId] = useState<string | null>(null);
+  // Per-row in-flight guard for the colour picker (a PATCH, a different
+  // concern from the activation/deploy-scope toggles below — see
+  // `handleSetColor`, left as its own mutation rather than folded into the
+  // shared hook).
+  const [colorBusyId, setColorBusyId] = useState<string | null>(null);
 
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productLicenses, setProductLicenses] = useState<License[]>([]);
@@ -251,39 +253,18 @@ export function AdminProducts() {
     }
   }
 
-  async function handleSetActivation(id: string, ativo: boolean) {
-    setBusyId(id);
-    try {
-      await api.post(`/api/products/${id}/activation`, { ativo });
-      await refreshAfterMutation(id);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function handleSetDeployScope(id: string, deploy_scope: DeployScope) {
-    setBusyId(id);
-    try {
-      await api.post(`/api/products/${id}/deploy-scope`, { deploy_scope });
-      await refreshAfterMutation(id);
-    } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setBusyId(null);
-    }
-  }
+  const { busyId, setActivation: handleSetActivation, setDeployScope: handleSetDeployScope } =
+    useProductStateActions(refreshAfterMutation);
 
   async function handleSetColor(id: string, cor: string) {
-    setBusyId(id);
+    setColorBusyId(id);
     try {
       await api.patch(`/api/products/${id}`, { cor });
       await refreshAfterMutation(id);
     } catch (err: any) {
       alert(err.message);
     } finally {
-      setBusyId(null);
+      setColorBusyId(null);
     }
   }
 
@@ -521,13 +502,13 @@ export function AdminProducts() {
               ativo={selectedProduct.ativo}
               deployScope={selectedProduct.deploy_scope}
               busy={busyId === selectedProduct.id}
-              onToggle={next => handleSetActivation(selectedProduct.id, next)}
+              onToggle={next => handleSetActivation(selectedProduct, next)}
             />
             <DeployScopeToggle
               ativo={selectedProduct.ativo}
               deployScope={selectedProduct.deploy_scope}
               busy={busyId === selectedProduct.id}
-              onToggle={next => handleSetDeployScope(selectedProduct.id, next)}
+              onToggle={next => handleSetDeployScope(selectedProduct, next)}
             />
             <EditIconButton onClick={() => openEditProduct(selectedProduct)} />
           </div>
@@ -887,7 +868,7 @@ export function AdminProducts() {
                         <td className="px-4 py-3">
                           <ColorPickerButton
                             cor={product.cor}
-                            busy={busyId === product.id}
+                            busy={colorBusyId === product.id}
                             onPick={hex => handleSetColor(product.id, hex)}
                           />
                         </td>
@@ -896,7 +877,7 @@ export function AdminProducts() {
                             ativo={product.ativo}
                             deployScope={product.deploy_scope}
                             busy={busyId === product.id}
-                            onToggle={next => handleSetActivation(product.id, next)}
+                            onToggle={next => handleSetActivation(product, next)}
                           />
                         </td>
                         <td className="px-4 py-3">
@@ -904,7 +885,7 @@ export function AdminProducts() {
                             ativo={product.ativo}
                             deployScope={product.deploy_scope}
                             busy={busyId === product.id}
-                            onToggle={next => handleSetDeployScope(product.id, next)}
+                            onToggle={next => handleSetDeployScope(product, next)}
                           />
                         </td>
                         <td className="px-4 py-3 text-foreground">{licenseCount(product.id)}</td>

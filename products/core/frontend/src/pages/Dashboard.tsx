@@ -11,6 +11,7 @@ import {
   StatusToggle,
   type DeployScope,
 } from '../components/ProductStateControls';
+import { useProductStateActions } from '../hooks/useProductStateActions';
 
 interface Product {
   id: string;
@@ -42,8 +43,6 @@ export function Dashboard() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState<string | null>(null);
-  // Per-card in-flight guard for the admin working-guide toggles.
-  const [busySlug, setBusySlug] = useState<string | null>(null);
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
 
@@ -80,31 +79,17 @@ export function Dashboard() {
     fetchData();
   }, [authLoading, user]);
 
-  /** Apply a working-guide change from a card, then re-read `/api/auth/me` so
-   *  the grid reflects what the server actually persisted (a deactivation also
-   *  demotes the scope, and a deactivated product drops out of the list). */
-  async function applyGuideChange(product: Product, call: () => Promise<unknown>) {
-    setBusySlug(product.slug);
-    try {
-      await call();
-      const meRes = await api.get('/api/auth/me');
-      setProducts(meRes.products || []);
-    } catch (err: any) {
-      toast.error(err?.message || 'Falha ao atualizar o produto');
-    } finally {
-      setBusySlug(null);
-    }
+  /** Re-read `/api/auth/me` after a working-guide mutation so the grid
+   *  reflects what the server actually persisted (a deactivation also
+   *  demotes the scope, and a deactivated product drops out of the list
+   *  for non-admins). */
+  async function refreshProducts() {
+    const meRes = await api.get('/api/auth/me');
+    setProducts(meRes.products || []);
   }
 
-  const setActivation = (product: Product, ativo: boolean) =>
-    applyGuideChange(product, () =>
-      api.post(`/api/products/${product.id}/activation`, { ativo }),
-    );
-
-  const setScope = (product: Product, deploy_scope: DeployScope) =>
-    applyGuideChange(product, () =>
-      api.post(`/api/products/${product.id}/deploy-scope`, { deploy_scope }),
-    );
+  const { busyId, setActivation, setDeployScope: setScope } =
+    useProductStateActions(refreshProducts);
 
   async function launchProduct(product: Product) {
     if (!product.has_access) return;
@@ -299,13 +284,13 @@ export function Dashboard() {
                   <DeployScopeToggle
                     ativo={product.ativo !== false}
                     deployScope={product.deploy_scope ?? 'dev'}
-                    busy={busySlug === product.slug}
+                    busy={busyId === product.id}
                     onToggle={next => setScope(product, next)}
                   />
                   <StatusToggle
                     ativo={product.ativo !== false}
                     deployScope={product.deploy_scope ?? 'dev'}
-                    busy={busySlug === product.slug}
+                    busy={busyId === product.id}
                     size="xs"
                     onToggle={next => setActivation(product, next)}
                   />
