@@ -5,7 +5,8 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.routers.studio_agents_router import get_eval_gate_dep, get_knowledge_catalog_dep
-from app.routers.studio_evals_router import get_eval_scheduler_dep
+from app.routers.studio_agents_router import get_compiled_hash_provider
+from app.routers.studio_evals_router import get_current_hash_dep, get_eval_scheduler_dep
 from app.studio.wiring import studio_eval_gate, studio_eval_scheduler, studio_knowledge_catalog
 from tests.routers.conftest import install_runtime, wait_until
 
@@ -28,12 +29,13 @@ def test_main_app_exposes_the_studio_routes():
         assert expected in paths, expected
 
 
-def test_the_three_seams_are_bound_in_production():
+def test_the_four_seams_are_bound_in_production():
     from app.main import app
 
     assert app.dependency_overrides[get_eval_gate_dep] is studio_eval_gate
     assert app.dependency_overrides[get_knowledge_catalog_dep] is studio_knowledge_catalog
     assert app.dependency_overrides[get_eval_scheduler_dep] is studio_eval_scheduler
+    assert app.dependency_overrides[get_current_hash_dep] is get_compiled_hash_provider
 
 
 class TestThroughTheRealBindings:
@@ -56,8 +58,6 @@ class TestThroughTheRealBindings:
             {"chave": "id", "titulo": "Id", "ordem": 1, "conteudo": "Você é a Isa.", "ativo": True}]})
         agent = rt.studio.get_agent(rt.org_id, "isa")
         draft = rt.studio.get_draft(rt.org_id, agent.id)
-        # BE-KE's eval store reads the version's hash through its own ref.
-        rt.evals.seed_version(rt.org_id, agent.id, draft.id, compiled_hash=draft.compiled_hash)
         case = rt.post("/api/studio/agents/isa/evals/cases", json={
             "slug": "reels", "titulo": "Reels", "entrada": "Crie um roteiro",
             "criterios": {"deve": ["ter gancho"], "nao_deve": []}})

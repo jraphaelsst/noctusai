@@ -1,16 +1,17 @@
 """Production bindings of the Agent Studio seams (contract §J2; slice BE-RT).
 
-The wave-1 routers declare three FAIL-CLOSED dependencies (503 until bound):
+The wave-1 routers declare four FAIL-CLOSED dependencies (503 until bound):
 ``get_eval_gate_dep`` / ``get_knowledge_catalog_dep`` (BE-DEF,
-``studio_agents_router``) and ``get_eval_scheduler_dep`` (BE-KE,
-``studio_evals_router``). :func:`install_studio_seams` binds them on the
+``studio_agents_router``) and ``get_eval_scheduler_dep`` /
+``get_current_hash_dep`` (BE-KE, ``studio_evals_router``). :func:`install_studio_seams` binds them on the
 product app through ``app.dependency_overrides`` — the seam those modules
 document for exactly this — to:
 
-* the gate → BE-KE's ``SupabaseEvalGate`` (``FakeEvalGate`` when no Supabase
-  service-role key is configured, like every other Fake/Real factory here);
+* the gate → BE-KE's ``get_eval_gate`` (``SupabaseEvalGate``, or
+  ``FakeEvalGate`` when no Supabase service-role key is configured);
 * the catalog → :class:`~app.studio.catalog.StoreKnowledgeCatalog` over the
   SAME knowledge-store dependency the knowledge routes use;
+* the run hash → ``get_compiled_hash_provider`` (the version compiled now);
 * the scheduler → a closure that starts :class:`~app.studio.evals.EvalRunner`
   for the caller's org, built from the same dependency instances the route
   resolved, with its task strongly referenced on ``app.state``.
@@ -33,11 +34,16 @@ from app.dependencies import (
     require_admin,
 )
 from app.routers.studio_agents_router import (
+    get_compiled_hash_provider,
     get_eval_gate_dep,
     get_knowledge_catalog_dep,
     get_studio_definition_store_dep,
 )
-from app.routers.studio_evals_router import get_eval_scheduler_dep, get_eval_store_dep
+from app.routers.studio_evals_router import (
+    get_current_hash_dep,
+    get_eval_scheduler_dep,
+    get_eval_store_dep,
+)
 from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
 from app.studio.catalog import StoreKnowledgeCatalog
 from noctusai_lib.api.auth.session import AuthContext
@@ -69,11 +75,10 @@ def get_eval_judge_dep():
 
 
 def studio_eval_gate():
+    """BE-KE's factory already returns ``FakeEvalGate`` without a service key."""
     from app.stores.studio_evals import get_eval_gate
-    from app.studio.models import FakeEvalGate
 
-    gate = get_eval_gate(settings)
-    return gate if gate is not None else FakeEvalGate()
+    return get_eval_gate(settings)
 
 
 def studio_knowledge_catalog(knowledge=Depends(get_studio_knowledge_store_dep)) -> StoreKnowledgeCatalog:
@@ -123,6 +128,9 @@ def studio_seam_bindings() -> dict[Any, Any]:
         get_eval_gate_dep: studio_eval_gate,
         get_knowledge_catalog_dep: studio_knowledge_catalog,
         get_eval_scheduler_dep: studio_eval_scheduler,
+        # The hash a new eval run is stamped with = the version compiled NOW
+        # by THE compiler (fail-closed 503 until bound).
+        get_current_hash_dep: get_compiled_hash_provider,
     }
 
 

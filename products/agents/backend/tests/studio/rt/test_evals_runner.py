@@ -12,7 +12,7 @@ import pytest
 
 from app.runtime.fake_runtime import FakeAgentRuntime
 from app.stores._util import utcnow
-from app.stores.studio_definitions import SectionInput
+from app.stores.studio_definitions import FakeStudioDefinitionStore, SectionInput
 from app.stores.studio_eval_runs import FakeEvalRunWriter
 from app.stores.studio_evals import EvalCaseInput, FakeEvalStore
 from app.stores.studio_knowledge import FakeStudioKnowledgeStore
@@ -27,7 +27,7 @@ from app.studio.evals import (
     sweep_orphaned_runs,
 )
 from app.studio.spec import StudioTurnTarget, build_studio_spec
-from tests.studio.rt.fakes import FakeStudioStore, ScriptedJudge
+from tests.studio.rt.fakes import ScriptedJudge
 
 ORG = uuid4()
 USER = uuid4()
@@ -35,7 +35,7 @@ USER = uuid4()
 
 class World:
     def __init__(self, *, cases=(("c1", "Pergunta 1", {"deve": ["ser claro"], "nao_deve": ["inventar dados"]}),), runtime=None, judge=None):
-        self.defs = FakeStudioStore()
+        self.defs = FakeStudioDefinitionStore()
         self.kb = FakeStudioKnowledgeStore()
         self.catalog = StoreKnowledgeCatalog(self.kb)
         self.evals = FakeEvalStore()

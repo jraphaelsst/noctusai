@@ -30,7 +30,7 @@ from app.stores.transcripts import FakeTranscriptStore
 from app.studio.tools import build_studio_tools, studio_allowed_tools
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 from tests.runtime.test_run_turn_slots import _assistant, _result, _ScriptedTransport, _slot
-from tests.studio.rt.fakes import FakeStudioStore
+from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.stores.studio_knowledge import FakeStudioKnowledgeStore
 
 STUDIO_FOUR = [
@@ -179,7 +179,7 @@ class TestStudioCanUseTool:
 def test_build_studio_tools_is_an_sdk_server_named_studio():
     cfg = build_studio_tools(
         org_id=uuid4(), agent_id=uuid4(), version_id=uuid4(), knowledge_enabled=True,
-        definitions=FakeStudioStore(), knowledge=FakeStudioKnowledgeStore(),
+        definitions=FakeStudioDefinitionStore(), knowledge=FakeStudioKnowledgeStore(),
     )
     assert cfg["type"] == "sdk" and cfg["name"] == "studio"
 

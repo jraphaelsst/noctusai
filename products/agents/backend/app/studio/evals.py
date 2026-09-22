@@ -329,6 +329,7 @@ class EvalRunner:
                 persist=False,
             )
         except StudioSpecError as exc:
+            logger.warning("agents.eval.spec_refused org_id=%s run_id=%s code=%s", org_id, run.id, exc.code)
             self._runs.finish_run(org_id, run.id, status="falhou", aprovados=0, score=None, erro=exc.code)
             return
         if spec.compiled_hash != run.compiled_hash:
@@ -353,10 +354,9 @@ class EvalRunner:
             while True:
                 if self._runs.get_run_status(org_id, run.id) != "executando":
                     return  # cancelled (or failed elsewhere): pick no new case
-                try:
-                    result = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    return
+                if queue.empty():
+                    return  # every case taken (no await between check and take)
+                result = queue.get_nowait()
                 outcome = await self._run_case(org_id, run, spec, result.case_id)
                 if outcome is not None:
                     outcomes.append(outcome)
@@ -401,6 +401,7 @@ class EvalRunner:
         try:
             saida = await self._agent_answer(org_id, run, spec, case)
         except _CaseError as exc:
+            logger.warning("agents.eval.case_no_answer run_id=%s case_id=%s: %s", run.id, case_id, exc)
             return _erro(str(exc))
         except Exception:
             logger.exception("agents.eval.turn_failed run_id=%s case_id=%s", run.id, case_id)
@@ -413,6 +414,7 @@ class EvalRunner:
             )
             passed, score = score_case(verdict)
         except JudgeError as exc:
+            logger.warning("agents.eval.judge_unusable run_id=%s case_id=%s: %s", run.id, case_id, exc)
             return _erro(f"Falha do avaliador: {exc}", saida)
         except Exception:
             logger.exception("agents.eval.judge_failed run_id=%s case_id=%s", run.id, case_id)

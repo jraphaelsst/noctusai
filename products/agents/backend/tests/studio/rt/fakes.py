@@ -6,47 +6,25 @@ from typing import Any
 from uuid import UUID
 
 from app.stores.errors import NotFound
-from app.stores.studio_definitions import FakeStudioDefinitionStore, SectionInput
-from app.stores.studio_knowledge import StudioAgentRef
 from app.studio.evals import Criterion, JudgeVerdict, parse_judge_output
 
 
-class FakeStudioStore(FakeStudioDefinitionStore):
-    """``FakeStudioDefinitionStore`` + the transactional
-    ``replace_draft_bundle(org_id, version_id, secoes, skills)`` entry point
-    the importer calls. The hardening slice ships the real method on the
-    store; until it lands, this thin fallback (built on the Fake's existing
-    methods) lets the importer be tested — test-only, by agreement."""
+def publish(defs: Any, org_id: UUID, agent: Any, version_id: UUID, user_id: UUID, *, catalog: Any = None) -> Any:
+    """Publish a draft the way the publish route does (M1): compile it, stamp
+    the hash, then flip under ``expected_hash`` with the proof-of-use text —
+    here via an override reason (no eval run)."""
+    from app.stores.studio_knowledge import FakeStudioKnowledgeStore
+    from app.studio.bundles import compile_version
+    from app.studio.catalog import StoreKnowledgeCatalog
 
-    def replace_draft_bundle(
-        self, org_id: UUID, version_id: UUID, secoes: list[SectionInput], skills: list[dict[str, Any]]
-    ) -> None:
-        self.replace_sections(org_id, version_id, secoes)
-        for sk in self.list_skills(org_id, version_id):
-            self.delete_skill(org_id, sk.id)
-        for s in skills:
-            rec = self.create_skill(
-                org_id, version_id, nome=s["nome"], descricao=s["descricao"], corpo=s["corpo"],
-                ordem=s["ordem"], ativo=s["ativo"],
-            )
-            for a in s["arquivos"]:
-                self.upsert_skill_file(org_id, rec.id, caminho=a["caminho"], titulo=a["titulo"], conteudo=a["conteudo"])
-
-
-class DefinitionsAgentLookup:
-    """BE-KE's routers resolve agents through ``AgentLookup``; in production
-    it reads the same ``agents.agents`` table the definitions store does.
-    Over Fakes, this adapter gives both the SAME rows."""
-
-    def __init__(self, store: FakeStudioDefinitionStore) -> None:
-        self._store = store
-
-    def get_by_key(self, org_id: UUID, key: str) -> StudioAgentRef:
-        a = self._store.get_agent(org_id, key)  # raises NotFound
-        return StudioAgentRef(
-            id=a.id, org_id=a.org_id, key=a.key, nome=a.nome, definition_mode=a.definition_mode,
-            ativo=a.ativo, publicacao_limiar=a.publicacao_limiar,
-        )
+    catalog = catalog or StoreKnowledgeCatalog(FakeStudioKnowledgeStore())
+    draft = defs.get_version(org_id, version_id)
+    compiled = compile_version(defs, catalog, org_id, agent, draft)
+    defs.set_compiled_hash(org_id, version_id, compiled.hash)
+    return defs.publish_version(
+        org_id, version_id, user_id, None, "publicação de teste do BE-RT",
+        expected_hash=compiled.hash, texto=compiled.texto, manifest=compiled.manifest_json(),
+    )
 
 
 class ScriptedJudge:
@@ -111,8 +89,7 @@ class ReadOnlyProxy:
 
 
 __all__ = [
-    "DefinitionsAgentLookup",
-    "FakeStudioStore",
+    "publish",
     "NotFound",
     "ReadOnlyProxy",
     "ScriptedJudge",

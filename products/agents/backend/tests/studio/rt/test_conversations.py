@@ -114,7 +114,7 @@ class TestStudioTurn:
         conv = _studio_conv(rt)
         v2 = rt.studio.create_draft(rt.org_id, agent.id, v1.id, rt.user_id)
         rt.studio.replace_sections(rt.org_id, v2.id, [SectionInput(chave="nova", titulo="Nova", ordem=1, conteudo="v2")])
-        rt.studio.publish_version(rt.org_id, v2.id, rt.user_id, None, "publicação de teste do BE-RT")
+        rt.publish(agent, v2.id)
         assert self._post(rt, conv["id"]).status_code == 202
         assert wait_turn_released(rt.stores.conversations, rt.org_id, UUID(conv["id"]))
         assert runtime.calls[0][0].version_id == v1.id
@@ -139,14 +139,14 @@ class TestStudioTurn:
         assert resp.status_code == 409
         assert resp.json()["code"] == "no_active_version"
 
-        v1 = rt.studio.publish_version(rt.org_id, draft.id, rt.user_id, None, "publicação de teste do BE-RT")
+        v1 = rt.publish(agent, draft.id)
         assert self._post(rt, conv["id"]).status_code == 202
         assert wait_turn_released(rt.stores.conversations, rt.org_id, UUID(conv["id"]))
         assert rt.get(f"/api/conversations/{conv['id']}").json()["version_id"] == str(v1.id)
 
     def test_prompt_too_large_is_refused_never_truncated(self, rt):
         runtime, _ = install_runtime(rt.client, [])
-        rt.make_agent(secoes=[("gigante", "Gigante", "x" * 60_001)])
+        rt.make_agent(secoes=[("parte-a", "A", "x" * 31_000), ("parte-b", "B", "y" * 31_000)])  # each under the 40k section cap
         conv = _studio_conv(rt)
         resp = self._post(rt, conv["id"])
         assert resp.status_code == 409

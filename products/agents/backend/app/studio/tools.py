@@ -171,6 +171,8 @@ def _int_arg(args: dict[str, Any], key: str, default: int) -> int | None:
     try:
         return int(value)
     except (TypeError, ValueError):
+        # Surfaced to the model as an `{"erro": ...}` payload by the caller.
+        logger.debug("agents.studio_tool.bad_int_arg key=%s value=%r", key, value)
         return None
 
 
@@ -272,16 +274,17 @@ def studio_tool_specs(
             return _erro("parte_invalida")
         parte = max(parte, 1)
         try:
+            # One read on the happy path; archived documents are unreadable (M4).
             part = knowledge.read_document_part(org_id, agent_id, slug, parte=parte, max_chars=KB_PAGE_CHARS)
         except NotFound:
-            if parte == 1:
+            # Unknown/archived slug OR out-of-range page — told apart below
+            # and answered as an explicit `{"erro": ...}` payload.
+            logger.debug("agents.studio_tool.kb_ler_miss slug=%s parte=%s", slug, parte)
+            part = None
+        if part is None:
+            if parte == 1 or knowledge.find_document_by_slug(org_id, agent_id, slug) is None:
                 return _erro("documento_inexistente")
-            # The store raises NotFound for BOTH an unknown slug and an
-            # out-of-range page; probe page 1 to tell the model which.
-            try:
-                first = knowledge.read_document_part(org_id, agent_id, slug, parte=1, max_chars=KB_PAGE_CHARS)
-            except NotFound:
-                return _erro("documento_inexistente")
+            first = knowledge.read_document_part(org_id, agent_id, slug, parte=1, max_chars=KB_PAGE_CHARS)
             return _erro("parte_inexistente", total_partes=first.total_partes)
         return _render(
             {

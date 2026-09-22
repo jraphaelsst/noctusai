@@ -31,8 +31,8 @@ from pydantic import Field, StrictBool, field_validator, model_validator
 
 from app.schemas.studio import CAMINHO_PATTERN, SLUG_PATTERN, EntryTipo
 from app.stores.agents import DEFAULT_AGENT_KEYS
-from app.stores.errors import NotFound
 from app.stores.studio_definitions import EFFORTS, MODELS, SectionInput
+from app.studio.bundles import compile_version
 from app.stores.studio_knowledge import DOCUMENT_TYPES, CollectionInput, source_sha_of
 from app.stores.studio_evals import EvalCaseInput
 from noctusai_lib.api import StrictHttpModel
@@ -309,10 +309,8 @@ def import_bundle(
     out.skills = len(bundle.skills)
     out.arquivos = sum(len(s.arquivos) for s in bundle.skills)
 
-    try:
-        agent = definitions.get_agent(org_id, key)
-    except NotFound:
-        agent = None
+    # Explicit "maybe" read over the org's agents (legacy included).
+    agent = next((a for a in definitions.list_agents(org_id) if a.key == key), None)
     if agent is not None and agent.definition_mode != "studio":
         raise ImportRefused(409, "not_studio_agent", "Este agente não é gerenciado pelo Studio.")
     out.criado = agent is None
@@ -428,13 +426,14 @@ def import_bundle(
         if added and cli.slug in existing_clients:
             out.avisos.append(f"cliente '{cli.slug}': {added} entrada(s) adicionada(s) ao existente")
 
-    # ── refresh the draft's compiled_hash (§B1: refreshed on every draft save)
-    from app.routers.studio_agents_router import compile_version
-
+    # ── refresh the draft's compiled_hash (§B1: refreshed on every draft save;
+    # compare-and-set on the updated_at just read, M1)
     draft = definitions.get_version(org_id, draft.id)
     compiled = compile_version(definitions, catalog, org_id, agent, draft)
     if draft.compiled_hash != compiled.hash:
-        definitions.set_compiled_hash(org_id, draft.id, compiled.hash)
+        definitions.set_compiled_hash(
+            org_id, draft.id, compiled.hash, expected_updated_at=draft.updated_at
+        )
     for aviso in compiled.avisos:
         out.avisos.append(f"compilação: {aviso.mensagem}")
     return out.to_dict()
@@ -468,9 +467,9 @@ def _plan(
         if col.slug not in existing_cols:
             out.colecoes_criadas += 1
         for doc in col.documentos:
-            try:
-                current = knowledge.get_document_by_slug(org_id, agent.id, doc.slug)
-            except NotFound:
+            # Archived documents count too: the import updates them in place.
+            current = knowledge.find_document_by_slug(org_id, agent.id, doc.slug, include_inactive=True)
+            if current is None:
                 out.documentos_criados += 1
                 continue
             if current.source_sha == source_sha_of(doc.conteudo):

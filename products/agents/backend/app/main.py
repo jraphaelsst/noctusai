@@ -168,5 +168,5 @@ app = create_product_app(
 )
 
 # Agent Studio §J2: bind the fail-closed seams (eval gate, knowledge
-# catalog, eval scheduler) to their production implementations.
+# catalog, eval scheduler, run hash) to their production implementations.
 install_studio_seams(app)

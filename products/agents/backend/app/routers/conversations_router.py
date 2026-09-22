@@ -61,6 +61,7 @@ from app.runtime.types import AgentSpec, TurnContext
 from app.routers.studio_agents_router import (
     get_knowledge_catalog_dep,
     get_studio_definition_store_dep,
+    resolve_agent,
 )
 from app.studio.spec import StudioSpecError, build_studio_spec
 from noctusai_lib.api.auth.session import AuthContext, resolve_org_role
@@ -121,22 +122,15 @@ def _http(status_code: int, code: str, detail: str) -> HTTPException:
 
 
 def _julia_agent(agent_store: Any, org_id: UUID) -> Any | None:
-    try:
-        return agent_store.get_by_key(org_id, JULIA_KEY)
-    except NotFound:
-        return None
+    """Julia's row, or ``None`` while it was never seeded for this org (an
+    explicit "maybe" read — not an ``except NotFound`` fallback)."""
+    return next((a for a in agent_store.list(org_id) if a.key == JULIA_KEY), None)
 
 
 def _resolve_studio_agent(studio_store: Any, org_id: UUID, key: str) -> Any:
-    """Agent Studio §D intro: unknown key → 404 ``agent_not_found``; a
-    legacy agent under a studio key → 409 ``not_studio_agent``."""
-    try:
-        agent = studio_store.get_agent(org_id, key)
-    except NotFound as exc:
-        raise _http(404, "agent_not_found", "Agente não encontrado.") from exc
-    if agent.definition_mode != "studio":
-        raise _http(409, "not_studio_agent", "Este agente não é gerenciado pelo Studio.")
-    return agent
+    """Agent Studio §D intro — the SAME resolver every studio route uses:
+    unknown key → 404 ``agent_not_found``; legacy → 409 ``not_studio_agent``."""
+    return resolve_agent(studio_store, org_id, key)
 
 
 def _studio_agent_by_id(studio_store: Any, org_id: UUID, agent_id: UUID) -> Any | None:
@@ -231,13 +225,14 @@ async def _get_readable_conversation(
     try:
         return conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
     except NotFound:
-        pass
+        # Not the owner (or absent) — fall through to the admin read below.
+        logger.debug("agents.conversation.not_owned conversation_id=%s", conversation_id)
     role = resolve_org_role(get_core_client(), ctx.user_id)
     if role in ADMIN_ROLES:
         try:
             return conv_store.get(ctx.org_id, conversation_id)
         except NotFound:
-            pass
+            logger.debug("agents.conversation.not_found conversation_id=%s", conversation_id)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND)
 
 
@@ -282,11 +277,12 @@ async def create_conversation(
     # newer publish never moves it); with none yet, it pins at its first turn.
     agent = _resolve_studio_agent(studio_store, ctx.org_id, payload.agent_key)
     if payload.client_id is not None:
-        try:
-            client = studio_store.get_client(ctx.org_id, payload.client_id)
-        except NotFound:
-            client = None
-        if client is None or client.agent_id != agent.id or not client.ativo:
+        # Scoped to THIS agent's clients: a foreign or unknown id is simply absent.
+        client = next(
+            (c for c in studio_store.list_clients(ctx.org_id, agent.id) if c.id == payload.client_id),
+            None,
+        )
+        if client is None or not client.ativo:
             raise _http(422, "invalid_client", "Cliente inválido para este agente.")
     active = studio_store.get_active_version(ctx.org_id, agent.id)
     record = store.create(
