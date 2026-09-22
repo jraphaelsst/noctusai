@@ -67,6 +67,12 @@ export type { SkeletonProps, SkeletonRounded } from "./ui/Skeleton";
 export { TableSkeleton } from "./ui/TableSkeleton";
 export type { TableSkeletonProps } from "./ui/TableSkeleton";
 
+// Form/layout primitives — Card / Textarea / Select / Field / FormError /
+// EmptyState / ErrorState. Promoted from two near-verbatim product-local
+// copies (academia-de-reciclagem + agents studio, DRY N=2 triage).
+export { Card, Textarea, Select, Field, FormError, EmptyState, ErrorState } from "./ui/FormControls";
+export type { CardProps, TextareaProps, SelectProps } from "./ui/FormControls";
+
 export { LLMProviderSelector } from "./components/LLMProviderSelector";
 export type { LLMProviderSelectorProps } from "./components/LLMProviderSelector";
 

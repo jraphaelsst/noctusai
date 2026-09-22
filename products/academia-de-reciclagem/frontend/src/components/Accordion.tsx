@@ -8,8 +8,11 @@
  * `Sidebar.tsx`'s per-group disclosure; it isn't exported as a reusable
  * primitive). This composes the same Radix primitive directly, kept
  * product-local and deliberately small — promote to the seed the moment a
- * second product needs the same shape (DRY N=2 triage), mirroring
- * `components/FormControls.tsx`'s own promotion note.
+ * second product needs the same shape (DRY N=2 triage), the same reasoning
+ * that already promoted this product's former `components/FormControls.tsx`
+ * (Card/Textarea/Select/Field/FormError/EmptyState/ErrorState) into
+ * `@noctusai/lib/design-system` once the `agents` product needed the same
+ * shapes.
  *
  * Uncontrolled by design: `@radix-ui/react-collapsible` has no "one open at
  * a time" group primitive (that's `@radix-ui/react-accordion`, not a

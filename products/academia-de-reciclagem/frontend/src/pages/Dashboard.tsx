@@ -10,8 +10,7 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { BookOpen, HelpCircle, ListTodo, Scale } from "lucide-react";
 
-import { Badge, PageSkeleton } from "@noctusai/lib/design-system";
-import { Card, ErrorState } from "@/components/FormControls";
+import { Badge, Card, ErrorState, PageSkeleton } from "@noctusai/lib/design-system";
 import { errorMessage } from "@/lib/errors";
 import { useKbList } from "@/hooks/useKb";
 import { usePerguntasList } from "@/hooks/usePerguntas";

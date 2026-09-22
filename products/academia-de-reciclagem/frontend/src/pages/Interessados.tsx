@@ -11,8 +11,18 @@ import { useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader, PageSkeleton } from "@noctusai/lib/design-system";
-import { Card, EmptyState, ErrorState } from "@/components/FormControls";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  DialogBody,
+  DialogFooter,
+  DialogHeader,
+  EmptyState,
+  ErrorState,
+  PageSkeleton,
+} from "@noctusai/lib/design-system";
 import { errorMessage } from "@/lib/errors";
 import { useDeleteInteressado, useInteressadosList, type Interessado } from "@/hooks/useInteressados";
 

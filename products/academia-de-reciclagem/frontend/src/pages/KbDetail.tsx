@@ -15,24 +15,22 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
-  Button,
-  Input,
   Badge,
-  PageSkeleton,
+  Button,
+  Card,
   Dialog,
-  DialogHeader,
   DialogBody,
   DialogFooter,
-} from "@noctusai/lib/design-system";
-import {
-  Card,
-  Select,
+  DialogHeader,
+  ErrorState,
   Field,
   FormError,
-  ErrorState,
+  Input,
+  PageSkeleton,
+  Select,
   Textarea,
-  MarkdownBlock,
-} from "@/components/FormControls";
+} from "@noctusai/lib/design-system";
+import { MarkdownBlock } from "@/components/MarkdownBlock";
 import { errorMessage } from "@/lib/errors";
 import {
   KB_CATEGORIAS,

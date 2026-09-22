@@ -542,13 +542,40 @@ function ApprovalCard({
   );
 }
 
+/**
+ * `block.href` is adapter-supplied, not user-typed, but it still ends up in
+ * a rendered `<a href>` — a `javascript:`/`data:` value (or a protocol-
+ * relative `//evil.example.com`) would execute or navigate off-origin the
+ * moment the row renders/is clicked. Allow-list: a same-origin *relative*
+ * path (`/foo`, never `//foo` — that's protocol-relative, not same-origin)
+ * or a `http(s):` absolute URL. Anything else renders as inert plain text.
+ */
+function isSafeLinkHref(href: string): boolean {
+  if (/^\/(?!\/)/.test(href)) return true;
+  return /^https?:\/\//i.test(href);
+}
+
 /** Single-line in-app navigation row (contract §G "Conversar", 2026-09-21). */
 function LinkRow({ block }: { block: ChatLinkBlock }) {
+  if (!isSafeLinkHref(block.href)) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground"
+        data-testid="chat-link-block"
+      >
+        {block.label}
+      </span>
+    );
+  }
+
+  const isExternal = /^https?:\/\//i.test(block.href);
+
   return (
     <a
       href={block.href}
       className="inline-flex items-center gap-1 text-[10px] font-medium text-primary underline-offset-2 hover:underline"
       data-testid="chat-link-block"
+      {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
     >
       {block.label}
     </a>

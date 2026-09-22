@@ -10,16 +10,21 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
-  Button,
   Badge,
-  Input,
-  PageSkeleton,
+  Button,
+  Card,
   Dialog,
-  DialogHeader,
   DialogBody,
   DialogFooter,
+  DialogHeader,
+  EmptyState,
+  ErrorState,
+  Field,
+  FormError,
+  Input,
+  PageSkeleton,
+  Textarea,
 } from "@noctusai/lib/design-system";
-import { Card, Field, FormError, EmptyState, ErrorState, Textarea } from "@/components/FormControls";
 import { errorMessage } from "@/lib/errors";
 import {
   useAnswerPergunta,

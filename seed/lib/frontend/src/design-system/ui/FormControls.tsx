@@ -1,16 +1,21 @@
 /**
- * Small local form/layout primitives that `@noctusai/lib/design-system`
- * does not ship yet (Textarea, Select, Card, Field, EmptyState, ErrorState).
- * Styled with the same token idiom as the seed `Input`/`Button`/`Badge`
- * primitives (`seed/lib/frontend/src/design-system/ui/Input.tsx`) and
- * mirrors `products/academia-de-reciclagem/frontend/src/components/FormControls.tsx`
- * byte-for-byte on the shapes shared with it — kept product-local per that
- * file's own note ("promote to the seed the moment a second product needs
- * the same shapes"); this is now N=2, flagged in the handback as a
- * scoped-improvement rather than promoted mid-slice.
+ * FormControls — small form/layout primitives (Card, Textarea, Select,
+ * Field, FormError, EmptyState, ErrorState).
+ *
+ * Promoted from two near-verbatim product-local copies —
+ * `products/academia-de-reciclagem/frontend/src/components/FormControls.tsx`
+ * and `products/agents/frontend/src/components/studio/FormControls.tsx` —
+ * once the second product needed the same shapes (DRY N=2 triage, both
+ * files' own promotion note). Styled with the same token idiom as the
+ * neighbouring `Input`/`Button`/`Badge` primitives in this folder so a page
+ * mixing these with the rest of the design system looks identical.
+ *
+ * `Textarea`'s `monospace` prop and both components' `data-testid` passthrough
+ * come from the `agents` product's copy — a strict superset of the
+ * `academia` shapes, so nothing was dropped in the merge.
  */
 import * as React from "react";
-import { cn } from "@noctusai/lib";
+import { cn } from "../../utils";
 
 export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   "data-testid"?: string;
@@ -18,12 +23,17 @@ export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
   ({ className, ...props }, ref) => (
-    <div ref={ref} className={cn("rounded-lg border border-border bg-card p-4", className)} {...props} />
+    <div
+      ref={ref}
+      className={cn("rounded-lg border border-border bg-card p-4", className)}
+      {...props}
+    />
   ),
 );
 Card.displayName = "Card";
 
 export interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+  /** Renders in a monospace font at a smaller size — code/JSON/prompt bodies. */
   monospace?: boolean;
   "data-testid"?: string;
 }
@@ -93,10 +103,14 @@ export function Field({
   );
 }
 
+/** Form-level error banner — the field-level 422 message from the backend. */
 export function FormError({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+    <div
+      role="alert"
+      className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+    >
       {message}
     </div>
   );

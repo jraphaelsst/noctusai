@@ -22,8 +22,18 @@ import { useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ClipboardList, Play, Plus, XCircle } from "lucide-react";
 import { toast } from "sonner";
-import { Badge, Button, Input, PageSkeleton } from "@noctusai/lib/design-system";
-import { Card, EmptyState, ErrorState, Field, FormError, Textarea } from "@/components/studio/FormControls";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Field,
+  FormError,
+  Input,
+  PageSkeleton,
+  Textarea,
+} from "@noctusai/lib/design-system";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
