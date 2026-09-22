@@ -16,3 +16,27 @@
  * Mirrors `seed/framework/frontend/tests/setup.ts` pattern.
  */
 import "@testing-library/jest-dom";
+
+/**
+ * jsdom Pointer Events polyfill — Radix UI's pointer-driven primitives
+ * (Select, and any future Combobox/Slider/etc.) call
+ * `target.hasPointerCapture` / `setPointerCapture` / `releasePointerCapture`
+ * on pointerdown, and `scrollIntoView` when auto-scrolling a highlighted
+ * item into view. jsdom does not implement the Pointer Events API, so these
+ * are undefined and Radix throws `TypeError: target.hasPointerCapture is
+ * not a function` on the first `userEvent.click` of a trigger — this is
+ * jsdom's known gap (documented by Radix itself), not a defect in the
+ * component under test. No-op stubs are the standard fix.
+ */
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}

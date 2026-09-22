@@ -18,6 +18,14 @@
  *   TableSkeleton — table-shaped loading placeholder composed from Skeleton
  *   Card / Textarea / Select / Field / FormError / EmptyState / ErrorState
  *                 — small form/layout primitives (see FormControls.tsx)
+ *   Popover / Checkbox / Switch / Avatar / ScrollArea / Progress
+ *                 — Radix-backed card-hub primitives, SW shadcn-copy parity
+ *                   (see popover.tsx / checkbox.tsx / switch.tsx / avatar.tsx /
+ *                   scroll-area.tsx / progress.tsx)
+ *   CardHubTextarea / CardHubSelect(+ sub-parts)
+ *                 — Radix-shape siblings of Textarea/Select above, aliased to
+ *                   avoid colliding with the native FormControls exports of
+ *                   the same bare name (see textarea.tsx / select.tsx)
  */
 export { Badge } from "./Badge";
 export type { BadgeProps, BadgeVariant } from "./Badge";
@@ -46,3 +54,30 @@ export type { TableSkeletonProps } from "./TableSkeleton";
 
 export { Card, Textarea, Select, Field, FormError, EmptyState, ErrorState } from "./FormControls";
 export type { CardProps, TextareaProps, SelectProps } from "./FormControls";
+
+export { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from "./popover";
+
+export { Checkbox } from "./checkbox";
+
+export { Switch } from "./switch";
+
+export { Avatar, AvatarImage, AvatarFallback } from "./avatar";
+
+export { ScrollArea, ScrollBar } from "./scroll-area";
+
+export { Progress } from "./progress";
+
+export { Textarea as CardHubTextarea } from "./textarea";
+
+export {
+  Select as CardHubSelect,
+  SelectGroup as CardHubSelectGroup,
+  SelectValue as CardHubSelectValue,
+  SelectTrigger as CardHubSelectTrigger,
+  SelectContent as CardHubSelectContent,
+  SelectLabel as CardHubSelectLabel,
+  SelectItem as CardHubSelectItem,
+  SelectSeparator as CardHubSelectSeparator,
+  SelectScrollUpButton as CardHubSelectScrollUpButton,
+  SelectScrollDownButton as CardHubSelectScrollDownButton,
+} from "./select";

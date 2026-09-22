@@ -73,6 +73,40 @@ export type { TableSkeletonProps } from "./ui/TableSkeleton";
 export { Card, Textarea, Select, Field, FormError, EmptyState, ErrorState } from "./ui/FormControls";
 export type { CardProps, TextareaProps, SelectProps } from "./ui/FormControls";
 
+// Card-hub primitives — Radix-backed, SW shadcn-copy parity (markup/classes/
+// data-attributes kept byte-for-byte so `social-wiring`'s card hub can swap
+// onto these imports with zero visual change at desktop). See
+// `project-history/roadmaps/cardhub-igig-crm-2026-09.wave-a-design.md` Slice B.
+// `Textarea`/`Select` already exist above (native HTML shapes, different
+// API) — the Radix-shape siblings here are re-exported under the
+// `CardHub*` prefix to avoid the name collision.
+export { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from "./ui/popover";
+
+export { Checkbox } from "./ui/checkbox";
+
+export { Switch } from "./ui/switch";
+
+export { Avatar, AvatarImage, AvatarFallback } from "./ui/avatar";
+
+export { ScrollArea, ScrollBar } from "./ui/scroll-area";
+
+export { Progress } from "./ui/progress";
+
+export { Textarea as CardHubTextarea } from "./ui/textarea";
+
+export {
+  Select as CardHubSelect,
+  SelectGroup as CardHubSelectGroup,
+  SelectValue as CardHubSelectValue,
+  SelectTrigger as CardHubSelectTrigger,
+  SelectContent as CardHubSelectContent,
+  SelectLabel as CardHubSelectLabel,
+  SelectItem as CardHubSelectItem,
+  SelectSeparator as CardHubSelectSeparator,
+  SelectScrollUpButton as CardHubSelectScrollUpButton,
+  SelectScrollDownButton as CardHubSelectScrollDownButton,
+} from "./ui/select";
+
 export { LLMProviderSelector } from "./components/LLMProviderSelector";
 export type { LLMProviderSelectorProps } from "./components/LLMProviderSelector";
 
