@@ -110,3 +110,10 @@ export type {
   StageCreateInput,
   StageUpdateInput,
 } from './pipeline';
+
+// Card hub — the entity-agnostic card organ: 3-pane detail dialog with a
+// subpage registry (rail + subpage + activity), board face, kind-registry
+// timeline, Geral subpage with named slots, and `createCardHubHooks` (the
+// data layer, query keys derived from `rootKey`). Moved from social-wiring's
+// lead card — `project-history/roadmaps/cardhub-igig-crm-2026-09.wave-a-design.md`.
+export * from './card-hub';

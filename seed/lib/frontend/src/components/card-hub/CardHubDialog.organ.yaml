@@ -1,0 +1,68 @@
+name: CardHubDialog
+path: seed/lib/frontend/src/components/card-hub/CardHubDialog.tsx
+phase: pilot-seed
+registered_at: '2026-09-22'
+validation_status: emerging
+known_facts:
+- 'A MOVE, not a rewrite, of social-wiring''s lead card
+  (`products/social-wiring/frontend/src/components/card/*` + the generic slice of
+  `hooks/useCardHub.ts`) per
+  project-history/roadmaps/cardhub-igig-crm-2026-09.wave-a-design.md Slice C
+  (redeems D13/S3 of products/social-wiring/projects/lead-card-hub-p2-PROJECT.md:
+  "lifting later must be a MOVE"). Consumer #1 = social-wiring (Slice F swaps
+  ClienteCardDialog onto it as a thin adapter); consumer #2 = igig CRM.'
+- 'Subpages are a REGISTRY (`CardSubpage<K>`: key/label/icon/render thunk/
+  isEmpty/toolbar). The dialog knows no subpage; only the ACTIVE one renders,
+  so an unopened subpage costs nothing; `onSubpageChange` lets the owner fetch
+  a tab''s data on first open. `GeralSubpage` is the seed''s generic spine
+  (etiquetas chips, descrição, anexos, checklists) with NAMED slots
+  (`afterTags`, `afterDescricao`, `beforeAnexos`); `GeralActions` is its
+  toolbar (Etiquetas/Checklist/Membros + `afterEtiquetas`).'
+- '`Timeline` renders by a kind-renderer registry (`{icon, summary}` per kind).
+  Seed defaults = the seed backend gatherers (nota, documento, checklist);
+  `GENERIC_TIMELINE_RENDERERS` (movimento, sistema) are opt-in; a product
+  merges its own (SW: touch). An unregistered kind renders the fallback line
+  "Evento (<kind>)" + a `(<kind>)` tag — never a crash, never dropped.'
+- '`createCardHubHooks({rootKey, basePath, entityLabel, documentoInvalidates},
+  api)` mirrors `createPipelineHooks`. Keys derive from rootKey in SW''s exact
+  shape (`[...root, id, "card"]`, `[...root, id, "timeline", kinds ?? "all"]`,
+  `[...root, "tags"]`), so SW passes `["sw","cardHub"]` and its product-only
+  hooks keep sharing one cache family (`keys` is returned for that reuse).
+  Multipart goes through `api.upload`, never `post`.'
+- 'Mobile-first (owner mandate R0): every mobile rule is a `max-sm:` utility,
+  so desktop (>=640px) keeps SW''s exact classes. Below 640px: full-screen
+  sheet (`100dvh`, frameless, one scrolling column), rail = sticky
+  horizontally-scrollable tab strip, activity pane stacked below, 40px touch
+  targets (TooltipIconButton, popover triggers, tabs, composer, close X).
+  `data-layout="sheet"|"dialog"` mirrors the breakpoint via `useSheetLayout`
+  (matchMedia) so the layout is assertable in jsdom.'
+- 'Drawn with SW-parity primitives: Slice B''s Popover/Checkbox/Switch/Avatar/
+  ScrollArea/Progress/CardHubSelect/CardHubTextarea plus Slice C''s
+  CardHubButton/CardHubInput/CardHubDialog*/Tooltip (design-system/ui) — the
+  design-system Button/Input/Dialog have different sizing and would drift the
+  desktop pixels.'
+errors_encountered: []
+drifts_surfaced:
+- 'Slice B''s primitive set omitted the shadcn Button, Input, Radix Dialog and
+  Tooltip the SW card is built from; added in Slice C under CardHub* aliases
+  (+ @radix-ui/react-dialog, react-tooltip, react-slot devDependencies).'
+- '`ChecklistItemRow` was listed as generic in the design but is bound to SW''s
+  documento-checklist (migration 067) and `DadosPessoaisForm`/`GENEROS`; it
+  stays in SW with `DocumentoChecklistSection`, consuming TokenCheckbox/
+  TooltipIconButton/format from this organ.'
+alternatives_considered:
+- 'Hard-coded subpage keys with render props per key (SW''s shape) — rejected:
+  the seed would carry SW''s domain vocabulary (vendedor, roteiros, contratos).'
+- 'A closed timeline kind union with a switch — rejected: a product kind
+  (SW touch/visita) would need a seed edit; the registry makes it a merge.'
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev:
+- 'Timeline + ChecklistsSection skeletons now gate on `loading && no rows`
+  (lying-loading-state rule); SW''s copies swapped existing rows for a
+  skeleton whenever `loading` was true.'

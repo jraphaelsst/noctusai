@@ -107,6 +107,27 @@ export {
   SelectScrollDownButton as CardHubSelectScrollDownButton,
 } from "./ui/select";
 
+// Card-hub Slice C additions — same SW-parity rationale as the block above.
+export { CardHubButton, cardHubButtonVariants } from "./ui/card-hub-button";
+export type { CardHubButtonProps, CardHubButtonVariant, CardHubButtonSize } from "./ui/card-hub-button";
+
+export { CardHubInput } from "./ui/card-hub-input";
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "./ui/tooltip";
+
+export {
+  Dialog as CardHubDialogRoot,
+  DialogPortal as CardHubDialogPortal,
+  DialogOverlay as CardHubDialogOverlay,
+  DialogClose as CardHubDialogClose,
+  DialogTrigger as CardHubDialogTrigger,
+  DialogContent as CardHubDialogContent,
+  DialogHeader as CardHubDialogHeader,
+  DialogFooter as CardHubDialogFooter,
+  DialogTitle as CardHubDialogTitle,
+  DialogDescription as CardHubDialogDescription,
+} from "./ui/radix-dialog";
+
 export { LLMProviderSelector } from "./components/LLMProviderSelector";
 export type { LLMProviderSelectorProps } from "./components/LLMProviderSelector";
 

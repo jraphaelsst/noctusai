@@ -26,6 +26,10 @@
  *                 — Radix-shape siblings of Textarea/Select above, aliased to
  *                   avoid colliding with the native FormControls exports of
  *                   the same bare name (see textarea.tsx / select.tsx)
+ *   CardHubButton / CardHubInput / CardHubDialog* / Tooltip
+ *                 — card-hub Slice C additions: SW shadcn-copy parity for the
+ *                   button, input, Radix dialog and tooltip the seed card hub
+ *                   (`components/card-hub/`) is drawn with
  */
 export { Badge } from "./Badge";
 export type { BadgeProps, BadgeVariant } from "./Badge";
@@ -81,3 +85,23 @@ export {
   SelectScrollUpButton as CardHubSelectScrollUpButton,
   SelectScrollDownButton as CardHubSelectScrollDownButton,
 } from "./select";
+
+export { CardHubButton, cardHubButtonVariants } from "./card-hub-button";
+export type { CardHubButtonProps, CardHubButtonVariant, CardHubButtonSize } from "./card-hub-button";
+
+export { CardHubInput } from "./card-hub-input";
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "./tooltip";
+
+export {
+  Dialog as CardHubDialogRoot,
+  DialogPortal as CardHubDialogPortal,
+  DialogOverlay as CardHubDialogOverlay,
+  DialogClose as CardHubDialogClose,
+  DialogTrigger as CardHubDialogTrigger,
+  DialogContent as CardHubDialogContent,
+  DialogHeader as CardHubDialogHeader,
+  DialogFooter as CardHubDialogFooter,
+  DialogTitle as CardHubDialogTitle,
+  DialogDescription as CardHubDialogDescription,
+} from "./radix-dialog";
