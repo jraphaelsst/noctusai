@@ -588,6 +588,68 @@ class TestQ11PendenciasEEstadoCivil:
         assert f"no prazo de {dias_por_extenso(esperado)}, a contar da assinatura" in _texto(1, d)
 
 
+class TestProcessoLegado:
+    """Migration 151 / owner directive 2026-09-22: `processo_legado=True`
+    dispenses the certidão TIME rules — a warning instead of a block —
+    for a deal that started before the platform. Never touches
+    `CERTIDAO_EMITIDA_APOS_ASSINATURA`, a data error, not an age rule."""
+
+    def _emitidas_ha(self, dias, *, processo_legado=True):
+        d = fx.variante(1)
+        v = d.vendedores[0]
+        return replace(
+            d,
+            processo_legado=processo_legado,
+            vendedores=[replace(v, certidoes=fx.certidoes_completas(fx.dias_antes(dias)))],
+        )
+
+    def test_a_30_day_old_certidao_warns_instead_of_blocking(self):
+        _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(30))
+        assert _codigos(av.bloqueios) == []
+        assert "CERTIDAO_EMISSAO_ANTIGA" in _codigos(av.avisos)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_the_aviso_names_the_dispensation(self):
+        _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(30))
+        aviso = next(a for a in av.avisos if a["codigo"] == "CERTIDAO_EMISSAO_ANTIGA")
+        assert aviso["mensagem"].endswith("(processo anterior à plataforma)")
+
+    def test_a_stated_validity_warns_instead_of_blocking(self):
+        d = fx.variante(1)
+        v = d.vendedores[0]
+        certs = [replace(c, validade_ate=fx.dias_antes(1)) if c.tipo == "cnd_federal" else c for c in v.certidoes]
+        _d, _pol, _sw, av = _avaliar(
+            1, replace(d, processo_legado=True, vendedores=[replace(v, certidoes=certs)])
+        )
+        assert _codigos(av.bloqueios) == []
+        assert "CERTIDAO_VENCIDA" in _codigos(av.avisos)
+
+    def test_a_90_day_old_estado_civil_certidao_warns_instead_of_blocking(self):
+        d = fx.variante(1)
+        d = replace(
+            d,
+            processo_legado=True,
+            vendedores=[replace(d.vendedores[0], certidao_estado_civil_emitida_em=fx.dias_antes(90))],
+        )
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert _codigos(av.bloqueios) == []
+        assert "CERTIDAO_ESTADO_CIVIL_ANTIGA" in _codigos(av.avisos)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_certidao_emitida_apos_assinatura_still_blocks(self):
+        """A data error, not an age rule — the flag never dispenses it."""
+        _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(-1))  # emitted AFTER assinatura
+        assert "CERTIDAO_EMITIDA_APOS_ASSINATURA" in _codigos(av.bloqueios)
+        assert not av.pronto
+
+    def test_unflagged_contracts_are_unaffected(self):
+        """Regression: the default (`processo_legado=False`) keeps blocking
+        — the dispensation is opt-in per contract, never ambient."""
+        _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(30, processo_legado=False))
+        assert set(_codigos(av.bloqueios)) == {"CERTIDAO_EMISSAO_ANTIGA"}
+        assert not av.pronto
+
+
 class TestQ12Posse:
     def test_missing_office_daily_fine_is_missing(self):
         d = fx.variante(1)

@@ -428,6 +428,13 @@ class DadosContrato:
     #: `assinatura_data` in the POST body still wins over both — that is an
     #: operator asking for a specific date at generation time.
     assinatura_data: Optional[date] = None
+    #: Migration 151. `atendimento_contratos.processo_legado` — an explicit,
+    #: admin-only, logged flag (owner directive 2026-09-22): this deal
+    #: started before the platform, so `derivacao._certidoes`'s certidão
+    #: TIME rules (emission age / validade) become warnings instead of
+    #: blocks. NEVER inferred here or anywhere else from a date — this is
+    #: exactly the stored column, nothing derived.
+    processo_legado: bool = False
 
 
 #: Papéis that sign the instrument. `fiador`/`outro` are parties to the deal

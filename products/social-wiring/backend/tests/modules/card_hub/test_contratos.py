@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 
+from noctusai_lib.testing import TEST_USER_ID
+
 from app.modules.card_hub import contratos_service as svc
 from app.modules.card_hub.deps import BUCKET
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
@@ -481,6 +483,121 @@ class TestOrgIsolation:
             headers=_auth(),
         )
         assert r.status_code == 404
+
+
+class TestProcessoLegado:
+    """Migration 151 — the admin-only "processo anterior à plataforma"
+    switch (`PUT .../contratos/{id}/processo-legado`). Owner directive,
+    2026-09-22: EXPLICIT, admin-only, logged — never an automatic date
+    heuristic. Same trusted-`noctus_users`-row gate as
+    `decidir_conflito_route` (migration 138); see `test_conflitos.py`'s
+    `TestOnlyAdminsCanDecide` for the sibling spoof-closing tests."""
+
+    def _make_admin(self, client) -> None:
+        client.mock_supabase.set_table_data(
+            "noctus_users",
+            [{"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": "owner"}],
+        )
+
+    def _url(self, cid, contrato_id) -> str:
+        return f"/api/clientes/{cid}/contratos/{contrato_id}/processo-legado"
+
+    def test_a_member_cannot_set_it(self, client, scoped, fake_storage):
+        cid, _aid = _seed(scoped)
+        contrato_id = _criar(client, cid).json()["id"]
+
+        r = client.put(
+            self._url(cid, contrato_id),
+            json={"ativo": True, "motivo": "Deal iniciado antes da plataforma."},
+            headers=_auth(),
+        )
+
+        assert r.status_code == 403, r.text
+        rows = scoped.table("atendimento_contratos").select("*").execute().data
+        assert not rows[0].get("processo_legado")
+
+    def test_unauthenticated_is_a_strict_401(self, anon_client, scoped, fake_storage):
+        cid, _aid = _seed(scoped)
+        r = anon_client.put(
+            self._url(cid, uuid4()), json={"ativo": True, "motivo": "x" * 5}
+        )
+        assert r.status_code == 401, r.text
+
+    def test_ativo_true_without_motivo_is_a_422(self, client, scoped, fake_storage):
+        self._make_admin(client)
+        cid, _aid = _seed(scoped)
+        contrato_id = _criar(client, cid).json()["id"]
+
+        r = client.put(self._url(cid, contrato_id), json={"ativo": True}, headers=_auth())
+        assert r.status_code == 422, r.text
+
+    def test_ativo_true_with_a_too_short_motivo_is_a_422(self, client, scoped, fake_storage):
+        self._make_admin(client)
+        cid, _aid = _seed(scoped)
+        contrato_id = _criar(client, cid).json()["id"]
+
+        r = client.put(
+            self._url(cid, contrato_id), json={"ativo": True, "motivo": "ok"}, headers=_auth()
+        )
+        assert r.status_code == 422, r.text
+
+    def test_an_admin_sets_it_and_it_is_logged(self, client, scoped, fake_storage):
+        self._make_admin(client)
+        cid, _aid = _seed(scoped)
+        contrato_id = _criar(client, cid).json()["id"]
+
+        r = client.put(
+            self._url(cid, contrato_id),
+            json={
+                "ativo": True,
+                "motivo": "Deal iniciado antes da plataforma — certidões emitidas fora do fluxo.",
+            },
+            headers=_auth(),
+        )
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["processo_legado"] is True
+        assert body["processo_legado_por"]["id"] == TEST_USER_ID
+        assert body["processo_legado_em"] is not None
+
+        row = scoped.table("atendimento_contratos").select("*").execute().data[0]
+        assert row["processo_legado"] is True
+        assert row["processo_legado_por"] == TEST_USER_ID
+        assert row["processo_legado_em"] is not None
+        assert row["processo_legado_motivo"].startswith("Deal iniciado antes da plataforma")
+
+    def test_an_admin_clears_it(self, client, scoped, fake_storage):
+        self._make_admin(client)
+        cid, _aid = _seed(scoped)
+        contrato_id = _criar(client, cid).json()["id"]
+        client.put(
+            self._url(cid, contrato_id),
+            json={"ativo": True, "motivo": "Deal iniciado antes da plataforma."},
+            headers=_auth(),
+        )
+
+        r = client.put(self._url(cid, contrato_id), json={"ativo": False}, headers=_auth())
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["processo_legado"] is False
+
+        row = scoped.table("atendimento_contratos").select("*").execute().data[0]
+        assert row["processo_legado"] is False
+        # The dispensation's own reason is stale once lifted — never left
+        # behind to look like it still applies.
+        assert row["processo_legado_motivo"] is None
+
+    def test_a_foreign_contrato_is_a_404(self, client, scoped, fake_storage):
+        self._make_admin(client)
+        cid, _aid = _seed(scoped)
+        r = client.put(
+            self._url(cid, uuid4()),
+            json={"ativo": True, "motivo": "Deal iniciado antes da plataforma."},
+            headers=_auth(),
+        )
+        assert r.status_code == 404, r.text
 
 
 class TestTheSizeLimitSeam:

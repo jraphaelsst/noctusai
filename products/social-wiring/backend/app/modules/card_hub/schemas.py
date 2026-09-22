@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
@@ -521,6 +521,30 @@ class ContratoPatchBody(StrictHttpModel):
     #: pendências; null = the office default (10). > 0 when set — a service
     #: 400, not a 422.
     prazo_pendencias_dias: Optional[int] = None
+
+
+class ProcessoLegadoBody(StrictHttpModel):
+    """Migration 151 — admin-only "processo anterior à plataforma" flag
+    (owner directive 2026-09-22). `ativo=True` dispenses the contract
+    gate's certidão TIME rules (emission age / validade) for THIS
+    contract only; `ativo=False` restores them. `motivo` is the admin's
+    own account of why — required (3..500 chars) only when turning the
+    flag ON; omitted/ignored when turning it off, since there is nothing
+    left to explain once the dispensation is lifted."""
+
+    ativo: bool
+    motivo: Optional[str] = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _motivo_required_when_ativo(self) -> "ProcessoLegadoBody":
+        if self.ativo:
+            texto = (self.motivo or "").strip()
+            if len(texto) < 3:
+                raise ValueError(
+                    "motivo é obrigatório (3 a 500 caracteres) ao marcar o "
+                    "processo como anterior à plataforma"
+                )
+        return self
 
 
 # ─── Negociação estruturada (migration 108) ──────────────────────────────

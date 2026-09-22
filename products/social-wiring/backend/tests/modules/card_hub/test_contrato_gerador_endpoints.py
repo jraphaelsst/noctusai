@@ -492,13 +492,16 @@ class TestGeracao:
         assert r.status_code == 200, r.text
         body = r.json()
         assert set(body) == {"contrato_id", "pronto", "modelo_derivado", "modelo_confere",
-                             "modelo_automatico", "switches", "faltando", "bloqueios", "avisos"}
+                             "modelo_automatico", "processo_legado", "switches", "faltando",
+                             "bloqueios", "avisos"}
         assert body["contrato_id"] == ids["contrato"] and body["pronto"] is False
         # No parcelas is UNKNOWN, never "à vista" by absence.
         assert body["switches"]["a_vista"] is False
         assert body["modelo_derivado"] == "compra_venda" and body["modelo_confere"] is True
         # An uploaded contract's modelo is the user's label — only flagged.
         assert body["modelo_automatico"] is False
+        # Migration 151 — never true unless an admin explicitly set it.
+        assert body["processo_legado"] is False
         campos = {f["campo"] for f in body["faltando"]}
         assert {"partes.vendedores", "negociacao.imovel", "negociacao.valor_negociado",
                 "negociacao.parcelas", "negociacao.posse_prazo_dias", "imobiliaria.razao_social",

@@ -498,6 +498,8 @@ def carregar(
         prazo_pendencias_dias=_int(contrato.get("prazo_pendencias_dias")),
         assinatura_data=_data(contrato.get("assinatura_data")),
         origem=contrato.get("origem") or "upload",
+        # Migration 151.
+        processo_legado=bool(contrato.get("processo_legado")),
     )
     return dados, atendimento_id
 

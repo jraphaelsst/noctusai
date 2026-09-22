@@ -79,6 +79,10 @@ function contrato(over: Partial<ContratoOut> = {}): ContratoOut {
     versoes: v ? [v] : [],
     assinatura_data: null,
     prazo_pendencias_dias: null,
+    processo_legado: false,
+    processo_legado_por: null,
+    processo_legado_em: null,
+    processo_legado_motivo: null,
     ...over,
   };
 }
@@ -141,6 +145,90 @@ describe("ContratosPanel", () => {
   it("🔴 an uploaded contract does NOT show the badge", async () => {
     const { screen } = await render({ contratos: [contrato({ origem: "upload" })] });
     expect(screen.queryByTestId("contrato-gerado-c1")).toBeNull();
+  });
+
+  describe("processo anterior à plataforma (migration 151)", () => {
+    it("🔴 the amber badge renders for EVERYONE when the flag is set", async () => {
+      const { screen } = await render({
+        contratos: [contrato({ processo_legado: true })],
+        isAdmin: false,
+      });
+      expect(screen.getByTestId("contrato-processo-legado-badge-c1").textContent).toContain(
+        "Processo anterior à plataforma",
+      );
+    });
+
+    it("the badge does not render when the flag is unset", async () => {
+      const { screen } = await render({ contratos: [contrato({ processo_legado: false })] });
+      expect(screen.queryByTestId("contrato-processo-legado-badge-c1")).toBeNull();
+    });
+
+    it("🔴 the checkbox is hidden for a non-admin", async () => {
+      const onSetProcessoLegado = vi.fn();
+      const { screen } = await render({
+        contratos: [contrato()],
+        isAdmin: false,
+        onSetProcessoLegado,
+      });
+      expect(screen.queryByTestId("contrato-processo-legado-checkbox-c1")).toBeNull();
+    });
+
+    it("the checkbox is hidden when no handler is wired, even for an admin", async () => {
+      const { screen } = await render({ contratos: [contrato()], isAdmin: true });
+      expect(screen.queryByTestId("contrato-processo-legado-checkbox-c1")).toBeNull();
+    });
+
+    it("checking it as admin opens the dialog — no callback until confirmed", async () => {
+      const onSetProcessoLegado = vi.fn();
+      const { screen, fireEvent } = await render({
+        contratos: [contrato()],
+        isAdmin: true,
+        onSetProcessoLegado,
+      });
+      fireEvent.click(screen.getByTestId("contrato-processo-legado-checkbox-c1"));
+      expect(screen.getByTestId("processo-legado-dialog")).toBeTruthy();
+      expect(onSetProcessoLegado).not.toHaveBeenCalled();
+    });
+
+    it("🔴 the dialog requires a 3-char motivo before confirming", async () => {
+      const onSetProcessoLegado = vi.fn();
+      const { screen, fireEvent } = await render({
+        contratos: [contrato()],
+        isAdmin: true,
+        onSetProcessoLegado,
+      });
+      fireEvent.click(screen.getByTestId("contrato-processo-legado-checkbox-c1"));
+      const confirmar = screen.getByTestId("processo-legado-confirmar") as HTMLButtonElement;
+      expect(confirmar.disabled).toBe(true);
+
+      fireEvent.change(screen.getByTestId("processo-legado-motivo"), {
+        target: { value: "ok" },
+      });
+      expect(confirmar.disabled).toBe(true);
+
+      fireEvent.change(screen.getByTestId("processo-legado-motivo"), {
+        target: { value: "Deal iniciado antes da plataforma." },
+      });
+      expect(confirmar.disabled).toBe(false);
+      fireEvent.click(confirmar);
+      expect(onSetProcessoLegado).toHaveBeenCalledWith(
+        "c1",
+        true,
+        "Deal iniciado antes da plataforma.",
+      );
+    });
+
+    it("unchecking an active flag calls back directly — no dialog, no motivo", async () => {
+      const onSetProcessoLegado = vi.fn();
+      const { screen, fireEvent } = await render({
+        contratos: [contrato({ processo_legado: true })],
+        isAdmin: true,
+        onSetProcessoLegado,
+      });
+      fireEvent.click(screen.getByTestId("contrato-processo-legado-checkbox-c1"));
+      expect(onSetProcessoLegado).toHaveBeenCalledWith("c1", false, undefined);
+      expect(screen.queryByTestId("processo-legado-dialog")).toBeNull();
+    });
   });
 
   it("shows the skeleton, not the empty state, while first loading", async () => {

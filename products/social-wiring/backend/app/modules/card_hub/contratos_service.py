@@ -185,6 +185,8 @@ def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
     ids = {r["enviado_por"] for r in linhas if r.get("enviado_por")}
     if row.get("status_por"):
         ids.add(row["status_por"])
+    if row.get("processo_legado_por"):
+        ids.add(row["processo_legado_por"])
     resolved = table_reads.resolve_actors(ids)
 
     versoes = [_versao_out(r, resolved) for r in linhas]
@@ -200,6 +202,12 @@ def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
         # Migration 114. `prazo_pendencias_dias` null = the office default.
         "assinatura_data": row.get("assinatura_data"),
         "prazo_pendencias_dias": row.get("prazo_pendencias_dias"),
+        # Migration 151. Explicit, admin-only "processo anterior à
+        # plataforma" flag — see `definir_processo_legado`.
+        "processo_legado": bool(row.get("processo_legado")),
+        "processo_legado_por": table_reads.actor(resolved, row.get("processo_legado_por")),
+        "processo_legado_em": row.get("processo_legado_em"),
+        "processo_legado_motivo": row.get("processo_legado_motivo"),
         "created_at": row["created_at"],
         "updated_at": row.get("updated_at"),
         # Highest `numero` among LIVE versions — `linhas` above already
@@ -706,6 +714,58 @@ def atualizar(
         patch["status_por"] = str(usuario_id) if usuario_id else None
 
     patch["updated_at"] = now_iso()
+    _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq(
+        "id", str(contrato_id)
+    ).execute()
+
+    atualizado = exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    return _contrato_saida(client, org_id, atualizado)
+
+
+def definir_processo_legado(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    contrato_id: UUID,
+    *,
+    ativo: bool,
+    motivo: Optional[str],
+    usuario_id: Optional[UUID],
+) -> dict:
+    """Migration 151. Explicit, admin-only "processo anterior à
+    plataforma" flag — 403'd upstream (`router.py`'s `is_org_admin`
+    check) before this ever runs, same posture
+    `decidir_conflito_route`/`resolver_conflito` takes for migration 138.
+
+    🔴 NEVER an automatic date heuristic — `ativo` is exactly what the
+    caller sent, nothing derived from `created_at` or any other
+    timestamp. `_por`/`_em` are stamped ONLY here (never accepted from
+    the request body), same discipline `atualizar`'s `status_por`/
+    `status_em` pair already follows. Turning the flag OFF clears all
+    three columns — there is nothing left to explain once the
+    dispensation is lifted, and a stale `motivo` from a PRIOR dispensa
+    must never look like it still applies.
+    """
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    exigir_contrato(client, org_id, atendimento_id, contrato_id)
+
+    # Belt-and-suspenders with `ProcessoLegadoBody`'s own `model_validator`
+    # (which already 422s a missing/short motivo before this runs) — same
+    # redundant-check discipline `atualizar` keeps for `modelo`/`status`.
+    if ativo and len((motivo or "").strip()) < 3:
+        raise ValidationError_(
+            "motivo é obrigatório (3 a 500 caracteres) ao marcar o processo "
+            "como anterior à plataforma",
+            field="motivo",
+        )
+
+    patch = {
+        "processo_legado": ativo,
+        "processo_legado_por": str(usuario_id) if usuario_id else None,
+        "processo_legado_em": now_iso(),
+        "processo_legado_motivo": motivo.strip() if ativo and motivo else None,
+        "updated_at": now_iso(),
+    }
     _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq(
         "id", str(contrato_id)
     ).execute()

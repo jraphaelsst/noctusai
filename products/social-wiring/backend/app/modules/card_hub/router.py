@@ -89,6 +89,7 @@ from app.modules.card_hub.schemas import (
     NotaCreateBody,
     NotaUpdateBody,
     PartePapelPatchBody,
+    ProcessoLegadoBody,
     RoteiroCreateBody,
     RoteiroOrdemBody,
     RoteiroPatchBody,
@@ -1433,6 +1434,40 @@ async def patch_contrato_route(
     valores = {k: getattr(body, k) for k in body.model_fields_set}
     return contratos_svc.atualizar(
         client, org_id, cliente_id, contrato_id, valores=valores,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.put("/{cliente_id}/contratos/{contrato_id}/processo-legado")
+async def put_contrato_processo_legado_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    body: ProcessoLegadoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Migration 151. Owner directive, 2026-09-22: an EXPLICIT, admin-only,
+    logged switch per contract — never an automatic date heuristic. When
+    `ativo=True`, the contract gate's certidão TIME rules (emission age /
+    validade — never `CERTIDAO_EMITIDA_APOS_ASSINATURA`, a data error, not
+    an age rule) become warnings instead of blocks for THIS deal, because
+    it started before the platform (`contrato_gerador.derivacao._certidoes`).
+
+    🔴 Owner/admin only — same TRUSTED `noctus_users` row (never
+    `user_metadata`) `decidir_conflito_route` reads for migration 138; see
+    that route's own docstring for the exact spoof this closes. Strict
+    `== 401`/`== 403` per `KB § PATTERNS/compliance/auth-boundary-false-green.md`.
+    """
+    user, org_id = _auth_parts(auth)
+    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="Marcar um contrato como processo anterior à plataforma "
+            "é restrito a administradores.",
+        )
+    return contratos_svc.definir_processo_legado(
+        client, org_id, cliente_id, contrato_id,
+        ativo=body.ativo, motivo=body.motivo,
         usuario_id=getattr(user, "id", None),
     )
 

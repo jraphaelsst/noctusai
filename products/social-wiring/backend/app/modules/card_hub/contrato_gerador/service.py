@@ -115,6 +115,9 @@ def obter_geracao(
         # True = `gerar` will set the contract's modelo to `modelo_derivado`
         # (a 'gerado' contract); False = a mismatch is only flagged.
         "modelo_automatico": dados.origem == "gerado",
+        # Migration 151 — so the UI can show the dispensation is active
+        # even before the reader gets down to the avisos that name it.
+        "processo_legado": dados.processo_legado,
         "switches": switches,
         "faltando": avaliacao.faltando,
         "bloqueios": avaliacao.bloqueios,

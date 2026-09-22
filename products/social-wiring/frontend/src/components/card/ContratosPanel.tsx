@@ -59,6 +59,7 @@ import {
   FileType2,
   ExternalLink,
   Eye,
+  History,
   Loader2,
   Plus,
   RefreshCw,
@@ -71,6 +72,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TooltipIconButton } from "@/components/card/TooltipIconButton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -173,6 +175,16 @@ interface Props {
   onAbrirEnvioAssinatura?: (contratoId: string, versaoId: string) => void;
   onCancelarAssinatura?: (contratoId: string, motivo: string) => void;
   cancelandoAssinaturaContratoId?: string | null;
+  /** Migration 151 (owner directive 2026-09-22). A UI convenience ONLY —
+   *  same posture `ConflitosPendentesPanel`'s own `isAdmin` already takes:
+   *  the server's `PUT .../processo-legado` reads the TRUSTED
+   *  `noctus_users` row and 403s a spoofed claim regardless of this. Gates
+   *  the "Processo anterior à plataforma" checkbox; the amber badge it
+   *  sets is visible to everyone. Defaults to `false` — the checkbox is
+   *  omitted, never mistakenly shown, while a caller hasn't wired it. */
+  isAdmin?: boolean;
+  onSetProcessoLegado?: (contratoId: string, ativo: boolean, motivo?: string) => void;
+  settingProcessoLegadoContratoId?: string | null;
 }
 
 export default function ContratosPanel({
@@ -204,6 +216,9 @@ export default function ContratosPanel({
   onAbrirEnvioAssinatura,
   onCancelarAssinatura,
   cancelandoAssinaturaContratoId,
+  isAdmin = false,
+  onSetProcessoLegado,
+  settingProcessoLegadoContratoId,
 }: Props) {
   const lista = contratos ?? [];
 
@@ -306,6 +321,13 @@ export default function ContratosPanel({
                   : undefined
               }
               cancelandoAssinatura={cancelandoAssinaturaContratoId === contrato.id}
+              isAdmin={isAdmin}
+              onSetProcessoLegado={
+                onSetProcessoLegado
+                  ? (ativo, motivo) => onSetProcessoLegado(contrato.id, ativo, motivo)
+                  : undefined
+              }
+              settingProcessoLegado={settingProcessoLegadoContratoId === contrato.id}
             />
           ))}
         </div>
@@ -335,6 +357,9 @@ function ContratoCard({
   onAbrirEnvioAssinatura,
   onCancelarAssinatura,
   cancelandoAssinatura = false,
+  isAdmin = false,
+  onSetProcessoLegado,
+  settingProcessoLegado = false,
 }: {
   contrato: ContratoOut;
   addingVersao: boolean;
@@ -361,10 +386,14 @@ function ContratoCard({
   onAbrirEnvioAssinatura?: (versaoId: string) => void;
   onCancelarAssinatura?: (motivo: string) => void;
   cancelandoAssinatura?: boolean;
+  isAdmin?: boolean;
+  onSetProcessoLegado?: (ativo: boolean, motivo?: string) => void;
+  settingProcessoLegado?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [historicoAberto, setHistoricoAberto] = useState(false);
+  const [processoLegadoDialogOpen, setProcessoLegadoDialogOpen] = useState(false);
   const [matriculaAberta, setMatriculaAberta] = useState(recemIniciado);
   const [geradorAberto, setGeradorAberto] = useState(recemIniciado);
 
@@ -450,6 +479,16 @@ function ContratoCard({
               >
                 <Sparkles className="h-3 w-3" />
                 Gerado automaticamente
+              </Badge>
+            )}
+            {contrato.processo_legado && (
+              <Badge
+                variant="outline"
+                className="gap-1 border-amber-300 bg-amber-50 text-[10px] text-amber-800"
+                data-testid={`contrato-processo-legado-badge-${contrato.id}`}
+              >
+                <History className="h-3 w-3" />
+                Processo anterior à plataforma
               </Badge>
             )}
             <div className="flex flex-col items-end gap-0.5">
@@ -557,6 +596,33 @@ function ContratoCard({
             </p>
           )}
         </div>
+
+        {isAdmin && onSetProcessoLegado && (
+          <div
+            className="flex items-start gap-2 rounded-md border p-2.5"
+            data-testid={`contrato-processo-legado-${contrato.id}`}
+          >
+            <Checkbox
+              id={`contrato-processo-legado-checkbox-${contrato.id}`}
+              checked={contrato.processo_legado}
+              disabled={settingProcessoLegado}
+              onCheckedChange={(checked) => {
+                if (checked === true) {
+                  setProcessoLegadoDialogOpen(true);
+                } else {
+                  onSetProcessoLegado(false);
+                }
+              }}
+              data-testid={`contrato-processo-legado-checkbox-${contrato.id}`}
+            />
+            <Label
+              htmlFor={`contrato-processo-legado-checkbox-${contrato.id}`}
+              className="text-xs font-normal leading-snug text-muted-foreground"
+            >
+              Processo anterior à plataforma — dispensar prazos de certidões
+            </Label>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -673,6 +739,17 @@ function ContratoCard({
           </Collapsible>
         )}
       </CardContent>
+      {onSetProcessoLegado && (
+        <_ProcessoLegadoDialog
+          open={processoLegadoDialogOpen}
+          onOpenChange={setProcessoLegadoDialogOpen}
+          onConfirmar={(motivo) => {
+            onSetProcessoLegado(true, motivo);
+            setProcessoLegadoDialogOpen(false);
+          }}
+          enviando={settingProcessoLegado}
+        />
+      )}
     </Card>
   );
 }
@@ -1023,6 +1100,73 @@ function _CancelarEnvioDialog({
           >
             {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Cancelar envio
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const MOTIVO_PROCESSO_LEGADO_MIN = 3;
+const MOTIVO_PROCESSO_LEGADO_MAX = 500;
+
+/**
+ * `_ProcessoLegadoDialog` — migration 151's motivo, 3..500 chars, same
+ * shape as `_CancelarEnvioDialog` above. Only asked when turning the flag
+ * ON: `ContratoCard` calls `onSetProcessoLegado(false)` directly for the
+ * OFF case, since there is nothing left to explain once the dispensation
+ * is lifted.
+ */
+function _ProcessoLegadoDialog({
+  open,
+  onOpenChange,
+  onConfirmar,
+  enviando,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirmar: (motivo: string) => void;
+  enviando: boolean;
+}) {
+  const [motivo, setMotivo] = useState("");
+
+  useEffect(() => {
+    if (!open) setMotivo("");
+  }, [open]);
+
+  const motivoValido =
+    motivo.trim().length >= MOTIVO_PROCESSO_LEGADO_MIN &&
+    motivo.trim().length <= MOTIVO_PROCESSO_LEGADO_MAX;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid="processo-legado-dialog">
+        <DialogHeader>
+          <DialogTitle>Processo anterior à plataforma</DialogTitle>
+          <DialogDescription>
+            Este deal começou antes da plataforma — as certidões podem ter sido emitidas
+            fora do fluxo atual. Explique por que (3 a 500 caracteres); os prazos de
+            certidões passam a ser avisos, não bloqueios, apenas para este contrato.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          value={motivo}
+          maxLength={MOTIVO_PROCESSO_LEGADO_MAX}
+          onChange={(e) => setMotivo(e.target.value)}
+          placeholder="Motivo"
+          data-testid="processo-legado-motivo"
+        />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={enviando}>
+            Voltar
+          </Button>
+          <Button
+            disabled={!motivoValido || enviando}
+            onClick={() => onConfirmar(motivo.trim())}
+            data-testid="processo-legado-confirmar"
+          >
+            {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Marcar como processo anterior
           </Button>
         </DialogFooter>
       </DialogContent>

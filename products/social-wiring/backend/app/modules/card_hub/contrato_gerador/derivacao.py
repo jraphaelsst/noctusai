@@ -1073,6 +1073,24 @@ def _certidoes(
     )
     com_apontamento: list[str] = []
 
+    def tempo(codigo: str, mensagem: str) -> None:
+        """The certidão TIME rules (emission age / validade) only —
+        `CERTIDAO_EMITIDA_APOS_ASSINATURA` is a data error, not an age
+        rule, and is NEVER routed through here; every call site keeps
+        calling `av.bloqueia` for it directly.
+
+        [Owner directive, 2026-09-22] `d.processo_legado` (migration 151,
+        set ONLY through `PUT .../processo-legado`, admin-only, never an
+        automatic date heuristic) dispenses these for a deal that started
+        before the platform: a warning instead of a block, so the
+        contract can still generate while the dispensation stays visible
+        on the readiness report.
+        """
+        if d.processo_legado:
+            av.avisa(codigo, f"{mensagem} (processo anterior à plataforma)")
+        else:
+            av.bloqueia(codigo, mensagem)
+
     def conferir(p: Pessoa, certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
         idx = indice_certidoes(certs, tipo_documento)
         for tipo in tipos_exigidos(tipo_documento):
@@ -1092,13 +1110,13 @@ def _certidoes(
                 av.bloqueia("CERTIDAO_EMITIDA_APOS_ASSINATURA", f"{rotulo} de {nome_grupo} tem emissão posterior à assinatura.")
             elif (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
                 # [Q10] every certidão is emitted less than 30 days before signing.
-                av.bloqueia(
+                tempo(
                     "CERTIDAO_EMISSAO_ANTIGA",
                     f"{rotulo} de {nome_grupo} foi emitida há {(assinatura - c.emitida_em).days} dias; "
                     f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura.",
                 )
             if c.validade_ate is not None and c.validade_ate < assinatura:
-                av.bloqueia("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
+                tempo("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
             # [§6.1 #15] A positiva AND a negativa-com-homônimos both need the
             # esclarecimentos paragraph — the homônimo apontamentos are exactly
             # what has to be explained away (migration 116).
@@ -1154,7 +1172,7 @@ def _certidoes(
                 f"A certidão de estado civil de {_nome(p)} tem emissão posterior à assinatura.",
             )
         elif (assinatura - emitida).days >= politica.certidao_estado_civil_max_dias:
-            av.bloqueia(
+            tempo(
                 "CERTIDAO_ESTADO_CIVIL_ANTIGA",
                 f"A certidão de estado civil de {_nome(p)} foi emitida há {(assinatura - emitida).days} dias; "
                 f"precisa ter menos de {politica.certidao_estado_civil_max_dias} dias na data da assinatura.",

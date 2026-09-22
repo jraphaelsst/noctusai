@@ -88,6 +88,14 @@ export interface ContratoOut {
   /** Migration 114. `null` = the office default (10 days) — never rendered
    *  as "0" or blank, see `ContratosPanel`'s placeholder. */
   prazo_pendencias_dias: number | null;
+  /** Migration 151 (owner directive 2026-09-22) — an explicit, admin-only,
+   *  logged flag: this deal started before the platform, so the contract
+   *  gate's certidão TIME rules become warnings instead of blocks. NEVER
+   *  inferred from a date — set only through `PUT .../processo-legado`. */
+  processo_legado: boolean;
+  processo_legado_por: ContratoActor | null;
+  processo_legado_em: string | null;
+  processo_legado_motivo: string | null;
 }
 
 export interface ContratoPatch {
@@ -152,6 +160,10 @@ export interface ContratoGeracaoStatus {
   /** `true` = a contract started by "Gerar contrato": generating sets its
    *  `modelo` to `modelo_derivado`. `false` = an upload — only flagged. */
   modelo_automatico: boolean;
+  /** Migration 151 — mirrors `ContratoOut.processo_legado`, so the "Gerar
+   *  contrato" section can show the dispensation is active even before a
+   *  reader gets down to the avisos that name it. */
+  processo_legado: boolean;
   switches: Record<string, boolean>;
   faltando: GeracaoFaltando[];
   bloqueios: GeracaoBloqueio[];
@@ -773,6 +785,34 @@ export function useContratoMutations(clienteId: string) {
     },
   });
 
+  /**
+   * `processoLegado` — PUT .../processo-legado (migration 151, owner
+   * directive 2026-09-22). Admin-only server-side (403 for anyone else);
+   * on success invalidates BOTH the contratos list (the badge/checkbox
+   * read off `ContratoOut.processo_legado`) and this contract's `geracao`
+   * query (the dispensed avisos only show up after a fresh readiness
+   * check), same pairing `gerar` already uses.
+   */
+  const processoLegado = useMutation({
+    mutationFn: ({
+      contratoId,
+      ativo,
+      motivo,
+    }: {
+      contratoId: string;
+      ativo: boolean;
+      motivo?: string;
+    }) =>
+      api.put<ContratoOut>(
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/processo-legado`,
+        { ativo, motivo },
+      ),
+    onSuccess: (_data, variables) => {
+      invalidate();
+      qc.invalidateQueries({ queryKey: GERACAO_KEY(clienteId, variables.contratoId) });
+    },
+  });
+
   return {
     create,
     addVersao,
@@ -784,5 +824,6 @@ export function useContratoMutations(clienteId: string) {
     iniciar,
     enviarParaAssinatura,
     cancelarAssinatura,
+    processoLegado,
   };
 }

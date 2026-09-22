@@ -33,6 +33,9 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { useAuthStore } from "@noctusai/seed/infra";
+import { resolveSSOContext } from "@noctusai/lib";
+
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
 import { EnviarAssinaturaDialog } from "@/components/card/EnviarAssinaturaDialog";
@@ -61,6 +64,14 @@ export function ContratosContainer({
 }) {
   const query = useContratos(clienteId);
   const mutations = useContratoMutations(clienteId);
+  // Migration 151 (owner directive 2026-09-22). A UI convenience ONLY —
+  // same posture `ConflitosPendentesPanel`'s own `isAdmin` already takes:
+  // the server's `PUT .../processo-legado` reads the TRUSTED `noctus_users`
+  // row and 403s a spoofed claim regardless of what this renders.
+  const { user } = useAuthStore();
+  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const isAdmin =
+    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
   // The deal's imóvel — narrows the matrícula picker (see header note).
   const negociacao = useNegociacao(clienteId);
   const imovelCodigo = negociacao.data?.imovel_codigo ?? null;
@@ -232,6 +243,24 @@ export function ContratosContainer({
         cancelandoAssinaturaContratoId={
           mutations.cancelarAssinatura.isPending
             ? (mutations.cancelarAssinatura.variables?.contratoId ?? null)
+            : null
+        }
+        isAdmin={isAdmin}
+        onSetProcessoLegado={(contratoId, ativo, motivo) =>
+          mutations.processoLegado.mutate(
+            { contratoId, ativo, motivo },
+            {
+              onError: (err) =>
+                toastServerError(
+                  err,
+                  "Não foi possível atualizar o processo anterior à plataforma.",
+                ),
+            },
+          )
+        }
+        settingProcessoLegadoContratoId={
+          mutations.processoLegado.isPending
+            ? (mutations.processoLegado.variables?.contratoId ?? null)
             : null
         }
       />

@@ -49,6 +49,7 @@ function statusFixture(over: Partial<ContratoGeracaoStatus> = {}): ContratoGerac
     modelo_derivado: "compra_venda",
     modelo_confere: true,
     modelo_automatico: false,
+    processo_legado: false,
     switches: {},
     faltando: [],
     bloqueios: [],
