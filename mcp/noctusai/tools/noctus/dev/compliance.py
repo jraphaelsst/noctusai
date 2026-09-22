@@ -49,6 +49,43 @@ logger = logging.getLogger(__name__)
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 
 
+def _active_product_dirs(products_dir: Path) -> list[Path]:
+    """Product directories to actually CHECK — active only, sorted.
+
+    THE CHOKE POINT (2026-09-22). Every per-product compliance walk that
+    means "check this product's code" should route through this instead of
+    a bare `products_dir.iterdir()` + `is_dir()`/hidden-dir filter (the
+    pattern this repeats, verbatim, dozens of times across this file). An
+    asleep product (`ativo=false` in the catalog, i.e. absent from
+    `deploy/fleet/active-scope.txt`) gets NO CI job, keeper, or hook per the
+    user's decision — walking it anyway re-checks code nobody is working on
+    and produces reds nobody can fix. `core` is always active (no `products`
+    catalog row — the platform shell) and is included here because it IS an
+    on-disk `products/core` dir; `product_scope.ALWAYS_ACTIVE` covers it.
+
+    NOT every products-dir walk belongs here — a check whose reason to see
+    every product is something OTHER than "check this product" (a detector's
+    recognizer corpus, a needle-search across the whole fleet, a live-DB-
+    schema-security scan over already-applied migrations) stays on a bare
+    walk deliberately; see `KB § PATTERNS/architect/product-working-scope.md`
+    for the worked list of which checks are active-only vs. deliberately
+    global.
+
+    Missing `active-scope.txt` ⇒ `product_scope.filter_active` fails toward
+    coverage (keeps every product + logs a WARNING) — losing the scope file
+    must never silently turn every per-product check off.
+    """
+    if not products_dir.exists():
+        return []
+    dirs = sorted(
+        d for d in products_dir.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    )
+    from .product_scope import filter_active
+    active = set(filter_active([d.name for d in dirs], products_dir.parent))
+    return [d for d in dirs if d.name in active]
+
+
 # Control-plane products OWN the identity/team/notifications/... routes — they
 # ARE the provider, not consumers. Warnings about "has own team.py — framework
 # provides this" are noise for them. Folded in by `seed-inheritance-hardening`
@@ -4027,7 +4064,9 @@ _AUTH_DEP_ANTIPATTERN_ATTRS: frozenset[str] = frozenset({
 
 def _walk_router_python_files(root: Path):
     """Yield every `*.py` file under `products/*/backend/app/routers/` —
-    the population where the auth-dep antipattern can land.
+    the population where the auth-dep antipattern can land. Active products
+    only (`_active_product_dirs` choke point) — nobody is touching an
+    asleep product's routers.
     """
     products = root / "products"
     if not products.exists():
@@ -4036,9 +4075,7 @@ def _walk_router_python_files(root: Path):
         "__pycache__", ".venv", "venv", "node_modules", ".git",
         ".pytest_cache", "tests", "migrations",
     }
-    for product_dir in products.iterdir():
-        if not product_dir.is_dir() or product_dir.name.startswith("."):
-            continue
+    for product_dir in _active_product_dirs(products):
         routers_dir = product_dir / "backend" / "app" / "routers"
         if not routers_dir.exists():
             continue
@@ -5413,9 +5450,7 @@ def check_seed_export_membership(repo_root: Path | None = None) -> list[dict]:
     if not products_dir.exists():
         return issues
 
-    for product_dir in sorted(products_dir.iterdir()):
-        if not product_dir.is_dir() or product_dir.name.startswith("."):
-            continue
+    for product_dir in _active_product_dirs(products_dir):
         slug = product_dir.name
 
         # Backend product source.
@@ -5554,10 +5589,16 @@ _BASH_ARRAY_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*=\(([^()]*)\)", re.DOTALL)
 _BASH_ARRAY_TOKEN_RE = re.compile(r'"([^"]+)"|\'([^\']+)\'|([A-Za-z0-9][A-Za-z0-9._-]*)')
 
 
-def _live_product_slugs(root: Path) -> set[str]:
-    """Set of product directory names under `products/` — the live fleet.
-    Used as the recognizer corpus so the detector does not itself freeze a
-    product-slug literal (which would violate the rule it enforces).
+def _all_product_slugs(root: Path) -> set[str]:
+    """Set of EVERY product directory name under `products/` — on disk,
+    active or asleep. Used as the recognizer corpus so the detector does
+    not itself freeze a product-slug literal (which would violate the rule
+    it enforces).
+
+    Renamed from `_live_product_slugs` (2026-09-22): "live" now collides
+    with `deploy_scope='live'` (`build_scope.py`), and this is deliberately
+    NOT routed through `_active_product_dirs` — it detects slug LITERALS
+    (any on-disk slug is a hit, asleep or not), it doesn't check products.
     """
     products = root / "products"
     if not products.exists():
@@ -5645,7 +5686,7 @@ def check_hardcoded_product_slug_set(repo_root: Path | None = None) -> list[dict
     if not root.exists():
         return issues
 
-    live_slugs = _live_product_slugs(root)
+    live_slugs = _all_product_slugs(root)
     if not live_slugs:
         # No fleet to compare against — cannot reason; skip.
         return issues
@@ -5922,6 +5963,10 @@ def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]
     Per the 2026-07-22 devops escalation (three recurrences in one session:
     @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling). Severity
     `high` — a clean-build break, not a style nit.
+
+    Active products only (2026-09-22, `product_scope.filter_active`) — an
+    asleep product's frontend is not being built, so a stale lockfile
+    snapshot there is not a live break risk.
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -5940,7 +5985,13 @@ def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]
 
     import json as _json
 
-    for pkg_path in sorted(root.glob("products/*/frontend/package.json")):
+    from .product_scope import filter_active
+
+    pkg_paths = sorted(root.glob("products/*/frontend/package.json"))
+    active_slugs = set(filter_active([p.parent.parent.name for p in pkg_paths], root))
+    pkg_paths = [p for p in pkg_paths if p.parent.parent.name in active_slugs]
+
+    for pkg_path in pkg_paths:
         slug = pkg_path.parent.parent.name
         lock_path = pkg_path.parent / "package-lock.json"
         if not lock_path.exists():
@@ -6010,13 +6061,13 @@ def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]
 
 def check_dependabot_product_coverage(repo_root: Path | None = None) -> list[dict]:
     """`.github/dependabot.yml`'s per-product npm blocks must mirror the
-    products actually on disk, and every npm block must carry the fleet-major
-    `ignore:` guard. Three legs, one class:
+    ACTIVE products on disk, and every npm block must carry the fleet-major
+    `ignore:` guard. Four legs, one class:
 
-    1. every `products/<slug>/frontend/package.json` on disk has a matching
-       npm block (`directory: "/products/<slug>/frontend"`) — a missing
-       block means Dependabot never opens an alert or PR for that product's
-       dependencies, invisible until a CVE lands unnoticed.
+    1. every ACTIVE `products/<slug>/frontend/package.json` on disk has a
+       matching npm block (`directory: "/products/<slug>/frontend"`) — a
+       missing block means Dependabot never opens an alert or PR for that
+       product's dependencies, invisible until a CVE lands unnoticed.
     2. no npm block's `directory:` points at a path with no `package.json`
        any more — a deleted/renamed product leaves a stale block; drift
        cuts both ways.
@@ -6024,13 +6075,20 @@ def check_dependabot_product_coverage(repo_root: Path | None = None) -> list[dic
        full 8-entry fleet-major `ignore:` guard — present-but-unguarded (or
        PARTIALLY guarded) is the actual hole this class hides: a block that
        exists LOOKS handled, so a partial guard is worse than none.
+    4. (low severity — `warning`, informational) a product npm block whose
+       slug is ASLEEP (`deploy/fleet/active-scope.txt` excludes it) — not
+       wrong, not blocking, just worth a human glance next time the file is
+       touched: the block can be removed at sleep time or left until
+       reactivation.
 
     Fix: `noctus.dev.refresh_dependabot_coverage` for legs 1 + 3 (targeted —
-    never a full-file rewrite; every existing comment/entry survives). Leg 2
-    is report-only there too — removing a block is a human call.
+    never a full-file rewrite; every existing comment/entry survives, and it
+    never adds a block for an asleep product). Leg 2 is report-only there
+    too — removing a block is a human call; leg 4 is report-only by design.
 
     Per the 2026-08-13 incident: `igig`/`orbity`/`products/seed` carried
-    zero dependency-update coverage while live. Severity `high`.
+    zero dependency-update coverage while live. Severity `high` (legs 1-3);
+    leg 4 is `warning` (this module's advisory-only vocabulary).
     """
     from tools.noctus.dev.dependabot_sync import (
         DEPENDABOT_REL,
@@ -6041,6 +6099,7 @@ def check_dependabot_product_coverage(repo_root: Path | None = None) -> list[dic
         _on_disk_product_slugs,
         _parse_blocks,
     )
+    from tools.noctus.dev.product_scope import dormant_slugs
 
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -6056,7 +6115,7 @@ def check_dependabot_product_coverage(repo_root: Path | None = None) -> list[dic
 
     blocks = _parse_blocks(lines)
     npm_by_slug = _npm_product_blocks(blocks)
-    on_disk = _on_disk_product_slugs(root)
+    on_disk = _on_disk_product_slugs(root)  # active only — see docstring
     rel = str(DEPENDABOT_REL)
 
     for slug in sorted(on_disk - set(npm_by_slug)):
@@ -6114,6 +6173,22 @@ def check_dependabot_product_coverage(repo_root: Path | None = None) -> list[dic
                 f"`noctus.dev.refresh_dependabot_coverage`."
             ),
             "severity": "high",
+        })
+
+    dormant = set(dormant_slugs(root))
+    for slug in sorted(set(npm_by_slug) & dormant):
+        issues.append({
+            "product": slug,
+            "file": rel,
+            "issue": (
+                f"{rel} still carries an npm block for `{slug}`, which is "
+                f"asleep (absent from deploy/fleet/active-scope.txt). Not "
+                f"wrong — Dependabot coverage for a dormant product is "
+                f"harmless — but a human may want to remove the block at "
+                f"sleep time; reactivating the product re-adds it "
+                f"automatically via `noctus.dev.refresh_dependabot_coverage`."
+            ),
+            "severity": "warning",
         })
 
     return issues
@@ -7112,9 +7187,7 @@ def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict
     if not products_dir.is_dir():
         return issues
 
-    for product_dir in sorted(products_dir.iterdir()):
-        if not product_dir.is_dir():
-            continue
+    for product_dir in _active_product_dirs(products_dir):
         backend_app = product_dir / "backend" / "app"
         if not backend_app.is_dir():
             continue
@@ -7611,9 +7684,7 @@ def check_product_source_build_dep_pip_seam(
     else:
         seam_body = ""
 
-    for d in sorted(products_dir.iterdir()):
-        if not d.is_dir() or d.name.startswith("."):
-            continue
+    for d in _active_product_dirs(products_dir):
         req = d / "backend" / "requirements.txt"
         if not req.exists():
             continue
@@ -7929,9 +8000,7 @@ def check_dockerfile_vite_supabase_args(
         "scripts/propagate-{dockerfiles,composes}.sh"
     )
 
-    for prod_dir in sorted(products_dir.iterdir()):
-        if not prod_dir.is_dir() or prod_dir.name.startswith("."):
-            continue
+    for prod_dir in _active_product_dirs(products_dir):
         slug = prod_dir.name
         dockerfile = prod_dir / "backend" / "Dockerfile"
         if not dockerfile.exists():
@@ -8090,9 +8159,7 @@ def check_product_container_shape(repo_root: Path | None = None) -> list[dict]:
         "(KB § PATTERNS/devops/containerization.md § 1a)"
     )
 
-    for prod_dir in sorted(products_dir.iterdir()):
-        if not prod_dir.is_dir() or prod_dir.name.startswith("."):
-            continue
+    for prod_dir in _active_product_dirs(products_dir):
         slug = prod_dir.name
         if slug == "seed":
             continue  # the canonical source — it IS the shape
@@ -8815,19 +8882,19 @@ _QUERY_FN_RATIONALE_WINDOW: int = 5
 
 
 def _query_fn_product_fe_bases(root: Path) -> list[str]:
-    """Enumerate every `products/<slug>/frontend` base on disk.
+    """Enumerate every ACTIVE `products/<slug>/frontend` base on disk.
 
-    Walks the products dir directly rather than parsing the registry
-    because every product on disk gets scanned (even pre-registration);
-    the goal is "every FE source tree", not "every registered product."
+    Walks the products dir directly rather than parsing the `@noctusai/lib`
+    CORS registry (a DIFFERENT registration axis — "every FE source tree",
+    not "every registered product"), but is scoped to active products via
+    the `_active_product_dirs` choke point: nobody is touching an asleep
+    product's queryFn bodies.
     """
     products_dir = root / "products"
     if not products_dir.is_dir():
         return []
     bases: list[str] = []
-    for child in sorted(products_dir.iterdir()):
-        if not child.is_dir():
-            continue
+    for child in _active_product_dirs(products_dir):
         if not (child / "frontend").is_dir():
             continue
         bases.append(f"products/{child.name}/frontend")
@@ -9211,18 +9278,18 @@ def _run_lying_loading_modeb_scan(
 
 
 def _lying_loading_product_fe_src_dirs(root: Path) -> list[Path]:
-    """Every `products/<slug>/frontend/src` directory on disk.
+    """Every ACTIVE `products/<slug>/frontend/src` directory on disk.
 
-    Scoped to products (not `seed/`) per the incident surface — walks disk
-    directly so a not-yet-registered product is still scanned.
+    Scoped to products (not `seed/`) per the incident surface, and to
+    ACTIVE products via `_active_product_dirs` (2026-09-22) — an asleep
+    product's FE is not being worked on, so a lying-loading-state finding
+    in it is unactionable noise.
     """
     products_dir = root / "products"
     if not products_dir.is_dir():
         return []
     dirs: list[Path] = []
-    for child in sorted(products_dir.iterdir()):
-        if not child.is_dir():
-            continue
+    for child in _active_product_dirs(products_dir):
         src = child / "frontend" / "src"
         if src.is_dir():
             dirs.append(src)
@@ -9661,14 +9728,17 @@ _POSTGREST_QUALIFIED_LITERAL_RE = re.compile(r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")
 
 
 def _postgrest_scan_roots(root: Path) -> list[Path]:
-    """Backend Python that talks to Supabase: the seed + every product API."""
+    """Backend Python that talks to Supabase: the seed + every ACTIVE
+    product's API (`_active_product_dirs` choke point, 2026-09-22) — `seed`
+    itself always scans (it is the shared source every product inherits
+    from, active or not)."""
     roots: list[Path] = []
     seed = root / "seed"
     if seed.is_dir():
         roots.append(seed)
     products = root / "products"
     if products.is_dir():
-        for product_dir in sorted(products.iterdir()):
+        for product_dir in _active_product_dirs(products):
             backend = product_dir / "backend"
             if backend.is_dir():
                 roots.append(backend)
@@ -10173,9 +10243,7 @@ def check_playwright_supabase_env(repo_root: Path | None = None) -> list[dict]:
         "products/core/frontend/playwright.config.ts)"
     )
 
-    for prod_dir in sorted(products_dir.iterdir()):
-        if not prod_dir.is_dir() or prod_dir.name.startswith("."):
-            continue
+    for prod_dir in _active_product_dirs(products_dir):
         slug = prod_dir.name
         cfg = prod_dir / "frontend" / "playwright.config.ts"
         if not cfg.exists():
@@ -10531,7 +10599,7 @@ def _check_status_pagina_dev_reachability(root: Path) -> list[dict]:
     if not products_dir.is_dir():
         return issues
 
-    for product_dir in sorted(p for p in products_dir.iterdir() if p.is_dir()):
+    for product_dir in _active_product_dirs(products_dir):
         migrations = sorted((product_dir / "backend" / "migrations").glob("*.sql"))
         if not migrations:
             continue
@@ -10599,9 +10667,7 @@ def check_limiter_conftest_import(repo_root: Path | None = None) -> list[dict]:
     if not products_dir.exists():
         return issues
 
-    for product_path in sorted(products_dir.iterdir()):
-        if not product_path.is_dir() or product_path.name.startswith("."):
-            continue
+    for product_path in _active_product_dirs(products_dir):
         name = product_path.name
         rate_limit_py = product_path / "backend" / "app" / "rate_limit.py"
         if not rate_limit_py.exists():
@@ -10830,8 +10896,11 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
     # alongside the canonical set (igig ships `migrations/sqlite/` numbered to
     # match its Postgres files). Subdirectories are scanned too — before
     # 2026-08-09 this glob was non-recursive, so a genuine duplicate INSIDE a
-    # mirror directory was invisible.
-    for product_dir in sorted((root / "products").glob("*")):
+    # mirror directory was invisible. Active products only (2026-09-22,
+    # `_active_product_dirs`) — each product's numbering is an independent
+    # sequence (not a shared-DB collision surface, unlike Leg B below), and
+    # nobody is adding migrations to an asleep product.
+    for product_dir in _active_product_dirs(root / "products"):
         mig_root = product_dir / "backend" / "migrations"
         if not mig_root.is_dir():
             continue
@@ -10985,6 +11054,12 @@ def check_schema_wide_anon_grant(
 
     Severity `critical` on both legs — no allowlist, no suppression marker
     (deliberate, same posture as `check_storage_bucket_public`).
+
+    Deliberately NOT active-only (`_active_product_dirs`, 2026-09-22): a
+    migration, once applied, describes the LIVE Postgres schema whether or
+    not its product is `ativo` — an asleep product's tables still exist in
+    the shared DB with real grants. Narrowing this scan to active products
+    would hide a genuine schema-security hole behind "nobody works on it."
 
     KB § PATTERNS/backend/database-rls.md.
     """
@@ -11296,6 +11371,12 @@ def check_storage_bucket_public(
     migration file — old or new — says, closing the gap this diff-scoping
     deliberately leaves in the static leg.
 
+    Deliberately NOT active-only (`_active_product_dirs`, 2026-09-22) for the
+    same reason as `check_schema_wide_anon_grant`: a `paths=None` audit reads
+    already-applied migration history, which describes the LIVE schema
+    regardless of `ativo`; a `paths=[...]` pre-commit call is diff-scoped to
+    whatever was actually staged, which self-limits to touched files anyway.
+
     KB § PATTERNS/backend/database-rls.md § Storage buckets — never public.
     KB § PATTERNS/security/lgpd.md § Public storage buckets bypass RLS
     entirely.
@@ -11535,6 +11616,11 @@ def check_migration_guard_has_probe(
     Severity `high`. See `_GUARD_PROBE_ALLOWLIST` for the one sanctioned
     opt-out shape (co-located rationale required, never a bare
     suppression).
+
+    Deliberately NOT active-only (`_active_product_dirs`, 2026-09-22) — same
+    reasoning as `check_storage_bucket_public`: already-applied migration
+    history describes the LIVE schema regardless of `ativo`, and the
+    pre-commit `paths=[...]` call is diff-scoped to staged files anyway.
     """
     root = repo_root or REPO_ROOT
     findings: list[dict] = []
@@ -11713,6 +11799,10 @@ def check_table_has_rls(
     *.sql`. `paths=[...]` scopes to the given files.
 
     Severity `high` (informational — not wired into any blocking gate).
+
+    Deliberately NOT active-only (`_active_product_dirs`, 2026-09-22) — same
+    reasoning as the other migration-SQL scans in this module: already-
+    applied history describes the LIVE schema regardless of `ativo`.
 
     KB § PATTERNS/backend/database-rls.md.
     """
@@ -12837,8 +12927,16 @@ def check_conftest_env_setdefault(
     findings: list[dict] = []
 
     if conftests is None:
+        from .product_scope import filter_active
+
         conftests = {}
-        for path in sorted((root / "products").glob("*/backend/tests/conftest.py")):
+        paths = sorted((root / "products").glob("*/backend/tests/conftest.py"))
+        active = set(filter_active(
+            [p.relative_to(root).parts[1] for p in paths], root,
+        ))
+        for path in paths:
+            if path.relative_to(root).parts[1] not in active:
+                continue  # asleep — active-only, 2026-09-22
             try:
                 conftests[str(path.relative_to(root))] = path.read_text(encoding="utf-8")
             except OSError:
@@ -13020,9 +13118,7 @@ def check_hashlib_usedforsecurity(repo_root: Path | None = None) -> list[dict]:
     scan_roots: list[tuple[str, Path]] = []
     products_dir = root / "products"
     if products_dir.exists():
-        for product_path in sorted(products_dir.iterdir()):
-            if not product_path.is_dir() or product_path.name.startswith("."):
-                continue
+        for product_path in _active_product_dirs(products_dir):
             app_dir = product_path / "backend" / "app"
             if app_dir.exists():
                 scan_roots.append((product_path.name, app_dir))
@@ -13614,9 +13710,7 @@ def check_canonical_organ_consumption(
 
     registry = _load_organ_registry(root)
 
-    for product_path in sorted(products_dir.iterdir()):
-        if not product_path.is_dir() or product_path.name.startswith("."):
-            continue
+    for product_path in _active_product_dirs(products_dir):
         fe_src = product_path / "frontend" / "src"
         if not fe_src.exists():
             continue
@@ -13838,9 +13932,7 @@ def check_consent_routes_mounted(
             r"(?:" + "|".join(re.escape(n) for n in _CONSENT_SHADOW_NAMES) + r")"
             r"\s*[=(:{<]"
         )
-        for product_path in sorted(products_dir.iterdir()):
-            if not product_path.is_dir() or product_path.name.startswith("."):
-                continue
+        for product_path in _active_product_dirs(products_dir):
             fe_src = product_path / "frontend" / "src"
             if not fe_src.exists():
                 continue
@@ -13891,13 +13983,16 @@ def check_consent_routes_mounted(
 
 
 def check_all_products() -> tuple[int, list]:
-    """Run all compliance checks on all products. Returns (score, issues)."""
+    """Run all compliance checks on all ACTIVE products. Returns (score, issues).
+
+    Active-only (2026-09-22, `_active_product_dirs` choke point) — an asleep
+    product gets no per-product compliance issues at all; see
+    `KB § PATTERNS/architect/product-working-scope.md`.
+    """
     all_issues = []
     scores = []
 
-    for d in sorted(PRODUCTS_DIR.iterdir()):
-        if not d.is_dir() or d.name.startswith("."):
-            continue
+    for d in _active_product_dirs(PRODUCTS_DIR):
         issues = (
             check_seed_compliance(d)
             + check_path_references(d)
@@ -17863,6 +17958,17 @@ def check_root_requirements_superset(repo_root: Path | None = None) -> list[dict
 
     Severity HIGH — an incomplete superset breaks the backend CI/predeploy gate.
     Silent skip when root requirements.txt or products/ are absent (non-noc tree).
+
+    Deliberately NOT active-only (`_active_product_dirs`, 2026-09-22): this is
+    a superset-COMPLETENESS check (`⊆ root`), not a per-product code check —
+    over-including an asleep product's deps costs nothing (root already had
+    them), while narrowing to active-only would let an asleep product's
+    requirements.txt drift silently, so reactivation could break CI/predeploy
+    with no keeper having ever flagged the gap. The CI test-matrix keeper
+    (`check_ci_test_matrix_coverage`) deliberately KEEPS dormant matrix
+    entries (skipped at runtime, not removed) — this keeper stays consistent
+    with "the install surface stays complete" rather than narrowing ahead of
+    a workflow-level change this dispatch does not own.
     KB § PATTERNS/devops/dev-prod-parity.md.
     """
     issues: list[dict] = []
@@ -18392,7 +18498,9 @@ def check_auth_boundary_false_green(
     `403` is deliberately NOT flagged (a second legitimate auth outcome —
     authenticated-but-forbidden), nor is a 404+500 resource-error range.
 
-    **Scope:** `products/*/backend/tests/**/*.py`.
+    **Scope:** `products/*/backend/tests/**/*.py`, active products only when
+    walking `products_dir` (`_active_product_dirs`, 2026-09-22) — an explicit
+    `product_path` is always scanned regardless of active state.
 
     **Never silent:** if a test file cannot be AST-parsed (SyntaxError or OS
     error), emits a `warning` finding requesting manual review rather than
@@ -18483,9 +18591,8 @@ def check_auth_boundary_false_green(
     if product_path is not None:
         _scan_product(product_path)
     else:
-        for d in sorted(base.iterdir()):
-            if d.is_dir() and not d.name.startswith("."):
-                _scan_product(d)
+        for d in _active_product_dirs(base):
+            _scan_product(d)
 
     return issues
 

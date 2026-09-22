@@ -130,6 +130,15 @@ def _write_product(root: Path, slug: str) -> None:
     (pdir / "package.json").write_text('{"name": "%s-frontend"}' % slug)
 
 
+def _write_active_scope(root: Path, *slugs: str) -> None:
+    """Stamp a synthetic `deploy/fleet/active-scope.txt` — with this file
+    present, `product_scope.filter_active` narrows to exactly `slugs`
+    instead of failing-toward-coverage."""
+    p = root / "deploy" / "fleet" / "active-scope.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(slugs) + "\n")
+
+
 class TestMissingProductBlock:
     def test_adds_a_block_for_an_uncovered_product(self, tmp_path):
         _write_dependabot(tmp_path, _CORE_BLOCK)
@@ -269,6 +278,47 @@ class TestMissingFileIsAnHonestError:
         (tmp_path / "products").mkdir()
         r = sync_dependabot_coverage(root=tmp_path)
         assert r["ok"] is False and r["status"] == "error"
+
+
+class TestActiveScopeFiltering:
+    """Coverage is ACTIVE-only (2026-09-22) — an asleep on-disk product must
+    never get a new npm block; an active one still does."""
+
+    def test_asleep_product_gets_no_block(self, tmp_path):
+        _write_dependabot(tmp_path, _GHOST_BLOCK.replace("ghost", "core"))
+        _write_product(tmp_path, "core")
+        _write_product(tmp_path, "beta")  # asleep — on disk, no block
+        _write_active_scope(tmp_path, "core")
+
+        r = sync_dependabot_coverage(root=tmp_path)
+
+        assert r["ok"] and r["status"] == "in-sync"
+        assert r["added"] == []
+        text = (tmp_path / ".github" / "dependabot.yml").read_text()
+        assert '"/products/beta/frontend"' not in text
+
+    def test_active_product_still_gets_a_block(self, tmp_path):
+        _write_dependabot(tmp_path, _CORE_BLOCK)
+        _write_product(tmp_path, "core")
+        _write_product(tmp_path, "beta")
+        _write_active_scope(tmp_path, "core", "beta")
+
+        r = sync_dependabot_coverage(root=tmp_path)
+
+        assert r["ok"] and r["status"] == "written"
+        assert r["added"] == ["beta"]
+        text = (tmp_path / ".github" / "dependabot.yml").read_text()
+        assert '"/products/beta/frontend"' in text
+
+    def test_missing_scope_file_falls_back_to_watching_everything(self, tmp_path):
+        # No active-scope.txt at all → filter_active fails toward coverage.
+        _write_dependabot(tmp_path, _CORE_BLOCK)
+        _write_product(tmp_path, "core")
+        _write_product(tmp_path, "beta")
+
+        r = sync_dependabot_coverage(root=tmp_path)
+
+        assert r["added"] == ["beta"]
 
 
 class TestRealRepoIsGreen:

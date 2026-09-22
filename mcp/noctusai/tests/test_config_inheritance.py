@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import check_config_extends_product_settings
+from tools.noctus.dev.product_scope import filter_active
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -40,11 +41,55 @@ class Settings(ProductSettings):
         assert check_config_extends_product_settings(PRODUCTS_DIR / "core") == []
 
     def test_all_real_products_pass(self):
-        for d in sorted(PRODUCTS_DIR.iterdir()):
-            if not d.is_dir() or d.name.startswith("."):
+        # Active products only (2026-09-22) — an asleep product's config.py
+        # is not being worked on; nobody is fixing a violation there.
+        dirs = sorted(d for d in PRODUCTS_DIR.iterdir() if d.is_dir() and not d.name.startswith("."))
+        active = set(filter_active([d.name for d in dirs], REPO_ROOT))
+        for d in dirs:
+            if d.name not in active:
                 continue
             issues = check_config_extends_product_settings(d)
             assert issues == [], f"{d.name} flagged: {issues}"
+
+
+class TestActiveScopeFiltering:
+    """Proves the choke point itself (`product_scope.filter_active`) skips
+    an asleep product and keeps an active one — the mechanism
+    `test_all_real_products_pass` above relies on."""
+
+    def _write_violation(self, root: Path, slug: str) -> None:
+        product = root / "products" / slug
+        (product / "backend" / "app").mkdir(parents=True)
+        (product / "backend" / "app" / "config.py").write_text("""
+from noctusai_lib.config import BaseAppSettings
+
+class Settings(BaseAppSettings):
+    pass
+""")
+
+    def test_asleep_product_is_skipped(self, tmp_path):
+        self._write_violation(tmp_path, "asleep-prod")
+        self._write_violation(tmp_path, "awake-prod")
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("awake-prod\n")
+
+        active = set(filter_active(["asleep-prod", "awake-prod"], tmp_path))
+
+        assert active == {"awake-prod"}
+
+    def test_active_product_still_checked(self, tmp_path):
+        self._write_violation(tmp_path, "awake-prod")
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("awake-prod\n")
+
+        product = tmp_path / "products" / "awake-prod"
+        active = set(filter_active(["awake-prod"], tmp_path))
+        issues = check_config_extends_product_settings(product)
+
+        assert active == {"awake-prod"}
+        assert len(issues) == 1
 
 
 class TestViolations:

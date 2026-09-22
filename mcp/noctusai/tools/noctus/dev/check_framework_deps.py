@@ -227,13 +227,26 @@ def _audit(root: Path) -> tuple[dict[str, list[str]], int, int, list[str]]:
     this codebase forbids. The caller surfaces them as
     ``skipped_non_consumers`` so "why is permutas not audited?" is answerable
     from the output alone.
+
+    Active products only (2026-09-22, ``product_scope.filter_active``) — an
+    asleep product's frontend isn't being built, so a missing FRAMEWORK_DEP
+    there is unactionable noise, not a live build-break risk. It simply does
+    not appear here at all (not even in ``skipped_non_consumers`` — that list
+    is reserved for on-disk, ACTIVE products that opted out of the framework,
+    e.g. ``permutas``).
     """
     required, _organ_transitive = _required_deps(root)
     drift: dict[str, list[str]] = {}
     total = 0
     audited = 0
     skipped: list[str] = []
+    from .product_scope import filter_active
+
     pkg_paths = sorted(root.glob("products/*/frontend/package.json"))
+    active_slugs = set(filter_active(
+        [p.parent.parent.name for p in pkg_paths], root,
+    ))
+    pkg_paths = [p for p in pkg_paths if p.parent.parent.name in active_slugs]
     for pkg_path in pkg_paths:
         slug = pkg_path.parent.parent.name
         pkg = json.loads(pkg_path.read_text())

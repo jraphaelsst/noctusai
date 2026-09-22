@@ -123,6 +123,40 @@ class TestProductLockfileDepSync:
         assert len(issues) == 1, issues
         assert issues[0]["product"] == "acme"
 
+    def test_asleep_product_with_stale_lockfile_is_not_flagged(self, tmp_path: Path):
+        _write_product(
+            tmp_path, "erp-imobiliario",
+            deps={"react": "^18.3.1"},
+            lockfile_packages={},  # stale — no node_modules/react entry
+        )
+        _write_product(
+            tmp_path, "core",
+            deps={"react": "^18.3.1"},
+            lockfile_packages={"node_modules/react": {"version": "18.3.1"}},
+        )
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("core\n")
+
+        issues = check_product_lockfile_dep_sync(tmp_path)
+
+        assert issues == [], issues
+
+    def test_active_product_with_stale_lockfile_is_still_flagged(self, tmp_path: Path):
+        _write_product(
+            tmp_path, "core",
+            deps={"react": "^18.3.1"},
+            lockfile_packages={},  # stale
+        )
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("core\n")
+
+        issues = check_product_lockfile_dep_sync(tmp_path)
+
+        assert len(issues) == 1, issues
+        assert issues[0]["product"] == "core"
+
     def test_real_repo_is_green(self):
         """The live repo (as of this commit) must have zero drift — the
         2026-07-22 knowledge-extractor @dnd-kit gap this session found was

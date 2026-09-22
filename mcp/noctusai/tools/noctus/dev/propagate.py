@@ -64,6 +64,8 @@ from workspace import resolve_caller_root
 def _load_products(repo_root: pathlib.Path | None = None) -> list[tuple[str, str]]:
     from noctusai_lib.config.cors_registry import parse_products_registry
 
+    from .product_scope import filter_active
+
     root = repo_root if repo_root is not None else REPO_ROOT
     entries = parse_products_registry(root / "start.sh")
     if not entries:
@@ -72,7 +74,15 @@ def _load_products(repo_root: pathlib.Path | None = None) -> list[tuple[str, str
             "propagate against an unknown product set. A silent empty list "
             "here would regenerate nothing and report success."
         )
-    return [(e["slug"], str(e["backend_port"])) for e in entries if e["slug"] != "seed"]
+    rows = [(e["slug"], str(e["backend_port"])) for e in entries if e["slug"] != "seed"]
+    # Active products only (2026-09-22, `product_scope.filter_active`) — an
+    # asleep product's compose/Dockerfile is not being rebuilt or reviewed;
+    # regenerating it anyway is noise `--propagate both --check` would then
+    # flag as drift on every commit. A missing `active-scope.txt` (e.g. every
+    # synthetic temp repo this module's own test suite builds) fails toward
+    # coverage — `filter_active` keeps every row unfiltered in that case.
+    active_slugs = set(filter_active([slug for slug, _ in rows], root))
+    return [(slug, port) for slug, port in rows if slug in active_slugs]
 
 
 # Module-import-time snapshot — kept for back-compat with callers that

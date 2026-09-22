@@ -14,6 +14,7 @@ from tools.noctus.dev.compliance import (
     _resolves_via_module_resolution,
     check_frontend_config_paths,
 )
+from tools.noctus.dev.product_scope import filter_active
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -125,11 +126,49 @@ class TestCompliantConfigs:
         assert check_frontend_config_paths(product) == []
 
     def test_all_real_products_pass(self):
-        for d in sorted(PRODUCTS_DIR.iterdir()):
-            if not d.is_dir() or d.name.startswith("."):
+        # Active products only (2026-09-22) — an asleep product's frontend
+        # config is not being worked on.
+        dirs = sorted(d for d in PRODUCTS_DIR.iterdir() if d.is_dir() and not d.name.startswith("."))
+        active = set(filter_active([d.name for d in dirs], REPO_ROOT))
+        for d in dirs:
+            if d.name not in active:
                 continue
             issues = check_frontend_config_paths(d)
             assert issues == [], f"{d.name} flagged: {issues}"
+
+
+class TestActiveScopeFiltering:
+    """Proves the choke point (`product_scope.filter_active`) skips an
+    asleep product and keeps an active one."""
+
+    def test_asleep_product_is_skipped(self, tmp_path):
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("awake-prod\n")
+
+        active = set(filter_active(["asleep-prod", "awake-prod"], tmp_path))
+
+        assert active == {"awake-prod"}
+
+    def test_active_product_still_checked(self, tmp_path):
+        seed_factory = tmp_path / "seed" / "framework" / "frontend"
+        seed_factory.mkdir(parents=True)
+        (seed_factory / "vite.config.factory.ts").write_text("")
+        product = tmp_path / "products" / "awake-prod"
+        (product / "frontend").mkdir(parents=True)
+        # broken path depth — same shape as test_broken_vite_path_flagged
+        (product / "frontend" / "vite.config.ts").write_text(
+            'import { x } from "../../seed/framework/frontend/vite.config.factory";'
+        )
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("awake-prod\n")
+
+        active = set(filter_active(["awake-prod"], tmp_path))
+        issues = check_frontend_config_paths(product)
+
+        assert active == {"awake-prod"}
+        assert len(issues) == 1
 
 
 class TestViolations:

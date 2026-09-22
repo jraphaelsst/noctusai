@@ -243,3 +243,38 @@ def test_load_products_raises_on_empty_registry(tmp_path):
     root.mkdir()
     with pytest.raises(RuntimeError, match="PRODUCTS registry parsed empty"):
         P._load_products(root)
+
+
+# ── active-scope filtering (2026-09-22) ─────────────────────────────────────
+def test_load_products_skips_asleep_keeps_active(tmp_path):
+    """`_load_products` must drop a slug absent from `active-scope.txt` and
+    keep one present in it — the choke point `--propagate both --check`
+    (pre-commit) relies on so an asleep product's compose/Dockerfile is
+    never regenerated or flagged as drift."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_registry_start_sh(
+        root, [("awake-product", "8100"), ("asleep-product", "8200")]
+    )
+    scope_path = root / "deploy" / "fleet" / "active-scope.txt"
+    scope_path.parent.mkdir(parents=True, exist_ok=True)
+    scope_path.write_text("awake-product\n")
+
+    products = P._load_products(root)
+
+    assert products == [("awake-product", "8100")]
+
+
+def test_load_products_missing_scope_file_keeps_everything(tmp_path):
+    """No `active-scope.txt` at the effective root (every synthetic temp
+    repo this suite's other tests build) fails toward coverage — every
+    registry row survives, unfiltered."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_registry_start_sh(
+        root, [("awake-product", "8100"), ("asleep-product", "8200")]
+    )
+
+    products = P._load_products(root)
+
+    assert {slug for slug, _ in products} == {"awake-product", "asleep-product"}

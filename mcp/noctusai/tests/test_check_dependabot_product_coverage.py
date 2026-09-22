@@ -113,6 +113,12 @@ def _write_product(root: Path, slug: str) -> None:
     (pdir / "package.json").write_text('{"name": "%s-frontend"}' % slug)
 
 
+def _write_active_scope(root: Path, *slugs: str) -> None:
+    p = root / "deploy" / "fleet" / "active-scope.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(slugs) + "\n")
+
+
 class TestLeg1MissingProductBlock:
     """A products/<slug>/frontend with a package.json but no npm block."""
 
@@ -205,6 +211,56 @@ class TestLeg3GuardCoverage:
         issues = check_dependabot_product_coverage(tmp_path)
         assert len(issues) == 1, issues
         assert issues[0]["product"] == "<seed>"
+
+
+class TestActiveScopeFiltering:
+    """Coverage (leg 1) is ACTIVE-only; an existing block for an asleep
+    product is flagged separately, low severity (leg 4) — 2026-09-22."""
+
+    def test_asleep_product_with_no_block_is_not_flagged(self, tmp_path):
+        _write_dependabot(tmp_path, _FULLY_GUARDED.format(slug="core"))
+        _write_product(tmp_path, "core")
+        _write_product(tmp_path, "igig")  # asleep, no block
+        _write_active_scope(tmp_path, "core")
+
+        issues = check_dependabot_product_coverage(tmp_path)
+
+        assert issues == [], issues
+
+    def test_active_product_with_no_block_is_still_flagged(self, tmp_path):
+        _write_dependabot(tmp_path, _FULLY_GUARDED.format(slug="core"))
+        _write_product(tmp_path, "core")
+        _write_product(tmp_path, "igig")  # active, no block
+        _write_active_scope(tmp_path, "core", "igig")
+
+        issues = check_dependabot_product_coverage(tmp_path)
+
+        missing = [i for i in issues if i["product"] == "igig"]
+        assert len(missing) == 1, issues
+        assert missing[0]["severity"] == "high"
+
+    def test_existing_block_for_asleep_product_is_a_low_severity_flag(self, tmp_path):
+        _write_dependabot(
+            tmp_path,
+            _FULLY_GUARDED.format(slug="core") + _FULLY_GUARDED.format(slug="igig"),
+        )
+        _write_product(tmp_path, "core")
+        _write_product(tmp_path, "igig")
+        _write_active_scope(tmp_path, "core")  # igig is asleep
+
+        issues = check_dependabot_product_coverage(tmp_path)
+
+        asleep_flags = [i for i in issues if i["product"] == "igig"]
+        assert len(asleep_flags) == 1, issues
+        assert asleep_flags[0]["severity"] == "warning"
+        assert "asleep" in asleep_flags[0]["issue"]
+
+    def test_missing_scope_file_falls_back_to_watching_everything(self, tmp_path):
+        _write_dependabot(tmp_path, _FULLY_GUARDED.format(slug="core"))
+        _write_product(tmp_path, "core")
+        _write_product(tmp_path, "igig")  # no active-scope.txt at all
+        issues = check_dependabot_product_coverage(tmp_path)
+        assert any(i["product"] == "igig" for i in issues)
 
 
 class TestAllClean:

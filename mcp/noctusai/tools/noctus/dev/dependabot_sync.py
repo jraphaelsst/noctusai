@@ -16,20 +16,27 @@ DERIVE-IT mechanism so it never silently regresses to 9/12 again.
 Two questions, one file, same "derive don't hand-maintain" answer as
 `deploy/fleet/build-scope.txt` (see `build_scope.py`):
 
-    which products/*/frontend dirs are on disk right now?  →  filesystem, not the
-                                                                catalog (Dependabot
-                                                                should watch an
-                                                                inactive-but-on-disk
-                                                                product too — the file
-                                                                already did, for
-                                                                adconnect/daily-life/
-                                                                dev-team/personal-
-                                                                finance/therapy-
-                                                                platform BEFORE this
-                                                                module existed).
+    which products/*/frontend dirs are on disk AND ACTIVE right now?  →  filesystem
+                                                                ∩ `deploy/fleet/
+                                                                active-scope.txt`
+                                                                (`product_scope.
+                                                                filter_active`).
     does every npm block on disk still resolve + carry the fleet-major guard?
                                                             →  parse the committed
                                                                 file's npm blocks.
+
+REVISED 2026-09-22 (supersedes the original "watch inactive too" stance below).
+This module used to deliberately track inactive-but-on-disk products too —
+Dependabot should still flag a CVE in a product we're not actively deploying,
+the reasoning went. The user's explicit decision for this dispatch overrides
+that: an asleep product (`adconnect`, `daily-life`, `dev-team`,
+`erp-imobiliario`, `knowledge-extractor`, `personal-finance`,
+`therapy-platform`) is OUT of every check until reactivated — including
+Dependabot coverage. `noctus.dev.refresh_dependabot_coverage` therefore only
+ever ADDS a block for an ACTIVE product now; a product's npm block is removed
+by hand at sleep time (this module is append-only by design — see "TARGETED
+REPAIR, NOT A REWRITE" below) and re-added automatically the moment
+`active-scope.txt` picks the product back up after reactivation + a refresh.
 
 TARGETED REPAIR, NOT A REWRITE. `dependabot.yml` carries load-bearing hand-written
 rationale comments (why product requirements.txt files are omitted from pip
@@ -165,20 +172,29 @@ def _has_npm_manifest(root: Path, rel_dir: str) -> bool:
 
 
 def _on_disk_product_slugs(root: Path) -> set[str]:
-    """Every `products/<slug>` with a `frontend/package.json` — filesystem
-    fact, not a catalog query. Deliberately NOT scoped to
-    `ativo=true AND deploy_scope='live'`: the file already tracked inactive-
-    but-on-disk products (adconnect, daily-life, dev-team, personal-finance,
-    therapy-platform) before this module existed — Dependabot should still
-    flag a CVE in a product we're not actively deploying."""
+    """Every ACTIVE `products/<slug>` with a `frontend/package.json` —
+    filesystem fact ∩ `deploy/fleet/active-scope.txt` (`product_scope.
+    filter_active`, 2026-09-22).
+
+    REVISED 2026-09-22 (see module docstring): used to be deliberately
+    unscoped to `ativo` — this module tracked an inactive-but-on-disk
+    product's npm coverage on the theory that Dependabot should still flag
+    a CVE in it. The user's explicit decision for this dispatch overrides
+    that: an asleep product is out of every check, Dependabot included,
+    until reactivated. A missing `active-scope.txt` fails toward coverage
+    (every on-disk npm consumer counts, exactly the old behaviour).
+    """
+    from .product_scope import filter_active
+
     products = root / "products"
     if not products.exists():
         return set()
-    return {
+    slugs = {
         d.name
         for d in products.iterdir()
         if d.is_dir() and not d.name.startswith(".") and _has_npm_manifest(root, f"products/{d.name}/frontend")
     }
+    return set(filter_active(slugs, root))
 
 
 def _render_ignore_entry(name: str) -> list[str]:

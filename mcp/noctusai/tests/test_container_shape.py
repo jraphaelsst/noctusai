@@ -136,6 +136,31 @@ class TestCheckProductContainerShape:
         assert any("external" in i["issue"] for i in issues)
         assert any("theta-tunnel" in i["issue"] for i in issues)
 
+    # ── active-scope filtering (2026-09-22) ─────────────────────────────
+    def test_asleep_product_missing_dockerfile_is_not_flagged(self, tmp_path: Path) -> None:
+        _make_product(tmp_path, "gamma", dockerfile=None, compose=_house_compose("gamma"), frontend=False)
+        _make_product(
+            tmp_path, "core",
+            dockerfile=_HOUSE_DOCKERFILE_BACKEND_ONLY, compose=_house_compose("core"), frontend=False,
+        )
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("core\n")
+
+        issues = C.check_product_container_shape(repo_root=tmp_path)
+
+        assert issues == [], issues
+
+    def test_active_product_missing_dockerfile_still_flagged(self, tmp_path: Path) -> None:
+        _make_product(tmp_path, "gamma", dockerfile=None, compose=_house_compose("gamma"), frontend=False)
+        scope = tmp_path / "deploy" / "fleet" / "active-scope.txt"
+        scope.parent.mkdir(parents=True, exist_ok=True)
+        scope.write_text("gamma\n")
+
+        issues = C.check_product_container_shape(repo_root=tmp_path)
+
+        assert any("has no" in i["issue"] and i["file"].endswith("Dockerfile") for i in issues)
+
     # ── real-tree smoke: the live fleet is house-conformant ────────────
     def test_live_fleet_is_clean(self) -> None:
         from settings import REPO_ROOT  # noqa: E402

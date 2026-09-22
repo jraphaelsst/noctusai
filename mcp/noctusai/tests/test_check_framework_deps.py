@@ -112,6 +112,48 @@ class TestAuditDrift:
         assert set(result["drift"]) == {"a-prod", "b-prod"}
 
 
+class TestActiveScopeFiltering:
+    """The audit is ACTIVE-only (2026-09-22) — an asleep on-disk product
+    with a missing FRAMEWORK_DEP must not appear in `drift`/`products_audited`
+    at all; an active one still does."""
+
+    def _write_scope(self, root: Path, *slugs: str) -> None:
+        p = root / "deploy" / "fleet" / "active-scope.txt"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(slugs) + "\n")
+
+    def test_asleep_product_with_drift_is_not_audited(self, tmp_path):
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "erp-imobiliario", partial)  # asleep, drifted
+        _write_pkg(tmp_path, "core", _full_deps())
+        self._write_scope(tmp_path, "core")
+
+        result = check_framework_deps(repo_root=tmp_path)
+
+        assert result["status"] == "clean"
+        assert result["drift"] == {}
+        assert result["products_audited"] == 1
+
+    def test_active_product_with_drift_is_still_audited(self, tmp_path):
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "core", partial)  # active, drifted
+        self._write_scope(tmp_path, "core")
+
+        result = check_framework_deps(repo_root=tmp_path)
+
+        assert result["status"] == "drift"
+        assert result["drift"] == {"core": ["zustand"]}
+
+    def test_missing_scope_file_falls_back_to_watching_everything(self, tmp_path):
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "erp-imobiliario", partial)  # no active-scope.txt
+
+        result = check_framework_deps(repo_root=tmp_path)
+
+        assert result["status"] == "drift"
+        assert "erp-imobiliario" in result["drift"]
+
+
 class TestFix:
     def test_fix_borrows_donor_versions_and_writes(self, tmp_path):
         donor_deps = {d: f"^{i}.0.0" for i, d in enumerate(FRAMEWORK_DEPS)}

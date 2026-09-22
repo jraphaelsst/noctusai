@@ -38,6 +38,7 @@ from tools.noctus.dev.compliance import (
     check_product_service_worker,
 )
 from tools.noctus.dev.migrate_product import FakeSqlExecutor
+from tools.noctus.dev.product_scope import filter_active
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCTS_DIR = REPO_ROOT / "products"
@@ -78,11 +79,18 @@ def _load_baseline_fingerprints() -> set[str]:
 def _real_product_names() -> list[str]:
     """Same derivation `check_all_products()` and `TestPathReferences` use —
     never a hand-maintained list (a hand list drifts the moment a product is
-    added/removed, per `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`)."""
-    return sorted(
+    added/removed, per `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`).
+
+    Active products only (2026-09-22, `product_scope.filter_active`) — mirrors
+    `check_all_products()`'s own `_active_product_dirs` choke point, so this
+    parametrization never lists a test node for a product the underlying scan
+    (`live_high_critical_fingerprints` → `check_all_products`) cannot ever
+    produce a fingerprint for."""
+    on_disk = sorted(
         d.name for d in PRODUCTS_DIR.iterdir()
         if d.is_dir() and not d.name.startswith(".")
     )
+    return sorted(filter_active(on_disk, REPO_ROOT))
 
 
 # `fingerprint()` (see `refresh_compliance_baseline.py`) leads with the
@@ -233,11 +241,11 @@ class TestSeedCompliance:
 
 class TestPathReferences:
     def test_no_old_shared_paths(self):
-        for d in sorted(PRODUCTS_DIR.iterdir()):
-            if not d.is_dir() or d.name.startswith("."):
-                continue
-            issues = check_path_references(d)
-            assert len(issues) == 0, f"{d.name} has old paths: {issues}"
+        # Active products only (2026-09-22) — reuses the module-level
+        # `_REAL_PRODUCT_NAMES` (`_real_product_names()`, already filtered).
+        for name in _REAL_PRODUCT_NAMES:
+            issues = check_path_references(PRODUCTS_DIR / name)
+            assert len(issues) == 0, f"{name} has old paths: {issues}"
 
 
 class TestMockSchemaValidation:
