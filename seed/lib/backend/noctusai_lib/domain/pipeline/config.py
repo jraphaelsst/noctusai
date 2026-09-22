@@ -17,6 +17,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# Semantic roles the CODE keys on (see migration 042's header). Defined here,
+# not in `stages.py`, because they are the DEFAULT of `PipelineConfig.stage_roles`
+# and `stages.py` already imports this module.
+STAGE_ROLE_ACCEPT = "proposta_aceite"
+STAGE_ROLE_FINAL = "final"
+DEFAULT_STAGE_ROLES: tuple[str, ...] = (STAGE_ROLE_ACCEPT, STAGE_ROLE_FINAL)
+
 
 @dataclass(frozen=True)
 class PipelineConfig:
@@ -47,6 +54,14 @@ class PipelineConfig:
         cliente_field: Optional column on the card carrying a cliente id, used
             to denormalise history rows. ``None`` for pipelines with no such
             concept.
+        stage_roles: The semantic roles a stage of THIS pipeline may carry.
+            Defaults to the two the ERP-shaped boards key on
+            (``proposta_aceite``, ``final``), so every existing consumer is
+            unchanged. A board whose features key on other roles (a CRM's
+            ``ganho``/``perdido``) declares its own set here instead of
+            forking the validation. A product whose ``papel`` column carries a
+            CHECK constraint must widen that constraint to match — the API
+            validates against this tuple, the database against its CHECK.
     """
 
     pipeline: str
@@ -58,6 +73,18 @@ class PipelineConfig:
     history_table: str = "pipeline_movimentos"
     cliente_field: str | None = "cliente_id"
     entity_label_plural: str | None = None
+    stage_roles: tuple[str, ...] = DEFAULT_STAGE_ROLES
+
+    def __post_init__(self) -> None:
+        # A list would make the frozen dataclass unhashable and silently
+        # mutable through the shared default; normalise to a tuple and refuse
+        # the degenerate cases loudly rather than at the first PATCH.
+        roles = tuple(self.stage_roles)
+        if any(not isinstance(r, str) or not r.strip() for r in roles):
+            raise ValueError("PipelineConfig.stage_roles must be non-empty strings.")
+        if len(set(roles)) != len(roles):
+            raise ValueError("PipelineConfig.stage_roles must not repeat a role.")
+        object.__setattr__(self, "stage_roles", roles)
 
     def count_label(self, total: int) -> str:
         """``"1 negociação"`` / ``"2 negociações"`` — never ``"2 negociaçãos"``."""

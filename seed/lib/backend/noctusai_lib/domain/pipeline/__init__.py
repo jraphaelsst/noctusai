@@ -24,14 +24,20 @@ is one UPDATE of one label, and every card, column header and history row
 re-reads it. Nothing is denormalised, so nothing can drift.
 
 `slug` is the stable machine key and is immutable; `label` is what humans edit.
-`papel` is the semantic role (`proposta_aceite`, `final`) that CODE keys on, so
+`papel` is the semantic role (`proposta_aceite`, `final` by default — a board
+declares its own set via `PipelineConfig.stage_roles`) that CODE keys on, so
 features like the accept-proposal seam survive the user renaming or moving the
 column they depend on.
 
 Schema: `products/erp-imobiliario/backend/migrations/042_pipeline_stages.sql`.
 """
 from .board import group_into_colunas, orphan_cards, stage_to_dto
-from .config import PipelineConfig
+from .config import (
+    DEFAULT_STAGE_ROLES,
+    STAGE_ROLE_ACCEPT,
+    STAGE_ROLE_FINAL,
+    PipelineConfig,
+)
 from .moves import move_card, resolve_initial_stage
 from .ordering import (
     POSITION_FIELD,
@@ -42,8 +48,6 @@ from .ordering import (
 from .router import PipelineContext, pipeline_stages_router
 from .stages import (
     STAGE_COLORS,
-    STAGE_ROLE_ACCEPT,
-    STAGE_ROLE_FINAL,
     STAGE_ROLES,
     count_cards_in_stage,
     create_stage,
@@ -57,6 +61,7 @@ from .stages import (
 )
 
 __all__ = [
+    "DEFAULT_STAGE_ROLES",
     "POSITION_FIELD",
     "PipelineConfig",
     "PipelineContext",

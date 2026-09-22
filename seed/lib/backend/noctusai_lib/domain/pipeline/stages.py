@@ -33,7 +33,7 @@ from noctusai_lib.primitives.exceptions import (
     ValidationError_,
 )
 
-from .config import PipelineConfig
+from .config import DEFAULT_STAGE_ROLES, PipelineConfig
 
 # Mirrors the `cor` CHECK constraint in erp migration 042. Duplicated
 # deliberately and kept small: the API should reject a bad token with a usable
@@ -47,10 +47,10 @@ STAGE_COLORS: tuple[str, ...] = (
     "muted",
 )
 
-# Semantic roles the CODE keys on. See migration 042's header.
-STAGE_ROLE_ACCEPT = "proposta_aceite"
-STAGE_ROLE_FINAL = "final"
-STAGE_ROLES: tuple[str, ...] = (STAGE_ROLE_ACCEPT, STAGE_ROLE_FINAL)
+# Semantic roles the CODE keys on. See migration 042's header. This is the
+# DEFAULT set (`STAGE_ROLE_ACCEPT` / `STAGE_ROLE_FINAL`, defined in `config.py`);
+# the set a pipeline actually validates against is `PipelineConfig.stage_roles`.
+STAGE_ROLES: tuple[str, ...] = DEFAULT_STAGE_ROLES
 
 # Fields a caller may set. `org_id`/`pipeline` are assigned by the server, and
 # `slug` is immutable after creation — it is the stable machine key that makes
@@ -73,7 +73,12 @@ def slugify(label: str) -> str:
     return slug or "etapa"
 
 
-def _validate(payload: dict[str, Any], *, partial: bool) -> None:
+def _validate(
+    payload: dict[str, Any],
+    *,
+    partial: bool,
+    roles: tuple[str, ...] = DEFAULT_STAGE_ROLES,
+) -> None:
     if not partial or "label" in payload:
         label = (payload.get("label") or "").strip()
         if not label:
@@ -90,9 +95,9 @@ def _validate(payload: dict[str, Any], *, partial: bool) -> None:
         )
 
     papel = payload.get("papel")
-    if papel is not None and papel not in STAGE_ROLES:
+    if papel is not None and papel not in roles:
         raise ValidationError_(
-            f"Papel inválido. Use um de: {', '.join(STAGE_ROLES)}.", field="papel"
+            f"Papel inválido. Use um de: {', '.join(roles)}.", field="papel"
         )
 
 
@@ -162,7 +167,7 @@ def stage_by_role(
 
 
 def create_stage(db, cfg: PipelineConfig, payload: dict[str, Any], *, org_id: str) -> dict:
-    _validate(payload, partial=False)
+    _validate(payload, partial=False, roles=cfg.stage_roles)
 
     label = payload["label"].strip()
     slug = (payload.get("slug") or slugify(label)).strip().lower()
@@ -217,7 +222,7 @@ def update_stage(
     copied, so nothing can drift out of sync.
     """
     get_stage(db, cfg, stage_id, org_id=org_id)  # 404s before validating a no-op edit
-    _validate(payload, partial=True)
+    _validate(payload, partial=True, roles=cfg.stage_roles)
 
     updates = {k: payload[k] for k in _UPDATABLE if k in payload}
     if "label" in updates:

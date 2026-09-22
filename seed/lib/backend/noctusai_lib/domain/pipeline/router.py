@@ -28,7 +28,6 @@ from .config import PipelineConfig
 from dataclasses import dataclass
 from .stages import (
     STAGE_COLORS,
-    STAGE_ROLES,
     create_stage,
     delete_stage,
     list_stages,
@@ -96,6 +95,7 @@ def pipeline_stages_router(
     log_action: Callable[..., Any] | None = None,
     prefix: str = "",
     tags: list[str] | None = None,
+    require_stage_admin: Callable[..., Any] | None = None,
 ) -> APIRouter:
     """Build a stage-CRUD router for one pipeline.
 
@@ -108,8 +108,16 @@ def pipeline_stages_router(
         log_action: Optional audit-log sink.
         prefix: Router prefix.
         tags: OpenAPI tags.
+        require_stage_admin: Optional FastAPI dependency gating every WRITE
+            route (create / edit / delete / reorder). Reads (`GET ""`,
+            `GET /opcoes`) stay open to anyone passing `auth_dependency`, so a
+            board can render for every member while only admins reshape it.
+            The dependency raises (e.g. 403) to refuse; its return value is
+            ignored. Omitted ⇒ every authenticated caller may edit, which is
+            the historical behaviour.
     """
     router = APIRouter(prefix=prefix, tags=tags or ["pipeline-stages"])
+    write_dependencies = [Depends(require_stage_admin)] if require_stage_admin else []
 
     @router.get("")
     async def listar_etapas(auth=Depends(auth_dependency)):
@@ -126,9 +134,11 @@ def pipeline_stages_router(
         constraints; a hardcoded frontend list is how you get a 400 the user
         cannot act on.
         """
-        return success_response({"cores": list(STAGE_COLORS), "papeis": list(STAGE_ROLES)})
+        return success_response(
+            {"cores": list(STAGE_COLORS), "papeis": list(cfg.stage_roles)}
+        )
 
-    @router.post("")
+    @router.post("", dependencies=write_dependencies)
     async def criar_etapa(body: StageCreate, auth=Depends(auth_dependency)):
         ctx = resolve_context(auth)
         db, org_id = ctx.db, ctx.org_id
@@ -148,7 +158,7 @@ def pipeline_stages_router(
             )
         return success_response(stage)
 
-    @router.patch("/{stage_id}")
+    @router.patch("/{stage_id}", dependencies=write_dependencies)
     async def editar_etapa(stage_id: str, body: StageUpdate, auth=Depends(auth_dependency)):
         """Edit a stage. Renaming here re-labels every card that references it."""
         ctx = resolve_context(auth)
@@ -163,7 +173,7 @@ def pipeline_stages_router(
             )
         return success_response(stage)
 
-    @router.delete("/{stage_id}")
+    @router.delete("/{stage_id}", dependencies=write_dependencies)
     async def excluir_etapa(
         stage_id: str,
         reassign_to: str | None = None,
@@ -181,7 +191,7 @@ def pipeline_stages_router(
             )
         return success_response(result)
 
-    @router.post("/reordenar")
+    @router.post("/reordenar", dependencies=write_dependencies)
     async def reordenar_etapas(body: StageReorder, auth=Depends(auth_dependency)):
         ctx = resolve_context(auth)
         stages = reorder_stages(ctx.db, cfg, body.ordem, org_id=ctx.org_id)
