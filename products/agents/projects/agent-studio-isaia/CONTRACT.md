@@ -363,7 +363,7 @@ by `source_sha` — unchanged ⇒ `inalterados`, no revision). Never publishes.
 - `ConversationCreateRequest` gains `agent_key: str = "julia"` and `client_id: UUID | None = None`
   (`client_id` only valid for studio agents, must belong to that agent → 422 `invalid_client`).
 - `ConversationOut` gains `agent_key: str`, `version_id: UUID | None`, `client_id: UUID | None`.
-- `GET /api/conversations?agent_key=` filters (default: all own conversations — Julia's page passes `julia`).
+- `GET /api/conversations?agent_key=` filters by agent; **default `julia`** when omitted (Julia's existing hook sends no filter — the default keeps her page byte-identical; studio pages always pass `agent_key`).
 - `MessageOut` gains `version_id: UUID | None`, `compiled_hash: str | None` (assistant messages of studio agents).
 - `POST /api/conversations/{id}/messages` for a studio agent: 409 `no_active_version` if the agent has no
   `ativa` version; 409 `agent_inactive` if `agents.ativo=false`. SSE event names/payloads unchanged.
