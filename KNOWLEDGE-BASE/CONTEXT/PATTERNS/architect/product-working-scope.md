@@ -130,13 +130,47 @@ place — the catalog-scope guard is what closes this, not a "revision ==
 prod tip" assertion (which would wrongly refuse routine, healthy re-deploys
 of live products). See `KB § PATTERNS/devops/prod-deploy-safety-gates.md`.
 
+## 4c · Asleep products leave EVERY gate, not just deploy (2026-09-22)
+
+**The friction.** §4b closed the deploy/migrate ACTIONS, but the TEST/CHECK side
+never asked the catalog: `test.yml` matrices, pre-commit keepers, `gate_sweep`,
+`run_all_tests`, `smoke_fleet` all walked `products/*`. A `seed/**` change
+therefore re-tested `therapy-platform`, `erp-imobiliario`, … — products the user
+had put to sleep — and each of their reds blocked live work and cost a
+fix-and-rerun on code nobody was working on. `ativo=false` said "don't touch";
+the gates touched it anyway.
+
+**The mechanism.** One catalog read (`build_scope._active_catalog_rows`) now
+generates TWO checked-in files:
+
+| File | Set | Who reads it |
+|---|---|---|
+| `deploy/fleet/build-scope.txt` | `ativo AND deploy_scope='live'` + core | image builds, deploy guard, smoke |
+| `deploy/fleet/active-scope.txt` | `ativo` (any scope) ∩ on-disk + core | every CI test job, keeper, hook, `gate_sweep`, `run_all_tests`, `build_parallel`, `smoke_fleet`, predeploy roster legs |
+
+`live ⊆ active` by construction (pinned by `test_product_scope.py`). Every
+consumer goes through `tools/noctus/dev/product_scope.filter_active` (Python)
+or parses the file in the `changes` job (CI) — never a hand-written slug list.
+**Fail toward coverage:** a missing `active-scope.txt` checks everything and
+warns; losing the file never silently turns gates off.
+
+**Asleep ≠ deleted.** Code stays on disk; its last image keeps running if it was
+in the fleet. CI matrix entries stay (skipped at runtime with a `::notice::`), so
+waking a product needs no workflow edit.
+
+**Wake a product** (the "product treatment"): toggle `ativo=true` in
+`/admin/products` → `python mcp/noctusai/cli.py --refresh-build-scope` (writes
+both files) → commit. Every gate checks it again from that commit on — expect
+the accumulated drift to surface then, and fix it as the first slice of the
+reactivation. **Put one to sleep:** the same steps with `ativo=false`.
+
 ## 5 · Before you touch a product
 
 ```sql
 SELECT slug, ativo, deploy_scope FROM public.products ORDER BY slug;
 ```
 
-`ativo = false` → stop. `deploy_scope = 'dev'` → do the work, land it on the
+`ativo = false` → stop (it is asleep — no gate checks it either, § 4c). `deploy_scope = 'dev'` → do the work, land it on the
 `dev` branch, do **not** promote — and note there is no dev fleet to deploy to
 while it is dormant. `deploy_scope = 'live'` → the full pipeline applies.
 
