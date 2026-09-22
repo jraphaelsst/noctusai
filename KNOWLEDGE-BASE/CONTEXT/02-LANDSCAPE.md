@@ -38,7 +38,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 30 | 25 | 35 | 0 | 58 | 709 |
+| Core | 30 | 25 | 35 | 3 | 58 | 709 |
 | Erp Imobiliario | 64 | 56 | 80 | 79 | 136 | 1,897 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 36 | 85 | 1,143 |
@@ -52,9 +52,9 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Igig | 10 | 5 | 21 | 17 | 18 | 285 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 24 | 9 | 21 | 172 |
-| Agents | 11 | 1 | 33 | 26 | 63 | 795 |
+| Agents | 11 | 1 | 34 | 26 | 63 | 806 |
 | Community | 16 | 18 | 33 | 21 | 36 | 364 |
-| **Total** | **260** | **264** | **557** | **345** | **854** | **11,612** |
+| **Total** | **260** | **264** | **558** | **348** | **854** | **11,623** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
