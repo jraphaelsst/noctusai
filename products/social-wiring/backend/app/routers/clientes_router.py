@@ -45,9 +45,15 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth.session import is_org_admin
 from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError
 
-from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
+from app.dependencies import (
+    coerce_org_uuid,
+    get_admin_client,
+    get_core_client,
+    get_current_user_org,
+)
 from app.services import clientes_backfill_job
 from app.services import clientes_service as svc
 from app.services import identidade_service as ident
@@ -323,6 +329,26 @@ class ClientePatchBody(StrictHttpModel):
     endereco_bairro: Optional[str] = None
     endereco_cidade: Optional[str] = None
     endereco_uf: Optional[str] = None
+
+    #: Migration 071's document-read name, now ALSO human-editable (owner
+    #: directive, 2026-09-19): "extracted from official files are the
+    #: truth... a human overwrites with admin confirmation and logs for
+    #: history and rollback." An edit that would replace a DOCUMENT-sourced
+    #: `nome_oficial` is held back and queued for admin adjudication unless
+    #: the acting user already is one (`clientes_service.update_cliente`'s
+    #: `is_admin` gate — see its module comment). `nome_oficial_origem` is
+    #: NOT accepted, exactly like every other identity field above.
+    nome_oficial: Optional[str] = None
+
+    #: Migration 148. The human half of contract F6's [Q11] freshness check
+    #: — a certidão de estado civil's emission date, for a certidão nobody
+    #: has uploaded (yet, or ever). Compared against every uploaded
+    #: certidão's own reading; whichever is more recent wins. NOT gated —
+    #: no extractor ever writes this column, so there is no document value
+    #: to protect (see that migration's header).
+    #: `certidao_estado_civil_emitida_em_origem` is NOT accepted; the server
+    #: stamps it, same discipline as every field above.
+    certidao_estado_civil_emitida_em: Optional[date] = None
 
 
 class MergeGrupoBody(StrictHttpModel):
@@ -709,6 +735,26 @@ async def get_cliente_route(
     }
 
 
+def _is_org_admin(user: Any) -> bool:
+    """Trusted-DB (`public.noctus_users.org_role`) bool predicate — NEVER
+    JWT `user_metadata`, which a user can rewrite themselves via
+    `auth.updateUser({data})` to self-promote and bypass the
+    admin-confirmation rule (the SAME spoof class documented in
+    `products/core/backend/app/routers/admin_llm_usage.py`). A bool here
+    rather than a raise, because a non-admin PATCH is not refused, it is
+    deferred to admin confirmation (`clientes_service.update_cliente`'s
+    `is_admin` gate).
+
+    🔴 2026-09-2x: this used to read `user_metadata.org_role`/`role`
+    directly — the exact spoofable shape `settings_router._require_admin`
+    (fixed alongside this) also had. Both now delegate to
+    `noctusai_lib.api.auth.session.is_org_admin`, the N=3 shared predicate
+    formalized this same dispatch (was also
+    `noctusai_seed.auth_router._require_org_admin`'s own trusted-DB read,
+    now itself delegating to the same shared function)."""
+    return is_org_admin(get_core_client(), getattr(user, "id", None))
+
+
 @router.patch("/{cliente_id}")
 async def update_cliente_route(
     cliente_id: UUID,
@@ -755,7 +801,12 @@ async def update_cliente_route(
             updates["arquivado_em"] = _now()
 
     try:
-        return svc.update_cliente(client, org_id, cliente_id, **updates)
+        return svc.update_cliente(
+            client, org_id, cliente_id,
+            acting_user_id=getattr(_user, "id", None),
+            is_admin=_is_org_admin(_user),
+            **updates,
+        )
     except svc.ClienteNotFound as exc:
         raise NotFoundError("clientes", str(cliente_id)) from exc
 

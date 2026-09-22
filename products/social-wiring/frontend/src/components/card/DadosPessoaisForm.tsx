@@ -67,6 +67,13 @@ export interface DadosPessoais {
   // NAME a party: nome, nacionalidade, estado civil (with regime de bens),
   // profissão, CPF, RG with issuing body, endereço. Of those seven this form
   // used to collect two.
+  //
+  // `nome_oficial` (migration 071) is the name as printed on an identity
+  // document — held BESIDE `nome_completo`, never reconciled with it (see
+  // that migration's header). Owner directive, 2026-09-19: now ALSO
+  // human-editable, on the same admin-confirmation terms as every field
+  // below — see `pendenteConfirmacao` on `DadosPessoaisFormProps`.
+  nome_oficial?: string | null;
   cpf?: string | null;
   rg?: string | null;
   /** Issuing body and UF as printed — "SSP/SP". Travels with `rg`: a number
@@ -76,6 +83,14 @@ export interface DadosPessoais {
   estado_civil?: string | null;
   regime_bens?: string | null;
   nacionalidade?: string | null;
+  /** Migration 117 (contract F6) — the marriage CELEBRATION date. Shown
+   *  only while `estado_civil` reads "Casado(a)". */
+  data_casamento?: string | null;
+  /** Migration 148 — the HUMAN half of contract F6's [Q11] 90-day
+   *  freshness check: an emission date for a certidão de estado civil
+   *  nobody has uploaded (yet, or ever). Never gated — no extractor ever
+   *  writes this column. */
+  certidao_estado_civil_emitida_em?: string | null;
   endereco_cep?: string | null;
   endereco_logradouro?: string | null;
   endereco_numero?: string | null;
@@ -131,6 +146,18 @@ export interface DadosPessoaisFormProps {
    * only showed it while open would show it to nobody.
    */
   saveError?: string | null;
+  /**
+   * Item_keys the LAST save deferred to admin confirmation (owner
+   * directive, 2026-09-19 — `clientes_service.update_cliente`'s
+   * `pendente_confirmacao` in the PATCH response). A field named here was
+   * NOT written: the document's value keeps prevailing until an admin
+   * decides via the conflicts queue. Rendered as a clear notice under the
+   * field so the operator does not read the still-old value as a rejected
+   * save. Cleared by the caller on the next successful non-deferred save
+   * (this form does not track it across renders itself — it is
+   * presentational, S3).
+   */
+  pendenteConfirmacao?: string[];
   /** Disambiguates the testids when several of these are on screen at once —
    *  one per party on the Documentos tab. */
   testId?: string;
@@ -145,6 +172,7 @@ export function DadosPessoaisForm({
   onSave,
   saving,
   saveError,
+  pendenteConfirmacao,
   testId = "dados-pessoais",
 }: DadosPessoaisFormProps) {
   const [aberto, setAberto] = useState(false);
@@ -164,12 +192,15 @@ export function DadosPessoaisForm({
     valores.genero,
     // 097's fields re-seed on the same terms: an extraction that confirms a
     // CPF writes the column, and a stale draft would overwrite it on Save.
+    valores.nome_oficial,
     valores.cpf,
     valores.rg,
     valores.rg_orgao_expedidor,
     valores.estado_civil,
     valores.regime_bens,
     valores.nacionalidade,
+    valores.data_casamento,
+    valores.certidao_estado_civil_emitida_em,
     valores.endereco_cep,
     valores.endereco_logradouro,
     valores.endereco_numero,
@@ -178,6 +209,8 @@ export function DadosPessoaisForm({
     valores.endereco_cidade,
     valores.endereco_uf,
   ]);
+
+  const pendente = (campo: string) => pendenteConfirmacao?.includes(campo) ?? false;
 
   function campo<K extends keyof DadosPessoais>(k: K, v: string) {
     setDraft((d) => ({ ...d, [k]: v === "" ? null : v }));
@@ -198,6 +231,19 @@ export function DadosPessoaisForm({
         {saveError && (
           <p className="text-xs text-destructive" data-testid={`${testId}-erro`}>
             {saveError}
+          </p>
+        )}
+        {/* Visible in the COLLAPSED state too, deliberately — this is the
+            state most of the time on screen, and an edit that never landed
+            (see PendenteAviso below) must not read as a rejected save just
+            because the editor closed. */}
+        {!!pendenteConfirmacao?.length && (
+          <p
+            className="rounded border border-amber-400/50 bg-amber-50 p-2 text-xs text-amber-800"
+            data-testid={`${testId}-pendente-resumo`}
+          >
+            Aguardando confirmação de um administrador: {pendenteConfirmacao.join(", ")}.
+            O valor do documento continua valendo até a decisão.
           </p>
         )}
         {/* Icon-only, caption on hover — and the SAME string on `aria-label`,
@@ -265,6 +311,7 @@ export function DadosPessoaisForm({
           onChange={(e) => campo("data_nascimento", e.target.value)}
           data-testid={`${testId}-nascimento`}
         />
+        <PendenteAviso ativo={pendente("data_nascimento")} testId={`${testId}-nascimento`} />
       </Campo>
 
       <Campo rotulo="Profissão" htmlFor={`${testId}-profissao`}>
@@ -292,6 +339,7 @@ export function DadosPessoaisForm({
             ))}
           </SelectContent>
         </Select>
+        <PendenteAviso ativo={pendente("genero")} testId={`${testId}-genero`} />
       </Campo>
 
       {/* ─── Qualificação civil (migration 097) ────────────────────────────
@@ -302,6 +350,19 @@ export function DadosPessoaisForm({
         Qualificação
       </p>
 
+      {/* Migration 071, human-editable since the owner's 2026-09-19
+          directive. Labelled distinctly from "Nome Completo" above — the two
+          are compared, never reconciled (see that migration's header). */}
+      <Campo rotulo="Nome completo (como no documento)" htmlFor={`${testId}-nome-oficial`}>
+        <Input
+          id={`${testId}-nome-oficial`}
+          value={texto(draft.nome_oficial)}
+          onChange={(e) => campo("nome_oficial", e.target.value)}
+          data-testid={`${testId}-nome-oficial`}
+        />
+        <PendenteAviso ativo={pendente("nome_oficial")} testId={`${testId}-nome-oficial`} />
+      </Campo>
+
       <Campo rotulo="CPF" htmlFor={`${testId}-cpf`}>
         <Input
           id={`${testId}-cpf`}
@@ -310,6 +371,7 @@ export function DadosPessoaisForm({
           placeholder="412.954.238-98"
           data-testid={`${testId}-cpf`}
         />
+        <PendenteAviso ativo={pendente("cpf")} testId={`${testId}-cpf`} />
       </Campo>
 
       <div className="grid grid-cols-2 gap-2">
@@ -333,6 +395,7 @@ export function DadosPessoaisForm({
               RG não pode ser igual ao CPF.
             </p>
           )}
+          <PendenteAviso ativo={pendente("rg")} testId={`${testId}-rg`} />
         </Campo>
         {/* Side by side with the number because the two are one fact: an RG
             without its issuer does not identify a document. */}
@@ -355,6 +418,7 @@ export function DadosPessoaisForm({
           placeholder="brasileiro(a)"
           data-testid={`${testId}-nacionalidade`}
         />
+        <PendenteAviso ativo={pendente("nacionalidade")} testId={`${testId}-nacionalidade`} />
       </Campo>
 
       <div className="grid grid-cols-2 gap-2">
@@ -380,6 +444,7 @@ export function DadosPessoaisForm({
               ))}
             </SelectContent>
           </Select>
+          <PendenteAviso ativo={pendente("estado_civil")} testId={`${testId}-estado-civil`} />
         </Campo>
         {/* Always rendered, never conditional on `estado_civil`. A field that
             appears and disappears as the box above changes moves the form
@@ -407,8 +472,43 @@ export function DadosPessoaisForm({
               ))}
             </SelectContent>
           </Select>
+          <PendenteAviso ativo={pendente("regime_bens")} testId={`${testId}-regime-bens`} />
         </Campo>
       </div>
+
+      {/* Migration 117 (contract F6) — shown only for a married party. Not
+          gated the way estado_civil/regime_bens above are visually flagged
+          twice: it is its OWN CAMPOS entry, so it gets its OWN notice. */}
+      {draft.estado_civil === "Casado(a)" && (
+        <Campo rotulo="Data de casamento" htmlFor={`${testId}-data-casamento`}>
+          <Input
+            id={`${testId}-data-casamento`}
+            type="date"
+            value={texto(draft.data_casamento)}
+            onChange={(e) => campo("data_casamento", e.target.value)}
+            data-testid={`${testId}-data-casamento`}
+          />
+          <PendenteAviso ativo={pendente("data_casamento")} testId={`${testId}-data-casamento`} />
+        </Campo>
+      )}
+
+      {/* Migration 148 — the manual half of contract F6's [Q11] 90-day
+          freshness check. Always shown (unlike data_casamento above):
+          required for a VENDEDOR regardless of estado civil, and this form
+          has no notion of "which side this person is on" to hide it for a
+          comprador. Never gated — no extractor ever writes this column. */}
+      <Campo
+        rotulo="Certidão de estado civil — data de emissão (obrigatório para vendedores)"
+        htmlFor={`${testId}-certidao-estado-civil-emitida-em`}
+      >
+        <Input
+          id={`${testId}-certidao-estado-civil-emitida-em`}
+          type="date"
+          value={texto(draft.certidao_estado_civil_emitida_em)}
+          onChange={(e) => campo("certidao_estado_civil_emitida_em", e.target.value)}
+          data-testid={`${testId}-certidao-estado-civil-emitida-em`}
+        />
+      </Campo>
 
       <p className="pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Endereço
@@ -523,5 +623,24 @@ function Campo({
       </label>
       {children}
     </div>
+  );
+}
+
+/**
+ * "Aguardando confirmação do administrador" — the visible half of the
+ * owner's provenance directive (2026-09-19). A field this shows for is one
+ * the last Save DID send, but the server held back: the value on screen is
+ * still whatever the OPEN box shows (the operator's own typed draft, not
+ * what actually landed), so this is placed right under the box it applies
+ * to, never merely in the summary banner above — the exact field must be
+ * unambiguous.
+ */
+function PendenteAviso({ ativo, testId }: { ativo: boolean; testId: string }) {
+  if (!ativo) return null;
+  return (
+    <p className="mt-1 text-xs text-amber-700" data-testid={`${testId}-pendente`}>
+      Aguardando confirmação de um administrador — o valor do documento
+      continua valendo até a decisão.
+    </p>
   );
 }

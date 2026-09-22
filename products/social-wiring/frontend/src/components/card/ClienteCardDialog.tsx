@@ -255,6 +255,13 @@ export interface ClienteCardDialogProps {
    * independently-fetched copy. `undefined` when not on file yet.
    */
   renderCertidoesDoTitular?: (documento?: string) => ReactNode;
+  /**
+   * The TITULAR's own admin-decide surface (owner directive, 2026-09-19) —
+   * `ConflitosPendentesCard`, same thunk reasoning as
+   * `renderQualificacaoDoTitular`/`renderCertidoesDoTitular` above (this
+   * component never sees the titular's raw id).
+   */
+  renderConflitosPendentes?: () => ReactNode;
 
   /**
    * The Negociação and Financiamento/Escritura subpages.
@@ -277,6 +284,10 @@ export interface ClienteCardDialogProps {
   /** The server's own message from the titular's last rejected save (the
    *  RG==CPF 400, migration 110) — see `DadosPessoaisFormProps.saveError`. */
   dadosPessoaisError?: string | null;
+  /** Owner directive, 2026-09-19 — see `DadosPessoaisFormProps
+   *  .pendenteConfirmacao`. The titular's last save's admin-confirmation
+   *  fallout. */
+  dadosPessoaisPendente?: string[];
   /**
    * The person's atendimentos, each with its ORIGIN record embedded. The card
    * renders the lead's own data from these — `clientes` holds identity and card
@@ -926,7 +937,9 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                     onSave={props.onSaveDadosPessoais}
                     saving={props.dadosPessoaisSaving}
                     saveError={props.dadosPessoaisError}
+                    pendenteConfirmacao={props.dadosPessoaisPendente}
                   />
+                  {props.renderConflitosPendentes?.() ?? null}
                   {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
                   {props.renderQualificacaoDoTitular?.() ?? null}
                 </>

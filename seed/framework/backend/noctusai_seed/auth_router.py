@@ -64,11 +64,11 @@ from noctusai_lib.api.auth.session import (
     SessionRevoker,
     SessionStore,
     build_api_token_row,
+    is_org_admin,
     make_get_auth_context,
     make_session_revoker,
     make_session_store,
     mint_token_secret,
-    resolve_org_role,
 )
 
 _API_TOKEN_MAX_EXPIRY_DAYS = 90
@@ -287,13 +287,11 @@ def _require_org_admin(core_client: Any, ctx: AuthContext) -> None:
     PGRST205 (see ``feedback_product_client_schema_scoping_public_tables``
     memory entry).
     """
-    # SEED-1: delegates the trusted-DB query itself to the seed's shared
-    # ``resolve_org_role`` (same table, same shape) rather than
-    # re-inlining it — the N=2 the 2026-07-06 entry already flagged is
-    # now N=1 sharing one implementation with ``require_scopes``'s
-    # user-role branch.
-    role = resolve_org_role(core_client, ctx.user_id)
-    if role not in ("owner", "admin"):
+    # SEED-1, now via ``is_org_admin`` (the N=3 shared predicate formalized
+    # 2026-09-2x — ``require_scopes``'s user-role branch, social-wiring's
+    # ``settings_router``/``clientes_router`` gates, and this one all share
+    # ONE trusted-DB implementation now instead of each re-deriving it).
+    if not is_org_admin(core_client, ctx.user_id):
         raise HTTPException(
             status_code=403,
             detail="API-token management restricted to owner/admin roles",

@@ -33,6 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth.session import require_org_admin_role
 from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
 
@@ -40,6 +41,7 @@ from app.config import SocialWiringSettings, settings
 from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
+    get_core_client,
     get_current_user,
     get_current_user_org,
     get_scoped_admin_client,
@@ -623,24 +625,23 @@ async def send_waha_test(
 
 # ─── Meta App config tab (Wave 2 — app-wide, DB-backed + env-fallback) ─
 def _require_admin(user: Any, context: str) -> None:
-    """403 unless ``user`` has owner/admin role on their org.
+    """403 unless ``user`` has owner/admin role on their org — the
+    TRUSTED ``public.noctus_users`` row, never ``user_metadata``.
 
-    Same check-shape as ``noctusai_seed.auth_router._require_org_admin``
-    (N=2 — flagged as a `scoped-improvement:` in this dispatch's
-    delivery note rather than extracted mid-brief; that helper reads
-    org_role from the TRUSTED `public.noctus_users` row via
-    `deps.get_core_client()`, whereas this one reads `user_metadata`
-    directly — a narrower, still-spoofable check this slice didn't
-    touch; module-local + underscore-prefixed either way, so this one
-    stays local instead of reaching across a router/module boundary).
+    🔴 2026-09-2x: this used to read ``user_metadata.org_role``/``role``
+    directly — a user can rewrite their OWN metadata via
+    ``auth.updateUser({data})`` and self-promote (the exact spoof class
+    ``products/core/backend/app/routers/admin_llm_usage.py`` documents;
+    also the class ``clientes_router._is_org_admin`` had, fixed the same
+    dispatch). Now delegates to
+    ``noctusai_lib.api.auth.session.require_org_admin_role`` — the N=3
+    shared trusted-DB predicate (was ALSO
+    ``noctusai_seed.auth_router._require_org_admin``'s own hand-rolled
+    trusted-DB read; all three now share ONE implementation) —
+    module-local + underscore-prefixed still, so callers below don't
+    change shape.
     """
-    metadata = getattr(user, "user_metadata", None) or {}
-    role = metadata.get("org_role") or metadata.get("role")
-    if role not in ("owner", "admin"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"{context} restricted to owner/admin roles",
-        )
+    require_org_admin_role(get_core_client(), getattr(user, "id", None), context)
 
 
 def get_app_config_store_dep():

@@ -88,6 +88,10 @@ vi.mock("@/hooks/useCardHub", () => ({
     atualizarPapel: { mutate: vi.fn(), isPending: false, variables: undefined },
   }),
   useDadosPessoaisMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  // Durable pending-state read (owner directive, 2026-09-19) —
+  // `ClienteDetailModal`'s `renderConflitosPendentes` thunk + its
+  // `dadosPessoaisPendente` prop both read this.
+  useConflitosPendentes: () => ({ data: [] }),
   useNotaMutations: () => ({ create: mockCreate, update: mockUpdate, remove: { mutate: vi.fn() } }),
   useTagCatalogMutations: () => ({
     create: { mutate: vi.fn() },

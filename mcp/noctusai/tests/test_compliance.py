@@ -2,6 +2,9 @@
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (
@@ -72,6 +75,52 @@ def _load_baseline_fingerprints() -> set[str]:
     return set(data["fingerprints"])
 
 
+def _real_product_names() -> list[str]:
+    """Same derivation `check_all_products()` and `TestPathReferences` use —
+    never a hand-maintained list (a hand list drifts the moment a product is
+    added/removed, per `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`)."""
+    return sorted(
+        d.name for d in PRODUCTS_DIR.iterdir()
+        if d.is_dir() and not d.name.startswith(".")
+    )
+
+
+# `fingerprint()` (see `refresh_compliance_baseline.py`) leads with the
+# `product` field (`f"{product}|{file}|{severity}|{sym}"`); global/harness
+# checks (not scoped to a real product) use bracket sentinels like
+# `<harness>`, `<git>`, `<docs>`, `<mcp>`, etc. — never a real product name.
+# Group under this single id so a NEW global/harness regression still fails
+# loudly without inventing a hand-maintained sentinel list.
+_PLATFORM_GLOBAL_ID = "<platform-global>"
+_REAL_PRODUCT_NAMES = _real_product_names()
+_COMPLIANCE_PARAM_IDS = _REAL_PRODUCT_NAMES + [_PLATFORM_GLOBAL_ID]
+
+
+@pytest.fixture(scope="module")
+def _compliance_snapshot():
+    """Run the (expensive) platform-wide scan exactly ONCE per test-module
+    run and cache it — `test_all_products_compliant` is parametrized per
+    product below purely for FAILURE ATTRIBUTION (one red node instead of
+    one red node listing every product's fingerprints together); it must
+    NOT re-run `check_all_products()` once per product."""
+    score, live_fps = live_high_critical_fingerprints()
+    baseline = _load_baseline_fingerprints()
+    new_high_critical = sorted(set(live_fps) - baseline)
+    # Informational only — the absolute score is NOT a gate under Option A
+    # (`projects/platform-compliance-baseline` §7(A)).
+    print(
+        f"[compliance][informational] platform absolute score={score} "
+        f"high/critical-fingerprints live={len(live_fps)} "
+        f"baseline={len(baseline)} regressions={len(new_high_critical)}"
+    )
+    by_id: dict[str, list[str]] = {pid: [] for pid in _COMPLIANCE_PARAM_IDS}
+    for fp in new_high_critical:
+        product = fp.split("|", 1)[0]
+        pid = product if product in by_id else _PLATFORM_GLOBAL_ID
+        by_id[pid].append(fp)
+    return {"score": score, "by_id": by_id}
+
+
 class TestEnvArtifactExclusion:
     """`is_env_artifact` excludes non-deterministic / worktree-specific issue
     classes from BOTH the committed baseline and the live regression gate, so
@@ -129,7 +178,9 @@ class TestSeedCompliance:
     def test_mailing_is_compliant(self):
         issues = check_seed_compliance(PRODUCTS_DIR / "mailing")
         assert len(issues) == 0, f"Mailing has issues: {issues}"
-    def test_all_products_compliant(self):
+
+    @pytest.mark.parametrize("product", _COMPLIANCE_PARAM_IDS)
+    def test_all_products_compliant(self, product, _compliance_snapshot):
         """Platform-wide compliance REGRESSION gate (Option A — locked
         2026-05-18 by the user, ``projects/platform-compliance-baseline``
         §7(A)).
@@ -147,21 +198,24 @@ class TestSeedCompliance:
         ``tests/refresh_compliance_baseline.py`` when debt is intentionally
         resolved (shrink) or a new class is triaged-accepted (grow, with a
         cited decision). See that file's header.
+
+        Parametrized per product (2026-09-21, perf — `compliance-test-speed`)
+        purely for FAILURE ATTRIBUTION: the underlying scan still runs
+        exactly ONCE for the whole module (`_compliance_snapshot`, module-
+        scoped fixture) — this does NOT re-run `check_all_products()` per
+        product. A regression in one product's fingerprints now fails
+        `test_all_products_compliant[<that product>]` alone instead of a
+        single node listing every product's issues together. Non-product
+        (global/harness) regressions bucket under
+        ``test_all_products_compliant[<platform-global>]``.
         """
-        score, live_fps = live_high_critical_fingerprints()
-        baseline = _load_baseline_fingerprints()
-        new_high_critical = sorted(set(live_fps) - baseline)
-        # Informational only — the absolute score is NOT a gate under (A).
-        print(
-            f"[compliance][informational] platform absolute score={score} "
-            f"high/critical-fingerprints live={len(live_fps)} "
-            f"baseline={len(baseline)} regressions={len(new_high_critical)}"
-        )
-        assert not new_high_critical, (
-            "NEW high/critical compliance issue(s) vs the committed baseline "
-            "(regression — fix the new issue, do NOT silently grow the "
-            f"baseline): {new_high_critical}. Absolute score (informational): "
-            f"{score}."
+        regressions = _compliance_snapshot["by_id"][product]
+        score = _compliance_snapshot["score"]
+        assert not regressions, (
+            f"NEW high/critical compliance issue(s) for `{product}` vs the "
+            "committed baseline (regression — fix the new issue, do NOT "
+            f"silently grow the baseline): {regressions}. Absolute platform "
+            f"score (informational): {score}."
         )
 
     def test_detects_boilerplate_router(self):

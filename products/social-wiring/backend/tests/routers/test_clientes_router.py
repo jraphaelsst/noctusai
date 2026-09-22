@@ -31,6 +31,8 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from noctusai_lib.testing import TEST_USER_ID
+
 from app.dependencies import coerce_org_uuid
 from app.routers.clientes_router import get_clientes_client
 from tests.conftest import (  # type: ignore[attr-defined]
@@ -665,6 +667,257 @@ class TestPatchCliente:
         assert resp.status_code == 200, resp.text
         assert resp.json()["cpf"] == "412.954.238-98"
         assert resp.json()["rg"] == "52.179.965-X"
+
+    def test_patch_nome_oficial_is_accepted_and_stamps_manual_origin(
+        self, client, scoped
+    ):
+        """071's document-owned name, now human-editable (owner directive,
+        2026-09-19) — same server-stamped `_origem`/`_documento_id`/`_em`
+        triple every other machine-or-hand field gets, when the current
+        value has no document provenance to protect."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"nome_oficial": "Ana Maria da Silva"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nome_oficial"] == "Ana Maria da Silva"
+
+        payload = scoped.table("clientes").updated_payloads[-1]
+        assert payload["nome_oficial_origem"] == "manual"
+        assert payload["nome_oficial_documento_id"] is None
+
+    def test_patch_nome_oficial_origem_is_not_accepted_from_the_body(
+        self, client, scoped
+    ):
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"nome_oficial": "Ana Maria da Silva", "nome_oficial_origem": "rg"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_patch_certidao_estado_civil_emitida_em_is_accepted(
+        self, client, scoped
+    ):
+        """Migration 148 — the manual half of contract F6's [Q11] freshness
+        check. Never gated (no extractor ever writes this column)."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"certidao_estado_civil_emitida_em": "2025-06-01"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["certidao_estado_civil_emitida_em"] == "2025-06-01"
+
+        payload = scoped.table("clientes").updated_payloads[-1]
+        import json as _json
+
+        _json.dumps(payload)
+        assert isinstance(payload["certidao_estado_civil_emitida_em"], str)
+        assert payload["certidao_estado_civil_emitida_em_origem"] == "manual"
+
+    def test_patch_certidao_estado_civil_emitida_em_origem_is_not_accepted(
+        self, client, scoped
+    ):
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={
+                "certidao_estado_civil_emitida_em": "2025-06-01",
+                "certidao_estado_civil_emitida_em_origem": "manual",
+            },
+            headers=_auth(),
+        )
+        assert resp.status_code == 422, resp.text
+
+
+# ─── PATCH — admin-confirmation gate on a document-sourced field (owner
+#     directive, 2026-09-19) ──────────────────────────────────────────────
+#
+# Mirrors `test_settings_clientes_inactivity.py`'s `admin_client`/
+# `member_client` pair — org_role read off the TRUSTED `public.noctus_users`
+# row (`noctusai_lib.api.auth.session.is_org_admin`, via
+# `clientes_router._is_org_admin`), NEVER the JWT's `user_metadata` (a user
+# can rewrite their own metadata via `auth.updateUser({data})` — see
+# `test_auth_router.py`'s established pattern for the same trusted-DB
+# check).
+
+
+def _role_client(*, org_role: str | None, jwt_claim: str | None = None):
+    """`org_role` seeds the TRUSTED `noctus_users` row the gate actually
+    reads. `jwt_claim` optionally ALSO sets `user_metadata.org_role` to a
+    DIFFERENT value — the spoof scenario: a caller-controlled token
+    claiming a role the gate must never honor."""
+    mock_sb = MockSupabaseClient()
+    mock_sb.auth.get_user = MagicMock(
+        return_value=MockUserResponse(
+            MockUser(id=TEST_USER_ID, org_id=ORG_RAW, org_role=jwt_claim or org_role)
+        )
+    )
+    mock_sb.set_table_data(
+        "noctus_users",
+        [{"id": TEST_USER_ID, "org_id": ORG_RAW, "org_role": org_role}],
+    )
+    return mock_sb
+
+
+@pytest.fixture
+def admin_client():
+    mock_sb = _role_client(org_role="owner")
+    with (
+        patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+    ):
+        from app.main import app
+
+        bind_consent_module_to_mock(mock_sb)
+        yield TestClient(app, raise_server_exceptions=True)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def member_client():
+    mock_sb = _role_client(org_role=None)
+    with (
+        patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+    ):
+        from app.main import app
+
+        bind_consent_module_to_mock(mock_sb)
+        yield TestClient(app, raise_server_exceptions=True)
+    app.dependency_overrides.clear()
+
+
+def _cliente_documental(id_, **extra) -> dict:
+    row = _cliente(id_, "Ana")
+    row.update({
+        "estado_civil": "Casado(a)", "estado_civil_origem": "certidao_casamento",
+        "regime_bens": None, "regime_bens_origem": None,
+    })
+    row.update(extra)
+    return row
+
+
+class TestPatchAdminConfirmation:
+    def test_member_edit_of_a_document_sourced_field_is_held_back(
+        self, member_client
+    ):
+        a1 = str(uuid4())
+        get_clientes_client().set_table_data(
+            "clientes", [_cliente_documental(a1)]
+        )
+        resp = member_client.patch(
+            f"/api/clientes/{a1}",
+            json={"estado_civil": "Solteiro(a)"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        # The document's value keeps prevailing.
+        assert body["estado_civil"] == "Casado(a)"
+        assert body["pendente_confirmacao"] == ["estado_civil"]
+
+        conflitos = (
+            get_clientes_client().table("cliente_campo_conflitos")
+            .select("*").execute().data
+        )
+        assert len(conflitos) == 1
+        assert conflitos[0]["status"] == "pendente"
+        assert conflitos[0]["valor_proposto"] == "Solteiro(a)"
+
+    def test_admin_edit_of_a_document_sourced_field_applies_immediately(
+        self, admin_client
+    ):
+        a1 = str(uuid4())
+        get_clientes_client().set_table_data(
+            "clientes", [_cliente_documental(a1)]
+        )
+        resp = admin_client.patch(
+            f"/api/clientes/{a1}",
+            json={"estado_civil": "Solteiro(a)"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["estado_civil"] == "Solteiro(a)"
+        assert body["pendente_confirmacao"] == []
+
+        conflitos = (
+            get_clientes_client().table("cliente_campo_conflitos")
+            .select("*").execute().data
+        )
+        assert len(conflitos) == 1
+        assert conflitos[0]["status"] == "aceito"
+        assert conflitos[0]["valor_anterior"] == "Casado(a)"
+
+    def test_a_field_with_no_document_provenance_is_never_gated_for_a_member(
+        self, member_client
+    ):
+        a1 = str(uuid4())
+        get_clientes_client().set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = member_client.patch(
+            f"/api/clientes/{a1}",
+            json={"nacionalidade": "brasileira"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["nacionalidade"] == "brasileira"
+        assert body["pendente_confirmacao"] == []
+
+    def test_a_jwt_claiming_admin_does_not_bypass_the_gate_only_the_db_row_counts(
+        self,
+    ):
+        """🔴 The exact spoof `_is_org_admin` used to be vulnerable to: a
+        user rewrites their OWN `user_metadata.org_role` to `admin` via
+        `auth.updateUser({data})`. The TRUSTED `noctus_users` row still
+        says `member`, so the edit must still be held back — strictly, not
+        `in (200, 403)`."""
+        mock_sb = _role_client(org_role="member", jwt_claim="admin")
+        with (
+            patch(
+                "noctusai_seed.database.DatabaseModule.get_client",
+                return_value=mock_sb,
+            ),
+            patch(
+                "noctusai_seed.database.DatabaseModule.get_core_client",
+                return_value=mock_sb,
+            ),
+            patch(
+                "noctusai_seed.database.DatabaseModule.get_admin_client",
+                return_value=mock_sb,
+            ),
+        ):
+            from app.main import app
+
+            bind_consent_module_to_mock(mock_sb)
+            spoofed_client = TestClient(app, raise_server_exceptions=True)
+
+            a1 = str(uuid4())
+            get_clientes_client().set_table_data(
+                "clientes", [_cliente_documental(a1)]
+            )
+            resp = spoofed_client.patch(
+                f"/api/clientes/{a1}",
+                json={"estado_civil": "Solteiro(a)"},
+                headers=_auth(),
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["estado_civil"] == "Casado(a)"
+            assert body["pendente_confirmacao"] == ["estado_civil"]
+            app.dependency_overrides.clear()
 
 
 # ─── review queue ───────────────────────────────────────────────────────

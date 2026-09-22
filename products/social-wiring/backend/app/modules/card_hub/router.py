@@ -37,7 +37,9 @@ from fastapi import (
     UploadFile,
 )
 
-from app.dependencies import coerce_org_uuid, get_current_user_org
+from noctusai_lib.api.auth.session import is_org_admin
+
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
 from app.modules.card_hub import checklist_extras_service as extras_svc
@@ -1042,15 +1044,27 @@ async def descartar_extracao_route(
 
 @router.get("/conflitos")
 async def listar_conflitos_route(
+    cliente_id: Optional[UUID] = Query(
+        None,
+        description=(
+            "Scope to one person's pending conflicts (the card's own "
+            "admin-confirmation notice — see `DadosPessoaisForm`). Omitted: "
+            "every pending conflict in the org, the org-wide admin queue."
+        ),
+    ),
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> list:
     """Every pending field conflict in the org — the admin's queue. Each
     row carries `valor_anterior` (typed/prior) beside `valor_proposto`
-    (extracted) plus `origem_proposto` — the comparison an admin needs to
-    decide without opening anything else."""
+    (extracted, or a human's edit of a document-sourced field — migration
+    138's reverse direction, `clientes_service.update_cliente`'s
+    admin-confirmation gate) plus `origem_proposto` — the comparison an
+    admin needs to decide without opening anything else. Read-only; not
+    admin-gated (same posture `documento-retencao`'s READ half takes —
+    seeing what's pending is not the sensitive half, deciding it is)."""
     _user, org_id = _auth_parts(auth)
-    return identidade_svc.conflitos_pendentes(client, org_id)
+    return identidade_svc.conflitos_pendentes(client, org_id, cliente_id)
 
 
 @router.put("/conflitos/{conflito_id}/decidir")
@@ -1061,11 +1075,23 @@ async def decidir_conflito_route(
     client=Depends(get_card_hub_client),
 ) -> dict:
     """Accept or reject a pending conflict. Accepting overwrites
-    `clientes.<campo>` with the extracted value (the prior value stays on
+    `clientes.<campo>` with the proposed value (the prior value stays on
     the conflict row); rejecting leaves `clientes` untouched. Refuses
     (422) a conflict that already has a decision — idempotent,
-    first-decision-wins."""
+    first-decision-wins.
+
+    🔴 Owner/admin only — the TRUSTED `public.noctus_users` row, never
+    `user_metadata` (see `clientes_router._is_org_admin`'s own docstring
+    for the exact spoof this closes). Deciding a conflict IS the
+    "admin confirmation" the owner's provenance directive names; letting
+    any authenticated org member decide would make that confirmation
+    meaningless."""
     user, org_id = _auth_parts(auth)
+    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="Decidir um conflito de dados é restrito a administradores.",
+        )
     return identidade_svc.resolver_conflito(
         client,
         org_id,

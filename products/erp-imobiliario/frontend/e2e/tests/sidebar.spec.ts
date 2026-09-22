@@ -42,6 +42,24 @@ async function expandSidebarRail(page: Page) {
   await expect(rail).toHaveAttribute('data-rail-expanded', 'true');
 }
 
+/**
+ * Open one nav group (topic) by its label.
+ *
+ * Since 2026-09-21 every group starts COLLAPSED by construction (seed
+ * `Sidebar.tsx`); only the group holding the active route auto-opens. A
+ * link inside any other group is not rendered visible until its group is
+ * expanded — exactly what a user does — so the test does it too. The toggle
+ * is a real <button aria-expanded> named by the group label.
+ */
+async function expandNavGroup(page: Page, label: string) {
+  await expandSidebarRail(page);
+  const trigger = page.getByRole('button', { name: label, exact: true });
+  if ((await trigger.getAttribute('aria-expanded')) !== 'true') {
+    await trigger.click();
+  }
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+}
+
 test.describe('Sidebar Navigation', () => {
   test('regular user sees nav items', async ({ authenticatedPage: page }) => {
     await mockSupabaseQueries(page, { isAdmin: false });
@@ -57,7 +75,9 @@ test.describe('Sidebar Navigation', () => {
     await expect(page.getByRole('link', { name: 'Clientes' })).toBeVisible();
     // Nav now distinguishes "Metas individuais" from "Metas da Empresa" — use
     // the exact item name to avoid a strict-mode multi-match on "Metas".
+    await expandNavGroup(page, 'Metas & Desempenho');
     await expect(page.getByRole('link', { name: 'Metas individuais' })).toBeVisible();
+    await expandNavGroup(page, 'Comercial');
     await expect(page.getByRole('link', { name: /Imóveis|Imoveis/ })).toBeVisible();
   });
 
@@ -94,8 +114,22 @@ test.describe('Sidebar Navigation', () => {
 
     await expandSidebarRail(page);
     await expect(page.getByText('Painel de Controle')).toBeVisible();
+    await expandNavGroup(page, 'Painel de Controle');
     await expect(page.getByRole('link', { name: /Usuários|Usuarios/ })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Admin' })).toBeVisible();
+  });
+
+  test('groups start collapsed except the one holding the active route', async ({ authenticatedPage: page }) => {
+    await mockSupabaseQueries(page, { isAdmin: false });
+    await mockDashboardAPIs(page);
+    await page.goto('/dashboard');
+
+    await expandSidebarRail(page);
+    // /dashboard lives in "Principal" — auto-opened so the user sees where they are.
+    await expect(page.getByRole('button', { name: 'Principal', exact: true })).toHaveAttribute('aria-expanded', 'true');
+    // Every other topic starts closed; the user expands what they need.
+    await expect(page.getByRole('button', { name: 'Comercial', exact: true })).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByRole('link', { name: 'Permutas' })).toBeHidden();
   });
 
   test('regular user does not see admin section', async ({ authenticatedPage: page }) => {

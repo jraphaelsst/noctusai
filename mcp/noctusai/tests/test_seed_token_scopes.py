@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -36,6 +37,9 @@ from fastapi.testclient import TestClient
 from noctusai_lib.api.auth.session import (
     AuthContext,
     SupabaseApiTokenResolver,
+    is_org_admin,
+    make_require_org_admin,
+    require_org_admin_role,
     require_scopes,
 )
 from noctusai_lib.testing import MockSupabaseClient
@@ -433,3 +437,123 @@ class TestRequireScopes:
         resp = client.get("/protected")
 
         assert resp.status_code == 401, resp.text
+
+
+# ─── `is_org_admin` / `require_org_admin_role` / `make_require_org_admin`
+#     — the N=3 shared trusted-DB predicate (2026-09-2x) ───────────────────
+#
+# Formalizes what `noctusai_seed.auth_router._require_org_admin` already did
+# correctly (trusted-DB `public.noctus_users` read) into a reusable
+# bool-predicate + imperative-raise + dependency-factory trio, so a product
+# route stops hand-rolling a FOURTH copy — or worse, a spoofable
+# `user_metadata.org_role` read (the class this closes; see
+# `resolve_org_role`'s own docstring + `products/core/backend/app/routers
+# /admin_llm_usage.py`'s note on the exact spoof).
+
+
+class TestIsOrgAdmin:
+    def test_owner_is_admin(self):
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "owner"}])
+        assert is_org_admin(core, _USER) is True
+
+    def test_admin_is_admin(self):
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "admin"}])
+        assert is_org_admin(core, _USER) is True
+
+    def test_member_is_not_admin(self):
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "member"}])
+        assert is_org_admin(core, _USER) is False
+
+    def test_a_jwt_metadata_admin_claim_is_irrelevant_only_the_db_row_counts(self):
+        """The exact scenario a spoofed `user_metadata.org_role='admin'`
+        used to defeat: the TRUSTED row says `member`, so this is strictly
+        `False` regardless of anything a caller-controlled token might
+        claim (this predicate never even looks at `user_metadata`)."""
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "member"}])
+        assert is_org_admin(core, _USER) is False
+
+    def test_no_row_is_not_admin(self):
+        core = _FakeCoreClient([])
+        assert is_org_admin(core, _USER) is False
+
+    def test_none_user_id_is_not_admin(self):
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "owner"}])
+        assert is_org_admin(core, None) is False
+
+    def test_custom_admin_roles_are_respected(self):
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "lead"}])
+        assert is_org_admin(core, _USER, admin_roles=frozenset({"lead"})) is True
+        assert is_org_admin(core, _USER) is False
+
+
+class TestRequireOrgAdminRole:
+    def test_admin_passes_silently(self):
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "admin"}])
+        require_org_admin_role(core, _USER, "Chaves de API")  # no raise
+
+    def test_member_raises_403_naming_the_context(self):
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "member"}])
+        with pytest.raises(HTTPException) as exc_info:
+            require_org_admin_role(core, _USER, "Chaves de API")
+        assert exc_info.value.status_code == 403
+        assert "Chaves de API" in str(exc_info.value.detail)
+
+
+class TestMakeRequireOrgAdmin:
+    """The dependency-factory shape — a route can `Depends()` this INSTEAD
+    OF its own `get_current_user_org`."""
+
+    def _user(self, org_role_claim: str | None = "admin"):
+        # `org_role_claim` lives on `user_metadata` — mirrors a token a
+        # caller could themselves rewrite via `auth.updateUser({data})`.
+        # `make_require_org_admin` must never read it.
+        return SimpleNamespace(
+            id=str(_USER), user_metadata={"org_role": org_role_claim},
+        )
+
+    def test_trusted_db_member_is_403_even_with_a_spoofed_admin_claim(self):
+        auth = (self._user("admin"), "token", str(_ORG))
+
+        async def _get_current_user_org():
+            return auth
+
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "member"}])
+        dep = make_require_org_admin(_get_current_user_org, lambda: core)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(dep(auth=auth))
+        assert exc_info.value.status_code == 403
+
+    def test_trusted_db_admin_passes_and_returns_the_auth_tuple(self):
+        auth = (self._user("member"), "token", str(_ORG))
+
+        async def _get_current_user_org():
+            return auth
+
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "owner"}])
+        dep = make_require_org_admin(_get_current_user_org, lambda: core)
+
+        result = _run(dep(auth=auth))
+        assert result is auth
+
+    def test_wired_through_a_real_fastapi_dependency(self):
+        """Same ASGI-wiring proof `test_missing_credential_is_exactly_401
+        _never_403_or_404_or_422` runs for `require_scopes` — a genuine
+        `Depends(...)` resolution, not just the branch logic."""
+        auth = (self._user("admin"), "token", str(_ORG))
+
+        async def _get_current_user_org():
+            return auth
+
+        core = _FakeCoreClient([{"id": str(_USER), "org_role": "member"}])
+        dep = make_require_org_admin(_get_current_user_org, lambda: core)
+
+        app = FastAPI()
+
+        @app.get("/admin-only")
+        async def admin_only(auth: tuple = Depends(dep)):
+            return {"user_id": auth[0].id}
+
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/admin-only")
+        assert resp.status_code == 403, resp.text

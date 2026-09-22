@@ -51,13 +51,22 @@ describe("DadosPessoaisForm", () => {
       "Data de Nascimento",
       "Profissão",
       "Gênero",
-      // Qualificação (097)
+      // Qualificação (097) — nome_oficial (071, human-editable since the
+      // owner's 2026-09-19 directive) leads the block, same reasoning
+      // migration 097's own header gives for CPF/RG leading it: these are
+      // document-provenance identity fields, not contact details.
+      "Nome completo (como no documento)",
       "CPF",
       "RG",
       "Órgão expedidor",
       "Nacionalidade",
       "Estado civil",
       "Regime de bens",
+      // Migration 148 — always shown (required for a vendedor regardless
+      // of estado civil). "Data de casamento" is absent here: it only
+      // renders while estado_civil reads "Casado(a)", which this cliente
+      // does not.
+      "Certidão de estado civil — data de emissão (obrigatório para vendedores)",
       // Endereço (097)
       "CEP",
       "Logradouro",
@@ -67,6 +76,34 @@ describe("DadosPessoaisForm", () => {
       "Cidade",
       "UF",
     ]);
+  });
+
+  it("hides Data de casamento when estado civil is not Casado(a)", async () => {
+    const { screen } = await abrir();
+    expect(screen.queryByTestId("dados-pessoais-data-casamento")).toBeNull();
+  });
+
+  it("shows Data de casamento while estado civil reads Casado(a)", async () => {
+    const { screen } = await abrir({ valores: { estado_civil: "Casado(a)" } });
+    expect(screen.getByTestId("dados-pessoais-data-casamento")).toBeTruthy();
+  });
+
+  it("sends nome_oficial and certidao_estado_civil_emitida_em", async () => {
+    const { onSave, fireEvent, screen } = await abrir();
+    fireEvent.change(screen.getByTestId("dados-pessoais-nome-oficial"), {
+      target: { value: "Ana Maria da Silva" },
+    });
+    fireEvent.change(
+      screen.getByTestId("dados-pessoais-certidao-estado-civil-emitida-em"),
+      { target: { value: "2025-06-01" } },
+    );
+    fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nome_oficial: "Ana Maria da Silva",
+        certidao_estado_civil_emitida_em: "2025-06-01",
+      }),
+    );
   });
 
   it("🔴 sends the qualification fields Save was given", async () => {
@@ -231,5 +268,34 @@ describe("DadosPessoaisForm — surfacing a rejected save (migration 110)", () =
   it("não mostra nada quando não há erro", async () => {
     const { screen } = await abrir();
     expect(screen.queryByTestId("dados-pessoais-erro")).toBeNull();
+  });
+});
+
+describe("DadosPessoaisForm — pendente de confirmação do administrador (owner directive, 2026-09-19)", () => {
+  it("mostra um aviso sob o campo cujo valor foi retido", async () => {
+    const { screen } = await abrir({ pendenteConfirmacao: ["estado_civil"] });
+    expect(screen.getByTestId("dados-pessoais-estado-civil-pendente")).toBeTruthy();
+    // Nenhum outro campo mostra o aviso.
+    expect(screen.queryByTestId("dados-pessoais-cpf-pendente")).toBeNull();
+  });
+
+  it("mostra o resumo mesmo com o editor fechado", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <DadosPessoaisForm
+        valores={{}}
+        onSave={vi.fn()}
+        pendenteConfirmacao={["nome_oficial", "cpf"]}
+      />,
+    );
+    const resumo = screen.getByTestId("dados-pessoais-pendente-resumo");
+    expect(resumo.textContent).toContain("nome_oficial");
+    expect(resumo.textContent).toContain("cpf");
+  });
+
+  it("não mostra nada quando não há pendência", async () => {
+    const { screen } = await abrir();
+    expect(screen.queryByTestId("dados-pessoais-pendente-resumo")).toBeNull();
+    expect(screen.queryByTestId("dados-pessoais-cpf-pendente")).toBeNull();
   });
 });

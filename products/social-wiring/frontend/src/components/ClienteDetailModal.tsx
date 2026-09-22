@@ -39,6 +39,7 @@ import {
   useChecklistExtras,
   useCompradorMutations,
   useCompradores,
+  useConflitosPendentes,
   useDadosPessoaisMutation,
   useAgendamentoMutations,
   useAgendamentos,
@@ -71,6 +72,7 @@ import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 import { ContratosContainer } from "@/components/ContratosContainer";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import { QualificacaoCompletudePanel } from "@/components/QualificacaoCompletudePanel";
+import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 import { useContratoMutations } from "@/hooks/useContratos";
 
 export interface ClienteDetailModalProps {
@@ -186,6 +188,13 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // object twice.
   const compradorMutations = useCompradorMutations(id ?? "__none__");
   const dadosPessoaisMutation = useDadosPessoaisMutation(id ?? "__none__");
+  // Durable pending-state read (owner directive, 2026-09-19) —
+  // `DadosPessoaisForm`'s notice must survive a reload, unlike the last
+  // mutation's own transient response. `enabled: !!id` — an `undefined`
+  // clienteId reads as "org-wide" in this hook, so the modal being closed
+  // (`id === null`) must gate the query off explicitly rather than fall
+  // through to fetching the wrong (org-wide) list.
+  const conflitosPendentes = useConflitosPendentes(id ?? undefined, { enabled: !!id });
 
   const timelineEntries = flattenTimeline(timeline.data?.pages);
 
@@ -652,6 +661,14 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
             : "Não foi possível salvar os dados."
           : null
       }
+      // Owner directive, 2026-09-19 — see `DadosPessoaisFormProps
+      // .pendenteConfirmacao`. The DURABLE read (`useConflitosPendentes`),
+      // not the last mutation's own transient response — this survives a
+      // reload, and reflects a conflict opened by ANY source (an
+      // extraction, not only this modal's own last save).
+      dadosPessoaisPendente={conflitosPendentes.data
+        ?.filter((c) => c.status === "pendente")
+        .map((c) => c.campo)}
       onSaveDadosPessoais={(valores) =>
         dadosPessoaisMutation.mutate(valores, {
           onError: (err) =>
@@ -724,6 +741,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
           />
         )
       }
+      renderConflitosPendentes={() => id && <ConflitosPendentesPanel clienteId={id} />}
       renderQualificacaoDoTitular={() =>
         id && (
           <QualificacaoCompletudePanel

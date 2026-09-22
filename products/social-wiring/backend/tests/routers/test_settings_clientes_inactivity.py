@@ -34,7 +34,13 @@ from app.config import SocialWiringSettings
 PLATFORM_DEFAULT = SocialWiringSettings.model_fields[
     "clientes_inactivity_threshold_days_default"
 ].default
-from noctusai_lib.testing import MockSupabaseClient, MockUser, MockUserResponse, bind_consent_module_to_mock
+from noctusai_lib.testing import (
+    TEST_USER_ID,
+    MockSupabaseClient,
+    MockUser,
+    MockUserResponse,
+    bind_consent_module_to_mock,
+)
 
 _URL = "/api/settings/clientes-inactivity"
 
@@ -43,6 +49,14 @@ def _mock_client(*, org_role: str | None = None) -> MockSupabaseClient:
     mock_sb = MockSupabaseClient()
     mock_sb.auth.get_user = MagicMock(
         return_value=MockUserResponse(MockUser(org_id="test-org-123", org_role=org_role))
+    )
+    # 🔴 The admin gate now reads the TRUSTED `public.noctus_users` row,
+    # never `user_metadata.org_role` (spoofable via `auth.updateUser`) —
+    # see `test_auth_router.py`'s established pattern for the same class
+    # of trusted-DB check.
+    mock_sb.set_table_data(
+        "noctus_users",
+        [{"id": TEST_USER_ID, "org_id": "test-org-123", "org_role": org_role}],
     )
     return mock_sb
 

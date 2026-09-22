@@ -51,7 +51,11 @@ from noctusai_lib.api.auth.session.factory import (
     make_session_store,
 )
 from noctusai_lib.api.auth.session.scopes import (
+    ADMIN_ORG_ROLES,
     CallerRestriction,
+    is_org_admin,
+    make_require_org_admin,
+    require_org_admin_role,
     require_scopes,
     resolve_org_role,
 )
@@ -98,6 +102,7 @@ from noctusai_lib.api.auth.session.types import (
 )
 
 __all__ = [
+    "ADMIN_ORG_ROLES",
     "ApiTokenAuditMiddleware",
     "ApiTokenInfo",
     "ApiTokenAuditWriter",
@@ -131,15 +136,18 @@ __all__ = [
     "TokenExchanger",
     "build_api_token_row",
     "hash_token",
+    "is_org_admin",
     "make_api_token_audit_writer",
     "make_default_refresh_fn",
     "make_default_revoke_fn",
     "make_get_auth_context",
     "make_product_token_admin",
+    "make_require_org_admin",
     "make_session_revoker",
     "make_session_store",
     "make_token_exchanger",
     "mint_token_secret",
+    "require_org_admin_role",
     "require_scopes",
     "resolve_org_role",
 ]

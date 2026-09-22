@@ -1202,7 +1202,196 @@ def _validar_rg_diferente_cpf(rg: Optional[str], cpf: Optional[str]) -> None:
         )
 
 
-def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) -> dict:
+# ─── A human edit of a DOCUMENT-sourced value (the reverse of migration 138) ─
+#
+# 138 built the admin-adjudication queue for the OTHER direction: an
+# extraction disagreeing with a value already on `clientes`. The owner's
+# provenance directive (2026-09-19), quoted verbatim in this dispatch's
+# brief, closes the gap on THIS side too: "humans input data, extracted from
+# official files are the truth. if a robot input a data, then a human edits
+# an extracted-data, human overwrites with admin confirmation and logs for
+# history and rollback."
+#
+# So: a human PATCH touching a field whose CURRENT value came from a
+# document (`<campo>_origem` neither NULL nor `'manual'`) never silently
+# overwrites it. An org admin/owner's edit applies immediately — they ARE
+# the confirmation — but still gets logged to `cliente_campo_conflitos` with
+# `status='aceito'`, pre-decided, so `valor_anterior` survives as the way
+# back exactly like an accepted extraction conflict does. Anyone else's edit
+# is held back (removed from the write payload — the document value keeps
+# prevailing) and opens a `status='pendente'` row for an admin to decide via
+# the EXISTING `PUT /conflitos/{id}/decidir` route
+# (`identidade_extracao_service.resolver_conflito`, unchanged: it is already
+# generic over which `campo` and which `origem_proposto` it is deciding).
+#
+# 🔴 Deliberately NOT importing `identidade_extracao_service` to reuse its
+# `_registrar_conflito` — that module imports `app.modules.card_hub.services`,
+# which imports THIS module (`clientes_service`), so the reverse import here
+# would be circular. The insert shape below is intentionally the same few
+# columns, kept in sync by hand (both write the same `cliente_campo_
+# conflitos` table `resolver_conflito` reads generically).
+CONFLITOS_TABLE = "cliente_campo_conflitos"
+
+#: Every identity/qualificação field a document extractor can also write —
+#: `identidade_extracao_service.CAMPOS`' item_keys, plus `nome_oficial`
+#: (071, now also human-editable — see migration 148's note on why it was
+#: "never written by hand" before this dispatch). `rg_orgao_expedidor` is
+#: deliberately absent: it has no `_origem` column of its own (it rides with
+#: `rg`, same as on the extraction side — see the loop below).
+_CAMPOS_COM_ORIGEM: tuple[str, ...] = (
+    "nome_oficial", "cpf", "rg", "data_nascimento", "genero",
+    "estado_civil", "regime_bens", "data_casamento", "nacionalidade",
+)
+
+
+def _conflito_pendente_existente(
+    client: Any, org_id: UUID, cliente_id: UUID, campo: str
+) -> bool:
+    rows = (
+        _t(client, CONFLITOS_TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("campo", campo)
+        .eq("status", "pendente")
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows)
+
+
+def _abrir_conflito_edicao_manual(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    campo: str,
+    *,
+    valor_anterior: Any,
+    origem_anterior: Optional[str],
+    valor_proposto: Any,
+) -> None:
+    """A non-admin's edit of a document-sourced field — held back from
+    `clientes`, opened as a `pendente` conflict instead. Mirrors
+    `identidade_extracao_service._registrar_conflito`'s own dedupe: skip the
+    insert (and the doomed second row the partial UNIQUE index would refuse
+    anyway) when a pending conflict for this (cliente, campo) already
+    exists — a second PATCH attempt while the first is still awaiting a
+    decision is not a second conflict."""
+    if _conflito_pendente_existente(client, org_id, cliente_id, campo):
+        return
+    _t(client, CONFLITOS_TABLE).insert(
+        {
+            "id": str(uuid4()),
+            "org_id": str(org_id),
+            "cliente_id": str(cliente_id),
+            "campo": campo,
+            "valor_anterior": valor_anterior,
+            "origem_anterior": origem_anterior,
+            "valor_proposto": valor_proposto,
+            "origem_proposto": "manual",
+            "confianca_proposta": None,
+            "fonte_tabela": None,
+            "fonte_id": None,
+            "status": "pendente",
+            "notificado_em": None,
+            "decidido_por": None,
+            "decidido_em": None,
+            "created_at": _now(),
+        }
+    ).execute()
+
+
+def _superseder_conflitos_pendentes(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    campo: str,
+    *,
+    decidido_por: Optional[Any],
+) -> None:
+    """An admin's DIRECT edit of `campo` makes any pre-existing `pendente`
+    conflict on that SAME (cliente, campo) stale — it proposed overwriting
+    a document value that no longer exists (the admin just overwrote it a
+    different way). Left alone, that row would keep sitting in the admin
+    queue offering a decision about a value the record has already moved
+    past. Closed as `rejeitado` (the admin's own edit is what happened
+    instead, captured in its OWN fresh `aceito` row by the caller) rather
+    than silently deleted — the record that a conflict was once open here
+    stays auditable, same posture every other decided row gets."""
+    now = _now()
+    pendentes = (
+        _t(client, CONFLITOS_TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("campo", campo)
+        .eq("status", "pendente")
+        .execute()
+    ).data or []
+    for row in pendentes:
+        _t(client, CONFLITOS_TABLE).update(
+            {
+                "status": "rejeitado",
+                "decidido_por": str(decidido_por) if decidido_por else None,
+                "decidido_em": now,
+            }
+        ).eq("id", row["id"]).execute()
+
+
+def _registrar_edicao_manual_confirmada(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    campo: str,
+    *,
+    valor_anterior: Any,
+    origem_anterior: Optional[str],
+    valor_proposto: Any,
+    decidido_por: Optional[Any],
+) -> None:
+    """An admin/owner's edit of a document-sourced field — applied
+    immediately (the caller has already written `valor_proposto` to
+    `clientes` in the SAME PATCH), logged here PRE-DECIDED (`status=
+    'aceito'`, `decidido_por` the admin themselves) so `valor_anterior`
+    survives as the history/rollback record the owner's directive asks
+    for. ALSO closes out (`_superseder_conflitos_pendentes`) any stale
+    `pendente` row this same edit makes moot — see that function's
+    docstring."""
+    _superseder_conflitos_pendentes(
+        client, org_id, cliente_id, campo, decidido_por=decidido_por
+    )
+    now = _now()
+    _t(client, CONFLITOS_TABLE).insert(
+        {
+            "id": str(uuid4()),
+            "org_id": str(org_id),
+            "cliente_id": str(cliente_id),
+            "campo": campo,
+            "valor_anterior": valor_anterior,
+            "origem_anterior": origem_anterior,
+            "valor_proposto": valor_proposto,
+            "origem_proposto": "manual",
+            "confianca_proposta": None,
+            "fonte_tabela": None,
+            "fonte_id": None,
+            "status": "aceito",
+            "notificado_em": None,
+            "decidido_por": str(decidido_por) if decidido_por else None,
+            "decidido_em": now,
+            "created_at": now,
+        }
+    ).execute()
+
+
+def update_cliente(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    *,
+    acting_user_id: Optional[Any] = None,
+    is_admin: bool = False,
+    **updates: Any,
+) -> dict:
     """PATCH (§5 `PATCH /api/clientes/{id}`) — nome, ativo/arquivado (D4).
 
     `reativado_em` / `inativo_threshold_dias` are server-derived-only (see
@@ -1220,7 +1409,18 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
     value arrived, so letting a caller assert it would let a client claim a
     machine read was typed by a person, or the reverse. A manual value also
     outranks every later automatic extraction, which is only safe if the
-    server is the one that decided it was manual."""
+    server is the one that decided it was manual.
+
+    🔴 `acting_user_id` / `is_admin` (owner directive, 2026-09-19) — see the
+    module comment above `_abrir_conflito_edicao_manual`. Every field in
+    `_CAMPOS_COM_ORIGEM` whose CURRENT value came from a document is gated:
+    an admin's edit applies immediately (still logged for history/rollback);
+    anyone else's is held back and queued for admin adjudication through the
+    existing `cliente_campo_conflitos` machinery. The RETURN dict always
+    carries `pendente_confirmacao` — the list of item_keys THIS call deferred
+    (empty when nothing was) — so a caller (the PATCH route, the frontend
+    form) never has to guess whether a field it just sent actually landed.
+    """
     allowed = {
         "nome", "ativo", "arquivado_em", "inativo_em",
         "reativado_em", "inativo_threshold_dias",
@@ -1240,76 +1440,102 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
         # 117 (contract F6) — the marriage celebration date. A checklist item
         # like data_nascimento/genero/cpf/rg above, on the same terms.
         "data_casamento",
+        # 071, now human-editable (owner directive, 2026-09-19 — see
+        # `_CAMPOS_COM_ORIGEM`'s comment). Gated exactly like every field
+        # above: a document-sourced `nome_oficial` needs admin confirmation
+        # to be hand-corrected.
+        "nome_oficial",
+        # 148 — the manual half of contract F6's [Q11] freshness check.
+        # Never gated (see that migration's header): no extractor ever
+        # writes this column, so there is no document value to protect.
+        "certidao_estado_civil_emitida_em",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:
-        return _require_cliente(client, org_id, cliente_id)
+        return {**_require_cliente(client, org_id, cliente_id), "pendente_confirmacao": []}
+
+    # Fetched once, up front, whenever the PATCH touches ANY field this
+    # function must compare against its EXISTING value — the gate below, and
+    # (since `rg`/`cpf` are both in `_CAMPOS_COM_ORIGEM`) the rg==cpf
+    # collision guard that used to fetch this separately.
+    atual: Optional[dict] = None
+    if payload.keys() & set(_CAMPOS_COM_ORIGEM):
+        atual = _require_cliente(client, org_id, cliente_id)
+
+    pendentes: list[str] = []
+    aprovados_admin: list[tuple[str, Any, Optional[str]]] = []
+
+    if atual is not None:
+        for campo in _CAMPOS_COM_ORIGEM:
+            if campo not in payload:
+                continue
+            valor_atual = atual.get(campo)
+            origem_atual = atual.get(f"{campo}_origem")
+            eh_documento = bool(valor_atual) and origem_atual not in (None, "manual")
+            if not eh_documento:
+                continue
+            if is_admin:
+                aprovados_admin.append((campo, valor_atual, origem_atual))
+                continue
+            # Não-admin: NUNCA sobrescreve silenciosamente — vira pendência,
+            # e o valor do documento continua prevalecendo até uma decisão.
+            pendentes.append(campo)
+            del payload[campo]
+            if campo == "rg" and "rg_orgao_expedidor" in payload:
+                # Rides with `rg` (no provenance of its own) — must not
+                # apply on its own while `rg` itself is held back.
+                del payload["rg_orgao_expedidor"]
+
+    if not payload:
+        # Every touched field was deferred to admin confirmation — nothing
+        # left to write. `atual` is guaranteed non-None here (the loop above
+        # only runs, and only defers, when it is).
+        assert atual is not None
+        for campo in pendentes:
+            _abrir_conflito_edicao_manual(
+                client, org_id, cliente_id, campo,
+                valor_anterior=atual.get(campo),
+                origem_anterior=atual.get(f"{campo}_origem"),
+                valor_proposto=updates.get(campo),
+            )
+        return {**atual, "pendente_confirmacao": pendentes}
 
     # A PATCH touching either document number must not leave the pair
-    # colliding, even when only one of the two is in THIS payload — fetch
-    # whichever side is missing from the request to validate the value the
-    # row will actually hold once this write lands.
+    # colliding, even when only one of the two is in THIS payload — compare
+    # against whichever side is missing from the request (or was just
+    # deferred above) to validate the value the row will actually hold once
+    # this write lands.
     if "rg" in payload or "cpf" in payload:
-        atual = _require_cliente(client, org_id, cliente_id)
         rg_efetivo = payload["rg"] if "rg" in payload else atual.get("rg")
         cpf_efetivo = payload["cpf"] if "cpf" in payload else atual.get("cpf")
         _validar_rg_diferente_cpf(rg_efetivo, cpf_efetivo)
 
-    # A hand-edited birthdate is authoritative and must never be silently
-    # replaced by a later OCR read (`identidade_extracao_service` checks this
-    # origin before writing). Clearing it back to NULL clears the origin too —
-    # an origin left pointing at a value that no longer exists is a lie the
-    # extractor would then honour.
-    if "data_nascimento" in payload:
-        payload["data_nascimento_origem"] = "manual" if payload["data_nascimento"] else None
-        payload["data_nascimento_documento_id"] = None
-        payload["data_nascimento_em"] = _now() if payload["data_nascimento"] else None
+    # Every field in `_CAMPOS_COM_ORIGEM` still present in `payload` (i.e.
+    # NOT deferred above) is a value the server is about to write — stamp its
+    # provenance quintet the SAME way for all nine: `_origem='manual'`
+    # (or `None` when the caller is clearing the field back to empty —
+    # clearing must clear the origin too, an origin pointing at a value that
+    # no longer exists is a lie the extractor would then honour),
+    # `_documento_id=None` (a human always types, never points at a
+    # document) and `_em` the moment of the write. `confirmado_por`/
+    # `confirmado_em` are untouched — those belong to `confirmar_sugestao`'s
+    # "a human vouched for a machine read" flow, a different action from
+    # "a human typed a value".
+    for campo in _CAMPOS_COM_ORIGEM:
+        if campo not in payload:
+            continue
+        valor = payload[campo]
+        payload[f"{campo}_origem"] = "manual" if valor else None
+        payload[f"{campo}_documento_id"] = None
+        payload[f"{campo}_em"] = _now() if valor else None
 
-    # Identical treatment for `genero`, because migration 073 made it the third
-    # field an identity document can supply. A typed value must outrank every
-    # later extraction, and that is only safe while the SERVER is the one
-    # deciding a value was typed.
-    if "genero" in payload:
-        payload["genero_origem"] = "manual" if payload["genero"] else None
-        payload["genero_documento_id"] = None
-        payload["genero_em"] = _now() if payload["genero"] else None
-
-    # 🔴 Identical treatment for `cpf` and `rg` (migration 097), and the rule
-    # generalises rather than being written twice more: a typed document number
-    # must outrank every later extraction, and that is only safe while the
-    # SERVER decides a value was typed. Clearing one clears its origin too — an
-    # origin pointing at a value that no longer exists is a lie the extractor
-    # would then honour.
-    #
-    # `rg_orgao_expedidor` is NOT stamped: it has no provenance quintet of its
-    # own because it is not independently persistable. It travels with `rg`,
-    # exactly as `IdentityFields.rg_orgao` does.
-    for campo in ("cpf", "rg"):
-        if campo in payload:
-            payload[f"{campo}_origem"] = "manual" if payload[campo] else None
-            payload[f"{campo}_documento_id"] = None
-            payload[f"{campo}_em"] = _now() if payload[campo] else None
-
-    # 🔴 Identical treatment for `data_casamento` (migration 117, contract
-    # F6) — the same "a typed value must outrank every later extraction"
-    # rule `data_nascimento` established above, on a field that is ALSO read
-    # off a document (certidao_casamento).
-    if "data_casamento" in payload:
-        payload["data_casamento_origem"] = "manual" if payload["data_casamento"] else None
-        payload["data_casamento_documento_id"] = None
-        payload["data_casamento_em"] = _now() if payload["data_casamento"] else None
-
-    # 🔴 Identical treatment for `nacionalidade` (migration 146, resolves
-    # `NOC-REMEDIATE[nacionalidade-identity-parser]`) — the same "a typed
-    # value must outrank every later extraction" rule every field above
-    # gives, on a field that has been PATCH-able since 097 but only became
-    # ALSO readable off a document with this migration. Pre-145 rows may
-    # carry a `nacionalidade` with no `_origem` at all; a PATCH from here on
-    # is unambiguously the server's own stamp.
-    if "nacionalidade" in payload:
-        payload["nacionalidade_origem"] = "manual" if payload["nacionalidade"] else None
-        payload["nacionalidade_documento_id"] = None
-        payload["nacionalidade_em"] = _now() if payload["nacionalidade"] else None
+    # 148 — the manual certidão-emission date. Same stamping shape as above,
+    # minus `_documento_id`/`_confirmado_*`: that migration's column pair
+    # has no such columns (no extractor ever writes it — see its header).
+    if "certidao_estado_civil_emitida_em" in payload:
+        valor = payload["certidao_estado_civil_emitida_em"]
+        payload["certidao_estado_civil_emitida_em_origem"] = "manual" if valor else None
+        payload["certidao_estado_civil_emitida_em_em"] = _now() if valor else None
 
     payload["updated_at"] = _now()
     resp = (
@@ -1322,7 +1548,26 @@ def update_cliente(client: Any, org_id: UUID, cliente_id: UUID, **updates: Any) 
     rows = resp.data or []
     if not rows:
         raise ClienteNotFound(f"cliente {cliente_id} not found for org {org_id}")
-    return rows[0]
+    resultado = rows[0]
+
+    for campo in pendentes:
+        assert atual is not None
+        _abrir_conflito_edicao_manual(
+            client, org_id, cliente_id, campo,
+            valor_anterior=atual.get(campo),
+            origem_anterior=atual.get(f"{campo}_origem"),
+            valor_proposto=updates.get(campo),
+        )
+    for campo, valor_anterior, origem_anterior in aprovados_admin:
+        _registrar_edicao_manual_confirmada(
+            client, org_id, cliente_id, campo,
+            valor_anterior=valor_anterior,
+            origem_anterior=origem_anterior,
+            valor_proposto=resultado.get(campo),
+            decidido_por=acting_user_id,
+        )
+
+    return {**resultado, "pendente_confirmacao": pendentes}
 
 
 def list_review_groups(client: Any, org_id: UUID) -> list[dict]:

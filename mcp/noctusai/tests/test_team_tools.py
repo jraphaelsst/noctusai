@@ -26,13 +26,7 @@ MCP_ROOT = Path(__file__).resolve().parents[1]
 if str(MCP_ROOT) not in sys.path:
     sys.path.insert(0, str(MCP_ROOT))
 
-# Also add dev_team/src to sys.path so `from dev_team.mcp_facade import ...`
-# resolves from inside the lazy handler imports. dev_team isn't pip-installed
-# in this worktree's MCP venv yet — engineer D wires that in a later batch.
-REPO_ROOT = MCP_ROOT.parents[1]
-DEV_TEAM_SRC = REPO_ROOT / "dev_team" / "src"
-if str(DEV_TEAM_SRC) not in sys.path:
-    sys.path.insert(0, str(DEV_TEAM_SRC))
+# `dev_team/src` is put on sys.path suite-wide by `conftest.py`.
 
 import pytest  # noqa: E402
 
