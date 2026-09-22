@@ -35,6 +35,7 @@ from .paging import (
     iter_paged_rows,
 )
 from .sqlite_adapter import SqliteRecordStore
+from . import table_reads
 from .supabase_adapter import SupabaseLike, SupabaseRecordStore
 from .types import (
     Filter,
@@ -69,6 +70,10 @@ __all__ = [
     "PagerOverflowError",
     "DEFAULT_PAGE_SIZE",
     "DEFAULT_MAX_PAGES",
+    # Org-scoped PostgREST read helpers (batched `in_()`, paged reads, actor
+    # names) — see table_reads.py. Namespaced, not flattened: `table` /
+    # `batched` are too generic to live at this module's top level.
+    "table_reads",
 ]
 
 
