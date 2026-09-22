@@ -74,7 +74,15 @@ class _SchemaPinnedAdminClient:
     client shape.
     """
 
-    __slots__ = ("_client", "_schema")
+    #: ``__weakref__`` is NOT optional here: a raw ``supabase.Client`` is
+    #: weak-referenceable, so consumers key ``weakref.WeakKeyDictionary``
+    #: caches on it (social-wiring's ``certidoes/deps.py::storage_for`` and
+    #: five sibling ``deps.py`` modules). A ``__slots__`` class without it
+    #: raises ``TypeError: cannot create weak reference`` — which took
+    #: ``GET /api/certidoes/consultas`` + ``/fila-tjsp`` to 500 in prod on
+    #: 2026-09-22, minutes after this wrapper shipped. A wrapper must keep
+    #: every capability of what it wraps, weak-referenceability included.
+    __slots__ = ("_client", "_schema", "__weakref__")
 
     def __init__(self, client: Client, schema: str) -> None:
         self._client = client
@@ -117,6 +125,7 @@ class DatabaseModule:
         self._settings = settings
         self._schema = schema
         self._admin: Optional[Client] = None
+        self._admin_pinned: Optional["_SchemaPinnedAdminClient"] = None
 
     @property
     def schema(self) -> str:
@@ -154,15 +163,20 @@ class DatabaseModule:
         """Get a cached admin client (service role, bypasses RLS).
 
         Returned wrapped in :class:`_SchemaPinnedAdminClient` — see its
-        docstring. The cache holds the RAW client (built once); the wrapper
-        is cheap and stateless, so it is fine to construct one per call.
+        docstring. BOTH the raw client and its wrapper are cached, so every
+        caller gets the SAME wrapper object: consumers key
+        ``weakref.WeakKeyDictionary`` caches on this client (social-wiring's
+        ``modules/*/deps.py``), and a fresh wrapper per call would miss that
+        cache every time and let each entry be collected immediately.
         Behaves like a :class:`~supabase.Client` for every method a caller
         actually uses (``.table()``/``.rpc()``/``.from_()``/``.schema()``
         plus passthrough of everything else) — no consumer needs to change.
         """
         if self._admin is None:
             self._admin = self.get_client()
-        return _SchemaPinnedAdminClient(self._admin, self._schema)
+        if self._admin_pinned is None:
+            self._admin_pinned = _SchemaPinnedAdminClient(self._admin, self._schema)
+        return self._admin_pinned
 
 
 def create_database_module(settings, schema: str) -> DatabaseModule:

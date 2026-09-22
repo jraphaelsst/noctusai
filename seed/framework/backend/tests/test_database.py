@@ -90,14 +90,16 @@ class TestThePoisoningShapeIsDead:
             admin.table("app_integration_config")
             assert admin._pinned().options.schema == "agents"
 
-    def test_get_admin_client_caches_one_underlying_raw_client(self):
-        """Two wrapper instances must share the SAME underlying client —
-        otherwise the cache is defeated and every call pays connection
-        setup cost again."""
+    def test_get_admin_client_caches_the_wrapper_and_the_raw_client(self):
+        """Every caller must get the SAME wrapper object, not just the same
+        underlying client. Consumers key `weakref.WeakKeyDictionary` caches
+        on the admin client (social-wiring `modules/*/deps.py`); a fresh
+        wrapper per call would miss that cache on every request and let each
+        entry be collected immediately."""
         db = DatabaseModule(_settings(), schema="agents")
         first = db.get_admin_client()
         second = db.get_admin_client()
-        assert first is not second  # a fresh wrapper is fine, it's stateless
+        assert first is second
         assert first._client is second._client  # the cached raw client is shared
 
 
@@ -204,3 +206,23 @@ class TestDirectWrapperUnit:
         wrapped = _SchemaPinnedAdminClient(raw, "agents")
         with pytest.raises(AttributeError):
             wrapped.definitely_not_a_real_attribute
+
+    def test_the_wrapper_is_weak_referenceable_like_the_raw_client(self):
+        # Consumers key `weakref.WeakKeyDictionary` caches on the admin client
+        # (social-wiring `modules/*/deps.py::storage_for` + siblings). A
+        # __slots__ wrapper missing `__weakref__` raises TypeError there —
+        # it took /api/certidoes/consultas + /fila-tjsp to 500 in prod
+        # (2026-09-22) minutes after this wrapper shipped.
+        import weakref
+
+        wrapped = _SchemaPinnedAdminClient(self._FakeClient(), "agents")
+        assert weakref.ref(wrapped)() is wrapped
+        cache: "weakref.WeakKeyDictionary[object, str]" = weakref.WeakKeyDictionary()
+        cache[wrapped] = "backend"
+        assert cache[wrapped] == "backend"
+
+    def test_the_admin_client_handed_to_products_is_weak_referenceable(self):
+        import weakref
+
+        module = DatabaseModule(_settings(), schema="agents")
+        assert weakref.ref(module.get_admin_client())() is module.get_admin_client()
