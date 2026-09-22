@@ -36,6 +36,12 @@ function dados(over: Partial<ImovelDados> = {}): ImovelDados {
     situacoes_onus: [],
     titulo_aquisitivo_fonte: null,
     onus_fonte: null,
+    endereco_manual_logradouro: null,
+    endereco_manual_numero: null,
+    endereco_manual_cidade: null,
+    endereco_manual_uf: null,
+    endereco_manual_confirmado_por: null,
+    endereco_manual_confirmado_em: null,
     updated_at: null,
     ...over,
   };
