@@ -27,7 +27,7 @@ The first studio agent is **IsaIA** (Instagram content strategist). Julia is unt
 | A6 | Progressive disclosure is served by **read-only in-process MCP tools** (`mcp__studio__*`, §E.3) reading the DB — not by filesystem `Read`. | Keeps `Read/Grep/Glob/Bash` disallowed (Julia's hardened posture) while skills and knowledge still load just-in-time. |
 | A7 | Every turn records `version_id` + `compiled_hash`; the exact compiled text is stored once per hash in `compiled_prompts`. | "Proof of use": open the exact prompt any turn ran with. |
 | A8 | Publishing requires a concluded eval run on the draft's **current** compiled hash with `score >= agents.publicacao_limiar` — or an admin override with a written reason (recorded). | The eval gate is the substitute for code review now that prompt/skills are data. |
-| A9 | Knowledge search v1 = Postgres full-text (`portuguese` config, weighted title/body) + trigram on titles. Embeddings are a later hybrid leg (§K). | Deterministic, zero cost, no new provider dependency; the corpus is navigated mostly by structure (cards/registry/indices). |
+| A9 | Knowledge search v1 = Postgres full-text (`portuguese` config, weighted title/resumo/body; no trigram index — pg_trgm lives in another product's schema on this project). Embeddings are a later hybrid leg (§K). | Deterministic, zero cost, no new provider dependency; the corpus is navigated mostly by structure (cards/registry/indices). |
 | A10 | Model allowlist stays `claude-opus-5` / `claude-sonnet-5` (same CHECK as personas). Eval judge = `claude-sonnet-5` via `noctusai_lib` LLM layer, generator = the version's model. | Reuse the existing allowlist; judge ≠ generator where possible. |
 
 ---
@@ -222,7 +222,7 @@ agents.knowledge_documents (
   ) stored,
   unique (agent_id, slug)
 );
--- GIN(busca); pg_trgm GIN on titulo (CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions).
+-- GIN(busca). (No trigram index — see A9.)
 
 agents.knowledge_revisions (                -- append-only audit
   document_id uuid not null references agents.knowledge_documents(id) on delete cascade,

@@ -93,13 +93,11 @@ class TestKnowledgeDocumentsSearch:
     def test_gin_index_on_busca(self, sql):
         assert "CREATE INDEX idx_agents_knowledge_documents_busca ON agents.knowledge_documents USING GIN (busca)" in sql
 
-    def test_pg_trgm_extension_and_titulo_index(self, sql):
-        assert "CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions;" in sql
-        assert (
-            "CREATE INDEX idx_agents_knowledge_documents_titulo_trgm\n"
-            "    ON agents.knowledge_documents USING GIN (titulo extensions.gin_trgm_ops);"
-            in sql
-        )
+    def test_no_cross_product_trigram_dependency(self, sql):
+        # pg_trgm lives in another product's schema on this project; the
+        # migration must not depend on it (dry run 2026-09-21).
+        assert "gin_trgm_ops" not in sql
+        assert "CREATE EXTENSION" not in sql
 
     def test_source_sha_column_exists(self, sql):
         block = _table_block(sql, "knowledge_documents")

@@ -48,13 +48,12 @@
 
 SET search_path = agents, public;
 
--- pg_trgm powers the trigram GIN index on `knowledge_documents.titulo`
--- (fuzzy/substring title search, contract §B2 "pg_trgm GIN on titulo").
--- Pre-installed on Supabase-managed Postgres; installed into the
--- `extensions` schema per platform convention (see
--- `products/erp-imobiliario/backend/migrations/002_ai_matching.sql`'s
--- `CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;`).
-CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions;
+-- No trigram index (2026-09-21, found by a BEGIN…ROLLBACK dry run against the
+-- live schema): on this project pg_trgm is installed in the `social_wiring`
+-- schema, so an `IF NOT EXISTS … WITH SCHEMA extensions` install is a no-op
+-- and its operator class is not reachable under `extensions`. Nothing queries
+-- trigrams — titles are already searchable at weight A of `busca` — so the
+-- index is dropped rather than coupling this schema to another product's.
 
 
 -- ────────────────────────────────────────────────────────────────────────
@@ -137,8 +136,6 @@ CREATE POLICY "service_role_bypass" ON agents.knowledge_documents
 CREATE INDEX idx_agents_knowledge_documents_org ON agents.knowledge_documents(org_id);
 CREATE INDEX idx_agents_knowledge_documents_collection ON agents.knowledge_documents(collection_id);
 CREATE INDEX idx_agents_knowledge_documents_busca ON agents.knowledge_documents USING GIN (busca);
-CREATE INDEX idx_agents_knowledge_documents_titulo_trgm
-    ON agents.knowledge_documents USING GIN (titulo extensions.gin_trgm_ops);
 
 CREATE OR REPLACE TRIGGER set_updated_at_knowledge_documents
     BEFORE UPDATE ON agents.knowledge_documents
