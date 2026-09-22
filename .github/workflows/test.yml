@@ -446,6 +446,14 @@ jobs:
         working-directory: products/${{ matrix.product }}/frontend
         run: npm test
 
+      # Type check. vitest transpiles without type-checking and `vite build`
+      # does the same, so a type error could reach prod with every job green.
+      # All 16 product frontends were at 0 errors when this landed (2026-09-21).
+      - name: Type check (tsc --noEmit)
+        if: steps.gate.outputs.run == 'true'
+        working-directory: products/${{ matrix.product }}/frontend
+        run: npx tsc --noEmit -p tsconfig.json
+
   seed-frontend-tests:
     # The SHARED-LIBRARY half of the FE suite — `@noctusai/lib`
     # (seed/lib/frontend: 32 spec files, 375 tests).
