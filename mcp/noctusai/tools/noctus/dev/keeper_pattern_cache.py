@@ -94,9 +94,20 @@ def _source_sha(worktree_path: str | None = None) -> str:
     return hashlib.sha256(src.read_bytes()).hexdigest()
 
 
-def _connect() -> sqlite3.Connection:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(CACHE_PATH))
+def _cache_file(worktree_path: str | None) -> Path:
+    """The cache slot mirroring `worktree_path`'s compliance.py (default: this
+    process's tree). keeper-patterns is a per-tree cache
+    (`cache_backend._PER_TREE_CACHES`) — one aggregate sha, so the slot must
+    belong to the tree that was hashed."""
+    if worktree_path:
+        return _cache_path("keeper-patterns", resolve_caller_root(worktree_path))
+    return CACHE_PATH
+
+
+def _connect(worktree_path: str | None = None) -> sqlite3.Connection:
+    path = _cache_file(worktree_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     # WAL + busy_timeout — uniform locking discipline across keeper-mirror caches.
     apply_locking_pragmas(conn)
@@ -297,16 +308,16 @@ def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
     fixed-CWD process bound to the primary at startup, so omitting
     `worktree_path` from inside an engineer worktree silently mirrors the
     STALE primary `compliance.py` rather than the worktree's own in-flight
-    edits. The CACHE ITSELF is unaffected — it lives at the shared Tier-1
-    `.claude/cache/keeper-patterns.sqlite`; `worktree_path` only changes
-    which source tree is hashed + parsed.
+    edits. The cache written is that SAME tree's per-tree slot
+    (`<git-dir>/noctusai/cache/keeper-patterns.sqlite`), so hashing one tree
+    never flips another tree's freshness.
 
     Returns a status dict: ``{ok, status('in-sync'|'rebuilt'), source_sha,
     rows_written, resolved_compliance_src}``. ``force=True`` bypasses the
     in-sync short-circuit.
     """
     sha_now = _source_sha(worktree_path)
-    conn = _connect()
+    conn = _connect(worktree_path)
     _init_schema(conn)
     if not force:
         cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")

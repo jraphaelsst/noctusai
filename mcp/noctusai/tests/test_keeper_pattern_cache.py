@@ -230,7 +230,8 @@ class TestWorktreePathScoping:
         assert r["resolved_compliance_src"] == str(
             wt / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "compliance.py"
         )
-        names = self._keeper_names_in_cache(kpc.CACHE_PATH)
+        # A scoped refresh writes the SCOPED tree's own slot (per-tree cache).
+        names = self._keeper_names_in_cache(kpc._cache_file(str(wt)))
         assert "check_worktree_only_keeper" in names, (
             "the worktree-only keeper must be visible via worktree_path")
 

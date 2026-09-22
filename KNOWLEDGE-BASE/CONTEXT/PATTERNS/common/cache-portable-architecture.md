@@ -26,6 +26,30 @@ sessions.
 
 Survives as long as the repo's `.git/` exists. Deleted only when the user removes the repo.
 
+### Tier 1a — per-tree single-slot mirrors (the exception, 2026-09-22)
+**Location:** `<git-dir>/noctusai/cache/*.sqlite` — `.git/` for the primary (the same file
+Tier-1 uses, so no migration), `.git/worktrees/<name>/` for a linked worktree.
+
+Sharing is right for **content-addressed** caches (the embeddings: rows keyed by chunk sha,
+so every tree's chunks coexist and a fresh worktree skips the re-embed). It is wrong for a
+**single-slot mirror** — a cache whose freshness is ONE aggregate sha of a tracked source
+(`auto-improvement.ndjson`, `compliance.py`, an agent bundle, `absorptions.ndjson`). That
+slot can match only one tree at a time: tree A's refresh made it "stale" for tree B, and a
+high-severity freshness keeper then blocked B's unrelated commits. Every hand refresh fixed
+one tree by breaking the others (hit on every commit of three parallel slices, 2026-09-21/22).
+
+So `cache_backend._PER_TREE_CACHES` = {`keeper-patterns`, `agent-context`,
+`auto-improvement`, `absorptions`} resolve per tree (`git rev-parse --absolute-git-dir`).
+Each rebuilds from its own tree's source in under a second, so there is nothing worth
+sharing; no Tier-2 auto-pull or legacy migration applies (a pulled copy would mirror some
+other tree). A linked worktree's slot is deleted with `git worktree remove`. Modules that
+accept `worktree_path` / `repo_root` write AND read that tree's slot (`_cache_file(...)`) —
+never the calling process's. Unresolvable git dir (dangling stub) ⇒ `<root>/.claude/cache/`.
+
+**Rule for a new cache:** content-addressed ⇒ shared Tier-1; single-slot aggregate mirror ⇒
+add it to `_PER_TREE_CACHES`. `noc-graph` is the documented exception: single-slot but
+~13 s to rebuild and gated only by an advisory keeper, so it stays shared.
+
 ### Tier 2 — Remote authoritative
 **Location:** Prod pgvector at `noctus-cache-pg:5432` (already in place via the
 prod-cache-container pattern).
@@ -150,3 +174,8 @@ One resolver. One location. Eight caches + two ledgers.
   Tier-1 relocation + migration in the same commit; Tier-2 cache_pull + auto-pull-on-empty
   alongside. Replaces the abandoned "inherit cache by symlink" first-cut proposal (which
   perpetuated per-worktree state rather than fixing it).
+- 2026-09-22 — Tier 1a: single-slot mirrors moved to a per-tree slot. The shared slot could
+  only ever be fresh for one tree, so a high-severity keeper blocked unrelated commits in every
+  other tree; a same-week pre-commit "always refresh for the committing tree" leg only masked
+  it at commit time (and hooks run from the PRIMARY's working copy, so a worktree didn't even
+  get that leg until the primary pulled it). Per-tree resolution removes the contention.

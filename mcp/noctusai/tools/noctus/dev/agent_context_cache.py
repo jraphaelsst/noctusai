@@ -99,9 +99,28 @@ def _sha_file(path: Path) -> str:
     return _sha_bytes(path.read_bytes()) if path.exists() else ""
 
 
-def _connect() -> sqlite3.Connection:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(CACHE_PATH))
+def _cache_file(
+    worktree_path: str | None = None, repo_root: Path | None = None,
+) -> Path:
+    """The cache slot for the tree named by `worktree_path` / `repo_root`
+    (default: this process's tree). agent-context is a per-tree cache
+    (`cache_backend._PER_TREE_CACHES`): each `bundle_sha` is computed from ONE
+    tree's agent + KB files, so it must be written to AND read from that same
+    tree's slot — reading another tree's slot is the stale-forever shape the
+    2026-09-17 fix below closed for the live side."""
+    if worktree_path:
+        return _cache_path("agent-context", resolve_caller_root(worktree_path))
+    if repo_root:
+        return _cache_path("agent-context", Path(repo_root))
+    return CACHE_PATH
+
+
+def _connect(
+    worktree_path: str | None = None, repo_root: Path | None = None,
+) -> sqlite3.Connection:
+    path = _cache_file(worktree_path, repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     # WAL + busy_timeout — uniform locking discipline across keeper-mirror caches.
     apply_locking_pragmas(conn)
@@ -283,8 +302,8 @@ def refresh(
     fixed-CWD process bound to the primary at startup, so omitting
     `worktree_path` from inside an engineer worktree silently mirrors the
     STALE primary agent set rather than the worktree's own in-flight edits.
-    The CACHE ITSELF is unaffected — it lives at the shared Tier-1
-    `.claude/cache/agent-context.sqlite`.
+    The cache written is that SAME tree's per-tree slot
+    (`<git-dir>/noctusai/cache/agent-context.sqlite`).
 
     Returns:
       {ok, status('in-sync'|'rebuilt'), refreshed=[agent_names], rows_written}
@@ -293,7 +312,7 @@ def refresh(
     kb_dir = _kb_dir_for(worktree_path)
     if not agents_dir.is_dir():
         return {"ok": True, "status": "in-sync", "refreshed": [], "rows_written": 0}
-    conn = _connect()
+    conn = _connect(worktree_path)
     _init_schema(conn)
 
     targets: list[Path] = sorted(agents_dir.glob("*.md"))
@@ -382,9 +401,9 @@ def lookup(agent_name: str, worktree_path: str | None = None) -> dict:
     if not agent_md.exists():
         return {"ok": False, "error": f"agent {agent_name!r} not found"}
     live_sha, _ = _bundle_sources(agent_md, kb_dir)
-    if not CACHE_PATH.exists():
+    if not _cache_file(worktree_path).exists():
         refresh(agent_name=agent_name, worktree_path=worktree_path)
-    conn = _connect()
+    conn = _connect(worktree_path)
     _init_schema(conn)
     cur = conn.execute(
         "SELECT value FROM cache_meta WHERE key=?",
@@ -394,7 +413,7 @@ def lookup(agent_name: str, worktree_path: str | None = None) -> dict:
     if not row or row["value"] != live_sha:
         conn.close()
         refresh(agent_name=agent_name, worktree_path=worktree_path)
-        conn = _connect()
+        conn = _connect(worktree_path)
         _init_schema(conn)
     cur = conn.execute(
         "SELECT section_kind, section_path, section_value, cached_at "
@@ -469,12 +488,12 @@ def get_bundle_sha(
     agent_md = agents_dir / f"{agent_name}.md"
     live, _ = _bundle_sources(agent_md, kb_dir)
     cached: str | None = None
-    if CACHE_PATH.exists():
+    if _cache_file(repo_root=repo_root).exists():
         try:
             # Reuse _connect() (WAL + busy_timeout) — a raw sqlite3.connect()
             # here would skip busy_timeout and raise `database is locked` under
             # writer contention. KB § PATTERNS/common/cache-locking-discipline.md.
-            conn = _connect()
+            conn = _connect(repo_root=repo_root)
             cur = conn.execute(
                 "SELECT value FROM cache_meta WHERE key=?",
                 (f"bundle_sha:{agent_name}",),

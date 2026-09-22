@@ -149,6 +149,68 @@ def _git_common_dir(repo_root: Path) -> Path:
     return common
 
 
+# ── Per-tree caches (single-slot aggregate mirrors) ──────────────────────────
+# Sharing one file across worktrees is right for CONTENT-ADDRESSED caches (the
+# embeddings: rows keyed by chunk sha, so every tree's chunks coexist and a new
+# worktree skips a ~30 min re-embed). It is WRONG for a SINGLE-SLOT mirror whose
+# freshness is ONE aggregate sha of a tracked source (a ledger, compliance.py, an
+# agent bundle): the slot can match only one tree at a time, so a refresh from
+# tree A makes it "stale" for tree B, and a high-severity freshness keeper then
+# blocked B's unrelated commits (2026-09-21/22: hit on every commit of three
+# parallel slices, each "fixed" by a hand refresh that re-broke the other trees).
+# These resolve to `<git-dir>/noctusai/cache/` instead — `.git` for the primary
+# (the SAME file as before: no migration) and `.git/worktrees/<name>` for a
+# linked worktree (private, and deleted by `git worktree remove`). Each rebuilds
+# from its tree's own source in well under a second, so there is nothing to
+# share. noc-graph is single-slot too but stays shared: a rebuild costs ~13 s
+# and its freshness keeper is advisory (never blocks).
+# KB § PATTERNS/common/cache-portable-architecture.md (Tier 1a).
+_PER_TREE_CACHES: frozenset[str] = frozenset({
+    "keeper-patterns",
+    "agent-context",
+    "auto-improvement",
+    "absorptions",
+})
+
+
+def is_per_tree_cache(cache_name: str) -> bool:
+    """True when `cache_name` resolves per working tree, not repo-shared."""
+    return cache_name in _PER_TREE_CACHES
+
+
+def _git_dir(repo_root: Path) -> Path | None:
+    """Return THIS working tree's own git directory, or None if unresolvable.
+
+    Primary tree: `<repo>/.git` (== the common dir). Linked worktree:
+    `<primary>/.git/worktrees/<name>`. When git cannot resolve it (no git, not
+    a repo, a dangling worktree stub) a real `<repo_root>/.git` directory is
+    still honoured; a `.git` FILE is not — it is a stub pointing elsewhere, and
+    building a path under it fails with NotADirectoryError.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--absolute-git-dir"],
+            capture_output=True, text=True, check=True, timeout=5,
+        )
+        return Path(out.stdout.strip())
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        dot_git = repo_root / ".git"
+        return dot_git if dot_git.is_dir() else None
+
+
+def tree_cache_dir(repo_root: Path | None = None) -> Path:
+    """Return the per-tree cache directory (`<git-dir>/noctusai/cache/`).
+
+    Unresolvable git dir ⇒ `<root>/.claude/cache/` — the original per-tree
+    location, still gitignored, so the cache stays private to that tree.
+    """
+    root = repo_root if repo_root is not None else REPO_ROOT
+    git_dir = _git_dir(root)
+    d = (git_dir / _NEW_CACHE_SUBDIR) if git_dir is not None else (root / _LEGACY_CACHE_DIR_REL)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def cache_dir(repo_root: Path | None = None) -> Path:
     """Return the persistent shared cache directory for this repo.
 
@@ -378,7 +440,9 @@ def cache_path(cache_name: str, repo_root: Path | None = None) -> Path:
     """Resolve a cache name to its persistent SQLite file path.
 
     Path layout (see `KB § PATTERNS/common/cache-portable-architecture.md`):
-      `<git-common-dir>/noctusai/cache/<cache_name>.sqlite`
+      `<git-common-dir>/noctusai/cache/<cache_name>.sqlite` — shared by every
+      worktree; EXCEPT the single-slot mirrors in `_PER_TREE_CACHES`, which
+      resolve to `<git-dir>/noctusai/cache/<cache_name>.sqlite` (one per tree).
 
     Side effects (idempotent, per-process memoized — zero-cost after first
     call per repo_root):
@@ -401,6 +465,11 @@ def cache_path(cache_name: str, repo_root: Path | None = None) -> Path:
             f"valid: {sorted(_CACHE_FILES)}"
         )
     root = repo_root if repo_root is not None else REPO_ROOT
+    if cache_name in _PER_TREE_CACHES:
+        # No legacy migration and no Tier-2 auto-pull: a pulled or migrated copy
+        # would mirror some OTHER tree's source, and the owning module rebuilds
+        # this tree's slot from local source on first use.
+        return tree_cache_dir(root) / _CACHE_FILES[cache_name]
     _migrate_legacy_cache(root)
     path = cache_dir(root) / _CACHE_FILES[cache_name]
     if not path.exists():

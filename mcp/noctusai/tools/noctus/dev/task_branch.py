@@ -924,8 +924,10 @@ def _settle_structural_caches(verbose: bool = False) -> dict[str, Any]:
     """Settle the Tier-1 SHARED structural caches against the at-rest primary
     tree at the end of a cross-tree integrate/cleanup.
 
-    ``noc-graph`` (and ``auto-improvement``) live in the worktree-shared
-    ``.git/noctusai/cache/`` (cache-portable-architecture). During the
+    ``noc-graph`` lives in the worktree-shared ``.git/noctusai/cache/``
+    (cache-portable-architecture); ``auto-improvement`` is per-tree since
+    2026-09-22 (Tier 1a), so settling it here only refreshes the PRIMARY's
+    own slot and can no longer flip a worktree's. During the
     worktree↔primary handoff the SAME shared cache is written from two working
     trees, so its stored ``aggregate_source_sha`` can briefly reflect a
     transient tree-state the at-rest primary tree does not match — surfacing as

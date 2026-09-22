@@ -263,8 +263,9 @@ class TestScopedRefreshCrossTreeParity:
         acc.refresh(agent_name="backend-engineer", worktree_path=str(wt), force=True)
 
         # Direct sqlite assertion — per the brief, not just a passing
-        # refresh() call. Read cache_meta straight off disk.
-        conn = sqlite3.connect(str(acc.CACHE_PATH))
+        # refresh() call. Read cache_meta straight off disk — from the
+        # WORKTREE's own slot (agent-context is a per-tree cache).
+        conn = sqlite3.connect(str(acc._cache_file(str(wt))))
         row = conn.execute(
             "SELECT value FROM cache_meta WHERE key=?",
             ("bundle_sha:backend-engineer",),
@@ -341,7 +342,7 @@ class TestScopedRefreshCrossTreeParity:
         assert b["ok"] is True
         assert "WORKTREE body" in b["body"]
 
-        conn = sqlite3.connect(str(acc.CACHE_PATH))
+        conn = sqlite3.connect(str(acc._cache_file(str(wt))))
         row = conn.execute(
             "SELECT value FROM cache_meta WHERE key=?",
             ("bundle_sha:backend-engineer",),

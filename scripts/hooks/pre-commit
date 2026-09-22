@@ -870,12 +870,13 @@ fi
 # observations. KB § PATTERNS/scoped-auto-improvement.md.
 #
 # ALWAYS refreshed for the COMMITTING tree (2026-09-21), not only when the
-# ndjson is staged: the cache is ONE sqlite shared by every worktree
-# (<git-common-dir>/noctusai/cache/), while each worktree carries its OWN copy
-# of the ledger it mirrors. Any refresh from tree A therefore makes the cache
-# "stale" for tree B, and the freshness gate below blocked B's unrelated
-# commits — hit 3× in one parallel session (two engineers + the tech-lead),
-# each "fixed" by a hand refresh. The refresh is idempotent and ~0.4s.
+# ndjson is staged. The root cause it first papered over — one sqlite shared by
+# every worktree, so tree A's refresh made the slot "stale" for tree B — is
+# fixed at the source since 2026-09-22: single-slot mirrors are PER-TREE
+# (`<git-dir>/noctusai/cache/`, cache_backend._PER_TREE_CACHES). The refresh
+# stays because it is idempotent and ~0.4s, and it self-heals a slot the
+# ledger outran (an uncommitted append) before the gate reads it.
+# KB § PATTERNS/common/cache-portable-architecture.md (Tier 1a).
 if have_py; then
     if ! "$PY" "$CLI" --refresh-auto-improvement-cache --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] auto-improvement-cache refresh FAILED — investigate before committing." >&2

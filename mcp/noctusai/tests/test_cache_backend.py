@@ -40,10 +40,12 @@ class TestCachePath:
         # Tier-1 layout: <git-common-dir>/noctusai/cache/<name>.sqlite — shared
         # by all worktrees (KB § PATTERNS/common/cache-portable-architecture.md).
         # Asserted via cache_dir + layout (robust to the git-common-dir fallback)
-        # rather than the retired <repo>/.claude/cache path.
-        p = cb.cache_path("keeper-patterns", repo_root=tmp_path)
-        assert p == cb.cache_dir(tmp_path) / "keeper-patterns.sqlite"
-        assert p.name == "keeper-patterns.sqlite"
+        # rather than the retired <repo>/.claude/cache path. Uses a SHARED
+        # (content-addressed) cache — single-slot mirrors are per-tree, see
+        # TestPerTreeCaches.
+        p = cb.cache_path("kb-embeddings", repo_root=tmp_path)
+        assert p == cb.cache_dir(tmp_path) / "kb-embeddings.sqlite"
+        assert p.name == "kb-embeddings.sqlite"
         assert p.parent.name == "cache" and p.parent.parent.name == "noctusai"
 
     def test_unknown_cache_raises_KeyError(self, tmp_path):
@@ -64,8 +66,8 @@ class TestSqliteBackend:
 
     def test_location_returns_file_path(self, tmp_path):
         be = cb.SqliteCacheBackend(repo_root=tmp_path)
-        loc = be.location("agent-context")
-        assert loc.endswith("noctusai/cache/agent-context.sqlite")
+        loc = be.location("kb-embeddings")
+        assert loc.endswith("noctusai/cache/kb-embeddings.sqlite")
 
     def test_connect_creates_parent_dir(self, tmp_path):
         be = cb.SqliteCacheBackend(repo_root=tmp_path)
@@ -290,3 +292,60 @@ class TestCacheUsesLockingHelper:
         issues = check_cache_uses_locking_helper(repo_root=tmp_path)
         # _connect() applies the helper; get_source_sha() has no raw connect.
         assert [i for i in issues if i["symbol"] == "cache-connect-without-locking-helper"] == []
+
+
+# ── Per-tree caches (2026-09-22) ─────────────────────────────────────────────
+# A single-slot mirror (freshness = ONE aggregate sha of a tracked source) must
+# never be shared across worktrees: tree A's refresh flipped tree B's slot to
+# "stale" and a high-severity keeper blocked B's unrelated commits. These tests
+# use a REAL repo + linked worktree, because the whole point is how
+# `git rev-parse` resolves the two trees differently.
+
+import subprocess as _sp
+
+
+def _git(*args, cwd):
+    _sp.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+@pytest.fixture
+def repo_with_worktree(tmp_path):
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _git("init", "-q", "-b", "dev", cwd=primary)
+    _git("-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "init", cwd=primary)
+    wt = tmp_path / "wt"
+    _git("worktree", "add", "-q", "-b", "feat/x", str(wt), cwd=primary)
+    return primary, wt
+
+
+class TestPerTreeCaches:
+    SINGLE_SLOT = ("keeper-patterns", "agent-context", "auto-improvement", "absorptions")
+
+    def test_single_slot_caches_are_private_per_worktree(self, repo_with_worktree):
+        primary, wt = repo_with_worktree
+        for name in self.SINGLE_SLOT:
+            assert cb.is_per_tree_cache(name)
+            p_primary = cb.cache_path(name, repo_root=primary)
+            p_wt = cb.cache_path(name, repo_root=wt)
+            assert p_primary != p_wt, name
+            # Primary keeps its exact pre-change file (no migration needed) …
+            assert p_primary == primary.resolve() / ".git" / "noctusai" / "cache" / p_primary.name
+            # … and the worktree's lives under ITS git-dir, so `git worktree
+            # remove` deletes it with the worktree.
+            assert p_wt.parent.parent.parent == (primary.resolve() / ".git" / "worktrees" / "wt")
+
+    def test_content_addressed_caches_stay_shared(self, repo_with_worktree):
+        primary, wt = repo_with_worktree
+        for name in ("kb-embeddings", "code-embeddings", "noc-graph"):
+            assert not cb.is_per_tree_cache(name)
+            assert cb.cache_path(name, repo_root=primary) == cb.cache_path(name, repo_root=wt)
+
+    def test_unresolvable_git_dir_falls_back_to_tree_local_cache(self, tmp_path):
+        # A dangling worktree stub (`.git` FILE git can't follow) must not
+        # raise NotADirectoryError — it lands in the tree's gitignored
+        # .claude/cache instead, still private to that tree.
+        (tmp_path / ".git").write_text("gitdir: /nowhere\n")
+        p = cb.cache_path("auto-improvement", repo_root=tmp_path)
+        assert p == tmp_path / ".claude" / "cache" / "auto-improvement.sqlite"

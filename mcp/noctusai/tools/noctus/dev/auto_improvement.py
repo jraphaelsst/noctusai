@@ -108,9 +108,22 @@ def _ledger_path_for(worktree_path: str | None) -> Path:
     return LEDGER_PATH
 
 
-def _connect() -> sqlite3.Connection:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(CACHE_PATH))
+def _cache_file(worktree_path: str | None) -> Path:
+    """The cache slot mirroring `worktree_path`'s ledger (default: this process's tree).
+
+    auto-improvement is a per-tree cache (`cache_backend._PER_TREE_CACHES`): its
+    freshness is ONE sha of ONE tree's ledger, so the slot a refresh writes must
+    belong to the tree whose ledger it hashed — never a shared slot another
+    tree's refresh can flip."""
+    if worktree_path:
+        return _cache_path("auto-improvement", resolve_caller_root(worktree_path))
+    return CACHE_PATH
+
+
+def _connect(worktree_path: str | None = None) -> sqlite3.Connection:
+    path = _cache_file(worktree_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     # WAL + busy_timeout — readers don't block writers AND a contending writer
     # waits instead of erroring (uniform locking discipline across keeper-mirror
@@ -248,7 +261,7 @@ def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
     looked plausible with no way to tell it was about the wrong tree)."""
     ledger_path = _ledger_path_for(worktree_path)
     sha_now = _source_sha(ledger_path)
-    conn = _connect()
+    conn = _connect(worktree_path)
     _init_schema(conn)
     if not force:
         cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
@@ -346,16 +359,16 @@ def query(
     failure logs a warning and falls back to the unfiltered set."""
     ledger_path = _ledger_path_for(worktree_path)
     sha_now = _source_sha(ledger_path)
-    if not CACHE_PATH.exists():
+    if not _cache_file(worktree_path).exists():
         refresh(worktree_path=worktree_path)
-    conn = _connect()
+    conn = _connect(worktree_path)
     _init_schema(conn)
     cur = conn.execute("SELECT value FROM cache_meta WHERE key='source_sha'")
     row = cur.fetchone()
     if not row or row["value"] != sha_now:
         conn.close()
         refresh(worktree_path=worktree_path)
-        conn = _connect()
+        conn = _connect(worktree_path)
         _init_schema(conn)
     sql = "SELECT * FROM auto_improvement WHERE 1=1"
     params: list = []
