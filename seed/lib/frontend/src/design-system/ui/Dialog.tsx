@@ -15,7 +15,10 @@
  *   - role="dialog" aria-modal="true" on the backdrop
  *   - aria-label={title} when title is provided
  *   - Escape key calls onClose
- *   - Clicking the backdrop calls onClose
+ *   - Clicking the backdrop calls onClose — but ONLY when the press both
+ *     started and ended there, so a text-selection drag that starts inside
+ *     the panel and releases over the backdrop never closes the dialog
+ *     (it used to, discarding whatever the user had typed)
  *   - Click propagation stopped inside the panel
  *
  * NOTE: This is a controlled component — open state is managed by the caller.
@@ -94,6 +97,9 @@ export interface DialogProps {
 }
 
 export function Dialog({ open, onClose, title, className, children }: DialogProps) {
+  /** Where the current press STARTED — see the backdrop's onMouseDown/onClick. */
+  const pressOriginRef = React.useRef<"backdrop" | "panel" | null>(null);
+
   React.useEffect(() => {
     if (!open) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -112,8 +118,19 @@ export function Dialog({ open, onClose, title, className, children }: DialogProp
       aria-modal="true"
       aria-label={title}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      /* A backdrop `click` alone is NOT enough to mean "clicked outside": a
+         drag that STARTS inside the panel (select-all in a text field, drag a
+         slider) and RELEASES over the backdrop still fires `click` on their
+         common ancestor — the backdrop — and would close the dialog, losing
+         whatever the user had typed. So the close requires BOTH ends of the
+         gesture on the backdrop: `mousedown` arms it, `click` acts on it. */
+      onMouseDown={(e) => {
+        pressOriginRef.current = e.target === e.currentTarget ? "backdrop" : "panel";
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        const fromBackdrop = pressOriginRef.current !== "panel";
+        pressOriginRef.current = null;
+        if (e.target === e.currentTarget && fromBackdrop) onClose();
       }}
     >
       {/* Panel */}
