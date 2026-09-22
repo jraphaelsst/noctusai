@@ -126,6 +126,18 @@ class ExtracaoManualBody(StrictHttpModel):
     texto: str = Field(min_length=1)
 
 
+class VincularImovelBody(StrictHttpModel):
+    """Link an EXISTING transcription to a property (migration 150) —
+    `PUT /extracoes/{extracao_id}/imovel`. `substituir=True` asks to swap
+    an already-linked extraction onto a DIFFERENT código; see
+    `estrutura_service.vincular_imovel`'s docstring for why even that
+    still cannot succeed once `codigo` is set (the DB's write-once guard,
+    migrations 111/135/136, has no escape hatch)."""
+
+    codigo: str = Field(min_length=1, max_length=64)
+    substituir: bool = False
+
+
 __all__ = [
     "AtoReferidoBody",
     "DetalhesAtoBody",
@@ -139,4 +151,5 @@ __all__ = [
     "SelecaoAtosBody",
     "SelecaoPermutaBody",
     "TituloAquisitivoTextoBody",
+    "VincularImovelBody",
 ]

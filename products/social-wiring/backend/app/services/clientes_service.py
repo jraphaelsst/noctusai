@@ -84,7 +84,6 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from noctusai_lib.integrations.documents import is_same_as_cpf
 from noctusai_lib.primitives.exceptions import ValidationError_
 
 from app.services import identidade_service as ident
@@ -1184,24 +1183,6 @@ def get_touches(
     return {"items": rows, "total": total, "page": page, "pages": pages}
 
 
-def _validar_rg_diferente_cpf(rg: Optional[str], cpf: Optional[str]) -> None:
-    """Refuse a PATCH that would leave `rg` and `cpf` holding the same
-    document, digits-and-letters compared (`rg.is_same_as_cpf`).
-
-    🔴 THE BUG THIS CATCHES. A qualificação form (or a copy-paste) puts the
-    CPF into the RG box verbatim — nothing about either value is individually
-    wrong, only the PAIR is. Migration 097 deliberately ships no DB CHECK for
-    it (existing rows may already disagree, and a CHECK refuses every future
-    write to a row it never asked about when it was created); this is the
-    manual-write half of the guard `identidade_extracao_service` runs on the
-    extraction side.
-    """
-    if is_same_as_cpf(rg, cpf):
-        raise ValidationError_(
-            "RG não pode ser igual ao CPF.", field="rg",
-        )
-
-
 # ─── A human edit of a DOCUMENT-sourced value (the reverse of migration 138) ─
 #
 # 138 built the admin-adjudication queue for the OTHER direction: an
@@ -1500,16 +1481,20 @@ def update_cliente(
             )
         return {**atual, "pendente_confirmacao": pendentes}
 
-    # A PATCH touching either document number must not leave the pair
-    # colliding, even when only one of the two is in THIS payload — compare
-    # against whichever side is missing from the request (or was just
-    # deferred above) to validate the value the row will actually hold once
-    # this write lands.
-    if "rg" in payload or "cpf" in payload:
-        rg_efetivo = payload["rg"] if "rg" in payload else atual.get("rg")
-        cpf_efetivo = payload["cpf"] if "cpf" in payload else atual.get("cpf")
-        _validar_rg_diferente_cpf(rg_efetivo, cpf_efetivo)
-
+    # 🔴 RG == CPF is NOT refused here (nor anywhere else in this codebase,
+    # 2026-09-22). It used to be — a hard `ValidationError_` on a PATCH
+    # leaving the pair holding the same eleven digits, the copy-paste bug
+    # `rg.is_same_as_cpf` exists to catch. But the new Carteira de
+    # Identidade Nacional (CIN) uses the CPF number AS the identity number
+    # by design: contract 08 (a human-typed reference) qualifies "TAUANE
+    # GONÇALVES DIAS ... RG 448.864.938-66-IIGDR-SP e inscrita no CPF/MF
+    # 448.864.938-66" — the same eleven digits in both boxes, correctly. A
+    # refusal here would make this product unable to save a real CIN
+    # holder's identity. The contract-generation gate still surfaces the
+    # collision — as an `av.avisa("RG_IGUAL_CPF", ...)` warning for the
+    # operator to confirm against the document, never a `bloqueia` — see
+    # `contrato_gerador.derivacao._partes`.
+    #
     # Every field in `_CAMPOS_COM_ORIGEM` still present in `payload` (i.e.
     # NOT deferred above) is a value the server is about to write — stamp its
     # provenance quintet the SAME way for all nine: `_origem='manual'`

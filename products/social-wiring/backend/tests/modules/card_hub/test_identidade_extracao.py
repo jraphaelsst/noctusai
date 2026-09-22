@@ -653,11 +653,16 @@ class TestEstadoCivilERegimeBensSaoExtraidos:
         assert body["sugestoes_extras"]["regime_bens"]["valor"] == "comunhao_parcial"
 
 
-class TestRgIgualCpfNaoEhAplicado:
-    """🔴 `rg.is_same_as_cpf` — the copy-paste bug, not a document to trust.
+class TestRgIgualCpfEhAplicado:
+    """🔴 [2026-09-22] `rg.is_same_as_cpf` == True is APPLIED, not declined.
 
-    A qualificação form putting the CPF into the RG box verbatim is the
-    real-world shape this guards; see `rg.is_same_as_cpf`'s own docstring.
+    A qualificação form putting the CPF into the RG box verbatim used to be
+    treated as always a copy-paste bug — but the new Carteira de Identidade
+    Nacional (CIN) uses the CPF number as the identity number by design
+    (see `rg.is_same_as_cpf`'s own docstring for the contract-08 citation),
+    so the collision is frequently the correct reading, not a mistake. The
+    contract-generation gate is where a human still gets a chance to look at
+    it — as a warning, never a block (`derivacao._partes`).
     """
 
     @staticmethod
@@ -670,7 +675,7 @@ class TestRgIgualCpfNaoEhAplicado:
         )
 
     @pytest.mark.asyncio
-    async def test_declined_against_an_existing_cpf(self, client, scoped):
+    async def test_applied_against_an_existing_cpf(self, client, scoped):
         cid, did, storage = await _setup(
             scoped, tipo="rg", cliente={"cpf": "412.954.238-98"}
         )
@@ -678,18 +683,16 @@ class TestRgIgualCpfNaoEhAplicado:
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(self._rg_igual_ao_cpf("412.954.238-98")),
         )
-        assert out["aplicado_ao_cliente"]["rg"] is False
-        assert _cliente(scoped, cid).get("rg") is None
-        # The reading is NOT discarded — it stays on the document as a
-        # suggestion, same as any other declined-but-legible read.
+        assert out["aplicado_ao_cliente"]["rg"] is True
+        assert _cliente(scoped, cid)["rg"] == "412.954.238-98"
         assert _documento(scoped, did)["extracao_rg"] == "412.954.238-98"
 
     @pytest.mark.asyncio
-    async def test_declined_against_a_cpf_applied_earlier_in_the_same_read(
+    async def test_applied_against_a_cpf_applied_earlier_in_the_same_read(
         self, client, scoped
     ):
         """`cpf` sorts before `rg` in `CAMPOS`, so a document reading BOTH
-        fields at once must compare `rg` against the CPF it JUST wrote, not
+        fields at once applies `rg` even against the CPF it JUST wrote, not
         only against whatever was already on file."""
         cid, did, storage = await _setup(scoped, tipo="rg")
         fields = IdentityFields(
@@ -704,12 +707,15 @@ class TestRgIgualCpfNaoEhAplicado:
             extractor=FakeIdentityExtractor(fields),
         )
         assert out["aplicado_ao_cliente"]["cpf"] is True
-        assert out["aplicado_ao_cliente"]["rg"] is False
+        assert out["aplicado_ao_cliente"]["rg"] is True
         assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
-        assert _cliente(scoped, cid).get("rg") is None
+        assert _cliente(scoped, cid)["rg"] == "412.954.238-98"
 
     @pytest.mark.asyncio
-    async def test_surfaces_as_a_flagged_suggestion(self, client, scoped):
+    async def test_no_longer_pending_once_applied(self, client, scoped):
+        """Since the unattended apply now lands the value, it is no longer a
+        pending suggestion — `sugestoes_pendentes` only offers a
+        first-writer-wins field (`rg`) when the column is still empty."""
         cid, did, storage = await _setup(
             scoped, tipo="rg", cliente={"cpf": "412.954.238-98"}
         )
@@ -718,14 +724,14 @@ class TestRgIgualCpfNaoEhAplicado:
             extractor=FakeIdentityExtractor(self._rg_igual_ao_cpf("412.954.238-98")),
         )
         sugestoes = svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
-        assert sugestoes["rg"]["aviso"] == "rg_igual_cpf"
+        assert "rg" not in sugestoes
 
-    def test_confirmar_sugestao_refuses_the_same_collision(self, client, scoped):
-        """A human explicitly confirming must not be a bypass of the guard
-        the unattended apply already enforces."""
+    def test_confirmar_sugestao_accepts_the_same_collision(self, client, scoped):
+        """A human explicitly confirming must not be refused a case the
+        unattended apply itself would already have landed."""
         cid, did = str(uuid4()), str(uuid4())
         scoped.set_table_data(
-            "clientes", [cliente_row(cid, cpf="412.954.238-98")]
+            "clientes", [cliente_row(cid, cpf="412.954.238-98", rg=None)]
         )
         scoped.set_table_data("cliente_documentos", [{
             "id": did, "org_id": ORG_ID, "cliente_id": cid,
@@ -733,11 +739,11 @@ class TestRgIgualCpfNaoEhAplicado:
             "extracao_descartada_em": None,
             "extracao_rg": "412.954.238-98",
         }])
-        with pytest.raises(Exception) as exc_info:
-            svc.confirmar_sugestao(
-                scoped, ORG_UUID, UUID(cid), UUID(did), item_key="rg",
-            )
-        assert "RG" in str(exc_info.value)
+        resultado = svc.confirmar_sugestao(
+            scoped, ORG_UUID, UUID(cid), UUID(did), item_key="rg",
+        )
+        assert resultado["confirmado"] is True
+        assert _cliente(scoped, cid)["rg"] == "412.954.238-98"
 
 
 class TestDataCasamentoIsExtracted:

@@ -285,11 +285,27 @@ class TestGate:
         _d, _pol, _sw, av = _avaliar(5, d)
         assert "MATRICULA_COM_MARCACAO_BRUTA" in _codigos(av.bloqueios)
 
-    def test_rg_igual_ao_cpf_blocks(self):
+    def test_rg_igual_ao_cpf_warns_but_does_not_block(self):
+        """🔴 [2026-09-22] Warning, not block — the Carteira de Identidade
+        Nacional (CIN) legitimately uses the CPF number as the identity
+        number, so this must never stop the contract from generating."""
         d = fx.variante(1)
         v = replace(d.vendedores[0], rg=d.vendedores[0].cpf)
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        assert "RG_IGUAL_CPF" in [b["codigo"] for b in av.bloqueios]
+        assert "RG_IGUAL_CPF" in _codigos(av.avisos)
+        assert "RG_IGUAL_CPF" not in _codigos(av.bloqueios)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_missing_profissao_warns_but_does_not_block(self):
+        """🔴 [2026-09-22] `profissao` is not a hard gate: contract 08 (the
+        office's own reference) qualifies REGINA MARIA PELOSI with no
+        profession at all."""
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], faltando_qualificacao=["profissao"])
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
+        assert "PARTE_SEM_PROFISSAO" in _codigos(av.avisos)
+        assert not any(f["campo"] == "qualificacao.profissao" for f in av.faltando)
+        assert av.pronto, (av.faltando, av.bloqueios)
 
     def test_a_missing_certidao_is_named_per_parte(self):
         d = fx.variante(1)
@@ -865,3 +881,36 @@ class TestNacionalidadeFlex:
     def test_free_text_outside_the_vocabulary_passes_through_lowercased(self):
         p = self._pessoa(genero="Feminino", nacionalidade="Sul-coreana")
         assert frases.nacionalidade_flex(p) == "sul-coreana"
+
+
+class TestTextoPessoaSemProfissao:
+    """🔴 [2026-09-22] `frases.texto_pessoa` omits profissão cleanly when
+    absent — the office accepts a qualification without it (contract 08's
+    REGINA MARIA PELOSI). Before this fix, an empty `partes` entry joined as
+    a dangling ", ," right before "portador(a) da cédula..."."""
+
+    def _pessoa(self, **extra):
+        return fx.pessoa(
+            "cliente-1", "vendedor", "proprietario", "REGINA MARIA PELOSI",
+            "Feminino", "111", "11.111.111-1", estado_civil="divorciado", **extra,
+        )
+
+    def test_no_profissao_omits_it_with_no_dangling_comma(self):
+        p = self._pessoa(profissao=None)
+        texto = frases.texto_pessoa(p, em_nucleo=False)
+        assert ", ," not in texto
+        assert ",  " not in texto
+        assert texto.startswith(
+            "REGINA MARIA PELOSI, brasileira, divorciada, portadora da cédula "
+            "de identidade RG 11.111.111-1-SSP-SP e inscrita no CPF/MF "
+        )
+
+    def test_blank_profissao_is_treated_the_same_as_none(self):
+        p = self._pessoa(profissao="   ")
+        texto = frases.texto_pessoa(p, em_nucleo=False)
+        assert ", ," not in texto
+
+    def test_a_present_profissao_still_renders_between_estado_civil_and_rg(self):
+        p = self._pessoa(profissao="empresária")
+        texto = frases.texto_pessoa(p, em_nucleo=False)
+        assert "divorciada, empresária, portadora" in texto

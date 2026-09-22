@@ -315,6 +315,45 @@ async def criar(
     return _contrato_saida(client, org_id, row)
 
 
+def rascunho_gerado_sem_versao(
+    client: Any, org_id: UUID, atendimento_id: UUID
+) -> Optional[dict]:
+    """The most recent `origem='gerado'` draft this atendimento still has
+    with ZERO versions, or `None`.
+
+    🔴 WHY THIS EXISTS. `contrato_gerador.service.iniciar` used to
+    `criar_para_gerar` unconditionally on every "Gerar contrato" click, so a
+    slow render, an accidental double-click, or revisiting the card each
+    left one more empty `rascunho` row behind — five, on one prod card
+    (RODRIGO MORASCHI ENRIQUEZ, 2026-09), none of them ever rendered. The
+    fix is this lookup: `iniciar` reuses a leftover draft instead of adding
+    another one, and only inserts a fresh row when none is reusable.
+
+    Scoped to `origem='gerado'`: an UPLOADED contract (`criar`) always
+    carries its v1 in the same write, so it can never match "zero versions"
+    — this can only ever pick up the generator's own leftovers, never a
+    document a human uploaded.
+
+    Newest first, and the FIRST match wins — the most recent unrendered
+    attempt is what the next click should continue, not an older one.
+    """
+    rows = (
+        _t(client, TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", str(atendimento_id))
+        .eq("origem", "gerado")
+        .eq("status", "rascunho")
+        .is_("deleted_at", "null")
+        .execute()
+    ).data or []
+    rows.sort(key=lambda r: r["created_at"], reverse=True)
+    for row in rows:
+        if not VERSOES_STORE.listar_linhas(client, org_id, UUID(str(row["id"]))):
+            return row
+    return None
+
+
 def criar_para_gerar(
     client: Any,
     org_id: UUID,

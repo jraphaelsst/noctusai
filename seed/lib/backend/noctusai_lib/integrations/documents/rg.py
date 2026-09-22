@@ -362,6 +362,14 @@ def is_same_as_cpf(rg: Optional[str], cpf: Optional[str]) -> bool:
 
     Either value missing returns `False` — there is nothing to compare, and
     "nothing" is not "the same".
+
+    🔴 THIS FUNCTION DETECTS; IT DOES NOT REFUSE (2026-09-22). A collision is
+    not always the copy-paste bug above: the Carteira de Identidade Nacional
+    (CIN) uses the CPF number AS the identity number by design, so a real
+    CIN holder's RG legitimately equals their CPF. Callers decide what to do
+    with `True` — `social_wiring`'s contract-generation gate surfaces it as
+    an operator-confirmable warning, never a hard block; nothing in this
+    module (or its consumers, as of the date above) refuses a write over it.
     """
     if not rg or not cpf:
         return False

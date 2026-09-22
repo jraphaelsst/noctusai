@@ -593,18 +593,16 @@ def aplicar_campos_ao_cliente(
 
         # 🔴 An RG that collapses onto the CPF (this party's own, whether
         # already on file or applied earlier in THIS same loop — `cpf` sorts
-        # before `rg` in `CAMPOS`) is the copy-paste bug `rg.is_same_as_cpf`
-        # exists to catch, not a document to trust. The reading is NOT
-        # discarded — it already sits on `cliente_documentos.extracao_rg`
-        # unconditionally (see `extrair_identidade`) — it is only declined
-        # here, so it resurfaces through `sugestoes_pendentes` for a human to
-        # look at instead of silently qualifying a party with their own CPF
-        # standing in for their RG.
-        if campo.item_key == "rg":
-            cpf_efetivo = updates.get("cpf", atual.get("cpf"))
-            if is_same_as_cpf(valor, cpf_efetivo):
-                continue
-
+        # before `rg` in `CAMPOS`) is APPLIED, not declined. It used to be
+        # skipped here — `rg.is_same_as_cpf` used to be treated as always a
+        # copy-paste bug — but the new Carteira de Identidade Nacional (CIN)
+        # uses the CPF number as the identity number by design (contract 08's
+        # "TAUANE GONÇALVES DIAS ... RG 448.864.938-66-IIGDR-SP e inscrita no
+        # CPF/MF 448.864.938-66"), so a same-value read is frequently the
+        # correct one, not a mistake worth withholding unattended. The
+        # contract-generation gate is where a human still gets to look at it:
+        # `contrato_gerador.derivacao._partes` raises `av.avisa("RG_IGUAL_
+        # CPF", ...)`, never a block.
         presente = atual.get(campo.item_key)
 
         if not campo.sobrescreve:
@@ -1147,10 +1145,10 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             valor = doc.get(campo.coluna_valor)
             if not _oferecer(campo, atual, valor):
                 continue
-            # Tells the operator WHY a high-confidence RG reading is sitting
-            # here unapplied instead of already being on the record — see the
-            # rg==cpf guard in `_aplicar_ao_cliente`. `None` for every other
-            # field and every RG that is simply a normal pending suggestion.
+            # Flags a still-pending RG reading that matches the CPF on file —
+            # correct for a Carteira de Identidade Nacional (CIN) holder,
+            # confirm against the document. `None` for every other field and
+            # every RG that is simply a normal pending suggestion.
             aviso = (
                 "rg_igual_cpf"
                 if campo.item_key == "rg" and is_same_as_cpf(valor, cliente.get("cpf"))
@@ -1237,17 +1235,16 @@ def confirmar_sugestao(
             "Esta sugestão já foi descartada.", field="extracao_descartada_em"
         )
 
-    # `cpf` rides along when confirming an `rg` suggestion — the one extra
-    # column the rg==cpf guard below needs, and the same reasoning
-    # `_aplicar_ao_cliente` uses: a confirm is another write path onto
-    # `clientes.rg`, and it must refuse the same collision a PATCH refuses,
-    # not only the unattended apply.
-    colunas_cliente = f"{campo.item_key},{campo.origem}"
-    if campo.item_key == "rg":
-        colunas_cliente += ",cpf"
+    # 🔴 No `rg==cpf` refusal here (2026-09-22). It used to be — the same
+    # collision `_aplicar_ao_cliente` used to decline, refused again on this
+    # write path — but a CIN holder's RG legitimately equals their CPF (see
+    # `clientes_service.update_cliente`'s comment for the contract-08
+    # citation). Confirming applies the reading; the contract-generation
+    # gate is what still surfaces it, as a warning (`derivacao._partes`'s
+    # `av.avisa("RG_IGUAL_CPF", ...)`).
     cliente_rows = (
         _t(client, CLIENTES_TABLE)
-        .select(colunas_cliente)
+        .select(f"{campo.item_key},{campo.origem}")
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
         .limit(1)
@@ -1256,11 +1253,6 @@ def confirmar_sugestao(
     if not cliente_rows:
         raise NotFoundError("clientes", str(cliente_id))
     presente = cliente_rows[0].get(campo.item_key)
-
-    if campo.item_key == "rg" and is_same_as_cpf(valor, cliente_rows[0].get("cpf")):
-        raise ValidationError_(
-            "RG não pode ser igual ao CPF.", field="rg",
-        )
 
     if not campo.sobrescreve and presente:
         raise ValidationError_(

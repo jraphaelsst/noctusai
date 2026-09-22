@@ -159,7 +159,13 @@ def texto_pessoa(p: Pessoa, *, em_nucleo: bool) -> str:
         par_ec = _ESTADO_CIVIL_FLEX.get(p.estado_civil or "")
         if par_ec:
             partes.append(_g(p, *par_ec))
-    partes.append((p.profissao or "").strip().lower())
+    # [2026-09-22] Omitted cleanly when absent — the office accepts a
+    # qualification with no profissão (contract 08's REGINA MARIA PELOSI has
+    # none), and an empty entry here used to join as a dangling ", ," before
+    # "portador(a) da cédula...".
+    profissao = (p.profissao or "").strip().lower()
+    if profissao:
+        partes.append(profissao)
     texto = ", ".join(partes)
     texto += (
         f", {_g(p, 'portador', 'portadora')} da cédula de identidade RG {rg_texto(p)}"

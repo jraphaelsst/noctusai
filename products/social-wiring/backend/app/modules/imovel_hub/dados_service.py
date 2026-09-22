@@ -292,6 +292,75 @@ def registrar_imovel(
     return canonico
 
 
+def registro_status(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
+    """Is this código known at all — through the Vista-synced mirror, or
+    only through the registry (manually registered, a lead, an intake)?
+
+    🔴 WHY ANYTHING NEEDS THIS AT ALL. `GET /api/imoveis/{codigo}`
+    (`app.routers.imoveis_router.get_imovel`) reads ONLY `imoveis`, the
+    Vista mirror, and 404s otherwise — correct for that route's job (it is
+    a DISPLAY of the CRM listing) but wrong as the property page's "can
+    this even be opened" check: a manually registered código
+    (`registrar_imovel` above) has no listing to display and never will,
+    yet it is a perfectly real property the cartório/endereço/inscrição
+    fields (`imovel_dados`, this same module) can still be authored for.
+
+    `origem` is a TWO-value surface ("manual"/"vista"), narrower than the
+    registry's own five-value `origem_descoberta` vocabulary
+    (migration 063) — this route only needs to answer "did Vista ever list
+    it", not which of the non-Vista paths (lead/venda/intake/manual/
+    desconhecida) found it first. Read off the REGISTRY row, not off
+    whether the mirror still HAS the código today: a synced property that
+    later sold and left `imoveis` keeps `origem_descoberta='vista_sync'`
+    forever (the registry is append-only) and must keep reporting "vista",
+    never flip to "manual" just because it left the catalog.
+
+    The `imoveis` lookup below is a defensive fallback, not the primary
+    path — every synced row's OWN upsert also writes a registry row
+    (`imoveis_service._upsert_registry`), so a mirror-only, registry-less
+    código should not occur; kept so one never false-404s regardless.
+
+    Returns `None` when the código is unknown to both.
+    """
+    canonico = (codigo or "").strip().upper()
+    if not canonico:
+        return None
+
+    registry_rows = (
+        _t(client, REGISTRY_TABLE)
+        .select(f"{REGISTRY_CODIGO},origem_descoberta,created_at")
+        .eq("org_id", str(org_id))
+        .eq(REGISTRY_CODIGO, canonico)
+        .limit(1)
+        .execute()
+    ).data or []
+    if registry_rows:
+        origem = "vista" if registry_rows[0].get("origem_descoberta") == "vista_sync" else "manual"
+        return {
+            "codigo": canonico,
+            "registrado": True,
+            "origem": origem,
+            "criado_em": registry_rows[0].get("created_at"),
+        }
+
+    mirror_rows = (
+        _t(client, "imoveis")
+        .select("codigo,data_cadastro")
+        .eq("org_id", str(org_id))
+        .eq("codigo_norm", canonico)
+        .limit(1)
+        .execute()
+    ).data or []
+    if mirror_rows:
+        return {
+            "codigo": canonico,
+            "registrado": True,
+            "origem": "vista",
+            "criado_em": mirror_rows[0].get("data_cadastro"),
+        }
+    return None
+
+
 def linha(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
     rows = (
         _t(client, TABLE)

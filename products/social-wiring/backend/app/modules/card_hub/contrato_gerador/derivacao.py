@@ -615,6 +615,17 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                 conjuge = ids_lado.get(p.conjuge_cliente_id or "")
                 if chave == "conjuge_qualificacao" and conjuge is not None:
                     continue  # the spouse is a signatory and is gated on their own
+                if chave == "profissao":
+                    # [2026-09-22] A missing profissão is not a blocker: the
+                    # office's own reference contract (08) qualifies REGINA
+                    # MARIA PELOSI with no profession at all, and `frases.
+                    # texto_pessoa` already omits it cleanly (no dangling
+                    # comma) when absent.
+                    av.avisa(
+                        "PARTE_SEM_PROFISSAO",
+                        f"{_nome(p)} está sem profissão informada — a qualificação sai sem esse dado.",
+                    )
+                    continue
                 av.falta(
                     f"qualificacao.{chave}",
                     f"{ROTULO_QUALIFICACAO.get(chave, chave)} — {_nome(p)}",
@@ -641,7 +652,19 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
             if p.cpf and not cpf_valido(p.cpf):
                 av.bloqueia("CPF_INVALIDO", f"O CPF de {_nome(p)} não confere (dígitos verificadores).")
             if is_same_as_cpf(p.rg, p.cpf):
-                av.bloqueia("RG_IGUAL_CPF", f"O RG de {_nome(p)} é igual ao CPF — corrija o RG.")
+                # [2026-09-22] Warning, not block: the new Carteira de
+                # Identidade Nacional (CIN) uses the CPF number as the
+                # identity number by design — contract 08 (human-typed
+                # reference) qualifies "TAUANE GONÇALVES DIAS ... RG
+                # 448.864.938-66-IIGDR-SP e inscrita no CPF/MF
+                # 448.864.938-66", the same eleven digits in both, correctly.
+                # An operator confirms against the document; the generator
+                # no longer refuses to run.
+                av.avisa(
+                    "RG_IGUAL_CPF",
+                    f"O RG de {_nome(p)} é igual ao CPF — correto apenas para a "
+                    "Carteira de Identidade Nacional (CIN); confira o documento.",
+                )
             for valor in (p.cpf, p.rg):
                 norm = _doc_norm(valor)
                 if not norm:

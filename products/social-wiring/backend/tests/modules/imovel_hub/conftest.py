@@ -162,7 +162,11 @@ def registry_row(codigo=CODIGO, *, ativo_no_vista=True, **extra) -> dict:
         "ultimo_visto_no_vista_em": "2026-01-01T00:00:00+00:00",
         "ativo_no_vista": ativo_no_vista,
         "delistado_em": None if ativo_no_vista else "2026-02-01T00:00:00+00:00",
-        "origem_descoberta": "sync",
+        # `imoveis_service._upsert_registry`'s own value for a Vista-synced
+        # discovery — migration 063's vocabulary, not the placeholder "sync"
+        # this default used to carry (dead until `registro_status` started
+        # reading it).
+        "origem_descoberta": "vista_sync",
         "created_at": "2026-01-01T00:00:00+00:00",
         "updated_at": "2026-01-01T00:00:00+00:00",
     }

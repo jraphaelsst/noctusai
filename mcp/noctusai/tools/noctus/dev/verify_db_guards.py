@@ -701,6 +701,48 @@ _RUIDO_SHAPE_PROBE = GuardProbe(
 
 
 # ---------------------------------------------------------------------------
+# Registry — imovel_documento_acessos.acao CHECK (109, widened 111/115/150).
+# ---------------------------------------------------------------------------
+
+_ACAO_CHECK_PROBE = GuardProbe(
+    id="imovel_documento_acessos.acao.shape_check",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_documento_acessos_acao_check",
+    kind="write_refusal",
+    migrations=(
+        "109_matricula_estruturada.sql",
+        "111_matricula_lgpd_followups.sql",
+        "115_matricula_ato_detalhes.sql",
+        "150_matricula_extracao_vincular_imovel.sql",
+    ),
+    rationale=(
+        "`acao` is a closed vocabulary — every access-log reader (LGPD "
+        "exports, the checklist/geração panels) matches on it by exact "
+        "string, so a typo'd or free-text value would silently vanish from "
+        "every one of them instead of erroring where it was written. "
+        "Enforced by the CHECK constraint `imovel_documento_acessos_acao_"
+        "check`, widened once per new logged action (109 'view'/'download'/"
+        "'delete' -> 111 adds 'text_view' -> 115 adds 'detalhes_view' -> 150 "
+        "adds 'imovel_vinculado') without ever loosening it to accept "
+        "anything outside the named set."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="imovel_documento_acessos",
+        columns_sql="org_id, extracao_id, acao",
+        values_sql="org_id, id, 'noc-probe-not-a-real-acao'",
+        fixture_from=f"{_SW_SCHEMA}.{_MATRICULA_TABLE}",
+        fixture_description=(
+            f"no row in {_SW_SCHEMA}.{_MATRICULA_TABLE} to attach a probe "
+            "access-log row to (via extracao_id)"
+        ),
+        guard_fragment='constraint "imovel_documento_acessos_acao_check"',
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — social_wiring.matricula_abertura_blocos constraints (136).
 # ---------------------------------------------------------------------------
 
@@ -1395,6 +1437,7 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
+    _ACAO_CHECK_PROBE,
     *_ABERTURA_PROBES,
     _ABERTURA_UNIQUE_PROBE,
     _ENDERECO_REGISTRO_PROBE,

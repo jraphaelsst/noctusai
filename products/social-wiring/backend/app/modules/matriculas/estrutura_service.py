@@ -107,6 +107,15 @@ STATUS_CONCLUIDA = "concluida"
 #: `imovel_documento_acessos` (109) never logged. See `log_leitura_texto`.
 ACAO_TEXT_VIEW = "text_view"
 
+#: [2026-09-22] `vincular_imovel` linking an unlinked extraction to a
+#: código — the one write-side `acao` this table carries. `log_acesso_
+#: extracao`'s shape (`extracao_id` + `usuario_id` + `acao` + `created_at`)
+#: is agnostic to read-vs-write; reused here rather than a new migration
+#: adding a `codigo_vinculado_por`/`_em` provenance pair to `matricula_
+#: extracoes`, since this table has no other provenance columns for
+#: `codigo` to begin with.
+ACAO_IMOVEL_VINCULADO = "imovel_vinculado"
+
 #: Only a PDF goes through the transcriber (`service.processar_extracao`
 #: hands it `mimetype="application/pdf"`); an imóvel's photographed matrícula
 #: is still stored, just not transcribed.
@@ -333,6 +342,99 @@ def exigir_extracao(client: Any, org_id: UUID, extracao_id: UUID) -> dict:
     if not rows:
         raise NotFoundError(EXTRACOES_TABLE, str(extracao_id))
     return rows[0]
+
+
+def vincular_imovel(
+    client: Any,
+    org_id: UUID,
+    extracao_id: UUID,
+    *,
+    codigo: str,
+    substituir: bool,
+    usuario_id: Optional[Any],
+) -> dict:
+    """Link an EXISTING transcription (`codigo IS NULL`) to a property —
+    the matrícula picker's escape hatch for an extraction that was
+    transcribed without ever naming a código (an upload-without-codigo, or
+    a manual paste), so it never needs a second, PAID re-upload just to
+    become selectable for a contract.
+
+    🔴 WRITE-ONCE, THE SAME AS THE DATABASE (migrations 111/135/136). A
+    trigger on `matricula_extracoes` unconditionally refuses changing
+    `codigo` once it is already set — "codigo não pode ser alterado após
+    vinculado a um imóvel" — with NO escape hatch, `substituir` included:
+    the trigger cannot see an application-level flag at all. This function
+    enforces that SAME rule before ever attempting the write, so a caller
+    gets a clean, named 409 instead of a raw Postgres exception surfacing
+    as a 500 — but `substituir=True` still cannot make an already-linked
+    extraction relink to a DIFFERENT código; it only changes which of two
+    409 messages comes back (unconfirmed vs. permanently immutable), so a
+    caller — and a human reading the response — can tell the two apart.
+    Actually loosening the guard is a production schema decision, not an
+    application one; see this function's delivery note.
+
+    The código itself is NOT re-validated as "registered" here — the
+    router already refused an unregistered one with a 422 before this
+    runs (`dados_service.registro_status`); re-checking would just be a
+    second query for the same answer.
+    """
+    extracao = exigir_extracao(client, org_id, extracao_id)
+    canonico = (codigo or "").strip().upper()
+    if not canonico:
+        raise ValidationError_("Código do imóvel é obrigatório.", field="codigo")
+
+    atual = extracao.get("codigo")
+    if atual == canonico:
+        return _extracao_saida_resumida(extracao)
+
+    if atual:
+        if not substituir:
+            raise ConflictError(
+                f"Esta transcrição já está vinculada ao imóvel {atual}. "
+                "Envie substituir=true para confirmar a troca.",
+                resource=EXTRACOES_TABLE,
+            )
+        # `substituir=True` still cannot land: the DB's write-once trigger
+        # (migrations 111/135/136) refuses ANY change to an already-set
+        # `codigo`, unconditionally — see the docstring above.
+        raise ConflictError(
+            f"O vínculo desta transcrição com o imóvel {atual} é permanente "
+            "e não pode ser trocado — crie uma nova transcrição para "
+            f"vincular ao imóvel {canonico}.",
+            resource=EXTRACOES_TABLE,
+        )
+
+    dados_service.ensure_imovel(client, org_id, canonico)
+    (
+        _t(client, EXTRACOES_TABLE)
+        .update({"codigo": canonico})
+        .eq("org_id", str(org_id))
+        .eq("id", str(extracao_id))
+        .execute()
+    )
+    log_acesso_extracao(
+        client,
+        docs_svc.STORE.acessos_table,
+        org_id,
+        extracao_id,
+        usuario_id,
+        ACAO_IMOVEL_VINCULADO,
+    )
+    return _extracao_saida_resumida({**extracao, "codigo": canonico})
+
+
+def _extracao_saida_resumida(extracao: dict) -> dict:
+    """The SAME summary shape `GET /extracoes` (the list) returns — never
+    the full row `GET /extracoes/{id}` does, which carries the CPF-bearing
+    `texto_extraido` and (LGPD, migration 111) logs a `text_view` access
+    every time it is read. A link operation is not a read of that text, so
+    this response should not silently cost one."""
+    colunas = (
+        "id", "nome_arquivo", "tamanho_bytes", "num_paginas", "status",
+        "erro_mensagem", "codigo", "imovel_documento_id", "arquivo_origem_id",
+        "substituida_por", "possui_marcacao_bruta", "created_at",
+    )
+    return {c: extracao.get(c) for c in colunas}
 
 
 def log_leitura_texto(
@@ -1535,6 +1637,7 @@ def garantir_removivel(client: Any, org_id: UUID, extracao_id: str) -> None:
 
 
 __all__ = [
+    "ACAO_IMOVEL_VINCULADO",
     "ACAO_TEXT_VIEW",
     "ATOS_TABLE",
     "CONTRATOS_TABLE",
@@ -1560,4 +1663,5 @@ __all__ = [
     "persistir_atos",
     "purgar_texto_expirado",
     "sugerir",
+    "vincular_imovel",
 ]

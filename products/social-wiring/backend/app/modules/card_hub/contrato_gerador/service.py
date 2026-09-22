@@ -135,20 +135,37 @@ def iniciar(
     usuario_id: Optional[Any],
     politica: Politica,
 ) -> dict:
-    """Start a generated contract for this deal: create the contract row
-    (`contratos_svc.criar_para_gerar`), set its modelo to the one the deal's
-    data derives, and return it with the readiness report — so the card can
-    show "what is missing" at once. Nothing is rendered here; v1 comes from
-    `gerar` once `pronto`."""
+    """Start a generated contract for this deal — or CONTINUE one already
+    started, when it never got a version. Sets the contract's modelo to the
+    one the deal's data derives, and returns it with the readiness report —
+    so the card can show "what is missing" at once. Nothing is rendered
+    here; v1 comes from `gerar` once `pronto`.
+
+    🔴 REUSES A LEFTOVER DRAFT (2026-09-22) INSTEAD OF ALWAYS INSERTING.
+    `criar_para_gerar` used to run unconditionally on every call — one more
+    empty `rascunho` row per click of the "Gerar contrato" button, since a
+    generated draft cannot render itself. `contratos_svc.
+    rascunho_gerado_sem_versao` finds the atendimento's newest `origem=
+    'gerado'`, `status='rascunho'` draft that still has ZERO versions, if
+    any, and this reuses it — same as a freshly created row, its modelo is
+    still re-derived and corrected below, so "the same derived modelo" is
+    true by construction rather than something this function has to compare
+    up front. The caller (the router) is told whether a row was created or
+    reused, to answer 201 vs 200.
+    """
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    row = contratos_svc.criar_para_gerar(
-        client,
-        org_id,
-        atendimento_id,
-        titulo=TITULO_GERADO,
-        modelo="compra_venda",
-        criado_por=usuario_id,
-    )
+    reaproveitado = contratos_svc.rascunho_gerado_sem_versao(client, org_id, atendimento_id)
+    if reaproveitado is not None:
+        row = reaproveitado
+    else:
+        row = contratos_svc.criar_para_gerar(
+            client,
+            org_id,
+            atendimento_id,
+            titulo=TITULO_GERADO,
+            modelo="compra_venda",
+            criado_por=usuario_id,
+        )
     contrato_id = UUID(row["id"])
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
     derivado = modelo_derivado(derivar_switches(dados, politica))
@@ -160,6 +177,9 @@ def iniciar(
         "geracao": obter_geracao(
             client, org_id, cliente_id, contrato_id, usuario_id=usuario_id, politica=politica
         ),
+        # Popped by the router before the body is serialised — decides
+        # 201 (a brand-new draft) vs 200 (an unrendered one continued).
+        "_reaproveitado": reaproveitado is not None,
     }
 
 

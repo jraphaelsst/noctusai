@@ -743,6 +743,67 @@ class TestIniciar:
         assert r.json()["error"]["code"] == "AMBIGUOUS_ATENDIMENTO"
         assert _rows(scoped, "atendimento_contratos") == antes
 
+    def test_a_second_click_reuses_the_unrendered_draft_instead_of_duplicating_it(
+        self, client, scoped, fake_storage
+    ):
+        """🔴 [2026-09-22] The bug behind RODRIGO MORASCHI ENRIQUEZ's 5 empty
+        prod drafts: re-clicking "Gerar contrato" before ever rendering must
+        leave exactly ONE `origem='gerado'` row, not one per click."""
+        ids = _seed_base(scoped)
+        r1 = self._iniciar(client, ids)
+        assert r1.status_code == 201, r1.text
+        contrato_id_1 = r1.json()["contrato"]["id"]
+
+        r2 = self._iniciar(client, ids)
+        assert r2.status_code == 200, r2.text
+        contrato_id_2 = r2.json()["contrato"]["id"]
+
+        assert contrato_id_1 == contrato_id_2
+        gerados = [
+            c for c in _rows(scoped, "atendimento_contratos")
+            if c["origem"] == "gerado" and c["atendimento_id"] == ids["atendimento"]
+        ]
+        assert len(gerados) == 1
+        assert gerados[0]["id"] == contrato_id_1
+
+    def test_a_click_after_a_real_version_exists_starts_a_new_draft(
+        self, client, scoped, fake_storage
+    ):
+        """Once the reused draft actually renders (a real version lands),
+        the NEXT click must not silently keep filling the now-rendered
+        contract — it starts a fresh one, same as the very first click."""
+        ids = _seed_completo(scoped)
+        primeiro = self._iniciar(client, ids).json()["contrato"]["id"]
+
+        # The matrícula-act selection is PER CONTRACT by design (`iniciar`
+        # never copies it) — mirror `_seed_completo`'s seeded selection
+        # (keyed to `ids["contrato"]`) onto the new draft so it is "pronto"
+        # and `.../gerar` below can actually succeed.
+        selecao_base = _rows(scoped, "atendimento_contrato_matricula_atos")
+        extra = [
+            {**linha, "id": str(uuid4()), "contrato_id": primeiro}
+            for linha in selecao_base if linha["contrato_id"] == ids["contrato"]
+        ]
+        scoped.set_table_data(
+            "atendimento_contrato_matricula_atos", selecao_base + extra
+        )
+
+        r = client.post(
+            _url({"cliente": ids["cliente"], "contrato": primeiro}, "gerar"),
+            json={"assinatura_data": hoje().isoformat()},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+
+        r2 = self._iniciar(client, ids)
+        assert r2.status_code == 201, r2.text
+        assert r2.json()["contrato"]["id"] != primeiro
+        gerados = [
+            c for c in _rows(scoped, "atendimento_contratos")
+            if c["origem"] == "gerado" and c["atendimento_id"] == ids["atendimento"]
+        ]
+        assert len(gerados) == 2
+
 
 class TestModeloDeContratoGerado:
     """A 'gerado' contract's modelo follows the data; an upload's never does."""

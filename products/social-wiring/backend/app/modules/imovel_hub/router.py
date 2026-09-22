@@ -152,6 +152,28 @@ async def registrar_imovel_route(
     return {"codigo": canonico}
 
 
+@router.get("/{codigo}/registro")
+async def obter_registro_route(
+    codigo: str,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Is this código known at all — even a manually registered property
+    (or a lead-discovered one) `GET /api/imoveis/{codigo}` 404s, because
+    that route only reads the Vista-synced mirror? The property page's
+    "can this even open" check, before it tries to render cartório/
+    endereço/inscrição fields that route can never carry for such a
+    código. See `dados_service.registro_status` for the `origem` mapping.
+    """
+    _user, org_id = _auth_parts(auth)
+    resultado = dados_svc.registro_status(client, org_id, codigo)
+    if resultado is None:
+        raise HTTPException(
+            status_code=404, detail=f"Imóvel {codigo} não encontrado."
+        )
+    return resultado
+
+
 # ─── Documents ────────────────────────────────────────────────────────────
 
 

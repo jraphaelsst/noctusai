@@ -19,7 +19,7 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 
 from noctusai_lib.api import StrictHttpModel
 
@@ -45,20 +45,30 @@ class GerarContratoBody(StrictHttpModel):
 @router.post("/{cliente_id}/contratos/gerar", status_code=201)
 async def post_contrato_iniciar_route(
     cliente_id: UUID,
+    response: Response,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
     politica=Depends(get_politica_contrato),
 ) -> dict:
     """The card's "Gerar contrato" button: creates the contract to generate
-    and returns `{contrato, geracao}` — see `service.iniciar`."""
+    (or CONTINUES a leftover one that never got a version) and returns
+    `{contrato, geracao}` — see `service.iniciar`.
+
+    201 for a brand-new draft (the decorator's default); 200 when an
+    already-existing, still-unrendered draft was reused instead — same body
+    shape either way, so the FE (`useContratos.ts`'s `iniciar` mutation,
+    a plain `api.post` that only checks `response.ok`) needs no change."""
     user, org_id = auth_parts(auth)
-    return service.iniciar(
+    resultado = service.iniciar(
         client,
         org_id,
         cliente_id,
         usuario_id=getattr(user, "id", None),
         politica=politica,
     )
+    if resultado.pop("_reaproveitado"):
+        response.status_code = status.HTTP_200_OK
+    return resultado
 
 
 @router.get("/{cliente_id}/contratos/{contrato_id}/geracao")

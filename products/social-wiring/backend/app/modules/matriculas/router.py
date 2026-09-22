@@ -91,6 +91,7 @@ from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 
 from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_client
+from app.modules.imovel_hub import dados_service as imovel_dados_svc
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
 from app.modules.imovel_hub import matricula_extracao_service as imovel_matricula_svc
 from app.modules.imovel_hub.deps import (
@@ -118,6 +119,7 @@ from app.modules.matriculas.schemas import (
     OnusCredorBody,
     SelecaoAtosBody,
     TituloAquisitivoTextoBody,
+    VincularImovelBody,
 )
 from app.modules.matriculas.service import (
     TABLE,
@@ -406,13 +408,27 @@ async def criar_extracao_manual_route(
 async def listar_extracoes(
     busca: Optional[str] = Query(None),
     codigo: Optional[str] = Query(None, max_length=64),
+    sem_imovel: Optional[bool] = Query(
+        None,
+        description=(
+            "true = only extractions with no código yet (`codigo IS NULL`) — "
+            "the pool `PUT /extracoes/{id}/imovel` can still link. Mutually "
+            "exclusive with `codigo` in practice (a code-scoped list is never "
+            "unlinked); both may be sent, `sem_imovel` simply matches nothing "
+            "then, never an error."
+        ),
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     auth=Depends(get_current_user_org),
 ):
     """List extraction history — without `texto_extraido` (see `_COLUNAS_LISTA`).
 
-    `codigo` narrows to one imóvel's matrículas.
+    `codigo` narrows to one imóvel's matrículas. `sem_imovel=true` narrows
+    to the ones with NO imóvel yet — the matrícula picker's pool for
+    `PUT /extracoes/{extracao_id}/imovel` (migration 150), so a matrícula
+    transcribed without a código (upload-without-codigo, or a manual
+    paste) is actually findable instead of orphaned.
     """
     _user, token, _org_id = _auth_parts(auth)
     db = get_user_client(token)
@@ -425,6 +441,8 @@ async def listar_extracoes(
             query = query.ilike("nome_arquivo", f"%{busca}%")
         if codigo_canonico:
             query = query.eq("codigo", codigo_canonico)
+        if sem_imovel:
+            query = query.is_("codigo", "null")
         return query
 
     count_result = _filtrar(db.table(TABLE).select("id", count="exact")).execute()
@@ -599,6 +617,54 @@ async def arquivo_original_route(
         usuario_id=getattr(user, "id", None),
     )
     return success_response(resultado)
+
+
+@router.put("/extracoes/{extracao_id}/imovel")
+async def vincular_imovel_route(
+    extracao_id: UUID,
+    body: VincularImovelBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Link an already-transcribed matrícula to a property (migration
+    150) — the picker's escape hatch for an extraction that was never
+    given a código (`sem_imovel=true` on `GET /extracoes` lists the
+    pool), so it does not need a second, PAID re-upload/re-transcription
+    just to become selectable for a contract.
+
+    Returns the SAME summary shape `GET /extracoes` (the list) returns —
+    not the full row `GET /extracoes/{id}` does, which also carries
+    `texto_extraido` and logs an LGPD `text_view` access on every read; a
+    link operation is not a read of that text.
+
+    422 when `codigo` is not a registered imóvel (registry or the Vista
+    mirror — `imovel_hub.dados_service.registro_status`), checked here so
+    the failure names the exact reason before the service layer's own
+    checks run. See `estrutura_service.vincular_imovel` for what
+    `substituir` can and (mostly) cannot do.
+    """
+    user, _token, org_id = _auth_parts(auth)
+    canonico = (body.codigo or "").strip().upper()
+    if not canonico:
+        raise HTTPException(status_code=422, detail="Código do imóvel é obrigatório.")
+    if imovel_dados_svc.registro_status(client, UUID(org_id), canonico) is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Imóvel {canonico} não está registrado — cadastre-o "
+                "(POST /api/imoveis/{codigo}/registrar) antes de vincular."
+            ),
+        )
+    return success_response(
+        estrutura_svc.vincular_imovel(
+            client,
+            UUID(org_id),
+            extracao_id,
+            codigo=canonico,
+            substituir=body.substituir,
+            usuario_id=getattr(user, "id", None),
+        )
+    )
 
 
 # ─── the structured half (migration 109) ──────────────────────────────────
