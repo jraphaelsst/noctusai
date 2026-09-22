@@ -42,6 +42,7 @@ import {
   ChevronLeft,
   Loader2,
   MessageCircle,
+  Pencil,
   Send,
   User,
   Wrench,
@@ -208,6 +209,19 @@ export interface ChatApprovalActionResult {
   isPending: boolean;
 }
 
+/**
+ * Optional rename seam (2026-09-22, `conversa-renomear-autoabrir`). One hook
+ * call per open scope, mirroring `useApprovalAction` above: `isPending` is
+ * shared, since only one row is ever mid-edit at a time. `rename` MUST throw
+ * a user-facing `Error` on failure — same contract as `useSend` — which
+ * `ThreadListItem` surfaces inline under the edit input rather than closing
+ * it, so the user sees why and can retry without re-opening the pencil.
+ */
+export interface ChatRenameThreadResult {
+  rename: (threadId: string, titulo: string) => Promise<void>;
+  isPending: boolean;
+}
+
 export interface ChatWindowAdapter {
   /** Thread list for the given scope (WhatsApp connectionId / Meta accountId / ...). */
   useThreads: (scopeId: string | null) => ChatAsyncResult<ChatThread[]>;
@@ -238,6 +252,13 @@ export interface ChatWindowAdapter {
    * buttons, even when `decision === "pendente"`.
    */
   useApprovalAction?: (scopeId: string | null) => ChatApprovalActionResult;
+  /**
+   * Optional rename seam (contract §E.2 `PATCH /api/conversations/{id}`,
+   * 2026-09-22). Omit ⇒ no pencil icon renders on any thread row — the
+   * pre-existing behaviour for every consumer that hasn't adopted it yet
+   * (WhatsApp, Instagram DMs).
+   */
+  useRenameThread?: (scopeId: string | null) => ChatRenameThreadResult;
 }
 
 export interface ChatWindowProps {
@@ -249,6 +270,18 @@ export interface ChatWindowProps {
   /** Shown as the right-pane placeholder before any thread is selected. */
   emptySelectionLabel?: string;
   className?: string;
+  /**
+   * Optional CONTROLLED selection (2026-09-22, `conversa-renomear-autoabrir`
+   * — fixes "Nova conversa" not opening the conversation it just created).
+   * Omit either prop ⇒ ChatWindow falls back to its own internal
+   * `useState`, byte-identical to every pre-existing consumer (WhatsApp,
+   * Instagram DMs, Agent Studio's Chat tab) that never passes them.
+   * `onSelectThread` fires on every user click AND on `onBack` (with
+   * `null`), so a controlling parent stays in sync with in-organ
+   * navigation too.
+   */
+  selectedThreadId?: string | null;
+  onSelectThread?: (threadId: string | null) => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -345,46 +378,159 @@ function MessagesSkeleton() {
   );
 }
 
+/**
+ * Inline rename row — replaces the whole row while editing (contract §E.2
+ * rename seam, 2026-09-22). Kept fully self-contained (its own `editing` /
+ * `value` / `error` state): only one row is ever mid-edit at a time, so
+ * there is nothing to lift into `ChatWindow`'s state, mirroring
+ * `ApprovalCard`'s self-contained `diffOpen`/`actionError`.
+ */
 function ThreadListItem({
   thread,
   selected,
   onClick,
+  renameAction,
 }: {
   thread: ChatThread;
   selected: boolean;
   onClick: () => void;
+  /** Omit ⇒ no pencil icon, exactly as before this seam. */
+  renameAction?: ChatRenameThreadResult;
 }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      data-testid={`chat-thread-${thread.id}`}
-      className={cn(
-        "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/60",
-        selected && "bg-muted",
-      )}
-    >
-      <AvatarInitials name={thread.title} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium">{thread.title}</span>
-          <span className="flex-shrink-0 text-xs text-muted-foreground">
-            {relativeTime(thread.lastMessageAt)}
-          </span>
-        </div>
-        <div className="mt-0.5 flex items-center justify-between gap-2">
-          <p className="truncate text-xs text-muted-foreground">
-            {thread.lastDirection === "outbound" && <span className="mr-1 text-primary">Você:</span>}
-            {thread.lastMessagePreview}
-          </p>
-          {!!thread.unreadCount && thread.unreadCount > 0 && (
-            <Badge className="h-5 min-w-5 flex-shrink-0 px-1.5 text-xs">
-              {thread.unreadCount > 99 ? "99+" : thread.unreadCount}
-            </Badge>
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(thread.title);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  function startEditing(e: React.MouseEvent) {
+    e.stopPropagation();
+    setValue(thread.title);
+    setError(null);
+    setEditing(true);
+  }
+
+  function cancelEditing() {
+    setEditing(false);
+    setValue(thread.title);
+    setError(null);
+  }
+
+  async function commit() {
+    const trimmed = value.trim();
+    // A blank or unchanged title is a no-op, not an error — matches
+    // Escape's cancel, never sends a request the 422-blank guard would
+    // just reject anyway.
+    if (!renameAction || !trimmed || trimmed === thread.title) {
+      cancelEditing();
+      return;
+    }
+    setError(null);
+    try {
+      await renameAction.rename(thread.id, trimmed);
+      setEditing(false);
+    } catch (err) {
+      // Stays open with the inline error (same posture as ThreadPanel's
+      // `sendError` banner) — never silently reverts without saying why.
+      setError(err instanceof Error ? err.message : "Erro ao renomear.");
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    e.stopPropagation();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEditing();
+    }
+  }
+
+  if (editing) {
+    return (
+      <div
+        className="flex w-full items-center gap-3 px-3 py-2"
+        data-testid={`chat-thread-${thread.id}-editing`}
+      >
+        <AvatarInitials name={thread.title} />
+        <div className="min-w-0 flex-1">
+          <label htmlFor={`chat-thread-rename-input-${thread.id}`} className="sr-only">
+            Renomear conversa
+          </label>
+          <Input
+            id={`chat-thread-rename-input-${thread.id}`}
+            ref={inputRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onBlur={commit}
+            disabled={renameAction?.isPending}
+            className="h-7 text-sm"
+            data-testid={`chat-thread-rename-input-${thread.id}`}
+          />
+          {error && (
+            <p
+              className="mt-0.5 text-[10px] text-destructive"
+              data-testid={`chat-thread-rename-error-${thread.id}`}
+            >
+              {error}
+            </p>
           )}
         </div>
       </div>
-    </button>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "group flex w-full items-center transition-colors hover:bg-muted/60",
+        selected && "bg-muted",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        data-testid={`chat-thread-${thread.id}`}
+        className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left"
+      >
+        <AvatarInitials name={thread.title} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate text-sm font-medium">{thread.title}</span>
+            <span className="flex-shrink-0 text-xs text-muted-foreground">
+              {relativeTime(thread.lastMessageAt)}
+            </span>
+          </div>
+          <div className="mt-0.5 flex items-center justify-between gap-2">
+            <p className="truncate text-xs text-muted-foreground">
+              {thread.lastDirection === "outbound" && <span className="mr-1 text-primary">Você:</span>}
+              {thread.lastMessagePreview}
+            </p>
+            {!!thread.unreadCount && thread.unreadCount > 0 && (
+              <Badge className="h-5 min-w-5 flex-shrink-0 px-1.5 text-xs">
+                {thread.unreadCount > 99 ? "99+" : thread.unreadCount}
+              </Badge>
+            )}
+          </div>
+        </div>
+      </button>
+      {renameAction && (
+        <button
+          type="button"
+          onClick={startEditing}
+          aria-label="Renomear conversa"
+          data-testid={`chat-thread-rename-${thread.id}`}
+          className="mr-2 flex-shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -652,6 +798,7 @@ function ThreadPanel({
   onBack: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -679,6 +826,15 @@ function ThreadPanel({
   useEffect(() => {
     if (!thread.id) return;
     markReadRef.current?.(thread.id);
+  }, [thread.id]);
+
+  // Focus the composer whenever a thread opens (ChatWindow remounts
+  // ThreadPanel with `key={thread.id}`, so this fires once per open,
+  // never on every message/render) — cheap, and doubles as "focus the
+  // message box" for a freshly created conversation once the page
+  // auto-selects it (contract-free UX seam, `conversa-renomear-autoabrir`).
+  useEffect(() => {
+    composerRef.current?.focus();
   }, [thread.id]);
 
   useEffect(() => {
@@ -826,6 +982,7 @@ function ThreadPanel({
         )}
         <div className="flex items-center gap-2 p-2">
           <Input
+            ref={composerRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -862,11 +1019,23 @@ export function ChatWindow({
   emptyThreadsLabel = "Nenhuma conversa ainda.",
   emptySelectionLabel = "Selecione uma conversa",
   className,
+  selectedThreadId: controlledSelectedThreadId,
+  onSelectThread,
 }: ChatWindowProps) {
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [internalSelectedThreadId, setInternalSelectedThreadId] = useState<string | null>(null);
+  // Controlled/uncontrolled split (contract-free React idiom): a consumer
+  // that never passes `selectedThreadId` gets the pre-existing fully
+  // internal behaviour, byte-identical to before this prop existed.
+  const isControlled = controlledSelectedThreadId !== undefined;
+  const selectedThreadId = isControlled ? controlledSelectedThreadId : internalSelectedThreadId;
+  function selectThread(id: string | null) {
+    if (!isControlled) setInternalSelectedThreadId(id);
+    onSelectThread?.(id);
+  }
 
   const { data: threads = [], isLoading: loadingThreads, isError: errorThreads } =
     adapter.useThreads(scopeId);
+  const renameAction = adapter.useRenameThread?.(scopeId);
 
   const selectedThread = threads.find((t) => t.id === selectedThreadId) ?? null;
   const showThread = !!selectedThread;
@@ -898,7 +1067,8 @@ export function ChatWindow({
                   <ThreadListItem
                     thread={thread}
                     selected={selectedThreadId === thread.id}
-                    onClick={() => setSelectedThreadId(thread.id)}
+                    onClick={() => selectThread(thread.id)}
+                    renameAction={renameAction}
                   />
                   {idx < threads.length - 1 && <div className="ml-14 border-t" />}
                 </div>
@@ -916,7 +1086,7 @@ export function ChatWindow({
             scopeId={scopeId}
             thread={selectedThread}
             adapter={adapter}
-            onBack={() => setSelectedThreadId(null)}
+            onBack={() => selectThread(null)}
           />
         ) : (
           <EmptyState icon={<User className="h-10 w-10 opacity-20" />} label={emptySelectionLabel} fullHeight />

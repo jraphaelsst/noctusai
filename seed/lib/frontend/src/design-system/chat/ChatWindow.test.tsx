@@ -746,3 +746,150 @@ describe("ChatWindow — link block (in-app navigation row)", () => {
     expect(block.textContent).toBe("clique aqui");
   });
 });
+
+// ─── Controlled selection (2026-09-22, conversa-renomear-autoabrir) ───────────
+
+describe("ChatWindow — controlled selection seam", () => {
+  it("opens the thread the parent controls via selectedThreadId, with no click", () => {
+    render(<ChatWindow scopeId="s1" adapter={makeAdapter()} selectedThreadId="t1" />);
+    expect(screen.getByTestId("chat-thread-panel")).toBeTruthy();
+  });
+
+  it("calls onSelectThread when a thread row is clicked, even while controlled", () => {
+    const onSelectThread = vi.fn();
+    render(
+      <ChatWindow
+        scopeId="s1"
+        adapter={makeAdapter()}
+        selectedThreadId={null}
+        onSelectThread={onSelectThread}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+    expect(onSelectThread).toHaveBeenCalledWith("t1");
+  });
+
+  it("calls onSelectThread(null) on Back, even while controlled", () => {
+    const onSelectThread = vi.fn();
+    render(
+      <ChatWindow
+        scopeId="s1"
+        adapter={makeAdapter()}
+        selectedThreadId="t1"
+        onSelectThread={onSelectThread}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Voltar"));
+    expect(onSelectThread).toHaveBeenCalledWith(null);
+  });
+
+  it("falls back to its own internal state when selectedThreadId/onSelectThread are omitted (every pre-existing consumer)", () => {
+    render(<ChatWindow scopeId="s1" adapter={makeAdapter()} />);
+    expect(screen.getByText("Selecione uma conversa")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("chat-thread-t1"));
+    expect(screen.getByTestId("chat-thread-panel")).toBeTruthy();
+  });
+});
+
+// ─── Rename seam (contract §E.2 PATCH, 2026-09-22) ─────────────────────────────
+
+describe("ChatWindow — rename seam", () => {
+  it("is entirely absent when the adapter omits useRenameThread", () => {
+    render(<ChatWindow scopeId="s1" adapter={makeAdapter()} />);
+    expect(screen.queryByTestId("chat-thread-rename-t1")).toBeNull();
+  });
+
+  it("renders a pencil per thread row when the adapter provides useRenameThread", () => {
+    const adapter = makeAdapter({
+      useRenameThread: () => ({ rename: vi.fn().mockResolvedValue(undefined), isPending: false }),
+    });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+    expect(screen.getByTestId("chat-thread-rename-t1")).toBeTruthy();
+    expect(screen.getByTestId("chat-thread-rename-t2")).toBeTruthy();
+  });
+
+  it("clicking the pencil swaps the row for an inline input seeded with the current title", () => {
+    const adapter = makeAdapter({
+      useRenameThread: () => ({ rename: vi.fn().mockResolvedValue(undefined), isPending: false }),
+    });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+
+    fireEvent.click(screen.getByTestId("chat-thread-rename-t1"));
+
+    const input = screen.getByTestId("chat-thread-rename-input-t1") as HTMLInputElement;
+    expect(input.value).toBe("João Raphael");
+  });
+
+  it("Enter commits the new title via rename(threadId, titulo)", async () => {
+    const rename = vi.fn().mockResolvedValue(undefined);
+    const adapter = makeAdapter({ useRenameThread: () => ({ rename, isPending: false }) });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+
+    fireEvent.click(screen.getByTestId("chat-thread-rename-t1"));
+    const input = screen.getByTestId("chat-thread-rename-input-t1");
+    fireEvent.change(input, { target: { value: "Novo título" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() => expect(rename).toHaveBeenCalledWith("t1", "Novo título"));
+    await waitFor(() => expect(screen.queryByTestId("chat-thread-rename-input-t1")).toBeNull());
+  });
+
+  it("blur also commits (contract: 'Enter or blur saves')", async () => {
+    const rename = vi.fn().mockResolvedValue(undefined);
+    const adapter = makeAdapter({ useRenameThread: () => ({ rename, isPending: false }) });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+
+    fireEvent.click(screen.getByTestId("chat-thread-rename-t1"));
+    const input = screen.getByTestId("chat-thread-rename-input-t1");
+    fireEvent.change(input, { target: { value: "Renomeada no blur" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(rename).toHaveBeenCalledWith("t1", "Renomeada no blur"));
+  });
+
+  it("Escape cancels without calling rename and restores the original title", () => {
+    const rename = vi.fn().mockResolvedValue(undefined);
+    const adapter = makeAdapter({ useRenameThread: () => ({ rename, isPending: false }) });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+
+    fireEvent.click(screen.getByTestId("chat-thread-rename-t1"));
+    const input = screen.getByTestId("chat-thread-rename-input-t1");
+    fireEvent.change(input, { target: { value: "Descartada" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    expect(screen.queryByTestId("chat-thread-rename-input-t1")).toBeNull();
+    expect(rename).not.toHaveBeenCalled();
+    expect(screen.getByText("João Raphael")).toBeTruthy();
+  });
+
+  it("a thrown rename error stays open with an inline message, never a silent revert", async () => {
+    const rename = vi.fn().mockRejectedValue(new Error("Título inválido."));
+    const adapter = makeAdapter({ useRenameThread: () => ({ rename, isPending: false }) });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+
+    fireEvent.click(screen.getByTestId("chat-thread-rename-t1"));
+    const input = screen.getByTestId("chat-thread-rename-input-t1");
+    fireEvent.change(input, { target: { value: "Novo" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-thread-rename-error-t1").textContent).toBe("Título inválido."),
+    );
+    // Stays open — the user can see the error and retry.
+    expect(screen.getByTestId("chat-thread-rename-input-t1")).toBeTruthy();
+  });
+
+  it("a blank-after-trim commit is a no-op — cancels without calling rename", () => {
+    const rename = vi.fn();
+    const adapter = makeAdapter({ useRenameThread: () => ({ rename, isPending: false }) });
+    render(<ChatWindow scopeId="s1" adapter={adapter} />);
+
+    fireEvent.click(screen.getByTestId("chat-thread-rename-t1"));
+    const input = screen.getByTestId("chat-thread-rename-input-t1");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(rename).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("chat-thread-rename-input-t1")).toBeNull();
+  });
+});

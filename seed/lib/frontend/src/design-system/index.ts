@@ -185,6 +185,7 @@ export type {
   ChatReadStateResult,
   ChatLoadMoreResult,
   ChatApprovalActionResult,
+  ChatRenameThreadResult,
 } from "./chat";
 
 // Chart / KPI / filter organs — seed-canonical (N=3 recurrence rule, see

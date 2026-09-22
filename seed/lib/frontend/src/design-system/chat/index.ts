@@ -17,4 +17,5 @@ export type {
   ChatReadStateResult,
   ChatLoadMoreResult,
   ChatApprovalActionResult,
+  ChatRenameThreadResult,
 } from "./ChatWindow";
