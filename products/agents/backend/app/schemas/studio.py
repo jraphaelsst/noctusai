@@ -1,0 +1,313 @@
+"""Pydantic schemas for the Agent Studio definitions API (contract §D1, §D2).
+
+Request bodies are :class:`~noctusai_lib.api.StrictHttpModel` (``extra=
+"forbid"`` → 422 on an unknown field, §D intro). Response models are plain
+``BaseModel`` (consumers ignore unknown response fields). PATCH bodies are
+read with ``model_dump(exclude_unset=True)`` so an omitted field is "leave
+as is" and an explicit ``null`` is "clear" where the column is nullable.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator
+
+from noctusai_lib.api import StrictHttpModel
+
+#: 012 slug CHECK (agent key, section chave, skill nome, client slug).
+SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
+#: 012 skill-file caminho CHECK (the `..` exclusion is validated separately).
+CAMINHO_PATTERN = r"^[a-z0-9][a-z0-9._/-]*$"
+
+EntryTipo = Literal[
+    "marca", "publico", "posicionamento", "trava", "decisao", "aprendizado", "evidencia", "nota"
+]
+EntryStatus = Literal["ativo", "arquivado"]
+
+
+# ── agents ──────────────────────────────────────────────────────────────────
+
+
+class StudioAgentCreateRequest(StrictHttpModel):
+    key: str = Field(..., min_length=1, max_length=64, pattern=SLUG_PATTERN)
+    nome: str = Field(..., min_length=1)
+    descricao: str | None = None
+
+
+class StudioAgentUpdateRequest(StrictHttpModel):
+    nome: str | None = Field(default=None, min_length=1)
+    descricao: str | None = None
+    ativo: bool | None = None
+    publicacao_limiar: float | None = Field(default=None, ge=0, le=1)
+
+
+class AgentSummaryOut(BaseModel):
+    id: UUID
+    key: str
+    nome: str
+    descricao: str | None
+    definition_mode: str
+    ativo: bool
+    publicacao_limiar: float
+    versao_ativa: int | None
+    tem_rascunho: bool
+
+
+class AgentListOut(BaseModel):
+    items: list[AgentSummaryOut]
+
+
+class VersionSummaryOut(BaseModel):
+    id: UUID
+    versao: int
+    status: str
+    notas: str | None
+    model: str
+    created_at: datetime
+    published_at: datetime | None
+    compiled_hash: str | None
+    eval_score: float | None
+
+
+class AgentDetailOut(AgentSummaryOut):
+    versoes: list[VersionSummaryOut]
+
+
+# ── versions ────────────────────────────────────────────────────────────────
+
+
+class SectionOut(BaseModel):
+    id: UUID
+    chave: str
+    titulo: str
+    ordem: int
+    conteudo: str
+    ativo: bool
+
+
+class SkillFileMetaOut(BaseModel):
+    id: UUID
+    caminho: str
+    titulo: str | None
+    chars: int
+
+
+class SkillFileOut(BaseModel):
+    id: UUID
+    caminho: str
+    titulo: str | None
+    conteudo: str
+
+
+class SkillOut(BaseModel):
+    id: UUID
+    nome: str
+    descricao: str
+    corpo: str
+    ordem: int
+    ativo: bool
+    arquivos: list[SkillFileMetaOut]
+
+
+class VersionDetailOut(VersionSummaryOut):
+    effort: str
+    max_turns: int
+    idioma: str
+    tool_policy: dict[str, Any]
+    based_on_version_id: UUID | None
+    published_by: UUID | None
+    publish_override_reason: str | None
+    eval_run_id: UUID | None
+    secoes: list[SectionOut]
+    skills: list[SkillOut]
+
+
+class DraftCreateRequest(StrictHttpModel):
+    from_version_id: UUID | None = None
+
+
+class ToolPolicyIn(StrictHttpModel):
+    web_search: bool
+    knowledge: bool
+
+
+class DraftUpdateRequest(StrictHttpModel):
+    notas: str | None = None
+    model: str | None = None
+    effort: str | None = None
+    max_turns: int | None = None
+    idioma: str | None = Field(default=None, min_length=1)
+    tool_policy: ToolPolicyIn | None = None
+
+
+class SectionIn(StrictHttpModel):
+    id: UUID | None = None
+    chave: str = Field(..., min_length=1, pattern=SLUG_PATTERN)
+    titulo: str = Field(..., min_length=1)
+    ordem: int
+    conteudo: str
+    ativo: bool
+
+
+class SectionsReplaceRequest(StrictHttpModel):
+    secoes: list[SectionIn]
+
+
+class SkillCreateRequest(StrictHttpModel):
+    nome: str = Field(..., min_length=1, max_length=64, pattern=SLUG_PATTERN)
+    descricao: str = Field(..., min_length=1, max_length=1024)
+    corpo: str
+    ordem: int = 0
+    ativo: bool = True
+
+
+class SkillUpdateRequest(StrictHttpModel):
+    nome: str | None = Field(default=None, min_length=1, max_length=64, pattern=SLUG_PATTERN)
+    descricao: str | None = Field(default=None, min_length=1, max_length=1024)
+    corpo: str | None = None
+    ordem: int | None = None
+    ativo: bool | None = None
+
+
+class SkillFileUpsertRequest(StrictHttpModel):
+    caminho: str = Field(..., min_length=1, max_length=255, pattern=CAMINHO_PATTERN)
+    titulo: str | None = None
+    conteudo: str
+
+    @field_validator("caminho")
+    @classmethod
+    def _no_parent_segments(cls, v: str) -> str:
+        # 012 CHECK `caminho !~ '\.\.'` — refuse at the boundary, not at the DB.
+        if ".." in v:
+            raise ValueError("caminho must not contain '..'")
+        return v
+
+
+class PublishRequest(StrictHttpModel):
+    notas: str | None = None
+    #: §H4: the gate cannot be bypassed without a reason ≥ 20 chars.
+    override_reason: str | None = Field(default=None, min_length=20)
+
+
+# ── compile / diff / prompts ────────────────────────────────────────────────
+
+
+class AvisoOut(BaseModel):
+    codigo: str
+    mensagem: str
+    bloqueante: bool
+
+
+class CompiledOut(BaseModel):
+    texto: str
+    hash: str
+    tokens_estimados: int
+    manifest: list[dict[str, Any]]
+    sob_demanda: list[dict[str, Any]]
+    avisos: list[AvisoOut]
+    version_id: UUID
+    client_id: UUID | None
+
+
+class DiffSideOut(BaseModel):
+    version_id: UUID
+    hash: str
+
+
+class DiffSectionOut(BaseModel):
+    chave: str
+    estado: Literal["igual", "alterada", "nova", "removida"]
+
+
+class DiffSkillOut(BaseModel):
+    nome: str
+    estado: Literal["igual", "alterada", "nova", "removida"]
+
+
+class DiffConfigOut(BaseModel):
+    campo: str
+    a: Any
+    b: Any
+
+
+class DiffOut(BaseModel):
+    a: DiffSideOut
+    b: DiffSideOut
+    texto_a: str
+    texto_b: str
+    secoes: list[DiffSectionOut]
+    skills: list[DiffSkillOut]
+    configuracoes: list[DiffConfigOut]
+
+
+class PromptByHashOut(BaseModel):
+    hash: str
+    texto: str
+    manifest: list[dict[str, Any]]
+    version_id: UUID
+    client_id: UUID | None
+    created_at: datetime
+
+
+# ── clients (§D2) ───────────────────────────────────────────────────────────
+
+
+class ClientEntryOut(BaseModel):
+    id: UUID
+    tipo: str
+    titulo: str
+    conteudo: str
+    status: str
+    created_at: datetime
+
+
+class ClientOut(BaseModel):
+    id: UUID
+    slug: str
+    nome: str
+    resumo: str
+    ativo: bool
+    entradas: list[ClientEntryOut]
+
+
+class ClientSummaryOut(BaseModel):
+    id: UUID
+    slug: str
+    nome: str
+    resumo: str
+    ativo: bool
+    total_entradas: int
+
+
+class ClientListOut(BaseModel):
+    items: list[ClientSummaryOut]
+
+
+class ClientCreateRequest(StrictHttpModel):
+    slug: str = Field(..., min_length=1, max_length=64, pattern=SLUG_PATTERN)
+    nome: str = Field(..., min_length=1)
+    resumo: str = ""
+    ativo: bool = True
+
+
+class ClientUpdateRequest(StrictHttpModel):
+    slug: str | None = Field(default=None, min_length=1, max_length=64, pattern=SLUG_PATTERN)
+    nome: str | None = Field(default=None, min_length=1)
+    resumo: str | None = None
+    ativo: bool | None = None
+
+
+class ClientEntryCreateRequest(StrictHttpModel):
+    tipo: EntryTipo
+    titulo: str = Field(..., min_length=1)
+    conteudo: str = ""
+    status: EntryStatus = "ativo"
+
+
+class ClientEntryUpdateRequest(StrictHttpModel):
+    tipo: EntryTipo | None = None
+    titulo: str | None = Field(default=None, min_length=1)
+    conteudo: str | None = None
+    status: EntryStatus | None = None

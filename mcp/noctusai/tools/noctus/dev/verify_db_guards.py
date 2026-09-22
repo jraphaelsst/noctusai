@@ -1000,6 +1000,175 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — agents Agent Studio version immutability (migration 012).
+# ---------------------------------------------------------------------------
+#
+# Fully self-provisioning: `agents.agents.org_id` has no FK, so every probe
+# fabricates its own org id, agent, version(s) and children inside the
+# rolled-back transaction — no production row is borrowed or touched. The
+# only `no_fixture` path is "migration 012 not applied" (to_regclass).
+# Setup statements live INSIDE the classified sub-block on purpose: a setup
+# failure surfaces as `ambiguous` (its SQLERRM never carries the guard's
+# fragment), never as a false `refused`.
+
+_AGENTS_SCHEMA = "agents"
+_AGENTS_STUDIO_MIGRATIONS = ("012_agent_studio_definitions.sql",)
+_AGENTS_PROBE_AGENT_SQL = (
+    f"INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode) "
+    "VALUES (v_org, 'noc-probe', 'NOC probe', 'claude_sdk', 'studio') RETURNING id INTO v_agent;"
+)
+
+
+def _agents_version_sql(status: str, versao: int, into: str) -> str:
+    return (
+        f"INSERT INTO {_AGENTS_SCHEMA}.agent_versions "
+        "(org_id, agent_id, versao, status, model, effort, created_by) "
+        f"VALUES (v_org, v_agent, {versao}, '{status}', 'claude-opus-5', 'high', v_org) "
+        f"RETURNING id INTO {into};"
+    )
+
+
+def _agents_studio_probe(
+    *, probe_id: str, guard_name: str, attack_sql: str, guard_fragment: str, what: str, rationale: str,
+) -> GuardProbe:
+    fragment_lit = _sql_lit(guard_fragment)
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_agent uuid;
+  v_version uuid;
+  v_version2 uuid;
+  v_skill uuid;
+  v_file uuid;
+BEGIN
+  IF to_regclass('{_AGENTS_SCHEMA}.agent_versions') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_versions does not exist (migration 012 not applied)';
+  END IF;
+  BEGIN
+    {_AGENTS_PROBE_AGENT_SQL}
+{attack_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard under test did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="agents",
+        schema=_AGENTS_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=_AGENTS_STUDIO_MIGRATIONS,
+        sql=sql,
+        rationale=rationale,
+    )
+
+
+_AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
+    _agents_studio_probe(
+        probe_id="agent_versions.one_ativa_per_agent",
+        guard_name="agent_versions_one_ativa_idx",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    {_agents_version_sql('ativa', 2, 'v_version2')}"
+        ),
+        guard_fragment="agent_versions_one_ativa_idx",
+        what="a second ativa version for the same agent",
+        rationale=(
+            "At most one published (ativa) version per agent (Agent Studio §A3): "
+            "two would make 'the version a new conversation runs' ambiguous."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_versions.one_rascunho_per_agent",
+        guard_name="agent_versions_one_rascunho_idx",
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    {_agents_version_sql('rascunho', 2, 'v_version2')}"
+        ),
+        guard_fragment="agent_versions_one_rascunho_idx",
+        what="a second rascunho version for the same agent",
+        rationale=(
+            "Exactly one draft per agent (§A3) — two drafts would split edits "
+            "and let the eval gate judge one while another is published."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_versions.published_is_immutable",
+        guard_name="guard_agent_version_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET model = 'claude-sonnet-5' WHERE id = v_version;"
+        ),
+        guard_fragment="version_immutable",
+        what="UPDATE of a published version's model",
+        rationale=(
+            "A published version is immutable (§A3/§H3): conversations and "
+            "compiled_prompts point at it as proof of what ran."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_prompt_sections.published_parent_is_immutable",
+        guard_name="guard_version_child_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_prompt_sections (org_id, version_id, chave, titulo, ordem, conteudo) "
+            "VALUES (v_org, v_version, 'noc-probe', 'NOC probe', 1, 'x');"
+        ),
+        guard_fragment="version_immutable",
+        what="INSERT of a prompt section into a published version",
+        rationale=(
+            "Sections/skills of a published version are frozen with it (§B1) — "
+            "otherwise the published prompt text silently changes."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_skill_files.published_parent_is_immutable",
+        guard_name="guard_skill_file_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_skills (org_id, version_id, nome, descricao, corpo) "
+            "VALUES (v_org, v_version, 'noc-probe', 'NOC probe', 'x') RETURNING id INTO v_skill;\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_skill_files (org_id, skill_id, caminho, conteudo) "
+            "VALUES (v_org, v_skill, 'noc-probe.md', 'x') RETURNING id INTO v_file;\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET status = 'ativa' WHERE id = v_version;\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_skill_files SET conteudo = 'changed' WHERE id = v_file;"
+        ),
+        guard_fragment="version_immutable",
+        what="UPDATE of a skill file whose version was published",
+        rationale=(
+            "Skill reference files are part of the published version (§B1); "
+            "they are reached through agent_skills, so they carry their own guard."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="compiled_prompts.write_once",
+        guard_name="guard_compiled_prompt_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.compiled_prompts (org_id, hash, version_id, texto, manifest) "
+            "VALUES (v_org, 'sha256:' || repeat('0', 64), v_version, 'x', '[]'::jsonb);\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.compiled_prompts SET texto = 'changed' WHERE org_id = v_org;"
+        ),
+        guard_fragment="compiled_prompt_immutable",
+        what="UPDATE of a stored compiled prompt",
+        rationale=(
+            "compiled_prompts is the proof-of-use record (§A7): the exact text a "
+            "turn ran with must never be rewritten after the fact."
+        ),
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -1009,6 +1178,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _STORAGE_BUCKETS_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
+    *_AGENTS_STUDIO_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
