@@ -114,6 +114,16 @@ def _live_slugs_from_catalog() -> list[str]:
     NEVER returns a guess. A silently-wrong build scope would skip a live product's
     image, which is the exact failure this file exists to prevent.
     """
+    return sorted({slug for slug, scope in _active_catalog_rows() if scope == "live"})
+
+
+def _active_catalog_rows() -> list[tuple[str, str]]:
+    """`(slug, deploy_scope)` for every `ativo = true` catalog row.
+
+    The ONE catalog read behind both generated scope files — `build-scope.txt`
+    (the `live` subset) and `active-scope.txt` (all of it, see `product_scope.py`).
+    Raises RuntimeError (never guesses) when the Supabase env is absent.
+    """
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
@@ -128,14 +138,8 @@ def _live_slugs_from_catalog() -> list[str]:
         raise RuntimeError(f"the `supabase` package is required to read the catalog: {exc}") from exc
 
     client = create_client(url, key)
-    resp = (
-        client.table("products")
-        .select("slug")
-        .eq("ativo", True)
-        .eq("deploy_scope", "live")
-        .execute()
-    )
-    return sorted({row["slug"] for row in (resp.data or [])})
+    resp = client.table("products").select("slug,deploy_scope").eq("ativo", True).execute()
+    return sorted((row["slug"], row["deploy_scope"]) for row in (resp.data or []))
 
 
 def refresh_build_scope(write: bool = True, _live: list[str] | None = None) -> dict:
@@ -220,11 +224,18 @@ def register(server) -> None:
             "after activating/deactivating a product, else a `seed/**` push either "
             "rebuilds a product you retired or skips one you just activated. Needs "
             "SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY; REFUSES to guess without them. "
+            "ALSO regenerates `deploy/fleet/active-scope.txt` (`ativo = true`, any "
+            "scope, + core) — the set every CI test job / keeper / gate_sweep checks; "
+            "a product absent from it is asleep and skipped. "
             "write=False previews. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md."
         ),
     )
     def _refresh_build_scope(write: bool = True) -> dict:
-        return refresh_build_scope(write=write)
+        from .product_scope import refresh_active_scope
+        result = refresh_build_scope(write=write)
+        result["active_scope"] = refresh_active_scope(write=write)
+        result["ok"] = bool(result.get("ok")) and bool(result["active_scope"].get("ok"))
+        return result
 
 
 __all__ = [

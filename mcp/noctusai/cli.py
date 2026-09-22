@@ -342,7 +342,7 @@ def main():
     parser.add_argument("--files", metavar="FILES", help="Comma-separated target file paths for --compose-brief (e.g. mcp/noctusai/tools/noctus/dev/foo.py,mcp/noctusai/cli.py).")
     parser.add_argument("--description", metavar="TEXT", help="Task description text for --compose-brief.")
     parser.add_argument("--spa-smoke", action="store_true", help="Post-deploy gate for the FRONTEND: per live product, assert the shell serves a mount point + bundle tag, the bundle is real JS (not the SPA HTML fallback, which 200s), and a deep link 200s. Closes the gap where container-health, /api/health and an edge 200 are all green while every user sees a blank page. MCP: noctus.dev.spa_smoke. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
-    parser.add_argument("--refresh-build-scope", action="store_true", help="Regenerate deploy/fleet/build-scope.txt — the products whose images a PUSH-triggered build rebuilds. Derived from the catalog (ativo=true AND deploy_scope='live') plus core. Run after activating/deactivating a product. Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. MCP: noctus.dev.refresh_build_scope. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
+    parser.add_argument("--refresh-build-scope", action="store_true", help="Regenerate deploy/fleet/build-scope.txt — the products whose images a PUSH-triggered build rebuilds. Derived from the catalog (ativo=true AND deploy_scope='live') plus core. Also regenerates deploy/fleet/active-scope.txt (ativo=true, any scope, + core) — the set every CI test job / keeper / gate_sweep checks. Run after activating/deactivating a product. Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. MCP: noctus.dev.refresh_build_scope. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--refresh-dependabot-coverage", action="store_true", help="Repair .github/dependabot.yml: add an npm block for every products/<slug>/frontend with a package.json missing one, and append the fleet-major `ignore:` guard to any npm block that lacks it (full or partial). Targeted repair, not a rewrite — every existing comment/entry survives byte-for-byte. Idempotent. Stale blocks (directory has no package.json any more) are reported, never removed. Pass --dry to preview. MCP: noctus.dev.refresh_dependabot_coverage. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--refresh-ci-matrix-coverage", action="store_true", help="Repair .github/workflows/test.yml: append every qualifying-but-missing product to the product-backend-tests / product-frontend-tests `matrix: product:` lists (qualifying = has real test files for that suite). Targeted repair — every existing line/comment survives. Idempotent. Stale entries (tests gone) are reported, never removed. Pass --dry to preview. MCP: noctus.dev.refresh_ci_matrix_coverage. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--vector-costs-drain-spool", action="store_true", help="Fold the untracked cost spool (project-history/.vector-costs-spool.ndjson) into the tracked vector-costs.ndjson ledger and empty it. Run by the pre-commit hook so cost rows ride inside a real commit instead of a ledger-only chore commit. Idempotent. MCP: noctus.dev.vector_costs_drain_spool. KB § PATTERNS/common/vector-cost-tracking.md § Fold-into-commit.")
@@ -2710,6 +2710,13 @@ def main():
         else:
             print(f"  {GREEN}✓ build-scope written: {slugs}{RESET}")
         print(f"    excluded (inactive): {excl}")
+        from tools.noctus.dev.product_scope import refresh_active_scope as _ras
+        act = _ras()
+        if not act.get("ok"):
+            print(f"  {RED}✗ active-scope refresh FAILED: {act.get('error')}{RESET}")
+            sys.exit(1)
+        print(f"  {GREEN}✓ active-scope {act['status']}: {' '.join(act['slugs'])}{RESET}")
+        print(f"    asleep (skipped by every gate): {', '.join(act['dormant']) or 'none'}")
         sys.exit(0)
 
     elif args.refresh_dependabot_coverage:

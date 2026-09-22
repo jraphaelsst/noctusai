@@ -1,0 +1,29 @@
+# active-scope.txt — WHICH PRODUCTS THE DEV PROCESS TOUCHES. One slug per line.
+#
+# 🔴 GENERATED — do not hand-edit. Regenerate (writes this AND build-scope.txt):
+#     python mcp/noctusai/cli.py --refresh-build-scope
+#
+# DERIVED FROM THE CATALOG:
+#     SELECT slug FROM public.products WHERE ativo = true      (any deploy_scope)
+# ∩ products/* on disk, plus `core` (platform shell, not a `products` row).
+#
+# A product NOT listed here is ASLEEP: CI test jobs, pre-commit keepers, gate_sweep
+# and run_all_tests skip it entirely. Wake it = set ativo=true in /admin/products,
+# then regenerate — every gate picks it up again, no workflow edit needed.
+# Consumers: KB § PATTERNS/architect/product-working-scope.md § 4c.
+#
+# build-scope.txt (the `live` subset) is always ⊆ this file.
+#
+# Last refresh: 2026-09-22
+# Asleep (on disk, ativo=false): adconnect, daily-life, dev-team, erp-imobiliario, knowledge-extractor, personal-finance, therapy-platform
+# Active in catalog but no products/<slug>/ dir: none
+
+academia-de-reciclagem
+agents
+community
+core
+igig
+orbity
+p-studio
+seed
+social-wiring
