@@ -1,28 +1,26 @@
 """Agent Studio — eval cases/runs/results store (contract §B2/§D4, slice
-BE-KE), plus :class:`SupabaseEvalGate` — the Real implementation of
-BE-DEF's ``EvalGate`` Protocol (contract §J2.1).
+BE-KE), plus :class:`SupabaseEvalGate` — the Real implementation of the
+``EvalGate`` Protocol (contract §J2.1, ``app.studio.models``).
 
-Three IO surfaces:
+Two IO surfaces (seed Protocol + Fake + Real + factory each):
 
 1. ``EvalStore`` — cases (CRUD) + runs (create/list/get/cancel/fail) +
-   results (list, joined with the case's slug/titulo for the run-detail
-   response) + a minimal ``VersionLookup``-shaped read of
-   ``agents.agent_versions.compiled_hash`` (needed to stamp a new run and
-   to 409 ``compile_required`` when it's NULL — contract §J2.2). Same
-   "wave-1 slices never import each other's unfinished code" reasoning as
-   ``app.stores.studio_knowledge.AgentLookup`` — see that module's
-   docstring.
-2. ``SupabaseEvalGate`` — contract §J2.1: BE-DEF defines ``GateRun`` +
-   the ``EvalGate`` Protocol in ``app/studio/models.py`` (not present in
-   this branch); this class satisfies that Protocol STRUCTURALLY (Python
-   Protocols need no inheritance) and imports ``GateRun`` LAZILY, inside
-   the one method that constructs it — so importing this module never
-   touches ``app.studio.models``, and this branch's own test suite builds
-   standalone. The import only actually executes once a caller (BE-DEF,
-   post-merge) calls ``latest_concluded_run`` on a version that HAS a
-   concluded run; the "no concluded run" branch returns ``None`` without
-   ever reaching the import. BE-KE's own test for the "found" branch uses
-   ``pytest.importorskip("app.studio.models")`` for exactly this reason.
+   results (list, joined with the case's slug/titulo in ONE embedded
+   select). Version/agent resolution is NOT this module's job — the
+   router resolves both through BE-DEF's ``StudioDefinitionStore``.
+2. ``EvalGate`` — :class:`SupabaseEvalGate` / ``FakeEvalGate`` via
+   :func:`get_eval_gate`: the newest ``concluida`` AND ``completa`` run
+   of a version (H1 — a later subset run never hides the complete one).
+
+Hardening (wave-1 security review + compliance review): a run and its
+pending results are created by ONE ``agents.create_eval_run`` call (L6 —
+no orphan ``pendente`` run can block the slot); an explicit case list is
+deduped and capped at :data:`~app.studio.models.RUN_CASE_IDS_MAX`; every
+write goes through ``app.stores._db_errors`` — a duplicate slug is 409
+``slug_taken``, a concurrent run 409 ``run_in_progress``, deleting a case
+that has results 409 ``case_in_use`` (supabase-py RAISES on constraint
+violations; it never returns empty rows). The Fake raises the same typed
+errors from the same conditions.
 """
 from __future__ import annotations
 
@@ -32,8 +30,11 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from app.stores._db_errors import StudioConflict, exec_query, exec_rpc
 from app.stores._util import utcnow, utcnow_iso
-from app.stores.errors import Conflict, NotFound
+from app.stores.errors import NotFound
+from app.studio.models import RUN_CASE_IDS_MAX, EvalGate, FakeEvalGate, GateRun
+from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 __all__ = [
     "CASE_SLUG_RE",
@@ -45,20 +46,19 @@ __all__ = [
     "EvalRunRecord",
     "EvalResultRecord",
     "EvalResultWithCase",
-    "VersionRef",
     "EvalStore",
     "FakeEvalStore",
     "SupabaseEvalStore",
     "get_eval_store",
     "SupabaseEvalGate",
     "get_eval_gate",
+    "normalize_case_ids",
 ]
 
 _SCHEMA = "agents"
 _CASES_TABLE = "eval_cases"
 _RUNS_TABLE = "eval_runs"
 _RESULTS_TABLE = "eval_results"
-_VERSIONS_TABLE = "agent_versions"
 
 #: Contract §B2 `eval_runs.status` CHECK.
 RUN_STATUSES = ("pendente", "executando", "concluida", "falhou", "cancelada")
@@ -84,6 +84,20 @@ def _validate_criterios(criterios: dict[str, Any]) -> None:
         raise ValueError("criterios.deve / criterios.nao_deve must be lists")
     if len(deve) + len(nao_deve) < 1:
         raise ValueError("criterios must contain at least one item across deve/nao_deve")
+
+
+def normalize_case_ids(case_ids: list[UUID] | None) -> list[UUID] | None:
+    """L6: dedupe (first occurrence wins, order kept) and cap an explicit
+    case list. ``None`` stays ``None`` — "every active case" (a COMPLETE run)."""
+    if case_ids is None:
+        return None
+    seen: dict[UUID, None] = {}
+    for cid in case_ids:
+        seen.setdefault(cid, None)
+    out = list(seen)
+    if len(out) > RUN_CASE_IDS_MAX:
+        raise ValueError(f"at most {RUN_CASE_IDS_MAX} distinct case_ids per run")
+    return out
 
 
 # ── dataclasses ──────────────────────────────────────────────────────────
@@ -136,6 +150,9 @@ class EvalRunRecord:
     erro: str | None
     created_at: datetime
     updated_at: datetime
+    #: H1: ``True`` only for a run over every active case at run time
+    #: (``case_ids`` omitted) — the only kind the publish gate accepts.
+    completa: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,15 +178,6 @@ class EvalResultWithCase:
     case_titulo: str
 
 
-@dataclass(frozen=True)
-class VersionRef:
-    id: UUID
-    org_id: UUID
-    agent_id: UUID
-    compiled_hash: str | None
-    status: str
-
-
 # ── EvalStore ────────────────────────────────────────────────────────────
 
 
@@ -180,7 +188,9 @@ class EvalStore(Protocol):
         """Raises :class:`NotFound` for an unknown/foreign case id."""
         ...
 
-    def create_case(self, org_id: UUID, agent_id: UUID, data: EvalCaseInput) -> EvalCaseRecord: ...
+    def create_case(self, org_id: UUID, agent_id: UUID, data: EvalCaseInput) -> EvalCaseRecord:
+        """Raises ``StudioConflict('slug_taken')`` for a duplicate slug."""
+        ...
 
     def update_case(
         self, org_id: UUID, agent_id: UUID, case_id: UUID, *,
@@ -189,22 +199,21 @@ class EvalStore(Protocol):
         tags: tuple[str, ...] | Any = _UNSET, ativo: bool | Any = _UNSET,
     ) -> EvalCaseRecord: ...
 
-    def delete_case(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> None: ...
-
-    def get_version_ref(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> VersionRef:
-        """Minimal read of `agents.agent_versions` — raises :class:`NotFound`
-        when the version doesn't exist for this (org, agent)."""
+    def delete_case(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> None:
+        """Raises ``StudioConflict('case_in_use')`` when any run has a
+        result for the case (FK) — deactivate it instead."""
         ...
 
     def create_run(
         self, org_id: UUID, agent_id: UUID, version_id: UUID, *, compiled_hash: str, limiar: float,
         case_ids: list[UUID] | None, started_by: UUID,
     ) -> EvalRunRecord:
-        """Resolves the case set (``case_ids`` if given, else every active
-        case for the agent), raises :class:`NotFound` if an explicit id
-        doesn't belong to the agent, raises :class:`ValueError` if the
-        resolved set is empty, raises :class:`Conflict` if a
-        pendente/executando run already exists for ``version_id``."""
+        """ONE transaction (``agents.create_eval_run``): resolves the case
+        set (``case_ids`` deduped+capped, else every active case →
+        ``completa=True``), inserts the run and its pending results. Raises
+        :class:`NotFound` for a foreign case id, :class:`ValueError` for an
+        empty set / too many ids, ``StudioConflict('run_in_progress')`` when
+        a pendente/executando run already exists for ``version_id``."""
         ...
 
     def list_runs(self, org_id: UUID, agent_id: UUID, version_id: UUID | None = None) -> list[EvalRunRecord]: ...
@@ -213,7 +222,10 @@ class EvalStore(Protocol):
         """Raises :class:`NotFound` for an unknown/foreign run id."""
         ...
 
-    def list_results_with_cases(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> list[EvalResultWithCase]: ...
+    def list_results_with_cases(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> list[EvalResultWithCase]:
+        """One embedded read; a result whose case is missing is a broken
+        invariant (FK) and raises — never a blank slug."""
+        ...
 
     def mark_run_failed(self, org_id: UUID, run_id: UUID, *, erro: str) -> EvalRunRecord:
         """Used when scheduling itself fails (contract §J2.2 fail-closed
@@ -222,35 +234,20 @@ class EvalStore(Protocol):
         ...
 
     def cancel_run(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> EvalRunRecord:
-        """Raises :class:`Conflict` if the run isn't currently
-        pendente/executando."""
+        """Raises ``StudioConflict('run_not_cancellable')`` if the run isn't
+        currently pendente/executando."""
         ...
 
 
 class FakeEvalStore:
-    """In-memory :class:`EvalStore`."""
+    """In-memory :class:`EvalStore` — raises the same typed errors the Real
+    store maps from the 013 constraints (unique slug, one active run per
+    version, results FK on cases)."""
 
     def __init__(self) -> None:
         self._cases: dict[UUID, dict[str, Any]] = {}
         self._runs: dict[UUID, dict[str, Any]] = {}
         self._results: dict[UUID, list[dict[str, Any]]] = {}
-        # Test seam — real versions live in BE-DEF's store; the Fake here
-        # lets router tests seed a version's compiled_hash directly.
-        self._versions: dict[UUID, dict[str, Any]] = {}
-
-    # -- test seam for the version lookup ------------------------------
-
-    def seed_version(self, org_id: UUID, agent_id: UUID, version_id: UUID, *, compiled_hash: str | None, status: str = "rascunho") -> None:
-        self._versions[version_id] = {
-            "id": version_id, "org_id": org_id, "agent_id": agent_id,
-            "compiled_hash": compiled_hash, "status": status,
-        }
-
-    def get_version_ref(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> VersionRef:
-        row = self._versions.get(version_id)
-        if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
-            raise NotFound(f"version {version_id} not found for agent {agent_id}")
-        return VersionRef(**row)
 
     # -- cases ------------------------------------------------------------
 
@@ -270,9 +267,10 @@ class FakeEvalStore:
     def create_case(self, org_id: UUID, agent_id: UUID, data: EvalCaseInput) -> EvalCaseRecord:
         _validate_slug(data.slug)
         _validate_criterios(data.criterios)
-        for row in self._own_cases(org_id, agent_id):
-            if row["slug"] == data.slug:
-                raise ValueError(f"slug {data.slug!r} already exists for this agent")
+        for row in self._cases.values():
+            if row["agent_id"] == agent_id and row["slug"] == data.slug:
+                # 013 UNIQUE (agent_id, slug)
+                raise StudioConflict("slug_taken", f"slug {data.slug!r} already exists for this agent")
         now = utcnow()
         row = {
             "id": uuid4(), "org_id": org_id, "agent_id": agent_id, "slug": data.slug, "titulo": data.titulo,
@@ -291,6 +289,8 @@ class FakeEvalStore:
         row = self._cases.get(case_id)
         if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
             raise NotFound(f"eval case {case_id} not found for agent {agent_id}")
+        if criterios is not _UNSET:
+            _validate_criterios(criterios)
         if titulo is not _UNSET:
             row["titulo"] = titulo
         if entrada is not _UNSET:
@@ -298,7 +298,6 @@ class FakeEvalStore:
         if contexto is not _UNSET:
             row["contexto"] = contexto
         if criterios is not _UNSET:
-            _validate_criterios(criterios)
             row["criterios"] = dict(criterios)
         if rubrica is not _UNSET:
             row["rubrica"] = rubrica
@@ -313,6 +312,9 @@ class FakeEvalStore:
         row = self._cases.get(case_id)
         if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
             raise NotFound(f"eval case {case_id} not found for agent {agent_id}")
+        if any(r["case_id"] == case_id for results in self._results.values() for r in results):
+            # 013 `eval_results.case_id` FK (no cascade).
+            raise StudioConflict("case_in_use", f"eval case {case_id} has results — deactivate it instead")
         del self._cases[case_id]
 
     # -- runs ---------------------------------------------------------
@@ -324,21 +326,25 @@ class FakeEvalStore:
         self, org_id: UUID, agent_id: UUID, version_id: UUID, *, compiled_hash: str, limiar: float,
         case_ids: list[UUID] | None, started_by: UUID,
     ) -> EvalRunRecord:
-        for row in self._own_runs(org_id, agent_id):
-            if row["version_id"] == version_id and row["status"] in ACTIVE_RUN_STATUSES:
-                raise Conflict(f"a run is already in progress for version {version_id}")
-
-        if case_ids is None:
-            resolved = [c["id"] for c in self._own_cases(org_id, agent_id) if c["ativo"]]
+        explicit = normalize_case_ids(case_ids)
+        if explicit is None:
+            resolved = [
+                c["id"] for c in sorted(self._own_cases(org_id, agent_id), key=lambda c: c["created_at"])
+                if c["ativo"]
+            ]
         else:
             resolved = []
-            for cid in case_ids:
+            for cid in explicit:
                 row = self._cases.get(cid)
                 if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
                     raise NotFound(f"eval case {cid} not found for agent {agent_id}")
                 resolved.append(cid)
         if not resolved:
             raise ValueError("no eval cases to run")
+        for row in self._runs.values():
+            if row["version_id"] == version_id and row["status"] in ACTIVE_RUN_STATUSES:
+                # 013 eval_runs_one_active_per_version_idx
+                raise StudioConflict("run_in_progress", f"a run is already in progress for version {version_id}")
 
         now = utcnow()
         row = {
@@ -346,6 +352,7 @@ class FakeEvalStore:
             "compiled_hash": compiled_hash, "status": "pendente", "total": len(resolved), "aprovados": 0,
             "score": None, "limiar": limiar, "started_by": started_by, "started_at": now,
             "finished_at": None, "erro": None, "created_at": now, "updated_at": now,
+            "completa": explicit is None,
         }
         self._runs[row["id"]] = row
         self._results[row["id"]] = [
@@ -376,10 +383,10 @@ class FakeEvalStore:
         out = []
         for row in self._results.get(run_id, []):
             case = self._cases.get(row["case_id"])
+            if case is None:
+                raise RuntimeError(f"eval result {row['id']} references missing case {row['case_id']}")
             out.append(EvalResultWithCase(
-                result=self._result_record(row),
-                case_slug=case["slug"] if case else "",
-                case_titulo=case["titulo"] if case else "",
+                result=self._result_record(row), case_slug=case["slug"], case_titulo=case["titulo"],
             ))
         return out
 
@@ -398,10 +405,19 @@ class FakeEvalStore:
         if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
             raise NotFound(f"eval run {run_id} not found for agent {agent_id}")
         if row["status"] not in ACTIVE_RUN_STATUSES:
-            raise Conflict(f"run {run_id} is not in a cancellable state ({row['status']})")
+            raise StudioConflict("run_not_cancellable", f"run {run_id} is not in a cancellable state ({row['status']})")
         row["status"] = "cancelada"
         row["finished_at"] = utcnow()
         row["updated_at"] = utcnow()
+        return self._run_record(row)
+
+    # -- test seam: the runner's writes (BE-RT owns the real runner) ------
+
+    def finish_run(self, run_id: UUID, *, score: float, aprovados: int | None = None) -> EvalRunRecord:
+        row = self._runs[run_id]
+        row.update(status="concluida", score=score, finished_at=utcnow(), updated_at=utcnow())
+        if aprovados is not None:
+            row["aprovados"] = aprovados
         return self._run_record(row)
 
     # -- record builders ------------------------------------------------
@@ -420,52 +436,37 @@ class FakeEvalStore:
 
 
 class SupabaseEvalStore:
-    """Real :class:`EvalStore` — Postgres via the admin client."""
+    """Real :class:`EvalStore` — Postgres via the admin client. Bare table
+    names (``KB § PATTERNS/backend/postgrest-schema-targeting.md``);
+    unbounded reads page through ``iter_paged_rows``."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def _cases(self):
-        return self._client.schema(_SCHEMA).table(_CASES_TABLE)
+    def _t(self, table: str):
+        return self._client.schema(_SCHEMA).table(table)
 
-    def _runs(self):
-        return self._client.schema(_SCHEMA).table(_RUNS_TABLE)
+    def _paged(self, build, *, label: str, order: tuple[tuple[str, bool], ...]) -> list[dict[str, Any]]:
+        def fetch(start: int, end: int):
+            q = build()
+            for col, desc in order:
+                q = q.order(col, desc=desc)
+            return q.order("id").range(start, end).execute().data
 
-    def _results(self):
-        return self._client.schema(_SCHEMA).table(_RESULTS_TABLE)
-
-    def _versions(self):
-        return self._client.schema(_SCHEMA).table(_VERSIONS_TABLE)
-
-    def get_version_ref(self, org_id: UUID, agent_id: UUID, version_id: UUID) -> VersionRef:
-        resp = (
-            self._versions().select("id, org_id, agent_id, compiled_hash, status")
-            .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(version_id))
-            .execute()
-        )
-        rows = resp.data or []
-        if not rows:
-            raise NotFound(f"version {version_id} not found for agent {agent_id}")
-        row = rows[0]
-        return VersionRef(
-            id=UUID(str(row["id"])), org_id=UUID(str(row["org_id"])), agent_id=UUID(str(row["agent_id"])),
-            compiled_hash=row.get("compiled_hash"), status=row["status"],
-        )
+        return list(iter_paged_rows(fetch, label=label))
 
     # -- cases ------------------------------------------------------------
 
     def list_cases(self, org_id: UUID, agent_id: UUID) -> list[EvalCaseRecord]:
-        resp = (
-            self._cases().select("*")
-            .eq("org_id", str(org_id)).eq("agent_id", str(agent_id))
-            .order("created_at")
-            .execute()
+        rows = self._paged(
+            lambda: self._t(_CASES_TABLE).select("*").eq("org_id", str(org_id)).eq("agent_id", str(agent_id)),
+            label=f"eval_cases agent_id={agent_id}", order=(("created_at", False),),
         )
-        return [self._case_record(r) for r in (resp.data or [])]
+        return [self._case_record(r) for r in rows]
 
     def get_case(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> EvalCaseRecord:
         resp = (
-            self._cases().select("*")
+            self._t(_CASES_TABLE).select("*")
             .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(case_id))
             .execute()
         )
@@ -482,10 +483,10 @@ class SupabaseEvalStore:
             "entrada": data.entrada, "contexto": data.contexto, "criterios": dict(data.criterios),
             "rubrica": data.rubrica, "tags": list(data.tags), "ativo": data.ativo,
         }
-        resp = self._cases().insert(payload).execute()
+        resp = exec_query(self._t(_CASES_TABLE).insert(payload), unique_code="slug_taken")
         rows = resp.data or []
         if not rows:
-            raise ValueError(f"slug {data.slug!r} already exists for this agent")
+            raise RuntimeError(f"insert of eval case {data.slug!r} returned no row")
         return self._case_record(rows[0])
 
     def update_case(
@@ -509,10 +510,9 @@ class SupabaseEvalStore:
             updates["tags"] = list(tags)
         if ativo is not _UNSET:
             updates["ativo"] = ativo
-        resp = (
-            self._cases().update(updates)
+        resp = exec_query(
+            self._t(_CASES_TABLE).update(updates)
             .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(case_id))
-            .execute()
         )
         rows = resp.data or []
         if not rows:
@@ -520,13 +520,12 @@ class SupabaseEvalStore:
         return self._case_record(rows[0])
 
     def delete_case(self, org_id: UUID, agent_id: UUID, case_id: UUID) -> None:
-        resp = (
-            self._cases().delete()
-            .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(case_id))
-            .execute()
+        resp = exec_query(
+            self._t(_CASES_TABLE).delete()
+            .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(case_id)),
+            fk_code="case_in_use",
         )
-        rows = resp.data or []
-        if not rows:
+        if not (resp.data or []):
             raise NotFound(f"eval case {case_id} not found for agent {agent_id}")
 
     # -- runs ---------------------------------------------------------
@@ -535,64 +534,33 @@ class SupabaseEvalStore:
         self, org_id: UUID, agent_id: UUID, version_id: UUID, *, compiled_hash: str, limiar: float,
         case_ids: list[UUID] | None, started_by: UUID,
     ) -> EvalRunRecord:
-        active = (
-            self._runs().select("id", count="exact")
-            .eq("org_id", str(org_id)).eq("version_id", str(version_id))
-            .in_("status", list(ACTIVE_RUN_STATUSES))
-            .execute()
-        )
-        if (active.count or 0) > 0:
-            raise Conflict(f"a run is already in progress for version {version_id}")
-
-        if case_ids is None:
-            resp = (
-                self._cases().select("id")
-                .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("ativo", True)
-                .execute()
-            )
-            resolved = [UUID(str(r["id"])) for r in (resp.data or [])]
-        else:
-            resolved = []
-            for cid in case_ids:
-                self.get_case(org_id, agent_id, cid)  # raises NotFound if foreign/missing
-                resolved.append(cid)
-        if not resolved:
-            raise ValueError("no eval cases to run")
-
-        now_iso = utcnow_iso()
-        run_payload = {
-            "org_id": str(org_id), "agent_id": str(agent_id), "version_id": str(version_id),
-            "compiled_hash": compiled_hash, "status": "pendente", "total": len(resolved), "aprovados": 0,
-            "score": None, "limiar": limiar, "started_by": str(started_by), "started_at": now_iso,
-        }
-        resp = self._runs().insert(run_payload).execute()
-        rows = resp.data or []
-        if not rows:
-            raise Conflict(f"a run is already in progress for version {version_id}")
-        run = self._run_record(rows[0])
-
-        results_payload = [
-            {
-                "org_id": str(org_id), "run_id": str(run.id), "case_id": str(cid), "status": "pendente",
-            }
-            for cid in resolved
-        ]
-        self._results().insert(results_payload).execute()
-        return run
+        explicit = normalize_case_ids(case_ids)
+        resp = exec_rpc(self._client, _SCHEMA, "create_eval_run", {
+            "p_org_id": str(org_id), "p_agent_id": str(agent_id), "p_version_id": str(version_id),
+            "p_compiled_hash": compiled_hash, "p_limiar": limiar,
+            "p_case_ids": [str(c) for c in explicit] if explicit is not None else None,
+            "p_started_by": str(started_by),
+        }, unique_code="run_in_progress")
+        run_id = resp.data
+        if isinstance(run_id, list):
+            run_id = run_id[0] if run_id else None
+        if isinstance(run_id, dict):
+            run_id = next(iter(run_id.values()), None)
+        if not run_id:
+            raise RuntimeError(f"create_eval_run returned no run id: {resp.data!r}")
+        return self.get_run(org_id, agent_id, UUID(str(run_id)))
 
     def list_runs(self, org_id: UUID, agent_id: UUID, version_id: UUID | None = None) -> list[EvalRunRecord]:
-        query = (
-            self._runs().select("*")
-            .eq("org_id", str(org_id)).eq("agent_id", str(agent_id))
-        )
-        if version_id is not None:
-            query = query.eq("version_id", str(version_id))
-        resp = query.order("created_at", desc=True).execute()
-        return [self._run_record(r) for r in (resp.data or [])]
+        def build():
+            q = self._t(_RUNS_TABLE).select("*").eq("org_id", str(org_id)).eq("agent_id", str(agent_id))
+            return q.eq("version_id", str(version_id)) if version_id is not None else q
+
+        rows = self._paged(build, label=f"eval_runs agent_id={agent_id}", order=(("created_at", True),))
+        return [self._run_record(r) for r in rows]
 
     def get_run(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> EvalRunRecord:
         resp = (
-            self._runs().select("*")
+            self._t(_RUNS_TABLE).select("*")
             .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(run_id))
             .execute()
         )
@@ -603,25 +571,27 @@ class SupabaseEvalStore:
 
     def list_results_with_cases(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> list[EvalResultWithCase]:
         self.get_run(org_id, agent_id, run_id)
-        resp = self._results().select("*").eq("org_id", str(org_id)).eq("run_id", str(run_id)).execute()
-        results = [self._result_record(r) for r in (resp.data or [])]
+        rows = self._paged(
+            lambda: self._t(_RESULTS_TABLE).select("*, eval_cases(slug, titulo)")
+            .eq("org_id", str(org_id)).eq("run_id", str(run_id)),
+            label=f"eval_results run_id={run_id}", order=(("created_at", False),),
+        )
         out: list[EvalResultWithCase] = []
-        for result in results:
-            try:
-                case = self.get_case(org_id, agent_id, result.case_id)
-                slug, titulo = case.slug, case.titulo
-            except NotFound:
-                slug, titulo = "", ""
-            out.append(EvalResultWithCase(result=result, case_slug=slug, case_titulo=titulo))
+        for row in rows:
+            case = row.get("eval_cases")
+            if not case:
+                raise RuntimeError(f"eval result {row.get('id')} came back without its case (FK broken?)")
+            out.append(EvalResultWithCase(
+                result=self._result_record(row), case_slug=case["slug"], case_titulo=case["titulo"],
+            ))
         return out
 
     def mark_run_failed(self, org_id: UUID, run_id: UUID, *, erro: str) -> EvalRunRecord:
-        resp = (
-            self._runs().update({
+        resp = exec_query(
+            self._t(_RUNS_TABLE).update({
                 "status": "falhou", "erro": erro, "finished_at": utcnow_iso(), "updated_at": utcnow_iso(),
             })
             .eq("org_id", str(org_id)).eq("id", str(run_id))
-            .execute()
         )
         rows = resp.data or []
         if not rows:
@@ -631,17 +601,18 @@ class SupabaseEvalStore:
     def cancel_run(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> EvalRunRecord:
         current = self.get_run(org_id, agent_id, run_id)
         if current.status not in ACTIVE_RUN_STATUSES:
-            raise Conflict(f"run {run_id} is not in a cancellable state ({current.status})")
-        resp = (
-            self._runs().update({
+            raise StudioConflict("run_not_cancellable", f"run {run_id} is not in a cancellable state ({current.status})")
+        resp = exec_query(
+            self._t(_RUNS_TABLE).update({
                 "status": "cancelada", "finished_at": utcnow_iso(), "updated_at": utcnow_iso(),
             })
             .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(run_id))
-            .execute()
+            .in_("status", list(ACTIVE_RUN_STATUSES))
         )
         rows = resp.data or []
         if not rows:
-            raise NotFound(f"eval run {run_id} not found for agent {agent_id}")
+            # Finished between the read and the write.
+            raise StudioConflict("run_not_cancellable", f"run {run_id} is no longer in a cancellable state")
         return self._run_record(rows[0])
 
     # -- record builders ------------------------------------------------
@@ -666,6 +637,7 @@ class SupabaseEvalStore:
             limiar=float(row["limiar"]), started_by=UUID(str(row["started_by"])),
             started_at=row.get("started_at"), finished_at=row.get("finished_at"), erro=row.get("erro"),
             created_at=row["created_at"], updated_at=row["updated_at"],
+            completa=bool(row.get("completa", False)),
         )
 
     @staticmethod
@@ -687,21 +659,22 @@ def get_eval_store(settings: Any) -> EvalStore:
     return SupabaseEvalStore(get_admin_client())
 
 
-# ── SupabaseEvalGate — the Real side of BE-DEF's `EvalGate` Protocol ─────
+# ── SupabaseEvalGate — the Real side of the `EvalGate` Protocol ──────────
 
 
 class SupabaseEvalGate:
-    """Contract §J2.1 Real implementation. See module docstring for the
-    lazy-import rationale."""
+    """Contract §J2.1 Real implementation: the newest ``concluida`` run of
+    the version that is ``completa`` (H1)."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def latest_concluded_run(self, org_id: UUID, version_id: UUID):
+    def latest_concluded_run(self, org_id: UUID, version_id: UUID) -> GateRun | None:
         resp = (
             self._client.schema(_SCHEMA).table(_RUNS_TABLE)
-            .select("id, score, limiar, compiled_hash, status")
-            .eq("org_id", str(org_id)).eq("version_id", str(version_id)).eq("status", "concluida")
+            .select("id, score, limiar, compiled_hash, status, completa, total")
+            .eq("org_id", str(org_id)).eq("version_id", str(version_id))
+            .eq("status", "concluida").eq("completa", True)
             .order("finished_at", desc=True)
             .limit(1)
             .execute()
@@ -710,24 +683,22 @@ class SupabaseEvalGate:
         if not rows:
             return None
         row = rows[0]
-        from app.studio.models import GateRun  # lazy — see module docstring
-
         return GateRun(
             id=UUID(str(row["id"])),
             score=float(row["score"]) if row.get("score") is not None else None,
             limiar=float(row["limiar"]),
             compiled_hash=row["compiled_hash"],
             status=row["status"],
+            completa=bool(row.get("completa", False)),
+            total=int(row.get("total") or 0),
         )
 
 
-def get_eval_gate(settings: Any) -> SupabaseEvalGate | None:
-    """``None`` when no Supabase service-role key is configured — callers
-    (BE-RT's production dependency binding) fall back to BE-DEF's
-    ``FakeEvalGate`` in that case, mirroring every other Real/Fake factory
-    in this product."""
+def get_eval_gate(settings: Any) -> EvalGate:
+    """Real when a Supabase service-role key is configured, the in-memory
+    ``FakeEvalGate`` otherwise — same signal as every other factory here."""
     if not getattr(settings, "supabase_service_role_key", None):
-        return None
+        return FakeEvalGate()
     from app.database import get_admin_client
 
     return SupabaseEvalGate(get_admin_client())

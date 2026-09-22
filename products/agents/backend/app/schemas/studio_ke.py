@@ -21,7 +21,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.studio.models import LIMITS, RUN_CASE_IDS_MAX
 from noctusai_lib.api import StrictHttpModel
+
+#: M3 — collection metadata is compiled into EVERY prompt of the agent (a
+#: live, ungated prompt input), so it carries the tightest caps.
+_COL_NOME = LIMITS["collection.nome"]
+_COL_TAG = LIMITS["collection.tag"]
+_COL_DESCRICAO = LIMITS["collection.descricao"]
+_DOC_CONTEUDO = LIMITS["document.conteudo"]
 
 # ── Knowledge — collections (§D3) ───────────────────────────────────────
 
@@ -42,16 +50,16 @@ class CollectionListOut(BaseModel):
 
 class CollectionCreateRequest(StrictHttpModel):
     slug: str = Field(..., min_length=1)
-    nome: str = Field(..., min_length=1)
-    tag: str | None = None
-    descricao: str = ""
+    nome: str = Field(..., min_length=1, max_length=_COL_NOME)
+    tag: str | None = Field(default=None, max_length=_COL_TAG)
+    descricao: str = Field(default="", max_length=_COL_DESCRICAO)
     ordem: int = 0
 
 
 class CollectionUpdateRequest(StrictHttpModel):
-    nome: str | None = None
-    tag: str | None = None
-    descricao: str | None = None
+    nome: str | None = Field(default=None, max_length=_COL_NOME)
+    tag: str | None = Field(default=None, max_length=_COL_TAG)
+    descricao: str | None = Field(default=None, max_length=_COL_DESCRICAO)
     ordem: int | None = None
 
 
@@ -92,7 +100,7 @@ class DocumentCreateRequest(StrictHttpModel):
     slug: str = Field(..., min_length=1)
     titulo: str = Field(..., min_length=1)
     tipo: str
-    conteudo: str = Field(..., min_length=1)
+    conteudo: str = Field(..., min_length=1, max_length=_DOC_CONTEUDO)
     resumo: str | None = None
     proveniencia: dict[str, Any] | None = None
 
@@ -101,7 +109,7 @@ class DocumentUpdateRequest(StrictHttpModel):
     titulo: str | None = None
     tipo: str | None = None
     resumo: str | None = None
-    conteudo: str | None = None
+    conteudo: str | None = Field(default=None, max_length=_DOC_CONTEUDO)
     proveniencia: dict[str, Any] | None = None
     ativo: bool | None = None
     motivo: str | None = None
@@ -148,13 +156,27 @@ class CriteriosModel(StrictHttpModel):
         return self
 
 
+class CriteriosOut(BaseModel):
+    deve: list[str] = Field(default_factory=list)
+    nao_deve: list[str] = Field(default_factory=list)
+
+
+class VereditoOut(BaseModel):
+    """One judged criterion of a result (contract §B2 ``veredito``)."""
+
+    criterio: str
+    tipo: str  # "deve" | "nao_deve"
+    ok: bool
+    motivo: str
+
+
 class EvalCaseOut(BaseModel):
     id: UUID
     slug: str
     titulo: str
     entrada: str
     contexto: str | None
-    criterios: dict[str, list[str]]
+    criterios: CriteriosOut
     rubrica: str | None
     tags: list[str]
     ativo: bool
@@ -200,6 +222,9 @@ class EvalRunOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     erro: str | None
+    #: Additive (H1): ``True`` only for a run over every active case — the
+    #: only kind the publish gate accepts. Subset runs are for iteration.
+    completa: bool = False
 
 
 class EvalRunListOut(BaseModel):
@@ -208,7 +233,9 @@ class EvalRunListOut(BaseModel):
 
 class EvalRunCreateRequest(StrictHttpModel):
     version_id: UUID
-    case_ids: list[UUID] | None = None
+    #: Omitted ⇒ every active case (a COMPLETE run). A list is deduped and
+    #: capped (L6) — and never satisfies the publish gate (H1).
+    case_ids: list[UUID] | None = Field(default=None, max_length=RUN_CASE_IDS_MAX)
 
 
 class EvalResultOut(BaseModel):
@@ -218,7 +245,7 @@ class EvalResultOut(BaseModel):
     status: str
     score: float | None
     saida: str | None
-    veredito: Any | None
+    veredito: list[VereditoOut] | None
     notas_juiz: str | None
     duracao_ms: int | None
 
@@ -242,6 +269,8 @@ __all__ = [
     "SearchItemOut",
     "SearchOut",
     "CriteriosModel",
+    "CriteriosOut",
+    "VereditoOut",
     "EvalCaseOut",
     "EvalCaseListOut",
     "EvalCaseCreateRequest",

@@ -39,6 +39,22 @@ def agent(store):
     return store.create_studio_agent(ORG, "isa", "Isa", "descr")
 
 
+def _stamp(store, vid, h=None):
+    """What the router does after every draft write: stamp the hash."""
+    h = h or "sha256:" + uuid4().hex + uuid4().hex
+    store.set_compiled_hash(ORG, vid, h)
+    return h
+
+
+def _publish(store, vid, run_id=None, reason=None):
+    h = _stamp(store, vid)
+    if run_id is not None:
+        store.register_eval_run(ORG, vid, run_id=run_id, score=0.9, compiled_hash=h)
+    return store.publish_version(
+        ORG, vid, USER, run_id, reason, expected_hash=h, texto="T", manifest=[],
+    )
+
+
 def _fill(store, draft_id):
     store.replace_sections(ORG, draft_id, [
         SectionInput(chave="identidade", titulo="Identidade", ordem=10, conteudo="x"),
@@ -94,7 +110,7 @@ class TestDrafts:
         v1 = store.create_draft(ORG, agent.id, None, USER)
         store.update_draft(ORG, v1.id, {"model": "claude-sonnet-5", "max_turns": 12})
         sk = _fill(store, v1.id)
-        store.publish_version(ORG, v1.id, USER, None, "motivo suficientemente longo")
+        _publish(store, v1.id, reason="motivo suficientemente longo")
 
         v2 = store.create_draft(ORG, agent.id, v1.id, USER)
         assert v2.versao == 2 and v2.based_on_version_id == v1.id
@@ -166,11 +182,11 @@ class TestPublishAndImmutability:
     def test_publish_flips_previous_active(self, store, agent):
         v1 = store.create_draft(ORG, agent.id, None, USER)
         run_id = uuid4()
-        p1 = store.publish_version(ORG, v1.id, USER, run_id, None)
+        p1 = _publish(store, v1.id, run_id=run_id)
         assert (p1.status, p1.published_by, p1.eval_run_id) == ("ativa", USER, run_id)
         assert p1.published_at is not None
         v2 = store.create_draft(ORG, agent.id, v1.id, USER)
-        store.publish_version(ORG, v2.id, USER, None, "override reason with twenty+ chars")
+        _publish(store, v2.id, reason="override reason with twenty+ chars")
         assert store.get_version(ORG, v1.id).status == "substituida"
         assert store.get_active_version(ORG, agent.id).id == v2.id
         assert store.get_draft(ORG, agent.id) is None
@@ -180,7 +196,7 @@ class TestPublishAndImmutability:
         v1 = store.create_draft(ORG, agent.id, None, USER)
         sk = _fill(store, v1.id)
         f = store.list_version_skill_files(ORG, v1.id)[0]
-        store.publish_version(ORG, v1.id, USER, None, "x" * 20)
+        _publish(store, v1.id, reason="x" * 20)
         attempts = [
             lambda: store.update_draft(ORG, v1.id, {"notas": "n"}),
             lambda: store.set_compiled_hash(ORG, v1.id, "sha256:" + "0" * 64),
@@ -190,7 +206,9 @@ class TestPublishAndImmutability:
             lambda: store.delete_skill(ORG, sk.id),
             lambda: store.upsert_skill_file(ORG, sk.id, caminho="b.md", titulo=None, conteudo="b"),
             lambda: store.delete_skill_file(ORG, f.id),
-            lambda: store.publish_version(ORG, v1.id, USER, None, None),
+            lambda: store.publish_version(
+                ORG, v1.id, USER, None, "x" * 20, expected_hash="sha256:" + "0" * 64, texto="T", manifest=[],
+            ),
             lambda: store.discard_draft(ORG, v1.id),
         ]
         for attempt in attempts:
@@ -210,7 +228,7 @@ class TestPublishAndImmutability:
 
     def test_versions_newest_first(self, store, agent):
         v1 = store.create_draft(ORG, agent.id, None, USER)
-        store.publish_version(ORG, v1.id, USER, None, "x" * 20)
+        _publish(store, v1.id, reason="x" * 20)
         store.create_draft(ORG, agent.id, v1.id, USER)
         assert [v.versao for v in store.list_versions(ORG, agent.id)] == [2, 1]
 
@@ -356,15 +374,19 @@ class TestSupabaseStore:
 
     def test_publish_and_discard_params(self):
         vid, run = uuid4(), uuid4()
+        h = "sha256:" + "c" * 64
         client = _RecordingClient([None, [_version_row(vid, "ativa")], None])
         store = SupabaseStudioDefinitionStore(client)
-        store.publish_version(ORG, vid, USER, run, None)
-        store.discard_draft(ORG, vid)
+        store.publish_version(ORG, vid, USER, run, None, expected_hash=h, texto="T", manifest=[{"chave": "a"}])
+        store.discard_draft(ORG, vid, actor=USER)
         assert client.executed[0][1] == ("publish_agent_version", {
             "p_org_id": str(ORG), "p_version_id": str(vid), "p_published_by": str(USER),
-            "p_eval_run_id": str(run), "p_override_reason": None,
+            "p_eval_run_id": str(run), "p_override_reason": None, "p_expected_hash": h,
+            "p_texto": "T", "p_manifest": [{"chave": "a"}],
         })
-        assert client.executed[2][1] == ("discard_agent_draft", {"p_org_id": str(ORG), "p_version_id": str(vid)})
+        assert client.executed[2][1] == (
+            "discard_agent_draft", {"p_org_id": str(ORG), "p_version_id": str(vid), "p_actor": str(USER)},
+        )
 
     @pytest.mark.parametrize(
         "error, expected, code",

@@ -10,7 +10,7 @@ from app.routers.studio_evals_router import (
     get_eval_scheduler_dep,
 )
 from app.stores.studio_evals import EvalCaseInput
-from tests.studio.ke.conftest import DEFAULT_ORG_ID, seed_org_role, seed_studio_agent
+from tests.studio.ke.conftest import DEFAULT_ORG_ID, seed_draft, seed_org_role, seed_studio_agent
 
 CASE_PAYLOAD = {
     "slug": "roteiro-basico",
@@ -85,10 +85,9 @@ class TestCasesCrud:
 
 
 class TestCreateRun:
-    def _seed_agent_case_version(self, ke_client, *, compiled_hash="sha256:abc123"):
+    def _seed_agent_case_version(self, ke_client):
         agent = seed_studio_agent(ke_client)
-        version_id = uuid4()
-        ke_client.stores.evals.seed_version(DEFAULT_ORG_ID, agent.id, version_id, compiled_hash=compiled_hash)
+        version_id = seed_draft(ke_client, agent).id
         ke_client.stores.evals.create_case(
             DEFAULT_ORG_ID, agent.id,
             EvalCaseInput(
@@ -113,14 +112,22 @@ class TestCreateRun:
         assert runs[0]["status"] == "falhou"
         assert runs[0]["erro"] == "eval_runner_unavailable"
 
-    def test_null_compiled_hash_409s_compile_required(self, ke_client):
+    def test_run_is_stamped_with_the_hash_compiled_now_not_the_stored_one(self, ke_client):
+        """Compliance review #3: the stored ``compiled_hash`` can be stale
+        (knowledge doc counts live in the compiled text); the run carries
+        what ``get_current_hash_dep`` computes at creation."""
         seed_org_role(ke_client, role="owner")
-        agent, version_id = self._seed_agent_case_version(ke_client, compiled_hash=None)
-        resp = ke_client.post(
-            "/api/studio/agents/isaia/evals/runs", json={"version_id": str(version_id)},
-        )
-        assert resp.status_code == 409
-        assert resp.json()["code"] == "compile_required"
+        agent, version_id = self._seed_agent_case_version(ke_client)
+        ke_client.stores.defs.set_compiled_hash(DEFAULT_ORG_ID, version_id, "sha256:" + "a" * 64)  # stale
+        ke_client.stores.hashes[version_id] = "sha256:" + "b" * 64  # what compiles now
+        app = ke_client.raw().app
+        app.dependency_overrides[get_eval_scheduler_dep] = lambda: (lambda run_id: None)
+        try:
+            resp = ke_client.post("/api/studio/agents/isaia/evals/runs", json={"version_id": str(version_id)})
+        finally:
+            app.dependency_overrides.pop(get_eval_scheduler_dep, None)
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["compiled_hash"] == "sha256:" + "b" * 64
 
     def test_unknown_version_404s(self, ke_client):
         seed_org_role(ke_client, role="owner")
@@ -155,8 +162,7 @@ class TestCreateRun:
 class TestGetAndCancelRun:
     def _create_run_with_available_scheduler(self, ke_client):
         agent = seed_studio_agent(ke_client)
-        version_id = uuid4()
-        ke_client.stores.evals.seed_version(DEFAULT_ORG_ID, agent.id, version_id, compiled_hash="sha256:abc123")
+        version_id = seed_draft(ke_client, agent).id
         ke_client.stores.evals.create_case(
             DEFAULT_ORG_ID, agent.id,
             EvalCaseInput(slug="case-1", titulo="Caso 1", entrada="entrada", criterios={"deve": ["x"], "nao_deve": []}),

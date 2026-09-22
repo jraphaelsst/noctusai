@@ -14,6 +14,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.studio.models import LIMITS, OVERRIDE_REASON_MIN_CHARS, PUBLICACAO_LIMIAR_MIN, override_reason_ok
 from noctusai_lib.api import StrictHttpModel
 
 #: 012 slug CHECK (agent key, section chave, skill nome, client slug).
@@ -40,7 +41,8 @@ class StudioAgentUpdateRequest(StrictHttpModel):
     nome: str | None = Field(default=None, min_length=1)
     descricao: str | None = None
     ativo: bool | None = None
-    publicacao_limiar: float | None = Field(default=None, ge=0, le=1)
+    #: H2 floor — the DB CHECK ``agents_publicacao_limiar_floor`` mirrors it.
+    publicacao_limiar: float | None = Field(default=None, ge=PUBLICACAO_LIMIAR_MIN, le=1)
 
 
 class AgentSummaryOut(BaseModel):
@@ -122,6 +124,10 @@ class VersionDetailOut(VersionSummaryOut):
     eval_run_id: UUID | None
     secoes: list[SectionOut]
     skills: list[SkillOut]
+    #: Additive (H2): the threshold in force when the version was published
+    #: (``None`` on a draft). ``eval_score`` on a published version is the
+    #: gating run's score snapshotted at publish (``None`` for an override).
+    limiar_aplicado: float | None = None
 
 
 class DraftCreateRequest(StrictHttpModel):
@@ -147,7 +153,7 @@ class SectionIn(StrictHttpModel):
     chave: str = Field(..., min_length=1, pattern=SLUG_PATTERN)
     titulo: str = Field(..., min_length=1)
     ordem: int
-    conteudo: str
+    conteudo: str = Field(..., max_length=LIMITS["section.conteudo"])
     ativo: bool
 
 
@@ -158,7 +164,7 @@ class SectionsReplaceRequest(StrictHttpModel):
 class SkillCreateRequest(StrictHttpModel):
     nome: str = Field(..., min_length=1, max_length=64, pattern=SLUG_PATTERN)
     descricao: str = Field(..., min_length=1, max_length=1024)
-    corpo: str
+    corpo: str = Field(..., max_length=LIMITS["skill.corpo"])
     ordem: int = 0
     ativo: bool = True
 
@@ -166,7 +172,7 @@ class SkillCreateRequest(StrictHttpModel):
 class SkillUpdateRequest(StrictHttpModel):
     nome: str | None = Field(default=None, min_length=1, max_length=64, pattern=SLUG_PATTERN)
     descricao: str | None = Field(default=None, min_length=1, max_length=1024)
-    corpo: str | None = None
+    corpo: str | None = Field(default=None, max_length=LIMITS["skill.corpo"])
     ordem: int | None = None
     ativo: bool | None = None
 
@@ -174,7 +180,7 @@ class SkillUpdateRequest(StrictHttpModel):
 class SkillFileUpsertRequest(StrictHttpModel):
     caminho: str = Field(..., min_length=1, max_length=255, pattern=CAMINHO_PATTERN)
     titulo: str | None = None
-    conteudo: str
+    conteudo: str = Field(..., max_length=LIMITS["skill_file.conteudo"])
 
     @field_validator("caminho")
     @classmethod
@@ -187,8 +193,22 @@ class SkillFileUpsertRequest(StrictHttpModel):
 
 class PublishRequest(StrictHttpModel):
     notas: str | None = None
-    #: §H4: the gate cannot be bypassed without a reason ≥ 20 chars.
-    override_reason: str | None = Field(default=None, min_length=20)
+    #: §H4 / L1: the gate cannot be bypassed without a reason of at least
+    #: 20 NON-whitespace characters. Stored stripped; the DB CHECK
+    #: ``agent_versions_override_reason_len`` is the backstop.
+    override_reason: str | None = None
+
+    @field_validator("override_reason")
+    @classmethod
+    def _real_reason(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not override_reason_ok(v):
+            raise ValueError(
+                f"override_reason needs at least {OVERRIDE_REASON_MIN_CHARS} non-whitespace characters"
+            )
+        return v
 
 
 # ── compile / diff / prompts ────────────────────────────────────────────────
@@ -288,26 +308,27 @@ class ClientListOut(BaseModel):
 class ClientCreateRequest(StrictHttpModel):
     slug: str = Field(..., min_length=1, max_length=64, pattern=SLUG_PATTERN)
     nome: str = Field(..., min_length=1)
-    resumo: str = ""
+    #: M3: the client brain is a live, ungated prompt input — capped.
+    resumo: str = Field(default="", max_length=LIMITS["client.resumo"])
     ativo: bool = True
 
 
 class ClientUpdateRequest(StrictHttpModel):
     slug: str | None = Field(default=None, min_length=1, max_length=64, pattern=SLUG_PATTERN)
     nome: str | None = Field(default=None, min_length=1)
-    resumo: str | None = None
+    resumo: str | None = Field(default=None, max_length=LIMITS["client.resumo"])
     ativo: bool | None = None
 
 
 class ClientEntryCreateRequest(StrictHttpModel):
     tipo: EntryTipo
-    titulo: str = Field(..., min_length=1)
-    conteudo: str = ""
+    titulo: str = Field(..., min_length=1, max_length=LIMITS["entry.titulo"])
+    conteudo: str = Field(default="", max_length=LIMITS["entry.conteudo"])
     status: EntryStatus = "ativo"
 
 
 class ClientEntryUpdateRequest(StrictHttpModel):
     tipo: EntryTipo | None = None
-    titulo: str | None = Field(default=None, min_length=1)
-    conteudo: str | None = None
+    titulo: str | None = Field(default=None, min_length=1, max_length=LIMITS["entry.titulo"])
+    conteudo: str | None = Field(default=None, max_length=LIMITS["entry.conteudo"])
     status: EntryStatus | None = None

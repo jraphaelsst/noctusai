@@ -38,7 +38,60 @@ __all__ = [
     "FakeEvalGate",
     "KnowledgeCatalog",
     "FakeKnowledgeCatalog",
+    "LIMITS",
+    "OVERRIDE_REASON_MIN_CHARS",
+    "PUBLICACAO_LIMIAR_MIN",
+    "SEARCH_QUERY_MAX",
+    "LIST_QUERY_MAX",
+    "RUN_CASE_IDS_MAX",
+    "override_reason_ok",
 ]
+
+
+# ── Size caps (wave-1 security review M3) ───────────────────────────────────
+#
+# ONE source for the three layers that enforce them: the HTTP schemas
+# (``app/schemas/studio*.py`` — 422 at the boundary), the stores (Fake AND
+# Real validate before writing — the importer reaches the stores without
+# the HTTP schemas), and the ``CHECK (length(...) <= N)`` constraints of
+# migrations 012/013 (the backstop). Collection metadata and the client
+# brain are LIVE prompt inputs (compiled into every turn, never frozen by a
+# published version, never behind the eval gate) — so they are capped
+# tightest.
+
+LIMITS: dict[str, int] = {
+    "collection.nome": 120,
+    "collection.tag": 12,
+    "collection.descricao": 600,
+    "client.resumo": 8_000,
+    "entry.titulo": 200,
+    "entry.conteudo": 4_000,
+    "client.active_entries": 200,
+    "section.conteudo": 40_000,
+    "skill.corpo": 60_000,
+    "skill_file.conteudo": 120_000,
+    "document.conteudo": 2_000_000,
+}
+
+#: L1 — an override reason needs this many NON-whitespace characters.
+OVERRIDE_REASON_MIN_CHARS = 20
+#: H2 — DB CHECK floor on ``agents.publicacao_limiar`` (a threshold of 0.1
+#: would make the gate decorative).
+PUBLICACAO_LIMIAR_MIN = 0.5
+#: L5 — ``q`` cap of the ranked knowledge search (router + SQL function).
+SEARCH_QUERY_MAX = 512
+#: L4 — ``q`` cap of the document list filter (router + SQL function).
+LIST_QUERY_MAX = 200
+#: L6 — an explicit eval-run case list is deduped and capped at this size.
+RUN_CASE_IDS_MAX = 200
+
+
+def override_reason_ok(reason: str | None) -> bool:
+    """``True`` iff ``reason`` carries at least
+    :data:`OVERRIDE_REASON_MIN_CHARS` non-whitespace characters (L1)."""
+    if reason is None:
+        return False
+    return sum(1 for ch in reason if not ch.isspace()) >= OVERRIDE_REASON_MIN_CHARS
 
 
 # ── Compiler input ──────────────────────────────────────────────────────────
@@ -223,10 +276,19 @@ class GateRun:
     limiar: float
     compiled_hash: str
     status: str
+    #: Additive (H1): ``True`` only for a run over EVERY active case at run
+    #: time (``case_ids`` omitted). A subset run never satisfies the gate.
+    #: Defaults to ``False`` — fail closed for any constructor that predates it.
+    completa: bool = False
+    #: Additive (H1): number of cases the run covered; the gate needs >= 1.
+    total: int = 0
 
 
 class EvalGate(Protocol):
-    def latest_concluded_run(self, org_id: UUID, version_id: UUID) -> GateRun | None: ...
+    def latest_concluded_run(self, org_id: UUID, version_id: UUID) -> GateRun | None:
+        """The newest ``concluida`` run of the version that is ``completa``
+        (H1 — a later subset run must never hide the complete one)."""
+        ...
 
 
 class FakeEvalGate:

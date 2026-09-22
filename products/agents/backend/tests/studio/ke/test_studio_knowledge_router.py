@@ -72,12 +72,13 @@ class TestCollectionsCrud:
         assert updated.json()["nome"] == "Audiência"
         assert updated.json()["tag"] == "AU"  # untouched field survives
 
-    def test_duplicate_slug_422s(self, ke_client):
+    def test_duplicate_slug_409s(self, ke_client):
         seed_org_role(ke_client, role="owner")
         seed_studio_agent(ke_client)
         ke_client.post("/api/studio/agents/isaia/knowledge", json={"slug": "audience", "nome": "Audience"})
         resp = ke_client.post("/api/studio/agents/isaia/knowledge", json={"slug": "audience", "nome": "Dup"})
-        assert resp.status_code == 422, resp.text
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["code"] == "slug_taken"
 
     def test_unknown_field_rejected_422(self, ke_client):
         seed_org_role(ke_client, role="owner")

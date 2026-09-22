@@ -23,6 +23,16 @@ by the DB triggers; the Real store maps their ``version_immutable`` raise to
 :class:`VersionImmutable`, and the Fake raises the same error from the same
 conditions so router tests exercise the real contract.
 
+Hardening (wave-1 security review): every content write of a draft NULLs
+its ``compiled_hash`` (the DB triggers; the Fake mirrors it), the routers
+re-stamp it with a compare-and-set on ``updated_at``
+(:meth:`StudioDefinitionStore.set_compiled_hash`), and ``publish_version``
+refuses ``draft_changed`` unless the caller's gate-checked hash is still the
+row's. Publish re-validates the eval gate in the DB, snapshots
+``limiar_aplicado``/``eval_score`` and appends to ``agent_audit_log`` (so do
+threshold changes and draft discards). Size caps (``app.studio.models.LIMITS``)
+are validated here for Fake AND Real before any write.
+
 Unbounded reads page through ``iter_paged_rows`` (PostgREST caps every
 response at 1000 rows silently — ``KB § PATTERNS/backend/postgrest-row-cap.md``).
 Cross-parent reads (a version's skill files, a client list's entry counts)
@@ -38,8 +48,10 @@ from decimal import Decimal
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from app.stores._db_errors import StudioConflict, VersionImmutable, exec_query, exec_rpc
 from app.stores._util import utcnow
-from app.stores.errors import Conflict, NotFound
+from app.stores.errors import NotFound
+from app.studio.models import LIMITS, PUBLICACAO_LIMIAR_MIN, override_reason_ok
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 logger = logging.getLogger(__name__)
@@ -61,6 +73,11 @@ __all__ = [
     "ClientRecord",
     "ClientEntryRecord",
     "CompiledPromptRecord",
+    "AuditRecord",
+    "SkillBundleInput",
+    "SkillFileInput",
+    "DraftBundleResult",
+    "AUDIT_ACOES",
     "StudioDefinitionStore",
     "FakeStudioDefinitionStore",
     "SupabaseStudioDefinitionStore",
@@ -89,6 +106,11 @@ DRAFT_DEFAULTS = {
 
 _AGENT_FIELDS = ("nome", "descricao", "ativo", "publicacao_limiar")
 _DRAFT_FIELDS = ("notas", "model", "effort", "max_turns", "idioma", "tool_policy")
+#: The version-row settings that feed the compile — changing one invalidates
+#: a draft's ``compiled_hash`` (012 ``guard_agent_version_immutable``).
+_COMPILED_SETTINGS = ("model", "effort", "max_turns", "idioma", "tool_policy")
+#: 012 ``agent_audit_log.acao`` CHECK.
+AUDIT_ACOES = ("limiar_alterado", "publicado", "publicado_override", "rascunho_descartado")
 _SKILL_FIELDS = ("nome", "descricao", "corpo", "ordem", "ativo")
 _CLIENT_FIELDS = ("slug", "nome", "resumo", "ativo")
 _ENTRY_FIELDS = ("tipo", "titulo", "conteudo", "status")
@@ -97,21 +119,8 @@ _ENTRY_FIELDS = ("tipo", "titulo", "conteudo", "status")
 # ── errors ──────────────────────────────────────────────────────────────────
 
 
-class StudioConflict(Conflict):
-    """A write refused for a machine-readable reason (``code`` = the §D 409
-    code: ``key_taken`` / ``draft_exists`` / ``skill_exists`` /
-    ``client_exists`` / ``chave_conflict`` / ``draft_referenced``)."""
-
-    def __init__(self, code: str, message: str = "") -> None:
-        super().__init__(message or code)
-        self.code = code
-
-
-class VersionImmutable(StudioConflict):
-    """The target version (or a child of it) is not a ``rascunho``."""
-
-    def __init__(self, message: str = "") -> None:
-        super().__init__("version_immutable", message or "version_immutable")
+# ``StudioConflict`` / ``VersionImmutable`` live in ``app.stores._db_errors``
+# (shared by the three studio stores) and are re-exported here.
 
 
 # ── records ─────────────────────────────────────────────────────────────────
@@ -154,6 +163,9 @@ class VersionRecord:
     publish_override_reason: str | None
     created_at: datetime
     updated_at: datetime
+    #: H2 snapshots, set by ``publish_agent_version`` (NULL on a draft).
+    limiar_aplicado: float | None = None
+    eval_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -246,7 +258,122 @@ class CompiledPromptRecord:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class AuditRecord:
+    id: UUID
+    org_id: UUID
+    agent_id: UUID
+    actor: UUID | None
+    acao: str
+    antes: dict[str, Any] | None
+    depois: dict[str, Any] | None
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class SkillFileInput:
+    caminho: str
+    titulo: str | None = None
+    conteudo: str = ""
+
+
+@dataclass(frozen=True)
+class SkillBundleInput:
+    """One skill of :meth:`StudioDefinitionStore.replace_draft_bundle`."""
+
+    nome: str
+    descricao: str
+    corpo: str = ""
+    ordem: int = 0
+    ativo: bool = True
+    arquivos: tuple[SkillFileInput, ...] = ()
+
+
+@dataclass(frozen=True)
+class DraftBundleResult:
+    secoes: int
+    skills: int
+    arquivos: int
+
+
 # ── validation shared by Fake + Real (mirrors the 012 CHECKs) ──────────────
+
+
+def _check_cap(value: str | None, key: str, what: str) -> None:
+    """M3 size caps — the same numbers as the 012/013 CHECKs."""
+    limit = LIMITS[key]
+    if value is not None and len(value) > limit:
+        raise ValueError(f"{what} exceeds {limit} characters ({len(value)})")
+
+
+def _validate_agent_fields(fields: dict[str, Any]) -> None:
+    _check_fields(fields, _AGENT_FIELDS, "agent")
+    if "publicacao_limiar" in fields:
+        limiar = float(fields["publicacao_limiar"])
+        if not (PUBLICACAO_LIMIAR_MIN <= limiar <= 1):
+            raise ValueError(f"publicacao_limiar must be between {PUBLICACAO_LIMIAR_MIN} and 1")
+
+
+def _validate_section(s: "SectionInput") -> None:
+    _check_cap(s.conteudo, "section.conteudo", "section conteudo")
+
+
+def _validate_skill_fields(fields: dict[str, Any]) -> None:
+    _check_cap(fields.get("corpo"), "skill.corpo", "skill corpo")
+
+
+def _validate_client_fields(fields: dict[str, Any]) -> None:
+    _check_cap(fields.get("resumo"), "client.resumo", "client resumo")
+
+
+def _validate_entry_caps(fields: dict[str, Any]) -> None:
+    _check_cap(fields.get("titulo"), "entry.titulo", "entry titulo")
+    _check_cap(fields.get("conteudo"), "entry.conteudo", "entry conteudo")
+
+
+def _as_section_input(item: Any) -> "SectionInput":
+    if isinstance(item, SectionInput):
+        return item
+    d = dict(item)
+    return SectionInput(
+        chave=d["chave"], titulo=d["titulo"], ordem=int(d.get("ordem", 0)),
+        conteudo=d.get("conteudo") or "", ativo=bool(d.get("ativo", True)),
+    )
+
+
+def _as_skill_input(item: Any) -> SkillBundleInput:
+    if isinstance(item, SkillBundleInput):
+        return item
+    d = dict(item)
+    arquivos = tuple(
+        f if isinstance(f, SkillFileInput)
+        else SkillFileInput(caminho=dict(f)["caminho"], titulo=dict(f).get("titulo"), conteudo=dict(f).get("conteudo") or "")
+        for f in (d.get("arquivos") or ())
+    )
+    return SkillBundleInput(
+        nome=d["nome"], descricao=d["descricao"], corpo=d.get("corpo") or "",
+        ordem=int(d.get("ordem", 0)), ativo=bool(d.get("ativo", True)), arquivos=arquivos,
+    )
+
+
+def _validate_bundle(secoes: list["SectionInput"], skills: list[SkillBundleInput]) -> None:
+    """The whole bundle is checked BEFORE any write (Fake and Real alike),
+    so a bad element never half-applies a replace."""
+    chaves = [s.chave for s in secoes]
+    if len(set(chaves)) != len(chaves):
+        raise StudioConflict("chave_conflict", "duplicate chave in payload")
+    nomes = [sk.nome for sk in skills]
+    if len(set(nomes)) != len(nomes):
+        raise StudioConflict("skill_exists", "duplicate skill nome in payload")
+    for s in secoes:
+        _validate_section(s)
+    for sk in skills:
+        _validate_skill_fields({"corpo": sk.corpo})
+        caminhos = [f.caminho for f in sk.arquivos]
+        if len(set(caminhos)) != len(caminhos):
+            raise StudioConflict("caminho_conflict", f"duplicate caminho in skill {sk.nome!r}")
+        for f in sk.arquivos:
+            _check_cap(f.conteudo, "skill_file.conteudo", "skill file conteudo")
 
 
 def _validate_draft_fields(fields: dict[str, Any]) -> None:
@@ -289,7 +416,16 @@ class StudioDefinitionStore(Protocol):
         """``definition_mode='studio'``, ``runtime='claude_sdk'``, ``ativo=false``.
         Raises ``StudioConflict('key_taken')``."""
         ...
-    def update_agent(self, org_id: UUID, key: str, fields: dict[str, Any]) -> StudioAgentRecord: ...
+    def update_agent(
+        self, org_id: UUID, key: str, fields: dict[str, Any], *, actor: UUID | None = None
+    ) -> StudioAgentRecord:
+        """A ``publicacao_limiar`` change goes through
+        ``agents.set_agent_publicacao_limiar`` so the audit row carries
+        ``actor``; floor :data:`PUBLICACAO_LIMIAR_MIN` (ValueError below)."""
+        ...
+    def list_audit_log(self, org_id: UUID, agent_id: UUID) -> list[AuditRecord]:
+        """Newest first."""
+        ...
 
     # versions
     def list_versions(self, org_id: UUID, agent_id: UUID) -> list[VersionRecord]:
@@ -307,22 +443,49 @@ class StudioDefinitionStore(Protocol):
         """Raises ``ValueError`` on an allowlist violation, :class:`VersionImmutable`
         on a non-draft."""
         ...
-    def set_compiled_hash(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> VersionRecord: ...
+    def set_compiled_hash(
+        self, org_id: UUID, version_id: UUID, compiled_hash: str, *, expected_updated_at: Any = None,
+    ) -> VersionRecord:
+        """Stamp a draft's hash. With ``expected_updated_at`` it is a
+        compare-and-set: a row whose ``updated_at`` moved since the caller
+        read it (a concurrent content write) raises
+        ``StudioConflict('draft_changed')`` instead of stamping a hash
+        computed from stale content (M1)."""
+        ...
     def publish_version(
         self, org_id: UUID, version_id: UUID, published_by: UUID,
-        eval_run_id: UUID | None, override_reason: str | None,
+        eval_run_id: UUID | None, override_reason: str | None, *, expected_hash: str,
+        texto: str, manifest: list[dict[str, Any]],
     ) -> VersionRecord:
-        """``agents.publish_agent_version`` — the gate is the caller's job."""
+        """``agents.publish_agent_version`` — ONE transaction that stores the
+        proof-of-use ``compiled_prompts`` row (``texto``/``manifest`` under
+        ``expected_hash``, idempotent by hash), flips the versions,
+        snapshots ``limiar_aplicado`` + ``eval_score`` and writes the audit
+        row. Raises ``StudioConflict('draft_changed')`` unless
+        ``expected_hash`` is the draft's current ``compiled_hash``,
+        ``StudioConflict('eval_required')`` when the DB-side gate re-check
+        fails."""
         ...
-    def discard_draft(self, org_id: UUID, version_id: UUID) -> None: ...
+    def discard_draft(self, org_id: UUID, version_id: UUID, *, actor: UUID | None = None) -> None: ...
 
     # sections
     def list_sections(self, org_id: UUID, version_id: UUID) -> list[SectionRecord]: ...
     def replace_sections(
         self, org_id: UUID, version_id: UUID, secoes: list[SectionInput]
     ) -> list[SectionRecord]:
-        """Full replace; an input ``id`` of an existing section of THIS
-        version keeps that id, anything else gets a new one."""
+        """Full replace in ONE transaction (``agents.replace_draft_sections``);
+        an input ``id`` of an existing section of THIS version keeps that id,
+        anything else gets a new one."""
+        ...
+    def replace_draft_bundle(
+        self, org_id: UUID, version_id: UUID, secoes: list[Any], skills: list[Any],
+    ) -> DraftBundleResult:
+        """ATOMIC replacement of a draft's sections + skills + skill files
+        (``agents.replace_draft_bundle`` — one transaction; the importer's
+        write). ``secoes`` items: :class:`SectionInput` or mappings with
+        ``chave, titulo, ordem, conteudo, ativo``; ``skills`` items:
+        :class:`SkillBundleInput` or mappings with ``nome, descricao, corpo,
+        ordem, ativo, arquivos: [{caminho, titulo, conteudo}]``."""
         ...
 
     # skills + files
@@ -372,6 +535,10 @@ class StudioDefinitionStore(Protocol):
         untouched (never updated)."""
         ...
     def get_compiled_prompt(self, org_id: UUID, hash: str) -> CompiledPromptRecord: ...
+    def erase_client_compiled_prompts(self, org_id: UUID, client_id: UUID) -> int:
+        """LGPD erasure (``agents.erase_compiled_prompts``) — the ONLY
+        deletion path for compiled prompts. Returns the rows erased."""
+        ...
 
 
 # ── Fake ────────────────────────────────────────────────────────────────────
@@ -382,8 +549,12 @@ class FakeStudioDefinitionStore:
 
     Emulates 012: the partial uniques (one rascunho / one ativa), the
     immutability triggers (children of a non-draft raise
-    :class:`VersionImmutable`), the deep-copy of ``create_agent_draft`` and
-    the atomic flip of ``publish_agent_version``.
+    :class:`VersionImmutable`), the draft-hash invalidation (every content
+    write NULLs the draft's ``compiled_hash`` and moves its ``updated_at``),
+    the client-entry cap, the deep-copy of ``create_agent_draft``, and
+    ``publish_agent_version``'s hash check + DB-side gate re-check + snapshot
+    + audit. The eval runs the DB function reads live in BE-KE's tables —
+    tests register the ones publish may see with :meth:`register_eval_run`.
 
     ``agents`` rows are keyed by ``(org_id, key)``. Tests that also exercise
     legacy agents seed them with :meth:`add_legacy_agent` (the legacy rows
@@ -399,6 +570,11 @@ class FakeStudioDefinitionStore:
         self._clients: dict[UUID, ClientRecord] = {}
         self._entries: dict[UUID, ClientEntryRecord] = {}
         self._compiled: dict[tuple[UUID, str], CompiledPromptRecord] = {}
+        self._audit: list[AuditRecord] = []
+        #: run_id -> the `eval_runs` columns publish_agent_version reads.
+        self._eval_runs: dict[UUID, dict[str, Any]] = {}
+        #: agent_id -> number of active eval cases (publish needs >= 1).
+        self._active_cases: dict[UUID, int] = {}
         self._seq = 0
 
     def _now(self) -> datetime:
@@ -409,13 +585,53 @@ class FakeStudioDefinitionStore:
         self._seq += 1
         return utcnow() + timedelta(microseconds=self._seq)
 
-    # ── test helper
+    # ── test helpers
+    def register_eval_run(
+        self, org_id: UUID, version_id: UUID, *, score: float | None, compiled_hash: str,
+        completa: bool = True, total: int = 1, status: str = "concluida", active_cases: int = 1,
+        run_id: UUID | None = None,
+    ) -> UUID:
+        """Make an ``eval_runs`` row visible to :meth:`publish_version`'s
+        DB-side gate re-check (the Real function reads BE-KE's table)."""
+        v = self.get_version(org_id, version_id)
+        rid = run_id or uuid4()
+        self._eval_runs[rid] = {
+            "org_id": org_id, "version_id": version_id, "score": score, "compiled_hash": compiled_hash,
+            "completa": completa, "total": total, "status": status,
+        }
+        self._active_cases[v.agent_id] = active_cases
+        return rid
+
+    def _audit_append(
+        self, org_id: UUID, agent_id: UUID, actor: UUID | None, acao: str,
+        antes: dict[str, Any] | None, depois: dict[str, Any] | None,
+    ) -> None:
+        self._audit.append(AuditRecord(
+            id=uuid4(), org_id=org_id, agent_id=agent_id, actor=actor, acao=acao,
+            antes=antes, depois=depois, created_at=self._now(),
+        ))
+
+    def _touch_draft(self, version_id: UUID) -> None:
+        """012 child triggers: a content write under a draft NULLs its
+        ``compiled_hash`` (and, being an UPDATE, moves ``updated_at``)."""
+        v = self._versions.get(version_id)
+        if v is not None and v.status == "rascunho":
+            self._versions[version_id] = replace(v, compiled_hash=None, updated_at=self._now())
+
     def add_legacy_agent(self, org_id: UUID, key: str, nome: str) -> StudioAgentRecord:
+        return self.seed_agent(org_id, key, nome=nome, definition_mode="legacy", ativo=False)
+
+    def seed_agent(
+        self, org_id: UUID, key: str, *, agent_id: UUID | None = None, nome: str | None = None,
+        definition_mode: str = "studio", ativo: bool = True, publicacao_limiar: float = 0.8,
+    ) -> StudioAgentRecord:
+        """Test helper: an ``agents.agents`` row with explicit columns (the
+        knowledge/eval router suites resolve agents through this store)."""
         now = self._now()
         rec = StudioAgentRecord(
-            id=uuid4(), org_id=org_id, key=key, nome=nome, descricao=None,
-            definition_mode="legacy", runtime="claude_sdk", ativo=False,
-            publicacao_limiar=0.8, created_at=now, updated_at=now,
+            id=agent_id or uuid4(), org_id=org_id, key=key, nome=nome or key, descricao=None,
+            definition_mode=definition_mode, runtime="claude_sdk", ativo=ativo,
+            publicacao_limiar=publicacao_limiar, created_at=now, updated_at=now,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -446,14 +662,27 @@ class FakeStudioDefinitionStore:
         self._agents[(org_id, key)] = rec
         return rec
 
-    def update_agent(self, org_id: UUID, key: str, fields: dict[str, Any]) -> StudioAgentRecord:
-        _check_fields(fields, _AGENT_FIELDS, "agent")
-        rec = self.get_agent(org_id, key)
-        if "publicacao_limiar" in fields and not (0 <= float(fields["publicacao_limiar"]) <= 1):
-            raise ValueError("publicacao_limiar must be between 0 and 1")
-        rec = replace(rec, **fields, updated_at=self._now())
+    def update_agent(
+        self, org_id: UUID, key: str, fields: dict[str, Any], *, actor: UUID | None = None
+    ) -> StudioAgentRecord:
+        _validate_agent_fields(fields)
+        before = self.get_agent(org_id, key)
+        rec = replace(before, **fields, updated_at=self._now())
         self._agents[(org_id, key)] = rec
+        if "publicacao_limiar" in fields and float(fields["publicacao_limiar"]) != before.publicacao_limiar:
+            # 012 `audit_agent_limiar_change` trigger.
+            self._audit_append(
+                org_id, rec.id, actor, "limiar_alterado",
+                {"publicacao_limiar": before.publicacao_limiar},
+                {"publicacao_limiar": float(fields["publicacao_limiar"])},
+            )
         return rec
+
+    def list_audit_log(self, org_id: UUID, agent_id: UUID) -> list[AuditRecord]:
+        return sorted(
+            (a for a in self._audit if a.org_id == org_id and a.agent_id == agent_id),
+            key=lambda a: a.created_at, reverse=True,
+        )
 
     def _agent_by_id(self, org_id: UUID, agent_id: UUID) -> StudioAgentRecord:
         for (o, _), a in self._agents.items():
@@ -538,34 +767,76 @@ class FakeStudioDefinitionStore:
     def update_draft(self, org_id: UUID, version_id: UUID, fields: dict[str, Any]) -> VersionRecord:
         _validate_draft_fields(fields)
         v = self._require_draft(org_id, version_id)
+        changed = any(k in fields and fields[k] != getattr(v, k) for k in _COMPILED_SETTINGS)
         v = replace(v, **fields, updated_at=self._now())
+        if changed:
+            v = replace(v, compiled_hash=None)
         self._versions[v.id] = v
         return v
 
-    def set_compiled_hash(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> VersionRecord:
+    def set_compiled_hash(
+        self, org_id: UUID, version_id: UUID, compiled_hash: str, *, expected_updated_at: Any = None,
+    ) -> VersionRecord:
         v = self._require_draft(org_id, version_id)
+        if expected_updated_at is not None and v.updated_at != expected_updated_at:
+            raise StudioConflict("draft_changed", "the draft changed since it was read")
         v = replace(v, compiled_hash=compiled_hash, updated_at=self._now())
         self._versions[v.id] = v
         return v
 
     def publish_version(
         self, org_id: UUID, version_id: UUID, published_by: UUID,
-        eval_run_id: UUID | None, override_reason: str | None,
+        eval_run_id: UUID | None, override_reason: str | None, *, expected_hash: str,
+        texto: str, manifest: list[dict[str, Any]],
     ) -> VersionRecord:
         v = self._require_draft(org_id, version_id)
+        if expected_hash is None or v.compiled_hash != expected_hash:
+            raise StudioConflict("draft_changed", "the draft changed since the gate was checked")
+        limiar = self._agent_by_id(org_id, v.agent_id).publicacao_limiar
+        score: float | None = None
+        reason = override_reason.strip() if override_reason is not None else None
+        if eval_run_id is not None:
+            run = self._eval_runs.get(eval_run_id)
+            ok = (
+                run is not None and run["org_id"] == org_id and run["version_id"] == version_id
+                and run["status"] == "concluida" and run["completa"] and run["total"] >= 1
+                and run["compiled_hash"] == expected_hash and run["score"] is not None
+                and run["score"] >= limiar and self._active_cases.get(v.agent_id, 0) >= 1
+            )
+            if not ok:
+                raise StudioConflict("eval_required", "the eval gate did not pass")
+            score = run["score"]
+            reason = None
+        elif not override_reason_ok(reason):
+            raise StudioConflict("eval_required", "no passing eval run and no valid override reason")
+        # Proof of use (§A7) in the same "transaction" as the flip.
+        self.save_compiled_prompt(
+            org_id, hash=expected_hash, version_id=version_id, client_id=None, texto=texto, manifest=manifest,
+        )
         now = self._now()
         current = self.get_active_version(org_id, v.agent_id)
         if current is not None:
             self._versions[current.id] = replace(current, status="substituida", updated_at=now)
         v = replace(
             v, status="ativa", published_by=published_by, published_at=now,
-            eval_run_id=eval_run_id, publish_override_reason=override_reason, updated_at=now,
+            eval_run_id=eval_run_id, publish_override_reason=reason, updated_at=now,
+            limiar_aplicado=limiar, eval_score=score,
         )
         self._versions[v.id] = v
+        self._audit_append(
+            org_id, v.agent_id, published_by,
+            "publicado" if eval_run_id is not None else "publicado_override",
+            {"version_id": str(current.id), "versao": current.versao} if current is not None else None,
+            {
+                "version_id": str(v.id), "versao": v.versao, "compiled_hash": v.compiled_hash,
+                "eval_run_id": str(eval_run_id) if eval_run_id else None, "eval_score": score,
+                "limiar_aplicado": limiar, "override_reason": reason,
+            },
+        )
         return v
 
-    def discard_draft(self, org_id: UUID, version_id: UUID) -> None:
-        self._require_draft(org_id, version_id)
+    def discard_draft(self, org_id: UUID, version_id: UUID, *, actor: UUID | None = None) -> None:
+        v = self._require_draft(org_id, version_id)
         if any(c.version_id == version_id for c in self._compiled.values()):
             raise StudioConflict("draft_referenced", "the draft is referenced by a stored compiled prompt")
         for sk in self._skills_of(version_id):
@@ -574,7 +845,14 @@ class FakeStudioDefinitionStore:
             del self._skills[sk.id]
         for s in self._sections_of(version_id):
             del self._sections[s.id]
+        # 013 `eval_runs.version_id ON DELETE CASCADE`.
+        for rid in [r for r, row in self._eval_runs.items() if row["version_id"] == version_id]:
+            del self._eval_runs[rid]
         del self._versions[version_id]
+        self._audit_append(
+            org_id, v.agent_id, actor, "rascunho_descartado",
+            {"version_id": str(v.id), "versao": v.versao, "compiled_hash": v.compiled_hash}, None,
+        )
 
     # ── sections
     def _sections_of(self, version_id: UUID) -> list[SectionRecord]:
@@ -594,6 +872,8 @@ class FakeStudioDefinitionStore:
         chaves = [s.chave for s in secoes]
         if len(set(chaves)) != len(chaves):
             raise StudioConflict("chave_conflict", "duplicate chave in payload")
+        for s in secoes:
+            _validate_section(s)
         existing = {s.id: s for s in self._sections_of(version_id)}
         for sid in existing:
             del self._sections[sid]
@@ -606,7 +886,47 @@ class FakeStudioDefinitionStore:
                 id=sid, org_id=org_id, version_id=version_id, chave=s.chave, titulo=s.titulo,
                 ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo, created_at=created, updated_at=now,
             )
+        self._touch_draft(version_id)
         return self._sections_of(version_id)
+
+    def replace_draft_bundle(
+        self, org_id: UUID, version_id: UUID, secoes: list[Any], skills: list[Any],
+    ) -> DraftBundleResult:
+        self._require_draft(org_id, version_id)
+        sec_in = [_as_section_input(s) for s in secoes]
+        sk_in = [_as_skill_input(s) for s in skills]
+        _validate_bundle(sec_in, sk_in)
+        # Validated in full above — the mutation below cannot fail midway,
+        # which is the Fake's equivalent of the RPC's single transaction.
+        for sk in self._skills_of(version_id):
+            for fid in [f.id for f in self._files.values() if f.skill_id == sk.id]:
+                del self._files[fid]
+            del self._skills[sk.id]
+        for sec in self._sections_of(version_id):
+            del self._sections[sec.id]
+        now = self._now()
+        n_files = 0
+        for sec in sec_in:
+            sid = uuid4()
+            self._sections[sid] = SectionRecord(
+                id=sid, org_id=org_id, version_id=version_id, chave=sec.chave, titulo=sec.titulo,
+                ordem=sec.ordem, conteudo=sec.conteudo, ativo=sec.ativo, created_at=now, updated_at=now,
+            )
+        for sk in sk_in:
+            skid = uuid4()
+            self._skills[skid] = SkillRecord(
+                id=skid, org_id=org_id, version_id=version_id, nome=sk.nome, descricao=sk.descricao,
+                corpo=sk.corpo, ordem=sk.ordem, ativo=sk.ativo, created_at=now, updated_at=now,
+            )
+            for f in sk.arquivos:
+                fid = uuid4()
+                self._files[fid] = SkillFileRecord(
+                    id=fid, org_id=org_id, skill_id=skid, caminho=f.caminho, titulo=f.titulo,
+                    conteudo=f.conteudo, created_at=now, updated_at=now,
+                )
+                n_files += 1
+        self._touch_draft(version_id)
+        return DraftBundleResult(secoes=len(sec_in), skills=len(sk_in), arquivos=n_files)
 
     # ── skills
     def _skills_of(self, version_id: UUID) -> list[SkillRecord]:
@@ -630,6 +950,7 @@ class FakeStudioDefinitionStore:
         ordem: int = 0, ativo: bool = True,
     ) -> SkillRecord:
         self._require_draft(org_id, version_id)
+        _validate_skill_fields({"corpo": corpo})
         if any(s.nome == nome for s in self._skills_of(version_id)):
             raise StudioConflict("skill_exists", f"skill {nome!r} already exists")
         now = self._now()
@@ -638,10 +959,12 @@ class FakeStudioDefinitionStore:
             corpo=corpo, ordem=ordem, ativo=ativo, created_at=now, updated_at=now,
         )
         self._skills[sk.id] = sk
+        self._touch_draft(version_id)
         return sk
 
     def update_skill(self, org_id: UUID, skill_id: UUID, fields: dict[str, Any]) -> SkillRecord:
         _check_fields(fields, _SKILL_FIELDS, "skill")
+        _validate_skill_fields(fields)
         sk = self.get_skill(org_id, skill_id)
         self._require_draft(org_id, sk.version_id)
         if "nome" in fields and fields["nome"] != sk.nome and any(
@@ -650,6 +973,7 @@ class FakeStudioDefinitionStore:
             raise StudioConflict("skill_exists", f"skill {fields['nome']!r} already exists")
         sk = replace(sk, **fields, updated_at=self._now())
         self._skills[sk.id] = sk
+        self._touch_draft(sk.version_id)
         return sk
 
     def delete_skill(self, org_id: UUID, skill_id: UUID) -> None:
@@ -658,6 +982,7 @@ class FakeStudioDefinitionStore:
         for fid in [f.id for f in self._files.values() if f.skill_id == skill_id]:
             del self._files[fid]
         del self._skills[skill_id]
+        self._touch_draft(sk.version_id)
 
     def list_version_skill_files(self, org_id: UUID, version_id: UUID) -> list[SkillFileRecord]:
         ids = {s.id for s in self.list_skills(org_id, version_id)}
@@ -675,9 +1000,11 @@ class FakeStudioDefinitionStore:
     def upsert_skill_file(
         self, org_id: UUID, skill_id: UUID, *, caminho: str, titulo: str | None, conteudo: str
     ) -> SkillFileRecord:
+        _check_cap(conteudo, "skill_file.conteudo", "skill file conteudo")
         sk = self.get_skill(org_id, skill_id)
         self._require_draft(org_id, sk.version_id)
         now = self._now()
+        self._touch_draft(sk.version_id)
         for f in self._files.values():
             if f.skill_id == skill_id and f.caminho == caminho:
                 nf = replace(f, titulo=titulo, conteudo=conteudo, updated_at=now)
@@ -695,6 +1022,7 @@ class FakeStudioDefinitionStore:
         sk = self.get_skill(org_id, f.skill_id)
         self._require_draft(org_id, sk.version_id)
         del self._files[file_id]
+        self._touch_draft(sk.version_id)
 
     # ── clients
     def list_clients(self, org_id: UUID, agent_id: UUID) -> list[ClientRecord]:
@@ -714,6 +1042,7 @@ class FakeStudioDefinitionStore:
     def create_client(
         self, org_id: UUID, agent_id: UUID, *, slug: str, nome: str, resumo: str = "", ativo: bool = True
     ) -> ClientRecord:
+        _validate_client_fields({"resumo": resumo})
         if any(c.agent_id == agent_id and c.slug == slug for c in self._clients.values()):
             raise StudioConflict("client_exists", f"client {slug!r} already exists")
         now = self._now()
@@ -726,6 +1055,7 @@ class FakeStudioDefinitionStore:
 
     def update_client(self, org_id: UUID, client_id: UUID, fields: dict[str, Any]) -> ClientRecord:
         _check_fields(fields, _CLIENT_FIELDS, "client")
+        _validate_client_fields(fields)
         c = self.get_client(org_id, client_id)
         if "slug" in fields and fields["slug"] != c.slug and any(
             o.agent_id == c.agent_id and o.slug == fields["slug"] for o in self._clients.values()
@@ -753,7 +1083,10 @@ class FakeStudioDefinitionStore:
         status: str = "ativo",
     ) -> ClientEntryRecord:
         _validate_entry({"tipo": tipo, "status": status})
+        _validate_entry_caps({"titulo": titulo, "conteudo": conteudo})
         self.get_client(org_id, client_id)
+        if status == "ativo":
+            self._check_entry_cap(client_id, exclude=None)
         now = self._now()
         e = ClientEntryRecord(
             id=uuid4(), org_id=org_id, client_id=client_id, tipo=tipo, titulo=titulo,
@@ -765,7 +1098,10 @@ class FakeStudioDefinitionStore:
     def update_client_entry(self, org_id: UUID, entry_id: UUID, fields: dict[str, Any]) -> ClientEntryRecord:
         _check_fields(fields, _ENTRY_FIELDS, "entry")
         _validate_entry(fields)
+        _validate_entry_caps(fields)
         e = self.get_client_entry(org_id, entry_id)
+        if fields.get("status") == "ativo" and e.status != "ativo":
+            self._check_entry_cap(e.client_id, exclude=e.id)
         e = replace(e, **fields, updated_at=self._now())
         self._entries[e.id] = e
         return e
@@ -773,6 +1109,18 @@ class FakeStudioDefinitionStore:
     def delete_client_entry(self, org_id: UUID, entry_id: UUID) -> None:
         self.get_client_entry(org_id, entry_id)
         del self._entries[entry_id]
+
+    def _check_entry_cap(self, client_id: UUID, *, exclude: UUID | None) -> None:
+        """012 ``guard_client_entry_cap``."""
+        ativas = sum(
+            1 for e in self._entries.values()
+            if e.client_id == client_id and e.status == "ativo" and e.id != exclude
+        )
+        if ativas >= LIMITS["client.active_entries"]:
+            raise StudioConflict(
+                "client_entries_cap",
+                f"a client may hold at most {LIMITS['client.active_entries']} active entries",
+            )
 
     # ── compiled prompts
     def save_compiled_prompt(
@@ -796,6 +1144,12 @@ class FakeStudioDefinitionStore:
             raise NotFound(f"compiled prompt {hash} not found")
         return rec
 
+    def erase_client_compiled_prompts(self, org_id: UUID, client_id: UUID) -> int:
+        keys = [k for k, c in self._compiled.items() if c.org_id == org_id and c.client_id == client_id]
+        for k in keys:
+            del self._compiled[k]
+        return len(keys)
+
 
 # ── Real ────────────────────────────────────────────────────────────────────
 
@@ -806,31 +1160,6 @@ def _uuid_or_none(v: Any) -> UUID | None:
 
 def _float(v: Any) -> float:
     return float(Decimal(str(v)))
-
-
-def _api_error_text(exc: Exception) -> tuple[str | None, str]:
-    code = getattr(exc, "code", None)
-    msg = getattr(exc, "message", None) or str(exc)
-    return code, msg
-
-
-def _map_db_error(exc: Exception, *, unique_code: str | None = None) -> Exception:
-    """Translate a PostgREST error into the store's typed error. The 012
-    triggers/functions raise with the machine code AS the message."""
-    code, msg = _api_error_text(exc)
-    if "version_immutable" in msg:
-        return VersionImmutable(msg)
-    if "compiled_prompt_immutable" in msg:
-        return StudioConflict("compiled_prompt_immutable", msg)
-    if "draft_exists" in msg:
-        return StudioConflict("draft_exists", msg)
-    if "version_not_found" in msg or "agent_not_found" in msg:
-        return NotFound(msg)
-    if code == "23505" and unique_code is not None:
-        return StudioConflict(unique_code, msg)
-    if code == "23503":
-        return StudioConflict("draft_referenced", msg)
-    return exc
 
 
 class SupabaseStudioDefinitionStore:
@@ -846,23 +1175,11 @@ class SupabaseStudioDefinitionStore:
     def _t(self, table: str):
         return self._client.schema(_SCHEMA).table(table)
 
-    def _rpc(self, fn: str, params: dict[str, Any]):
-        try:
-            return self._client.schema(_SCHEMA).rpc(fn, params).execute()
-        except Exception as exc:
-            mapped = _map_db_error(exc)
-            if mapped is exc:
-                raise
-            raise mapped from exc
+    def _rpc(self, fn: str, params: dict[str, Any], *, fk_code: str | None = None):
+        return exec_rpc(self._client, _SCHEMA, fn, params, fk_code=fk_code)
 
-    def _exec(self, query, *, unique_code: str | None = None):
-        try:
-            return query.execute()
-        except Exception as exc:
-            mapped = _map_db_error(exc, unique_code=unique_code)
-            if mapped is exc:
-                raise
-            raise mapped from exc
+    def _exec(self, query, *, unique_code: str | None = None, fk_code: str | None = None):
+        return exec_query(query, unique_code=unique_code, fk_code=fk_code)
 
     def _paged(self, build, *, label: str, order: tuple[str, ...]) -> list[dict[str, Any]]:
         def fetch(start: int, end: int):
@@ -909,6 +1226,8 @@ class SupabaseStudioDefinitionStore:
             eval_run_id=_uuid_or_none(row.get("eval_run_id")),
             publish_override_reason=row.get("publish_override_reason"),
             created_at=row["created_at"], updated_at=row["updated_at"],
+            limiar_aplicado=_float(row["limiar_aplicado"]) if row.get("limiar_aplicado") is not None else None,
+            eval_score=_float(row["eval_score"]) if row.get("eval_score") is not None else None,
         )
 
     @staticmethod
@@ -985,14 +1304,41 @@ class SupabaseStudioDefinitionStore:
         resp = self._exec(self._t("agents").insert(payload), unique_code="key_taken")
         return self._agent(self._one(resp, f"agent {key!r}"))
 
-    def update_agent(self, org_id: UUID, key: str, fields: dict[str, Any]) -> StudioAgentRecord:
-        _check_fields(fields, _AGENT_FIELDS, "agent")
-        if not fields:
+    def update_agent(
+        self, org_id: UUID, key: str, fields: dict[str, Any], *, actor: UUID | None = None
+    ) -> StudioAgentRecord:
+        _validate_agent_fields(fields)
+        agent = self.get_agent(org_id, key)
+        rest = {k: v for k, v in fields.items() if k != "publicacao_limiar"}
+        if "publicacao_limiar" in fields:
+            # Through the function so the audit trigger knows the actor (H2).
+            self._rpc("set_agent_publicacao_limiar", {
+                "p_org_id": str(org_id), "p_agent_id": str(agent.id),
+                "p_limiar": float(fields["publicacao_limiar"]),
+                "p_actor": str(actor) if actor else None,
+            })
+        if not rest:
             return self.get_agent(org_id, key)
         resp = self._exec(
-            self._t("agents").update(dict(fields)).eq("org_id", str(org_id)).eq("key", key)
+            self._t("agents").update(rest).eq("org_id", str(org_id)).eq("key", key)
         )
         return self._agent(self._one(resp, f"agent {key!r}"))
+
+    def list_audit_log(self, org_id: UUID, agent_id: UUID) -> list[AuditRecord]:
+        rows = self._paged(
+            lambda: self._t("agent_audit_log").select("*")
+            .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)),
+            label=f"agent_audit_log agent_id={agent_id}", order=("created_at",),
+        )
+        recs = [
+            AuditRecord(
+                id=UUID(str(r["id"])), org_id=UUID(str(r["org_id"])), agent_id=UUID(str(r["agent_id"])),
+                actor=_uuid_or_none(r.get("actor")), acao=r["acao"], antes=r.get("antes"),
+                depois=r.get("depois"), created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+        return list(reversed(recs))
 
     # ── versions
     def list_versions(self, org_id: UUID, agent_id: UUID) -> list[VersionRecord]:
@@ -1055,20 +1401,30 @@ class SupabaseStudioDefinitionStore:
             raise VersionImmutable(f"version {version_id} is {v.status}")
         return self._version(rows[0])
 
-    def set_compiled_hash(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> VersionRecord:
-        resp = self._exec(
+    def set_compiled_hash(
+        self, org_id: UUID, version_id: UUID, compiled_hash: str, *, expected_updated_at: Any = None,
+    ) -> VersionRecord:
+        q = (
             self._t("agent_versions").update({"compiled_hash": compiled_hash})
             .eq("org_id", str(org_id)).eq("id", str(version_id)).eq("status", "rascunho")
         )
+        if expected_updated_at is not None:
+            ts = expected_updated_at.isoformat() if isinstance(expected_updated_at, datetime) else str(expected_updated_at)
+            q = q.eq("updated_at", ts)
+        resp = self._exec(q)
         rows = resp.data or []
         if not rows:
+            # Missing (NotFound), not a draft (immutable) or moved (CAS) — tell which.
             v = self.get_version(org_id, version_id)
-            raise VersionImmutable(f"version {version_id} is {v.status}")
+            if v.status != "rascunho":
+                raise VersionImmutable(f"version {version_id} is {v.status}")
+            raise StudioConflict("draft_changed", f"draft {version_id} changed since it was read")
         return self._version(rows[0])
 
     def publish_version(
         self, org_id: UUID, version_id: UUID, published_by: UUID,
-        eval_run_id: UUID | None, override_reason: str | None,
+        eval_run_id: UUID | None, override_reason: str | None, *, expected_hash: str,
+        texto: str, manifest: list[dict[str, Any]],
     ) -> VersionRecord:
         self._rpc("publish_agent_version", {
             "p_org_id": str(org_id),
@@ -1076,11 +1432,18 @@ class SupabaseStudioDefinitionStore:
             "p_published_by": str(published_by),
             "p_eval_run_id": str(eval_run_id) if eval_run_id else None,
             "p_override_reason": override_reason,
+            "p_expected_hash": expected_hash,
+            "p_texto": texto,
+            "p_manifest": manifest,
         })
         return self.get_version(org_id, version_id)
 
-    def discard_draft(self, org_id: UUID, version_id: UUID) -> None:
-        self._rpc("discard_agent_draft", {"p_org_id": str(org_id), "p_version_id": str(version_id)})
+    def discard_draft(self, org_id: UUID, version_id: UUID, *, actor: UUID | None = None) -> None:
+        self._rpc(
+            "discard_agent_draft",
+            {"p_org_id": str(org_id), "p_version_id": str(version_id), "p_actor": str(actor) if actor else None},
+            fk_code="draft_referenced",
+        )
 
     # ── sections
     def list_sections(self, org_id: UUID, version_id: UUID) -> list[SectionRecord]:
@@ -1094,41 +1457,51 @@ class SupabaseStudioDefinitionStore:
     def replace_sections(
         self, org_id: UUID, version_id: UUID, secoes: list[SectionInput]
     ) -> list[SectionRecord]:
-        """Delete the sections no longer present, then upsert the payload by
-        id (new rows get a pre-generated id). Not one transaction — but
-        every step is guarded by the draft-only trigger, and a failure
-        surfaces (never swallowed); the caller still holds the full payload
-        to retry. A chave SWAP between two existing rows hits the unique
-        constraint mid-upsert → ``StudioConflict('chave_conflict')``."""
-        draft = self.get_version(org_id, version_id)
-        if draft.status != "rascunho":
-            raise VersionImmutable(f"version {version_id} is {draft.status}")
+        """ONE ``agents.replace_draft_sections`` call = one transaction (the
+        previous delete-then-upsert sequence could half-apply)."""
         chaves = [s.chave for s in secoes]
         if len(set(chaves)) != len(chaves):
             raise StudioConflict("chave_conflict", "duplicate chave in payload")
-        existing = {s.id for s in self.list_sections(org_id, version_id)}
-        keep_ids = {s.id for s in secoes if s.id is not None and s.id in existing}
-        for sid in existing - keep_ids:
-            self._exec(
-                self._t("agent_prompt_sections").delete()
-                .eq("org_id", str(org_id)).eq("id", str(sid))
-            )
-        # A removed row's chave is free again here (deleted above), so a new
-        # row may reuse it; only a swap between two KEPT rows can collide.
-        rows = []
-        for s in secoes:
-            sid = s.id if s.id in keep_ids else uuid4()
-            rows.append({
-                "id": str(sid), "org_id": str(org_id), "version_id": str(version_id),
-                "chave": s.chave, "titulo": s.titulo, "ordem": s.ordem,
-                "conteudo": s.conteudo, "ativo": s.ativo,
-            })
-        if rows:
-            self._exec(
-                self._t("agent_prompt_sections").upsert(rows, on_conflict="id"),
-                unique_code="chave_conflict",
-            )
+        for sec in secoes:
+            _validate_section(sec)
+        self._rpc("replace_draft_sections", {
+            "p_org_id": str(org_id),
+            "p_version_id": str(version_id),
+            "p_secoes": [
+                {
+                    "id": str(sec.id) if sec.id else None, "chave": sec.chave, "titulo": sec.titulo,
+                    "ordem": sec.ordem, "conteudo": sec.conteudo, "ativo": sec.ativo,
+                }
+                for sec in secoes
+            ],
+        })
         return self.list_sections(org_id, version_id)
+
+    def replace_draft_bundle(
+        self, org_id: UUID, version_id: UUID, secoes: list[Any], skills: list[Any],
+    ) -> DraftBundleResult:
+        sec_in = [_as_section_input(x) for x in secoes]
+        sk_in = [_as_skill_input(x) for x in skills]
+        _validate_bundle(sec_in, sk_in)
+        self._rpc("replace_draft_bundle", {
+            "p_org_id": str(org_id),
+            "p_version_id": str(version_id),
+            "p_secoes": [
+                {"chave": x.chave, "titulo": x.titulo, "ordem": x.ordem, "conteudo": x.conteudo, "ativo": x.ativo}
+                for x in sec_in
+            ],
+            "p_skills": [
+                {
+                    "nome": sk.nome, "descricao": sk.descricao, "corpo": sk.corpo, "ordem": sk.ordem,
+                    "ativo": sk.ativo,
+                    "arquivos": [{"caminho": f.caminho, "titulo": f.titulo, "conteudo": f.conteudo} for f in sk.arquivos],
+                }
+                for sk in sk_in
+            ],
+        })
+        return DraftBundleResult(
+            secoes=len(sec_in), skills=len(sk_in), arquivos=sum(len(sk.arquivos) for sk in sk_in),
+        )
 
     # ── skills
     def list_skills(self, org_id: UUID, version_id: UUID) -> list[SkillRecord]:
@@ -1147,6 +1520,7 @@ class SupabaseStudioDefinitionStore:
         self, org_id: UUID, version_id: UUID, *, nome: str, descricao: str, corpo: str,
         ordem: int = 0, ativo: bool = True,
     ) -> SkillRecord:
+        _validate_skill_fields({"corpo": corpo})
         payload = {
             "org_id": str(org_id), "version_id": str(version_id), "nome": nome,
             "descricao": descricao, "corpo": corpo, "ordem": ordem, "ativo": ativo,
@@ -1156,6 +1530,7 @@ class SupabaseStudioDefinitionStore:
 
     def update_skill(self, org_id: UUID, skill_id: UUID, fields: dict[str, Any]) -> SkillRecord:
         _check_fields(fields, _SKILL_FIELDS, "skill")
+        _validate_skill_fields(fields)
         if not fields:
             return self.get_skill(org_id, skill_id)
         resp = self._exec(
@@ -1185,6 +1560,7 @@ class SupabaseStudioDefinitionStore:
     def upsert_skill_file(
         self, org_id: UUID, skill_id: UUID, *, caminho: str, titulo: str | None, conteudo: str
     ) -> SkillFileRecord:
+        _check_cap(conteudo, "skill_file.conteudo", "skill file conteudo")
         self.get_skill(org_id, skill_id)
         payload = {
             "org_id": str(org_id), "skill_id": str(skill_id), "caminho": caminho,
@@ -1217,6 +1593,7 @@ class SupabaseStudioDefinitionStore:
     def create_client(
         self, org_id: UUID, agent_id: UUID, *, slug: str, nome: str, resumo: str = "", ativo: bool = True
     ) -> ClientRecord:
+        _validate_client_fields({"resumo": resumo})
         payload = {
             "org_id": str(org_id), "agent_id": str(agent_id), "slug": slug, "nome": nome,
             "resumo": resumo, "ativo": ativo,
@@ -1226,6 +1603,7 @@ class SupabaseStudioDefinitionStore:
 
     def update_client(self, org_id: UUID, client_id: UUID, fields: dict[str, Any]) -> ClientRecord:
         _check_fields(fields, _CLIENT_FIELDS, "client")
+        _validate_client_fields(fields)
         if not fields:
             return self.get_client(org_id, client_id)
         resp = self._exec(
@@ -1254,6 +1632,7 @@ class SupabaseStudioDefinitionStore:
         status: str = "ativo",
     ) -> ClientEntryRecord:
         _validate_entry({"tipo": tipo, "status": status})
+        _validate_entry_caps({"titulo": titulo, "conteudo": conteudo})
         payload = {
             "org_id": str(org_id), "client_id": str(client_id), "tipo": tipo,
             "titulo": titulo, "conteudo": conteudo, "status": status,
@@ -1264,6 +1643,7 @@ class SupabaseStudioDefinitionStore:
     def update_client_entry(self, org_id: UUID, entry_id: UUID, fields: dict[str, Any]) -> ClientEntryRecord:
         _check_fields(fields, _ENTRY_FIELDS, "entry")
         _validate_entry(fields)
+        _validate_entry_caps(fields)
         if not fields:
             return self.get_client_entry(org_id, entry_id)
         resp = self._exec(
@@ -1296,6 +1676,15 @@ class SupabaseStudioDefinitionStore:
     def get_compiled_prompt(self, org_id: UUID, hash: str) -> CompiledPromptRecord:
         resp = self._t("compiled_prompts").select("*").eq("org_id", str(org_id)).eq("hash", hash).execute()
         return self._compiled(self._one(resp, f"compiled prompt {hash}"))
+
+    def erase_client_compiled_prompts(self, org_id: UUID, client_id: UUID) -> int:
+        resp = self._rpc("erase_compiled_prompts", {"p_org_id": str(org_id), "p_client_id": str(client_id)})
+        data = resp.data
+        if isinstance(data, list):
+            data = data[0] if data else 0
+        if isinstance(data, dict):
+            data = next(iter(data.values()))
+        return int(data or 0)
 
 
 def get_studio_definition_store(settings: Any) -> StudioDefinitionStore:

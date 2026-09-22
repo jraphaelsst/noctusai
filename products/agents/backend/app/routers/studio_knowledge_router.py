@@ -2,16 +2,16 @@
 §D3, slice BE-KE).
 
 Auth: ``require_member`` for reads, ``require_admin`` for writes (the
-SAME deps every other studio router uses — contract §D intro "existing
-deps"). Every route resolves the agent by ``(ctx.org_id, key)`` via
-:func:`app.stores.studio_knowledge.get_agent_lookup` — 404
-``agent_not_found`` for an unknown key, 409 ``not_studio_agent`` for a
-legacy agent (contract §D intro). A foreign ``col_id``/``doc_id`` 404s,
-never 403-leaks (contract §H.1).
+SAME deps every other studio router uses). The agent is resolved through
+BE-DEF's ``StudioDefinitionStore`` and its ``resolve_agent`` — ONE resolver
+for every studio route: 404 ``agent_not_found`` for an unknown key, 409
+``not_studio_agent`` for a legacy agent. A foreign ``col_id``/``doc_id``
+404s, never 403-leaks (contract §H.1). Typed store errors map through the
+shared ``store_errors`` (409 ``slug_taken`` / 422 ``invalid_field``).
 
-Not registered on ``app/main.py`` yet — router registration is BE-RT's
-(contract §J2.3); this module only exports ``router`` for a local test
-app (``tests/studio/ke/conftest.py``) until BE-RT merges.
+Caps (wave-1 security review): the list filter ``q`` ≤ 200 chars (L4 — and
+it travels as a bound SQL parameter, never a PostgREST filter string);
+search ``q`` ≤ 512 (L5).
 """
 from __future__ import annotations
 
@@ -20,6 +20,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.dependencies import require_admin, require_member
+from app.routers.studio_agents_router import (
+    get_studio_definition_store_dep,
+    resolve_agent,
+    store_errors,
+)
 from app.schemas.studio_ke import (
     CollectionCreateRequest,
     CollectionListOut,
@@ -36,21 +41,19 @@ from app.schemas.studio_ke import (
     SearchOut,
 )
 from app.stores.errors import NotFound
+from app.stores.studio_definitions import StudioAgentRecord
 from app.stores.studio_knowledge import (
     CollectionInput,
     DocumentInput,
-    StudioAgentRef,
     _UNSET,
 )
+from app.studio.models import LIST_QUERY_MAX, SEARCH_QUERY_MAX
 from noctusai_lib.api.auth.session import AuthContext
 
 router = APIRouter(prefix="/api/studio/agents", tags=["studio-knowledge"])
 
 
-# ── DI seams (local to this slice — see app/dependencies.py's module
-# docstring for why: BE-RT owns the production wiring in main.py; wave-1
-# routers build their own dependency accessors so their branch runs
-# standalone, contract §J2.3) ────────────────────────────────────────────
+# ── DI seams ─────────────────────────────────────────────────────────────
 
 
 def get_studio_knowledge_store_dep():
@@ -60,38 +63,13 @@ def get_studio_knowledge_store_dep():
     return get_studio_knowledge_store(settings)
 
 
-def get_agent_lookup_dep():
-    from app.config import settings
-    from app.stores.studio_knowledge import get_agent_lookup
-
-    return get_agent_lookup(settings)
-
-
-def _resolve_studio_agent(agent_lookup, org_id: UUID, key: str) -> StudioAgentRef:
-    try:
-        agent = agent_lookup.get_by_key(org_id, key)
-    except NotFound as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"detail": "Agente não encontrado.", "code": "agent_not_found"},
-        ) from exc
-    if agent.definition_mode != "studio":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"detail": "Agente não é um agente Studio.", "code": "not_studio_agent"},
-        )
-    return agent
+def resolve_studio_agent(defs, org_id: UUID, key: str) -> StudioAgentRecord:
+    """BE-DEF's resolver (studio-only) — shared with ``studio_evals_router``."""
+    return resolve_agent(defs, org_id, key)
 
 
 def _not_found(detail: str = "Recurso não encontrado.", code: str = "not_found") -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail={"detail": detail, "code": code})
-
-
-def _invalid_field(exc: ValueError) -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail={"detail": str(exc), "code": "invalid_field"},
-    )
 
 
 def _collection_out(record, total_documentos: int) -> CollectionOut:
@@ -126,9 +104,9 @@ async def list_collections(
     key: str,
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> CollectionListOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
     records = store.list_collections(ctx.org_id, agent.id)
     colecoes = [
         _collection_out(r, store.count_documents(ctx.org_id, agent.id, r.id))
@@ -143,17 +121,15 @@ async def create_collection(
     payload: CollectionCreateRequest,
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> CollectionOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
-    try:
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    with store_errors():
         record = store.create_collection(
             ctx.org_id, agent.id,
             CollectionInput(slug=payload.slug, nome=payload.nome, tag=payload.tag,
                              descricao=payload.descricao, ordem=payload.ordem),
         )
-    except ValueError as exc:
-        raise _invalid_field(exc) from exc
     return _collection_out(record, 0)
 
 
@@ -164,16 +140,17 @@ async def update_collection(
     payload: CollectionUpdateRequest,
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> CollectionOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
     fields = payload.model_dump(exclude_unset=True)
     try:
-        record = store.update_collection(
-            ctx.org_id, agent.id, col_id,
-            nome=fields.get("nome", _UNSET), tag=fields.get("tag", _UNSET),
-            descricao=fields.get("descricao", _UNSET), ordem=fields.get("ordem", _UNSET),
-        )
+        with store_errors():
+            record = store.update_collection(
+                ctx.org_id, agent.id, col_id,
+                nome=fields.get("nome", _UNSET), tag=fields.get("tag", _UNSET),
+                descricao=fields.get("descricao", _UNSET), ordem=fields.get("ordem", _UNSET),
+            )
     except NotFound as exc:
         raise _not_found("Coleção não encontrada.", "collection_not_found") from exc
     total = store.count_documents(ctx.org_id, agent.id, col_id)
@@ -187,22 +164,23 @@ async def update_collection(
 async def list_documents(
     key: str,
     col_id: UUID,
-    q: str | None = Query(None),
+    q: str | None = Query(None, max_length=LIST_QUERY_MAX),
     tipo: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentListOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
     try:
         store.get_collection(ctx.org_id, agent.id, col_id)
     except NotFound as exc:
         raise _not_found("Coleção não encontrada.", "collection_not_found") from exc
-    records, total = store.list_documents(
-        ctx.org_id, agent.id, col_id, q=q, tipo=tipo, page=page, page_size=page_size,
-    )
+    with store_errors():
+        records, total = store.list_documents(
+            ctx.org_id, agent.id, col_id, q=q, tipo=tipo, page=page, page_size=page_size,
+        )
     return DocumentListOut(items=[_document_list_item_out(r) for r in records], total=total)
 
 
@@ -216,14 +194,14 @@ async def create_document(
     payload: DocumentCreateRequest,
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
     try:
         store.get_collection(ctx.org_id, agent.id, col_id)
     except NotFound as exc:
         raise _not_found("Coleção não encontrada.", "collection_not_found") from exc
-    try:
+    with store_errors():
         record = store.create_document(
             ctx.org_id, agent.id, col_id,
             DocumentInput(
@@ -232,8 +210,6 @@ async def create_document(
             ),
             author_id=ctx.user_id,
         )
-    except ValueError as exc:
-        raise _invalid_field(exc) from exc
     return _document_out(record)
 
 
@@ -243,9 +219,9 @@ async def get_document(
     doc_id: UUID,
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
     try:
         record = store.get_document(ctx.org_id, agent.id, doc_id)
     except NotFound as exc:
@@ -260,22 +236,21 @@ async def update_document(
     payload: DocumentUpdateRequest,
     ctx: AuthContext = Depends(require_admin),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> DocumentOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
     fields = payload.model_dump(exclude_unset=True)
     motivo = fields.pop("motivo", None)
     try:
-        record = store.update_document(
-            ctx.org_id, agent.id, doc_id, author_id=ctx.user_id, motivo=motivo,
-            titulo=fields.get("titulo", _UNSET), tipo=fields.get("tipo", _UNSET),
-            resumo=fields.get("resumo", _UNSET), conteudo=fields.get("conteudo", _UNSET),
-            proveniencia=fields.get("proveniencia", _UNSET), ativo=fields.get("ativo", _UNSET),
-        )
+        with store_errors():
+            record = store.update_document(
+                ctx.org_id, agent.id, doc_id, author_id=ctx.user_id, motivo=motivo,
+                titulo=fields.get("titulo", _UNSET), tipo=fields.get("tipo", _UNSET),
+                resumo=fields.get("resumo", _UNSET), conteudo=fields.get("conteudo", _UNSET),
+                proveniencia=fields.get("proveniencia", _UNSET), ativo=fields.get("ativo", _UNSET),
+            )
     except NotFound as exc:
         raise _not_found("Documento não encontrado.", "document_not_found") from exc
-    except ValueError as exc:
-        raise _invalid_field(exc) from exc
     return _document_out(record)
 
 
@@ -285,9 +260,9 @@ async def list_revisions(
     doc_id: UUID,
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> RevisionListOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
     try:
         records = store.list_revisions(ctx.org_id, agent.id, doc_id)
     except NotFound as exc:
@@ -304,15 +279,16 @@ async def list_revisions(
 @router.get("/{key}/knowledge/search", response_model=SearchOut)
 async def search_knowledge(
     key: str,
-    q: str = Query(..., min_length=1),
+    q: str = Query(..., min_length=1, max_length=SEARCH_QUERY_MAX),
     colecao: str | None = Query(None),
     limite: int = Query(8, ge=1, le=20),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_studio_knowledge_store_dep),
-    agent_lookup=Depends(get_agent_lookup_dep),
+    defs=Depends(get_studio_definition_store_dep),
 ) -> SearchOut:
-    agent = _resolve_studio_agent(agent_lookup, ctx.org_id, key)
-    results = store.search(ctx.org_id, agent.id, q, colecao=colecao, limite=limite)
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    with store_errors():
+        results = store.search(ctx.org_id, agent.id, q, colecao=colecao, limite=limite)
     return SearchOut(items=[
         SearchItemOut(
             doc_id=r.doc_id, slug=r.slug, titulo=r.titulo, colecao=r.colecao,
@@ -322,12 +298,8 @@ async def search_knowledge(
     ])
 
 
-# Public aliases — `studio_evals_router.py` shares these two helpers
-# (both routers are BE-KE's own files; this is an intra-slice import, not
-# the cross-slice "wave-1 slices never import each other's unfinished
-# code" shape contract §J2.3 warns about).
-resolve_studio_agent = _resolve_studio_agent
+# Public alias — `studio_evals_router.py` shares the 404 helper.
 not_found_error = _not_found
 
 
-__all__ = ["router", "resolve_studio_agent", "not_found_error", "get_agent_lookup_dep"]
+__all__ = ["router", "resolve_studio_agent", "not_found_error", "get_studio_knowledge_store_dep"]

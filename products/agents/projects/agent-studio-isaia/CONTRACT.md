@@ -43,6 +43,21 @@ authenticated` + `GRANT EXECUTE ... TO service_role` pair. Routes use the admin 
 defence in depth). The anon-grant lockdown of `011_anon_grant_lockdown.sql` must hold for the
 new tables (mirror whatever 011 does for tables created after it).
 
+**Hardening (wave-1 security review, slice BE-HARDEN — applied in place, 012/013 were never deployed):**
+- **Grants (M5):** every studio table restates `REVOKE ALL ... FROM anon` and
+  `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ... FROM authenticated` (mirrors 009/010); `authenticated` keeps SELECT only.
+- **Size caps (M3)** — enforced by the HTTP schemas, the stores (Fake AND Real) and a DB `CHECK`
+  (single source: `app.studio.models.LIMITS`): collection `nome` ≤ 120 / `tag` ≤ 12 / `descricao` ≤ 600;
+  client `resumo` ≤ 8 000; entry `titulo` ≤ 200 / `conteudo` ≤ 4 000; ≤ 200 `ativo` entries per client
+  (trigger `guard_client_entry_cap` → 409 `client_entries_cap`); section `conteudo` ≤ 40 000; skill `corpo`
+  ≤ 60 000; skill file `conteudo` ≤ 120 000; knowledge document `conteudo` ≤ 2 000 000.
+  **Collection metadata (nome/tag/descricao + doc counts) and the client brain (resumo + active entries) are
+  LIVE prompt inputs**: they are compiled into every turn, are not frozen by a published version and never
+  pass the eval gate — which is why they carry the tightest caps.
+- **Every studio write** goes through `app/stores/_db_errors.py`: the functions/triggers raise the machine
+  code as the message; `23505` → 409 with the route's code, `23503` → 409 (`draft_referenced` / `case_in_use`),
+  `23514` → 422 `invalid_field`.
+
 ### B1 · `012_agent_studio_definitions.sql` (slice BE-DEF)
 
 ```sql
@@ -138,17 +153,43 @@ ALTER TABLE agents.messages
 **Immutability triggers** (BEFORE UPDATE/DELETE): on `agent_versions`, when `OLD.status <> 'rascunho'`
 only the transition `ativa → substituida` is permitted (all content columns frozen); on the three
 child tables, any INSERT/UPDATE/DELETE whose parent version is not `rascunho` raises
-`version_immutable`. `compiled_prompts` rows are never updated (trigger raises).
+`version_immutable`. `compiled_prompts` rows are never updated NOR deleted (trigger raises) — the ONE
+deletion path is `agents.erase_compiled_prompts(p_org_id, p_client_id) returns int` (service_role only,
+LGPD erasure of one client's prompts).
+
+**Publish race (M1):** every content write under a draft (child INSERT/UPDATE/DELETE, or a change of
+`model/effort/max_turns/idioma/tool_policy`) sets the draft's `compiled_hash` to NULL (the child guards
+row-lock the parent first). The API re-stamps it after its own writes with a compare-and-set on
+`updated_at`; `GET .../compiled` never writes (L7).
+
+**Threshold + audit (H2):** `agents.publicacao_limiar` has a CHECK floor `>= 0.5`
+(`agents_publicacao_limiar_floor`); `agent_versions` gains `limiar_aplicado`/`eval_score` numeric(4,3) null
+(snapshotted by publish) and the CHECK `agent_versions_override_reason_len` (≥ 20 chars once trimmed).
+`agents.agent_audit_log (org_id, agent_id, actor, acao, antes jsonb, depois jsonb)` is append-only
+(trigger); `acao ∈ limiar_alterado | publicado | publicado_override | rascunho_descartado`. Threshold
+changes are logged by a trigger (actor via `agents.set_agent_publicacao_limiar(p_org_id, p_agent_id,
+p_limiar, p_actor)`); publish/discard write their row inside their function.
 
 **Functions** (SECURITY DEFINER, locked search_path, EXECUTE → service_role only):
 - `agents.create_agent_draft(p_org_id, p_agent_id, p_source_version_id uuid null, p_created_by) returns uuid`
   — raises `draft_exists` if a rascunho exists. `p_source_version_id` null ⇒ empty draft with defaults
   (`claude-opus-5`, `high`, 40); non-null ⇒ deep-copies settings + sections + skills + skill files,
   sets `based_on_version_id`. New `versao = max+1`.
-- `agents.publish_agent_version(p_org_id, p_version_id, p_published_by, p_eval_run_id uuid null, p_override_reason text null) returns void`
-  — one transaction: assert rascunho, flip current ativa → substituida, set this → ativa + publish fields.
-  (The gate check itself runs in Python *before* the call; the function only enforces "is a draft".)
-- `agents.discard_agent_draft(p_org_id, p_version_id)` — deletes a rascunho (cascade).
+- `agents.publish_agent_version(p_org_id, p_version_id, p_published_by, p_eval_run_id uuid null, p_override_reason text null, p_expected_hash text, p_texto text, p_manifest jsonb) returns void`
+  — one transaction: assert rascunho; `draft_changed` unless `p_expected_hash` = the row's `compiled_hash`;
+  re-checks the gate (run of this version, `concluida`, `completa`, `total ≥ 1`, stamped `p_expected_hash`,
+  score ≥ the agent's current threshold, agent still has ≥ 1 active case — else `eval_required`; without a
+  run the override reason needs ≥ 20 non-whitespace chars); stores the proof-of-use `compiled_prompts` row
+  (idempotent by hash); flips ativa → substituida, this → ativa; snapshots `limiar_aplicado`/`eval_score`;
+  appends the audit row. The Python gate still runs first (it builds the rich 409 body).
+- `agents.discard_agent_draft(p_org_id, p_version_id, p_actor)` — deletes a rascunho (cascade, incl. its
+  eval runs) + audit row; `draft_referenced` if a compiled prompt points at it.
+- `agents.replace_draft_sections(p_org_id, p_version_id, p_secoes jsonb)` — `PUT .../draft/sections` in ONE
+  transaction (ids of existing rows kept; chave unique deferred for swaps).
+- `agents.replace_draft_bundle(p_org_id, p_version_id, p_secoes jsonb, p_skills jsonb)` — ATOMIC replacement of
+  a draft's sections + skills + skill files (the importer's write; store method
+  `replace_draft_bundle(org_id, version_id, secoes, skills)`, skills items `{nome, descricao, corpo, ordem,
+  ativo, arquivos: [{caminho, titulo, conteudo}]}`).
 
 ### B2 · `013_agent_studio_knowledge_evals.sql` (slice BE-KE)
 
@@ -229,6 +270,13 @@ ALTER TABLE agents.agent_versions
   ADD CONSTRAINT agent_versions_eval_run_fk FOREIGN KEY (eval_run_id) REFERENCES agents.eval_runs(id);
 ```
 
+**Hardening (BE-HARDEN):** `eval_runs.completa boolean not null default false` — true only when the run
+covered every active case (`case_ids` omitted); the publish gate requires it (H1). `eval_runs.version_id`
+is `ON DELETE CASCADE` (L8). `agents.create_eval_run(...)` inserts the run + its pending results in ONE
+transaction (L6; explicit ids deduped, ≤ 200). `agents.list_knowledge_documents(...)` runs the list filter
+as a bound, LIKE-escaped parameter (`q` ≤ 200, L4). `agents.search_knowledge` caps `q` ≤ 512 and headlines
+over `left(conteudo, 50000)` (L5).
+
 Knowledge + evals are **agent-scoped, not version-scoped** (the corpus is large and evolves on its
 own clock; the revision log is its history). The version snapshot freezes prompt, skills and
 settings; the manifest records the knowledge catalog state (collection slugs + doc counts) at compile.
@@ -258,7 +306,9 @@ def compile_prompt(inp: CompileInput) -> CompiledPrompt: ...   # pure, determini
 ```
 
 `ManifestSection = {chave, titulo, origem: {tipo: "secao"|"auto", id: uuid|None, campo: str|None}, inicio: int, fim: int, chars: int, tokens: int}`
-(`inicio`/`fim` are character offsets into `texto` — the inspector uses them to highlight and link).
+(`inicio`/`fim` are offsets into `texto` counted in **Unicode code points** (Python `str` indices — NOT
+UTF-16 code units; a JS consumer must index with `Array.from(texto)` / code-point iteration, not
+`String.prototype.slice`) — the inspector uses them to highlight and link).
 `OnDemandItem = {tipo: "skill"|"arquivo_skill"|"colecao", nome: str, caminho: str|None, chars: int, tokens: int, gatilho: str}`.
 
 **Output layout** (exact; `\n\n` between blocks, trailing newline stripped):
@@ -293,7 +343,7 @@ Test: same input ⇒ identical `texto` + `hash`; any field change ⇒ different 
 
 ---
 
-## §D · HTTP API (all JSON; errors `{"detail": {"detail": str, "code": str}}` as in the existing routers)
+## §D · HTTP API (all JSON; errors are FLAT on the wire: `{"detail": str, "code": str, ...extra}` — e.g. `eval_required` adds `hash_atual` + `ultima_execucao` at the top level)
 
 Auth: `require_member` for reads, `require_admin` for writes (existing deps). Every route resolves the
 agent by `(ctx.org_id, key)` → 404 `agent_not_found`; a legacy agent on a studio route → 409 `not_studio_agent`.
@@ -305,8 +355,8 @@ Mutating a non-draft → 409 `version_immutable`. Unknown fields → 422 (`Stric
 | `GET /api/studio/agents` | — | `{items: [AgentSummary]}` — `AgentSummary = {id, key, nome, descricao, definition_mode, ativo, publicacao_limiar, versao_ativa: int|null, tem_rascunho: bool}`; includes legacy agents (read-only badge) |
 | `POST /api/studio/agents` (admin) | `{key, nome, descricao?}` | 201 `AgentSummary` — creates a `studio` agent, `runtime='claude_sdk'`, `ativo=false`, plus an empty draft v1. 409 `key_taken`. |
 | `GET /api/studio/agents/{key}` | — | `AgentDetail = AgentSummary + {versoes: [VersionSummary]}`; `VersionSummary = {id, versao, status, notas, model, created_at, published_at, compiled_hash, eval_score: number|null}` newest first |
-| `PATCH /api/studio/agents/{key}` (admin) | `{nome?, descricao?, ativo?, publicacao_limiar?}` | `AgentSummary` |
-| `GET /api/studio/agents/{key}/versions/{vid}` | — | `VersionDetail = VersionSummary + {effort, max_turns, idioma, tool_policy, based_on_version_id, published_by, publish_override_reason, eval_run_id, secoes: [Section], skills: [Skill]}`; `Section = {id, chave, titulo, ordem, conteudo, ativo}`; `Skill = {id, nome, descricao, corpo, ordem, ativo, arquivos: [{id, caminho, titulo, chars}]}` |
+| `PATCH /api/studio/agents/{key}` (admin) | `{nome?, descricao?, ativo?, publicacao_limiar? (0.5–1)}` | `AgentSummary` (a threshold change is audited) |
+| `GET /api/studio/agents/{key}/versions/{vid}` | — | `VersionDetail = VersionSummary + {effort, max_turns, idioma, tool_policy, based_on_version_id, published_by, publish_override_reason, eval_run_id, limiar_aplicado: number|null, secoes: [Section], skills: [Skill]}` (a published version's `eval_score` is the score snapshotted at publish; null for an override); `Section = {id, chave, titulo, ordem, conteudo, ativo}`; `Skill = {id, nome, descricao, corpo, ordem, ativo, arquivos: [{id, caminho, titulo, chars}]}` |
 | `POST /api/studio/agents/{key}/draft` (admin) | `{from_version_id?: uuid}` | 201 `VersionDetail`. 409 `draft_exists`. Omitted ⇒ clone of the active version, or empty if none. |
 | `DELETE /api/studio/agents/{key}/draft` (admin) | — | 204. 404 when no draft. |
 | `PATCH /api/studio/agents/{key}/draft` (admin) | `{notas?, model?, effort?, max_turns?, idioma?, tool_policy?}` | `VersionDetail` (422 `invalid_field` on allowlist) |
@@ -317,9 +367,9 @@ Mutating a non-draft → 409 `version_immutable`. Unknown fields → 422 (`Stric
 | `PUT /api/studio/agents/{key}/draft/skills/{skill_id}/files` (admin) | `{caminho, titulo?, conteudo}` (upsert by caminho) | `{id, caminho, titulo, chars}` |
 | `GET /api/studio/agents/{key}/skills/{skill_id}/files/{file_id}` | — | `{id, caminho, titulo, conteudo}` |
 | `DELETE /api/studio/agents/{key}/draft/skills/{skill_id}/files/{file_id}` (admin) | — | 204 |
-| `GET /api/studio/agents/{key}/versions/{vid}/compiled?client_id=` | — | `CompiledOut = {texto, hash, tokens_estimados, manifest, sob_demanda, avisos: [{codigo, mensagem, bloqueante}], version_id, client_id}` (compiles live; for a draft the hash also refreshes `agent_versions.compiled_hash`) |
+| `GET /api/studio/agents/{key}/versions/{vid}/compiled?client_id=` | — | `CompiledOut = {texto, hash, tokens_estimados, manifest, sob_demanda, avisos: [{codigo, mensagem, bloqueante}], version_id, client_id}` (compiles live; a READ — never writes `agent_versions.compiled_hash`, L7) |
 | `GET /api/studio/agents/{key}/versions/{a}/diff/{b}` | — | `{a: {version_id, hash}, b: {...}, texto_a, texto_b, secoes: [{chave, estado: "igual"|"alterada"|"nova"|"removida"}], skills: [{nome, estado}], configuracoes: [{campo, a, b}]}` |
-| `POST /api/studio/agents/{key}/draft/publish` (admin) | `{notas?, override_reason?: str(min 20)}` | `VersionDetail` (now `ativa`). 409 `eval_required` with `{hash_atual, ultima_execucao: {id, score, limiar, compiled_hash}|null}` when the gate fails and no override; 409 `compile_blocked` with `avisos` when a blocking warning exists (no override possible). |
+| `POST /api/studio/agents/{key}/draft/publish` (admin) | `{notas?, override_reason?: str(≥ 20 non-whitespace chars, stored trimmed)}` | `VersionDetail` (now `ativa`). 409 `eval_required` with `{hash_atual, ultima_execucao: {id, score, limiar, compiled_hash, completa}|null}` when the gate fails (only a `completa` run counts) and no override; 409 `compile_blocked` with `avisos` when a blocking warning exists (no override possible); 409 `draft_changed` when the draft moved between the gate check and the publish. |
 | `GET /api/studio/prompts/{hash}` | — | `{hash, texto, manifest, version_id, client_id, created_at}` — 404 `prompt_not_found` |
 
 ### D2 · Clients (BE-DEF)
@@ -331,24 +381,24 @@ Mutating a non-draft → 409 `version_immutable`. Unknown fields → 422 (`Stric
 | Method · Path | Body | 2xx |
 |---|---|---|
 | `GET /api/studio/agents/{key}/knowledge` | — | `{colecoes: [{id, slug, nome, tag, descricao, ordem, total_documentos}]}` |
-| `POST /api/studio/agents/{key}/knowledge` (admin) | `{slug, nome, tag?, descricao?, ordem?}` | 201 collection |
+| `POST /api/studio/agents/{key}/knowledge` (admin) | `{slug, nome, tag?, descricao?, ordem?}` | 201 collection; 409 `slug_taken` |
 | `PATCH /api/studio/agents/{key}/knowledge/{col_id}` (admin) | fields | collection |
-| `GET /api/studio/agents/{key}/knowledge/{col_id}/documents?q=&tipo=&page=&page_size=` | — | `{items: [{id, slug, titulo, tipo, resumo, chars, ativo, updated_at}], total}` |
+| `GET /api/studio/agents/{key}/knowledge/{col_id}/documents?q=(≤200)&tipo=&page=&page_size=` | — | `{items: [{id, slug, titulo, tipo, resumo, chars, ativo, updated_at}], total}` |
 | `POST /api/studio/agents/{key}/knowledge/{col_id}/documents` (admin) | `{slug, titulo, tipo, conteudo, resumo?, proveniencia?}` | 201 `Document` |
 | `GET /api/studio/agents/{key}/documents/{doc_id}` | — | `Document = {id, collection_id, slug, titulo, tipo, resumo, conteudo, proveniencia, ativo, chars, updated_at}` |
 | `PATCH /api/studio/agents/{key}/documents/{doc_id}` (admin) | fields + `motivo?` | `Document` (writes a revision) |
 | `GET /api/studio/agents/{key}/documents/{doc_id}/revisions` | — | `{items: [{id, op, motivo, author_id, created_at}]}` |
-| `GET /api/studio/agents/{key}/knowledge/search?q=&colecao=&limite=` | — | `{items: [{doc_id, slug, titulo, colecao, tag, tipo, trecho, rank}]}` — the SAME function the `kb_buscar` tool calls |
+| `GET /api/studio/agents/{key}/knowledge/search?q=(≤512)&colecao=&limite=` | — | `{items: [{doc_id, slug, titulo, colecao, tag, tipo, trecho, rank}]}` — the SAME function the `kb_buscar` tool calls |
 
 ### D4 · Evals (BE-KE)
 | Method · Path | Body | 2xx |
 |---|---|---|
-| `GET /api/studio/agents/{key}/evals/cases` | — | `{items: [EvalCase]}`; `EvalCase = {id, slug, titulo, entrada, contexto, criterios, rubrica, tags, ativo}` |
-| `POST /api/studio/agents/{key}/evals/cases` (admin) | EvalCase minus id | 201 |
-| `PATCH/DELETE /api/studio/agents/{key}/evals/cases/{case_id}` (admin) | | |
-| `POST /api/studio/agents/{key}/evals/runs` (admin) | `{version_id, case_ids?: [uuid]}` | 202 `EvalRun = {id, version_id, compiled_hash, status, total, aprovados, score, limiar, started_at, finished_at, erro}` — runs in background; 409 `run_in_progress` |
+| `GET /api/studio/agents/{key}/evals/cases` | — | `{items: [EvalCase]}`; `EvalCase = {id, slug, titulo, entrada, contexto, criterios: {deve: [str], nao_deve: [str]}, rubrica, tags, ativo}` |
+| `POST /api/studio/agents/{key}/evals/cases` (admin) | EvalCase minus id | 201; 409 `slug_taken` |
+| `PATCH/DELETE /api/studio/agents/{key}/evals/cases/{case_id}` (admin) | | DELETE of a case with results → 409 `case_in_use` (deactivate instead) |
+| `POST /api/studio/agents/{key}/evals/runs` (admin) | `{version_id, case_ids?: [uuid] (≤ 200, deduped)}` | 202 `EvalRun = {id, version_id, compiled_hash, status, total, aprovados, score, limiar, started_at, finished_at, erro, completa}` — runs in background; `completa` only when `case_ids` is omitted; `compiled_hash` = the version compiled at run creation (seam `get_current_hash_dep`, 503 `compile_unavailable` unbound); 409 `run_in_progress` |
 | `GET /api/studio/agents/{key}/evals/runs?version_id=` | — | `{items: [EvalRun]}` |
-| `GET /api/studio/agents/{key}/evals/runs/{run_id}` | — | `EvalRun + {resultados: [{case_id, case_slug, case_titulo, status, score, saida, veredito, notas_juiz, duracao_ms}]}` |
+| `GET /api/studio/agents/{key}/evals/runs/{run_id}` | — | `EvalRun + {resultados: [{case_id, case_slug, case_titulo, status, score, saida, veredito: [{criterio, tipo, ok, motivo}]|null, notas_juiz, duracao_ms}]}` |
 | `POST /api/studio/agents/{key}/evals/runs/{run_id}/cancel` (admin) | — | `EvalRun` |
 
 ### D5 · Import (BE-RT owns the endpoint — it needs both the BE-DEF and BE-KE stores; the bundle format is §F)
@@ -357,7 +407,8 @@ Query `?dry_run=true` returns the plan without writing. Response:
 `{dry_run, agente: {criado: bool}, rascunho: {version_id, secoes, skills, arquivos}, conhecimento: {colecoes_criadas, documentos_criados, documentos_atualizados, documentos_inalterados}, evals: {criados, atualizados}, clientes: {criados}, avisos: [str]}`.
 Semantics: creates the agent if absent (studio); **replaces the draft's sections + skills** (creating a draft
 from the active version first if none exists); knowledge + evals + clients upsert by slug (documents keyed
-by `source_sha` — unchanged ⇒ `inalterados`, no revision). Never publishes.
+by `source_sha` — unchanged ⇒ `inalterados`, no revision; created/updated ⇒ an `op='import'` revision; a slug
+living in ANOTHER collection ⇒ 409 `slug_in_other_collection`, never a silent move). Never publishes.
 
 ### D6 · Conversations (BE-RT) — extends the existing routes, Julia shape unchanged
 - `ConversationCreateRequest` gains `agent_key: str = "julia"` and `client_id: UUID | None = None`

@@ -1,12 +1,14 @@
 """``FakeEvalStore`` behaviour (contract §B2/§D4) + `SupabaseEvalGate`
-shape (contract §J2.1)."""
+shape (contract §J2.1). Version resolution lives in BE-DEF's store — the
+eval store takes the version id as given."""
 from __future__ import annotations
 
 from uuid import uuid4
 
 import pytest
 
-from app.stores.errors import Conflict, NotFound
+from app.stores._db_errors import StudioConflict
+from app.stores.errors import NotFound
 from app.stores.studio_evals import EvalCaseInput, FakeEvalStore, SupabaseEvalGate
 
 ORG = uuid4()
@@ -17,9 +19,7 @@ USER = uuid4()
 
 @pytest.fixture
 def store() -> FakeEvalStore:
-    s = FakeEvalStore()
-    s.seed_version(ORG, AGENT, VERSION, compiled_hash="sha256:abc123")
-    return s
+    return FakeEvalStore()
 
 
 def _case_input(slug: str = "case-1", **overrides) -> EvalCaseInput:
@@ -43,8 +43,9 @@ class TestCases:
 
     def test_duplicate_slug_rejected(self, store):
         store.create_case(ORG, AGENT, _case_input())
-        with pytest.raises(ValueError):
+        with pytest.raises(StudioConflict) as exc:
             store.create_case(ORG, AGENT, _case_input())
+        assert exc.value.code == "slug_taken"
 
     def test_update_partial_fields(self, store):
         case = store.create_case(ORG, AGENT, _case_input())
@@ -61,19 +62,6 @@ class TestCases:
     def test_foreign_case_id_not_found(self, store):
         with pytest.raises(NotFound):
             store.get_case(ORG, AGENT, uuid4())
-
-
-class TestVersionRef:
-    def test_get_version_ref(self, store):
-        ref = store.get_version_ref(ORG, AGENT, VERSION)
-        assert ref.compiled_hash == "sha256:abc123"
-
-    def test_foreign_version_not_found(self, store):
-        with pytest.raises(NotFound):
-            store.get_version_ref(ORG, AGENT, uuid4())
-        other_org = uuid4()
-        with pytest.raises(NotFound):
-            store.get_version_ref(other_org, AGENT, VERSION)
 
 
 class TestCreateRun:
@@ -110,7 +98,7 @@ class TestCreateRun:
             ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
             case_ids=None, started_by=USER,
         )
-        with pytest.raises(Conflict):
+        with pytest.raises(StudioConflict):
             store.create_run(
                 ORG, AGENT, VERSION, compiled_hash="sha256:abc123", limiar=0.8,
                 case_ids=None, started_by=USER,
@@ -149,7 +137,7 @@ class TestRunLifecycle:
             case_ids=None, started_by=USER,
         )
         store.cancel_run(ORG, AGENT, run.id)
-        with pytest.raises(Conflict):
+        with pytest.raises(StudioConflict):
             store.cancel_run(ORG, AGENT, run.id)
 
     def test_list_runs_filters_by_version_and_orders_newest_first(self, store):
@@ -168,9 +156,7 @@ class TestRunLifecycle:
 
 
 class TestSupabaseEvalGateShape:
-    def test_no_concluded_run_returns_none_without_importing_studio_models(self):
-        """The 'not found' branch never touches `app.studio.models` — this
-        must pass standalone in THIS branch, before BE-DEF merges 012."""
+    def test_no_concluded_run_returns_none(self):
 
         class _EmptyTable:
             def select(self, *_a, **_k):
@@ -202,11 +188,6 @@ class TestSupabaseEvalGateShape:
         assert gate.latest_concluded_run(ORG, VERSION) is None
 
     def test_found_run_constructs_gate_run(self):
-        """Exercises the lazy `from app.studio.models import GateRun`
-        branch — only meaningful once BE-DEF's `app/studio/models.py`
-        merges (contract §J2.1); skipped in this standalone branch."""
-        pytest.importorskip("app.studio.models")
-
         run_id = uuid4()
 
         class _FoundTable:
@@ -227,6 +208,7 @@ class TestSupabaseEvalGateShape:
                     data = [{
                         "id": str(run_id), "score": 0.9, "limiar": 0.8,
                         "compiled_hash": "sha256:abc123", "status": "concluida",
+                        "completa": True, "total": 4,
                     }]
 
                 return _Resp()
@@ -244,3 +226,4 @@ class TestSupabaseEvalGateShape:
         assert result.id == run_id
         assert result.score == 0.9
         assert result.compiled_hash == "sha256:abc123"
+        assert (result.completa, result.total) == (True, 4)

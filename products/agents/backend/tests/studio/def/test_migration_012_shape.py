@@ -21,8 +21,27 @@ NEW_TABLES = (
     "agent_clients",
     "agent_client_entries",
     "compiled_prompts",
+    "agent_audit_log",
 )
-VERSION_FUNCTIONS = ("create_agent_draft", "publish_agent_version", "discard_agent_draft")
+VERSION_FUNCTIONS = (
+    "create_agent_draft",
+    "publish_agent_version",
+    "discard_agent_draft",
+    "set_agent_publicacao_limiar",
+    "replace_draft_sections",
+    "replace_draft_bundle",
+    "erase_compiled_prompts",
+)
+TRIGGER_FUNCTIONS = (
+    "guard_agent_version_immutable",
+    "guard_version_child_immutable",
+    "guard_skill_file_immutable",
+    "guard_compiled_prompt_immutable",
+    "guard_audit_log_append_only",
+    "guard_client_entry_cap",
+    "audit_agent_limiar_change",
+)
+ALL_FUNCTIONS = VERSION_FUNCTIONS + TRIGGER_FUNCTIONS
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +71,7 @@ class TestParses:
         # outside pg_catalog/public; RECORD is equivalent for a syntax check.
         body = re.sub(r"(v_\w+) agents\.agent_versions;", r"\1 RECORD;", sql)
         fns = re.findall(r"CREATE OR REPLACE FUNCTION.*?\$\$;", body, re.S)
-        assert len(fns) == 7
+        assert len(fns) == len(ALL_FUNCTIONS)
         for fn in fns:
             parser.parse_plpgsql_json(fn)
 
@@ -67,9 +86,13 @@ class TestStudioColumnsOnAgents:
 
     def test_descricao_and_limiar(self, sql):
         assert "ADD COLUMN descricao TEXT NULL" in sql
+        assert "ADD COLUMN publicacao_limiar NUMERIC(4,3) NOT NULL DEFAULT 0.800," in sql
+
+    def test_limiar_has_a_named_floor(self, sql):
+        """H2: a threshold below 0.5 makes the gate decorative."""
         assert re.search(
-            r"ADD COLUMN publicacao_limiar NUMERIC\(4,3\) NOT NULL DEFAULT 0\.800\s+"
-            r"CHECK \(publicacao_limiar >= 0 AND publicacao_limiar <= 1\)",
+            r"ADD CONSTRAINT agents_publicacao_limiar_floor\s+"
+            r"CHECK \(publicacao_limiar >= 0\.5 AND publicacao_limiar <= 1\)",
             sql,
         )
 
@@ -189,7 +212,9 @@ class TestImmutabilityTriggers:
             ("guard_agent_prompt_sections_immutable", "agent_prompt_sections", "BEFORE INSERT OR UPDATE OR DELETE", "guard_version_child_immutable"),
             ("guard_agent_skills_immutable", "agent_skills", "BEFORE INSERT OR UPDATE OR DELETE", "guard_version_child_immutable"),
             ("guard_agent_skill_files_immutable", "agent_skill_files", "BEFORE INSERT OR UPDATE OR DELETE", "guard_skill_file_immutable"),
-            ("guard_compiled_prompts_immutable", "compiled_prompts", "BEFORE UPDATE", "guard_compiled_prompt_immutable"),
+            ("guard_compiled_prompts_immutable", "compiled_prompts", "BEFORE UPDATE OR DELETE", "guard_compiled_prompt_immutable"),
+            ("guard_agent_audit_log_append_only", "agent_audit_log", "BEFORE UPDATE OR DELETE", "guard_audit_log_append_only"),
+            ("guard_agent_client_entries_cap", "agent_client_entries", "BEFORE INSERT OR UPDATE", "guard_client_entry_cap"),
         ],
     )
     def test_trigger_present(self, sql, trigger, table, events, fn):
@@ -206,6 +231,7 @@ class TestImmutabilityTriggers:
         for col in (
             "notas", "model", "effort", "max_turns", "idioma", "tool_policy", "compiled_hash",
             "eval_run_id", "publish_override_reason", "published_at", "published_by",
+            "limiar_aplicado", "eval_score",
         ):
             assert f"NEW.{col} IS DISTINCT FROM OLD.{col}" in body, col
 
@@ -224,11 +250,21 @@ class TestVersionFunctions:
         )
         assert re.search(
             r"FUNCTION agents\.publish_agent_version\(\s*p_org_id UUID,\s*p_version_id UUID,\s*"
-            r"p_published_by UUID,\s*p_eval_run_id UUID,\s*p_override_reason TEXT\s*\) RETURNS VOID",
+            r"p_published_by UUID,\s*p_eval_run_id UUID,\s*p_override_reason TEXT,\s*"
+            r"p_expected_hash TEXT,\s*p_texto TEXT,\s*p_manifest JSONB\s*\) RETURNS VOID",
             sql,
         )
         assert re.search(
-            r"FUNCTION agents\.discard_agent_draft\(\s*p_org_id UUID,\s*p_version_id UUID\s*\) RETURNS VOID",
+            r"FUNCTION agents\.discard_agent_draft\(\s*p_org_id UUID,\s*p_version_id UUID,\s*p_actor UUID\s*\) RETURNS VOID",
+            sql,
+        )
+        assert re.search(
+            r"FUNCTION agents\.replace_draft_bundle\(\s*p_org_id UUID,\s*p_version_id UUID,\s*"
+            r"p_secoes JSONB,\s*p_skills JSONB\s*\) RETURNS VOID",
+            sql,
+        )
+        assert re.search(
+            r"FUNCTION agents\.erase_compiled_prompts\(\s*p_org_id UUID,\s*p_client_id UUID\s*\) RETURNS INT",
             sql,
         )
 
@@ -265,11 +301,9 @@ class TestSecurityDefinerExecuteGrants:
                 names.append(m.group(1))
         return names
 
-    def test_all_seven_functions_are_covered(self, sql):
+    def test_every_function_is_covered(self, sql):
         names = self._definer_names(sql)
-        assert len(names) == 7
-        for fn in VERSION_FUNCTIONS:
-            assert f"agents.{fn}" in names
+        assert sorted(names) == sorted(f"agents.{fn}" for fn in ALL_FUNCTIONS)
 
     def test_revoke_pairs(self, sql):
         for fname in self._definer_names(sql):
@@ -283,3 +317,168 @@ class TestSecurityDefinerExecuteGrants:
             m = re.search(rf"GRANT EXECUTE ON FUNCTION {re.escape(fname)}\b[^;]*TO([^;]*);", sql)
             assert m, f"{fname} lacks its GRANT"
             assert [r.strip() for r in m.group(1).split(",")] == ["service_role"]
+
+
+# ── wave-1 security review hardening ────────────────────────────────────────
+
+
+class TestAuthenticatedWriteLockdown:
+    """M5 (mirrors 009/010): authenticated keeps SELECT, never writes."""
+
+    @pytest.mark.parametrize("table", NEW_TABLES)
+    def test_authenticated_writes_revoked(self, sql, table):
+        assert f"REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.{table} FROM authenticated;" in sql
+
+
+class TestSizeCaps:
+    """M3: the DB CHECK backstop of ``app.studio.models.LIMITS``."""
+
+    @pytest.mark.parametrize(
+        "table, check",
+        [
+            ("agent_prompt_sections", "CHECK (length(conteudo) <= 40000)"),
+            ("agent_skills", "CHECK (length(corpo) <= 60000)"),
+            ("agent_skill_files", "CHECK (length(conteudo) <= 120000)"),
+            ("agent_clients", "CHECK (length(resumo) <= 8000)"),
+            ("agent_client_entries", "CHECK (length(titulo) <= 200)"),
+            ("agent_client_entries", "CHECK (length(conteudo) <= 4000)"),
+        ],
+    )
+    def test_cap(self, sql, table, check):
+        assert check in _table_block(sql, table)
+
+    def test_caps_match_the_python_limits(self, sql):
+        from app.studio.models import LIMITS
+
+        for key, needle in (
+            ("section.conteudo", "length(conteudo) <= {}"), ("skill.corpo", "length(corpo) <= {}"),
+            ("skill_file.conteudo", "length(conteudo) <= {}"), ("client.resumo", "length(resumo) <= {}"),
+            ("entry.titulo", "length(titulo) <= {}"), ("entry.conteudo", "length(conteudo) <= {}"),
+        ):
+            assert needle.format(LIMITS[key]) in sql, key
+
+    def test_active_entry_cap_trigger(self, sql):
+        body = _function_block(sql, "guard_client_entry_cap")
+        assert "v_ativas >= 200" in body
+        assert "FOR UPDATE" in body  # serialises concurrent inserts per client
+        assert "RAISE EXCEPTION 'client_entries_cap'" in body
+
+
+class TestOverrideReason:
+    def test_named_check_on_trimmed_length(self, sql):
+        """L1: DB backstop — the reason must survive btrim with >= 20 chars."""
+        block = _table_block(sql, "agent_versions")
+        assert "CONSTRAINT agent_versions_override_reason_len CHECK (" in block
+        assert "length(btrim(publish_override_reason, E' \\t\\r\\n')) >= 20" in block
+
+
+class TestPublishRace:
+    """M1: content writes NULL the draft hash; publish needs the expected hash."""
+
+    @pytest.mark.parametrize("fn", ["guard_version_child_immutable", "guard_skill_file_immutable"])
+    def test_child_guards_lock_parent_and_null_its_hash(self, sql, fn):
+        body = _function_block(sql, fn)
+        assert "FOR UPDATE" in body
+        assert "SET compiled_hash = NULL" in body
+
+    def test_draft_setting_change_nulls_hash(self, sql):
+        body = _function_block(sql, "guard_agent_version_immutable")
+        assert "NEW.compiled_hash := NULL;" in body
+
+    def test_publish_refuses_a_changed_draft(self, sql):
+        body = _function_block(sql, "publish_agent_version")
+        assert "v_row.compiled_hash IS DISTINCT FROM p_expected_hash" in body
+        assert "RAISE EXCEPTION 'draft_changed'" in body
+        # checked on the FOR UPDATE-locked row, before anything is written
+        assert body.index("FOR UPDATE") < body.index("'draft_changed'") < body.index("UPDATE agents.agent_versions")
+
+
+class TestPublishGateInDb:
+    """H1/H2: the DB re-validates the gate and snapshots it."""
+
+    def test_run_must_be_complete_and_match(self, sql):
+        body = _function_block(sql, "publish_agent_version")
+        for cond in (
+            "r.version_id = p_version_id", "r.status = 'concluida'", "r.completa", "r.total >= 1",
+            "r.compiled_hash = p_expected_hash", "r.score >= v_limiar",
+        ):
+            assert cond in body, cond
+        assert "c.ativo" in body  # >= 1 active case
+        assert "RAISE EXCEPTION 'eval_required'" in body
+
+    def test_snapshots_threshold_and_score(self, sql):
+        body = _function_block(sql, "publish_agent_version")
+        assert "limiar_aplicado = v_limiar" in body
+        assert "eval_score = v_score" in body
+        assert "FOR SHARE" in body  # threshold can't move under the publish
+
+    def test_override_needs_20_non_whitespace_chars(self, sql):
+        body = _function_block(sql, "publish_agent_version")
+        assert "length(regexp_replace(v_reason, '\\s', '', 'g')) < 20" in body
+
+    def test_proof_of_use_is_in_the_same_transaction(self, sql):
+        body = _function_block(sql, "publish_agent_version")
+        assert "INSERT INTO agents.compiled_prompts" in body
+        assert "ON CONFLICT (org_id, hash) DO NOTHING" in body
+        assert body.index("INSERT INTO agents.compiled_prompts") < body.index("SET status = 'ativa'")
+
+    def test_version_columns(self, sql):
+        block = _table_block(sql, "agent_versions")
+        assert "limiar_aplicado NUMERIC(4,3) NULL" in block
+        assert "eval_score NUMERIC(4,3) NULL" in block
+
+
+class TestAuditLog:
+    def test_publish_and_discard_append(self, sql):
+        assert "INSERT INTO agents.agent_audit_log" in _function_block(sql, "publish_agent_version")
+        assert "'publicado_override'" in _function_block(sql, "publish_agent_version")
+        body = _function_block(sql, "discard_agent_draft")
+        assert "INSERT INTO agents.agent_audit_log" in body and "'rascunho_descartado'" in body
+
+    def test_threshold_changes_are_audited_by_trigger(self, sql):
+        assert re.search(
+            r"CREATE OR REPLACE TRIGGER audit_agent_limiar_change\s+AFTER UPDATE OF publicacao_limiar ON agents\.agents\s+"
+            r"FOR EACH ROW\s+WHEN \(OLD\.publicacao_limiar IS DISTINCT FROM NEW\.publicacao_limiar\)",
+            sql,
+        )
+        assert "current_setting('agents.audit_actor', true)" in _function_block(sql, "audit_agent_limiar_change")
+        assert "set_config('agents.audit_actor'" in _function_block(sql, "set_agent_publicacao_limiar")
+
+    def test_acao_allowlist(self, sql):
+        assert (
+            "CHECK (acao IN ('limiar_alterado', 'publicado', 'publicado_override', 'rascunho_descartado'))"
+            in _table_block(sql, "agent_audit_log")
+        )
+
+
+class TestCompiledPromptErasure:
+    """L2: DELETE is refused except through the service_role erasure function."""
+
+    def test_guard_allows_delete_only_under_the_erasure_flag(self, sql):
+        body = _function_block(sql, "guard_compiled_prompt_immutable")
+        assert "current_setting('agents.compiled_prompt_erasure', true) = 'on'" in body
+
+    def test_erasure_function_sets_the_flag_and_scopes_by_org_and_client(self, sql):
+        body = _function_block(sql, "erase_compiled_prompts")
+        assert "set_config('agents.compiled_prompt_erasure', 'on', true)" in body
+        assert "DELETE FROM agents.compiled_prompts WHERE org_id = p_org_id AND client_id = p_client_id" in body
+        assert "RAISE EXCEPTION 'client_required'" in body
+
+
+class TestAtomicReplace:
+    def test_sections_replace_defers_the_chave_unique(self, sql):
+        block = _table_block(sql, "agent_prompt_sections")
+        assert "UNIQUE (version_id, chave) DEFERRABLE INITIALLY IMMEDIATE" in block
+        body = _function_block(sql, "replace_draft_sections")
+        assert "SET CONSTRAINTS agents.agent_prompt_sections_version_chave_key DEFERRED" in body
+        assert "RAISE EXCEPTION 'chave_conflict'" in body
+
+    def test_bundle_replaces_sections_skills_and_files(self, sql):
+        body = _function_block(sql, "replace_draft_bundle")
+        for stmt in (
+            "DELETE FROM agents.agent_prompt_sections", "DELETE FROM agents.agent_skills",
+            "INSERT INTO agents.agent_prompt_sections", "INSERT INTO agents.agent_skills",
+            "INSERT INTO agents.agent_skill_files",
+        ):
+            assert stmt in body, stmt
+        assert "RAISE EXCEPTION 'skill_exists'" in body
