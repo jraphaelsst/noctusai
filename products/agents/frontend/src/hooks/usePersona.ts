@@ -8,6 +8,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { ApiError } from "@/lib/errors";
 
 const PERSONA_KEY = ["agents", "julia", "persona"] as const;
 
@@ -47,13 +48,26 @@ export function usePersona() {
   const query = useQuery<Persona>({
     queryKey: PERSONA_KEY,
     queryFn: () => api.get<Persona>("/api/agents/julia/persona"),
+    // A 404 here means "Julia has no persona yet" (contract §E.2,
+    // `code: "not_found"`) — a definitive, stable answer, not a transient
+    // failure. Retrying it 3x just stretches the skeleton before the page
+    // can fall back to its create-mode form. Any other status (5xx,
+    // network) still gets react-query's normal retry.
+    retry: (failureCount, error) =>
+      error instanceof ApiError && error.status === 404 ? false : failureCount < 3,
   });
+
+  const isNotFound = query.error instanceof ApiError && query.error.status === 404;
 
   return {
     data: query.data,
     showSkeleton: query.isPending && !query.data,
     isRefreshing: query.isFetching && !!query.data,
-    isError: query.isError,
+    // A definitive "no persona yet" is not an error state — the page
+    // renders its create-mode form instead. Only a genuine failure (5xx,
+    // network) surfaces the error card.
+    isError: query.isError && !isNotFound,
+    isNotFound,
   };
 }
 

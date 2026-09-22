@@ -31,9 +31,15 @@ const EFFORT_LABELS: Record<string, string> = {
   max: "Máximo",
 };
 
+// Defaults for the very first persona (no row yet, contract §E.2 404 →
+// "nenhuma persona ainda"). `nome`/`model`/`effort`/`idioma` use the
+// backend's own canonical values (never invented — `model`/`effort` are
+// CHECK-constrained, `app/stores/personas.py`); the free-text fields
+// (`papel`, `tom`, `system_prompt_append`) stay EMPTY — persona content is
+// the admin's to author, not a UI default.
 function emptyForm(): PersonaUpdateInput {
   return {
-    nome: "",
+    nome: "Julia",
     papel: "",
     model: PERSONA_MODELS[1],
     effort: "medium",
@@ -49,6 +55,12 @@ export default function JuliaPersona() {
   const isAdmin = useIsAdmin();
   const { data: persona, showSkeleton, isError } = usePersona();
   const updatePersona = useUpdatePersona();
+  // No persona row yet (contract §E.2 404, "Nenhuma persona ativa
+  // configurada") vs. editing the existing one — drives copy + the submit
+  // button label. `PUT` creates versão 1 either way (`update_persona`,
+  // `app/routers/persona_router.py`); the UI difference is honesty about
+  // which is about to happen.
+  const isCreateMode = !persona;
 
   const [form, setForm] = useState<PersonaUpdateInput>(emptyForm());
   const [formError, setFormError] = useState<string | null>(null);
@@ -81,7 +93,7 @@ export default function JuliaPersona() {
     setFormError(null);
     try {
       await updatePersona.mutateAsync(form);
-      toast.success("Persona atualizada.");
+      toast.success(isCreateMode ? "Persona criada." : "Persona atualizada.");
     } catch (err) {
       // 422 → field-level validation error (contract §E.2) — the backend
       // returns a single message naming the offending field/allowlist.
@@ -114,10 +126,15 @@ export default function JuliaPersona() {
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-border bg-card p-6">
-          {persona && (
+          {persona ? (
             <Badge variant="muted" data-testid="persona-version">
               Versão {persona.versao}
             </Badge>
+          ) : (
+            <p className="text-sm text-muted-foreground" data-testid="persona-create-notice">
+              Julia ainda não tem uma persona configurada e não vai responder até que uma seja
+              salva aqui.
+            </p>
           )}
 
           <div>
@@ -141,6 +158,7 @@ export default function JuliaPersona() {
               id="persona-papel"
               className={INPUT_CLASS}
               value={form.papel}
+              placeholder="Ex: assistente de atendimento da Academia de Reciclagem"
               required
               onChange={(e) => setField("papel", e.target.value)}
             />
@@ -248,7 +266,11 @@ export default function JuliaPersona() {
           )}
 
           <Button type="submit" variant="primary" disabled={updatePersona.isPending}>
-            {updatePersona.isPending ? "Salvando..." : "Salvar"}
+            {updatePersona.isPending
+              ? "Salvando..."
+              : isCreateMode
+                ? "Criar persona"
+                : "Salvar"}
           </Button>
         </form>
       )}
