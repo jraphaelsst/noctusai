@@ -92,12 +92,26 @@ from app.studio.tools import STUDIO_SERVER_NAME, studio_allowed_tools
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "AcademiaLaunchConfig",
     "build_launch_options",
     "ClaudeAgentSdkRuntime",
     "STUDIO_DISALLOWED_TOOLS",
     "STUDIO_PROMPT_ATTRIBUTION",
     "studio_system_prompt",
 ]
+
+@dataclasses.dataclass(frozen=True)
+class AcademiaLaunchConfig:
+    """The Julia-only inputs of an ``academia``-toolset turn: the academia
+    API client, the §D ``sub`` agent id and the approval-assertion signing
+    secret. A studio turn needs NONE of them, so the runtime resolves this
+    lazily — only when a non-studio turn launches (see
+    ``ClaudeAgentSdkRuntime(academia_config=...)``)."""
+
+    academia_api: AcademiaApi
+    agent_id: UUID
+    approval_secret: str
+
 
 #: Contract §E.11 "Launch options" — the persona/JULIA.md text goes in a
 #: group-only file inside the slot's handoff dir, never on argv.
@@ -190,9 +204,9 @@ def build_launch_options(
     *,
     spec: AgentSpec,
     ctx: TurnContext,
-    academia_api: AcademiaApi,
-    agent_id: UUID,
-    approval_secret: str,
+    academia_api: AcademiaApi | None,
+    agent_id: UUID | None,
+    approval_secret: str | None,
     can_use_tool: Any,
     approvals: ApprovalStore,
     slot: TurnSlot,
@@ -251,6 +265,12 @@ def build_launch_options(
             cli_path=cli_path,
             anthropic_api_key=anthropic_api_key,
             studio_tools=studio_tools,
+        )
+    if academia_api is None or agent_id is None or not approval_secret:
+        # Fail closed: the academia MCP server can never be built without
+        # its Julia-only inputs (they are optional only for studio specs).
+        raise RuntimeError(
+            "an academia-toolset turn requires academia_api, agent_id and approval_secret"
         )
     allowed_tools = list(BASE_TOOLS) + [
         f"mcp__academia__{n}" for n in _leitura_short_names()
@@ -445,7 +465,7 @@ class _TurnDriver:
         *,
         ctx: TurnContext,
         broker: ApprovalBroker,
-        academia_api: AcademiaApi,
+        academia_api: AcademiaApi | None,
         allowlist: frozenset[str] | None = None,
     ) -> None:
         self._ctx = ctx
@@ -543,6 +563,10 @@ class _TurnDriver:
         slug = tool_input.get("slug")
         if not slug:
             return {"antes": None, "depois": depois}
+        if self._academia_api is None:
+            # Only a studio turn carries no academia client, and its exact-name
+            # allowlist denies every mcp__academia__ tool before this runs.
+            raise RuntimeError("kb_escrever diff requested on a turn without an academia client")
         try:
             current = await self._academia_api.get(f"/api/kb/{slug}")
         except AcademiaNotFoundError:
@@ -664,27 +688,54 @@ class ClaudeAgentSdkRuntime:
     def __init__(
         self,
         *,
-        academia_api: AcademiaApi,
-        agent_id: UUID,
-        approval_secret: str,
         plugin_path: str,
         approvals: ApprovalStore,
         slot_pool: SlotPool,
         transcripts: TranscriptStore,
+        academia_api: AcademiaApi | None = None,
+        agent_id: UUID | None = None,
+        approval_secret: str | None = None,
+        academia_config: Callable[[], AcademiaLaunchConfig] | None = None,
         cli_path: str = DEFAULT_CLI_PATH,
         approval_use_window_seconds: int = 120,
         transport_factory: Any = None,
         anthropic_api_key: str | None = None,
         studio_tools_factory: Callable[[AgentSpec, TurnContext], Any] | None = None,
     ) -> None:
+        """Julia's academia inputs come EITHER as the three values
+        (``academia_api`` + ``agent_id`` + ``approval_secret``) OR as
+        ``academia_config`` — a zero-arg provider called once per
+        academia-toolset turn, at launch. The provider form is what
+        :func:`app.runtime.get_agent_runtime` uses, so a studio turn never
+        resolves (nor requires) the approval key or the academia client.
+        Neither form ⇒ this runtime refuses academia turns."""
+        legacy = (academia_api, agent_id, approval_secret)
+        if academia_config is not None and any(v is not None for v in legacy):
+            raise ValueError(
+                "pass either academia_config or academia_api/agent_id/approval_secret, not both"
+            )
+        if academia_config is None and any(v is not None for v in legacy):
+            if academia_api is None or agent_id is None or approval_secret is None:
+                raise ValueError(
+                    "academia_api, agent_id and approval_secret must be passed together"
+                )
+            fixed = AcademiaLaunchConfig(
+                academia_api=academia_api, agent_id=agent_id, approval_secret=approval_secret
+            )
+
+            def academia_config() -> AcademiaLaunchConfig:
+                return fixed
+        self._academia_config = academia_config
+        # The value form's inputs stay readable (tests build Julia launch
+        # options straight from them); `None` under the provider form.
+        self._academia_api = academia_api
+        self._agent_id = agent_id
+        self._approval_secret = approval_secret
         self._anthropic_api_key = anthropic_api_key
         # Agent Studio §E3: builds the per-turn `studio` MCP server from the
         # server-side spec (`app.studio.tools.build_studio_tools` over the
         # studio stores). `None` ⇒ this runtime refuses studio specs.
         self._studio_tools_factory = studio_tools_factory
-        self._academia_api = academia_api
-        self._agent_id = agent_id
-        self._approval_secret = approval_secret
         self._plugin_path = plugin_path
         self._approvals = approvals
         self._slot_pool = slot_pool
@@ -897,6 +948,13 @@ class ClaudeAgentSdkRuntime:
         studio = spec.toolset == "studio"
         studio_tools = None
         allowlist: frozenset[str] | None = None
+        # Julia-only inputs resolve HERE, per academia turn, and fail closed
+        # (the provider raises) — a studio turn never touches them.
+        academia: AcademiaLaunchConfig | None = None
+        if not studio:
+            if self._academia_config is None:
+                raise RuntimeError("this runtime was built without academia launch config")
+            academia = self._academia_config()
         if studio:
             if self._studio_tools_factory is None:
                 raise RuntimeError("this runtime was built without a studio tools factory")
@@ -929,14 +987,17 @@ class ClaudeAgentSdkRuntime:
         )
 
         driver = _TurnDriver(
-            ctx=ctx, broker=broker, academia_api=self._academia_api, allowlist=allowlist
+            ctx=ctx,
+            broker=broker,
+            academia_api=academia.academia_api if academia else None,
+            allowlist=allowlist,
         )
         options = build_launch_options(
             spec=spec,
             ctx=ctx,
-            academia_api=self._academia_api,
-            agent_id=self._agent_id,
-            approval_secret=self._approval_secret,
+            academia_api=academia.academia_api if academia else None,
+            agent_id=academia.agent_id if academia else None,
+            approval_secret=academia.approval_secret if academia else None,
             can_use_tool=driver.can_use_tool,
             approvals=self._approvals,
             slot=slot,

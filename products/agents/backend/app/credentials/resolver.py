@@ -59,7 +59,9 @@ __all__ = [
     "get_config_store_handle",
     "get_credential_resolver",
     "install_config_store_handle",
+    "require_resolved_academia_config",
     "require_resolved_prod_config",
+    "require_resolved_runtime_config",
     "reset_for_testing",
 ]
 
@@ -189,21 +191,52 @@ def get_credential_resolver(settings: Any) -> CredentialResolver:
     return CredentialResolver(get_config_store_handle(settings).store, settings)
 
 
-def require_resolved_prod_config(resolver: CredentialResolver) -> None:
-    """Deploy-context guard over RESOLVED values (DB or env) — the
-    DB-aware successor of `require_prod_config([...])` for the four keys
-    the Julia runtime needs. Lists every gap at once."""
-    if not is_deploy_context():
-        return
-    missing = [
+def _missing_runtime_keys(resolver: CredentialResolver) -> list[str]:
+    return [] if resolver.anthropic_api_key() else ["ANTHROPIC_API_KEY"]
+
+
+def _missing_academia_keys(resolver: CredentialResolver) -> list[str]:
+    return [
         env
         for env, present in (
-            ("ANTHROPIC_API_KEY", bool(resolver.anthropic_api_key())),
             ("APPROVAL_ASSERTION_SECRETS", bool(resolver.approval_signing_secret())),
             ("ACADEMIA_API_TOKEN", bool(resolver.academia_api_token())),
             ("JULIA_AGENT_ID", resolver.julia_agent_id() is not None),
         )
         if not present
     ]
+
+
+def require_resolved_runtime_config(resolver: CredentialResolver) -> None:
+    """Deploy-context guard for EVERY turn (Julia and studio alike): the
+    Anthropic key is the only value both toolsets need."""
+    if not is_deploy_context():
+        return
+    missing = _missing_runtime_keys(resolver)
+    if missing:
+        raise MissingProdConfigError(missing)
+
+
+def require_resolved_academia_config(resolver: CredentialResolver) -> None:
+    """Deploy-context guard for an ``academia``-toolset (Julia) turn — run
+    at that turn's launch, never for a studio turn, which uses none of
+    these three keys."""
+    if not is_deploy_context():
+        return
+    missing = _missing_academia_keys(resolver)
+    if missing:
+        raise MissingProdConfigError(missing)
+
+
+def require_resolved_prod_config(resolver: CredentialResolver) -> None:
+    """Deploy-context guard over RESOLVED values (DB or env) — the
+    DB-aware successor of `require_prod_config([...])` for all four keys
+    the Julia runtime needs. Lists every gap at once. The per-turn path
+    uses the two scoped halves above (`require_resolved_runtime_config`
+    + `require_resolved_academia_config`) so a studio turn never depends
+    on Julia-only config."""
+    if not is_deploy_context():
+        return
+    missing = _missing_runtime_keys(resolver) + _missing_academia_keys(resolver)
     if missing:
         raise MissingProdConfigError(missing)
