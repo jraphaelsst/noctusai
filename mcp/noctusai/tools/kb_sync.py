@@ -380,6 +380,7 @@ def methodology_reference_gaps(root: Path) -> list[str]:
 
     **Surfaces scanned (in-repo only):**
       * ``CLAUDE.md``
+      * ``CONTEXTUALIZE.md``
       * ``CLAUDE/**/*.md``
       * ``.claude/agents/*.md``
       * ``.claude/skills/*/SKILL.md``
@@ -449,6 +450,13 @@ def methodology_reference_gaps(root: Path) -> list[str]:
     claude_md = root / "CLAUDE.md"
     if claude_md.is_file():
         surfaces.append(claude_md)
+    # CONTEXTUALIZE.md  (added 2026-09-21, contextualize-freshness-gate: the
+    # fresh-agent front door is an 8-way-sync surface, yet a broken `KB § …`
+    # pointer in it was invisible to this gate — the same narrower-than-the-
+    # contract shape as the commands gap below.)
+    contextualize_md = root / "CONTEXTUALIZE.md"
+    if contextualize_md.is_file():
+        surfaces.append(contextualize_md)
     # CLAUDE/**/*.md
     claude_dir = root / "CLAUDE"
     if claude_dir.is_dir():

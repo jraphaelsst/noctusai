@@ -15514,6 +15514,48 @@ _CONTEXTUALIZE_CANONICAL_CORES = (
 # file with broad pointer-only reach. Raise via codified rationale only.
 _CONTEXTUALIZE_LINE_CAP = 75
 
+# Count claims CONTEXTUALIZE.md may make about the harness, keyed to the
+# `_harness_roster` kind they must equal. A number next to one of these nouns
+# is re-derived from disk on every check — a hand-typed count that no longer
+# matches the tree is drift, not prose.
+_CONTEXTUALIZE_COUNTED_NOUNS = {
+    "specialist agents": "agents",
+    "procedure skills": "skills",
+    "slash commands": "commands",
+}
+# The MCP tool count moves weekly (a new `noctus.dev.*` tool per slice), and
+# `mcp/noctusai/tools/` is outside the 8-way-sync trigger paths, so a gated
+# equality would still go stale between commits. It lives ONLY in the derived
+# `kb-counts:mcp_tools` block of 06-AGENTS.md; CONTEXTUALIZE.md points there.
+_CONTEXTUALIZE_FORBIDDEN_COUNT_RE = re.compile(r"\b\d+\s+(?:MCP\s+)?tools\b")
+
+
+def _harness_roster(root: Path) -> dict[str, list[str]]:
+    """The on-disk harness surfaces — skills, slash commands, agents.
+
+    The ONE enumeration shared by every keeper that asserts a doc lists the
+    harness (CLAUDE.md router legs + CONTEXTUALIZE.md freshness leg). A kind
+    whose directory is absent maps to ``[]``.
+    """
+    claude = root / ".claude"
+    skills_dir = claude / "skills"
+    commands_dir = claude / "commands"
+    agents_dir = claude / "agents"
+    return {
+        "skills": sorted(
+            p.name for p in skills_dir.iterdir()
+            if p.is_dir() and (p / "SKILL.md").is_file()
+        ) if skills_dir.is_dir() else [],
+        "commands": sorted(
+            p.stem for p in commands_dir.iterdir()
+            if p.is_file() and p.suffix == ".md"
+        ) if commands_dir.is_dir() else [],
+        "agents": sorted(
+            p.stem for p in agents_dir.iterdir()
+            if p.is_file() and p.suffix == ".md"
+        ) if agents_dir.is_dir() else [],
+    }
+
 
 def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26, kb-vector-search): enforces the
@@ -16116,10 +16158,7 @@ def check_skills_listed_in_router(repo_root: Path | None = None) -> list[dict]:
         text = claude_md.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return issues
-    on_disk = sorted(
-        p.name for p in skills_dir.iterdir()
-        if p.is_dir() and (p / "SKILL.md").is_file()
-    )
+    on_disk = _harness_roster(root)["skills"]
     # Leg (a): skill on disk not in CLAUDE.md.
     for skill in on_disk:
         if skill not in text:
@@ -16233,10 +16272,7 @@ def check_commands_listed_in_router(repo_root: Path | None = None) -> list[dict]
         text = claude_md.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return issues
-    on_disk = sorted(
-        p.stem for p in commands_dir.iterdir()
-        if p.is_file() and p.suffix == ".md"
-    )
+    on_disk = _harness_roster(root)["commands"]
     # Leg (a): command on disk not in CLAUDE.md.
     for cmd in on_disk:
         if cmd not in text:
@@ -16972,6 +17008,19 @@ def check_contextualize_alignment(repo_root: Path | None = None) -> list[dict]:
           pointer substring in the body — the curated list of docs a
           fresh agent MUST be routed to.
 
+    Content-freshness legs (2026-09-21, contextualize-freshness-gate —
+    (a)-(c) guard the SHAPE, so a map listing 8 of 9 commands and a tool
+    count 57 behind the tree passed for months):
+      (d) Roster parity, both directions, per kind (skills · slash commands ·
+          agents) against `_harness_roster`: every on-disk name is listed
+          (`name` / `/name` in backticks), and every name on the §4 roster
+          line for that kind exists on disk.
+      (e) Every count claim next to a `_CONTEXTUALIZE_COUNTED_NOUNS` noun
+          equals the derived roster size; an MCP tool count is forbidden
+          outright (it lives in the derived `kb-counts:mcp_tools` block).
+      KB-pointer resolution for this file is `kb_sync`'s
+      `methodology_reference_gaps` (CONTEXTUALIZE.md is one of its surfaces).
+
     Severity ``high`` (drift here ⇒ fresh agents arrive un-oriented and
     re-read the same docs you already trimmed; the codebase is the source
     of truth, and CONTEXTUALIZE.md is the front door).
@@ -17023,6 +17072,76 @@ def check_contextualize_alignment(repo_root: Path | None = None) -> list[dict]:
                 "severity": "high",
                 "symbol": "contextualize-missing-canonical-core",
             })
+    issues.extend(_contextualize_freshness_issues(text, _harness_roster(root)))
+    return issues
+
+
+# Per roster kind: how a name is written in CONTEXTUALIZE.md, the marker that
+# identifies its §4 roster line, and the regex pulling listed names off it.
+_CONTEXTUALIZE_ROSTER_LINES = {
+    "skills": ("`{}`", "(`.claude/skills/`", re.compile(r"`([a-z][a-z0-9-]+)`")),
+    "commands": ("`/{}`", "(`.claude/commands/`", re.compile(r"`/([a-z][a-z0-9-]+)`")),
+    "agents": ("`{}`", "(`.claude/agents/`", re.compile(r"`([a-z][a-z0-9-]+)`")),
+}
+
+
+def _contextualize_freshness_issues(
+    text: str, roster: dict[str, list[str]],
+) -> list[dict]:
+    """Legs (d) + (e) of `check_contextualize_alignment` — see its docstring."""
+    issues: list[dict] = []
+
+    def _issue(issue: str, symbol: str) -> None:
+        issues.append({
+            "product": "<harness>", "file": "CONTEXTUALIZE.md",
+            "issue": issue, "severity": "high", "symbol": symbol,
+        })
+
+    lines = text.splitlines()
+    for kind, (spelling, marker, name_re) in _CONTEXTUALIZE_ROSTER_LINES.items():
+        on_disk = roster.get(kind, [])
+        for name in on_disk:
+            if spelling.format(name) not in text:
+                _issue(
+                    f"{kind[:-1]} {spelling.format(name)} exists on disk but "
+                    f"CONTEXTUALIZE.md §4 does not list it — a fresh agent "
+                    f"cannot discover it. Add it to the {marker[1:]} line.",
+                    f"contextualize-{kind}-unlisted",
+                )
+        roster_line = next((ln for ln in lines if marker in ln), None)
+        if roster_line is None:
+            if on_disk:
+                _issue(
+                    f"CONTEXTUALIZE.md has no §4 roster line for {kind} "
+                    f"(marker {marker[1:]}) while {len(on_disk)} exist on disk.",
+                    f"contextualize-{kind}-roster-line-missing",
+                )
+            continue
+        for name in sorted(set(name_re.findall(roster_line)) - set(on_disk)):
+            _issue(
+                f"CONTEXTUALIZE.md §4 lists {spelling.format(name)} but no such "
+                f"{kind[:-1]} exists on disk — remove the stale entry or "
+                f"restore the {kind[:-1]}.",
+                f"contextualize-{kind}-stale",
+            )
+
+    for noun, kind in _CONTEXTUALIZE_COUNTED_NOUNS.items():
+        derived = len(roster.get(kind, []))
+        for claimed in re.findall(rf"\b(\d+)\s+{noun}\b", text):
+            if int(claimed) != derived:
+                _issue(
+                    f"CONTEXTUALIZE.md claims {claimed} {noun}, the tree has "
+                    f"{derived} — fix the number or drop it (the roster line "
+                    f"already lists them).",
+                    "contextualize-count-drift",
+                )
+    for claim in _CONTEXTUALIZE_FORBIDDEN_COUNT_RE.findall(text):
+        _issue(
+            f"CONTEXTUALIZE.md hand-writes an MCP tool count (`{claim}`) — it "
+            f"drifts weekly. Point at the derived count in `KB § "
+            f"CONTEXT/06-AGENTS.md` (kb-counts:mcp_tools block) instead.",
+            "contextualize-hand-count",
+        )
     return issues
 
 
