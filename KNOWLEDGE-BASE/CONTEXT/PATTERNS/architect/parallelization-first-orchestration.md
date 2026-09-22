@@ -27,7 +27,7 @@
 ## The flow (tech-lead view)
 1. **Decompose** the task into slices. Ask: how many specialists? Are slices file-disjoint? Is judgment decomposable into design-then-impl?
 2. **Pick the roster** for each slice — read `KB § 06-AGENTS.md` + the live `.claude/agents/` files; prefer the most-specialized advisor/executor that fits the slice's domain.
-3. **Brief tight** (the `engineer-seed` minimum-viable-brief: goal + reference + scope + acceptance — see `.claude/agents/engineer-seed.md` §11). Tight briefs are the real speed lever, not the model.
+3. **Brief tight** (the `engineer-seed` minimum-viable-brief: goal + reference + scope + acceptance — see `KB § PATTERNS/architect/dispatch-engineer-tuning.md` §4d). Tight briefs are the real speed lever, not the model.
 4. **Dispatch in one turn** when parallel-clean; one turn per wave when wave-gated (Wave N+1 dispatches only after Wave N FF-merges, per [[branching-and-merging]] §18).
 5. **Architect-side certify** each return on its own clean worktree before commit (per the worktree-sensitivity corollary in [[branching]]).
 6. **Integrate** (FF rebase-then-push); the tech-lead is the sole git owner.

@@ -21,7 +21,7 @@ Why this exists
 Bypass forbidden
     Surfacing MUST NOT be skipped to avoid friction. This tool makes the
     round-trip cheap enough that bypass has no justification. KB § bg-engineer-safety
-    (in-flight codification) and engineer-seed §1c both mandate surfacing.
+    (in-flight codification) and engineer-seed §2 both mandate surfacing.
 
 KB § PATTERNS/common/surface-and-resume-tooling.md.
 """
@@ -303,7 +303,7 @@ def register(server) -> None:
             "with YAML frontmatter. Returns SurfaceReceipt with surface_id, "
             "surface_path, and exit_marker_msg (print this verbatim as the "
             "FINAL output line so the orchestrator detects the block). "
-            "Bypass FORBIDDEN per engineer-seed §1c + bg-engineer-safety rule. "
+            "Bypass FORBIDDEN per engineer-seed §2/§5 + bg-engineer-safety rule. "
             "Tech-lead responds with noctus.dev.respond_and_resume. "
             "KB § PATTERNS/common/surface-and-resume-tooling.md."
         ),

@@ -85,7 +85,7 @@ The composed brief includes:
 - Full surface note body
 - Full tech-lead response
 - Cache-first reflex reminder (non-negotiable; spelled out once in the brief)
-- Safety rules (stage-only / no --no-verify / worktree isolation)
+- Safety rules (commit-own-branch / no --no-verify / worktree isolation)
 - Worktree path + SHA for the resumed agent to verify
 
 ---

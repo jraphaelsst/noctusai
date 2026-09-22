@@ -22,7 +22,7 @@ owns_kb:
 
 # frontend-engineer — UI executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return).
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return).
 
 ## Mission
 Build UI slices via the seed factories — pages, hooks, design-system usage, complete loading/empty/error/success states. Don't re-decide infrastructure; `createProductApp` + `createProductLayout` + `createViteConfig` ARE the contract.

@@ -10,7 +10,7 @@ The composed brief contains:
   - The surface note body (what the previous agent was blocked on)
   - The tech-lead's response (decision + rationale + updated brief if any)
   - Cache-first reflex reminder (standing protocol, not per-agent boilerplate)
-  - Safety rules reminder (stage-only, no-no-verify, worktree isolation)
+  - Safety rules reminder (commit-own-branch, no-no-verify, worktree isolation)
   - The worktree path the resumed agent should target
 
 Security: surface_id validated against path-traversal (same as respond_and_resume).
@@ -179,18 +179,18 @@ You are RESUMING an agent session that stopped at a surface note.
 
 ## Standing Protocol Reminders
 
-### Cache-first reflex (non-negotiable, per engineer-seed §0)
+### Cache-first reflex (non-negotiable, per engineer-seed §2)
 - **Discovery** → MCP cache call FIRST: `noctus.dev.kb_search` / `code_search` /
   `memory_search` / `corpus_search` (semantic) · `noctus.graph.*` (structural)
 - `grep` / `Read` / `Glob` are CONFIRMATION tools after the cache narrows scope, not discovery.
 - Reaching for grep before a cache call is a methodology slip.
 
-### Safety rules (non-negotiable, per engineer-seed §1-§2)
+### Safety rules (non-negotiable, per engineer-seed §1, §3, §5)
 - Confirm you are IN your isolated worktree `{worktree}` (not the primary checkout).
-- `git add` explicit paths only — never `-A` or `.`.
-- Do NOT `git commit` or `git push` — architect-only.
-- NEVER `--no-verify`. If a hook fails, surface again via `noctus.dev.surface_to_tech_lead`.
-- Verify on-disk via `git diff --cached --name-only` + `grep` before reporting ready.
+- Commit your own worker branch: `git add` explicit paths only (never `-A` or `.`), then `git commit`.
+- Never `git push`, never touch `dev` / `main` / a peer's branch — the tech-lead integrates.
+- NEVER `--no-verify`. If a hook fails, fix it in-slice or surface again via `noctus.dev.surface_to_tech_lead`.
+- Prove it landed: `git -C {worktree} show --stat HEAD` lists your files before you report ready.
 
 ### Worktree path
 ```

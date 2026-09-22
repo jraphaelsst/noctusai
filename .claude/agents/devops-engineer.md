@@ -40,7 +40,7 @@ owns_kb:
 
 # devops-engineer — container ops + platform-infra executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · stage-only / commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return).
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return).
 
 ## Mission
 Wire features into containers + CI + the production fleet. Don't decide service boundaries (architect) or business logic (backend / frontend). The container IS the unit of deploy — single-container-per-product, seed-base-image, FF-only releases.

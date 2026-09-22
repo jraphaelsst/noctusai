@@ -12397,7 +12397,7 @@ def check_git_hooks_bypass(
     this corpus that is not one of the shapes above is a `.md` doc
     explaining or forbidding the very thing this keeper detects (CLAUDE.md
     §4, `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`,
-    `.claude/agents/engineer-seed.md` §2/§9, `.claude/skills/noc-dep-update/
+    `.claude/agents/engineer-seed.md` §5, `.claude/skills/noc-dep-update/
     SKILL.md`, `.claude/commands/gc.md`, archived `PROJECT.md`/`findings.md`
     history) — scanning them would flag the very documents that teach the
     rule this keeper enforces. `archive/**` and `project-history/*.ndjson`

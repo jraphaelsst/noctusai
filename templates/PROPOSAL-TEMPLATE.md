@@ -32,7 +32,7 @@
 **Affected products:** {{product1, product2, …}}
 **Status:** pending  <!-- surface notes: tech-lead flips to accepted/rejected/adapted; delivery notes: stay 'pending' until tech-lead absorbs lessons + closes -->
 
-<!-- For kind=delivery: also include this footer block (mirrors engineer-seed §7) -->
+<!-- For kind=delivery: also include this footer block (mirrors engineer-seed §4) -->
 <!--
 **Codification events emitted (this slice):**
 - s1-emergent: {{target + 1-line description, or "none"}}

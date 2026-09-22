@@ -15,9 +15,9 @@ credentials — no PyGithub, no token handling here).
 ## Why commit / push are NOT exposed (scope boundary)
 
 The methodology rule **commit + push only your own work** + the
-engineers-stage-architect-commits split (CLAUDE.md §1, `.claude/agents/
-engineer-seed.md §2`) deliberately keeps raw `git commit` / `git
-push` in the human-audited git workflow. Exposing them as MCP tools
+engineers-commit-their-branch / tech-lead-integrates split (CLAUDE.md §1,
+`.claude/agents/engineer-seed.md §3`) deliberately keeps raw `git commit` /
+`git push` in the hook-gated git workflow. Exposing them as MCP tools
 would let any agent turn round-trips into commits, defeating authorship
 discipline. This connector is the **GitHub side** of the methodology —
 PRs, checks, repo state — *after* commits already landed via the normal
