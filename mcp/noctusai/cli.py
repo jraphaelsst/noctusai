@@ -443,7 +443,11 @@ def main():
         color = GREEN if score == 100 else RED
         print(f"  {BOLD}Score: {color}{score}/100{RESET}  |  Issues: {len(issues)}")
         for i in issues:
-            print(f"    {RED}[{i['severity']}]{RESET} {i['product']}: {i['issue']}")
+            # Per-product checks key on `product`; the global checks
+            # (phase-state, dispatch-routing, out-of-contract trees, …) key on
+            # a file/path instead — label by whichever scope the issue carries.
+            scope = i.get("product") or i.get("file") or i.get("path") or "global"
+            print(f"    {RED}[{i['severity']}]{RESET} {scope}: {i['issue']}")
 
     elif args.check_phase_state:
         from tools.noctus.dev.compliance import check_phase_state_consistency
