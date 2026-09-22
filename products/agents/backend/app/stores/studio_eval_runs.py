@@ -225,6 +225,7 @@ class SupabaseEvalRunWriter:
 
     def fail_orphaned_runs(self, *, started_before: datetime, erro: str) -> int:
         now = utcnow_iso()
+        # postgrest-unbounded-ok: the `.in_()` list is the 2-element status constant.
         resp = (
             self._runs().update({"status": "falhou", "erro": erro, "finished_at": now, "updated_at": now})
             .in_("status", list(ACTIVE_RUN_STATUSES))
