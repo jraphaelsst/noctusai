@@ -27,7 +27,7 @@ from pathlib import Path
 
 from noctusai_lib.config.settings import BaseAppSettings
 
-from workspace import get_ledger_root, get_noctusai_home
+from workspace import get_ledger_root, get_noctusai_home, unwrap_worktree_root
 
 
 Settings = BaseAppSettings
@@ -66,9 +66,38 @@ def resolve_test_python() -> str:
     ``noctus.dev.predeploy_check`` (P5 gate) and a false *green* in
     ``noctus.dev.pytest`` (0 passed / 0 failed parsed as success). Both call
     sites resolve the interpreter here instead of hardcoding ``"python"``.
-    Falls back to the current interpreter when the repo-root venv is absent."""
-    cand = REPO_ROOT / "venv" / "bin" / "python"
-    return str(cand) if cand.exists() else sys.executable
+
+    Resolution order:
+      1. ``<REPO_ROOT>/venv`` — the caller's own tree, when it has one.
+      2. The PRIMARY checkout's ``venv`` when ``REPO_ROOT`` is a linked
+         worktree. A worktree is a fresh checkout with NO ``venv/`` of its
+         own (nobody runs `pip install` per worktree), so step 1 misses and
+         the old code fell straight through to ``sys.executable`` — the MCP
+         server's own venv, which lacks the product deps. Every product
+         whose tests import one of those (``claude_agent_sdk`` for
+         ``agents``) then failed at COLLECTION, and ``predeploy_check``
+         reported ``status='blocked'``: a red that judges the HARNESS, not
+         the code (2026-09-22, two sessions burned in one day, each
+         re-running the suite by hand to discover the product was green —
+         1209 passed). Mirrors ``env_bootstrap._candidate_roots``' existing
+         worktree→primary fallback for ``.env``, via the same
+         ``unwrap_worktree_root`` primitive ``get_ledger_root`` is built on.
+      3. ``sys.executable`` — no venv anywhere (CI installs deps into the
+         job interpreter; a contributor may too).
+
+    Returns a path only. Whether that interpreter can actually import what
+    a suite needs is the CALLER's verdict to make — see
+    ``predeploy_check``'s ``classify_failure``, which now reads a
+    collection-time ``ModuleNotFoundError`` as *unmeasurable*, never as a
+    product failure (`KB § PATTERNS/common/methodology-execution-discipline.md`,
+    verdict-channel integrity)."""
+    for root in (REPO_ROOT, unwrap_worktree_root(REPO_ROOT)):
+        if root is None:
+            continue
+        cand = root / "venv" / "bin" / "python"
+        if cand.exists():
+            return str(cand)
+    return sys.executable
 
 
 __all__ = [

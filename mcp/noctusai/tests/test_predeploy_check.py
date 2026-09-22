@@ -1119,3 +1119,74 @@ def test_db_guards_runner_passes_when_clean(monkeypatch, tmp_path):
     ok, msg = PC._default_run_check("db_guards", "social-wiring", tmp_path)
     assert ok is True
     assert "db_guards ok" in msg
+
+
+# ── unmeasurable ⇒ inconclusive, never a product verdict (2026-09-22) ──
+# A fresh worktree carries no `venv/`, so the runner used to fall through to
+# an interpreter without the product deps; pytest then died at COLLECTION and
+# the gate reported `blocked` — a red that judges the HARNESS. Two sessions
+# burned a day on it, each re-running the suite by hand to find the product
+# green (agents: 1209 passed). `settings.resolve_test_python` now falls back
+# to the primary checkout; this is the SECOND net, for when it still happens.
+_COLLECTION_FAILURE = (
+    "ImportError while importing test module 'tests/runtime/test_claude_runtime.py'.\n"
+    "E   ModuleNotFoundError: No module named 'claude_agent_sdk'\n"
+    "!!!!!! Interrupted: 7 errors during collection !!!!!!\n"
+)
+
+
+def _product_with_requirements(tmp_path, product: str, lines: str):
+    be = tmp_path / "products" / product / "backend"
+    be.mkdir(parents=True)
+    (be / "requirements.txt").write_text(lines)
+    return tmp_path
+
+
+def test_collection_failure_on_a_declared_dep_is_inconclusive_not_blocked(tmp_path):
+    root = _product_with_requirements(tmp_path, "agents", "claude-agent-sdk==0.1.0\nfastapi\n")
+    r = PC.predeploy_check(
+        "agents",
+        run_check=lambda c, p, rt: (False, _COLLECTION_FAILURE) if c == "backend_tests" else (True, "ok"),
+        repo_root=str(root),
+        now=_now,
+    )
+    assert r["status"] == "inconclusive", r["status"]
+    # Still not a pass: an inconclusive gate must not read as green.
+    assert r["exit_code"] == 1
+    assert r["unmeasurable"] and r["unmeasurable"][0]["check"] == "backend_tests"
+    assert "claude_agent_sdk" in r["unmeasurable"][0]["reason"]
+    # And it is NOT laundered into the learning pipeline as an unknown class.
+    assert r["unknown_count"] == 0
+
+
+def test_missing_module_NOT_declared_is_still_a_real_block(tmp_path):
+    """The distinguishing rule: a dep the product never declares is a REAL
+    finding (it would fail the same way in a clean container build), so it
+    must keep blocking. Otherwise this net would swallow genuine bugs."""
+    root = _product_with_requirements(tmp_path, "agents", "fastapi\n")
+    r = PC.predeploy_check(
+        "agents",
+        run_check=lambda c, p, rt: (False, _COLLECTION_FAILURE) if c == "backend_tests" else (True, "ok"),
+        repo_root=str(root),
+        write_report=lambda name, body: f"predeploy-reports/{name}",
+        log_fn=lambda *a, **k: 1,
+        now=_now,
+    )
+    assert r["status"] == "blocked", r["status"]
+    assert r["unmeasurable"] == []
+
+
+def test_ordinary_test_failure_is_never_unmeasurable(tmp_path):
+    """A plain assertion failure is a verdict — it must stay blocking even
+    for a product whose requirements list plenty of modules."""
+    root = _product_with_requirements(tmp_path, "agents", "claude-agent-sdk\n")
+    r = PC.predeploy_check(
+        "agents",
+        run_check=lambda c, p, rt: (False, "FAILED tests/test_x.py::test_y - AssertionError: 1 != 2") if c == "backend_tests" else (True, "ok"),
+        repo_root=str(root),
+        write_report=lambda name, body: f"predeploy-reports/{name}",
+        log_fn=lambda *a, **k: 1,
+        now=_now,
+    )
+    assert r["status"] == "blocked"
+    assert r["unmeasurable"] == []

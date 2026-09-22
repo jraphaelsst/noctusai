@@ -224,6 +224,72 @@ _KNOWN: list[dict[str, Any]] = [
 ]
 
 
+_COLLECTION_IMPORT_RX = re.compile(
+    r"ModuleNotFoundError: No module named ['\"]([A-Za-z0-9_.]+)['\"]"
+)
+_COLLECTION_ERROR_RX = re.compile(r"errors? during collection|ImportError while importing")
+
+
+def _normalise_dist(name: str) -> str:
+    """`claude-agent-sdk` and `claude_agent_sdk` are the same thing."""
+    return name.strip().lower().replace("-", "_")
+
+
+def declared_requirement_modules(root: pathlib.Path, product: str) -> set[str]:
+    """Every distribution named in the product's pinned requirements, plus
+    the seed lib, normalised for comparison against an import name."""
+    declared: set[str] = {"noctusai_lib", "noctusai_seed"}
+    be = root / "products" / product / "backend"
+    for name in ("requirements.txt", "requirements-dev.txt"):
+        path = be / name
+        if not path.exists():
+            continue
+        for raw in path.read_text(errors="replace").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if not line or line.startswith("-"):
+                continue
+            dist = re.split(r"[<>=!~\[; ]", line, 1)[0]
+            if dist:
+                declared.add(_normalise_dist(dist))
+    return declared
+
+
+def unmeasurable_reason(
+    output: str, root: pathlib.Path, product: str
+) -> str | None:
+    """Return why this output means "the harness could not measure", or None
+    when it is a genuine product verdict.
+
+    The distinguishing question is NOT "did an import fail" — a dep missing
+    from `requirements.txt` is a REAL finding (see the
+    `pip_framework_implicit` class). It is "did pytest fail to COLLECT
+    because the interpreter lacks something the product legitimately
+    DECLARES". That means the runner was pointed at the wrong interpreter,
+    so the suite never ran and there is no verdict to report —
+    `KB § PATTERNS/common/methodology-execution-discipline.md`
+    (verdict-channel integrity: unmeasurable ⇒ inconclusive, never red).
+    """
+    text = output or ""
+    if not _COLLECTION_ERROR_RX.search(text):
+        return None
+    missing = {_normalise_dist(m) for m in _COLLECTION_IMPORT_RX.findall(text)}
+    if not missing:
+        return None
+    declared = declared_requirement_modules(root, product)
+    harness_gaps = sorted(missing & declared)
+    if not harness_gaps:
+        return None
+    return (
+        f"pytest could not COLLECT: the interpreter is missing "
+        f"{', '.join(harness_gaps)}, which this product DECLARES in its "
+        f"requirements — so the suite never ran and this is not a verdict "
+        f"on the code. Point the runner at an interpreter that has the "
+        f"product deps installed (the repo-root `venv`; a fresh worktree "
+        f"has none of its own — `settings.resolve_test_python` now falls "
+        f"back to the primary checkout's venv for exactly this reason)."
+    )
+
+
 def classify_failure(output: str) -> dict[str, Any] | None:
     """Pure classifier: first known class whose regex matches, else None
     (unknown — caller writes a report + logs s1). OPEN taxonomy."""
@@ -981,7 +1047,10 @@ def predeploy_check(
 ) -> dict[str, Any]:
     """Run the deploy-relevant checks for `product`; classify + (auto_fix the
     safe class) + report/learn unknowns. status='ready' (all pass) |
-    'blocked' (≥1 fail). Never raises on a check failure — it returns it."""
+    'inconclusive' (the only failures were unmeasurable — the harness could
+    not run them, so they are no verdict on the product) | 'blocked' (≥1
+    real fail). Both non-ready statuses exit 1: inconclusive is not a pass.
+    Never raises on a check failure — it returns it."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "error": "product required", "exit_code": 1}
     # default runner threads the resolved prod env + env-fleet paths; injected
@@ -1009,6 +1078,15 @@ def predeploy_check(
         ok, output = runner(check, product, root)
         entry: dict[str, Any] = {"check": check, "ok": ok}
         if not ok:
+            # BEFORE classifying: did we measure anything at all? A harness
+            # that could not run the suite must not be reported as a failing
+            # product.
+            unmeasurable = unmeasurable_reason(output, root, product)
+            if unmeasurable:
+                entry["unmeasurable"] = unmeasurable
+                entry["output_tail"] = (output or "").strip()[-600:]
+                results.append(entry)
+                continue
             cls = classify_failure(output)
             if cls:
                 entry["classified"] = cls
@@ -1050,10 +1128,20 @@ def predeploy_check(
 
     failed = [r for r in results if not r["ok"]]
     healthy = not failed
+    # A run whose only failures were unmeasurable is INCONCLUSIVE, not
+    # blocked: 'blocked' asserts the product is not deploy-ready, and we do
+    # not know that. Still exit non-zero — an inconclusive gate is not a
+    # pass, and must not be mistaken for one.
+    unmeasurable = [r for r in failed if r.get("unmeasurable")]
+    inconclusive = bool(unmeasurable) and len(unmeasurable) == len(failed)
+    status = "ready" if healthy else ("inconclusive" if inconclusive else "blocked")
     return {
         "ok": True,
         "product": product,
-        "status": "ready" if healthy else "blocked",
+        "status": status,
+        "unmeasurable": [
+            {"check": r["check"], "reason": r["unmeasurable"]} for r in unmeasurable
+        ],
         "exit_code": 0 if healthy else 1,
         "checks": results,
         "classified": classified,
@@ -1103,7 +1191,9 @@ def register(server) -> None:
             "the framework-dep class when auto_fix=True (composes "
             "check_framework_deps), and for an UNKNOWN failure writes "
             "predeploy-reports/<utc>-<product>.md + logs phase_learnings (s1). "
-            "status='ready' (all pass, exit 0) | 'blocked' (≥1 fail, exit 1). "
+            "status='ready' (all pass, exit 0) | 'inconclusive' (only "
+            "unmeasurable failures — the harness could not run them; exit 1) "
+            "| 'blocked' (>=1 real fail, exit 1). "
             "Pass worktree_path when called from inside a git worktree. "
             "See KB § GUIDES/production-deploy.md § 2a + § 6 + "
             "KB § PATTERNS/boundary-contract-tests.md."
