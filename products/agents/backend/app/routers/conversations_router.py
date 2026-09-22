@@ -57,7 +57,12 @@ from app.schemas.agents import (
 from app.stores.conversations import ConversationRecord
 from app.stores.errors import NotFound
 from app.stores.messages import MessageRecord
-from app.runtime.types import TurnContext
+from app.runtime.types import AgentSpec, TurnContext
+from app.routers.studio_agents_router import (
+    get_knowledge_catalog_dep,
+    get_studio_definition_store_dep,
+)
+from app.studio.spec import StudioSpecError, build_studio_spec
 from noctusai_lib.api.auth.session import AuthContext, resolve_org_role
 from noctusai_lib.realtime import create_sse_router
 
@@ -75,8 +80,11 @@ INSTANCE_ID = f"agents-{uuid4().hex[:12]}"
 
 _NOT_FOUND = {"detail": "Conversa não encontrada.", "code": "not_found"}
 
+#: Agent Studio §D6 — the agent a request that names none addresses.
+JULIA_KEY = "julia"
 
-def _conversation_out(record: ConversationRecord) -> ConversationOut:
+
+def _conversation_out(record: ConversationRecord, agent_key: str) -> ConversationOut:
     return ConversationOut(
         id=record.id,
         agent_id=record.agent_id,
@@ -87,6 +95,9 @@ def _conversation_out(record: ConversationRecord) -> ConversationOut:
         last_message_at=record.last_message_at,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        agent_key=agent_key,
+        version_id=record.version_id,
+        client_id=record.client_id,
     )
 
 
@@ -100,7 +111,52 @@ def _message_out(record: MessageRecord) -> MessageOut:
         token_usage=record.token_usage,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        version_id=record.version_id,
+        compiled_hash=record.compiled_hash,
     )
+
+
+def _http(status_code: int, code: str, detail: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"detail": detail, "code": code})
+
+
+def _julia_agent(agent_store: Any, org_id: UUID) -> Any | None:
+    try:
+        return agent_store.get_by_key(org_id, JULIA_KEY)
+    except NotFound:
+        return None
+
+
+def _resolve_studio_agent(studio_store: Any, org_id: UUID, key: str) -> Any:
+    """Agent Studio §D intro: unknown key → 404 ``agent_not_found``; a
+    legacy agent under a studio key → 409 ``not_studio_agent``."""
+    try:
+        agent = studio_store.get_agent(org_id, key)
+    except NotFound as exc:
+        raise _http(404, "agent_not_found", "Agente não encontrado.") from exc
+    if agent.definition_mode != "studio":
+        raise _http(409, "not_studio_agent", "Este agente não é gerenciado pelo Studio.")
+    return agent
+
+
+def _studio_agent_by_id(studio_store: Any, org_id: UUID, agent_id: UUID) -> Any | None:
+    for agent in studio_store.list_agents(org_id):
+        if agent.id == agent_id and agent.definition_mode == "studio":
+            return agent
+    return None
+
+
+def _agent_key_for(org_id: UUID, agent_id: UUID, agent_store: Any, studio_store: Any) -> str:
+    """The ``agent_key`` of a conversation's agent (§D6 ``ConversationOut``)."""
+    for agent in agent_store.list(org_id):
+        if agent.id == agent_id:
+            return agent.key
+    for agent in studio_store.list_agents(org_id):
+        if agent.id == agent_id:
+            return agent.key
+    # A conversation whose agent row is gone is a data-integrity breach
+    # (conversations.agent_id is a FK) — loud, never a guessed key.
+    raise RuntimeError(f"agent {agent_id} of a conversation not found for org {org_id}")
 
 
 def _conversation_payload(record: ConversationRecord) -> dict[str, Any]:
@@ -123,7 +179,20 @@ def _conversation_payload(record: ConversationRecord) -> dict[str, Any]:
 
 
 def _message_payload(record: MessageRecord) -> dict[str, Any]:
-    """JSON-safe SSE payload for ``message.new`` (contract §E.3)."""
+    """JSON-safe SSE payload for ``message.new`` (contract §E.3).
+
+    Agent Studio §A7: a stamped (studio assistant) message also carries
+    ``version_id`` + ``compiled_hash``; an unstamped one (every Julia
+    message) keeps the exact pre-studio payload."""
+    payload = _message_payload_base(record)
+    if record.version_id is not None:
+        payload["version_id"] = str(record.version_id)
+    if record.compiled_hash is not None:
+        payload["compiled_hash"] = record.compiled_hash
+    return payload
+
+
+def _message_payload_base(record: MessageRecord) -> dict[str, Any]:
     return {
         "id": str(record.id),
         "conversation_id": str(record.conversation_id),
@@ -174,11 +243,22 @@ async def _get_readable_conversation(
 
 @router.get("", response_model=ConversationListOut)
 async def list_conversations(
+    agent_key: str = Query(default=JULIA_KEY, min_length=1, max_length=64),
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_conversation_store_dep),
+    agent_store=Depends(get_agent_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationListOut:
-    records = store.list_owned(ctx.org_id, ctx.user_id)
-    items = [_conversation_out(r) for r in records]
+    """Agent Studio §D6: filtered by agent, **default ``julia``** — Julia's
+    page sends no filter and keeps seeing exactly her conversations."""
+    if agent_key == JULIA_KEY:
+        agent = _julia_agent(agent_store, ctx.org_id)
+        if agent is None:  # never seeded for this org ⇒ she has no conversations
+            return ConversationListOut(items=[], total=0)
+    else:
+        agent = _resolve_studio_agent(studio_store, ctx.org_id, agent_key)
+    records = store.list_owned(ctx.org_id, ctx.user_id, agent_id=agent.id)
+    items = [_conversation_out(r, agent.key) for r in records]
     return ConversationListOut(items=items, total=len(items))
 
 
@@ -188,11 +268,33 @@ async def create_conversation(
     ctx: AuthContext = Depends(require_member),
     agent_store=Depends(get_agent_store_dep),
     store=Depends(get_conversation_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationOut:
-    agent_store.ensure_default_agents(ctx.org_id)
-    agent = agent_store.get_by_key(ctx.org_id, "julia")
-    record = store.create(ctx.org_id, agent.id, ctx.user_id, titulo=payload.titulo)
-    return _conversation_out(record)
+    if payload.agent_key == JULIA_KEY:
+        if payload.client_id is not None:
+            raise _http(422, "invalid_client", "Clientes só existem para agentes do Studio.")
+        agent_store.ensure_default_agents(ctx.org_id)
+        agent = agent_store.get_by_key(ctx.org_id, JULIA_KEY)
+        record = store.create(ctx.org_id, agent.id, ctx.user_id, titulo=payload.titulo)
+        return _conversation_out(record, JULIA_KEY)
+
+    # Agent Studio §D6: a studio conversation pins the ACTIVE version now (a
+    # newer publish never moves it); with none yet, it pins at its first turn.
+    agent = _resolve_studio_agent(studio_store, ctx.org_id, payload.agent_key)
+    if payload.client_id is not None:
+        try:
+            client = studio_store.get_client(ctx.org_id, payload.client_id)
+        except NotFound:
+            client = None
+        if client is None or client.agent_id != agent.id or not client.ativo:
+            raise _http(422, "invalid_client", "Cliente inválido para este agente.")
+    active = studio_store.get_active_version(ctx.org_id, agent.id)
+    record = store.create(
+        ctx.org_id, agent.id, ctx.user_id, titulo=payload.titulo,
+        version_id=active.id if active is not None else None,
+        client_id=payload.client_id,
+    )
+    return _conversation_out(record, agent.key)
 
 
 @router.get("/{conversation_id}", response_model=ConversationOut)
@@ -200,9 +302,13 @@ async def get_conversation(
     conversation_id: UUID,
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_conversation_store_dep),
+    agent_store=Depends(get_agent_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationOut:
     record = await _get_readable_conversation(ctx, conversation_id, store)
-    return _conversation_out(record)
+    return _conversation_out(
+        record, _agent_key_for(ctx.org_id, record.agent_id, agent_store, studio_store)
+    )
 
 
 @router.get("/{conversation_id}/messages", response_model=MessageListOut)
@@ -255,20 +361,34 @@ async def post_message(
     msg_store=Depends(get_message_store_dep),
     persona_store=Depends(get_persona_store_dep),
     bus=Depends(get_realtime_bus_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
 ) -> MessagePostResponse:
     try:
-        conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
+        conversation = conv_store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
     except NotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND) from exc
 
-    try:
-        agent = agent_store.get_by_key(ctx.org_id, "julia")
-    except NotFound as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND) from exc
-    if not agent.ativo:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"detail": "O agente Julia está desligado.", "code": "agent_off"},
+    julia = _julia_agent(agent_store, ctx.org_id)
+    studio_spec: AgentSpec | None = None
+    if julia is not None and conversation.agent_id == julia.id:
+        agent = julia
+        if not agent.ativo:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"detail": "O agente Julia está desligado.", "code": "agent_off"},
+            )
+        capacity_text = (
+            "A Julia está atendendo o número máximo de conversas "
+            "agora. Tente novamente em instantes."
+        )
+    else:
+        agent, studio_spec = _prepare_studio_turn(
+            ctx.org_id, conversation, conv_store, studio_store, catalog
+        )
+        capacity_text = (
+            f"O agente {agent.nome} está atendendo o número máximo de conversas "
+            "agora. Tente novamente em instantes."
         )
 
     # Contract §E.11 "Route order", step 1: reserve a slot BEFORE the turn
@@ -278,13 +398,7 @@ async def post_message(
     if slot is None:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={
-                "detail": (
-                    "A Julia está atendendo o número máximo de conversas "
-                    "agora. Tente novamente em instantes."
-                ),
-                "code": "julia_capacidade",
-            },
+            detail={"detail": capacity_text, "code": "julia_capacidade"},
             headers={"Retry-After": "10"},
         )
 
@@ -325,6 +439,7 @@ async def post_message(
                 persona_store=persona_store,
                 bus=bus,
                 slot=slot,
+                spec=studio_spec,
             )
         )
         _track_background_task(request.app.state, task)
@@ -338,6 +453,32 @@ async def post_message(
         raise
 
     return MessagePostResponse(mensagem=_message_out(user_message), status="processando")
+
+
+def _prepare_studio_turn(
+    org_id: UUID, conversation: ConversationRecord, conv_store: Any, studio_store: Any, catalog: Any
+) -> tuple[Any, AgentSpec]:
+    """Agent Studio §D6/§E2: validate a studio turn and build its spec BEFORE
+    the turn is accepted, so every refusal is a clean 409 with zero trace
+    (no slot, no lock, no user message): ``agent_inactive``,
+    ``no_active_version``, ``prompt_too_large``, ``client_inactive`` /
+    ``invalid_client``. The spec (compiled once, stored once per hash) is
+    what the background turn runs and stamps."""
+    agent = _studio_agent_by_id(studio_store, org_id, conversation.agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND)
+    if not agent.ativo:
+        raise _http(409, "agent_inactive", f"O agente {agent.nome} está desligado.")
+    active = studio_store.get_active_version(org_id, agent.id)
+    if active is None:
+        raise _http(409, "no_active_version", f"O agente {agent.nome} não tem versão publicada.")
+    if conversation.version_id is None:
+        conversation = conv_store.pin_version(org_id, conversation.id, active.id)
+    try:
+        spec = build_studio_spec(agent, conversation, definitions=studio_store, catalog=catalog)
+    except StudioSpecError as exc:
+        raise _http(409, exc.code, exc.detail) from exc
+    return agent, spec
 
 
 def _apply_tool_event(
@@ -448,6 +589,7 @@ async def _apply_and_publish_block_event(
     msg_store: Any,
     bus: Any,
     apply_fn: Any,
+    stamp: dict[str, Any] | None = None,
 ) -> tuple[UUID, list[dict[str, Any]]]:
     """Contract §E.9 point 3 (revised): shared by ``tool.*`` and
     ``approval.*`` handling in ``_run_turn_background`` — both persist
@@ -457,7 +599,7 @@ async def _apply_and_publish_block_event(
     of the full row — in that fixture order: the granular event first,
     THEN ``message.updated``."""
     if current_message_id is None:
-        record = msg_store.add(org_id, conversation_id, "assistant", "", blocks=[])
+        record = msg_store.add(org_id, conversation_id, "assistant", "", blocks=[], **(stamp or {}))
         current_message_id = record.id
         current_blocks = []
         await publish_event(conversation_id, "message.new", _message_payload(record), bus=bus)
@@ -485,6 +627,7 @@ async def _run_turn_background(
     persona_store: Any,
     bus: Any,
     slot: Any,
+    spec: AgentSpec | None = None,
 ) -> None:
     """Contract §E.9 "What the routes must do with a turn", points 2-6,
     wrapped per §E.11 "Route order" in a turn deadline
@@ -502,16 +645,27 @@ async def _run_turn_background(
     reserved (contract §E.11) — this function's ``finally`` releases the
     turn lock FIRST, then the slot, on every exit path: normal
     completion, a runtime exception, the turn deadline, or task
-    cancellation."""
+    cancellation.
+
+    Agent Studio §E2/§E4: ``spec`` is a studio agent's ALREADY-built spec
+    (the route compiled it before accepting the turn); ``None`` keeps
+    Julia's path — the active persona row through ``build_spec``. A studio
+    spec's ``version_id`` + ``compiled_hash`` are stamped on every
+    assistant message this turn persists."""
     current_message_id: UUID | None = None
     current_blocks: list[dict[str, Any]] = []
+    stamp: dict[str, Any] = (
+        {"version_id": spec.version_id, "compiled_hash": spec.compiled_hash}
+        if spec is not None and spec.toolset == "studio"
+        else {}
+    )
 
     try:
         async with asyncio.timeout(settings.turn_timeout_seconds):
-            persona = persona_store.get_active(org_id, agent_id)
             conversation = conv_store.get_owned(org_id, conversation_id, owner_user_id)
-
-            spec = build_spec(persona)
+            if spec is None:
+                persona = persona_store.get_active(org_id, agent_id)
+                spec = build_spec(persona)
             turn_ctx = TurnContext(
                 org_id=org_id,
                 conversation_id=conversation_id,
@@ -536,7 +690,7 @@ async def _run_turn_background(
                 if kind == "message.new":
                     record = msg_store.add(
                         org_id, conversation_id, "assistant", evt_payload.get("texto", ""),
-                        blocks=[],
+                        blocks=[], **stamp,
                     )
                     current_message_id = record.id
                     current_blocks = []
@@ -557,6 +711,7 @@ async def _run_turn_background(
                         msg_store=msg_store,
                         bus=bus,
                         apply_fn=_apply_tool_event,
+                        stamp=stamp,
                     )
                 elif kind in ("approval.requested", "approval.resolved"):
                     current_message_id, current_blocks = await _apply_and_publish_block_event(
@@ -569,6 +724,7 @@ async def _run_turn_background(
                         msg_store=msg_store,
                         bus=bus,
                         apply_fn=_apply_approval_event,
+                        stamp=stamp,
                     )
                 elif kind == "session.resume_fallback":
                     # Contract §E.9 "Resume after a restart" — a distinct
