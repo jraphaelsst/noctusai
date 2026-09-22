@@ -44,6 +44,10 @@ _ROTAS_115 = {
     ("get", "/api/matriculas/imoveis/{codigo}/antigos-proprietarios"),
 }
 
+_ROTAS_152 = {
+    ("put", "/api/matriculas/imoveis/{codigo}/ultima-transferencia"),
+}
+
 
 def test_every_matriculas_route_requires_auth(anon_client):
     from app.modules.matriculas import register
@@ -57,6 +61,7 @@ def test_every_matriculas_route_requires_auth(anon_client):
     }
     assert _ROTAS_109 <= paths, f"missing 109 routes: {_ROTAS_109 - paths}"
     assert _ROTAS_115 <= paths, f"missing 115 routes: {_ROTAS_115 - paths}"
+    assert _ROTAS_152 <= paths, f"missing 152 routes: {_ROTAS_152 - paths}"
 
     for method, path in sorted(paths):
         concrete = path

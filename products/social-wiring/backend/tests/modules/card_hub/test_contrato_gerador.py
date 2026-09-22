@@ -507,6 +507,30 @@ class TestQ9AntigoProprietario:
         _d, _pol, _sw, av = _avaliar(1, self._transferido_em(None))
         assert _campos(av) == [("matricula.ultima_transferencia", None)]
 
+    def test_unknown_last_transfer_points_at_the_imovel_page(self):
+        """[migration 152] `onde` moved from `matricula` to `imovel` — the
+        manual override lives on the property page, not the matrículas
+        screen, and the rótulo now asks for the wider "transferência de
+        propriedade", not only a "compra e venda"."""
+        _d, _pol, _sw, av = _avaliar(1, self._transferido_em(None))
+        item = av.faltando[0]
+        assert item["onde"] == "imovel"
+        assert item["destino"]["rota"].startswith("/imoveis/")
+        assert "transferência de propriedade" in item["rotulo"]
+
+    def test_a_confirmed_absence_of_any_transfer_is_not_missing(self):
+        """[migration 152] "Não consta transferência registrada" is an
+        ANSWER — `ultima_transferencia_sem_registro_confirmado=True` clears
+        the `faltando` entirely rather than leaving it unknown."""
+        d = fx.variante(1)
+        d = replace(
+            d, imovel=replace(d.imovel, ultima_transferencia_sem_registro_confirmado=True)
+        )
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert not any(f["campo"] == "matricula.ultima_transferencia" for f in av.faltando)
+        assert not any(f["campo"] == "partes.antigo_proprietario" for f in av.faltando)
+
     def test_a_transfer_less_than_five_years_ago_requires_a_previous_owner(self):
         _d, _pol, _sw, av = _avaliar(1, self._transferido_em(date(2021, 9, 15)))
         assert _campos(av) == [("partes.antigo_proprietario", None)]
@@ -648,6 +672,33 @@ class TestProcessoLegado:
         _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(30, processo_legado=False))
         assert set(_codigos(av.bloqueios)) == {"CERTIDAO_EMISSAO_ANTIGA"}
         assert not av.pronto
+
+    def test_the_previous_owner_requirement_warns_instead_of_blocking(self):
+        """[Owner directive, 2026-09-22] The strict [Q9] rules apply to sales
+        that run through the platform; a legacy deal's recent transfer still
+        surfaces (`av.avisa`), but never blocks/asks for the previous
+        owner's name/gênero/certidões — the human-made reference contract
+        for a 2023 legacy acquisition (contract 08) qualifies only the
+        seller, with no previous-owner section at all."""
+        d = fx.variante(1)
+        d = replace(
+            d,
+            processo_legado=True,
+            imovel=replace(d.imovel, ultima_transferencia_em=date(2021, 9, 15)),
+        )
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert not any(f["campo"] == "partes.antigo_proprietario" for f in av.faltando)
+        assert "ANTIGO_PROPRIETARIO_PROCESSO_LEGADO" in _codigos(av.avisos)
+
+    def test_a_non_legacy_contract_still_demands_the_previous_owner(self):
+        """Regression: the downgrade never applies to an ordinary contract —
+        only `processo_legado=True` triggers it."""
+        d = fx.variante(1)
+        d = replace(d, imovel=replace(d.imovel, ultima_transferencia_em=date(2021, 9, 15)))
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert _campos(av) == [("partes.antigo_proprietario", None)]
+        assert "ANTIGO_PROPRIETARIO_PROCESSO_LEGADO" not in _codigos(av.avisos)
 
 
 class TestQ12Posse:

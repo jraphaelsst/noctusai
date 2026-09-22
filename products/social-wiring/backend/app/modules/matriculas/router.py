@@ -58,8 +58,10 @@ is the operator's confirmation. Three imóvel-level reads build on the acts
 the operator chose in 109 — `/imoveis/{codigo}/titulo-aquisitivo`,
 `/imoveis/{codigo}/onus-credor` (each with a PUT that confirms the wording)
 and `/imoveis/{codigo}/antigos-proprietarios` (the office's 5-year certidões
-rule). They live HERE, not in `imovel_hub`, because every answer is a reading
-of a matrícula; `titulo_service.py` holds the logic.
+rule, with a manual-override PUT at `/imoveis/{codigo}/ultima-transferencia`
+since migration 152 for when the acts don't answer it). They live HERE, not
+in `imovel_hub`, because every answer is a reading of a matrícula;
+`titulo_service.py` holds the logic.
 
 Route ordering: every path is under the literal `/api/matriculas` prefix.
 `POST /extracoes/de-documento` is a literal sibling of the dynamic
@@ -119,6 +121,7 @@ from app.modules.matriculas.schemas import (
     OnusCredorBody,
     SelecaoAtosBody,
     TituloAquisitivoTextoBody,
+    UltimaTransferenciaManualBody,
     VincularImovelBody,
 )
 from app.modules.matriculas.service import (
@@ -922,12 +925,38 @@ async def antigos_proprietarios_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
 ):
-    """The last registered compra e venda's sellers, its date, and whether
-    their certidões are required (sale less than 5 years old)."""
+    """The last registered transfer's sellers, its date, and whether their
+    certidões are required (transfer less than 5 years old) — from the
+    matrícula's acts, or the manual override (migration 152) when they don't
+    answer it."""
     user, _token, org_id = _auth_parts(auth)
     return success_response(
         titulo_svc.antigos_proprietarios(
             client, UUID(org_id), codigo, usuario_id=getattr(user, "id", None)
+        )
+    )
+
+
+@router.put("/imoveis/{codigo}/ultima-transferencia")
+async def confirmar_ultima_transferencia_route(
+    body: UltimaTransferenciaManualBody,
+    codigo: str = _CODIGO,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+):
+    """Manual override for [Q9]'s previous-owner rule (migration 152): a
+    typed date (+ nature), or `sem_registro: true` alone ("não consta
+    transferência registrada")."""
+    user, _token, org_id = _auth_parts(auth)
+    return success_response(
+        titulo_svc.confirmar_ultima_transferencia_manual(
+            client,
+            UUID(org_id),
+            codigo,
+            data=body.data,
+            natureza=body.natureza,
+            sem_registro=body.sem_registro,
+            usuario_id=getattr(user, "id", None),
         )
     )
 

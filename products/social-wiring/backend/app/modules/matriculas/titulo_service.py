@@ -10,8 +10,13 @@ acts the operator already chose in 109:
 - título phrase    <- `imovel_dados.titulo_aquisitivo_ato_id`'s instrumento,
   rendered by the seed's `frase_titulo_aquisitivo`;
 - ônus creditor    <- the `credor` of each act in `imovel_dados.onus_fonte_atos`;
-- previous owners  <- the transmitentes of the LAST `compra_e_venda` act of the
-  imóvel's título extraction (or its newest concluded extraction).
+- previous owners  <- the transmitentes of the CONFIRMED título aquisitivo
+  act, when its nature is one that transfers ownership for consideration
+  (`NATUREZAS_ULTIMA_TRANSFERENCIA`); otherwise the LAST such act anywhere in
+  the imóvel's título extraction (or its newest concluded extraction), by
+  `ordem`. [migration 152] When neither exists, an operator's manual
+  override (a typed date, or an explicit "não consta transferência
+  registrada" statement) answers it instead.
 
 A suggestion is recomputed on every read and is never stored. What IS stored
 is the operator's confirmation (`imovel_dados.titulo_aquisitivo_texto` /
@@ -20,11 +25,23 @@ suggestion, and the confirmation is what the contract uses.
 
 🔴 OFFICE RULE — CERTIDÕES OF THE PREVIOUS OWNERS
 ------------------------------------------------
-Required when the last registered compra e venda is LESS than
+Required when the last registered TRANSFER OF OWNERSHIP is LESS than
 `ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS` years old (exactly five years is not
-"less than five"). When a sale IS found but its registration date is unknown,
-`exige_certidoes` is TRUE and `data_desconhecida` says why: an unreadable date
-must lead to asking for the certidões, never to silently waiving them.
+"less than five"). When a transfer IS found but its registration date is
+unknown, `exige_certidoes` is TRUE and `data_desconhecida` says why: an
+unreadable date must lead to asking for the certidões, never to silently
+waiving them.
+
+[Owner directive, 2026-09-22] "The last registered compra e venda" was too
+narrow: a matrícula whose last transfer is a PERMUTA (or a dação em
+pagamento / arrematação) could never satisfy this. `NATUREZAS_ULTIMA_
+TRANSFERENCIA` widens it to every nature that moves ownership for
+consideration — still NOT the seed's full `NATUREZAS_TRANSFERENCIA` (which
+also counts `doacao`/`partilha`): re-classifying an act as `doacao` is how
+an operator tells this feature "this did not transfer for consideration, do
+not treat it as the sale" (`test_the_confirmed_nature_decides_what_a_sale_
+is`), so a donation or an inheritance partition must not silently
+substitute for it either.
 
 🔴 LGPD: every route here that returns details without the act text logs
 `detalhes_view` (`ato_detalhes_service.log_leitura_detalhes`) before answering.
@@ -35,7 +52,11 @@ from datetime import date
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.integrations.documents import Instrumento, frase_titulo_aquisitivo
+from noctusai_lib.integrations.documents import (
+    Instrumento,
+    NATUREZAS_TRANSFERENCIA,
+    frase_titulo_aquisitivo,
+)
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.imovel_hub import dados_service
@@ -47,6 +68,18 @@ from app.services.documento_store import now_iso, today
 ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS = 5
 
 NATUREZA_COMPRA_E_VENDA = "compra_e_venda"
+
+#: [Q9] Natures that count as "the imóvel changed hands" for the previous-
+#: owner certidões rule — a SUBSET of the seed's broader
+#: `NATUREZAS_TRANSFERENCIA` (which also includes `doacao`/`partilha`; see
+#: this module's docstring for why those two stay excluded here). Migration
+#: 152's manual-override `natureza` select offers exactly these 4.
+NATUREZAS_ULTIMA_TRANSFERENCIA: frozenset[str] = NATUREZAS_TRANSFERENCIA & {
+    NATUREZA_COMPRA_E_VENDA,
+    "permuta",
+    "dacao",
+    "arrematacao",
+}
 
 #: Why a GET has no suggestion — a machine-readable reason for the FE.
 MOTIVO_SEM_TITULO = "sem_titulo_confirmado"
@@ -388,6 +421,29 @@ def _extracao_do_imovel(
     return rows[0] if rows else None
 
 
+def _manual_ultima_transferencia(linha: dict) -> Optional[dict]:
+    """The RAW manual-override state (migration 152) — always returned so the
+    property page can show/edit it regardless of whether a derivation below
+    is currently the effective source. `None` means no override was ever
+    confirmed."""
+    confirmado_em = linha.get("ultima_transferencia_manual_confirmado_em")
+    if confirmado_em is None:
+        return None
+    resolved = table_reads.resolve_actors(
+        {linha.get("ultima_transferencia_manual_confirmado_por")} - {None}
+    )
+    bruto = linha.get("ultima_transferencia_manual_data")
+    return {
+        "data_registro": str(bruto)[:10] if bruto else None,
+        "natureza": linha.get("ultima_transferencia_manual_natureza"),
+        "sem_registro": bool(linha.get("ultima_transferencia_manual_sem_registro")),
+        "confirmado_por": table_reads.actor(
+            resolved, linha.get("ultima_transferencia_manual_confirmado_por")
+        ),
+        "confirmado_em": confirmado_em,
+    }
+
+
 def antigos_proprietarios(
     client: Any,
     org_id: UUID,
@@ -396,8 +452,26 @@ def antigos_proprietarios(
     usuario_id: Optional[Any] = None,
     hoje: Optional[date] = None,
 ) -> dict:
-    """Who sold the imóvel in its last registered compra e venda, when, and
-    whether the office rule requires their certidões."""
+    """Who sold the imóvel in its last registered transfer of ownership,
+    when, and whether the office rule requires their certidões.
+
+    Priority for `ultima_transferencia` [migration 152]:
+    1. The CONFIRMED título aquisitivo act, when its `natureza` is one of
+       `NATUREZAS_ULTIMA_TRANSFERENCIA` — an operator already verified this
+       act IS how the current owner acquired, so it is trusted over a blind
+       re-scan (fixes the permuta dead end: a confirmed título act whose
+       nature is `permuta` was invisible to the old compra-e-venda-only
+       search).
+    2. Otherwise, the LATEST such act anywhere in the extraction (by
+       `ordem`) — the original heuristic, now recognising every nature in
+       `NATUREZAS_ULTIMA_TRANSFERENCIA` instead of `compra_e_venda` alone.
+    3. Otherwise, the operator's manual override: a typed date, or an
+       explicit "não consta transferência registrada" statement that
+       resolves `exige_certidoes` to `False` instead of leaving it unknown.
+    `manual` in the response always reports the raw override state, even
+    when a derivation above wins — the property page shows/edits it either
+    way.
+    """
     codigo = _codigo(codigo)
     dados_service.ensure_imovel(client, org_id, codigo)
     linha = dados_service.linha(client, org_id, codigo) or {}
@@ -411,51 +485,147 @@ def antigos_proprietarios(
         "transmitentes": [],
         "exige_certidoes": False,
         "data_desconhecida": False,
+        "sem_registro": False,
+        "origem": None,
+        "manual": _manual_ultima_transferencia(linha),
     }
-    if extracao is None or extracao.get("status") != estrutura_svc.STATUS_CONCLUIDA:
+
+    ato: Optional[dict] = None
+    det: Optional[dict] = None
+    origem_derivacao: Optional[str] = None
+
+    if extracao is not None and extracao.get("status") == estrutura_svc.STATUS_CONCLUIDA:
+        por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
+
+        ato_id_titulo = linha.get("titulo_aquisitivo_ato_id")
+        det_titulo = detalhes.get(str(ato_id_titulo)) if ato_id_titulo else None
+        if (
+            ato_id_titulo
+            and str(ato_id_titulo) in por_id
+            and det_titulo is not None
+            and det_titulo.get("natureza") in NATUREZAS_ULTIMA_TRANSFERENCIA
+        ):
+            ato, det, origem_derivacao = (
+                por_id[str(ato_id_titulo)],
+                det_titulo,
+                "titulo_confirmado",
+            )
+        else:
+            transferencias = [
+                por_id[ato_id]
+                for ato_id, d in detalhes.items()
+                if d.get("natureza") in NATUREZAS_ULTIMA_TRANSFERENCIA and ato_id in por_id
+            ]
+            if transferencias:
+                ato = max(transferencias, key=lambda r: r["ordem"])
+                det = detalhes[str(ato["id"])]
+                origem_derivacao = "extracao"
+
+    if ato is not None and det is not None:
+        detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
+        bruto = det.get("data_registro")
+        data_registro = date.fromisoformat(str(bruto)[:10]) if bruto else None
+        limite = _anos_antes(hoje, ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS)
+        saida.update(
+            {
+                "ultima_transferencia": {
+                    "ato_id": str(ato["id"]),
+                    "ato_ref": _ato_ref(ato),
+                    "natureza": det.get("natureza"),
+                    "data_registro": data_registro.isoformat() if data_registro else None,
+                    "detalhes_origem": det.get("origem"),
+                },
+                "transmitentes": [
+                    {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
+                    for p in det.get("transmitentes") or []
+                ],
+                "exige_certidoes": data_registro is None or data_registro > limite,
+                "data_desconhecida": data_registro is None,
+                "origem": origem_derivacao,
+            }
+        )
         return saida
 
-    por_id, detalhes = _atos_e_detalhes(client, org_id, extracao)
-    vendas = [
-        por_id[ato_id]
-        for ato_id, det in detalhes.items()
-        if det.get("natureza") == NATUREZA_COMPRA_E_VENDA and ato_id in por_id
-    ]
-    if not vendas:
+    manual = saida["manual"]
+    if manual and manual.get("sem_registro"):
+        saida["sem_registro"] = True
+        saida["origem"] = "manual"
         return saida
-
-    ultima = max(vendas, key=lambda r: r["ordem"])
-    det = detalhes[str(ultima["id"])]
-    detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
-
-    bruto = det.get("data_registro")
-    data_registro = date.fromisoformat(str(bruto)[:10]) if bruto else None
-    limite = _anos_antes(hoje, ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS)
-    saida.update(
-        {
-            "ultima_transferencia": {
-                "ato_id": str(ultima["id"]),
-                "ato_ref": _ato_ref(ultima),
-                "data_registro": data_registro.isoformat() if data_registro else None,
-                "detalhes_origem": det.get("origem"),
-            },
-            "transmitentes": [
-                {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
-                for p in det.get("transmitentes") or []
-            ],
-            "exige_certidoes": data_registro is None or data_registro > limite,
-            "data_desconhecida": data_registro is None,
-        }
-    )
+    if manual and manual.get("data_registro"):
+        data_registro = date.fromisoformat(manual["data_registro"])
+        limite = _anos_antes(hoje, ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS)
+        saida.update(
+            {
+                "ultima_transferencia": {
+                    "ato_id": None,
+                    "ato_ref": None,
+                    "natureza": manual.get("natureza"),
+                    "data_registro": manual["data_registro"],
+                    "detalhes_origem": "manual",
+                },
+                "exige_certidoes": data_registro > limite,
+                "data_desconhecida": False,
+                "origem": "manual",
+            }
+        )
     return saida
+
+
+def confirmar_ultima_transferencia_manual(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    data: Optional[date],
+    natureza: Optional[str],
+    sem_registro: bool,
+    usuario_id: Optional[Any],
+) -> dict:
+    """`PUT /imoveis/{codigo}/ultima-transferencia` [migration 152] — the
+    manual fallback for [Q9]'s previous-owner rule, always available on the
+    property page next to "Antigos proprietários": a typed date (+ optional
+    nature), or an explicit "não consta transferência registrada" statement
+    — which the gate must treat as an ANSWER (`exige_antigo_proprietario`
+    resolves to `False`), never as still-unknown. `data=None, natureza=None,
+    sem_registro=False` clears the override.
+    """
+    codigo = _codigo(codigo)
+    if data is not None and sem_registro:
+        raise ValidationError_(
+            "Informe uma data OU marque que não consta transferência registrada — não os dois.",
+            field="sem_registro",
+        )
+    if natureza is not None and data is None:
+        raise ValidationError_(
+            "A natureza da transferência exige uma data de registro.", field="natureza"
+        )
+    if natureza is not None and natureza not in NATUREZAS_ULTIMA_TRANSFERENCIA:
+        raise ValidationError_(
+            f"Natureza inválida para a última transferência: {natureza}", field="natureza"
+        )
+
+    limpar = data is None and not sem_registro
+    patch = {
+        "ultima_transferencia_manual_data": data,
+        "ultima_transferencia_manual_natureza": natureza if data is not None else None,
+        "ultima_transferencia_manual_sem_registro": bool(sem_registro),
+        "ultima_transferencia_manual_confirmado_por": (
+            None if limpar else (str(usuario_id) if usuario_id else None)
+        ),
+        "ultima_transferencia_manual_confirmado_em": None if limpar else now_iso(),
+    }
+    dados_service.gravar_ultima_transferencia_manual(client, org_id, codigo, patch)
+    return antigos_proprietarios(client, org_id, codigo, usuario_id=usuario_id)
 
 
 __all__ = [
     "ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS",
+    "NATUREZAS_ULTIMA_TRANSFERENCIA",
     "antigos_proprietarios",
     "confirmar_detalhes_ato",
     "confirmar_onus_credor",
     "confirmar_titulo",
+    "confirmar_ultima_transferencia_manual",
     "obter_onus_credor",
     "obter_titulo",
 ]

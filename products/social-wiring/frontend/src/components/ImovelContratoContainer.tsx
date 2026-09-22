@@ -21,6 +21,7 @@ import {
   useConfirmarEnderecoRegistro,
   useConfirmarOnusCredor,
   useConfirmarTitulo,
+  useConfirmarUltimaTransferenciaManual,
   useEnderecoRegistro,
   useImovelCertidoes,
   useOnusCredor,
@@ -38,6 +39,7 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
   const confirmarTitulo = useConfirmarTitulo(codigo);
   const confirmarEnderecoRegistro = useConfirmarEnderecoRegistro(codigo);
   const confirmarOnus = useConfirmarOnusCredor(codigo);
+  const confirmarUltimaTransferencia = useConfirmarUltimaTransferenciaManual(codigo);
   const confirmarExtracao = useConfirmarDocumentoExtracao(codigo);
   const documentoMutations = useImovelDocumentoMutations(codigo);
 
@@ -72,6 +74,10 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
         antigos={antigosQuery.data}
         antigosShowSkeleton={antigosQuery.isPending && !antigosQuery.data}
         antigosIsError={antigosQuery.isError && !antigosQuery.data}
+        savingUltimaTransferenciaManual={confirmarUltimaTransferencia.isPending}
+        onConfirmarUltimaTransferenciaManual={(input) =>
+          confirmarUltimaTransferencia.mutate(input)
+        }
       />
 
       <ImovelCertidoesCard

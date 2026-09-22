@@ -552,11 +552,20 @@ def antigos_proprietarios(d: DadosContrato) -> list[Pessoa]:
 
 
 def exige_antigo_proprietario(d: DadosContrato, assinatura: date, politica: Politica) -> Optional[bool]:
-    """[Q9] True when the last registered compra e venda is less than
-    `antigo_proprietario_janela_anos` before the assinatura; None = unknown."""
-    if d.imovel is None or d.imovel.ultima_transferencia_em is None:
+    """[Q9] True when the last registered transfer of ownership is less than
+    `antigo_proprietario_janela_anos` before the assinatura; `False` when a
+    human confirmed there is none at all (`ultima_transferencia_sem_
+    registro_confirmado`, migration 152 — an ANSWER, not a fallback); `None`
+    = unknown (still faltando)."""
+    if d.imovel is None:
         return None
-    return ha_menos_de_anos(d.imovel.ultima_transferencia_em, assinatura, politica.antigo_proprietario_janela_anos)
+    if d.imovel.ultima_transferencia_em is not None:
+        return ha_menos_de_anos(
+            d.imovel.ultima_transferencia_em, assinatura, politica.antigo_proprietario_janela_anos
+        )
+    if d.imovel.ultima_transferencia_sem_registro_confirmado:
+        return False
+    return None
 
 
 def pessoas_certificadas(
@@ -1178,15 +1187,31 @@ def _certidoes(
                 f"precisa ter menos de {politica.certidao_estado_civil_max_dias} dias na data da assinatura.",
             )
 
-    # [Q9] previous owner(s) when the last compra e venda is recent.
+    # [Q9] previous owner(s) when the last transfer of ownership is recent.
     antigos = antigos_proprietarios(d)
     if d.imovel is not None:
         exige = exige_antigo_proprietario(d, assinatura, politica)
         if exige is None:
             av.falta(
                 "matricula.ultima_transferencia",
-                "Data do registro da última compra e venda na matrícula",
-                "matricula",
+                "Data do registro da última transferência de propriedade na matrícula "
+                "— confirme na página do imóvel",
+                "imovel",
+            )
+        elif exige and d.processo_legado:
+            # [Owner directive, 2026-09-22] Same posture as `tempo()` above:
+            # a deal that started before the platform keeps the requirement
+            # VISIBLE but never blocks on it — the human-made reference
+            # contract for a legacy 2023 acquisition qualifies only the
+            # seller, with no previous-owner section at all. Skip every
+            # `falta` this branch would otherwise raise (name/gênero/
+            # certidões of the antigos) — they never enter a legacy contract.
+            av.avisa(
+                "ANTIGO_PROPRIETARIO_PROCESSO_LEGADO",
+                "A última transferência foi registrada há menos de "
+                f"{politica.antigo_proprietario_janela_anos} anos, mas o processo é anterior à "
+                "plataforma: os antigos proprietários não entram no contrato "
+                "(processo anterior à plataforma).",
             )
         elif exige:
             if not antigos:
@@ -1194,8 +1219,8 @@ def _certidoes(
                 quem = f" — consta(m) na matrícula: {nomes}" if nomes else ""
                 av.falta(
                     "partes.antigo_proprietario",
-                    "Antigo(s) proprietário(s) do imóvel no card — a última compra e venda foi registrada há "
-                    f"menos de {politica.antigo_proprietario_janela_anos} anos{quem}",
+                    "Antigo(s) proprietário(s) do imóvel no card — a última transferência de "
+                    f"propriedade foi registrada há menos de {politica.antigo_proprietario_janela_anos} anos{quem}",
                     "partes",
                     ancora="vendedor",
                 )
@@ -1208,8 +1233,8 @@ def _certidoes(
         elif antigos:
             av.avisa(
                 "ANTIGO_PROPRIETARIO_DISPENSADO",
-                f"A última compra e venda foi registrada há {politica.antigo_proprietario_janela_anos} anos ou mais; "
-                "as certidões do(s) antigo(s) proprietário(s) não entram no contrato.",
+                f"A última transferência de propriedade foi registrada há {politica.antigo_proprietario_janela_anos} "
+                "anos ou mais; as certidões do(s) antigo(s) proprietário(s) não entram no contrato.",
             )
 
     if com_apontamento:

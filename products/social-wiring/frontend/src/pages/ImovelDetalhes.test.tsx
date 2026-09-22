@@ -80,6 +80,7 @@ vi.mock("@/hooks/useImovelContrato", async (importOriginal) => {
     useConfirmarTitulo: mutation,
     useConfirmarEnderecoRegistro: mutation,
     useConfirmarOnusCredor: mutation,
+    useConfirmarUltimaTransferenciaManual: mutation,
     useConfirmarDocumentoExtracao: mutation,
   };
 });

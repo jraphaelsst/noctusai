@@ -17,8 +17,11 @@ each now lives on the ENTITY IT DESCRIBES rather than in a side-car:
 - `Intermediario.*` qualification <- `atendimento_intermediarios` (114).
 - `Imovel.titulo_aquisitivo_texto` / `.onus_credor` <- `imovel_dados` (115),
   the operator's CONFIRMED wording (never the recomputed suggestion).
-- `Imovel.ultima_transferencia_em` / `.ultima_transferencia_transmitentes`
-  <- the matrícula's last compra e venda (115).
+- `Imovel.ultima_transferencia_em` / `.ultima_transferencia_transmitentes` /
+  `.ultima_transferencia_sem_registro_confirmado`
+  <- the matrícula's last ownership-transferring act (115), the confirmed
+  título aquisitivo act when it is one (109/115), or a manual override /
+  "não consta" statement (152) — `titulo_service.antigos_proprietarios`.
 - `PermutaImovel`       <- the `tipo='permuta'` parcela's `permuta_ativos`
   (114) + each ativo's own imóvel + that ativo's matrícula quote (115).
 - `Certidao.consulta_situacao_cadastral` / `.consulta_data_situacao`
@@ -222,13 +225,22 @@ class Imovel:
     titulo_aquisitivo_texto: Optional[str] = None
     #: [§6.1 #11] The confirmed creditor of the ônus (`imovel_dados.onus_credor`).
     onus_credor: Optional[str] = None
-    #: [Q9] Registration date of the LAST compra e venda on the matrícula.
-    #: < 5 years before the assinatura → the previous owner(s) must present
-    #: certidões. None = unknown (faltando).
+    #: [Q9] Registration date of the LAST transfer of ownership on the
+    #: matrícula (compra e venda, permuta, dação em pagamento, arrematação —
+    #: `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA`; NOT doação/partilha,
+    #: see that module's docstring). < 5 years before the assinatura → the
+    #: previous owner(s) must present certidões. `None` = unknown (faltando)
+    #: UNLESS `ultima_transferencia_sem_registro_confirmado` below is set.
     ultima_transferencia_em: Optional[date] = None
     #: Who sold in that last transfer — so the "add the antigo proprietário"
     #: refusal can NAME them instead of leaving the operator to find them.
     ultima_transferencia_transmitentes: tuple[str, ...] = ()
+    #: [migration 152] A human confirmed there is NO registered transfer of
+    #: this imóvel at all ("Não consta transferência registrada") — an
+    #: explicit STATEMENT, not the absence of one. `ultima_transferencia_em
+    #: is None` alone means "unknown"; this flag is what tells
+    #: `exige_antigo_proprietario` to stop asking and resolve to `False`.
+    ultima_transferencia_sem_registro_confirmado: bool = False
     #: [§6.1 #14] The imóvel's own certidões (migration 118).
     certidoes: tuple[CertidaoImovel, ...] = ()
     #: 🔴 [endereco-portaria-vs-imovel, migration 139] The short address

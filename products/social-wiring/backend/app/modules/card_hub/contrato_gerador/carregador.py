@@ -12,7 +12,7 @@
 | imóvel address                | `imovel_hub.busca_service.enriquecer`                |
 | imóvel matrícula/ônus/título  | `imovel_hub.dados_service.obter`                     |
 | imóvel certidões (118)        | `imovel_hub.documentos_service.certidoes`            |
-| última compra e venda (115)   | `matriculas.titulo_service.antigos_proprietarios`    |
+| última transferência (115/152)| `matriculas.titulo_service.antigos_proprietarios`    |
 | matrícula literal text        | `matriculas.estrutura_service.obter_selecao` (logs the text read) |
 | ônus source acts (kind/nº)    | `matriculas.estrutura_service.listar_atos` (logs the text read)   |
 | permuta ativos (114)          | `permuta_ativos` rows via `table_reads.in_batched_rows` |
@@ -204,10 +204,11 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
             if ato is not None:
                 atos.append(AtoCitado(kind=ato["kind"], numero=ato.get("numero")))
 
-    # Migration 115. Only `data_registro` + `transmitentes` are read: the
-    # service's own `exige_certidoes` is computed against TODAY, while the
-    # contract's [Q9] rule runs against the ASSINATURA date — `derivacao`
-    # recomputes it there rather than inheriting a differently-dated answer.
+    # Migration 115/152. Only `data_registro` + `transmitentes` + `sem_
+    # registro` are read: the service's own `exige_certidoes` is computed
+    # against TODAY, while the contract's [Q9] rule runs against the
+    # ASSINATURA date — `derivacao` recomputes it there rather than
+    # inheriting a differently-dated answer.
     antigos = titulo_service.antigos_proprietarios(client, org_id, codigo, usuario_id=usuario_id)
     ultima = antigos.get("ultima_transferencia") or {}
 
@@ -239,6 +240,7 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
         ultima_transferencia_transmitentes=tuple(
             t["nome"] for t in antigos.get("transmitentes") or [] if t.get("nome")
         ),
+        ultima_transferencia_sem_registro_confirmado=bool(antigos.get("sem_registro")),
         # Migration 118 — the imóvel's own CND / matrícula certidões.
         certidoes=tuple(
             CertidaoImovel(

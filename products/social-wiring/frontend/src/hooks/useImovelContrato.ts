@@ -123,12 +123,28 @@ export interface OnusCredorResponse {
   confirmado: ConfirmacaoCredor | null;
 }
 
+/** [Q9] `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA` — the natures that
+ *  count as "the imóvel changed hands" for this rule. NOT `doacao`/
+ *  `partilha`: re-classifying an act as `doacao` is how an operator tells
+ *  the backend "this did not transfer for consideration", so a donation
+ *  never substitutes for a sale here either. */
+export type NaturezaUltimaTransferencia = "compra_e_venda" | "permuta" | "dacao" | "arrematacao";
+
+export const NATUREZA_ULTIMA_TRANSFERENCIA_LABEL: Record<NaturezaUltimaTransferencia, string> = {
+  compra_e_venda: "Compra e venda",
+  permuta: "Permuta",
+  dacao: "Dação em pagamento",
+  arrematacao: "Arrematação",
+};
+
 export interface UltimaTransferencia {
-  ato_id: string;
+  /** `null` for a manual override (migration 152) — there is no act. */
+  ato_id: string | null;
   ato_ref: string | null;
+  natureza: string | null;
   /** ISO date, or `null` when the act's date could not be read. */
   data_registro: string | null;
-  detalhes_origem: "sugestao" | "confirmado" | null;
+  detalhes_origem: "sugestao" | "confirmado" | "manual" | null;
 }
 
 /** `GET/PUT .../endereco-registro` (migration 139/147) — the operator's
@@ -139,6 +155,17 @@ export interface EnderecoRegistroResponse {
   confirmado: ConfirmacaoTexto | null;
 }
 
+/** The RAW manual-override state (migration 152) — reported even when a
+ *  derivation from the matrícula's acts is the EFFECTIVE source, so the
+ *  property page's form can show/edit it either way. `null` = never set. */
+export interface UltimaTransferenciaManual {
+  data_registro: string | null;
+  natureza: string | null;
+  sem_registro: boolean;
+  confirmado_por: MatriculaActor | null;
+  confirmado_em: string | null;
+}
+
 export interface AntigosProprietariosResponse {
   codigo: string;
   extracao_id: string | null;
@@ -146,12 +173,21 @@ export interface AntigosProprietariosResponse {
   transmitentes: AtoParte[];
   /**
    * 🔴 OFFICE RULE: the sellers' certidões are required when the last
-   * registered sale is LESS than five years old — AND when its date could not
-   * be read at all (`data_desconhecida`), because an unreadable date must
-   * lead to asking, never to silently waiving.
+   * registered transfer is LESS than five years old — AND when its date
+   * could not be read at all (`data_desconhecida`), because an unreadable
+   * date must lead to asking, never to silently waiving.
    */
   exige_certidoes: boolean;
   data_desconhecida: boolean;
+  /** [migration 152] A human confirmed there is NO registered transfer at
+   *  all ("não consta transferência registrada") — an ANSWER, resolving
+   *  `exige_certidoes` to `false` instead of leaving it unknown. */
+  sem_registro: boolean;
+  /** Where `ultima_transferencia` came from, or why `sem_registro` fired:
+   *  the confirmed título act, a scan of the extraction's other acts, or
+   *  the manual override. `null` when nothing resolved it at all. */
+  origem: "titulo_confirmado" | "extracao" | "manual" | null;
+  manual: UltimaTransferenciaManual | null;
 }
 
 export type CertidaoResultado =
@@ -393,6 +429,39 @@ export function useConfirmarOnusCredor(codigo: string) {
     onSuccess: (data) => qc.setQueryData(ONUS_KEY(codigo), data),
     onError: (error: Error) => {
       toast.error("Não foi possível salvar o credor do ônus", {
+        description: readableError(error),
+      });
+    },
+  });
+}
+
+/**
+ * `PUT .../ultima-transferencia` (migration 152) — the manual fallback for
+ * [Q9]'s previous-owner rule, always available next to "Antigos
+ * proprietários": a typed date (+ optional nature), or `semRegistro: true`
+ * alone ("não consta transferência registrada"). Mutually exclusive — the
+ * backend refuses both set.
+ */
+export function useConfirmarUltimaTransferenciaManual(codigo: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      data: string | null;
+      natureza: NaturezaUltimaTransferencia | null;
+      semRegistro: boolean;
+    }): Promise<AntigosProprietariosResponse> => {
+      const result = await api.put(`${matriculasBase(codigo)}/ultima-transferencia`, {
+        data: input.data,
+        natureza: input.natureza,
+        sem_registro: input.semRegistro,
+      });
+      return result.data as AntigosProprietariosResponse;
+    },
+    // The PUT re-reads and returns the whole shape (same as `antigos-
+    // proprietarios`), so seed rather than invalidate.
+    onSuccess: (data) => qc.setQueryData(ANTIGOS_KEY(codigo), data),
+    onError: (error: Error) => {
+      toast.error("Não foi possível salvar a última transferência", {
         description: readableError(error),
       });
     },

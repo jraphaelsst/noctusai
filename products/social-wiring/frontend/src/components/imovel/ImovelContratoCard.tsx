@@ -34,16 +34,26 @@ import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
 import {
   ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS,
+  NATUREZA_ULTIMA_TRANSFERENCIA_LABEL,
   motivoSemSugestaoTexto,
   type AntigosProprietariosResponse,
   type EnderecoRegistroResponse,
+  type NaturezaUltimaTransferencia,
   type OnusCredorResponse,
   type TituloAquisitivoResponse,
 } from "@/hooks/useImovelContrato";
@@ -75,6 +85,12 @@ export interface ImovelContratoCardProps {
   antigos: AntigosProprietariosResponse | undefined;
   antigosShowSkeleton: boolean;
   antigosIsError: boolean;
+  savingUltimaTransferenciaManual: boolean;
+  onConfirmarUltimaTransferenciaManual: (input: {
+    data: string | null;
+    natureza: NaturezaUltimaTransferencia | null;
+    semRegistro: boolean;
+  }) => void;
 }
 
 /** Where to go to fix a missing suggestion: the act's own extraction when we
@@ -162,6 +178,8 @@ export default function ImovelContratoCard({
   antigos,
   antigosShowSkeleton,
   antigosIsError,
+  savingUltimaTransferenciaManual,
+  onConfirmarUltimaTransferenciaManual,
 }: ImovelContratoCardProps) {
   // Drafts seeded from the CONFIRMED wording (not the suggestion): the
   // suggestion is one click away via "Usar sugestão", and pre-filling with it
@@ -169,6 +187,15 @@ export default function ImovelContratoCard({
   const [tituloDraft, setTituloDraft] = useState("");
   const [enderecoRegistroDraft, setEnderecoRegistroDraft] = useState("");
   const [credorDraft, setCredorDraft] = useState("");
+  // Seeded from the RAW manual-override state (`antigos.manual`), never from
+  // the resolved `ultima_transferencia` — a derived-from-acts value is not
+  // something this form ever overwrote, and pre-filling with it would make
+  // an untouched override look like one the operator just typed.
+  const [ultimaTransferenciaDataDraft, setUltimaTransferenciaDataDraft] = useState("");
+  const [ultimaTransferenciaNaturezaDraft, setUltimaTransferenciaNaturezaDraft] = useState<
+    NaturezaUltimaTransferencia | ""
+  >("");
+  const [semRegistroDraft, setSemRegistroDraft] = useState(false);
 
   const tituloConfirmado = titulo?.confirmado?.texto ?? "";
   useEffect(() => {
@@ -184,6 +211,15 @@ export default function ImovelContratoCard({
   useEffect(() => {
     setCredorDraft(credorConfirmado);
   }, [credorConfirmado]);
+
+  const manual = antigos?.manual ?? null;
+  useEffect(() => {
+    setUltimaTransferenciaDataDraft(manual?.data_registro ?? "");
+    setUltimaTransferenciaNaturezaDraft(
+      (manual?.natureza as NaturezaUltimaTransferencia) ?? "",
+    );
+    setSemRegistroDraft(manual?.sem_registro ?? false);
+  }, [manual?.data_registro, manual?.natureza, manual?.sem_registro]);
 
   return (
     <Card>
@@ -484,68 +520,230 @@ export default function ImovelContratoCard({
             <p className="text-xs text-destructive" data-testid="imovel-antigos-erro">
               Não foi possível carregar os antigos proprietários.
             </p>
-          ) : !antigos?.ultima_transferencia ? (
-            <p className="text-xs text-muted-foreground" data-testid="imovel-antigos-vazio">
-              Nenhuma compra e venda registrada foi encontrada na matrícula.
-            </p>
           ) : (
             <>
-              <p className="text-xs text-muted-foreground">
-                Última transferência: ato{" "}
-                <strong>{antigos.ultima_transferencia.ato_ref ?? "—"}</strong>
-                {antigos.ultima_transferencia.data_registro
-                  ? ` registrada em ${formatarData(antigos.ultima_transferencia.data_registro)}`
-                  : " — data não lida"}
-              </p>
-
-              {antigos.transmitentes.length > 0 ? (
-                <ul className="space-y-0.5" data-testid="imovel-antigos-transmitentes">
-                  {antigos.transmitentes.map((p, i) => (
-                    <li key={`${p.nome}-${i}`} className="text-xs">
-                      {p.nome}
-                      {p.cpf_cnpj ? ` · ${p.cpf_cnpj}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  O ato não informa os vendedores — confira os detalhes do ato.
-                </p>
-              )}
-
-              {antigos.data_desconhecida && (
-                // An unreadable date must lead to ASKING, never to silently
-                // waiving the certidões — so it is its own notice.
-                <div
-                  className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2"
-                  data-testid="imovel-antigos-data-desconhecida"
-                >
-                  <p className="flex items-start gap-1.5 text-xs text-amber-800">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    A data do registro não foi lida. Confirme a data do ato{" "}
-                    {antigos.ultima_transferencia.ato_ref ?? ""} nos detalhes do ato — sem ela,
-                    as certidões são exigidas por precaução.
+              {antigos?.ultima_transferencia ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Última transferência:{" "}
+                    {antigos.ultima_transferencia.ato_ref ? (
+                      <>
+                        ato <strong>{antigos.ultima_transferencia.ato_ref}</strong>
+                      </>
+                    ) : (
+                      <strong>informada manualmente</strong>
+                    )}
+                    {antigos.ultima_transferencia.natureza && (
+                      <>
+                        {" "}
+                        (
+                        {NATUREZA_ULTIMA_TRANSFERENCIA_LABEL[
+                          antigos.ultima_transferencia.natureza as NaturezaUltimaTransferencia
+                        ] ?? antigos.ultima_transferencia.natureza}
+                        )
+                      </>
+                    )}
+                    {antigos.ultima_transferencia.data_registro
+                      ? ` registrada em ${formatarData(antigos.ultima_transferencia.data_registro)}`
+                      : " — data não lida"}
                   </p>
-                  <Link
-                    to={linkDaMatricula(codigo, antigos.extracao_id)}
-                    className="inline-flex items-center gap-1 text-xs font-medium underline"
-                  >
-                    <Link2 className="h-3 w-3" />
-                    Abrir a matrícula
-                  </Link>
-                </div>
-              )}
 
-              {antigos.exige_certidoes && (
+                  {antigos.transmitentes.length > 0 ? (
+                    <ul className="space-y-0.5" data-testid="imovel-antigos-transmitentes">
+                      {antigos.transmitentes.map((p, i) => (
+                        <li key={`${p.nome}-${i}`} className="text-xs">
+                          {p.nome}
+                          {p.cpf_cnpj ? ` · ${p.cpf_cnpj}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : antigos.ultima_transferencia.ato_ref ? (
+                    <p className="text-xs text-muted-foreground">
+                      O ato não informa os vendedores — confira os detalhes do ato.
+                    </p>
+                  ) : null}
+
+                  {antigos.data_desconhecida && (
+                    // An unreadable date must lead to ASKING, never to silently
+                    // waiving the certidões — so it is its own notice.
+                    <div
+                      className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2"
+                      data-testid="imovel-antigos-data-desconhecida"
+                    >
+                      <p className="flex items-start gap-1.5 text-xs text-amber-800">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        A data do registro não foi lida. Confirme a data do ato{" "}
+                        {antigos.ultima_transferencia.ato_ref ?? ""} nos detalhes do ato — sem ela,
+                        as certidões são exigidas por precaução.
+                      </p>
+                      <Link
+                        to={linkDaMatricula(codigo, antigos.extracao_id)}
+                        className="inline-flex items-center gap-1 text-xs font-medium underline"
+                      >
+                        <Link2 className="h-3 w-3" />
+                        Abrir a matrícula
+                      </Link>
+                    </div>
+                  )}
+
+                  {antigos.exige_certidoes && (
+                    <p
+                      className="flex items-start gap-1.5 rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
+                      data-testid="imovel-antigos-exige-certidoes"
+                    >
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      Certidões dos antigos proprietários são obrigatórias: a transferência foi
+                      registrada há menos de {ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS} anos.
+                    </p>
+                  )}
+                </>
+              ) : antigos?.sem_registro ? (
                 <p
-                  className="flex items-start gap-1.5 rounded border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
-                  data-testid="imovel-antigos-exige-certidoes"
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground"
+                  data-testid="imovel-antigos-sem-registro"
                 >
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  Certidões dos antigos proprietários são obrigatórias: a venda foi registrada
-                  há menos de {ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS} anos.
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Confirmado: não consta transferência de propriedade registrada na matrícula.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground" data-testid="imovel-antigos-vazio">
+                  Nenhuma transferência de propriedade registrada foi encontrada na matrícula.
                 </p>
               )}
+
+              {/* ─── Manual override (migration 152) ─────────────────────
+                  Always available — the acts-based derivation above wins
+                  when it finds something; this is the fallback the contract
+                  gate needs when it doesn't. */}
+              <div className="space-y-2 rounded border p-2" data-testid="imovel-ultima-transferencia-manual">
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  Informar manualmente
+                </p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="imovel-ultima-transferencia-data" className="text-xs">
+                      Data do registro da última transferência de propriedade
+                    </Label>
+                    <Input
+                      id="imovel-ultima-transferencia-data"
+                      type="date"
+                      value={ultimaTransferenciaDataDraft}
+                      disabled={savingUltimaTransferenciaManual || semRegistroDraft}
+                      onChange={(e) => setUltimaTransferenciaDataDraft(e.target.value)}
+                      data-testid="imovel-ultima-transferencia-data"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="imovel-ultima-transferencia-natureza" className="text-xs">
+                      Natureza
+                    </Label>
+                    <Select
+                      value={ultimaTransferenciaNaturezaDraft || undefined}
+                      onValueChange={(v) =>
+                        setUltimaTransferenciaNaturezaDraft(v as NaturezaUltimaTransferencia)
+                      }
+                      disabled={savingUltimaTransferenciaManual || semRegistroDraft}
+                    >
+                      <SelectTrigger
+                        id="imovel-ultima-transferencia-natureza"
+                        className="w-44"
+                        data-testid="imovel-ultima-transferencia-natureza"
+                      >
+                        <SelectValue placeholder="Selecione" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(
+                          Object.entries(NATUREZA_ULTIMA_TRANSFERENCIA_LABEL) as [
+                            NaturezaUltimaTransferencia,
+                            string,
+                          ][]
+                        ).map(([valor, rotulo]) => (
+                          <SelectItem key={valor} value={valor}>
+                            {rotulo}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="imovel-ultima-transferencia-sem-registro"
+                    checked={semRegistroDraft}
+                    disabled={savingUltimaTransferenciaManual}
+                    onCheckedChange={(v) => {
+                      const marcado = v === true;
+                      setSemRegistroDraft(marcado);
+                      if (marcado) {
+                        setUltimaTransferenciaDataDraft("");
+                        setUltimaTransferenciaNaturezaDraft("");
+                      }
+                    }}
+                    data-testid="imovel-ultima-transferencia-sem-registro"
+                  />
+                  <Label
+                    htmlFor="imovel-ultima-transferencia-sem-registro"
+                    className="text-xs font-normal"
+                  >
+                    Não consta transferência registrada
+                  </Label>
+                </div>
+
+                {manual?.confirmado_por && (
+                  <Confirmacao
+                    nome={manual.confirmado_por?.nome}
+                    em={manual.confirmado_em}
+                    testId="imovel-ultima-transferencia-confirmado"
+                  />
+                )}
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={
+                      savingUltimaTransferenciaManual ||
+                      (!semRegistroDraft && !ultimaTransferenciaDataDraft)
+                    }
+                    onClick={() =>
+                      onConfirmarUltimaTransferenciaManual({
+                        data: semRegistroDraft ? null : ultimaTransferenciaDataDraft || null,
+                        natureza: semRegistroDraft
+                          ? null
+                          : (ultimaTransferenciaNaturezaDraft || null) as
+                              | NaturezaUltimaTransferencia
+                              | null,
+                        semRegistro: semRegistroDraft,
+                      })
+                    }
+                    data-testid="imovel-ultima-transferencia-confirmar"
+                  >
+                    {savingUltimaTransferenciaManual && (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    )}
+                    Confirmar
+                  </Button>
+                  {manual && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={savingUltimaTransferenciaManual}
+                      onClick={() =>
+                        onConfirmarUltimaTransferenciaManual({
+                          data: null,
+                          natureza: null,
+                          semRegistro: false,
+                        })
+                      }
+                      data-testid="imovel-ultima-transferencia-limpar"
+                    >
+                      Limpar
+                    </Button>
+                  )}
+                </div>
+              </div>
             </>
           )}
         </section>

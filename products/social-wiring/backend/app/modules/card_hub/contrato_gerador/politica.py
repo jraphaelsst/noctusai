@@ -105,9 +105,11 @@ class Politica:
     # the assinatura (the group is then titled "… - Baixada"); `suspensa` /
     # `nula` / older baixadas are omitted.
     pj_baixada_janela_anos: int = 5
-    # [Q9] Answered: when the last registered compra e venda of the imóvel
-    # happened less than this many years before the assinatura, the previous
-    # owner(s) present full certidões too.
+    # [Q9] Answered: when the last registered transfer of ownership of the
+    # imóvel (compra e venda, permuta, dação em pagamento, arrematação —
+    # `titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA`) happened less than
+    # this many years before the assinatura, the previous owner(s) present
+    # full certidões too.
     antigo_proprietario_janela_anos: int = 5
 
     # [Q10] Answered: EVERY certidão must have been emitted less than this

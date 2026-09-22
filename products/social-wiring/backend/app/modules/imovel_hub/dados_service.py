@@ -178,6 +178,21 @@ _CAMPO_MIRROR = {
 
 HISTORICO_ENDERECO_TABLE = "imovel_endereco_historico"
 
+#: Migration 152 — the manual override for [Q9]'s previous-owner rule (the
+#: LAST resort when `matriculas.titulo_service.antigos_proprietarios` finds
+#: no ownership-transferring act at all): a typed date + optional nature, or
+#: an explicit "não consta transferência registrada" statement. Written ONLY
+#: by `gravar_ultima_transferencia_manual`, which `matriculas.titulo_service.
+#: confirmar_ultima_transferencia_manual` calls after validating the
+#: date/sem_registro/natureza combination.
+CAMPOS_ULTIMA_TRANSFERENCIA_MANUAL: tuple[str, ...] = (
+    "ultima_transferencia_manual_data",
+    "ultima_transferencia_manual_natureza",
+    "ultima_transferencia_manual_sem_registro",
+    "ultima_transferencia_manual_confirmado_por",
+    "ultima_transferencia_manual_confirmado_em",
+)
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -472,6 +487,22 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
             resolved, row.get("endereco_manual_confirmado_por")
         ),
         "endereco_manual_confirmado_em": row.get("endereco_manual_confirmado_em"),
+        # Migration 152 — the manual override for [Q9]'s previous-owner rule.
+        # `matriculas.titulo_service.antigos_proprietarios` is the read that
+        # actually resolves the EFFECTIVE value (acts-derivation wins over
+        # this); these are the raw stored fields, mirrored here like every
+        # other imovel_dados-authored field.
+        "ultima_transferencia_manual_data": row.get("ultima_transferencia_manual_data"),
+        "ultima_transferencia_manual_natureza": row.get("ultima_transferencia_manual_natureza"),
+        "ultima_transferencia_manual_sem_registro": bool(
+            row.get("ultima_transferencia_manual_sem_registro")
+        ),
+        "ultima_transferencia_manual_confirmado_por": table_reads.actor(
+            resolved, row.get("ultima_transferencia_manual_confirmado_por")
+        ),
+        "ultima_transferencia_manual_confirmado_em": row.get(
+            "ultima_transferencia_manual_confirmado_em"
+        ),
         "updated_at": row.get("updated_at"),
     }
 
@@ -489,6 +520,7 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("onus_credor_confirmado_por"),
         (row or {}).get("endereco_registro_confirmado_por"),
         (row or {}).get("endereco_manual_confirmado_por"),
+        (row or {}).get("ultima_transferencia_manual_confirmado_por"),
     }
     return _saida(codigo, row, table_reads.resolve_actors(ids))
 
@@ -756,6 +788,23 @@ def historico_endereco(client: Any, org_id: UUID, codigo: str) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def gravar_ultima_transferencia_manual(client: Any, org_id: UUID, codigo: str, patch: dict) -> None:
+    """Write the manual override for [Q9]'s previous-owner rule (migration
+    152). Refuses any column outside `CAMPOS_ULTIMA_TRANSFERENCIA_MANUAL` —
+    the caller (`matriculas.titulo_service.confirmar_ultima_transferencia_
+    manual`) validates the date/sem_registro/natureza combination and stamps
+    the confirmation; this is not a back door to the other authored fields.
+    """
+    recusados = sorted(set(patch) - set(CAMPOS_ULTIMA_TRANSFERENCIA_MANUAL))
+    if recusados:
+        raise ValueError(
+            "gravar_ultima_transferencia_manual: colunas fora do escopo: "
+            + ", ".join(recusados)
+        )
+    ensure_imovel(client, org_id, codigo)
+    _gravar(client, org_id, codigo, linha(client, org_id, codigo), patch)
 
 
 def extracao_referenciada(client: Any, org_id: UUID, extracao_id: Any) -> bool:

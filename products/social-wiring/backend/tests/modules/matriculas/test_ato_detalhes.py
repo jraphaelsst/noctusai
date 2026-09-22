@@ -330,6 +330,7 @@ class TestAntigosProprietarios:
         assert data["ultima_transferencia"] == {
             "ato_id": data["ultima_transferencia"]["ato_id"],
             "ato_ref": "R-2",
+            "natureza": "compra_e_venda",
             "data_registro": venda.isoformat(),
             "detalhes_origem": "sugestao",
         }
@@ -386,6 +387,116 @@ class TestAntigosProprietarios:
 
         assert data["ultima_transferencia"]["ato_ref"] == "R-1"
         assert data["exige_certidoes"] is False
+
+    def test_a_confirmed_titulo_act_that_is_a_permuta_derives_it(self, client, scoped):
+        """The live dead end: R-4 confirmed as título aquisitivo, natureza
+        `permuta` — invisible to the old compra-e-venda-only search."""
+        recente = date.today() - timedelta(days=365)
+        ext = extracao_row(texto=texto_com_venda(recente))
+        seed(scoped, registry=[registry_row()], extracoes=[ext])
+        atos = _por_chave(_atos(client, ext["id"]))
+        r2 = atos[("R", 2)]["id"]
+        client.put(f"/api/matriculas/atos/{r2}/detalhes", json={"natureza": "permuta"})
+        client.put(
+            f"/api/matriculas/extracoes/{ext['id']}/fontes",
+            json={"titulo_aquisitivo_ato_id": r2},
+        )
+
+        data = _data(client.get(self._url()))
+
+        assert data["origem"] == "titulo_confirmado"
+        assert data["ultima_transferencia"]["ato_ref"] == "R-2"
+        assert data["ultima_transferencia"]["natureza"] == "permuta"
+        assert data["ultima_transferencia"]["data_registro"] == recente.isoformat()
+        assert data["exige_certidoes"] is True
+
+    def test_manual_override_answers_it_when_no_extraction_transfer_exists(self, client, scoped):
+        seed(scoped, registry=[registry_row()])
+        recente = (date.today() - timedelta(days=365)).isoformat()
+
+        put = _data(
+            client.put(
+                f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+                json={"data": recente, "natureza": "permuta", "sem_registro": False},
+            )
+        )
+        assert put["origem"] == "manual"
+        assert put["ultima_transferencia"] == {
+            "ato_id": None,
+            "ato_ref": None,
+            "natureza": "permuta",
+            "data_registro": recente,
+            "detalhes_origem": "manual",
+        }
+        assert put["exige_certidoes"] is True
+        assert put["manual"]["data_registro"] == recente
+        assert put["manual"]["confirmado_por"] is not None
+
+        # A found act in the extraction always wins over the manual override.
+        # `seed()` resets EVERY table it's given, `imovel_dados` included —
+        # carry the override just written forward explicitly, or this
+        # `seed()` call would silently wipe it before the assertion below.
+        dados_atual = scoped.table("imovel_dados").select("*").execute().data
+        antigo = (date.today() - timedelta(days=10 * 365)).isoformat()
+        ext = extracao_row(texto=texto_com_venda(date.today() - timedelta(days=10 * 365)))
+        seed(scoped, registry=[registry_row()], extracoes=[ext], dados=dados_atual)
+        derivado = _data(client.get(self._url()))
+        assert derivado["origem"] == "extracao"
+        assert derivado["ultima_transferencia"]["data_registro"] == antigo
+        # The raw override state is still reported for the FE form.
+        assert derivado["manual"]["data_registro"] == recente
+
+        limpo = _data(
+            client.put(
+                f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+                json={"data": None, "natureza": None, "sem_registro": False},
+            )
+        )
+        assert limpo["manual"] is None
+
+    def test_sem_registro_is_recorded_as_an_answer_not_a_fallback(self, client, scoped):
+        seed(scoped, registry=[registry_row()])
+
+        put = _data(
+            client.put(
+                f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+                json={"data": None, "sem_registro": True},
+            )
+        )
+        assert put["ultima_transferencia"] is None
+        assert put["sem_registro"] is True
+        assert put["origem"] == "manual"
+        assert put["manual"]["sem_registro"] is True
+        assert put["exige_certidoes"] is False
+
+    def test_a_date_and_sem_registro_together_is_refused(self, client, scoped):
+        seed(scoped, registry=[registry_row()])
+        resp = client.put(
+            f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+            json={"data": "2023-01-01", "sem_registro": True},
+        )
+        assert resp.status_code == 400
+
+    def test_a_nature_without_a_date_is_refused(self, client, scoped):
+        seed(scoped, registry=[registry_row()])
+        resp = client.put(
+            f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+            json={"data": None, "natureza": "permuta", "sem_registro": False},
+        )
+        assert resp.status_code == 400
+
+    def test_the_write_always_stamps_the_authenticated_org(self, client, scoped):
+        """org scoping: `imovel_dados` rows carry the CALLER's org_id, never
+        one taken from the request body — there is none to take it from."""
+        seed(scoped, registry=[registry_row()])
+        _data(
+            client.put(
+                f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+                json={"data": "2023-07-11", "natureza": "permuta", "sem_registro": False},
+            )
+        )
+        rows = scoped.table("imovel_dados").select("*").execute().data
+        assert rows and all(r["org_id"] == ORG_ID for r in rows)
 
 
 # ─── permuta quotes ───────────────────────────────────────────────────────

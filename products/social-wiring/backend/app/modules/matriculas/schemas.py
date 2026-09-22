@@ -116,6 +116,20 @@ class EnderecoRegistroBody(StrictHttpModel):
     texto: Optional[str] = Field(..., max_length=2000)
 
 
+class UltimaTransferenciaManualBody(StrictHttpModel):
+    """The manual override for [Q9]'s previous-owner rule (migration 152) —
+    always available next to "Antigos proprietários" on the property page,
+    for when the matrícula's acts do not already answer it. `data` (+ an
+    optional `natureza`), OR `sem_registro: true` alone ("não consta
+    transferência registrada"); the two are mutually exclusive — the service
+    (`titulo_service.confirmar_ultima_transferencia_manual`) refuses both
+    set. `data: null, sem_registro: false` clears the override."""
+
+    data: Optional[date] = Field(...)
+    natureza: Optional[NaturezaAto] = None
+    sem_registro: bool = False
+
+
 class ExtracaoManualBody(StrictHttpModel):
     """A matrícula's text, typed or pasted by a human — no PDF, no vision AI
     (migration 149). Feeds the exact same segmenter an AI transcription's

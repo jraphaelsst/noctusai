@@ -71,12 +71,16 @@ function antigos(
     ultima_transferencia: {
       ato_id: "ato-1",
       ato_ref: "R-1",
+      natureza: "compra_e_venda",
       data_registro: "2024-05-10",
       detalhes_origem: "sugestao",
     },
     transmitentes: [{ nome: "Joao da Silva", cpf_cnpj: "000.000.000-00" }],
     exige_certidoes: true,
     data_desconhecida: false,
+    sem_registro: false,
+    origem: "extracao",
+    manual: null,
     ...over,
   };
 }
@@ -88,6 +92,7 @@ async function render(props: Record<string, unknown> = {}) {
   const onConfirmarTitulo = vi.fn();
   const onConfirmarEnderecoRegistro = vi.fn();
   const onConfirmarOnusCredor = vi.fn();
+  const onConfirmarUltimaTransferenciaManual = vi.fn();
   const view = rtl.render(
     React.createElement(
       MemoryRouter,
@@ -115,11 +120,20 @@ async function render(props: Record<string, unknown> = {}) {
         antigos: antigos(),
         antigosShowSkeleton: false,
         antigosIsError: false,
+        savingUltimaTransferenciaManual: false,
+        onConfirmarUltimaTransferenciaManual,
         ...props,
       } as never),
     ),
   );
-  return { ...rtl, ...view, onConfirmarTitulo, onConfirmarEnderecoRegistro, onConfirmarOnusCredor };
+  return {
+    ...rtl,
+    ...view,
+    onConfirmarTitulo,
+    onConfirmarEnderecoRegistro,
+    onConfirmarOnusCredor,
+    onConfirmarUltimaTransferenciaManual,
+  };
 }
 
 describe("ImovelContratoCard — título aquisitivo", () => {
@@ -317,6 +331,7 @@ describe("ImovelContratoCard — antigos proprietários", () => {
         ultima_transferencia: {
           ato_id: "ato-1",
           ato_ref: "R-1",
+          natureza: "compra_e_venda",
           data_registro: null,
           detalhes_origem: "sugestao",
         },
@@ -333,5 +348,111 @@ describe("ImovelContratoCard — antigos proprietários", () => {
       antigos: antigos({ ultima_transferencia: null, transmitentes: [], exige_certidoes: false }),
     });
     expect(getByTestId("imovel-antigos-vazio")).toBeTruthy();
+  });
+});
+
+describe("ImovelContratoCard — última transferência (manual override, migration 152)", () => {
+  it("🔴 a confirmed 'não consta' is an ANSWER, not the empty state", async () => {
+    const { getByTestId, queryByTestId } = await render({
+      antigos: antigos({
+        ultima_transferencia: null,
+        transmitentes: [],
+        exige_certidoes: false,
+        sem_registro: true,
+        origem: "manual",
+        manual: {
+          data_registro: null,
+          natureza: null,
+          sem_registro: true,
+          confirmado_por: { id: "u1", nome: "Ana" },
+          confirmado_em: "2026-09-22T10:00:00Z",
+        },
+      }),
+    });
+    expect(getByTestId("imovel-antigos-sem-registro").textContent).toContain(
+      "não consta transferência",
+    );
+    expect(queryByTestId("imovel-antigos-vazio")).toBeNull();
+  });
+
+  it("the confirm button stays disabled with an empty draft", async () => {
+    const { getByTestId } = await render({
+      antigos: antigos({ manual: null }),
+    });
+    expect(
+      (getByTestId("imovel-ultima-transferencia-confirmar") as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("confirms a typed date (no nature chosen) as null, not a stray value", async () => {
+    const { getByTestId, fireEvent, onConfirmarUltimaTransferenciaManual } = await render({
+      antigos: antigos({ manual: null }),
+    });
+    fireEvent.change(getByTestId("imovel-ultima-transferencia-data"), {
+      target: { value: "2023-07-11" },
+    });
+    fireEvent.click(getByTestId("imovel-ultima-transferencia-confirmar"));
+    expect(onConfirmarUltimaTransferenciaManual).toHaveBeenCalledWith({
+      data: "2023-07-11",
+      natureza: null,
+      semRegistro: false,
+    });
+  });
+
+  it("🔴 checking 'não consta' clears the date draft and sends sem_registro, not a date", async () => {
+    const { getByTestId, fireEvent, onConfirmarUltimaTransferenciaManual } = await render({
+      antigos: antigos({ manual: null }),
+    });
+    fireEvent.change(getByTestId("imovel-ultima-transferencia-data"), {
+      target: { value: "2023-07-11" },
+    });
+    fireEvent.click(getByTestId("imovel-ultima-transferencia-sem-registro"));
+    expect((getByTestId("imovel-ultima-transferencia-data") as HTMLInputElement).value).toBe("");
+    fireEvent.click(getByTestId("imovel-ultima-transferencia-confirmar"));
+    expect(onConfirmarUltimaTransferenciaManual).toHaveBeenCalledWith({
+      data: null,
+      natureza: null,
+      semRegistro: true,
+    });
+  });
+
+  it("offers no Limpar button when there is no override yet", async () => {
+    const { queryByTestId } = await render({ antigos: antigos({ manual: null }) });
+    expect(queryByTestId("imovel-ultima-transferencia-limpar")).toBeNull();
+  });
+
+  it("Limpar clears the override entirely once one exists", async () => {
+    const { getByTestId, fireEvent, onConfirmarUltimaTransferenciaManual } = await render({
+      antigos: antigos({
+        manual: {
+          data_registro: "2023-07-11",
+          natureza: "permuta",
+          sem_registro: false,
+          confirmado_por: { id: "u1", nome: "Ana" },
+          confirmado_em: "2026-09-22T10:00:00Z",
+        },
+      }),
+    });
+    fireEvent.click(getByTestId("imovel-ultima-transferencia-limpar"));
+    expect(onConfirmarUltimaTransferenciaManual).toHaveBeenCalledWith({
+      data: null,
+      natureza: null,
+      semRegistro: false,
+    });
+  });
+
+  it("names who confirmed the manual override", async () => {
+    const { getByTestId } = await render({
+      antigos: antigos({
+        manual: {
+          data_registro: "2023-07-11",
+          natureza: "permuta",
+          sem_registro: false,
+          confirmado_por: { id: "u1", nome: "Ana" },
+          confirmado_em: "2026-09-22T10:00:00Z",
+        },
+      }),
+    });
+    expect(getByTestId("imovel-ultima-transferencia-confirmado").textContent).toContain("Ana");
   });
 });

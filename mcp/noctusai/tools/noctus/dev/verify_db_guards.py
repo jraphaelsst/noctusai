@@ -913,6 +913,127 @@ _ENDERECO_REGISTRO_PROBE = GuardProbe(
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imovel_dados_ultima_transferencia_manual_confirmado
+# CHECK (migration 152).
+# ---------------------------------------------------------------------------
+#
+# Same fixture shape as `_ENDERECO_REGISTRO_PROBE` above (same table,
+# borrowing an `imoveis` código with no `imovel_dados` row yet) — the probe
+# below trips the SAME family of bug the endereço one guards against: a
+# manual override recorded WITHOUT its confirmation stamp is indistinguishable
+# from an unreviewed suggestion, and `titulo_service.antigos_proprietarios`
+# treats an unconfirmed override as "no override at all" (`_manual_ultima_
+# transferencia` gates on `confirmado_em`) — so this is the guard that keeps
+# a half-written override from silently vanishing rather than surfacing.
+
+_ULTIMA_TRANSFERENCIA_MANUAL_PROBE = GuardProbe(
+    id="imovel_dados.ultima_transferencia_manual.confirmed_pair",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_ultima_transferencia_manual_confirmado",
+    kind="write_refusal",
+    migrations=("152_ultima_transferencia_manual.sql",),
+    rationale=(
+        "ultima_transferencia_manual_data (the [Q9] previous-owner rule's "
+        "manual fallback, migration 152) and its confirmation timestamp "
+        "must be set/cleared together — an unconfirmed value reads as no "
+        "override at all (`titulo_service._manual_ultima_transferencia`), "
+        "so a half-written row would silently vanish rather than answering "
+        "the gate."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table=_IMOVEL_DADOS_TABLE,
+        columns_sql="org_id, codigo, ultima_transferencia_manual_data, ultima_transferencia_manual_confirmado_em",
+        values_sql="fx.org_id, fx.codigo, DATE '2020-01-10', NULL",
+        fixture_from=_ENDERECO_REGISTRO_FIXTURE_FROM,
+        fixture_description=_ENDERECO_REGISTRO_FIXTURE_DESC,
+        guard_fragment='constraint "imovel_dados_ultima_transferencia_manual_confirmado"',
+    ),
+)
+
+_ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE = GuardProbe(
+    id="imovel_dados.ultima_transferencia_manual.natureza_vocabulary",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_ultima_transferencia_manual_natureza_check",
+    kind="write_refusal",
+    migrations=("152_ultima_transferencia_manual.sql",),
+    rationale=(
+        "ultima_transferencia_manual_natureza is restricted to the 4 natures "
+        "`titulo_service.NATUREZAS_ULTIMA_TRANSFERENCIA` recognises for this "
+        "rule (compra_e_venda/permuta/dacao/arrematacao) — NOT the seed's "
+        "full 14-value NaturezaAto vocabulary. A value outside that (e.g. "
+        "`hipoteca`, or `doacao` which the office deliberately excludes here) "
+        "must never be silently accepted into the manual override."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table=_IMOVEL_DADOS_TABLE,
+        columns_sql=(
+            "org_id, codigo, ultima_transferencia_manual_data, "
+            "ultima_transferencia_manual_natureza, ultima_transferencia_manual_confirmado_em"
+        ),
+        values_sql="fx.org_id, fx.codigo, DATE '2020-01-10', 'hipoteca', NOW()",
+        fixture_from=_ENDERECO_REGISTRO_FIXTURE_FROM,
+        fixture_description=_ENDERECO_REGISTRO_FIXTURE_DESC,
+        guard_fragment='constraint "imovel_dados_ultima_transferencia_manual_natureza_check"',
+    ),
+)
+
+_ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_REQUER_DATA_PROBE = GuardProbe(
+    id="imovel_dados.ultima_transferencia_manual.natureza_requer_data",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_ultima_transferencia_manual_natureza_requer_data",
+    kind="write_refusal",
+    migrations=("152_ultima_transferencia_manual.sql",),
+    rationale=(
+        "A nature only means something alongside a date — it must never "
+        "survive on its own (e.g. after `_data` is cleared but `_natureza` "
+        "is left behind), which would print a nature for a transfer the "
+        "gate no longer has a date for."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table=_IMOVEL_DADOS_TABLE,
+        columns_sql="org_id, codigo, ultima_transferencia_manual_natureza",
+        values_sql="fx.org_id, fx.codigo, 'permuta'",
+        fixture_from=_ENDERECO_REGISTRO_FIXTURE_FROM,
+        fixture_description=_ENDERECO_REGISTRO_FIXTURE_DESC,
+        guard_fragment='constraint "imovel_dados_ultima_transferencia_manual_natureza_requer_data"',
+    ),
+)
+
+_ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE = GuardProbe(
+    id="imovel_dados.ultima_transferencia_manual.exclusiva",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_ultima_transferencia_manual_exclusiva",
+    kind="write_refusal",
+    migrations=("152_ultima_transferencia_manual.sql",),
+    rationale=(
+        "A date AND 'não consta transferência registrada' set together is a "
+        "contradiction, not a richer answer — `titulo_service.confirmar_"
+        "ultima_transferencia_manual` refuses it too; this is the backstop "
+        "against a caller that bypasses the service (or a future bug in it)."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table=_IMOVEL_DADOS_TABLE,
+        columns_sql=(
+            "org_id, codigo, ultima_transferencia_manual_data, "
+            "ultima_transferencia_manual_sem_registro, ultima_transferencia_manual_confirmado_em"
+        ),
+        values_sql="fx.org_id, fx.codigo, DATE '2020-01-10', TRUE, NOW()",
+        fixture_from=_ENDERECO_REGISTRO_FIXTURE_FROM,
+        fixture_description=_ENDERECO_REGISTRO_FIXTURE_DESC,
+        guard_fragment='constraint "imovel_dados_ultima_transferencia_manual_exclusiva"',
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — zero public storage.buckets (platform-wide; the LGPD guard).
 # ---------------------------------------------------------------------------
 #
@@ -1441,6 +1562,10 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_ABERTURA_PROBES,
     _ABERTURA_UNIQUE_PROBE,
     _ENDERECO_REGISTRO_PROBE,
+    _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
+    _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,
+    _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_REQUER_DATA_PROBE,
+    _ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE,
     _STORAGE_BUCKETS_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
