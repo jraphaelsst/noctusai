@@ -1001,19 +1001,20 @@ END;
 
 
 # ---------------------------------------------------------------------------
-# Registry — agents Agent Studio version immutability (migration 012).
+# Registry — agents Agent Studio (migrations 012 + 013).
 # ---------------------------------------------------------------------------
 #
 # Fully self-provisioning: `agents.agents.org_id` has no FK, so every probe
 # fabricates its own org id, agent, version(s) and children inside the
 # rolled-back transaction — no production row is borrowed or touched. The
-# only `no_fixture` path is "migration 012 not applied" (to_regclass).
+# only `no_fixture` path is "the migration is not applied" (to_regclass).
 # Setup statements live INSIDE the classified sub-block on purpose: a setup
 # failure surfaces as `ambiguous` (its SQLERRM never carries the guard's
 # fragment), never as a false `refused`.
 
 _AGENTS_SCHEMA = "agents"
 _AGENTS_STUDIO_MIGRATIONS = ("012_agent_studio_definitions.sql",)
+_AGENTS_KE_MIGRATIONS = ("013_agent_studio_knowledge_evals.sql",)
 _AGENTS_PROBE_AGENT_SQL = (
     f"INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode) "
     "VALUES (v_org, 'noc-probe', 'NOC probe', 'claude_sdk', 'studio') RETURNING id INTO v_agent;"
@@ -1031,9 +1032,18 @@ def _agents_version_sql(status: str, versao: int, into: str) -> str:
 
 def _agents_studio_probe(
     *, probe_id: str, guard_name: str, attack_sql: str, guard_fragment: str, what: str, rationale: str,
+    migrations: tuple[str, ...] = _AGENTS_STUDIO_MIGRATIONS, requires_table: str | None = None,
 ) -> GuardProbe:
     fragment_lit = _sql_lit(guard_fragment)
     what_lit = _sql_lit(what)
+    extra_fixture = (
+        f"""
+  IF to_regclass('{_AGENTS_SCHEMA}.{requires_table}') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.{requires_table} does not exist ({migrations[0]} not applied)';
+  END IF;"""
+        if requires_table
+        else ""
+    )
     sql = _do_block(f"""
 DECLARE
   v_org uuid := gen_random_uuid();
@@ -1042,10 +1052,11 @@ DECLARE
   v_version2 uuid;
   v_skill uuid;
   v_file uuid;
+  v_client uuid;
 BEGIN
   IF to_regclass('{_AGENTS_SCHEMA}.agent_versions') IS NULL THEN
     RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_versions does not exist (migration 012 not applied)';
-  END IF;
+  END IF;{extra_fixture}
   BEGIN
     {_AGENTS_PROBE_AGENT_SQL}
 {attack_sql}
@@ -1067,7 +1078,7 @@ END;
         schema=_AGENTS_SCHEMA,
         guard_name=guard_name,
         kind="write_refusal",
-        migrations=_AGENTS_STUDIO_MIGRATIONS,
+        migrations=migrations,
         sql=sql,
         rationale=rationale,
     )
@@ -1166,84 +1177,149 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
             "turn ran with must never be rewritten after the fact."
         ),
     ),
-)
-
-
-# ---------------------------------------------------------------------------
-# Registry — agents.eval_runs one active run per version (migration 013,
-# Agent Studio slice BE-KE, contract §B2/§D4).
-# ---------------------------------------------------------------------------
-#
-# Self-provisioning, three tables deep: borrows an existing `agents.agents`
-# org_id, then INSERTs a throwaway agent + a throwaway `agent_versions` row
-# (needed only for its `id` — 012_agent_studio_definitions.sql, a PARALLEL
-# migration not necessarily applied yet in every environment this probe
-# might run against) before the two `eval_runs` inserts that trip the
-# guard. `to_regclass('agents.agent_versions') IS NULL` is checked FIRST
-# and classified `no_fixture` (never a crash, never a false `permitted`) —
-# 013 is numbered after 012 so a real deploy always has both, but this
-# probe must not blow up if it is ever run against a database that has 013
-# without 012 (e.g. mid-development, before the two migrations land
-# together).
-
-_AGENTS_SCHEMA = "agents"
-
-_EVAL_RUNS_ONE_ACTIVE_PER_VERSION_PROBE = GuardProbe(
-    id="agents.eval_runs.one_active_per_version",
-    product="agents",
-    schema=_AGENTS_SCHEMA,
-    guard_name="eval_runs_one_active_per_version_idx",
-    kind="write_refusal",
-    migrations=("013_agent_studio_knowledge_evals.sql",),
-    rationale=(
-        "At most one `pendente`/`executando` eval run per version — "
-        "`POST .../evals/runs` maps a second concurrent request into 409 "
-        "`run_in_progress` (contract §D4). Without this partial unique "
-        "index two runs could race: both write `eval_results` for the "
-        "same version, and the publish gate (contract §J2.1's "
-        "`latest_concluded_run`) would read whichever finished last as "
-        "the answer, silently discarding the other run's verdict."
+    _agents_studio_probe(
+        probe_id="agent_versions.published_delete_refused",
+        guard_name="guard_agent_version_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    DELETE FROM {_AGENTS_SCHEMA}.agent_versions WHERE id = v_version;"
+        ),
+        guard_fragment="version_immutable",
+        what="DELETE of a published version",
+        rationale=(
+            "Only a draft may be deleted (discard) — a published version is the "
+            "proof of what conversations ran; deleting it erases history."
+        ),
     ),
-    sql=_do_block(f"""
-DECLARE
-  v_org_id uuid;
-  v_agent_id uuid;
-  v_version_id uuid;
-BEGIN
-  IF to_regclass('{_AGENTS_SCHEMA}.agent_versions') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_versions does not exist yet (012_agent_studio_definitions.sql not applied)';
-  END IF;
-  SELECT org_id INTO v_org_id FROM {_AGENTS_SCHEMA}.agents LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no existing {_AGENTS_SCHEMA}.agents row to borrow an org_id from (a genuinely org-less database)';
-  END IF;
-
-  INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode)
-  VALUES (v_org_id, 'noc-probe-agent', 'NOC Probe Agent', 'claude_sdk', 'studio')
-  RETURNING id INTO v_agent_id;
-
-  INSERT INTO {_AGENTS_SCHEMA}.agent_versions (org_id, agent_id, versao, status, model, effort, created_by)
-  VALUES (v_org_id, v_agent_id, 1, 'rascunho', 'claude-opus-5', 'high', v_org_id)
-  RETURNING id INTO v_version_id;
-
-  INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by)
-  VALUES (v_org_id, v_agent_id, v_version_id, 'sha256:noc-probe-1', 'pendente', 0.8, v_org_id);
-
-  BEGIN
-    INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by)
-    VALUES (v_org_id, v_agent_id, v_version_id, 'sha256:noc-probe-2', 'executando', 0.8, v_org_id);
-    RAISE EXCEPTION 'NOC_PROBE:permitted: a second pendente/executando eval_runs row for the same version_id was accepted — eval_runs_one_active_per_version_idx did not fire';
-  EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
-      RAISE;
-    ELSIF SQLERRM LIKE '%eval_runs_one_active_per_version_idx%' THEN
-      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
-    ELSE
-      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
-    END IF;
-  END;
-END;
-"""),
+    _agents_studio_probe(
+        probe_id="agent_versions.substituida_to_ativa_refused",
+        guard_name="guard_agent_version_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('substituida', 1, 'v_version')}\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET status = 'ativa' WHERE id = v_version;"
+        ),
+        guard_fragment="version_immutable",
+        what="UPDATE of a superseded version back to ativa",
+        rationale=(
+            "Re-activation must go through a new draft + publish (eval gate, audit); "
+            "flipping substituida -> ativa would bypass both."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_prompt_sections.child_delete_under_published_parent",
+        guard_name="guard_version_child_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_prompt_sections (org_id, version_id, chave, titulo, ordem, conteudo) "
+            "VALUES (v_org, v_version, 'noc-probe', 'NOC probe', 1, 'x');\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_versions SET status = 'ativa' WHERE id = v_version;\n"
+            f"    DELETE FROM {_AGENTS_SCHEMA}.agent_prompt_sections WHERE version_id = v_version;"
+        ),
+        guard_fragment="version_immutable",
+        what="DELETE of a section of a published version",
+        rationale=(
+            "Removing a section silently changes the published prompt exactly like "
+            "an edit would — the child guard must refuse DELETE too."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="compiled_prompts.delete_refused",
+        guard_name="guard_compiled_prompt_immutable",
+        attack_sql=(
+            f"    {_agents_version_sql('ativa', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.compiled_prompts (org_id, hash, version_id, texto, manifest) "
+            "VALUES (v_org, 'sha256:' || repeat('0', 64), v_version, 'x', '[]'::jsonb);\n"
+            f"    DELETE FROM {_AGENTS_SCHEMA}.compiled_prompts WHERE org_id = v_org;"
+        ),
+        guard_fragment="compiled_prompt_immutable",
+        what="DELETE of a stored compiled prompt outside erase_compiled_prompts",
+        rationale=(
+            "Proof-of-use rows are write-once (§A7); the ONLY deletion path is the "
+            "service_role LGPD erasure function `agents.erase_compiled_prompts`."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agents.publicacao_limiar_floor",
+        guard_name="agents_publicacao_limiar_floor",
+        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET publicacao_limiar = 0.1 WHERE id = v_agent;",
+        guard_fragment="agents_publicacao_limiar_floor",
+        what="UPDATE of publicacao_limiar below the 0.5 floor",
+        rationale=(
+            "A threshold of 0.1 makes the publish eval gate decorative (wave-1 "
+            "security review H2) — the floor holds whatever the write path."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_versions.override_reason_len",
+        guard_name="agent_versions_override_reason_len",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_versions "
+            "(org_id, agent_id, versao, status, model, effort, created_by, publish_override_reason) "
+            "VALUES (v_org, v_agent, 1, 'ativa', 'claude-opus-5', 'high', v_org, '   curto      ');"
+        ),
+        guard_fragment="agent_versions_override_reason_len",
+        what="a publish override reason under 20 chars once trimmed",
+        rationale=(
+            "Bypassing the eval gate must carry a real, reviewable reason (L1) — "
+            "whitespace padding must not satisfy it."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_audit_log.append_only",
+        guard_name="guard_audit_log_append_only",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_audit_log (org_id, agent_id, acao) "
+            "VALUES (v_org, v_agent, 'publicado');\n"
+            f"    UPDATE {_AGENTS_SCHEMA}.agent_audit_log SET acao = 'publicado_override' WHERE agent_id = v_agent;"
+        ),
+        guard_fragment="audit_log_append_only",
+        what="UPDATE of an audit log row",
+        rationale=(
+            "The governance audit trail (threshold changes, publishes, overrides, "
+            "discards) is append-only — a rewritable log proves nothing."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agent_client_entries.active_cap",
+        guard_name="guard_client_entry_cap",
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_clients (org_id, agent_id, slug, nome) "
+            "VALUES (v_org, v_agent, 'noc-probe', 'NOC probe') RETURNING id INTO v_client;\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_client_entries (org_id, client_id, tipo, titulo) "
+            "SELECT v_org, v_client, 'nota', 'n' || g FROM generate_series(1, 200) AS g;\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agent_client_entries (org_id, client_id, tipo, titulo) "
+            "VALUES (v_org, v_client, 'nota', 'overflow');"
+        ),
+        guard_fragment="client_entries_cap",
+        what="a 201st active entry on one client",
+        rationale=(
+            "The client brain is compiled into every bound turn (a live, ungated "
+            "prompt input) — capped at 200 active entries (M3)."
+        ),
+    ),
+    _agents_studio_probe(
+        probe_id="agents.eval_runs.one_active_per_version",
+        guard_name="eval_runs_one_active_per_version_idx",
+        migrations=_AGENTS_KE_MIGRATIONS,
+        requires_table="eval_runs",
+        attack_sql=(
+            f"    {_agents_version_sql('rascunho', 1, 'v_version')}\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by) "
+            "VALUES (v_org, v_agent, v_version, 'sha256:noc-probe-1', 'pendente', 0.8, v_org);\n"
+            f"    INSERT INTO {_AGENTS_SCHEMA}.eval_runs (org_id, agent_id, version_id, compiled_hash, status, limiar, started_by) "
+            "VALUES (v_org, v_agent, v_version, 'sha256:noc-probe-2', 'executando', 0.8, v_org);"
+        ),
+        guard_fragment="eval_runs_one_active_per_version_idx",
+        what="a second pendente/executando eval_runs row for the same version_id",
+        rationale=(
+            "At most one `pendente`/`executando` eval run per version — "
+            "`POST .../evals/runs` maps a second concurrent request into 409 "
+            "`run_in_progress` (contract §D4). Without this partial unique "
+            "index two runs could race: both write `eval_results` for the "
+            "same version, and the publish gate would read whichever finished "
+            "last as the answer, silently discarding the other run's verdict."
+        ),
+    ),
 )
 
 
@@ -1257,7 +1333,6 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
-    _EVAL_RUNS_ONE_ACTIVE_PER_VERSION_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

@@ -41,9 +41,19 @@ def _publishable(studio, key="isa"):
     return resp.json()
 
 
-def _pass_gate(studio, draft, score=0.9):
-    run = GateRun(id=uuid4(), score=score, limiar=0.8, compiled_hash=draft["compiled_hash"], status="concluida")
+def _pass_gate(studio, draft, score=0.9, *, completa=True, total=3):
+    """A concluded run visible to BOTH gate layers: the Python gate seam and
+    the DB-side re-check ``publish_agent_version`` does (the Fake store's
+    registered ``eval_runs``)."""
+    run = GateRun(
+        id=uuid4(), score=score, limiar=0.8, compiled_hash=draft["compiled_hash"], status="concluida",
+        completa=completa, total=total,
+    )
     studio.gate.set_run(studio.org_id, UUID(draft["id"]), run)
+    studio.store.register_eval_run(
+        studio.org_id, UUID(draft["id"]), run_id=run.id, score=score,
+        compiled_hash=draft["compiled_hash"], completa=completa, total=total,
+    )
     return run
 
 
@@ -271,8 +281,10 @@ class TestCompiled:
             assert body["texto"][m["inicio"]:m["fim"]].startswith("# ")
         assert body["avisos"] == []
         assert body["version_id"] == draft["id"] and body["client_id"] is None
-        # Knowledge changed ⇒ the draft's stored hash was refreshed to match.
-        assert _draft(studio)["compiled_hash"] == body["hash"] != draft["compiled_hash"]
+        # L7: a read never writes — the stored hash is only re-stamped by an
+        # admin write or at publish, even though knowledge changed the text.
+        assert body["hash"] != draft["compiled_hash"]
+        assert _draft(studio)["compiled_hash"] == draft["compiled_hash"]
 
     def test_compiled_with_client(self, studio):
         _publishable(studio)

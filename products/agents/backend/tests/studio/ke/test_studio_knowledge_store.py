@@ -35,8 +35,11 @@ class TestCollections:
         assert [c.slug for c in items] == ["audience"]
 
     def test_duplicate_slug_rejected(self, store, collection):
-        with pytest.raises(ValueError):
+        from app.stores._db_errors import StudioConflict
+
+        with pytest.raises(StudioConflict) as exc:
             store.create_collection(ORG, AGENT, CollectionInput(slug="audience", nome="Dup"))
+        assert exc.value.code == "slug_taken"
 
     def test_foreign_collection_id_not_found(self, store, collection):
         with pytest.raises(NotFound):

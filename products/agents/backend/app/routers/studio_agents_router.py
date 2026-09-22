@@ -19,15 +19,19 @@ Seams (all FastAPI dependencies, overridden in tests — never patched):
   ``knowledge_catalog_unavailable``): compiling WITHOUT the knowledge block
   would produce a plausible prompt with the wrong hash. BE-RT binds it.
 
-``compiled_hash`` (the no-client compile of a draft) is refreshed after every
-draft save, on every compile of a draft, and right before the publish gate
-(§B1 "refreshed on every draft save").
+``compiled_hash`` (the no-client compile of a draft) is re-stamped after
+every admin write to the draft and right before the publish gate — never by
+a read (L7: ``GET .../compiled`` is side-effect free). The DB NULLs it on
+every content write (M1), so the stamp is a compare-and-set on the draft's
+``updated_at``: a concurrent write in between wins, and publish refuses
+(409 ``draft_changed``) unless the gate-checked hash is still the row's.
 
 Routers are registered in ``main.py`` by BE-RT (§J2.3); until then they are
 mounted on a local test app.
 """
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Any, Iterator
 from uuid import UUID
@@ -88,6 +92,8 @@ from app.studio.models import (
 )
 from noctusai_lib.api.auth.session import AuthContext
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/studio", tags=["studio"])
 
 #: Version settings compared by the diff endpoint, in output order.
@@ -122,6 +128,21 @@ def get_knowledge_catalog_dep() -> KnowledgeCatalog:
             "code": "knowledge_catalog_unavailable",
         },
     )
+
+
+def get_compiled_hash_provider(
+    store=Depends(get_studio_definition_store_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
+):
+    """``(org_id, agent, version) -> hash`` of the version compiled NOW
+    (no client) — the ready-made production binding for
+    ``studio_evals_router.get_current_hash_dep`` (wire it in
+    ``app.studio.wiring``). Pure read: it never stamps the draft."""
+
+    def _hash(org_id: UUID, agent: StudioAgentRecord, version: VersionRecord) -> str:
+        return compile_version(store, catalog, org_id, agent, version).hash
+
+    return _hash
 
 
 # ── error helpers ───────────────────────────────────────────────────────────
@@ -286,11 +307,38 @@ def compile_version(
     ))
 
 
-def _refresh_draft_hash(store, catalog, org_id: UUID, agent, draft: VersionRecord) -> tuple[VersionRecord, CompiledPrompt]:
+def _refresh_draft_hash(
+    store, catalog, org_id: UUID, agent, draft_id: UUID, *, strict: bool = False,
+) -> tuple[VersionRecord, CompiledPrompt]:
+    """Re-read the draft, compile it, and stamp the hash with a
+    compare-and-set on the ``updated_at`` just read (M1) — a content write
+    that lands between the read and the stamp makes the CAS miss instead of
+    stamping a hash of stale content.
+
+    ``strict`` (publish): a missed CAS is a 409 ``draft_changed``. Otherwise
+    (a save path) the concurrent writer re-stamps after its own write, so the
+    miss is logged and the freshly-read row is returned as is."""
+    try:
+        draft = store.get_version(org_id, draft_id)
+    except NotFound as exc:
+        raise http_error(404, "draft_not_found", "Nenhum rascunho para este agente.") from exc
     compiled = compile_version(store, catalog, org_id, agent, draft)
-    if draft.compiled_hash != compiled.hash:
+    if draft.compiled_hash == compiled.hash:
+        return draft, compiled
+    try:
         with store_errors():
-            draft = store.set_compiled_hash(org_id, draft.id, compiled.hash)
+            draft = store.set_compiled_hash(
+                org_id, draft.id, compiled.hash, expected_updated_at=draft.updated_at,
+            )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        if strict or detail.get("code") != "draft_changed":
+            raise
+        logger.warning(
+            "studio: compiled_hash CAS missed for draft %s (concurrent write) — left to that writer",
+            draft_id,
+        )
+        draft = store.get_version(org_id, draft_id)
     return draft, compiled
 
 
@@ -336,13 +384,22 @@ def _skill_out(skill, files) -> SkillOut:
     )
 
 
+def _score_of(gate: EvalGate, org_id: UUID, v: VersionRecord) -> float | None:
+    """A published version reports the score SNAPSHOT taken at publish (H2;
+    ``None`` for an override publish); a draft its latest complete run."""
+    if v.status != "rascunho":
+        return v.eval_score
+    return _eval_score(gate, org_id, v.id)
+
+
 def _version_detail(store, gate: EvalGate, org_id: UUID, v: VersionRecord) -> VersionDetailOut:
     files = store.list_version_skill_files(org_id, v.id)
     return VersionDetailOut(
-        **_version_summary(v, _eval_score(gate, org_id, v.id)),
+        **_version_summary(v, _score_of(gate, org_id, v)),
         effort=v.effort, max_turns=v.max_turns, idioma=v.idioma, tool_policy=v.tool_policy,
         based_on_version_id=v.based_on_version_id, published_by=v.published_by,
         publish_override_reason=v.publish_override_reason, eval_run_id=v.eval_run_id,
+        limiar_aplicado=v.limiar_aplicado,
         secoes=[
             SectionOut(id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo)
             for s in store.list_sections(org_id, v.id)
@@ -388,7 +445,7 @@ async def create_studio_agent(
     with store_errors():
         agent = store.create_studio_agent(ctx.org_id, payload.key, payload.nome, payload.descricao)
         draft = store.create_draft(ctx.org_id, agent.id, None, ctx.user_id)
-    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return _summary(store, ctx.org_id, agent)
 
 
@@ -402,7 +459,7 @@ async def get_studio_agent(
     agent = resolve_agent(store, ctx.org_id, key)
     summary = _summary(store, ctx.org_id, agent)
     versoes = [
-        VersionSummaryOut(**_version_summary(v, _eval_score(gate, ctx.org_id, v.id)))
+        VersionSummaryOut(**_version_summary(v, _score_of(gate, ctx.org_id, v)))
         for v in store.list_versions(ctx.org_id, agent.id)
     ]
     return AgentDetailOut(**summary.model_dump(), versoes=versoes)
@@ -418,7 +475,7 @@ async def update_studio_agent(
     resolve_agent(store, ctx.org_id, key)
     fields = patch_fields(payload, nullable=frozenset({"descricao"}))
     with store_errors():
-        agent = store.update_agent(ctx.org_id, key, fields)
+        agent = store.update_agent(ctx.org_id, key, fields, actor=ctx.user_id)
     return _summary(store, ctx.org_id, agent)
 
 
@@ -455,7 +512,7 @@ async def create_draft(
         source_id = active.id if active else None
     with store_errors():
         draft = store.create_draft(ctx.org_id, agent.id, source_id, ctx.user_id)
-    draft, _ = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    draft, _ = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return _version_detail(store, gate, ctx.org_id, draft)
 
 
@@ -468,7 +525,7 @@ async def discard_draft(
     agent = resolve_agent(store, ctx.org_id, key)
     draft = resolve_draft(store, ctx.org_id, agent)
     with store_errors():
-        store.discard_draft(ctx.org_id, draft.id)
+        store.discard_draft(ctx.org_id, draft.id, actor=ctx.user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -486,7 +543,7 @@ async def update_draft(
     fields = patch_fields(payload, nullable=frozenset({"notas"}))
     with store_errors():
         draft = store.update_draft(ctx.org_id, draft.id, fields)
-    draft, _ = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    draft, _ = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return _version_detail(store, gate, ctx.org_id, draft)
 
 
@@ -510,7 +567,7 @@ async def replace_draft_sections(
     ]
     with store_errors():
         store.replace_sections(ctx.org_id, draft.id, secoes)
-    draft, _ = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    draft, _ = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return _version_detail(store, gate, ctx.org_id, draft)
 
 
@@ -532,7 +589,7 @@ async def create_draft_skill(
             ctx.org_id, draft.id, nome=payload.nome, descricao=payload.descricao,
             corpo=payload.corpo, ordem=payload.ordem, ativo=payload.ativo,
         )
-    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return _skill_out(skill, [])
 
 
@@ -550,7 +607,7 @@ async def update_draft_skill(
     fields = patch_fields(payload)
     with store_errors():
         skill = store.update_skill(ctx.org_id, skill_id, fields)
-    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     files = [f for f in store.list_version_skill_files(ctx.org_id, draft.id) if f.skill_id == skill.id]
     return _skill_out(skill, files)
 
@@ -567,7 +624,7 @@ async def delete_draft_skill(
     _, draft = _resolve_draft_skill(store, ctx.org_id, agent, skill_id)
     with store_errors():
         store.delete_skill(ctx.org_id, skill_id)
-    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -586,7 +643,7 @@ async def upsert_draft_skill_file(
         f = store.upsert_skill_file(
             ctx.org_id, skill_id, caminho=payload.caminho, titulo=payload.titulo, conteudo=payload.conteudo,
         )
-    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return SkillFileMetaOut(id=f.id, caminho=f.caminho, titulo=f.titulo, chars=len(f.conteudo))
 
 
@@ -618,7 +675,7 @@ async def delete_draft_skill_file(
     _resolve_file(store, ctx.org_id, skill_id, file_id)
     with store_errors():
         store.delete_skill_file(ctx.org_id, file_id)
-    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -639,9 +696,8 @@ async def get_compiled(
     client = None
     if client_id is not None:
         client = client_bundle(store, ctx.org_id, resolve_client(store, ctx.org_id, agent, client_id))
-    if version.status == "rascunho":
-        # `compiled_hash` is the no-client hash — refresh it from that compile.
-        _refresh_draft_hash(store, catalog, ctx.org_id, agent, version)
+    # L7: a read never writes — the stored hash moves only on admin writes
+    # and at publish.
     compiled = compile_version(store, catalog, ctx.org_id, agent, version, client)
     return _compiled_out(compiled, version.id, client_id)
 
@@ -713,15 +769,21 @@ async def publish_draft(
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> VersionDetailOut:
     """§D1 publish + §J2.1 gate: pass ⇔ a run exists ∧ status='concluida' ∧
+    completa (covered every active case, H1) ∧ total >= 1 ∧
     run.compiled_hash == the draft's CURRENT hash ∧ score >= limiar. A
-    blocking compile warning refuses publish with no override possible."""
+    blocking compile warning refuses publish with no override possible.
+
+    The DB function re-checks all of it (plus "the agent still has an
+    active case"), refuses ``draft_changed`` if the draft moved since the
+    hash below was stamped (M1), and stores the proof-of-use prompt in the
+    same transaction as the flip."""
     agent = resolve_agent(store, ctx.org_id, key)
     draft = resolve_draft(store, ctx.org_id, agent)
     if payload.notas is not None:
         with store_errors():
             draft = store.update_draft(ctx.org_id, draft.id, {"notas": payload.notas})
 
-    draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft)
+    draft, compiled = _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id, strict=True)
     if compiled.bloqueado:
         raise http_error(
             409, "compile_blocked", "O prompt compilado tem avisos bloqueantes.",
@@ -732,6 +794,8 @@ async def publish_draft(
     passes = (
         run is not None
         and run.status == "concluida"
+        and run.completa
+        and run.total >= 1
         and run.compiled_hash == compiled.hash
         and run.score is not None
         and run.score >= agent.publicacao_limiar
@@ -746,18 +810,20 @@ async def publish_draft(
             "Publicar exige uma avaliação concluída do prompt atual com nota acima do limiar.",
             hash_atual=compiled.hash,
             ultima_execucao=(
-                {"id": str(run.id), "score": run.score, "limiar": run.limiar, "compiled_hash": run.compiled_hash}
+                {
+                    "id": str(run.id), "score": run.score, "limiar": run.limiar,
+                    "compiled_hash": run.compiled_hash, "completa": run.completa,
+                }
                 if run is not None
                 else None
             ),
         )
 
     with store_errors():
-        published = store.publish_version(ctx.org_id, draft.id, ctx.user_id, eval_run_id, override_reason)
-        # Proof of use (§A7): the exact published text, stored once per hash.
-        store.save_compiled_prompt(
-            ctx.org_id, hash=compiled.hash, version_id=published.id, client_id=None,
-            texto=compiled.texto, manifest=compiled.manifest_json(),
+        # Proof of use (§A7) is stored INSIDE the publish transaction.
+        published = store.publish_version(
+            ctx.org_id, draft.id, ctx.user_id, eval_run_id, override_reason,
+            expected_hash=compiled.hash, texto=compiled.texto, manifest=compiled.manifest_json(),
         )
     return _version_detail(store, gate, ctx.org_id, published)
 
@@ -783,6 +849,7 @@ async def get_prompt_by_hash(
 
 __all__ = [
     "router",
+    "get_compiled_hash_provider",
     "get_eval_gate_dep",
     "get_knowledge_catalog_dep",
     "get_studio_definition_store_dep",

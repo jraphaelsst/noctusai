@@ -213,3 +213,84 @@ class TestSearchKnowledgeFunction:
         fn_body = sql[fn_start:]
         assert "d.org_id = p_org_id" in fn_body
         assert "d.agent_id = p_agent_id" in fn_body
+
+
+# ── wave-1 security review hardening ────────────────────────────────────────
+
+
+def _fn_block(sql: str, name: str) -> str:
+    start = sql.index(f"CREATE OR REPLACE FUNCTION agents.{name}(")
+    return sql[start : sql.index("$$;", sql.index("AS $$", start)) + 3]
+
+
+class TestGrantLockdown:
+    """M5 (mirrors 009/010): explicit anon REVOKE + authenticated write REVOKE."""
+
+    @pytest.mark.parametrize("table", TABLES)
+    def test_anon_revoked(self, sql, table):
+        assert f"REVOKE ALL ON agents.{table} FROM anon;" in sql
+
+    @pytest.mark.parametrize("table", TABLES)
+    def test_authenticated_writes_revoked(self, sql, table):
+        assert f"REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON agents.{table} FROM authenticated;" in sql
+
+
+class TestCaps:
+    """M3 — the DB backstop of ``app.studio.models.LIMITS``."""
+
+    def test_collection_metadata_caps(self, sql):
+        from app.studio.models import LIMITS
+
+        block = sql[sql.index("CREATE TABLE agents.knowledge_collections ("):]
+        block = block[: block.index(");")]
+        assert f"nome TEXT NOT NULL CHECK (length(nome) <= {LIMITS['collection.nome']})" in block
+        assert f"tag TEXT NULL CHECK (length(tag) <= {LIMITS['collection.tag']})" in block
+        assert f"CHECK (length(descricao) <= {LIMITS['collection.descricao']})" in block
+
+    def test_document_conteudo_cap(self, sql):
+        from app.studio.models import LIMITS
+
+        assert f"conteudo TEXT NOT NULL CHECK (length(conteudo) <= {LIMITS['document.conteudo']})" in sql
+
+
+class TestEvalRunsHardening:
+    def test_completa_column(self, sql):
+        """H1: only a complete run satisfies the gate."""
+        assert "completa BOOLEAN NOT NULL DEFAULT false" in sql
+
+    def test_version_fk_cascades(self, sql):
+        """L8: discarding a draft takes its runs with it."""
+        assert "version_id UUID NOT NULL REFERENCES agents.agent_versions(id) ON DELETE CASCADE" in sql
+
+    def test_create_eval_run_is_one_transaction(self, sql):
+        body = _fn_block(sql, "create_eval_run")
+        assert "INSERT INTO agents.eval_runs" in body
+        assert "INSERT INTO agents.eval_results" in body
+        assert "v_completa BOOLEAN := p_case_ids IS NULL" in body
+        assert "array_agg(DISTINCT x)" in body  # dedupe
+        assert "cardinality(v_cases) > 200" in body  # cap
+        assert "RAISE EXCEPTION 'eval_case_not_found'" in body
+        assert "RAISE EXCEPTION 'no_eval_cases'" in body
+
+
+class TestSearchHardening:
+    def test_query_is_capped_and_headline_bounded(self, sql):
+        """L5."""
+        body = _fn_block(sql, "search_knowledge")
+        assert "length(p_query) > 512" in body
+        assert "left(d.conteudo, 50000)" in body
+
+
+class TestListDocumentsFunction:
+    def test_q_is_a_bound_escaped_parameter(self, sql):
+        """L4: no PostgREST filter-string interpolation; LIKE metachars escaped."""
+        body = _fn_block(sql, "list_knowledge_documents")
+        assert "length(p_q) > 200" in body
+        assert "replace(replace(replace(p_q, '\\', '\\\\'), '%', '\\%'), '_', '\\_')" in body
+        assert body.count("ESCAPE '\\'") == 6
+        assert "d.org_id = p_org_id AND d.agent_id = p_agent_id AND d.collection_id = p_collection_id" in body
+
+    def test_plpgsql_bodies_parse(self, sql):
+        parser = pytest.importorskip("pglast.parser")
+        for fn in re.findall(r"CREATE OR REPLACE FUNCTION.*?\$\$;", sql, re.S):
+            parser.parse_plpgsql_json(fn)

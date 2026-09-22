@@ -517,8 +517,11 @@ class TestRegistrySanity:
 
 
 class TestAgentsStudioProbes:
-    """Migration 012 (agents Agent Studio) — one self-provisioning probe per
-    guard object `check_migration_guard_has_probe` detects in that file."""
+    """Migrations 012 + 013 (agents Agent Studio) — one self-provisioning
+    probe per guard object `check_migration_guard_has_probe` detects in
+    those files, plus the extra refusal paths the wave-1 security review
+    asked to prove (published DELETE, child DELETE, substituida -> ativa,
+    compiled_prompts DELETE)."""
 
     _GUARDS = {
         "agent_versions_one_ativa_idx",
@@ -527,21 +530,51 @@ class TestAgentsStudioProbes:
         "guard_version_child_immutable",
         "guard_skill_file_immutable",
         "guard_compiled_prompt_immutable",
+        "guard_audit_log_append_only",
+        "guard_client_entry_cap",
+        "agents_publicacao_limiar_floor",
+        "agent_versions_override_reason_len",
+        "eval_runs_one_active_per_version_idx",
     }
+    _MIGRATIONS = {("012_agent_studio_definitions.sql",), ("013_agent_studio_knowledge_evals.sql",)}
 
     @staticmethod
     def _probes():
         return [p for p in DEFAULT_REGISTRY if p.product == "agents"]
 
-    def test_every_012_guard_has_a_probe(self):
+    def test_every_studio_guard_has_a_probe(self):
         assert {p.guard_name for p in self._probes()} == self._GUARDS
+
+    def test_every_detected_guard_in_012_and_013_is_registered(self):
+        from tools.noctus.dev.compliance import _detect_guard_objects
+
+        root = Path(__file__).resolve().parents[3] / "products" / "agents" / "backend" / "migrations"
+        for name in ("012_agent_studio_definitions.sql", "013_agent_studio_knowledge_evals.sql"):
+            detected = {g["guard_name"] for g in _detect_guard_objects((root / name).read_text())}
+            assert detected <= self._GUARDS, (name, detected - self._GUARDS)
+
+    def test_review_refusal_paths_are_probed(self):
+        ids = {p.id for p in self._probes()}
+        assert {
+            "agent_versions.published_delete_refused",
+            "agent_versions.substituida_to_ativa_refused",
+            "agent_prompt_sections.child_delete_under_published_parent",
+            "compiled_prompts.delete_refused",
+            "agents.publicacao_limiar_floor",
+            "agent_versions.override_reason_len",
+        } <= ids
 
     def test_probes_self_provision_and_borrow_nothing(self):
         for p in self._probes():
             assert "gen_random_uuid()" in p.sql, p.id
             assert "INSERT INTO agents.agents" in p.sql, p.id
+            assert "SELECT org_id" not in p.sql, p.id  # never borrows a real org
             assert "to_regclass('agents.agent_versions')" in p.sql, p.id
-            assert p.migrations == ("012_agent_studio_definitions.sql",)
+            assert p.migrations in self._MIGRATIONS, p.id
+
+    def test_schema_constant_is_declared_once(self):
+        src = (Path(__file__).resolve().parents[1] / "tools" / "noctus" / "dev" / "verify_db_guards.py").read_text()
+        assert src.count('_AGENTS_SCHEMA = "agents"') == 1
 
     def test_probe_bodies_parse_as_plpgsql(self):
         parser = pytest.importorskip("pglast.parser")
