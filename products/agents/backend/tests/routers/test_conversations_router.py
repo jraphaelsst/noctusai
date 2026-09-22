@@ -55,6 +55,12 @@ class TestAuthBoundary:
         resp = agents_client.raw().get(f"/api/conversations/{uuid4()}/stream")
         assert resp.status_code == 401
 
+    def test_rename_requires_auth(self, agents_client):
+        resp = agents_client.raw().patch(
+            f"/api/conversations/{uuid4()}", json={"titulo": "Nova"}
+        )
+        assert resp.status_code == 401
+
 
 class TestCreateAndList:
     def test_create_and_get(self, agents_client):
@@ -119,6 +125,86 @@ class TestConversationOwnershipBoundary:
 
         resp = agents_client.get(f"/api/conversations/{other_conv.id}/messages")
         assert resp.status_code == 404
+
+    def test_rename_another_users_conversation_404(self, agents_client):
+        seed_org_role(agents_client, role="owner")  # even admins may not rename
+        seed_active_agent_and_persona(agents_client)
+        other_user = uuid4()
+        agent = agents_client.stores.agents.get_by_key(DEFAULT_ORG_ID, "julia")
+        other_conv = agents_client.stores.conversations.create(DEFAULT_ORG_ID, agent.id, other_user)
+
+        resp = agents_client.patch(
+            f"/api/conversations/{other_conv.id}", json={"titulo": "Sequestrada"}
+        )
+        assert resp.status_code == 404
+
+
+class TestRenameConversation:
+    def test_rename_happy_path(self, agents_client):
+        seed_org_role(agents_client, role="member")
+        seed_active_agent_and_persona(agents_client)
+        create_resp = agents_client.post("/api/conversations", json={"titulo": "Original"})
+        conv_id = create_resp.json()["id"]
+
+        resp = agents_client.patch(
+            f"/api/conversations/{conv_id}", json={"titulo": "  Renomeada  "}
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["titulo"] == "Renomeada"
+        assert body["id"] == conv_id
+
+        get_resp = agents_client.get(f"/api/conversations/{conv_id}")
+        assert get_resp.json()["titulo"] == "Renomeada"
+
+    def test_rename_unknown_conversation_404(self, agents_client):
+        seed_org_role(agents_client, role="member")
+        seed_active_agent_and_persona(agents_client)
+        resp = agents_client.patch(
+            f"/api/conversations/{uuid4()}", json={"titulo": "Nova"}
+        )
+        assert resp.status_code == 404
+
+    def test_rename_blank_after_trim_422(self, agents_client):
+        seed_org_role(agents_client, role="member")
+        seed_active_agent_and_persona(agents_client)
+        create_resp = agents_client.post("/api/conversations", json={"titulo": "Original"})
+        conv_id = create_resp.json()["id"]
+
+        resp = agents_client.patch(f"/api/conversations/{conv_id}", json={"titulo": "   "})
+        assert resp.status_code == 422
+
+    def test_rename_too_long_422(self, agents_client):
+        seed_org_role(agents_client, role="member")
+        seed_active_agent_and_persona(agents_client)
+        create_resp = agents_client.post("/api/conversations", json={"titulo": "Original"})
+        conv_id = create_resp.json()["id"]
+
+        resp = agents_client.patch(
+            f"/api/conversations/{conv_id}", json={"titulo": "x" * 121}
+        )
+        assert resp.status_code == 422
+
+    def test_rename_missing_titulo_422(self, agents_client):
+        seed_org_role(agents_client, role="member")
+        seed_active_agent_and_persona(agents_client)
+        create_resp = agents_client.post("/api/conversations", json={"titulo": "Original"})
+        conv_id = create_resp.json()["id"]
+
+        resp = agents_client.patch(f"/api/conversations/{conv_id}", json={})
+        assert resp.status_code == 422
+
+    def test_rename_unknown_field_422(self, agents_client):
+        """``StrictHttpModel`` — ``extra="forbid"`` (contract §0 "Strictness")."""
+        seed_org_role(agents_client, role="member")
+        seed_active_agent_and_persona(agents_client)
+        create_resp = agents_client.post("/api/conversations", json={"titulo": "Original"})
+        conv_id = create_resp.json()["id"]
+
+        resp = agents_client.patch(
+            f"/api/conversations/{conv_id}", json={"titulo": "Nova", "status": "arquivada"}
+        )
+        assert resp.status_code == 422
 
 
 class TestPostMessage:

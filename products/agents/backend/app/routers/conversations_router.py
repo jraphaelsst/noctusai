@@ -49,6 +49,7 @@ from app.schemas.agents import (
     ConversationCreateRequest,
     ConversationListOut,
     ConversationOut,
+    ConversationUpdateRequest,
     MessageCreateRequest,
     MessageListOut,
     MessageOut,
@@ -305,6 +306,28 @@ async def get_conversation(
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationOut:
     record = await _get_readable_conversation(ctx, conversation_id, store)
+    return _conversation_out(
+        record, _agent_key_for(ctx.org_id, record.agent_id, agent_store, studio_store)
+    )
+
+
+@router.patch("/{conversation_id}", response_model=ConversationOut)
+async def rename_conversation(
+    conversation_id: UUID,
+    payload: ConversationUpdateRequest,
+    ctx: AuthContext = Depends(require_member),
+    store=Depends(get_conversation_store_dep),
+    agent_store=Depends(get_agent_store_dep),
+    studio_store=Depends(get_studio_definition_store_dep),
+) -> ConversationOut:
+    """Rename only (contract §E.2 addition) — owner-only, same posture as
+    ``POST .../messages`` ("even admins may not POST" — a write to
+    someone else's conversation is a 404, not a permission check)."""
+    try:
+        store.get_owned(ctx.org_id, conversation_id, ctx.user_id)
+    except NotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND) from exc
+    record = store.set_titulo(ctx.org_id, conversation_id, payload.titulo)
     return _conversation_out(
         record, _agent_key_for(ctx.org_id, record.agent_id, agent_store, studio_store)
     )

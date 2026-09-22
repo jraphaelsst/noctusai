@@ -108,3 +108,29 @@ def test_acquire_after_ttl_expiry_succeeds_for_a_new_instance(store):
 
     reacquired = store.try_acquire_turn(org_id, conv.id, "instance-2", ttl_seconds=30)
     assert reacquired is True
+
+
+def test_set_titulo_updates_and_returns_the_record(store):
+    org_id, agent_id, user_id = uuid4(), uuid4(), uuid4()
+    conv = store.create(org_id, agent_id, user_id, titulo="Original")
+
+    updated = store.set_titulo(org_id, conv.id, "Renomeada")
+
+    assert updated.titulo == "Renomeada"
+    assert updated.id == conv.id
+    fetched = store.get_owned(org_id, conv.id, user_id)
+    assert fetched.titulo == "Renomeada"
+
+
+def test_set_titulo_raises_not_found_for_unknown_conversation(store):
+    with pytest.raises(NotFound):
+        store.set_titulo(uuid4(), uuid4(), "Nova")
+
+
+def test_set_titulo_raises_not_found_for_another_org(store):
+    org_a, org_b = uuid4(), uuid4()
+    agent_id, user_id = uuid4(), uuid4()
+    conv = store.create(org_a, agent_id, user_id)
+
+    with pytest.raises(NotFound):
+        store.set_titulo(org_b, conv.id, "Nova")

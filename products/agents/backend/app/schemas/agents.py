@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 
@@ -106,6 +106,22 @@ class ConversationCreateRequest(StrictHttpModel):
     agent_key: str = Field(default="julia", min_length=1, max_length=64, pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")
     #: Studio agents only; must belong to that agent AND be active.
     client_id: UUID | None = None
+
+
+class ConversationUpdateRequest(StrictHttpModel):
+    """``PATCH /api/conversations/{conversation_id}`` — rename only."""
+
+    titulo: str
+
+    @field_validator("titulo")
+    @classmethod
+    def _titulo_trimmed_and_bounded(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("titulo não pode ficar em branco")
+        if len(v) > 120:
+            raise ValueError("titulo deve ter no máximo 120 caracteres")
+        return v
 
 
 # ── Messages (§E.2) ──────────────────────────────────────────────────────

@@ -116,6 +116,15 @@ class ConversationStore(Protocol):
         id."""
         ...
 
+    def set_titulo(self, org_id: UUID, id: UUID, titulo: str) -> ConversationRecord:
+        """Rename (``PATCH /api/conversations/{conversation_id}``) —
+        org-scoped only, same shape as :meth:`set_sdk_session_id`; the
+        router verifies ownership itself (``get_owned``) BEFORE calling
+        this, so this method is not itself an authorization boundary.
+        Raises :class:`~app.stores.errors.NotFound` on an unknown/other-org
+        id."""
+        ...
+
 
 class FakeConversationStore:
     """In-memory :class:`ConversationStore`."""
@@ -219,6 +228,14 @@ class FakeConversationStore:
         if row is None or row["org_id"] != org_id:
             raise NotFound(f"conversation {id} not found for org {org_id}")
         row["sdk_session_id"] = sdk_session_id
+        row["updated_at"] = utcnow()
+        return self._to_record(row)
+
+    def set_titulo(self, org_id: UUID, id: UUID, titulo: str) -> ConversationRecord:
+        row = self._rows.get(id)
+        if row is None or row["org_id"] != org_id:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        row["titulo"] = titulo
         row["updated_at"] = utcnow()
         return self._to_record(row)
 
@@ -379,6 +396,19 @@ class SupabaseConversationStore:
             .update(
                 {"sdk_session_id": sdk_session_id, "updated_at": utcnow_iso()}
             )
+            .eq("id", str(id))
+            .eq("org_id", str(org_id))
+            .execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            raise NotFound(f"conversation {id} not found for org {org_id}")
+        return self._record(rows[0])
+
+    def set_titulo(self, org_id: UUID, id: UUID, titulo: str) -> ConversationRecord:
+        resp = (
+            self._table()
+            .update({"titulo": titulo, "updated_at": utcnow_iso()})
             .eq("id", str(id))
             .eq("org_id", str(org_id))
             .execute()
