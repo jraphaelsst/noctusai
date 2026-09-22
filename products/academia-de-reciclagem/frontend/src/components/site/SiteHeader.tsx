@@ -1,12 +1,14 @@
 /**
- * The public-site header — nav + mobile menu, shared by `/`, `/como-funciona`
+ * The public-site header — nav + mobile menu, shared by `/`, `/o-projeto`
  * and `/a-carta` so the three public pages present one identical nav
  * (extracted from `pages/Landing.tsx`, which owned this markup alone before
  * the sub-pages existed).
  *
- * "Como funciona" and "A Carta" are real routes (`Link`); the rest are
- * landing sections, resolved by `SectionLink` to either an in-page anchor
- * (on the landing) or `/#<hash>` (everywhere else).
+ * "O Projeto" and "A Carta" are real routes (`Link`) — the two reading
+ * pages, and the first two items by design. The rest are landing sections,
+ * resolved by `SectionLink` to either an in-page anchor (on the landing) or
+ * `/#<hash>` (everywhere else) — including "Como funciona", which scrolls to
+ * the landing's own section rather than opening a page of its own.
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -24,21 +26,21 @@ export function SiteHeader() {
       <div className="container-xl nav-inner">
         <Brand />
         <nav className={`nav-links ${menuOpen ? 'is-open' : ''}`} aria-label="Navegação principal">
-          <SectionLink hash="projeto" className="nav-link" onClick={closeMenu} data-testid="link-projeto">
-            O projeto
-          </SectionLink>
-          <Link className="nav-link" to="/como-funciona" onClick={closeMenu} data-testid="link-como-funciona">
-            Como funciona
+          <Link className="nav-link" to="/o-projeto" onClick={closeMenu} data-testid="link-projeto">
+            O Projeto
           </Link>
+          <Link className="nav-link" to="/a-carta" onClick={closeMenu} data-testid="link-a-carta">
+            A Carta
+          </Link>
+          <SectionLink hash="como-funciona" className="nav-link" onClick={closeMenu} data-testid="link-como-funciona">
+            Como funciona
+          </SectionLink>
           <SectionLink hash="impacto" className="nav-link" onClick={closeMenu} data-testid="link-impacto">
             Impacto
           </SectionLink>
           <SectionLink hash="pilares" className="nav-link" onClick={closeMenu} data-testid="link-pilares">
             Pilares
           </SectionLink>
-          <Link className="nav-link" to="/a-carta" onClick={closeMenu} data-testid="link-a-carta">
-            A Carta
-          </Link>
           <SectionLink hash="participar" className="nav-cta" onClick={closeMenu} data-testid="link-participar">
             Quero participar <ArrowRight size={14} />
           </SectionLink>

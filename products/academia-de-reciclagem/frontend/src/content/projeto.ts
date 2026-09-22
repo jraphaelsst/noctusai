@@ -4,15 +4,16 @@
  * Fonte: os documentos em `products/academia-de-reciclagem/projects/content/*.docx`
  * (00–06 = os tópicos do projeto, exibidos em /como-funciona; a Carta às Próximas
  * Gerações, exibida em /a-carta). Cada documento vira uma sequência de blocos na
- * mesma ordem do original: parágrafo, destaque (parágrafo inteiro em negrito no
- * documento) ou imagem (o infográfico "30 toneladas", com a legenda do documento).
+ * mesma ordem do original: parágrafo ou destaque (parágrafo inteiro em negrito
+ * no documento). O infográfico "30 toneladas" NÃO entra aqui: ele é uma peça da
+ * landing (`pages/Landing.tsx`, seção `#trinta-toneladas`), não do corpo de
+ * leitura — as páginas de texto são só texto, por decisão editorial.
  * Ao revisar um documento, atualize o bloco correspondente aqui.
  */
 
 export type Bloco =
   | { tipo: 'paragrafo'; texto: string }
-  | { tipo: 'destaque'; texto: string }
-  | { tipo: 'imagem'; legenda?: string };
+  | { tipo: 'destaque'; texto: string };
 
 export interface Topico {
   /** Âncora estável (`/como-funciona#<id>`). */
@@ -45,7 +46,6 @@ export const TOPICOS: Topico[] = [
       { tipo: 'paragrafo', texto: "O projeto deve aproveitar essa rede de relacionamento pessoal, empresarial e institucional para incentivar a coleta de materiais recicláveis, principalmente nos condomínios residenciais. O objetivo é criar uma ponte entre quem gera o resíduo e quem pode dar a ele a destinação correta." },
       { tipo: 'paragrafo', texto: "A primeira grande frente do projeto deve ser o propósito e a comunicação da causa. Antes de pedir adesão, é preciso mostrar por que o projeto existe. As pessoas precisam entender que o lixo não desaparece quando sai de casa. Ele continua existindo, segue um caminho e pode virar problema ou oportunidade." },
       { tipo: 'paragrafo', texto: "A imagem das mais de 30 toneladas de resíduos geradas por uma pessoa ao longo da vida deve ser uma das peças simbólicas do movimento. Ela representa de forma visual aquilo que os números sozinhos não conseguem transmitir." },
-      { tipo: 'imagem', legenda: "Imagem estratégica do projeto — representação visual das mais de 30 toneladas de resíduos geradas por uma pessoa ao longo da vida." },
       { tipo: 'paragrafo', texto: "A segunda frente deve ser a legislação. O projeto deve caminhar alinhado à Política Nacional de Resíduos Sólidos, à legislação municipal de Cotia e às legislações dos demais municípios envolvidos. Isso dará sustentação institucional ao movimento e ajudará a demonstrar que a destinação correta dos resíduos é uma responsabilidade compartilhada entre poder público, empresas, condomínios e cidadãos." },
       { tipo: 'paragrafo', texto: "Em Cotia, foi identificado que existe legislação específica sobre resíduos sólidos e Plano Municipal de Gestão Integrada de Resíduos Sólidos. Essa base deve ser organizada e ampliada futuramente para Carapicuíba, Embu das Artes e Jandira, permitindo que o projeto dialogue com cada município de forma correta." },
       { tipo: 'paragrafo', texto: "A terceira frente deve ser a relação com as cooperativas. As cooperativas são o coração social do projeto. Elas representam a transformação do resíduo em renda, trabalho e dignidade. A experiência na Cooperativa Nova Cotia mostrou que a reciclagem não é apenas ambiental. Ela é também humana." },
@@ -127,7 +127,6 @@ export const TOPICOS: Topico[] = [
       { tipo: 'paragrafo', texto: "O projeto pretende ajudar as pessoas a enxergarem que o lixo não termina quando sai de casa. Ele continua existindo. Ele segue um caminho. E esse caminho pode ser de abandono e poluição, ou de reciclagem, renda e dignidade." },
       { tipo: 'paragrafo', texto: "A escolha desse caminho depende de consciência, organização e compromisso." },
       { tipo: 'paragrafo', texto: "O Projeto Academia da Reciclagem nasce para ajudar a construir essa consciência e transformar esse compromisso em ação." },
-      { tipo: 'imagem', legenda: "Imagem de apoio — representação visual do impacto da geração de resíduos ao longo da vida." },
     ],
   },
   {
@@ -370,7 +369,6 @@ export const TOPICOS: Topico[] = [
       { tipo: 'paragrafo', texto: "Podem seguir para o descarte inadequado, para os aterros, para as ruas, para os córregos e para a degradação ambiental." },
       { tipo: 'paragrafo', texto: "Ou podem seguir para a reciclagem, para a economia circular, para a geração de renda e para a construção de uma cultura mais responsável." },
       { tipo: 'paragrafo', texto: "A escolha desse caminho depende de consciência, organização e ação." },
-      { tipo: 'imagem', legenda: "Imagem de apoio — representação visual do impacto dos resíduos gerados por uma pessoa ao longo da vida." },
       { tipo: 'paragrafo', texto: "O Projeto Academia da Reciclagem nasce para transformar consciência em movimento." },
       { tipo: 'paragrafo', texto: "Não queremos apenas falar sobre reciclagem. Queremos criar pontes concretas para que os materiais recicláveis gerados nos condomínios e empresas da região cheguem ao destino correto." },
       { tipo: 'paragrafo', texto: "Não queremos apenas instalar lixeiras. Queremos educar pessoas!!" },
@@ -464,7 +462,6 @@ export const CARTA: Carta = {
     { tipo: 'paragrafo', texto: "Essa é a razão pela qual decidi agir." },
     { tipo: 'paragrafo', texto: "E essa é a mensagem que desejo deixar às próximas gerações: o planeta que vocês receberão depende das escolhas que fazemos agora." },
     { tipo: 'destaque', texto: "Que as nossas escolhas sejam dignas do futuro que desejamos construir." },
-    { tipo: 'imagem', legenda: "Imagem de apoio — representação visual do impacto dos resíduos gerados por uma pessoa ao longo da vida." },
     { tipo: 'destaque', texto: "Gilson Tangerino" },
     { tipo: 'paragrafo', texto: "Idealizador do Projeto Academia da Reciclagem." },
   ],

@@ -38,9 +38,11 @@ describe("ACarta", () => {
     expect(signature).toHaveTextContent("Idealizador do Projeto Academia da Reciclagem.");
   });
 
-  it("shares the public-site nav (SiteHeader) with 'Como funciona' routed to the new page", () => {
+  it("shares the public-site nav (SiteHeader): pages route, sections go back to the landing", () => {
     renderPage();
-    expect(screen.getByTestId("link-como-funciona")).toHaveAttribute("href", "/como-funciona");
+    expect(screen.getByTestId("link-projeto")).toHaveAttribute("href", "/o-projeto");
     expect(screen.getByTestId("link-a-carta")).toHaveAttribute("href", "/a-carta");
+    // Off the landing, a section link becomes `/#<hash>` (SectionLink).
+    expect(screen.getByTestId("link-como-funciona")).toHaveAttribute("href", "/#como-funciona");
   });
 });

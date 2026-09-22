@@ -4,7 +4,7 @@
  *
  * On the landing itself (`pathname === "/"`) it's a plain in-page anchor —
  * the browser jumps straight to the section, no router involvement. On any
- * other public page (`/como-funciona`, `/a-carta`) the same section lives on
+ * other public page (`/o-projeto`, `/a-carta`) the same section lives on
  * the landing, so it renders a react-router `Link` to `/#<hash>`; the
  * landing's own `useHashScroll` (see `pages/Landing.tsx`) then smooth-
  * scrolls to it once mounted, since a client-side route change does not

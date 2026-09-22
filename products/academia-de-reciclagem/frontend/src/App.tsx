@@ -27,9 +27,10 @@ const Decisoes = lazy(() => import("@/pages/Decisoes"));
 const Perguntas = lazy(() => import("@/pages/Perguntas"));
 const Roadmap = lazy(() => import("@/pages/Roadmap"));
 // Public site — contract `projects/interessados-CONTRACT.md`.
-const ComoFunciona = lazy(() => import("@/pages/ComoFunciona"));
+const OProjeto = lazy(() => import("@/pages/OProjeto"));
 const ACarta = lazy(() => import("@/pages/ACarta"));
 const Interessados = lazy(() => import("@/pages/Interessados"));
+const ComoFuncionaRedirect = lazy(() => import("@/pages/ComoFuncionaRedirect"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -92,7 +93,9 @@ export default createProductApp({
   // interessados-CONTRACT.md`). Header/footer/nav are shared with `Landing`
   // via `components/site/`.
   publicRoutes: [
-    { path: "/como-funciona", component: ComoFunciona },
+    { path: "/o-projeto", component: OProjeto },
+    // Old path, kept alive as a redirect — see the component's own doc.
+    { path: "/como-funciona", component: ComoFuncionaRedirect },
     { path: "/a-carta", component: ACarta },
   ],
   Layout,

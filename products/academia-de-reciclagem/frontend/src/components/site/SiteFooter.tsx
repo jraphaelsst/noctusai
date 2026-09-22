@@ -1,6 +1,6 @@
 /**
  * The public-site footer — extracted from `pages/Landing.tsx` so
- * `/como-funciona` and `/a-carta` share the exact same sponsor credit +
+ * `/o-projeto` and `/a-carta` share the exact same sponsor credit +
  * "voltar ao início" link.
  */
 import { ChevronDown } from 'lucide-react';

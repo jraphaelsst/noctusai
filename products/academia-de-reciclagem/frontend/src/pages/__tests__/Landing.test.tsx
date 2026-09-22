@@ -6,7 +6,7 @@
  * jsdom has no IntersectionObserver (a browser API, not ours), so a minimal one
  * that reports every node as visible stands in for it.
  *
- * Also covers the shared `SiteHeader` nav (new `/como-funciona` and
+ * Also covers the shared `SiteHeader` nav (the `/o-projeto` and
  * `/a-carta` links) and `InterestPopup`, both mounted by `Landing` —
  * `@/lib/api` is mocked so the popup's `createInteressado` call never
  * reaches the real seed infra.
@@ -85,9 +85,14 @@ describe("Landing", () => {
     expect(document.documentElement.style.scrollBehavior).toBe("");
   });
 
-  it("'Como funciona' nav link points to the new /como-funciona page", () => {
+  it("'O Projeto' nav link points to the /o-projeto page", () => {
     renderAt("/");
-    expect(screen.getByTestId("link-como-funciona")).toHaveAttribute("href", "/como-funciona");
+    expect(screen.getByTestId("link-projeto")).toHaveAttribute("href", "/o-projeto");
+  });
+
+  it("'Como funciona' is an in-page anchor on the landing, not a route", () => {
+    renderAt("/");
+    expect(screen.getByTestId("link-como-funciona")).toHaveAttribute("href", "#como-funciona");
   });
 
   it("'A Carta' nav link points to the new /a-carta page", () => {
@@ -95,9 +100,19 @@ describe("Landing", () => {
     expect(screen.getByTestId("link-a-carta")).toHaveAttribute("href", "/a-carta");
   });
 
-  it("'Ver como funciona' hero button points to the new /como-funciona page", () => {
+  it("gives the 30-toneladas infographic its own section, with the sourced numbers", () => {
     renderAt("/");
-    expect(screen.getByTestId("button-ver-metodo")).toHaveAttribute("href", "/como-funciona");
+    // The image the reading pages used to interleave now lives here.
+    expect(screen.getByTestId("infografico-30-toneladas")).toBeInTheDocument();
+    expect(screen.getByTestId("tonnage-toneladas")).toHaveTextContent("+30 t");
+    expect(screen.getByTestId("tonnage-conteineres")).toHaveTextContent("+70");
+    expect(screen.getByTestId("tonnage-municipios")).toHaveTextContent("4");
+    expect(screen.getByTestId("link-tonnage-projeto")).toHaveAttribute("href", "/o-projeto");
+  });
+
+  it("'Ver o projeto' hero button points to the /o-projeto page", () => {
+    renderAt("/");
+    expect(screen.getByTestId("button-ver-metodo")).toHaveAttribute("href", "/o-projeto");
   });
 });
 

@@ -277,7 +277,27 @@
   .academia-landing .nav-links.is-open .nav-login { justify-content:center; }
 }
 
-/* ── noc addition: /como-funciona + /a-carta — a dark top band so the
+/* ── noc addition: landing `#trinta-toneladas` — the infographic section.
+   Two columns (image | copy + numbers) that stack on narrow screens, image
+   first in both orders: it is the argument, the numbers annotate it. ── */
+.academia-landing .tonnage-section { background:hsl(42 38% 96%); }
+.academia-landing .tonnage-layout { display:grid; grid-template-columns:minmax(0, 1.05fr) minmax(0, .95fr); gap:clamp(34px, 5vw, 76px); align-items:center; }
+.academia-landing .tonnage-figure figure { margin:0; }
+.academia-landing .tonnage-figure img { width:100%; height:auto; display:block; border-radius:16px; box-shadow:14px 16px 0 hsl(var(--primary) / .12); }
+.academia-landing .tonnage-figure figcaption { margin-top:16px; max-width:46ch; font-family:var(--app-font-mono); font-size:.7rem; line-height:1.6; color:hsl(var(--muted-foreground)); }
+.academia-landing .tonnage-copy .section-intro { margin-bottom:38px; }
+.academia-landing .tonnage-metrics { display:flex; flex-direction:column; gap:22px; margin:0 0 34px; }
+.academia-landing .tonnage-metric { display:grid; grid-template-columns:auto 1fr; align-items:baseline; gap:20px; padding-top:20px; border-top:1px solid hsl(var(--primary) / .18); }
+.academia-landing .tonnage-value { margin:0; color:hsl(var(--accent)); font-family:var(--app-font-serif); font-size:clamp(2.4rem, 4.2vw, 3.4rem); line-height:.95; letter-spacing:-.06em; }
+.academia-landing .tonnage-label { margin:0; color:hsl(var(--primary)); font-size:.92rem; line-height:1.55; max-width:34ch; }
+.academia-landing .tonnage-cta { border-color:hsl(var(--primary) / .35); color:hsl(var(--primary)); }
+.academia-landing .tonnage-cta:hover { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); }
+
+@media (max-width: 900px) {
+  .academia-landing .tonnage-layout { grid-template-columns:1fr; gap:34px; }
+}
+
+/* ── noc addition: /o-projeto + /a-carta — a dark top band so the
    header's light nav text stays legible without the landing's hero image
    behind it (the header is position:absolute; this is its own section). ── */
 .academia-landing .sub-hero { position:relative; background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); padding:190px 0 68px; }
@@ -285,31 +305,42 @@
 .academia-landing .sub-hero .section-title { color:hsl(var(--primary-foreground)); margin-bottom:16px; }
 .academia-landing .sub-hero .section-intro { color:hsl(42 25% 82%); max-width:620px; }
 
-/* ── noc addition: /como-funciona accordion ── */
+/* ── noc addition: /o-projeto accordion ── */
 .academia-landing .como-funciona-section { padding-top:66px; }
-.academia-landing .accordion-list { display:flex; flex-direction:column; gap:14px; max-width:860px; margin-inline:auto; }
+.academia-landing .accordion-list { display:flex; flex-direction:column; gap:14px; max-width:820px; margin-inline:auto; }
 .academia-landing .accordion-item { border:1px solid hsl(var(--border)); border-radius:14px; background:hsl(var(--card)); overflow:hidden; }
 .academia-landing .accordion-trigger { width:100%; display:flex; align-items:center; gap:18px; padding:22px 26px; background:transparent; border:0; text-align:left; cursor:pointer; font-family:inherit; color:hsl(var(--primary)); }
 .academia-landing .accordion-numero { font-family:var(--app-font-mono); font-size:.72rem; letter-spacing:.1em; color:hsl(var(--accent)); flex-shrink:0; }
-.academia-landing .accordion-titulo { flex:1; font-family:var(--app-font-serif); font-weight:600; font-size:1.28rem; letter-spacing:-.02em; }
+.academia-landing .accordion-titulo { flex:1; font-family:var(--app-font-serif); font-weight:600; font-size:1.38rem; letter-spacing:-.02em; }
 .academia-landing .accordion-chevron { flex-shrink:0; color:hsl(var(--muted-foreground)); transition:transform .25s ease; }
 .academia-landing .accordion-trigger[data-state="open"] .accordion-chevron { transform:rotate(180deg); }
-.academia-landing .accordion-panel { padding:0 26px 26px; }
-.academia-landing .accordion-panel-inner > * + * { margin-top:14px; }
+.academia-landing .accordion-panel { padding:0 30px 34px; }
+/* Paragraph rhythm inside an open topic — without this the blocks sit flush
+   against each other and the topic reads as a wall of text. Deliberately a
+   flex `gap`, not `> * + * { margin-top }`: the latter ties on specificity
+   with `.content-paragrafo { margin:0 }` below and loses on source order. */
+.academia-landing .accordion-panel-inner { display:flex; flex-direction:column; gap:26px; }
 
-/* content blocks — shared by /como-funciona (inside each accordion panel)
-   and /a-carta (the full letter body). */
-.academia-landing .content-paragrafo { color:hsl(var(--muted-foreground)); font-size:.95rem; line-height:1.75; margin:0; }
-.academia-landing .content-destaque { color:hsl(var(--primary)); font-family:var(--app-font-serif); font-weight:600; font-size:1.15rem; line-height:1.45; letter-spacing:-.015em; margin:0; padding-left:16px; border-left:2px solid hsl(var(--accent)); }
-.academia-landing .content-figure { margin:22px 0; }
-.academia-landing .content-figure img { width:100%; border-radius:10px; display:block; }
-.academia-landing .content-figure figcaption { margin-top:10px; font-size:.72rem; color:hsl(var(--muted-foreground)); font-family:var(--app-font-mono); }
+/* content blocks — shared by /o-projeto (inside each accordion panel) and
+   /a-carta (the full letter body).
 
-/* ── noc addition: /a-carta letter page ── */
+   READING TYPOGRAPHY. These two pages are long-form prose, not UI: the body
+   is sized in absolute terms (not the compact .8-.95rem the landing's
+   marketing blocks use), the leading is generous, and the measure is capped
+   around 68 characters so the eye finds the next line without hunting.
+   Paragraph rhythm is set by the gaps below, not by a cramped 14px. */
+.academia-landing .content-paragrafo { color:hsl(var(--foreground)); font-size:1.12rem; line-height:1.85; max-width:68ch; margin:0; }
+.academia-landing .content-destaque { color:hsl(var(--primary)); font-family:var(--app-font-serif); font-weight:600; font-size:1.45rem; line-height:1.5; letter-spacing:-.015em; max-width:60ch; margin:0; padding-left:22px; border-left:3px solid hsl(var(--accent)); }
+
+/* ── noc addition: /a-carta letter page ──
+   The letter is the slowest read on the site, so it goes one step further
+   than /o-projeto: slightly larger body, more leading, and wider paragraph
+   gaps. `max-width` is in ch (not px) so the measure tracks the font size
+   instead of narrowing as the text grows. */
 .academia-landing .carta-section { background:hsl(var(--background)); }
-.academia-landing .carta-page { max-width:680px; margin-inline:auto; display:flex; flex-direction:column; gap:20px; }
-.academia-landing .carta-page .content-paragrafo { font-size:1.02rem; line-height:1.85; }
-.academia-landing .carta-page .content-destaque { font-size:1.35rem; }
+.academia-landing .carta-page { max-width:64ch; margin-inline:auto; display:flex; flex-direction:column; gap:32px; }
+.academia-landing .carta-page .content-paragrafo { font-size:1.18rem; line-height:1.95; max-width:none; }
+.academia-landing .carta-page .content-destaque { font-size:1.6rem; line-height:1.45; max-width:none; }
 .academia-landing .carta-signature { margin-top:12px; padding-top:26px; border-top:1px solid hsl(var(--border)); }
 .academia-landing .carta-signature .content-destaque { border-left:0; padding-left:0; font-family:var(--app-font-serif); font-size:1.7rem; font-style:italic; }
 .academia-landing .carta-signature .content-paragrafo { color:hsl(var(--muted-foreground)); font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; font-family:var(--app-font-mono); }

@@ -1,12 +1,12 @@
 /**
- * `/como-funciona` — the seed `publicRoutes` slot (`createProductApp({
+ * `/o-projeto` — the seed `publicRoutes` slot (`createProductApp({
  * publicRoutes })`), reachable for both signed-out AND signed-in visitors
  * (mounted ahead of the auth-gated catch-all in `seed/framework/frontend/
  * src/app.tsx`, same as the platform's consent pages).
  *
  * All seven `TOPICOS` (`src/content/projeto.ts`) as independent expand/
  * collapse sections (`components/Accordion.tsx`). Supports a
- * `/como-funciona#<id>` deep link: the matching section opens on mount and
+ * `/o-projeto#<id>` deep link: the matching section opens on mount and
  * the page scrolls to it.
  */
 import { useEffect } from 'react';
@@ -20,7 +20,7 @@ import { ContentBlocks } from '@/components/ContentBlocks';
 import { TOPICOS } from '@/content/projeto';
 import './landing.css';
 
-export default function ComoFunciona() {
+export default function OProjeto() {
   const location = useLocation();
   // Read once, at mount — `defaultOpen` only affects the section's INITIAL
   // render, so re-computing this on every hash change would do nothing.
@@ -42,7 +42,7 @@ export default function ComoFunciona() {
 
       <section className="sub-hero">
         <div className="container-xl">
-          <div className="eyebrow">como funciona</div>
+          <div className="eyebrow">o projeto</div>
           <h1 className="display section-title">
             Os sete passos do<br />Projeto Academia da Reciclagem.
           </h1>

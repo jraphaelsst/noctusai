@@ -2,7 +2,7 @@
  * The public "receber futuras comunicações?" popup — `projects/
  * interessados-CONTRACT.md` § Frontend obligations.
  *
- * Mounted once per public page (`Landing`, `ComoFunciona`, `ACarta`) inside
+ * Mounted once per public page (`Landing`, `OProjeto`, `ACarta`) inside
  * their `.academia-landing` scope, so the seed `Dialog`/`Button`/`Input`
  * primitives it's built from pick up the landing's own palette — those
  * primitives are styled entirely off the shared `--background`/`--primary`/

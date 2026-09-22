@@ -1,5 +1,5 @@
 /**
- * A single expand/collapse section for `/como-funciona` — one per
+ * A single expand/collapse section for `/o-projeto` — one per
  * `TOPICOS` entry (`src/content/projeto.ts`).
  *
  * There is no Accordion/Collapsible organ in `@noctusai/lib/design-system`
@@ -18,7 +18,7 @@
  * a time" group primitive (that's `@radix-ui/react-accordion`, not a
  * platform dependency), and the brief calls for independent expand/collapse
  * per section, not an exclusive accordion. `defaultOpen` exists solely to
- * satisfy a `/como-funciona#<id>` deep link on first mount.
+ * satisfy a `/o-projeto#<id>` deep link on first mount.
  */
 import type { ReactNode } from 'react';
 import * as CollapsiblePrimitive from '@radix-ui/react-collapsible';

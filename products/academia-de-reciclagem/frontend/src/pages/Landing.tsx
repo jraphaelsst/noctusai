@@ -10,7 +10,7 @@
  * wouter, NotFound) are dropped — the seed app shell already supplies all of them.
  *
  * Header + footer live in `components/site/` (`SiteHeader`/`SiteFooter`) —
- * shared verbatim with `/como-funciona` and `/a-carta` so the public site
+ * shared verbatim with `/o-projeto` and `/a-carta` so the public site
  * presents one identical nav everywhere. `useHashScroll` is what makes those
  * two pages' "back to a landing section" links (`/#pilares`, etc.) actually
  * land on the section: a client-side route change does not trigger the
@@ -23,6 +23,7 @@ import { ArrowDownRight, ArrowRight, BookOpen, Circle, CircleDot, Factory, HandH
 import { SiteHeader } from '@/components/site/SiteHeader';
 import { SiteFooter } from '@/components/site/SiteFooter';
 import { InterestPopup } from '@/components/InterestPopup';
+import infografico from '@/assets/landing/infografico-30-toneladas.jpg';
 import './landing.css';
 
 function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
@@ -102,7 +103,7 @@ export default function Landing() {
             </Reveal>
             <Reveal className="hero-actions" delay={350}>
               <a className="button-primary" href="#participar" data-testid="button-conhecer">Conheça a iniciativa <ArrowDownRight size={16} /></a>
-              <Link className="button-quiet" to="/como-funciona" data-testid="button-ver-metodo">Ver como funciona</Link>
+              <Link className="button-quiet" to="/o-projeto" data-testid="button-ver-metodo">Ver o projeto</Link>
             </Reveal>
             <Reveal className="hero-footnote" delay={470}>
               <span className="hero-footnote-line" aria-hidden="true" />
@@ -143,10 +144,67 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* The project's symbolic piece. It used to sit inline in the reading
+          pages, where it competed with the text; here it gets a section of
+          its own, with the numbers it is meant to make tangible. Every
+          figure below comes from `content/projeto.ts` (the source .docx) —
+          no invented statistics. */}
+      <section id="trinta-toneladas" className="section tonnage-section" aria-labelledby="tonnage-title">
+        <div className="container-xl tonnage-layout">
+          <Reveal className="tonnage-figure">
+            <figure>
+              <img
+                src={infografico}
+                alt="Infográfico: a montanha de resíduos que uma única pessoa gera ao longo da vida, representada em contêineres empilhados."
+                loading="lazy"
+                /* the asset's intrinsic size — reserves the right box, no layout shift */
+                width={1280}
+                height={853}
+                data-testid="infografico-30-toneladas"
+              />
+              <figcaption>
+                Imagem estratégica do projeto — as mais de 30 toneladas de resíduos que uma pessoa gera ao
+                longo da vida.
+              </figcaption>
+            </figure>
+          </Reveal>
+
+          <Reveal className="tonnage-copy" delay={150}>
+            <div className="eyebrow">02 / a imagem que move o projeto</div>
+            <h2 id="tonnage-title" className="display section-title">
+              O lixo não<br />desaparece.
+            </h2>
+            <p className="section-intro">
+              Ele continua existindo, segue um caminho — e esse caminho pode ser de abandono e poluição, ou de
+              reciclagem, renda e dignidade. Números sozinhos não transmitem isso. Esta imagem transmite.
+            </p>
+
+            <dl className="tonnage-metrics" aria-label="A conta de uma vida">
+              <div className="tonnage-metric" data-testid="tonnage-toneladas">
+                <dt className="tonnage-value">+30 t</dt>
+                <dd className="tonnage-label">de resíduos gerados por uma única pessoa ao longo da vida</dd>
+              </div>
+              <div className="tonnage-metric" data-testid="tonnage-conteineres">
+                <dt className="tonnage-value">+70</dt>
+                <dd className="tonnage-label">contêineres empilhados — a imagem que deu origem ao projeto</dd>
+              </div>
+              <div className="tonnage-metric" data-testid="tonnage-municipios">
+                <dt className="tonnage-value">4</dt>
+                <dd className="tonnage-label">municípios no território inicial: Cotia, Carapicuíba, Embu das Artes e Jandira</dd>
+              </div>
+            </dl>
+
+            <Link className="button-quiet tonnage-cta" to="/o-projeto" data-testid="link-tonnage-projeto">
+              Ver o projeto inteiro <ArrowRight size={16} />
+            </Link>
+          </Reveal>
+        </div>
+      </section>
+
       <section id="como-funciona" className="section dark-section">
         <div className="container-xl">
           <Reveal>
-            <div className="eyebrow">02 / o nosso jeito</div>
+            <div className="eyebrow">03 / o nosso jeito</div>
             <h2 className="display section-title">Menos palestra.<br />Mais mão na massa.</h2>
           </Reveal>
           <div className="steps">
@@ -175,7 +233,7 @@ export default function Landing() {
       <section id="impacto" className="section impact-section">
         <div className="container-xl impact-layout">
           <Reveal>
-            <div className="eyebrow">03 / sinais de impacto</div>
+            <div className="eyebrow">04 / sinais de impacto</div>
             <h2 className="display section-title">Mudança boa<br />deixa rastro.</h2>
             <p className="impact-note">Acompanhamos aquilo que importa: gente mais segura para decidir, espaços mais preparados para separar e valor reconhecido em cada etapa.</p>
           </Reveal>
@@ -194,7 +252,7 @@ export default function Landing() {
         <div className="container-xl">
           <Reveal className="audience-heading">
             <div>
-              <div className="eyebrow">04 / uma academia de verdade</div>
+              <div className="eyebrow">05 / uma academia de verdade</div>
               <h2 id="audience-title" className="display section-title">Cabe muita gente<br />nesta conversa.</h2>
             </div>
             <p className="section-intro">Cada participante chega com uma pergunta. Sai com uma ferramenta — e com vontade de passar adiante.</p>
@@ -233,7 +291,7 @@ export default function Landing() {
         <div className="container-xl">
           <div className="pillars-intro">
             <Reveal>
-              <div className="eyebrow">05 / o que sustenta o projeto</div>
+              <div className="eyebrow">06 / o que sustenta o projeto</div>
               <h2 id="pillars-title" className="display section-title">Um propósito.<br /><em>Três caminhos.</em></h2>
             </Reveal>
             <Reveal className="pillars-context" delay={150}>
@@ -267,7 +325,7 @@ export default function Landing() {
       <section className="section story-section">
         <div className="container-xl story-grid">
           <Reveal>
-            <div className="eyebrow">06 / uma outra narrativa</div>
+            <div className="eyebrow">07 / uma outra narrativa</div>
             <p className="story-quote">O que era “lixo” pode ser <em>começo</em> de muita coisa.</p>
           </Reveal>
           <Reveal className="story-detail" delay={170}>
@@ -280,7 +338,7 @@ export default function Landing() {
       <section id="participar" className="join-section">
         <div className="container-xl join-content">
           <Reveal>
-            <div className="eyebrow">07 / vem com a gente</div>
+            <div className="eyebrow">08 / vem com a gente</div>
             <h2 className="display join-title">Toda mudança<br />precisa de uma primeira volta.</h2>
           </Reveal>
           <Reveal delay={170}>

@@ -1,15 +1,14 @@
 /**
- * Renders a `Bloco[]` (`src/content/projeto.ts`) — shared by `/como-funciona`
+ * Renders a `Bloco[]` (`src/content/projeto.ts`) — shared by `/o-projeto`
  * (inside each `AccordionItem`) and `/a-carta` (the full letter body).
  *
- * `imagem` blocks all render the one "30 toneladas" infographic
- * (`content/projeto.ts`'s own module doc), lazy-loaded since every
- * `/como-funciona` topic panel can carry one and only the expanded ones are
- * visible at a time.
+ * TEXT ONLY. The "30 toneladas" infographic used to be interleaved here as
+ * an `imagem` block; it now lives in its own landing section
+ * (`pages/Landing.tsx`, `#trinta-toneladas`), where it gets the space and
+ * the supporting numbers it needs. The reading pages stay uninterrupted.
  */
 import type { Key, ReactElement } from 'react';
 import type { Bloco } from '@/content/projeto';
-import infografico from '@/assets/landing/infografico-30-toneladas.jpg';
 
 export function renderBloco(bloco: Bloco, key: Key): ReactElement {
   if (bloco.tipo === 'destaque') {
@@ -17,14 +16,6 @@ export function renderBloco(bloco: Bloco, key: Key): ReactElement {
       <p key={key} className="content-destaque">
         {bloco.texto}
       </p>
-    );
-  }
-  if (bloco.tipo === 'imagem') {
-    return (
-      <figure key={key} className="content-figure">
-        <img src={infografico} alt={bloco.legenda ?? ''} loading="lazy" />
-        {bloco.legenda ? <figcaption>{bloco.legenda}</figcaption> : null}
-      </figure>
     );
   }
   return (
