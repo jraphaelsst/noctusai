@@ -403,6 +403,44 @@ class TestCodeNeighbors:
         ce.refresh(repo_root=tmp_repo)
         assert ce.code_neighbors("mcp/x.py", "does_not_exist") == []
 
+    def test_preloaded_rows_matches_reload(self, tmp_repo, fake_embed):
+        """Perf seam (2026-09-21): passing `rows=` (an already-loaded
+        `_load_all_chunk_vectors()` result) must be byte-identical to the
+        default reload-per-call path — it exists ONLY to let
+        `code_recurrence_promote.scan()` load the cache once instead of once
+        per anchor (O(N) reloads of an O(N) cache), which was the dominant
+        cost of `check_code_recurrence_drift` (~1000s of the compliance
+        suite's ~1250s). Same data in, must be same ranking out."""
+        (tmp_repo / "mcp" / "a.py").write_text(
+            "def anchor():\n    return 'a' * 100\n\n"
+            "def sibling():\n    return 'b' * 100\n\n"
+            "def third():\n    return 'c' * 100\n"
+        )
+        ce.refresh(repo_root=tmp_repo)
+        reloaded = ce.code_neighbors("mcp/a.py", "anchor", top_k=5)
+        preloaded_rows = ce._load_all_chunk_vectors()
+        via_rows = ce.code_neighbors(
+            "mcp/a.py", "anchor", top_k=5, rows=preloaded_rows
+        )
+        assert via_rows == reloaded
+
+    def test_preloaded_rows_skips_reload(self, tmp_repo, fake_embed, monkeypatch):
+        """The `rows=` seam's whole point: with it set, `code_neighbors` must
+        NOT call `_load_all_chunk_vectors()` at all."""
+        (tmp_repo / "mcp" / "a.py").write_text(
+            "def anchor():\n    return 'a' * 100\n\n"
+            "def sibling():\n    return 'b' * 100\n"
+        )
+        ce.refresh(repo_root=tmp_repo)
+        rows = ce._load_all_chunk_vectors()
+
+        def _boom():
+            raise AssertionError("_load_all_chunk_vectors() must not be called")
+
+        monkeypatch.setattr(ce, "_load_all_chunk_vectors", _boom)
+        neighbors = ce.code_neighbors("mcp/a.py", "anchor", top_k=5, rows=rows)
+        assert all(n["symbol_name"] != "anchor" for n in neighbors)
+
 
 # ── Embed batching — the 2026-08 retry-storm fix ────────────────────────────
 def _many_functions_source(n: int) -> str:

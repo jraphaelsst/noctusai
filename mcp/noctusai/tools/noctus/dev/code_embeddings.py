@@ -577,15 +577,30 @@ def _load_all_chunk_vectors() -> list[tuple[str, int, str, str, str, list[float]
     return out
 
 
-def code_neighbors(path: str, symbol_name: str = "", top_k: int = 5) -> list[dict]:
+def code_neighbors(
+    path: str,
+    symbol_name: str = "",
+    top_k: int = 5,
+    rows: list[tuple[str, int, str, str, str, list[float]]] | None = None,
+) -> list[dict]:
     """Top-K semantically nearest code symbols to the given `path` + `symbol_name`.
 
     If `symbol_name` is empty, uses the first chunk in the file as anchor.
     Returns `[{path, symbol_name, kind, score}]` ordered desc by similarity.
     Use case: cross-product recurrence discovery — "what other code looks
     like this helper?" → candidates for absorption.
+
+    `rows` (perf seam, 2026-09-21): pass an already-loaded
+    `_load_all_chunk_vectors()` result to skip the reload — added because
+    `code_recurrence_promote.scan()` used to call this once PER ANCHOR
+    (one full cache reload + deserialize per row, i.e. O(N) reloads of an
+    O(N)-sized cache = O(N²) I/O), which alone accounted for the bulk of
+    `test_all_products_compliant`'s ~1000s wall-clock via
+    `check_code_recurrence_drift`. Every other caller (the MCP tool, ad-hoc
+    single lookups) omits it and keeps the exact prior behavior.
     """
-    rows = _load_all_chunk_vectors()
+    if rows is None:
+        rows = _load_all_chunk_vectors()
     if not rows:
         return []
     anchor = next(

@@ -131,7 +131,14 @@ def scan(
     for path, _idx, symbol, kind in anchors:
         if len(clusters) >= limit:
             break
-        neighbors = ce.code_neighbors(path, symbol_name=symbol, top_k=top_k_per_file)
+        # Perf (2026-09-21): pass the already-loaded `rows` so
+        # `code_neighbors` doesn't reload + re-deserialize the WHOLE cache
+        # on every single anchor — that redundant O(N) reload × O(N)
+        # anchors was the dominant cost of `check_code_recurrence_drift`
+        # (~1000s of ~1250s total in `test_all_products_compliant`).
+        neighbors = ce.code_neighbors(
+            path, symbol_name=symbol, top_k=top_k_per_file, rows=rows
+        )
         for n in neighbors:
             score = n["score"]
             if score < threshold:

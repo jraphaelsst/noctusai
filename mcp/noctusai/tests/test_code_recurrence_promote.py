@@ -56,7 +56,16 @@ def mock_code_embeddings(monkeypatch):
 
     monkeypatch.setattr(ce, "_load_all_chunk_vectors", lambda: fake_rows)
 
-    def _fake_neighbors(path, symbol_name="", top_k=5):
+    def _fake_neighbors(path, symbol_name="", top_k=5, rows=None):
+        # Perf regression (2026-09-21): `scan()` must call
+        # `_load_all_chunk_vectors()` ONCE and thread the result through via
+        # `rows=`, never leave `code_neighbors` to reload per anchor — that
+        # per-anchor reload was ~1000s of the compliance suite's ~1250s
+        # (`check_code_recurrence_drift`, N reloads of an O(N) cache).
+        assert rows is fake_rows, (
+            "scan() must pass the preloaded rows through to code_neighbors() "
+            "instead of letting it reload the cache per anchor"
+        )
         anchor = next(
             (r for r in fake_rows
              if r[0] == path and (not symbol_name or r[2] == symbol_name)),
