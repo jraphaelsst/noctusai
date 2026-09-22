@@ -158,11 +158,26 @@ warns; losing the file never silently turns gates off.
 in the fleet. CI matrix entries stay (skipped at runtime with a `::notice::`), so
 waking a product needs no workflow edit.
 
-**Wake a product** (the "product treatment"): toggle `ativo=true` in
-`/admin/products` → `python mcp/noctusai/cli.py --refresh-build-scope` (writes
-both files) → commit. Every gate checks it again from that commit on — expect
-the accumulated drift to surface then, and fix it as the first slice of the
-reactivation. **Put one to sleep:** the same steps with `ativo=false`.
+**Wake or sleep a product = flip the toggle. Nothing else.** Migration 051 puts
+a statement-level trigger on `public.products` (INSERT/DELETE/UPDATE OF `ativo`,
+`deploy_scope`) that sends the full resulting sets to GitHub as a
+`repository_dispatch` (`product-scope-changed`, token in Supabase Vault as
+`github_product_scope_dispatch_token`). `.github/workflows/sync-product-scope.yml`
+regenerates both files with the shared generators and commits them to `dev` as
+`noctus-scope-bot`; if a product WOKE, it dispatches the full `test.yml` suite so
+the woken product gets its checks at once — expect accumulated drift to surface
+there, and fix it as the first slice of the reactivation. Both toggle surfaces
+(`/admin/products` and the dashboard cards) go through one hook,
+`useProductStateActions`, and the trigger catches any other writer too.
+
+**Prove it:** `python mcp/noctusai/cli.py --product-scope-report [slug]` — per
+product, every gate surface's own listing code says `checked`/`skipped`; verdict
+`awake`/`asleep`, `MIXED` (a gate ignores the scope) or `STALE` (file ≠ live
+catalog: the dispatch has not landed yet, or failed — check the workflow run and
+`net._http_response`). Structural guards in CI: the report runs over the real
+repo, and every `products/` walk in the toolkit must carry a
+`# product-scope: active|all — reason` marker. Manual fallback:
+`--refresh-build-scope` (needs the Supabase env).
 
 ## 5 · Before you touch a product
 

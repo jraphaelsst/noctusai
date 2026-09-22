@@ -1,0 +1,139 @@
+# sync-product-scope — the catalog toggle lands in git by itself.
+#
+# WHY (2026-09-22). deploy/fleet/active-scope.txt (what every CI job / keeper /
+# gate sweep checks) and deploy/fleet/build-scope.txt (what gets images) mirror
+# public.products.ativo / deploy_scope. The user flips a product asleep or awake
+# in /admin/products or on a core dashboard card and expects every gate to follow
+# with nobody committing anything. Migration 051's trigger on public.products
+# sends the FULL resulting sets here as a repository_dispatch; this job
+# regenerates both files with the same generator as `--refresh-build-scope` and
+# commits them to `dev`.
+#
+# No database credential lives in GitHub — the payload IS the catalog state.
+# Payload is untrusted input: every slug must match the slug shape, and the
+# generator intersects it with products/* on disk (ghosts never land).
+#
+# A bot commit to `dev` is the sanctioned automation exception (like the ledger
+# pushes). Commits made with GITHUB_TOKEN do not trigger other workflows, so when
+# a product WAKES this job explicitly dispatches test.yml on dev (full active
+# suite) — a woken product gets its checks immediately, as the product treatment
+# requires.
+#
+# KB § PATTERNS/architect/product-working-scope.md § 4c.
+name: Sync product scope
+
+on:
+  repository_dispatch:
+    types: [product-scope-changed]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-product-scope
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Validate payload
+        id: payload
+        env:
+          ACTIVE_JSON: ${{ toJSON(github.event.client_payload.active) }}
+          LIVE_JSON: ${{ toJSON(github.event.client_payload.live) }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re, sys
+          ok = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+          out = {}
+          for key in ("ACTIVE_JSON", "LIVE_JSON"):
+              val = json.loads(os.environ[key])
+              if not isinstance(val, list) or not all(isinstance(s, str) and ok.match(s) for s in val):
+                  print(f"::error::{key} is not a list of product slugs: {val!r}")
+                  sys.exit(1)
+              out[key] = val
+          if not set(out["LIVE_JSON"]) <= set(out["ACTIVE_JSON"]):
+              print("::error::payload has live products that are not active — catalog invariant broken")
+              sys.exit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"active={','.join(out['ACTIVE_JSON'])}\n")
+              fh.write(f"live={','.join(out['LIVE_JSON'])}\n")
+          print("active:", out["ACTIVE_JSON"]); print("live:", out["LIVE_JSON"])
+          PY
+
+      - name: Install toolkit deps
+        run: pip install -q -r requirements.txt
+
+      - name: Regenerate scope files
+        id: regen
+        env:
+          ACTIVE: ${{ steps.payload.outputs.active }}
+          LIVE: ${{ steps.payload.outputs.live }}
+        working-directory: mcp/noctusai
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, ".")
+          from tools.noctus.dev.build_scope import refresh_build_scope
+          from tools.noctus.dev.product_scope import read_active_scope, refresh_active_scope
+          split = lambda v: [s for s in v.split(",") if s]
+          before = read_active_scope() or []
+          b = refresh_build_scope(_live=split(os.environ["LIVE"]))
+          if not b.get("ok"):
+              print(f"::error::build-scope: {b.get('error')}"); sys.exit(1)
+          a = refresh_active_scope(_active=split(os.environ["ACTIVE"]))
+          if not a.get("ok"):
+              print(f"::error::active-scope: {a.get('error')}"); sys.exit(1)
+          woke = sorted(set(a["slugs"]) - set(before))
+          slept = sorted(set(before) - set(a["slugs"]))
+          print(f"active: {a['slugs']}\nwoke: {woke}\nslept: {slept}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"woke={' '.join(woke)}\nslept={' '.join(slept)}\n")
+          PY
+
+      - name: Commit to dev
+        id: commit
+        env:
+          WOKE: ${{ steps.regen.outputs.woke }}
+          SLEPT: ${{ steps.regen.outputs.slept }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- deploy/fleet/active-scope.txt deploy/fleet/build-scope.txt; then
+            echo "scope files already match the catalog — nothing to commit"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "noctus-scope-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/fleet/active-scope.txt deploy/fleet/build-scope.txt
+          git commit -q -m "chore(scope): sync product scope from catalog — woke: ${WOKE:-none}; slept: ${SLEPT:-none}" \
+            -m "Automated by sync-product-scope.yml (catalog trigger, migration 051)."
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:dev; then
+              echo "pushed=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            echo "push raced (attempt $attempt) — rebasing on origin/dev"
+            git fetch -q origin dev && git rebase -q origin/dev
+          done
+          echo "::error::could not push the scope sync to dev after 5 attempts"
+          exit 1
+
+      - name: Re-test woken products
+        if: steps.commit.outputs.pushed == 'true' && steps.regen.outputs.woke != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run test.yml --ref dev
