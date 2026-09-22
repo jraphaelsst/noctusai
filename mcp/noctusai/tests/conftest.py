@@ -19,6 +19,15 @@ import pytest
 _MCP_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_MCP_ROOT))
 
+# The repo-root `dev_team` engine (imported lazily by `noctus.team.*` tools).
+# Suite-wide, not per-file: `test_rollups.py` exercised the same imports but
+# only passed when `test_team_tools.py` — which used to add this path itself —
+# had run first in the same process. CI sharding (2026-09-21) broke that
+# accidental order.
+_DEV_TEAM_SRC = _MCP_ROOT.parents[1] / "dev_team" / "src"
+if str(_DEV_TEAM_SRC) not in sys.path:
+    sys.path.insert(0, str(_DEV_TEAM_SRC))
+
 # When running from a git worktree the venv-installed noctusai_lib uses an
 # editable-install MetaPathFinder that hardcodes the PRIMARY checkout path.
 # That finder takes priority over sys.path, so a simple sys.path.insert can't

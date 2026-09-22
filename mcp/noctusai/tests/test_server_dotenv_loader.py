@@ -21,6 +21,15 @@ from unittest.mock import patch
 
 import pytest
 
+# 🔴 Import `server` at COLLECTION time, never inside a test. Importing it runs
+# `auto_configure_for_cli(...)`, whose `configure_logging` removes every
+# handler already on the root logger — including the `caplog` handler pytest
+# attaches for the test. Imported inside a test, the log line this file
+# asserts on is emitted into the void; it only passed when some EARLIER test
+# file happened to have imported `server` first (surfaced 2026-09-21 by CI
+# sharding, which changed that order).
+import server  # noqa: E402,F401
+
 
 @pytest.fixture(autouse=True)
 def _restore_environ():
