@@ -656,8 +656,13 @@ def _item(alvo: _Alvo, campo: CampoValidavel, fontes: dict[str, dict], nomes: di
 
 
 #: `cliente_campo_conflitos.campo` is the `CampoExtraido.item_key` — the same
-#: name as a `CAMPOS_CLIENTE` entry; only those feed the contract.
-_CAMPOS_CLIENTE_CONTRATO = frozenset(c.campo for c in CAMPOS_CLIENTE)
+#: name as a `CAMPOS_CLIENTE` entry, except the cônjuge link, which the
+#: identity slice (153) files under its column name. Only these feed the
+#: contract (e.g. `data_nascimento` does not).
+_CONFLITO_CAMPO_CLIENTE: dict[str, str] = {
+    **{c.campo: c.campo for c in CAMPOS_CLIENTE},
+    "conjuge_cliente_id": "conjuge",
+}
 
 
 def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[dict]:
@@ -679,15 +684,16 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
             client, "cliente_campo_conflitos", org_id, "cliente_id", sorted(pessoas)
         )
         for r in rows:
-            if r.get("status") != "pendente" or r.get("campo") not in _CAMPOS_CLIENTE_CONTRATO:
+            registro = _CONFLITO_CAMPO_CLIENTE.get(r.get("campo") or "")
+            if r.get("status") != "pendente" or registro is None:
                 continue
             p = pessoas[str(r["cliente_id"])]
-            campo = _POR_ENTIDADE_CAMPO[(ENTIDADE_CLIENTE, r["campo"])]
+            campo = _POR_ENTIDADE_CAMPO[(ENTIDADE_CLIENTE, registro)]
             saida.append({
                 "id": str(r["id"]),
                 "entidade": ENTIDADE_CLIENTE,
                 "entidade_id": p.cliente_id,
-                "campo": r["campo"],
+                "campo": registro,
                 "grupo": _rotulo_pessoa(p, {}),
                 "rotulo": campo.rotulo,
                 "valor_atual": _texto(r.get("valor_anterior")),

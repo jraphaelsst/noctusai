@@ -472,6 +472,13 @@ class TestConflitosAbertos:
         assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
         assert _gerar(client, ids).status_code == 201
 
+    def test_the_identity_slices_conjuge_conflict_maps_to_the_registry_field(self, client, scoped):
+        """153 files the cônjuge link conflict under its column name."""
+        ids = _seed_completo(scoped)
+        self._conflito_cliente(scoped, ids, campo="conjuge_cliente_id")
+        [conflito] = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"]
+        assert conflito["campo"] == "conjuge" and conflito["rotulo"] == "Cônjuge vinculado"
+
     def test_a_decided_conflict_does_not_block(self, client, scoped):
         ids = _seed_completo(scoped)
         self._conflito_cliente(scoped, ids)
