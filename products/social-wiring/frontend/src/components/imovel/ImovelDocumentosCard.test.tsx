@@ -59,6 +59,13 @@ describe("ImovelDocumentosCard", () => {
     expect(screen.getByText(/número será lido automaticamente/i)).toBeTruthy();
   });
 
+  it("🔴 carries the id the contract 'Resolver' (foro comarca) lands on", async () => {
+    const { container } = await render();
+    const card = container.querySelector("#imovel-documentos");
+    expect(card).not.toBeNull();
+    expect(card?.getAttribute("tabindex")).toBe("-1");
+  });
+
   it("🔴 says it is still reading, rather than showing nothing", async () => {
     // Otherwise "in progress" looks exactly like "found nothing" and like
     // "broken" — an empty field in all three cases.

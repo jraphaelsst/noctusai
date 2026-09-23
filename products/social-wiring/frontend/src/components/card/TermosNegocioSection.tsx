@@ -6,9 +6,20 @@
  *
  * 🔴 PUT REPLACES THE WHOLE OBJECT — every key is sent on every save.
  * `PUT .../negociacao/termos` stores an absent key as `null`; this component
- * keeps ALL sixteen fields in one draft and submits the complete shape on
+ * keeps ALL seventeen fields in one draft and submits the complete shape on
  * "Salvar termos", never a partial patch (there is no PATCH here — see
  * `useAtualizarTermos`).
+ *
+ * 🔴 ITENS INTEGRANTES AND AD CORPUS ARE EXPLICIT ANSWERS (2026-09-23).
+ * Contract generation now blocks until each is ANSWERED
+ * (`contrato_gerador.derivacao._contrato`), so "not answered" must stay
+ * representable here and never be saved as an answer by accident:
+ *   - itens integrantes: "Há itens (listar)" vs "Nenhum item integrante"
+ *     (`itens_integrantes_ausente_confirmado`, migration 163) vs unanswered.
+ *   - ad corpus: "Sim" vs "Não" vs unanswered. It used to be a checkbox
+ *     seeded `?? false`, so ANY termos save silently answered "não".
+ * Each control carries the DOM id the readiness list's "Resolver" link
+ * targets (`derivacao.ALVO_*`).
  *
  * 🔴 GROUP VISIBILITY IS DATA-DRIVEN, NOT A TAB THE OPERATOR PICKS.
  * The permuta-reversa group only makes sense once the deal actually has a
@@ -21,7 +32,6 @@ import { toast } from "sonner";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -73,8 +83,11 @@ interface TermosDraft {
   permuta_posse_marco_parcela_id: string;
   permuta_obrigacoes_entrega: string;
 
+  /** "" = not answered yet. */
+  itens_resposta: ItensResposta | "";
   itens_integrantes: string;
-  ad_corpus: boolean;
+  /** "" = not answered yet. */
+  ad_corpus: "sim" | "nao" | "";
   obrigacoes_vendedor: string;
 
   onus_quitacao: OnusQuitacao | "";
@@ -99,8 +112,13 @@ function toDraft(t: NegociacaoTermos): TermosDraft {
     permuta_posse_marco_parcela_id: t.permuta_posse_marco_parcela_id ?? "",
     permuta_obrigacoes_entrega: t.permuta_obrigacoes_entrega ?? "",
 
+    itens_resposta: t.itens_integrantes
+      ? "lista"
+      : t.itens_integrantes_ausente_confirmado
+        ? "nenhum"
+        : "",
     itens_integrantes: t.itens_integrantes ?? "",
-    ad_corpus: t.ad_corpus ?? false,
+    ad_corpus: t.ad_corpus == null ? "" : t.ad_corpus ? "sim" : "nao",
     obrigacoes_vendedor: t.obrigacoes_vendedor ?? "",
 
     onus_quitacao: t.onus_quitacao ?? "",
@@ -151,8 +169,11 @@ function toPayload(d: TermosDraft): TermosNegocioPut {
       d.permuta_posse_marco === "parcela" ? d.permuta_posse_marco_parcela_id || null : null,
     permuta_obrigacoes_entrega: textoOuNulo(d.permuta_obrigacoes_entrega),
 
-    itens_integrantes: textoOuNulo(d.itens_integrantes),
-    ad_corpus: d.ad_corpus,
+    // Only the chosen answer travels: listing items sends the text (the
+    // backend refuses text AND "nenhum" together), "nenhum" sends the flag.
+    itens_integrantes: d.itens_resposta === "lista" ? textoOuNulo(d.itens_integrantes) : null,
+    itens_integrantes_ausente_confirmado: d.itens_resposta === "nenhum",
+    ad_corpus: d.ad_corpus === "" ? null : d.ad_corpus === "sim",
     obrigacoes_vendedor: textoOuNulo(d.obrigacoes_vendedor),
 
     onus_quitacao: d.onus_quitacao || null,
@@ -167,6 +188,71 @@ function toPayload(d: TermosDraft): TermosNegocioPut {
 }
 
 const NENHUMA_PARCELA = "__none__";
+
+type ItensResposta = "lista" | "nenhum";
+
+/** DOM ids the contract readiness list's "Resolver" lands on — the SAME
+ *  strings `contrato_gerador.derivacao.ALVO_*` emits as `destino.alvo`. */
+export const ALVO_ITENS_INTEGRANTES = "termos-itens-integrantes-resposta";
+export const ALVO_AD_CORPUS = "termos-ad-corpus-resposta";
+
+/**
+ * An explicit, mutually-exclusive answer — a radiogroup of buttons where
+ * NOTHING is selected until someone answers. A checkbox cannot say
+ * "unanswered", which is exactly the state generation blocks on.
+ */
+function EscolhaExplicita<V extends string>({
+  id,
+  rotulo,
+  opcoes,
+  valor,
+  onChange,
+}: {
+  id: string;
+  rotulo: string;
+  opcoes: { valor: V; rotulo: string }[];
+  valor: V | "";
+  onChange: (v: V) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-sm font-medium leading-none" id={`${id}-rotulo`}>
+        {rotulo}
+      </p>
+      <div
+        id={id}
+        role="radiogroup"
+        aria-labelledby={`${id}-rotulo`}
+        tabIndex={-1}
+        className="inline-flex flex-wrap gap-1 rounded-md border bg-muted/40 p-1"
+        data-testid={id}
+      >
+        {opcoes.map((o) => {
+          const ativo = o.valor === valor;
+          return (
+            <Button
+              key={o.valor}
+              type="button"
+              size="sm"
+              variant={ativo ? "default" : "ghost"}
+              role="radio"
+              aria-checked={ativo}
+              onClick={() => onChange(o.valor)}
+              data-testid={`${id}-${o.valor}`}
+            >
+              {o.rotulo}
+            </Button>
+          );
+        })}
+      </div>
+      {valor === "" && (
+        <p className="text-xs text-amber-700" data-testid={`${id}-pendente`}>
+          Sem resposta — a geração do contrato fica bloqueada até responder.
+        </p>
+      )}
+    </div>
+  );
+}
 
 function ParcelaMarcoSelect({
   id,
@@ -216,7 +302,13 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
   const permutaMarcoFaltaParcela =
     draft.permuta_posse_marco === "parcela" && !draft.permuta_posse_marco_parcela_id;
 
-  const podeSalvar = !posseMarcoFaltaParcela && !permutaMarcoFaltaParcela;
+  // "Sim — listar" with nothing listed would save as UNANSWERED (blank text
+  // collapses to null server-side) while the screen claims an answer.
+  const itensListaVazia =
+    draft.itens_resposta === "lista" && !draft.itens_integrantes.trim();
+
+  const podeSalvar =
+    !posseMarcoFaltaParcela && !permutaMarcoFaltaParcela && !itensListaVazia;
 
   function submit() {
     if (!podeSalvar) return;
@@ -391,28 +483,49 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
         {/* ─── Itens integrantes / ad corpus / obrigações do vendedor ─── */}
         <section className="space-y-3" data-testid="termos-itens">
           <h4 className="text-sm font-medium">Itens integrantes</h4>
-          <div className="space-y-1.5">
-            <Label htmlFor="termos-itens-integrantes">
-              Itens integrantes do imóvel
-            </Label>
-            <Textarea
-              id="termos-itens-integrantes"
-              value={draft.itens_integrantes}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, itens_integrantes: e.target.value }))
-              }
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="termos-ad-corpus"
-              checked={draft.ad_corpus}
-              onCheckedChange={(v) =>
-                setDraft((d) => ({ ...d, ad_corpus: v === true }))
-              }
-            />
-            <Label htmlFor="termos-ad-corpus">Venda ad corpus</Label>
-          </div>
+          <EscolhaExplicita<ItensResposta>
+            id={ALVO_ITENS_INTEGRANTES}
+            rotulo="O imóvel tem itens integrantes?"
+            opcoes={[
+              { valor: "lista", rotulo: "Sim — listar os itens" },
+              { valor: "nenhum", rotulo: "Nenhum item integrante" },
+            ]}
+            valor={draft.itens_resposta}
+            onChange={(v) => setDraft((d) => ({ ...d, itens_resposta: v }))}
+          />
+          {draft.itens_resposta === "lista" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="termos-itens-integrantes">
+                Itens integrantes do imóvel
+              </Label>
+              <Textarea
+                id="termos-itens-integrantes"
+                data-testid="termos-itens-integrantes"
+                value={draft.itens_integrantes}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, itens_integrantes: e.target.value }))
+                }
+              />
+              {!draft.itens_integrantes.trim() && (
+                <p
+                  className="text-xs text-destructive"
+                  data-testid="termos-itens-integrantes-erro"
+                >
+                  Relacione os itens, ou escolha &ldquo;Nenhum item integrante&rdquo;.
+                </p>
+              )}
+            </div>
+          )}
+          <EscolhaExplicita<"sim" | "nao">
+            id={ALVO_AD_CORPUS}
+            rotulo="Venda ad corpus?"
+            opcoes={[
+              { valor: "sim", rotulo: "Sim" },
+              { valor: "nao", rotulo: "Não" },
+            ]}
+            valor={draft.ad_corpus}
+            onChange={(v) => setDraft((d) => ({ ...d, ad_corpus: v }))}
+          />
           <div className="space-y-1.5">
             <Label htmlFor="termos-obrigacoes-vendedor">
               Obrigações do vendedor

@@ -23,44 +23,25 @@
  * that DISAGREES with the record read as evidence the data is there, which is
  * the single failure the derivation exists to prevent.
  *
- * TEXT ITEMS vs DOCUMENT ITEMS
- * ----------------------------
+ * TEXT ITEMS ONLY
+ * ---------------
  * A text item (`nome_completo`, `celular`, `email`, `data_nascimento`,
  * `profissao`, `genero`) is satisfied by TYPING, so it carries a pencil and
  * edits in place — writing through the same `PATCH /api/clientes/{id}` path
  * the full form uses, with only the edited field in the body.
  *
- * A document item (`rg`, `cpf`) is satisfied by UPLOADING, so it carries an
- * upload icon — and, once a file exists, it carries that icon NO LONGER. What
- * a filled row offers instead is view, download, and a trash that DISCARDS THE
- * FILE AND KEEPS THE ROW. The row itself is not deletable: the list is the
- * same for every client by definition, defined server-side. That asymmetry is
- * deliberate and is what separates these rows from the extras below, which
- * the operator creates and can therefore destroy.
- *
- * 🔴 WHY UPLOAD DISAPPEARS ONCE THERE IS A FILE
- * ----------------------------------------------
- * It used to stay, relabelled "Substituir". So the control that silently
- * overwrites an answered row was the most prominent thing on it, sitting where
- * the eye had already learned to find "the button for this row" — and a
- * replacement is destructive in a way the label does not convey: the displaced
- * document is soft-deleted, and the operator finds out afterwards. Replacing a
- * file is now the deliberate two-step it always should have been (discard,
- * then upload), and a row carrying its document reads as ANSWERED rather than
- * as still asking.
+ * The file-satisfied rows (`rg`, `cpf`) this row used to carry collapsed into
+ * the ONE identity item (2026-09-23), which has two upload slots and its own
+ * row, `IdentidadeChecklistRow` — the upload / view / download / discard
+ * affordances (and why upload disappears once a file exists) live there now.
  *
  * Presentational only (`card/**`): props in, callbacks out.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Check,
-  Download,
-  ExternalLink,
-  FileText,
   Pencil,
-  Trash2,
   Undo2,
-  Upload,
   X,
 } from "lucide-react";
 
@@ -76,7 +57,7 @@ import { cn } from "@/lib/utils";
 import type { DocumentoChecklistItem } from "@/types/cardHub";
 
 import { GENEROS, type DadosPessoais } from "./DadosPessoaisForm";
-import { TokenCheckbox, TooltipIconButton, formatBytes, formatarDataISO } from "@noctusai/lib/components";
+import { TokenCheckbox, TooltipIconButton, formatarDataISO } from "@noctusai/lib/components";
 
 type CampoTipo = "texto" | "email" | "tel" | "data" | "select";
 
@@ -88,7 +69,7 @@ type CampoTipo = "texto" | "email" | "tel" | "data" | "select";
  * column that disagreed on the control would be two ways to write the same
  * value, and one of them would be wrong first.
  *
- * A key absent from this map and absent from `ITENS_DOCUMENTO` renders as a
+ * A key absent from this map renders as a
  * plain row with a tick and no editor — a new server-side item shows up as
  * itself rather than crashing or silently vanishing.
  */
@@ -100,9 +81,6 @@ const CAMPO_POR_ITEM: Record<string, { campo: keyof DadosPessoais; tipo: CampoTi
   profissao: { campo: "profissao", tipo: "texto" },
   genero: { campo: "genero", tipo: "select" },
 };
-
-/** The two satisfied by a FILE rather than by typing. */
-const ITENS_DOCUMENTO = new Set(["rg", "cpf"]);
 
 /** Sentinel for "not set" in the gênero `Select` — Radix treats `value=""`
  *  as uncontrolled, so a real token is needed and is mapped back to `""`
@@ -123,17 +101,6 @@ export interface ChecklistItemRowProps {
    *  with a stale draft. */
   onSaveCampo?: (patch: DadosPessoais) => void;
   savingCampo?: boolean;
-  onUploadDocumento?: (item: DocumentoChecklistItem, file: File) => void;
-  /** Discards the FILE. The row stays, ready for a fresh upload. */
-  onRemoverDocumento?: (documentoId: string, item: DocumentoChecklistItem) => void;
-  uploading?: boolean;
-  /** Opens the file INLINE in a new tab — the same `cliente_documentos` id
-   *  space and the same `GET .../documentos/{id}/url` round trip Anexos
-   *  already uses, so a checklist-satisfying RG/CPF is opened exactly like
-   *  any other attachment. */
-  onVisualizarDocumento?: (documentoId: string) => void;
-  /** Downloads the file, saved under its ORIGINAL filename. */
-  onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
   /** Disambiguates testids when several people's checklists are on screen. */
   testIdPrefix?: string;
 }
@@ -144,23 +111,12 @@ export function ChecklistItemRow({
   onToggle,
   onSaveCampo,
   savingCampo,
-  onUploadDocumento,
-  onRemoverDocumento,
-  uploading,
-  onVisualizarDocumento,
-  onBaixarDocumento,
   testIdPrefix = "documento-checklist",
 }: ChecklistItemRowProps) {
   const tid = `${testIdPrefix}-${item.key}`;
   const campo = CAMPO_POR_ITEM[item.key];
-  const ehDocumento = ITENS_DOCUMENTO.has(item.key);
   const [editando, setEditando] = useState(false);
   const [rascunho, setRascunho] = useState<string>(valor ?? "");
-  // 🔴 Its OWN input, held by a ref — never a shared element looked up by id.
-  // Several of these rows are on screen at once (one per required document,
-  // one set per party), and a shared input would file every buyer's RG onto
-  // whoever mounted first. A ref cannot address the wrong element.
-  const inputArquivo = useRef<HTMLInputElement>(null);
 
   function abrirEdicao() {
     setRascunho(valor ?? "");
@@ -179,15 +135,11 @@ export function ChecklistItemRow({
     setEditando(false);
   }
 
-  const exibido = ehDocumento
-    ? item.documento
-      ? `${item.documento.nome_original} · ${formatBytes(item.documento.tamanho_bytes)}`
-      : "—"
-    : valor
-      ? campo?.tipo === "data"
-        ? formatarDataISO(valor)
-        : valor
-      : "—";
+  const exibido = valor
+    ? campo?.tipo === "data"
+      ? formatarDataISO(valor)
+      : valor
+    : "—";
 
   return (
     <li
@@ -277,9 +229,6 @@ export function ChecklistItemRow({
           )}
           data-testid={`${tid}-valor`}
         >
-          {ehDocumento && item.documento && (
-            <FileText className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden="true" />
-          )}
           {exibido}
         </span>
       )}
@@ -319,75 +268,6 @@ export function ChecklistItemRow({
           testId={`${tid}-editar`}
           className="h-7 w-7"
           onClick={abrirEdicao}
-        />
-      )}
-
-      {ehDocumento && onUploadDocumento && (
-        <>
-          <input
-            ref={inputArquivo}
-            type="file"
-            className="hidden"
-            data-testid={`${tid}-arquivo-input`}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onUploadDocumento(item, file);
-              // Cleared so re-picking the SAME file fires `change` again.
-              e.target.value = "";
-            }}
-          />
-          {/* Only while the row is still ASKING. Once it holds a file the
-              answer is in, and the control that would overwrite it is not the
-              one to lead with — see the file docblock. The hidden input above
-              stays mounted either way: it is addressed by ref, and a row that
-              has just had its file discarded must be able to accept the next
-              one without waiting for a remount. */}
-          {!item.documento && (
-            <TooltipIconButton
-              label={`Enviar ${item.label}`}
-              icon={Upload}
-              testId={`${tid}-upload`}
-              className="h-7 w-7"
-              disabled={uploading}
-              onClick={() => inputArquivo.current?.click()}
-            />
-          )}
-        </>
-      )}
-
-      {/* View + download — only once a file exists. Same document id space
-          as Anexos (`GET .../documentos/{id}/url`), so these are the exact
-          view/download affordance the erp-imobiliario Certidões page has,
-          applied to the RG/CPF rows. */}
-      {ehDocumento && item.documento && onVisualizarDocumento && (
-        <TooltipIconButton
-          label={`Visualizar ${item.label}`}
-          icon={ExternalLink}
-          testId={`${tid}-visualizar`}
-          className="h-7 w-7"
-          onClick={() => onVisualizarDocumento(item.documento!.id)}
-        />
-      )}
-      {ehDocumento && item.documento && onBaixarDocumento && (
-        <TooltipIconButton
-          label={`Baixar ${item.label}`}
-          icon={Download}
-          testId={`${tid}-baixar`}
-          className="h-7 w-7"
-          onClick={() => onBaixarDocumento(item.documento!.id, item.documento!.nome_original)}
-        />
-      )}
-
-      {/* Only once a file exists — and it discards the FILE, never the row.
-          The mandatory list is server-defined; there is no such thing as
-          deleting "CPF" from it. */}
-      {ehDocumento && item.documento && onRemoverDocumento && (
-        <TooltipIconButton
-          label={`Descartar o arquivo de ${item.label}`}
-          icon={Trash2}
-          testId={`${tid}-descartar-arquivo`}
-          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-          onClick={() => onRemoverDocumento(item.documento!.id, item)}
         />
       )}
     </li>

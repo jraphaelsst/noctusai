@@ -183,6 +183,11 @@ export interface NegociacaoTermos {
   permuta_obrigacoes_entrega: string | null;
 
   itens_integrantes: string | null;
+  /** Migration 163 — `true` = a human confirmed this deal has NO itens
+   *  integrantes. With `itens_integrantes` null and this `false`, the
+   *  question is UNANSWERED and contract generation blocks. */
+  itens_integrantes_ausente_confirmado: boolean;
+  /** `null` = unanswered (blocks generation); `false` is a real "não". */
   ad_corpus: boolean | null;
   obrigacoes_vendedor: string | null;
 

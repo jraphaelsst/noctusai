@@ -51,7 +51,7 @@ import { CasadoToggle } from "@/components/card/CasadoToggle";
 import { CertidaoCasamentoSlot, TIPO_CERTIDAO_CASAMENTO } from "@/components/card/CertidaoCasamentoSlot";
 import { baixarArquivo } from "@noctusai/lib/components";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
-import { estadoCivilExigeConjuge } from "@/types/qualificacaoCompletude";
+import { estadoCivilExigeConjuge, temArquivoCin } from "@/types/qualificacaoCompletude";
 
 export interface PessoaDocumentosPanelProps {
   clienteId: string;
@@ -120,6 +120,7 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         pendenteConfirmacao={conflitosPendentes.data
           ?.filter((c) => c.status === "pendente")
           .map((c) => c.campo)}
+        temCin={temArquivoCin(checklist.data?.items)}
         onSave={(valores) =>
           dados.mutate(valores, {
             onError: (e) =>
@@ -134,10 +135,11 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         // would name two different people's rows identically.
         testIdPrefix={`documento-checklist-${clienteId}`}
         items={checklist.data?.items ?? []}
-        // 🔴 `isPending || isFetching`, never `isLoading`. TanStack v5's
-        // `isLoading` is false during a background refetch, so an empty branch
-        // would render "nothing here" over data that exists.
-        loading={checklist.isPending || checklist.isFetching}
+        // 🔴 Two signals, never `isLoading` (KB § lying-loading-state):
+        // skeleton only while there is NO data yet; a background refetch over
+        // rows that exist is the separate non-reserving `refreshing` spinner.
+        loading={checklist.isPending && !checklist.data}
+        refreshing={checklist.isFetching && !!checklist.data}
         onToggle={(key, concluido) =>
           toggle.mutate(
             { key, concluido },
@@ -165,13 +167,13 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
           })
         }
         uploading={docs.upload.isPending}
-        // A checklist row's file is filed under the ROW's key: the item IS the
-        // document type, so `rg` uploads as `rg`. Handing it the catalogue's
+        // A checklist row's file is filed under the type the ROW names — the
+        // identity item's slot (`cin` / `cnh`). Handing it the catalogue's
         // first type (what the generic Anexos button does) would file every
         // identity document as whatever happens to sort first.
-        onUploadDocumento={(item, file) =>
+        onUploadDocumento={(_item, file, tipoDocumento) =>
           docs.upload.mutate(
-            { file, tipoDocumento: item.key },
+            { file, tipoDocumento },
             {
               onError: (e) =>
                 toast.error(erro(e, "Não foi possível enviar o documento.")),
@@ -263,7 +265,8 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         testId={`anexos-section-${clienteId}`}
         documentos={documentos.data ?? []}
         tipos={tipos.data ?? []}
-        loading={documentos.isPending || documentos.isFetching}
+        loading={documentos.isPending && !documentos.data}
+        refreshing={documentos.isFetching && !!documentos.data}
         uploading={docs.upload.isPending}
         // The operator's OWN pick from the section's own `<Select>` — see
         // `AnexosSection`'s module docblock for why the tipo no longer

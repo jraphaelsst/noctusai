@@ -547,13 +547,13 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
           },
         )
       }
-      // A checklist row's file is filed under the ROW's key: the item IS the
-      // document type, so `rg` uploads as `rg`. The generic Anexos button
-      // hands it the catalogue's first type, which is right for a loose
-      // attachment and wrong for an identity document.
-      onUploadDocumentoChecklist={(item, file) =>
+      // A checklist row's file is filed under the type the ROW names — the
+      // identity item's slot (`cin` / `cnh`). The generic Anexos button hands
+      // it the catalogue's first type, which is right for a loose attachment
+      // and wrong for an identity document.
+      onUploadDocumentoChecklist={(_item, file, tipoDocumento) =>
         documentoMutations.upload.mutate(
-          { file, tipoDocumento: item.key },
+          { file, tipoDocumento },
           {
             onError: (err) =>
               toastServerError(err, "Não foi possível enviar o documento."),
@@ -801,10 +801,11 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       renderNegociacao={() => <NegociacaoContainer clienteId={id} />}
       renderFinanciamento={() => <FinanciamentoContainer clienteId={id} />}
-      renderContratos={() => (
+      renderContratos={({ irPara }) => (
         <ContratosContainer
           clienteId={id as string}
           onNovoContrato={() => setContratoDialogOpen(true)}
+          onIrPara={irPara}
         />
       )}
       onOpenDocumento={handleOpenDocumento}

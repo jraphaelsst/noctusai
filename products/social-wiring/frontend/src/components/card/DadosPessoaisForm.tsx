@@ -49,6 +49,7 @@ import {
 import {
   estadoCivilExigeConjuge,
   estadoCivilExigeDataCasamento,
+  ehCin,
   rgIgualAoCpf,
 } from "@/types/qualificacaoCompletude";
 
@@ -165,6 +166,9 @@ export interface DadosPessoaisFormProps {
    * presentational, S3).
    */
   pendenteConfirmacao?: string[];
+  /** A CIN file is on this person's record — RG == CPF is then its valid
+   *  state and the amber RG==CPF notice is never shown (see `ehCin`). */
+  temCin?: boolean;
   /** Disambiguates the testids when several of these are on screen at once —
    *  one per party on the Documentos tab. */
   testId?: string;
@@ -180,6 +184,7 @@ export function DadosPessoaisForm({
   saving,
   saveError,
   pendenteConfirmacao,
+  temCin = false,
   testId = "dados-pessoais",
 }: DadosPessoaisFormProps) {
   const [aberto, setAberto] = useState(false);
@@ -268,7 +273,9 @@ export function DadosPessoaisForm({
     );
   }
 
-  const rgIgualCpf = rgIgualAoCpf(draft.rg, draft.cpf);
+  // Never for a CIN — there RG == CPF is correct by design (2026-09-23).
+  const rgIgualCpf =
+    rgIgualAoCpf(draft.rg, draft.cpf) && !ehCin(draft.rg_orgao_expedidor, temCin);
 
   return (
     <div className="mb-4 space-y-3 rounded-md border p-3" data-testid={testId}>

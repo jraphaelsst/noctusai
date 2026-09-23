@@ -19,7 +19,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
-import GeradorContratoSection from "@/components/card/GeradorContratoSection";
+import GeradorContratoSection, { type GeracaoDestino } from "@/components/card/GeradorContratoSection";
 import ValidacaoExtracaoDialog from "@/components/card/ValidacaoExtracaoDialog";
 import {
   ContratoGeracaoError,
@@ -42,6 +42,9 @@ export interface GeradorContratoContainerProps {
   /** Whether the "Gerar contrato" collapsible is open — the lazy gate the F5
    *  brief asks for. See `useContratoGeracao`'s header note. */
   aberto: boolean;
+  /** Card-scoped "Resolver" — switches the card subpage and lands on the
+   *  falta's control. Handed down from the card dialog; absent elsewhere. */
+  onIrPara?: (destino: GeracaoDestino) => void;
 }
 
 /**
@@ -63,6 +66,7 @@ export function GeradorContratoContainer({
   clienteId,
   contratoId,
   aberto,
+  onIrPara,
 }: GeradorContratoContainerProps) {
   const query = useContratoGeracao(clienteId, contratoId, aberto);
   const { gerar } = useContratoMutations(clienteId);
@@ -202,6 +206,7 @@ export function GeradorContratoContainer({
         onGerar={handleGerar}
         erroGeracao={erroGeracao}
         avisosGerados={avisosGerados}
+        onIrPara={onIrPara}
       />
       <ValidacaoExtracaoDialog
         open={validacaoAberta}

@@ -1332,6 +1332,24 @@ class TestComarcaDaMatricula:
         _d, _pol, _sw, av = _avaliar(1, d)
         assert ("negociacao.foro_comarca", None) in _campos(av)
 
+    @pytest.mark.parametrize(
+        "constante, arquivo",
+        [
+            ("ALVO_ITENS_INTEGRANTES", "components/card/TermosNegocioSection.tsx"),
+            ("ALVO_AD_CORPUS", "components/card/TermosNegocioSection.tsx"),
+            ("ALVO_DOCUMENTOS_DO_IMOVEL", "components/imovel/ImovelDocumentosCard.tsx"),
+        ],
+    )
+    def test_every_alvo_is_rendered_by_the_screen_it_names(self, constante, arquivo):
+        """`destino.alvo` is a DOM id — the producer (here) and the screen that
+        renders it must spell it the same, or "Resolver" lands nowhere."""
+        from pathlib import Path
+
+        fonte = Path(__file__).resolve().parents[4] / "frontend" / "src" / arquivo
+        if not fonte.is_file():
+            pytest.skip(f"frontend source not in this checkout: {fonte}")
+        assert f'"{getattr(derivacao, constante)}"' in fonte.read_text(encoding="utf-8")
+
     def test_the_foro_falta_resolves_on_the_imoveis_documents(self):
         """🔴 Not the generic `/matriculas` extractor list: the imóvel's own
         page, on the documents card where its matrícula is uploaded — still

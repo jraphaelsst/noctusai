@@ -59,6 +59,9 @@ export interface GeracaoDestino {
   tela: string;
   rota: string;
   ancora: string | null;
+  /** The CONTROL on that screen that answers the falta — a DOM id the screen
+   *  renders (`derivacao.ALVO_*`). `null`/absent = the screen itself. */
+  alvo?: string | null;
   ids: {
     cliente_id?: string;
     contrato_id?: string;
@@ -159,19 +162,30 @@ function SugestoesLista({
   );
 }
 
+/** The route a routable destino links to — with `#alvo` when it names a
+ *  control, which the target page scrolls to (`useRolarAteHash`). */
+export function rotaDoDestino(destino: GeracaoDestino): string {
+  return destino.alvo ? `${destino.rota}#${destino.alvo}` : destino.rota;
+}
+
 /**
  * One `faltando` item, rendered actionable off its own `destino`.
  *
  * 🔴 A card-scoped destino (`tela` prefixed `card_`) points at a
  * `ClienteCardDialog` subpage the dialog owns in LOCAL STATE — there is no
- * URL that opens it (`derivacao.py:110-116`'s carve-out), and
- * `GeradorContratoContainer` has no callback wired down from the dialog to
- * switch it either. Inventing a query param the SPA ignores would be a dead
- * link wearing a link's clothes, so this renders guidance text naming the
- * subpage instead. A genuinely routable destino (its own SPA route) renders
- * a real `<Link>`.
+ * URL that opens it (`derivacao.py`'s carve-out). When the dialog hands down
+ * `onIrPara` (it does since 2026-09-23 — the render ctx's `select`), the line
+ * gets a real "Resolver" that switches the subpage and lands on `destino.alvo`.
+ * Without it, guidance text names the subpage — never a query param the SPA
+ * would ignore. A genuinely routable destino renders a real `<Link>`.
  */
-function FaltandoLinha({ item }: { item: FaltandoComDestino }) {
+function FaltandoLinha({
+  item,
+  onIrPara,
+}: {
+  item: FaltandoComDestino;
+  onIrPara?: (destino: GeracaoDestino) => void;
+}) {
   const destino = item.destino;
 
   if (!destino) {
@@ -188,6 +202,32 @@ function FaltandoLinha({ item }: { item: FaltandoComDestino }) {
     const subpageLabel = destino.ancora
       ? SUBPAGE_LABEL[destino.ancora as CardSubpageKey] ?? destino.ancora
       : null;
+    if (onIrPara && destino.ancora) {
+      return (
+        <li>
+          <div className="flex items-center justify-between gap-2">
+            <span>
+              {item.rotulo}
+              {subpageLabel && (
+                <span className="text-muted-foreground/70"> (aba {subpageLabel})</span>
+              )}
+            </span>
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
+              data-testid={`gerador-contrato-faltando-ir-${item.campo}-${item.parte_id ?? ""}`}
+              onClick={() => onIrPara(destino)}
+            >
+              Resolver
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          </div>
+          <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
+        </li>
+      );
+    }
     return (
       <li data-testid={`gerador-contrato-faltando-guidance-${item.campo}-${item.parte_id ?? ""}`}>
         {item.rotulo}
@@ -217,7 +257,7 @@ function FaltandoLinha({ item }: { item: FaltandoComDestino }) {
           className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
           data-testid={`gerador-contrato-faltando-link-${item.campo}-${item.parte_id ?? ""}`}
         >
-          <Link to={destino.rota}>
+          <Link to={rotaDoDestino(destino)}>
             Resolver
             <ArrowRight className="h-3 w-3" />
           </Link>
@@ -244,6 +284,10 @@ interface Props {
   /** The `avisos` a `201` returned — `null` before any successful generation
    *  in this session. */
   avisosGerados: string[] | null;
+  /** Switches the card to a card-scoped destino's subpage and lands on its
+   *  `alvo`. Omitted outside the card dialog — card destinos then render as
+   *  guidance text. */
+  onIrPara?: (destino: GeracaoDestino) => void;
 }
 
 export default function GeradorContratoSection({
@@ -258,6 +302,7 @@ export default function GeradorContratoSection({
   onGerar,
   erroGeracao,
   avisosGerados,
+  onIrPara,
 }: Props) {
   if (showSkeleton) {
     return (
@@ -354,7 +399,11 @@ export default function GeradorContratoSection({
               <p className="text-xs font-medium">{ONDE_ROTULOS[onde] ?? onde}</p>
               <ul className="ml-3 list-disc text-xs text-muted-foreground">
                 {itens.map((item) => (
-                  <FaltandoLinha key={`${item.campo}-${item.parte_id ?? ""}`} item={item} />
+                  <FaltandoLinha
+                    key={`${item.campo}-${item.parte_id ?? ""}`}
+                    item={item}
+                    onIrPara={onIrPara}
+                  />
                 ))}
               </ul>
             </div>

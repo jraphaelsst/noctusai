@@ -248,6 +248,66 @@ describe("GeradorContratoSection", () => {
     ).toBeNull();
   });
 
+  it("🔴 inside the card, a card-scoped 'Resolver' jumps to the subpage + control (onIrPara)", async () => {
+    const onIrPara = vi.fn();
+    const alvo = destino({
+      tela: "card_negociacao",
+      rota: "/clientes",
+      ancora: "negociacao",
+      alvo: "termos-itens-integrantes-resposta",
+      ids: { cliente_id: "cli1" },
+    });
+    const { screen, fireEvent } = await render({
+      onIrPara,
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "negociacao.itens_integrantes",
+            rotulo: "Itens integrantes (relacione-os, ou confirme que não há nenhum)",
+            onde: "negociacao",
+            parte_id: null,
+            destino: alvo,
+          },
+        ],
+      }),
+    });
+    const botao = screen.getByTestId(
+      "gerador-contrato-faltando-ir-negociacao.itens_integrantes-",
+    );
+    // A button, not a fabricated link — the card owns its subpage in state.
+    expect(botao.tagName).toBe("BUTTON");
+    fireEvent.click(botao);
+    expect(onIrPara).toHaveBeenCalledWith(alvo);
+  });
+
+  it("🔴 a routable destino naming an `alvo` links to the route + #alvo (foro → imóvel documents)", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "negociacao.foro_comarca",
+            rotulo: "Comarca do cartório da matrícula",
+            onde: "matricula",
+            parte_id: null,
+            destino: destino({
+              tela: "imovel",
+              rota: "/imoveis/IM-1",
+              ancora: null,
+              alvo: "imovel-documentos",
+              ids: { imovel_codigo: "IM-1" },
+            }),
+          },
+        ],
+      }),
+    });
+    const link = screen.getByTestId(
+      "gerador-contrato-faltando-link-negociacao.foro_comarca-",
+    ) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/imoveis/IM-1#imovel-documentos");
+  });
+
   it("🔴 a `faltando` item's `sugestoes` render as 'Envie X em Y' hints, with a routable destino as a link", async () => {
     const { screen } = await render({
       status: status({

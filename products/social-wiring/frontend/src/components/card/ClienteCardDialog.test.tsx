@@ -80,6 +80,21 @@ function item(key: string, label: string, over: Record<string, unknown> = {}) {
   };
 }
 
+/** The ONE identity item (2026-09-23) — CIN + CNH slots under one tick. */
+function identidade(over: Record<string, unknown> = {}) {
+  return item("identidade", "Documento de identidade (RG e CPF)", {
+    documento: null,
+    documentos: [
+      { tipo_documento: "cin", rotulo: "CIN", upload: true, documento: null },
+      { tipo_documento: "cnh", rotulo: "CNH", upload: true, documento: null },
+    ],
+    faltando: ["rg", "cpf"],
+    faltando_rotulos: ["RG", "CPF"],
+    dica: "Basta um dos dois (CIN ou CNH), desde que dele se leiam o RG e o CPF.",
+    ...over,
+  });
+}
+
 /**
  * Renders the card AND opens the two folds the client's paperwork now lives
  * behind ("Dados obrigatórios", and "Outros dados" nested inside it).
@@ -226,11 +241,7 @@ describe("ClienteCardDialog — Anexos empty state", () => {
       <ClienteCardDialog
         {...baseProps({
           documentos: [],
-          documentoChecklist: [
-            item("rg", "RG"),
-            item("cpf", "CPF"),
-            item("email", "Email"),
-          ],
+          documentoChecklist: [identidade(), item("email", "Email")],
           onUploadDocumentoChecklist: vi.fn(),
         })}
       />,
@@ -239,13 +250,14 @@ describe("ClienteCardDialog — Anexos empty state", () => {
     // Queried off `document` rather than the render container: the card is a
     // Radix Dialog and renders through a portal, so the container is empty.
     const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
-    // anexos + rg + cpf, and NOT email — a typed item is never satisfied by a
-    // file, so it must not own one.
+    // anexos + the identity item's CIN + CNH slots, and NOT email — a typed
+    // item is never satisfied by a file, so it must not own one.
     expect(inputs).toHaveLength(3);
     expect(screen.getByTestId("anexos-section").querySelectorAll('input[type="file"]'))
       .toHaveLength(1);
-    expect(screen.getByTestId("documento-checklist-rg-row").querySelectorAll('input[type="file"]'))
-      .toHaveLength(1);
+    expect(
+      screen.getByTestId("documento-checklist-identidade-row").querySelectorAll('input[type="file"]'),
+    ).toHaveLength(2);
     expect(
       screen.getByTestId("documento-checklist-email-row").querySelectorAll('input[type="file"]'),
     ).toHaveLength(0);
@@ -1244,7 +1256,7 @@ describe("ClienteCardDialog — Roteiros (migration 082)", () => {
 
 describe("a linha unificada de um dado obrigatório", () => {
   const TEXTO = item("email", "Email");
-  const DOC = item("rg", "RG");
+  const DOC = identidade();
 
   async function linha(overrides = {}) {
     const { fireEvent, render, screen } = await import("@testing-library/react");
@@ -1339,50 +1351,73 @@ describe("a linha unificada de um dado obrigatório", () => {
     expect(screen.queryByTestId("documento-checklist-email-descartar-arquivo")).toBeNull();
   });
 
-  it("a DOCUMENT item offers an upload and no inline editor", async () => {
+  it("the identity item offers a CIN and a CNH upload and no inline editor", async () => {
     const { screen } = await linha();
-    expect(screen.getByTestId("documento-checklist-rg-upload")).toBeTruthy();
-    // There is nothing to type: an RG is satisfied by a file.
-    expect(screen.queryByTestId("documento-checklist-rg-editar")).toBeNull();
+    expect(screen.getByTestId("documento-checklist-identidade-cin-upload")).toBeTruthy();
+    expect(screen.getByTestId("documento-checklist-identidade-cnh-upload")).toBeTruthy();
+    // Its numbers are typed in "Dados pessoais", not on this row.
+    expect(screen.queryByTestId("documento-checklist-identidade-editar")).toBeNull();
+  });
+
+  it("🔴 an identity upload is filed under the SLOT's type", async () => {
+    const onUploadDocumentoChecklist = vi.fn();
+    const { fireEvent, screen } = await linha({ onUploadDocumentoChecklist });
+    const file = new File(["x"], "cnh.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("documento-checklist-identidade-cnh-arquivo-input"), {
+      target: { files: [file] },
+    });
+    expect(onUploadDocumentoChecklist).toHaveBeenCalledWith(
+      expect.objectContaining({ key: "identidade" }),
+      file,
+      "cnh",
+    );
   });
 
   it("🔴 the trash appears only once a file exists, and DISCARDS THE FILE", async () => {
     const onRemoverDocumentoChecklist = vi.fn();
-    const comArquivo = {
-      ...DOC,
-      concluido: true,
-      derivado: true,
-      documento: {
-        id: "doc-rg",
-        nome_original: "rg.pdf",
-        mime_type: "application/pdf",
-        tamanho_bytes: 2048,
-        created_at: "2026-08-24T00:00:00Z",
-      },
-    };
+    const comArquivo = identidade({
+      documentos: [
+        { tipo_documento: "cin", rotulo: "CIN", upload: true, documento: null },
+        {
+          tipo_documento: "cnh",
+          rotulo: "CNH",
+          upload: true,
+          documento: {
+            id: "doc-cnh",
+            nome_original: "cnh.pdf",
+            mime_type: "application/pdf",
+            tamanho_bytes: 2048,
+            created_at: "2026-08-24T00:00:00Z",
+          },
+        },
+      ],
+    });
 
     const semArquivo = await linha();
-    expect(semArquivo.screen.queryByTestId("documento-checklist-rg-descartar-arquivo")).toBeNull();
+    expect(
+      semArquivo.screen.queryByTestId("documento-checklist-identidade-cnh-descartar-arquivo"),
+    ).toBeNull();
     (await import("@testing-library/react")).cleanup();
 
     const { fireEvent, screen } = await linha({
       documentoChecklist: [comArquivo],
       onRemoverDocumentoChecklist,
     });
-    expect(screen.getByTestId("documento-checklist-rg-row").textContent).toContain("rg.pdf");
-    fireEvent.click(screen.getByTestId("documento-checklist-rg-descartar-arquivo"));
+    expect(screen.getByTestId("documento-checklist-identidade-row").textContent).toContain("cnh.pdf");
+    fireEvent.click(screen.getByTestId("documento-checklist-identidade-cnh-descartar-arquivo"));
     // The card STAYS; the document is deleted for a fresh upload. A mandatory
-    // row is server-defined — there is no such thing as deleting "RG" from it.
-    expect(onRemoverDocumentoChecklist).toHaveBeenCalledWith("doc-rg", comArquivo);
-    expect(screen.getByTestId("documento-checklist-rg-row")).toBeTruthy();
+    // row is server-defined — there is no such thing as deleting it.
+    expect(onRemoverDocumentoChecklist).toHaveBeenCalledWith("doc-cnh", comArquivo);
+    expect(screen.getByTestId("documento-checklist-identidade-row")).toBeTruthy();
   });
 
   it("🔴 renders without a trash when the backend has not shipped `documento` yet", async () => {
     // The field is optional on purpose: this branch and the backend slice that
     // populates it were built in parallel, and neither may assume the other.
     const { screen } = await linha({ documentoChecklist: [DOC] });
-    expect(screen.getByTestId("documento-checklist-rg-row")).toBeTruthy();
-    expect(screen.queryByTestId("documento-checklist-rg-descartar-arquivo")).toBeNull();
+    expect(screen.getByTestId("documento-checklist-identidade-row")).toBeTruthy();
+    expect(screen.queryByTestId("documento-checklist-identidade-cin-descartar-arquivo")).toBeNull();
+    expect(screen.queryByTestId("documento-checklist-identidade-cnh-descartar-arquivo")).toBeNull();
   });
 
   it("keeps the manual badge and the withdraw affordance on the row", async () => {
@@ -1702,6 +1737,39 @@ describe("a barra lateral como hover rail", () => {
     fireEvent.click(screen.getByTestId("card-subpage-tab-contratos"));
     expect(screen.getByTestId("card-subpage-contratos")).toBeTruthy();
     expect(screen.getByTestId("contratos-stub")).toBeTruthy();
+  });
+
+  it("🔴 the readiness 'Resolver' (irPara) switches the card to the falta's subpage", async () => {
+    const { render, screen, fireEvent, act } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          renderContratos: ({ irPara }) => (
+            <button
+              type="button"
+              data-testid="resolver-stub"
+              onClick={() =>
+                irPara({
+                  tela: "card_negociacao",
+                  rota: "/clientes",
+                  ancora: "negociacao",
+                  alvo: "termos-ad-corpus-resposta",
+                  ids: {},
+                })
+              }
+            />
+          ),
+          renderNegociacao: () => <div data-testid="negociacao-stub" />,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-contratos"));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("resolver-stub"));
+    });
+    expect(screen.getByTestId("card-subpage-negociacao")).toBeTruthy();
+    expect(screen.getByTestId("negociacao-stub")).toBeTruthy();
+    expect(screen.queryByTestId("card-subpage-contratos")).toBeNull();
   });
 
   it("falls back to a placeholder when no renderContratos is given", async () => {

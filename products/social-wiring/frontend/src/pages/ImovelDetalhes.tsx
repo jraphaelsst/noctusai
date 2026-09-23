@@ -75,10 +75,14 @@ import {
   useImovelDocumentos,
 } from "@/hooks/useImovelDados";
 import { useTeamMembers } from "@/hooks/useTeam";
+import { useRolarAteHash } from "@/hooks/useRolarAteAlvo";
 import { formatValor, useImovel, useImovelRegistro } from "@/hooks/useImoveis";
 
 export default function ImovelDetalhes() {
   const { codigo } = useParams<{ codigo: string }>();
+  // A readiness "Resolver" lands here as `/imoveis/X#imovel-documentos` —
+  // scroll to that card once the page has rendered it.
+  useRolarAteHash();
   const query = useImovel(codigo ?? null);
   const registroQuery = useImovelRegistro(codigo ?? null);
   const solicitacao = useSolicitacaoDoImovel(codigo ?? null);

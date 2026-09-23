@@ -126,6 +126,55 @@ describe("DocumentoChecklistSection — progress + rows", () => {
   });
 });
 
+describe("o item único de identidade (RG e CPF, 2026-09-23)", () => {
+  const IDENTIDADE = item("identidade", "Documento de identidade (RG e CPF)", {
+    documento: null,
+    documentos: [
+      { tipo_documento: "cin", rotulo: "CIN", upload: true, documento: null },
+      { tipo_documento: "cnh", rotulo: "CNH", upload: true, documento: null },
+    ],
+    faltando: ["cpf"],
+    faltando_rotulos: ["CPF"],
+    dica: "Basta um dos dois (CIN ou CNH), desde que dele se leiam o RG e o CPF.",
+  });
+
+  it("🔴 renders as ONE row with a CIN and a CNH slot, naming the missing number", async () => {
+    const { getByTestId, getAllByTestId } = await renderSection(
+      baseProps({ items: [IDENTIDADE], onUploadDocumento: vi.fn() }),
+    );
+    expect(getAllByTestId(/-row$/)).toHaveLength(1);
+    expect(getByTestId("documento-checklist-identidade-cin-upload")).toBeTruthy();
+    expect(getByTestId("documento-checklist-identidade-cnh-upload")).toBeTruthy();
+    expect(getByTestId("documento-checklist-identidade-faltando").textContent).toContain("CPF");
+  });
+
+  it("🔴 the RG / CPF readings are offered beside the checklist (sugestoes_extras)", async () => {
+    const sugestao = {
+      valor: "52.179.965-X",
+      documento_id: "doc-1",
+      documento_nome: "cnh.pdf",
+      tipo_documento: "cnh",
+      confianca: "baixa",
+      fonte: "ocr",
+      rotulo: "DOC. IDENTIDADE",
+      valor_atual: null,
+      aviso: null,
+    };
+    const onResolverSugestao = vi.fn();
+    const rtl = await import("@testing-library/react");
+    const { getByTestId } = await renderSection(
+      baseProps({
+        items: [IDENTIDADE],
+        sugestoesExtras: { rg: sugestao, cpf: { ...sugestao, valor: "412.954.238-98" } },
+        onResolverSugestao,
+      }),
+    );
+    expect(getByTestId("documento-checklist-rg-sugestao")).toBeTruthy();
+    rtl.fireEvent.click(getByTestId("documento-checklist-cpf-sugestao-confirmar"));
+    expect(onResolverSugestao).toHaveBeenCalledWith("doc-1", "confirmar", "cpf");
+  });
+});
+
 describe("sugestão de RG idêntico ao CPF (migration 110)", () => {
   it("🔴 mostra o aviso quando a sugestão de RG carrega aviso=rg_igual_cpf", async () => {
     const rgComAviso = item("rg", "RG", {
@@ -144,7 +193,11 @@ describe("sugestão de RG idêntico ao CPF (migration 110)", () => {
     const { getByTestId } = await renderSection(
       baseProps({ items: [rgComAviso], onResolverSugestao: vi.fn() }),
     );
-    expect(getByTestId("documento-checklist-rg-sugestao-aviso-rg-cpf")).toBeTruthy();
+    const aviso = getByTestId("documento-checklist-rg-sugestao-aviso-rg-cpf");
+    // Informational — confirming succeeds (the server refuses RG == CPF
+    // nowhere, a CIN prints the CPF as its identity number).
+    expect(aviso.className).not.toContain("text-destructive");
+    expect(aviso.textContent).not.toContain("vai falhar");
   });
 
   it("não mostra o aviso para uma sugestão comum de RG", async () => {

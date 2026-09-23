@@ -21,6 +21,10 @@
  * per card instance, reachable only from this instance.
  */
 import { useRef, useState } from "react";
+
+/** DOM id of this card — the SAME string `contrato_gerador.derivacao.
+ *  ALVO_DOCUMENTOS_DO_IMOVEL` emits as a readiness `destino.alvo`. */
+export const ALVO_DOCUMENTOS_DO_IMOVEL = "imovel-documentos";
 import {
   AlertCircle,
   AlertTriangle,
@@ -86,7 +90,11 @@ export default function ImovelDocumentosCard({
   }
 
   return (
-    <Card>
+    // `id` = the contract readiness list's "Resolver" target for the foro
+    // comarca falta (`derivacao.ALVO_DOCUMENTOS_DO_IMOVEL`): the comarca is
+    // read off the matrícula uploaded HERE. `tabIndex={-1}` so the jump can
+    // move focus to it too.
+    <Card id={ALVO_DOCUMENTOS_DO_IMOVEL} tabIndex={-1} data-testid={ALVO_DOCUMENTOS_DO_IMOVEL}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <FileText className="h-4 w-4" />
