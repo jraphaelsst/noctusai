@@ -36,11 +36,27 @@ class InboundMedia:
         filename: Original filename when known. Primes the document/vision
             prompt ("the model knows what to expect") and is the
             classification fallback when `mimetype` is absent.
+        force_vision: PDF only. Skip the text-layer short-circuit even when
+            `classify_pdf_text_layer` judges it substantive — the caller
+            already read that text and found none of the fields it needs
+            (`documents.ladder.DocumentTextLadder.to_text`'s own
+            `pular_camada_texto`, which this carries through). Without this,
+            `RealMediaResolver._resolve_pdf` independently re-runs the SAME
+            classifier, finds the SAME "substantive" verdict, and hands back
+            the SAME useless text — the caller's forced retry becomes a
+            silent no-op. Measured 2026-09-23: a "CNH Digital" PDF whose
+            selectable text is a card-cover boilerplate (real, substantive
+            text by the classifier's field-agnostic char-count heuristic)
+            while every identity field lives in a small embedded image —
+            `sem_dados` on every retry, because vision was never actually
+            called. Ignored by every non-PDF branch and by
+            `FakeMediaResolver`.
     """
 
     content: bytes
     mimetype: Optional[str] = None
     filename: Optional[str] = None
+    force_vision: bool = False
 
 
 @dataclass(frozen=True)

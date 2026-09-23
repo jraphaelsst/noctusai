@@ -45,9 +45,14 @@ class _FakeTranscriber:
         self._transcricao = transcricao
         self.calls: list[dict] = []
 
-    async def transcribe(self, content, *, mimetype=None, filename=None):
+    async def transcribe(self, content, *, mimetype=None, filename=None, force_vision=False):
         self.calls.append(
-            {"content": content, "mimetype": mimetype, "filename": filename}
+            {
+                "content": content,
+                "mimetype": mimetype,
+                "filename": filename,
+                "force_vision": force_vision,
+            }
         )
         return self._transcricao
 
@@ -211,6 +216,43 @@ class TestScannedPdfDelegatesInsteadOfDescribingPageOne:
         assert out.error is None
         assert "TEXTO DIGITAL REAL" in out.text
         assert transcriber.calls == []
+
+    @pytest.mark.asyncio
+    async def test_force_vision_overrides_the_short_circuit_even_when_substantive(
+        self,
+    ) -> None:
+        """`InboundMedia.force_vision=True` (the identity extractor's forced
+        retry, via `DocumentTextLadder.to_text(pular_camada_texto=True)`)
+        must reach the transcriber even though this SAME text layer is, by
+        the field-agnostic classifier, substantive. Without this, a caller
+        retrying because this exact text held none of its fields gets this
+        exact text back again — measured 2026-09-23 on a "CNH Digital" PDF
+        whose card-cover disclaimer classifies substantive while every
+        identity field lives in a small embedded image."""
+        transcricao = Transcription(
+            pages=(TranscribedPage(number=1, text="NOME: FULANO DE TAL", source=TextSource.OCR),),
+            num_paginas=1,
+        )
+        transcriber = _FakeTranscriber(transcricao)
+        resolver = RealMediaResolver(org_id="org-1", document_transcriber=transcriber)
+
+        fitz = pytest.importorskip("fitz")
+        doc = fitz.open()
+        page = doc.new_page()
+        texto = "TEXTO DIGITAL REAL. " * 10
+        page.insert_textbox(fitz.Rect(20, 20, 500, 500), texto, fontsize=10)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        out = await resolver.resolve(
+            InboundMedia(content=pdf_bytes, mimetype="application/pdf", force_vision=True)
+        )
+
+        assert out.error is None
+        assert "NOME: FULANO DE TAL" in out.text
+        assert "TEXTO DIGITAL REAL" not in out.text  # the vision answer won, not the text layer
+        assert len(transcriber.calls) == 1
+        assert transcriber.calls[0]["force_vision"] is True
 
 
 class TestQuotaFailurePropagates:

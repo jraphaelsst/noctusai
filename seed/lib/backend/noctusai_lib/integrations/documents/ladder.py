@@ -171,7 +171,18 @@ class DocumentTextLadder:
             from noctusai_lib.integrations.media import InboundMedia
 
             resolved = await self._get_resolver().resolve(
-                InboundMedia(content=content, mimetype=mimetype, filename=filename)
+                InboundMedia(
+                    content=content,
+                    mimetype=mimetype,
+                    filename=filename,
+                    # The resolver's own PDF branch re-derives text-layer
+                    # substantiveness independently (`RealMediaResolver.
+                    # _resolve_pdf`) — without carrying `pular_camada_texto`
+                    # through, a forced retry silently re-reads the SAME
+                    # text that already failed the caller's own field
+                    # search. See `InboundMedia.force_vision`'s docstring.
+                    force_vision=pular_camada_texto,
+                )
             )
         except Exception as exc:  # noqa: BLE001 - background job must not die
             logger.warning("document text ladder: resolver failed: %s", exc)

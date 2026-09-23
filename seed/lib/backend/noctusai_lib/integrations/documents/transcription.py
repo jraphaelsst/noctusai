@@ -328,6 +328,7 @@ class DocumentTranscriber(Protocol):
         *,
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
+        force_vision: bool = False,
     ) -> Transcription:
         ...
 
@@ -347,6 +348,10 @@ class FakeDocumentTranscriber:
         *,
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
+        # Accepted for `DocumentTranscriber` Protocol parity, deliberately
+        # ignored: the Fake has no page-trust concept to override, and
+        # every fixture consumer stays byte-for-byte unaffected either way.
+        force_vision: bool = False,
     ) -> Transcription:
         if not content:
             return Transcription(
@@ -413,16 +418,17 @@ class LadderDocumentTranscriber:
         *,
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
+        force_vision: bool = False,
     ) -> Transcription:
         try:
-            return await self._transcribe(content)
+            return await self._transcribe(content, force_vision=force_vision)
         except Exception as exc:  # noqa: BLE001 - background job must not die
             logger.warning("transcription failed: %s", exc)
             return Transcription(
                 error=_classify_failure(exc), error_message=str(exc)
             )
 
-    async def _transcribe(self, content: bytes) -> Transcription:
+    async def _transcribe(self, content: bytes, *, force_vision: bool = False) -> Transcription:
         if not content:
             return Transcription(
                 error="empty_document", error_message="no bytes to transcribe"
@@ -444,8 +450,18 @@ class LadderDocumentTranscriber:
         from noctusai_lib.integrations.media import classify_pdf_text_layer
 
         camada = classify_pdf_text_layer(content)
-        textos = _texto_confiavel_por_pagina(camada, num_paginas)
-        paginas_para_visao = [n for n in range(1, num_paginas + 1) if n not in textos]
+        if force_vision:
+            # The caller (via `RealMediaResolver._resolve_pdf`'s own
+            # `force_vision`) already read this document's trusted text and
+            # found none of the fields it needs. Honouring
+            # `_texto_confiavel_por_pagina`'s "trusted" verdict here would
+            # hand back the SAME text the caller is retrying to escape —
+            # every page goes to vision instead, no exceptions.
+            textos: dict[int, str] = {}
+            paginas_para_visao = list(range(1, num_paginas + 1))
+        else:
+            textos = _texto_confiavel_por_pagina(camada, num_paginas)
+            paginas_para_visao = [n for n in range(1, num_paginas + 1) if n not in textos]
 
         # Bold/underline for the free pages, from the PDF's own spans and
         # drawings — never from re-deriving `textos`, which stays untouched
@@ -517,7 +533,12 @@ class LadderDocumentTranscriber:
 
         if self._render_dpi_policy is not None:
             images = _pdf_to_images_within_budget(
-                content, paginas_para_visao, self._render_dpi_policy, num_paginas, camada
+                content,
+                paginas_para_visao,
+                self._render_dpi_policy,
+                num_paginas,
+                camada,
+                force_vision=force_vision,
             )
         else:
             images = _pdf_to_images(content, paginas_para_visao, self._render_dpi)
@@ -665,16 +686,66 @@ def _encoded_size(raw: bytes) -> int:
     return 4 * ((len(raw) + 2) // 3)
 
 
-#: A page's largest embedded image must be at least this many times the
-#: area of the next-largest to count as "the document" rather than one of
-#: several images of comparable importance (a card graphic next to an
-#: issuer logo of similar size, say — ambiguous, so the ordinary
-#: page-raster rung answers instead).
+#: A page's largest (non-barcode — see `_barcode_like`) embedded image must
+#: be at least this many times the area of the next-largest to count as
+#: "the document" alone rather than one of several images of comparable
+#: importance (two stacked card halves, say). Below this ratio, every
+#: image within it of the largest is treated as a SIBLING contributing to
+#: the card's region instead of being discarded — see
+#: `_dominant_embedded_image`.
 _DOMINANT_IMAGE_AREA_RATIO = 3.0
+
+#: DPI for the cropped-region render when 2+ comparable non-barcode images
+#: together form the card (e.g. two stacked halves, or a duplicated
+#: overlay) — see `_dominant_embedded_image`. Deliberately higher than any
+#: `RenderDpiPolicy` starting DPI: the crop covers a small fraction of the
+#: page, so a sharp render of just that region stays well under the byte
+#: budget where the same DPI applied to the WHOLE page would not.
+_CARD_REGION_DPI = 600
+
+#: How close to a perfect square (`width / height`) counts as "QR-code
+#: shaped" for `_barcode_like`'s second signal. Every card image measured
+#: 2026-09-23 has an aspect ratio between 0.70 and 1.42 — none within this
+#: tolerance of 1.0 — while the QR/barcode samples are exactly 1.00.
+_BARCODE_ASPECT_TOLERANCE = 0.18
+
+
+def _barcode_like(info: dict) -> bool:
+    """Is this embedded image a QR code / barcode, not the card itself?
+
+    Measured 2026-09-23 against a real "CNH Digital" (Detran/Serpro) PDF:
+    it embeds a verification QR code (591x591, DeviceGray, 1 bit/pixel)
+    ALONGSIDE the card image(s), at a rect AREA close enough to the card's
+    own that `_DOMINANT_IMAGE_AREA_RATIO` judged neither one dominant — the
+    "ambiguous, bail to the page raster" case that constant exists for,
+    except the QR was never a competing candidate for "the document" at
+    all, and excluding it is what lets the real dominance/union logic see
+    the card underneath it.
+
+    `bpc <= 1` (1 bit per pixel) is checked alone first: no photograph of a
+    physical card is ever encoded at 1 bit/pixel, so this signal alone
+    never misclassifies real card content. A near-square, single-component
+    (grayscale) image is treated the same way as a defensive second
+    signal — every card image sampled has an aspect ratio between 0.70 and
+    1.42 (never square) — so an 8-bit-grayscale barcode variant is also
+    caught, without risking a false positive on an accidentally-square RGB
+    photo (which this second check alone would never flag: colorspace must
+    ALSO be single-component).
+    """
+    if (info.get("bpc") or 8) <= 1:
+        return True
+    largura, altura = info.get("width") or 0, info.get("height") or 0
+    if info.get("colorspace") == 1 and largura and altura:
+        aspecto = largura / altura
+        if abs(aspecto - 1.0) <= _BARCODE_ASPECT_TOLERANCE:
+            return True
+    return False
 
 
 def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
-    """The ONE embedded raster image on this page, at ITS OWN resolution.
+    """The identity card's own pixels on this page — one embedded image at
+    its native resolution, or a crop spanning several comparable ones,
+    whichever this page actually carries.
 
     The `identity-vision-render-dpi` shape measured 2026-09-23: a card's
     every field lives in a small embedded image; the page's SELECTABLE
@@ -684,13 +755,21 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
     sized card graphic vs. a full A4 raster), so the DPI/budget trade-off
     in `_pdf_to_images_within_budget` does not even arise for this page.
 
-    Never raises, and returns `None` — the ordinary page-raster rung then
-    answers instead — when: the page cannot be opened; it has no embedded
-    image; or it has more than one and none is unambiguously dominant
-    (`_DOMINANT_IMAGE_AREA_RATIO`). Deliberately does NOT try to pick "the
-    best" image among several comparable ones — a wrong guess there would
-    silently send the wrong picture, which is worse than falling back to
-    the page raster this function's caller already has to support anyway.
+    Three shapes, in order:
+
+    1. Exactly one non-barcode image (after `_barcode_like` excludes any
+       QR/verification code) — return its raw bytes, unscaled. The
+       original, single-image fast path, unchanged.
+    2. Two or more non-barcode images within `_DOMINANT_IMAGE_AREA_RATIO`
+       of the largest — no single one IS the document (a front/back pair,
+       or a duplicated overlay layer; measured on a real template that
+       stacks the card as 2-3 same-area images) — crop-render the UNION of
+       their rects at `_CARD_REGION_DPI` instead of guessing which one to
+       send.
+    3. Anything else (no images once barcodes are excluded; the page
+       cannot be opened; a lone tiny image dwarfed by others that were
+       filtered) — `None`, and the ordinary page-raster rung answers
+       instead. Never raises.
     """
     try:
         import fitz  # type: ignore  # PyMuPDF
@@ -711,30 +790,57 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
         if not imagens:
             return None
 
-        areas: list[tuple[float, int]] = []
+        candidatos: list[tuple[float, int, "fitz.Rect"]] = []
         for img in imagens:
             xref = img[0]
             try:
-                maior = max(
-                    (abs(r.width * r.height) for r in page.get_image_rects(xref)),
-                    default=0.0,
-                )
+                rects = page.get_image_rects(xref)
             except Exception:
-                maior = 0.0
-            areas.append((maior, xref))
-        areas.sort(key=lambda par: par[0], reverse=True)
+                continue
+            if not rects:
+                continue
+            rect = max(rects, key=lambda r: abs(r.width * r.height))
+            try:
+                info = doc.extract_image(xref)
+            except Exception:
+                continue
+            if _barcode_like(info):
+                continue
+            candidatos.append((abs(rect.width * rect.height), xref, rect))
 
-        if len(areas) > 1 and areas[0][0] < areas[1][0] * _DOMINANT_IMAGE_AREA_RATIO:
-            return None  # no single image clearly IS the document
+        if not candidatos:
+            return None  # no card-shaped image once barcodes are excluded
 
-        xref = areas[0][1]
+        candidatos.sort(key=lambda c: c[0], reverse=True)
+        maior_area = candidatos[0][0]
+        irmas = [c for c in candidatos if c[0] * _DOMINANT_IMAGE_AREA_RATIO >= maior_area]
+
+        if len(irmas) == 1:
+            xref = irmas[0][1]
+            try:
+                extraido = doc.extract_image(xref)
+            except Exception:
+                logger.debug("dominant-image: extract_image failed on page %d", numero, exc_info=True)
+                return None
+            dados = (extraido or {}).get("image")
+            return dados or None
+
+        # 2+ comparable, non-barcode images — no single one IS the
+        # document, but their UNION region is. Crop-render just that
+        # region instead of extracting one (possibly wrong) image
+        # verbatim, or falling back to the whole page.
+        left = min(r.x0 for _, _, r in irmas)
+        top = min(r.y0 for _, _, r in irmas)
+        right = max(r.x1 for _, _, r in irmas)
+        bottom = max(r.y1 for _, _, r in irmas)
+        uniao = fitz.Rect(left, top, right, bottom)
+        zoom = _CARD_REGION_DPI / 72
         try:
-            extraido = doc.extract_image(xref)
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=uniao)
+            return pix.tobytes("png")
         except Exception:
-            logger.debug("dominant-image: extract_image failed on page %d", numero, exc_info=True)
+            logger.debug("dominant-image: crop render failed on page %d", numero, exc_info=True)
             return None
-        dados = (extraido or {}).get("image")
-        return dados or None
     finally:
         doc.close()
 
@@ -745,16 +851,26 @@ def _pdf_to_images_within_budget(
     policy: RenderDpiPolicy,
     num_paginas: int,
     camada,
+    *,
+    force_vision: bool = False,
 ) -> dict[int, bytes]:
     """Rasterize each page for vision, honouring `policy` — the
     `identity-vision-render-dpi` fix. Per page, independently:
 
     1. If the page's text layer classified as pure provenance boilerplate
        (`reason == "provenance stamp only"` — see `pdf_text._classify_page`)
-       and it carries one dominant embedded image, send that image at its
-       own resolution (`_dominant_embedded_image`) — cheaper AND sharper
-       than any page raster, so the DPI/budget question below is skipped
-       entirely for this page.
+       OR the caller has already told us this page's text is useless
+       (`force_vision` — a caller-level fact, stronger than the classifier's
+       own field-agnostic guess), and the page carries a usable embedded
+       image or a union of comparable ones, send THAT instead of the whole
+       page (`_dominant_embedded_image`) — cheaper AND sharper than any page
+       raster, so the DPI/budget question below is skipped entirely for
+       this page. `force_vision` widens this beyond the "provenance stamp"
+       reason on purpose: a page can be `force_vision`'d because its text
+       classified as genuinely substantive (a card-cover disclaimer, say)
+       yet held none of the caller's fields — the classifier's reason string
+       was never wrong, it just answers a different question than "does
+       THIS caller's data live here".
     2. Otherwise, rasterize the whole page starting at
        `policy.dpi_for_page_count(num_paginas)`, stepping DOWN through
        `policy.step_down_dpis` (only the candidates below the starting DPI,
@@ -777,7 +893,7 @@ def _pdf_to_images_within_budget(
 
     images: dict[int, bytes] = {}
     for numero in paginas:
-        if razoes.get(numero) == "provenance stamp only":
+        if razoes.get(numero) == "provenance stamp only" or force_vision:
             nativo = _dominant_embedded_image(pdf_bytes, numero)
             if nativo is not None and _encoded_size(nativo) <= policy.max_encoded_bytes:
                 images[numero] = nativo
