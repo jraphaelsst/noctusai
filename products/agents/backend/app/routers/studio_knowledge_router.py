@@ -12,6 +12,18 @@ shared ``store_errors`` (409 ``slug_taken`` / 422 ``invalid_field``).
 Caps (wave-1 security review): the list filter ``q`` ≤ 200 chars (L4 — and
 it travels as a bound SQL parameter, never a PostgREST filter string);
 search ``q`` ≤ 512 (L5).
+
+``POST .../documents/batch`` (UI-KB-BACKEND): bulk ingest for the Studio UI
+(a 382-document corpus can't go through one-document-per-call) — up to
+``DOCUMENTS_BATCH_MAX`` items, reusing the importer's
+``upsert_document_by_source_sha`` (idempotent re-upload, no revision spam)
+so its semantics are IDENTICAL for a UI batch upload and a bundle import.
+PER-ITEM results: one bad document never loses the other 99 — every
+store error (``ValueError`` invalid slug/tipo/size, ``StudioConflict``
+``slug_in_other_collection``) is caught per item, never propagated as a
+500/409 for the whole call. ``app.main`` raises this route's body-size cap
+(``DOCUMENTS_BATCH_BODY_LIMIT_PATTERN``) the same way it does for
+``.../import`` — the 1 MB webhook-DoS default would 413 a realistic batch.
 """
 from __future__ import annotations
 
@@ -30,6 +42,9 @@ from app.schemas.studio_ke import (
     CollectionListOut,
     CollectionOut,
     CollectionUpdateRequest,
+    DocumentBatchCreateRequest,
+    DocumentBatchItemResultOut,
+    DocumentBatchResultOut,
     DocumentCreateRequest,
     DocumentListItemOut,
     DocumentListOut,
@@ -40,6 +55,7 @@ from app.schemas.studio_ke import (
     SearchItemOut,
     SearchOut,
 )
+from app.stores._db_errors import StudioConflict
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord
 from app.stores.studio_knowledge import (
@@ -51,6 +67,16 @@ from app.studio.models import LIST_QUERY_MAX, SEARCH_QUERY_MAX
 from noctusai_lib.api.auth.session import AuthContext
 
 router = APIRouter(prefix="/api/studio/agents", tags=["studio-knowledge"])
+
+#: The body-cap pattern ``app.main`` registers (whole-segment wildcard,
+#: same shape as ``studio_import_router.IMPORT_BODY_LIMIT_PATTERN``).
+DOCUMENTS_BATCH_BODY_LIMIT_PATTERN = "/api/studio/agents/*/knowledge/*/documents/batch"
+#: 100 items × `document.conteudo` (2 MB) is a pathological upper bound
+#: nobody hits in practice (a real knowledge corpus runs KB-hundred KB per
+#: doc); 20 MB gives generous headroom over realistic batches while staying
+#: well under the pathological max — narrower than the 25 MB bundle import
+#: cap since this is one collection's slice, not a whole agent.
+DOCUMENTS_BATCH_MAX_BYTES = 20 * 1024 * 1024
 
 
 # ── DI seams ─────────────────────────────────────────────────────────────
@@ -211,6 +237,56 @@ async def create_document(
             author_id=ctx.user_id,
         )
     return _document_out(record)
+
+
+_BATCH_STATUS_PT = {"created": "criado", "updated": "atualizado", "unchanged": "inalterado"}
+
+
+@router.post(
+    "/{key}/knowledge/{col_id}/documents/batch", response_model=DocumentBatchResultOut,
+)
+async def create_documents_batch(
+    key: str,
+    col_id: UUID,
+    payload: DocumentBatchCreateRequest,
+    ctx: AuthContext = Depends(require_admin),
+    store=Depends(get_studio_knowledge_store_dep),
+    defs=Depends(get_studio_definition_store_dep),
+) -> DocumentBatchResultOut:
+    """Bulk ingest into ONE collection (contract §D3 batch, UI-KB-BACKEND).
+
+    Reuses ``upsert_document_by_source_sha`` — the SAME idempotent-upsert
+    semantics the §F importer uses (change-detected on content hash, no
+    revision written when unchanged). Every item's validation/conflict
+    error is caught individually so one bad document never sinks the call.
+    """
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    try:
+        store.get_collection(ctx.org_id, agent.id, col_id)
+    except NotFound as exc:
+        raise _not_found("Coleção não encontrada.", "collection_not_found") from exc
+
+    resultados: list[DocumentBatchItemResultOut] = []
+    counts = {"criado": 0, "atualizado": 0, "inalterado": 0, "erro": 0}
+    for item in payload.documentos:
+        try:
+            record, op = store.upsert_document_by_source_sha(
+                ctx.org_id, agent.id, col_id,
+                slug=item.slug, titulo=item.titulo, tipo=item.tipo,
+                resumo=item.resumo, proveniencia=item.proveniencia, conteudo=item.conteudo,
+                author_id=ctx.user_id,
+            )
+        except (ValueError, StudioConflict) as exc:
+            counts["erro"] += 1
+            resultados.append(DocumentBatchItemResultOut(slug=item.slug, status="erro", erro=str(exc)))
+            continue
+        status_pt = _BATCH_STATUS_PT[op]
+        counts[status_pt] += 1
+        resultados.append(DocumentBatchItemResultOut(slug=item.slug, status=status_pt, doc_id=record.id))
+    return DocumentBatchResultOut(
+        resultados=resultados, criados=counts["criado"], atualizados=counts["atualizado"],
+        inalterados=counts["inalterado"], erros=counts["erro"],
+    )
 
 
 @router.get("/{key}/documents/{doc_id}", response_model=DocumentOut)

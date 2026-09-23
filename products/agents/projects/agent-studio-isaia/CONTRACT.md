@@ -652,3 +652,47 @@ sum) and every result's `custo_usd`/`tokens_*`.
 a "cheaper iteration" model picker in the run-launch UI) — trigger: the next Agent Studio FE slice.
 `products/agents/frontend/src/api/studio/types-ke.ts` already mirrors L6's `EvalRun`/`EvalResult`
 additions (and `StudioMessage` mirrors the message ones) so that slice starts from a synced contract.
+
+## §M · UI bulk ingest (2026-09-23)
+
+**WHY.** IsaIA's own knowledge corpus is 382 documents / 12 skills with 21 reference files — building
+that entirely through the Studio UI (the goal, instead of one `import` bundle authored outside the
+repo) was impossible at one-document/one-file-per-call. Both routes reuse existing store semantics
+verbatim — no new upsert logic, no new DB objects.
+
+**M1 · `POST .../knowledge/{col_id}/documents/batch`** (admin). Body `{"documentos": [{slug, titulo,
+tipo, conteudo, resumo?, proveniencia?}, ...]}` — same fields/caps as the single-document
+`DocumentCreateRequest` (`app/schemas/studio_ke.py::DocumentBatchItemIn`), 1..100 items
+(`DOCUMENTS_BATCH_MAX`, 422 beyond — a Pydantic list-length error, not a 413; the 413 backstop is the
+route's raised body-size cap below). Calls the SAME `StudioKnowledgeStore.
+upsert_document_by_source_sha` the §F importer uses per item — idempotent re-upload (`"inalterado"`,
+no revision written), a slug already in ANOTHER collection → per-item `"erro"`
+(`slug_in_other_collection`), never a 409 for the whole call. Response: `{resultados: [{slug, status:
+"criado"|"atualizado"|"inalterado"|"erro", doc_id?, erro?}], criados, atualizados, inalterados,
+erros}` — one bad document never loses the other 99 (§H "PER-ITEM results, never all-or-nothing").
+`proveniencia` was already accepted on the single-document create route (`DocumentCreateRequest.
+proveniencia: dict | None`) — no schema change needed there.
+
+**M2 · `PUT .../draft/skills/{skill_id}/files/batch`** (admin). Body `{"arquivos": [{caminho, titulo?,
+conteudo}, ...]}` — same fields/caps/path-traversal guard as the single-file `SkillFileUpsertRequest`,
+1..50 items (`SKILL_FILES_BATCH_MAX`). Draft-only: `_resolve_draft_skill` 409s `version_immutable` for
+the WHOLE call if the target version isn't a `rascunho` (same as the single-file route — a batch never
+opens a weaker path onto a published version). Calls `upsert_skill_file` per item (upsert keyed on
+`caminho`); the router determines created-vs-updated by diffing against the skill's file set fetched
+once before the loop. Response: `{resultados: [{caminho, status: "criado"|"atualizado"|"erro", id?,
+titulo?, chars?, erro?}], criados, atualizados, erros}`.
+
+**M3 · Body-size overrides (`app.main`).** Both routes are JSON bodies above the seed's 1 MB
+webhook-DoS default, registered in `max_body_path_overrides` the same way as `.../import` (whole-
+segment wildcard patterns, `DOCUMENTS_BATCH_BODY_LIMIT_PATTERN` / `SKILL_FILES_BATCH_BODY_LIMIT_PATTERN`
+in each router module): 20 MB for documents (generous headroom over a realistic 100-doc batch; well
+under the 100×2 MB pathological max `document.conteudo` alone would allow), 8 MB for skill files
+(50×120 KB pathological max is 6 MB). Narrower than the 25 MB bundle-import cap in both cases — each
+call is one collection's or one skill's slice, not a whole agent.
+
+**M4 · Validation parity (§H4).** Every cap/allowlist the single-item route enforces applies
+identically per batch item — `tipo` allowlist, slug pattern, `document.conteudo`/`skill_file.conteudo`
+size caps, `caminho` pattern + `..`-exclusion — via the SAME Pydantic field constraints
+(`DocumentBatchItemIn`/`SkillFileBatchItemIn` mirror the single-item request schemas field-for-field)
+and the SAME store-layer validation (`_validate_slug`/`_validate_tipo`/`_check_cap` — no batch-only
+code path bypasses them). No weaker path into `knowledge_documents` or `agent_skill_files`.

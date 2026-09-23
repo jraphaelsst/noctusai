@@ -22,6 +22,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.studio.models import (
+    DOCUMENTS_BATCH_MAX,
     EVAL_RUN_BUDGET_USD_MAX,
     EVAL_RUN_MODEL_ALLOWLIST,
     LIMITS,
@@ -118,6 +119,46 @@ class DocumentUpdateRequest(StrictHttpModel):
     proveniencia: dict[str, Any] | None = None
     ativo: bool | None = None
     motivo: str | None = None
+
+
+class DocumentBatchItemIn(StrictHttpModel):
+    """One document of a `documents:batch` call — same fields/caps as
+    ``DocumentCreateRequest``, validated identically (no weaker path into
+    the same table)."""
+
+    slug: str = Field(..., min_length=1)
+    titulo: str = Field(..., min_length=1)
+    tipo: str
+    conteudo: str = Field(..., min_length=1, max_length=_DOC_CONTEUDO)
+    resumo: str | None = None
+    proveniencia: dict[str, Any] | None = None
+
+
+class DocumentBatchCreateRequest(StrictHttpModel):
+    #: 1..100 (`DOCUMENTS_BATCH_MAX`) — 422 `too_short`/`too_long` beyond
+    #: (Pydantic's own list-length error, never a bespoke 413: the body-size
+    #: DoS backstop is the route's raised ``max_body_path_overrides`` cap,
+    #: this is the item-COUNT cap).
+    documentos: list[DocumentBatchItemIn] = Field(..., min_length=1, max_length=DOCUMENTS_BATCH_MAX)
+
+
+class DocumentBatchItemResultOut(BaseModel):
+    slug: str
+    #: "criado" | "atualizado" | "inalterado" | "erro"
+    status: str
+    doc_id: UUID | None = None
+    erro: str | None = None
+
+
+class DocumentBatchResultOut(BaseModel):
+    """Per-item results — ONE bad document in a call of 100 never loses the
+    other 99 (a 4xx/5xx here would be an all-or-nothing failure)."""
+
+    resultados: list[DocumentBatchItemResultOut]
+    criados: int
+    atualizados: int
+    inalterados: int
+    erros: int
 
 
 class RevisionOut(BaseModel):
@@ -313,6 +354,10 @@ __all__ = [
     "DocumentOut",
     "DocumentCreateRequest",
     "DocumentUpdateRequest",
+    "DocumentBatchItemIn",
+    "DocumentBatchCreateRequest",
+    "DocumentBatchItemResultOut",
+    "DocumentBatchResultOut",
     "RevisionOut",
     "RevisionListOut",
     "SearchItemOut",
