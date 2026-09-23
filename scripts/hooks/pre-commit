@@ -791,6 +791,40 @@ if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
     # findings.
 fi
 
+# ─── 6i. Stand-in conformance gate (advisory, only when backend .py or a ──
+# migration changed) ─────────────────────────────────────────────────────
+# Keeper `check_stand_in_conformance` (`tools/noctus/dev/stand_in_conformance.py`
+# — no KB doc yet, new detector). Built against THREE same-day production
+# failures (2026-09-22) where a test double was more permissive than the
+# real thing: `imovel_dados` (an unencodable write payload the mock
+# accepted — leg B(iii) pins `_validate_json_serializable` stays wired),
+# `_SchemaPinnedAdminClient` (a `__slots__` wrapper missing `__weakref__`
+# broke every `WeakKeyDictionary`-keyed cache the moment real dependency
+# resolution ran — leg A resolves each product's OWN FastAPI dependency
+# graph against a REAL client object, construction-only, never a live
+# request; leg B(i)/B(ii) assert weak-referenceability + identity
+# stability), and `atendimento_contrato_versoes` (a cross-column CHECK the
+# mock couldn't express — leg B(iv) inventories migration CHECKs against
+# `ConditionalPresenceManifest` coverage). Legs A/B(i)/B(ii)/B(iii) are
+# proven clean on this tree (the CLI's own blocking predicate would exit 1
+# on a genuine regression there); leg B(iv) is DELIBERATELY excluded from
+# that predicate — the fleet-wide migration scan correctly surfaces a
+# substantial PRE-EXISTING backlog of unreviewed cross-column CHECK
+# constraints this first landing does not intend to big-bang-block the
+# fleet on. Observe-first cadence on a brand-new detector, matching
+# `check_postgrest_unbounded_query`/`check_lying_loading_state`: advisory
+# only for now — `|| true` regardless of the CLI's own exit code, so a
+# future genuine leg-A/B(i)/B(ii)/B(iii) regression is SEEN (printed) even
+# though it isn't yet gated to block. Promote to blocking once the leg
+# B(iv) backlog has a review pass. Scoped to staged backend .py
+# (`$STAGED_BACKEND_PY`, reused from 6g/6h above — covers
+# `noctusai_lib/testing/mocks.py` too) OR a staged migration file.
+STAGED_STAND_IN_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/migrations/.*\.sql$' || true)
+if { [[ -n "$STAGED_BACKEND_PY" ]] || [[ -n "$STAGED_STAND_IN_MIGRATIONS" ]]; } && have_py; then
+    echo "[pre-commit] backend .py/migrations staged — checking stand-in conformance..."
+    "$PY" "$CLI" --check-stand-in-conformance --worktree-path "$REPO_ROOT" || true
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),
