@@ -84,7 +84,11 @@ import {
   envelopeVivo,
   useAssinaturas,
   useContratoMutations,
+  validateContratoAssinadoFile,
+  versaoParaImpressao,
   type AssinaturaOut,
+  type ContratoOut,
+  type VersaoOut,
 } from "./useContratos";
 
 beforeEach(() => {
@@ -287,5 +291,81 @@ describe("useContratoMutations — enviarParaAssinatura / cancelarAssinatura", (
     await Promise.resolve();
     const err = captured as AssinaturaError;
     expect(err.details?.provedor_mensagem).toBe("signer email already used");
+  });
+});
+
+describe("migration 157 — modalidade de assinatura", () => {
+  function versao(over: Partial<VersaoOut> = {}): VersaoOut {
+    return {
+      id: "v1", nome_original: "c.pdf", mime_type: "application/pdf", tamanho_bytes: 1,
+      tipo_documento: "contrato", enviado_por: null, created_at: "2026-09-20T00:00:00Z",
+      numero: 1, rotulo: null, origem: "gerado", docx_disponivel: true,
+      modalidade_assinatura: "fisica", ...over,
+    };
+  }
+  function contrato(atual: VersaoOut | null): ContratoOut {
+    return {
+      id: "c1", atendimento_id: "a1", titulo: "t", modelo: "compra_venda", status: "rascunho",
+      status_em: null, status_por: null, origem: "gerado", created_at: "2026-09-20T00:00:00Z",
+      updated_at: null, versao_atual: atual, versoes: atual ? [atual] : [],
+      assinatura_data: null, prazo_pendencias_dias: null, processo_legado: false,
+      processo_legado_por: null, processo_legado_em: null, processo_legado_motivo: null,
+      modalidade_assinatura: "fisica",
+    };
+  }
+
+  it("versaoParaImpressao returns only a gerado rendering made as física", () => {
+    expect(versaoParaImpressao(contrato(versao()))?.id).toBe("v1");
+    expect(versaoParaImpressao(contrato(versao({ modalidade_assinatura: "digital" })))).toBeNull();
+    expect(versaoParaImpressao(contrato(versao({ modalidade_assinatura: null })))).toBeNull();
+    expect(versaoParaImpressao(contrato(versao({ origem: "assinado" })))).toBeNull();
+    expect(versaoParaImpressao(contrato(null))).toBeNull();
+  });
+
+  it("the scanned copy must be a PDF", () => {
+    expect(validateContratoAssinadoFile(new File(["%PDF"], "a.pdf"))).toBeNull();
+    expect(validateContratoAssinadoFile(new File(["PK"], "a.docx"))).toContain("PDF");
+  });
+
+  it("marcarAssinadoFisico POSTs multipart to .../assinatura-fisica, with or without the scan", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init?: RequestInit) =>
+        new Response(JSON.stringify(contrato(versao())), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { marcarAssinadoFisico } = useContratoMutations("cli1") as unknown as {
+      marcarAssinadoFisico: { _mutationFn: (v: unknown) => Promise<unknown> };
+    };
+
+    await marcarAssinadoFisico._mutationFn({ contratoId: "c1" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/api/clientes/cli1/contratos/c1/assinatura-fisica");
+    expect(init.method).toBe("POST");
+    expect((init.body as FormData).has("file")).toBe(false);
+
+    const pdf = new File(["%PDF"], "assinado.pdf", { type: "application/pdf" });
+    await marcarAssinadoFisico._mutationFn({ contratoId: "c1", file: pdf });
+    const body = (fetchMock.mock.calls[1] as [string, RequestInit])[1].body as FormData;
+    expect(body.get("file")).toBeInstanceOf(File);
+    vi.unstubAllGlobals();
+  });
+
+  it("🔴 a typed refusal surfaces the server's own pt-BR message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: { code: "CONTRATO_NAO_E_FISICO", message: "Só um contrato de assinatura física..." } }),
+          { status: 409 },
+        ),
+      ),
+    );
+    const { marcarAssinadoFisico } = useContratoMutations("cli1") as unknown as {
+      marcarAssinadoFisico: { _mutationFn: (v: unknown) => Promise<unknown> };
+    };
+    await expect(marcarAssinadoFisico._mutationFn({ contratoId: "c1" })).rejects.toThrow(
+      "Só um contrato de assinatura física...",
+    );
+    vi.unstubAllGlobals();
   });
 });

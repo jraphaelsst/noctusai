@@ -73,6 +73,7 @@ function statusFixture(over: Partial<ContratoGeracaoStatus> = {}): ContratoGerac
     modelo_confere: true,
     modelo_automatico: false,
     processo_legado: false,
+    modalidade_assinatura: "digital",
     switches: {},
     faltando: [],
     bloqueios: [],

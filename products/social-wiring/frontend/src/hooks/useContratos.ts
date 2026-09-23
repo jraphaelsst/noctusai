@@ -38,6 +38,22 @@ export type ContratoModelo =
 export type ContratoOrigem = "upload" | "gerado";
 
 /**
+ * Migration 157 — how the contract gets signed, and THE GATE between the two
+ * flows: `digital` = the e-signature envelope ("Enviar para assinatura");
+ * `fisica` = printed and signed by hand ("Baixar para impressão" +
+ * "Marcar como assinado"). The server refuses `enviar` on a `fisica`
+ * contract (409 `CONTRATO_FISICO_SEM_ASSINATURA_DIGITAL`) and refuses going
+ * `fisica` while an envelope is live (409
+ * `CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO`).
+ */
+export type ModalidadeAssinatura = "digital" | "fisica";
+
+export const MODALIDADE_ASSINATURA_LABEL: Record<ModalidadeAssinatura, string> = {
+  digital: "Digital",
+  fisica: "Física",
+};
+
+/**
  * §2's migration widens ONLY `atendimento_contrato_versoes.origem`'s CHECK,
  * not the contract's own `ContratoOrigem` — a contract does not become
  * "assinado" just because one of its versions did; `ContratoOut.origem` still
@@ -66,6 +82,11 @@ export interface VersaoOut {
    *  .docx the ABNT PDF was rendered from, stored as a sibling artifact on
    *  the same row. Drives whether "Baixar .docx" renders at all. */
   docx_disponivel: boolean;
+  /** Migration 157. For a `gerado` version: the modalidade it was RENDERED
+   *  with — only a `fisica` rendering carries the signature lines, so only
+   *  that one is offered as "Baixar para impressão". `null` for upload /
+   *  assinado versions and for gerado ones that predate the migration. */
+  modalidade_assinatura: ModalidadeAssinatura | null;
 }
 
 export interface ContratoOut {
@@ -96,6 +117,8 @@ export interface ContratoOut {
   processo_legado_por: ContratoActor | null;
   processo_legado_em: string | null;
   processo_legado_motivo: string | null;
+  /** Migration 157 — the signing gate. A pre-157 contract reads `digital`. */
+  modalidade_assinatura: ModalidadeAssinatura;
 }
 
 export interface ContratoPatch {
@@ -107,6 +130,23 @@ export interface ContratoPatch {
   /** Migration 114. Must be `> 0` when set; `null` restores the office
    *  default (10 days) — the service's own 400, not a 422. */
   prazo_pendencias_dias?: number | null;
+  /** Migration 157. 409 `CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO` when
+   *  switching to `fisica` under a live envelope. */
+  modalidade_assinatura?: ModalidadeAssinatura;
+}
+
+/**
+ * The one place a version is "the print copy" of a física contract: a
+ * GENERATED version rendered with `fisica` (so it carries the signature
+ * lines). A version generated while the contract was still digital is never
+ * handed out for printing — it would print the digital-signature clause.
+ */
+export function versaoParaImpressao(contrato: ContratoOut): VersaoOut | null {
+  const atual = contrato.versao_atual;
+  if (atual && atual.origem === "gerado" && atual.modalidade_assinatura === "fisica") {
+    return atual;
+  }
+  return null;
 }
 
 // ─── Contract generation (F5) ────────────────────────────────────────────
@@ -164,6 +204,8 @@ export interface ContratoGeracaoStatus {
    *  contrato" section can show the dispensation is active even before a
    *  reader gets down to the avisos that name it. */
   processo_legado: boolean;
+  /** Migration 157 — which instrument `gerar` will render. */
+  modalidade_assinatura: ModalidadeAssinatura;
   switches: Record<string, boolean>;
   faltando: GeracaoFaltando[];
   bloqueios: GeracaoBloqueio[];
@@ -372,6 +414,20 @@ export const CONTRATO_MODELO_OPTIONS: ContratoModelo[] = [
 // Mirrors the server's own gate (422 for wrong MIME / oversize) so the user
 // finds out from the form, not from a round trip.
 
+/** Migration 157 — the scanned signed copy of a física contract: PDF only
+ *  (the server's own 400 otherwise), same 25 MB ceiling. */
+export const CONTRATO_ASSINADO_ACCEPT_ATTR = ".pdf,application/pdf";
+
+export function validateContratoAssinadoFile(file: File): string | null {
+  if (!file.name.toLowerCase().endsWith(".pdf")) {
+    return `Envie o contrato assinado digitalizado em PDF (${file.name} não é PDF).`;
+  }
+  if (file.size > MAX_BYTES) {
+    return `Arquivo muito grande (${formatBytes(file.size)}). O limite é 25 MB.`;
+  }
+  return null;
+}
+
 const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".doc"] as const;
 export const CONTRATO_ACCEPT_ATTR = ACCEPTED_EXTENSIONS.join(",");
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -544,6 +600,11 @@ async function postMultipart(url: string, formData: FormData): Promise<ContratoO
  */
 async function extractDetailMessage(response: Response): Promise<string> {
   const body = await response.json().catch(() => null);
+  // A typed `AppException` (e.g. migration 157's 409s) answers
+  // `{error: {code, message}}`, not FastAPI's `detail` — its pt-BR
+  // `message` is the sentence to show.
+  const appMessage = body?.error?.message;
+  if (typeof appMessage === "string" && appMessage) return appMessage;
   const detail = body?.detail;
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
@@ -813,6 +874,25 @@ export function useContratoMutations(clienteId: string) {
     },
   });
 
+  /**
+   * `marcarAssinadoFisico` — POST .../assinatura-fisica (migration 157). A
+   * `fisica` contract's manual close-out: status `assinado` (stamped by the
+   * server) plus, optionally, the scanned signed PDF as a new `assinado`
+   * version. Multipart because of the optional file — `postMultipart`
+   * surfaces the server's own pt-BR message on every refusal.
+   */
+  const marcarAssinadoFisico = useMutation({
+    mutationFn: ({ contratoId, file }: { contratoId: string; file?: File | null }) => {
+      const formData = new FormData();
+      if (file) formData.append("file", file);
+      return postMultipart(
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/assinatura-fisica`,
+        formData,
+      );
+    },
+    onSuccess: invalidate,
+  });
+
   return {
     create,
     addVersao,
@@ -825,5 +905,6 @@ export function useContratoMutations(clienteId: string) {
     enviarParaAssinatura,
     cancelarAssinatura,
     processoLegado,
+    marcarAssinadoFisico,
   };
 }

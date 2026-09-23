@@ -34,7 +34,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
+import { ApiError, resolveSSOContext } from "@noctusai/lib";
 
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
@@ -51,7 +51,13 @@ import { useNegociacao } from "@/hooks/useNegociacao";
 import { useTestemunhas } from "@/hooks/useTestemunhas";
 
 function toastServerError(err: unknown, fallback: string) {
-  const message = err instanceof Error && err.message ? err.message : fallback;
+  // A typed server refusal (`{error: {code, message}}` — e.g. migration
+  // 157's 409 CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO) carries its own
+  // pt-BR sentence; `ApiError.message` would prefix it with the status.
+  const envelope =
+    err instanceof ApiError ? (err.body as { error?: { message?: string } } | undefined) : undefined;
+  const message =
+    envelope?.error?.message || (err instanceof Error && err.message ? err.message : fallback);
   toast.error(message);
 }
 
@@ -261,6 +267,38 @@ export function ContratosContainer({
         settingProcessoLegadoContratoId={
           mutations.processoLegado.isPending
             ? (mutations.processoLegado.variables?.contratoId ?? null)
+            : null
+        }
+        // Migration 157 — the Digital/Física signing gate.
+        onPatchModalidade={(contratoId, modalidade) =>
+          mutations.patch.mutate(
+            { contratoId, patch: { modalidade_assinatura: modalidade } },
+            {
+              onSuccess: () =>
+                toast.success(
+                  modalidade === "fisica"
+                    ? "Assinatura física — gere uma nova versão para imprimir."
+                    : "Assinatura digital.",
+                ),
+              onError: (err) =>
+                toastServerError(err, "Não foi possível mudar a modalidade de assinatura."),
+            },
+          )
+        }
+        onMarcarAssinadoFisico={(contratoId, file) =>
+          mutations.marcarAssinadoFisico.mutate(
+            { contratoId, file },
+            {
+              onSuccess: () =>
+                toast.success(file ? "Contrato assinado anexado." : "Contrato marcado como assinado."),
+              onError: (err) =>
+                toastServerError(err, "Não foi possível marcar o contrato como assinado."),
+            },
+          )
+        }
+        marcandoAssinadoContratoId={
+          mutations.marcarAssinadoFisico.isPending
+            ? (mutations.marcarAssinadoFisico.variables?.contratoId ?? null)
             : null
         }
       />

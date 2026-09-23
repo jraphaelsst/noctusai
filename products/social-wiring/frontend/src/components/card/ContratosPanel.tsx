@@ -99,11 +99,13 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
+import { ContratoModalidadeSection } from "@/components/card/ContratoModalidadeSection";
 import type {
   AssinaturaEntry,
   AssinaturaOut,
   ContratoOut,
   ContratoStatus,
+  ModalidadeAssinatura,
   VersaoOut,
 } from "@/hooks/useContratos";
 import {
@@ -185,6 +187,13 @@ interface Props {
   isAdmin?: boolean;
   onSetProcessoLegado?: (contratoId: string, ativo: boolean, motivo?: string) => void;
   settingProcessoLegadoContratoId?: string | null;
+  /** Migration 157 — the Digital/Física toggle. Omitted ⇒ the toggle renders
+   *  read-only (disabled), never a control that does nothing. */
+  onPatchModalidade?: (contratoId: string, modalidade: ModalidadeAssinatura) => void;
+  /** Migration 157 — "Marcar como assinado" (+ optional scanned PDF) for a
+   *  física contract. */
+  onMarcarAssinadoFisico?: (contratoId: string, file: File | null) => void;
+  marcandoAssinadoContratoId?: string | null;
 }
 
 export default function ContratosPanel({
@@ -219,6 +228,9 @@ export default function ContratosPanel({
   isAdmin = false,
   onSetProcessoLegado,
   settingProcessoLegadoContratoId,
+  onPatchModalidade,
+  onMarcarAssinadoFisico,
+  marcandoAssinadoContratoId,
 }: Props) {
   const lista = contratos ?? [];
 
@@ -328,6 +340,15 @@ export default function ContratosPanel({
                   : undefined
               }
               settingProcessoLegado={settingProcessoLegadoContratoId === contrato.id}
+              onPatchModalidade={
+                onPatchModalidade ? (m) => onPatchModalidade(contrato.id, m) : undefined
+              }
+              onMarcarAssinadoFisico={
+                onMarcarAssinadoFisico
+                  ? (file) => onMarcarAssinadoFisico(contrato.id, file)
+                  : undefined
+              }
+              marcandoAssinado={marcandoAssinadoContratoId === contrato.id}
             />
           ))}
         </div>
@@ -360,6 +381,9 @@ function ContratoCard({
   isAdmin = false,
   onSetProcessoLegado,
   settingProcessoLegado = false,
+  onPatchModalidade,
+  onMarcarAssinadoFisico,
+  marcandoAssinado = false,
 }: {
   contrato: ContratoOut;
   addingVersao: boolean;
@@ -389,6 +413,9 @@ function ContratoCard({
   isAdmin?: boolean;
   onSetProcessoLegado?: (ativo: boolean, motivo?: string) => void;
   settingProcessoLegado?: boolean;
+  onPatchModalidade?: (modalidade: ModalidadeAssinatura) => void;
+  onMarcarAssinadoFisico?: (file: File | null) => void;
+  marcandoAssinado?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -536,16 +563,30 @@ function ContratoCard({
           <p className="text-xs text-muted-foreground">Sem versão enviada.</p>
         )}
 
-        {atual && (
-          <_AssinaturaSection
-            contratoId={contrato.id}
-            versao={atual}
-            entry={assinaturaEntry}
-            onAbrirEnvio={onAbrirEnvioAssinatura}
-            onCancelar={onCancelarAssinatura}
-            cancelando={cancelandoAssinatura}
-          />
-        )}
+        {/* Migration 157 — the Digital/Física gate. Digital keeps the
+            existing send-for-signature section verbatim; Física replaces it
+            with print + "Marcar como assinado" and never offers a send. */}
+        <ContratoModalidadeSection
+          contrato={contrato}
+          envelopeVivo={envelopeVivo(assinaturaEntry?.data)}
+          patching={patching}
+          onPatchModalidade={onPatchModalidade}
+          onBaixarImpressao={(versaoId) => onDownload(versaoId, "pdf")}
+          onMarcarAssinado={onMarcarAssinadoFisico}
+          marcandoAssinado={marcandoAssinado}
+          digitalContent={
+            atual ? (
+              <_AssinaturaSection
+                contratoId={contrato.id}
+                versao={atual}
+                entry={assinaturaEntry}
+                onAbrirEnvio={onAbrirEnvioAssinatura}
+                onCancelar={onCancelarAssinatura}
+                cancelando={cancelandoAssinatura}
+              />
+            ) : null
+          }
+        />
 
         <div
           className="grid gap-3 rounded-md border p-2.5 sm:grid-cols-[1fr_1fr_auto] sm:items-end"

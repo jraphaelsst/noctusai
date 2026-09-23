@@ -58,6 +58,7 @@ function versao(over: Partial<VersaoOut> = {}): VersaoOut {
     rotulo: null,
     origem: "upload",
     docx_disponivel: false,
+    modalidade_assinatura: null,
     ...over,
   };
 }
@@ -83,6 +84,7 @@ function contrato(over: Partial<ContratoOut> = {}): ContratoOut {
     processo_legado_por: null,
     processo_legado_em: null,
     processo_legado_motivo: null,
+    modalidade_assinatura: "digital",
     ...over,
   };
 }
@@ -775,5 +777,81 @@ describe("assinatura digital (signature-integration-CONTRACT §4)", () => {
     fireEvent.click(screen.getByTestId("contrato-historico-toggle-c1"));
     expect(screen.getByTestId("contrato-versao-v2").textContent).toContain("Assinado");
     expect(screen.getByTestId("contrato-versao-v1").textContent).not.toContain("(Assinado)");
+  });
+});
+
+describe("modalidade de assinatura — Digital/Física (migration 157)", () => {
+  function entry(over: Partial<AssinaturaEntry> = {}): AssinaturaEntry {
+    return { data: null, isPending: false, isFetching: false, isError: false, ...over };
+  }
+
+  it("🔴 digital (default) keeps 'Enviar para assinatura' and shows no física actions", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: { c1: entry() },
+      onAbrirEnvioAssinatura: vi.fn(),
+      onPatchModalidade: vi.fn(),
+    });
+    expect(screen.getByTestId("contrato-modalidade-digital-c1").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("contrato-enviar-assinatura-c1")).toBeTruthy();
+    expect(screen.queryByTestId("contrato-baixar-impressao-c1")).toBeNull();
+    expect(screen.queryByTestId("contrato-marcar-assinado-c1")).toBeNull();
+  });
+
+  it("🔴 física hides the send-for-signature path and shows print + 'Marcar como assinado'", async () => {
+    const onDownload = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [
+        contrato({
+          modalidade_assinatura: "fisica",
+          versao_atual: versao({ id: "v2", origem: "gerado", modalidade_assinatura: "fisica" }),
+        }),
+      ],
+      assinaturas: { c1: entry() },
+      onAbrirEnvioAssinatura: vi.fn(),
+      onPatchModalidade: vi.fn(),
+      onMarcarAssinadoFisico: vi.fn(),
+      onDownload,
+    });
+    expect(screen.queryByTestId("contrato-enviar-assinatura-c1")).toBeNull();
+    fireEvent.click(screen.getByTestId("contrato-baixar-impressao-c1"));
+    expect(onDownload).toHaveBeenCalledWith("c1", "v2", "pdf");
+    expect(screen.getByTestId("contrato-marcar-assinado-c1").textContent).toContain(
+      "Marcar como assinado",
+    );
+  });
+
+  it("clicking the other segment PATCHes the modalidade for that contract", async () => {
+    const onPatchModalidade = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato()],
+      assinaturas: { c1: entry() },
+      onPatchModalidade,
+    });
+    fireEvent.click(screen.getByTestId("contrato-modalidade-fisica-c1"));
+    expect(onPatchModalidade).toHaveBeenCalledWith("c1", "fisica");
+  });
+
+  it("🔴 'Física' is disabled while a digital envelope is live, and says why", async () => {
+    const onPatchModalidade = vi.fn();
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: {
+        c1: entry({
+          data: {
+            assinatura_id: "s1",
+            external_id: "ext1",
+            link_assinatura: "https://d4sign.example/ext1",
+            provedor: "d4sign",
+            status: "pendente",
+            signatarios: [],
+            enviado_em: "2026-09-17T20:00:00Z",
+          },
+        }),
+      },
+      onPatchModalidade,
+    });
+    expect((screen.getByTestId("contrato-modalidade-fisica-c1") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("contrato-modalidade-bloqueio-c1").textContent).toContain("cancele o envio");
   });
 });
