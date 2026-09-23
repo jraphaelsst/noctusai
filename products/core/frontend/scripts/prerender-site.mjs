@@ -123,6 +123,11 @@ ${head}
     fs.rmSync(path.join(CLIENT_OUT, "src"), { recursive: true, force: true });
   }
 
+  // The SSR bundle is a build-time-only tool. `dist/` is copied whole into
+  // the runtime image and served as static files, so leaving it there would
+  // publish server-render code at /_site-ssr/*. Remove it once rendering is done.
+  fs.rmSync(SSR_OUT, { recursive: true, force: true });
+
   console.log(`prerender-site: wrote ${manifestRoutes.length} route files to ${CLIENT_OUT}`);
 }
 

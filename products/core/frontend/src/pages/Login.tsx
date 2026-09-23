@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, setToken } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 
@@ -15,7 +15,9 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isSignup, setIsSignup] = useState(false);
+  // `?mode=signup` (the website's "Criar conta" CTAs) opens straight in signup mode.
+  const [searchParams] = useSearchParams();
+  const [isSignup, setIsSignup] = useState(() => searchParams.get('mode') === 'signup');
   const [nome, setNome] = useState('');
   const [empresa, setEmpresa] = useState('');
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
@@ -49,7 +51,14 @@ export function Login() {
       await refresh();
       navigate('/');
     } catch (err: any) {
-      setError(err.message);
+      // Signup can be closed from Website → Configurações (backend answers
+      // 403 `signup_closed`); point the visitor at the waitlist instead of
+      // echoing the machine code.
+      if (isSignup && err?.status === 403 && String(err?.message ?? '').includes('signup_closed')) {
+        setError('Os cadastros estão temporariamente fechados. Entre na lista de espera em noctusai.com/lista-de-espera.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }

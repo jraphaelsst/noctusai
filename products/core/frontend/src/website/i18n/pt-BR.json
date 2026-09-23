@@ -83,7 +83,11 @@
     "loading": "Carregando planos...",
     "empty": "Nenhum plano disponível no momento.",
     "error": "Não foi possível carregar os planos agora.",
-    "fullComparison": "Ver comparação completa"
+    "fullComparison": "Ver comparação completa",
+    "users": "Até {n} usuários",
+    "usersUnlimited": "Usuários ilimitados",
+    "products": "Até {n} produtos",
+    "productsUnlimited": "Todos os produtos"
   },
   "faq": {
     "title": "Perguntas frequentes"

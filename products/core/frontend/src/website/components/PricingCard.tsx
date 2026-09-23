@@ -1,6 +1,18 @@
 import { useT } from "../lib/i18n";
-import type { PlanRow } from "../lib/api";
+import { planFeatureList, type PlanRow } from "../lib/api";
 import { useTrackEvent } from "../hooks/useTrackEvent";
+
+/** Real plan limits from the `plans` row (`-1` = unlimited, per core migration 001). */
+function limitLines(plan: PlanRow, t: ReturnType<typeof useT>): string[] {
+  const lines: string[] = [];
+  if (typeof plan.max_users === "number") {
+    lines.push(plan.max_users < 0 ? t("pricing.usersUnlimited") : t("pricing.users", { n: plan.max_users }));
+  }
+  if (typeof plan.max_products === "number") {
+    lines.push(plan.max_products < 0 ? t("pricing.productsUnlimited") : t("pricing.products", { n: plan.max_products }));
+  }
+  return lines;
+}
 
 function formatBRL(value: number, locale: "pt-BR" | "en"): string {
   return new Intl.NumberFormat(locale === "en" ? "en-US" : "pt-BR", {
@@ -39,7 +51,7 @@ export function PricingCard({
       {plan.descricao && <p>{plan.descricao}</p>}
       <div className="nx-price-amount">{plan.is_custom ? "—" : formatBRL(price, locale)}</div>
       <ul>
-        {plan.features?.slice(0, 6).map((f, i) => (
+        {limitLines(plan, t).concat(planFeatureList(plan.features)).slice(0, 6).map((f, i) => (
           <li key={i}>{f}</li>
         ))}
       </ul>

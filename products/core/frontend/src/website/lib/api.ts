@@ -37,8 +37,34 @@ export interface PlanRow {
   price_yearly: number;
   max_users: number | null;
   max_products: number | null;
-  features: string[];
+  /**
+   * `plans.features` is a JSONB column with default `{}` (core migration 001),
+   * NOT a string array. The live rows hold `{}`. Treat it as unknown and
+   * normalize through `planFeatureList`; never call array methods on it directly.
+   */
+  features: unknown;
   is_custom: boolean;
+}
+
+/**
+ * Normalize a plan's `features` JSONB into display strings:
+ * - an array → its string/number items;
+ * - an object → keys whose value is `true`, plus `key: value` for string/number values;
+ * - anything else → `[]`.
+ */
+export function planFeatureList(features: unknown): string[] {
+  if (Array.isArray(features)) {
+    return features.filter((f) => typeof f === "string" || typeof f === "number").map(String);
+  }
+  if (features && typeof features === "object") {
+    const out: string[] = [];
+    for (const [key, value] of Object.entries(features as Record<string, unknown>)) {
+      if (value === true) out.push(key);
+      else if (typeof value === "string" || typeof value === "number") out.push(`${key}: ${value}`);
+    }
+    return out;
+  }
+  return [];
 }
 
 function baseUrl(): string {
