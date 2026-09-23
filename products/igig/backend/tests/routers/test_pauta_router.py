@@ -124,6 +124,33 @@ class TestCalendario:
         ).json()
         assert body["itens"] == []
 
+    def test_filters_by_cliente(self, api, repos, cliente):
+        """The Clientes card's calendar tab shows one cliente only (R9)."""
+        outro = repos.cliente.criar(ORG, {"nome": "Café Lua"})
+        self._agendar(api, cliente, "do sol", "2026-01-10T09:00:00")
+        self._agendar(api, outro, "da lua", "2026-01-11T09:00:00")
+        janela = "inicio=2026-01-01T00:00:00&fim=2026-01-31T23:59:59"
+        todos = api.get(f"/api/pautas/calendario?{janela}").json()["itens"]
+        assert sorted(p["titulo"] for p in todos) == ["da lua", "do sol"]
+        so_sol = api.get(
+            f"/api/pautas/calendario?{janela}&cliente_id={cliente['id']}"
+        ).json()["itens"]
+        assert [p["titulo"] for p in so_sol] == ["do sol"]
+
+    def test_exposes_whether_the_pauta_was_generated(self, api, repos, cliente):
+        """The calendar badges pautas generated from an accepted orçamento."""
+        repos.pauta.criar(ORG, {
+            "cliente_id": cliente["id"], "titulo": "auto",
+            "data_publicacao": "2026-01-12T09:00:00", "gerada_automaticamente": True,
+        })
+        self._agendar(api, cliente, "manual", "2026-01-13T09:00:00")
+        itens = api.get(
+            "/api/pautas/calendario?inicio=2026-01-01T00:00:00&fim=2026-01-31T23:59:59"
+        ).json()["itens"]
+        assert {p["titulo"]: p["gerada_automaticamente"] for p in itens} == {
+            "auto": True, "manual": False,
+        }
+
     def test_inverted_window_returns_422(self, api):
         resp = api.get("/api/pautas/calendario?inicio=2026-02-01T00:00:00&fim=2026-01-01T00:00:00")
         assert resp.status_code == 422

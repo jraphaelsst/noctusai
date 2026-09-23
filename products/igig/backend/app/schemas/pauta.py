@@ -77,6 +77,11 @@ class PautaOut(BaseModel):
     canal: str | None = None
     data_publicacao: str | None = None
     publicado_em: str | None = None
+    #: True when the pauta was generated from an accepted orçamento's
+    #: recurring item (roadmap R9) — the calendar badges it so the agency can
+    #: tell planned-by-contract from planned-by-hand.
+    gerada_automaticamente: bool = False
+    orcamento_item_id: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

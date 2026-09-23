@@ -7,6 +7,7 @@ Three surfaces in one router, because they are one workflow:
                                                     writes = org admins)
     GET   /api/esteira/board?cliente_id=            the kanban (seed columns)
     POST  /api/esteira/tarefas                      create a tarefa (entry stage)
+    DELETE /api/esteira/tarefas/{id}                delete a tarefa (204)
     POST  /api/esteira/tarefas/{id}/mover-etapa     drag: +1 forward, back w/ motivo
     GET   /api/esteira/tarefas/{id}/apontamentos    timesheet segments
     POST  /api/esteira/tarefas/{id}/timer/iniciar   play  (the CALLER's timer)
@@ -39,7 +40,7 @@ is rate-limited, returns a NARROW projection, and never distinguishes
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from noctusai_lib.domain.pipeline import pipeline_stages_router
 from noctusai_lib.integrations.persistence import RecordNotFound
 from noctusai_lib.primitives.responses import success_response
@@ -143,6 +144,17 @@ async def criar_tarefa(
     except RegraViolada as erro:
         raise http_de(erro) from erro
     return TarefaOut(**tarefa)
+
+
+@router.delete("/tarefas/{tarefa_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir_tarefa(
+    tarefa_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+) -> Response:
+    """Delete a tarefa of the caller's org. 404 when it is not theirs."""
+    esteira_quadro.excluir_tarefa(db, _org(auth), tarefa_id=tarefa_id, user_id=_usuario(auth))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/tarefas/{tarefa_id}/mover-etapa")
