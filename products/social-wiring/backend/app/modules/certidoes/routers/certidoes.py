@@ -7,7 +7,8 @@
     GET    /api/certidoes/consultas/{id}                 detail + resultados
     POST   /api/certidoes/consultas/{id}/reprocessar     retry the failed ones
     POST   /api/certidoes/consultas/{id}/cancelar        stop what is in flight
-    DELETE /api/certidoes/consultas/{id}                 + storage cleanup
+    DELETE /api/certidoes/consultas/{id}                 soft-delete (migration 161)
+    POST   /api/certidoes/consultas/{id}/restaurar        undo a soft-delete
     GET    /api/certidoes/download                       one file, proxied
     GET    /api/certidoes/consultas/{id}/download-zip    all of them, zipped
     POST   /api/certidoes/resultados/{id}/upload         manual PDF, same pipeline (async extraction)
@@ -195,12 +196,21 @@ def _get_consulta_or_404(db, consulta_id: str, org_id: UUID, select: str = "*") 
     `.execute()` on a filtered select rather than `.single()`: `single()` raises
     on zero rows, and the raised shape differs across supabase-py versions —
     this returns the honest 404 the same way regardless.
+
+    `.is_("excluida_em", "null")`: a soft-deleted consulta (migration 161) is
+    a 404 here — the same shape a hard-deleted one always was. Every route
+    that resolves a consulta through this helper (detail, reprocess, cancel,
+    download-zip, upload, vincular-parte/cliente, situação cadastral) is
+    therefore excluded-aware for free. `POST .../restaurar` is the one
+    caller that deliberately does NOT go through this helper, because
+    finding an excluded consulta is its entire job.
     """
     rows = (
         db.table(CONSULTAS)
         .select(select)
         .eq("id", consulta_id)
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .execute()
     ).data or []
     if not rows:
@@ -310,7 +320,8 @@ async def listar_consultas(
     )
 
     def _scoped(query):
-        query = query.eq("org_id", str(org_id))
+        # Migration 161: a soft-deleted consulta never appears in the list.
+        query = query.eq("org_id", str(org_id)).is_("excluida_em", "null")
         if status:
             query = query.eq("status", status)
         if busca:
@@ -651,37 +662,75 @@ async def excluir_consulta(
     consulta_id: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
-    storage: StorageBackend = Depends(get_storage_backend),
     svc: CertidoesService = Depends(get_certidoes_service),
 ):
-    """Delete a consultation, its results, and the files behind them."""
+    """Soft-delete a consultation and its results (migration 161).
+
+    🔴 THIS USED TO HARD-DELETE. A prod consulta of 12 results + blobs was
+    removed this way and nobody could tell WHO did it — the row that would
+    have named the actor was the row that got deleted. Blobs are now KEPT
+    (a soft-delete never touches storage): `excluida_em`/`excluida_por` are
+    stamped on the consulta AND every one of its resultados instead, every
+    reader filters `excluida_em is null` (see migration 161's header for the
+    full grep), `POST .../restaurar` reverses it, and `certidoes.scheduler`'s
+    purge job hard-deletes blobs + rows only after 30 days.
+
+    The structured INFO line below is a BRIDGE, not the audit trail itself:
+    a parallel slice is landing the seed audit middleware that will persist
+    every action (not only deletes); until it does, this is the only durable
+    trace of who excluded what. No PII — org/user/consulta ids and a count.
+    """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    # Verify existence up front so the 404 path performs no storage cleanup.
+    # Verify existence up front — a 404 must not stamp an audit line for an
+    # action that never happened.
     _get_consulta_or_404(db, consulta_id, org_id, select="id")
 
-    # One resultado per registry type per consulta: the fan-out in
-    # `criar_consulta` inserts exactly `len(CERTIDOES_CONFIG)` of them and the
-    # FK cascades with the consulta.
-    # postgrest-unbounded-ok: bounded at 10 rows by that fan-out, not 1 000.
-    resultados = (
-        db.table(RESULTADOS)
-        .select("arquivo_url")
-        .eq("consulta_id", consulta_id)
-        .eq("org_id", str(org_id))
-        .execute()
-    )
-    # Blobs BEFORE rows: a row we delete first is a key we can no longer find,
-    # i.e. an orphan in the bucket nobody will ever look for again.
-    await svc.delete_storage_files(resultados.data or [], storage)
+    n_resultados = svc.soft_delete_consulta(db, org_id, consulta_id, _user.id)
+    if n_resultados is None:
+        # Excluded between the check above and here (a race) — same 404 the
+        # existence check would have raised.
+        raise HTTPException(status_code=404, detail="Consulta não encontrada")
 
-    # CASCADE removes the resultados (migration 091's FK).
-    db.table(CONSULTAS).delete().eq("id", consulta_id).eq(
-        "org_id", str(org_id)
-    ).execute()
+    logger.info(
+        "certidoes: consulta excluida (soft) user_id=%s org_id=%s "
+        "consulta_id=%s n_resultados=%d",
+        _user.id, org_id, consulta_id, n_resultados,
+    )
 
     return ok_response("Consulta excluída com sucesso")
+
+
+@router.post("/consultas/{consulta_id}/restaurar")
+async def restaurar_consulta(
+    consulta_id: str,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """Undo a soft-delete (migration 161): clears `excluida_em`/
+    `excluida_por` on the consulta and every one of its resultados. Blobs
+    were never touched by the delete, so nothing is re-fetched here.
+
+    404 for a consulta absent from this org OR one that was never excluded
+    — `svc.restaurar_consulta`'s own docstring has the reasoning for the
+    second case. Same authz as every other route: `get_current_user_org`,
+    org-scoped.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    restored = svc.restaurar_consulta(db, org_id, consulta_id)
+    if restored is None:
+        raise HTTPException(status_code=404, detail="Consulta não encontrada")
+
+    logger.info(
+        "certidoes: consulta restaurada user_id=%s org_id=%s consulta_id=%s",
+        _user.id, org_id, consulta_id,
+    )
+
+    return success_response(restored)
 
 
 @router.get("/download")
@@ -710,6 +759,7 @@ async def download_certidao(
         .select("id")
         .eq("org_id", str(org_id))
         .eq("arquivo_url", url)
+        .is_("excluida_em", "null")
         .limit(1)
         .execute()
     ).data or []

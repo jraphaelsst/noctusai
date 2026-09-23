@@ -504,6 +504,169 @@ async def delete_storage_files(
     return deleted
 
 
+# --------------- Soft-delete, restore, purge (S3 — audit-trail slice) ---------------
+#
+# 🔴 WHY SOFT-DELETE REPLACED THE HARD DELETE — see migration 161's header for
+# the prod incident: a manual consulta of 12 results + blobs was hard-deleted
+# and nobody could tell WHO did it. `soft_delete_consulta` stamps
+# `excluida_em`/`excluida_por` on the consulta AND every one of its
+# resultados (an UPDATE, not a DELETE — the FK CASCADE only fires on DELETE,
+# so the resultados need their own explicit write, in the same call). Blobs
+# are NEVER touched here: `restaurar_consulta` needs them intact, and
+# `purge_excluidas` is the only place that removes them, 30 days later.
+
+
+def soft_delete_consulta(db, org_id, consulta_id: str, usuario_id) -> Optional[int]:
+    """Mark one consulta AND its resultados excluded. Returns the number of
+    resultados stamped, or `None` when the consulta does not exist (or is
+    already excluded) in this org — the router turns that into the 404.
+
+    Re-checks existence even though the router already ran `_get_consulta_
+    or_404` first: a service function's contract should not depend on what
+    its one caller happened to check.
+    """
+    existing = (
+        db.table(CONSULTAS)
+        .select("id")
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
+        .execute()
+    ).data or []
+    if not existing:
+        return None
+
+    agora = datetime.now(timezone.utc).isoformat()
+    quem = str(usuario_id) if usuario_id else None
+
+    db.table(CONSULTAS).update({
+        "excluida_em": agora,
+        "excluida_por": quem,
+    }).eq("id", consulta_id).eq("org_id", str(org_id)).execute()
+
+    resultados_atualizados = (
+        db.table(RESULTADOS)
+        .update({"excluida_em": agora, "excluida_por": quem})
+        .eq("consulta_id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    return len(resultados_atualizados)
+
+
+def restaurar_consulta(db, org_id, consulta_id: str) -> Optional[dict]:
+    """The inverse of `soft_delete_consulta`: clears `excluida_em`/
+    `excluida_por` on the consulta AND every one of its resultados. Blobs
+    were never touched by the soft-delete, so a restore needs no storage
+    work at all.
+
+    Deliberately does NOT filter `excluida_em` on the lookup — restoring is
+    the one operation that MUST be able to find an excluded row. Returns
+    `None` for a consulta absent from this org, OR one that was never
+    excluded in the first place (nothing to restore — silently "succeeding"
+    on that would hide a caller's mistaken id from itself); either shape is
+    a 404 to the router, same contract as `atualizar_situacao_cadastral`'s.
+    """
+    existing = (
+        db.table(CONSULTAS)
+        .select("id, excluida_em")
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    if not existing or existing[0].get("excluida_em") is None:
+        return None
+
+    updated = (
+        db.table(CONSULTAS)
+        .update({"excluida_em": None, "excluida_por": None})
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+
+    db.table(RESULTADOS).update({
+        "excluida_em": None,
+        "excluida_por": None,
+    }).eq("consulta_id", consulta_id).eq("org_id", str(org_id)).execute()
+
+    return updated[0] if updated else None
+
+
+async def purge_excluidas(
+    db, storage: StorageBackend, *, older_than_days: int = 30
+) -> dict:
+    """Hard-delete blobs + rows for every consulta excluded more than
+    `older_than_days` ago. Cross-org, like `recover_stale_processando` above
+    — the scheduler's `db` is the RAW admin client (`scheduler._clients`),
+    same shape `meta_ads.services.leadgen_webhook_service.
+    LeadgenWebhookService.purge_processed` uses for its own LGPD-retention
+    cutoff delete.
+
+    Runs the SAME "blobs before rows" ordering `routers/certidoes.py::
+    excluir_consulta` always has: a row deleted first is a bucket key
+    nobody can find again.
+    """
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=older_than_days)
+    ).isoformat()
+
+    def _page(start: int, end: int):
+        # `.lt("excluida_em", cutoff)` alone already excludes NULL rows (SQL
+        # `col < value` is never true for NULL) — every active consulta is
+        # simply not a candidate, no separate `IS NOT NULL` needed.
+        return (
+            db.table(CONSULTAS)
+            .select("id")
+            .lt("excluida_em", cutoff)
+            .order("excluida_em")
+            .range(start, end)
+            .execute()
+            .data
+        )
+
+    stale = _all_rows(_page, "certidao_consultas past purge cutoff")
+    if not stale:
+        return {"consultas": 0, "resultados": 0, "arquivos": 0}
+
+    consultas_purgadas = 0
+    resultados_purgados = 0
+    arquivos_purgados = 0
+    for consulta in stale:
+        consulta_id = consulta["id"]
+        # postgrest-unbounded-ok: at most ~13 resultados per consulta, the
+        # same fan-out bound every other read against this table relies on.
+        resultados = (
+            db.table(RESULTADOS)
+            .select("arquivo_url")
+            .eq("consulta_id", consulta_id)
+            .execute()
+        ).data or []
+        arquivos_purgados += await delete_storage_files(resultados, storage)
+
+        deleted_resultados = (
+            db.table(RESULTADOS).delete().eq("consulta_id", consulta_id).execute()
+        ).data or []
+        resultados_purgados += len(deleted_resultados)
+
+        # CASCADE removes any resultado this pass did not already delete
+        # (migration 091's FK) — belt-and-braces with the explicit delete
+        # above, which is what lets `resultados_purgados` count accurately.
+        db.table(CONSULTAS).delete().eq("id", consulta_id).execute()
+        consultas_purgadas += 1
+
+    logger.info(
+        "certidoes purge: %d consulta(s), %d resultado(s), %d arquivo(s) "
+        "hard-deleted past the %d-day retention window",
+        consultas_purgadas, resultados_purgados, arquivos_purgados, older_than_days,
+    )
+    return {
+        "consultas": consultas_purgadas,
+        "resultados": resultados_purgados,
+        "arquivos": arquivos_purgados,
+    }
+
+
 # --------------- AI analysis ---------------
 
 #: Which model writes the analysis, PER PROVIDER.
@@ -2441,6 +2604,7 @@ def _resultados_das_consultas(db, org_id, consultas: list[dict]) -> list[dict]:
             .select(RESULTADO_COLUNAS_SEM_TEXTO)
             .eq("org_id", str(org_id))
             .in_("consulta_id", batch)
+            .is_("excluida_em", "null")
             .order("ordem")
             .execute()
         ).data or []
@@ -2469,11 +2633,16 @@ def certidoes_por_parte(db, org_id, atendimento_parte_id: str) -> list[dict]:
     `certidoes_por_cliente` both run.
     """
     # postgrest-unbounded-ok: a handful of consultas per party, not 1 000.
+    # `.is_("excluida_em", "null")`: a soft-deleted consulta's certidões must
+    # not surface here — the contract generator's readiness read runs
+    # straight through this function (see the module's `certidoes_svc.
+    # certidoes_por_parte` callers).
     consultas = (
         db.table(CONSULTAS)
         .select(_CONSULTA_COLUNAS_RESUMO)
         .eq("org_id", str(org_id))
         .eq("atendimento_parte_id", str(atendimento_parte_id))
+        .is_("excluida_em", "null")
         .execute()
     ).data or []
     return _resultados_das_consultas(db, org_id, consultas)
@@ -2500,6 +2669,7 @@ def certidoes_por_cliente(db, org_id, cliente_id: str) -> list[dict]:
         .select(_CONSULTA_COLUNAS_RESUMO)
         .eq("org_id", str(org_id))
         .eq("cliente_id", str(cliente_id))
+        .is_("excluida_em", "null")
         .execute()
     ).data or []
     return _resultados_das_consultas(db, org_id, consultas)
@@ -2525,6 +2695,7 @@ def atualizar_situacao_cadastral(db, org_id, consulta_id: str, campos: dict) -> 
         .select("id")
         .eq("id", consulta_id)
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .execute()
     ).data or []
     if not existing:
@@ -2568,6 +2739,7 @@ def confirmar_resultado(
         .select("id")
         .eq("id", resultado_id)
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .execute()
     ).data or []
     if not existing:
@@ -2643,6 +2815,7 @@ async def mint_resultado_url(
         .select("id, arquivo_url")
         .eq("id", resultado_id)
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .execute()
     ).data or []
     if not rows:
@@ -2688,6 +2861,7 @@ def obter_transcricao_resultado(
         .select("id, tipo, nome_display, texto_extraido, formatacao")
         .eq("id", resultado_id)
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .execute()
     ).data or []
     if not rows:
