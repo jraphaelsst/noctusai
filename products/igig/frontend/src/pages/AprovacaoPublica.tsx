@@ -143,6 +143,17 @@ export default function AprovacaoPublica() {
         </section>
       )}
 
+      {/* The agency may have pulled the piece back out of approval after the
+          link went out — the server then refuses a decision (409
+          `fora_de_aprovacao`). Show the content read-only instead of offering
+          buttons that can only fail. */}
+      {!aprovacao.aguardando_aprovacao ? (
+        <p className="mt-6 rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
+          Este conteúdo não está mais aguardando a sua aprovação. Se precisar,
+          fale com a sua agência.
+        </p>
+      ) : (
+      <>
       <section className="mt-6">
         <label htmlFor="observacao" className="text-xs text-muted-foreground">
           Observações (opcional para aprovar, recomendado ao pedir ajuste)
@@ -181,6 +192,8 @@ export default function AprovacaoPublica() {
           Solicitar ajuste
         </Button>
       </div>
+      </>
+      )}
     </Moldura>
   );
 }
