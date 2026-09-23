@@ -5,28 +5,40 @@
   ORÇAMENTO POST /api/comercial/estimar            the escopo calculator
            /api/comercial/orcamentos …             proposals
   CONTRATO POST /api/comercial/contratos/gerar     PDF + signature dispatch
-           POST /api/comercial/assinatura/webhook  → activates the client
+           POST /api/comercial/assinatura/webhook  → activates the client (SIGNED)
+
+The funnel board (negócios, stages, mover-etapa) is `comercial_funil_router`.
 
 The lead form is UNAUTHENTICATED by design — it is embedded on the agency's
-public site — so it is rate-limited and writes ONLY to `lead`. It cannot touch
-`cliente`, cannot read anything, and returns no data beyond an acknowledgement:
-an anonymous endpoint that echoed stored records back would be a scraping
-surface.
+public site — so it is rate-limited and writes ONLY the lead and its funnel
+card (roadmap R2: a form lead appears in the funnel's first stage). It cannot
+touch `cliente`, cannot read anything, and returns no data beyond an
+acknowledgement: an anonymous endpoint that echoed stored records back would be
+a scraping surface.
 
 The signature webhook is the spec's Módulo 1 automation: confirmation flips the
 client to `ativo` and converts the originating lead. It is idempotent, because
-signing providers retry.
+signing providers retry — and it is HMAC-verified before anything runs (smoke
+finding 2: it used to accept any caller holding a guessable id).
 """
 # NOTE: no `from __future__ import annotations` — this module IS rate-limited;
 # see esteira_router.py for the slowapi/PEP 563 interaction.
 import logging
 from dataclasses import asdict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.security.webhook_signatures import (
+    ResolvedSecret,
+    VerifiedWebhook,
+    webhook_endpoint,
+)
+from pydantic import ValidationError
 
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.pipelines import get_admin_db
 from app.rate_limit import limiter
 from app.repositories import Repositorios
 from app.schemas.comercial import (
@@ -41,7 +53,9 @@ from app.schemas.comercial import (
     OrcamentoCreate,
     OrcamentoOut,
 )
+from app.services import comercial_funil
 from app.services.contrato_documento import enviar_para_assinatura, gerar_pdf_contrato
+from app.services.regras import RegraViolada
 from app.services.orcamento_service import ItemEscopo, OrcamentoService
 from app.storage import chave_da_peca, get_storage
 from app.store import get_repositorios, get_repositorios_admin
@@ -82,9 +96,14 @@ def _localizar_contrato(repos: Repositorios, external_id: str):
 async def capturar_lead(
     request: Request,
     payload: LeadPublicoIn,
-    repos: Repositorios = Depends(get_repositorios_admin),
+    db: Any = Depends(get_admin_db),
 ) -> dict:
     """Public lead capture. No auth, write-only, rate-limited.
+
+    The lead lands with `origem='formulario'` (the CHANNEL); the form's own
+    free-text `origem` field — "como nos conheceu" — is stored as
+    `como_conheceu`, so the public form's contract is unchanged. Its funnel
+    card is opened at the entry stage in the same request.
 
     Returns only an acknowledgement — never the stored record, and never an
     id. An anonymous endpoint that echoed data back would be a scraping
@@ -92,8 +111,23 @@ async def capturar_lead(
     """
     dados = payload.model_dump(exclude_none=True)
     org_id = str(dados.pop("org_id"))
-    repos.lead.criar(org_id, dados)
-    logger.info("lead capturado org=%s origem=%s", org_id, dados.get("origem"))
+    como_conheceu = dados.pop("origem", None)
+    linhas = (
+        db.table("lead").insert(
+            {**dados, "org_id": org_id, "origem": "formulario", "como_conheceu": como_conheceu}
+        ).execute().data or []
+    )
+    if not linhas:
+        raise RuntimeError("insert de lead não retornou a linha criada")
+    try:
+        comercial_funil.abrir_negocio(db, org_id, lead_id=str(linhas[0]["id"]))
+    except RegraViolada:
+        # The lead IS stored; only its card could not be placed (an org that
+        # deactivated every funnel stage). Loud, but the visitor's submission
+        # must not be rejected for the agency's configuration.
+        logger.error("lead %s sem card no funil org=%s — funil sem etapas ativas",
+                     linhas[0]["id"], org_id)
+    logger.info("lead capturado org=%s como_conheceu=%s", org_id, como_conheceu)
     return {"ok": True, "mensagem": "Recebemos seus dados. Entraremos em contato em breve."}
 
 
@@ -136,6 +170,7 @@ async def converter_lead(
         "email": lead.get("email"),
         "telefone": lead.get("telefone"),
         "origem": lead.get("origem"),
+        "lead_id": lead_id,
     })
     return LeadOut(**repos.lead.converter(org_id, lead_id, str(cliente["id"])))
 
@@ -303,11 +338,25 @@ async def gerar_contrato(
     )
 
 
+async def _segredo_assinatura(request: Request, body: bytes) -> ResolvedSecret:
+    """Per-request read so a rotated secret (or a test's value) is honoured.
+    Empty collapses to "unset", which `bypass_when_unset=False` refuses."""
+    return ResolvedSecret(secret=settings.igig_assinatura_webhook_secret or None)
+
+
 @router.post("/assinatura/webhook")
 @limiter.limit(settings.webhook_rate_limit)
 async def assinatura_webhook(
     request: Request,
-    payload: AssinaturaWebhookIn,
+    verified: VerifiedWebhook = webhook_endpoint(
+        secret_resolver=_segredo_assinatura,
+        scheme="sha256_hex",
+        # FAIL-CLOSED: with no secret configured every call is a 401. An
+        # unsigned endpoint that ACTIVATES CONTRACTS is the hole this closes
+        # (smoke finding 2) — there is no early-dev bypass here.
+        bypass_when_unset=False,
+        log_prefix="igig-assinatura-webhook",
+    ),
     repos: Repositorios = Depends(get_repositorios_admin),
 ) -> dict:
     """Signature provider callback — the Módulo 1 automation.
@@ -316,10 +365,15 @@ async def assinatura_webhook(
     originating lead is marked convertido. Idempotent, because providers retry
     — a second delivery must not re-run the side effects.
 
-    Runs on the service-role client: the caller is a vendor with no noc
-    session. The `external_id` is the credential, exactly like the approval
-    portal's token.
+    Auth is the HMAC-SHA256 of the raw body under
+    `IGIG_ASSINATURA_WEBHOOK_SECRET` (header `X-Webhook-Hmac-SHA256`), checked
+    BEFORE any read. The body is parsed from the VERIFIED bytes. Runs on the
+    service-role client: the caller is a vendor with no noc session.
     """
+    try:
+        payload = AssinaturaWebhookIn.model_validate_json(verified.body or b"{}")
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_url=False)) from exc
     encontrado = _localizar_contrato(repos, payload.external_id)
     if encontrado is None:
         raise HTTPException(status_code=404, detail="Contrato não encontrado")

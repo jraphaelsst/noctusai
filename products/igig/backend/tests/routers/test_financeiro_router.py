@@ -10,7 +10,7 @@ from noctusai_lib.integrations.persistence import SqliteRecordStore
 
 from app.dependencies import coerce_org_uuid
 from app.repositories import Repositorios
-from app.services.financeiro_service import proxima_competencia
+from app.services.financeiro_service import limites_da_competencia, proxima_competencia
 from app.store import aplicar_schema_sqlite, get_repositorios, get_repositorios_admin
 
 ORG = str(coerce_org_uuid("test-org-123"))
@@ -60,6 +60,28 @@ class TestCompetencia:
 
     def test_rolls_the_year_in_december(self):
         assert proxima_competencia("2026-12") == "2027-01"
+
+    @pytest.mark.parametrize(
+        ("competencia", "ultimo"),
+        [("2026-02", "2026-02-28"), ("2028-02", "2028-02-29"),
+         ("2026-04", "2026-04-30"), ("2026-12", "2026-12-31")],
+    )
+    def test_month_bounds_come_from_the_calendar(self, competencia, ultimo):
+        """Smoke finding 1: a literal `-31` is not a timestamp Postgres accepts
+        in a short month — the SQLite suite compares TEXT and never saw it."""
+        inicio, fim = limites_da_competencia(competencia)
+        assert inicio == f"{competencia}-01T00:00:00"
+        assert fim == f"{ultimo}T23:59:59.999999"
+        # Every bound must parse as a real instant — the property Postgres enforces.
+        from datetime import datetime
+
+        datetime.fromisoformat(inicio)
+        datetime.fromisoformat(fim)
+
+    @pytest.mark.parametrize("ruim", ["2026-13", "2026-00", "26-02", "2026-2", "abc"])
+    def test_malformed_competencia_is_a_valueerror(self, ruim):
+        with pytest.raises(ValueError):
+            limites_da_competencia(ruim)
 
 
 class TestFaturas:
@@ -155,6 +177,15 @@ class TestExcedentes:
         _pautas(repos, cliente, 5)
         assert api.get("/api/financeiro/excedentes/2026-08").json() == []
 
+    def test_short_month_is_counted_to_its_real_last_day(self, api, repos, cliente):
+        _contrato(repos, cliente, pacote=1)
+        _pautas(repos, cliente, 2, mes="2026-02")
+        linha = api.get("/api/financeiro/excedentes/2026-02").json()[0]
+        assert linha["entregues"] == 2
+
+    def test_malformed_competencia_is_422_not_500(self, api, cliente):
+        assert api.get("/api/financeiro/excedentes/2026-13").status_code == 422
+
     def test_inactive_contracts_are_skipped(self, api, repos, cliente):
         repos.contrato.criar(ORG, {
             "cliente_id": cliente["id"], "status": "encerrado", "posts_por_mes": 5,
@@ -170,7 +201,7 @@ class TestDRE:
             ORG, {"nome": "Ana", "usuario_id": "user-1", "funcao_id": funcao["id"]}
         )
         pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Post"})
-        tarefa = repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte"})
+        tarefa = repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "etapa-1"})
         repos.apontamento.criar(ORG, {
             "tarefa_id": tarefa["id"], "usuario_id": "user-1",
             "iniciado_em": "2026-08-01T09:00:00", "minutos": minutos,
@@ -206,7 +237,7 @@ class TestDRE:
     def test_uncosted_hours_warn_that_margin_is_overstated(self, api, repos, cliente):
         """The mirror image of the BI screen's warning."""
         pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Post"})
-        tarefa = repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte"})
+        tarefa = repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "etapa-1"})
         repos.apontamento.criar(ORG, {
             "tarefa_id": tarefa["id"], "usuario_id": "sem-rate",
             "iniciado_em": "2026-08-01T09:00:00", "minutos": 300,

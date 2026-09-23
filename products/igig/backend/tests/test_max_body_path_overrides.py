@@ -35,6 +35,15 @@ class TestIgIgMaxBodyPathOverrides:
         expectations = {
             "/api/pautas/11111111-1111-1111-1111-111111111111/pecas": 60 * 1024 * 1024,
             "/api/marcas/22222222-2222-2222-2222-222222222222/logo": 3 * 1024 * 1024,
+            # Card-hub uploads (seed card_hub, app/card_hub.py) — both cards,
+            # both upload leaves.
+            "/api/clientes/33333333-3333-3333-3333-333333333333/documentos": 30 * 1024 * 1024,
+            "/api/clientes/33333333-3333-3333-3333-333333333333/checklist-extras/"
+            "44444444-4444-4444-4444-444444444444/documento": 30 * 1024 * 1024,
+            "/api/comercial/negocios/55555555-5555-5555-5555-555555555555/documentos":
+                30 * 1024 * 1024,
+            "/api/comercial/negocios/55555555-5555-5555-5555-555555555555/checklist-extras/"
+            "44444444-4444-4444-4444-444444444444/documento": 30 * 1024 * 1024,
         }
         for path, expected in expectations.items():
             assert _limit_for(overrides, path) == expected, path

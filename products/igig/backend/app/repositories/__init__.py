@@ -39,23 +39,9 @@ __all__ = [
     "FaturaItemRepository",
     "LeadRepository",
     "OrcamentoRepository",
+    "PipelineStageRepository",
     "Repositorios",
-    "ETAPAS",
 ]
-
-#: The rigid 8-step esteira from Módulo 4, in order. Sequence matters: the
-#: kanban advances one step at a time, and the DB CHECK constraint mirrors
-#: this exact set on both backends.
-ETAPAS: tuple[str, ...] = (
-    "aguardando_roteiro",
-    "roteiro_em_producao",
-    "aguardando_design",
-    "design_em_producao",
-    "revisao_interna",
-    "aprovacao_cliente",
-    "pronto_para_agendamento",
-    "agendado",
-)
 
 
 class ClienteRepository(BaseRepository):
@@ -135,51 +121,16 @@ class PautaRepository(BaseRepository):
 
 
 class TarefaRepository(BaseRepository):
+    """Plain tarefa reads/writes.
+
+    The BOARD — stages, moves, the approval-stage rules, the atomic refação
+    count — is `app/services/esteira_quadro.py` on the seed pipeline, since the
+    esteira's stages became user-editable rows (migration 017). Nothing here
+    may move a tarefa between stages: a second move path is how the history
+    and the rules get skipped.
+    """
+
     table = "tarefa"
-
-    def por_etapa(self, org_id: str, etapa: str) -> list[Record]:
-        return self._por("etapa", etapa, org_id)
-
-    def quadro(self, org_id: str) -> dict[str, list[Record]]:
-        """Every tarefa grouped by etapa — the Módulo 4 kanban payload.
-
-        One query, grouped in memory: eight per-etapa queries would be eight
-        round-trips for a board that always renders all columns at once.
-        """
-        board: dict[str, list[Record]] = {etapa: [] for etapa in ETAPAS}
-        for tarefa in self.listar(org_id):
-            board.setdefault(tarefa.get("etapa", ""), []).append(tarefa)
-        return board
-
-    def mover(self, org_id: str, tarefa_id: str, etapa: str) -> Record:
-        if etapa not in ETAPAS:
-            raise ValueError(f"etapa inválida: {etapa!r}; esperada uma de {ETAPAS}")
-        return self.atualizar(org_id, tarefa_id, {"etapa": etapa})
-
-    def solicitar_ajuste(self, org_id: str, tarefa_id: str, observacao: str = "") -> Record:
-        """Módulo 4: the client's [Solicitar Ajuste] button.
-
-        Reopens the tarefa at revisão interna AND increments the Contador de
-        Refações, which Módulo 5's BI de eficiência reports per client. The
-        read-then-write is not atomic on either backend; a concurrent double
-        click could lose one increment. Acceptable today (one client acts on
-        one tarefa at a time) and the fix — an atomic increment on the store —
-        belongs in the seam, not here, when a second consumer needs it.
-        """
-        atual = self.buscar(org_id, tarefa_id)
-        return self.atualizar(
-            org_id,
-            tarefa_id,
-            {
-                "etapa": "revisao_interna",
-                "refacoes": int(atual.get("refacoes") or 0) + 1,
-                "observacao_cliente": observacao,
-            },
-        )
-
-    def aprovar(self, org_id: str, tarefa_id: str) -> Record:
-        """Módulo 4: [Aprovar Conteúdo] jumps straight to scheduling."""
-        return self.atualizar(org_id, tarefa_id, {"etapa": "pronto_para_agendamento"})
 
 
 class ApontamentoRepository(BaseRepository):
@@ -206,12 +157,16 @@ class ApontamentoRepository(BaseRepository):
         abertos = self.listar(org_id, spec=spec)
         return abertos[0] if abertos else None
 
-    def iniciar(self, org_id: str, tarefa_id: str, usuario_id: str) -> Record:
+    def iniciar(
+        self, org_id: str, tarefa_id: str, usuario_id: str, *, profissional_id: str | None = None
+    ) -> Record:
         """Start the timer, auto-pausing whatever else was running.
 
         The spec requires the clock to stop when another tarefa starts, so
         this closes any open segment first rather than letting the unique
-        index reject the insert.
+        index reject the insert. `usuario_id` is ALWAYS the authenticated
+        caller (smoke finding 3 — never a payload field); `profissional_id` is
+        that user's team record, which is what cost is computed from.
         """
         aberto = self.aberto_do_usuario(org_id, usuario_id)
         if aberto is not None:
@@ -221,6 +176,7 @@ class ApontamentoRepository(BaseRepository):
             {
                 "tarefa_id": tarefa_id,
                 "usuario_id": usuario_id,
+                "profissional_id": profissional_id,
                 "iniciado_em": datetime.now(timezone.utc).isoformat(),
                 "minutos": 0,
             },
@@ -294,8 +250,12 @@ class AprovacaoRepository(BaseRepository):
         tarefa_id: str,
         *,
         validade: timedelta | None = None,
+        emitido_por: str | None = None,
     ) -> Record:
-        """Mint an approval link for a tarefa."""
+        """Mint an approval link for a tarefa.
+
+        `emitido_por` is who sent it — the person told when the client decides.
+        """
         expira = datetime.now(timezone.utc) + (validade or self.VALIDADE_PADRAO)
         return self.criar(
             org_id,
@@ -303,6 +263,7 @@ class AprovacaoRepository(BaseRepository):
                 "tarefa_id": tarefa_id,
                 "token": self.montar_token(org_id),
                 "expira_em": expira.isoformat(),
+                "emitido_por": emitido_por,
             },
         )
 
@@ -368,6 +329,16 @@ class ProfissionalRepository(BaseRepository):
 
     def ativos(self, org_id: str) -> list[Record]:
         return self.listar(org_id, spec=QuerySpec().with_filter("ativo", Op.EQ, True))
+
+    def do_usuario(self, org_id: str, usuario_id: str) -> Record | None:
+        """The team record linked to an auth user, or ``None``.
+
+        ``None`` is a real state (an owner who never registered as a
+        profissional), and callers treat it as "hours without a rate" — which
+        the BI reports as an alert rather than as free work.
+        """
+        encontrados = self._por("usuario_id", usuario_id, org_id)
+        return encontrados[0] if encontrados else None
 
     def custo_hora_efetivo(self, org_id: str, profissional_id: str, *, funcoes: "FuncaoRepository") -> float:
         """The rate that actually applies to this person.
@@ -712,6 +683,27 @@ class OrcamentoRepository(BaseRepository):
         return self.atualizar(org_id, orcamento_id, {"status": "aceito"})
 
 
+class PipelineStageRepository(BaseRepository):
+    """READ-ONLY view of the board stages (migration 017).
+
+    Stage CRUD belongs to the seed pipeline (`app/pipelines.py`); this exists
+    so a RecordStore-side reader — the public approval portal's page — can ask
+    "which role does this stage carry?" without a second client.
+    """
+
+    table = "pipeline_stages"
+    default_order = (Order("posicao"),)
+
+    def papel_de(self, org_id: str, etapa_id: str) -> str | None:
+        """The stage's role, or ``None`` for a role-less stage.
+
+        Raises ``RecordNotFound`` for an unknown id — a tarefa pointing at a
+        missing stage is a data fault the caller must see, not a role-less
+        stage.
+        """
+        return self.buscar(org_id, etapa_id).get("papel")
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -740,3 +732,4 @@ class Repositorios:
         self.fatura_item = FaturaItemRepository(store)
         self.lead = LeadRepository(store)
         self.orcamento = OrcamentoRepository(store)
+        self.etapa = PipelineStageRepository(store)

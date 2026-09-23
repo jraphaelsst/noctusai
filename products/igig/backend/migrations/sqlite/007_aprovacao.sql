@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS aprovacao (
     decidido_em TEXT,
     decisao     TEXT CHECK (decisao IN ('aprovado', 'ajuste')),
     observacao  TEXT,
+    -- Added by 017: who minted the link (the agency is notified on decision).
+    emitido_por TEXT,
     created_at  TEXT NOT NULL,
     updated_at  TEXT
 );

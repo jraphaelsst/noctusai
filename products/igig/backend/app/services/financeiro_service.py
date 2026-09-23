@@ -16,13 +16,47 @@ quietly disagree about the same client.
 """
 from __future__ import annotations
 
+import calendar
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
 from app.repositories import Repositorios
 from app.services.bi_service import BIService
 
-__all__ = ["Excedente", "LinhaDRE", "FinanceiroService", "proxima_competencia"]
+__all__ = [
+    "Excedente",
+    "LinhaDRE",
+    "FinanceiroService",
+    "proxima_competencia",
+    "limites_da_competencia",
+]
+
+_COMPETENCIA = re.compile(r"^(\d{4})-(\d{2})$")
+
+
+def limites_da_competencia(competencia: str) -> tuple[str, str]:
+    """First and last instant of a `YYYY-MM` month, as ISO strings.
+
+    🔴 The last day comes from the calendar, never a literal `-31`: Postgres
+    rejects `2026-02-31T23:59:59` as a timestamp, so every month shorter than
+    31 days 500'd in production (smoke finding 1, 2026-09-22) while the SQLite
+    suite — which compares these as TEXT — stayed green.
+
+    Raises ``ValueError`` on anything that is not a real `YYYY-MM`; the router
+    turns that into a 422 instead of letting `int()` crash into a 500.
+    """
+    casou = _COMPETENCIA.match(competencia or "")
+    if not casou:
+        raise ValueError(f"competência inválida: {competencia!r}; esperado AAAA-MM")
+    ano, mes = int(casou.group(1)), int(casou.group(2))
+    if not 1 <= mes <= 12:
+        raise ValueError(f"competência inválida: {competencia!r}; mês fora de 01-12")
+    ultimo_dia = calendar.monthrange(ano, mes)[1]
+    return (
+        f"{ano:04d}-{mes:02d}-01T00:00:00",
+        f"{ano:04d}-{mes:02d}-{ultimo_dia:02d}T23:59:59.999999",
+    )
 
 
 def proxima_competencia(competencia: str) -> str:
@@ -78,8 +112,7 @@ class FinanceiroService:
         Counting tarefas instead would double-count a piece that took several
         steps, and counting publicacoes would miss anything published manually.
         """
-        inicio = f"{competencia}-01T00:00:00"
-        fim = f"{competencia}-31T23:59:59"
+        inicio, fim = limites_da_competencia(competencia)
         entregues: dict[str, int] = {}
         for pauta in self._repos.pauta.no_periodo(org_id, inicio, fim):
             cid = str(pauta.get("cliente_id") or "")

@@ -19,6 +19,15 @@ class IgIgSettings(ProductSettings):
     # Rename per vendor (``resend_webhook_secret`` / ``meta_webhook_secret`` / etc.).
     example_webhook_secret: str = ""
 
+    # ── Signature-provider webhook (routers/comercial_router.py) ──────
+    # HMAC-SHA256 (hex, `X-Webhook-Hmac-SHA256`) of the raw body. EMPTY ⇒ the
+    # webhook refuses every call (401): it activates contracts, so there is no
+    # unsigned early-dev mode. Deliberately NOT in `required_prod_config` yet —
+    # declaring a key that is absent from the prod .env turns a refused
+    # webhook into a refused BOOT (see app/main.py's note); add it there once
+    # the provider integration (NOC-REMEDIATE[igig-assinatura]) sets it.
+    igig_assinatura_webhook_secret: str = ""
+
     # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
     webhook_rate_limit: str = "60/minute"
 

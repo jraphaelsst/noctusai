@@ -12,7 +12,7 @@ import sqlite3
 import pytest
 from noctusai_lib.integrations.persistence import RecordNotFound, SqliteRecordStore
 
-from app.repositories import ETAPAS, Repositorios
+from app.repositories import Repositorios
 from app.store import aplicar_schema_sqlite
 
 ORG = "org-igig"
@@ -36,7 +36,11 @@ def tarefa(repos: Repositorios, cliente: dict) -> dict:
     pauta = repos.pauta.criar(
         ORG, {"cliente_id": cliente["id"], "titulo": "Post institucional", "funil": "topo"}
     )
-    return repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte do post"})
+    # Stage rows live behind PostgREST (app/pipelines.py); on this store the
+    # id is opaque, and NOT NULL like the Postgres column after migration 017.
+    return repos.tarefa.criar(
+        ORG, {"pauta_id": pauta["id"], "titulo": "Arte do post", "etapa_id": "etapa-1"}
+    )
 
 
 # ── Cliente ─────────────────────────────────────────────────────────
@@ -95,47 +99,28 @@ def test_repertorio_round_trips_json_columns(repos, cliente):
     assert repertorio["tom_de_voz"] == "próximo e caloroso"
 
 
-# ── Tarefa / esteira (Módulo 4) ─────────────────────────────────────
-def test_tarefa_starts_at_the_first_etapa(repos, tarefa):
-    assert tarefa["etapa"] == ETAPAS[0] == "aguardando_roteiro"
+# ── Tarefa (Módulo 4) ───────────────────────────────────────────────
+# The board rules (stages, moves, refação) live in app/services/esteira_quadro.py
+# and are tested in tests/services/test_esteira_quadro.py.
+def test_tarefa_requires_a_stage(repos, tarefa):
+    """`etapa_id` is NOT NULL — a tarefa with no stage would vanish from the board."""
+    from noctusai_lib.integrations.persistence import PersistenceError
+
+    with pytest.raises(PersistenceError):
+        repos.tarefa.criar(ORG, {"pauta_id": tarefa["pauta_id"], "titulo": "Sem etapa"})
 
 
-def test_quadro_has_every_column_even_when_empty(repos, tarefa):
-    quadro = repos.tarefa.quadro(ORG)
-    assert set(quadro) == set(ETAPAS)
-    assert len(quadro["aguardando_roteiro"]) == 1
-    assert quadro["agendado"] == []
-
-
-def test_mover_advances_the_etapa(repos, tarefa):
-    assert repos.tarefa.mover(ORG, tarefa["id"], "design_em_producao")["etapa"] == "design_em_producao"
-
-
-def test_mover_rejects_an_unknown_etapa(repos, tarefa):
-    with pytest.raises(ValueError, match="etapa inválida"):
-        repos.tarefa.mover(ORG, tarefa["id"], "etapa_inventada")
-
-
-def test_solicitar_ajuste_reopens_and_increments_refacoes(repos, tarefa):
-    repos.tarefa.mover(ORG, tarefa["id"], "aprovacao_cliente")
-    ajustada = repos.tarefa.solicitar_ajuste(ORG, tarefa["id"], "trocar a cor do fundo")
-    assert ajustada["etapa"] == "revisao_interna"
-    assert ajustada["refacoes"] == 1
-    assert ajustada["observacao_cliente"] == "trocar a cor do fundo"
-
-    de_novo = repos.tarefa.solicitar_ajuste(ORG, tarefa["id"], "outra coisa")
-    assert de_novo["refacoes"] == 2, "the contador must accumulate across rounds"
-
-
-def test_aprovar_jumps_to_scheduling(repos, tarefa):
-    repos.tarefa.mover(ORG, tarefa["id"], "aprovacao_cliente")
-    assert repos.tarefa.aprovar(ORG, tarefa["id"])["etapa"] == "pronto_para_agendamento"
+def test_tarefa_has_no_hardcoded_etapa_column(repos, tarefa):
+    """Migration 017 dropped `etapa`: the stage is `etapa_id` and nothing else."""
+    assert "etapa" not in tarefa
+    assert tarefa["etapa_id"] == "etapa-1"
 
 
 # ── Apontamento / timesheet (Módulo 4) ──────────────────────────────
 def test_iniciar_opens_a_segment(repos, tarefa):
     apontamento = repos.apontamento.iniciar(ORG, tarefa["id"], "user-1")
     assert apontamento["encerrado_em"] is None
+    assert apontamento["profissional_id"] is None
     assert repos.apontamento.aberto_do_usuario(ORG, "user-1")["id"] == apontamento["id"]
 
 
@@ -143,7 +128,7 @@ def test_starting_another_tarefa_auto_closes_the_running_timer(repos, tarefa, cl
     """The spec requires the clock to pause when another tarefa starts."""
     outra_pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Outra"})
     outra_tarefa = repos.tarefa.criar(
-        ORG, {"pauta_id": outra_pauta["id"], "titulo": "Outra arte"}
+        ORG, {"pauta_id": outra_pauta["id"], "titulo": "Outra arte", "etapa_id": "etapa-1"}
     )
 
     primeiro = repos.apontamento.iniciar(ORG, tarefa["id"], "user-1")
