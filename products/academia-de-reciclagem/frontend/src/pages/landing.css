@@ -278,23 +278,35 @@
 }
 
 /* ── noc addition: landing `#trinta-toneladas` — the infographic section.
-   Two columns (image | copy + numbers) that stack on narrow screens, image
-   first in both orders: it is the argument, the numbers annotate it. ── */
+   Editorial stack, not a side-by-side grid: the "02 /" heading + lede read
+   first (the argument), the image illustrates it directly underneath — big,
+   offset-shadowed, edge-anchored — and the sourced numbers land as a
+   bordered ledger row right under the image (same motif as `.impact-numbers`
+   elsewhere on the page) instead of a tall list stacked beside a shorter
+   image, which is what left the large empty gap in the old two-column
+   `align-items:center` layout. */
 .academia-landing .tonnage-section { background:hsl(42 38% 96%); }
-.academia-landing .tonnage-layout { display:grid; grid-template-columns:minmax(0, 1.05fr) minmax(0, .95fr); gap:clamp(34px, 5vw, 76px); align-items:center; }
-.academia-landing .tonnage-figure figure { margin:0; }
-.academia-landing .tonnage-figure img { width:100%; height:auto; display:block; border-radius:16px; box-shadow:14px 16px 0 hsl(var(--primary) / .12); }
-.academia-landing .tonnage-figure figcaption { margin-top:16px; max-width:46ch; font-family:var(--app-font-mono); font-size:.7rem; line-height:1.6; color:hsl(var(--muted-foreground)); }
-.academia-landing .tonnage-copy .section-intro { margin-bottom:38px; }
-.academia-landing .tonnage-metrics { display:flex; flex-direction:column; gap:22px; margin:0 0 34px; }
-.academia-landing .tonnage-metric { display:grid; grid-template-columns:auto 1fr; align-items:baseline; gap:20px; padding-top:20px; border-top:1px solid hsl(var(--primary) / .18); }
-.academia-landing .tonnage-value { margin:0; color:hsl(var(--accent)); font-family:var(--app-font-serif); font-size:clamp(2.4rem, 4.2vw, 3.4rem); line-height:.95; letter-spacing:-.06em; }
-.academia-landing .tonnage-label { margin:0; color:hsl(var(--primary)); font-size:.92rem; line-height:1.55; max-width:34ch; }
+.academia-landing .tonnage-head { max-width:720px; margin-bottom:48px; }
+.academia-landing .tonnage-head .section-title { margin:14px 0 20px; }
+.academia-landing .tonnage-head .section-intro { max-width:620px; }
+
+.academia-landing .tonnage-visual { margin-bottom:50px; }
+.academia-landing .tonnage-figure { margin:0 auto; max-width:900px; }
+.academia-landing .tonnage-figure img { width:100%; height:auto; display:block; border-radius:18px; box-shadow:16px 18px 0 hsl(var(--primary) / .16); }
+.academia-landing .tonnage-figure figcaption { margin-top:18px; max-width:56ch; margin-inline:auto; font-family:var(--app-font-mono); font-size:.7rem; line-height:1.6; color:hsl(var(--muted-foreground)); }
+
+.academia-landing .tonnage-metrics { display:grid; grid-template-columns:repeat(3, 1fr); gap:0; margin:0 0 34px; border-top:1px solid hsl(var(--primary) / .2); }
+.academia-landing .tonnage-metric { padding:22px 24px 0 0; }
+.academia-landing .tonnage-metric + .tonnage-metric { padding-left:24px; border-left:1px solid hsl(var(--primary) / .2); }
+.academia-landing .tonnage-value { margin:0; color:hsl(var(--accent)); font-family:var(--app-font-serif); font-size:clamp(2.2rem, 3.6vw, 3.1rem); line-height:.95; letter-spacing:-.06em; }
+.academia-landing .tonnage-label { display:block; margin:9px 0 0; color:hsl(var(--primary)); font-size:.85rem; line-height:1.5; max-width:30ch; }
 .academia-landing .tonnage-cta { border-color:hsl(var(--primary) / .35); color:hsl(var(--primary)); }
 .academia-landing .tonnage-cta:hover { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); }
 
 @media (max-width: 900px) {
-  .academia-landing .tonnage-layout { grid-template-columns:1fr; gap:34px; }
+  .academia-landing .tonnage-metrics { grid-template-columns:1fr; }
+  .academia-landing .tonnage-metric { padding:20px 0 0; }
+  .academia-landing .tonnage-metric + .tonnage-metric { padding-left:0; border-left:0; border-top:1px solid hsl(var(--primary) / .2); margin-top:20px; }
 }
 
 /* ── noc addition: /o-projeto + /a-carta — a dark top band so the

@@ -148,11 +148,31 @@ export default function Landing() {
           pages, where it competed with the text; here it gets a section of
           its own, with the numbers it is meant to make tangible. Every
           figure below comes from `content/projeto.ts` (the source .docx) —
-          no invented statistics. */}
+          no invented statistics.
+
+          Layout: the "02 /" heading + lede read first (the argument), then
+          the image — large, offset-shadowed, edge-anchored — illustrates it,
+          then the sourced numbers land as a bordered ledger row directly
+          under the image instead of stacked in a tall list beside it (the
+          old side-by-side grid left a lot of vertical air when the image was
+          shorter than the copy column). */}
       <section id="trinta-toneladas" className="section tonnage-section" aria-labelledby="tonnage-title">
-        <div className="container-xl tonnage-layout">
-          <Reveal className="tonnage-figure">
-            <figure>
+        <div className="container-xl tonnage-head">
+          <Reveal className="tonnage-heading">
+            <div className="eyebrow">02 / a imagem que move o projeto</div>
+            <h2 id="tonnage-title" className="display section-title">
+              O lixo não<br />desaparece.
+            </h2>
+            <p className="section-intro">
+              Ele continua existindo, segue um caminho — e esse caminho pode ser de abandono e poluição, ou de
+              reciclagem, renda e dignidade. Números sozinhos não transmitem isso. Esta imagem transmite.
+            </p>
+          </Reveal>
+        </div>
+
+        <Reveal className="tonnage-visual" delay={140}>
+          <div className="container-xl tonnage-visual-inner">
+            <figure className="tonnage-figure">
               <img
                 src={infografico}
                 alt="Infográfico: a montanha de resíduos que uma única pessoa gera ao longo da vida, representada em contêineres empilhados."
@@ -167,18 +187,11 @@ export default function Landing() {
                 longo da vida.
               </figcaption>
             </figure>
-          </Reveal>
+          </div>
+        </Reveal>
 
-          <Reveal className="tonnage-copy" delay={150}>
-            <div className="eyebrow">02 / a imagem que move o projeto</div>
-            <h2 id="tonnage-title" className="display section-title">
-              O lixo não<br />desaparece.
-            </h2>
-            <p className="section-intro">
-              Ele continua existindo, segue um caminho — e esse caminho pode ser de abandono e poluição, ou de
-              reciclagem, renda e dignidade. Números sozinhos não transmitem isso. Esta imagem transmite.
-            </p>
-
+        <div className="container-xl">
+          <Reveal className="tonnage-footer" delay={230}>
             <dl className="tonnage-metrics" aria-label="A conta de uma vida">
               <div className="tonnage-metric" data-testid="tonnage-toneladas">
                 <dt className="tonnage-value">+30 t</dt>
