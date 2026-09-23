@@ -568,3 +568,170 @@ class TestCheckUploadRouteBodyOverride:
             """,
         )
         assert check_upload_route_body_override(tmp_path) == []
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Nested `include_router` prefix composition (2026-09-23). The card_hub
+# shape: `assinatura_router.py`'s `APIRouter()` carries NO prefix and is
+# mounted by `router.py`'s `router.include_router(assinatura_router)` under
+# `/api/clientes`. The single-file resolver derived a prefix-less pattern
+# key and false-positived against the real, correctly-declared override.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def _write_nested(tmp_path: Path, slug: str = "hub") -> None:
+    """Three levels, three import styles:
+    `router.py` (prefix /api/clientes)
+      └─ include_router(sub_router)                 — `from X import router as sub_router`
+           └─ include_router(deep_router, prefix="/extra") — relative import
+                └─ deep.py `APIRouter(prefix="/deep")`, UploadFile at "/{id}/scan"
+      └─ include_router(outro.router)               — module-attribute style
+           └─ outro.py `APIRouter()`, UploadFile at "/{cid}/anexo"
+    """
+    base = f"products/{slug}/backend/app/modules/hub"
+    _write(tmp_path, f"{base}/__init__.py", "")
+    _write(
+        tmp_path,
+        f"{base}/router.py",
+        """
+        from fastapi import APIRouter
+        from app.modules.hub.sub_router import router as sub_router
+        from app.modules.hub import outro
+        router = APIRouter(prefix="/api/clientes")
+        router.include_router(sub_router)
+        router.include_router(outro.router)
+        """,
+    )
+    _write(
+        tmp_path,
+        f"{base}/sub_router.py",
+        """
+        from fastapi import APIRouter
+        from .deep import router as deep_router
+        router = APIRouter()
+        router.include_router(deep_router, prefix="/extra")
+        """,
+    )
+    _write(
+        tmp_path,
+        f"{base}/deep.py",
+        """
+        from typing import Optional
+        from fastapi import APIRouter, File, UploadFile
+        router = APIRouter(prefix="/deep")
+
+        @router.post("/{id}/scan")
+        async def scan(id: str, file: Optional[UploadFile] = File(None)):
+            return {}
+        """,
+    )
+    _write(
+        tmp_path,
+        f"{base}/outro.py",
+        """
+        from fastapi import APIRouter, File, UploadFile
+        router = APIRouter()
+
+        @router.post("/{cid}/anexo")
+        async def anexo(cid: str, file: UploadFile = File(...)):
+            return {}
+        """,
+    )
+
+
+class TestNestedIncludeRouterPrefixes:
+    def test_the_real_composed_path_is_matched_against_the_override_table(self, tmp_path):
+        _write_main(
+            tmp_path,
+            "hub",
+            overrides_body=(
+                "_MAX_BODY_PATH_OVERRIDES = {\n"
+                '    "/api/clientes/extra/deep/*/scan": 30_000_000,\n'
+                '    "/api/clientes/*/anexo": 30_000_000,\n'
+                "}"
+            ),
+        )
+        _write_nested(tmp_path)
+        assert check_upload_route_body_override(tmp_path) == []
+
+    def test_a_genuinely_missing_override_still_fails_with_the_full_path(self, tmp_path):
+        _write_main(
+            tmp_path,
+            "hub",
+            overrides_body='_MAX_BODY_PATH_OVERRIDES = {"/api/clientes/*/anexo": 30_000_000}',
+        )
+        _write_nested(tmp_path)
+        issues = check_upload_route_body_override(tmp_path)
+        assert len(issues) == 1, issues
+        assert "/api/clientes/extra/deep/*/scan" in issues[0]["issue"]
+        assert issues[0]["file"].endswith("deep.py:7")
+
+    def test_the_prefix_less_key_the_old_resolver_derived_does_not_cover(self, tmp_path):
+        """Proves the composed path is what is checked: a key matching only
+        the child's own (unmounted) path must NOT count as coverage."""
+        _write_main(
+            tmp_path,
+            "hub",
+            overrides_body=(
+                "_MAX_BODY_PATH_OVERRIDES = {\n"
+                '    "/deep/*/scan": 30_000_000,\n'
+                '    "/*/anexo": 30_000_000,\n'
+                "}"
+            ),
+        )
+        _write_nested(tmp_path)
+        chaves = sorted(i["issue"].split("(POST ")[1].split(")")[0] for i in check_upload_route_body_override(tmp_path))
+        assert chaves == ["/api/clientes/*/anexo", "/api/clientes/extra/deep/*/scan"]
+
+    def test_a_router_mounted_twice_is_checked_at_every_mount(self, tmp_path):
+        _write_main(
+            tmp_path,
+            "dual",
+            overrides_body='_MAX_BODY_PATH_OVERRIDES = {"/api/a/*/up": 1_000_000}',
+        )
+        base = "products/dual/backend/app/routers"
+        _write(tmp_path, f"{base}/filho.py", """
+            from fastapi import APIRouter, File, UploadFile
+            router = APIRouter()
+
+            @router.post("/{x}/up")
+            async def up(x: str, file: UploadFile = File(...)):
+                return {}
+            """)
+        _write(tmp_path, f"{base}/a.py", """
+            from fastapi import APIRouter
+            from app.routers.filho import router as filho
+            router = APIRouter(prefix="/api/a")
+            router.include_router(filho)
+            """)
+        _write(tmp_path, f"{base}/b.py", """
+            from fastapi import APIRouter
+            from app.routers.filho import router as filho
+            router = APIRouter(prefix="/api/b")
+            router.include_router(filho)
+            """)
+        issues = check_upload_route_body_override(tmp_path)
+        assert len(issues) == 1, issues
+        assert "/api/b/*/up" in issues[0]["issue"]
+
+    def test_an_include_cycle_does_not_hang_or_crash(self, tmp_path):
+        _write_main(tmp_path, "ciclo")
+        base = "products/ciclo/backend/app/routers"
+        _write(tmp_path, f"{base}/um.py", """
+            from fastapi import APIRouter, File, UploadFile
+            from app.routers.dois import router as dois
+            router = APIRouter(prefix="/um")
+            router.include_router(dois)
+
+            @router.post("/up")
+            async def up(file: UploadFile = File(...)):
+                return {}
+            """)
+        _write(tmp_path, f"{base}/dois.py", """
+            from fastapi import APIRouter
+            from app.routers.um import router as um
+            router = APIRouter(prefix="/dois")
+            router.include_router(um)
+            """)
+        issues = check_upload_route_body_override(tmp_path)
+        assert issues and all("/up" in i["issue"] for i in issues)

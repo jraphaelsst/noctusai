@@ -6912,11 +6912,15 @@ def check_every_test_file_is_gated(repo_root: Path | None = None) -> list[dict]:
 # had upload routes and ZERO entries.
 #
 # STATIC-ANALYSIS SCOPE (read before trusting a clean run as exhaustive):
-# this keeper resolves a route's mounted path from ONLY (a) the router's
+# this keeper resolves a route's mounted path from (a) the router's
 # own `APIRouter(prefix=...)` literal (or a same-file post-hoc
 # `<router>.prefix = "<literal>"` assignment when the constructor didn't
-# set one — the legacy `adconnect` pattern) and (b) the route decorator's
-# own path literal. It does NOT resolve an EXTRA prefix a product might
+# set one — the legacy `adconnect` pattern), (b) the route decorator's
+# own path literal, and (c) since 2026-09-23, every PARENT router's prefix
+# composed through `<parent_router>.include_router(<child>, prefix=...)`
+# edges across files and any number of levels (`_upload_route_mount_
+# prefixes` — the card_hub `assinatura_router` false positive). It does
+# NOT resolve an EXTRA prefix a product might
 # apply at `app.include_router(router, prefix=...)` time in `main.py` —
 # no product in this fleet does that for an upload route today, but a
 # future one could, and this keeper would then derive a shorter-than-real
@@ -7072,13 +7076,160 @@ def _upload_route_iter_routes(tree: "ast.Module", prefixes: dict):
             if not has_upload:
                 continue
 
-            mounted = prefixes[router_var].rstrip("/") + "/" + route_path.lstrip("/")
-            mounted = mounted.rstrip("/") or "/"
-            segments = tuple(s for s in mounted.split("/") if s)
-            pattern_key = "/" + "/".join(
-                "*" if _UPLOAD_ROUTE_DYNAMIC_SEGMENT_RE.match(s) else s for s in segments
-            )
-            yield pattern_key, method, node.name, node.lineno
+            montagens = prefixes[router_var]
+            if isinstance(montagens, str):
+                montagens = [montagens]
+            for prefixo in montagens:
+                mounted = prefixo.rstrip("/") + "/" + route_path.lstrip("/")
+                mounted = mounted.rstrip("/") or "/"
+                segments = tuple(s for s in mounted.split("/") if s)
+                pattern_key = "/" + "/".join(
+                    "*" if _UPLOAD_ROUTE_DYNAMIC_SEGMENT_RE.match(s) else s for s in segments
+                )
+                yield pattern_key, method, node.name, node.lineno
+
+
+def _upload_route_module_name(backend_dir: Path, py_file: Path) -> str:
+    """`backend/app/modules/x/router.py` -> `app.modules.x.router`
+    (`__init__.py` -> its package)."""
+    parts = list(py_file.relative_to(backend_dir).with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _upload_route_import_map(tree: "ast.Module", module: str, is_package: bool) -> dict:
+    """Local name -> (source_module, attr_or_None) for every `import`/
+    `from ... import ...` in `tree`. `attr=None` means the local name IS a
+    module (so `name.router` resolves to `(module, "router")`). Relative
+    imports are resolved against `module`."""
+    mapa: dict = {}
+    pacote = module if is_package else module.rpartition(".")[0]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                alvo = pacote
+                for _ in range(node.level - 1):
+                    alvo = alvo.rpartition(".")[0]
+                base = f"{alvo}.{base}" if base else alvo
+            for alias in node.names:
+                local = alias.asname or alias.name
+                # `from pkg import sub` may import a submodule OR an
+                # attribute — record the attribute form; the resolver also
+                # tries `pkg.sub` as a module when `.attr` access follows.
+                mapa[local] = (base, alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    mapa[alias.asname] = (alias.name, None)
+    return mapa
+
+
+def _upload_route_mount_prefixes(backend_dir: Path, arvores: dict) -> dict:
+    """EFFECTIVE mount prefixes for every `APIRouter` variable in a
+    product's backend, composing parent `<parent>.include_router(<child>,
+    prefix=...)` edges across files and across any number of levels.
+
+    `arvores` maps `py_file -> ast.Module`. Returns
+    `{py_file: {router_var: [full_prefix, ...]}}`. A router that no known
+    router includes keeps its own prefix alone (exactly the pre-2026-09-23
+    behaviour); a router included by N parents is checked at every mount.
+
+    WHY (2026-09-23). `card_hub/assinatura_router.py`'s `APIRouter()` has
+    no prefix — it is mounted by `card_hub/router.py`'s
+    `router.include_router(assinatura_router)` under `/api/clientes`. The
+    single-file resolver derived `/*/contratos/*/assinatura-fisica` for its
+    first UploadFile route and false-positived against the real, correctly
+    declared `/api/clientes/*/contratos/*/assinatura-fisica` override.
+
+    STILL OUT OF SCOPE: an include whose PARENT is not an `APIRouter`
+    variable (e.g. `app.include_router(r, prefix=...)` on the FastAPI app
+    in `main.py`) — the runtime check remains the source of truth there.
+    """
+    info: dict = {}  # module -> (py_file, own_prefixes, import_map)
+    for py_file, tree in arvores.items():
+        modulo = _upload_route_module_name(backend_dir, py_file)
+        info[modulo] = (
+            py_file,
+            _upload_route_extract_router_prefixes(tree),
+            _upload_route_import_map(tree, modulo, py_file.name == "__init__.py"),
+        )
+
+    def resolver(modulo: str, expr: "ast.expr"):
+        """`(module, var)` of the router `expr` names, or None."""
+        _py, proprios, imports = info[modulo]
+        if isinstance(expr, ast.Name):
+            if expr.id in proprios:
+                return (modulo, expr.id)
+            origem = imports.get(expr.id)
+            if origem and origem[1] is not None:
+                fonte, attr = origem
+                if fonte in info and attr in info[fonte][1]:
+                    return (fonte, attr)
+            return None
+        if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+            origem = imports.get(expr.value.id)
+            if origem is None:
+                return None
+            fonte, attr = origem
+            candidato = fonte if attr is None else f"{fonte}.{attr}"
+            if candidato in info and expr.attr in info[candidato][1]:
+                return (candidato, expr.attr)
+        return None
+
+    # child (module, var) -> [(parent (module, var), include-time prefix)]
+    pais: dict = {}
+    for modulo, (py_file, proprios, _imports) in info.items():
+        for node in ast.walk(arvores[py_file]):
+            if not (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "include_router"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in proprios
+                and node.args
+            ):
+                continue
+            filho = resolver(modulo, node.args[0])
+            if filho is None:
+                continue
+            extra = ""
+            for kw in node.keywords:
+                if (
+                    kw.arg == "prefix"
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
+                    extra = kw.value.value
+            pais.setdefault(filho, []).append(((modulo, node.func.value.id), extra))
+
+    memo: dict = {}
+
+    def montagens(chave, visitando: frozenset) -> list:
+        if chave in memo:
+            return memo[chave]
+        proprio = info[chave[0]][1][chave[1]]
+        arestas = pais.get(chave, [])
+        if not arestas or chave in visitando:
+            resultado = [proprio]
+        else:
+            resultado = []
+            for pai, extra in arestas:
+                for base in montagens(pai, visitando | {chave}):
+                    junto = base.rstrip("/") + "/" + extra.strip("/") + "/" + proprio.strip("/")
+                    junto = "/" + "/".join(s for s in junto.split("/") if s)
+                    if junto not in resultado:
+                        resultado.append(junto)
+        memo[chave] = resultado
+        return resultado
+
+    saida: dict = {}
+    for modulo, (py_file, proprios, _imports) in info.items():
+        saida[py_file] = {
+            var: montagens((modulo, var), frozenset()) for var in proprios
+        }
+    return saida
 
 
 def _upload_route_extract_override_keys(main_py: Path) -> set:
@@ -7195,6 +7346,7 @@ def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict
 
         override_keys = _upload_route_extract_override_keys(backend_app / "main.py")
 
+        arvores: dict = {}
         for py_file in sorted(backend_app.rglob("*.py")):
             rel_parts = py_file.relative_to(backend_app).parts
             if any(
@@ -7204,12 +7356,17 @@ def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict
                 continue
             try:
                 source = py_file.read_text(encoding="utf-8")
-                tree = ast.parse(source, filename=str(py_file))
+                arvores[py_file] = ast.parse(source, filename=str(py_file))
             except (OSError, UnicodeDecodeError, SyntaxError) as exc:
                 logger.debug("compliance: cannot parse %s (%s)", py_file, exc)
                 continue
 
-            prefixes = _upload_route_extract_router_prefixes(tree)
+        # Compose parent `include_router` prefixes across files/levels
+        # (2026-09-23 — see `_upload_route_mount_prefixes`).
+        montagens_por_arquivo = _upload_route_mount_prefixes(backend_app.parent, arvores)
+
+        for py_file, tree in arvores.items():
+            prefixes = montagens_por_arquivo.get(py_file) or {}
             if not prefixes:
                 continue
 
