@@ -507,15 +507,6 @@ stray `PyJWT==2.13.0` was the 2026-06-30 red. Before bumping one product, bump
 the fleet (or don't diverge): grep the pin across `products/*/backend/requirements.txt`
 + root `requirements.txt`, land the same value everywhere in one commit.
 
-### 3. Product FE change → update the outline-corpus baseline SAME commit
-
-Editing `products/<slug>/frontend/src/**` shifts AST symbol counts. If a file
-drifts >5% from `mcp/noctusai/tests/fixtures/outline_corpus_baseline.json`, the
-`TestCorpusBaselineSnapshot` gate (MCP suite) goes red. Re-snapshot the drifted
-entries in the SAME commit as the FE change. The baseline is a **deliberate
-drift-detector** — update it consciously (review the delta), never blind-regen
-the whole file. See `feedback_outline_corpus_baseline_coupling`.
-
 ---
 
 See also:

@@ -1,34 +1,44 @@
-"""Corpus accuracy guard for `outline_typescript` against every TS / TSX
-file under `products/*/frontend/src/`.
+"""Corpus accuracy guard for `outline_typescript`.
 
-The TS regex backend claims ~95% accuracy on prettier/eslint-formatted
-sources (`outline_typescript.py` module docstring). This corpus test pins
-that claim:
+Two INDEPENDENT guards, split by what each one actually needs to say
+something meaningful:
 
-1. **No `parse_error`** on any file in the corpus. A regex misfire that
-   would set `parse_error` would itself signal a worse-than-95% problem.
-2. **At least one symbol per non-trivial file** (>20 lines, not a pure
-   re-export barrel). Empty results indicate the regex regressed against
-   a syntax it used to handle.
-3. **A baseline snapshot** — the per-file symbol count is captured to
-   `tests/fixtures/outline_corpus_baseline.json`. Future runs must stay
-   within ±5% **OR** ±1 symbol per file, whichever is more permissive
-   (tolerance for legitimate symbol additions / removals during normal
-   feature work).
+1. **Frozen-corpus baseline** (`TestFrozenCorpus*`) — measures the outliner
+   ONLY against `tests/fixtures/outline_corpus/`, a small (~12-file)
+   VENDORED snapshot of real `.ts`/`.tsx` shapes (functional components,
+   hooks, a default-export entrypoint, arrow-fn components, class
+   components, a re-export barrel — see that directory's README.md).
+   This corpus is FROZEN: it changes only when someone deliberately updates
+   it (new outliner shape to cover, or a fixture for a real outliner
+   regression), never as a side effect of ordinary product-frontend work.
+   Because the corpus never moves on its own, a baseline drift here is
+   ALWAYS an outliner-regression signal, never legitimate feature growth —
+   no re-ratification path is needed because the input itself doesn't
+   change.
 
-   Decided 2026-08-31, after repeated false fires on small files: a
-   RELATIVE-ONLY tolerance is wrong at small symbol counts — one
-   legitimate export added to a 4-symbol file is a 25% move, well past
-   ±5%, so the guard fired hardest on exactly the files it has the
-   least statistical basis to say anything about. The intent of this
-   test is to catch a CORPUS-WIDE regex regression (the regex backend
-   silently stops recognizing a syntax shape across many files), not to
-   gate a single-symbol edit on one small file — an absolute ±1-symbol
-   floor lets that legitimate case through while the relative ±5% rule
-   still catches genuine multi-symbol regressions on files of any size
-   (see `test_within_tolerance_of_baseline`'s docstring for the
-   two-sided proof: a 1-symbol move on a small file passes, a
-   multi-symbol regression on that same small file still fails).
+2. **Live-tree parse-success** (`TestLiveTreeParses`) — every `.ts`/`.tsx`
+   file under `products/*/frontend/src/` must still outline WITHOUT a
+   `parse_error`. This is a real safety net (a regex misfire in the
+   outliner) and needs NO baseline / no symbol-count — it's a pure
+   pass/fail per file, so it never drifts just because a product added a
+   route or a hook. This is the one live-tree property worth keeping after
+   freezing the corpus above.
+
+Decided 2026-09-23: the baseline used to be measured against the LIVE
+product tree, so any legitimate top-level-symbol change (a new lazy route,
+a hook gaining a return value, a page split into sub-components) tripped
+the ±5%/±1-symbol guard — 9 baseline-bump-only commits since 2026-08
+(`225c1892f` "core main.tsx outline baseline 29→33", `47d34f189`,
+`78bba2e03`, `32fb55fee`, `8cfd4e07a`, `06df43af5`, `b0e1fe32e`, ...) with
+no sanctioned per-entry re-ratification path — the only documented refresh
+was "delete the whole fixture and let it regenerate", which silently
+absorbs every unrelated regression present at that moment (exactly the
+corpus-wide regex drift the fixture exists to catch). See
+`project-history/auto-improvement.ndjson` (2026-09-01 entry). Gates are
+safety nets behind a mechanism, not walls agents collide with during
+normal work — freezing the corpus removes the coupling to live product
+code at the root instead of adding a re-ratification workaround on top of
+it.
 
 Marked `@pytest.mark.slow` so the default suite stays fast.
 
@@ -52,12 +62,10 @@ from tools.noctus.dev.product_scope import is_active
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-CORPUS_GLOB_BASES = [
-    REPO_ROOT / "products",
-]
 TS_EXTENSIONS = {".ts", ".tsx"}
-SKIP_DIRS = {"node_modules", ".venv", "dist", "build", "playwright-report",
-             "test-results", "__pycache__", "coverage", "e2e", ".backup"}
+
+# --- Frozen corpus (baseline-measuring guard) -------------------------------
+CORPUS_DIR = Path(__file__).resolve().parent / "fixtures" / "outline_corpus"
 BASELINE_FILE = Path(__file__).resolve().parent / "fixtures" / "outline_corpus_baseline.json"
 TOLERANCE = 0.05  # ±5% per file
 # Absolute floor, decided 2026-08-31: a delta passes if it is within
@@ -71,10 +79,24 @@ TOLERANCE = 0.05  # ±5% per file
 # already looser there than 5% of a large count.
 ABS_SYMBOL_FLOOR = 1
 
+# --- Live tree (no-baseline parse-success safety net) ------------------------
+LIVE_TREE_BASES = [REPO_ROOT / "products"]
+SKIP_DIRS = {"node_modules", ".venv", "dist", "build", "playwright-report",
+             "test-results", "__pycache__", "coverage", "e2e", ".backup"}
 
-def _walk_corpus() -> list[Path]:
+
+def _walk_frozen_corpus() -> list[Path]:
+    if not CORPUS_DIR.exists():
+        return []
+    return sorted(
+        p for p in CORPUS_DIR.rglob("*")
+        if p.is_file() and p.suffix in TS_EXTENSIONS
+    )
+
+
+def _walk_live_tree() -> list[Path]:
     files: list[Path] = []
-    for base in CORPUS_GLOB_BASES:
+    for base in LIVE_TREE_BASES:
         if not base.exists():
             continue
         for p in base.rglob("*"):  # product-scope: active (filtered below)
@@ -87,23 +109,23 @@ def _walk_corpus() -> list[Path]:
             # Only frontend SOURCE trees (production code). Excludes e2e
             # specs, playwright-report, etc. — those don't follow the
             # production patterns the outliner is calibrated for.
-            rel = str(p.relative_to(base))
             if "/frontend/src/" not in str(p) + "/":
                 continue
             # Co-located UNIT tests (`*.test.ts(x)` / `*.spec.ts(x)`) are not
             # production code: their top-level body is mostly `describe`/`it`
             # callbacks + `vi.fn()` mocks, so the outliner legitimately finds
-            # near-zero declarations — that trips `test_nontrivial_files_have_
-            # symbols` and pollutes the baseline. The corpus measures PRODUCT
-            # symbol coverage; exclude tests (same rationale as the e2e exclusion).
+            # near-zero declarations. The live-tree guard measures
+            # PARSE-ability of product code; exclude tests (same rationale
+            # as the e2e exclusion).
             if p.name.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")):
                 continue
-            # Test-runner setup (`src/test/setup.ts` etc.) is test infra, not product
-            # code — polyfills and `vi.mock`s with no declarations (same rationale).
+            # Test-runner setup (`src/test/setup.ts` etc.) is test infra, not
+            # product code — polyfills and `vi.mock`s with no declarations
+            # (same rationale).
             if "/frontend/src/test/" in str(p):
                 continue
-            # Asleep products (absent from deploy/fleet/active-scope.txt) are out of
-            # every gate — their TS is not outlined or baselined until they wake.
+            # Asleep products (absent from deploy/fleet/active-scope.txt) are
+            # out of every gate — their TS is not outlined until they wake.
             parts = p.relative_to(REPO_ROOT).parts
             if parts[0] == "products" and not is_active(parts[1], REPO_ROOT):
                 continue
@@ -112,18 +134,21 @@ def _walk_corpus() -> list[Path]:
 
 
 @pytest.fixture(scope="module")
-def corpus_files() -> list[Path]:
-    files = _walk_corpus()
+def frozen_corpus_files() -> list[Path]:
+    files = _walk_frozen_corpus()
     if not files:
-        pytest.skip("no TS / TSX files found in products/*/frontend/")
+        pytest.skip(
+            f"no TS / TSX files found in {CORPUS_DIR} — the frozen corpus "
+            "fixture is missing or empty."
+        )
     return files
 
 
 @pytest.fixture(scope="module")
-def corpus_results(corpus_files: list[Path]) -> dict[str, dict]:
+def frozen_corpus_results(frozen_corpus_files: list[Path]) -> dict[str, dict]:
     results = {}
-    for f in corpus_files:
-        rel = str(f.relative_to(REPO_ROOT))
+    for f in frozen_corpus_files:
+        rel = str(f.relative_to(CORPUS_DIR))
         outline = ot.outline_typescript(f)
         results[rel] = {
             "parse_error": outline.parse_error,
@@ -134,47 +159,71 @@ def corpus_results(corpus_files: list[Path]) -> dict[str, dict]:
     return results
 
 
-@pytest.mark.slow
-class TestCorpusNoParseErrors:
-    """Every file in the corpus must outline cleanly (no regex misfire)."""
+@pytest.fixture(scope="module")
+def live_tree_files() -> list[Path]:
+    files = _walk_live_tree()
+    if not files:
+        pytest.skip("no TS / TSX files found in products/*/frontend/")
+    return files
 
-    def test_no_parse_errors(self, corpus_results: dict[str, dict]):
-        bad = {p: r for p, r in corpus_results.items() if r["parse_error"]}
+
+@pytest.mark.slow
+class TestFrozenCorpusNoParseErrors:
+    """Every file in the FROZEN corpus must outline cleanly (no regex
+    misfire). Sanity check on the fixture itself — a broken fixture file
+    would silently zero out the baseline test below."""
+
+    def test_no_parse_errors(self, frozen_corpus_results: dict[str, dict]):
+        bad = {p: r for p, r in frozen_corpus_results.items() if r["parse_error"]}
         assert not bad, (
-            f"{len(bad)} file(s) in the TS corpus parsed with errors: "
+            f"{len(bad)} file(s) in the frozen TS corpus parsed with errors: "
             f"{list(bad)[:5]}"
         )
 
 
 @pytest.mark.slow
-class TestCorpusSymbolCoverage:
-    """Non-trivial files (>20 lines, not pure re-export) must expose ≥1
-    symbol. Empty results signal a regex regression."""
+class TestFrozenCorpusSymbolCoverage:
+    """Non-trivial frozen-corpus files (>20 lines, not a pure re-export)
+    must expose ≥1 symbol. Empty results signal a regex regression."""
 
-    def test_nontrivial_files_have_symbols(self, corpus_results: dict[str, dict]):
+    def test_nontrivial_files_have_symbols(self, frozen_corpus_results: dict[str, dict]):
         empty: list[str] = []
-        for path, r in corpus_results.items():
+        for path, r in frozen_corpus_results.items():
             if r["total_lines"] <= 20:
                 continue
             # Pure re-export barrels are legitimately symbol-empty if they
-            # only contain `export * from "…";` lines — those still register
-            # under `imports`. Skip when total_lines is small AND imports > 0
-            # AND symbol_count is 0.
-            if r["symbol_count"] == 0 and r["imports"] > 0 and r["total_lines"] < 50:
+            # only contain `export * from "…";` / `export { X } from "…";`
+            # lines — those still register under `imports`. `imports > 0
+            # and symbol_count == 0` is sufficient evidence on its own: the
+            # outliner found nothing BUT import/re-export statements, so
+            # there is nothing else the file could be. No line-count cap —
+            # a barrel re-exporting many organs (e.g.
+            # `seed/lib/frontend/src/components/index.ts`) is still a pure
+            # barrel at 130 lines; an arbitrary size ceiling here produced a
+            # false fire on exactly that legitimate shape (found 2026-09-23
+            # while building the frozen outline corpus).
+            if r["symbol_count"] == 0 and r["imports"] > 0:
                 continue
             if r["symbol_count"] == 0:
                 empty.append(path)
         assert not empty, (
-            f"{len(empty)} non-trivial file(s) outlined to zero symbols: "
-            f"{empty[:5]}"
+            f"{len(empty)} non-trivial frozen-corpus file(s) outlined to zero "
+            f"symbols: {empty[:5]}"
         )
 
 
 @pytest.mark.slow
-class TestCorpusBaselineSnapshot:
-    """Per-file symbol count must stay within ±5% **or** ±1 symbol
-    (`ABS_SYMBOL_FLOOR`) of the recorded baseline, whichever is more
-    permissive. First run captures the baseline if absent.
+class TestFrozenCorpusBaselineSnapshot:
+    """Per-file symbol count (of the FROZEN corpus only) must stay within
+    ±5% **or** ±1 symbol (`ABS_SYMBOL_FLOOR`) of the recorded baseline,
+    whichever is more permissive. First run captures the baseline if
+    absent.
+
+    Because the corpus is frozen (`tests/fixtures/outline_corpus/`, a
+    vendored copy — never `products/**` live), any drift here comes ONLY
+    from a change to the outliner itself. Bump the baseline in the same
+    commit as a deliberate outliner change; it should never move on its
+    own from unrelated product-frontend work.
 
     Relative-OR-absolute, not relative-only (decided 2026-08-31): a
     1-symbol move on a small file (e.g. 4 -> 5 symbols, a 25% relative
@@ -187,12 +236,12 @@ class TestCorpusBaselineSnapshot:
     proven directly against this same comparison logic.
     """
 
-    def test_within_tolerance_of_baseline(self, corpus_results: dict[str, dict]):
+    def test_within_tolerance_of_baseline(self, frozen_corpus_results: dict[str, dict]):
         if not BASELINE_FILE.exists():
             BASELINE_FILE.parent.mkdir(parents=True, exist_ok=True)
             snapshot = {
                 p: r["symbol_count"]
-                for p, r in corpus_results.items()
+                for p, r in frozen_corpus_results.items()
             }
             BASELINE_FILE.write_text(json.dumps(snapshot, indent=2, sort_keys=True))
             pytest.skip(
@@ -201,9 +250,9 @@ class TestCorpusBaselineSnapshot:
 
         baseline: dict[str, int] = json.loads(BASELINE_FILE.read_text())
         regressions: list[str] = []
-        for path, r in corpus_results.items():
+        for path, r in frozen_corpus_results.items():
             if path not in baseline:
-                continue  # new file — not a regression
+                continue  # new fixture file — not a regression
             base = baseline[path]
             now = r["symbol_count"]
             if base == 0:
@@ -215,9 +264,10 @@ class TestCorpusBaselineSnapshot:
                 f"{path}: baseline={base} now={now} delta={delta:.1%}"
             )
         assert not regressions, (
-            f"{len(regressions)} file(s) drifted >{TOLERANCE:.0%} AND "
-            f">{ABS_SYMBOL_FLOOR} symbol(s) from baseline:\n  "
-            + "\n  ".join(regressions[:10])
+            f"{len(regressions)} frozen-corpus file(s) drifted >{TOLERANCE:.0%} "
+            f"AND >{ABS_SYMBOL_FLOOR} symbol(s) from baseline — this means the "
+            "OUTLINER changed (the corpus itself is frozen), review + "
+            "re-snapshot deliberately:\n  " + "\n  ".join(regressions[:10])
         )
 
 
@@ -257,3 +307,24 @@ class TestAbsoluteFloorDecision:
         # And the relative ±5% rule is unchanged for large files.
         assert _within_tolerance(base=200, now=250) is False  # +25%, no floor rescue at this scale
         assert _within_tolerance(base=200, now=208) is True   # +4%, within ±5%
+
+
+@pytest.mark.slow
+class TestLiveTreeParses:
+    """No-baseline safety net: every LIVE `products/*/frontend/src/`
+    `.ts`/`.tsx` file must still outline without a `parse_error`. Pure
+    pass/fail, no symbol-count comparison — so unlike the frozen-corpus
+    baseline above, this one legitimately DOES scan the live, ever-changing
+    product tree without ever drifting on ordinary feature work; it only
+    fires on a genuine outliner regex misfire."""
+
+    def test_no_parse_errors(self, live_tree_files: list[Path]):
+        bad: dict[str, str] = {}
+        for f in live_tree_files:
+            outline = ot.outline_typescript(f)
+            if outline.parse_error:
+                bad[str(f.relative_to(REPO_ROOT))] = outline.parse_error
+        assert not bad, (
+            f"{len(bad)} live product file(s) parsed with errors: "
+            f"{list(bad)[:5]}"
+        )

@@ -933,23 +933,29 @@ pytest -p no:randomly second_half ... target_test
 
 ---
 
-## Outline-corpus baseline coupling — a product-FE change can fail an mcp test
+## TS outline-corpus baseline — a safety net, not a wall (frozen corpus)
 
 `mcp/noctusai/tests/test_outline_typescript_corpus.py` snapshots the per-file
-**top-level-symbol count** of a corpus of **product `.tsx`** files into
-`mcp/noctusai/tests/fixtures/outline_corpus_baseline.json` (±5% tolerance). Its
-job is to catch **TS-outliner regressions** (if the extractor breaks, counts
-drop). Side effect: adding/removing a top-level symbol in a tracked product
-component (e.g. a new exported function/component) **drifts that baseline** →
-the corpus test fails **even though you only touched product frontend code, not
-the MCP toolkit**. The fix is not a code change — **refresh the baseline**: bump
-the file's entry in `outline_corpus_baseline.json` to the new count (surgical,
-one line), or delete the file to recapture (recaptures ALL — only when
-intentional). Bit 2026-05-25 (`AdminProducts.tsx` 6→7 from a new `DeploymentBadge`).
+**top-level-symbol count** of a small, FROZEN, vendored corpus
+(`mcp/noctusai/tests/fixtures/outline_corpus/`) into
+`mcp/noctusai/tests/fixtures/outline_corpus_baseline.json` (±5%/±1-symbol
+tolerance). Its job is to catch **TS-outliner regressions** (if the extractor
+breaks, counts drop). The corpus is a copy, not a live scan of
+`products/**` — editing product frontend code does **not** touch it and
+never drifts the baseline; a drift here is always an outliner change, never
+legitimate feature growth. Bump the fixture + re-snapshot the baseline only
+when deliberately changing the outliner (new syntax shape to cover) or
+replacing a stale corpus example — see
+`mcp/noctusai/tests/fixtures/outline_corpus/README.md`.
 
-**Session-checklist implication:** run `cd mcp/noctusai && pytest tests/` not only
-when the MCP toolkit changed but also when a **product `.tsx`** changed (CLAUDE.md
-§1 "Finish the session").
+Decided 2026-09-23 — this used to snapshot the LIVE `products/*/frontend/src/`
+tree, so any legitimate symbol-count change (new route, new hook return
+value, a component split) tripped it: 9 baseline-bump-only commits since
+2026-08 with no sanctioned per-entry re-ratification path. Freezing the
+corpus removed the coupling at the root instead of adding a refresh
+ritual on top of it. A separate `TestLiveTreeParses` guard still scans the
+live tree, but asserts only parse-success (no symbol-count comparison) — a
+pure pass/fail that never drifts on ordinary feature work.
 
 **Backend (`.py`) evaluation — do we need the same?** No (today). Backend AST
 *exploration* already works: `noctus.dev.outline_python` (libcst — the AST-first
