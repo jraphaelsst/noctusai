@@ -61,5 +61,38 @@ class IgIgSettings(ProductSettings):
     igig_tiktok_token: str = ""
     igig_linkedin_token: str = ""
 
+    # ── E-mail: SMTP platform fallback (wave-2 slice B, roadmap R7) ────
+    # The PRIMARY path is a per-org SMTP account set on the Integrações page
+    # (`integracao` canal `smtp`, password Fernet-encrypted with the cofre).
+    # These are the EXPLICIT platform fallback for an org that set none — used
+    # loudly (logged + surfaced as `origem: "plataforma"`), never silently.
+    # Empty host/user/password ⇒ no fallback ⇒ sending refuses with 409.
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_user: str = ""
+    smtp_password: str = ""
+    # "ssl" | "starttls". Empty ⇒ derived from the port (465 ⇒ ssl, else starttls).
+    smtp_security: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = ""
+
+    # ── Gmail OAuth + reply watch (wave-2 slice B, roadmap R8) ─────────
+    # The GCP OAuth app (shared with social-wiring's Gmail/Calendar flows).
+    # Empty ⇒ `GET /api/integracoes/email/gmail/oauth/start` answers 503.
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    # Pub/Sub push for `users.watch` (KB § INTEGRATIONS/google.md § 5a).
+    # ANY of the four empty ⇒ `configuracao_gcp_ok=false`, no watch is ever
+    # attempted and the push webhook refuses (503) — never a fake success.
+    #   GMAIL_PUSH_GCP_PROJECT     GCP project id owning the topic
+    #   GMAIL_PUSH_TOPIC           topic id or full `projects/<p>/topics/<t>`
+    #   GMAIL_PUSH_AUDIENCE        OIDC `aud` on the push subscription (the
+    #                              webhook URL, conventionally)
+    #   GMAIL_PUSH_SERVICE_ACCOUNT the SA email the subscription signs as
+    gmail_push_gcp_project: str = ""
+    gmail_push_topic: str = ""
+    gmail_push_audience: str = ""
+    gmail_push_service_account: str = ""
+
 
 settings = IgIgSettings()
