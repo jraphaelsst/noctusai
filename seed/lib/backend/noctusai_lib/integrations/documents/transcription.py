@@ -447,7 +447,7 @@ class LadderDocumentTranscriber:
         # document needs no key, no vision call and no rasterization, so a
         # consumer that has never configured a provider can still transcribe
         # one. Checking the key first would refuse work we can do.
-        from noctusai_lib.integrations.media import classify_pdf_text_layer
+        from noctusai_lib.integrations.media import classify_pdf_text_layer, clean_extraction_output
 
         camada = classify_pdf_text_layer(content)
         if force_vision:
@@ -461,11 +461,24 @@ class LadderDocumentTranscriber:
             paginas_para_visao = list(range(1, num_paginas + 1))
         else:
             textos = _texto_confiavel_por_pagina(camada, num_paginas)
+            # Registry provenance stamps (`Valide aqui`, `Solicitado por`,
+            # the "ri digital" / ONR platform footer — see `pdf_text.py`)
+            # come OUT here, before anything downstream derives an offset
+            # from this text. `classify_pdf_text_layer` keeps `page.text`
+            # verbatim on purpose (it answers "can this page be trusted",
+            # not "what should the caller keep") — this is that rewrite.
+            textos = {n: clean_extraction_output(t) for n, t in textos.items()}
             paginas_para_visao = [n for n in range(1, num_paginas + 1) if n not in textos]
 
         # Bold/underline for the free pages, from the PDF's own spans and
-        # drawings — never from re-deriving `textos`, which stays untouched
-        # (rung-1 invariant: `page.text` is byte-identical either way).
+        # drawings, ALIGNED onto `textos` by substring search
+        # (`_extract_text_layer_formatting`) — never by re-deriving
+        # `textos` itself. Cleaning `textos` above, before this call, is
+        # what keeps that search-based alignment correct for free: a span
+        # that lived inside a stripped stamp line simply is not found in
+        # the now-shorter text and is dropped (logged at debug), and every
+        # other span is found at its new position without this function
+        # doing any offset math of its own.
         formatacao_camada = _extrair_formatacao_camada_texto(
             content, textos, sorted(textos)
         )
@@ -561,6 +574,14 @@ class LadderDocumentTranscriber:
                 org_id=self._org_id,
                 max_tokens=4096,
             )
+            # Registry provenance stamps come out BEFORE `parse_markup`, not
+            # after: `parse_markup` computes `ranges` as offsets into
+            # WHATEVER text it is handed, so stripping first means those
+            # offsets are correct from the moment they exist — no remap
+            # step, unlike `matricula_marcacao.remover_marcacao`'s job for
+            # the `**`/`<u>` markers themselves. Same function as rung 1
+            # (`pdf_text.clean_extraction_output`), one mechanism for both.
+            marcado = clean_extraction_output(marcado)
             # The vision reply carries `**bold**` / `<u>underline</u>` markers
             # per `OCR_PROMPT` — `textos[numero]` is the STRIPPED text (the
             # page's `text`, same as every other rung), and the ranges are

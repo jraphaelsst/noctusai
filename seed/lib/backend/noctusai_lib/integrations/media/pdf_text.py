@@ -221,6 +221,7 @@ _PROVENANCE_STAMP_PATTERNS: tuple[str, ...] = (
     # ONR certidão (assinador-web) — the 137-char stamp from the 2026-08-25
     # ERP defect and from CERTIDÃO DE MATRÍCULA - EUROVILLE / CANTAGALO.
     r"^valide\s+est[ea]\s+documento\b.*$",
+    r"^valide\s+aqui\s+est[ea]\s+documento\b.*$",
     r"^valide\s+aqui$",
     r"^este\s+documento$",
     # ONR "Visualização de Matrícula" — the 83-char requester stamp from
@@ -268,7 +269,57 @@ _PROVENANCE_STAMP_PATTERNS: tuple[str, ...] = (
     r"^republica\s+federativa\s+do\s+brasil$",
     r"^ministerio\s+dos\s+transportes$",
     r"^secretaria\s+nacional\s+de\s+transito\s*-?\s*senatran$",
+    # ── ONR "ri digital" platform + "assinador-web" certidão footer ─────
+    # Added 2026-09-23 from the EUROVILLE / CANTAGALO real corpus
+    # (`social_wiring.matricula_extracoes.texto_extraido`), which still
+    # opened with "Valide aqui\neste documento" ahead of "Mat. 3917 —
+    # Página 1/3 — PROT. 89.029" even though the ROOT stamp lines above
+    # already matched: the existing patterns only covered the STAMP the
+    # user reported, not the rest of the same platform's footer that
+    # travels with it on every certidão (verification-code line, the
+    # "ri digital" wordmark in its several renderings, and a masthead
+    # variant of the "Documento gerado oficialmente" line already handled
+    # above). Each was found VERBATIM in the corpus, not invented.
+    r"^para\s+verificar\s+a\s+autenticidade\s+do\s+documento\s+acesse\s+o\s+site\s*:?$",
+    r"^selo\s*:\s*\S+$",
+    r"^ri\s*digital(\.onr)?(\s*\|.*)?$",
+    r"^registro\s+de\s+im[o0]veis\s*-\s*www\.[^\s]+$",
+    # The ONR "Operador Nacional do Sistema de Registro Eletrônico de
+    # Imóveis" masthead — a pure letterhead identifying the platform, not
+    # the property (parallel to the SENATRAN masthead above). Recurs 5x
+    # across the corpus, once per page it decorates. The 4-word title
+    # sometimes shares a line with the "onr" wordmark (optionally behind
+    # an OCR'd logo glyph, `⋰onr` / `. . .onr` — `\W*` absorbs it) and
+    # sometimes lands on its OWN line, with "onr" a separate line above it
+    # or dropped by the OCR entirely — each combination is matched.
+    r"^\W*onr(\s+operador\s+nacional)?$",
+    r"^operador\s+nacional$",
+    r"^do\s+sistema\s+de\s+registro$",
+    r"^eletr[o0]nico\s+de\s+im[o0]veis$",
+    # The vision transcriber's OWN markdown artifact, not a registry
+    # stamp: it wraps the header/footer stamp region in a fenced code
+    # block (```) rather than plain prose. Grouped in this one list per
+    # the "don't create a second list" rule — the fence marker carries no
+    # information of its own, so dropping a bare one can never remove
+    # content, only the vision model's formatting noise around a stamp.
+    r"^`{3,}$",
 )
+
+
+def _stamp_match_key(limpo: str) -> str:
+    """Case-folded, accent-stripped copy of an already-`.strip()`ped line,
+    for matching ONLY against `_PROVENANCE_STAMP_PATTERNS` — never for what
+    a caller keeps."""
+    return "".join(
+        c
+        for c in unicodedata.normalize("NFD", limpo.casefold())
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def _is_provenance_stamp_line(limpo: str) -> bool:
+    chave = _stamp_match_key(limpo)
+    return any(re.match(p, chave) for p in _PROVENANCE_STAMP_PATTERNS)
 
 
 def strip_provenance_stamps(text: str) -> str:
@@ -277,6 +328,8 @@ def strip_provenance_stamps(text: str) -> str:
     Used to decide whether a page SAYS anything — not to rewrite what the
     caller receives. `PdfPage.text` keeps the page verbatim, because a page
     that is genuine content should be transcribed faithfully, stamp and all.
+    (`clean_extraction_output`, below, is the function that DOES rewrite
+    what a caller receives.)
 
     Returns the surviving lines joined by newlines; a page that was nothing
     but boilerplate returns `""`.
@@ -289,16 +342,42 @@ def strip_provenance_stamps(text: str) -> str:
         limpo = line.strip()
         if not limpo:
             continue
-        # Accent-strip + case-fold for MATCHING only; `line` is what we keep.
-        chave = "".join(
-            c
-            for c in unicodedata.normalize("NFD", limpo.casefold())
-            if unicodedata.category(c) != "Mn"
-        )
-        if any(re.match(p, chave) for p in _PROVENANCE_STAMP_PATTERNS):
+        if _is_provenance_stamp_line(limpo):
             continue
         kept.append(limpo)
     return "\n".join(kept)
+
+
+def clean_extraction_output(text: str) -> str:
+    """Remove the same registry provenance stamps `strip_provenance_stamps`
+    detects, from a document's OUTPUT text rather than for a char-count
+    classification.
+
+    Unlike `strip_provenance_stamps`, every other line — including BLANK
+    ones — survives untouched: downstream act-segmentation
+    (`segment_matricula_atos`) and abertura-block detection read
+    line-start labels and paragraph breaks, and collapsing them here would
+    silently corrupt every document, not just the boilerplate ones. Only
+    the outer run of now-empty leading/trailing lines is trimmed, so a page
+    that opened with nothing but a stamp starts at its first real line.
+
+    Call this on a page's text BEFORE anything downstream computes an
+    OFFSET into it (bold/underline ranges, `ruido` spans) — stripping
+    first means those are derived fresh against the already-clean text,
+    so there is no span to remap afterward. Applied on both extraction
+    rungs: the PDF text layer (`transcription._texto_confiavel_por_pagina`)
+    and the vision reply (`transcription.LadderDocumentTranscriber`,
+    before `parse_markup`) — one function, both rungs, per
+    `KB § PATTERNS/backend/backend.md`'s single-mechanism rule.
+    """
+    if not text:
+        return text
+    kept_lines = [
+        line
+        for line in text.splitlines()
+        if not (line.strip() and _is_provenance_stamp_line(line.strip()))
+    ]
+    return "\n".join(kept_lines).strip("\n")
 
 
 @dataclass(frozen=True)
@@ -483,6 +562,7 @@ __all__ = [
     "PdfPage",
     "PdfTextLayer",
     "classify_pdf_text_layer",
+    "clean_extraction_output",
     "extract_pdf_text",
     "pdf_text_tooling_available",
     "strip_provenance_stamps",
