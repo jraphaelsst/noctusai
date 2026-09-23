@@ -280,6 +280,24 @@ if [[ -z "${NOCTUS_SKIP_BRANCH_TREE_CHECK:-}" && -x "$PY_PP" && -f "$CLI_PP" ]];
     done <<< "$PUSH_LINES"
 fi
 
+# ── stale-branch-pointer SAFETY NET ─────────────────────────────────────────
+# The pointer lifecycle is a MECHANISM (task_branch start/integrate/cleanup
+# write the transitions; session_end_sweep heals the rest). This only fires if
+# both missed, and it blocks only on this session's own pointers (warning for
+# peers). Runs once, outside the per-ref loop. `|| _sp_rc=$?` keeps the
+# assignment a TESTED command under `set -e` (see the ledger-drain note below).
+_sp_rc=0
+if [[ ! -x "$PY_PP" || ! -f "$CLI_PP" ]]; then
+    echo "[pre-push] stale-branch-pointers: SKIPPED — no toolkit venv at $PY_PP (unmeasurable, not a pass)."
+elif _sp_out="$("$PY_PP" "$CLI_PP" --check-stale-branch-pointers 2>&1)" || { _sp_rc=$?; false; }; then
+    echo "[pre-push] $(echo "$_sp_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
+elif [[ $_sp_rc -ne 0 ]]; then
+    echo "" >&2
+    echo "🔴 pre-push: stale branch pointer(s) owned by this session." >&2
+    echo "$_sp_out" >&2
+    blocked=1
+fi
+
 # ── ledger-drain keeper ─────────────────────────────────────────────────────
 # Branch-independent (it inspects task_branch.py's own structure, not the ref
 # being pushed), so it runs ONCE outside the per-ref loop rather than per-ref.

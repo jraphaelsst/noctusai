@@ -30,6 +30,26 @@ This is the same instinct as **fix-on-contact** ([[drift-fix-on-contact]]) and *
 - **Silent-null compliance** — auto-fill a placeholder/null just to clear the gate. Refuse loudly instead.
 - **Mechanism-only** — ship the auto-fill but no gate. (Out-of-band edits + legacy rows + foreign contexts silently re-introduce the violation.)
 
+## Walls: gates the normal flow keeps hitting (2026-09-23)
+
+The owner's framing: *"gates only function as safety nets, not as part of the dev methodology flow. This is like driving a car and using walls to help you turn the wheel."* A gate that fires during ordinary work is a **wall**: its mechanism is missing or broken, and agents are steering by collision. The signal is measurable. Count the commits that exist only to satisfy a gate (baseline bumps, hand-closed pointers, renumbers, `fix(ci)` on the merged tip, ledger-only commits) and the auto-improvement rows naming a gate. A recurring count is a mechanism bug, not agent carelessness.
+
+Design rules a safety net must meet:
+- **Measure, don't predict.** A guard that parses intent (shell commands) turns into an arms race of fix commits. Where the exact target can't be known up front, allow the action and measure its effect (e.g. the primary-checkout dirt delta), then surface it.
+- **Scope the block to the actor who can fix it.** In a shared multi-agent repo, a global-state gate blocks only the session that owns the violation. Peers get a warning (`check_stale_branch_pointers`).
+- **Unmeasurable is not red.** A gate that can't run (no venv, no deps) says `SKIPPED — unmeasurable`. It never blocks on its own harness failure (`KB § PATTERNS/common/methodology-execution-discipline.md`, verdict-channel integrity).
+- **Judge the change, not the file.** A pre-existing violation elsewhere in a file is the commit-time keeper's job. A write-time guard judges only what the write adds (`test_seam_guard`).
+- **Mechanism first, then backfill, then the gate.** Otherwise the new gate goes red on legacy state and trains everyone to route around it.
+
+The 2026-09-23 audit ranked the walls; the fixes landed as mechanisms:
+
+| Wall | Mechanism now |
+|---|---|
+| branch-tree pointers left `on_going` for months | `task_branch` start/integrate/cleanup write the transitions; healer proves rebased branches via `Noc-Branch` trailers; net: `check_stale_branch_pointers` |
+| follow-up branch read as an unapproved ship-consent project | `task_branch start project=` / inherited from `parent` |
+
+In flight from that audit: the `primary_write_guard` Bash leg (13 fix commits), the outline corpus baseline, `test_seam_guard` scoping, and `check_framework_deps` at scaffold/absorb. Still open (serialized behind `task_branch.py`, or awaiting an owner decision): migration renumber at integrate, a gate sweep on the rebased tip before FF-push, derived KB counts at integrate instead of per commit, and moving append-only ops ledgers off the `dev` code line (23% of dev commits are ledger-only).
+
 ## How to apply (the authoring checklist)
 
 When a rule/standard is worth enforcing:

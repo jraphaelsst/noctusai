@@ -19299,6 +19299,89 @@ def check_branch_tree_mirror(
     return issues
 
 
+def check_stale_branch_pointers(
+    session: str | None = None,
+    repo_root: Path | None = None,
+    run=None,
+) -> list[dict]:
+    """SAFETY NET behind the pointer-lifecycle mechanism (2026-09-23).
+
+    The mechanism is `task_branch`: start claims `on_going`, integrate writes
+    `integrated-worktree-live`, cleanup writes `shipped`; `session_end_sweep`
+    heals whatever slips past. This keeper fires only when BOTH failed: a
+    pointer is still `on_going`/`integrated-worktree-live` although its branch
+    demonstrably landed on origin/dev (the shared `pointer_branch_landed`
+    predicate, the same one the healer uses) AND its worktree is gone.
+
+    Severity is `high` (blocks the push) only for pointers owned by `session`
+    (default: CLAUDE_CODE_SESSION_ID): the pushing session can fix its own
+    in one call. Other sessions' stale pointers are `warning`. One agent's miss
+    must never wall off every other agent's push in a shared repo.
+
+    Before this existed, stale pointers accumulated silently for months and
+    were closed by hand whenever someone noticed.
+    """
+    import json
+    import os
+
+    from tools.noctus.dev import _worktree_staleness as wts
+
+    root = repo_root or REPO_ROOT
+    ledger = root / "project-history" / "branch-tree.ndjson"
+    if not ledger.exists():
+        return []
+    runner = run or wts.make_subprocess_runner(root, timeout=30)
+    base = wts.resolve_merged_base(runner)
+    me = session if session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+
+    latest: dict[str, dict] = {}
+    for raw in ledger.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if row.get("branch"):
+            latest[row["branch"]] = row
+
+    rc, wl, _e = runner(["git", "worktree", "list", "--porcelain"])
+    live_branches = {
+        ln.split("refs/heads/", 1)[1]
+        for ln in (wl if rc == 0 else "").splitlines()
+        if ln.startswith("branch refs/heads/")
+    }
+
+    issues: list[dict] = []
+    for branch, row in latest.items():
+        if row.get("status") not in {"on_going", "integrated-worktree-live"}:
+            continue
+        if branch in live_branches:
+            continue
+        landed, how = wts.pointer_branch_landed(
+            runner, branch, (row.get("commit") or "").strip(), base,
+            fork_sha=wts.fork_sha_from_pointer_base(row.get("base", "")))
+        if not landed:
+            continue
+        own = bool(me) and row.get("session") == me
+        issues.append({
+            "product": "<platform>",
+            "file": "project-history/branch-tree.ndjson",
+            "issue": (
+                f"branch-tree pointer for '{branch}' is still '{row.get('status')}' but the "
+                f"branch landed on {base} ({how}) and its worktree is gone. The lifecycle "
+                "mechanism (task_branch integrate/cleanup, then session_end_sweep's heal) "
+                "missed it. Fix in one call: `noctus.dev.session_end_sweep` (heals every "
+                "provable pointer) or `noctus.dev.branch_pointer action=update "
+                f"branch='{branch}' status=shipped`. Then find out why the mechanism missed. "
+                "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3."
+            ),
+            "severity": "high" if own else "warning",
+        })
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # `check_prod_exposure_consent` — the prod-promotion consent gate.
 #

@@ -105,6 +105,56 @@ def is_merged(run: GitRunner, branch: str, base: str) -> bool:
     )
 
 
+def has_trailer_commit_on(run: GitRunner, branch: str, base: str) -> bool:
+    """True when ``base`` carries a commit stamped ``Noc-Branch: <branch>``.
+
+    The ``commit-msg`` hook stamps every commit with its branch, and the
+    trailer survives the rebase ``task_branch integrate`` performs. So it
+    proves "this branch's work landed" after the branch ref is deleted AND the
+    SHA the pointer recorded was rewritten. That rewrite is why pointer-SHA
+    ancestry alone could never heal a rebased branch (2026-09-23)."""
+    rc, out, _e = run(["git", "log", base, "--format=%(trailers:key=Noc-Branch,valueonly)"])
+    if rc != 0:
+        return False
+    return any(line.strip() == branch for line in out.splitlines())
+
+
+def pointer_branch_landed(
+    run: GitRunner, branch: str, recorded_commit: str, base: str,
+    fork_sha: str = "",
+) -> tuple[bool, str]:
+    """Did the branch a pointer names land on ``base``? → (landed, how).
+
+    One predicate for the healer (session_end_sweep) and the safety-net keeper
+    (check_stale_branch_pointers), so they can never disagree:
+      1. branch ref exists → ``is_merged`` (ancestry or cherry equivalence),
+         except a branch still sitting on its fork point (``fork_sha``, from
+         the pointer's ``base`` "origin/dev@<sha>"): a fresh fork is trivially
+         its own ancestor (the 2026-09-16 false positive documented below)
+         and has landed nothing;
+      2. recorded commit is an ancestor of ``base``;
+      3. ``base`` carries a ``Noc-Branch: <branch>`` trailer commit (proves
+         a rebased-and-deleted branch, whose recorded sha never reached dev).
+    """
+    rc, tip, _e = run(["git", "rev-parse", "--verify", "--quiet", branch])
+    if rc == 0:
+        tip = tip.strip()
+        if fork_sha and tip.startswith(fork_sha.strip()):
+            return (has_trailer_commit_on(run, branch, base), "branch trailer commit on base")
+        return (is_merged(run, branch, base), "branch ref merged into base")
+    if recorded_commit and is_ancestor(run, recorded_commit, base):
+        return (True, "branch cleaned up; recorded commit is on base")
+    if has_trailer_commit_on(run, branch, base):
+        return (True, "branch cleaned up; its Noc-Branch trailer commit is on base")
+    return (False, "unproven")
+
+
+def fork_sha_from_pointer_base(base_field: str) -> str:
+    """``"origin/dev@c6e9445e7"`` → ``"c6e9445e7"``; anything else → ``""``."""
+    _ref, sep, sha = (base_field or "").partition("@")
+    return sha.strip() if sep else ""
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 🔴 2026-09-16 incident — the merged predicate is a FALSE POSITIVE for a
 # freshly-created, actively-worked-in worktree.

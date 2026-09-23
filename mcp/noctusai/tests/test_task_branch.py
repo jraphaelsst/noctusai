@@ -2503,3 +2503,111 @@ def test_plan_env_wiring_still_repoints_when_node_modules_is_real(tmp_path):
     nm = str(wt_root / "products" / "alpha" / "frontend" / "node_modules")
     repoints = [w for w in wire if w.get("kind") == "@noctusai" and w["link"].startswith(nm)]
     assert [w["link"] for w in repoints] == [str(Path(nm) / "@noctusai" / "lib")]
+
+
+# ── Branch-tree pointer lifecycle (2026-09-23) ───────────────────────────────
+# task_branch owns the pointer transitions so no session closes pointers by
+# hand: start → on_going claim, integrate → integrated-worktree-live with the
+# POST-REBASE sha, cleanup → shipped. A pointer failure never fails the git
+# lifecycle; the result carries it under `pointer`.
+
+class FakePointerOps:
+    def __init__(self, latest=None, raise_on=None):
+        self._latest = dict(latest or {})
+        self.appends: list[dict] = []
+        self.updates: list[dict] = []
+        self.raise_on = raise_on
+
+    def latest(self, branch):
+        if self.raise_on == "latest":
+            raise RuntimeError("ledger unreadable")
+        return self._latest.get(branch)
+
+    def append(self, **kw):
+        self.appends.append(kw)
+        row = {"branch": kw["branch"], "status": kw["status"], "project": kw.get("project") or "inherited"}
+        self._latest[kw["branch"]] = row
+        return {"ok": True, "row": row, "push": {"ok": True}}
+
+    def update(self, **kw):
+        self.updates.append(kw)
+        prev = self._latest.get(kw["branch"], {})
+        row = {**prev, "status": kw["status"], "commit": kw.get("commit") or prev.get("commit")}
+        self._latest[kw["branch"]] = row
+        return {"ok": True, "row": row}
+
+
+def test_start_claims_an_on_going_pointer_with_project():
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+    ops = FakePointerOps()
+    res = T.task_branch(action="start", slug="x", confirm=True, run=fake, pointer_ops=ops,
+                        project="seed-vite-schema", brief="fix the build", parent="feat/prev")
+    assert res["status"] == "started"
+    assert res["pointer"]["status"] == "claimed"
+    (a,) = ops.appends
+    assert a["branch"] == "feat/x" and a["status"] == "on_going"
+    assert a["project"] == "seed-vite-schema" and a["parent"] == "feat/prev"
+    assert a["worktree"] == ".claude/worktrees/x" and a["push_dev"] is True
+
+
+def test_start_does_not_double_claim_a_live_pointer():
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+    ops = FakePointerOps(latest={"feat/x": {"status": "on_going"}})
+    res = T.task_branch(action="start", slug="x", confirm=True, run=fake, pointer_ops=ops)
+    assert res["pointer"]["status"] == "already_claimed" and ops.appends == []
+
+
+def test_start_dry_run_writes_no_pointer():
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+    ops = FakePointerOps()
+    T.task_branch(action="start", slug="x", confirm=False, run=fake, pointer_ops=ops)
+    assert ops.appends == [] and ops.updates == []
+
+
+def test_integrate_records_post_rebase_commit_as_integrated_worktree_live():
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+    )
+    ops = FakePointerOps(latest={"feat/x": {"status": "on_going", "commit": "pre-rebase"}})
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake, pointer_ops=ops)
+    assert res["status"] == "integrated"
+    assert res["pointer"]["status"] == "updated"
+    (u,) = ops.updates
+    assert u["status"] == "integrated-worktree-live"
+    assert u["commit"] == "b0" and u["push_dev"] is False  # the trailing drain ships it
+
+
+def test_cleanup_closes_pointer_as_shipped():
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([("b0", "d0")]))
+    ops = FakePointerOps(latest={"feat/x": {"status": "integrated-worktree-live"}})
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", salvage_recorder=_capture_recorder(), pointer_ops=ops)
+    assert res["status"] == "cleaned"
+    assert res["pointer"] == {"status": "updated", "pointer_status": "shipped", "commit": None}
+    assert ops.updates[0]["status"] == "shipped"
+
+
+def test_cleanup_leaves_terminal_pointer_alone():
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([("b0", "d0")]))
+    ops = FakePointerOps(latest={"feat/x": {"status": "shipped"}})
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", salvage_recorder=_capture_recorder(), pointer_ops=ops)
+    assert res["pointer"]["status"] == "already_terminal" and ops.updates == []
+
+
+def test_pointer_failure_is_reported_never_fails_the_git_lifecycle():
+    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([("b0", "d0")]))
+    ops = FakePointerOps(raise_on="latest")
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", salvage_recorder=_capture_recorder(), pointer_ops=ops)
+    assert res["status"] == "cleaned" and res["exit_code"] == 0
+    assert res["pointer"]["status"] == "error" and "ledger unreadable" in res["pointer"]["error"]
+
+
+def test_injected_runner_without_pointer_ops_never_touches_the_real_ledger():
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+    res = T.task_branch(action="start", slug="x", confirm=True, run=fake)
+    assert res["pointer"]["status"] == "skipped"

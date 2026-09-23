@@ -970,6 +970,100 @@ def _default_migration_collision_check(abs_wt_path: str) -> list[dict]:
     return check_migration_number_collision(repo_root=Path(abs_wt_path))
 
 
+class PointerOps:
+    """The branch-tree pointer lifecycle, owned by the git lifecycle.
+
+    `task_branch` is the one tool that KNOWS when a branch is forked, landed on
+    dev, and torn down, so it writes the pointer transitions itself:
+
+        start     → append `on_going` (the collision-zone claim)
+        integrate → update `integrated-worktree-live` + the POST-REBASE commit
+        cleanup   → update `shipped`
+
+    Before 2026-09-23 none of these ran: every session appended and closed
+    pointers by hand, forgot, and `check_branch_tree_mirror` (pre-push) or the
+    ship-consent manifest caught it later: a gate standing in for a missing
+    mechanism. Worse, `integrate` rebases, so a hand-recorded `commit` never
+    lands on dev, and `session_end_sweep`'s healer could never prove the branch
+    integrated. Pointers stayed `on_going` for months.
+
+    Best-effort by construction: a pointer failure is REPORTED in the result
+    (`pointer` key), never raised. The git lifecycle succeeding is the primary
+    outcome, and the keeper `check_stale_branch_pointers` is the safety net if
+    this mechanism ever misses. Writes use push_dev=False except `start`: the
+    trailing `_drain_ledgers_from_primary` ships integrate/cleanup rows, while
+    a claim must be visible on dev immediately.
+    """
+
+    def latest(self, branch: str) -> dict | None:
+        from tools.noctus.dev import branch_pointer as bp
+        return bp._latest_per_branch(bp._read_dev_ledger()).get(branch)
+
+    def append(self, **kw: Any) -> dict[str, Any]:
+        from tools.noctus.dev import branch_pointer as bp
+        return bp.append(**kw)
+
+    def update(self, **kw: Any) -> dict[str, Any]:
+        from tools.noctus.dev import branch_pointer as bp
+        return bp.update(**kw)
+
+
+_TERMINAL_POINTER_STATUSES = frozenset({"shipped", "canceled", "stale"})
+
+
+def _pointer_transition(
+    ops: "PointerOps | None", *, branch: str, status: str,
+    commit: str | None = None, notes: str,
+) -> dict[str, Any]:
+    """Move an existing non-terminal pointer to `status`. Never raises."""
+    if ops is None:
+        return {"status": "skipped", "reason": "no pointer ops (test/custom runner)"}
+    try:
+        prev = ops.latest(branch)
+        if prev is None:
+            return {"status": "no_pointer",
+                    "reason": f"{branch} has no branch-tree pointer to transition"}
+        if prev.get("status") in _TERMINAL_POINTER_STATUSES:
+            return {"status": "already_terminal", "pointer_status": prev.get("status")}
+        res = ops.update(branch=branch, status=status, commit=commit,
+                         notes=notes, push_dev=False)
+        if res.get("ok"):
+            return {"status": "updated", "pointer_status": status,
+                    "commit": (res.get("row") or {}).get("commit")}
+        return {"status": "error", "error": res.get("error", "update failed")}
+    except Exception as e:  # noqa: BLE001 — reported, never blocks the git lifecycle
+        logger.warning("task_branch: pointer transition for %s failed: %s", branch, e)
+        return {"status": "error", "error": str(e)[:300]}
+
+
+def _pointer_claim(
+    ops: "PointerOps | None", *, branch: str, base_ref: str, commit: str,
+    wt_path: str, slug: str, project: str | None, brief: str | None,
+    paths: list[str] | None, agent: str | None, role: str | None, parent: str | None,
+) -> dict[str, Any]:
+    """Append the `on_going` claim for a fresh branch unless one is already live."""
+    if ops is None:
+        return {"status": "skipped", "reason": "no pointer ops (test/custom runner)"}
+    try:
+        prev = ops.latest(branch)
+        if prev is not None and prev.get("status") not in _TERMINAL_POINTER_STATUSES:
+            return {"status": "already_claimed", "pointer_status": prev.get("status")}
+        res = ops.append(
+            branch=branch, base=base_ref, commit=commit, worktree=wt_path,
+            role=role or "orchestrator", agent=agent or "self-branch",
+            parent=parent or "dev", paths=list(paths or []), status="on_going",
+            brief=brief or f"self-branch {slug}", project=project, push_dev=True,
+        )
+        if res.get("ok"):
+            row = res.get("row") or {}
+            return {"status": "claimed", "project": row.get("project"),
+                    "pushed": bool((res.get("push") or {}).get("ok"))}
+        return {"status": "error", "error": res.get("error", "append failed")}
+    except Exception as e:  # noqa: BLE001 — reported, never blocks the fork
+        logger.warning("task_branch: pointer claim for %s failed: %s", branch, e)
+        return {"status": "error", "error": str(e)[:300]}
+
+
 def _task_branch_is_write(bound_args: dict) -> bool:
     """`task_branch`'s REFUSE predicate (2026-09-18, the incident tool
     itself): only the MUTATING actions — `start` / `integrate` / `cleanup`
@@ -998,9 +1092,23 @@ def task_branch(
     salvage_recorder: Callable[..., Any] | None = None,
     settle: Callable[..., dict[str, Any]] | None = None,
     migration_check: Callable[[str], list[dict]] | None = None,
+    pointer_ops: "PointerOps | None" = None,
+    project: str | None = None,
+    brief: str | None = None,
+    paths: list[str] | None = None,
+    agent: str | None = None,
+    role: str | None = None,
+    parent: str | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
-    """`action` ∈ {status, start, integrate, cleanup}. Writes are dry-run unless
+    """`action` ∈ {status, start, integrate, cleanup}.
+
+    Branch-tree pointer lifecycle (see `PointerOps`): `start` claims an
+    `on_going` pointer (`project`/`brief`/`paths`/`agent`/`role`/`parent` fill
+    it; `project` omitted ⇒ inherited from `parent`'s pointer), `integrate`
+    records the post-rebase commit as `integrated-worktree-live`, `cleanup`
+    closes it `shipped`. `pointer_ops` is the test seam; the production default
+    runs only on the real runner (same rule as `settle`). Writes are dry-run unless
     `confirm`. Returns a structured plan/result; never raises on a refusal — it
     returns it (the refusal IS the safety net).
 
@@ -1058,6 +1166,10 @@ def task_branch(
     # tree here would write REAL symlinks into the caller's actual
     # `.claude/worktrees/<slug>` as a side effect of running a unit test.
     wire_env = wire_env and (primary_root is not None or run is None)
+    # Same production-only rule: an injected `run` must never write the REAL
+    # branch-tree ledger as a side effect of a unit test.
+    pointer_fn = pointer_ops if pointer_ops is not None else (
+        PointerOps() if run is None else None)
 
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
@@ -1179,8 +1291,12 @@ def task_branch(
                     "skipped": _compact_wire_list(all_skipped),
                     "full_report": report_path,
                 }
+        pointer_result = _pointer_claim(
+            pointer_fn, branch=branch, base_ref=f"{remote}/{dev_branch}@{dev[:9]}",
+            commit=dev[:9], wt_path=wt_path, slug=slug, project=project, brief=brief,
+            paths=paths, agent=agent, role=role, parent=parent)
         return {**plan, **wired_extra, "status": "started", "exit_code": 0,
-                "already_existed": already_existed,
+                "already_existed": already_existed, "pointer": pointer_result,
                 "message": f"{'reused already-existing' if already_existed else 'created'} "
                            f"{wt_path} on {branch}"
                            f"{' + wired %d env symlink(s)' % wired_count if wire_env else ''}. "
@@ -1407,14 +1523,21 @@ def task_branch(
                           "new_dev_sha": new_dev, "verified": new_dev == new_head,
                           "message": (f"integrated {len(ahead)} commit(s) to {dev_branch} "
                                       f"(attempt {attempt}). Tear down: action='cleanup' slug='{slug}'.")}
+                # Record the POST-REBASE sha: the pre-rebase commit a hand
+                # pointer carried is never on dev, which is why pointers could
+                # not be proven integrated and stayed on_going for months.
+                result["pointer"] = _pointer_transition(
+                    pointer_fn, branch=branch, status="integrated-worktree-live",
+                    commit=(new_head or "")[:9] or None,
+                    notes=f"task_branch integrate → {dev_branch}@{(new_dev or '')[:9]}")
                 if settle_fn is not None:
                     try:
                         result["cache_settle"] = settle_fn()
                     except Exception as e:  # best-effort — never fail a clean integrate
                         result["cache_settle"] = {"ok": False, "error": str(e)}
-                # 🔴 AFTER the settle, deliberately — see `_drain_ledgers_from_primary`.
-                # The settle is the last thing that can dirty a ledger, so a drain
-                # placed before it can never ship what it writes.
+                # 🔴 AFTER the settle AND the pointer write, deliberately — see
+                # `_drain_ledgers_from_primary`. Both dirty ledgers, so a drain
+                # placed before them could never ship what they write.
                 try:
                     result["ledger_drain"] = _drain_ledgers_from_primary(
                         runner, root=_resolve_primary_root(primary_root),
@@ -1589,6 +1712,10 @@ def task_branch(
                          + ("" if salvage_pushed or not salvage_ledger else
                             f" NOTE: salvage row committed locally but NOT pushed — "
                             f"{salvage_push_reason}")}
+    # Merged (checked above) + worktree removed ⇒ the lifecycle is over.
+    result["pointer"] = _pointer_transition(
+        pointer_fn, branch=branch, status="shipped",
+        notes=f"task_branch cleanup: merged into {dev_branch}, worktree removed")
     if settle_fn is not None:
         try:
             result["cache_settle"] = settle_fn()
@@ -1657,6 +1784,11 @@ def register(server) -> None:
             "warned (toolkit_stale + a warnings entry), never refused. "
             "allow_stale_toolkit=True is the escape hatch (almost always "
             "wrong). See noctus.dev.toolkit_freshness. "
+            "BRANCH-TREE POINTER LIFECYCLE (2026-09-23, owned here so nobody closes pointers "
+            "by hand): start claims an on_going pointer (project/brief/paths/agent/role/parent "
+            "fill it; project omitted => inherited from parent's pointer), integrate records "
+            "the POST-REBASE commit as integrated-worktree-live, cleanup closes it shipped; the "
+            "outcome rides on result['pointer'] and never blocks the git lifecycle. "
             "status: status|planned|started|integrated|conflict|up_to_date|"
             "cleaned|partial|blocked|refused_stale_toolkit|error."
         ),
@@ -1668,10 +1800,18 @@ def register(server) -> None:
         wire_env: bool = True,
         verbose: bool = False,
         allow_stale_toolkit: bool = False,
+        project: str | None = None,
+        brief: str | None = None,
+        paths: list[str] | None = None,
+        agent: str | None = None,
+        role: str | None = None,
+        parent: str | None = None,
     ) -> dict:
         return task_branch(action=action, slug=slug, confirm=confirm,
                            wire_env=wire_env, verbose=verbose,
-                           allow_stale_toolkit=allow_stale_toolkit)
+                           allow_stale_toolkit=allow_stale_toolkit,
+                           project=project, brief=brief, paths=paths,
+                           agent=agent, role=role, parent=parent)
 
 
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_BENIGN_REFRESH_PATTERNS",

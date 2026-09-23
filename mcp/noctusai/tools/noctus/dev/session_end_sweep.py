@@ -243,14 +243,11 @@ def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
     `shipped` — `pointer_blocks_removal` keeps refusing removal for it
     exactly like `on_going`, never bypassed by `force=True`
     (`branch_pointer.TERMINAL_STATUSES` deliberately excludes it).
-    NOC-REMEDIATE[integrated-worktree-live-reconcile]: once the worktree
-    directory is LATER removed by any means, this pointer stays at
-    `integrated-worktree-live` until an explicit re-heal — cleanup is never
-    blocked forever in practice (`cleanup_stale_worktrees`/`mole`'s own
-    PHANTOM path removes the git worktree registration once the directory is
-    gone, independent of pointer status), but the ledger value itself is not
-    auto-promoted back to `shipped` by this pass. A future sweep enhancement
-    can close that residual ledger-hygiene gap.
+    `integrated-worktree-live` pointers are candidates too: once their
+    worktree directory is gone they are promoted to `shipped` (2026-09-23;
+    this was the `integrated-worktree-live-reconcile` remediation). The
+    mechanism is now `task_branch` itself (integrate/cleanup write these
+    transitions), so this pass only heals what slipped past it.
 
     Writes each flip with `push_dev=False`; the caller's `deliver_trailing_ledgers`
     step (which already lists `branch-tree.ndjson` + its mirror) delivers them in
@@ -268,7 +265,11 @@ def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
     try:
         run = wts.make_subprocess_runner(repo_root, timeout=30)
         base = wts.resolve_merged_base(run)
-        candidates = bp.query(status="on_going")
+        # integrated-worktree-live too: once its worktree is gone it must
+        # reach `shipped` (closes NOC-REMEDIATE[integrated-worktree-live-reconcile]).
+        by_branch = {r.get("branch"): r for r in
+                     bp.query(status="on_going") + bp.query(status="integrated-worktree-live")}
+        candidates = [r for b, r in by_branch.items() if b]
     except Exception as e:  # noqa: BLE001
         return {"healed": [], "skipped_unproven": [], "errors": [f"query failed: {e}"[:200]]}
 
@@ -290,12 +291,13 @@ def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
             continue
         try:
             branch_exists = run(["git", "rev-parse", "--verify", "--quiet", branch])[0] == 0
-            if branch_exists:
-                integrated = wts.is_merged(run, branch, base)
-                reason = "branch integrated into dev"
-            else:
-                integrated = bool(commit) and wts.is_ancestor(run, commit, base)
-                reason = "branch cleaned up; recorded commit is in dev"
+            # Shared with the check_stale_branch_pointers keeper so healer and
+            # safety net can never disagree. It also proves a REBASED branch via
+            # its Noc-Branch trailer. Recorded-SHA ancestry alone never could,
+            # and that left pointers on_going for months.
+            integrated, reason = wts.pointer_branch_landed(
+                run, branch, commit, base,
+                fork_sha=wts.fork_sha_from_pointer_base(row.get("base", "")))
             if not integrated:
                 if not branch_exists:
                     skipped_unproven.append(branch)
