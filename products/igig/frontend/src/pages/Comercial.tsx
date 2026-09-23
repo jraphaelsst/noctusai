@@ -1,347 +1,131 @@
 /**
- * Comercial — Módulo 1: leads, calculadora de escopo, orçamentos e contratos.
+ * Comercial — the sales funnel page (roadmap R2–R5; wave-2 contract Slice C).
  *
- * The calculator is the delicate part. Its `alertas` are rendered ABOVE the
- * price, not below it: with no custo/hora data the suggestion is R$0, and a
- * user who quotes that number loses money on the job. A warning under the
- * headline figure would be read after the decision, not before it.
+ * Contains exactly: the pré-qualificação link, the funnel board and the
+ * "Novo lead" button. The board is the seed `PipelineBoard` over
+ * `@/lib/pipelines#comercialPipeline`:
+ *   • drag-and-drop changes stage (touch: press-and-hold) — no stage dropdown,
+ *   • columns editable in-header (add / rename / recolour / delete / reorder)
+ *     for org admins only — the server enforces the same (`require_stage_admin`),
+ *   • `onBeforeMove`: into the `fechado`-role stage ⇒ "Qual orçamento foi
+ *     aceito?" picker; the chosen id rides as `extra.orcamento_id`, none ⇒
+ *     "Gerar orçamento" instead (no close without an orçamento, R4),
+ *   • a refused move (409/422) is rolled back by the seed and its server
+ *     message toasted verbatim.
  *
- * The dry-run flag on a generated contract is shown for the same reason — an
- * operator must not believe a contract reached the client when no signing
- * vendor was contacted.
+ * A card opens the negócio `CardHubDialog`; its "Gerar orçamento" icon (and
+ * the dialog's) open the shared `OrcamentoModal`.
  */
 import { useState } from "react";
-import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
-import { AlertTriangle, Calculator, FileSignature, Link as LinkIcon, Plus, UserPlus } from "lucide-react";
+import { Plus } from "lucide-react";
+import { PipelineBoard } from "@noctusai/lib/components";
+import { ADMIN_ROLES, resolveSSOContext, type OrgRole } from "@noctusai/lib";
+import { Button, Skeleton } from "@noctusai/lib/design-system";
 import { useAuthStore } from "@noctusai/seed/infra";
+import { toast } from "sonner";
 
-import { useClientes } from "@/hooks/useClientes";
-import {
-  FORMATOS_ESCOPO,
-  useConverterLead,
-  useCriarOrcamento,
-  useDefinirPrecoFinal,
-  useEstimar,
-  useGerarContrato,
-  useLeads,
-  useOrcamentos,
-  type FormatoEscopo,
-  type ItemEscopo,
-} from "@/hooks/useComercial";
+import { FechadoOrcamentoPicker, useFechadoGate } from "@/components/comercial/FechadoOrcamentoPicker";
+import { LinkPreQualificacao } from "@/components/comercial/LinkPreQualificacao";
+import { NegocioCardDialog } from "@/components/comercial/NegocioCardDialog";
+import { NegocioCardFace } from "@/components/comercial/NegocioCardFace";
+import { NovoLeadDialog } from "@/components/comercial/NovoLeadDialog";
+import { OrcamentoModal } from "@/components/orcamento/OrcamentoModal";
+import { describeError } from "@/lib/errors";
+import { brl } from "@/lib/format";
+import { comercialPipeline } from "@/lib/pipelines";
+import type { Negocio } from "@/types/crm";
 
-const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const ROLE_LABELS = { fechado: "Fechado (exige orçamento aceito)" };
 
 export default function Comercial() {
-  const { leads, loading: carregandoLeads } = useLeads();
-  const { orcamentos } = useOrcamentos();
-  const { clientes } = useClientes();
-  const converter = useConverterLead();
-  const estimar = useEstimar();
-  const criarOrcamento = useCriarOrcamento();
-  const definirPreco = useDefinirPrecoFinal();
-  const gerarContrato = useGerarContrato();
+  const { user } = useAuthStore();
+  const sso = resolveSSOContext(user?.user_metadata);
+  const isAdmin = sso.isProductAdmin || ADMIN_ROLES.includes(sso.org.role as OrgRole);
 
-  const [itens, setItens] = useState<ItemEscopo[]>([{ formato: "feed", quantidade: 10 }]);
-  const [margem, setMargem] = useState(50);
-  const [titulo, setTitulo] = useState("Social media mensal");
-  const [contratoCliente, setContratoCliente] = useState("");
-  const [valorMensal, setValorMensal] = useState(5000);
+  // The board query is shared with `PipelineBoard` (same key: no filtros), so
+  // the open card always reads the freshest row after any mutation.
+  const { data: colunas } = comercialPipeline.useBoard();
+  const [abertoId, setAbertoId] = useState<string | null>(null);
+  const aberto: Negocio | null =
+    (abertoId && colunas?.flatMap((c) => c.cards).find((n) => n.id === abertoId)) || null;
 
-  const estimativa = estimar.data ?? null;
+  const [novoLead, setNovoLead] = useState(false);
+  const [orcamento, setOrcamento] = useState<{ id?: string | null; negocioId?: string | null } | null>(null);
+
+  const gate = useFechadoGate();
+
+  function gerarOrcamento(negocio: Negocio) {
+    setOrcamento({ negocioId: negocio.id });
+  }
 
   return (
-    <div className="space-y-6 p-6">
-      <header>
-        <h1 className="text-2xl font-semibold text-foreground">Comercial</h1>
-        <p className="text-sm text-muted-foreground">
-          Leads, calculadora de escopo, orçamentos e contratos.
-        </p>
+    <div className="mx-auto w-full max-w-full space-y-4 overflow-x-hidden p-4 sm:p-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold text-foreground">Comercial</h1>
+          <p className="text-sm text-muted-foreground">Cada lead novo entra na primeira etapa do funil.</p>
+        </div>
+        <Button onClick={() => setNovoLead(true)} data-testid="comercial-novo-lead">
+          <Plus className="mr-1 h-4 w-4" /> Novo lead
+        </Button>
       </header>
 
-      {/* The public capture form's shareable link. It used to be an API path
-          printed in the empty state — a developer-facing string on a screen
-          the comercial team uses, and not something anyone could hand to a
-          prospect. */}
       <LinkPreQualificacao />
 
-      {/* ── Leads ──────────────────────────────────────────────────── */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Leads</h2>
-        {carregandoLeads ? (
-          <Skeleton className="h-20 w-full" />
-        ) : leads.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nenhum lead ainda. Divulgue o formulário de pré-qualificação para
-            começar a receber.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {leads.map((lead) => (
-              <li key={lead.id} className="flex flex-wrap items-center gap-3 py-2">
-                <Badge variant={lead.status === "convertido" ? "default" : "muted"}>
-                  {lead.status}
-                </Badge>
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                  {lead.empresa || lead.nome}
-                  {lead.nicho && (
-                    <span className="ml-2 text-xs text-muted-foreground">{lead.nicho}</span>
-                  )}
-                </span>
-                {lead.orcamento_disponivel != null && (
-                  <span className="text-xs text-muted-foreground">
-                    {BRL.format(lead.orcamento_disponivel)}
-                  </span>
-                )}
-                {!lead.cliente_id && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={converter.isPending}
-                    onClick={() => converter.mutate(lead.id)}
-                  >
-                    <UserPlus className="mr-2 h-3 w-3" />
-                    Converter
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      {/* ── Calculadora ────────────────────────────────────────────── */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Calculator className="h-4 w-4" />
-          Calculadora de Escopo
-        </h2>
-
-        <div className="space-y-2">
-          {itens.map((item, i) => (
-            <div key={i} className="flex flex-wrap items-end gap-2">
-              <select
-                aria-label="Formato"
-                value={item.formato}
-                onChange={(e) =>
-                  setItens(itens.map((it, idx) =>
-                    idx === i ? { ...it, formato: e.target.value as FormatoEscopo } : it))
-                }
-                className="h-10 rounded-md border border-border bg-background px-2 text-sm text-foreground"
-              >
-                {FORMATOS_ESCOPO.map((f) => (
-                  <option key={f} value={f}>{f}</option>
-                ))}
-              </select>
-              <Input
-                type="number"
-                min={1}
-                aria-label="Quantidade"
-                value={item.quantidade}
-                onChange={(e) =>
-                  setItens(itens.map((it, idx) =>
-                    idx === i ? { ...it, quantidade: Number(e.target.value) } : it))
-                }
-                className="w-24"
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Remover item"
-                onClick={() => setItens(itens.filter((_, idx) => idx !== i))}
-              >
-                ×
-              </Button>
+      {/* The board scrolls sideways INSIDE its own frame — the page never does. */}
+      <div className="-mx-4 min-w-0 sm:mx-0">
+        <PipelineBoard<Negocio>
+          hooks={comercialPipeline}
+          formatValue={brl}
+          emptyColumnLabel="Nenhum negócio nesta etapa"
+          editableHeaders
+          reorderableColumns
+          canEditStages={isAdmin}
+          roleLabels={ROLE_LABELS}
+          onBeforeMove={gate.onBeforeMove}
+          onMoveError={(err) => toast.error(describeError(err, "Não foi possível mover o negócio."))}
+          columnClassName="flex-shrink-0 w-[85vw] max-w-80 sm:w-80 rounded-lg border bg-card text-card-foreground shadow-sm h-full flex flex-col overflow-hidden [&>[data-kanban-column-id]]:flex-1 [&>[data-kanban-column-id]]:p-3 [&>[data-kanban-column-id]]:overflow-y-auto"
+          className="px-4 sm:px-0"
+          loadingState={
+            <div className="flex gap-3 overflow-hidden px-4 sm:px-0">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-80 w-[85vw] max-w-80 shrink-0 sm:w-80" />
+              ))}
             </div>
-          ))}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setItens([...itens, { formato: "feed", quantidade: 1 }])}
-          >
-            <Plus className="mr-2 h-3 w-3" />
-            Item
-          </Button>
-        </div>
+          }
+          onCardClick={(n) => setAbertoId(n.id)}
+          renderCard={(n, { isDragging }) => (
+            <NegocioCardFace negocio={n} isDragging={isDragging} onGerarOrcamento={gerarOrcamento} />
+          )}
+        />
+      </div>
 
-        <div className="mt-3 flex flex-wrap items-end gap-2">
-          <label className="text-xs text-muted-foreground">
-            Margem alvo (%)
-            <Input
-              type="number"
-              min={0}
-              max={99}
-              value={margem}
-              onChange={(e) => setMargem(Number(e.target.value))}
-              className="mt-1 w-24"
-            />
-          </label>
-          <Button
-            disabled={itens.length === 0 || estimar.isPending}
-            onClick={() => estimar.mutate({ itens, margem_alvo: margem })}
-          >
-            Calcular
-          </Button>
-        </div>
+      <NovoLeadDialog open={novoLead} onClose={() => setNovoLead(false)} />
 
-        {estimativa && (
-          <div className="mt-4 rounded border border-border p-3">
-            {/* ABOVE the price, deliberately — a warning read after the number
-                is read after the decision. */}
-            {estimativa.alertas.length > 0 && (
-              <p className="mb-2 flex items-start gap-1 text-xs text-destructive">
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                {estimativa.alertas.join(" · ")}
-              </p>
-            )}
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
-              <div><dt className="text-xs text-muted-foreground">Horas</dt>
-                <dd className="text-foreground">{estimativa.horas}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Custo/hora médio</dt>
-                <dd className="text-foreground">{BRL.format(estimativa.custo_hora_medio)}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Custo</dt>
-                <dd className="text-foreground">{BRL.format(estimativa.custo)}</dd></div>
-              <div><dt className="text-xs text-muted-foreground">Preço mínimo</dt>
-                <dd className="font-semibold text-foreground">
-                  {BRL.format(estimativa.preco_sugerido)}
-                </dd></div>
-            </dl>
+      <NegocioCardDialog
+        negocio={aberto}
+        onClose={() => setAbertoId(null)}
+        onGerarOrcamento={gerarOrcamento}
+        onAbrirOrcamento={(id) => setOrcamento({ id })}
+      />
 
-            <div className="mt-3 flex flex-wrap items-end gap-2">
-              <Input
-                aria-label="Título do orçamento"
-                value={titulo}
-                onChange={(e) => setTitulo(e.target.value)}
-                className="min-w-[200px] flex-1"
-              />
-              <Button
-                disabled={criarOrcamento.isPending}
-                onClick={() => criarOrcamento.mutate({ titulo, itens, margem_alvo: margem })}
-              >
-                Salvar orçamento
-              </Button>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* ── Orçamentos ─────────────────────────────────────────────── */}
-      {orcamentos.length > 0 && (
-        <section className="rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-semibold text-foreground">Orçamentos</h2>
-          <ul className="divide-y divide-border">
-            {orcamentos.map((o) => (
-              <li key={o.id} className="flex flex-wrap items-center gap-3 py-2">
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground">{o.titulo}</span>
-                <span className="text-xs text-muted-foreground">
-                  sugerido {BRL.format(o.preco_sugerido)}
-                </span>
-                <Input
-                  type="number"
-                  aria-label={`Preço final de ${o.titulo}`}
-                  defaultValue={o.preco_final ?? o.preco_sugerido}
-                  onBlur={(e) =>
-                    definirPreco.mutate({ id: o.id, preco_final: Number(e.target.value) })
-                  }
-                  className="w-32"
-                />
-                {o.preco_final != null && o.preco_final < o.preco_sugerido && (
-                  <Badge variant="destructive">abaixo do mínimo</Badge>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {/* ── Contrato ───────────────────────────────────────────────── */}
-      <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-          <FileSignature className="h-4 w-4" />
-          Gerar contrato
-        </h2>
-        <div className="flex flex-wrap items-end gap-2">
-          <select
-            aria-label="Cliente do contrato"
-            value={contratoCliente}
-            onChange={(e) => setContratoCliente(e.target.value)}
-            className="h-10 rounded-md border border-border bg-background px-2 text-sm text-foreground"
-          >
-            <option value="">Cliente…</option>
-            {clientes.map((c) => (
-              <option key={c.id} value={c.id}>{c.nome}</option>
-            ))}
-          </select>
-          <label className="text-xs text-muted-foreground">
-            Valor mensal
-            <Input
-              type="number"
-              value={valorMensal}
-              onChange={(e) => setValorMensal(Number(e.target.value))}
-              className="mt-1 w-32"
-            />
-          </label>
-          <Button
-            disabled={!contratoCliente || gerarContrato.isPending}
-            onClick={() =>
-              gerarContrato.mutate({ cliente_id: contratoCliente, valor_mensal: valorMensal })
-            }
-          >
-            Gerar PDF e enviar
-          </Button>
-        </div>
-
-        {gerarContrato.data && (
-          <div className="mt-3 rounded border border-border p-3 text-sm">
-            {gerarContrato.data.dry_run && (
-              <p className="mb-2 flex items-start gap-1 text-xs text-destructive">
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                Simulação: nenhum provedor de assinatura foi contatado. Configure
-                as credenciais antes de enviar ao cliente.
-              </p>
-            )}
-            <p className="text-foreground">
-              Contrato gerado · <code className="text-xs">{gerarContrato.data.documento_key}</code>
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Link: {gerarContrato.data.link_assinatura}
-            </p>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-/** The shareable pré-qualificação link, with copy-to-clipboard. */
-function LinkPreQualificacao() {
-  const { user } = useAuthStore();
-  const [copiado, setCopiado] = useState(false);
-  // `org_id` lives on the raw user metadata, not on `resolveSSOContext().org`
-  // (which carries name/logo/role only) — same accessor the seed's
-  // LLMSpendBadge uses.
-  const orgId = (user?.user_metadata?.org_id as string | undefined) ?? null;
-
-  if (!orgId) return null;
-  const url = `${window.location.origin}/pre-qualificacao/${orgId}`;
-
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-3 text-sm">
-      <LinkIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="text-muted-foreground">Formulário de pré-qualificação:</span>
-      <code className="min-w-0 flex-1 truncate text-foreground">{url}</code>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={() => {
-          setCopiado(true);
-          // Clipboard access can be refused (insecure context, permissions);
-          // the URL is on screen regardless, so a refusal degrades to
-          // copy-by-hand rather than losing it.
-          void navigator.clipboard?.writeText(url).catch(() => undefined);
+      <FechadoOrcamentoPicker
+        negocio={gate.pendente}
+        onEscolher={(orcamentoId) => gate.decidir({ extra: { orcamento_id: orcamentoId } })}
+        onCancelar={() => gate.decidir(false)}
+        onGerarOrcamento={(n) => {
+          gate.decidir(false);
+          gerarOrcamento(n);
         }}
-      >
-        {copiado ? "Copiado" : "Copiar"}
-      </Button>
+      />
+
+      <OrcamentoModal
+        open={!!orcamento}
+        onClose={() => setOrcamento(null)}
+        orcamentoId={orcamento?.id ?? null}
+        negocioId={orcamento?.negocioId ?? null}
+        onOrcamentoChange={(o) => setOrcamento({ id: o.id, negocioId: o.negocio_id })}
+      />
     </div>
   );
 }
