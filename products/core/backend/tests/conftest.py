@@ -152,13 +152,17 @@ class UnauthClient:
 
 MOCK_USER = MockUser(id="test-user-123", email="test@example.com")
 MOCK_ADMIN_USER = MockUser(id="admin-user-456", email="admin@example.com")
+MOCK_MARKETING_USER = MockUser(id="marketing-user-789", email="marketing@example.com")
 
 
 # ---------------------------------------------------------------------------
 # Patch target helpers
 # ---------------------------------------------------------------------------
 
-def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm, mock_get_org_id=None):
+def _build_patches(
+    mock_sb, mock_get_user, mock_get_admin, mock_check_perm, mock_get_org_id=None,
+    mock_get_website_editor=None,
+):
     """Build the list of (target, replacement) tuples for all patches."""
     return [
         # Framework-class-level DATABASE patches (added in core-seed-wiring-v2 Phase 3).
@@ -291,6 +295,13 @@ def _build_patches(mock_sb, mock_get_user, mock_get_admin, mock_check_perm, mock
         ("app.routers.me_consents.get_user_client", mock_sb),
         ("app.routers.me_consents.get_current_user", mock_get_user),
         ("app.routers.me_consents.get_org_id", mock_get_org_id),
+        # Website — auth router's signup-gate check + settings/leads services
+        # (both import `get_admin_client` at module scope — patch where it's
+        # USED, matching every entry above).
+        ("app.services.website_settings_service.get_admin_client", mock_sb),
+        ("app.services.website_leads_service.get_admin_client", mock_sb),
+        ("app.routers.website_admin.get_current_admin", mock_get_admin),
+        ("app.routers.website_admin.get_website_editor", mock_get_website_editor),
     ]
 
 
@@ -306,6 +317,7 @@ def _is_direct_replacement(target_name, value):
         "get_org_id",
         "check_permission",
         "supabase_admin",
+        "get_website_editor",
     )
     return any(target_name.endswith(dt) for dt in direct_targets)
 
@@ -317,6 +329,107 @@ def _apply_patches(stack, patches):
             stack.enter_context(patch(target, value))
         else:
             stack.enter_context(patch(target, return_value=value))
+
+
+@pytest.fixture(autouse=True)
+def _reset_website_caches():
+    """`website_settings_service`'s 30s settings cache and `website_html`'s
+    30s manifest cache are module-level globals — reset around every test
+    so one test's write/monkeypatch can never leak into the next."""
+    from app.routers import website_html
+    from app.services import website_settings_service
+
+    website_settings_service.invalidate_cache()
+    website_html.invalidate_manifest_cache()
+    yield
+    website_settings_service.invalidate_cache()
+    website_html.invalidate_manifest_cache()
+
+
+def website_defaults_dict() -> dict:
+    """A complete, valid `WebsiteSettings` dict — mirrors what the FE's
+    `settings.defaults.json` build output looks like."""
+    return {
+        "site_enabled": True,
+        "signup_enabled": True,
+        "whatsapp": {
+            "number_e164": "+5511999999999",
+            "default_message": {"pt": "Oi!", "en": "Hi!"},
+            "float_enabled": True,
+        },
+        "sections": {
+            "audiences": True, "products": True, "custom_builds": True, "trust": True,
+            "social_proof": False, "pricing": True, "news": False, "faq": True,
+            "hero_update_card": False,
+        },
+        "products": [
+            {"slug": "erp-imobiliario", "visible": True, "order": 1, "state": "disponivel"},
+            {"slug": "hidden-product", "visible": False, "order": 2, "state": "em_breve"},
+        ],
+        "trust_items": [
+            {"key": "iso", "icon": "shield", "text": {"pt": "ISO", "en": "ISO"},
+             "verified_by": "auditor", "verified_at": "2026-01-01T00:00:00Z"},
+            {"key": "unverified", "icon": "shield", "text": {"pt": "x", "en": "x"},
+             "verified_by": None, "verified_at": None},
+        ],
+        "social_proof_items": [],
+        "faq": [{"q": {"pt": "P?", "en": "Q?"}, "a": {"pt": "R", "en": "A"}}],
+        "tracking": {"plausible_domain": None, "ga4_id": None, "meta_pixel_id": None},
+    }
+
+
+def website_manifest_dict() -> dict:
+    return {
+        "routes": [
+            {"path": "/", "lang": "pt-BR", "file": "index.html", "alt": "/en", "product": None},
+            {"path": "/en", "lang": "en", "file": "en/index.html", "alt": "/", "product": None},
+            {"path": "/produtos/erp-imobiliario", "lang": "pt-BR", "file": "produtos/erp-imobiliario/index.html",
+             "alt": "/en/products/erp-imobiliario", "product": "erp-imobiliario"},
+            {"path": "/produtos/hidden-product", "lang": "pt-BR", "file": "produtos/hidden-product/index.html",
+             "alt": None, "product": "hidden-product"},
+            {"path": "/404", "lang": "pt-BR", "file": "404/index.html", "alt": "/en/404", "product": None},
+            {"path": "/en/404", "lang": "en", "file": "en/404/index.html", "alt": "/404", "product": None},
+        ],
+        "product_routes": {"erp-imobiliario": {"pt": "/produtos/erp-imobiliario", "en": "/en/products/erp-imobiliario"}},
+        "built_at": "2026-09-23T00:00:00Z",
+    }
+
+
+_PAGE_HTML_TEMPLATE = """<!doctype html><html><head>
+<script id="nx-settings" type="application/json">__NX_SETTINGS__</script>
+</head><body>
+<h1>{title}</h1>
+<!--nx:section:pricing-->PRICING_BLOCK<!--/nx:section:pricing-->
+<!--nx:section:social_proof-->SOCIAL_PROOF_BLOCK<!--/nx:section:social_proof-->
+<!--nx:product:erp-imobiliario-->ERP_CARD<!--/nx:product:erp-imobiliario-->
+<!--nx:product:hidden-product-->HIDDEN_CARD<!--/nx:product:hidden-product-->
+</body></html>
+"""
+
+
+@pytest.fixture
+def website_site(tmp_path):
+    """A tmp `_site/` build dir wired via the `website_paths` DI seam
+    (never the `settings` singleton directly — `KB § PATTERNS/backend/
+    di-test-seam.md`; mirrors `webhook_delivery.configure_webhook_sender`
+    / `reset_webhook_sender`). Returns the `_site` `Path`."""
+    import json as _json
+
+    from app.services import website_paths
+
+    site = tmp_path / "_site"
+    site.mkdir()
+    (site / "settings.defaults.json").write_text(_json.dumps(website_defaults_dict()), encoding="utf-8")
+    (site / "manifest.json").write_text(_json.dumps(website_manifest_dict()), encoding="utf-8")
+
+    for route in website_manifest_dict()["routes"]:
+        file_path = site / route["file"]
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(_PAGE_HTML_TEMPLATE.format(title=route["path"]), encoding="utf-8")
+
+    website_paths.configure_site_dir(tmp_path)
+    yield site
+    website_paths.reset_site_dir()
 
 
 @pytest.fixture
@@ -357,9 +470,13 @@ def client():
     async def _mock_get_org_id(user):
         return "org-1"
 
+    async def _mock_get_website_editor(authorization=None):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Acesso restrito à equipe do site")
+
     patches = _build_patches(
         mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
-        mock_get_org_id=_mock_get_org_id,
+        mock_get_org_id=_mock_get_org_id, mock_get_website_editor=_mock_get_website_editor,
     )
 
     with contextlib.ExitStack() as stack:
@@ -402,9 +519,15 @@ def admin_client():
     async def _mock_get_org_id(user):
         return "org-1"
 
+    async def _mock_get_website_editor(authorization=None):
+        if not authorization or not authorization.startswith("Bearer "):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="Token ausente")
+        return MOCK_ADMIN_USER, "test-token-valid", "admin"
+
     patches = _build_patches(
         mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
-        mock_get_org_id=_mock_get_org_id,
+        mock_get_org_id=_mock_get_org_id, mock_get_website_editor=_mock_get_website_editor,
     )
 
     with contextlib.ExitStack() as stack:
@@ -413,6 +536,49 @@ def admin_client():
         # Per-fixture re-bind of the seed's consent module to THIS test's
         # mock_sb. See KB § PATTERNS/testing.md § Consent-guard product
         # conftest pattern.
+        bind_consent_module_to_mock(mock_sb)
+        tc = TestClient(app)
+        yield AuthClient(tc, mock_sb)
+
+
+@pytest.fixture
+def marketing_client():
+    """Test client where `get_website_editor` succeeds with role='marketing'
+    but `get_current_admin` 403s — exercises the admin-only-field guard and
+    the CSV-export/rollback 🔒 gates (contract §3)."""
+    mock_sb = MockSupabaseClient()
+    mock_sb.auth.get_user = MagicMock(return_value=MockUserResponse(MOCK_MARKETING_USER))
+
+    async def _mock_get_current_user(authorization=None):
+        if not authorization or not authorization.startswith("Bearer "):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="Token ausente")
+        return MOCK_MARKETING_USER, "test-token-valid"
+
+    async def _mock_get_current_admin(authorization=None):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
+
+    async def _mock_check_permission(user_id, org_id, permission_slug):
+        return False
+
+    async def _mock_get_org_id(user):
+        return "org-1"
+
+    async def _mock_get_website_editor(authorization=None):
+        if not authorization or not authorization.startswith("Bearer "):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="Token ausente")
+        return MOCK_MARKETING_USER, "test-token-valid", "marketing"
+
+    patches = _build_patches(
+        mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
+        mock_get_org_id=_mock_get_org_id, mock_get_website_editor=_mock_get_website_editor,
+    )
+
+    with contextlib.ExitStack() as stack:
+        _apply_patches(stack, patches)
+        from app.main import app
         bind_consent_module_to_mock(mock_sb)
         tc = TestClient(app)
         yield AuthClient(tc, mock_sb)
@@ -440,9 +606,13 @@ def unauth_client():
     async def _mock_get_org_id(user):
         return "org-1"
 
+    async def _mock_get_website_editor(authorization=None):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Token ausente")
+
     patches = _build_patches(
         mock_sb, _mock_get_current_user, _mock_get_current_admin, _mock_check_permission,
-        mock_get_org_id=_mock_get_org_id,
+        mock_get_org_id=_mock_get_org_id, mock_get_website_editor=_mock_get_website_editor,
     )
 
     with contextlib.ExitStack() as stack:

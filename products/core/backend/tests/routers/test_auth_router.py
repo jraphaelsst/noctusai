@@ -52,6 +52,58 @@ class TestSignup:
         assert resp.status_code == 422
 
 
+class TestSignupGate:
+    """Website `signup_enabled` switch (contract §6, §10)."""
+
+    def test_open_when_website_settings_never_configured(self, client):
+        # No `website_settings` row at all AND no FE-built defaults file on
+        # this test run — `WebsiteDefaultsMissing` must NOT block signup.
+        mock_sb = client.mock_supabase
+        mock_auth_user = MockUser(id="new-user-id", email="new@example.com")
+        mock_auth_response = MagicMock()
+        mock_auth_response.user = mock_auth_user
+        mock_sb.auth.admin.create_user = MagicMock(return_value=mock_auth_response)
+        mock_sb.set_table_data("website_settings", [])
+        mock_sb.set_table_data("organizations", [{"id": "org-1", "nome": "Test Corp"}])
+        mock_sb.set_table_data("noctus_users", [])
+
+        resp = client.post("/api/auth/signup", json={
+            "nome": "Test User", "email": "new@example.com",
+            "password": "password123", "empresa": "Test Corp",
+        })
+        assert resp.status_code == 200
+
+    def test_closed_returns_403_signup_closed(self, client, website_site):
+        from tests.conftest import website_defaults_dict
+
+        mock_sb = client.mock_supabase
+        closed = {**website_defaults_dict(), "signup_enabled": False}
+        mock_sb.set_table_data("website_settings", [{"version": 1, "data": closed}])
+
+        resp = client.post("/api/auth/signup", json={
+            "nome": "Test User", "email": "blocked@example.com",
+            "password": "password123", "empresa": "Test Corp",
+        })
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "signup_closed"
+
+    def test_open_when_signup_enabled_true(self, client, website_site):
+        mock_sb = client.mock_supabase
+        mock_auth_user = MockUser(id="new-user-id", email="new@example.com")
+        mock_auth_response = MagicMock()
+        mock_auth_response.user = mock_auth_user
+        mock_sb.auth.admin.create_user = MagicMock(return_value=mock_auth_response)
+        mock_sb.set_table_data("website_settings", [])
+        mock_sb.set_table_data("organizations", [{"id": "org-1", "nome": "Test Corp"}])
+        mock_sb.set_table_data("noctus_users", [])
+
+        resp = client.post("/api/auth/signup", json={
+            "nome": "Test User", "email": "new@example.com",
+            "password": "password123", "empresa": "Test Corp",
+        })
+        assert resp.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # POST /api/auth/login
 # ---------------------------------------------------------------------------
@@ -125,6 +177,10 @@ class TestGetMe:
         data = resp.json()
         assert "user" in data
         assert "organization" in data
+        # Website contract §3/§6: the FE auth-context needs `role` (e.g.
+        # 'marketing') visible here — already true (profile is `SELECT *`),
+        # pinned as a regression guard.
+        assert data["user"]["role"] == "admin"
 
     def test_get_me_profile_not_found(self, client):
         mock_sb = client.mock_supabase

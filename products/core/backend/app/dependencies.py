@@ -71,6 +71,25 @@ async def get_current_admin(authorization: Optional[str] = Header(None)) -> Tupl
     return user, token
 
 
+async def get_website_editor(authorization: Optional[str] = Header(None)) -> Tuple:
+    """Extract user and verify they may edit the website (admin OR marketing).
+
+    Returns `(user, token, role)` — the router layer branches on `role` to
+    enforce the admin-only sub-surface (`site_enabled`/`signup_enabled`,
+    CSV export, rollback) within an otherwise shared endpoint set. Mirrors
+    `get_current_admin` in shape; the extra role in the return tuple is
+    the ONLY difference (contract §3, `get_website_editor`).
+    """
+    user, token = await get_current_user(authorization)
+    db = get_admin_client()
+
+    profile = db.table("noctus_users").select("role").eq("id", user.id).single().execute()
+    role = profile.data.get("role") if profile.data else None
+    if role not in ("admin", "marketing"):
+        raise HTTPException(status_code=403, detail="Acesso restrito à equipe do site")
+    return user, token, role
+
+
 async def get_current_user_with_permissions(
     authorization: Optional[str] = Header(None),
 ) -> Tuple:

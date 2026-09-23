@@ -31,6 +31,9 @@ from app.routers import templates
 from app.routers import me_consents as me_consents_router
 from app.routers import fleet_control as fleet_control_router
 from app.routers import billing_admin as billing_admin_router
+from app.routers import website_public as website_public_router
+from app.routers import website_admin as website_admin_router
+from app.routers.website_html import website_html_middleware
 
 configure_scheduler()
 
@@ -75,8 +78,21 @@ app = create_product_app(
         me_consents_router.router,
         fleet_control_router.router,
         billing_admin_router.router,
+        website_public_router.router,
+        website_admin_router.router,
     ],
 )
+
+# Website host-split serving (contract §5) — registered as `http` middleware
+# AFTER `create_product_app` returns, so it becomes the OUTERMOST layer of
+# the ASGI middleware stack (Starlette's `add_middleware` prepends; the
+# LAST one added runs FIRST on the way in). This intercepts a website-host
+# request BEFORE it reaches any other middleware/route/the SPA mount —
+# "registered before the SPA mount" in effect, since middleware wraps
+# dispatch regardless of route registration order. A non-website-host
+# request (e.g. `core.noctusai.com`) — or `site_enabled=false` — falls
+# through to `call_next(request)` unchanged.
+app.middleware("http")(website_html_middleware)
 
 
 @app.get("/")
