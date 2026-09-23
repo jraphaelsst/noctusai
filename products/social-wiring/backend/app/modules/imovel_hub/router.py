@@ -20,6 +20,7 @@ route is org-scoped and auth-required.
 """
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from fastapi import (
@@ -35,6 +36,7 @@ from fastapi import (
 )
 
 from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.primitives.exceptions import ConflictError, ValidationError_
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
 from app.modules.imovel_hub import busca_service
@@ -55,6 +57,24 @@ from app.modules.imovel_hub.schemas import (
     ImovelDadosPatchBody,
     ImovelDocumentoExtracaoPatchBody,
 )
+# NOC-REMEDIATE[matricula-pipeline-consolidation] (partial — see module
+# docstring below): the imóvel-page upload now queues the SAME full
+# transcription `matriculas.router`'s `/extrair`-with-`codigo` queues, not
+# just the número-de-matrícula read above. `matriculas.estrutura_service`
+# and `matriculas.service` import only `imovel_hub`'s SUBMODULES (never
+# `imovel_hub.router`), so this import direction adds no cycle — see
+# `app/modules/matriculas/__init__.py`'s own docstring for the two-readers
+# problem this does NOT solve.
+from app.modules.matriculas import estrutura_service as matriculas_estrutura_svc
+from app.modules.matriculas import service as matriculas_service
+from app.modules.matriculas.deps import (
+    TranscriberFactory,
+    get_background_client as get_matriculas_background_client,
+    get_notification_service as get_matriculas_notification_service,
+    get_transcriber_factory as get_matriculas_transcriber_factory,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/imoveis", tags=["imoveis-dados"])
 
@@ -205,9 +225,15 @@ async def upload_documento_route(
     extractor_factory=Depends(get_matricula_extractor_factory),
     notificador=Depends(get_imovel_notification_service),
     estrutura_seams=Depends(get_estrutura_seams),
+    matriculas_background_db=Depends(get_matriculas_background_client),
+    matriculas_transcriber_factory: TranscriberFactory = Depends(
+        get_matriculas_transcriber_factory
+    ),
+    matriculas_notificador=Depends(get_matriculas_notification_service),
 ) -> dict:
     user, org_id = _auth_parts(auth)
     codigo = codigo.upper()
+    content_type = file.content_type or "application/octet-stream"
     data = await file.read()
     documento = await docs_svc.upload(
         client,
@@ -215,7 +241,7 @@ async def upload_documento_route(
         org_id,
         codigo,
         filename=file.filename or "arquivo",
-        content_type=file.content_type or "application/octet-stream",
+        content_type=content_type,
         data=data,
         tipo_documento=tipo_documento,
         enviado_por=getattr(user, "id", None),
@@ -254,6 +280,52 @@ async def upload_documento_route(
             extract_text=estrutura_seams.extract_text,
             analyze_estrutura=estrutura_seams.analyze_estrutura,
         )
+
+    # NOC-REMEDIATE[matricula-pipeline-consolidation] (partial fix, 2026-09-23)
+    # — see `app/modules/matriculas/__init__.py`'s own docstring for the
+    # part this does NOT close. Before this, an imóvel-page matrícula
+    # upload only ran the two jobs above (número-de-matrícula +
+    # migration-118's structured `emitida_em` read); the FULL transcription
+    # — cartório, inscrição, situação de ônus, atos, título suggestions —
+    # only ran through `/api/matriculas/extrair` WITH a `codigo`, which
+    # keeps its own `imovel_documentos` row rather than reusing this one.
+    # `criar_extracao_de_documento` is the same call `POST /api/matriculas/
+    # extracoes/de-documento` makes for a PDF the imóvel already holds —
+    # queuing it HERE, off the SAME upload, is "queue it exactly as the
+    # imóvel page's upload queues it" applied to the imóvel page's own
+    # upload. It is idempotent per `imovel_documento_id` (409 `ConflictError`
+    # if a non-`erro` extraction already exists for this exact document —
+    # which cannot happen for a document this call just created, but the
+    # guard is the seed's, not re-implemented here) and only accepts a PDF
+    # (`ValidationError_` for the image mime types this route also allows) —
+    # neither failure mode may fail the upload response itself: the
+    # document is already stored by the time this runs.
+    if tipo_documento == "matricula" and content_type == "application/pdf":
+        try:
+            extracao = matriculas_estrutura_svc.criar_extracao_de_documento(
+                client,
+                org_id,
+                codigo=codigo,
+                imovel_documento_id=UUID(documento["id"]),
+                usuario_id=getattr(user, "id", None),
+            )
+        except (ValidationError_, ConflictError) as exc:
+            logger.warning(
+                "imovel %s documento %s: matrícula transcription not queued: %s",
+                codigo, documento["id"], exc,
+            )
+        else:
+            storage_path = extracao.pop("storage_path")
+            background.add_task(
+                matriculas_service.processar_extracao_de_documento,
+                extracao["id"],
+                storage_path,
+                str(org_id),
+                matriculas_background_db,
+                storage,
+                transcriber_factory=matriculas_transcriber_factory,
+                notificador=matriculas_notificador,
+            )
     return documento
 
 
