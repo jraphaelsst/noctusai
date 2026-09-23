@@ -717,7 +717,22 @@ def aplicar_campos_ao_cliente(
       earlier extraction, a `cliente_campo_conflitos` row opens (returned, so
       the caller notifies an admin). `nome_oficial` included — the old
       `sobrescreve=True` "newest document wins" is gone.
-    - **Same fact -> nothing** (`_mesmo_valor`, per field).
+    - **Same fact, still machine-pending, and a human now vouches for it
+      (`confirmado_por` given) -> promoted to confirmed**, `updates`-only on
+      `_confirmado_por/_em`: a matrícula qualification auto-applied
+      machine-pending (`persistir_sugestoes` -> `_aplicar_automatico`,
+      `confirmado_por=None`) and a human later clicking `confirmar` on that
+      SAME reading must not silently do nothing just because the value was
+      already there — that would leave it machine-pending forever, invisible
+      to `confirmar`'s own return payload, even though a human DID look at
+      it. Provenance (`origem`/`documento_id`/`em`) is left exactly as the
+      machine wrote it: confirming does not change WHO supplied the value,
+      only that it is now reviewed — the same thing `contrato_gerador
+      .validacao_extracao._patch_aceite` does generically for the D2 gate,
+      reached here through this module's own confirm action instead.
+      Already-confirmed -> nothing (re-confirming does not re-stamp).
+    - **Same fact, no `confirmado_por` given -> nothing** (`_mesmo_valor`,
+      per field) — the ordinary machine-vs-machine agreement case.
     - An operator who explicitly typed then CLEARED a field
       (`origem='manual'`, value empty) is still respected: that was a human
       decision about the field, and the reading stays on the document as a
@@ -732,7 +747,7 @@ def aplicar_campos_ao_cliente(
     """
     colunas: list[str] = ["id"]
     for campo in campos:
-        colunas += [campo.item_key, campo.origem]
+        colunas += [campo.item_key, campo.origem, campo.confirmado_em]
     rows = (
         _t(client, CLIENTES_TABLE)
         .select(",".join(dict.fromkeys(colunas)))
@@ -789,6 +804,12 @@ def aplicar_campos_ao_cliente(
                 )
                 if novo is not None:
                     conflitos.append(novo)
+            elif confirmado_por and _vazio(atual.get(campo.confirmado_em)):
+                # Same fact, still machine-pending, a human now vouches for
+                # it — promote to confirmed. See the docstring's D1 bullet.
+                updates[campo.confirmado_por] = str(confirmado_por)
+                updates[campo.confirmado_em] = now
+                aplicados[campo.item_key] = True
             continue
         if atual.get(campo.origem) == "manual":
             continue

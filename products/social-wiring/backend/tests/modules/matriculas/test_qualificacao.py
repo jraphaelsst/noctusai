@@ -162,6 +162,155 @@ class TestTheListingCarriesQualificacoes:
         assert scoped.table("matricula_atos").inserted_payloads == []
 
 
+# ─── auto-apply-on-vincular: fill-empty with provenance (D1, migration 153) ─
+#
+# The REGINA case: a qualificação `vinculado` to a cliente used to sit there
+# doing nothing to `clientes` until a human clicked `confirmar` — nobody had
+# to, so the profissão never reached the contract gate. `persistir_sugestoes`
+# now runs `_aplicar_automatico` on every freshly-`vinculado` row, machine-
+# pending (`confirmado_por=None`), the SAME mechanics `confirmar` already
+# used — see `qualificacao_service`'s own module docstring.
+
+
+class TestAutoApplyOnVincular:
+    def test_fill_empty_applies_before_any_human_confirms(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_QUALIFICACAO)
+        cliente_jose = cliente_row(cpf=CPF_JOSE)
+        seed(scoped, extracoes=[ext], clientes=[cliente_jose])
+
+        _atos(client, ext["id"])  # segmentation -> persistir_sugestoes -> auto-apply
+
+        cliente_atual = (
+            scoped.table("clientes").select("*").eq("id", cliente_jose["id"]).execute().data[0]
+        )
+        assert cliente_atual["nacionalidade"] == "brasileiro"
+        assert cliente_atual["nacionalidade_origem"] == "matricula"
+        assert cliente_atual["profissao"] == "comerciante"
+        assert cliente_atual["estado_civil"] == "casado"
+        assert cliente_atual["rg"] == "11.222.333"
+        # Migration 153's gender canonicalisation applies here exactly like
+        # it does on `confirmar` — see `_lidos`' own comment.
+        assert cliente_atual["genero"] == "Masculino"
+        # Machine-pending — nobody has looked at it yet.
+        assert cliente_atual["profissao_confirmado_por"] is None
+        assert cliente_atual["profissao_confirmado_em"] is None
+
+    def test_a_disagreeing_field_opens_a_conflict_and_never_overwrites(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_QUALIFICACAO)
+        cliente_jose = cliente_row(
+            cpf=CPF_JOSE, estado_civil="divorciado", estado_civil_origem="manual"
+        )
+        seed(scoped, extracoes=[ext], clientes=[cliente_jose])
+
+        jose = _por_cpf(_atos(client, ext["id"])["qualificacoes"])[CPF_JOSE]
+
+        cliente_atual = (
+            scoped.table("clientes").select("*").eq("id", cliente_jose["id"]).execute().data[0]
+        )
+        assert cliente_atual["estado_civil"] == "divorciado"  # never overwritten
+        assert cliente_atual["profissao"] == "comerciante"  # every OTHER field still fills
+
+        conflito = (
+            scoped.table("cliente_campo_conflitos")
+            .select("*")
+            .eq("cliente_id", cliente_jose["id"])
+            .execute()
+            .data[0]
+        )
+        assert conflito["campo"] == "estado_civil"
+        assert conflito["valor_anterior"] == "divorciado"
+        assert conflito["valor_proposto"] == "casado"
+        assert conflito["origem_proposto"] == "matricula"
+        assert conflito["fonte_tabela"] == "matricula_qualificacoes"
+        assert conflito["fonte_id"] == jose["id"]
+        assert conflito["status"] == "pendente"
+
+    def test_an_unmatched_qualificacao_applies_nothing(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_QUALIFICACAO)
+        seed(scoped, extracoes=[ext])  # no clientes -> both rows unmatched
+
+        _atos(client, ext["id"])
+
+        assert scoped.table("clientes").select("*").execute().data == []
+        assert scoped.table("cliente_campo_conflitos").select("*").execute().data == []
+
+
+class TestBackfillAplicarCamposVinculados:
+    """The catch-up for a `vinculado` row written before the hook above
+    existed — a legacy row seeded directly (bypassing `persistir_sugestoes`
+    entirely), never touched by segmentation."""
+
+    def _linha_legado(self, cliente_id: str) -> dict:
+        return {
+            "id": str(uuid4()),
+            "org_id": ORG_ID,
+            "extracao_id": str(uuid4()),
+            "cpf_cnpj": CPF_JOSE,
+            "cpf_cnpj_normalizado": "22233344405",
+            "nome": "JOSÉ EXEMPLO LIMA",
+            "nacionalidade": "brasileiro",
+            "estado_civil": "casado",
+            "profissao": "comerciante",
+            "rg": "11.222.333",
+            "rg_orgao_expedidor": None,
+            "endereco": "Rua Fictícia, nº 45, Cotia-SP",
+            "genero": "m",
+            "confianca": "alta",
+            "origem": {},
+            "cliente_id": cliente_id,
+            "vinculo_status": qsvc.VINCULADO,
+            "confirmado_por": None,
+            "confirmado_em": None,
+            "aplicado_campos": None,
+            "descartado_por": None,
+            "descartado_em": None,
+        }
+
+    def test_backfills_a_legacy_vinculado_row(self, scoped):
+        cliente_jose = cliente_row(cpf=CPF_JOSE)
+        seed(scoped, clientes=[cliente_jose], qualificacoes=[self._linha_legado(cliente_jose["id"])])
+
+        resultado = qsvc.backfill_aplicar_campos_vinculados(scoped, ORG_ID)
+
+        assert resultado["linhas_vinculadas"] == 1
+        assert resultado["aplicados"] > 0
+        assert resultado["conflitos_abertos"] == 0
+        cliente_atual = (
+            scoped.table("clientes").select("*").eq("id", cliente_jose["id"]).execute().data[0]
+        )
+        assert cliente_atual["profissao"] == "comerciante"
+        assert cliente_atual["profissao_origem"] == "matricula"
+        assert cliente_atual["profissao_confirmado_por"] is None
+
+    def test_rerunning_the_backfill_is_a_true_no_op(self, scoped):
+        cliente_jose = cliente_row(cpf=CPF_JOSE)
+        seed(scoped, clientes=[cliente_jose], qualificacoes=[self._linha_legado(cliente_jose["id"])])
+
+        primeiro = qsvc.backfill_aplicar_campos_vinculados(scoped, ORG_ID)
+        segundo = qsvc.backfill_aplicar_campos_vinculados(scoped, ORG_ID)
+
+        assert primeiro["aplicados"] > 0
+        assert segundo == {"linhas_vinculadas": 1, "aplicados": 0, "conflitos_abertos": 0}
+
+    def test_rerunning_after_a_conflict_never_opens_a_second_one(self, scoped):
+        cliente_jose = cliente_row(
+            cpf=CPF_JOSE, estado_civil="divorciado", estado_civil_origem="manual"
+        )
+        seed(scoped, clientes=[cliente_jose], qualificacoes=[self._linha_legado(cliente_jose["id"])])
+
+        primeiro = qsvc.backfill_aplicar_campos_vinculados(scoped, ORG_ID)
+        segundo = qsvc.backfill_aplicar_campos_vinculados(scoped, ORG_ID)
+
+        assert primeiro["conflitos_abertos"] == 1
+        assert segundo["conflitos_abertos"] == 0
+        conflitos = scoped.table("cliente_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 1
+        cliente_atual = (
+            scoped.table("clientes").select("*").eq("id", cliente_jose["id"]).execute().data[0]
+        )
+        assert cliente_atual["estado_civil"] == "divorciado"  # never overwritten
+
+
 # ─── PUT /qualificacoes/{id}/confirmar ──────────────────────────────────────
 
 
@@ -211,6 +360,13 @@ class TestConfirming:
     def test_confirming_never_overwrites_an_existing_value(
         self, client, scoped, fake_notification_service
     ):
+        """`_preparar`'s own GET .../atos already triggers the auto-apply-
+        on-vincular hook (`persistir_sugestoes` -> `_aplicar_automatico`,
+        see `TestAutoApplyOnVincular`), so the conflict this test is about
+        is ALREADY open by the time `confirmar` runs — `confirmar` finds it
+        pending (`_conflito_pendente_existente`) and opens no SECOND one:
+        `conflitos_abertos` for THIS call is empty, and `estado_civil`
+        stays declined/unapplied either way."""
         _ext, cliente_jose, jose = self._preparar(
             client, scoped, cliente_extra={"estado_civil": "divorciado", "estado_civil_origem": "manual"}
         )
@@ -218,7 +374,7 @@ class TestConfirming:
         resp = _data(client.put(f"/api/matriculas/qualificacoes/{jose['id']}/confirmar"))
 
         assert resp["aplicado_campos"]["estado_civil"] is False
-        assert resp["conflitos_abertos"] == ["estado_civil"]
+        assert resp["conflitos_abertos"] == []
         cliente_atual = (
             scoped.table("clientes")
             .select("*")
@@ -228,28 +384,21 @@ class TestConfirming:
         )
         assert cliente_atual["estado_civil"] == "divorciado"
 
-        conflito = (
+        conflitos = (
             scoped.table("cliente_campo_conflitos")
             .select("*")
             .eq("cliente_id", cliente_jose["id"])
             .execute()
-            .data[0]
+            .data
         )
+        assert len(conflitos) == 1  # confirming never opens a second one
+        conflito = conflitos[0]
         assert conflito["valor_anterior"] == "divorciado"
         assert conflito["valor_proposto"] == "casado"
         assert conflito["origem_proposto"] == "matricula"
         assert conflito["fonte_tabela"] == "matricula_qualificacoes"
         assert conflito["fonte_id"] == jose["id"]
         assert conflito["status"] == "pendente"
-        assert conflito["notificado_em"] is not None  # the fake dispatch ran
-
-        # The admin notification carries the SAME comparison — nothing
-        # forces an admin to leave the message to judge it.
-        assert len(fake_notification_service.conflitos) == 1
-        enviado = fake_notification_service.conflitos[0]["conflito"]
-        assert enviado["valor_anterior"] == "divorciado"
-        assert enviado["valor_proposto"] == "casado"
-        assert fake_notification_service.conflitos[0]["cliente_nome"] == "JOSÉ EXEMPLO LIMA"
 
     def test_confirming_without_a_match_stamps_but_applies_nothing(self, client, scoped):
         ext = extracao_row(texto=TEXTO_QUALIFICACAO)

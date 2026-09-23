@@ -202,7 +202,26 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         # itself (`origem='matricula'`, the quinteto pattern) and the
         # migration-118 structured read (`origem` in `ia`/`manual`).
         origens=frozenset({"matricula"}) | _ORIGENS_ESTRUTURA,
-        campos=frozenset({"numero_matricula"}),
+        # `numero_matricula` — the imóvel-domain header field `extrator`
+        # above reads. The other seven are a SEPARATE reader over the SAME
+        # upload (`matriculas.qualificacao_service`'s consumer of
+        # `noctusai_lib.integrations.documents.matricula_qualificacao
+        # .extrair_qualificacoes`, per migration 137) that lands on
+        # `clientes` (`ORIGEM_MATRICULA = "matricula"`, the same `origens`
+        # value already claimed above) rather than on `imovel_dados` — one
+        # `Fonte` because there is one physical document, not two. `Fonte.
+        # dominio` stays `"imovel"` (this is the imóvel-upload channel's
+        # entry, and every `dominio`-filtered reader —
+        # `identidade_extracao_service.TIPOS_EXTRAIVEIS`/`TIPOS_ENDERECO` —
+        # only reads `dominio == "cliente"` Fontes, so this stays invisible
+        # to card_hub's own identity-upload gating either way): `linhagem
+        # ._fontes_possiveis` matches candidates by `campos` alone, not by
+        # `dominio`, which is what lets a cliente-domain gap (e.g.
+        # `profissao`) legitimately resolve to an imóvel-domain document.
+        campos=frozenset(
+            {"numero_matricula", "profissao", "estado_civil", "nacionalidade",
+             "rg", "rg_orgao", "endereco", "genero"}
+        ),
         estrutura_extraivel=True,
     ),
     Fonte(

@@ -29,19 +29,28 @@ vs. this module's `"nome"`; `clientes.rg_orgao_expedidor` vs. `"rg_orgao"`).
 A product's own catalog is where that renaming is declared, once, in one
 place a test can walk.
 
-**Scope, honestly.** This module currently catalogues the two seed
-extractors social-wiring's contract-gate wave (migrations 153/154) put to
-work: the identity-document reader (`factory.make_identity_extractor`) and
-the matrícula header's `find_matricula`. The FULL matrícula parse
-(`make_matricula_extractor` — cartório, inscrição, ônus, atos, the whole
-transcription) is a materially larger seed capability this module does not
-yet catalogue field-by-field.
-NOC-REMEDIATE[capacidades-matricula-completa]: extend `CAPACIDADES["matricula"]`
-once a product needs its own `Fonte` to claim one of those fields — 2026-09-23.
-The imóvel CND/guia-IPTU structured reads
-(`imovel_hub/documentos_service.py`'s `extrair_estrutura`) are a per-product
-ad-hoc LLM JSON prompt, not a seed-typed parser, so they are deliberately
-absent here too — see that product module's own `CAMPOS_ESTRUTURA_POR_TIPO`.
+**Scope, honestly.** This module currently catalogues the three seed
+extractors social-wiring's contract-gate wave (migrations 137/153/154) put
+to work: the identity-document reader (`factory.make_identity_extractor`),
+the matrícula header's `find_matricula`, and the matrícula ACT TEXT's party
+qualification reader (`matricula_qualificacao.extrair_qualificacoes`) — a
+second, independent extraction over the SAME `tipo_documento="matricula"`
+upload, on the SAME `origem="matricula"` write value, so it lands in
+`CAPACIDADES["matricula"]` beside the header fields rather than under a
+second key (there is no second physical document type to key it by).
+`rg`/`rg_orgao_expedidor` from a matrícula qualification are genuinely
+narrower than an identity document's — no photo, no `data_emissao` — but the
+canonical names are the same ones `_IDENTIDADE_COMPLETA` already uses, so no
+new vocabulary is introduced for them. The FULL matrícula parse
+(`make_matricula_extractor` — cartório, inscrição, ônus, the rest of the
+transcription beyond what a qualification or the header carries) remains a
+materially larger seed capability this module does not yet catalogue
+field-by-field; extend `CAPACIDADES["matricula"]` again once a product needs
+its own `Fonte` to claim one of those. The imóvel CND/guia-IPTU structured
+reads (`imovel_hub/documentos_service.py`'s `extrair_estrutura`) are a
+per-product ad-hoc LLM JSON prompt, not a seed-typed parser, so they are
+deliberately absent here too — see that product module's own
+`CAMPOS_ESTRUTURA_POR_TIPO`.
 """
 from __future__ import annotations
 
@@ -57,6 +66,20 @@ _IDENTIDADE_COMPLETA: frozenset[str] = frozenset(_IDENTITY_CAMPOS) | {
     "rg_orgao",
     "data_emissao",
 }
+
+#: `matricula_qualificacao.extrair_qualificacoes`' per-party read off the act
+#: text — canonical names already shared with `_IDENTIDADE_COMPLETA`
+#: (`"rg_orgao"` for the issuer, matching `types.CAMPOS`' vocabulary, not
+#: `clientes.rg_orgao_expedidor`'s column name — see this module's own
+#: docstring on why product columns are free to differ). `"endereco"` is
+#: read (`Qualificacao.endereco`, unstructured prose) but a product may
+#: choose NOT to auto-apply it to a structured column — see social-wiring's
+#: `matriculas.qualificacao_service.CAMPOS_QUALIFICACAO` docstring for why
+#: it deliberately does not yet; this catalogue only bounds what CAN be
+#: read, same as every other entry here.
+_QUALIFICACAO_MATRICULA: frozenset[str] = frozenset(
+    {"profissao", "estado_civil", "nacionalidade", "rg", "rg_orgao", "endereco", "genero"}
+)
 
 #: `tipo_documento -> {canonical field names a seed parser can lift off it}`.
 #:
@@ -82,7 +105,10 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # not necessarily this titular, so this module does not claim them even
     # though nothing stops a caller from reading the bytes further.
     "comprovante_endereco": frozenset({"endereco"}),
-    # `matricula.find_matricula` — the número de matrícula off the header.
-    # See the module docstring's scope note for the full-parse gap.
-    "matricula": frozenset({"numero_matricula"}),
+    # `matricula.find_matricula` (the número off the header) PLUS
+    # `matricula_qualificacao.extrair_qualificacoes` (each party's own
+    # facts off the act text) — two independent readers, one
+    # `tipo_documento`. See the module docstring's scope note for the
+    # full-transcription gap this still does not cover.
+    "matricula": frozenset({"numero_matricula"}) | _QUALIFICACAO_MATRICULA,
 }

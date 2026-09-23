@@ -65,6 +65,26 @@ class TestLinhagemDoRegistro:
             "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
         }
 
+    def test_profissao_lists_matricula_alongside_the_identity_documents(self):
+        """The gap the REGINA case surfaced: `profissao` (and the other six
+        matrícula-qualification fields) used to resolve `documento_ausente`
+        with candidates rg/cnh/certidões only — the matrícula was never
+        considered even though `matriculas.qualificacao_service` had
+        already read it. `matricula`'s `Fonte.campos` now claims these
+        seven (`fontes.py`, migration 137's write path), so the harness's
+        gap trace (`tests/e2e_contrato/harness.py::classificar_gap`, driven
+        by this exact function) can finally name it."""
+        body = linhagem.linhagem_do_registro()
+        for campo in (
+            "profissao", "estado_civil", "nacionalidade", "rg",
+            "rg_orgao_expedidor", "endereco", "genero",
+        ):
+            entrada = next(
+                e for e in body["fontes"] if e["entidade"] == "cliente" and e["campo"] == campo
+            )
+            tipos = {f["tipo_documento"] for f in entrada["fontes"]}
+            assert "matricula" in tipos, f"{campo} does not list matricula as a candidate: {tipos}"
+
     def test_certidao_do_imovel_lists_the_four_estrutura_extraivel_tipos(self):
         body = linhagem.linhagem_do_registro()
         entrada = next(

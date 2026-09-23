@@ -47,6 +47,31 @@ panel. NOC-REMEDIATE[matricula-qualificacao-card-merge]: teaching
 `sugestoes_pendentes` to also read `matricula_qualificacoes` is a real,
 separate follow-up (mixing two suggestion-source shapes cleanly deserves its
 own design pass, not a rushed bolt-on) — 2026-09-18.
+
+🔴 FILL-EMPTY THE MOMENT A ROW IS `vinculado` — NOT ONLY ON `confirmar`
+-------------------------------------------------------------------------
+Migration 153's D1 (owner directive, 2026-09-22) already governs
+`identidade_extracao_service.extrair_identidade`: a machine reading fills
+whatever is EMPTY on `clientes`, with provenance, `confirmado_por=None`
+(machine-pending, for the contract's validation gate) — no human has to
+click anything first. `persistir_sugestoes` now applies that SAME policy the
+instant `_linha` resolves a party to exactly one cliente
+(`vinculo_status='vinculado'`) — see `_aplicar_automatico`, called for every
+freshly-inserted `vinculado` row before this function returns. `confirmar`
+still runs the identical mechanics with `confirmado_por=usuario_id` — a
+human vouching for a value that was already applied machine-pending simply
+re-stamps it confirmed (or opens/leaves the conflict `aplicar_campos_ao_cliente`
+already returned `False` for). `backfill_aplicar_campos_vinculados` is the
+one-time catch-up for rows written before this hook existed — idempotent by
+construction, since a field already filled (by either path) is left alone.
+
+NOC-REMEDIATE[matricula-qualificacao-auto-apply-notify]: a conflict this
+auto-apply opens is logged (`logger.info`) but NOT fanned out through
+`notification_service` — `persistir_sugestoes` runs synchronously from
+`estrutura_service.persistir_atos` (itself called from a background-task
+bridge, `router._run_extraction`), and threading an async notifier through
+that whole chain is a real, separate follow-up; an admin still sees the
+conflict via the general `conflitos_pendentes` queue. — 2026-09-23.
 """
 from __future__ import annotations
 
@@ -263,6 +288,14 @@ def persistir_sugestoes(
     `ato_detalhes_service.persistir_sugestoes` documents. The
     `UNIQUE (extracao_id, cpf_cnpj_normalizado)` constraint is the backstop
     for a concurrent double-heal.
+
+    Every freshly-inserted `vinculado` row is fed straight into
+    `_aplicar_automatico` — see the module docstring's D1 paragraph. A
+    per-row failure there is logged and skipped, never raised: the acts and
+    the qualificação rows are already written and are the product (same
+    posture `estrutura_service.persistir_atos` already documents for THIS
+    function's own call); `backfill_aplicar_campos_vinculados` is the net
+    for whatever a transient failure leaves unfilled.
     """
     atos = [r for r in ato_rows if r["kind"] != "abertura"]
     if not atos or not (texto or "").strip():
@@ -283,6 +316,28 @@ def persistir_sugestoes(
     ]
     if linhas:
         _t(db, TABLE).insert(linhas).execute()
+        for linha in linhas:
+            try:
+                _aplicados, conflitos = _aplicar_automatico(db, org_id, linha)
+            except Exception:  # noqa: BLE001 - row landed; backfill is the net
+                logger.error(
+                    "matricula %s: qualificação %s inserted but its "
+                    "auto-apply-to-cliente failed — see "
+                    "backfill_aplicar_campos_vinculados",
+                    extracao_id,
+                    linha["id"],
+                    exc_info=True,
+                )
+                continue
+            if conflitos:
+                logger.info(
+                    "matricula %s: qualificação %s opened %d admin "
+                    "conflict(s) instead of applying unattended: %s",
+                    extracao_id,
+                    linha["id"],
+                    len(conflitos),
+                    [c["campo"] for c in conflitos],
+                )
     return len(linhas)
 
 
@@ -377,6 +432,41 @@ def _lidos(row: dict) -> dict[str, tuple[Any, str, Optional[str], bool]]:
         "profissao": row.get("profissao"),
     }
     return {k: (v, confianca, None, True) for k, v in valores.items()}
+
+
+def _aplicar_automatico(client: Any, org_id: Any, row: dict) -> tuple[dict[str, bool], list[dict]]:
+    """Fill-empty, with provenance, the instant a qualificação is
+    `vinculado` to a cliente — no human involved yet (D1, migration 153).
+    Same mechanics `confirmar` uses, `confirmado_por=None` instead of the
+    operator's id: a field already SET that disagrees opens a conflict
+    (`aplicar_campos_ao_cliente`), never an overwrite; a field that already
+    agrees, or is already machine-pending from the same source, is a no-op —
+    which is what makes re-running this (`backfill_aplicar_campos_vinculados`,
+    or a second `persistir_sugestoes` self-heal) safe.
+
+    A no-op tuple for a row that is not (yet) `vinculado` — `_linha` already
+    guarantees `cliente_id` is set whenever `vinculo_status == VINCULADO`,
+    this is the defensive mirror for a caller handing back a stale/foreign
+    dict (the backfill reads rows straight off the table).
+    """
+    if row.get("vinculo_status") != VINCULADO or not row.get("cliente_id"):
+        return {c.item_key: False for c in CAMPOS_QUALIFICACAO}, []
+    lidos = _lidos(row)
+    return aplicar_campos_ao_cliente(
+        client,
+        org_id,
+        row["cliente_id"],
+        ORIGEM_MATRICULA,
+        lidos,
+        campos=CAMPOS_QUALIFICACAO,
+        documento_id=None,
+        fonte_tabela=TABLE,
+        fonte_id=row["id"],
+        # Machine-pending — see the module docstring's D1 paragraph. A human
+        # who later clicks `confirmar` re-runs this with their own id and
+        # stamps whatever is still unconfirmed.
+        confirmado_por=None,
+    )
 
 
 def _formatar_cpf_para_cliente(row: dict) -> Optional[str]:
@@ -478,6 +568,52 @@ def descartar(
     return {**row, **patch}
 
 
+def backfill_aplicar_campos_vinculados(client: Any, org_id: Any) -> dict:
+    """Catch-up for every `vinculado` qualificação written BEFORE
+    `persistir_sugestoes` started calling `_aplicar_automatico` on insert
+    (2026-09-23) — REGINA's `profissão`, e.g. Idempotent: `_aplicar_
+    automatico` -> `aplicar_campos_ao_cliente` only ever fills a field that
+    is still empty or opens/reuses a pending conflict for one that
+    disagrees, so re-running this against the same org twice (or against a
+    row `confirmar` already applied) touches nothing the second time.
+
+    Never run against prod from this function alone — it takes whichever
+    `client`/`org_id` the caller hands it, the same as every other function
+    in this module; it is not itself an admin-only HTTP route, so a human
+    invokes it deliberately, once, per org, e.g.:
+
+        python -c "
+    from app.dependencies import get_admin_client
+    from app.modules.matriculas.qualificacao_service import (
+        backfill_aplicar_campos_vinculados,
+    )
+    print(backfill_aplicar_campos_vinculados(get_admin_client(), '<ORG_ID>'))
+    "
+
+    Returns `{"linhas_vinculadas": N, "aplicados": M, "conflitos_abertos": K}`
+    — `aplicados` counts individual (row, campo) fills across every row, not
+    rows; `conflitos_abertos` the same for newly-opened conflicts.
+    """
+    rows = table_reads.paged_rows(
+        client, TABLE, org_id, eq_filters={"vinculo_status": VINCULADO}
+    )
+    linhas_vinculadas = 0
+    total_aplicados = 0
+    total_conflitos = 0
+    for row in rows:
+        if not row.get("cliente_id"):
+            continue
+        linhas_vinculadas += 1
+        aplicados, conflitos = _aplicar_automatico(client, org_id, row)
+        total_aplicados += sum(1 for foi in aplicados.values() if foi)
+        total_conflitos += len(conflitos)
+    return {
+        "linhas_vinculadas": linhas_vinculadas,
+        "aplicados": total_aplicados,
+        "conflitos_abertos": total_conflitos,
+    }
+
+
 def purgar_da_extracao(client: Any, org_id: Any, extracao_id: Any) -> None:
     """Delete every qualificação row read from `extracao_id` — called when
     its text is purged (`estrutura_service.purgar_texto_expirado`), so a
@@ -494,6 +630,7 @@ __all__ = [
     "VINCULADO",
     "SEM_CORRESPONDENCIA",
     "AMBIGUO",
+    "backfill_aplicar_campos_vinculados",
     "confirmar",
     "descartar",
     "persistir_sugestoes",
