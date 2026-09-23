@@ -32,7 +32,7 @@ Owner asked to smoke-test igig end-to-end, make the Esteira drag-and-drop, add a
 | T2 | Owner prod consent for SW | owner's explicit "promote SW" in chat | SW is live; prod exposure is the owner's decision |
 | T3 | Wave B shipped | igig bugfix + domain migrations green, lead/cliente/marca model live locally | C–E build on the new model |
 
-**Today's status (2026-09-23)**: T1 ✅ (wave A A.1–A.4 integrated on dev AND in prod — seed card_hub 5224c4704 is an ancestor of origin/prod). T2 ✅ implicitly (SW wave A reached prod via the 2026-09-22 bless). Waves B–E executing in session 32f6dbc0 under the owner's 2026-09-23 instruction "finish leftovers … go all the way to prod" — see **Execution plan (2026-09-23)** below. igig catalog row is `ativo=true, deploy_scope=dev`; the running prod container is the 2026-08-13 build.
+**Today's status (2026-09-23 ~07:30 UTC)**: waves B–E BUILT + INTEGRATED on dev (19 commits, project `cardhub-igig-crm`, consent authored at 62f060cf1 from the owner's typed sentence — manifest: approved 19/19). igig catalog flipped `deploy_scope=live` on the owner's "go all the way to prod". Migrations 016–026 APPLIED to the live DB (025 backfilled the 2 legacy leads into negócios). Gates on the dev tip: igig backend 705 passed · FE tsc clean + 175 vitest + vite build · `predeploy_check igig` READY 12/12 · all 144 routes strict-401. **NOT YET IN PROD**: the joint cut (`release stage=bless mode=cut`) is refused because approved commits chain (seed `components/index.ts` code + INDEX.md prose) onto `noctus-release-tooling` (unapproved, another project) — clears only with the owner's `I approve shipping project noctus-release-tooling to production.` noctusai-1b holds deploy duty: cut → promote → `deploy_image igig` → `deploy_verify [igig]` → `spa_smoke [igig]` → browser smoke. Until then the 2026-08-13 prod container runs against the new schema (Esteira + public form error; public-form traffic ≈ 0 — 2 test leads ever).
 
 ## Phase 1 — Spec capture (SHIPPED with this commit)
 
@@ -74,13 +74,13 @@ Wave 1 (parallel, file-disjoint):
 
 Wave 2 (after wave 1 integrates) — feature-vertical full-stack slices: Comercial funnel · Orçamentos + Produtos e Serviços + PDF · E-mail/Integrações/reply watcher · Clientes CardHub + marcas merge + calendário/esteira tabs · Esteira board + Calendário fix + portal · Financeiro alignment + report service + orphan hooks UI · Automations v1 + lead sources (WAHA, Meta) + AI assist. Mobile-first (R0) in every slice. Then: migrations → gate sweep → live browser smoke (desktop + 390px) → ship consent → prod.
 
-## Phase 3 — Wave B: igig foundation (IN PROGRESS — W1a)
+## Phase 3 — Wave B: igig foundation (BUILT — on dev, awaiting cut)
 
 Bugfixes 1–8; data model: `lead`, `negocio`(funnel card), `cliente` enrichment, `marca` N per cliente, `orcamento` + `orcamento_item` (recurrence: weekdays bitmask + qty/day), `produto_servico` catalog, pipeline_stages/movimentos for `comercial` + `esteira`; mobile-first shell.
 
-## Phase 4 — Wave C: Comercial + Orçamentos + Produtos e Serviços (DEFERRED — T3)
-## Phase 5 — Wave D: e-mail (SMTP seam + PDF attach), reply watcher (Gmail API push, matching Message-ID), notifications, Integrações SMTP keys (DEFERRED — T3)
-## Phase 6 — Wave E: Clientes CardHub (marcas/calendário/esteira/financeiro tabs), calendar generation, Financeiro alignment + Report service, automations v1 (DEFERRED — T3)
+## Phase 4 — Wave C: Comercial + Orçamentos + Produtos e Serviços (BUILT — on dev)
+## Phase 5 — Wave D: e-mail (SMTP seam + PDF attach), reply watcher (Gmail API push, matching Message-ID), notifications, Integrações SMTP keys (BUILT — on dev; LIVE reply-watch needs owner GCP setup, see follow-ups)
+## Phase 6 — Wave E: Clientes CardHub (marcas/calendário/esteira/financeiro tabs), calendar generation, Financeiro alignment + Report service, automations v1 (BUILT — on dev)
 
 ## Phase 2c — SW live e2e, extraction + contract ownership (IN PROGRESS — 2026-09-23, session 5297f35f)
 
@@ -117,6 +117,26 @@ Bugfixes 1–8; data model: `lead`, `negocio`(funnel card), `cliente` enrichment
 5. Build cards for reference contracts 01–08.
 6. Build the 4 fake atendimentos 1c never finished (cv-parcelado/permuta/fgts).
 7. Clean up the integrated sw-extr-* worktrees.
+
+## Follow-ups after the 2026-09-23 build (named destinations)
+
+Owner actions (not agent-doable):
+- **F0** Type `I approve shipping project noctus-release-tooling to production.` — unblocks the joint cut (see status).
+- **F1** SMTP: fill igig Integrações → E-mail SMTP (or set `SMTP_*` in the VPS `.env` as the platform fallback). Orçamento e-mail send answers 409 `smtp_nao_configurado` until then.
+- **F2** Gmail reply-watch (R8) GCP one-time setup: enable Gmail + Pub/Sub APIs on the OAuth client's project; add `gmail.send`/`gmail.readonly` scopes + redirect `<PRODUCT_URL_IGIG>/api/integracoes/email/gmail/oauth/callback`; push-auth service account; env `GMAIL_PUSH_GCP_PROJECT/TOPIC/AUDIENCE/SERVICE_ACCOUNT` (topic/subscription provisioned idempotently by seed `ensure_push_subscription`). Then Integrações → Conectar Gmail. Full steps: `KB § INTEGRATIONS/google.md` §5a.
+- **F3** `IGIG_ASSINATURA_WEBHOOK_SECRET` before any real signature provider (webhook fails closed without it); optional `IGIG_WAHA_WEBHOOK_HMAC_SECRET`, `IGIG_META_APP_SECRET`.
+- **F4** OpenAI API credits exhausted (memory/kb embedding refresh 429s) — caches go stale until topped up.
+- **F5** LGPD: the Assistente IA sends lead personal data to Anthropic with no per-org AI-consent gate (entry in LGPD-WARNINGS.md) — decide.
+
+Seed/refinement (triage per recurrence rule):
+- **R-a** Mobile full-screen-sheet classes now in 3+ copies (seed MotivoMoveDialog, CardHubDialog, igig `lib/mobileSheet.ts`, igig `SheetDialog`) → lift into seed `Dialog` (`NOC-REMEDIATE[seed-dialog-mobile-sheet]`).
+- **R-b** Seed `Button` touch size (igig adds `max-sm:h-10` everywhere); seed confirm dialog (`NOC-REMEDIATE[seed-confirm-dialog]`, 5 igig sites); `useDebouncedValue`, `useCardHubGeral`, `useIsOrgAdmin` → `@noctusai/lib` when a 2nd product mounts the card organ.
+- **R-c** Contract physical-signature modality at N=2 (SW + igig) → shared contract-signing module before a 3rd copy.
+- **R-d** Seed `GmailClient.get_profile()` (N=2 SW + igig); seed `make_email_sender`/`make_gmail_client` `strict=True` (no silent Fake for transactional consumers).
+- **R-e** ERP + SW certidão converters → seed `render_html_pdf` (N=4 lift done in seed; consumers not migrated).
+- **R-f** igig cofre-key helper duplicated (`marca_router`, `integracoes_router`) → `app/services/cofre.py` at N=3; lead-source DELETE endpoints (UI can only edit); `noctus.dev.scan_wiring` misses generic `api.get<T>()` calls; `MockSupabaseClient.order()` is a no-op.
+- **R-g** Toolkit: `branch_pointer` CLI from a worktree writes the primary ledger (rows stranded); commit-msg hook was not installed in this clone (fixed via `install-hooks.sh` 2026-09-23 — other clones?); `task_branch` wire_env links `.vite-temp` (dangles after primary `npm ci`); the cut's kb-counts false-coupling (noctusai-1b building `feat/release-derived-file-exempt`).
+- **R-h** Esteira tarefa `etapa` column dropped in 017 without an expand/contract step — the schema-ahead-of-code window above is the cost; future breaking migrations ship expand → deploy → contract.
 
 ## Anti-goals
 
