@@ -24,7 +24,7 @@
  * matrícula page is the whole feature, not a placeholder for a bigger one.
  */
 import { useEffect, useState } from "react";
-import { Landmark, Link2, Loader2, MapPin, ScrollText } from "lucide-react";
+import { Landmark, Link2, Loader2, ScrollText } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
@@ -41,11 +41,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-import type {
-  EnderecoManualPatch,
-  ImovelDados,
-  ImovelDadosPatch,
-} from "@/hooks/useImovelDados";
+import type { ImovelDados, ImovelDadosPatch } from "@/hooks/useImovelDados";
 import { origemLabel } from "@/hooks/useImovelDados";
 import type { Member } from "@/hooks/useTeam";
 
@@ -60,24 +56,17 @@ interface Props {
   error?: string | null;
   onSave: (patch: ImovelDadosPatch) => void;
 
-  // ─── Manual address override (migration 149) ───────────────────────────
-  // A SEPARATE save (its own PUT, its own confirmation stamp) from `onSave`
-  // above — `dados_service.gravar_endereco_manual` is not part of
-  // `atualizar`'s `CAMPOS_EDITAVEIS`, because every touched field logs an
-  // `imovel_endereco_historico` row (see the section below).
+  // 🔴 The manual ADDRESS override (migration 149/159) moved to its own
+  // `<ImovelEnderecoCard/>` (2026-09-23) — see that file's header. Only the
+  // mirror's `empreendimento` is still read here, for the
+  // "Empreendimento / condomínio" field below.
   mirror?: {
-    logradouro?: string | null;
-    numero?: string | null;
-    cidade?: string | null;
-    uf?: string | null;
     // Migration 158 — the Vista mirror's own `imoveis.empreendimento`,
     // shown so an operator can see what the mirror already has before
     // typing an override. Absent (not merely null) on the manual layout —
     // that código has no mirror row at all.
     empreendimento?: string | null;
   };
-  savingEnderecoManual?: boolean;
-  onSaveEnderecoManual?: (patch: EnderecoManualPatch) => void;
 }
 
 interface Draft {
@@ -131,22 +120,6 @@ function toDraft(dados: ImovelDados | undefined): Draft {
   };
 }
 
-interface EnderecoManualDraft {
-  logradouro: string;
-  numero: string;
-  cidade: string;
-  uf: string;
-}
-
-function toEnderecoManualDraft(dados: ImovelDados | undefined): EnderecoManualDraft {
-  return {
-    logradouro: dados?.endereco_manual_logradouro ?? "",
-    numero: dados?.endereco_manual_numero ?? "",
-    cidade: dados?.endereco_manual_cidade ?? "",
-    uf: dados?.endereco_manual_uf ?? "",
-  };
-}
-
 export default function ImovelCartorioCard({
   dados,
   membros,
@@ -155,13 +128,8 @@ export default function ImovelCartorioCard({
   error,
   onSave,
   mirror,
-  savingEnderecoManual,
-  onSaveEnderecoManual,
 }: Props) {
   const [draft, setDraft] = useState<Draft>(() => toDraft(dados));
-  const [enderecoManualDraft, setEnderecoManualDraft] = useState<EnderecoManualDraft>(() =>
-    toEnderecoManualDraft(dados),
-  );
 
   // Re-seed when the server view changes — including when a background
   // matrícula read fills `numero_matricula` while this card is on screen.
@@ -180,30 +148,8 @@ export default function ImovelCartorioCard({
     dados?.empreendimento_manual,
   ]);
 
-  useEffect(() => {
-    setEnderecoManualDraft(toEnderecoManualDraft(dados));
-  }, [
-    dados?.endereco_manual_logradouro,
-    dados?.endereco_manual_numero,
-    dados?.endereco_manual_cidade,
-    dados?.endereco_manual_uf,
-  ]);
-
   const set = (k: keyof Draft) => (v: string) =>
     setDraft((d) => ({ ...d, [k]: v }));
-
-  const setEndereco = (k: keyof EnderecoManualDraft) => (v: string) =>
-    setEnderecoManualDraft((d) => ({ ...d, [k]: v }));
-
-  function submitEnderecoManual() {
-    const blank = (s: string) => (s.trim() === "" ? null : s.trim());
-    onSaveEnderecoManual?.({
-      logradouro: blank(enderecoManualDraft.logradouro),
-      numero: blank(enderecoManualDraft.numero),
-      cidade: blank(enderecoManualDraft.cidade),
-      uf: blank(enderecoManualDraft.uf),
-    });
-  }
 
   function submit() {
     // 🔴 Empty string → `null`, never `""`. The backend treats absence as
@@ -344,103 +290,6 @@ export default function ImovelCartorioCard({
             Recebe 5% da comissão nas negociações deste imóvel.
           </p>
         </div>
-
-        {/* ─── Manual address override (migration 149) ───────────────────
-            This product has no write-back to the Vista mirror the imóvel's
-            address normally comes from — the contract gate reads THESE 4
-            fields when set, falling back to the mirror otherwise. Every
-            change is logged (`imovel_endereco_historico`): the mirror is
-            external/synced data so an override needs no admin approval,
-            but does need a trail. */}
-        {onSaveEnderecoManual && (
-          <div className="space-y-3 border-t pt-4" data-testid="imovel-endereco-manual">
-            <Label className="flex items-center gap-1.5 text-sm font-semibold">
-              <MapPin className="h-3.5 w-3.5" />
-              Endereço (substituição manual)
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              Corrige o endereço lido do CRM/Vista — usado pelo gerador de contratos
-              quando preenchido. Deixe em branco para usar o endereço do CRM.
-            </p>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="col-span-2 space-y-1">
-                <Label htmlFor="endereco-manual-logradouro" className="text-xs">
-                  Logradouro {mirror?.logradouro ? `(CRM: ${mirror.logradouro})` : ""}
-                </Label>
-                <Input
-                  id="endereco-manual-logradouro"
-                  value={enderecoManualDraft.logradouro}
-                  onChange={(e) => setEndereco("logradouro")(e.target.value)}
-                  placeholder={mirror?.logradouro ?? "Ex.: Rua Fictícia"}
-                  disabled={loading || savingEnderecoManual}
-                  data-testid="imovel-endereco-manual-logradouro"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="endereco-manual-numero" className="text-xs">
-                  Número {mirror?.numero ? `(CRM: ${mirror.numero})` : ""}
-                </Label>
-                <Input
-                  id="endereco-manual-numero"
-                  value={enderecoManualDraft.numero}
-                  onChange={(e) => setEndereco("numero")(e.target.value)}
-                  placeholder={mirror?.numero ?? "Ex.: 100"}
-                  disabled={loading || savingEnderecoManual}
-                  data-testid="imovel-endereco-manual-numero"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="endereco-manual-uf" className="text-xs">
-                  UF {mirror?.uf ? `(CRM: ${mirror.uf})` : ""}
-                </Label>
-                <Input
-                  id="endereco-manual-uf"
-                  value={enderecoManualDraft.uf}
-                  onChange={(e) => setEndereco("uf")(e.target.value.toUpperCase())}
-                  placeholder={mirror?.uf ?? "Ex.: SP"}
-                  maxLength={2}
-                  disabled={loading || savingEnderecoManual}
-                  data-testid="imovel-endereco-manual-uf"
-                />
-              </div>
-              <div className="col-span-2 space-y-1">
-                <Label htmlFor="endereco-manual-cidade" className="text-xs">
-                  Cidade {mirror?.cidade ? `(CRM: ${mirror.cidade})` : ""}
-                </Label>
-                <Input
-                  id="endereco-manual-cidade"
-                  value={enderecoManualDraft.cidade}
-                  onChange={(e) => setEndereco("cidade")(e.target.value)}
-                  placeholder={mirror?.cidade ?? "Ex.: São Paulo"}
-                  disabled={loading || savingEnderecoManual}
-                  data-testid="imovel-endereco-manual-cidade"
-                />
-              </div>
-            </div>
-
-            {dados?.endereco_manual_confirmado_por && (
-              <p className="text-xs text-muted-foreground">
-                Última alteração por {dados.endereco_manual_confirmado_por.nome ?? "—"}
-                {dados.endereco_manual_confirmado_em
-                  ? ` em ${new Date(dados.endereco_manual_confirmado_em).toLocaleString("pt-BR")}`
-                  : ""}
-              </p>
-            )}
-
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={loading || savingEnderecoManual}
-              onClick={submitEnderecoManual}
-              data-testid="imovel-endereco-manual-salvar"
-            >
-              {savingEnderecoManual && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-              Salvar endereço
-            </Button>
-          </div>
-        )}
 
         {/* ─── Situação de ônus (migration 099) ──────────────────────────
             What a contract's first clause asserts about this property. The

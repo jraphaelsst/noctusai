@@ -38,8 +38,11 @@ function dados(over: Partial<ImovelDados> = {}): ImovelDados {
     onus_fonte: null,
     endereco_manual_logradouro: null,
     endereco_manual_numero: null,
+    endereco_manual_complemento: null,
+    endereco_manual_bairro: null,
     endereco_manual_cidade: null,
     endereco_manual_uf: null,
+    endereco_manual_cep: null,
     endereco_manual_confirmado_por: null,
     endereco_manual_confirmado_em: null,
     empreendimento_manual: null,
@@ -54,11 +57,9 @@ async function render(
   dadosOverride?: Partial<ImovelDados>,
   opts?: {
     onSave?: (patch: unknown) => void;
+    // Migration 159 — the address fields moved to `<ImovelEnderecoCard/>`;
+    // this card's `mirror` prop only carries `empreendimento` now.
     mirror?: {
-      logradouro?: string | null;
-      numero?: string | null;
-      cidade?: string | null;
-      uf?: string | null;
       empreendimento?: string | null;
     };
   },
