@@ -618,6 +618,10 @@ class TermosNegocioPutBody(StrictHttpModel):
     permuta_obrigacoes_entrega: Optional[str] = Field(default=None, max_length=4000)
 
     itens_integrantes: Optional[str] = Field(default=None, max_length=4000)
+    #: [Migration 163] `True` = a human confirmed this deal genuinely has no
+    #: itens integrantes — the only way an unset `itens_integrantes` stops
+    #: blocking generation (see that migration's header).
+    itens_integrantes_ausente_confirmado: Optional[bool] = None
     ad_corpus: Optional[bool] = None
     obrigacoes_vendedor: Optional[str] = Field(default=None, max_length=4000)
 

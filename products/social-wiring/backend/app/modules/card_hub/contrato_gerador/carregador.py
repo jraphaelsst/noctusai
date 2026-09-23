@@ -47,6 +47,7 @@ from app.modules.card_hub import financiamento_service
 from app.modules.card_hub import negociacao_estruturada_service as estruturada_svc
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub import services as svc
+from app.modules.card_hub.contrato_gerador import derivacao
 from app.modules.card_hub.contrato_gerador.dados import (
     AtoCitado,
     Certidao,
@@ -364,6 +365,7 @@ def _termos(bruto: dict) -> Termos:
         permuta_posse_marco_parcela_id=_id(bruto.get("permuta_posse_marco_parcela_id")),
         permuta_obrigacoes_entrega=bruto.get("permuta_obrigacoes_entrega"),
         itens_integrantes=bruto.get("itens_integrantes"),
+        itens_integrantes_ausente_confirmado=bool(bruto.get("itens_integrantes_ausente_confirmado")),
         ad_corpus=bruto.get("ad_corpus"),
         obrigacoes_vendedor=bruto.get("obrigacoes_vendedor"),
         onus_quitacao=bruto.get("onus_quitacao"),
@@ -438,6 +440,17 @@ def carregar(
     codigo = negociacao.get("imovel_codigo")
     imovel = _imovel(client, org_id, codigo, usuario_id) if codigo else None
     selecao = estrutura_service.obter_selecao(client, org_id, contrato_id, usuario_id=usuario_id)
+    # [Owner directive, 2026-09-23] The DA ELEIÇÃO DO FORO comarca, read off
+    # THIS matrícula's own FULL transcription — independent of which acts
+    # the operator selected to quote (`selecao["extracao_id"]` alone is
+    # enough; `selecao["texto"]` can legitimately still be empty).
+    comarca = (
+        derivacao.comarca_de_texto(
+            estrutura_service.texto_da_extracao(client, org_id, selecao["extracao_id"])
+        )
+        if selecao.get("extracao_id")
+        else None
+    )
     imobiliaria, testemunhas = _imobiliaria(client, org_id)
 
     parcelas = [
@@ -482,6 +495,7 @@ def carregar(
             descricao_imovel_formatacao=ranges_from_json(
                 (selecao.get("descricao_imovel") or {}).get("formatacao")
             ),
+            comarca=comarca,
         ),
         valor_negociado=_dec(estruturada.get("valor_negociado")),
         pct_comissao=_dec(negociacao.get("pct_comissao")),

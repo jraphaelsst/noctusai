@@ -77,6 +77,7 @@ from noctusai_lib.primitives.exceptions import (
     ValidationError_,
 )
 
+from app.modules.card_hub import negociacao_service
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
@@ -1287,6 +1288,57 @@ def _papel(row: dict) -> str:
     return row.get("papel") or PAPEL_OBJETO
 
 
+def texto_da_extracao(client: Any, org_id: UUID, extracao_id: Any) -> Optional[str]:
+    """The extraction's raw transcription, or `None` when it doesn't exist /
+    was never transcribed — a TOLERANT sibling of `exigir_extracao` (which
+    404s) for callers reading the full text as a fact source
+    (`contrato_gerador.carregador`'s `comarca_da_matricula` derivation)
+    rather than requiring the row to exist."""
+    rows = (
+        _t(client, EXTRACOES_TABLE)
+        .select("texto_extraido")
+        .eq("org_id", str(org_id))
+        .eq("id", str(extracao_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return (rows[0].get("texto_extraido") if rows else None) or None
+
+
+def _extracao_padrao_do_imovel(client: Any, org_id: UUID, codigo: str) -> Optional[str]:
+    """[Owner directive, 2026-09-23] `obter_selecao`'s fallback when the
+    contract carries no explicit (operator-saved) selection yet: the
+    extraction of the matrícula PDF uploaded on the imóvel page itself
+    (`/imoveis/<codigo>` "Documentos do imóvel", tipo=matricula) — never a
+    matrícula uploaded through some other surface. The most recently
+    uploaded such document that actually finished transcribing wins; NEVER
+    overrides an explicit `definir_selecao` (that path never reaches this
+    helper — see the `if not todas` guard at its one call site)."""
+    documentos = (
+        _t(client, docs_svc.TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("codigo", codigo)
+        .eq("tipo_documento", "matricula")
+        .order("created_at", desc=True)
+        .execute()
+    ).data or []
+    for documento in documentos:
+        extracoes = (
+            _t(client, EXTRACOES_TABLE)
+            .select("id")
+            .eq("org_id", str(org_id))
+            .eq("imovel_documento_id", str(documento["id"]))
+            .eq("status", STATUS_CONCLUIDA)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        ).data or []
+        if extracoes:
+            return str(extracoes[0]["id"])
+    return None
+
+
 def obter_selecao(
     client: Any, org_id: UUID, contrato_id: UUID, *, usuario_id: Optional[Any] = None
 ) -> dict:
@@ -1321,7 +1373,7 @@ def obter_selecao(
     shape. `permutas` (migration 115) lists one quote per property given in
     exchange, each in that same shape plus its `permuta_ativo_id`.
     """
-    _exigir_contrato(client, org_id, contrato_id)
+    contrato = _exigir_contrato(client, org_id, contrato_id)
     todas = sorted(
         table_reads.paged_rows(
             client, SELECAO_TABLE, org_id, eq_filters={"contrato_id": str(contrato_id)}
@@ -1341,6 +1393,17 @@ def obter_selecao(
         "selecionado_em": None,
     }
     if not todas:
+        # [Owner directive, 2026-09-23] No explicit (operator-saved)
+        # selection yet — default the EXTRACTION (never the atos/texto,
+        # which stay a deliberate editorial pick) to the matrícula uploaded
+        # on the imóvel page itself, so the FE picker opens on the RIGHT
+        # document instead of nothing at all. `selecionado_por`/`_em` stay
+        # unset — this is a computed default, not a recorded human choice.
+        codigo = negociacao_service.imovel_do_atendimento(
+            client, org_id, UUID(str(contrato["atendimento_id"]))
+        )
+        if codigo:
+            saida["extracao_id"] = _extracao_padrao_do_imovel(client, org_id, codigo)
         return saida
 
     objeto = [r for r in todas if _papel(r) == PAPEL_OBJETO]

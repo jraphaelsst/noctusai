@@ -290,31 +290,34 @@ def montar_contexto(
     n = 0
     for p in pessoas_cert:
         idx = indice_certidoes(p.certidoes, "cpf")
+        # [Owner directive, 2026-09-23] A vendedor's certidões are no longer
+        # `faltando`-gated (`derivacao.conferir`), so `idx` can legitimately
+        # miss a `tipo` here — present ONLY whichever certidões exist; a
+        # seller with none on file gets no group at all (never an `idx[t]`
+        # KeyError, live on prod until this fix).
+        itens = [frases.item_certidao(t, idx[t]) for t in tipos_exigidos("cpf") if t in idx]
+        if not itens:
+            continue
         n += 1
-        grupos.append(
-            {
-                "num": n,
-                "em_nome_de": p.nome,
-                "sufixo": None,
-                "itens": [frases.item_certidao(t, idx[t]) for t in tipos_exigidos("cpf")],
-            }
-        )
-        pendentes_cert += [frases.pendencia_certidao(t, p.nome or "") for t in tipos_exigidos("cpf") if idx[t].resultado == "nao_emitida"]
+        grupos.append({"num": n, "em_nome_de": p.nome, "sufixo": None, "itens": itens})
+        pendentes_cert += [
+            frases.pendencia_certidao(t, p.nome or "")
+            for t in tipos_exigidos("cpf")
+            if t in idx and idx[t].resultado == "nao_emitida"
+        ]
     for p in pessoas_cert:
         for documento, certs, sufixo in grupos_pj_exigidos(p, assinatura, politica):
             idx = indice_certidoes(certs, "cnpj")
             nome_pj = certs[0].consulta_nome or documento
-            n += 1
             tipos = tipos_exigidos("cnpj")
-            grupos.append(
-                {
-                    "num": n,
-                    "em_nome_de": nome_pj,
-                    "sufixo": sufixo,
-                    "itens": [frases.item_certidao(t, idx[t]) for t in tipos],
-                }
-            )
-            pendentes_cert += [frases.pendencia_certidao(t, nome_pj) for t in tipos if idx[t].resultado == "nao_emitida"]
+            itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
+            if not itens:
+                continue
+            n += 1
+            grupos.append({"num": n, "em_nome_de": nome_pj, "sufixo": sufixo, "itens": itens})
+            pendentes_cert += [
+                frases.pendencia_certidao(t, nome_pj) for t in tipos if t in idx and idx[t].resultado == "nao_emitida"
+            ]
 
     # [§6.1 #14] The imóvel's own group (migration 118): matrícula + IPTU CND +
     # condominial CND, whichever are on file.
@@ -516,7 +519,11 @@ def montar_contexto(
         "multa_rescisoria": sinal.valor,
         "resolutiva_notificacao_email": politica.resolutiva_notificacao_email,
         "corretagem": corretagem,
-        "foro": {"comarca": f"{e.cidade}/{(e.uf or '').upper()}"},
+        # [Owner directive, 2026-09-23] The matrícula-derived comarca
+        # (`carregador.carregar` -> `derivacao.comarca_de_texto`) — never
+        # the imóvel address; gated `faltando` by `derivacao._contrato`,
+        # so this is never blank.
+        "foro": {"comarca": d.matricula.comarca},
         "assinatura": {
             "local": d.imobiliaria.endereco.cidade,
             "data_extenso": data_por_extenso(assinatura),
