@@ -18,6 +18,3 @@ export const negocioCardHub = createCardHubHooks(
   },
   api,
 );
-
-/** Members are `igig.profissional` rows — the PUT body key is their FK. */
-export const MEMBRO_IDS_FIELD = "profissional_ids";

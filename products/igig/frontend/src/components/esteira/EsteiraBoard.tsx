@@ -24,7 +24,6 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
 import {
   MotivoMoveDialog,
   PipelineBoard,
@@ -35,6 +34,7 @@ import { Button } from "@noctusai/lib/design-system";
 import { Plus } from "lucide-react";
 
 import { esteiraPipeline, type TarefaCard } from "@/hooks/useEsteira";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 import { decidirMovimento } from "./moveRules";
 import { NovaTarefaDialog } from "./NovaTarefaDialog";
 import { TarefaCardFace } from "./TarefaCardFace";
@@ -61,7 +61,7 @@ interface MotivoPendente {
 export function EsteiraBoard({ clienteId, className }: EsteiraBoardProps) {
   const { user } = useAuthStore();
   const usuarioId = user?.id ?? null;
-  const podeEditarEtapas = resolveSSOContext(user?.user_metadata).isProductAdmin;
+  const podeEditarEtapas = useIsOrgAdmin();
 
   const filtros = useMemo(() => (clienteId ? { cliente_id: clienteId } : undefined), [clienteId]);
   // Same key as the board's own query — a cache read, not a second request.

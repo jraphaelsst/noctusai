@@ -17,6 +17,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { ApiError } from "@noctusai/lib";
+import { MemoryRouter } from "react-router-dom";
+
+// The e-mail and lead-source cards have their own colocated tests
+// (`components/integracoes/__tests__`); this file covers the social-channel
+// list, whose hooks share the single mocked `useQuery` below.
+vi.mock("@/components/integracoes/SmtpCard", () => ({ SmtpCard: () => null }));
+vi.mock("@/components/integracoes/GmailCard", () => ({ GmailCard: () => null }));
+vi.mock("@/components/integracoes/LeadSourceCards", () => ({
+  WhatsappLeadsCard: () => null,
+  MetaLeadsCard: () => null,
+}));
 
 const { mockGet, mockPost, mockDelete } = vi.hoisted(() => ({
   mockGet: vi.fn(),
@@ -94,7 +105,7 @@ describe("Integracoes — error honesty", () => {
       error: new ApiError(403, "Token recusado pela Meta Graph API"),
     };
 
-    render(<Integracoes />);
+    render(<MemoryRouter><Integracoes /></MemoryRouter>);
 
     expect(screen.getByText(/Token recusado pela Meta Graph API/)).toBeInTheDocument();
     expect(screen.queryByText(/Sem IGIG_COFRE_KEY/)).not.toBeInTheDocument();
@@ -111,7 +122,7 @@ describe("Integracoes — cofre-not-configured banner", () => {
       error: null,
     } as never);
 
-    render(<Integracoes />);
+    render(<MemoryRouter><Integracoes /></MemoryRouter>);
 
     expect(screen.getByText(/Criptografia não configurada/)).toBeInTheDocument();
     // A submit is guaranteed to 409 while unconfigured — disable it instead
@@ -133,7 +144,7 @@ describe("Integracoes — cofre-not-configured banner", () => {
       error: null,
     } as never);
 
-    render(<Integracoes />);
+    render(<MemoryRouter><Integracoes /></MemoryRouter>);
 
     expect(screen.queryByText(/Criptografia não configurada/)).not.toBeInTheDocument();
   });
@@ -147,7 +158,7 @@ describe("Integracoes — cofre-not-configured banner", () => {
       error: null,
     } as never);
 
-    render(<Integracoes />);
+    render(<MemoryRouter><Integracoes /></MemoryRouter>);
 
     expect(screen.queryByText(/Criptografia não configurada/)).not.toBeInTheDocument();
   });
