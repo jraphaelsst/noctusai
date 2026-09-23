@@ -72,4 +72,26 @@ describe("resolveProductSchema", () => {
       expect(resolveProductSchema(productFrontend(slug), undefined), slug).toBe(schema);
     }
   });
+
+  // The derivation reads backend/app/database.py at `vite build`, so the
+  // Docker frontend-build stage must COPY it. Without the COPY the host
+  // build passes and every GHCR image build throws (2026-09-23, runs
+  // 35863261054 / 35863808626).
+  it("every active product's Dockerfile ships database.py into the frontend-build stage", () => {
+    const active = fs
+      .readFileSync(path.join(REPO_ROOT, "deploy/fleet/active-scope.txt"), "utf-8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#"));
+    const dockerfiles: Array<[string, string]> = [
+      ...active.map((slug): [string, string] => [slug, `products/${slug}/backend/Dockerfile`]),
+      ["seed", "templates/product-seed/backend/Dockerfile"],
+    ];
+    for (const [slug, rel] of dockerfiles) {
+      if (!fs.existsSync(path.join(REPO_ROOT, `products/${slug}/backend/app/database.py`))) continue;
+      const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf-8");
+      const buildStage = text.slice(0, text.indexOf("RUN npm run build"));
+      expect(buildStage, rel).toContain(`COPY products/${slug}/backend/app/database.py ../backend/app/database.py`);
+    }
+  });
 });

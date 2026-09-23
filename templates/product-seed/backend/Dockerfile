@@ -52,6 +52,10 @@ RUN --mount=type=cache,target=/root/.npm \
     rm -f package-lock.json \
     && npm install --no-audit --no-fund
 COPY products/seed/frontend ./
+# The vite factory derives VITE_PRODUCT_SCHEMA from this product's
+# backend/app/database.py (seed resolveProductSchema) — ship it into the
+# build stage or `npm run build` throws.
+COPY products/seed/backend/app/database.py ../backend/app/database.py
 RUN npm run build   # → /app/products/seed/frontend/dist
 
 # ── runtime: API + SPA on one port ──────────────────────────────────────
