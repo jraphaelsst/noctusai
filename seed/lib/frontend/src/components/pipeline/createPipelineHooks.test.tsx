@@ -231,6 +231,66 @@ describe('useMoveCard — optimistic update', () => {
     });
   });
 
+  // `PipelineBoard`'s `onBeforeMove` merges its `MoveDecision` object form
+  // (`{ motivo, extra }`) into `MoveVariables`; `extra` must reach the wire.
+  it('merges `extra` fields into the mover-etapa POST body', async () => {
+    (api.post as any).mockResolvedValue({ data: { id: 'c1', valor: 100 } });
+    const hooks = makeHooks();
+    const { result } = renderHook(() => hooks.useMoveCard(), { wrapper });
+
+    act(() => {
+      result.current.mutate({
+        cardId: 'c1',
+        toStageId: STAGE_B,
+        toIndex: 0,
+        motivo: 'aprovado pelo gerente',
+        extra: { aprovado_por: 'u-42', valor_negociado: 999 },
+      });
+    });
+
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    expect(api.post).toHaveBeenCalledWith('/api/cards/c1/mover-etapa', {
+      para_etapa_id: STAGE_B,
+      novo_indice: 0,
+      motivo: 'aprovado pelo gerente',
+      aprovado_por: 'u-42',
+      valor_negociado: 999,
+    });
+  });
+
+  it('a custom `onError` REPLACES the default toast — never both', async () => {
+    const filtros = { busca: 'x' };
+    queryClient.setQueryData(['testboard', filtros], board());
+    let fail!: (e: Error) => void;
+    (api.post as any).mockImplementation(
+      () => new Promise((_resolve, reject) => { fail = reject; }),
+    );
+    const { toast } = await import('sonner');
+    const onError = vi.fn();
+
+    const hooks = makeHooks();
+    const { result } = renderHook(() => hooks.useMoveCard({ onError }), { wrapper });
+
+    act(() => {
+      result.current.mutate({ cardId: 'c1', toStageId: STAGE_B, toIndex: 0 });
+    });
+    await waitFor(() => expect(api.post).toHaveBeenCalled());
+    await act(async () => {
+      fail(new Error('conflito de etapa'));
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'conflito de etapa' }),
+      expect.objectContaining({ cardId: 'c1', toStageId: STAGE_B }),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+
+    // Rollback still runs regardless of which error channel is used.
+    const dataAfter = queryClient.getQueryData<PipelineColumn<Card>[]>(['testboard', filtros])!;
+    expect(dataAfter[0].cards.map((c) => c.id)).toEqual(['c1', 'c2']);
+  });
+
   it('invalidates every configured sibling key on settle', async () => {
     // A board is never the only surface showing a card's stage. The ERP's
     // cliente-detail page reads the same deal under `negociacoes-venda` and

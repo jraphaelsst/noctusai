@@ -24,6 +24,24 @@
  *    withheld. The server-side twin is `pipeline_stages_router(...,
  *    require_stage_admin=...)`; this prop only hides what the API would refuse.
  *
+ * MOVE INTERCEPT (opt-in via `onBeforeMove`): every drag normally goes
+ * straight to `useMoveCard().mutate`. Pass `onBeforeMove` and the board
+ * AWAITS its decision first — a product can block a move (a stage-gate rule
+ * a same-tab UI can't enforce server-side alone), or ask for a reason (see
+ * `MotivoMoveDialog`) before committing.
+ *
+ * SNAP-BACK-UNTIL-CONFIRMED: while `onBeforeMove`'s promise is unresolved,
+ * the mutation is simply never called, so the card has nothing to be
+ * optimistic ABOUT yet — it renders back in its source column (dimmed, via
+ * the internal pending-id set) until a decision lands, never in the target
+ * column ahead of confirmation. `false` cancels outright (nothing was ever
+ * mutated, so there is nothing to roll back); `true` or `{ motivo, extra }`
+ * proceeds through the normal optimistic-move-then-rollback-on-error path.
+ * A move the SERVER rejects (409/422) is unaffected by any of this — it
+ * still rolls back via `useMoveCard`'s own `onError`; `onMoveError` (opt-in)
+ * REPLACES the default toast for that case, and also fires if `onBeforeMove`
+ * itself throws (nothing to roll back there either).
+ *
  * Usage:
  * ```tsx
  * const pipeline = createPipelineHooks<NegociacaoVenda>({
@@ -53,8 +71,14 @@ import { PipelineStagesManager } from './PipelineStagesManager';
 import { StageHeaderMenu } from './StageHeaderMenu';
 import { mergeVisibleStageOrder } from './stageOrder';
 import { STAGE_ROLE_LABELS, stageColorClasses } from './stageTokens';
-import type { PipelineHooks } from './createPipelineHooks';
-import type { PipelineColumn, PipelineStage, StageRoleLabels } from './types';
+import type { MoveVariables, PipelineHooks } from './createPipelineHooks';
+import type {
+  MoveDecision,
+  MoveIntentContext,
+  PipelineColumn,
+  PipelineStage,
+  StageRoleLabels,
+} from './types';
 
 export interface PipelineBoardProps<TCard> {
   hooks: PipelineHooks<TCard>;
@@ -113,6 +137,20 @@ export interface PipelineBoardProps<TCard> {
   canEditStages?: boolean;
   /** Role → label descriptor for the stage editors. Default: seed defaults. */
   roleLabels?: StageRoleLabels;
+  /**
+   * Opt-in async gate on every drag, cross-column OR same-column, before it
+   * mutates. See the module doc's MOVE INTERCEPT / SNAP-BACK-UNTIL-CONFIRMED
+   * sections. Sync returns work too (`Promise.resolve` wraps them).
+   */
+  onBeforeMove?: (ctx: MoveIntentContext<TCard>) => Promise<MoveDecision> | MoveDecision;
+  /**
+   * Fires when a move does not land — the SERVER rejects it (409/422; the
+   * optimistic update is already rolled back by the time this runs) OR
+   * `onBeforeMove` itself throws (nothing was ever mutated). Omit and the
+   * existing `sonner` toast (`Erro ao mover ${entityLabel}`) fires instead —
+   * this prop REPLACES that default, it does not add to it.
+   */
+  onMoveError?: (error: Error, vars: MoveVariables) => void;
 }
 
 const DEFAULT_COLUMN_CLASS =
@@ -138,11 +176,20 @@ export function PipelineBoard<TCard>({
   onColumnReorder,
   canEditStages = true,
   roleLabels = STAGE_ROLE_LABELS,
+  onBeforeMove,
+  onMoveError,
 }: PipelineBoardProps<TCard>) {
   const { descriptor } = hooks;
   const { data: colunas, isPending, isFetching, error } = hooks.useBoard(filtros);
-  const moveCard = hooks.useMoveCard();
+  const moveCard = hooks.useMoveCard(
+    onMoveError ? { onError: (error, vars) => onMoveError(error, vars) } : undefined,
+  );
   const [configurando, setConfigurando] = React.useState(false);
+  // Cards awaiting an `onBeforeMove` decision — see SNAP-BACK-UNTIL-CONFIRMED
+  // in the module doc. Dimmed via `renderCard`'s wrapper below; the card
+  // itself never leaves its source column because `moveCard.mutate` is only
+  // called once the decision resolves.
+  const [pendingMoveIds, setPendingMoveIds] = React.useState<ReadonlySet<string>>(new Set());
 
   const hasStagesApi = Boolean(descriptor.stagesEndpoint);
   const editable = canEditStages && (allowStageEditing ?? hasStagesApi);
@@ -201,6 +248,84 @@ export function PipelineBoard<TCard>({
   // Some column is showing fewer cards than it has.
   const algumaTruncada = columns.some(
     (c) => c.exibidos !== undefined && c.exibidos < (c.total ?? 0),
+  );
+
+  const runMove = React.useCallback(
+    (
+      cardId: string,
+      toStageId: string,
+      toIndex: number,
+      decision?: { motivo?: string; extra?: Record<string, unknown> },
+    ) => {
+      moveCard.mutate({ cardId, toStageId, toIndex, motivo: decision?.motivo, extra: decision?.extra });
+    },
+    [moveCard],
+  );
+
+  const handleMove = React.useCallback(
+    (cardId: string, fromStageId: string, toStageId: string, toIndex: number) => {
+      if (!onBeforeMove) {
+        runMove(cardId, toStageId, toIndex);
+        return;
+      }
+
+      const fromCol = columns.find((c) => c.etapa === fromStageId);
+      const toCol = columns.find((c) => c.etapa === toStageId);
+      const card =
+        fromCol?.cards.find((c) => descriptor.getCardId(c) === cardId) ??
+        columns.flatMap((c) => c.cards).find((c) => descriptor.getCardId(c) === cardId);
+
+      // Should never happen — `KanbanBoard` only reports moves for cards and
+      // stages it was itself handed — but a resolution failure here must
+      // fail OPEN (the drag still completes) rather than silently eating the
+      // user's drag because `onBeforeMove`'s ctx could not be built.
+      if (!fromCol?.stage || !toCol?.stage || !card) {
+        runMove(cardId, toStageId, toIndex);
+        return;
+      }
+
+      const fromIndex = columns.indexOf(fromCol);
+      const toColIndex = columns.indexOf(toCol);
+      const direction: MoveIntentContext<TCard>['direction'] =
+        toColIndex === fromIndex ? 'same' : toColIndex > fromIndex ? 'forward' : 'backward';
+      const stepDistance = Math.abs(toColIndex - fromIndex);
+
+      setPendingMoveIds((prev) => new Set(prev).add(cardId));
+
+      Promise.resolve(
+        onBeforeMove({
+          card,
+          fromStage: fromCol.stage,
+          toStage: toCol.stage,
+          toIndex,
+          direction,
+          stepDistance,
+        }),
+      )
+        .then((decision: MoveDecision) => {
+          if (decision === false) return; // cancelled — never mutated, nothing to roll back
+          if (decision === true) {
+            runMove(cardId, toStageId, toIndex);
+            return;
+          }
+          runMove(cardId, toStageId, toIndex, decision);
+        })
+        .catch((error: unknown) => {
+          onMoveError?.(
+            error instanceof Error ? error : new Error(String(error)),
+            { cardId, toStageId, toIndex },
+          );
+        })
+        .finally(() => {
+          setPendingMoveIds((prev) => {
+            if (!prev.has(cardId)) return prev;
+            const next = new Set(prev);
+            next.delete(cardId);
+            return next;
+          });
+        });
+    },
+    [columns, descriptor, onBeforeMove, onMoveError, runMove],
   );
 
   return (
@@ -273,7 +398,19 @@ export function PipelineBoard<TCard>({
           columns.find((c) => c.cards.some((x) => descriptor.getCardId(x) === descriptor.getCardId(card)))
             ?.etapa ?? ''
         }
-        renderCard={renderCard}
+        renderCard={(card, state) => {
+          const node = renderCard(card, state);
+          // Snap-back-until-confirmed visual: dim the card while its
+          // `onBeforeMove` decision is unresolved (see module doc). No-op
+          // (renders `node` untouched) when `onBeforeMove` is not set, since
+          // `pendingMoveIds` is then never populated.
+          if (!pendingMoveIds.has(descriptor.getCardId(card))) return node;
+          return (
+            <div className="opacity-60 pointer-events-none transition-opacity" aria-busy="true">
+              {node}
+            </div>
+          );
+        }}
         onCardActivate={onCardClick}
         renderColumnHeader={(stage) => {
           const coluna = columns.find((c) => c.etapa === stage.id);
@@ -346,10 +483,10 @@ export function PipelineBoard<TCard>({
           // A same-stage drop still goes through `mover-etapa`: the server
           // treats it as a position-only change (no history row, no stage
           // gate), so there is no second endpoint that could drift from this
-          // one. `fromStage` is now unused, and kept in the signature because
-          // it is part of the underlying board's contract.
-          void fromStage;
-          moveCard.mutate({ cardId, toStageId: toStage, toIndex });
+          // one. `handleMove` routes through `onBeforeMove` when the consumer
+          // set one (fires for same-stage moves too — `direction: 'same'`);
+          // otherwise it mutates directly, byte-identical to before.
+          handleMove(cardId, fromStage, toStage, toIndex);
         }}
         columnClassName={columnClassName}
         onColumnReorder={columnsReorderable ? handleColumnReorder : undefined}
