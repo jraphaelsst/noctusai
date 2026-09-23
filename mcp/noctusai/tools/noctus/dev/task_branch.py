@@ -1229,6 +1229,78 @@ def _attempt_migration_renumber(
     return {"renumbered": renumbered, "unresolved": unresolved}
 
 
+# ── Merged-tip verification (mechanism 2) ─────────────────────────────────
+#
+# THE PRINCIPLE (same owner directive as the renumber mechanism above): per-
+# branch green is not integration green. Fifteen `fix(ci): green the merged
+# tip` commits are the evidence — a branch that was green on ITS OWN base
+# still broke CI once rebased onto what everyone else had landed meanwhile.
+#
+# Reuses `noctus.dev.gate_sweep` UNCHANGED — it already derives the right
+# gate SET from a diff against `base_ref`, runs each gate as its own
+# subprocess, and classifies harness-invalid/harness-suspect failures. This
+# mechanism adds exactly two things gate_sweep itself does not: an OVERALL
+# wall-clock time-box (gate_sweep's own `timeout=` is PER-GATE), and the
+# "is this red actually caused by THIS branch, or merely something its own
+# `seed/` change fanned out to on a product it never touched" distinction —
+# see `_merged_tip_red_is_new`.
+def _merged_tip_red_is_new(gate_name: str, scope: dict | None) -> bool:
+    """True iff `gate_name`'s failure is plausibly caused by THIS branch's
+    own diff — never a pre-existing (or fleet-wide-fanout-only) red.
+
+    `scope` is `gate_sweep`'s own returned scope dict (`products` = directly
+    diffed `products/<slug>/...` paths; `seed_fleet_wide` = this branch
+    touched `seed/`, which fans a product's gate out to EVERY active
+    product regardless of whether THIS branch touched it). A product gate
+    born ONLY from that fan-out — not itself in `scope['products']` — is
+    presumptively unrelated to this branch, the same "the collision belongs
+    to whoever merges second, not whoever committed first" reasoning
+    `check_migration_number_collision`'s Leg A/B split already applies one
+    layer up. `mcp_toolkit_tests` / `kb_sync_verify` / `claude_md_router`
+    only ever appear in `gate_sweep`'s scope when THIS branch's own diff
+    touched `mcp/` or the doc surface directly, so those are always "new"
+    when present. Missing/malformed `scope` degrades conservatively to
+    "new" — an unverifiable relationship must never silently un-block."""
+    if not scope:
+        return True
+    if gate_name.startswith(("pytest:", "vite_build:", "e2e:")):
+        slug = gate_name.split(":", 1)[1]
+        if slug in (scope.get("products") or []):
+            return True
+        if scope.get("seed_fleet_wide"):
+            return False  # pulled in ONLY by this branch's own seed/ fan-out
+        return True  # neither directly touched nor fanned-out — conservative
+    return True
+
+
+def _default_merged_tip_check(abs_wt_path: str, dev_ref: str, timeout: int = 90) -> dict[str, Any]:
+    """Production default for the `action='integrate'` merged-tip gate —
+    the REAL, unmodified `noctus.dev.gate_sweep`, scoped to `dev_ref` (the
+    ref THIS worktree just rebased onto) and run against the just-rebased
+    worktree. Lazy import (mirrors `_default_migration_collision_check`).
+
+    `timeout` bounds the TOTAL wall-clock budget, not gate_sweep's own
+    per-gate one: `gate_sweep`'s injectable `run_gate` seam is wrapped with
+    a shared deadline so a `seed/`-triggered fleet-wide fan-out across many
+    products cannot silently blow past the time-box. A gate that would
+    start after the deadline is reported `ran=False` — which `gate_sweep`'s
+    own `_verdict` already classifies as `incomplete`, never `red` (never
+    a measured failure it never actually ran)."""
+    import time as _time
+
+    from .gate_sweep import _default_run_gate, gate_sweep  # lazy import
+
+    deadline = _time.time() + max(1, timeout)
+
+    def _boxed_run_gate(spec):
+        remaining = deadline - _time.time()
+        if remaining <= 0:
+            return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
+        return _default_run_gate(spec, timeout=max(1, int(remaining)))
+
+    return gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, run_gate=_boxed_run_gate)
+
+
 class PointerOps:
     """The branch-tree pointer lifecycle, owned by the git lifecycle.
 
@@ -1353,7 +1425,8 @@ def task_branch(
     migration_check: Callable[[str], list[dict]] | None = None,
     migration_applied_check: Callable[[str, str, str], str] | None = None,
     verify_merged_tip: bool = True,
-    merged_tip_check: Callable[[str, list[str]], dict[str, Any]] | None = None,
+    merged_tip_check: Callable[[str, str], dict[str, Any]] | None = None,
+    merged_tip_timeout: int = 90,
     pointer_ops: "PointerOps | None" = None,
     project: str | None = None,
     brief: str | None = None,
@@ -1423,6 +1496,12 @@ def task_branch(
     # never fire under an injected `run`.
     migration_applied_check_fn = migration_applied_check if migration_applied_check is not None else (
         _default_migration_applied_check if run is None else None)
+    # Same production-only rule — the real default shells out to
+    # `noctus.dev.gate_sweep` (real subprocesses) and must never fire under
+    # an injected `run`.
+    merged_tip_check_fn = merged_tip_check if merged_tip_check is not None else (
+        (lambda p, d: _default_merged_tip_check(p, d, timeout=merged_tip_timeout))
+        if run is None else None)
     # wire_env defaults True (KB § self-branching-mode.md § 5a — "a fresh
     # worktree must come ready to run gates"), but ONLY in the real
     # production path OR when the caller supplies an explicit primary_root.
@@ -1719,6 +1798,12 @@ def task_branch(
                                     f"integrate. {detail}").strip()}
             if verbose:
                 logger.debug("task_branch.integrate: rebase succeeded; pushing to %s", dev_branch)
+            # LEDGER_ROOT (never REPO_ROOT): must be the PRIMARY checkout. See
+            # workspace.get_ledger_root() docstring. Computed unconditionally
+            # (not just when migrations were touched) — the merged-tip check
+            # below needs it too.
+            from settings import LEDGER_ROOT as _LEDGER_ROOT  # lazy, mirrors _default_run_local
+            abs_wt_path = str((_LEDGER_ROOT / wt_path).resolve())
             # ── Migration-number collision gate — the SECOND backstop ──
             #
             # Reuses `check_migration_number_collision` UNCHANGED (Leg A
@@ -1744,10 +1829,6 @@ def task_branch(
             # unrelated collision elsewhere in the repo never false-blocks an
             # integrate that has nothing to do with it.
             if introduced_migration_dirs and migration_check_fn is not None:
-                # LEDGER_ROOT (never REPO_ROOT): must be the PRIMARY checkout.
-                # See workspace.get_ledger_root() docstring.
-                from settings import LEDGER_ROOT as _LEDGER_ROOT  # lazy, mirrors _default_run_local
-                abs_wt_path = str((_LEDGER_ROOT / wt_path).resolve())
                 try:
                     mig_findings = migration_check_fn(abs_wt_path)
                 except Exception as exc:  # never let the checker crash integrate
@@ -1803,6 +1884,45 @@ def task_branch(
                         logger.debug(
                             "task_branch.integrate: auto-renumbered %d migration(s): %s",
                             len(renumber_result["renumbered"]), renumber_result["renumbered"])
+            # ── Merged-tip verification — fast, scoped, refuses only on a
+            # MEASURED NEW red (see module comment above `_merged_tip_red_is_new`).
+            merged_tip_result = None
+            if verify_merged_tip and merged_tip_check_fn is not None:
+                try:
+                    merged_tip_result = merged_tip_check_fn(
+                        abs_wt_path, f"{remote}/{dev_branch}")
+                except Exception as exc:  # never let the checker crash integrate
+                    merged_tip_result = {"status": "error", "error": str(exc)}
+                    if verbose:
+                        logger.debug("task_branch.integrate: merged_tip_check_fn raised: %s", exc)
+                new_red_gates = [
+                    g for g in (merged_tip_result or {}).get("gates", []) or []
+                    if g.get("ran") and g.get("exit_code") not in (0, None)
+                    and not g.get("harness_suspect")
+                    and _merged_tip_red_is_new(g.get("gate", ""), merged_tip_result.get("scope"))
+                ]
+                if new_red_gates:
+                    if benign_stashed:
+                        _pop_stash(runner, wt_path, benign_stashed, verbose)
+                        benign_stashed = False
+                    return {**plan, "status": "blocked", "exit_code": 1,
+                            "introduced_migrations": introduced_migrations,
+                            "merged_tip_check": merged_tip_result,
+                            "reason": (
+                                f"{branch} rebased onto {remote}/{dev_branch} cleanly, but "
+                                f"{len(new_red_gates)} gate(s) this branch's own diff plausibly "
+                                "caused now fail on the merged tip — see merged_tip_check.gates "
+                                "for the per-gate detail. A pre-existing red already on "
+                                f"{dev_branch} (or a fleet-wide fan-out on a product this "
+                                "branch never touched) would NOT have blocked here."),
+                            "message": (
+                                f"rebase of {branch} onto {remote}/{dev_branch} succeeded, but "
+                                f"{len(new_red_gates)} gate(s) newly fail on the merged tip. "
+                                "Not pushed.")}
+                elif verbose:
+                    logger.debug("task_branch.integrate: merged-tip check status=%s "
+                                 "(pushing regardless — no NEW red found)",
+                                 (merged_tip_result or {}).get("status"))
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc == 0:
                 # Pop stash AFTER the push so the worktree ends clean (the benign
@@ -1822,6 +1942,8 @@ def task_branch(
                     result["message"] += (
                         f" Auto-renumbered {len(all_renumbered)} migration(s) on rebase — "
                         "see migration_renumber.")
+                if merged_tip_result is not None:
+                    result["merged_tip_check"] = merged_tip_result
                 # Record the POST-REBASE sha: the pre-rebase commit a hand
                 # pointer carried is never on dev, which is why pointers could
                 # not be proven integrated and stayed on_going for months.

@@ -2539,6 +2539,157 @@ class TestMigrationRenumberMechanism:
         assert unresolved and "could not be established" in unresolved[0]["reason"], unresolved
 
 
+# ---------------------------------------------------------------------------
+# Merged-tip verification (mechanism 2) — per-branch green is not
+# integration green. `TestMergedTipRedIsNew` unit-tests the pure new-vs-
+# pre-existing classifier; `TestMergedTipVerificationMechanism` drives the
+# full `action='integrate'` wiring with an injected `merged_tip_check`
+# (mirrors `migration_check`'s injection seam — the real `gate_sweep` call
+# is never exercised here, only the wiring around it).
+# ---------------------------------------------------------------------------
+
+
+class TestMergedTipRedIsNew:
+    def test_directly_touched_product_is_new(self):
+        scope = {"products": ["core"], "seed_fleet_wide": False}
+        assert T._merged_tip_red_is_new("pytest:core", scope) is True
+
+    def test_fleet_wide_fanout_only_product_is_not_new(self):
+        scope = {"products": [], "seed_fleet_wide": True}
+        assert T._merged_tip_red_is_new("vite_build:other-product", scope) is False
+
+    def test_directly_touched_wins_even_under_fleet_wide_fanout(self):
+        scope = {"products": ["core"], "seed_fleet_wide": True}
+        assert T._merged_tip_red_is_new("pytest:core", scope) is True
+
+    def test_mcp_toolkit_gate_is_always_new(self):
+        scope = {"products": [], "seed_fleet_wide": True}
+        assert T._merged_tip_red_is_new("mcp_toolkit_tests", scope) is True
+
+    def test_missing_scope_degrades_conservatively_to_new(self):
+        assert T._merged_tip_red_is_new("pytest:core", None) is True
+
+    def test_neither_touched_nor_fanned_out_is_conservatively_new(self):
+        """A gate present without either signal is not a shape gate_sweep
+        actually produces, but the classifier still fails safe."""
+        scope = {"products": [], "seed_fleet_wide": False}
+        assert T._merged_tip_red_is_new("pytest:core", scope) is True
+
+
+class TestMergedTipVerificationMechanism:
+    @staticmethod
+    def _fake():
+        return FakeGit(
+            refs={"origin/dev": "d0", "feat/x": "b0"},
+            anc=_anc_pairs([]),
+            logs={"d0..b0": "c1 x", "b0..d0": ""},
+            head_sha="b0",
+        )
+
+    def test_green_pushes(self):
+        fake = self._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "green", "gates": [
+                {"gate": "pytest:core", "ran": True, "exit_code": 0},
+            ], "scope": {"products": ["core"], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check)
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert res["merged_tip_check"]["status"] == "green"
+
+    def test_inconclusive_pushes_anyway(self):
+        """No trustworthy red exists (every failure harness-suspect, or a
+        gate never ran) — pushes, reports the inconclusive verdict."""
+        fake = self._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "inconclusive", "gates": [
+                {"gate": "pytest:core", "ran": True, "exit_code": 1,
+                 "harness_suspect": {"signature": "no venv"}},
+            ], "scope": {"products": ["core"], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check)
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert res["merged_tip_check"]["status"] == "inconclusive"
+
+    def test_pre_existing_fleet_wide_red_pushes_anyway(self):
+        """A `seed/` change fanned this branch's gate_sweep out to a product
+        this branch never touched; that product's own red is not this
+        branch's fault — must NEVER block."""
+        fake = self._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "red", "gates": [
+                {"gate": "pytest:unrelated-product", "ran": True, "exit_code": 1},
+            ], "scope": {"products": [], "seed_fleet_wide": True}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check)
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+
+    def test_new_red_on_directly_touched_product_refuses(self):
+        fake = self._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "red", "gates": [
+                {"gate": "pytest:core", "ran": True, "exit_code": 1,
+                 "summary": "3 failed"},
+            ], "scope": {"products": ["core"], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check)
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == [], "must NEVER push on a NEW merged-tip red"
+        assert res["merged_tip_check"]["status"] == "red"
+        assert "1 gate(s)" in res["message"]
+
+    def test_verify_merged_tip_false_opts_out_entirely(self):
+        fake = self._fake()
+        called = []
+
+        def check(abs_wt_path, dev_ref):
+            called.append(1)
+            return {"status": "red", "gates": [
+                {"gate": "pytest:core", "ran": True, "exit_code": 1},
+            ], "scope": {"products": ["core"], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check, verify_merged_tip=False)
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert called == [], "merged_tip_check must not run at all when opted out"
+
+    def test_merged_tip_check_exception_does_not_crash_integrate(self):
+        """A broken checker degrades to 'nothing measured' rather than
+        taking down the whole integrate — same posture as migration_check."""
+        fake = self._fake()
+
+        def broken_check(abs_wt_path, dev_ref):
+            raise RuntimeError("boom")
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=broken_check)
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+
+    def test_no_merged_tip_check_injected_with_real_run_never_blocks(self):
+        """Production-only-default symmetry with `migration_check`/
+        `migration_applied_check`: an injected `run` (test/custom context)
+        must NOT trigger the REAL `_default_merged_tip_check` (which would
+        shell out to real `gate_sweep` subprocesses)."""
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert "merged_tip_check" not in res
+
+
 # ── ledger drain: the stranded-row recurrence (4+ incidents, ~4 months) ──────
 #
 # `worktree-salvage.ndjson` always had a commit+push leg; `auto-improvement.ndjson`

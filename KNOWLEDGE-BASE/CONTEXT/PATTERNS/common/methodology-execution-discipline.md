@@ -150,6 +150,28 @@ same reading applies to any tool that goes quiet.
   that has the shape with no effective `pipefail` backing it (severity
   escalates from "fragile" to "definitely wrong").
 
+**2026-09-23 — the merged-tip re-run is now automatic, not a remembered
+step.** Fifteen `fix(ci): green the merged tip` commits are the evidence
+"per-branch green ≠ integration green" (§1) was routine to forget, not
+exceptional: a branch green on its OWN base still broke once rebased onto
+what everyone else had landed meanwhile. `noctus.dev.task_branch(action=
+'integrate')` now calls `gate_sweep` itself, scoped (`base_ref=origin/dev`,
+the exact ref it just rebased onto) and time-boxed (default ≤90s overall,
+`merged_tip_timeout=`), AFTER the rebase and BEFORE the push. It refuses
+the push ONLY on a gate that both (a) actually failed on a valid harness
+(no `harness_suspect`) and (b) is plausibly CAUSED by this branch's own
+diff — a product gate pulled in ONLY by this branch's own `seed/`-triggered
+fleet-wide fan-out, on a product this branch never touched, does not block
+(the same "the collision belongs to whoever merges second" reasoning
+`check_migration_number_collision`'s Leg A/B split already applies one
+layer up, for migrations). `inconclusive` / `incomplete` / a timed-out gate
+push anyway, reported under the `merged_tip_check` result key — "cannot
+measure" pushes, exactly like a pre-existing red does, because acting on an
+unmeasurable red is the § 6 mistake at integrate time. Opt out with
+`verify_merged_tip=False` for a doc-only slice. See
+`mcp/noctusai/tools/noctus/dev/task_branch.py`'s module comment above
+`_merged_tip_red_is_new`.
+
 NOC-REMEDIATE[codify]: the piped-`$?`/pipe-into-filter half shipped as
 `check_piped_exit_code_pattern` (2026-09-17, this row). `gh run watch
 --exit-status` used as a gate remains deferred — a genuinely different
