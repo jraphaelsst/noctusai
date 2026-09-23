@@ -12,17 +12,23 @@
  *     "falhou", so the operator knows whether to retry or fix credentials.
  */
 import { Fragment, useState } from "react";
+import { toast } from "sonner";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, Ban, BarChart3, Send } from "lucide-react";
+import { AlertTriangle, Ban, BarChart3, CalendarPlus, Clock, Send } from "lucide-react";
 
+import { usePautas } from "@/hooks/usePautas";
 import {
+  CANAIS,
+  useAgendarPublicacao,
   useCancelarPublicacao,
   useEficiencia,
   useExecutarPublicacao,
+  useFila,
   useMetricas,
   usePublicacoes,
   useRegistrarMetrica,
+  type Canal,
   type Publicacao,
   type StatusPublicacao,
 } from "@/hooks/useDistribuicao";
@@ -45,9 +51,9 @@ export default function Distribuicao() {
   const [metricasAbertas, setMetricasAbertas] = useState<string | null>(null);
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
       <header>
-        <h1 className="text-2xl font-semibold text-foreground">Distribuição e Métricas</h1>
+        <h1 className="text-xl font-semibold text-foreground sm:text-2xl">Distribuição e Métricas</h1>
         <p className="text-sm text-muted-foreground">
           Fila de publicação e eficiência por cliente.
         </p>
@@ -108,14 +114,18 @@ export default function Distribuicao() {
         )}
       </section>
 
+      {/* ── Agendar + fila ─────────────────────────────────────────── */}
+      <AgendarPublicacao />
+      <FilaPublicacao />
+
       {/* ── Fila de publicação ─────────────────────────────────────── */}
       <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Publicações</h2>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">Todas as publicações</h2>
         {carregandoPubs ? (
           <Skeleton className="h-24 w-full" />
         ) : publicacoes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhuma publicação agendada. Agende a partir de uma pauta no calendário.
+            Nenhuma publicação ainda. Use "Agendar publicação" acima.
           </p>
         ) : (
           <ul className="divide-y divide-border">
@@ -305,5 +315,151 @@ function PainelMetricas({ publicacao }: { publicacao: Publicacao }) {
         </p>
       )}
     </div>
+  );
+}
+
+/** Local `datetime-local` value → ISO with the browser's offset (never naive). */
+function isoDeDataHoraLocal(valor: string): string {
+  return new Date(valor).toISOString();
+}
+
+function mensagemDe(erro: unknown, padrao: string): string {
+  return erro instanceof Error && erro.message ? erro.message : padrao;
+}
+
+/**
+ * Schedule a pauta on a channel. `POST /api/distribuicao/publicacoes` had no
+ * consumer — the page said "agende a partir de uma pauta" and there was
+ * nowhere to do it.
+ */
+function AgendarPublicacao() {
+  const { pautas, loading } = usePautas();
+  const agendar = useAgendarPublicacao();
+  const [pautaId, setPautaId] = useState("");
+  const [canal, setCanal] = useState<Canal>("instagram");
+  const [quando, setQuando] = useState("");
+
+  function submeter(e: React.FormEvent) {
+    e.preventDefault();
+    if (!pautaId || !quando) return;
+    agendar.mutate(
+      { pauta_id: pautaId, canal, agendada_para: isoDeDataHoraLocal(quando) },
+      {
+        onSuccess: () => {
+          toast.success("Publicação agendada");
+          setPautaId("");
+          setQuando("");
+        },
+        onError: (erro) => toast.error(mensagemDe(erro, "Não foi possível agendar.")),
+      },
+    );
+  }
+
+  const campo = "h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground";
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+        <CalendarPlus className="h-4 w-4" />
+        Agendar publicação
+      </h2>
+      {!loading && pautas.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nenhuma pauta cadastrada. Crie uma no{" "}
+          <a href="/calendario" className="underline">Calendário Editorial</a>.
+        </p>
+      ) : (
+        <form onSubmit={submeter} className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
+          <label className="text-xs text-muted-foreground">
+            Pauta
+            <select
+              className={`mt-1 ${campo}`}
+              value={pautaId}
+              onChange={(e) => setPautaId(e.target.value)}
+              disabled={loading}
+            >
+              <option value="">{loading ? "Carregando…" : "Selecione…"}</option>
+              {pautas.map((p) => (
+                <option key={p.id} value={p.id}>{p.titulo}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Canal
+            <select
+              className={`mt-1 ${campo}`}
+              value={canal}
+              onChange={(e) => setCanal(e.target.value as Canal)}
+            >
+              {CANAIS.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-muted-foreground">
+            Quando
+            <Input
+              type="datetime-local"
+              className="mt-1 h-11"
+              value={quando}
+              onChange={(e) => setQuando(e.target.value)}
+            />
+          </label>
+          <Button type="submit" className="min-h-11" disabled={!pautaId || !quando || agendar.isPending}>
+            {agendar.isPending ? "Agendando…" : "Agendar"}
+          </Button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+/**
+ * The due queue (`GET /api/distribuicao/fila`): scheduled publications whose
+ * time has come. This is what the publisher job drains; showing it lets the
+ * operator see (and push) what is waiting instead of discovering it late.
+ */
+function FilaPublicacao() {
+  const { fila, loading, error } = useFila();
+  const executar = useExecutarPublicacao();
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-4">
+      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Clock className="h-4 w-4" />
+        Fila — prontas para publicar
+      </h2>
+      {error ? (
+        <p className="text-sm text-destructive">Não foi possível carregar a fila.</p>
+      ) : loading ? (
+        <Skeleton className="h-16 w-full" />
+      ) : fila.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nada na fila agora.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {fila.map((pub) => (
+            <li key={pub.id} className="flex flex-wrap items-center gap-3 py-2">
+              <Badge variant="muted">{pub.canal}</Badge>
+              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {pub.agendada_para
+                  ? `agendada para ${new Date(pub.agendada_para).toLocaleString("pt-BR")}`
+                  : "sem data"}
+              </span>
+              <Button
+                size="sm"
+                disabled={executar.isPending}
+                onClick={() =>
+                  executar.mutate(pub.id, {
+                    onError: (e) => toast.error(mensagemDe(e, "Não foi possível publicar.")),
+                  })
+                }
+              >
+                <Send className="mr-2 h-3 w-3" />
+                Publicar agora
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

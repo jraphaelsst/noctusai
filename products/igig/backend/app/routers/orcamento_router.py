@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, Query, status
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
+from app.automacoes_deps import get_portas_automacao
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import get_core_db, get_db
@@ -36,6 +37,7 @@ from app.schemas.orcamento import (
     OrcamentoUpdate,
     RecusarIn,
 )
+from app.services import automacoes
 from app.services import contratos as contratos_svc
 from app.services import orcamentos as svc
 from app.services.documentos_pdf import nome_da_agencia, renderizar_orcamento_pdf
@@ -171,14 +173,19 @@ async def aceitar(
     orcamento_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
+    portas: automacoes.PortasAutomacao = Depends(get_portas_automacao),
 ) -> dict:
-    """Accept: negócio → fechado stage (ganho), Cliente created, pautas generated."""
+    """Accept: negócio → fechado stage (ganho), Cliente created, pautas generated.
+
+    Entering Fechado fires that stage's automations like any board move. The
+    engine keys each execution on the ENTRY row, so a re-accept (no new
+    transition) never fires twice."""
     try:
-        return success_response(
-            svc.aceitar(db, _org(auth), orcamento_id, user_id=str(auth[0].id))
-        )
+        resultado = svc.aceitar(db, _org(auth), orcamento_id, user_id=str(auth[0].id))
     except RegraViolada as erro:
         raise http_de(erro) from erro
+    await automacoes.ao_entrar_etapa(portas, _org(auth), pipeline="comercial", card_id=str(resultado["negocio"]["id"]), user_id=str(auth[0].id))
+    return success_response(resultado)
 
 
 @router.post("/{orcamento_id}/recusar")

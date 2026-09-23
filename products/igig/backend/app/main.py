@@ -52,6 +52,10 @@ from app.scheduler import configure as _configure_scheduler, start_scheduler, st
 # only FIRE in a deployed container (`NOCTUS_SCHEDULERS_ENABLED`, see
 # `noctusai_lib.api.scheduler.start_scheduler`).
 _configure_scheduler()
+from app.routers.automacao_router import router as automacao_router
+from app.routers.integracoes_leads_router import router as integracoes_leads_router
+from app.routers.lead_webhooks_router import router as lead_webhooks_router
+from app.routers.assistente_router import router as assistente_router
 
 # Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
 # 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
@@ -128,6 +132,8 @@ app = create_product_app(
         # `/api/webhooks/gmail/push`) — no shape collision with the routers above.
         integracoes_email_router, orcamento_email_router, gmail_webhook_router,
         orcamento_router, produto_router, contrato_router,
+        # Automações v1 + fontes de lead + assistente IA (slice E2, R11).
+        automacao_router, integracoes_leads_router, lead_webhooks_router, assistente_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     lifespan_startup=start_scheduler,

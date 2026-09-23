@@ -62,6 +62,7 @@ def _out(row: dict) -> PautaOut:
 async def calendario(
     inicio: str = Query(..., description="ISO-8601 inclusive"),
     fim: str = Query(..., description="ISO-8601 inclusive"),
+    cliente_id: str | None = Query(default=None, description="Só as pautas deste cliente"),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> CalendarioResponse:
@@ -73,7 +74,7 @@ async def calendario(
     if fim < inicio:
         raise HTTPException(status_code=422, detail="Período inválido: fim anterior ao início")
     org_id = _org(auth)
-    itens = repos.pauta.no_periodo(org_id, inicio, fim)
+    itens = repos.pauta.no_periodo(org_id, inicio, fim, cliente_id=cliente_id)
     return CalendarioResponse(inicio=inicio, fim=fim, itens=[_out(p) for p in itens])
 
 
