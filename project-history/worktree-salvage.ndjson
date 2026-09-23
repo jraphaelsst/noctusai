@@ -961,3 +961,4 @@
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/igig-followups-be", "branch": "feat/igig-followups-be", "sha": "62f060cf196848efd3eb2bc782fa5bcacdca70b8", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/cardhub-c-seed-fe", "branch": "feat/cardhub-c-seed-fe", "sha": "bef5ab17a825996754be1eb36d5a1a90eca6b7f0", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/cardhub-f-sw-fe", "branch": "feat/cardhub-f-sw-fe", "sha": "a52f0dbfbc1d93ac399f3f7b30a1c3256d41d7a6", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/cardhub-igig-crm", "branch": "feat/cardhub-igig-crm", "sha": "b3bbffd13f07e10e8ee233438ed79ae49aa91a23", "reason": "task_branch cleanup (learn-before-delete)"}
