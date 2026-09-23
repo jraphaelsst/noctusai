@@ -12,6 +12,8 @@ Scopes (all are Google *restricted* scopes → require App Review for
 production verification — see `types.GMAIL_*_SCOPE`):
 - `send_message` → `gmail.send`.
 - `list_messages` / `get_message` → `gmail.readonly`.
+- `watch` / `stop` / `list_history` / `get_message_metadata` →
+  `gmail.metadata` OR `gmail.readonly` (either; readonly is a superset).
 
 The Protocol's docstrings document the per-method unit cost + the
 scope so any consumer reading the surface budgets and requests
@@ -23,9 +25,12 @@ from __future__ import annotations
 from typing import Protocol
 
 from noctusai_lib.integrations.gmail.types import (
+    GmailHistoryResult,
     GmailListResult,
     GmailMessage,
+    GmailMessageMetadata,
     SendResult,
+    WatchResult,
 )
 
 
@@ -52,6 +57,10 @@ class GmailClient(Protocol):
     | `send_message` | **100** | `users.messages.send`. Requires `gmail.send`. |
     | `list_messages` | **5** | `users.messages.list` (one page; ids + thread ids only). Requires `gmail.readonly`. |
     | `get_message` | **5** | `users.messages.get?format=full`. Requires `gmail.readonly`. |
+    | `watch` | **100** | `users.watch`. Requires `gmail.metadata` or `gmail.readonly`. |
+    | `stop` | **50** | `users.stop`. Same scopes as `watch`. |
+    | `list_history` | **2 / page** | `users.history.list`. Same scopes as `watch`. |
+    | `get_message_metadata` | **5** | `users.messages.get?format=metadata`. Same scopes as `watch`. |
 
     A naive "list then get each" loop costs ``5 + 5·N`` — at the
     250/user/sec ceiling that is ~50 messages/second of hydration;
@@ -130,6 +139,76 @@ class GmailClient(Protocol):
         **Requires the `gmail.readonly` scope.**
 
         Returns `None` when the message doesn't exist or was deleted."""
+        ...
+
+    # ---- push-watch (Pub/Sub) surface -----------------------------------
+
+    async def watch(
+        self,
+        topic_name: str,
+        label_ids: list[str] | None = None,
+    ) -> WatchResult:
+        """Start (or refresh) push notifications for this mailbox.
+
+        **Quota cost: 100 units.** Gmail publishes a notification to
+        `topic_name` (FULL resource name, ``projects/<p>/topics/<t>``) on
+        every mailbox change touching `label_ids` (default ``["INBOX"]``,
+        `labelFilterBehavior=include`). The topic must already grant
+        `roles/pubsub.publisher` to `GMAIL_PUSH_SERVICE_ACCOUNT` — see
+        `pubsub_provisioning.ensure_push_subscription`.
+
+        Idempotent: re-calling with the same topic refreshes the watch.
+        A watch expires after at most 7 days; renew DAILY (Google's
+        recommendation) — a lapsed watch silently stops delivering.
+
+        Returns `WatchResult(history_id, expiration)`; persist
+        `history_id` as the `list_history` cursor."""
+        ...
+
+    async def stop(self) -> None:
+        """Stop push notifications for this mailbox (`users.stop`,
+        **50 units**). Idempotent — stopping with no active watch is not
+        an error."""
+        ...
+
+    async def list_history(
+        self,
+        start_history_id: str,
+        history_types: list[str] | None = None,
+        label_id: str | None = None,
+    ) -> GmailHistoryResult:
+        """Changes since `start_history_id` (`users.history.list`,
+        **2 units / page**; all pages are drained).
+
+        `history_types` defaults to ``["messageAdded"]``; only
+        `messagesAdded` records contribute to `messages` (the reply-watch
+        loop's only need). `label_id` narrows to one label (e.g.
+        ``"INBOX"`` to skip the user's own SENT copies). Messages are
+        de-duplicated by id, in history order.
+
+        Returns `GmailHistoryResult(messages, history_id)` — unpackable
+        as ``messages, new_history_id``. Persist `history_id` even when
+        `messages` is empty.
+
+        Raises `GmailHistoryExpiredError` when Gmail answers 404 (the
+        cursor is older than retained history) — the caller must resync
+        (re-`watch()` + reconcile via `list_messages`), never skip."""
+        ...
+
+    async def get_message_metadata(
+        self,
+        message_id: str,
+        headers: list[str] | None = None,
+    ) -> GmailMessageMetadata | None:
+        """Headers + labels for one message, NO body
+        (`users.messages.get?format=metadata`, **5 units**).
+
+        `headers` defaults to `REPLY_MATCH_HEADERS`
+        (From/Subject/Message-ID/In-Reply-To/References) — exactly what
+        `match_reply` needs. Every requested header is present in the
+        result's `headers` dict (``""`` when absent on the message).
+
+        Returns `None` when the message doesn't exist (404)."""
         ...
 
 
