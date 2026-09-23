@@ -12,6 +12,14 @@ consent-gated hops sit between everyday `dev` work and the live VPS:
                       believed their pin had taken effect). It also REFUSES
                       unless `Tests & Build` is GREEN on the exact dev tip
                       (2026-08-22 — see below).
+  • RIDERS (2026-09-22) — bless no longer carries the WHOLE dev tip blindly:
+                      `stage=manifest` attributes every commit main..dev
+                      (Noc-Branch trailer → branch-tree project) to a
+                      ship-consent state; unapproved riders ⇒ bless CUTS a
+                      `release/<stamp>` of approved work (merge-tree +
+                      commit-tree, no checkout) instead of FF-ing dev, and
+                      `stage=backmerge` restores dev ⊇ main afterwards.
+                      KB § PATTERNS/devops/ship-consent-riders.md.
   • Gate 2 — PROMOTE: fast-forward `prod` to a blessed `main` sha — and FIRST
                       snapshot the *current* prod onto `prod-backup` (instant
                       rollback pointer). The VPS pulls `origin/prod` afterwards
@@ -62,7 +70,15 @@ from typing import Any, Callable
 # git subcommands the tool may run. It pushes ref-specs (`<sha>:refs/heads/X`),
 # never checks out / resets / forces — keeping those off the list makes a
 # destructive or history-rewriting release structurally impossible.
-_ALLOWED_GIT = frozenset({"fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "push"})
+# 2026-09-22 (ship-consent riders): + read-only `show`/`cherry`/`cat-file`/
+# `patch-id` for the rider manifest, and `merge-tree`/`commit-tree` for the
+# release CUT — both write only unreachable OBJECTS (never a ref, never a
+# working tree, never an index), so a cut is a cherry-pick with no checkout.
+# Refs still move ONLY via `push`.
+_ALLOWED_GIT = frozenset({
+    "fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "push",
+    "show", "cherry", "cat-file", "patch-id", "merge-tree", "commit-tree",
+})
 
 # The CI workflow whose green is a bless PRECONDITION (skill `noc-ship` step 0b).
 _CI_WORKFLOW = "Tests & Build"
@@ -78,7 +94,7 @@ from tools.noctus.dev import toolkit_freshness as _toolkit_freshness  # noqa: E4
 
 
 def _default_run_local(
-    cmd: list[str], env_extra: dict[str, str] | None = None
+    cmd: list[str], env_extra: dict[str, str] | None = None, stdin: str | None = None
 ) -> tuple[int, str, str]:
     """Run `cmd` locally at the repo root; (rc, stdout, stderr). `env_extra`
     overlays the process env (used to set NOCTUS_ALLOW_MAIN_PUSH on the one
@@ -91,11 +107,13 @@ def _default_run_local(
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT), env=env)
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT), env=env,
+                       input=stdin)
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 
 
-def _git(runner, *args, env_extra: dict[str, str] | None = None) -> tuple[int, str, str]:
+def _git(runner, *args, env_extra: dict[str, str] | None = None,
+         stdin: str | None = None) -> tuple[int, str, str]:
     """Run a git subcommand — ONLY if on the safe allowlist AND carrying no
     banned token. The structural guarantee the tool can never force/rewrite."""
     sub = args[0] if args else ""
@@ -106,6 +124,8 @@ def _git(runner, *args, env_extra: dict[str, str] | None = None) -> tuple[int, s
     for tok in args:
         if tok in _BANNED_TOKENS:
             raise ValueError(f"release: banned token '{tok}' in git {list(args)}")
+    if stdin is not None:
+        return runner(["git", *args], env_extra=env_extra, stdin=stdin)
     return runner(["git", *args], env_extra=env_extra) if env_extra is not None \
         else runner(["git", *args])
 
@@ -180,6 +200,169 @@ def _ci_verdict(runner, sha: str, workflow: str = _CI_WORKFLOW) -> dict[str, Any
             "detail": f"every '{workflow}' run on {sha[:9]} was cancelled/skipped"}
 
 
+# ── ship-consent riders (2026-09-22) ─────────────────────────────────────────
+# Owner mandate: a prod deploy must NOT carry other agents' in-flight /
+# unapproved work. Bless used to FF main to the WHOLE dev tip; it now reads a
+# rider MANIFEST (every commit main..dev, grouped Noc-Branch → project →
+# ship-consent state) and, when anything is unapproved, defaults to CUTTING a
+# `release/<stamp>` branch of approved work only.
+# KB § PATTERNS/devops/ship-consent-riders.md.
+_CONSENT_LEDGER_REL = "project-history/ship-consent.ndjson"
+_POINTER_LEDGER_REL = "project-history/branch-tree.ndjson"
+_MODES = ("cut", "refuse")
+
+
+def _read_ledger(git, remote: str, dev_branch: str, rel: str) -> list[dict]:
+    """dev's copy of an append-only ledger (what every agent sees). Absent ⇒
+    [] (no approvals / no pointers yet is a real state, not an error)."""
+    rc, out, _e = git("show", f"{remote}/{dev_branch}:{rel}")
+    if rc != 0:
+        return []
+    rows = []
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            rows.append(rec)
+    return rows
+
+
+def _manifest(git, main: str, dev: str, remote: str, dev_branch: str,
+              consent_rows, pointer_rows, verify_consent, transcript_home) -> dict[str, Any]:
+    from tools.noctus.dev import _release_riders as RR
+    from tools.noctus.dev.branch_pointer import project_for_branch
+    from tools.noctus.dev.ship_consent import effective_approvals, verify_row
+
+    if consent_rows is None:
+        consent_rows = _read_ledger(git, remote, dev_branch, _CONSENT_LEDGER_REL)
+    if pointer_rows is None:
+        pointer_rows = _read_ledger(git, remote, dev_branch, _POINTER_LEDGER_REL)
+    verify = verify_consent or (lambda row: verify_row(row, home=transcript_home))
+    return RR.build_manifest(git, main, dev, consent_rows, pointer_rows, verify,
+                             project_for_branch, effective_approvals)
+
+
+def _stamp(now) -> str:
+    import datetime as _dt
+    t = now() if callable(now) else now
+    t = t or _dt.datetime.now(_dt.timezone.utc)
+    return t.strftime("%Y%m%d-%H%M")
+
+
+def _bless_cut(git, base, man, mode, confirm, remote, main, main_branch,
+               dev_branch, ff, now) -> dict[str, Any]:
+    """Unapproved riders (or a diverged main after an earlier cut): never FF
+    the whole dev tip. mode='refuse' → blocked; mode='cut' (default) → build
+    `release/<stamp>` = main + approved/exempt commits in dev order."""
+    from tools.noctus.dev._release_riders import cherry_pick_chain
+
+    info = {"unapproved_riders": man["unapproved_riders"], "projects": man["projects"],
+            "deferred": man["deferred"], "ff": ff}
+    if mode == "refuse":
+        return {**base, **info, "status": "blocked", "exit_code": 1,
+                "reason": (f"{len(man['unapproved_riders'])} rider(s) lack ship-consent"
+                           + ("" if ff else f"; {main_branch} is not an ancestor of "
+                              f"{dev_branch} (run stage='backmerge' after a cut)")
+                           + ". Approve via noctus.dev.ship_consent, or bless mode='cut'.")}
+    if man["dependencies"]:
+        return {**base, **info, "status": "blocked", "exit_code": 1,
+                "dependencies": man["dependencies"],
+                "reason": "an APPROVED commit changes files last changed by an UNAPPROVED "
+                          "rider before it — shipping it alone would ship a state that never "
+                          "existed on dev. Approve the named rider's project, or wait for it: "
+                          + "; ".join(f"{d['commit'][:9]} needs {', '.join(x[:9] for x in d['depends_on'])}"
+                                      for d in man["dependencies"])}
+    if not man["ship"]:
+        return {**base, **info, "status": "blocked", "exit_code": 1,
+                "reason": "nothing approved to ship — every rider awaits ship-consent "
+                          "(or is already on main)."}
+    chain = cherry_pick_chain(git, main, man["ship"])
+    if not chain["ok"]:
+        return {**base, **info, "status": "blocked", "exit_code": 1,
+                "conflict": chain.get("conflict"), "detail": chain.get("detail"),
+                "reason": (f"approved commit {str(chain.get('conflict') or '')[:9]} does not "
+                           f"apply cleanly onto {main_branch} without the riders left behind — "
+                           "it depends on unapproved work. " + str(chain.get("error") or ""))}
+    name = f"release/{_stamp(now)}"
+    plan = {**base, **info, "mode": "cut", "release_branch": name,
+            "release_sha": chain["tip"], "ship": man["ship"], "picked": chain["picked"],
+            "would_advance": f"{remote}/{name} → {chain['tip'][:9]} "
+                             f"({len(man['ship'])} commit(s) on {main[:9]})"}
+    if not confirm:
+        return {**plan, "status": "planned_cut", "exit_code": 0,
+                "message": (f"cut planned: {len(man['ship'])} approved/exempt commit(s), "
+                            f"{len(man['unapproved_riders'])} rider(s) left on {dev_branch}. "
+                            "confirm=True pushes the release branch (NOT main).")}
+    rc, out, err = git("push", remote, f"{chain['tip']}:refs/heads/{name}")
+    if rc != 0:
+        return {**plan, "status": "error", "exit_code": 1,
+                "error": f"push of {name} failed: {err.strip() or out.strip()}"}
+    return {**plan, "status": "cut_pushed", "exit_code": 0,
+            "message": (f"pushed {name} @ {chain['tip'][:9]}. Wait for '{_CI_WORKFLOW}' "
+                        f"GREEN on that sha, then noctus.dev.release stage='bless' "
+                        f"release_branch='{name}' confirm=True. After promote: "
+                        "stage='backmerge'.")}
+
+
+def _bless_release_branch(git, runner, base, manifest, remote, main, main_branch,
+                          release_branch, confirm) -> dict[str, Any]:
+    """FF main → a pushed cut, after RE-verifying (a) it is still a pure cut of
+    currently-approved work and (b) CI is green on its exact sha."""
+    from tools.noctus.dev._release_riders import release_branch_sources
+
+    if not release_branch.startswith("release/"):
+        return {**base, "status": "error", "exit_code": 1,
+                "error": f"release_branch must be a release/<stamp> cut (got {release_branch!r})"}
+    rel = _resolve(git, f"{remote}/{release_branch}")
+    if not rel:
+        return {**base, "status": "error", "exit_code": 1,
+                "error": f"cannot resolve {remote}/{release_branch}"}
+    if not _is_ancestor(git, main, rel):
+        return {**base, "status": "blocked", "exit_code": 1, "release_sha": rel,
+                "reason": f"{main_branch} moved since the cut — cut again (never force main)."}
+    sources, err = release_branch_sources(git, main, rel)
+    man = manifest()
+    if err or not man.get("ok"):
+        return {**base, "status": "blocked", "exit_code": 1,
+                "reason": f"cannot verify the cut: {err or man.get('error')}"}
+    shippable = set(man["ship"]) | set(man.get("on_main") or [])
+    foreign = [s["sha"][:9] for s in sources
+               if s["merge"] or not s["from"] or s["from"] not in shippable]
+    if foreign:
+        return {**base, "status": "blocked", "exit_code": 1, "release_sha": rel,
+                "foreign_commits": foreign,
+                "reason": ("the release branch carries commits that are not cuts of "
+                           "CURRENTLY-approved work (hand-added, or consent revoked since): "
+                           + ", ".join(foreign))}
+    ci = _ci_verdict(runner, rel)
+    docs_only = _is_docs_only(_changed_paths(git, main, rel))
+    if ci["verdict"] != "green" and not docs_only:
+        return {**base, "status": "blocked", "exit_code": 1, "ci": ci, "release_sha": rel,
+                "reason": f"CI is not green on the release sha {rel[:9]} "
+                          f"(verdict={ci['verdict']}): {ci.get('detail') or ci.get('url') or ''}"}
+    plan = {**base, "release_branch": release_branch, "release_sha": rel, "ci": ci,
+            "incoming_commits": _commits(git, main, rel),
+            "would_advance": f"{main_branch} → {rel[:9]} ({release_branch})"}
+    if not confirm:
+        return {**plan, "status": "planned", "exit_code": 0,
+                "message": f"clean FF {main_branch} → {release_branch}. Pass confirm=True."}
+    rc, out, err = git("push", remote, f"{rel}:refs/heads/{main_branch}",
+                       env_extra={"NOCTUS_ALLOW_MAIN_PUSH": "1"})
+    if rc != 0:
+        return {**plan, "status": "error", "exit_code": 1,
+                "error": f"push to {main_branch} failed: {err.strip() or out.strip()}"}
+    new_main = _resolve(git, f"{remote}/{main_branch}")
+    return {**plan, "status": "blessed", "exit_code": 0, "new_main_sha": new_main,
+            "verified": new_main == rel,
+            "message": f"blessed {release_branch} to {main_branch}. Next: stage='promote', "
+                       "then stage='backmerge' so dev ⊇ main again."}
+
+
 @_toolkit_freshness.refuse_gate("release")
 def release(
     stage: str = "status",
@@ -190,19 +373,31 @@ def release(
     prod_branch: str = "prod",
     backup_branch: str = "prod-backup",
     sha: str | None = None,
+    mode: str = "cut",
+    release_branch: str | None = None,
     run: Callable[..., tuple[int, str, str]] | None = None,
-    now=None,  # accepted for signature parity / future timestamped tags
+    now=None,  # datetime | () -> datetime — stamps release/<YYYYMMDD-HHMM>
+    consent_rows: list[dict] | None = None,
+    pointer_rows: list[dict] | None = None,
+    verify_consent: Callable[[dict], tuple[bool, str]] | None = None,
+    transcript_home=None,
 ) -> dict[str, Any]:
-    """`stage` ∈ {status, bless, promote}. Dry-run unless `confirm`. Returns a
-    structured plan/result; never raises on a refusal — it returns it."""
+    """`stage` ∈ {status, manifest, bless, promote, backmerge}. Dry-run unless
+    `confirm`. Returns a structured plan/result; never raises on a refusal —
+    it returns it. `consent_rows`/`pointer_rows`/`verify_consent` are DI seams
+    (default: dev's ledgers + transcript re-verification)."""
     runner = run or _default_run_local
 
-    def git(*args, env_extra=None):
-        return _git(runner, *args, env_extra=env_extra)
+    def git(*args, env_extra=None, stdin=None):
+        return _git(runner, *args, env_extra=env_extra, stdin=stdin)
 
-    if stage not in {"status", "bless", "promote"}:
+    if stage not in {"status", "manifest", "bless", "promote", "backmerge"}:
         return {"ok": False, "status": "error", "exit_code": 1,
-                "error": f"unknown stage '{stage}' (expected status|bless|promote)"}
+                "error": f"unknown stage '{stage}' "
+                         "(expected status|manifest|bless|promote|backmerge)"}
+    if mode not in _MODES:
+        return {"ok": False, "status": "error", "exit_code": 1,
+                "error": f"unknown mode '{mode}' (expected {'|'.join(_MODES)})"}
 
     # ── INSPECT (read-only) ──
     git("fetch", remote, "--quiet")
@@ -239,8 +434,54 @@ def release(
                 "commits": _commits(git, prod, main)[:20] if prod else [],
             },
             "prod_backup_trails_prod": (backup == prod) if (backup and prod) else None,
-            "message": "chain: feat/* → dev → main (bless) → prod (promote) → VPS (deploy_pull).",
+            "message": "chain: feat/* → dev → main (bless) → prod (promote) → VPS (deploy_pull). "
+                       "Before bless: stage='manifest' shows WHOSE work the bless would carry "
+                       "and its ship-consent state.",
         }
+
+    def manifest():
+        return _manifest(git, main, dev, remote, dev_branch, consent_rows,
+                         pointer_rows, verify_consent, transcript_home)
+
+    # ── MANIFEST ── read-only: who rides along, and are they approved?
+    if stage == "manifest":
+        man = manifest()
+        if not man.get("ok"):
+            return {**base, "status": "error", "exit_code": 1, "error": man.get("error")}
+        ff = _is_ancestor(git, main, dev)
+        verdict = ("fast-forward bless: every rider approved or exempt"
+                   if man["all_approved"] and ff else
+                   "bless would CUT a release of approved work only (mode='cut')")
+        return {**base, **man, "status": "manifest", "exit_code": 0, "ff": ff,
+                "message": f"{len(man['commits'])} rider(s) {main_branch}..{dev_branch}; "
+                           f"{len(man['unapproved_riders'])} unapproved/unattributed; "
+                           f"{len(man['dependencies'])} dependency conflict(s). {verdict}. "
+                           "Approve a project: noctus.dev.ship_consent action='challenge'."}
+
+    # ── BACKMERGE ── restore dev ⊇ main after a cut (merge commit, no checkout)
+    if stage == "backmerge":
+        from tools.noctus.dev._release_riders import backmerge_commit
+        if _is_ancestor(git, main, dev):
+            return {**base, "status": "up_to_date", "exit_code": 0,
+                    "message": f"{dev_branch} already contains {main_branch}; nothing to backmerge."}
+        bm = backmerge_commit(git, dev, main)
+        if not bm["ok"]:
+            return {**base, "status": "blocked", "exit_code": 1, "conflict": bm["detail"],
+                    "reason": f"merging {main_branch} into {dev_branch} conflicts — resolve on a "
+                              "feature branch (task_branch) and integrate; never force."}
+        plan = {**base, "backmerge_sha": bm["sha"],
+                "would_advance": f"{dev_branch} → {bm['sha'][:9]} (merge of {main_branch})"}
+        if not confirm:
+            return {**plan, "status": "planned", "exit_code": 0,
+                    "message": "clean merge available. Pass confirm=True to push it to dev."}
+        rc, out, err = git("push", remote, f"{bm['sha']}:refs/heads/{dev_branch}")
+        if rc != 0:
+            return {**plan, "status": "error", "exit_code": 1,
+                    "error": f"push to {dev_branch} failed (dev moved? re-run): "
+                             f"{err.strip() or out.strip()}"}
+        new_dev = _resolve(git, f"{remote}/{dev_branch}")
+        return {**plan, "status": "backmerged", "exit_code": 0, "new_dev_sha": new_dev,
+                "verified": new_dev == bm["sha"]}
 
     # ── BLESS (dev → main) ──
     if stage == "bless":
@@ -264,10 +505,19 @@ def release(
         if dev == main:
             return {**base, "status": "up_to_date", "exit_code": 0,
                     "message": f"{main_branch} already == {dev_branch}; nothing to bless."}
-        if not _is_ancestor(git, main, dev):
+        if release_branch:
+            return _bless_release_branch(
+                git, runner, base, manifest, remote, main, main_branch,
+                release_branch, confirm)
+        ff = _is_ancestor(git, main, dev)
+        man = manifest()
+        if not man.get("ok"):
             return {**base, "status": "blocked", "exit_code": 1,
-                    "reason": f"{main_branch} has commits not in {dev_branch} — not a clean "
-                              f"fast-forward. Reconcile on {dev_branch} first (never force main)."}
+                    "reason": f"cannot build the rider manifest: {man.get('error')} — "
+                              "an unreadable manifest never buys a bless."}
+        if not (man["all_approved"] and ff):
+            return _bless_cut(git, base, man, mode, confirm, remote, main,
+                              main_branch, dev_branch, ff, now)
         incoming = _commits(git, main, dev)
         # 🔴 CI-GREEN PRECONDITION (2026-08-22). noc-ship step 0b has always
         # called this MANDATORY, but nothing enforced it — so `1c83232f` was
@@ -292,7 +542,7 @@ def release(
                         "project-history, which this diff is not."
                     )}
         plan = {**base, "would_advance": f"{main_branch} → {dev[:9]}", "incoming_commits": incoming,
-                "ci": ci}
+                "ci": ci, "riders": {"all_approved": True, "commits": len(man["commits"])}}
         if docs_only and ci["verdict"] != "green":
             plan["ci_exception"] = ("docs-only diff (no executable path changed) — "
                                     "noc-ship step 0b's sole sanctioned CI exception")
@@ -398,6 +648,17 @@ def register(server) -> None:
             "stage='promote' snapshots the current prod onto prod-backup then "
             "fast-forwards prod to a blessed main sha (pass sha= to pin; default = "
             "main tip — which ships ALL of prod..main, flagged large_promote). "
+            "SHIP-CONSENT RIDERS (2026-09-22): stage='manifest' (read-only) lists "
+            "every commit main..dev grouped Noc-Branch trailer → branch-tree project "
+            "→ noctus.dev.ship_consent state (docs/project-history-only = exempt; "
+            "no trailer + no pointer evidence = unattributed = unapproved). bless "
+            "FFs only when every rider is approved/exempt; otherwise mode='cut' "
+            "(default) builds release/<YYYYMMDD-HHMM> = main + approved commits in "
+            "dev order (patch-id-equal skipped; REFUSES on a conflict or an approved "
+            "commit depending on an unapproved rider), confirm=True pushes THAT "
+            "branch; then bless release_branch=<name> confirm=True FFs main to it "
+            "once CI is green on its exact sha. mode='refuse' just blocks. "
+            "stage='backmerge' merges main into dev (merge commit) so dev ⊇ main. "
             "DRY-RUN by default — pass confirm=True to push. FF-only "
             "by construction (never force/reset/checkout). It is the ONLY sanctioned "
             "setter of NOCTUS_ALLOW_MAIN_PUSH, and only for its own push. After a "
@@ -409,17 +670,20 @@ def register(server) -> None:
             "confirm=False status/plan call is only warned. "
             "allow_stale_toolkit=True is the escape hatch (almost always "
             "wrong). See noctus.dev.toolkit_freshness. "
-            "status: status|planned|up_to_date|blocked|blessed|promoted|error|"
-            "refused_stale_toolkit."
+            "status: status|manifest|planned|planned_cut|cut_pushed|up_to_date|"
+            "blocked|blessed|promoted|backmerged|error|refused_stale_toolkit."
         ),
     )
     def _release(
         stage: str = "status",
         confirm: bool = False,
         sha: str | None = None,
+        mode: str = "cut",
+        release_branch: str | None = None,
         allow_stale_toolkit: bool = False,
     ) -> dict:
-        return release(stage=stage, confirm=confirm, sha=sha,
+        return release(stage=stage, confirm=confirm, sha=sha, mode=mode,
+                       release_branch=release_branch,
                        allow_stale_toolkit=allow_stale_toolkit)
 
 

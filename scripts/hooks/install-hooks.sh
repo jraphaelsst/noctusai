@@ -8,6 +8,7 @@
 #   pre-commit — 1. Syncs seed → template if products/seed/ is staged.
 #                2. Regenerates KB count blocks and stages them.
 #                3. Verifies CLAUDE.md ↔ KB INDEX sync (blocking).
+#   commit-msg — appends `Noc-Branch: <branch>` (ship-consent attribution).
 #   pre-push   — client-side branch protection: gates ALL pushes to
 #                main/prod behind NOCTUS_ALLOW_MAIN_PUSH=1 (routine work
 #                goes to dev; main is deploy-only, § 0), and always refuses
@@ -37,6 +38,15 @@ rm -f "$HOOKS_DIR/pre-push"
 ln -s "$REPO_ROOT/scripts/hooks/pre-push" "$HOOKS_DIR/pre-push"
 chmod +x "$REPO_ROOT/scripts/hooks/pre-push"
 echo "  pre-push: gate main/prod pushes (NOCTUS_ALLOW_MAIN_PUSH=1 to deploy) + refuse force/delete"
+
+# ─── commit-msg: ship-consent attribution trailer (Noc-Branch: <branch>).
+# Lets `noctus.dev.release stage=manifest` group dev..main riders by
+# branch → project, so bless never carries unapproved work to prod.
+# KB § PATTERNS/devops/ship-consent-riders.md
+rm -f "$HOOKS_DIR/commit-msg"
+ln -s "$REPO_ROOT/scripts/hooks/commit-msg" "$HOOKS_DIR/commit-msg"
+chmod +x "$REPO_ROOT/scripts/hooks/commit-msg"
+echo "  commit-msg: append Noc-Branch trailer (ship-consent attribution)"
 
 # ─── merge driver: kb-counts (regenerate auto-derived inventory blocks on merge)
 # `.gitattributes` maps the count-block-bearing KB docs to merge=kb-counts; the

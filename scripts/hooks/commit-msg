@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# ──────────────────────────────────────────────────────────────
+# commit-msg — ship-consent ATTRIBUTION trailer (2026-09-22).
+#
+# Appends `Noc-Branch: <current branch>` to every commit message that does not
+# already carry one, so `noctus.dev.release stage=manifest` can group the
+# commits `origin/main..origin/dev` would ship by the branch → project that
+# authored them, and bless can refuse to carry another agent's unapproved work
+# to prod. KB § PATTERNS/devops/ship-consent-riders.md.
+#
+# Skips (by design, never an error):
+#   • merge commits (MERGE_HEAD present) — a merge carries no authored diff;
+#   • detached HEAD — rebase / cherry-pick replays run detached, and the
+#     ORIGINAL trailer already rides in the replayed message, which is how
+#     the attribution survives `task_branch integrate`'s rebase onto dev.
+# An existing `Noc-Branch:` trailer is NEVER rewritten (first author wins —
+# a cherry-pick onto a release branch keeps the originating branch).
+# Never blocks a commit: attribution failure degrades to "unattributed",
+# which the manifest already treats as UNAPPROVED (refuse-not-null there).
+# ──────────────────────────────────────────────────────────────
+msg_file="$1"
+[ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+# An empty message aborts the commit — never turn it into a trailer-only one.
+grep -qvE '^[[:space:]]*(#.*)?$' "$msg_file" || exit 0
+
+git_dir="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+[ -f "$git_dir/MERGE_HEAD" ] && exit 0
+
+branch="$(git symbolic-ref -q --short HEAD 2>/dev/null)" || exit 0
+[ -n "$branch" ] || exit 0
+
+if git interpret-trailers --parse < "$msg_file" 2>/dev/null | grep -qi '^Noc-Branch:'; then
+    exit 0
+fi
+
+if ! git interpret-trailers --in-place --if-exists doNothing \
+        --trailer "Noc-Branch: $branch" "$msg_file" 2>/dev/null; then
+    echo "commit-msg: WARNING — could not append Noc-Branch trailer; this commit will read as" \
+         "'unattributed' (= unapproved) in noctus.dev.release stage=manifest." >&2
+fi
+exit 0
