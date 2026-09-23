@@ -64,6 +64,11 @@ from noctusai_lib.integrations.documents.abnt import (
     render_abnt_pdf,
     render_word_html,
 )
+from noctusai_lib.integrations.documents.html_pdf import (
+    HtmlPdfError,
+    cp1252_safe,
+    render_html_pdf,
+)
 from noctusai_lib.integrations.documents.birthdate import find_birthdate, normalize
 from noctusai_lib.integrations.documents.civil_status import (
     ESTADO_CIVIL_VALORES,
@@ -207,6 +212,9 @@ def __getattr__(name: str):  # pragma: no cover - lazy proxy
 
 
 __all__ = [
+    "HtmlPdfError",
+    "cp1252_safe",
+    "render_html_pdf",
     "DEFAULT_DOCUMENT_PROVIDER",
     "DOCUMENT_ANALYSIS_MODELS",
     "DOCUMENT_PROVIDERS",
