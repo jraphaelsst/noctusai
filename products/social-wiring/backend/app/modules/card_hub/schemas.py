@@ -422,6 +422,10 @@ class ContratoPatchBody(StrictHttpModel):
     #: Migration 114. ISO date (AAAA-MM-DD); null clears it. Parsed by the
     #: service so a malformed date is a named 400, not a 422.
     assinatura_data: Optional[str] = Field(default=None, max_length=32)
+    #: Migration 157 — the signing GATE. 'fisica' while an e-signature
+    #: envelope is live is the service's typed 409
+    #: `CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO`.
+    modalidade_assinatura: Optional[Literal["digital", "fisica"]] = None
     #: Migration 114. Per-contract override of the office deadline to resolve
     #: pendências; null = the office default (10). > 0 when set — a service
     #: 400, not a 422.

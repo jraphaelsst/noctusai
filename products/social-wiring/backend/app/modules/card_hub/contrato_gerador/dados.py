@@ -360,7 +360,9 @@ class Testemunha:
     #: Contract 08's real witnesses have only this, never a CPF.
     rg: Optional[str]
     #: Optional — an office MAY hold one, validated (mod-11) when present,
-    #: but never required and never printed (migration 108/143 revisited).
+    #: but never required. Never printed in a DIGITAL contract (migration
+    #: 108/143 revisited); a FÍSICA contract (migration 157) prints it beside
+    #: the RG under the witness's signature line when present.
     cpf: Optional[str] = None
     #: [migration 143] Optional at readiness (an aviso, not a faltando) —
     #: required only to add this witness to a D4Sign envelope.
@@ -447,6 +449,11 @@ class DadosContrato:
     #: blocks. NEVER inferred here or anywhere else from a date — this is
     #: exactly the stored column, nothing derived.
     processo_legado: bool = False
+    #: Migration 157. `atendimento_contratos.modalidade_assinatura` —
+    #: 'digital' (e-signature; the instrument carries the DA ASSINATURA
+    #: DIGITAL clause) or 'fisica' (printed, signed by hand: no digital
+    #: clause, signature lines, "em NN vias"). Exactly the stored column.
+    modalidade_assinatura: str = "digital"
 
 
 #: Papéis that sign the instrument. `fiador`/`outro` are parties to the deal

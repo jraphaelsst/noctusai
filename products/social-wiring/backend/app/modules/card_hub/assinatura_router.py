@@ -1,6 +1,11 @@
 """`/api/clientes/{cliente_id}/contratos/{contrato_id}/assinatura[...]` —
 e-signature envelope for a contract version. Contract §3.1-§3.3.
 
+Migration 157 adds `POST .../{contrato_id}/assinatura-fisica` — the manual
+close-out of a PHYSICAL contract (multipart; the scanned signed PDF is an
+optional `file`). Its literal segment `assinatura-fisica` is distinct from
+`assinatura`, so neither shadows the other.
+
 A separate file, `include_router`'d into `card_hub/router.py`'s `router`
 with one line — same layout `contrato_gerador/router.py` uses. All three
 paths here share the segment `.../{contrato_id}/assinatura`, a literal
@@ -21,7 +26,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
@@ -119,6 +124,36 @@ async def post_assinatura_cancelar_route(
         cliente_id,
         contrato_id,
         motivo=body.motivo,
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.post("/{cliente_id}/contratos/{contrato_id}/assinatura-fisica")
+async def post_assinatura_fisica_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    file: Optional[UploadFile] = File(None),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+) -> dict:
+    """Migration 157 — "Marcar como assinado" for a 'fisica' contract.
+    Returns the contract (same shape `GET .../contratos` lists)."""
+    user, org_id = auth_parts(auth)
+    arquivo = None
+    if file is not None:
+        arquivo = (
+            await file.read(),
+            file.filename or "contrato-assinado.pdf",
+            file.content_type or "application/octet-stream",
+        )
+    return await service.marcar_assinado_fisico(
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        contrato_id,
+        arquivo=arquivo,
         usuario_id=getattr(user, "id", None),
     )
 

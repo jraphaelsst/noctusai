@@ -119,6 +119,8 @@ def obter_geracao(
         # Migration 151 — so the UI can show the dispensation is active
         # even before the reader gets down to the avisos that name it.
         "processo_legado": dados.processo_legado,
+        # Migration 157 — which instrument `gerar` will render.
+        "modalidade_assinatura": dados.modalidade_assinatura,
         "switches": switches,
         "faltando": avaliacao.faltando,
         "bloqueios": avaliacao.bloqueios,
@@ -247,6 +249,9 @@ async def gerar(
         docx=renderizado.docx,
         contexto_sha256=snapshot_sha256(dados, politica, data),
         usuario_id=usuario_id,
+        # Migration 157 — so "Baixar para impressão" only ever offers a
+        # rendering that actually carries the signature lines.
+        modalidade_assinatura=dados.modalidade_assinatura,
     )
     return {"versao": versao, "avisos": avaliacao.avisos}
 

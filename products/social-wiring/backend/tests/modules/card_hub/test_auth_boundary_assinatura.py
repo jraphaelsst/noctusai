@@ -20,6 +20,8 @@ _ROUTES: tuple[tuple[str, str], ...] = (
     ("post", "/api/clientes/{cliente_id}/contratos/{contrato_id}/assinatura"),
     ("get", "/api/clientes/{cliente_id}/contratos/{contrato_id}/assinatura"),
     ("post", "/api/clientes/{cliente_id}/contratos/{contrato_id}/assinatura/cancelar"),
+    # Migration 157 — the physical close-out.
+    ("post", "/api/clientes/{cliente_id}/contratos/{contrato_id}/assinatura-fisica"),
 )
 
 

@@ -492,8 +492,10 @@ class TestGeracao:
         assert r.status_code == 200, r.text
         body = r.json()
         assert set(body) == {"contrato_id", "pronto", "modelo_derivado", "modelo_confere",
-                             "modelo_automatico", "processo_legado", "switches", "faltando",
-                             "bloqueios", "avisos"}
+                             "modelo_automatico", "processo_legado", "modalidade_assinatura",
+                             "switches", "faltando", "bloqueios", "avisos"}
+        # Migration 157 — a contract row with no stored modalidade is digital.
+        assert body["modalidade_assinatura"] == "digital"
         assert body["contrato_id"] == ids["contrato"] and body["pronto"] is False
         # No parcelas is UNKNOWN, never "à vista" by absence.
         assert body["switches"]["a_vista"] is False
@@ -668,6 +670,31 @@ class TestVariantes:
         geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
         assert geracao["pronto"] is True, (geracao["faltando"], geracao["bloqueios"])
         assert geracao["switches"]["tem_permuta"] is True
+
+
+class TestModalidadeAssinatura:
+    """Migration 157 — the generated VERSION records which modalidade it was
+    rendered with, so "Baixar para impressão" only offers a física rendering."""
+
+    @pytest.mark.parametrize("modalidade", ["digital", "fisica"])
+    def test_the_version_carries_the_modalidade_it_was_rendered_with(
+        self, client, scoped, fake_storage, modalidade
+    ):
+        ids = _seed_completo(scoped)
+        _contrato_over(scoped, ids, modalidade_assinatura=modalidade)
+
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert geracao["modalidade_assinatura"] == modalidade
+        assert geracao["switches"]["tem_assinatura_digital"] is (modalidade == "digital")
+
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
+        assert r.status_code == 201, r.text
+        assert r.json()["versao"]["modalidade_assinatura"] == modalidade
+        assert _rows(scoped, "atendimento_contrato_versoes")[0]["modalidade_assinatura"] == modalidade
+
+        contrato = client.get(f"/api/clientes/{ids['cliente']}/contratos", headers=_auth()).json()["contratos"][0]
+        assert contrato["modalidade_assinatura"] == modalidade
+        assert contrato["versao_atual"]["modalidade_assinatura"] == modalidade
 
 
 class TestAssinaturaData:

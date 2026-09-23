@@ -502,6 +502,8 @@ def carregar(
         origem=contrato.get("origem") or "upload",
         # Migration 151.
         processo_legado=bool(contrato.get("processo_legado")),
+        # Migration 157.
+        modalidade_assinatura=contrato.get("modalidade_assinatura") or "digital",
     )
     return dados, atendimento_id
 

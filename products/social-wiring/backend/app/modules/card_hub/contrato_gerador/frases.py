@@ -247,6 +247,35 @@ def signatario_linha(p: Pessoa) -> str:
     return nome_email_linha(p.nome, p.email)
 
 
+# ─── assinatura física (migration 157) ────────────────────────────────────
+
+#: The line a party signs on, printed ABOVE each signer's and each
+#: witness's name in a FÍSICA contract.
+LINHA_ASSINATURA = "______________________________"
+
+
+def documento_linha(cpf: Optional[str]) -> str:
+    """"CPF 000.000.000-00" (or CNPJ) under a física signer's name; "" when
+    there is no document to print — never a dangling label."""
+    if not so_digitos(cpf):
+        return ""
+    rotulo, numero = documento(cpf)
+    return f"{rotulo} {numero}"
+
+
+def testemunha_documento_linha(cpf: Optional[str], rg: Optional[str]) -> str:
+    """A física witness's documents: "CPF 000.000.000-00 / RG 00.000.000-0",
+    or just the one that exists (RG is gate-required; CPF optional)."""
+    partes = [p for p in (documento_linha(cpf), f"RG {rg.strip()}" if (rg or "").strip() else "") if p]
+    return " / ".join(partes)
+
+
+def assinante_fisico(p: Pessoa) -> dict[str, str]:
+    """A física signer's block: name (upper) + CPF — no e-mail (nothing is
+    e-mailed for a física contract)."""
+    return {"nome": (p.nome or "").upper(), "documento": documento_linha(p.cpf)}
+
+
 # ─── preço / parcelas (spec §2.3) ─────────────────────────────────────────
 
 

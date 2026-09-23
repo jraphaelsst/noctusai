@@ -457,6 +457,9 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
         "tem_declaracao_partes": politica.tem_declaracao_partes,
         # [Q12] the office's value, in every modelo (permuta included).
         "tem_multa_diaria_posse": d.imobiliaria.posse_multa_diaria is not None,
+        # Migration 157 — a FÍSICA contract is printed and signed by hand:
+        # no DA ASSINATURA DIGITAL clause, signature lines instead.
+        "tem_assinatura_digital": d.modalidade_assinatura != "fisica",
     }
 
 
@@ -655,8 +658,10 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                     p.parte_id,
                     ancora=_ancora(p),
                 )
-            # [Q14] the e-mail is printed beside the name in the signature block.
-            if not p.email:
+            # [Q14] the e-mail is printed beside the name in the signature
+            # block — of a DIGITAL contract only; a física one (migration
+            # 157) prints name + CPF under a signature line, no e-mail.
+            if not p.email and d.modalidade_assinatura != "fisica":
                 av.avisa("PARTE_SEM_EMAIL", f"{_nome(p)} não tem e-mail; o bloco de assinatura sai sem ele.")
             if p.cpf and not cpf_valido(p.cpf):
                 av.bloqueia("CPF_INVALIDO", f"O CPF de {_nome(p)} não confere (dígitos verificadores).")
@@ -1276,12 +1281,16 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
         # faltando, so a witness the office hasn't e-mail'd yet never blocks
         # `av.pronto` (readiness), only surfaces before the operator tries to
         # send it.
-        if not t.email:
+        if not t.email and d.modalidade_assinatura != "fisica":
             av.avisa(
                 "TESTEMUNHA_SEM_EMAIL",
                 f"A testemunha {i} não tem e-mail cadastrado — necessário apenas para o envio de assinatura digital.",
             )
-    if not org.plataforma_assinatura_nome or not org.plataforma_assinatura_url:
+    # Only the DIGITAL clause names the platform — a física contract
+    # (migration 157) has no such clause, so it never needs one.
+    if d.modalidade_assinatura != "fisica" and (
+        not org.plataforma_assinatura_nome or not org.plataforma_assinatura_url
+    ):
         av.falta(
             "imobiliaria.plataforma_assinatura",
             "Plataforma de assinatura digital (nome e endereço)",

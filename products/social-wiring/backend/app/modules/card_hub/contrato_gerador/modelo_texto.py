@@ -170,8 +170,10 @@ Declaram {{ V.art }} {{ V.NOME }} e {{ C.art }} {{ C.NOME }} haverem vistoriado 
 {{ C.pl('Declara','Declaram') }} {{ C.art }} {{ C.NOME }} {{ C.pl('haver','haverem') }} pessoalmente vistoriado o imóvel objeto da presente negociação{% if imovel.em_condominio %}, bem como as áreas de uso comum do condomínio onde o mesmo está localizado{% endif %}, estando {{ C.g('ciente','ciente','cientes') }} do estado atual de conservação {{ 'de ambas as áreas ora mencionadas' if imovel.em_condominio else 'do imóvel' }}, pelo que {{ C.pl('manifesta','manifestam') }} seu conhecimento e aceitação.
 {%p endif %}
 
+{%p if tem_assinatura_digital %}
 CLÁUSULA {{ cl.assinatura_digital.ORD }} - DA ASSINATURA DIGITAL
 As Partes expressamente concordam em utilizar e reconhecem como válida qualquer forma de comprovação de anuência aos termos ora acordados em formato eletrônico através da plataforma {{ assinatura.plataforma_nome }} ({{ assinatura.plataforma_url }}). A formalização do negócio por meio digital será suficiente para a validade e integral vinculação das partes ao presente Contrato, nos termos da Medida Provisória n.º 2.200-2/2001 e demais normas aplicáveis, produzindo os mesmos efeitos legais das assinaturas manuscritas.
+{%p endif %}
 
 CLÁUSULA {{ cl.registro.ORD }} – AUTORIZAÇÃO DE REGISTRO DESTE INSTRUMENTO
 Fica o Senhor Oficial do Registro de Imóveis competente autorizado, mediante provocação de qualquer das partes contratantes, a promover o registro do presente instrumento, na forma hábil.
@@ -194,8 +196,13 @@ Neste ato {{ corretagem.contratantes_texto }} {{ corretagem.contrata }} {{ corre
 
 CLÁUSULA {{ cl.foro.ORD }} - DA ELEIÇÃO DO FORO
 As partes elegem o foro da Comarca de {{ foro.comarca }}, para dirimir as questões decorrentes do presente instrumento, renunciando a outro, por mais privilegiado que seja.
+{%p if tem_assinatura_digital %}
 E, por estarem assim justos e contratados, os contraentes assinam o presente instrumento de forma digital, na presença das testemunhas abaixo identificadas.
+{%p else %}
+E, por estarem assim justos e contratados, os contraentes assinam o presente instrumento em {{ vias }} vias de igual teor e forma, na presença das testemunhas abaixo identificadas.
+{%p endif %}
 {{ assinatura.local }}, {{ assinatura.data_extenso }}.
+{%p if tem_assinatura_digital %}
 {{ V.NOME }}
 {%p for p in V_signatarios %}
 {{ p }}
@@ -209,6 +216,32 @@ TESTEMUNHAS:
 {{ t.linha }}
 RG {{ t.rg }}
 {%p endfor %}
+{%p else %}
+{{ V.NOME }}
+{%p for s in V_assinantes_fisicos %}
+{{ linha_assinatura }}
+{{ s.nome }}
+{%p if s.documento %}
+{{ s.documento }}
+{%p endif %}
+{%p endfor %}
+{{ C.NOME }}
+{%p for s in C_assinantes_fisicos %}
+{{ linha_assinatura }}
+{{ s.nome }}
+{%p if s.documento %}
+{{ s.documento }}
+{%p endif %}
+{%p endfor %}
+TESTEMUNHAS:
+{%p for t in testemunhas_fisicas %}
+{{ linha_assinatura }}
+{{ t.nome }}
+{%p if t.documento %}
+{{ t.documento }}
+{%p endif %}
+{%p endfor %}
+{%p endif %}
 """
 
 

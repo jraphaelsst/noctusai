@@ -419,6 +419,10 @@ _MAX_BODY_PATH_OVERRIDES = {
     # limit and stays under this outer bound.
     "/api/clientes/*/contratos": 30 * 1024 * 1024,  # 30 MB
     "/api/clientes/*/contratos/*/versoes": 30 * 1024 * 1024,  # 30 MB
+    # Migration 157 — the scanned signed PDF of a PHYSICAL contract
+    # (POST .../contratos/{contrato_id}/assinatura-fisica), stored through
+    # the same 25 MB-policy version store.
+    "/api/clientes/*/contratos/*/assinatura-fisica": 30 * 1024 * 1024,  # 30 MB
     # Checklist-extra upload (POST
     # /api/clientes/{cliente_id}/checklist-extras/{extra_id}/documento —
     # card_hub, migration 083). A THIRD `/api/clientes` entry, for the same

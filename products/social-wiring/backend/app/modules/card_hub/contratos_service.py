@@ -28,6 +28,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import (
+    AppException,
     ConflictError,
     NotFoundError,
     ValidationError_,
@@ -67,6 +68,14 @@ STATUSES: tuple[str, ...] = (
     "cancelado",
 )
 
+#: Migration 157 — how the contract gets signed. 'digital' = the
+#: e-signature envelope flow (`assinatura_service.enviar`, migration 134);
+#: 'fisica' = printed and signed by hand (no envelope may be sent; closed
+#: out by `assinatura_service.marcar_assinado_fisico`). The DB default
+#: 'digital' keeps every pre-157 contract on its old behaviour.
+MODALIDADES: tuple[str, ...] = ("digital", "fisica")
+MODALIDADE_PADRAO = "digital"
+
 CAMPOS_EDITAVEIS: tuple[str, ...] = (
     "titulo",
     "modelo",
@@ -74,7 +83,98 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     # Migration 114.
     "assinatura_data",
     "prazo_pendencias_dias",
+    # Migration 157.
+    "modalidade_assinatura",
 )
+
+#: Migration 134's envelope table and the statuses that make an envelope
+#: "live" (in flight at the provider). Owned HERE, not in
+#: `assinatura_service` (which imports this module — the reverse import
+#: would be a cycle), because `atualizar` must refuse switching a contract
+#: to 'fisica' while one is live. `assinatura_service` reads the same
+#: tuple, so "live" has exactly one definition.
+ASSINATURAS_TABLE = "atendimento_contrato_assinaturas"
+ENVELOPE_VIVO_STATUSES: tuple[str, ...] = ("pendente", "parcial")
+
+
+# ─── error taxonomy (migration 157) ──────────────────────────────────────
+
+
+class ContratoFisicoSemAssinaturaDigital(AppException):
+    """`assinatura_service.enviar` on a contract whose modalidade is
+    'fisica' — a physical contract is printed and signed by hand; it never
+    goes to the e-signature platform."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="CONTRATO_FISICO_SEM_ASSINATURA_DIGITAL",
+            message=(
+                "Este contrato é de assinatura física: imprima-o para assinatura "
+                "manual. Para enviar por e-mail, mude a modalidade para digital."
+            ),
+            status_code=409,
+        )
+
+
+class ContratoComAssinaturaDigitalEmAndamento(AppException):
+    """Switching to 'fisica' while an envelope is live would leave a
+    provider-side signing in flight for a contract the office now signs on
+    paper — cancel the envelope first."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO",
+            message=(
+                "Há uma assinatura digital em andamento para este contrato. "
+                "Cancele-a antes de mudar para assinatura física."
+            ),
+            status_code=409,
+        )
+
+
+class ContratoNaoEFisico(AppException):
+    """`marcar_assinado_fisico` on a 'digital' contract — a digital
+    contract is marked signed by the provider's webhook, never by hand."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="CONTRATO_NAO_E_FISICO",
+            message=(
+                "Só um contrato de assinatura física pode ser marcado como "
+                "assinado manualmente — o digital é concluído pela plataforma "
+                "de assinatura."
+            ),
+            status_code=409,
+        )
+
+
+class ContratoJaAssinado(AppException):
+    def __init__(self) -> None:
+        super().__init__(
+            code="CONTRATO_JA_ASSINADO",
+            message="Este contrato já está marcado como assinado.",
+            status_code=409,
+        )
+
+
+def modalidade(row: dict) -> str:
+    """The row's modalidade — a pre-157 row read before the migration is
+    applied carries no column at all, which IS 'digital' (the column's own
+    default), never an unknown."""
+    return row.get("modalidade_assinatura") or MODALIDADE_PADRAO
+
+
+def envelope_vivo(client: Any, org_id: UUID, contrato_id: UUID) -> Optional[dict]:
+    """The contract's in-flight envelope (pendente/parcial), or None."""
+    rows = (
+        _t(client, ASSINATURAS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("contrato_id", str(contrato_id))
+        .in_("status", list(ENVELOPE_VIVO_STATUSES))
+        .execute()
+    ).data or []
+    return rows[0] if rows else None
 
 #: The docx sibling `nova_versao_gerada` stores beside a gerado version's PDF
 #: (migration 120) is always this — never a column, see that migration's
@@ -175,6 +275,10 @@ def _versao_out(row: dict, resolved: dict) -> dict:
         # both a PDF (this row's own mime_type/tamanho_bytes) and this docx
         # sibling — `formato=docx` on `.../versoes/{id}/url` needs it.
         "docx_disponivel": bool(row.get("docx_storage_path")),
+        # Migration 157. Which contract modalidade a GERADO version was
+        # rendered with; null for upload/assinado and pre-157 gerado rows.
+        # "Baixar para impressão" is only offered for 'fisica'.
+        "modalidade_assinatura": row.get("modalidade_assinatura"),
     }
 
 
@@ -209,6 +313,8 @@ def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
         "processo_legado_por": table_reads.actor(resolved, row.get("processo_legado_por")),
         "processo_legado_em": row.get("processo_legado_em"),
         "processo_legado_motivo": row.get("processo_legado_motivo"),
+        # Migration 157 — the signing GATE: digital (e-signature) | fisica.
+        "modalidade_assinatura": modalidade(row),
         "created_at": row["created_at"],
         "updated_at": row.get("updated_at"),
         # Highest `numero` among LIVE versions — `linhas` above already
@@ -578,6 +684,7 @@ async def nova_versao_gerada(
     docx: bytes,
     contexto_sha256: str,
     usuario_id: Optional[UUID],
+    modalidade_assinatura: str = MODALIDADE_PADRAO,
 ) -> dict:
     """A version produced by the F5 generator (`card_hub/contrato_gerador`):
     origem='gerado' plus the SHA-256 of the data it was rendered from
@@ -613,7 +720,12 @@ async def nova_versao_gerada(
         data=data,
         rotulo=None,
         usuario_id=usuario_id,
-        extra={"origem": "gerado", "contexto_sha256": contexto_sha256},
+        extra={
+            "origem": "gerado",
+            "contexto_sha256": contexto_sha256,
+            # Migration 157 — the modalidade this rendering carries.
+            "modalidade_assinatura": modalidade_assinatura,
+        },
         docx=docx,
     )
 
@@ -698,6 +810,23 @@ def atualizar(
             f"Permitidos: {', '.join(STATUSES)}",
             field="status",
         )
+    if "modalidade_assinatura" in valores:
+        nova = valores["modalidade_assinatura"]
+        if nova not in MODALIDADES:
+            raise ValidationError_(
+                f"modalidade de assinatura inválida: {nova!r}. "
+                f"Permitidas: {', '.join(MODALIDADES)}",
+                field="modalidade_assinatura",
+            )
+        # Migration 157. A live envelope means the provider is collecting
+        # signatures right now — going 'fisica' under it would leave that
+        # in flight for a contract the office now signs on paper.
+        if (
+            nova == "fisica"
+            and modalidade(atual) != "fisica"
+            and envelope_vivo(client, org_id, contrato_id) is not None
+        ):
+            raise ContratoComAssinaturaDigitalEmAndamento()
 
     patch = {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
 
@@ -915,7 +1044,15 @@ def remover_contrato(
 
 __all__ = [
     "ALLOWED_MIME_TYPES",
+    "ASSINATURAS_TABLE",
     "CAMPOS_EDITAVEIS",
+    "ContratoComAssinaturaDigitalEmAndamento",
+    "ContratoFisicoSemAssinaturaDigital",
+    "ContratoJaAssinado",
+    "ContratoNaoEFisico",
+    "ENVELOPE_VIVO_STATUSES",
+    "MODALIDADES",
+    "MODALIDADE_PADRAO",
     "MAX_UPLOAD_BYTES",
     "MIME_DOCX",
     "MODELOS",
@@ -926,8 +1063,10 @@ __all__ = [
     "atualizar",
     "criar",
     "definir_status",
+    "envelope_vivo",
     "exigir_contrato",
     "listar",
+    "modalidade",
     "nova_versao",
     "nova_versao_assinada",
     "nova_versao_gerada",

@@ -17,6 +17,12 @@ WHAT THIS OWNS
   envelope's status, not a page render.
 - `cancelar` (§3.3): cancel the live envelope at the provider and put the
   contract back in `em_revisao`.
+- `marcar_assinado_fisico` (migration 157): the close-out for a contract
+  whose `modalidade_assinatura` is 'fisica' — printed and signed by hand,
+  never sent to the provider. Sets `assinado` (stamped `status_por`/
+  `status_em` via `contratos_service.definir_status`) and optionally stores
+  the scanned signed PDF as an `origem='assinado'` version through the SAME
+  LGPD-logged version store the webhook path uses.
 - `aplicar_evento_webhook` (§3.4): the state-after a webhook delivers —
   idempotent on `(provedor, external_id, status)`, and on `concluido`
   downloads the signed PDF and stores it as a NEW version
@@ -56,7 +62,12 @@ from noctusai_lib.integrations.signature import (
     is_forward_transition,
 )
 from noctusai_lib.integrations.storage import StorageBackend
-from noctusai_lib.primitives.exceptions import AppException, NotFoundError
+from noctusai_lib.primitives.exceptions import (
+    AppException,
+    ConflictError,
+    NotFoundError,
+    ValidationError_,
+)
 
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import services as svc
@@ -75,7 +86,9 @@ TABLE = "atendimento_contrato_assinaturas"
 #: would raise before this service ever ran, the wrong error shape).
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-_ENVELOPE_VIVO_STATUSES = ("pendente", "parcial")
+#: One definition of "live" — owned by `contratos_service` (its `atualizar`
+#: refuses going 'fisica' under a live envelope, migration 157).
+_ENVELOPE_VIVO_STATUSES = contratos_svc.ENVELOPE_VIVO_STATUSES
 
 #: Statuses `aplicar_evento_webhook` treats as terminal for
 #: `is_forward_transition` — once a row reaches one of these, only a
@@ -338,9 +351,16 @@ async def enviar(
 
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     try:
-        contratos_svc.exigir_contrato(client, org_id, atendimento_id, contrato_id)
+        contrato = contratos_svc.exigir_contrato(client, org_id, atendimento_id, contrato_id)
     except NotFoundError:
         raise ContratoNaoEncontrado(contrato_id) from None
+
+    # Migration 157 — THE GATE. A 'fisica' contract is printed and signed by
+    # hand: nothing is ever e-mailed or sent to the provider. Checked right
+    # after the contract resolves (404 first), before any version/provider
+    # work — the modalidade alone decides this request is not allowed.
+    if contratos_svc.modalidade(contrato) == "fisica":
+        raise contratos_svc.ContratoFisicoSemAssinaturaDigital()
 
     try:
         versao = contratos_svc.VERSOES_STORE.exigir(client, org_id, contrato_id, versao_id)
@@ -418,6 +438,80 @@ async def enviar(
     )
 
     return _sig_out(row)
+
+
+# ─── migration 157 — POST .../assinatura-fisica ─────────────────────────
+
+#: The scanned signed copy is a PDF — a .docx is an editable rendering, not
+#: evidence that anybody signed anything.
+MIME_ASSINADO_FISICO = "application/pdf"
+
+
+async def marcar_assinado_fisico(
+    client: Any,
+    storage: StorageBackend,
+    org_id: UUID,
+    cliente_id: UUID,
+    contrato_id: UUID,
+    *,
+    arquivo: Optional[tuple[bytes, str, str]],
+    usuario_id: Optional[Any],
+) -> dict:
+    """Close out a PHYSICAL contract: status 'assinado' (stamped by/when),
+    plus — optionally — the scanned signed PDF as a new version.
+
+    `arquivo` is `(data, filename, content_type)` or None.
+
+    Order: 404 contract -> 409 not 'fisica' -> 409 cancelado -> 400 not a
+    PDF -> 409 already assinado with nothing to attach. An already-signed
+    contract MAY receive its scan later (the human signs today, scans
+    tomorrow) — that stores the version and leaves the original `status_por`
+    / `status_em` untouched: they answer "who marked it signed, when", which
+    a later upload does not change.
+    """
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    try:
+        contrato = contratos_svc.exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    except NotFoundError:
+        raise ContratoNaoEncontrado(contrato_id) from None
+
+    if contratos_svc.modalidade(contrato) != "fisica":
+        raise contratos_svc.ContratoNaoEFisico()
+    if contrato["status"] == "cancelado":
+        raise ConflictError(
+            "Contrato cancelado não pode ser marcado como assinado.",
+            resource=contratos_svc.TABLE,
+        )
+    if arquivo is not None and arquivo[2] != MIME_ASSINADO_FISICO:
+        raise ValidationError_(
+            "O contrato assinado digitalizado deve ser um PDF.", field="file"
+        )
+    ja_assinado = contrato["status"] == "assinado"
+    if ja_assinado and arquivo is None:
+        raise contratos_svc.ContratoJaAssinado()
+
+    if arquivo is not None:
+        data, filename, content_type = arquivo
+        # Same LGPD-logged version store every other version uses —
+        # `origem='assinado'` (migration 134), the operator as `enviado_por`.
+        await contratos_svc.nova_versao_assinada(
+            client,
+            storage,
+            org_id,
+            atendimento_id,
+            contrato_id,
+            data=data,
+            content_type=content_type,
+            filename=filename,
+            usuario_id=usuario_id,
+        )
+    if not ja_assinado:
+        contratos_svc.definir_status(
+            client, org_id, contrato_id, "assinado", usuario_id=usuario_id
+        )
+
+    atualizado = contratos_svc.exigir_contrato(client, org_id, atendimento_id, contrato_id)
+    return contratos_svc.saida(client, org_id, atualizado)
 
 
 # ─── §3.2 — GET .../assinatura (read-only, never calls the provider) ────
@@ -602,6 +696,8 @@ __all__ = [
     "aplicar_evento_webhook",
     "buscar_por_external_id",
     "cancelar",
+    "MIME_ASSINADO_FISICO",
     "enviar",
+    "marcar_assinado_fisico",
     "obter",
 ]

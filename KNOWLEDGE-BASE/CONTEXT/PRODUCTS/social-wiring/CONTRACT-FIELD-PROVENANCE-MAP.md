@@ -141,6 +141,10 @@ document set (text-layer and scan variants) with an answer key (`esperado.json`)
 | `cl.<key>.ORD` / `cl.<key>.ref` (16 keys) | §4 | derived | `numeracao.py::numerar_clausulas` | none — pure function of the switches | — | n/a (derivation, not a data field) |
 | `par(<key>)` | §2.0 | derived | `numeracao.py::ContadorParagrafos` | none | — | n/a (derivation) |
 | switches `tem_*`, `a_vista`, `ad_corpus` | §1.1 | derived | `derivacao.py:284 derivar_switches` | none — computed from the rows below every render; `ad_corpus` reads `atendimento_negociacao_termos.ad_corpus` (migration 114, tri-state) | `PUT /api/clientes/{cliente_id}/negociacao/termos` (`negociacao_estruturada_router.py:67`) sets `ad_corpus`/`itens_integrantes`/etc.; the rest derive from parcelas/financiamento/intermediários | `extracted_and_confirmable` for `ad_corpus`; the rest `manual_entry_only` (derived from manually-entered parcela types) |
+| `modalidade_assinatura` → `tem_assinatura_digital` (migration 157) | §2.13/§2.17 | none — operator choice per contract | — | `atendimento_contratos.modalidade_assinatura` (`digital` default \| `fisica`) | `PATCH /api/clientes/{cliente_id}/contratos/{contrato_id}`; going `fisica` under a live envelope is 409 `CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO` | `manual_entry_only` — `fisica` drops the §2.13 clause (numbering re-flows) and swaps the §2.17 closing/signature block |
+| `vias` (física) | §2.17 | derived | `contexto.py::montar_contexto` — one per signer (`len(vendedores)+len(compradores)`), min 2, `numero_com_extenso(…, largura=2)` | none | — | n/a (derivation) |
+| `V_assinantes_fisicos` / `C_assinantes_fisicos` (`s.nome`, `s.documento`), `linha_assinatura` (física) | §2.17 | derived from the partes rows | `frases.py::assinante_fisico` / `documento_linha` (NOME upper + "CPF …"; no e-mail); `frases.LINHA_ASSINATURA` | none (reads the partes' `nome_oficial`/`cpf`) | — | `manual_entry_only` (via the partes rows) |
+| `testemunhas_fisicas` (`t.nome`, `t.documento`) (física) | §2.17 | derived from the testemunhas rows | `frases.py::testemunha_documento_linha` ("CPF … / RG …", or just the one present) | `org_testemunhas.{nome,cpf,rg}` | same endpoints as the Testemunhas rows | `manual_entry_only` — the física block is the ONE place a witness CPF is printed (beside the RG) |
 | `contrato.modelo` (check only) | — | none | `derivacao.py:321 modelo_derivado` | `atendimento_contratos.modelo` | `PATCH /api/clientes/{cliente_id}/contratos/{contrato_id}`; `_contrato` only **warns** on mismatch (`MODELO_DIVERGENTE`), never blocks | `manual_entry_only` |
 
 ### Imóvel objeto (spec rows 9–18; clause §2.2)
@@ -490,6 +494,16 @@ pre-composed strings are themselves covered by the `certidoes.grupos` /
 | `tem_saldo_devedor` | Contrato / assinatura (§1.1 switches) |
 | `testemunhas` | Testemunhas |
 | `titulo_aquisitivo` | Imóvel objeto |
+| `C_assinantes_fisicos` | Contrato / assinatura (física, migration 157) |
+| `V_assinantes_fisicos` | Contrato / assinatura (física, migration 157) |
+| `linha_assinatura` | Contrato / assinatura (física, migration 157) |
+| `s.documento` | Contrato / assinatura (física, migration 157) |
+| `s.nome` | Contrato / assinatura (física, migration 157) |
+| `t.documento` | Testemunhas (física, migration 157) |
+| `t.nome` | Testemunhas (física, migration 157) |
+| `tem_assinatura_digital` | Contrato / assinatura (§1.1 switches) |
+| `testemunhas_fisicas` | Testemunhas (física, migration 157) |
+| `vias` | Contrato / assinatura (física, migration 157) |
 
 ## 4 · Ranked gap list
 

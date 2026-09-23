@@ -39,10 +39,13 @@ ORDEM_CLAUSULAS: tuple[str, ...] = (
     "foro",
 )
 
-#: The three conditional clauses and the switch that includes each (§0).
+#: The conditional clauses and the switch that includes each (§0).
+#: `assinatura_digital` (migration 157) is off for a FÍSICA contract — the
+#: clauses after it re-number by construction.
 CLAUSULA_CONDICIONAL: Mapping[str, str] = {
     "confissao": "tem_confissao",
     "declaracao_partes": "tem_declaracao_partes",
+    "assinatura_digital": "tem_assinatura_digital",
     "intermediacao": "tem_intermediacao",
 }
 

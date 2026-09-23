@@ -22,6 +22,7 @@ from noctusai_lib.domain.texto_ptbr import (
     CENTAVO,
     brl_por_extenso,
     data_por_extenso,
+    numero_com_extenso,
     dias_por_extenso,
     percentual_por_extenso,
 )
@@ -521,6 +522,23 @@ def montar_contexto(
         # comprador/vendedor signatário line already prints.
         "testemunhas": [
             {"linha": frases.nome_email_linha(t.nome, t.email), "rg": (t.rg or "").strip()}
+            for t in d.testemunhas
+        ],
+        # Migration 157 — read ONLY by the física branch of the closing /
+        # signature block (`tem_assinatura_digital` off). One signature
+        # line per signer and per witness; "vias" = one per signer (each
+        # party keeps a signed copy), never fewer than two.
+        "vias": numero_com_extenso(
+            max(2, len(vend) + len(comp_pessoas)), feminino=True, largura=2
+        ),
+        "linha_assinatura": frases.LINHA_ASSINATURA,
+        "V_assinantes_fisicos": [frases.assinante_fisico(p) for p in vend],
+        "C_assinantes_fisicos": [frases.assinante_fisico(p) for p in comp_pessoas],
+        "testemunhas_fisicas": [
+            {
+                "nome": (t.nome or "").upper(),
+                "documento": frases.testemunha_documento_linha(t.cpf, t.rg),
+            }
             for t in d.testemunhas
         ],
     }
