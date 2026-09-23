@@ -21,6 +21,7 @@ Owner asked to smoke-test igig end-to-end, make the Esteira drag-and-drop, add a
 - **R8 Reply watcher:** detect the lead's e-mail reply to the orçamento → in-app notification + e-mail notification to the owner.
 - **R9 Cliente card = the funnel card component** (same seed CardHub, same content) opened from Clientes listing and funnel. Cliente subtabs include: dados, marcas, calendário (auto-created pautas from accepted orçamento recurring items — **pautas only, esteira tasks on demand**), **Esteira filtered to that cliente**. Esteira page gets a cliente filter.
 - **R10 Financeiro aligned with orçamento acceptance** (accepted orçamento ⇒ contract/retainer ⇒ faturas). **Report button** (date/period spec) whose generator is a callable service/API so future agents can run it on a schedule. Payment tracking manual for now.
+- **R12 Contract signing modality (Digital | Física)** on the funnel card's contract — the gate: Digital ⇒ e-mail/e-signature flow; Física ⇒ no e-mail/e-sign, template gets manual signature lines + "N vias" closing, human prints + "Marcar como assinado" (+ scanned upload). Built first in SW (slice `sw-contrato-modalidade-assinatura`, 2026-09-22); igig contracts (wave C) consume the same behaviour.
 - **R11 Automations v1:** stage-entry actions (tasks/checklists/owner/SLA), WhatsApp/e-mail touchpoints, stale/SLA alerts, AI assist (Claude via `noctusai_lib.integrations.llm`, provider=anthropic).
 
 ## Trigger conditions (the "when")
