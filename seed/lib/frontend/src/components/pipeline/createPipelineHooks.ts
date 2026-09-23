@@ -31,6 +31,12 @@ export interface MoveVariables {
   toStageId: string;
   toIndex?: number;
   motivo?: string;
+  /**
+   * Extra fields merged into the `mover-etapa` POST body verbatim. Set by
+   * `PipelineBoard`'s opt-in `onBeforeMove` intercept (`MoveDecision`'s
+   * object form) — never populated by the board's own drag handling.
+   */
+  extra?: Record<string, unknown>;
 }
 
 export interface StageCreateInput {
@@ -107,7 +113,14 @@ export function createPipelineHooks<TCard>(
     });
   }
 
-  function useMoveCard() {
+  /**
+   * `options.onError` REPLACES the default `sonner` toast (never adds to
+   * it) — `PipelineBoard` passes it through from its own `onMoveError` prop
+   * so a product wiring its own rejection UX (e.g. re-opening
+   * `MotivoMoveDialog` with a server-supplied message) never double-toasts.
+   * Omit it and this hook's behaviour is byte-identical to before.
+   */
+  function useMoveCard(options?: { onError?: (error: Error, vars: MoveVariables) => void }) {
     const queryClient = useQueryClient();
 
     return useMutation({
@@ -116,6 +129,7 @@ export function createPipelineHooks<TCard>(
           para_etapa_id: vars.toStageId,
           novo_indice: vars.toIndex,
           motivo: vars.motivo,
+          ...vars.extra,
         });
         return unwrap<TCard | null>(result, null);
       },
@@ -171,11 +185,15 @@ export function createPipelineHooks<TCard>(
         return { previous };
       },
 
-      onError: (error: Error, _vars, context) => {
+      onError: (error: Error, vars, context) => {
         context?.previous?.forEach(([key, data]) => {
           queryClient.setQueryData(key, data);
         });
-        toast.error(`Erro ao mover ${entityLabel}`, { description: error.message });
+        if (options?.onError) {
+          options.onError(error, vars);
+        } else {
+          toast.error(`Erro ao mover ${entityLabel}`, { description: error.message });
+        }
       },
 
       onSettled: () => {

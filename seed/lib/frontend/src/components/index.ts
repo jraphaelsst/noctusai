@@ -89,6 +89,7 @@ export type {
 export {
   PipelineBoard,
   PipelineStagesManager,
+  MotivoMoveDialog,
   createPipelineHooks,
   STAGE_COLOR_CLASSES,
   STAGE_COLOR_OPTIONS,
@@ -98,6 +99,7 @@ export {
 export type {
   PipelineBoardProps,
   PipelineStagesManagerProps,
+  MotivoMoveDialogProps,
   PipelineHooks,
   PipelineApi,
   PipelineColumn,
@@ -107,6 +109,8 @@ export type {
   StageColorClasses,
   StageRole,
   MoveVariables,
+  MoveDecision,
+  MoveIntentContext,
   StageCreateInput,
   StageUpdateInput,
 } from './pipeline';
