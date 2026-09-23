@@ -120,6 +120,32 @@ class TestMarca:
         alheia = repos.marca.criar("outra-org", {"cliente_id": cliente["id"], "nome": "Rival"})
         assert api.get(f"/api/marcas/{alheia['id']}").status_code == 404
 
+    def test_a_cliente_carries_several_marcas(self, api, cliente):
+        for nome in ("Sol Pães", "Sol Café"):
+            assert api.post("/api/marcas", json={"cliente_id": cliente["id"], "nome": nome}).status_code == 201
+        resp = api.get("/api/marcas", params={"cliente_id": cliente["id"]})
+        assert sorted(m["nome"] for m in resp.json()) == ["Sol Café", "Sol Pães"]
+
+    def test_delete_removes_only_that_marca(self, api, cliente):
+        a = api.post("/api/marcas", json={"cliente_id": cliente["id"], "nome": "A"}).json()
+        b = api.post("/api/marcas", json={"cliente_id": cliente["id"], "nome": "B"}).json()
+        resp = api.delete(f"/api/marcas/{a['id']}")
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+        assert api.get(f"/api/marcas/{a['id']}").status_code == 404
+        assert api.get(f"/api/marcas/{b['id']}").status_code == 200
+
+    def test_delete_unknown_returns_404(self, api):
+        assert api.delete("/api/marcas/nao-existe").status_code == 404
+
+    def test_delete_of_another_orgs_marca_returns_404(self, api, repos, cliente):
+        alheia = repos.marca.criar("outra-org", {"cliente_id": cliente["id"], "nome": "Rival"})
+        assert api.delete(f"/api/marcas/{alheia['id']}").status_code == 404
+        assert repos.marca.buscar("outra-org", alheia["id"])["nome"] == "Rival"
+
+    def test_delete_requires_auth(self, api):
+        assert api.raw().delete("/api/marcas/qualquer").status_code == 401
+
 
 # ── Repertório (the persistent sidebar payload) ─────────────────────
 class TestRepertorio:

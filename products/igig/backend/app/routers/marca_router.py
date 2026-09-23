@@ -4,6 +4,8 @@ Two surfaces:
 
   MARCA          /api/marcas …            brand identity, tone of voice,
                                           editorial lines, personas, logo
+                                          (N marcas per cliente; CRUD incl.
+                                          DELETE /api/marcas/{id})
   REPERTÓRIO     /api/marcas/repertorio/{cliente_id}
                                           the compact payload the persistent
                                           sidebar renders on task screens
@@ -229,6 +231,26 @@ async def atualizar_marca(
         return MarcaOut(**repos.marca.atualizar(_org(auth), marca_id, dados))
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
+
+
+@router.delete("/{marca_id}", status_code=status.HTTP_200_OK)
+async def remover_marca(
+    marca_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> dict:
+    """Delete one marca of a cliente (a cliente carries N marcas — roadmap R9).
+
+    Pautas that pointed at it survive (`pauta.marca_id` is ON DELETE SET
+    NULL); the Cofre is keyed on the CLIENTE, not the marca, so it is
+    untouched. The uploaded logo object stays in the private bucket — it is
+    only reachable through a signed URL minted from this row, which is gone.
+    """
+    org_id = _org(auth)
+    if not repos.marca.remover(org_id, marca_id):
+        raise HTTPException(status_code=404, detail="Marca não encontrada")
+    logger.info("marca removida org=%s id=%s", org_id, marca_id)
+    return {"ok": True}
 
 
 @router.post("/{marca_id}/logo", response_model=LogoOut, status_code=status.HTTP_201_CREATED)
