@@ -2273,6 +2273,272 @@ class TestDefaultMigrationCollisionCheck:
         assert T._default_migration_collision_check(str(tmp_path)) == []
 
 
+# ---------------------------------------------------------------------------
+# Migration-number-collision RENUMBER — the mechanism behind the wall
+# (2026-09-23 owner directive: gates are safety nets behind a mechanism,
+# never a wall an agent steers by). `TestMigrationCollisionCandidates` unit-
+# tests the pure detection/rename helpers against a REAL tmp_path tree
+# (mirrors `TestDefaultMigrationCollisionCheck`'s own style — no fake needed,
+# these are trivial glue over real files); `TestMigrationRenumberMechanism`
+# drives the full `action='integrate'` wiring with FakeGit + a small in-
+# memory `FsOps` double keyed by directory SUFFIX (the real `abs_wt_path`
+# prefix is settings-derived and out of test control — only the relative
+# shape the production code actually branches on matters here).
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationCollisionCandidates:
+    def test_finds_deterministic_one_ours_one_theirs_collision(self, tmp_path):
+        mig = tmp_path / "products" / "core" / "backend" / "migrations"
+        mig.mkdir(parents=True)
+        (mig / "050_ours.sql").write_text("-- Migration 050 -- ours\n")
+        (mig / "050_theirs.sql").write_text("-- Migration 050 -- theirs\n")
+        relevant = [{"file": "products/core/backend/migrations/", "severity": "high"}]
+        introduced = ["products/core/backend/migrations/050_ours.sql"]
+
+        cands = T._migration_collision_candidates(T.FsOps(), str(tmp_path), introduced, relevant)
+
+        assert len(cands) == 1, cands
+        assert cands[0]["old_name"] == "050_ours.sql"
+        assert cands[0]["colliding_with"] == "050_theirs.sql"
+        assert sorted(cands[0]["all_entries"]) == ["050_ours.sql", "050_theirs.sql"]
+
+    def test_two_non_ours_siblings_is_ambiguous_yields_no_candidate(self, tmp_path):
+        """No principled default for "which file wins" — left unresolved."""
+        mig = tmp_path / "products" / "core" / "backend" / "migrations"
+        mig.mkdir(parents=True)
+        for name in ("050_ours.sql", "050_a.sql", "050_b.sql"):
+            (mig / name).write_text("x")
+        relevant = [{"file": "products/core/backend/migrations/", "severity": "high"}]
+        introduced = ["products/core/backend/migrations/050_ours.sql"]
+
+        cands = T._migration_collision_candidates(T.FsOps(), str(tmp_path), introduced, relevant)
+
+        assert cands == []
+
+    def test_finding_in_unflagged_directory_yields_no_candidate(self, tmp_path):
+        mig = tmp_path / "products" / "core" / "backend" / "migrations"
+        mig.mkdir(parents=True)
+        (mig / "050_ours.sql").write_text("x")
+        (mig / "050_theirs.sql").write_text("x")
+        relevant = [{"file": "products/other/backend/migrations/", "severity": "high"}]
+        introduced = ["products/core/backend/migrations/050_ours.sql"]
+
+        cands = T._migration_collision_candidates(T.FsOps(), str(tmp_path), introduced, relevant)
+
+        assert cands == []
+
+
+def test_next_free_migration_number_is_max_plus_one():
+    assert T._next_free_migration_number(["001_a.sql", "050_b.sql", "049_c.sql"], 3) == "051"
+
+
+def test_next_free_migration_number_empty_directory_starts_at_one():
+    assert T._next_free_migration_number([], 3) == "001"
+
+
+def test_rewrite_migration_self_references_updates_header_and_bare_number(tmp_path):
+    f = tmp_path / "058_x.sql"
+    f.write_text("-- Migration 057 -- docs\nSELECT '057';\n")
+
+    T._rewrite_migration_self_references(T.FsOps(), str(f), "057_x", "058_x", "057", "058")
+
+    content = f.read_text()
+    assert "Migration 058" in content
+    assert "'058'" in content
+    assert "057" not in content
+
+
+class FakeMigrationFs(T.FsOps):
+    """In-memory `FsOps` double for the renumber mechanism. Keyed by
+    directory-path SUFFIX rather than an exact string: the real `abs_wt_path`
+    the production code computes is derived from `settings.LEDGER_ROOT`
+    (out of test control), but every candidate/renumber helper only ever
+    branches on the path's relative shape (`products/<slug>/backend/
+    migrations`), so a suffix match exercises the real logic without
+    needing to fake `settings` itself."""
+
+    def __init__(self, dir_entries: dict[str, list[str]]):
+        self.dir_entries = dir_entries
+        self.written: dict[str, str] = {}
+
+    def _match(self, p: str):
+        norm = p.replace(os.sep, "/")
+        for suffix, entries in self.dir_entries.items():
+            if norm.endswith(suffix):
+                return entries
+        return None
+
+    def is_dir(self, p: str) -> bool:
+        return self._match(p) is not None
+
+    def list_dir(self, p: str) -> list[str]:
+        return list(self._match(p) or [])
+
+    def read_text(self, p: str) -> str | None:
+        return "-- Migration stub --\n"
+
+    def write_text(self, p: str, content: str) -> None:
+        self.written[p] = content
+
+
+class TestMigrationRenumberMechanism:
+    """`action='integrate'` end-to-end through the renumber mechanism —
+    happy path plus every fallback that must still block (applied / unknown
+    / ambiguous), exactly mirroring the existing migration-collision-gate
+    tests' FakeGit style above."""
+
+    @staticmethod
+    def _fake():
+        return FakeGit(
+            refs={"origin/dev": "d0", "feat/x": "b0"},
+            anc=_anc_pairs([]),
+            logs={"d0..b0": "c1 x", "b0..d0": ""},
+            head_sha="b0",
+            diff_output=_migration_diff_output(
+                "products/core/backend/migrations/050_ours.sql"
+            ),
+        )
+
+    @staticmethod
+    def _fake_check(abs_wt_path):
+        return [{
+            "product": "core", "file": "products/core/backend/migrations/",
+            "issue": "migration number 050 is claimed by 2 files", "severity": "high",
+        }]
+
+    def test_renumber_happy_path_renumbers_then_pushes(self):
+        fake = self._fake()
+        fs = FakeMigrationFs({
+            "products/core/backend/migrations": ["050_ours.sql", "050_theirs.sql"],
+        })
+        seen = []
+
+        def applied(product, filename, abs_wt_path):
+            seen.append((product, filename))
+            return "pending"
+
+        res = T.task_branch(
+            action="integrate", slug="x", confirm=True, run=fake, fs=fs,
+            migration_check=self._fake_check, migration_applied_check=applied,
+        )
+
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert seen == [("core", "050_ours.sql")]
+        renumbered = res["migration_renumber"]["renumbered"]
+        assert len(renumbered) == 1, res
+        assert renumbered[0]["new"] == "products/core/backend/migrations/051_ours.sql"
+        assert res["introduced_migrations"] == [
+            "products/core/backend/migrations/051_ours.sql"
+        ]
+        mv_calls = [c for c, _cwd in fake.calls if "mv" in c]
+        assert any(
+            "050_ours.sql" in " ".join(c) and "051_ours.sql" in " ".join(c)
+            for c in mv_calls
+        ), mv_calls
+        commit_calls = [c for c, _cwd in fake.calls if "commit" in c]
+        assert any("renumber" in " ".join(c) for c in commit_calls), commit_calls
+        # the push must come AFTER the renumber commit, not before it
+        mv_idx = next(i for i, (c, _cwd) in enumerate(fake.calls) if "mv" in c)
+        push_idx = next(i for i, (c, _cwd) in enumerate(fake.calls) if "push" in c)
+        assert mv_idx < push_idx
+
+    def test_renumber_blocks_when_already_applied(self):
+        fake = self._fake()
+        fs = FakeMigrationFs({
+            "products/core/backend/migrations": ["050_ours.sql", "050_theirs.sql"],
+        })
+
+        def applied(product, filename, abs_wt_path):
+            return "applied"
+
+        res = T.task_branch(
+            action="integrate", slug="x", confirm=True, run=fake, fs=fs,
+            migration_check=self._fake_check, migration_applied_check=applied,
+        )
+
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == [], "must NEVER push a migration already applied to a live DB"
+        unresolved = res["migration_renumber"]["unresolved"]
+        assert unresolved and "already applied" in unresolved[0]["reason"], unresolved
+        assert not any("mv" in c for c, _cwd in fake.calls), "must never rename an applied file"
+
+    def test_renumber_blocks_when_applied_ness_unknown(self):
+        fake = self._fake()
+        fs = FakeMigrationFs({
+            "products/core/backend/migrations": ["050_ours.sql", "050_theirs.sql"],
+        })
+
+        def applied(product, filename, abs_wt_path):
+            return "unknown"  # e.g. no Supabase credentials resolved
+
+        res = T.task_branch(
+            action="integrate", slug="x", confirm=True, run=fake, fs=fs,
+            migration_check=self._fake_check, migration_applied_check=applied,
+        )
+
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == []
+        unresolved = res["migration_renumber"]["unresolved"]
+        assert unresolved and "could not be established" in unresolved[0]["reason"], unresolved
+        assert "one-call fix" not in unresolved[0]["reason"].lower() or "migrate_product" in unresolved[0]["reason"]
+
+    def test_renumber_applied_check_raising_is_treated_as_unknown_and_blocks(self):
+        fake = self._fake()
+        fs = FakeMigrationFs({
+            "products/core/backend/migrations": ["050_ours.sql", "050_theirs.sql"],
+        })
+
+        def broken_applied(product, filename, abs_wt_path):
+            raise RuntimeError("boom")
+
+        res = T.task_branch(
+            action="integrate", slug="x", confirm=True, run=fake, fs=fs,
+            migration_check=self._fake_check, migration_applied_check=broken_applied,
+        )
+
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == []
+
+    def test_no_deterministic_candidate_still_blocks_with_named_reason(self):
+        """No on-disk sibling at all in THIS worktree (e.g. a Leg B cross-
+        branch-only warning) — nothing to renumber against; falls through to
+        the existing block, unchanged from before the mechanism existed."""
+        fake = self._fake()
+
+        res = T.task_branch(
+            action="integrate", slug="x", confirm=True, run=fake,
+            migration_check=self._fake_check,
+        )
+
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == []
+        unresolved = res["migration_renumber"]["unresolved"]
+        assert unresolved and "no deterministic" in unresolved[0]["reason"], unresolved
+
+    def test_no_applied_check_injected_with_real_candidate_blocks_as_unknown(self):
+        """Production-only-default symmetry with `migration_check_fn`: an
+        injected `run` (test/custom context) must NOT trigger the REAL
+        `_default_migration_applied_check` (which would reach for real
+        Supabase credentials) — it resolves to `None`, so a genuine
+        candidate is reported unresolved rather than silently assumed safe."""
+        fake = self._fake()
+        fs = FakeMigrationFs({
+            "products/core/backend/migrations": ["050_ours.sql", "050_theirs.sql"],
+        })
+
+        res = T.task_branch(
+            action="integrate", slug="x", confirm=True, run=fake, fs=fs,
+            migration_check=self._fake_check,  # no migration_applied_check= passed
+        )
+
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == []
+        unresolved = res["migration_renumber"]["unresolved"]
+        assert unresolved and "could not be established" in unresolved[0]["reason"], unresolved
+
+
 # ── ledger drain: the stranded-row recurrence (4+ incidents, ~4 months) ──────
 #
 # `worktree-salvage.ndjson` always had a commit+push leg; `auto-improvement.ndjson`

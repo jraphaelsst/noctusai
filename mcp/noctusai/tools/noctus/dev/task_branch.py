@@ -75,6 +75,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -690,6 +691,12 @@ class FsOps:
         except OSError:
             return None
 
+    def write_text(self, p: str, content: str) -> None:
+        """Overwrite `p` with `content` — used by the migration-renumber
+        mechanism (`_rewrite_migration_self_references`) to update a
+        renamed migration's own in-file header self-citation."""
+        Path(p).write_text(content, encoding="utf-8")
+
 
 def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[dict], list[dict]]:
     """Pure (read-only) planner. Returns (wire, skipped): `wire` = symlink/dir
@@ -970,6 +977,258 @@ def _default_migration_collision_check(abs_wt_path: str) -> list[dict]:
     return check_migration_number_collision(repo_root=Path(abs_wt_path))
 
 
+# ── Migration-number-collision RENUMBER (mechanism, not a wall) ──────────────
+#
+# THE PRINCIPLE (owner, 2026-09-23): gates are safety nets behind a mechanism,
+# never a wall an agent steers by. Before this, a post-rebase collision
+# BLOCKED integrate outright — six hand-done "renumber NNN→MMM" commits
+# (46e19ef79, 31f3dad23, 16fefbc8e, 9c4210eed, a8fe01f44, 4b8ba18fc) are the
+# evidence the block was routine, not exceptional: concurrent worktrees pick
+# the same next number, the block fires, a human renumbers by hand, re-runs.
+# This automates exactly that hand-done shape for the one case that is safe
+# to automate — see `_migration_collision_candidates`'s docstring for why the
+# scope stops there.
+#
+# WHY BLOCKING STAYS THE FLOOR. Three shapes are deliberately left to the
+# existing block rather than guessed at:
+#   1. Ambiguous on-disk collisions (0, or 2+, non-ours siblings for the same
+#      number) — no principled default for "which file wins".
+#   2. A Leg B (cross-branch, not-yet-merged) finding with no on-disk sibling
+#      in THIS worktree — nothing to renumber against yet; renumbering
+#      preemptively against an unmerged sibling could race that sibling's own
+#      renumber and produce a NEW collision.
+#   3. Applied-ness that cannot be established (no Supabase credentials, a
+#      network failure, or the product is out of `migrate_product`'s catalog
+#      scope) — renumbering a migration already applied to a live DB would
+#      orphan its `schema_migrations` row silently; "cannot tell" must never
+#      collapse to "assume safe".
+_MIGRATION_NUM_RE = re.compile(r"^(\d{3,4})_")
+
+
+def _migration_slug_from_directory(directory: str) -> str | None:
+    """``products/<slug>/backend/migrations`` -> ``<slug>``; `None` for
+    anything else (e.g. a dialect-mirror subdirectory like `migrations/
+    sqlite/`) — no renumber is attempted for those, they fall through to the
+    existing block."""
+    parts = directory.split("/")
+    if len(parts) == 4 and parts[0] == "products" and parts[2:] == ["backend", "migrations"]:
+        return parts[1]
+    return None
+
+
+def _migration_collision_candidates(
+    fs: "FsOps", abs_wt_path: str, introduced_migrations: list[str], relevant: list[dict],
+) -> list[dict]:
+    """Renumberable collisions among THIS branch's own introduced migrations.
+
+    Re-derives from what is ACTUALLY on disk in this worktree (post-rebase)
+    rather than parsing the gate finding's prose `issue` string — the finding
+    is a directory-scoped SIGNAL that something collides; this narrows it to
+    the deterministic single-file case: exactly one on-disk sibling, claiming
+    the same number, that THIS branch did NOT introduce. Zero or 2+ such
+    siblings is ambiguous and is left unresolved (see the module comment
+    above `_MIGRATION_NUM_RE`)."""
+    flagged_dirs = {str(f.get("file", "")).rstrip("/") for f in relevant}
+    introduced_set = set(introduced_migrations)
+    candidates: list[dict] = []
+    for rel in introduced_migrations:
+        directory, _, basename = rel.rpartition("/")
+        if directory not in flagged_dirs:
+            continue
+        m = _MIGRATION_NUM_RE.match(basename)
+        if not m:
+            continue
+        number = m.group(1)
+        abs_dir = os.path.join(abs_wt_path, directory)
+        if not fs.is_dir(abs_dir):
+            continue
+        try:
+            entries = fs.list_dir(abs_dir)
+        except OSError:
+            continue
+        siblings = [
+            e for e in entries
+            if e != basename and e.endswith(".sql")
+            and _MIGRATION_NUM_RE.match(e)
+            and _MIGRATION_NUM_RE.match(e).group(1) == number
+            and f"{directory}/{e}" not in introduced_set
+        ]
+        if len(siblings) == 1:
+            candidates.append({
+                "directory": directory, "old_name": basename,
+                "old_number": number, "colliding_with": siblings[0],
+                "all_entries": entries,
+            })
+    return candidates
+
+
+def _next_free_migration_number(entries: list[str], width: int) -> str:
+    """`max(NN) + 1` over what is ACTUALLY on disk in this one directory
+    right now (post-rebase == the authoritative merged state for THIS
+    source) — zero-padded to match the existing file-name width. Does not
+    consult unmerged sibling branches (see module comment, shape 2) —
+    the same residual race `noctus.dev.next_migration_number`'s own
+    docstring names for its "local branches" source, inherent to any
+    number picked before a push actually lands."""
+    numbers = [int(mm.group(1)) for e in entries if (mm := _MIGRATION_NUM_RE.match(e))]
+    nxt = (max(numbers) + 1) if numbers else 1
+    return str(nxt).zfill(width)
+
+
+def _rewrite_migration_self_references(
+    fs: "FsOps", abs_path: str, old_stem: str, new_stem: str,
+    old_number: str, new_number: str,
+) -> None:
+    """Best-effort in-file rename: swap the file's OWN old filename-stem and
+    bare number for the new ones, wherever they appear as a whole word inside
+    ITS OWN content (header comments like `-- Migration 057 --` / inline
+    self-citations like `` `057` ``). Scoped to THIS FILE ONLY — cross-file
+    references (service docstrings, tests, LGPD-WARNINGS.md entries, as the
+    historical hand-done renumbers show) are a human follow-up this
+    mechanism deliberately does not attempt; see the module comment above
+    `_MIGRATION_NUM_RE`."""
+    content = fs.read_text(abs_path)
+    if content is None:
+        return
+    new_content = re.sub(rf"\b{re.escape(old_stem)}\b", new_stem, content)
+    new_content = re.sub(rf"\b{re.escape(old_number)}\b", new_number, new_content)
+    if new_content != content:
+        fs.write_text(abs_path, new_content)
+
+
+def _renumber_one_migration(
+    runner, fs: "FsOps", wt_path: str, abs_wt_path: str, directory: str,
+    old_name: str, new_number: str, verbose: bool,
+) -> dict[str, Any]:
+    """`git mv` + in-file self-reference rewrite + a scoped commit — the
+    mechanical half of one renumber. `runner(["git", "-C", wt_path, ...])` is
+    called directly (bypassing `_git()`'s allowlist deliberately), the same
+    idiom `_benign_stash.commit_ledger_rows` already uses for `add`/`commit`
+    — `mv`/`add`/`commit` are not on `_ALLOWED_GIT` (push/rebase/worktree
+    stay the only high-level surface); this is the SAME narrow, path-scoped
+    escape hatch, not a widening of what `task_branch` can push or rewrite."""
+    old_rel = f"{directory}/{old_name}"
+    old_stem = old_name[:-4] if old_name.endswith(".sql") else old_name
+    old_number = old_stem.split("_", 1)[0]
+    rest = old_stem[len(old_number) + 1:]
+    new_stem = f"{new_number}_{rest}"
+    new_name = f"{new_stem}.sql"
+    new_rel = f"{directory}/{new_name}"
+    rc, out, err = runner(["git", "-C", wt_path, "mv", old_rel, new_rel])
+    if rc != 0:
+        return {"ok": False, "old": old_rel, "new": new_rel,
+                "error": f"git mv failed: {(err or out).strip()}"}
+    _rewrite_migration_self_references(
+        fs, os.path.join(abs_wt_path, new_rel), old_stem, new_stem, old_number, new_number)
+    rc, out, err = runner(["git", "-C", wt_path, "add", "--", new_rel])
+    if rc != 0:
+        return {"ok": False, "old": old_rel, "new": new_rel,
+                "error": f"git add failed: {(err or out).strip()}"}
+    msg = f"chore(migration): renumber {old_number}→{new_number} after rebase [auto]"
+    rc, out, err = runner(["git", "-C", wt_path, "commit", "-m", msg, "--", new_rel])
+    if rc != 0:
+        return {"ok": False, "old": old_rel, "new": new_rel,
+                "error": f"git commit failed: {(err or out).strip()}"}
+    if verbose:
+        logger.debug("task_branch.integrate: renumbered %s -> %s (auto)", old_rel, new_rel)
+    return {"ok": True, "old": old_rel, "new": new_rel,
+            "old_number": old_number, "new_number": new_number}
+
+
+def _default_migration_applied_check(product: str, filename: str, abs_wt_path: str) -> str:
+    """Production default for the renumber gate's applied-ness question —
+    reuses `migrate_product`'s own dry-run listing (`confirm=False`, never
+    applies anything) scoped to exactly this one filename, rather than
+    hand-rolling a second `schema_migrations` query path. Returns
+    `'applied' | 'pending' | 'unknown'` — `'unknown'` for anything that is
+    not a clean `dry_run` result (missing credentials, a stale/dirty tree,
+    the product out of catalog scope, a query error): the caller treats
+    `'unknown'` exactly like `'applied'` for safety (never renumber on an
+    unverifiable answer), but reports the distinct reason."""
+    from .migrate_product import migrate_product
+    try:
+        result = migrate_product(
+            product, confirm=False, target=filename, worktree_path=abs_wt_path,
+        )
+    except Exception:
+        return "unknown"
+    if result.get("status") != "dry_run":
+        return "unknown"
+    if filename in (result.get("skipped_already_applied") or []):
+        return "applied"
+    if filename in (result.get("pending") or []):
+        return "pending"
+    return "unknown"
+
+
+def _attempt_migration_renumber(
+    *, runner, fs: "FsOps", wt_path: str, abs_wt_path: str,
+    introduced_migrations: list[str], relevant: list[dict],
+    applied_check_fn: "Callable[[str, str, str], str] | None", verbose: bool,
+) -> dict[str, Any]:
+    """Best-effort collision resolver for `action='integrate'`. For each
+    deterministic renumberable collision (`_migration_collision_candidates`)
+    whose file is confirmed NOT YET applied to any DB, `git mv`s it to the
+    next free number in its own directory and commits. Ambiguous shapes and
+    unverifiable applied-ness land in `unresolved` (never guessed at) so the
+    caller keeps blocking with a message naming the exact reason — never a
+    silent renumber-or-not coin flip."""
+    candidates = _migration_collision_candidates(fs, abs_wt_path, introduced_migrations, relevant)
+    renumbered: list[dict] = []
+    unresolved: list[dict] = []
+    if not candidates:
+        # The gate fired but no candidate matched the deterministic shape —
+        # e.g. a Leg B cross-branch warning with nothing on disk to renumber
+        # against, or 2+ competing on-disk siblings (module comment, shapes
+        # 1/2 above `_MIGRATION_NUM_RE`).
+        return {"renumbered": renumbered, "unresolved": [{
+            "reason": "no deterministic one-ours/one-theirs on-disk collision "
+                      "found among this branch's introduced migrations — see "
+                      "migration_collision_findings for the raw gate output.",
+        }]}
+    for cand in candidates:
+        product = _migration_slug_from_directory(cand["directory"])
+        old_full = f"{cand['directory']}/{cand['old_name']}"
+        if not product:
+            unresolved.append({**cand, "reason": f"could not derive a product slug from "
+                                                    f"{cand['directory']!r}"})
+            continue
+        verdict = "unknown"
+        if applied_check_fn is not None:
+            try:
+                verdict = applied_check_fn(product, cand["old_name"], abs_wt_path)
+            except Exception as exc:
+                verdict = "unknown"
+                if verbose:
+                    logger.debug("task_branch.integrate: applied_check_fn raised for %s: %s",
+                                 old_full, exc)
+        if verdict == "applied":
+            unresolved.append({**cand, "reason": (
+                f"{old_full} is already applied to a live DB — renumbering it "
+                "would orphan its schema_migrations row. Renumber the OTHER "
+                f"(colliding) file, {cand['colliding_with']!r}, by hand instead.")})
+            continue
+        if verdict != "pending":
+            unresolved.append({**cand, "reason": (
+                f"applied-ness of {old_full} could not be established (no "
+                "Supabase credentials resolved, a network failure, or the "
+                "product is out of migrate_product's catalog scope). One-call "
+                f"fix: run `noctus.dev.migrate_product(product={product!r}, "
+                "confirm=False)` yourself to see the dry-run verdict, then "
+                "re-run integrate.")})
+            continue
+        width = len(cand["old_number"])
+        new_number = _next_free_migration_number(cand["all_entries"], width)
+        result = _renumber_one_migration(
+            runner, fs, wt_path, abs_wt_path, cand["directory"], cand["old_name"],
+            new_number, verbose)
+        if result["ok"]:
+            renumbered.append({**cand, **result})
+        else:
+            unresolved.append({**cand, "reason": result["error"]})
+    return {"renumbered": renumbered, "unresolved": unresolved}
+
+
 class PointerOps:
     """The branch-tree pointer lifecycle, owned by the git lifecycle.
 
@@ -1092,6 +1351,9 @@ def task_branch(
     salvage_recorder: Callable[..., Any] | None = None,
     settle: Callable[..., dict[str, Any]] | None = None,
     migration_check: Callable[[str], list[dict]] | None = None,
+    migration_applied_check: Callable[[str, str, str], str] | None = None,
+    verify_merged_tip: bool = True,
+    merged_tip_check: Callable[[str, list[str]], dict[str, Any]] | None = None,
     pointer_ops: "PointerOps | None" = None,
     project: str | None = None,
     brief: str | None = None,
@@ -1156,6 +1418,11 @@ def task_branch(
     # to a real `check_migration_number_collision` filesystem scan.
     migration_check_fn = migration_check if migration_check is not None else (
         _default_migration_collision_check if run is None else None)
+    # Same production-only rule — the applied-ness check for the renumber
+    # mechanism calls `migrate_product` (real credentials + network) and must
+    # never fire under an injected `run`.
+    migration_applied_check_fn = migration_applied_check if migration_applied_check is not None else (
+        _default_migration_applied_check if run is None else None)
     # wire_env defaults True (KB § self-branching-mode.md § 5a — "a fresh
     # worktree must come ready to run gates"), but ONLY in the real
     # production path OR when the caller supplies an explicit primary_root.
@@ -1386,6 +1653,7 @@ def task_branch(
                 logger.debug("task_branch.integrate: benign artifacts stashed; "
                              "proceeding with rebase")
 
+        all_renumbered: list[dict] = []  # accumulates across retry attempts (rare — see the loop body)
         for attempt in range(1, max_retries + 1):
             if verbose:
                 logger.debug("task_branch.integrate: attempt %d/%d — fetch + rebase",
@@ -1491,25 +1759,50 @@ def task_branch(
                     if str(f.get("file", "")).rstrip("/") in introduced_migration_dirs
                 ]
                 if relevant:
-                    if benign_stashed:
-                        _pop_stash(runner, wt_path, benign_stashed, verbose)
-                        benign_stashed = False
-                    return {**plan, "status": "blocked", "exit_code": 1,
-                            "introduced_migrations": introduced_migrations,
-                            "migration_collision_findings": relevant,
-                            "reason": (
-                                f"{branch} introduces a migration-number collision "
-                                f"({len(relevant)} finding(s)) — renumber before "
-                                "integrating. This is the SAME check pre-commit "
-                                "runs (check_migration_number_collision); it fires "
-                                "here too because a rebase onto fresh origin/dev "
-                                "is exactly the moment a latent (pre-commit "
-                                "warning-only) collision becomes real."),
-                            "message": (
-                                f"rebase of {branch} onto {remote}/{dev_branch} succeeded, "
-                                "but the resulting tree carries a migration-number "
-                                "collision this branch introduced. Not pushed."
-                            )}
+                    # ── RENUMBER, not block — the mechanism behind the wall ──
+                    # (see the module comment above `_MIGRATION_NUM_RE`). Only
+                    # the deterministic, verified-not-yet-applied shape is
+                    # auto-resolved; everything else still blocks below,
+                    # unchanged from before this existed.
+                    renumber_result = _attempt_migration_renumber(
+                        runner=runner, fs=fsops, wt_path=wt_path, abs_wt_path=abs_wt_path,
+                        introduced_migrations=introduced_migrations, relevant=relevant,
+                        applied_check_fn=migration_applied_check_fn, verbose=verbose)
+                    for done in renumber_result["renumbered"]:
+                        old_full = f"{done['directory']}/{done['old_name']}"
+                        new_full = done["new"]
+                        if old_full in introduced_migrations:
+                            introduced_migrations = sorted(
+                                [p for p in introduced_migrations if p != old_full] + [new_full])
+                    all_renumbered.extend(renumber_result["renumbered"])
+                    if renumber_result["unresolved"]:
+                        if benign_stashed:
+                            _pop_stash(runner, wt_path, benign_stashed, verbose)
+                            benign_stashed = False
+                        return {**plan, "status": "blocked", "exit_code": 1,
+                                "introduced_migrations": introduced_migrations,
+                                "migration_collision_findings": relevant,
+                                "migration_renumber": renumber_result,
+                                "reason": (
+                                    f"{branch} introduces a migration-number collision "
+                                    f"({len(relevant)} finding(s)) that could not be "
+                                    "auto-renumbered — see migration_renumber.unresolved "
+                                    "for the exact reason per file. This is the SAME "
+                                    "check pre-commit runs "
+                                    "(check_migration_number_collision); it fires here "
+                                    "too because a rebase onto fresh origin/dev is "
+                                    "exactly the moment a latent (pre-commit "
+                                    "warning-only) collision becomes real."),
+                                "message": (
+                                    f"rebase of {branch} onto {remote}/{dev_branch} succeeded, "
+                                    "but the resulting tree carries a migration-number "
+                                    "collision this branch introduced that could not be "
+                                    "safely auto-renumbered. Not pushed."
+                                )}
+                    if verbose:
+                        logger.debug(
+                            "task_branch.integrate: auto-renumbered %d migration(s): %s",
+                            len(renumber_result["renumbered"]), renumber_result["renumbered"])
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc == 0:
                 # Pop stash AFTER the push so the worktree ends clean (the benign
@@ -1521,8 +1814,14 @@ def task_branch(
                 new_head = _resolve(git, branch)
                 result = {**plan, "status": "integrated", "exit_code": 0, "attempts": attempt,
                           "new_dev_sha": new_dev, "verified": new_dev == new_head,
+                          "introduced_migrations": introduced_migrations,
                           "message": (f"integrated {len(ahead)} commit(s) to {dev_branch} "
                                       f"(attempt {attempt}). Tear down: action='cleanup' slug='{slug}'.")}
+                if all_renumbered:
+                    result["migration_renumber"] = {"renumbered": all_renumbered}
+                    result["message"] += (
+                        f" Auto-renumbered {len(all_renumbered)} migration(s) on rebase — "
+                        "see migration_renumber.")
                 # Record the POST-REBASE sha: the pre-rebase commit a hand
                 # pointer carried is never on dev, which is why pointers could
                 # not be proven integrated and stayed on_going for months.
