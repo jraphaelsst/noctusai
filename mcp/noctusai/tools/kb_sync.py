@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, TypedDict
 
 from settings import REPO_ROOT
+from workspace import resolve_caller_root
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -812,15 +813,32 @@ def render_kb_counts(target: Path, source_text: str) -> str:
     return text
 
 
-def update_kb_counts(check: bool = False) -> dict[str, Any]:
+def update_kb_counts(check: bool = False, repo_root: Path | str | None = None) -> dict[str, Any]:
     """Native port of scripts/update-kb-counts.py.
 
     Regenerates the ``kb-counts`` marker blocks. ``check=True`` reports
     drift without writing — ``drift`` mirrors the shell script's exit-1.
 
-    Returns ``{ok, drift, changed, files, message}``.
+    ``repo_root``, when given, OVERRIDES the module-level ``REPO_ROOT`` for
+    this one call. Necessary because this module's ``REPO_ROOT`` is a name
+    bound ONCE — at whichever moment this module is first imported in the
+    current process (``from settings import REPO_ROOT`` above) — and the
+    long-running MCP server imports every tool module exactly once, at
+    server boot, with cwd fixed at the PRIMARY checkout. A caller working in
+    a worktree who invokes ``noctus.dev.kb_sync(action='counts')`` through
+    that live server therefore always wrote into the PRIMARY regardless of
+    where the call actually originated (2026-09-23: caught live — a stray
+    ``02-LANDSCAPE.md`` diff appeared in the primary while the only writing
+    happening was pytest/playwright in a worktree). Rebinding the module
+    attribute in place is not the fix either: that mutates shared state
+    every OTHER concurrent call on the same server would then see — the
+    exact leak ``task_branch._default_regenerate_kb_counts`` documents and
+    works around by shelling out to a FRESH subprocess instead. An explicit
+    per-call parameter has neither problem. ``None`` preserves the original
+    behaviour byte-for-byte (the CLI's fresh-subprocess-per-invocation model
+    never hits this, so it keeps working either way).
     """
-    repo = Path(REPO_ROOT)
+    repo = Path(repo_root).resolve() if repo_root is not None else Path(REPO_ROOT)
     by_file: dict[Path, dict[str, Callable[[Path], str]]] = {}
     for name, (path, renderer) in _regions(repo).items():
         by_file.setdefault(path, {})[name] = renderer
@@ -883,12 +901,20 @@ def register(server) -> None:
             "/ 1 broken pointer / 2 index|layout drift). "
             "`action='counts'` regenerates the kb-counts marker blocks "
             "(inventory/database/mcp_tools/agent_context_tools); pass "
-            "`check=True` for drift-only (no write). See CLAUDE.md § 4."
+            "`check=True` for drift-only (no write). Pass `worktree_path` "
+            "when called from inside a git worktree so `action='counts'` "
+            "writes THERE, not into the MCP server's fixed-CWD primary — "
+            "omitting it from a worktree session regenerates the counts "
+            "into the primary checkout (the server imports this module "
+            "once, at boot, with the primary as REPO_ROOT). See CLAUDE.md § 4."
         ),
     )
-    def _kb_sync(action: str = "verify", check: bool = False) -> dict:
+    def _kb_sync(
+        action: str = "verify", check: bool = False, worktree_path: str | None = None,
+    ) -> dict:
         if action == "counts":
-            return update_kb_counts(check=check)
+            repo_root = resolve_caller_root(worktree_path) if worktree_path else None
+            return update_kb_counts(check=check, repo_root=repo_root)
         result = verify_kb_sync()
         return dict(result)
 

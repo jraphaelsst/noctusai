@@ -341,6 +341,39 @@ def test_update_kb_counts_marker_block_format_byte_stable(tmp_path, monkeypatch)
     assert "|\n<!-- kb-counts:end:inventory -->" in txt
 
 
+# ─── `repo_root=` override — the worktree-vs-primary write target (2026-09-23) ─
+#
+# 🔴 THE INCIDENT. `update_kb_counts()` used only the module-level
+# `REPO_ROOT` — a name bound ONCE, at whichever moment `kb_sync.py` is first
+# imported in the current process. The long-running MCP server imports every
+# tool module exactly once, at boot, with cwd fixed at the PRIMARY checkout.
+# A caller working in a worktree who ran `noctus.dev.kb_sync(action='counts')`
+# through that live server therefore ALWAYS wrote into the primary — caught
+# live as a stray `02-LANDSCAPE.md` diff in the primary while the only
+# writing actually happening was pytest/playwright in a worktree.
+
+def test_update_kb_counts_repo_root_param_overrides_module_level_REPO_ROOT(tmp_path, monkeypatch):
+    """The explicit `repo_root=` argument wins over `kb_sync.REPO_ROOT`, and
+    — the point of it existing at all — does so WITHOUT mutating that shared
+    module attribute, which would leak across every OTHER concurrent call
+    the long-running server serves."""
+    primary = tmp_path / "primary"
+    primary_landscape = _mk_counts_tree(primary)
+    worktree = tmp_path / "worktree"
+    worktree_landscape = _mk_counts_tree(worktree)
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", primary)
+    primary_before = primary_landscape.read_text(encoding="utf-8")
+
+    r = kb_sync.update_kb_counts(check=False, repo_root=worktree)
+
+    assert r["ok"] is True
+    assert r["changed"] is True
+    assert "STALE" not in worktree_landscape.read_text(encoding="utf-8")
+    # The primary (module-level REPO_ROOT) tree was never touched — the
+    # exact incident this closes.
+    assert primary_landscape.read_text(encoding="utf-8") == primary_before
+
+
 # ─── Stage-4 keeper: roster-vs-tree parity (2026-05-18) ──────────────
 # Regression-test-the-detector for `roster_tree_parity_gaps` — the
 # commit-blocking gate that guarantees the 02-LANDSCAPE `## Products`

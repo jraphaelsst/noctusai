@@ -889,6 +889,79 @@ def _is_ledger_only_git(sub: str, args: Sequence[str], cwd: str) -> bool:
     return False
 
 
+#: `restore` flags that keep the operation scoped to HEAD/the index. Anything
+#: else before the `--` (above all `--source=<ref>` / `-s <ref>`) names a
+#: DIFFERENT source to restore from — not "back to HEAD" — and must stay
+#: outside this exemption.
+_RESTORE_TO_HEAD_FLAGS = {"--staged", "--worktree"}
+
+
+def _is_restore_to_head_git(sub: str, args: Sequence[str]) -> bool:
+    """Is this `git checkout -- <paths>` / `git restore -- <paths>` an
+    unambiguous PATH restore back to HEAD (or the index, which on a guarded
+    primary can only ever equal HEAD — see below) — never a branch switch,
+    never a restore from an arbitrary ref?
+
+    🔴 THE CONTRADICTION THIS CLOSES (2026-09-23). `measure_posttool_dirt`'s
+    own refusal text (`format_primary_dirt_warning`, this module) hands the
+    agent an exact remedy for stray primary dirt: "`git -C <primary>
+    checkout -- <file>` for a tracked change". Before this function existed,
+    running exactly that command was refused by `decide()` — the ledger
+    exemption above (`_is_ledger_only_git`) only covers `project-history/`
+    paths, and every OTHER tracked file fell through to the generic
+    "git write is scoped to its whole checkout" refusal. The guard handed out
+    a remedy it then blocked, so the agent was stuck and a human had to fix
+    the primary by hand — the precise "safety net becomes a wall" failure
+    `KB § PATTERNS/common/gate-methodology-sync.md` names.
+
+    WHY THIS IS SAFE TO WIDEN PAST THE LEDGER PREFIX. This module's whole
+    premise (`_is_sync_to_remote_git`'s docstring says it outright) is that a
+    guarded primary is a READ-ONLY tree BY CONSTRUCTION: every genuine WRITE
+    into it is refused, so the only things that can ever be sitting there
+    dirty are (a) regenerated artifacts a hook wrote without asking, and
+    (b) the ledger appends `LEDGER_PREFIXES` already exempts. Restoring EITHER
+    kind to HEAD can only ever DISCARD dirt the guard never should have let
+    land, or no-op on a path that was never dirty. There is no path through
+    this exemption that can make the primary diverge from origin further than
+    it already has — which is exactly why the docstring on `decide()`'s
+    refusal text says "Restoring to HEAD cannot diverge dev".
+
+    NARROWED, DELIBERATELY, to the two forms the brief actually asks for —
+    anything else stays refused rather than guessed at:
+
+    * An explicit `--` separator is MANDATORY, same reasoning as
+      `_is_ledger_only_git`'s restore/checkout leg: before it, a lone token is
+      ambiguous between a path and a branch/ref name, and `git checkout dev`
+      is the one shape (§9a) that must never pass as "just a path".
+    * `checkout`: NOTHING may precede `--`. `git checkout <tree-ish> --
+      <path>` restores from an arbitrary commit/branch, not HEAD — a
+      different, wider operation this function does not cover.
+    * `restore`: only `--staged` and/or `--worktree` may precede `--`. Those
+      pick WHICH half of the restore-to-HEAD-or-index runs; anything else —
+      above all `--source=<ref>` — names a different source and is refused.
+
+    Deliberately does NOT check whether the named paths are actually tracked:
+    a `checkout --`/`restore --` naming an untracked path is a harmless git
+    error ("did not match any file(s) known to git"), never a write, so the
+    trackedness question changes nothing about whether this is safe to allow
+    — and checking it would cost a subprocess this module otherwise avoids on
+    every string-parseable branch (see the module docstring's design
+    constraints).
+    """
+    if sub not in {"restore", "checkout"}:
+        return False
+    tail = _strip_redirections(args[args.index(sub) + 1:])
+    if "--" not in tail:
+        return False
+    sep = tail.index("--")
+    before, paths = tail[:sep], tail[sep + 1:]
+    if not paths:
+        return False  # `git checkout --` / `git restore --` name nothing.
+    if sub == "checkout":
+        return not before
+    return all(tok in _RESTORE_TO_HEAD_FLAGS for tok in before)
+
+
 def _is_sync_to_remote_git(sub: str, args: Sequence[str], cwd: str) -> bool:
     """Is this `git reset --hard <remote-tracking-ref>` — i.e. RE-SYNCING the
     primary checkout to its remote, rather than writing work into it?
@@ -1051,6 +1124,15 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
                     # how parallel agents publish branch pointers), and this one
                     # refused it — which happened for real on 2026-08-19, one
                     # commit after the docstring claiming they could not drift.
+                    continue
+                if _is_restore_to_head_git(sub, rest):
+                    # `git checkout -- <path>` / `git restore -- <path>` — a
+                    # path-scoped restore back to HEAD, not a branch switch
+                    # and not a restore from an arbitrary ref. See the
+                    # function's own docstring for the contradiction this
+                    # closes: the PostToolUse leg's own remedy text names
+                    # exactly this command, and refusing it left the guard
+                    # handing out a fix it then blocked.
                     continue
                 # Otherwise a git write is scoped to its CHECKOUT, not to the
                 # pathspecs: `git checkout .` and `git reset --hard` name no

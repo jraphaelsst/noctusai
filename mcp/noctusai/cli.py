@@ -2571,8 +2571,17 @@ def main():
         sys.exit(0)
 
     elif args.update_kb_counts:
+        # Explicit repo_root, not the settings.REPO_ROOT rebind + lazy-import
+        # ordering trick --render-kb-counts (above) relies on: that trick
+        # only works because THIS is a fresh subprocess where kb_sync has
+        # never been imported before this line. update_kb_counts() now takes
+        # the override directly, so this call is correct independent of
+        # import order or process lifetime (see its own docstring).
         from tools.kb_sync import update_kb_counts
-        r = update_kb_counts(check=args.check)
+        repo_root = (
+            Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None
+        )
+        r = update_kb_counts(check=args.check, repo_root=repo_root)
         print(r.get("message", json.dumps(r, default=str)))
         sys.exit(int(r.get("exit_code", 1 if r.get("drift") else 0)))
 

@@ -24,6 +24,7 @@ checkout on a shared branch", which a test must never create for real. The
 KB § PATTERNS/common/self-branching-mode.md ·
 KB § PATTERNS/common/gate-methodology-sync.md
 """
+import re
 import sys
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from tools.noctus.dev.primary_write_guard import (  # noqa: E402
     capture_pretool_baseline,
     decide,
     diff_new_primary_dirt,
+    format_primary_dirt_warning,
     is_guarded_path,
     measure_posttool_dirt,
 )
@@ -411,6 +413,110 @@ def test_git_checkout_of_a_BRANCH_is_still_refused():
     methodology is built to prevent."""
     assert _decide("Bash", {"command": f"cd {PRIMARY} && git checkout dev"}) is not None
     assert _decide("Bash", {"command": f"cd {PRIMARY} && git checkout -b feat/x"}) is not None
+
+
+# ── restoring ANY tracked primary file to HEAD (2026-09-23) ───────────────
+#
+# 🔴 THE CONTRADICTION. `measure_posttool_dirt`'s own refusal text
+# (`format_primary_dirt_warning`) hands the agent the exact remedy for stray
+# primary dirt: "`git -C <primary> checkout -- <file>` for a tracked change".
+# Before this fix, running exactly that command was refused — the ledger
+# exemption above only covers `project-history/` paths, and every OTHER
+# tracked file fell through to the generic "a git write is scoped to its
+# whole checkout" refusal. The guard handed out a remedy it then blocked, so
+# the agent was stuck and the owner had to fix the primary by hand.
+#
+# Restoring a path to HEAD (or the index, which on a guarded primary can
+# only equal HEAD — every other write is refused) can only ever DISCARD dirt
+# the guard never should have let land, never create new divergence, so this
+# is safe to allow unconditionally for ANY tracked path — not just ledgers.
+
+def test_git_checkout_double_dash_of_a_source_path_is_now_allowed():
+    assert _decide(
+        "Bash", {"command": f"git -C {PRIMARY} checkout -- KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"}
+    ) is None
+
+
+def test_git_restore_double_dash_of_a_source_path_is_now_allowed():
+    assert _decide(
+        "Bash", {"command": f"git -C {PRIMARY} restore -- KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"}
+    ) is None
+
+
+def test_git_checkout_double_dash_with_cwd_already_the_primary_is_allowed():
+    """No `-C` at all — the effective cwd is already the primary."""
+    assert _decide(
+        "Bash", {"command": "git checkout -- CLAUDE.md"}, cwd=PRIMARY,
+    ) is None
+
+
+def test_git_restore_staged_and_worktree_double_dash_is_allowed():
+    """`--staged --worktree` restores BOTH the index and the working tree —
+    still scoped to HEAD/the index, never an arbitrary ref."""
+    assert _decide(
+        "Bash",
+        {"command": f"git -C {PRIMARY} restore --staged --worktree -- CLAUDE.md"},
+    ) is None
+
+
+def test_git_checkout_from_an_explicit_ref_stays_refused():
+    """`git checkout <tree-ish> -- <path>` restores from an ARBITRARY commit,
+    not HEAD — a different, wider operation this exemption does not cover."""
+    assert _decide(
+        "Bash", {"command": f"git -C {PRIMARY} checkout HEAD~1 -- CLAUDE.md"}
+    ) is not None
+    assert _decide(
+        "Bash", {"command": f"git -C {PRIMARY} checkout origin/dev -- CLAUDE.md"}
+    ) is not None
+
+
+def test_git_restore_with_an_explicit_source_stays_refused():
+    """`--source=<ref>` names a source other than HEAD/the index."""
+    assert _decide(
+        "Bash", {"command": f"git -C {PRIMARY} restore --source=HEAD~1 -- CLAUDE.md"}
+    ) is not None
+
+
+def test_git_checkout_double_dash_with_no_path_stays_refused():
+    """`git checkout --` alone names nothing to restore — not a real
+    restore-to-HEAD, and falling through keeps it refused rather than
+    silently a no-op allow."""
+    assert _decide("Bash", {"command": f"git -C {PRIMARY} checkout --"}) is not None
+
+
+def test_git_checkout_dot_without_the_separator_stays_refused():
+    """`git checkout .` (no explicit `--`) stays ambiguous and refused —
+    unchanged by this exemption, which requires the unambiguous separator."""
+    assert _decide("Bash", {"command": f"cd {PRIMARY} && git checkout ."}) is not None
+
+
+def test_a_branch_switch_still_refused_alongside_the_new_restore_exemption():
+    assert _decide("Bash", {"command": f"git -C {PRIMARY} checkout dev"}) is not None
+
+
+def test_reset_hard_still_refused_alongside_the_new_restore_exemption():
+    assert _decide("Bash", {"command": f"git -C {PRIMARY} reset --hard HEAD~1"}) is not None
+
+
+def test_clean_still_refused_alongside_the_new_restore_exemption():
+    assert _decide("Bash", {"command": f"git -C {PRIMARY} clean -fd"}) is not None
+
+
+def test_post_hook_remedy_command_is_itself_allowed_by_the_pre_hook():
+    """🔴 THE PAIRING PIN. `format_primary_dirt_warning` (the PostToolUse
+    leg's remedy text) tells the agent to run `git -C <primary> checkout --
+    <file>` to clean stray primary dirt. This reads that command SHAPE
+    straight out of the warning text and feeds it into `decide()` (the
+    PreToolUse leg) — if a future edit to either side drifts the wording
+    from what the guard actually allows, this fails instead of silently
+    reproducing the 2026-09-23 incident (a remedy the guard itself refuses)."""
+    ctx = _ctx()
+    warning = format_primary_dirt_warning(["KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"], ctx)
+    match = re.search(r"`(git -C \S+ checkout -- )<file>`", warning)
+    assert match, warning
+    remedy_cmd = match.group(1) + "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"
+    assert remedy_cmd.startswith(f"git -C {PRIMARY} checkout -- ")
+    assert decide("Bash", {"command": remedy_cmd}, WT, ctx=ctx, allow_override=False) is None
 
 
 # ── the compound `add && commit` trap (2026-08-27) ────────────────────────
