@@ -255,6 +255,158 @@ class TestDRE:
         assert api.get("/api/financeiro/dre?competencia=2026-08").json()[0]["receita"] == 5000.0
 
 
+class TestGerarCompetencia:
+    def test_requires_auth(self, api):
+        resp = api.raw().post(
+            "/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"}
+        )
+        assert resp.status_code == 401
+
+    def test_malformed_competencia_returns_422(self, api):
+        resp = api.post("/api/financeiro/faturas/gerar-competencia",
+                         json={"competencia": "agosto"})
+        assert resp.status_code == 422
+
+    def test_creates_one_invoice_per_active_contract(self, api, repos, cliente):
+        contrato = _contrato(repos, cliente, pacote=12, excedente=150.0)
+        resp = api.post("/api/financeiro/faturas/gerar-competencia",
+                         json={"competencia": "2026-08"})
+        assert resp.status_code == 200
+        corpo = resp.json()
+        assert len(corpo["criadas"]) == 1
+        assert corpo["existentes"] == []
+        fatura = corpo["criadas"][0]
+        assert fatura["contrato_id"] == contrato["id"]
+        assert fatura["valor_total"] == 5000.0  # só o retainer — sem excedentes ainda
+
+        itens = repos.fatura_item.da_fatura(ORG, fatura["id"])
+        assert [i["descricao"] for i in itens] == ["Retainer mensal"]
+
+    def test_inactive_contracts_are_skipped(self, api, repos, cliente):
+        repos.contrato.criar(ORG, {
+            "cliente_id": cliente["id"], "status": "encerrado", "valor_mensal": 999.0,
+        })
+        resp = api.post("/api/financeiro/faturas/gerar-competencia",
+                         json={"competencia": "2026-08"})
+        assert resp.json() == {"criadas": [], "existentes": []}
+
+    def test_rerunning_is_idempotent(self, api, repos, cliente):
+        """The point of the endpoint: closing the month twice must not
+        double-bill a single active contract."""
+        _contrato(repos, cliente)
+        primeira = api.post("/api/financeiro/faturas/gerar-competencia",
+                             json={"competencia": "2026-08"}).json()
+        segunda = api.post("/api/financeiro/faturas/gerar-competencia",
+                            json={"competencia": "2026-08"}).json()
+        assert len(primeira["criadas"]) == 1
+        assert segunda["criadas"] == []
+        assert len(segunda["existentes"]) == 1
+        assert segunda["existentes"][0]["id"] == primeira["criadas"][0]["id"]
+        assert len(repos.fatura.da_competencia(ORG, "2026-08")) == 1
+
+    def test_includes_excedentes_billed_to_this_competencia(self, api, repos, cliente):
+        """Delivered in July, package of 12, 15 delivered ⇒ 3 excedentes ×
+        R$150 — billed on AUGUST's invoice, per the spec ('mês subsequente')."""
+        _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _pautas(repos, cliente, 15, mes="2026-07")
+
+        resp = api.post("/api/financeiro/faturas/gerar-competencia",
+                         json={"competencia": "2026-08"})
+        fatura = resp.json()["criadas"][0]
+        assert fatura["valor_total"] == 5450.0  # 5000 retainer + 3×150
+
+        itens = repos.fatura_item.da_fatura(ORG, fatura["id"])
+        excedente = next(i for i in itens if i["tipo"] == "excedente")
+        assert excedente["quantidade"] == 3
+        assert excedente["valor_unit"] == 150.0
+
+    def test_no_excedente_line_when_delivery_is_within_package(self, api, repos, cliente):
+        _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _pautas(repos, cliente, 8, mes="2026-07")
+
+        resp = api.post("/api/financeiro/faturas/gerar-competencia",
+                         json={"competencia": "2026-08"})
+        fatura = resp.json()["criadas"][0]
+        assert fatura["valor_total"] == 5000.0
+        itens = repos.fatura_item.da_fatura(ORG, fatura["id"])
+        assert all(i["tipo"] != "excedente" for i in itens)
+
+    def test_vencimento_derived_from_contract_day(self, api, repos, cliente):
+        contrato = repos.contrato.criar(ORG, {
+            "cliente_id": cliente["id"], "status": "ativo",
+            "valor_mensal": 1000.0, "dia_vencimento": 31,  # Feb has no 31st
+        })
+        resp = api.post("/api/financeiro/faturas/gerar-competencia",
+                         json={"competencia": "2026-02"})
+        fatura = resp.json()["criadas"][0]
+        assert fatura["contrato_id"] == contrato["id"]
+        assert fatura["vencimento"] == "2026-02-28"
+
+    def test_a_cancelled_invoice_does_not_block_a_new_one(self, api, repos, cliente):
+        contrato = _contrato(repos, cliente)
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "contrato_id": contrato["id"],
+            "competencia": "2026-08", "status": "cancelada", "valor_total": 999.0,
+        })
+        resp = api.post("/api/financeiro/faturas/gerar-competencia",
+                         json={"competencia": "2026-08"})
+        assert len(resp.json()["criadas"]) == 1
+
+
+class TestResumo:
+    def test_requires_auth(self, api):
+        assert api.raw().get("/api/financeiro/resumo").status_code == 401
+
+    def test_malformed_competencia_returns_422(self, api):
+        assert api.get("/api/financeiro/resumo?competencia=agosto").status_code == 422
+
+    def test_mrr_is_the_sum_of_active_contracts(self, api, repos, cliente):
+        _contrato(repos, cliente)  # valor_mensal 5000, ativo
+        repos.contrato.criar(ORG, {
+            "cliente_id": cliente["id"], "status": "encerrado", "valor_mensal": 999.0,
+        })
+        resumo = api.get("/api/financeiro/resumo").json()
+        assert resumo["mrr"] == 5000.0
+
+    def test_a_receber_and_recebido_split_by_status(self, api, repos, cliente):
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+            "valor_total": 3000.0, "status": "paga",
+        })
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+            "valor_total": 2000.0, "status": "enviada",
+        })
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+            "valor_total": 999.0, "status": "cancelada",
+        })
+        resumo = api.get("/api/financeiro/resumo?competencia=2026-08").json()
+        assert resumo["recebido"] == 3000.0
+        assert resumo["a_receber"] == 2000.0
+
+    def test_competencia_scopes_a_receber_and_recebido(self, api, repos, cliente):
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-07",
+            "valor_total": 1000.0, "status": "paga",
+        })
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+            "valor_total": 2000.0, "status": "paga",
+        })
+        resumo = api.get("/api/financeiro/resumo?competencia=2026-08").json()
+        assert resumo["recebido"] == 2000.0
+
+    def test_inadimplente_counts_overdue_invoices(self, api, repos, cliente):
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-07",
+            "valor_total": 500.0, "vencimento": "2020-01-01", "status": "enviada",
+        })
+        resumo = api.get("/api/financeiro/resumo").json()
+        assert resumo["inadimplente_qtd"] == 1
+        assert resumo["inadimplente_valor"] == 500.0
+
+
 class TestInadimplentes:
     def test_overdue_invoice_is_listed_with_days_late(self, api, repos, cliente):
         repos.fatura.criar(ORG, {
