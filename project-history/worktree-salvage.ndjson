@@ -953,3 +953,4 @@
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/website-contract", "branch": "feat/website-contract", "sha": "ea7206442fe975e8fbb81091c2194a8e65fef77f", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/igig-financeiro-be", "branch": "feat/igig-financeiro-be", "sha": "74183eebc63622b1513751fc8b0ad35ba599f7a7", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/ledger-deliver-salvage", "branch": "feat/ledger-deliver-salvage", "sha": "bea157eeb773a36fc149708dc5312d06f61147b4", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/igig-automacoes-be", "branch": "feat/igig-automacoes-be", "sha": "c1f0e13ca736f9e4a4e8fe0497ca3aa51a40310b", "reason": "task_branch cleanup (learn-before-delete)"}
