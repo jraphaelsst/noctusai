@@ -316,3 +316,22 @@ def test_unit_plan_ship_set_ignores_ledger_paths_for_dependencies():
     ]
     plan = RR.plan_ship_set(riders)
     assert plan["ship"] == ["a"] and plan["dependencies"] == []
+
+
+def test_default_runner_roundtrips_non_utf8_bytes(tmp_path, monkeypatch):
+    """stage=manifest crashed on a non-UTF-8 byte in `git log -p` (2026-09-23)."""
+    import subprocess as sp
+    import settings
+    from tools.noctus.dev import release as R
+    repo = tmp_path / "r"
+    repo.mkdir()
+    sp.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "latin1.txt").write_bytes(b"caf\xe9 \x93quoted\x94\n")
+    sp.run(["git", "-C", str(repo), "add", "."], check=True)
+    sp.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+            "commit", "-qm", "x"], check=True)
+    monkeypatch.setattr(settings, "REPO_ROOT", repo)
+    rc, out, _e = R._default_run_local(["git", "log", "-p", "--format=commit %H", "-1"])
+    assert rc == 0
+    rc2, ids, _e2 = R._default_run_local(["git", "patch-id", "--stable"], stdin=out)
+    assert rc2 == 0 and len(ids.split()) == 2

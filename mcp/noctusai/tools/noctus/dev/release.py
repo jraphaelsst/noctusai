@@ -107,7 +107,12 @@ def _default_run_local(
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
-    r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT), env=env,
+    # surrogateescape: `git log -p` carries arbitrary bytes (binary diffs, Latin-1
+    # sources). Strict utf-8 crashed stage=manifest on 2026-09-23; surrogateescape
+    # round-trips every byte exactly, so the text handed back to `git patch-id`
+    # on stdin is byte-identical to what git produced.
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                       errors="surrogateescape", cwd=str(REPO_ROOT), env=env,
                        input=stdin)
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 
