@@ -1,0 +1,520 @@
+{
+  "_gerado_por": "gerar_documentos.py (sw-extraction-contract-gate-2026-09)",
+  "_seed": 20260922,
+  "personas": {
+    "titular": {
+      "nome": "RICARDO AUGUSTO FERREIRA LIMA",
+      "cpf": "111.222.333-96",
+      "rg": "23.456.789-0",
+      "rg_orgao": "SSP/SP",
+      "data_nascimento": "1985-03-14",
+      "genero": "Masculino"
+    },
+    "conjuge": {
+      "nome": "CAMILA DOS SANTOS FERREIRA LIMA",
+      "cpf": "222.333.444-05",
+      "rg": "34.567.890-1",
+      "rg_orgao": "SSP/SP",
+      "data_nascimento": "1988-11-02",
+      "genero": "Feminino"
+    },
+    "vendedor": {
+      "nome": "FERNANDO SOUZA MARTINS",
+      "cpf": "333.444.555-08",
+      "rg": "45.678.901-2",
+      "rg_orgao": "SSP/SP",
+      "data_nascimento": "1979-07-30",
+      "genero": "Masculino"
+    }
+  },
+  "imoveis": {
+    "livre": {
+      "codigo": "e2e-imv-livre",
+      "numero_matricula": "45678"
+    },
+    "hipoteca": {
+      "codigo": "e2e-imv-hipoteca",
+      "numero_matricula": "78901"
+    }
+  },
+  "documentos": {
+    "titular_rg_texto.pdf": {
+      "descricao": "RG (modelo antigo) — Ricardo, titular",
+      "tipo_documento": "rg",
+      "uploads": [
+        {
+          "alvo": "cliente:titular",
+          "campos": {
+            "clientes.nome_oficial": "RICARDO AUGUSTO FERREIRA LIMA",
+            "clientes.data_nascimento": "1985-03-14",
+            "clientes.genero": "Masculino",
+            "clientes.cpf": "111.222.333-96",
+            "clientes.rg": "23.456.789-0",
+            "clientes.rg_orgao_expedidor": "SSP/SP"
+          }
+        }
+      ]
+    },
+    "titular_rg_scan.pdf": {
+      "descricao": "RG (modelo antigo) — Ricardo, titular",
+      "tipo_documento": "rg",
+      "uploads": [
+        {
+          "alvo": "cliente:titular",
+          "campos": {
+            "clientes.nome_oficial": "RICARDO AUGUSTO FERREIRA LIMA",
+            "clientes.data_nascimento": "1985-03-14",
+            "clientes.genero": "Masculino",
+            "clientes.cpf": "111.222.333-96",
+            "clientes.rg": "23.456.789-0",
+            "clientes.rg_orgao_expedidor": "SSP/SP"
+          }
+        }
+      ]
+    },
+    "conjuge_cin_texto.pdf": {
+      "descricao": "CIN (Carteira de Identidade Nacional, modelo novo) — Camila, cônjuge",
+      "tipo_documento": "rg",
+      "uploads": [
+        {
+          "alvo": "cliente:conjuge",
+          "campos": {
+            "clientes.nome_oficial": "CAMILA DOS SANTOS FERREIRA LIMA",
+            "clientes.data_nascimento": "1988-11-02",
+            "clientes.genero": "Feminino",
+            "clientes.cpf": "222.333.444-05",
+            "clientes.rg": "34.567.890-1",
+            "clientes.rg_orgao_expedidor": "SSP/SP"
+          }
+        }
+      ],
+      "notas": "Nacionalidade é deliberadamente OMITIDA deste documento — ver README.md secao 'por que a CIN da Camila nao imprime nacionalidade'."
+    },
+    "conjuge_cin_scan.pdf": {
+      "descricao": "CIN (Carteira de Identidade Nacional, modelo novo) — Camila, cônjuge",
+      "tipo_documento": "rg",
+      "uploads": [
+        {
+          "alvo": "cliente:conjuge",
+          "campos": {
+            "clientes.nome_oficial": "CAMILA DOS SANTOS FERREIRA LIMA",
+            "clientes.data_nascimento": "1988-11-02",
+            "clientes.genero": "Feminino",
+            "clientes.cpf": "222.333.444-05",
+            "clientes.rg": "34.567.890-1",
+            "clientes.rg_orgao_expedidor": "SSP/SP"
+          }
+        }
+      ],
+      "notas": "Nacionalidade é deliberadamente OMITIDA deste documento — ver README.md secao 'por que a CIN da Camila nao imprime nacionalidade'."
+    },
+    "vendedor_cnh_texto.pdf": {
+      "descricao": "CNH — Fernando, vendedor",
+      "tipo_documento": "cnh",
+      "uploads": [
+        {
+          "alvo": "cliente:vendedor",
+          "campos": {
+            "clientes.nome_oficial": "FERNANDO SOUZA MARTINS",
+            "clientes.data_nascimento": "1979-07-30",
+            "clientes.cpf": "333.444.555-08",
+            "clientes.rg": "45.678.901-2",
+            "clientes.rg_orgao_expedidor": "SSP/SP"
+          }
+        }
+      ]
+    },
+    "vendedor_cnh_scan.pdf": {
+      "descricao": "CNH — Fernando, vendedor",
+      "tipo_documento": "cnh",
+      "uploads": [
+        {
+          "alvo": "cliente:vendedor",
+          "campos": {
+            "clientes.nome_oficial": "FERNANDO SOUZA MARTINS",
+            "clientes.data_nascimento": "1979-07-30",
+            "clientes.cpf": "333.444.555-08",
+            "clientes.rg": "45.678.901-2",
+            "clientes.rg_orgao_expedidor": "SSP/SP"
+          }
+        }
+      ]
+    },
+    "certidao_casamento_texto.pdf": {
+      "descricao": "Certidão de casamento conjunta — Ricardo + Camila",
+      "tipo_documento": "certidao_casamento",
+      "uploads": [
+        {
+          "alvo": "cliente:titular",
+          "campos": {
+            "clientes.nome_oficial": "RICARDO AUGUSTO FERREIRA LIMA",
+            "clientes.cpf": "111.222.333-96",
+            "clientes.estado_civil": "casado",
+            "clientes.regime_bens": "comunhao_parcial",
+            "clientes.data_casamento": "2015-06-20",
+            "clientes.nacionalidade": "brasileiro"
+          }
+        },
+        {
+          "alvo": "cliente:conjuge",
+          "campos": {
+            "clientes.nome_oficial": "CAMILA DOS SANTOS FERREIRA LIMA",
+            "clientes.cpf": "222.333.444-05",
+            "clientes.estado_civil": "casado",
+            "clientes.regime_bens": "comunhao_parcial",
+            "clientes.data_casamento": "2015-06-20",
+            "clientes.nacionalidade": "brasileiro"
+          }
+        }
+      ],
+      "notas": "MESMO arquivo, enviado DUAS vezes na UI — uma vez no card do Ricardo, uma vez no card da Camila (ver README.md). O extrator usa o titular esperado de cada card para decidir qual dos dois nomes/CPFs listados é 'o do card'."
+    },
+    "certidao_casamento_scan.pdf": {
+      "descricao": "Certidão de casamento conjunta — Ricardo + Camila",
+      "tipo_documento": "certidao_casamento",
+      "uploads": [
+        {
+          "alvo": "cliente:titular",
+          "campos": {
+            "clientes.nome_oficial": "RICARDO AUGUSTO FERREIRA LIMA",
+            "clientes.cpf": "111.222.333-96",
+            "clientes.estado_civil": "casado",
+            "clientes.regime_bens": "comunhao_parcial",
+            "clientes.data_casamento": "2015-06-20",
+            "clientes.nacionalidade": "brasileiro"
+          }
+        },
+        {
+          "alvo": "cliente:conjuge",
+          "campos": {
+            "clientes.nome_oficial": "CAMILA DOS SANTOS FERREIRA LIMA",
+            "clientes.cpf": "222.333.444-05",
+            "clientes.estado_civil": "casado",
+            "clientes.regime_bens": "comunhao_parcial",
+            "clientes.data_casamento": "2015-06-20",
+            "clientes.nacionalidade": "brasileiro"
+          }
+        }
+      ],
+      "notas": "MESMO arquivo, enviado DUAS vezes na UI — uma vez no card do Ricardo, uma vez no card da Camila (ver README.md). O extrator usa o titular esperado de cada card para decidir qual dos dois nomes/CPFs listados é 'o do card'."
+    },
+    "vendedor_certidao_nascimento_texto.pdf": {
+      "descricao": "Certidão de nascimento — Fernando, vendedor (solteiro)",
+      "tipo_documento": "certidao_nascimento",
+      "uploads": [
+        {
+          "alvo": "cliente:vendedor",
+          "campos": {
+            "clientes.nome_oficial": "FERNANDO SOUZA MARTINS",
+            "clientes.data_nascimento": "1979-07-30",
+            "clientes.genero": "Masculino",
+            "clientes.estado_civil": "solteiro"
+          }
+        }
+      ]
+    },
+    "vendedor_certidao_nascimento_scan.pdf": {
+      "descricao": "Certidão de nascimento — Fernando, vendedor (solteiro)",
+      "tipo_documento": "certidao_nascimento",
+      "uploads": [
+        {
+          "alvo": "cliente:vendedor",
+          "campos": {
+            "clientes.nome_oficial": "FERNANDO SOUZA MARTINS",
+            "clientes.data_nascimento": "1979-07-30",
+            "clientes.genero": "Masculino",
+            "clientes.estado_civil": "solteiro"
+          }
+        }
+      ]
+    },
+    "comprovante_endereco_texto.pdf": {
+      "descricao": "Comprovante de endereço (conta de luz) — Ricardo, titular",
+      "tipo_documento": "comprovante_endereco",
+      "uploads": [
+        {
+          "alvo": "cliente:titular",
+          "campos": {
+            "clientes.endereco_cep": "04101-000",
+            "clientes.endereco_logradouro": "Rua das Palmeiras",
+            "clientes.endereco_numero": "120",
+            "clientes.endereco_complemento": "apto 45",
+            "clientes.endereco_bairro": "Vila Mariana",
+            "clientes.endereco_cidade": "São Paulo",
+            "clientes.endereco_uf": "SP"
+          }
+        }
+      ],
+      "pending_spec": {
+        "note": "tipo_documento='comprovante_endereco' e o parser de endereco (mig 153, slice identity) ainda nao existiam neste worktree quando esta fixture foi criada — o rotulo/formato exato dos campos deve ser confirmado contra a implementacao real antes de tratar isto como score final. O bloco acima usa rotulos explicitos (CEP:/LOGRADOURO:/...) E uma linha de endereco corrido, para maximizar compatibilidade com qualquer uma das duas estrategias de parsing."
+      }
+    },
+    "comprovante_endereco_scan.pdf": {
+      "descricao": "Comprovante de endereço (conta de luz) — Ricardo, titular",
+      "tipo_documento": "comprovante_endereco",
+      "uploads": [
+        {
+          "alvo": "cliente:titular",
+          "campos": {
+            "clientes.endereco_cep": "04101-000",
+            "clientes.endereco_logradouro": "Rua das Palmeiras",
+            "clientes.endereco_numero": "120",
+            "clientes.endereco_complemento": "apto 45",
+            "clientes.endereco_bairro": "Vila Mariana",
+            "clientes.endereco_cidade": "São Paulo",
+            "clientes.endereco_uf": "SP"
+          }
+        }
+      ],
+      "pending_spec": {
+        "note": "tipo_documento='comprovante_endereco' e o parser de endereco (mig 153, slice identity) ainda nao existiam neste worktree quando esta fixture foi criada — o rotulo/formato exato dos campos deve ser confirmado contra a implementacao real antes de tratar isto como score final. O bloco acima usa rotulos explicitos (CEP:/LOGRADOURO:/...) E uma linha de endereco corrido, para maximizar compatibilidade com qualquer uma das duas estrategias de parsing."
+      }
+    },
+    "matricula_imovel_livre_texto.pdf": {
+      "descricao": "Matrícula do imóvel e2e-imv-livre — compra e venda + alienação fiduciária CANCELADA (situação de ônus esperada: livre)",
+      "tipo_documento": "matricula",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-livre",
+          "campos": {
+            "imovel_dados.numero_matricula": "45678"
+          }
+        }
+      ],
+      "bonus_campos": {
+        "imovel_dados.titulo_aquisitivo_texto": "Compra e venda registrada sob R-1, em 10/02/2024, tendo como outorgante vendedor Fernando Souza Martins e outorgados compradores Ricardo Augusto Ferreira Lima e Camila dos Santos Ferreira Lima.",
+        "imovel_dados.onus_credor": null,
+        "matricula_ato_detalhes[R-1].data_registro": "2024-02-10",
+        "matricula_ato_detalhes[R-1].transmitentes": [
+          {
+            "nome": "FERNANDO SOUZA MARTINS",
+            "cpf_cnpj": "333.444.555-08"
+          }
+        ],
+        "matricula_ato_detalhes[R-1].adquirentes": [
+          {
+            "nome": "RICARDO AUGUSTO FERREIRA LIMA",
+            "cpf_cnpj": "111.222.333-96"
+          },
+          {
+            "nome": "CAMILA DOS SANTOS FERREIRA LIMA",
+            "cpf_cnpj": "222.333.444-05"
+          }
+        ],
+        "clientes.profissao[titular]": "corretor de imóveis",
+        "clientes.profissao[conjuge]": "corretora de imóveis",
+        "clientes.profissao[vendedor]": "empresário",
+        "_nota": "Requer o clique 'Confirmar' na fila de Qualificações do imóvel (matriculas/qualificacao_service.confirmar) antes de aparecer em `clientes` — ver README.md."
+      },
+      "pending_spec": {
+        "imovel_dados.numero_registro_imoveis": "5º Ofício de Registro de Imóveis de São Paulo",
+        "imovel_dados.prefeitura_cadastro_imobiliario": "ver imovel_hub_iptu — populado pela guia de IPTU, nao pela matricula; mantido aqui so como referencia cruzada.",
+        "imovel_dados.situacao_onus": "livre",
+        "note": "numero_registro_imoveis / situacao_onus sao alvo da slice 'imovel' (mig 154), que nao havia sido mesclada neste worktree quando esta fixture foi gerada. O texto/valor acima e a MELHOR SUPOSICAO baseada no cabecalho real do documento (\"<N>o Oficio de Registro de Imoveis de <cidade>\") e no comportamento R-2 alienacao fiduciaria + Av-3 cancelamento => onus livre descrito no roadmap — nao e uma leitura de codigo ja existente. Revisar contra a implementacao real assim que 154 for mesclada."
+      }
+    },
+    "matricula_imovel_livre_scan.pdf": {
+      "descricao": "Matrícula do imóvel e2e-imv-livre — compra e venda + alienação fiduciária CANCELADA (situação de ônus esperada: livre)",
+      "tipo_documento": "matricula",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-livre",
+          "campos": {
+            "imovel_dados.numero_matricula": "45678"
+          }
+        }
+      ],
+      "bonus_campos": {
+        "imovel_dados.titulo_aquisitivo_texto": "Compra e venda registrada sob R-1, em 10/02/2024, tendo como outorgante vendedor Fernando Souza Martins e outorgados compradores Ricardo Augusto Ferreira Lima e Camila dos Santos Ferreira Lima.",
+        "imovel_dados.onus_credor": null,
+        "matricula_ato_detalhes[R-1].data_registro": "2024-02-10",
+        "matricula_ato_detalhes[R-1].transmitentes": [
+          {
+            "nome": "FERNANDO SOUZA MARTINS",
+            "cpf_cnpj": "333.444.555-08"
+          }
+        ],
+        "matricula_ato_detalhes[R-1].adquirentes": [
+          {
+            "nome": "RICARDO AUGUSTO FERREIRA LIMA",
+            "cpf_cnpj": "111.222.333-96"
+          },
+          {
+            "nome": "CAMILA DOS SANTOS FERREIRA LIMA",
+            "cpf_cnpj": "222.333.444-05"
+          }
+        ],
+        "clientes.profissao[titular]": "corretor de imóveis",
+        "clientes.profissao[conjuge]": "corretora de imóveis",
+        "clientes.profissao[vendedor]": "empresário",
+        "_nota": "Requer o clique 'Confirmar' na fila de Qualificações do imóvel (matriculas/qualificacao_service.confirmar) antes de aparecer em `clientes` — ver README.md."
+      },
+      "pending_spec": {
+        "imovel_dados.numero_registro_imoveis": "5º Ofício de Registro de Imóveis de São Paulo",
+        "imovel_dados.prefeitura_cadastro_imobiliario": "ver imovel_hub_iptu — populado pela guia de IPTU, nao pela matricula; mantido aqui so como referencia cruzada.",
+        "imovel_dados.situacao_onus": "livre",
+        "note": "numero_registro_imoveis / situacao_onus sao alvo da slice 'imovel' (mig 154), que nao havia sido mesclada neste worktree quando esta fixture foi gerada. O texto/valor acima e a MELHOR SUPOSICAO baseada no cabecalho real do documento (\"<N>o Oficio de Registro de Imoveis de <cidade>\") e no comportamento R-2 alienacao fiduciaria + Av-3 cancelamento => onus livre descrito no roadmap — nao e uma leitura de codigo ja existente. Revisar contra a implementacao real assim que 154 for mesclada."
+      }
+    },
+    "matricula_imovel_hipoteca_texto.pdf": {
+      "descricao": "Matrícula do imóvel e2e-imv-hipoteca — compra e venda + HIPOTECA ATIVA (sem cancelamento)",
+      "tipo_documento": "matricula",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-hipoteca",
+          "campos": {
+            "imovel_dados.numero_matricula": "78901"
+          }
+        }
+      ],
+      "bonus_campos": {
+        "matricula_ato_detalhes[R-1].data_registro": "2023-05-05",
+        "matricula_ato_detalhes[R-1].transmitentes": [
+          {
+            "nome": "ANTONIO CARLOS PEREIRA",
+            "cpf_cnpj": "444.555.666-19"
+          }
+        ],
+        "matricula_ato_detalhes[R-1].adquirentes": [
+          {
+            "nome": "MARINA ALVES SOUZA",
+            "cpf_cnpj": "555.666.777-20"
+          }
+        ],
+        "matricula_ato_detalhes[R-2].credor": "BANCO BETA FINANCEIRA S.A."
+      },
+      "pending_spec": {
+        "imovel_dados.numero_registro_imoveis": "3º Ofício de Registro de Imóveis de Campinas",
+        "imovel_dados.situacao_onus": "<token ainda nao definido pela slice imovel (mig 154) — ha hipoteca ATIVA, nao cancelada>",
+        "imovel_dados.onus_credor": "BANCO BETA FINANCEIRA S.A.",
+        "note": "Mesma ressalva de _doc_matricula_livre — ver ali."
+      }
+    },
+    "matricula_imovel_hipoteca_scan.pdf": {
+      "descricao": "Matrícula do imóvel e2e-imv-hipoteca — compra e venda + HIPOTECA ATIVA (sem cancelamento)",
+      "tipo_documento": "matricula",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-hipoteca",
+          "campos": {
+            "imovel_dados.numero_matricula": "78901"
+          }
+        }
+      ],
+      "bonus_campos": {
+        "matricula_ato_detalhes[R-1].data_registro": "2023-05-05",
+        "matricula_ato_detalhes[R-1].transmitentes": [
+          {
+            "nome": "ANTONIO CARLOS PEREIRA",
+            "cpf_cnpj": "444.555.666-19"
+          }
+        ],
+        "matricula_ato_detalhes[R-1].adquirentes": [
+          {
+            "nome": "MARINA ALVES SOUZA",
+            "cpf_cnpj": "555.666.777-20"
+          }
+        ],
+        "matricula_ato_detalhes[R-2].credor": "BANCO BETA FINANCEIRA S.A."
+      },
+      "pending_spec": {
+        "imovel_dados.numero_registro_imoveis": "3º Ofício de Registro de Imóveis de Campinas",
+        "imovel_dados.situacao_onus": "<token ainda nao definido pela slice imovel (mig 154) — ha hipoteca ATIVA, nao cancelada>",
+        "imovel_dados.onus_credor": "BANCO BETA FINANCEIRA S.A.",
+        "note": "Mesma ressalva de _doc_matricula_livre — ver ali."
+      }
+    },
+    "guia_iptu_texto.pdf": {
+      "descricao": "Guia de IPTU — imóvel e2e-imv-livre",
+      "tipo_documento": "guia_iptu",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-livre",
+          "campos": {
+            "imovel_documentos.inscricao_imobiliaria": "123.456.7890-1"
+          }
+        }
+      ],
+      "bonus_campos": {
+        "imovel_dados.prefeitura_cadastro_imobiliario": "123.456.7890-1"
+      }
+    },
+    "guia_iptu_scan.pdf": {
+      "descricao": "Guia de IPTU — imóvel e2e-imv-livre",
+      "tipo_documento": "guia_iptu",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-livre",
+          "campos": {
+            "imovel_documentos.inscricao_imobiliaria": "123.456.7890-1"
+          }
+        }
+      ],
+      "bonus_campos": {
+        "imovel_dados.prefeitura_cadastro_imobiliario": "123.456.7890-1"
+      }
+    },
+    "cnd_iptu_texto.pdf": {
+      "descricao": "CND de IPTU (negativa) — imóvel e2e-imv-livre",
+      "tipo_documento": "cnd_iptu",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-livre",
+          "campos": {
+            "imovel_documentos.numero": "2025/0045678",
+            "imovel_documentos.emitida_em": "2025-01-10",
+            "imovel_documentos.validade_ate": "2025-07-10",
+            "imovel_documentos.resultado": "negativa",
+            "imovel_documentos.inscricao_imobiliaria": "123.456.7890-1"
+          }
+        }
+      ]
+    },
+    "cnd_iptu_scan.pdf": {
+      "descricao": "CND de IPTU (negativa) — imóvel e2e-imv-livre",
+      "tipo_documento": "cnd_iptu",
+      "uploads": [
+        {
+          "alvo": "imovel:e2e-imv-livre",
+          "campos": {
+            "imovel_documentos.numero": "2025/0045678",
+            "imovel_documentos.emitida_em": "2025-01-10",
+            "imovel_documentos.validade_ate": "2025-07-10",
+            "imovel_documentos.resultado": "negativa",
+            "imovel_documentos.inscricao_imobiliaria": "123.456.7890-1"
+          }
+        }
+      ]
+    },
+    "cnd_federal_vendedor_texto.pdf": {
+      "descricao": "CND Federal (negativa) — Fernando, vendedor",
+      "tipo_documento": "cnd_federal",
+      "uploads": [
+        {
+          "alvo": "certidao:vendedor:cnd_federal",
+          "campos": {
+            "certidao_resultados.numero": "123456789",
+            "certidao_resultados.emitida_em": "2025-02-01",
+            "certidao_resultados.validade_ate": "2025-07-31",
+            "certidao_resultados.resultado": "negativa"
+          }
+        }
+      ]
+    },
+    "cnd_federal_vendedor_scan.pdf": {
+      "descricao": "CND Federal (negativa) — Fernando, vendedor",
+      "tipo_documento": "cnd_federal",
+      "uploads": [
+        {
+          "alvo": "certidao:vendedor:cnd_federal",
+          "campos": {
+            "certidao_resultados.numero": "123456789",
+            "certidao_resultados.emitida_em": "2025-02-01",
+            "certidao_resultados.validade_ate": "2025-07-31",
+            "certidao_resultados.resultado": "negativa"
+          }
+        }
+      ]
+    }
+  }
+}
