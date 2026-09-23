@@ -672,6 +672,94 @@ describe("Valor (%) do intermediário — a base é o valor do imóvel, não a c
   });
 });
 
+describe("[sw-comissao-parceiro-sem-creci] natureza do intermediário — parceiro sem CRECI", () => {
+  it("por padrão é 'intermediario' e mostra o campo CRECI (não papel)", async () => {
+    const { getByTestId, getByLabelText, queryByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-intermediario-novo"));
+    expect(getByLabelText("CRECI")).toBeTruthy();
+    expect(queryByLabelText("Papel/descrição (opcional)")).toBeNull();
+  });
+
+  it("🔴 trocar para 'parceiro sem CRECI' esconde o CRECI e mostra o papel", async () => {
+    const { getByTestId, getByText, getByLabelText, queryByLabelText } =
+      await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-intermediario-novo"));
+    fireEvent.click(getByText("Parceiro sem CRECI (recebe parte da comissão)"));
+
+    expect(queryByLabelText("CRECI")).toBeNull();
+    expect(getByLabelText("Papel/descrição (opcional)")).toBeTruthy();
+  });
+
+  it("o payload de criação de um parceiro sem CRECI envia natureza + papel, creci null", async () => {
+    const { getByTestId, getByText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-intermediario-novo"));
+    fireEvent.click(getByText("Parceiro sem CRECI (recebe parte da comissão)"));
+    fireEvent.change(document.getElementById("int-nome") as HTMLInputElement, {
+      target: { value: "SBCM Parceiros Imobiliários LTDA" },
+    });
+    fireEvent.change(document.getElementById("int-papel") as HTMLInputElement, {
+      target: { value: "indicação" },
+    });
+    fireEvent.click(getByTestId("negest-intermediario-salvar"));
+
+    expect(mockCreateIntermediario).toHaveBeenCalledTimes(1);
+    const payload = mockCreateIntermediario.mock.calls[0][0];
+    expect(payload.natureza).toBe("parceiro_split");
+    expect(payload.papel).toBe("indicação");
+    expect(payload.creci).toBeNull();
+  });
+
+  it("editar um intermediário existente com natureza 'parceiro_split' mostra o papel salvo", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          intermediarios: [
+            {
+              id: "int-parceiro",
+              nome: "SBCM Parceiros Imobiliários LTDA",
+              creci: null,
+              tipo: "percentual" as const,
+              valor: "5",
+              corretor_id: null,
+              favorecido_id: null,
+              natureza: "parceiro_split" as const,
+              papel: "indicação",
+              pessoa_tipo: "pj" as const,
+              documento: "45646535000172",
+              email: null,
+              endereco_cep: null,
+              endereco_logradouro: null,
+              endereco_numero: null,
+              endereco_complemento: null,
+              endereco_bairro: null,
+              endereco_cidade: null,
+              endereco_uf: null,
+              representante_nome: null,
+              representante_cpf: null,
+              created_at: null,
+              updated_at: null,
+            },
+          ],
+        }),
+      }),
+    );
+    const { getByLabelText, queryByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText(/Editar SBCM/));
+    expect((document.getElementById("int-papel") as HTMLInputElement).value).toBe(
+      "indicação",
+    );
+    expect(queryByLabelText("CRECI")).toBeNull();
+  });
+});
+
 describe("diálogo de favorecido — reset ao trocar de alvo", () => {
   const FAV_UM = {
     id: "fav-one",

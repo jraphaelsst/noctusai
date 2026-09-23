@@ -442,9 +442,16 @@ def montar_contexto(
         qualificados = []
         if any(i.corretor_id for i in d.intermediarios):
             qualificados.append(frases.qualificacao_imobiliaria(d.imobiliaria))
-        # [§6.1 #21] Each external intermediário is qualified from its OWN row.
+        # [§6.1 #21] Each external intermediário is qualified from its OWN
+        # row. Migration 162 — a 'parceiro_split' row (a commission-split
+        # beneficiary, never a contracted party) is NEVER added here, same
+        # as reference contract 08's own commission clause: its 3rd
+        # beneficiary appears only in the split-payment paragraph below
+        # (`valores`/`splits`), never in "as empresas a seguir qualificadas".
         qualificados += [
-            frases.qualificacao_intermediario(i) for i in d.intermediarios if not i.corretor_id
+            frases.qualificacao_intermediario(i)
+            for i in d.intermediarios
+            if not i.corretor_id and i.natureza == "intermediario"
         ]
         texto, texto_cap, contrata = frases.corretagem_contratantes(
             termos.corretagem_contratantes or "", V=V, C=C

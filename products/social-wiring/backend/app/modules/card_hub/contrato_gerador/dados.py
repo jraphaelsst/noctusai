@@ -185,6 +185,16 @@ class Intermediario:
     endereco: Endereco = field(default_factory=Endereco)
     representante_nome: Optional[str] = None
     representante_cpf: Optional[str] = None
+    #: Migration 162 — "intermediario" (default): a contracted party the
+    #: clause header qualifies (CRECI required). "parceiro_split": a
+    #: commission-split beneficiary never qualified in the header and never
+    #: required to carry a CRECI (`contexto.py`'s `qualificados` list skips
+    #: it; `derivacao.py._intermediacao` skips the CRECI readiness gate).
+    #: Both kinds are summed into the split total the same way.
+    natureza: str = "intermediario"
+    #: Free-text CRM metadata (why this party shares the commission) — never
+    #: rendered into the generated contract. See migration 162's header.
+    papel: Optional[str] = None
 
 
 @dataclass
