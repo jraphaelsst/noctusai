@@ -109,6 +109,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
+from app.modules.card_hub.proveniencia import fontes
 from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub.services import _now, _t
 
@@ -117,10 +118,14 @@ logger = logging.getLogger(__name__)
 DOCUMENTOS_TABLE = "cliente_documentos"
 CLIENTES_TABLE = "clientes"
 
-#: Document types worth reading fields off. Kept separate from
-#: `cliente_documento_tipos.identidade` on purpose: that flag drives LGPD
-#: retention policy, this drives a processing decision, and letting one silently
-#: change the other is how a retention edit turns into an unplanned OCR bill.
+#: Document types worth reading fields off — derived from `proveniencia.
+#: fontes.FONTES` (contract-gate S1), the ONE catalog that also backs
+#: `imovel_hub/documentos_service.py`'s own `TIPOS_*` and is checked against
+#: what the seed's extractor can actually produce (`capacidades.CAPACIDADES`).
+#: Kept separate from `cliente_documento_tipos.identidade` on purpose: that
+#: flag drives LGPD retention policy, this drives a processing decision, and
+#: letting one silently change the other is how a retention edit turns into
+#: an unplanned OCR bill.
 #:
 #: `cnh` was listed here BEFORE it had a row in `cliente_documento_tipos`
 #: (migration 057 seeded rg/cpf only, so no CNH could be uploaded and this
@@ -131,12 +136,7 @@ CLIENTES_TABLE = "clientes"
 #: both reach it now. No further change was needed here — this module was
 #: already written against the day it would ship.
 TIPOS_EXTRAIVEIS = frozenset(
-    {
-        "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
-        # Migration 153 (contract gate, identity slice). Read for its ADDRESS
-        # only — see `TIPOS_ENDERECO`.
-        "comprovante_endereco",
-    }
+    f.tipo_documento for f in fontes.FONTES.values() if f.dominio == "cliente"
 )
 
 #: Types whose reading may fill the `endereco_*` group — and, for these, ONLY
@@ -146,7 +146,11 @@ TIPOS_EXTRAIVEIS = frozenset(
 #: a certidão prints its CARTÓRIO's address, which is nobody's home.
 #: (`comprovante_residencia` is an `atendimento_documentos` type — the
 #: financing surface, a different table this pipeline does not read.)
-TIPOS_ENDERECO = frozenset({"comprovante_endereco"})
+TIPOS_ENDERECO = frozenset(
+    f.tipo_documento
+    for f in fontes.FONTES.values()
+    if f.dominio == "cliente" and "endereco" in f.campos
+)
 
 #: Types whose vision rung must receive EVERY page, not the adapter's
 #: 3-page default.
@@ -168,7 +172,9 @@ TIPOS_ENDERECO = frozenset({"comprovante_endereco"})
 #: marriage, divórcio or óbito is averbado on the margin of a birth
 #: certificate too, further into the document than page 1 — see that
 #: migration's header.
-TIPOS_LEITURA_INTEGRAL = frozenset({"certidao_casamento", "certidao_nascimento"})
+TIPOS_LEITURA_INTEGRAL = frozenset(
+    f.tipo_documento for f in fontes.FONTES.values() if f.leitura_integral
+)
 
 #: How many times one document may be STARTED before the sweep gives up.
 #: Bounds the vision bill on a deterministically-broken document — see
