@@ -56,7 +56,9 @@ def _wire(monkeypatch, *, runner, candidates, update_result=None):
 
 def test_flips_merged_existing_branch(monkeypatch):
     # branch exists (rev-parse rc0) AND is an ancestor of origin/dev (merge-base rc0).
-    runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+    runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", ""),
+                         # real commits carry the commit-msg hook's Noc-Branch trailer
+                         "log": (0, "feat/gone-but-landed\nfeat/in-flight\nfeat/landed\nfeat/live\nfeat/lost\nfeat/unrelated\nfeat/x\n", "")})
     updates = _wire(
         monkeypatch, runner=runner,
         candidates=[{"branch": "feat/landed", "commit": "abc123"}],
@@ -115,7 +117,9 @@ def test_skips_gone_branch_with_unproven_commit(monkeypatch):
 
 
 def test_reports_update_error_without_raising(monkeypatch):
-    runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+    runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", ""),
+                         # real commits carry the commit-msg hook's Noc-Branch trailer
+                         "log": (0, "feat/gone-but-landed\nfeat/in-flight\nfeat/landed\nfeat/live\nfeat/lost\nfeat/unrelated\nfeat/x\n", "")})
     _wire(
         monkeypatch, runner=runner,
         candidates=[{"branch": "feat/landed", "commit": "abc"}],
@@ -147,7 +151,9 @@ class TestWorktreeLivenessBeforeTerminalFlip:
     ):
         live_dir = tmp_path / "ef-w8-models-worker"
         live_dir.mkdir()
-        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", ""),
+                         # real commits carry the commit-msg hook's Noc-Branch trailer
+                         "log": (0, "feat/gone-but-landed\nfeat/in-flight\nfeat/landed\nfeat/live\nfeat/lost\nfeat/unrelated\nfeat/x\n", "")})
         monkeypatch.setattr(
             SES, "_worktree_branches",
             lambda root: [("ef-w8-models-worker", "feat/landed", live_dir)],
@@ -188,7 +194,9 @@ class TestWorktreeLivenessBeforeTerminalFlip:
         # No `_worktree_branches` monkeypatch — the real function resolves
         # `/repo/.claude/worktrees` as non-existent (fake root), returning
         # `[]`, exactly the existing (pre-fix) behaviour: preserved.
-        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", ""),
+                         # real commits carry the commit-msg hook's Noc-Branch trailer
+                         "log": (0, "feat/gone-but-landed\nfeat/in-flight\nfeat/landed\nfeat/live\nfeat/lost\nfeat/unrelated\nfeat/x\n", "")})
         updates = _wire(
             monkeypatch, runner=runner,
             candidates=[{"branch": "feat/landed", "commit": "abc123"}],
@@ -202,7 +210,9 @@ class TestWorktreeLivenessBeforeTerminalFlip:
     ):
         other_dir = tmp_path / "some-other-worktree"
         other_dir.mkdir()
-        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+        runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", ""),
+                         # real commits carry the commit-msg hook's Noc-Branch trailer
+                         "log": (0, "feat/gone-but-landed\nfeat/in-flight\nfeat/landed\nfeat/live\nfeat/lost\nfeat/unrelated\nfeat/x\n", "")})
         monkeypatch.setattr(
             SES, "_worktree_branches",
             lambda root: [("some-other-worktree", "feat/unrelated", other_dir)],

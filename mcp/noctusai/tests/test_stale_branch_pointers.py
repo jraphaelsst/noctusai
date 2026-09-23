@@ -51,16 +51,19 @@ def test_deleted_branch_with_no_evidence_is_unproven():
     assert wts.pointer_branch_landed(run, "feat/x", "abc", "origin/dev") == (False, "unproven")
 
 
-def test_fresh_fork_still_on_its_fork_point_is_not_landed():
-    # A fresh fork is trivially its own ancestor (the 2026-09-16 false positive).
-    run = _runner(refs={"feat/x"}, ancestors={("feat/x", "origin/dev")}, trailers="")
-    assert wts.pointer_branch_landed(run, "feat/x", "d0", "origin/dev", fork_sha="feat/x")[0] is False
+def test_fresh_branch_without_own_commits_is_not_landed_even_after_reset():
+    # Tip is a dev commit stamped for another branch; it's trivially an
+    # ancestor of dev, and the recorded fork point no longer matches (reset).
+    run = _runner(refs={"feat/x"}, ancestors={("feat/x", "origin/dev")},
+                  trailers="feat/other\n", ahead={"origin/dev..feat/x": 0})
+    assert wts.pointer_branch_landed(run, "feat/x", "d0", "origin/dev", fork_sha="d0")[0] is False
 
 
-def test_existing_branch_merged_past_its_fork_point_is_landed():
-    run = _runner(refs={"feat/x"}, ancestors={("feat/x", "origin/dev")}, trailers="")
-    assert wts.pointer_branch_landed(run, "feat/x", "b1", "origin/dev", fork_sha="d0") == (
-        True, "branch ref merged into base")
+def test_existing_branch_whose_own_commits_landed_is_landed():
+    run = _runner(refs={"feat/x"}, ancestors={("feat/x", "origin/dev")},
+                  trailers="feat/x\n", ahead={"origin/dev..feat/x": 0})
+    assert wts.pointer_branch_landed(run, "feat/x", "b1", "origin/dev") == (
+        True, "branch's own commits are on base")
 
 
 def test_fork_sha_parsed_from_pointer_base():

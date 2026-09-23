@@ -119,6 +119,12 @@ def has_trailer_commit_on(run: GitRunner, branch: str, base: str) -> bool:
     return any(line.strip() == branch for line in out.splitlines())
 
 
+def _commit_trailer_branch(run: GitRunner, ref: str) -> str:
+    """The ``Noc-Branch`` trailer of ``ref``'s own commit (``""`` if none)."""
+    rc, out, _e = run(["git", "log", "-1", ref, "--format=%(trailers:key=Noc-Branch,valueonly)"])
+    return out.strip().splitlines()[0].strip() if rc == 0 and out.strip() else ""
+
+
 def pointer_branch_landed(
     run: GitRunner, branch: str, recorded_commit: str, base: str,
     fork_sha: str = "",
@@ -126,22 +132,30 @@ def pointer_branch_landed(
     """Did the branch a pointer names land on ``base``? → (landed, how).
 
     One predicate for the healer (session_end_sweep) and the safety-net keeper
-    (check_stale_branch_pointers), so they can never disagree:
-      1. branch ref exists → ``is_merged`` (ancestry or cherry equivalence),
-         except a branch still sitting on its fork point (``fork_sha``, from
-         the pointer's ``base`` "origin/dev@<sha>"): a fresh fork is trivially
-         its own ancestor (the 2026-09-16 false positive documented below)
-         and has landed nothing;
-      2. recorded commit is an ancestor of ``base``;
-      3. ``base`` carries a ``Noc-Branch: <branch>`` trailer commit (proves
-         a rebased-and-deleted branch, whose recorded sha never reached dev).
+    (check_stale_branch_pointers), so they can never disagree. The evidence is
+    the branch's OWN work, identified by the ``Noc-Branch`` trailer the
+    commit-msg hook stamps on every commit (it survives rebase):
+      1. branch ref exists and is ahead of base → ``is_merged`` (cherry
+         equivalence of its own commits);
+      2. branch ref exists, not ahead → landed only if its tip commit is its
+         OWN (trailer == branch) or base carries one of its trailer commits.
+         A branch with no commits of its own sits on some dev commit and is
+         trivially an ancestor of base; it has landed nothing. Fork-point
+         matching was tried first and failed within the hour: an engineer
+         reset their fresh branch onto a newer dev, so the tip no longer
+         matched the recorded fork (2026-09-23);
+      3. ref gone → recorded commit on base, or a trailer commit on base.
+    ``fork_sha`` is accepted for callers but no longer needed.
     """
-    rc, tip, _e = run(["git", "rev-parse", "--verify", "--quiet", branch])
+    rc, _tip, _e = run(["git", "rev-parse", "--verify", "--quiet", branch])
     if rc == 0:
-        tip = tip.strip()
-        if fork_sha and tip.startswith(fork_sha.strip()):
-            return (has_trailer_commit_on(run, branch, base), "branch trailer commit on base")
-        return (is_merged(run, branch, base), "branch ref merged into base")
+        rc_c, count_out, _e2 = run(["git", "rev-list", "--count", f"{base}..{branch}"])
+        ahead = int(count_out.strip() or "0") if rc_c == 0 else 1
+        if ahead > 0:
+            return (is_merged(run, branch, base), "branch ref merged into base")
+        if _commit_trailer_branch(run, branch) == branch or has_trailer_commit_on(run, branch, base):
+            return (True, "branch's own commits are on base")
+        return (False, "branch has no commits of its own yet")
     if recorded_commit and is_ancestor(run, recorded_commit, base):
         return (True, "branch cleaned up; recorded commit is on base")
     if has_trailer_commit_on(run, branch, base):
