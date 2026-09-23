@@ -1001,7 +1001,14 @@ jobs:
     # zero signal — history is already merged).
     name: Gitleaks secrets scan
     needs: changes
-    if: needs.changes.outputs.run_heavy == 'true'
+    # NOT on workflow_dispatch (2026-09-22): the action has no diff base for a
+    # manual run, so it scans the FULL history — the out-of-scope case above — and
+    # fails on long-merged, triaged fixtures. That made every dispatched run red,
+    # including the full suite sync-product-scope.yml dispatches when a product
+    # wakes (whose bot commit gets no push run, so that red would block bless).
+    # Every human commit is still scanned by its own push/PR run; the bot commit
+    # only touches the two generated deploy/fleet/*-scope.txt files.
+    if: needs.changes.outputs.run_heavy == 'true' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
