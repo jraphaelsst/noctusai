@@ -243,7 +243,8 @@ KNOWLEDGE-BASE/
 │   │   └── 04-THERAPY.md
 │   ├── PRODUCTS/           ← per-product design docs (multi-feature slices that don't belong in a single INTEGRATIONS/backend doc)
 │       ├── core/
-│       │   └── SIGNUP-ONBOARDING-JOURNEY.md ← e2e signup→onboarding→org→noctus_users→JWT-claim→RLS chain; org_type (individual/company) + slug-prefix model + number_of_users; where each piece lives; migration 039; test coverage map
+│       │   ├── SIGNUP-ONBOARDING-JOURNEY.md ← e2e signup→onboarding→org→noctus_users→JWT-claim→RLS chain; org_type (individual/company) + slug-prefix model + number_of_users; where each piece lives; migration 039; test coverage map
+│       │   └── WEBSITE.md ← pointer to the noctusai.com website docs (live with the code at products/core/frontend/src/website/docs/, rendered in-app under Website → Documentação); Higgsfield MCP permission-only/website-only rule; website-scoped frontend MCPs (.claude/mcp/website.json)
 │       └── social-wiring/
 │           ├── INTEGRATIONS-MULTI-ACCOUNT.md ← multi-account integration credentials (integration_accounts table; seed-shape-vs-primitive-consume rule; YouTube OAuth v1; 3-step extension recipe)
 │           └── CONTRACT-FIELD-PROVENANCE-MAP.md ← F5 instrument generator (`card_hub/contrato_gerador`) field-by-field provenance: clause → source document → extractor code path → confirmed storage → UI confirm/promote step → status; ranked gap list; keeper `check_contract_field_provenance_map`
