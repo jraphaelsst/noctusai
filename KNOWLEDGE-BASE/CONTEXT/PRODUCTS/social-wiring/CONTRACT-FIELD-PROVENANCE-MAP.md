@@ -49,6 +49,62 @@ stored-but-unwritten clauses (`onus_quitacao='ja_quitado'`,
 `obrigacoes_vendedor`, `permuta_obrigacoes_entrega` — stored, no clause text
 exists for them in any sample contract). See §4 for the full ranked gap list.
 
+## 0a · File → contract coverage after the 2026-09-22 extraction wave (authoritative)
+
+> Supersedes the "0 confirmed / never promoted" picture above for everything a
+> DOCUMENT can supply. Roadmap + owner decisions:
+> `project-history/roadmaps/sw-extraction-contract-gate-2026-09.md`
+> (migrations 153 identity · 154 imóvel · 155 certidões · 156 validation ledger).
+
+**Write policy (owner D1).** An extracted value fills an EMPTY contract column directly,
+with provenance (`<campo>_origem` = source document tipo / `ia` / `api` / `sugerido`,
+`_documento_id`, `_em`), unconfirmed. A column a human set (`origem='manual'`) or an
+earlier extraction set to a different value is never overwritten: a conflict row
+(`cliente_campo_conflitos` / `imovel_campo_conflitos`) opens and an admin is notified.
+A human edit always stamps `manual` and is never re-prompted. Failed extractions retry
+automatically at most 2× (D3), then stay `erro` for a human.
+
+**Validation gate (owner D2).** "Gerar versão" first calls
+`GET /api/clientes/{id}/contratos/{contrato_id}/validacao-extracao`: every
+contract-feeding value that is machine-set and unconfirmed is listed with its source
+document; per-field ✓/✗ plus accept-all / reject-all. Accept stamps
+`_confirmado_por/_em`; reject clears value + provenance (the field becomes `faltando`;
+an inline input writes it back as `manual`). Every decision is appended to
+`social_wiring.extracao_validacoes` (the refinement ledger). Open conflicts on contract
+fields also block. The backend refuses `gerar` with 409 `EXTRACAO_PENDENTE_VALIDACAO`
+while anything is pending — the FE cannot bypass it. Registry:
+`card_hub/contrato_gerador/validacao_extracao.py` (derived from what `carregador.py`
+loads; a test keeps the two in lockstep).
+
+| Contract data | Source document(s) | Extractor | Lands in |
+|---|---|---|---|
+| nome oficial, CPF, RG + órgão expedidor, gênero, nacionalidade | RG antigo, CIN, CNH, certidão (per spouse) | `card_hub/identidade_extracao_service` + seed `integrations/documents/*` (text layer → vision fallback) | `clientes.*` (own provenance quintet each) |
+| estado civil, regime de bens, data do casamento, cônjuge link, profissão | certidão de casamento (both spouses) · certidão de nascimento | same + seed `conjuges.py` / `profession.py` | `clientes.estado_civil/regime_bens/data_casamento/conjuge_cliente_id/profissao` |
+| data de emissão da certidão de estado civil ([Q11] ≤90 dias) | certidão de casamento/nascimento | same | `cliente_documentos.extracao_data_emissao` (read by the gate) |
+| endereço (7 parts) | comprovante de endereço (holder must match the cliente) | seed `address.py` | `clientes.endereco_*` (one `endereco_*` quintet) |
+| nº da matrícula, cartório, inscrição municipal, situação de ônus, título aquisitivo (ato + texto), ônus credor + atos, última transferência | matrícula (transcription, linked to the imóvel) | `matriculas/preenchimento_service` + seed matrícula parsers (`find_cartorio`, `find_inscricao_municipal`) | `imovel_dados.*`, `matricula_ato_detalhes` |
+| descrição do imóvel (quoted verbatim) | matrícula | transcription + abertura segmentation (`descricao_imovel` block); legacy `**`/`<u>` markup normalised by `POST /api/matriculas/manutencao/normalizar` | `matricula_extracoes` / `matricula_abertura_blocos` |
+| inscrição imobiliária | guia IPTU / CND IPTU | `imovel_hub/documentos_service.extrair_estrutura` (status + retry, mig 154) | `imovel_dados.prefeitura_cadastro_imobiliario` |
+| imóvel certidões (nº, emissão, validade, resultado) | CND IPTU, CND condomínio, certidão de matrícula | same | `imovel_documentos.*` |
+| party certidões (nº, emissão, validade, resultado) | InfoSimples API · manual upload (scans read by vision, ≤3 pages, mig 155) | `certidoes/service` | `certidao_resultados.*` |
+
+**Manual-only — no document carries it (by design, not a gap):** valor negociado and
+every parcela (tipo, valor, vencimento/evento, forma de pagamento, favorecido, confissão,
+dispara corretagem, permuta ativos); favorecidos (banco/agência/conta/PIX); termos
+(posse prazo/marco, permuta posse, itens integrantes, ad corpus, confissão juros/garantia,
+ônus quitação/prazo, corretagem contratantes/parcelas); financiamento situação/FGTS;
+intermediários (CRECI, documento, e-mail, endereço, representante) and `pct_comissao`;
+office data (`org_dados_cadastrais`: razão social, CNPJ, CRECI, responsável, cidade,
+plataforma de assinatura, multa diária de posse, prazo de pendências) and testemunhas
+(nome, RG, e-mail); party e-mail; assinatura data; contrato modelo / processo legado;
+which matrícula atos the contract quotes (operator selection); the permuta ativo's own
+address snapshot; PJ situação cadastral (Receita) on certidão consultas; the parties'
+papel on the card; `politica.py` constants.
+
+**Proof harness.** `products/social-wiring/backend/tests/e2e_extracao/` — a fictional
+document set (text-layer and scan variants) with an answer key (`esperado.json`) and
+`verificar.py`, which scores a live DB field by field (value + provenance).
+
 ## 1 · How to read the table
 
 - **status** ∈ `extracted_and_confirmable` (an extractor writes a suggestion;
@@ -94,9 +150,9 @@ exists for them in any sample contract). See §4 for the full ranked gap list.
 | `imovel.titulo_curto` | §2.2 | derived from `imoveis`/`imovel_dados` | `contexto.py:164` | `imoveis.empreendimento` + `imovel_dados` address (`complemento`) | catalog listing form (`/imoveis`) | `manual_entry_only` |
 | `imovel.cidade` / `imovel.uf` / `imovel.endereco_curto` | §2.2/§2.7/§2.8/§2.12 | none | `carregador.py:200 _endereco(catalogo)` | `imoveis.cidade`/`uf`/`logradouro`/`numero` (the catalog listing) | `/imoveis` catalog edit form | `manual_entry_only` |
 | `imovel.descricao_matricula` (`{{r … }}` rich-text slot) | §2.2/§2.3 (permuta) | matrícula document (AI transcription) | `matriculas/estrutura_service.py:364 criar_extracao_de_documento` → text lands in `matricula_extracoes.texto_extraido` + `formatacao` | act selection: `atendimento_contrato_matricula_atos` (migration 115) — **not** the raw extraction; the CONTRACT'S selection of specific atos | `PUT /api/matriculas/contratos/{contrato_id}/atos` (`definir_selecao_route`, `matriculas/router.py:572`) | `extracted_and_confirmable`, but see gap (ii) below — the 5 real extractions' `formatacao='[]'` while `texto_extraido` still carries literal `**bold**` markers, so the confirmed selection quotes Markdown verbatim |
-| `imovel.inscricao_municipal` | §2.2 | none (or AI doc-extraction candidate, migration 118) | `imovel_hub/documentos_service.py:581 extrair_estrutura` (when a `guia_iptu`/`carne_condominio` is uploaded) | `imovel_dados.prefeitura_cadastro_imobiliario` | `PATCH /api/imoveis/{codigo}/dados` (`imovel_hub/router.py:71`, body `ImovelDadosPatchBody`, `imovel_hub/schemas.py:26`) | `manual_entry_only` (no `CAMPOS`-style auto-suggest wired to this specific field; document extraction lands on the DOCUMENT row, not auto-applied here) |
-| `imovel.matricula_numero` | §2.2 | matrícula document | AI transcription header (not separately parsed — an operator reads it off the extraction) | `imovel_dados.numero_matricula` | `PATCH /api/imoveis/{codigo}/dados` | `manual_entry_only` |
-| `imovel.cartorio` | §2.2 | matrícula document | same as above | `imovel_dados.numero_registro_imoveis` | `PATCH /api/imoveis/{codigo}/dados` | `manual_entry_only` |
+| `imovel.inscricao_municipal` | §2.2 | guia IPTU / CND IPTU (structured read) · matrícula `cadastro_municipal` abertura block | `imovel_hub/documentos_service.extrair_estrutura` (status/retry, migration 154) + `matriculas/preenchimento_service` (seed `find_inscricao_municipal`) → D1 writer `imovel_hub/campos_extraidos_service` | `imovel_dados.prefeitura_cadastro_imobiliario` (+ `_origem/_documento_id/_em/_confirmado_*`, migration 154) | validation gate (§0a) · conflict decide `PUT /api/imoveis/{codigo}/conflitos/{id}/decidir` · manual `PATCH /api/imoveis/{codigo}/dados` (stamps `manual`) | `extracted_and_confirmable` (2026-09-22) |
+| `imovel.matricula_numero` | §2.2 | matrícula document | `imovel_hub/matricula_extracao_service` (text layer or vision — D1 dropped the text-layer-only rule) + `matriculas/preenchimento_service` after transcription → `campos_extraidos_service` | `imovel_dados.numero_matricula` (+ quintet) | validation gate (§0a) · conflict decide `PUT /api/imoveis/{codigo}/conflitos/{id}/decidir` · manual `PATCH /api/imoveis/{codigo}/dados` (stamps `manual`) | `extracted_and_confirmable` (2026-09-22) |
+| `imovel.cartorio` | §2.2 | matrícula header | seed `find_cartorio` via `matriculas/preenchimento_service` → `campos_extraidos_service` | `imovel_dados.numero_registro_imoveis` (+ quintet, migration 154) | validation gate (§0a) · conflict decide `PUT /api/imoveis/{codigo}/conflitos/{id}/decidir` · manual `PATCH /api/imoveis/{codigo}/dados` (stamps `manual`) | `extracted_and_confirmable` (2026-09-22) |
 | `imovel.em_condominio` | §2.12 | derived | `contexto.py:168` (`EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO and bool(imoveis.empreendimento)`, `politica.py`) | none — pure function of `imoveis.empreendimento` | (office policy toggle, `politica.py`, not per-deal) | `extracted_and_confirmable` (via the catalog's `empreendimento` field) |
 | `titulo_aquisitivo` (spec's `titulo_aquisitivo.texto`) | §2.2 | matrícula act text (AI suggestion) | `matriculas/titulo_service.py:155 obter_titulo` (suggests off the selected atos) | `imovel_dados.titulo_aquisitivo_texto` (migration 115) — **the operator's CONFIRMED wording only; the generator never falls back to the suggestion** (`dados.py:206` comment) | `PUT /api/matriculas/imoveis/{codigo}/titulo-aquisitivo` (`confirmar_titulo_route`, `matriculas/router.py:634` → `titulo_service.py:212 confirmar_titulo`) | `extracted_and_confirmable` — **0 confirmed** across the corpus per §0 |
 | `itens_integrantes` | §2.2 | none — free text | — | `atendimento_negociacao_termos.itens_integrantes` (migration 114) | `PUT /api/clientes/{cliente_id}/negociacao/termos` | `manual_entry_only` |
@@ -436,6 +492,8 @@ pre-composed strings are themselves covered by the `certidoes.grupos` /
 | `titulo_aquisitivo` | Imóvel objeto |
 
 ## 4 · Ranked gap list
+
+> **2026-09-22 status (see §0a):** items 1 (identity fields now auto-filled, validated at the gate), 4 (`imovel_dados` auto-filled from the matrícula/IPTU), 6 (markup backfill route + marker-free transcription), 7 (`rg_orgao` now extracted), 9 (`onus_fonte_atos` filled by `preenchimento_service`) and 10 (endereço from comprovante) are CLOSED by migrations 153–156. Items 2/3/5 no longer need a separate office click per suggestion: they surface in the validation modal. The rest stand as written.
 
 Ranked by how many of the 6 spec §1.3 variants (V1–V6) the gap blocks
 **today**, given the classification below.
