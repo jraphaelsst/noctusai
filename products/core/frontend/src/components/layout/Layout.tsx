@@ -16,6 +16,8 @@ import {
   PackageOpen,
   Brain,
   FileText,
+  Globe,
+  BookOpen,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
@@ -28,7 +30,6 @@ const NAV_GROUPS: NavGroup[] = [
     key: 'admin',
     label: 'Administracao',
     icon: Settings,
-    defaultOpen: true,
     items: [
       { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
       { name: 'Usuarios', href: '/admin/users', icon: Users },
@@ -47,6 +48,12 @@ const NAV_GROUPS: NavGroup[] = [
       { name: 'Templates', href: '/admin/templates', icon: PackageOpen },
       { name: 'Configuracoes', href: '/admin/settings', icon: Settings },
     ],
+  },
+  {
+    key: 'website',
+    label: 'Website',
+    icon: Globe,
+    items: [{ name: 'Documentação', href: '/admin/website/docs', icon: BookOpen }],
   },
 ];
 
