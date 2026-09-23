@@ -68,7 +68,13 @@ _STYLE_HEADING = ParagraphStyle(
 )
 _STYLE_BODY = ParagraphStyle(
     "corpo", fontName="Helvetica", fontSize=9.5, leading=14, spaceAfter=8,
-    alignment=4,  # justified
+    # LEFT, not justified (alignment=4): a dry-run against the real seed
+    # parsers (`noctusai_lib.integrations.documents.*`) showed reportlab's
+    # justification widens inter-word spacing on a wrapped line, and
+    # pdfminer.six's extraction turns that widening into literal DOUBLE
+    # spaces mid-value ("RICARDO  AUGUSTO  FERREIRA  LIMA") — an artifact of
+    # THIS renderer, not of a real scanned document or a vision OCR pass.
+    alignment=0,
 )
 
 _HEADING_MARKERS = (
@@ -157,9 +163,10 @@ def rasterize_as_scan(pdf_bytes: bytes, *, seed: int) -> bytes:
 # (fields that land only after an additional human step — e.g. the
 # Qualificações-queue "Confirmar" click documented in README.md — reported
 # by verificar.py, never counted against the exit code) / optional
-# `pending_spec` (fields whose exact target format the imóvel slice
-# (mig 154) had not yet shipped when this fixture was authored — reported
-# as REVIEW, never scored as a miss).
+# `pending_spec` (fields whose exact target format some future slice has
+# not shipped yet — reported as REVIEW, never scored as a miss; unused as
+# of the 2026-09-23 reconciliation against the merged wave-1 slices, kept
+# for the next genuinely-unresolved field rather than removed).
 
 R, C, F = d.RICARDO, d.CAMILA, d.FERNANDO
 IL, IH = d.IMOVEL_LIVRE, d.IMOVEL_HIPOTECA
@@ -212,11 +219,19 @@ def _doc_conjuge_cin() -> dict:
         "SEXO: F",
         f"DATA DE NASCIMENTO: {p.nascimento_extenso}",
         f"NATURALIDADE: {p.naturalidade}",
+        f"CPF: {p.cpf}",
+        f"REGISTRO GERAL: {p.rg} {p.rg_orgao}",
+        # FILIAÇÃO comes AFTER cpf/rg — not immediately before it — so the
+        # holder's own CPF is never within the label-lookback window of a
+        # FILIAÇÃO/PAI/MAE block-opener decoy (see gerar_documentos.py's
+        # dry-run note on `titular_rg`'s equivalent ordering; a CPF line
+        # placed right after MAE gets DEMOTED to baixa confidence by
+        # cpf.py's own block-opener guard — real behaviour, not a defect,
+        # so the fixture avoids the layout that triggers it, same as most
+        # real CIN/RG cards print CPF near the top anyway).
         "FILIAÇÃO",
         f"PAI: {p.pai}",
         f"MAE: {p.mae}",
-        f"CPF: {p.cpf}",
-        f"REGISTRO GERAL: {p.rg} {p.rg_orgao}",
         "DOC. ORIGEM: RG SSP/SP",
     ]
     return {
@@ -236,9 +251,11 @@ def _doc_conjuge_cin() -> dict:
             },
         }],
         "notas": (
-            "Nacionalidade é deliberadamente OMITIDA deste documento — ver "
-            "README.md secao 'por que a CIN da Camila nao imprime "
-            "nacionalidade'."
+            "Nacionalidade é deliberadamente OMITIDA deste documento: a "
+            "certidão de casamento já cobre `clientes.nacionalidade` para "
+            "Camila (via `nacionalidade.canonico()`, forma masculina "
+            "canônica). Repeti-la aqui não adicionaria cobertura nova e só "
+            "arriscaria uma segunda fonte para o mesmo campo."
         ),
     }
 
@@ -251,15 +268,23 @@ def _doc_vendedor_cnh() -> dict:
         "",
         f"NOME: {p.nome}",
         f"DATA DE NASCIMENTO: {p.nascimento_extenso}",
-        "FILIAÇÃO",
-        f"PAI: {p.pai}",
-        f"MAE: {p.mae}",
+        f"NATURALIDADE: {p.naturalidade}",
         f"CPF: {p.cpf}",
         f"DOC. IDENTIDADE: {p.rg} {p.rg_orgao}",
         "CATEGORIA: B",
         "1ª HABILITAÇÃO: 15/03/2005",
         "DATA DE EXPEDIÇÃO: 10/04/2023",
         "VALIDADE: 10/04/2033",
+        # FILIAÇÃO LAST — a dry-run against the real `rg.find_rg` showed a
+        # FILIAÇÃO/PAI/MAE block within ~48 chars BEFORE "DOC. IDENTIDADE"
+        # demotes that reading to baixa with no matched_label (same
+        # block-opener guard `cpf.py` applies — see `_doc_conjuge_cin`'s
+        # note). Moving the decoy block to the end of the document, past
+        # every field it could otherwise poison, is the realistic fix: most
+        # CNH text layers print FILIAÇÃO in its own late section anyway.
+        "FILIAÇÃO",
+        f"PAI: {p.pai}",
+        f"MAE: {p.mae}",
     ]
     return {
         "id": "vendedor_cnh",
@@ -303,12 +328,22 @@ def _doc_certidao_casamento() -> dict:
         "",
         f"MATRÍCULA: {d.CASAMENTO['matricula_civil']}",
         "",
-        "NOMES COMPLETOS DE SOLTEIRO, DATAS DE NASCIMENTO, NATURALIDADE, "
-        "NACIONALIDADE E FILIAÇÕES DOS CÔNJUGES",
+        # Deliberately does NOT start with "NOME"/"NOMES" — a dry-run against
+        # `name.find_name_conflitos` showed a line beginning with "NOMES"
+        # re-opens `conjuges.py`'s multi-holder collection walk a second
+        # time, and this line's own word-wrap (long real-fixture wording,
+        # mirrored from the platform's own certidão test corpus) then fed a
+        # wrapped fragment into it as a THIRD, bogus "titular" candidate —
+        # a rendering artifact of a two-line PDF wrap, not something a real
+        # certidão's fixed print layout produces at this exact word.
+        "QUALIFICAÇÃO COMPLETA DOS CÔNJUGES (nome de solteiro, nascimento, "
+        "naturalidade, nacionalidade, profissão e filiação)",
         f"{R.nome}, nascido em {R.nascimento_extenso}, em {R.naturalidade}, "
-        f"de nacionalidade brasileiro, filho de {R.pai} e de {R.mae}.",
+        f"de nacionalidade brasileiro, de profissão {R.profissao}, filho de "
+        f"{R.pai} e de {R.mae}.",
         f"{C.nome}, nascida em {C.nascimento_extenso}, em {C.naturalidade}, "
-        f"de nacionalidade brasileira, filha de {C.pai} e de {C.mae}.",
+        f"de nacionalidade brasileira, de profissão {C.profissao}, filha de "
+        f"{C.pai} e de {C.mae}.",
         "",
         "DATA DO CASAMENTO",
         d.CASAMENTO["data_extenso"],
@@ -333,6 +368,7 @@ def _doc_certidao_casamento() -> dict:
                 "campos": {
                     "clientes.nome_oficial": R.nome,
                     "clientes.cpf": R.cpf,
+                    "clientes.profissao": R.profissao,
                     **campos_comuns,
                 },
             },
@@ -341,6 +377,7 @@ def _doc_certidao_casamento() -> dict:
                 "campos": {
                     "clientes.nome_oficial": C.nome,
                     "clientes.cpf": C.cpf,
+                    "clientes.profissao": C.profissao,
                     **campos_comuns,
                 },
             },
@@ -433,19 +470,6 @@ def _doc_comprovante_endereco() -> dict:
                 "clientes.endereco_uf": e.uf,
             },
         }],
-        "pending_spec": {
-            "note": (
-                "tipo_documento='comprovante_endereco' e o parser de "
-                "endereco (mig 153, slice identity) ainda nao existiam "
-                "neste worktree quando esta fixture foi criada — o "
-                "rotulo/formato exato dos campos deve ser confirmado "
-                "contra a implementacao real antes de tratar isto como "
-                "score final. O bloco acima usa rotulos explicitos "
-                "(CEP:/LOGRADOURO:/...) E uma linha de endereco corrido, "
-                "para maximizar compatibilidade com qualquer uma das duas "
-                "estrategias de parsing."
-            ),
-        },
     }
 
 
@@ -463,9 +487,9 @@ def _acts_imovel_livre() -> str:
         "",
         "R-2 - Em 10 de fevereiro de 2024, registra-se alienação "
         "fiduciária em garantia, pela qual os adquirentes do R-1 alienam "
-        "fiduciariamente o imóvel ao CREDOR FIDUCIÁRIO: BANCO ALFA DE "
-        "CRÉDITO IMOBILIÁRIO S.A., conforme Contrato de Financiamento nº "
-        "998877, celebrado em 08/02/2024.",
+        "fiduciariamente o imóvel ao CREDOR FIDUCIÁRIO: BANCO ALFA S.A., "
+        "conforme Contrato de Financiamento nº 998877, celebrado em "
+        "08/02/2024.",
         "",
         "AV-3 - Em 15 de janeiro de 2025, averba-se o cancelamento do R-2 "
         "desta matrícula, em razão da quitação integral da dívida "
@@ -510,17 +534,39 @@ def _doc_matricula_livre() -> dict:
         "paragrafos": paragrafos,
         "uploads": [{
             "alvo": f"imovel:{im.codigo}",
+            # Every one of these is auto-filled SYNCHRONOUSLY by
+            # `matriculas/preenchimento_service.preencher_sincrono` right
+            # after the transcription lands, PROVIDED the extraction is
+            # linked to the imóvel (`vincular_imovel` / the normal
+            # upload-to-an-imóvel flow) — no separate confirm click. Values
+            # verified 2026-09-23 by running the REAL seed parsers
+            # (`find_cartorio`, `find_inscricao_municipal`,
+            # `matricula_ato_detalhes.extrair_detalhes_ato`,
+            # `frase_titulo_aquisitivo`, `preenchimento_service
+            # .derivar_situacao_onus`) directly against this fixture's
+            # rendered text — see README.md's dry-run trace.
             "campos": {
                 "imovel_dados.numero_matricula": im.numero_matricula,
+                "imovel_dados.numero_registro_imoveis": im.oficio.upper(),
+                "imovel_dados.prefeitura_cadastro_imobiliario": im.cadastro_municipal,
+                "imovel_dados.situacao_onus": "livre",
+                "imovel_dados.titulo_aquisitivo_texto": (
+                    "adquirido por Escritura Pública lavrada em 05/02/2024 "
+                    "no 12º Tabelionato de Notas de São Paulo, Livro 350, "
+                    "fls. 120, registrada sob o R-1"
+                ),
             },
         }],
         "bonus_campos": {
-            "imovel_dados.titulo_aquisitivo_texto": (
-                "Compra e venda registrada sob R-1, em 10/02/2024, tendo "
-                "como outorgante vendedor Fernando Souza Martins e "
-                "outorgados compradores Ricardo Augusto Ferreira Lima e "
-                "Camila dos Santos Ferreira Lima."
-            ),
+            # onus_credor: R-2 (alienação fiduciária) is CANCELLED by AV-3,
+            # so `estrutura_service.sugerir`'s onus-source suggestion
+            # excludes it (per preenchimento_service.py's own docstring
+            # table: "onus_fonte — encumbrance acts not cited by a
+            # cancelamento") and `imovel_dados.onus_credor` stays NULL —
+            # informational (this harness's `campos`/pytest schema asserts
+            # non-empty values, so an EXPECTED-EMPTY field is reported here
+            # rather than as a `campos` entry) — the real proof this
+            # cancellation landed is `situacao_onus == "livre"` above.
             "imovel_dados.onus_credor": None,
             "matricula_ato_detalhes[R-1].data_registro": "2024-02-10",
             "matricula_ato_detalhes[R-1].transmitentes": [
@@ -530,32 +576,18 @@ def _doc_matricula_livre() -> dict:
                 {"nome": R.nome, "cpf_cnpj": R.cpf},
                 {"nome": C.nome, "cpf_cnpj": C.cpf},
             ],
-            "clientes.profissao[titular]": R.profissao,
-            "clientes.profissao[conjuge]": C.profissao,
+            "matricula_ato_detalhes[R-2].atos_referidos": [],
+            "matricula_ato_detalhes[AV-3].atos_referidos": [{"kind": "R", "numero": 2}],
             "clientes.profissao[vendedor]": F.profissao,
             "_nota": (
-                "Requer o clique 'Confirmar' na fila de Qualificações do "
-                "imóvel (matriculas/qualificacao_service.confirmar) antes "
-                "de aparecer em `clientes` — ver README.md."
-            ),
-        },
-        "pending_spec": {
-            "imovel_dados.numero_registro_imoveis": im.oficio,
-            "imovel_dados.prefeitura_cadastro_imobiliario": (
-                "ver imovel_hub_iptu — populado pela guia de IPTU, nao pela "
-                "matricula; mantido aqui so como referencia cruzada."
-            ),
-            "imovel_dados.situacao_onus": "livre",
-            "note": (
-                "numero_registro_imoveis / situacao_onus sao alvo da slice "
-                "'imovel' (mig 154), que nao havia sido mesclada neste "
-                "worktree quando esta fixture foi gerada. O texto/valor "
-                "acima e a MELHOR SUPOSICAO baseada no cabecalho real do "
-                "documento (\"<N>o Oficio de Registro de Imoveis de "
-                "<cidade>\") e no comportamento R-2 alienacao fiduciaria + "
-                "Av-3 cancelamento => onus livre descrito no roadmap — nao "
-                "e uma leitura de codigo ja existente. Revisar contra a "
-                "implementacao real assim que 154 for mesclada."
+                "SOMENTE o profissao do Fernando (vendedor) ainda depende "
+                "do clique 'Confirmar' na fila de Qualificações do imóvel "
+                "(matriculas/qualificacao_service.confirmar) — ele não tem "
+                "certidão de casamento, a ÚNICA outra fonte de profissão "
+                "no sistema (ver profession.py). Ricardo e Camila já "
+                "recebem profissao automaticamente do upload da certidão "
+                "de casamento (ver _doc_certidao_casamento) — não é mais "
+                "necessário confirmá-los na fila de Qualificações."
             ),
         },
     }
@@ -591,7 +623,7 @@ def _doc_matricula_hipoteca() -> dict:
         "",
         "R-2 - Em 05 de maio de 2023, registra-se hipoteca em primeiro "
         "grau, pela qual a adquirente do R-1 hipoteca o imóvel ao CREDOR "
-        "HIPOTECÁRIO: BANCO BETA FINANCEIRA S.A., conforme Contrato de "
+        "HIPOTECÁRIO: BANCO BETA S.A., conforme Contrato de "
         "Financiamento nº 445566, celebrado em 03/05/2023, no valor de "
         "R$ 400.000,00.",
         "",
@@ -610,8 +642,21 @@ def _doc_matricula_hipoteca() -> dict:
         "paragrafos": paragrafos,
         "uploads": [{
             "alvo": f"imovel:{im.codigo}",
+            # See `_doc_matricula_livre`'s comment — same automatic,
+            # confirm-free fill, values verified the same way. Here the
+            # hipoteca is never cancelled, so `situacao_onus` and
+            # `onus_credor` land as ACTIVE values instead of "livre"/empty.
             "campos": {
                 "imovel_dados.numero_matricula": im.numero_matricula,
+                "imovel_dados.numero_registro_imoveis": im.oficio.upper(),
+                "imovel_dados.prefeitura_cadastro_imobiliario": im.cadastro_municipal,
+                "imovel_dados.situacao_onus": "hipoteca",
+                "imovel_dados.onus_credor": "BANCO BETA S.A.",
+                "imovel_dados.titulo_aquisitivo_texto": (
+                    "adquirido por Escritura Pública lavrada em 02/05/2023 "
+                    "no 4º Tabelionato de Notas de Campinas, Livro 210, "
+                    "fls. 88, registrada sob o R-1"
+                ),
             },
         }],
         "bonus_campos": {
@@ -622,13 +667,7 @@ def _doc_matricula_hipoteca() -> dict:
             "matricula_ato_detalhes[R-1].adquirentes": [
                 {"nome": d.TERCEIRA_COMPRADORA, "cpf_cnpj": d.TERCEIRA_COMPRADORA_CPF},
             ],
-            "matricula_ato_detalhes[R-2].credor": "BANCO BETA FINANCEIRA S.A.",
-        },
-        "pending_spec": {
-            "imovel_dados.numero_registro_imoveis": im.oficio,
-            "imovel_dados.situacao_onus": "<token ainda nao definido pela slice imovel (mig 154) — ha hipoteca ATIVA, nao cancelada>",
-            "imovel_dados.onus_credor": "BANCO BETA FINANCEIRA S.A.",
-            "note": "Mesma ressalva de _doc_matricula_livre — ver ali.",
+            "matricula_ato_detalhes[R-2].credor": "BANCO BETA S.A.",
         },
     }
 
