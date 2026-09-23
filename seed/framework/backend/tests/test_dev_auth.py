@@ -55,7 +55,7 @@ class TestMakeDevAuthGetCurrentUser:
     def test_returns_user_token_tuple_compatible_shape(self):
         settings = _Settings(seed_dev_auth=True, debug=True)
         dep = make_dev_auth_get_current_user(settings)
-        user, token = asyncio.get_event_loop().run_until_complete(dep(None))
+        user, token = asyncio.run(dep(None))
         assert token == DEV_TOKEN
         assert user.email == DEV_USER_EMAIL
         # Shape downstream resolvers read (resolve_sso_role / get_org_id):
@@ -68,7 +68,7 @@ class TestMakeDevAuthGetCurrentUser:
         dep = make_dev_auth_get_current_user(
             settings, user_id="u-123", org_id="o-456"
         )
-        user, _ = asyncio.get_event_loop().run_until_complete(dep(None))
+        user, _ = asyncio.run(dep(None))
         assert user.id == "u-123"
         assert user.user_metadata["org_id"] == "o-456"
 
@@ -80,7 +80,7 @@ class TestMakeDevAuthGetCurrentUser:
             local_dev_org_id="cfg-org",
         )
         dep = make_dev_auth_get_current_user(settings)
-        user, _ = asyncio.get_event_loop().run_until_complete(dep(None))
+        user, _ = asyncio.run(dep(None))
         assert user.id == "cfg-user"
         assert user.user_metadata["org_id"] == "cfg-org"
 
@@ -90,11 +90,11 @@ class TestMakeDevAuthGetCurrentUser:
         settings = _Settings(seed_dev_auth=True, debug=True)
         dep = make_dev_auth_get_current_user(settings)
         with pytest.raises(HTTPException) as exc:
-            asyncio.get_event_loop().run_until_complete(dep("NotBearer xyz"))
+            asyncio.run(dep("NotBearer xyz"))
         assert exc.value.status_code == 401
 
     def test_no_header_accepted(self):
         settings = _Settings(seed_dev_auth=True, debug=True)
         dep = make_dev_auth_get_current_user(settings)
-        user, token = asyncio.get_event_loop().run_until_complete(dep(None))
+        user, token = asyncio.run(dep(None))
         assert token == DEV_TOKEN
