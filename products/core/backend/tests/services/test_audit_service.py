@@ -248,6 +248,113 @@ async def test_log_truncates_long_user_agent():
 
 
 @pytest.mark.asyncio
+async def test_log_backwards_compatible_omits_all_053_columns():
+    """A caller that never touches the migration-053 kwargs must not have
+    them appear in the insert payload at all — backwards compatibility."""
+    db, builder = _mock_db(insert_data=[{"id": "audit-11"}])
+
+    with patch("app.services.audit_service.get_admin_client", return_value=db):
+        from app.services.audit_service import log
+
+        await log(
+            user_id="user-1",
+            org_id="org-1",
+            action="create",
+            resource_type="subscription",
+        )
+
+    inserted = builder.insert.call_args[0][0]
+    for column in (
+        "product_slug", "method", "route_template", "path_params", "status_code",
+        "correlation_id", "role", "actor_kind", "client_hint", "duration_ms",
+        "before_snapshot",
+    ):
+        assert column not in inserted
+
+
+@pytest.mark.asyncio
+async def test_log_includes_053_columns_when_provided():
+    db, builder = _mock_db(insert_data=[{"id": "audit-12"}])
+
+    with patch("app.services.audit_service.get_admin_client", return_value=db):
+        from app.services.audit_service import log
+
+        await log(
+            user_id="user-1",
+            org_id="org-1",
+            action="update",
+            resource_type="license",
+            resource_id="lic-1",
+            product_slug="core",
+            method="PATCH",
+            route_template="/api/orgs/{org_id}/licenses/{license_id}",
+            path_params={"org_id": "org-1", "license_id": "lic-1"},
+            status_code=200,
+            correlation_id="corr-1",
+            role="admin",
+            actor_kind="user",
+            client_hint="web/chrome",
+            duration_ms=42,
+            before_snapshot={"status": "active"},
+        )
+
+    inserted = builder.insert.call_args[0][0]
+    assert inserted["product_slug"] == "core"
+    assert inserted["method"] == "PATCH"
+    assert inserted["route_template"] == "/api/orgs/{org_id}/licenses/{license_id}"
+    assert inserted["path_params"] == {"org_id": "org-1", "license_id": "lic-1"}
+    assert inserted["status_code"] == 200
+    assert inserted["correlation_id"] == "corr-1"
+    assert inserted["role"] == "admin"
+    assert inserted["actor_kind"] == "user"
+    assert inserted["client_hint"] == "web/chrome"
+    assert inserted["duration_ms"] == 42
+    assert inserted["before_snapshot"] == {"status": "active"}
+
+
+@pytest.mark.asyncio
+async def test_log_actor_kind_agent_for_autonomous_actions():
+    """An agent-originated action must be distinguishable from a user's."""
+    db, builder = _mock_db(insert_data=[{"id": "audit-13"}])
+
+    with patch("app.services.audit_service.get_admin_client", return_value=db):
+        from app.services.audit_service import log
+
+        await log(
+            user_id=None,
+            org_id="org-1",
+            action="publish",
+            resource_type="agent_version",
+            actor_kind="agent",
+        )
+
+    inserted = builder.insert.call_args[0][0]
+    assert inserted["actor_kind"] == "agent"
+
+
+@pytest.mark.asyncio
+async def test_log_status_code_zero_is_included_not_treated_as_falsy():
+    """status_code=0 / duration_ms=0 are valid values — `is not None`, not truthiness."""
+    db, builder = _mock_db(insert_data=[{"id": "audit-14"}])
+
+    with patch("app.services.audit_service.get_admin_client", return_value=db):
+        from app.services.audit_service import log
+
+        await log(
+            user_id="user-1",
+            org_id="org-1",
+            action="noop",
+            resource_type="session",
+            status_code=0,
+            duration_ms=0,
+        )
+
+    inserted = builder.insert.call_args[0][0]
+    assert inserted["status_code"] == 0
+    assert inserted["duration_ms"] == 0
+
+
+@pytest.mark.asyncio
 async def test_log_returns_empty_dict_on_failure():
     """log() returns {} when insert returns no data."""
     db, builder = _mock_db(insert_data=[])
