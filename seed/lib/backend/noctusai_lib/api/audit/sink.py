@@ -9,20 +9,27 @@ instead of one INSERT per request, because this sink is expected to
 fire on every mutating request across every product, not once per
 resolved product-token call.
 
-**Target table.** ``public.audit_logs`` — the table core already ships
-(``products/core/backend/migrations/001_noctusai_core.sql``,
-``action``/``resource_type``/``resource_id``/``details``/``user_id``/
-``org_id``/``created_at``). This sink writes THROUGH that existing
-shape (``action=method``, ``resource_type=product``, ``details={...}``)
-rather than requiring new columns, so it needs no migration of its own
-to start recording — ``settings.audit_trail_enabled`` staying ``False``
-until "core migration S1 is live" per the owner brief refers to an
-*additive* follow-up (dedicated ``route_template``/``path_params``/
-``status``/``correlation_id`` columns + indexes for
-``noctusai_lib.domain.card_hub.gatherers.gather_audit``'s query shape)
-— not a hard blocker for this module's own correctness. Until that
-migration lands, every field the dedicated columns will eventually
-carry still round-trips inside ``details`` (see ``_to_row``).
+**Target table.** ``public.audit_logs``, widened by
+``products/core/backend/migrations/053_audit_trail_expansion.sql``
+(S1, landed 2026-09-23) with dedicated columns for every field this
+sink captures: ``product_slug``, ``method``, ``route_template``,
+``path_params`` (JSONB), ``status_code``, ``correlation_id``,
+``role``, ``actor_kind`` (DB CHECK-enforced ``user``/``agent``/
+``service``), ``client_hint``, ``duration_ms``. ``_to_row`` writes
+these directly — ``details`` stays for genuine extras only (empty
+today; this sink has nothing left to fold into it). The ORIGINAL
+columns (``action``/``resource_type``/``resource_id``/``user_id``/
+``org_id``/``created_at``, 001/002) are also populated:
+``action=method``, and ``resource_type``/``resource_id`` are derived
+from the route (see ``_derive_resource``) — together with
+``product_slug`` they back the migration's
+``idx_audit_logs_product_resource`` index, the one
+``noctusai_lib.domain.card_hub.gatherers.gather_audit`` queries
+against.
+
+``audit_logs`` is append-only (053's ``guard_audit_logs_append_only``
+trigger) — this sink only ever ``INSERT``s, never ``UPDATE``/``DELETE``,
+matching the guard by construction.
 
 **Overflow / failure never swallows.** Both a full queue and a failed
 flush go through :func:`log_overflow_or_failure` — ERROR level, a
@@ -40,7 +47,7 @@ import json
 import logging
 import sys
 from dataclasses import asdict
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Callable, Mapping, Optional, Protocol
 
 from .types import AuditActor, AuditEntry
 
@@ -127,26 +134,75 @@ class FakeAuditSink:
         return None
 
 
+def _derive_resource(
+    route_template: str, path_params: Mapping[str, Any]
+) -> tuple[Optional[str], Optional[str]]:
+    """``("leads", "<uuid>")`` from ``"/api/leads/{lead_id}/notas/{nota_id}"``
+    + ``{"lead_id": "<uuid>", "nota_id": "..."}`` — the path SEGMENT
+    immediately before the FIRST ``{param}`` (URL-template order), and
+    that parameter's resolved value.
+
+    FIRST, not last: ``noctusai_lib.domain.card_hub.router``'s
+    ``entity_path()`` convention (and RESTful nesting generally) always
+    puts the card/entity's own id as the OUTERMOST path parameter —
+    ``/{id_param}/notas/{nota_id}``, ``/{id_param}/checklists/{checklist_id}``
+    — so the first param is consistently "which entity did this mutate,"
+    while a LAST-param convention would instead resolve every nested
+    sub-resource route (notes, checklists, documents, ...) to ITS OWN
+    id, missing them all in a per-entity query. Matches
+    ``CardHubConfig.entity_table`` by the module's own docstring
+    convention (``entity_table: "clientes"`` next to
+    ``prefix: "/api/clientes"`` — same string).
+
+    ``(None, None)`` for a route with no path parameter at all (a bare
+    collection route, e.g. ``POST /api/leads``).
+    """
+    segments = [s for s in route_template.split("/") if s]
+    for i, seg in enumerate(segments):
+        if seg.startswith("{") and seg.endswith("}"):
+            param_name = seg[1:-1].split(":", 1)[0]
+            resource_type = segments[i - 1] if i > 0 else None
+            raw_value = path_params.get(param_name)
+            resource_id = str(raw_value) if raw_value is not None else None
+            return resource_type, resource_id
+    return None, None
+
+
 def _to_row(entry: AuditEntry) -> dict[str, Any]:
-    """Map an :class:`AuditEntry` onto ``public.audit_logs``'s existing
-    columns — see the module docstring's "Target table" section."""
+    """Map an :class:`AuditEntry` onto ``public.audit_logs`` — dedicated
+    columns (053) written directly, original columns (001/002) derived
+    — see the module docstring's "Target table" section."""
     actor: AuditActor = entry.actor
+    resource_type, resource_id = _derive_resource(entry.route_template, entry.path_params)
     return {
+        # Original columns (001/002) — `action`/`resource_type` are
+        # NOT NULL; `resource_type` falls back to `product_slug` when
+        # the route has no path parameter at all (still a meaningful
+        # grouping, never a NULL that would violate the constraint).
         "user_id": actor.user_id,
         "org_id": actor.org_id,
         "action": entry.method,
-        "resource_type": entry.product,
-        "resource_id": None,
-        "user_agent": entry.client_hint,
-        "details": {
-            "route_template": entry.route_template,
-            "path_params": dict(entry.path_params),
-            "status": entry.status,
-            "correlation_id": entry.correlation_id,
-            "duration_ms": entry.duration_ms,
-            "actor_kind": entry.actor_kind,
-            "role": actor.role,
-        },
+        "resource_type": resource_type or entry.product_slug,
+        "resource_id": resource_id,
+        # Dedicated columns (053).
+        "product_slug": entry.product_slug,
+        "method": entry.method,
+        "route_template": entry.route_template,
+        "path_params": dict(entry.path_params),
+        "status_code": entry.status,
+        "correlation_id": entry.correlation_id,
+        "role": actor.role,
+        "actor_kind": entry.actor_kind,
+        "client_hint": entry.client_hint,
+        "duration_ms": (
+            int(entry.duration_ms) if entry.duration_ms is not None else None
+        ),
+        # `details` / `before_snapshot` / `ip_address` / `user_agent`
+        # stay at their DB defaults ('{}' / '{}' / NULL / NULL) — this
+        # sink has no extras left to fold into `details` now that every
+        # captured field has a dedicated column, and it never had raw
+        # UA/IP to begin with (`client_hint` is the coarse, non-PII
+        # substitute — see migration 053's LGPD note).
     }
 
 

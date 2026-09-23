@@ -28,10 +28,6 @@ class _FakeAuditQuery:
         self.calls.append(("eq", a))
         return self
 
-    def contains(self, *a):
-        self.calls.append(("contains", a))
-        return self
-
     def order(self, *a, **kw):
         self.calls.append(("order", a, kw))
         return self
@@ -64,7 +60,12 @@ class _FakeAdmin:
         return self._table_iface
 
 
-def _cfg(get_core_client, *, audit_trail_enabled: bool = True) -> CardHubConfig:
+def _cfg(
+    get_core_client,
+    *,
+    audit_trail_enabled: bool = True,
+    product_slug: str | None = "test-product",
+) -> CardHubConfig:
     return CardHubConfig(
         entity_kind="lead",
         entity_table="leads",
@@ -78,10 +79,11 @@ def _cfg(get_core_client, *, audit_trail_enabled: bool = True) -> CardHubConfig:
         },
         audit_trail_enabled=audit_trail_enabled,
         get_core_client=get_core_client,
+        product_slug=product_slug,
     )
 
 
-def test_config_wires_historico_gatherer_only_when_flag_and_client_are_both_set() -> None:
+def test_config_wires_historico_gatherer_only_when_flag_client_and_slug_are_all_set() -> None:
     enabled_cfg = _cfg(lambda: _FakeAdmin([]), audit_trail_enabled=True)
     assert enabled_cfg.timeline_gatherers["historico"] is gather_audit
 
@@ -91,6 +93,29 @@ def test_config_wires_historico_gatherer_only_when_flag_and_client_are_both_set(
     no_client_cfg = _cfg(None, audit_trail_enabled=True)
     assert "historico" not in no_client_cfg.timeline_gatherers
 
+    no_slug_cfg = _cfg(lambda: _FakeAdmin([]), audit_trail_enabled=True, product_slug=None)
+    assert "historico" not in no_slug_cfg.timeline_gatherers
+
+
+def test_gather_audit_filters_by_product_slug_and_resource_type_and_id() -> None:
+    """The exact column order of migration 053's
+    `idx_audit_logs_product_resource` index — this proves the query is
+    an index lookup, not the dropped JSONB-containment scan."""
+    admin = _FakeAdmin([])
+    cfg = _cfg(lambda: admin, product_slug="my-product")
+
+    gather_audit(cfg, db=None, org_id=ORG_ID, entity_id=ENTITY_ID, entity={})
+
+    assert admin.schema_calls == ["public"]
+    assert admin._table_iface.table_name == "audit_logs"
+    eq_calls = [c[1] for c in admin._table_iface._query.calls if c[0] == "eq"]
+    assert eq_calls == [
+        ("org_id", ORG_ID),
+        ("product_slug", "my-product"),
+        ("resource_type", "leads"),
+        ("resource_id", ENTITY_ID),
+    ]
+
 
 def test_gather_audit_maps_rows_to_timeline_entries() -> None:
     rows = [
@@ -98,25 +123,16 @@ def test_gather_audit_maps_rows_to_timeline_entries() -> None:
             "id": "row-1",
             "user_id": "u1",
             "created_at": "2026-09-20T10:00:00+00:00",
-            "action": "POST",
-            "details": {
-                "route_template": "/api/leads/{lead_id}",
-                "status": 201,
-                "actor_kind": "user",
-                "path_params": {"lead_id": ENTITY_ID},
-            },
+            "method": "POST",
+            "route_template": "/api/leads/{lead_id}",
+            "status_code": 201,
+            "actor_kind": "user",
         },
     ]
     admin = _FakeAdmin(rows)
     cfg = _cfg(lambda: admin)
 
     entries = gather_audit(cfg, db=None, org_id=ORG_ID, entity_id=ENTITY_ID, entity={})
-
-    assert admin.schema_calls == ["public"]
-    assert admin._table_iface.table_name == "audit_logs"
-    query_calls = dict((c[0], c) for c in admin._table_iface._query.calls)
-    assert query_calls["eq"][1] == ("org_id", ORG_ID)
-    assert query_calls["contains"][1] == ("details", {"path_params": {"lead_id": ENTITY_ID}})
 
     assert len(entries) == 1
     entry = entries[0]
@@ -132,6 +148,27 @@ def test_gather_audit_maps_rows_to_timeline_entries() -> None:
     }
 
 
+def test_gather_audit_falls_back_to_the_legacy_action_column() -> None:
+    """A row written before migration 053's dedicated `method` column
+    existed (or by a caller that still only sets `action`) still maps —
+    `method` wins when both are present."""
+    rows = [
+        {
+            "id": "row-legacy",
+            "user_id": None,
+            "created_at": "2026-09-20T09:00:00+00:00",
+            "action": "DELETE",
+            "method": None,
+        },
+    ]
+    admin = _FakeAdmin(rows)
+    cfg = _cfg(lambda: admin)
+
+    entries = gather_audit(cfg, db=None, org_id=ORG_ID, entity_id=ENTITY_ID, entity={})
+
+    assert entries[0]["payload"]["method"] == "DELETE"
+
+
 def test_gather_audit_handles_rows_with_no_actor() -> None:
     rows = [
         {
@@ -139,7 +176,6 @@ def test_gather_audit_handles_rows_with_no_actor() -> None:
             "user_id": None,
             "created_at": "2026-09-20T11:00:00+00:00",
             "action": "DELETE",
-            "details": {},
         },
     ]
     admin = _FakeAdmin(rows)

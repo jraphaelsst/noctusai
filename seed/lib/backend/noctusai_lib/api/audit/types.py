@@ -39,9 +39,16 @@ class AuditActor:
 class AuditEntry:
     """One recorded mutating request — the payload
     :class:`~noctusai_lib.api.audit.sink.AuditSink` implementations
-    persist."""
+    persist.
 
-    product: str
+    ``product_slug`` is the catalog slug (``"social-wiring"``), NEVER
+    the human-readable display name (``"Social Wiring"``,
+    ``create_product_app(name=...)``) — matches
+    ``public.audit_logs.product_slug`` (migration 053) verbatim, so a
+    query never has to normalize both shapes.
+    """
+
+    product_slug: str
     method: str
     route_template: str
     path_params: Mapping[str, Any]

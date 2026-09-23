@@ -14,6 +14,8 @@ import pytest
 from noctusai_lib.api.audit.sink import (
     FakeAuditSink,
     RealAuditSink,
+    _derive_resource,
+    _to_row,
     log_overflow_or_failure,
     make_audit_sink,
     overflow_or_failure_count,
@@ -23,7 +25,7 @@ from noctusai_lib.api.audit.types import AuditActor, AuditEntry
 
 def _entry(**overrides) -> AuditEntry:
     defaults = dict(
-        product="test-product",
+        product_slug="test-product",
         method="POST",
         route_template="/api/things/{id}",
         path_params={"id": "abc"},
@@ -113,7 +115,14 @@ class TestRealAuditSinkFlush:
         assert admin.schema_calls == ["public", "public"] or admin.schema_calls == ["public"]
         assert len(admin.inserted) == 1
         rows = admin.inserted[0]
-        assert {r["details"]["correlation_id"] for r in rows} == {"c1", "c2"}
+        # `correlation_id` (like every other captured field) is a
+        # DEDICATED column now (migration 053) — `details` carries only
+        # genuine extras, which this sink has none of.
+        assert {r["correlation_id"] for r in rows} == {"c1", "c2"}
+        # `details` is omitted entirely — the row relies on the column's
+        # own DB default ('{}'), never an explicit empty dict this sink
+        # would have to keep in sync with the schema.
+        assert all("details" not in r for r in rows)
 
     @pytest.mark.asyncio
     async def test_flushes_on_short_timer_without_reaching_batch_size(self) -> None:
@@ -178,6 +187,66 @@ class TestRealAuditSinkOverflow:
         lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
         payload = json.loads(lines[-1])
         assert payload["audit_fallback"] == "write_failed"
+
+
+class TestDeriveResource:
+    def test_single_path_param(self) -> None:
+        assert _derive_resource("/api/leads/{lead_id}", {"lead_id": "L1"}) == ("leads", "L1")
+
+    def test_nested_sub_resource_uses_first_param_not_last(self) -> None:
+        """The whole point of `_derive_resource`: a card_hub-nested route
+        (`entity_path("/notas/{nota_id}")`) still resolves to the CARD's
+        own resource/id, not the nested note's."""
+        assert _derive_resource(
+            "/api/leads/{lead_id}/notas/{nota_id}",
+            {"lead_id": "L1", "nota_id": "N1"},
+        ) == ("leads", "L1")
+
+    def test_no_path_param_returns_none_none(self) -> None:
+        assert _derive_resource("/api/leads", {}) == (None, None)
+
+    def test_strips_a_fastapi_converter_from_the_param_name(self) -> None:
+        assert _derive_resource("/api/leads/{lead_id:int}", {"lead_id": 42}) == ("leads", "42")
+
+    def test_missing_value_in_path_params_returns_none_id(self) -> None:
+        assert _derive_resource("/api/leads/{lead_id}", {}) == ("leads", None)
+
+
+class TestToRow:
+    def test_writes_dedicated_columns_not_details(self) -> None:
+        entry = _entry(
+            product_slug="social-wiring",
+            route_template="/api/clientes/{cliente_id}",
+            path_params={"cliente_id": "C1"},
+            status=200,
+            correlation_id="corr-9",
+            duration_ms=42.7,
+            actor=AuditActor(user_id="u1", org_id="o1", role="owner"),
+        )
+        row = _to_row(entry)
+        assert row["product_slug"] == "social-wiring"
+        assert row["method"] == "POST"
+        assert row["route_template"] == "/api/clientes/{cliente_id}"
+        assert row["path_params"] == {"cliente_id": "C1"}
+        assert row["status_code"] == 200
+        assert row["correlation_id"] == "corr-9"
+        assert row["role"] == "owner"
+        assert row["actor_kind"] == "user"
+        assert row["duration_ms"] == 42  # int() truncation — column is INT
+        assert "details" not in row
+
+    def test_original_columns_derived_from_route(self) -> None:
+        entry = _entry(route_template="/api/clientes/{cliente_id}", path_params={"cliente_id": "C1"})
+        row = _to_row(entry)
+        assert row["action"] == "POST"
+        assert row["resource_type"] == "clientes"
+        assert row["resource_id"] == "C1"
+
+    def test_resource_type_falls_back_to_product_slug_when_no_path_param(self) -> None:
+        entry = _entry(product_slug="social-wiring", route_template="/api/clientes", path_params={})
+        row = _to_row(entry)
+        assert row["resource_type"] == "social-wiring"
+        assert row["resource_id"] is None
 
 
 def test_log_overflow_or_failure_is_never_a_bare_pass(capsys) -> None:

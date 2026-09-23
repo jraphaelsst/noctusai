@@ -38,7 +38,7 @@ def _build_app(sink: FakeAuditSink, *, enabled: bool = True) -> FastAPI:
     # Mount order mirrors `configure_app`: AuditMiddleware added BEFORE
     # CorrelationIdMiddleware so it stays nested inside it (last-added =
     # outermost in Starlette's `add_middleware`).
-    app.add_middleware(AuditMiddleware, sink=sink, product="test-product", enabled=enabled)
+    app.add_middleware(AuditMiddleware, sink=sink, product_slug="test-product", enabled=enabled)
     app.add_middleware(CorrelationIdMiddleware)
 
     @app.get("/api/things/{thing_id}")
@@ -83,7 +83,7 @@ class TestMutatingOnlyFilter:
         assert entry.route_template == "/api/things/{thing_id}"
         assert entry.path_params == {"thing_id": "t1"}
         assert entry.status == 200
-        assert entry.product == "test-product"
+        assert entry.product_slug == "test-product"
 
     def test_delete_is_recorded(self) -> None:
         sink = FakeAuditSink()

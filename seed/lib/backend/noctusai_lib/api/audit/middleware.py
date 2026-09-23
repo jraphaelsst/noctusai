@@ -47,8 +47,11 @@ class AuditMiddleware:
     Args:
         app: The downstream ASGI app.
         sink: Where a resolved entry goes.
-        product: The product's schema/slug — becomes
-            :attr:`AuditEntry.product`.
+        product_slug: The product's CATALOG slug (``"social-wiring"``),
+            never the display name — becomes
+            :attr:`AuditEntry.product_slug`, matching
+            ``public.audit_logs.product_slug`` (migration 053)
+            verbatim.
         enabled: When ``False`` the middleware is a straight
             passthrough — no header parsing, no clock read, no sink
             call. Wired to ``settings.audit_trail_enabled`` by
@@ -62,12 +65,12 @@ class AuditMiddleware:
         app,
         *,
         sink: AuditSink,
-        product: str,
+        product_slug: str,
         enabled: bool = True,
     ) -> None:
         self.app = app
         self._sink = sink
-        self._product = product
+        self._product_slug = product_slug
         self._enabled = enabled
 
     async def __call__(self, scope, receive, send) -> None:
@@ -110,7 +113,7 @@ class AuditMiddleware:
         actor: Optional[AuditActor] = state.get("audit_actor")
 
         entry = AuditEntry(
-            product=self._product,
+            product_slug=self._product_slug,
             method=scope.get("method", ""),
             route_template=getattr(route, "path", str(route)),
             path_params=dict(scope.get("path_params") or {}),

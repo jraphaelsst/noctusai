@@ -95,25 +95,27 @@ def gather_audit(cfg: "CardHubConfig", db: Any, org_id: Any, entity_id: Any, ent
     requests whose path carried THIS card's id, reshaped into timeline
     entries.
 
-    Inert unless `cfg.audit_trail_enabled` AND `cfg.get_core_client`
-    are both set (`CardHubConfig.__post_init__` only wires this into
-    the default `timeline_gatherers` when both are true) — matching
-    `settings.audit_trail_enabled`'s own default-off posture.
+    Inert unless `cfg.audit_trail_enabled`, `cfg.get_core_client`, AND
+    `cfg.product_slug` are all set (`CardHubConfig.__post_init__` only
+    wires this into the default `timeline_gatherers` when all three
+    are true) — matching `settings.audit_trail_enabled`'s own
+    default-off posture.
 
-    Scoped by `org_id` (RLS-equivalent tenant boundary) AND a JSONB
-    containment match on `details->path_params` for `cfg.id_param`
-    (`AuditMiddleware` records `scope["path_params"]` verbatim under
-    that key — see `noctusai_lib.api.audit.sink._to_row`). NOT also
-    filtered by product/`resource_type`: `entity_id` is a UUID, so a
-    cross-product collision on the SAME id is not a realistic risk,
-    and `AuditMiddleware`'s `product` is the human-readable name
-    (`create_product_app(name=...)`), which `CardHubConfig` has no
-    access to — narrowing on it would need a new config field for
-    marginal safety. Capped at the 200 most recent rows (no full
-    pager — `noctusai_lib.integrations.persistence.table_reads
-    .paged_rows` assumes flat `eq_filters`, not a JSONB containment
-    filter); a card with a longer real history is a future
-    enhancement, not a correctness gap for a default gatherer.
+    Scoped by `product_slug` + `resource_type` + `resource_id` — the
+    exact column order of migration 053's
+    `idx_audit_logs_product_resource` index, so this is an index
+    lookup, not a scan. `resource_type` is `cfg.entity_table`
+    (`"clientes"`) and `resource_id` is `str(entity_id)`: these are
+    EXACTLY what `noctusai_lib.api.audit.sink._derive_resource` derives
+    from a route template's FIRST path parameter — which, by
+    `noctusai_lib.domain.card_hub.router`'s own `entity_path()`
+    convention, is ALWAYS this card's own id, for every card_hub route
+    including nested ones (`/{id_param}/notas/{nota_id}`,
+    `/{id_param}/checklists/{checklist_id}`, ...). Also filtered by
+    `org_id` (RLS-equivalent tenant boundary) as defense in depth —
+    not part of the index, kept anyway; an index is a performance
+    concern, never a substitute for a tenant-isolation filter. Capped
+    at the 200 most recent rows.
     """
     admin = cfg.get_core_client()
     rows = (
@@ -121,7 +123,9 @@ def gather_audit(cfg: "CardHubConfig", db: Any, org_id: Any, entity_id: Any, ent
         .table("audit_logs")
         .select("*")
         .eq("org_id", str(org_id))
-        .contains("details", {"path_params": {cfg.id_param: str(entity_id)}})
+        .eq("product_slug", cfg.product_slug)
+        .eq("resource_type", cfg.entity_table)
+        .eq("resource_id", str(entity_id))
         .order("created_at", desc=True)
         .limit(200)
         .execute()
@@ -136,10 +140,10 @@ def gather_audit(cfg: "CardHubConfig", db: Any, org_id: Any, entity_id: Any, ent
             "ocorrido_em": r["created_at"],
             "ator": actor(resolved, r.get("user_id")),
             "payload": {
-                "method": r.get("action"),
-                "route_template": (r.get("details") or {}).get("route_template"),
-                "status": (r.get("details") or {}).get("status"),
-                "actor_kind": (r.get("details") or {}).get("actor_kind"),
+                "method": r.get("method") or r.get("action"),
+                "route_template": r.get("route_template"),
+                "status": r.get("status_code"),
+                "actor_kind": r.get("actor_kind"),
             },
         }
         for r in rows

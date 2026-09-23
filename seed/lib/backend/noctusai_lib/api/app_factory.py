@@ -47,6 +47,7 @@ def configure_app(
     max_body_path_overrides: Mapping[str, MaxBodyOverrideValue] | None = None,
     allow_credentials: bool = True,
     product_name: str | None = None,
+    product_slug: str | None = None,
     audit_sink: Optional[AuditSink] = None,
 ) -> Optional[Mapping[str, MaxBodyOverrideValue]]:
     """
@@ -91,9 +92,23 @@ def configure_app(
                            Defaults to True. Mutually exclusive with a
                            wildcard `cors_origins='*'` — boot refuses the
                            combination (see CORS guard below).
-        product_name: Optional product slug surfaced in the CORS guard
-                      error message. When None, falls back to
-                      `settings.product_name` or '<unknown>'.
+        product_name: Optional product DISPLAY NAME surfaced in the CORS
+                      guard error message only (e.g. "Social Wiring").
+                      When None, falls back to `settings.product_name`
+                      or '<unknown>'. NOT the same thing as
+                      `product_slug` below — this one is prose, for a
+                      human reading a boot-refusal error.
+        product_slug: The product's CATALOG slug (e.g. "social-wiring"),
+                      never the display name — becomes
+                      `AuditEntry.product_slug` /
+                      `public.audit_logs.product_slug` (migration 053).
+                      `noctusai_seed.app.create_product_app` passes the
+                      schema-derived slug (`schema.replace("_", "-")`,
+                      the same derivation already used for
+                      `configure_logging(app_name=...)`) — direct
+                      `configure_app` callers that omit it fall back to
+                      `settings.product_slug` (when a product's own
+                      Settings declares one) or `"<unknown>"`.
         audit_sink: The `noctusai_lib.api.audit.AuditSink` to wire into
                       `AuditMiddleware`. `noctusai_seed.app.create_product_app`
                       builds this once (Real when `settings.audit_trail_enabled`
@@ -242,14 +257,14 @@ def configure_app(
     if max_body_path_overrides is None:
         max_body_path_overrides = getattr(settings, "max_body_path_overrides", None)
     _audit_enabled = bool(getattr(settings, "audit_trail_enabled", False))
-    _product_slug = product_name or getattr(settings, "product_name", None) or "<unknown>"
+    _product_slug = product_slug or getattr(settings, "product_slug", None) or "<unknown>"
     if audit_sink is None:
         from .audit import FakeAuditSink
 
         audit_sink = FakeAuditSink()
         _audit_enabled = False
     app.add_middleware(RequestLoggingMiddleware)
-    app.add_middleware(AuditMiddleware, sink=audit_sink, product=_product_slug, enabled=_audit_enabled)
+    app.add_middleware(AuditMiddleware, sink=audit_sink, product_slug=_product_slug, enabled=_audit_enabled)
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(
         MaxBodySizeMiddleware,

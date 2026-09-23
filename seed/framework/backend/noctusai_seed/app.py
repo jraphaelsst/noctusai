@@ -423,6 +423,12 @@ def create_product_app(
         app, settings, limiter=limiter,
         max_body_path_overrides=max_body_path_overrides,
         product_name=name,
+        # The catalog-shaped slug ("social-wiring"), NOT the display
+        # name `name` above ("Social Wiring") — same derivation
+        # `app_name` (step 1) already uses for `configure_logging`, so
+        # `AuditEntry.product_slug` matches the slug every other seed
+        # log line carries.
+        product_slug=app_name,
         audit_sink=audit_sink,
     )
 

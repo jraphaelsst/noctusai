@@ -21,6 +21,16 @@ class SocialWiringSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:social-wiring"
 
+    # ─── Audit trail (request-history middleware) ──────────────────────
+    # Repo-level default ON for this product only (unlike the platform's
+    # default-off `ProductSettings.audit_trail_enabled` — owner directive
+    # 2026-09-23: "the system should log it and record history of actions
+    # for everything," piloted here first per the platform's
+    # pilot-products-first refactor cadence before fanning out to the
+    # rest of the fleet). `AUDIT_TRAIL_ENABLED=0` in the environment still
+    # overrides, same as any other pydantic-settings field.
+    audit_trail_enabled: bool = True
+
     # ─── LLM usage/cost tracking (Custos page) ─────────────────────────
     # Repo-level default ON for this product (unlike the platform's
     # opt-in-via-env default): social-wiring's `122_llm_usage.sql` is the
