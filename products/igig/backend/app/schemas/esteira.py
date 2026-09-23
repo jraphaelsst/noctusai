@@ -7,16 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from noctusai_lib.api.schemas import StrictHttpModel
 
-from app.repositories import ETAPAS
-
 __all__ = [
-    "Etapa",
-    "TarefaCreate",
     "TarefaOut",
-    "MoverTarefa",
-    "QuadroResponse",
     "ApontamentoOut",
-    "IniciarTimer",
     "LinkAprovacaoOut",
     "AprovacaoPublicaOut",
     "PecaPublica",
@@ -24,48 +17,26 @@ __all__ = [
     "DecisaoOut",
 ]
 
-#: Derived from the repository constant so the wire contract, the DB CHECK
-#: and the kanban can never disagree about the 8 steps.
-Etapa = Literal[ETAPAS]  # type: ignore[valid-type]
-
-
-class TarefaCreate(StrictHttpModel):
-    pauta_id: str
-    titulo: str = Field(min_length=1, max_length=200)
-    responsavel_id: str | None = None
-    prazo: str | None = None
-
-
 class TarefaOut(BaseModel):
+    """A tarefa row. Its stage is `etapa_id` (a user-editable stage ROW since
+    migration 017); the board endpoint serves the stage objects themselves."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str
     org_id: str
     pauta_id: str
+    cliente_id: str | None = None
     titulo: str
-    etapa: str
+    etapa_id: str
+    #: Fractional board position — PostgREST serves `numeric` as a string.
+    kanban_pos: float | str | None = None
     responsavel_id: str | None = None
     prazo: str | None = None
     refacoes: int = 0
     observacao_cliente: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
-
-
-class MoverTarefa(StrictHttpModel):
-    etapa: str
-
-
-class QuadroResponse(BaseModel):
-    """The kanban: ordered column keys plus the tasks in each.
-
-    `etapas` is sent explicitly rather than letting the client hardcode the
-    order — the sequence is a business rule (the rigid esteira), and a client
-    that invents its own ordering would drift from the backend's.
-    """
-
-    etapas: list[str]
-    colunas: dict[str, list[TarefaOut]]
 
 
 class ApontamentoOut(BaseModel):
@@ -75,13 +46,10 @@ class ApontamentoOut(BaseModel):
     org_id: str
     tarefa_id: str
     usuario_id: str
+    profissional_id: str | None = None
     iniciado_em: str
     encerrado_em: str | None = None
     minutos: int = 0
-
-
-class IniciarTimer(StrictHttpModel):
-    usuario_id: str
 
 
 class LinkAprovacaoOut(BaseModel):
@@ -126,6 +94,9 @@ class AprovacaoPublicaOut(BaseModel):
     #: showing a broken frame.
     pecas: list[PecaPublica] = Field(default_factory=list)
     ja_decidida: bool = False
+    #: False once the agency pulled the tarefa out of the approval stage — the
+    #: portal then shows the content read-only (a decision would be a 409).
+    aguardando_aprovacao: bool = True
 
 
 class DecisaoIn(StrictHttpModel):

@@ -3,32 +3,32 @@
 Three surfaces in one router, because they are one workflow:
 
   AUTHED (the agency's team)
-    GET   /api/esteira/quadro                       the 8-column kanban
-    POST  /api/esteira/tarefas                      create a tarefa
-    POST  /api/esteira/tarefas/{id}/mover           advance the etapa
+    GET/POST/PATCH/DELETE /api/esteira/stages …     stage editor (seed router;
+                                                    writes = org admins)
+    GET   /api/esteira/board?cliente_id=            the kanban (seed columns)
+    POST  /api/esteira/tarefas                      create a tarefa (entry stage)
+    POST  /api/esteira/tarefas/{id}/mover-etapa     drag: +1 forward, back w/ motivo
     GET   /api/esteira/tarefas/{id}/apontamentos    timesheet segments
-    POST  /api/esteira/tarefas/{id}/timer/iniciar   play
-    POST  /api/esteira/tarefas/{id}/timer/encerrar  pause
-    POST  /api/esteira/tarefas/{id}/link-aprovacao  mint the client link
+    POST  /api/esteira/tarefas/{id}/timer/iniciar   play  (the CALLER's timer)
+    POST  /api/esteira/tarefas/{id}/timer/encerrar  pause (the CALLER's timer)
+    POST  /api/esteira/tarefas/{id}/link-aprovacao  mint the client link AND move
+                                                    the tarefa into approval
 
   PUBLIC (the agency's CLIENT — no noc account, token IS the auth)
     GET   /api/esteira/aprovar/{token}              what the client sees
     POST  /api/esteira/aprovar/{token}              [Aprovar] / [Solicitar Ajuste]
 
-The public pair runs on `get_repositorios_admin` (service-role, RLS bypassed)
-because an anonymous caller has no org for RLS to scope by — the same split
-Orbity uses. `org_id` is still passed explicitly on every repository call, so
-even that client cannot read across tenants.
+Board rules live in `app/services/esteira_quadro.py` on the seed pipeline; this
+router only maps HTTP to them. The legacy `/quadro` + `/tarefas/{id}/mover`
+pair is GONE, not aliased: it validated against a hardcoded 8-value tuple, and
+since migration 017 the stages are the org's own editable rows.
 
-The public pair is unauthenticated by design and therefore:
-  * rate-limited (public surface, DDOS guard),
-  * returns a NARROW projection that leaks none of the agency's internals,
-  * never distinguishes "unknown token" from "expired token" from "already
-    decided" in a way that turns the endpoint into an oracle — all three are
-    404 with the same body.
-
-Mirrors the shape Orbity already ships (`/aprovar/:token`), so the eventual
-IgIg→Orbity merge does not have to reconcile two different portals.
+The public pair runs on the service-role providers (`get_repositorios_admin`,
+`get_admin_db`) because an anonymous caller has no org for RLS to scope by —
+the same split Orbity uses. `org_id` comes out of the token and is passed
+explicitly on every call, so even that client cannot read across tenants. It
+is rate-limited, returns a NARROW projection, and never distinguishes
+"unknown" from "expired" from "already decided" (all the same 404).
 """
 # NOTE: deliberately NO `from __future__ import annotations` here.
 # The public endpoints are wrapped by `@limiter.limit(...)`, and with
@@ -37,27 +37,40 @@ IgIg→Orbity merge does not have to reconcile two different portals.
 # `Annotated[ForwardRef('DecisaoIn'), Query(...)]` and the whole app fails to
 # build at import. Eager annotations keep the body a body.
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from noctusai_lib.domain.pipeline import pipeline_stages_router
 from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.primitives.responses import success_response
 
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.pipelines import (
+    PAPEL_APROVACAO_CLIENTE,
+    PIPELINE_ESTEIRA,
+    exigir_admin_da_org,
+    get_admin_db,
+    get_core_db,
+    get_db,
+    get_pipeline_auth,
+    pipeline_context,
+)
 from app.rate_limit import limiter
-from app.repositories import ETAPAS, Repositorios
+from app.repositories import Repositorios
 from app.schemas.esteira import (
     ApontamentoOut,
     AprovacaoPublicaOut,
-    PecaPublica,
     DecisaoIn,
     DecisaoOut,
-    IniciarTimer,
     LinkAprovacaoOut,
-    MoverTarefa,
-    QuadroResponse,
-    TarefaCreate,
+    PecaPublica,
     TarefaOut,
 )
+from app.schemas.pipeline import MoverCardIn, TarefaCreate
+from app.services import esteira_quadro
+from app.services.notificacoes import notificar
+from app.services.regras import RegraViolada, http_de
 from app.storage import get_storage
 from app.store import get_repositorios, get_repositorios_admin
 
@@ -65,26 +78,48 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/esteira", tags=["esteira"])
 
+#: The esteira's stage editor — the seed router, mounted as-is. Writes need an
+#: org admin; system-role stages (`aprovacao_cliente`, `agendado`) are
+#: renamable/reorderable but the seed refuses to delete or deactivate them.
+stages_router = pipeline_stages_router(
+    PIPELINE_ESTEIRA,
+    auth_dependency=get_pipeline_auth,
+    resolve_context=lambda pa: pipeline_context(pa, PIPELINE_ESTEIRA),
+    success_response=success_response,
+    prefix="/api/esteira/stages",
+    tags=["esteira-etapas"],
+    require_stage_admin=exigir_admin_da_org,
+)
+
 #: One message for every public-lookup failure. Distinct messages would let a
 #: caller probe which tokens exist.
 _LINK_INVALIDO = "Link inválido ou expirado"
 
 
-# ── AUTHED — the agency's team ──────────────────────────────────────
-@router.get("/quadro", response_model=QuadroResponse)
-async def obter_quadro(
-    auth: tuple = Depends(get_current_user_org),
-    repos: Repositorios = Depends(get_repositorios),
-) -> QuadroResponse:
-    """The full kanban. All 8 columns always present, empty ones included."""
+def _org(auth: tuple) -> str:
     _user, _token, raw_org = auth
-    org_id = str(coerce_org_uuid(raw_org))
-    quadro = repos.tarefa.quadro(org_id)
-    return QuadroResponse(
-        etapas=list(ETAPAS),
-        colunas={
-            etapa: [TarefaOut(**t) for t in tarefas] for etapa, tarefas in quadro.items()
-        },
+    return str(coerce_org_uuid(raw_org))
+
+
+def _usuario(auth: tuple) -> str:
+    """The AUTHENTICATED caller — the only identity a timer may run under."""
+    return str(auth[0].id)
+
+
+# ── AUTHED — the agency's team ──────────────────────────────────────
+@router.get("/board")
+async def obter_board(
+    cliente_id: str | None = None,
+    limite_por_etapa: int | None = None,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+) -> dict:
+    """Every active stage as a column (empty ones included), `?cliente_id=` to
+    show one cliente's esteira (roadmap R9)."""
+    return success_response(
+        esteira_quadro.quadro(
+            db, _org(auth), cliente_id=cliente_id, limite_por_etapa=limite_por_etapa
+        )
     )
 
 
@@ -92,34 +127,46 @@ async def obter_quadro(
 async def criar_tarefa(
     payload: TarefaCreate,
     auth: tuple = Depends(get_current_user_org),
-    repos: Repositorios = Depends(get_repositorios),
+    db: Any = Depends(get_db),
 ) -> TarefaOut:
-    _user, _token, raw_org = auth
-    org_id = str(coerce_org_uuid(raw_org))
+    """New tarefa at the first stage. The pauta must exist (404 otherwise —
+    without the check the FK error would surface as an opaque 500)."""
     try:
-        repos.pauta.buscar(org_id, payload.pauta_id)
-    except RecordNotFound:
-        # Checked explicitly: without it the FK error surfaces as an opaque
-        # 500 from the store instead of naming the actual problem.
-        raise HTTPException(status_code=404, detail="Pauta não encontrada")
-    return TarefaOut(**repos.tarefa.criar(org_id, payload.model_dump(exclude_none=True)))
+        tarefa = esteira_quadro.criar_tarefa(
+            db, _org(auth),
+            pauta_id=payload.pauta_id,
+            titulo=payload.titulo,
+            responsavel_id=payload.responsavel_id,
+            prazo=payload.prazo,
+            user_id=_usuario(auth),
+        )
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
+    return TarefaOut(**tarefa)
 
 
-@router.post("/tarefas/{tarefa_id}/mover", response_model=TarefaOut)
-async def mover_tarefa(
+@router.post("/tarefas/{tarefa_id}/mover-etapa")
+async def mover_etapa(
     tarefa_id: str,
-    payload: MoverTarefa,
+    payload: MoverCardIn,
     auth: tuple = Depends(get_current_user_org),
-    repos: Repositorios = Depends(get_repositorios),
-) -> TarefaOut:
-    _user, _token, raw_org = auth
-    org_id = str(coerce_org_uuid(raw_org))
+    db: Any = Depends(get_db),
+) -> dict:
+    """Drag a card. 409 `etapa_invalida` (skip forward / inactive stage),
+    422 `motivo_obrigatorio` (backwards without a reason). Backwards out of
+    the approval stage counts a refação."""
     try:
-        return TarefaOut(**repos.tarefa.mover(org_id, tarefa_id, payload.etapa))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except RecordNotFound:
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+        linha = esteira_quadro.mover_tarefa(
+            db, _org(auth),
+            tarefa_id=tarefa_id,
+            para_etapa_id=payload.para_etapa_id,
+            user_id=_usuario(auth),
+            novo_indice=payload.novo_indice,
+            motivo=payload.motivo,
+        )
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
+    return success_response(linha)
 
 
 @router.get("/tarefas/{tarefa_id}/apontamentos", response_model=list[ApontamentoOut])
@@ -128,40 +175,52 @@ async def listar_apontamentos(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> list[ApontamentoOut]:
-    _user, _token, raw_org = auth
-    org_id = str(coerce_org_uuid(raw_org))
-    return [ApontamentoOut(**a) for a in repos.apontamento.da_tarefa(org_id, tarefa_id)]
+    return [ApontamentoOut(**a) for a in repos.apontamento.da_tarefa(_org(auth), tarefa_id)]
 
 
 @router.post("/tarefas/{tarefa_id}/timer/iniciar", response_model=ApontamentoOut,
              status_code=status.HTTP_201_CREATED)
 async def iniciar_timer(
     tarefa_id: str,
-    payload: IniciarTimer,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> ApontamentoOut:
-    """Play. Auto-closes whatever else this user had running."""
-    _user, _token, raw_org = auth
-    org_id = str(coerce_org_uuid(raw_org))
+    """Play — for the AUTHENTICATED caller. Auto-closes whatever else they had
+    running.
+
+    There is deliberately no body: the timer used to trust a payload
+    `usuario_id`, so anyone could book hours onto a colleague (smoke finding
+    3). A legacy client still sending one is simply ignored. The segment also
+    records the caller's `profissional` (resolved by `profissional.usuario_id`)
+    — the same record `tarefa.responsavel_id` points at (smoke finding 8).
+    """
+    org_id = _org(auth)
+    usuario_id = _usuario(auth)
     try:
         repos.tarefa.buscar(org_id, tarefa_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-    return ApontamentoOut(**repos.apontamento.iniciar(org_id, tarefa_id, payload.usuario_id))
+    profissional = repos.profissional.do_usuario(org_id, usuario_id)
+    if profissional is None:
+        logger.warning(
+            "timer sem profissional vinculado org=%s usuario=%s — horas sem custo/hora",
+            org_id, usuario_id,
+        )
+    return ApontamentoOut(**repos.apontamento.iniciar(
+        org_id, tarefa_id, usuario_id,
+        profissional_id=str(profissional["id"]) if profissional else None,
+    ))
 
 
 @router.post("/tarefas/{tarefa_id}/timer/encerrar", response_model=ApontamentoOut)
 async def encerrar_timer(
     tarefa_id: str,
-    payload: IniciarTimer,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> ApontamentoOut:
-    """Pause. 404 when this user has no running segment."""
-    _user, _token, raw_org = auth
-    org_id = str(coerce_org_uuid(raw_org))
-    aberto = repos.apontamento.aberto_do_usuario(org_id, payload.usuario_id)
+    """Pause the CALLER's running segment. 404 when they have none here."""
+    org_id = _org(auth)
+    aberto = repos.apontamento.aberto_do_usuario(org_id, _usuario(auth))
     if aberto is None or str(aberto.get("tarefa_id")) != tarefa_id:
         raise HTTPException(status_code=404, detail="Nenhum apontamento aberto nesta tarefa")
     return ApontamentoOut(**repos.apontamento.encerrar(org_id, str(aberto["id"])))
@@ -172,16 +231,25 @@ async def encerrar_timer(
 async def emitir_link_aprovacao(
     tarefa_id: str,
     auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
     repos: Repositorios = Depends(get_repositorios),
 ) -> LinkAprovacaoOut:
-    """Mint the white-label link the agency sends to its client."""
-    _user, _token, raw_org = auth
-    org_id = str(coerce_org_uuid(raw_org))
+    """Mint the white-label link the agency sends to its client.
+
+    Minting MEANS "this is with the client now": the tarefa moves into the
+    `aprovacao_cliente` stage in the same request (smoke finding 4 — the link
+    used to leave the card wherever it was, and the portal then acted on a
+    tarefa nobody had sent for approval). 409 `etapa_invalida` when the tarefa
+    is already past approval.
+    """
+    org_id = _org(auth)
     try:
-        repos.tarefa.buscar(org_id, tarefa_id)
-    except RecordNotFound:
-        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
-    link = repos.aprovacao.emitir(org_id, tarefa_id)
+        esteira_quadro.levar_para_aprovacao(
+            db, org_id, tarefa_id=tarefa_id, user_id=_usuario(auth)
+        )
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
+    link = repos.aprovacao.emitir(org_id, tarefa_id, emitido_por=_usuario(auth))
     logger.info("link de aprovação emitido org=%s tarefa=%s", org_id, tarefa_id)
     return LinkAprovacaoOut(**link)
 
@@ -242,7 +310,23 @@ async def ver_aprovacao_publica(
         formato=pauta.get("formato"),
         cliente_nome=cliente_nome,
         ja_decidida=repos.aprovacao.decidida(aprovacao),
+        aguardando_aprovacao=_aguardando_aprovacao(repos, org_id, tarefa),
     )
+
+
+def _aguardando_aprovacao(repos: Repositorios, org_id: str, tarefa: dict) -> bool:
+    """Whether the portal may still decide — the tarefa sits in the approval stage.
+
+    A tarefa whose stage row is missing is a data fault: logged, and shown as
+    not awaiting (the POST would refuse it anyway) rather than 500-ing a page
+    the client can still read.
+    """
+    try:
+        return repos.etapa.papel_de(org_id, str(tarefa["etapa_id"])) == PAPEL_APROVACAO_CLIENTE
+    except RecordNotFound:
+        logger.error("tarefa %s aponta para etapa inexistente %s",
+                     tarefa.get("id"), tarefa.get("etapa_id"))
+        return False
 
 
 @router.post("/aprovar/{token}", response_model=DecisaoOut)
@@ -252,12 +336,17 @@ async def decidir_aprovacao_publica(
     token: str,
     payload: DecisaoIn,
     repos: Repositorios = Depends(get_repositorios_admin),
+    db: Any = Depends(get_admin_db),
+    core: Any = Depends(get_core_db),
 ) -> DecisaoOut:
     """[Aprovar Conteúdo] or [Solicitar Ajuste].
 
     Single-decision: a spent link is a 404 like any other unusable link, so a
     client cannot flip a decision after the fact — or discover that a token
-    was once valid.
+    was once valid. Valid only while the tarefa is IN the approval stage (409
+    `fora_de_aprovacao` once the agency pulled it back). The agency is told
+    through an in-app notification — the decision stands even if that write
+    fails, because it is the client's action and it already happened.
     """
     aprovacao = _resolver_link(repos, token)
     if repos.aprovacao.decidida(aprovacao):
@@ -265,15 +354,55 @@ async def decidir_aprovacao_publica(
 
     org_id = str(aprovacao["org_id"])
     tarefa_id = str(aprovacao["tarefa_id"])
-
-    if payload.decisao == "aprovado":
-        repos.tarefa.aprovar(org_id, tarefa_id)
-    else:
-        repos.tarefa.solicitar_ajuste(org_id, tarefa_id, payload.observacao)
+    try:
+        esteira_quadro.decidir_aprovacao(
+            db, org_id, tarefa_id=tarefa_id, decisao=payload.decisao,
+            observacao=payload.observacao,
+        )
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
 
     repos.aprovacao.registrar_decisao(
         org_id, str(aprovacao["id"]), payload.decisao, payload.observacao
     )
     logger.info("aprovação decidida org=%s tarefa=%s decisao=%s",
                 org_id, tarefa_id, payload.decisao)
+    _avisar_agencia(repos, core, org_id, aprovacao, payload)
     return DecisaoOut(ok=True, decisao=payload.decisao)
+
+
+def _avisar_agencia(
+    repos: Repositorios, core: Any, org_id: str, aprovacao: dict, payload: DecisaoIn
+) -> None:
+    """Notify who sent the link + the tarefa's responsável (smoke finding 4:
+    the portal said "agência notificada" and nobody ever was)."""
+    tarefa = repos.tarefa.buscar(org_id, str(aprovacao["tarefa_id"]))
+    destinatarios = [aprovacao.get("emitido_por")]
+    if tarefa.get("responsavel_id"):
+        try:
+            destinatarios.append(
+                repos.profissional.buscar(org_id, str(tarefa["responsavel_id"])).get("usuario_id")
+            )
+        except RecordNotFound:
+            logger.warning("tarefa %s aponta para responsável ausente", tarefa.get("id"))
+    aprovado = payload.decisao == "aprovado"
+    titulo = (
+        f"Cliente aprovou: {tarefa.get('titulo')}" if aprovado
+        else f"Cliente pediu ajuste: {tarefa.get('titulo')}"
+    )
+    try:
+        notificar(
+            core,
+            org_id=org_id,
+            user_ids=destinatarios,
+            tipo="igig_aprovacao_cliente",
+            titulo=titulo,
+            mensagem=payload.observacao or ("Conteúdo aprovado." if aprovado else "Ajuste solicitado."),
+            metadata={
+                "tarefa_id": str(tarefa.get("id")),
+                "decisao": payload.decisao,
+                "link": "/esteira",
+            },
+        )
+    except Exception:  # noqa: BLE001 — the client's decision already stands
+        logger.exception("falha ao notificar a agência org=%s tarefa=%s", org_id, tarefa.get("id"))

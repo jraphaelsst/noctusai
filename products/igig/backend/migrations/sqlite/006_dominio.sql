@@ -35,12 +35,17 @@ CREATE TABLE IF NOT EXISTS cliente (
     origem       TEXT,
     observacoes  TEXT,
     encerrado_em TEXT,
+    -- Added by 018 (crm): the lead/negócio this cliente was closed from.
+    lead_id      TEXT,
+    negocio_id   TEXT,
     created_at   TEXT NOT NULL,
     updated_at   TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_igig_cliente_org ON cliente (org_id);
 CREATE INDEX IF NOT EXISTS idx_igig_cliente_status ON cliente (org_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_igig_cliente_lead
+    ON cliente (org_id, lead_id) WHERE lead_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS marca (
     id                TEXT PRIMARY KEY,
@@ -83,6 +88,11 @@ CREATE TABLE IF NOT EXISTS contrato (
     provedor_assinatura    TEXT,
     assinatura_external_id TEXT,
     link_assinatura        TEXT,
+    -- Added by 018 (crm): signing modality (roadmap R12).
+    modalidade_assinatura  TEXT NOT NULL DEFAULT 'digital'
+                           CHECK (modalidade_assinatura IN ('digital', 'fisica')),
+    assinado_manual_em     TEXT,
+    documento_assinado_key TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT
 );
@@ -104,6 +114,9 @@ CREATE TABLE IF NOT EXISTS pauta (
     canal           TEXT,
     data_publicacao TEXT,
     publicado_em    TEXT,
+    -- Added by 018 (crm): generated from an accepted orçamento's item.
+    orcamento_item_id      TEXT,
+    gerada_automaticamente INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL,
     updated_at      TEXT
 );
@@ -116,12 +129,12 @@ CREATE TABLE IF NOT EXISTS tarefa (
     org_id             TEXT NOT NULL,
     pauta_id           TEXT NOT NULL REFERENCES pauta (id) ON DELETE CASCADE,
     titulo             TEXT NOT NULL,
-    etapa              TEXT NOT NULL DEFAULT 'aguardando_roteiro'
-                       CHECK (etapa IN (
-                           'aguardando_roteiro', 'roteiro_em_producao',
-                           'aguardando_design', 'design_em_producao',
-                           'revisao_interna', 'aprovacao_cliente',
-                           'pronto_para_agendamento', 'agendado')),
+    -- 017 (pipeline) replaced the hardcoded `etapa` CHECK with a stage ROW.
+    -- NOT NULL like Postgres after its backfill; no FK here because the
+    -- stage rows live behind PostgREST (app/pipelines.py), never this store.
+    etapa_id           TEXT NOT NULL,
+    kanban_pos         REAL NOT NULL DEFAULT 0,
+    cliente_id         TEXT REFERENCES cliente (id) ON DELETE CASCADE,
     responsavel_id     TEXT,
     prazo              TEXT,
     refacoes           INTEGER NOT NULL DEFAULT 0,
@@ -131,7 +144,8 @@ CREATE TABLE IF NOT EXISTS tarefa (
 );
 
 CREATE INDEX IF NOT EXISTS idx_igig_tarefa_org ON tarefa (org_id);
-CREATE INDEX IF NOT EXISTS idx_igig_tarefa_etapa ON tarefa (org_id, etapa);
+CREATE INDEX IF NOT EXISTS idx_igig_tarefa_board ON tarefa (org_id, etapa_id, kanban_pos);
+CREATE INDEX IF NOT EXISTS idx_igig_tarefa_cliente ON tarefa (org_id, cliente_id);
 
 CREATE TABLE IF NOT EXISTS apontamento (
     id           TEXT PRIMARY KEY,
@@ -141,6 +155,8 @@ CREATE TABLE IF NOT EXISTS apontamento (
     iniciado_em  TEXT NOT NULL,
     encerrado_em TEXT,
     minutos      INTEGER NOT NULL DEFAULT 0,
+    -- Added by 017: the caller's profissional (smoke finding 8).
+    profissional_id TEXT,
     created_at   TEXT NOT NULL,
     updated_at   TEXT
 );

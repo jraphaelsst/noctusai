@@ -73,3 +73,72 @@ def client():
 
         tc = TestClient(app)
         yield AuthClient(tc, mock_sb)
+
+
+# ── PostgREST-backed surfaces (pipelines + card hubs, decision D-A1) ────────
+class IgigMockClient(MockSupabaseClient):
+    """`MockSupabaseClient` bound to schema `igig`, plus the ONE database
+    function the esteira calls.
+
+    `igig.incrementar_refacoes()` (migration 017) is an atomic
+    `UPDATE … SET refacoes = refacoes + 1 RETURNING refacoes`. The seed mock
+    answers every rpc with canned data, so a test could not tell whether the
+    increment happened; this double performs the same UPDATE on the mock's own
+    table and records the call. It stands in for the database, not for any
+    igig code path.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(schema="igig")
+        self.rpc_calls: list[tuple[str, dict]] = []
+
+    def rpc(self, name, params=None):
+        self.rpc_calls.append((name, dict(params or {})))
+        if name == "incrementar_refacoes":
+            for row in self.table("tarefa")._data:
+                if row.get("id") == params["p_tarefa_id"] and row.get("org_id") == params["p_org_id"]:
+                    row["refacoes"] = int(row.get("refacoes") or 0) + 1
+                    return MockSelectBuilder([{"refacoes": row["refacoes"]}])
+            return MockSelectBuilder([])
+        return super().rpc(name, params)
+
+
+@pytest.fixture
+def igig_db() -> IgigMockClient:
+    return IgigMockClient()
+
+
+@pytest.fixture
+def core_db() -> MockSupabaseClient:
+    return MockSupabaseClient()
+
+
+@pytest.fixture
+def crm_api(client, igig_db, core_db):
+    """The app with EVERY data dependency on one shared `igig` mock.
+
+    The pipeline/card-hub code reads through PostgREST (`get_db`,
+    `get_admin_db`) and the older routes through the RecordStore
+    (`get_repositorios*`). Pointing both at the SAME mock — the repositories
+    via the real `SupabaseRecordStore` adapter production uses — means a row
+    one seam writes is a row the other reads, as in production.
+    """
+    from noctusai_lib.integrations.persistence import SupabaseRecordStore
+
+    from app.main import app
+    from app.pipelines import get_admin_db, get_core_db, get_db
+    from app.repositories import Repositorios
+    from app.store import get_repositorios, get_repositorios_admin
+
+    repos = Repositorios(SupabaseRecordStore(igig_db))
+    overrides = {
+        get_db: lambda: igig_db,
+        get_admin_db: lambda: igig_db,
+        get_core_db: lambda: core_db,
+        get_repositorios: lambda: repos,
+        get_repositorios_admin: lambda: repos,
+    }
+    app.dependency_overrides.update(overrides)
+    yield client
+    for dep in overrides:
+        app.dependency_overrides.pop(dep, None)

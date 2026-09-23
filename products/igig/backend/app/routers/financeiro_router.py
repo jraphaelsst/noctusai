@@ -157,7 +157,11 @@ async def excedentes(
     `competencia_cobranca` is the month AFTER the work, per the spec — billing
     it in the same month would invoice work before the retainer for it.
     """
-    linhas = FinanceiroService(repos).excedentes(_org(auth), competencia)
+    try:
+        linhas = FinanceiroService(repos).excedentes(_org(auth), competencia)
+    except ValueError as exc:
+        # A malformed month is the caller's error, not a server fault.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     # asdict(), not vars(): these are slots=True dataclasses and have no __dict__.
     return [ExcedenteOut(**asdict(e)) for e in linhas]
 

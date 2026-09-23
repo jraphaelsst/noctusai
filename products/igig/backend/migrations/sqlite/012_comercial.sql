@@ -18,7 +18,16 @@ CREATE TABLE IF NOT EXISTS lead (
     canais_atuais        TEXT,
     dores                TEXT,
     orcamento_disponivel REAL,
-    origem               TEXT,
+    -- 018 (crm): the channel the lead arrived through (closed set); the old
+    -- free-text meaning lives in `como_conheceu`.
+    origem               TEXT NOT NULL DEFAULT 'manual'
+                         CHECK (origem IN ('formulario', 'manual', 'whatsapp', 'meta_ads')),
+    como_conheceu        TEXT,
+    instagram            TEXT,
+    especificacoes       TEXT NOT NULL DEFAULT '{}',
+    observacoes          TEXT,
+    meta_lead_id         TEXT,
+    waha_chat_id         TEXT,
     status               TEXT NOT NULL DEFAULT 'novo'
                          CHECK (status IN ('novo', 'qualificado', 'descartado', 'convertido')),
     cliente_id           TEXT REFERENCES cliente (id) ON DELETE SET NULL,
@@ -28,6 +37,10 @@ CREATE TABLE IF NOT EXISTS lead (
 
 CREATE INDEX IF NOT EXISTS idx_igig_lead_org ON lead (org_id);
 CREATE INDEX IF NOT EXISTS idx_igig_lead_status ON lead (org_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_igig_lead_meta
+    ON lead (org_id, meta_lead_id) WHERE meta_lead_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_igig_lead_waha
+    ON lead (org_id, waha_chat_id) WHERE waha_chat_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS orcamento (
     id              TEXT PRIMARY KEY,
@@ -42,10 +55,34 @@ CREATE TABLE IF NOT EXISTS orcamento (
     preco_final     REAL,
     margem_alvo     REAL NOT NULL DEFAULT 50,
     status          TEXT NOT NULL DEFAULT 'rascunho'
-                    CHECK (status IN ('rascunho', 'enviado', 'aceito', 'recusado')),
+                    CHECK (status IN (
+                        'rascunho', 'enviado', 'aceito', 'recusado', 'expirado', 'substituido')),
+    -- Added by 018 (crm): versions, validity, totals, e-mail tracking.
+    negocio_id       TEXT,
+    versao           INTEGER NOT NULL DEFAULT 1,
+    validade         TEXT,
+    subtotal_criacao REAL NOT NULL DEFAULT 0,
+    subtotal_gestao  REAL NOT NULL DEFAULT 0,
+    desconto         REAL NOT NULL DEFAULT 0,
+    total_mensal     REAL NOT NULL DEFAULT 0,
+    margem_estimada  REAL,
+    limites_escopo   TEXT NOT NULL DEFAULT '{}',
+    observacoes      TEXT,
+    pdf_key          TEXT,
+    enviado_em       TEXT,
+    email_message_id TEXT,
+    email_thread_id  TEXT,
+    respondido_em    TEXT,
+    aceito_em        TEXT,
+    recusado_em      TEXT,
+    motivo_recusa    TEXT,
     created_at      TEXT NOT NULL,
     updated_at      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_igig_orcamento_org ON orcamento (org_id);
 CREATE INDEX IF NOT EXISTS idx_igig_orcamento_lead ON orcamento (org_id, lead_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_igig_orcamento_um_aceito
+    ON orcamento (negocio_id) WHERE status = 'aceito' AND negocio_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_igig_orcamento_versao
+    ON orcamento (negocio_id, versao) WHERE negocio_id IS NOT NULL;

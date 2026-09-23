@@ -46,31 +46,51 @@ class EficienciaCliente:
         return round(self.minutos / 60, 2)
 
 
+@dataclass(slots=True)
+class _Custos:
+    """Rates keyed both ways, and the ONE rule for which key an apontamento uses.
+
+    A segment recorded since migration 017 carries the timer's
+    `profissional_id` (the team record `tarefa.responsavel_id` also points
+    at); older segments only have the auth `usuario_id`, resolved through
+    `profissional.usuario_id`.
+    """
+
+    por_profissional: dict[str, float | None] = field(default_factory=dict)
+    por_usuario: dict[str, float | None] = field(default_factory=dict)
+
+    def taxa(self, apontamento: dict) -> float | None:
+        profissional_id = apontamento.get("profissional_id")
+        if profissional_id:
+            return self.por_profissional.get(str(profissional_id))
+        return self.por_usuario.get(str(apontamento.get("usuario_id")))
+
+
 class BIService:
     """Aggregations over tarefas, apontamentos and the custo/hora model."""
 
     def __init__(self, repos: Repositorios) -> None:
         self._repos = repos
 
-    def _custo_por_usuario(self, org_id: str) -> dict[str, float | None]:
-        """Map `usuario_id` → effective hourly rate.
+    def _custos(self, org_id: str) -> "_Custos":
+        """Effective hourly rate per `profissional_id` AND per `usuario_id`.
 
         `None` means "this person has no resolvable rate" — distinct from 0.0,
         which is a real rate (an unpaid intern). Collapsing the two would
         silently understate the cost of every job they touched.
         """
-        mapa: dict[str, float | None] = {}
+        custos = _Custos()
         for prof in self._repos.profissional.listar(org_id):
-            usuario_id = prof.get("usuario_id")
-            if not usuario_id:
-                continue
             try:
-                mapa[str(usuario_id)] = self._repos.profissional.custo_hora_efetivo(
+                taxa: float | None = self._repos.profissional.custo_hora_efetivo(
                     org_id, str(prof["id"]), funcoes=self._repos.funcao
                 )
             except ValueError:
-                mapa[str(usuario_id)] = None
-        return mapa
+                taxa = None
+            custos.por_profissional[str(prof["id"])] = taxa
+            if prof.get("usuario_id"):
+                custos.por_usuario[str(prof["usuario_id"])] = taxa
+        return custos
 
     def eficiencia_por_cliente(self, org_id: str) -> list[EficienciaCliente]:
         """Taxa de refação + custo real do job, per client.
@@ -101,7 +121,7 @@ class BIService:
             alvo.tarefas += 1
             alvo.refacoes += int(tarefa.get("refacoes") or 0)
 
-        custos = self._custo_por_usuario(org_id)
+        custos = self._custos(org_id)
         for apontamento in self._repos.apontamento.listar(org_id):
             cliente_id = tarefa_para_cliente.get(str(apontamento.get("tarefa_id")), "")
             alvo = resultado.get(cliente_id)
@@ -109,7 +129,7 @@ class BIService:
                 continue
             minutos = int(apontamento.get("minutos") or 0)
             alvo.minutos += minutos
-            taxa = custos.get(str(apontamento.get("usuario_id")))
+            taxa = custos.taxa(apontamento)
             if taxa is None:
                 # Unknown rate: count it, never treat it as free.
                 alvo.apontamentos_sem_custo += 1
@@ -133,11 +153,11 @@ class BIService:
         not blank out an otherwise useful number, but it must not be invisible
         either.
         """
-        custos = self._custo_por_usuario(org_id)
+        custos = self._custos(org_id)
         total = 0.0
         alertas: list[str] = []
         for apontamento in self._repos.apontamento.da_tarefa(org_id, tarefa_id):
-            taxa = custos.get(str(apontamento.get("usuario_id")))
+            taxa = custos.taxa(apontamento)
             minutos = int(apontamento.get("minutos") or 0)
             if taxa is None:
                 alertas.append(
