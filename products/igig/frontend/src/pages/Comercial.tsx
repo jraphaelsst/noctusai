@@ -28,6 +28,7 @@ import { NegocioCardDialog } from "@/components/comercial/NegocioCardDialog";
 import { NegocioCardFace } from "@/components/comercial/NegocioCardFace";
 import { NovoLeadDialog } from "@/components/comercial/NovoLeadDialog";
 import { OrcamentoModal } from "@/components/orcamento/OrcamentoModal";
+import { useNegocioPorId } from "@/hooks/useComercial";
 import { describeError } from "@/lib/errors";
 import { brl } from "@/lib/format";
 import { comercialPipeline } from "@/lib/pipelines";
@@ -43,8 +44,13 @@ export default function Comercial() {
   // the open card always reads the freshest row after any mutation.
   const { data: colunas } = comercialPipeline.useBoard();
   const [abertoId, setAbertoId] = useState<string | null>(null);
-  const aberto: Negocio | null =
+  const doBoard =
     (abertoId && colunas?.flatMap((c) => c.cards).find((n) => n.id === abertoId)) || null;
+  // The board never holds a `perdido` card (`GET /board` is aberto+ganho
+  // only) — a deep link / orçamento that names one falls back to fetching it
+  // by id, so its archive still opens (roadmap gap G-2).
+  const fallback = useNegocioPorId(abertoId && !doBoard ? abertoId : null);
+  const aberto: Negocio | null = doBoard || fallback.data || null;
 
   const [novoLead, setNovoLead] = useState(false);
   const [orcamento, setOrcamento] = useState<{ id?: string | null; negocioId?: string | null } | null>(null);

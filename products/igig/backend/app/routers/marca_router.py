@@ -24,12 +24,14 @@ Two surfaces:
 # module is not rate-limited today, but the constraint travels with the file
 # the moment someone adds a decorator, and the cost of eager annotations is nil.
 import logging
+from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.roles import ADMIN_ROLES
 
-from app.config import settings
+from app.config import get_settings
 from app.dependencies import (
     coerce_org_uuid,
     get_current_user_org,
@@ -68,7 +70,23 @@ def _org(auth: tuple) -> str:
     return str(coerce_org_uuid(raw_org))
 
 
-def _exigir_admin(auth: tuple) -> None:
+def get_user_role_dep() -> Callable[[Any], str]:
+    """FastAPI dependency seam wrapping the seed's plain `get_user_role`.
+
+    A bare module-level import cannot be overridden by
+    `app.dependency_overrides` — a test would have to monkeypatch our own
+    reference to substitute the resolver. Wrapping it behind a zero-arg
+    dependency lets `_exigir_admin` (itself `Depends`-resolved) take the
+    resolver as an injectable default, per `KB § PATTERNS/backend/
+    di-test-seam.md`.
+    """
+    return get_user_role
+
+
+async def _exigir_admin(
+    auth: tuple = Depends(get_current_user_org),
+    papel_de: Callable[[Any], str] = Depends(get_user_role_dep),
+) -> None:
     """Gate for revealing a stored credential.
 
     Every member of the agency can SEE that a credential exists and use the
@@ -88,21 +106,21 @@ def _exigir_admin(auth: tuple) -> None:
     user, _token, _raw_org = auth
     if resolve_platform_role(user) == "platform_admin":
         return
-    papel = get_user_role(user)
+    papel = papel_de(user)
     if papel not in ADMIN_ROLES:
         raise HTTPException(
             status_code=403, detail="Apenas administradores podem revelar senhas"
         )
 
 
-def _chave_cofre() -> bytes:
+def _chave_cofre(cfg: Any) -> bytes:
     """The Fernet key, or a loud 409.
 
     A 409 rather than a 500: the request is well-formed, the SERVER is not
     configured. Saying so plainly is what stops someone concluding the vault
     is broken and pasting the password into `observacoes`.
     """
-    if not settings.igig_cofre_key:
+    if not cfg.igig_cofre_key:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -110,7 +128,7 @@ def _chave_cofre() -> bytes:
                 "Nenhuma senha é gravada em texto puro."
             ),
         )
-    return settings.igig_cofre_key.encode("utf-8")
+    return cfg.igig_cofre_key.encode("utf-8")
 
 
 def _acesso_out(row: dict) -> AcessoOut:
@@ -118,7 +136,7 @@ def _acesso_out(row: dict) -> AcessoOut:
     return AcessoOut(**row, tem_senha=bool(row.get("senha_cifrada")))
 
 
-async def _com_logo(linha: dict) -> dict:
+async def _com_logo(linha: dict, *, storage: StorageBackend, cfg: Any) -> dict:
     """Return the row with a FRESHLY-SIGNED `logo_url` minted from `logo_key`.
 
     🔴 A signed URL must never be persisted. `storage.signed_url` defaults to a
@@ -134,12 +152,9 @@ async def _com_logo(linha: dict) -> dict:
     chave = linha.get("logo_key")
     if not chave:
         return linha
-    armazenamento = get_storage()
     return {
         **linha,
-        "logo_url": await armazenamento.signed_url(
-            bucket=settings.igig_storage_bucket, key=str(chave)
-        ),
+        "logo_url": await storage.signed_url(bucket=cfg.igig_storage_bucket, key=str(chave)),
     }
 
 
@@ -149,12 +164,14 @@ async def listar_marcas(
     cliente_id: str | None = None,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
+    cfg: Any = Depends(get_settings),
 ) -> list[MarcaOut]:
     org_id = _org(auth)
     linhas = (
         repos.marca.do_cliente(org_id, cliente_id) if cliente_id else repos.marca.listar(org_id)
     )
-    return [MarcaOut(**await _com_logo(m)) for m in linhas]
+    return [MarcaOut(**await _com_logo(m, storage=storage, cfg=cfg)) for m in linhas]
 
 
 @router.post("", response_model=MarcaOut, status_code=status.HTTP_201_CREATED)
@@ -176,6 +193,8 @@ async def obter_repertorio(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
+    cfg: Any = Depends(get_settings),
 ) -> RepertorioOut:
     """The persistent-sidebar payload for a client.
 
@@ -192,7 +211,7 @@ async def obter_repertorio(
     marca = repos.marca.repertorio(org_id, cliente_id)
     if marca is None:
         return RepertorioOut(cliente_nome=cliente.get("nome"))
-    marca = await _com_logo(marca)
+    marca = await _com_logo(marca, storage=storage, cfg=cfg)
     return RepertorioOut(
         cliente_nome=cliente.get("nome"),
         marca_nome=marca.get("nome"),
@@ -210,11 +229,14 @@ async def obter_marca(
     marca_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
+    cfg: Any = Depends(get_settings),
 ) -> MarcaOut:
     try:
-        return MarcaOut(**await _com_logo(repos.marca.buscar(_org(auth), marca_id)))
+        linha = repos.marca.buscar(_org(auth), marca_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
+    return MarcaOut(**await _com_logo(linha, storage=storage, cfg=cfg))
 
 
 @router.patch("/{marca_id}", response_model=MarcaOut)
@@ -259,6 +281,8 @@ async def enviar_logo(
     arquivo: UploadFile = File(...),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
+    cfg: Any = Depends(get_settings),
 ) -> LogoOut:
     """Upload a brand logo through the seed storage seam.
 
@@ -282,14 +306,13 @@ async def enviar_logo(
         raise HTTPException(status_code=413, detail="Logo excede 2 MB")
 
     chave = chave_da_peca(org_id, f"marcas/{marca_id}", arquivo.filename or "logo")
-    armazenamento = get_storage()
-    await armazenamento.put(
-        bucket=settings.igig_storage_bucket,
+    await storage.put(
+        bucket=cfg.igig_storage_bucket,
         key=chave,
         data=conteudo,
         content_type=arquivo.content_type,
     )
-    url = await armazenamento.signed_url(bucket=settings.igig_storage_bucket, key=chave)
+    url = await storage.signed_url(bucket=cfg.igig_storage_bucket, key=chave)
     # Persist the KEY. `logo_url` is written too so a consumer reading the row
     # directly still sees something, but it is authoritative for exactly as
     # long as the TTL — every READ path re-signs from `logo_key` via
@@ -305,6 +328,7 @@ async def listar_acessos(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    cfg: Any = Depends(get_settings),
 ) -> AcessosOut:
     """Vault entries for a client, plus whether the vault is configured.
 
@@ -314,7 +338,7 @@ async def listar_acessos(
     attach to.
     """
     return AcessosOut(
-        cofre_configurado=bool(settings.igig_cofre_key),
+        cofre_configurado=bool(cfg.igig_cofre_key),
         itens=[_acesso_out(a) for a in repos.acesso.do_cliente(_org(auth), cliente_id)],
     )
 
@@ -324,6 +348,7 @@ async def criar_acesso(
     payload: AcessoCreate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    cfg: Any = Depends(get_settings),
 ) -> AcessoOut:
     org_id = _org(auth)
     try:
@@ -335,7 +360,7 @@ async def criar_acesso(
     campos.pop("cliente_id", None)
     rotulo = campos.pop("rotulo")
     senha = campos.pop("senha", None)
-    chave = _chave_cofre() if senha else None
+    chave = _chave_cofre(cfg) if senha else None
 
     registro = repos.acesso.guardar(
         org_id, payload.cliente_id, rotulo=rotulo, senha=senha, chave=chave, **campos
@@ -349,6 +374,7 @@ async def atualizar_acesso(
     payload: AcessoUpdate,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    cfg: Any = Depends(get_settings),
 ) -> AcessoOut:
     org_id = _org(auth)
     dados = payload.model_dump(exclude_none=True)
@@ -356,7 +382,7 @@ async def atualizar_acesso(
     if senha:
         from noctusai_lib.security.encrypted_tokens import encrypt
 
-        dados["senha_cifrada"] = encrypt(senha, _chave_cofre())
+        dados["senha_cifrada"] = encrypt(senha, _chave_cofre(cfg))
     if not dados:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
@@ -370,6 +396,8 @@ async def revelar_senha(
     acesso_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    cfg: Any = Depends(get_settings),
+    _admin: None = Depends(_exigir_admin),
 ) -> SenhaRevelada:
     """Decrypt ONE stored password. Admin/owner only, and logged.
 
@@ -377,11 +405,10 @@ async def revelar_senha(
     side effect (the log entry), and GETs land in browser history, proxy logs
     and prefetchers.
     """
-    _exigir_admin(auth)
     org_id = _org(auth)
     user, _token, _raw = auth
     try:
-        senha = repos.acesso.revelar_senha(org_id, acesso_id, _chave_cofre())
+        senha = repos.acesso.revelar_senha(org_id, acesso_id, _chave_cofre(cfg))
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Acesso não encontrado")
     if senha is None:

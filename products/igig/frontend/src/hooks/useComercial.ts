@@ -60,6 +60,21 @@ export function useLeads(status?: string) {
   };
 }
 
+/**
+ * One negócio, ANY status — the board query only ever holds `aberto`/`ganho`
+ * cards (`GET /board`), so a `perdido` deal opened from its archive, or from
+ * an orçamento deep link, falls back here (`GET /negocios/{id}`, gap G-2).
+ * `enabled: !!id` — pass `null` when the board already has the card.
+ */
+export function useNegocioPorId(id: string | null) {
+  return useQuery({
+    queryKey: [...COMERCIAL_QUERY_KEY, "negocio", id ?? ""],
+    queryFn: () =>
+      api.get(`/api/comercial/negocios/${encodeURIComponent(id as string)}`).then(unwrapData<Negocio>),
+    enabled: !!id,
+  });
+}
+
 function useInvalidateFunil() {
   const qc = useQueryClient();
   return () =>
@@ -107,11 +122,9 @@ export function usePerderNegocio() {
 }
 
 /**
- * Edit the lead's contact data from the negócio card's "Lead" subpage.
- *
- * `contract-deviation`: the wave-2 contract names "Lead (dados editáveis)"
- * but lists no lead-write endpoint; this targets `PATCH /api/comercial/leads/{id}`
- * (same router as the lead list) — reported to the tech-lead for a BE slice.
+ * Edit the lead's contact data from the negócio card's "Lead" subpage —
+ * `PATCH /api/comercial/leads/{id}` (roadmap gap G-1, same router as the
+ * lead list).
  */
 export function useAtualizarLead() {
   const invalidate = useInvalidateFunil();

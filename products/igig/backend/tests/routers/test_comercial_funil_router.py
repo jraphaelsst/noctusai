@@ -272,6 +272,76 @@ class TestMoverEtapa:
         assert _mover(api, "nao-existe", etapas["qualificacao"]["id"]).status_code == 404
 
 
+# ── Read (any status) ───────────────────────────────────────────────
+class TestObterNegocio:
+    def test_requires_auth(self, api, negocio):
+        resp = api.raw().get(f"/api/comercial/negocios/{negocio['id']}")
+        assert resp.status_code == 401
+
+    def test_returns_the_same_card_shape_as_the_board(self, api, negocio):
+        card = api.get(f"/api/comercial/negocios/{negocio['id']}").json()["data"]
+        assert card["id"] == negocio["id"]
+        assert card["lead"]["nome"] == "João"
+        assert card["responsavel"] is None
+        assert card["perdido_stage"] is None
+        assert card["dwell_dias"] is None
+
+    def test_a_perdido_negocio_opens_too(self, api, negocio, etapas):
+        """Unlike the board (`GET /board`, open+ganho only), the deep-link
+        lookup must open a lost deal — the archive links to it."""
+        api.post(f"/api/comercial/negocios/{negocio['id']}/perder", json={"motivo": "achou caro"})
+        card = api.get(f"/api/comercial/negocios/{negocio['id']}").json()["data"]
+        assert card["status"] == "perdido"
+        assert card["motivo_perda"] == "achou caro"
+        assert card["perdido_stage"] == {"id": etapas["leads"]["id"], "label": "Leads"}
+        assert card["dwell_dias"] is not None
+
+    def test_a_ganho_negocio_opens_too(self, api, negocio, etapas, igig_db):
+        orc = _orcamento(igig_db, negocio)
+        _mover(api, negocio["id"], etapas["fechado"]["id"], orcamento_id=orc["id"])
+        card = api.get(f"/api/comercial/negocios/{negocio['id']}").json()["data"]
+        assert card["status"] == "ganho"
+
+    def test_unknown_negocio_is_404(self, api):
+        assert api.get("/api/comercial/negocios/nao-existe").status_code == 404
+
+    def test_another_orgs_negocio_is_404(self, api, negocio, igig_db):
+        igig_db.table("negocio").update({"org_id": "outra-org"}).eq("id", negocio["id"]).execute()
+        assert api.get(f"/api/comercial/negocios/{negocio['id']}").status_code == 404
+
+
+class TestListarNegocios:
+    def test_requires_auth(self, api):
+        assert api.raw().get("/api/comercial/negocios").status_code == 401
+
+    def test_lists_every_status_unlike_the_board(self, api, negocio, etapas):
+        api.post(f"/api/comercial/negocios/{negocio['id']}/perder", json={"motivo": "sumiu"})
+        outro = api.post("/api/comercial/negocios", json={"lead": {"nome": "Ana"}}).json()["data"]
+        ids = {c["id"] for c in api.get("/api/comercial/negocios").json()["data"]}
+        assert ids == {negocio["id"], outro["id"]}
+
+    def test_filters_by_status(self, api, negocio, etapas):
+        api.post(f"/api/comercial/negocios/{negocio['id']}/perder", json={"motivo": "sumiu"})
+        outro = api.post("/api/comercial/negocios", json={"lead": {"nome": "Ana"}}).json()["data"]
+        perdidos = api.get("/api/comercial/negocios?status=perdido").json()["data"]
+        assert [c["id"] for c in perdidos] == [negocio["id"]]
+        abertos = api.get("/api/comercial/negocios?status=aberto").json()["data"]
+        assert [c["id"] for c in abertos] == [outro["id"]]
+
+    def test_q_searches_the_title(self, api, negocio):
+        api.post("/api/comercial/negocios", json={"lead": {"nome": "Ana", "empresa": "Estúdio X"}})
+        achados = api.get("/api/comercial/negocios?q=Sol").json()["data"]
+        assert [c["id"] for c in achados] == [negocio["id"]]
+
+    def test_org_scoped(self, api, negocio, igig_db):
+        igig_db.table("negocio").insert({
+            "org_id": "outra-org", "lead_id": negocio["lead_id"], "titulo": "De outra org",
+            "etapa_id": negocio["etapa_id"], "status": "aberto", "kanban_pos": "1",
+        }).execute()
+        ids = {c["id"] for c in api.get("/api/comercial/negocios").json()["data"]}
+        assert ids == {negocio["id"]}
+
+
 # ── Lost ────────────────────────────────────────────────────────────
 class TestPerder:
     def test_requires_auth(self, api, negocio):

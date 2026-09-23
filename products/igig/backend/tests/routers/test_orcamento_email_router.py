@@ -3,20 +3,24 @@
 `POST /api/orcamentos/{id}/enviar` needs the PDF slice A generates (seeded
 here: the row's ``pdf_key`` + the object in the fake storage) and sends it,
 attached, through the org's SMTP; the send is logged as an ``out`` row that
-the reply watcher later threads against.
+the reply watcher later threads against, and the response answers the FULL
+`Orcamento` shape (slice A's serializer, `app/services/orcamentos.py`) — the
+same one every other orçamento endpoint answers, not the raw stored row.
+
+Runs on the shared `igig` mock (`crm_api`): the router builds its own
+`Repositorios` over the SAME PostgREST client `get_db` injects, so the write
+and the re-read see the same row, as in production.
 """
 import asyncio
-from dataclasses import replace
 
 import pytest
-from noctusai_lib.integrations.persistence import SqliteRecordStore
+from noctusai_lib.integrations.persistence import SupabaseRecordStore
 from noctusai_lib.integrations.storage import FakeStorageBackend
 
 from app.email_deps import get_email_sender_factory, get_email_settings, get_pdf_storage
 from app.repositories import Repositorios
 from app.repositories.email import repositorios_email
 from app.services import email_config
-from app.store import aplicar_schema_sqlite, get_repositorios, get_repositorios_admin
 from tests.email_support import MAILBOX, ORG, SEM_GCP, SMTP, ConfigBox, Senders
 
 PDF = b"%PDF-1.7 orcamento"
@@ -24,10 +28,8 @@ CHAVE_PDF = f"{ORG}/orcamentos/o1/v1.pdf"
 
 
 @pytest.fixture
-def repos() -> Repositorios:
-    store = SqliteRecordStore(":memory:")
-    aplicar_schema_sqlite(store)
-    return Repositorios(store)
+def repos(igig_db) -> Repositorios:
+    return Repositorios(SupabaseRecordStore(igig_db))
 
 
 @pytest.fixture
@@ -48,18 +50,16 @@ def storage() -> FakeStorageBackend:
 
 
 @pytest.fixture
-def api(client, repos, cfg, senders, storage):
+def api(crm_api, cfg, senders, storage):
     from app.main import app
 
     overrides = {
-        get_repositorios: lambda: repos,
-        get_repositorios_admin: lambda: repos,
         get_email_settings: cfg,
         get_email_sender_factory: lambda: senders,
         get_pdf_storage: lambda: storage,
     }
     app.dependency_overrides.update(overrides)
-    yield client
+    yield crm_api
     for dep in overrides:
         app.dependency_overrides.pop(dep, None)
 
@@ -105,9 +105,20 @@ class TestEnviar:
         assert "Padaria Sol" in enviado.html and "R$ 1.500,00" in enviado.html
         assert "31/10/2026" in enviado.html
         assert data["message_id"] == "<fake-1@fake.noctus.test>"
+        assert data["orcamento"]["id"] == orc["id"]
         assert data["orcamento"]["status"] == "enviado"
         assert data["orcamento"]["enviado_em"]
-        assert data["orcamento"]["email_message_id"] == data["message_id"]
+
+    def test_answers_the_full_orcamento_shape(self, api, repos, lead, smtp):
+        """Not the raw stored row — the same serializer `GET /{id}` answers,
+        with items, the lead and the totals embedded."""
+        orc = _orcamento(repos, lead)
+        data = _enviar(api, orc["id"]).json()["data"]
+        corpo = data["orcamento"]
+        assert corpo["lead"]["email"] == "contato@padariasol.com"
+        assert corpo["itens"] == []
+        assert corpo["total_mensal"] == 1500.0
+        assert corpo["limites_escopo"]
 
     def test_logs_the_out_row(self, api, repos, lead, smtp):
         orc = _orcamento(repos, lead)
@@ -187,6 +198,8 @@ class TestEnviar:
         assert repositorios_email(repos.store).emails.do_orcamento(ORG, orc["id"]) == []
 
     def test_platform_smtp_fallback(self, api, repos, lead, cfg, senders):
+        from dataclasses import replace
+
         cfg.valor = replace(
             SEM_GCP, smtp_host="smtp.noctus.test", smtp_user="noc@noctus.test",
             smtp_password="p",

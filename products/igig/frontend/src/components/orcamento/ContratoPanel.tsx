@@ -80,18 +80,20 @@ export function ContratoPanel({ orcamento }: { orcamento: Orcamento }) {
       </div>
       {gerado ? (
         <div className="rounded-md border border-border p-3 text-sm" data-testid="contrato-gerado">
-          {gerado.dry_run ? (
+          {gerado.assinatura?.dry_run ? (
             <p className="mb-1 flex items-start gap-1 text-xs text-destructive">
               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
               Simulação: nenhum provedor de assinatura foi contatado.
             </p>
           ) : null}
           <p className="text-foreground">
-            Contrato {gerado.modalidade_assinatura === "fisica" ? "físico" : "digital"} gerado
-            {gerado.status ? ` · ${gerado.status}` : ""}.
+            Contrato {gerado.contrato.modalidade_assinatura === "fisica" ? "físico" : "digital"} gerado
+            {gerado.contrato.status ? ` · ${gerado.contrato.status}` : ""}.
           </p>
-          {gerado.link_assinatura ? (
-            <p className="break-all text-xs text-muted-foreground">Link: {gerado.link_assinatura}</p>
+          {gerado.assinatura?.link_assinatura ? (
+            <p className="break-all text-xs text-muted-foreground">
+              Link: {gerado.assinatura.link_assinatura}
+            </p>
           ) : null}
         </div>
       ) : null}

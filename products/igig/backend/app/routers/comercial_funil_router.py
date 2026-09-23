@@ -24,7 +24,7 @@ Board + move responses use the seed `{"data": ...}` envelope the seed
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from noctusai_lib.domain.pipeline import pipeline_stages_router
 from noctusai_lib.primitives.responses import success_response
 
@@ -76,6 +76,29 @@ async def obter_board(
     return success_response(
         comercial_funil.quadro(db, _org(auth), limite_por_etapa=limite_por_etapa)
     )
+
+
+@router.get("/negocios")
+async def listar_negocios(
+    status_filtro: str | None = Query(default=None, alias="status"),
+    q: str | None = None,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+) -> dict:
+    """Every negócio, ANY status — the `perdido` archive + search, unlike
+    `GET /board` (open + ganho only). `status`: aberto|ganho|perdido."""
+    return success_response(comercial_funil.listar_negocios(db, _org(auth), status=status_filtro, q=q))
+
+
+@router.get("/negocios/{negocio_id}")
+async def obter_negocio(
+    negocio_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+) -> dict:
+    """One negócio card, ANY status — so a `perdido` deal or a deep link from
+    an orçamento can open, not only board members."""
+    return success_response(comercial_funil.buscar_negocio(db, _org(auth), negocio_id))
 
 
 @router.post("/negocios", status_code=status.HTTP_201_CREATED)

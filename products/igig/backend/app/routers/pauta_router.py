@@ -21,6 +21,7 @@ import logging
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.integrations.storage import StorageBackend
 
 from app.config import settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
@@ -171,6 +172,7 @@ async def enviar_peca(
     arquivo: UploadFile = File(...),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
 ) -> PecaOut:
     """Upload the visual asset the client reviews beside the legenda."""
     org_id = _org(auth)
@@ -189,7 +191,7 @@ async def enviar_peca(
         raise HTTPException(status_code=413, detail="Peça excede 50 MB")
 
     chave = chave_da_peca(org_id, pauta_id, arquivo.filename or "peca")
-    await get_storage().put(
+    await storage.put(
         bucket=settings.igig_storage_bucket,
         key=chave,
         data=conteudo,

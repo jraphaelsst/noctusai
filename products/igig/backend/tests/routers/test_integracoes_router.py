@@ -24,16 +24,28 @@ def repos() -> Repositorios:
 
 
 @pytest.fixture
-def api(client, repos, monkeypatch):
+def cfg():
+    """A settings instance with the vault key set and every env fallback
+    cleared — via `get_settings` DI rather than patching the singleton
+    (KB § PATTERNS/backend/di-test-seam.md Class-A)."""
     from app.config import settings
+
+    return settings.model_copy(update={
+        "igig_cofre_key": CHAVE,
+        "igig_meta_token": "", "igig_tiktok_token": "", "igig_linkedin_token": "",
+    })
+
+
+@pytest.fixture
+def api(client, repos, cfg):
+    from app.config import get_settings
     from app.main import app
 
-    monkeypatch.setattr(settings, "igig_cofre_key", CHAVE)
-    for env in ("igig_meta_token", "igig_tiktok_token", "igig_linkedin_token"):
-        monkeypatch.setattr(settings, env, "")
+    app.dependency_overrides[get_settings] = lambda: cfg
     app.dependency_overrides[get_repositorios] = lambda: repos
     app.dependency_overrides[get_repositorios_admin] = lambda: repos
     yield client
+    app.dependency_overrides.pop(get_settings, None)
     app.dependency_overrides.pop(get_repositorios, None)
     app.dependency_overrides.pop(get_repositorios_admin, None)
 
@@ -49,10 +61,13 @@ class TestStatus:
         assert all(i["conectado"] is False for i in body)
         assert all(i["origem"] == "nenhuma" for i in body)
 
-    def test_env_fallback_shows_as_connected_from_env(self, api, monkeypatch):
-        from app.config import settings
+    def test_env_fallback_shows_as_connected_from_env(self, api, cfg):
+        from app.config import get_settings
+        from app.main import app
 
-        monkeypatch.setattr(settings, "igig_meta_token", "env-token")
+        app.dependency_overrides[get_settings] = lambda: cfg.model_copy(
+            update={"igig_meta_token": "env-token"}
+        )
         body = {i["canal"]: i for i in api.get("/api/integracoes").json()}
         assert body["instagram"]["conectado"] is True
         assert body["instagram"]["origem"] == "env"
@@ -64,10 +79,13 @@ class TestStatus:
         body = api.get("/api/integracoes").json()
         assert all(i["cofre_configurado"] is True for i in body)
 
-    def test_reports_cofre_configurado_false_when_the_key_is_unset(self, api, monkeypatch):
-        from app.config import settings
+    def test_reports_cofre_configurado_false_when_the_key_is_unset(self, api, cfg):
+        from app.config import get_settings
+        from app.main import app
 
-        monkeypatch.setattr(settings, "igig_cofre_key", "")
+        app.dependency_overrides[get_settings] = lambda: cfg.model_copy(
+            update={"igig_cofre_key": ""}
+        )
         body = api.get("/api/integracoes").json()
         assert all(i["cofre_configurado"] is False for i in body)
 
@@ -109,11 +127,14 @@ class TestConexao:
     def test_invalid_channel_returns_422(self, api):
         assert api.post("/api/integracoes/orkut", json={"token": "x"}).status_code == 422
 
-    def test_without_encryption_key_it_refuses(self, api, monkeypatch):
+    def test_without_encryption_key_it_refuses(self, api, cfg):
         """Never a plaintext downgrade — same contract as the Cofre."""
-        from app.config import settings
+        from app.config import get_settings
+        from app.main import app
 
-        monkeypatch.setattr(settings, "igig_cofre_key", "")
+        app.dependency_overrides[get_settings] = lambda: cfg.model_copy(
+            update={"igig_cofre_key": ""}
+        )
         resp = api.post("/api/integracoes/instagram", json={"token": TOKEN})
         assert resp.status_code == 409
         assert "IGIG_COFRE_KEY" in resp.text
@@ -146,6 +167,10 @@ class TestPublicacaoUsaOToken:
             def publicar(self, **_kwargs):
                 raise PublisherNotConfigured("token expirado")
 
+        # self-patch-ok: `get_publisher` resolves an EXTERNAL publisher
+        # client (Meta/TikTok/LinkedIn SDK) — the same external-boundary
+        # carve-out `KB § PATTERNS/backend/di-test-seam.md` allows for an
+        # LLM SDK, not our own domain logic.
         monkeypatch.setattr(dr, "get_publisher", lambda *_a, **_k: SemAuth())
         cliente = repos.cliente.criar(ORG, {"nome": "Padaria Sol"})
         pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Post"})
