@@ -103,3 +103,14 @@ class TestStaleBranchPointers:
         ])
         run = _runner(trailers="feat/live\nfeat/done\n", worktrees="worktree /r/x\nbranch refs/heads/feat/live\n")
         assert check_stale_branch_pointers(session="S1", repo_root=root, run=run) == []
+
+    def test_keeper_resolves_latest_by_ts_not_file_order(self, tmp_path):
+        # Union-merge can put an older row AFTER a newer one in the file.
+        root = _ledger(tmp_path, [
+            {"branch": "feat/x", "status": "shipped", "commit": "a", "session": "S1",
+             "ts": "2026-09-23T12:00:00+00:00"},
+            {"branch": "feat/x", "status": "on_going", "commit": "a", "session": "S1",
+             "ts": "2026-09-22T12:00:00+00:00"},
+        ])
+        run = _runner(trailers="feat/x\n")
+        assert check_stale_branch_pointers(session="S1", repo_root=root, run=run) == []

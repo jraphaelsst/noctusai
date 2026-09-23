@@ -19334,17 +19334,21 @@ def check_stale_branch_pointers(
     base = wts.resolve_merged_base(runner)
     me = session if session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
 
-    latest: dict[str, dict] = {}
+    from tools.noctus.dev import branch_pointer as bp
+
+    rows: list[dict] = []
     for raw in ledger.read_text(encoding="utf-8").splitlines():
         raw = raw.strip()
         if not raw:
             continue
         try:
-            row = json.loads(raw)
+            rows.append(json.loads(raw))
         except json.JSONDecodeError:
             continue
-        if row.get("branch"):
-            latest[row["branch"]] = row
+    # branch_pointer's OWN latest-by-ts resolver. The ledger is union-merged,
+    # so file order is not time order; "last line wins" read stale `on_going`
+    # rows for branches dev already records as `shipped` (2026-09-23).
+    latest = bp._latest_per_branch(rows)
 
     rc, wl, _e = runner(["git", "worktree", "list", "--porcelain"])
     live_branches = {

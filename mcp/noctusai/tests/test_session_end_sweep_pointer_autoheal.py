@@ -227,3 +227,18 @@ def test_sweep_respects_heal_pointers_false(monkeypatch, tmp_path):
     res = SES.sweep(repo_root=tmp_path, deliver_ledgers=False, heal_pointers=False)
     assert called["n"] == 0
     assert res["pointer_heal"]["healed"] == []
+
+
+def test_already_correct_status_writes_no_row(monkeypatch, tmp_path):
+    # An integrated-worktree-live pointer whose worktree is still live is
+    # already correct; rewriting it every sweep is pure ledger churn.
+    runner = FakeRunner({"rev-parse": (0, "sha\n", ""), "merge-base": (0, "", "")})
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    monkeypatch.setattr(SES, "_worktree_branches", lambda root: [("x", "feat/live", wt)])
+    updates = _wire(
+        monkeypatch, runner=runner,
+        candidates=[{"branch": "feat/live", "commit": "abc", "status": "integrated-worktree-live"}],
+    )
+    res = SES._autoheal_branch_pointers(Path("/repo"))
+    assert updates == [] and res["healed"] == [] and res["errors"] == []

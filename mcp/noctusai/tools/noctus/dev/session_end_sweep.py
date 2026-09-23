@@ -314,6 +314,8 @@ def _autoheal_branch_pointers(repo_root: Path) -> dict[str, Any]:
             else:
                 new_status = "shipped"
 
+            if row.get("status") == new_status:
+                continue  # already correct; a same-status row is pure ledger churn
             res = bp.update(
                 branch=branch,
                 status=new_status,
