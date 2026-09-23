@@ -117,6 +117,46 @@ class TestPosseClauseUsaEnderecoDoRegistro:
         assert "ENDERECO_DIVERGENTE_DA_MATRICULA" in {a["codigo"] for a in av.avisos}
 
 
+class TestEnderecoDeCondominioMigracao159:
+    """[owner rule, 2026-09-23] `im.endereco` is now THE PROPERTY TABLE's
+    address (`carregador._endereco_manual`'s per-field override over the
+    mirror) — for a condomínio whose Vista row mirrors only the building's
+    GATE address, an operator sets the UNIT's own address as the override.
+    `d.imovel.endereco` here already stands in for "override applied" (the
+    carregador layer is exercised separately, `test_carregador_endereco_
+    manual.py`); this pins that once it IS applied, the divergence check
+    stops firing against the property's own matrícula — the "must not be a
+    false alarm by itself" requirement."""
+
+    def test_the_units_own_address_set_as_override_stops_diverging(self):
+        # Same matrícula fixture as the class above (names "Alameda
+        # Fictícia, nº 535") — simulating the operator having set
+        # `endereco_manual_logradouro`/`_numero` to the UNIT's own address,
+        # matching what the matrícula itself says (unlike the GATE address
+        # `base_v1()` carries by default, "Rua Fictícia").
+        d = _com_matricula_de_registro()
+        d = replace(
+            d,
+            imovel=replace(
+                d.imovel,
+                endereco=replace(d.imovel.endereco, logradouro="Alameda Fictícia", numero="535"),
+            ),
+        )
+        _pol, _sw, av = _avaliar(d)
+        assert av.pronto is True
+        assert "ENDERECO_DIVERGENTE_DA_MATRICULA" not in {a["codigo"] for a in av.avisos}
+
+    def test_an_unset_override_still_diverges_against_the_gate_address_honestly(self):
+        # Without the override, `im.endereco` still reads the GATE address —
+        # the divergence fires, which is the HONEST state ("nobody has
+        # confirmed the unit's own address yet"), not a bug. Same assertion
+        # as `TestPosseClauseUsaEnderecoDoRegistro` above, restated here so
+        # this class documents the CONTRAST explicitly.
+        d = _com_matricula_de_registro()
+        _pol, _sw, av = _avaliar(d)
+        assert "ENDERECO_DIVERGENTE_DA_MATRICULA" in {a["codigo"] for a in av.avisos}
+
+
 class TestCoerenciaDeArea:
     def test_um_desencontro_de_area_dentro_da_tolerancia_nao_gera_aviso(self):
         # The reference shape: CRM AreaTotal 1052 vs the matrícula's own
