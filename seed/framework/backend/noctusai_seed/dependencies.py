@@ -36,7 +36,8 @@ import inspect
 import logging
 import warnings
 from typing import Optional
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
+from noctusai_lib.api.audit import AuditActor
 from noctusai_lib.api.auth import make_resolve_platform_role
 
 logger = logging.getLogger(__name__)
@@ -126,8 +127,38 @@ class ProductDependencies:
             lambda: self._db.get_core_client()
         )
 
-    async def get_current_user(self, authorization: Optional[str] = Header(None)):
-        """Extract and validate JWT from Authorization header. Returns (user, token)."""
+    async def get_current_user(
+        self,
+        authorization: Optional[str] = Header(None),
+        # 🔴 `Request = None`, NEVER `Optional[Request] = None` — FastAPI's
+        # special "inject the live Request" case matches the ANNOTATION
+        # literally being the `Request` class (`lenient_issubclass
+        # (type_annotation, Request)` in `fastapi/dependencies/utils.py`);
+        # `Optional[Request]` resolves to `Union[Request, None]`, which is
+        # not a class, so `lenient_issubclass` returns False and FastAPI
+        # falls through to treating it as a normal Pydantic field —
+        # `Request` isn't Pydantic-serializable, so EVERY route (anywhere
+        # in the fleet) with `Depends(deps.get_current_user)` as a
+        # sub-dependency fails at COLLECTION time with `FastAPIError:
+        # Invalid args for response field!`. Reproduced + confirmed via
+        # `products/social-wiring/backend/app/routers/clientes_router.py`
+        # during this module's own test run.
+        request: Request = None,
+    ):
+        """Extract and validate JWT from Authorization header. Returns (user, token).
+
+        `request` is optional and keeps `authorization` as the FIRST
+        parameter deliberately: every bundled seed router
+        (`noctusai_seed.routers`, `ai_feedback_router`, `llm_router`,
+        `scheduler_router`, ...) calls this method IMPERATIVELY —
+        `await deps.get_current_user(authorization)`, a single
+        positional argument, not through `Depends(...)`. FastAPI
+        itself resolves `Depends(deps.get_current_user)` by NAME
+        (`dependant.call(**values)`), so it still injects the live
+        `Request` regardless of this parameter's position or default —
+        only the many positional imperative callers required
+        `authorization` to stay first.
+        """
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="Token ausente")
         token = authorization.replace("Bearer ", "")
@@ -136,7 +167,19 @@ class ProductDependencies:
             user_response = admin.auth.get_user(token)
             if not user_response or not user_response.user:
                 raise HTTPException(status_code=401, detail="Token invalido")
-            return user_response.user, token
+            user = user_response.user
+            # `request.state`, NOT a ContextVar — see
+            # `noctusai_lib.api.audit` module docstring +
+            # `noctusai_lib.api.auth.make_get_current_user_org`'s same
+            # stash. This dependency doesn't resolve org_id/role (that's
+            # `get_current_user_org`'s job); a request authenticated only
+            # through this base dep still gets a `user_id`-only actor
+            # rather than no actor at all. `request` is `None` for the
+            # many imperative (non-`Depends`) callers above — nothing to
+            # stash onto in that shape, and nothing reads it there either.
+            if request is not None:
+                request.state.audit_actor = AuditActor(user_id=getattr(user, "id", None))
+            return user, token
         except HTTPException:
             raise
         except Exception:

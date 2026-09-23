@@ -40,14 +40,28 @@ class TestGetCurrentUserOrgWiring:
         from app.dependencies import get_current_user_org
         assert callable(get_current_user_org), "get_current_user_org must be callable"
 
-    def test_get_current_user_org_signature_is_authorization_only(self):
+    def test_get_current_user_org_signature_is_authorization_and_request_only(self):
+        """`request` (S2 audit-trail, `noctusai_lib.api.audit` — 2026-09-23)
+        is NOT a client-visible param: its annotation is the literal
+        `Request` class, which FastAPI special-cases as an internal
+        injection (never a query/body field), same guarantee this test
+        originally pinned for `authorization`'s `Header(None)` shape.
+        Only `authorization` and `request` may appear — anything else
+        would be the un-annotated-required-param footgun this file
+        exists to catch (`KB § PATTERNS/backend.md § Auth — canonical
+        pattern`)."""
+        from fastapi import Request
         from app.dependencies import get_current_user_org
-        sig = inspect.signature(get_current_user_org)
+        # `eval_str=True` — `noctusai_lib.api.auth` has `from __future__
+        # import annotations`, so the raw `.annotation` is the STRING
+        # `"Request"` unless resolved back to the real class.
+        sig = inspect.signature(get_current_user_org, eval_str=True)
         params = list(sig.parameters.values())
-        assert len(params) == 1, (
-            f"Expected 1 param (authorization), got {[p.name for p in params]}"
+        names = [p.name for p in params]
+        assert names == ["authorization", "request"], (
+            f"Expected exactly [authorization, request], got {names}"
         )
-        assert params[0].name == "authorization"
+        assert params[1].annotation is Request
 
 
 class TestFactorySourceIsSeed:

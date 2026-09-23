@@ -24,6 +24,7 @@ from noctusai_lib.primitives.exceptions import (
     postgrest_exception_handler,
     generic_exception_handler,
 )
+from .audit import AuditMiddleware, AuditSink
 from .middleware import (
     CorrelationIdMiddleware,
     DEFAULT_MAX_BODY_BYTES,
@@ -46,6 +47,8 @@ def configure_app(
     max_body_path_overrides: Mapping[str, MaxBodyOverrideValue] | None = None,
     allow_credentials: bool = True,
     product_name: str | None = None,
+    product_slug: str | None = None,
+    audit_sink: Optional[AuditSink] = None,
 ) -> Optional[Mapping[str, MaxBodyOverrideValue]]:
     """
     Apply shared configuration to a FastAPI app instance.
@@ -89,9 +92,33 @@ def configure_app(
                            Defaults to True. Mutually exclusive with a
                            wildcard `cors_origins='*'` — boot refuses the
                            combination (see CORS guard below).
-        product_name: Optional product slug surfaced in the CORS guard
-                      error message. When None, falls back to
-                      `settings.product_name` or '<unknown>'.
+        product_name: Optional product DISPLAY NAME surfaced in the CORS
+                      guard error message only (e.g. "Social Wiring").
+                      When None, falls back to `settings.product_name`
+                      or '<unknown>'. NOT the same thing as
+                      `product_slug` below — this one is prose, for a
+                      human reading a boot-refusal error.
+        product_slug: The product's CATALOG slug (e.g. "social-wiring"),
+                      never the display name — becomes
+                      `AuditEntry.product_slug` /
+                      `public.audit_logs.product_slug` (migration 053).
+                      `noctusai_seed.app.create_product_app` passes the
+                      schema-derived slug (`schema.replace("_", "-")`,
+                      the same derivation already used for
+                      `configure_logging(app_name=...)`) — direct
+                      `configure_app` callers that omit it fall back to
+                      `settings.product_slug` (when a product's own
+                      Settings declares one) or `"<unknown>"`.
+        audit_sink: The `noctusai_lib.api.audit.AuditSink` to wire into
+                      `AuditMiddleware`. `noctusai_seed.app.create_product_app`
+                      builds this once (Real when `settings.audit_trail_enabled`
+                      and a DB is available, Fake otherwise) and passes it
+                      through. `None` (default — direct `configure_app`
+                      callers that skip `create_product_app`) mounts the
+                      middleware in its permanently-disabled state
+                      (`enabled=False`, a `FakeAuditSink()` that is never
+                      called) — no product using `configure_app` directly
+                      is forced to also wire an audit sink.
 
     Returns:
         The EFFECTIVE `max_body_path_overrides` mapping actually wired
@@ -214,17 +241,30 @@ def configure_app(
     # Middleware (order matters: registered last runs first)
     #
     # Stack order on incoming requests:
-    #   MaxBodySizeMiddleware → CorrelationIdMiddleware → RequestLoggingMiddleware → handler
+    #   MaxBodySizeMiddleware → CorrelationIdMiddleware → RequestLoggingMiddleware → AuditMiddleware → handler
     #
     # Rationale: oversized bodies short-circuit before correlation/logging
     # do any work; correlation IDs must be set before request-logging emits
-    # records.
+    # records. AuditMiddleware is registered ALONGSIDE RequestLoggingMiddleware
+    # (both BEFORE CorrelationIdMiddleware) so it stays NESTED inside it —
+    # `get_correlation_id()` reads a ContextVar that CorrelationIdMiddleware
+    # resets in its own `finally` block once its `__call__` returns, which is
+    # only after every middleware nested inside it (both of these) has
+    # already returned. See `noctusai_lib.api.audit.middleware`'s docstring.
     # -----------------------------------------------------------------------
     if max_body_bytes is None:
         max_body_bytes = getattr(settings, "max_body_bytes", DEFAULT_MAX_BODY_BYTES)
     if max_body_path_overrides is None:
         max_body_path_overrides = getattr(settings, "max_body_path_overrides", None)
+    _audit_enabled = bool(getattr(settings, "audit_trail_enabled", False))
+    _product_slug = product_slug or getattr(settings, "product_slug", None) or "<unknown>"
+    if audit_sink is None:
+        from .audit import FakeAuditSink
+
+        audit_sink = FakeAuditSink()
+        _audit_enabled = False
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(AuditMiddleware, sink=audit_sink, product_slug=_product_slug, enabled=_audit_enabled)
     app.add_middleware(CorrelationIdMiddleware)
     app.add_middleware(
         MaxBodySizeMiddleware,

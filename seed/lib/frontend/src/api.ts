@@ -7,6 +7,24 @@
  */
 
 // ---------------------------------------------------------------------------
+// X-Noctus-Client — the caller-kind signal `AuditMiddleware`
+// (`noctusai_lib.api.audit`) reads on the way in. `"web"` for a normal
+// browser session; `"agent:webdriver"` when `navigator.webdriver` is
+// true — the standard automation tell every headless-Chrome/Playwright/
+// Selenium driver sets, present specifically because the driver IS
+// automating a real browser (a plain script hitting fetch() directly
+// has no `navigator` at all, which is exactly the case this constant
+// itself guards against below).
+// ---------------------------------------------------------------------------
+
+export function detectNoctusClientHeader(): string {
+  if (typeof navigator !== 'undefined' && (navigator as any).webdriver) {
+    return 'agent:webdriver';
+  }
+  return 'web';
+}
+
+// ---------------------------------------------------------------------------
 // Error extraction — identical across all three frontends
 // ---------------------------------------------------------------------------
 
@@ -192,7 +210,10 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
   const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated } = options;
 
   async function buildHeaders(token?: string | null): Promise<Record<string, string>> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-Noctus-Client': detectNoctusClientHeader(),
+    };
     const t = token ?? await getAuthToken();
     if (t) {
       headers['Authorization'] = `Bearer ${t}`;

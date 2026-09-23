@@ -80,6 +80,16 @@ class ProductSettings(BaseAppSettings):
     database_backend: str = "supabase"
     sqlite_db_path: str = "noctus-dev.sqlite3"
 
+    # ── Audit trail (request-history middleware) ──────────────────────
+    # Owner directive 2026-09-23: "record history of actions for
+    # everything." `AuditMiddleware` (`noctusai_lib.api.audit`) is wired
+    # into every product's app unconditionally, but stays fully inert
+    # (zero DB writes, zero queue) until this flag is on — default False
+    # until the core `public.audit_logs` migration (S1) is live, then
+    # flipped per product via `AUDIT_TRAIL_ENABLED=true`. See
+    # `noctusai_lib.api.audit` module docstring for the full contract.
+    audit_trail_enabled: bool = False
+
     @field_validator("database_backend")
     @classmethod
     def validate_database_backend(cls, v, info):

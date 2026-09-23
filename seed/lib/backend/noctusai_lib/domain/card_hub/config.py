@@ -30,7 +30,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from noctusai_lib.integrations.persistence.table_reads import ActorResolver
 
-from .gatherers import SEED_GATHERERS, Gatherer
+from .gatherers import SEED_GATHERERS, Gatherer, gather_audit
 
 #: `(cfg, db, org_id, entity_id, entity, current) -> replacement`. Receives the
 #: seed-built dict and returns the dict to serve — full control over the keys
@@ -206,12 +206,49 @@ class CardHubConfig:
     stage_table: Optional[str] = "pipeline_stages"
     documentos: DocumentoPolicy = field(default_factory=DocumentoPolicy)
     checklist_extra_tipo_documento: str = "outro"
+    #: Owner directive 2026-09-23 ("record history of actions for
+    #: everything") — mirrors `settings.audit_trail_enabled`'s
+    #: default-off posture. When True AND `get_core_client` +
+    #: `product_slug` are set, `__post_init__` wires `gatherers
+    #: .gather_audit` in as the `"historico"` timeline kind (unless the
+    #: product already declared its own `"historico"` gatherer, which
+    #: wins).
+    audit_trail_enabled: bool = False
+    #: Zero-arg accessor for the `public`-schema, service-role client —
+    #: the SAME shape `actor_resolver` is built from
+    #: (`table_reads.actor_resolver(get_core_client)`). Required (not
+    #: derived from `actor_resolver`) because `gather_audit` needs to
+    #: run an arbitrary SELECT, not just the fixed `noctus_users` lookup
+    #: `actor_resolver` exposes.
+    get_core_client: Optional[Callable[[], Any]] = None
+    #: The product's catalog slug (`"social-wiring"`), matching
+    #: `public.audit_logs.product_slug` (migration 053) and
+    #: `AuditMiddleware`'s own `product_slug` verbatim —
+    #: `gather_audit`'s query filters on it directly (the leading
+    #: column of `idx_audit_logs_product_resource`). Pass the SAME
+    #: value `create_product_app`'s schema-derived slug resolves to
+    #: (`noctusai_seed.app`'s `app_name` local, or
+    #: `noctusai_lib.api.app_factory.configure_app`'s `product_slug`
+    #: kwarg) — a mismatch here silently returns zero rows, never an
+    #: error.
+    product_slug: Optional[str] = None
 
     def __post_init__(self) -> None:
         for name in ("entity_kind", "entity_table", "entity_fk", "id_param", "table_prefix", "bucket"):
             if not getattr(self, name):
                 raise ValueError(f"CardHubConfig.{name} must be a non-empty string")
         object.__setattr__(self, "tables", self.tables.resolved(self.table_prefix))
+        if (
+            self.audit_trail_enabled
+            and self.get_core_client is not None
+            and self.product_slug
+            and "historico" not in self.timeline_gatherers
+        ):
+            object.__setattr__(
+                self,
+                "timeline_gatherers",
+                {**self.timeline_gatherers, "historico": gather_audit},
+            )
 
     @property
     def storage_segment(self) -> str:

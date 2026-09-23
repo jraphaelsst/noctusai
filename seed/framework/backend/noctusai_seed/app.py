@@ -34,6 +34,7 @@ from fastapi import FastAPI
 from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging, resolve_json_logs
 from noctusai_lib.api.app_factory import configure_app
+from noctusai_lib.api.audit import AuditSink, make_audit_sink
 from noctusai_lib.api.middleware import MaxBodyOverrideValue
 from noctusai_lib.config.credentials import configure_credentials
 from noctusai_lib.config.deploy_config import (
@@ -71,6 +72,7 @@ def create_product_app(
     serve_spa: Optional[str] = None,
     required_prod_config: Optional[list[str]] = None,
     max_body_path_overrides: Optional[Mapping[str, MaxBodyOverrideValue]] = None,
+    audit_sink: Optional[AuditSink] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -188,6 +190,15 @@ def create_product_app(
             default to ``noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY``
             instead of omitting it. See
             ``noctusai_seed.upload_route_overrides``.
+        audit_sink: Override for the ``noctusai_lib.api.audit.AuditSink``
+            ``AuditMiddleware`` records through. Default ``None`` builds one
+            via ``make_audit_sink`` (Real when ``settings.audit_trail_enabled``
+            and — outside pytest — a DB is wired; Fake otherwise, and ALWAYS
+            Fake while running under pytest regardless of the flag). Pass an
+            explicit ``FakeAuditSink()`` from a product's own test fixture to
+            assert on ``.entries`` after a request, or a ``RealAuditSink``
+            built with ``force_real=True`` to exercise the real wiring on
+            purpose. See ``noctusai_lib.api.audit`` module docstring.
     """
     # 1. Configure logging
     app_name = schema.replace("_", "-").replace(" ", "-").lower()
@@ -237,6 +248,42 @@ def create_product_app(
     #    needs a service-role client to write under RLS.
     db = create_database_module(settings, schema)
     deps = create_dependencies(db)
+
+    # 3a. Audit trail (owner directive 2026-09-23 — "record history of
+    #     actions for everything"). `audit_trail_enabled` defaults False
+    #     (see `ProductSettings`) — until flipped, `make_audit_sink`
+    #     still builds a `RealAuditSink` (harmless: `AuditMiddleware`
+    #     mounted in `configure_app` below is also passed `enabled=False`
+    #     and never calls it), so flipping the flag alone — no redeploy of
+    #     this wiring — is what activates recording.
+    #
+    #     `audit_sink=` (the function param) is a DI override — a
+    #     product's own test fixtures pass a `FakeAuditSink()` they want
+    #     to assert against, bypassing everything below entirely.
+    #
+    #     🔴 `lambda: db.get_core_client()`, NEVER `db.get_core_client`
+    #     bound eagerly here. `make_audit_sink` is called ONCE, at
+    #     product `app.main` IMPORT time — before any per-test
+    #     `unittest.mock.patch("noctusai_seed.database.DatabaseModule
+    #     .get_core_client", ...)` is active. A bound method captured at
+    #     that moment (`db.get_core_client`) resolves `__func__` at
+    #     ACCESS time, permanently — a later class-level patch never
+    #     reaches it. The lambda defers the attribute lookup to FLUSH
+    #     time, so it re-resolves through `DatabaseModule`'s current
+    #     class attribute on every call, exactly like every other DB
+    #     call in the seed (the same "late-binding lambda" convention
+    #     `ProductDependencies.__init__` already documents for
+    #     `make_resolve_platform_role`). `make_audit_sink` ALSO refuses
+    #     to build a `RealAuditSink` at all while running under pytest
+    #     (`noctusai_lib.api.audit.sink.running_under_pytest`) — this
+    #     lambda is defense in depth for outside that window (a product
+    #     script, or a future caller that flips `force_real=True`), not
+    #     the primary guard.
+    _audit_trail_enabled = bool(getattr(settings, "audit_trail_enabled", False))
+    if audit_sink is None:
+        audit_sink = make_audit_sink(
+            (lambda: db.get_core_client()) if _audit_trail_enabled else None
+        )
 
     # 4. Auto-wire LLM access. Products inherit platform defaults unless they
     #    override via the llm_config parameter. `REDIS_URL` flips the
@@ -371,6 +418,12 @@ def create_product_app(
                     )
             # Framework-level cleanup — release LLM provider pools.
             await shutdown_llm()
+            # Drain the audit sink's buffered queue so a clean shutdown
+            # never loses the last <2s (or <50-row) batch. Safe to call
+            # unconditionally — `FakeAuditSink.drain()` and an inert
+            # `RealAuditSink` (never started because `AuditMiddleware`
+            # is mounted `enabled=False`) both no-op.
+            await audit_sink.drain()
 
     has_lifespan = True  # now always true — we own shutdown_llm
 
@@ -399,6 +452,14 @@ def create_product_app(
     _effective_max_body_path_overrides = configure_app(
         app, settings, limiter=limiter,
         max_body_path_overrides=max_body_path_overrides,
+        product_name=name,
+        # The catalog-shaped slug ("social-wiring"), NOT the display
+        # name `name` above ("Social Wiring") — same derivation
+        # `app_name` (step 1) already uses for `configure_logging`, so
+        # `AuditEntry.product_slug` matches the slug every other seed
+        # log line carries.
+        product_slug=app_name,
+        audit_sink=audit_sink,
     )
 
     # 9. Register the standard routers the product opted into.

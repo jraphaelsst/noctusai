@@ -61,7 +61,9 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import jwt
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request
+
+from noctusai_lib.api.audit import AuditActor
 
 from noctusai_lib.primitives.timeutil import now_utc
 
@@ -594,8 +596,40 @@ def make_get_current_user_org(
             user, token, org_id = auth
             ...
     """
-    async def get_current_user_org(authorization: Optional[str] = Header(None)):
+    async def get_current_user_org(
+        authorization: Optional[str] = Header(None),
+        # See `noctusai_seed.dependencies.ProductDependencies
+        # .get_current_user`'s identical comment: `Request = None`, NEVER
+        # `Optional[Request] = None` — FastAPI's special Request-injection
+        # only matches the bare `Request` class annotation.
+        request: Request = None,
+    ):
+        # `request` is optional and comes AFTER `authorization`
+        # deliberately: `seed/lib/backend/tests/test_auth.py` (and any
+        # other caller exercising this factory's returned closure
+        # directly rather than through FastAPI's `Depends(...)`) calls
+        # `dep(authorization=...)` with no `request` at all. FastAPI
+        # itself resolves `Depends(get_current_user_org)` by NAME
+        # (`dependant.call(**values)`), so it still injects the live
+        # `Request` regardless of this parameter's position or default.
         user, token = await get_current_user_fn(authorization)
+
+        # `request.state`, NOT a ContextVar — `AuditMiddleware` runs
+        # OUTSIDE FastAPI's dependency graph (pure ASGI, added in
+        # `noctusai_lib.api.app_factory.configure_app`) and can only see
+        # this dependency's result via the SAME `scope["state"]` dict
+        # object `Request.state` writes through. Stashed as soon as
+        # `user.id` is known so even an early return below (missing org,
+        # required=False) still carries an actor. See
+        # `noctusai_lib.api.audit` module docstring. `request` is `None`
+        # for the direct-call (non-`Depends`) shape above — nothing to
+        # stash onto, and nothing reads it there either.
+        def _stash_actor(org_id: Optional[str]) -> None:
+            if request is None:
+                return
+            request.state.audit_actor = AuditActor(
+                user_id=getattr(user, "id", None), org_id=org_id, role=None
+            )
 
         # Trusted-first resolution — `public.noctus_users` is the SAME
         # source every product's RLS `current_org_id()` reads. It wins over
@@ -625,6 +659,7 @@ def make_get_current_user_org(
                     status_code=503,
                     detail="Falha ao resolver organizacao do usuario",
                 )
+            _stash_actor(None)
             return user, token, None
 
         if org_id is None:
@@ -647,7 +682,9 @@ def make_get_current_user_org(
                     status_code=missing_status,
                     detail=missing_detail,
                 )
+            _stash_actor(None)
             return user, token, None
+        _stash_actor(org_id)
         return user, token, org_id
     return get_current_user_org
 
