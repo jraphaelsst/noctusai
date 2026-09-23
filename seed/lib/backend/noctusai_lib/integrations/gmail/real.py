@@ -26,11 +26,18 @@ from typing import Any
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+from noctusai_lib.integrations.gmail.errors import GmailHistoryExpiredError
 from noctusai_lib.integrations.gmail.types import (
+    REPLY_MATCH_HEADERS,
     SUBJECT_MAX_LEN,
+    GmailHistoryResult,
     GmailListResult,
     GmailMessage,
+    GmailMessageMetadata,
+    GmailMessageRef,
     SendResult,
+    WatchResult,
+    validate_topic_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,6 +155,18 @@ def _message_from_api(item: dict[str, Any]) -> GmailMessage:
     )
 
 
+def _parse_epoch_ms(value: Any, *, field: str) -> datetime | None:
+    """Gmail epoch-millis string → tz-aware UTC datetime; `None` (logged)
+    when absent/unparseable."""
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
+    except (ValueError, TypeError, OverflowError):
+        logger.warning("gmail.epoch_ms_parse_failed field=%s value=%r", field, value)
+        return None
+
+
 # ---- RealGmailClient -------------------------------------------------------
 
 
@@ -227,7 +246,13 @@ class RealGmailClient:
         self,
         api_key: str | None = None,
         oauth_credentials: Any = None,
+        *,
+        service: Any = None,
     ) -> None:
+        """`service` is an optional pre-built Gmail v1 discovery service
+        (DI seam — tests inject a transport double instead of patching
+        `build`; production leaves it `None` and a service is built per
+        call from `oauth_credentials`)."""
         if oauth_credentials is None:
             raise ValueError(
                 "RealGmailClient requires oauth_credentials — Gmail has no "
@@ -236,8 +261,11 @@ class RealGmailClient:
             )
         self._api_key = api_key
         self._oauth_credentials = _as_google_credentials(oauth_credentials)
+        self._injected_service = service
 
     def _service(self) -> Any:
+        if self._injected_service is not None:
+            return self._injected_service
         return build(
             "gmail",
             "v1",
@@ -362,6 +390,151 @@ class RealGmailClient:
             )
             raise
         return _message_from_api(item)
+
+    # ---- push-watch surface ---------------------------------------------
+
+    async def watch(
+        self,
+        topic_name: str,
+        label_ids: list[str] | None = None,
+    ) -> WatchResult:
+        """100 quota units (`users.watch`). See `GmailClient.watch`."""
+        validate_topic_name(topic_name)
+        body = {
+            "topicName": topic_name,
+            "labelIds": list(label_ids if label_ids is not None else ["INBOX"]),
+            "labelFilterBehavior": "include",
+        }
+        try:
+            response = self._service().users().watch(userId="me", body=body).execute()
+        except HttpError as exc:
+            logger.warning(
+                "gmail.watch_http_error topic=%s status=%s",
+                topic_name,
+                getattr(exc.resp, "status", "?"),
+            )
+            raise
+        history_id = str(response.get("historyId", "") or "")
+        expiration = _parse_epoch_ms(response.get("expiration"), field="expiration")
+        if not history_id or expiration is None:
+            # A watch with no cursor or no expiry cannot be driven or renewed;
+            # accepting it would silently lose replies.
+            raise RuntimeError(
+                f"gmail users.watch returned an incomplete response: {response!r}"
+            )
+        return WatchResult(history_id=history_id, expiration=expiration)
+
+    async def stop(self) -> None:
+        """50 quota units (`users.stop`)."""
+        try:
+            self._service().users().stop(userId="me").execute()
+        except HttpError as exc:
+            logger.warning(
+                "gmail.stop_http_error status=%s", getattr(exc.resp, "status", "?")
+            )
+            raise
+
+    async def list_history(
+        self,
+        start_history_id: str,
+        history_types: list[str] | None = None,
+        label_id: str | None = None,
+    ) -> GmailHistoryResult:
+        """2 quota units / page (`users.history.list`); drains every page.
+        404 → `GmailHistoryExpiredError`. See `GmailClient.list_history`."""
+        kwargs: dict[str, Any] = {
+            "userId": "me",
+            "startHistoryId": str(start_history_id),
+            "historyTypes": list(
+                history_types if history_types is not None else ["messageAdded"]
+            ),
+        }
+        if label_id is not None:
+            kwargs["labelId"] = label_id
+        refs: list[GmailMessageRef] = []
+        seen: set[str] = set()
+        latest = str(start_history_id)
+        page_token: str | None = None
+        history_api = self._service().users().history()
+        while True:
+            if page_token is not None:
+                kwargs["pageToken"] = page_token
+            try:
+                response = history_api.list(**kwargs).execute()
+            except HttpError as exc:
+                status = getattr(exc.resp, "status", None)
+                if status == 404:
+                    logger.info(
+                        "gmail.history_expired start_history_id=%s", start_history_id
+                    )
+                    raise GmailHistoryExpiredError(str(start_history_id)) from exc
+                logger.warning(
+                    "gmail.list_history_http_error start=%s status=%s",
+                    start_history_id,
+                    status if status is not None else "?",
+                )
+                raise
+            for record in response.get("history", []) or []:
+                for added in record.get("messagesAdded", []) or []:
+                    msg = added.get("message", {}) or {}
+                    mid = msg.get("id", "")
+                    if not mid or mid in seen:
+                        continue
+                    seen.add(mid)
+                    refs.append(
+                        GmailMessageRef(
+                            id=mid,
+                            thread_id=msg.get("threadId", ""),
+                            label_ids=tuple(msg.get("labelIds", []) or []),
+                        )
+                    )
+            latest = str(response.get("historyId", latest) or latest)
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        return GmailHistoryResult(messages=refs, history_id=latest)
+
+    async def get_message_metadata(
+        self,
+        message_id: str,
+        headers: list[str] | None = None,
+    ) -> GmailMessageMetadata | None:
+        """5 quota units (`users.messages.get?format=metadata`). 404 → None."""
+        if not message_id:
+            return None
+        wanted = list(headers) if headers is not None else list(REPLY_MATCH_HEADERS)
+        try:
+            item = (
+                self._service()
+                .users()
+                .messages()
+                .get(
+                    userId="me",
+                    id=message_id,
+                    format="metadata",
+                    metadataHeaders=wanted,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            status = getattr(exc.resp, "status", None)
+            if status == 404:
+                return None
+            logger.warning(
+                "gmail.get_message_metadata_http_error message_id=%s status=%s",
+                message_id,
+                status if status is not None else "?",
+            )
+            raise
+        api_headers = (item.get("payload", {}) or {}).get("headers", []) or []
+        return GmailMessageMetadata(
+            id=item.get("id", message_id),
+            thread_id=item.get("threadId", ""),
+            label_ids=tuple(item.get("labelIds", []) or []),
+            headers={name: _header(api_headers, name) for name in wanted},
+            snippet=item.get("snippet", ""),
+            received_at=_parse_epoch_ms(item.get("internalDate"), field="internalDate"),
+        )
 
 
 __all__ = ["RealGmailClient"]

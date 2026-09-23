@@ -198,7 +198,7 @@ Package: `seed/lib/backend/noctusai_lib/integrations/gmail/`.
 `GMAIL_SEND_SCOPE`, `SUBJECT_MAX_LEN`, `FakeGmailClient`, `GmailClient`,
 `GmailCredentialResolver`, `GmailLabel`, `GmailListResult`,
 `GmailMessage`, `OAuthGmailCredentials`, `RealGmailClient`,
-`SendResult`, `make_gmail_client`.
+`SendResult`, `make_gmail_client` — plus the push-watch surface in §5a.
 
 Lifted 2026-05-18 (commit `b881079b`, originating project
 `mcp-connector-expansion`) to close the last gap in the Google seed
@@ -300,12 +300,77 @@ which already documents `CALENDAR_PROVIDER` / `DRIVE_PROVIDER` /
 `META_PROVIDER` constants — extend with `GMAIL_PROVIDER` when N=1
 hits, NOT pre-emptively).
 
-**Out-of-scope (v1)**: Gmail push/watch (Pub/Sub) subscriptions,
-full thread/label mutation (`gmail.modify` scope is exported but no
+**Out-of-scope (v1)**: full thread/label mutation (`gmail.modify` scope is exported but no
 methods consume it yet), Workspace DWD, drafts, attachments,
 batch-send. Any of these becomes a v2 follow-up filed only when a
 consumer surfaces (no seed-ahead beyond send + read; see Gap row
 "Gmail v2 surface" in §6).
+
+### 5a. gmail push-watch — reply detection (Pub/Sub push, no polling)
+
+Added 2026-09-23 for the first consumer, igig (project `cardhub-igig-crm`,
+roadmap `project-history/roadmaps/cardhub-igig-crm-2026-09.md` R8, decision
+"Reply watch = Gmail API push (users.watch → Pub/Sub push → our webhook;
+weekly renewal, no polling)"). Same package, Fake + Real + factory:
+
+| Surface | Where | Notes |
+|---|---|---|
+| `watch(topic_name, label_ids=["INBOX"]) → WatchResult(history_id, expiration)` | `GmailClient` | 100u. `topic_name` = FULL `projects/<p>/topics/<t>` (validated before the call). Idempotent; lapses after ≤7 days (`WATCH_MAX_LIFETIME_DAYS`) — renew **daily** (Google's recommendation; a weekly job that misses once goes blind). |
+| `stop()` | `GmailClient` | 50u. Idempotent. |
+| `list_history(start_history_id, history_types=["messageAdded"], label_id=None) → GmailHistoryResult(messages, history_id)` | `GmailClient` | 2u/page, drains all pages, dedups. NamedTuple → `messages, new_cursor = ...`. Persist `history_id` even when empty. **404 → `GmailHistoryExpiredError`** — resync (re-`watch()` + reconcile via `list_messages`), never skip. Pass `label_id="INBOX"` to skip your own SENT copies. |
+| `get_message_metadata(id, headers=REPLY_MATCH_HEADERS) → GmailMessageMetadata \| None` | `GmailClient` | 5u, `format=metadata` (no body). Every requested header present (`""` if absent). 404 → None. |
+| `parse_push_envelope(body) → GmailPushNotification(email_address, history_id, pubsub_message_id, …)` | `gmail.push` | Pure. `GmailPushEnvelopeError` on anything malformed. `history_id` is the mailbox id AFTER the change — NOT the cursor to query from. Dedup redeliveries on `pubsub_message_id`. |
+| `verify_push_token(authorization_header, audience, expected_service_account=None, *, verifier=None) → claims` | `gmail.push` | google-auth `id_token.verify_oauth2_token` (signature/expiry/aud) + issuer + pinned SA email + `email_verified`. `GmailPushAuthError` on ANY failure. Without `expected_service_account` it logs WARNING per call — any Google SA can mint a token for any audience, so pin it. `verifier=` is the test DI seam. |
+| `ensure_push_subscription(project_id, topic, push_endpoint, audience, credentials, *, push_service_account, subscription=None, ack_deadline_seconds=60, service=None) → PushSubscriptionResult` | `gmail.pubsub_provisioning` | Idempotent REST (googleapiclient `pubsub v1`, static discovery — no gcloud): topic → `roles/pubsub.publisher` for `gmail-api-push@system.gserviceaccount.com` (etag-preserving) → OIDC push subscription (created, or `modifyPushConfig` on drift). Refuses (`PubSubProvisioningError`) to repoint a same-named subscription bound to another topic. |
+| `match_reply(headers, known_message_ids, *, thread_id=None, known_threads=None) → known_id \| None` | `gmail.reply_matching` | Pure. In-Reply-To → References (newest-first) → thread-id fallback. Domain case-folded, local part case-kept. A message whose own Message-ID is known (our SENT copy) never matches. |
+
+**Consumer loop** (what igig wires):
+1. Send the orçamento → `sent = await client.send_message(...)`; then
+   `get_message_metadata(sent.message_id, ["Message-ID"])` and persist the
+   RFC `Message-ID` + `sent.thread_id` (send returns Gmail's id, NOT the RFC header).
+2. Per connected mailbox: `w = await client.watch(topic_name)`; persist
+   `w.history_id` (cursor) + `w.expiration`. Daily job re-calls `watch()`.
+3. Webhook: `verify_push_token(...)` → 401 on `GmailPushAuthError`;
+   `parse_push_envelope(body)` → 400 on `GmailPushEnvelopeError`; enqueue
+   `(email_address)` and return 204 fast.
+4. Worker: map `email_address` → mailbox → `list_history(cursor, label_id="INBOX")`;
+   per ref `get_message_metadata` → `match_reply(meta.headers, known_ids,
+   thread_id=meta.thread_id, known_threads=...)`; advance the cursor;
+   on `GmailHistoryExpiredError` re-watch + reconcile.
+
+**OAuth (tenant mailbox)** — reuse the existing connect path: social-wiring's
+`POST /api/integrations/accounts/gmail/oauth/start` grants `gmail.send` +
+`gmail.readonly`; `readonly` already covers `watch`/`history`/`metadata`
+(`GMAIL_METADATA_SCOPE` is the narrower alternative). Build the client
+exactly like `products/social-wiring/backend/app/services/account_credentials.py::build_gmail_client_for`:
+`OAuthGmailCredentials(refresh_token=<bundle>, client_id=GOOGLE_OAUTH_CLIENT_ID,
+client_secret=GOOGLE_OAUTH_CLIENT_SECRET, token=<bundle access_token>, scopes=<bundle scopes>)`
+→ `make_gmail_client(oauth_credentials=creds)`. Note that helper also
+refuses a mailbox lacking `gmail.send`; a watch-only resolver should check
+`gmail.readonly`/`gmail.metadata` instead.
+
+**One-time GCP prerequisites** (human with project Owner; not automatable here):
+1. On the GCP project owning the OAuth client (`GOOGLE_OAUTH_CLIENT_ID`): enable
+   **Gmail API** + **Cloud Pub/Sub API**.
+2. OAuth consent screen: `gmail.readonly` (or `gmail.metadata`) listed — both are
+   Google *restricted* scopes (production verification / CASA assessment).
+3. Create a **push-auth service account** (e.g. `gmail-push@<project>.iam.gserviceaccount.com`),
+   no roles on it. Projects created on/before 2021-04-08 only: grant
+   `service-<PROJECT_NUMBER>@gcp-sa-pubsub.iam.gserviceaccount.com`
+   `roles/iam.serviceAccountTokenCreator` on it.
+4. Provisioning identity for `ensure_push_subscription(credentials=...)`: a platform
+   service account with `roles/pubsub.admin` on the project (topic IAM needs
+   `pubsub.topics.setIamPolicy`), scope `PUBSUB_SCOPE` / cloud-platform. Never a
+   tenant mailbox credential.
+5. The push endpoint must be public **HTTPS** (Cloudflare tunnel hostname is fine).
+6. Env (product side; names are a recommendation, not yet read by seed code):
+   `GMAIL_PUSH_GCP_PROJECT`, `GMAIL_PUSH_TOPIC` (full name), `GMAIL_PUSH_AUDIENCE`
+   (= endpoint URL), `GMAIL_PUSH_SERVICE_ACCOUNT` (the step-3 email), plus the
+   existing `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`, and the
+   provisioning SA key (only where `ensure_push_subscription` runs).
+
+Tests: `seed/lib/backend/tests/integrations/gmail/test_gmail_watch.py` (Fake loop
+end-to-end, Real via injected service, envelope/token/provisioning/matching).
 
 ---
 
@@ -318,5 +383,5 @@ consumer surfaces (no seed-ahead beyond send + read; see Gap row
 | google_maps Static-fallback accuracy | deterministic by design (dev/test) | Set `api_key=` for live Routes API v2 |
 | OAuth start/callback router | not duplicated by design | Consume `noctusai_lib.security.oauth` + `google_scopes_router` as-is |
 | Drive outbound write (upload to Drive) | out-of-scope — both Protocols are read/download only | Additive Protocol when a consumer needs it |
-| Gmail v2 surface (push/watch, threads, drafts, attachments, batch-send, Workspace DWD) | out-of-scope — v1 ships send + list + get only | File `gmail-seed-v2-<feature>` follow-up project when a consumer surfaces; no seed-ahead per user policy |
+| Gmail v2 surface (threads, drafts, attachments, batch-send, Workspace DWD) | out-of-scope — ships send + list + get + push-watch (§5a) | File `gmail-seed-v2-<feature>` follow-up project when a consumer surfaces; no seed-ahead per user policy |
 | Gmail `CredentialStore` resolver bridge (`CredentialStoreGmailResolver` + `GMAIL_PROVIDER` constant) | not yet shipped — extend when N=1 product needs it | Add to `noctusai_lib.integrations.credential_resolvers` mirroring `CredentialStoreCalendarResolver`; pattern is mechanical |
