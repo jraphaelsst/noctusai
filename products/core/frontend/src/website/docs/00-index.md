@@ -1,6 +1,6 @@
 # Website noctusai.com — Documentação
 
-> **Status: v1 BUILD IN PROGRESS (2026-09-23).** The owner authorized the full build and prod deploy ("go all the way to prod"). Open decisions were taken for v1 as recorded in [15 · Build contract §0](15-api-contract.md#0--decisions-taken-for-v1-owner-delegated-go-all-the-way); anything still marked **OPEN** in 01–14 is resolved there or deferred to v1.1.
+> **Status: v1 BUILT, on `dev` @ 8462ff912, CI green; awaiting owner ship approval → core deploy (2026-09-23).** The owner authorized the full build and prod deploy ("go all the way to prod"). Open decisions were taken for v1 as recorded in [15 · Build contract §0](15-api-contract.md#0--decisions-taken-for-v1-owner-delegated-go-all-the-way); anything still marked **OPEN** in 01–14 is resolved there or deferred to v1.1.
 
 This is the design and technical guide for the public website at **noctusai.com**. It is the source of truth for anyone, human or agent, who designs, builds, writes copy for or operates the website. It sits in the logged app under **Website → Documentação**, and its files live in `products/core/frontend/src/website/docs/`.
 
@@ -30,6 +30,7 @@ This is the design and technical guide for the public website at **noctusai.com*
 | 12 | [Privacy, LGPD & tracking](12-privacy-lgpd-tracking.md) | Consent, analytics, pixels, first-party events, policy changes |
 | 13 | [Tooling & MCP policy](13-tooling-and-mcp-policy.md) | Higgsfield rules, Context7 / Chrome DevTools / shadcn MCPs, capture tooling |
 | 14 | [Build plan](14-build-plan.md) | Waves, slices, gates, rollout, and open decisions |
+| 16 | [v1 status & follow-ups](16-v1-status.md) | What shipped, how to operate it, known gaps, next steps |
 | 15 | [Build contract v1](15-api-contract.md) | **v1 decisions taken** (host split, no seed changes), DB, settings shape, API, build output, serving, acceptance |
 
 ## Change log
@@ -38,3 +39,4 @@ This is the design and technical guide for the public website at **noctusai.com*
 |---|---|---|
 | 2026-09-23 | 0.1 | First draft: interview, reference research (13 sites), synthesis, specs, Phase-0 architecture audit. |
 | 2026-09-23 | 0.2 | Build contract v1 (15) + v1 decisions: host split instead of `/app` move, no seed changes, prerender + FastAPI post-processing, blog deferred. |
+| 2026-09-23 | 1.0 | v1 built: backend (migration 052 applied to prod, public/admin API, signup gate, host-split middleware), public site (22 prerendered pages pt-BR/EN, 3D hero, consent, lead forms), admin (Configurações, Leads, marketing role). Real-browser integration caught and fixed a blank-page crash (`plans.features` shape) and hero/mobile layout defects. See [16 · v1 status](16-v1-status.md). |

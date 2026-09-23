@@ -9,9 +9,9 @@
 | Item | Route | Status |
 |---|---|---|
 | **Documentação** | `/admin/website/docs` (→ `/app/admin/website/docs` after the `/app` move) | Built with this documentation |
-| Configurações | `/admin/website/settings` | Build wave 3 |
-| Blog | `/admin/website/blog` | Build wave 3 |
-| Leads | `/admin/website/leads` | Build wave 3 |
+| Configurações | `/admin/website/settings` | ✅ v1 |
+| Blog | `/admin/website/blog` | v1.1 (deferred) |
+| Leads | `/admin/website/leads` | ✅ v1 |
 
 ## Roles & access
 
