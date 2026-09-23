@@ -73,7 +73,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { TooltipIconButton } from "@/components/card/TooltipIconButton";
+import { TooltipIconButton } from "@noctusai/lib/components";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Collapsible,

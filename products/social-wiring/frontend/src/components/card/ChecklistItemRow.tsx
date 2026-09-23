@@ -76,9 +76,7 @@ import { cn } from "@/lib/utils";
 import type { DocumentoChecklistItem } from "@/types/cardHub";
 
 import { GENEROS, type DadosPessoais } from "./DadosPessoaisForm";
-import { TokenCheckbox } from "./TokenCheckbox";
-import { TooltipIconButton } from "./TooltipIconButton";
-import { formatBytes, formatarDataISO } from "./format";
+import { TokenCheckbox, TooltipIconButton, formatBytes, formatarDataISO } from "@noctusai/lib/components";
 
 type CampoTipo = "texto" | "email" | "tel" | "data" | "select";
 

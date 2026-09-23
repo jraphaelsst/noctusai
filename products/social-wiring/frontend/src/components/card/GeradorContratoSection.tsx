@@ -32,7 +32,7 @@ import {
   type GeracaoOnde,
 } from "@/hooks/useContratos";
 
-import { CARD_SUBPAGES, type CardSubpageKey } from "./CardSidebarNav";
+import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
 
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
  *  by WHERE to go fill the field, not just what field it is. */
@@ -69,7 +69,7 @@ export interface GeracaoDestino {
 
 export type FaltandoComDestino = GeracaoFaltando & { destino?: GeracaoDestino };
 
-/** Card subpage labels, canonical source (`CardSidebarNav.CARD_SUBPAGES`) —
+/** Card subpage labels, canonical source (`cardSubpages.CARD_SUBPAGES`) —
  *  never a second hand-written copy of the rail's labels. */
 const SUBPAGE_LABEL: Partial<Record<CardSubpageKey, string>> = Object.fromEntries(
   CARD_SUBPAGES.map((s) => [s.key, s.label]),

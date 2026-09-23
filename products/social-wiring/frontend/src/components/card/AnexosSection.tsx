@@ -25,6 +25,15 @@
  * today's caller.
  *
  * Presentational only (`card/**`): props in, callbacks out.
+ *
+ * 🔴 NOT YET SWAPPED onto the seed card hub's `AnexosSection`
+ * (`@noctusai/lib/components`), which the card dialog's Geral already renders
+ * (wave-a Slice F). This SW copy survives for ONE reason: its colocated suite
+ * picks a tipo by clicking an option under a `vi.mock("@/components/ui/select")`
+ * that inlines every item — the seed component uses the seed's own Radix
+ * `Select`, which that mock cannot reach, so two cases would need the test to
+ * open the real picker first (and SW has no `@testing-library/user-event`).
+ * NOC-REMEDIATE[cardhub-sw-anexos-swap]: re-export the seed AnexosSection here and port the suite's two tipo-picking cases to the real seed Select (as `seed/.../card-hub/AnexosSection.test.tsx` does) — needs tech-lead sign-off on the test edit — 2026-09-22
  */
 import { useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, FileText, Loader2, RotateCw, Trash2, Upload } from "lucide-react";
@@ -39,8 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-import { TooltipIconButton } from "./TooltipIconButton";
-import { formatBytes } from "./format";
+import { TooltipIconButton, formatBytes } from "@noctusai/lib/components";
 
 //: Mirrors `documentos_service.ALLOWED_MIME_TYPES` (backend). A rejected
 //: upload still gets the server's typed 400 naming the real limit — this

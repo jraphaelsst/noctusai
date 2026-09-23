@@ -61,8 +61,8 @@ import {
 } from "@/hooks/useCardHub";
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
-import type { CardSubpageKey } from "@/components/card/CardSidebarNav";
-import { baixarArquivo } from "@/components/card/format";
+import type { CardSubpageKey } from "@/components/card/cardSubpages";
+import { baixarArquivo } from "@noctusai/lib/components";
 import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
 import { NovoContratoDialog } from "@/components/card/NovoContratoDialog";

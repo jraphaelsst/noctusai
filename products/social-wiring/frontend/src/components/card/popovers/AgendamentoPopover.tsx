@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-import { TooltipCaption } from "../TooltipIconButton";
+import { TooltipCaption } from "@noctusai/lib/components";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgendamentoCreateBody, TipoAgendamento } from "@/types/cardHub";
 

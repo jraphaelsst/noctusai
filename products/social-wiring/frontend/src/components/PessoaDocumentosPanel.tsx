@@ -46,7 +46,7 @@ import {
 import { AnexosSection } from "@/components/card/AnexosSection";
 import { DocumentoChecklistSection } from "@/components/card/DocumentoChecklistSection";
 import { DadosPessoaisForm } from "@/components/card/DadosPessoaisForm";
-import { baixarArquivo } from "@/components/card/format";
+import { baixarArquivo } from "@noctusai/lib/components";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 
 export interface PessoaDocumentosPanelProps {

@@ -48,7 +48,7 @@ import {
 } from "@/components/ui/select";
 import { rgIgualAoCpf } from "@/types/qualificacaoCompletude";
 
-import { TooltipIconButton } from "./TooltipIconButton";
+import { TooltipIconButton } from "@noctusai/lib/components";
 
 /** The taxonomy the UI offers. The COLUMN is unconstrained TEXT on purpose
  *  (migration 068) — a CHECK would freeze a product decision into the schema —

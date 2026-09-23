@@ -14,7 +14,7 @@
 import { Pencil } from "lucide-react";
 import { toast } from "sonner";
 
-import { TooltipIconButton } from "@/components/card/TooltipIconButton";
+import { TooltipIconButton } from "@noctusai/lib/components";
 
 const MENSAGEM =
   "Edição via plataforma ainda não disponível — o Vista não expõe rota de escrita. Chega quando migrarmos para o sistema próprio.";

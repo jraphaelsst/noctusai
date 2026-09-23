@@ -19,40 +19,25 @@
  */
 import {
   keepPreviousData,
-  useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import type { QueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
+import { createCardHubHooks, flattenTimeline } from "@noctusai/lib/components";
+import type { CardHubApi } from "@noctusai/lib/components";
 
 import { apiUrl } from "@/lib/apiBase";
 import type {
   Agendamento,
   AgendamentoCreateBody,
   AgendamentoPatchBody,
-  Acesso,
-  Checklist,
   ChecklistOrigem,
   Documento,
-  DocumentoUrlResponse,
   ItemsEnvelope,
-  CardDatas,
   CardResumo,
-  Membro,
-  Nota,
-  NotaTipo,
-  Tag,
-  TimelineEntry,
-  TimelineKind,
-  TimelinePage,
-  TipoDocumento,
   DocumentoChecklist,
   DocumentoChecklistItem,
-  ChecklistExtra,
-  ChecklistExtraTipo,
-  ChecklistExtrasResponse,
   Comprador,
   CompradoresResponse,
   LadoParte,
@@ -67,17 +52,81 @@ import type {
 import type { QualificacaoCompletude } from "@/types/qualificacaoCompletude";
 import type { DadosPessoais } from "@/components/card/DadosPessoaisForm";
 
+// ─── The seed card hub — the generic slice ─────────────────────────────────
+//
+// Resumo, timeline, notas, tags, membros, checklists, documentos and
+// checklist-extras are the seed's (`createCardHubHooks`, `@noctusai/lib/
+// components` — MOVED there from this file, wave-a Slice C/F,
+// `project-history/roadmaps/cardhub-igig-crm-2026-09.wave-a-design.md`). This
+// file keeps the SW-only hooks (agendamentos, roteiros, imóveis, documento
+// checklist, qualificação, compradores, dados pessoais, conflitos) and
+// re-exports the generated ones under their historical names below, so no
+// consumer changes.
+
+async function getAuthHeader(): Promise<Record<string, string>> {
+  const { data } = await supabase.auth.getSession();
+  const token = data?.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * Multipart POST — SW's own, kept verbatim through the seed's `upload` seam.
+ *
+ * Raw `fetch` with the supabase session header and NO content-type (the
+ * browser sets the multipart boundary). Kept rather than the seed client's
+ * `upload` because SW surfaces the server's `error.message` VERBATIM in its
+ * toasts (e.g. the upload-size refusal — a platform constant this UI does not
+ * own), where the seed client prefixes `[<status>] `; the swap onto the seed
+ * hooks is a zero-behaviour-change move.
+ */
+async function uploadMultipart<T>(path: string, form: FormData): Promise<T> {
+  const headers = await getAuthHeader();
+  const response = await fetch(apiUrl(path), { method: "POST", headers, body: form });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.error?.message ?? `Erro HTTP ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+/**
+ * The seed hooks' api seam. JSON verbs delegate to the seed client LAZILY
+ * (looked up per call, never captured), so the client stays the one
+ * `@noctusai/seed/infra` provides — including under a test's module mock.
+ */
+const cardHubApi: CardHubApi = {
+  get: (...args: Parameters<CardHubApi["get"]>) => api.get(...args),
+  post: (...args: Parameters<CardHubApi["post"]>) => api.post(...args),
+  patch: (...args: Parameters<CardHubApi["patch"]>) => api.patch(...args),
+  put: (...args: Parameters<CardHubApi["put"]>) => api.put(...args),
+  delete: (...args: Parameters<CardHubApi["delete"]>) => api.delete(...args),
+  upload: uploadMultipart,
+};
+
+const cardHub = createCardHubHooks<CardResumo>(
+  {
+    // Byte-identical to SW's historical keys — every SW-only hook below shares
+    // this one cache family, so every existing invalidation still lands.
+    rootKey: ["sw", "cardHub"],
+    basePath: "/api/clientes",
+    entityLabel: "cliente",
+    // An `rg`/`cpf` upload satisfies that mandatory item — the documento
+    // checklist's ticks DERIVE from documento existence too.
+    documentoInvalidates: ["documento-checklist"],
+  },
+  cardHubApi,
+);
+
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
-const ROOT_KEY = ["sw", "cardHub"] as const;
-const FAMILY_KEY = (clienteId: string) => [...ROOT_KEY, clienteId] as const;
-const CARD_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "card"] as const;
-const TIMELINE_KEY = (clienteId: string, kinds?: TimelineKind[]) =>
-  [...FAMILY_KEY(clienteId), "timeline", kinds ?? "all"] as const;
-const MEMBROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "membros"] as const;
-const CHECKLISTS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "checklists"] as const;
+const { keys } = cardHub;
+const ROOT_KEY = keys.root;
+const FAMILY_KEY = keys.family;
+const CARD_KEY = keys.card;
+const DOCUMENTOS_KEY = keys.documentos;
 const DOC_CHECKLIST_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "documento-checklist"] as const;
+
 /**
  * 🔴 NOT nested under `FAMILY_KEY`. `FAMILY_KEY(clienteId)` is scoped to the
  * CARD's own titular; qualificação-completude is fetched per PARTY
@@ -89,21 +138,14 @@ const DOC_CHECKLIST_KEY = (clienteId: string) =>
 const QUALIFICACAO_ROOT_KEY = [...ROOT_KEY, "qualificacao"] as const;
 const QUALIFICACAO_KEY = (clienteId: string) =>
   [...QUALIFICACAO_ROOT_KEY, clienteId] as const;
-const CHECKLIST_EXTRAS_KEY = (clienteId: string) =>
-  [...FAMILY_KEY(clienteId), "checklist-extras"] as const;
 const AGENDAMENTOS_KEY = (clienteId: string) =>
   [...FAMILY_KEY(clienteId), "agendamentos"] as const;
 const ROTEIROS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "roteiros"] as const;
 const IMOVEIS_BUSCA_KEY = (termo: string) => [...ROOT_KEY, "imoveisBusca", termo] as const;
-const DOCUMENTOS_KEY = (clienteId: string) => [...FAMILY_KEY(clienteId), "documentos"] as const;
-const ACESSOS_KEY = (clienteId: string, documentoId: string) =>
-  [...FAMILY_KEY(clienteId), "documentos", documentoId, "acessos"] as const;
 /** 🔴 The SIDE is part of the key. Both tabs hit the same endpoint, so a
  *  shared cache entry would render the vendedores under Compradores. */
 const COMPRADORES_KEY = (clienteId: string, lado: LadoParte = "comprador") =>
   [...FAMILY_KEY(clienteId), "compradores", lado] as const;
-const TAGS_KEY = [...ROOT_KEY, "tags"] as const;
-const TIPOS_DOC_KEY = [...ROOT_KEY, "tiposDocumento"] as const;
 /**
  * 🔴 NOT nested under `FAMILY_KEY`, same reasoning `QUALIFICACAO_ROOT_KEY`
  * gives: the org-wide admin queue (`useConflitosPendentes()`, no
@@ -116,410 +158,37 @@ const CONFLITOS_ROOT_KEY = [...ROOT_KEY, "conflitos"] as const;
 const CONFLITOS_KEY = (clienteId?: string) =>
   [...CONFLITOS_ROOT_KEY, clienteId ?? "__org__"] as const;
 
-function invalidateEverything(qc: QueryClient) {
-  return qc.invalidateQueries({ queryKey: ROOT_KEY });
-}
-
-/**
- * The checklist family ONLY — plus the two things a checklist edit genuinely
- * changes elsewhere: the card's badges (item counts) and the timeline (the
- * activity entry the edit produces).
- *
- * Invalidating `FAMILY_KEY(clienteId)` WHOLESALE — every query this cliente
- * has, not just this one — used to be this file's default reflex (every
- * mutation below has since been narrowed the same way; see each one's own
- * docblock). Ticking one checklist item re-fetched documentos and membros,
- * neither of which a checklist edit can affect. Combined with the section
- * skeletons that used to key off `isFetching` alone, that is what made the
- * card feel like it reloaded on every move.
- */
-function invalidateChecklistFamily(qc: QueryClient, clienteId: string) {
-  return Promise.all([
-    qc.invalidateQueries({ queryKey: CHECKLISTS_KEY(clienteId) }),
-    qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
-    qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
-  ]);
-}
-
 const clienteBase = (clienteId: string) => `/api/clientes/${encodeURIComponent(clienteId)}`;
 
-// ─── Card summary (the badge row source — §3 "Card summary") ──────────────
+// ─── Generated (seed) hooks, under SW's historical names ───────────────────
 
-export function useCardResumo(clienteId: string | null) {
-  return useQuery({
-    queryKey: CARD_KEY(clienteId ?? "__none__"),
-    queryFn: () => api.get<CardResumo>(`${clienteBase(clienteId as string)}/card`),
-    enabled: !!clienteId,
-  });
-}
-
-// ─── Timeline (D9 — one thread, cursor-paginated) ──────────────────────────
-
-export function useTimeline(clienteId: string | null, kinds?: TimelineKind[]) {
-  return useInfiniteQuery({
-    queryKey: TIMELINE_KEY(clienteId ?? "__none__", kinds),
-    queryFn: async ({ pageParam }: { pageParam: string | null }) => {
-      const params = new URLSearchParams({ limit: "50" });
-      if (pageParam) params.set("cursor", pageParam);
-      if (kinds?.length) params.set("kinds", kinds.join(","));
-      const res = await api.get<TimelinePage>(
-        `${clienteBase(clienteId as string)}/timeline?${params.toString()}`,
-      );
-      return res ?? { items: [], total: 0, next_cursor: null };
-    },
-    initialPageParam: null as string | null,
-    getNextPageParam: (lastPage) => lastPage.next_cursor,
-    enabled: !!clienteId,
-  });
-}
-
-/** Flattens the infinite-query pages into one newest-first array. */
-export function flattenTimeline(pages: TimelinePage[] | undefined): TimelineEntry[] {
-  if (!pages) return [];
-  return pages.flatMap((p) => p.items);
-}
-
-// ─── Notas ───────────────────────────────────────────────────────────────
-
-/**
- * A nota is either a `comentario` (timeline-only, plus the `notas` badge
- * count) or the card's single `descricao` (card STATE on `CardResumo`, never
- * duplicated into the timeline — see `CardResumo.descricao`'s docblock).
- * Either way the two things that change are `card` (badges, and `descricao`
- * for the `descricao`-typed case) and `timeline` (the `nota`-kind entry) —
- * never compradores, roteiros, agendamentos, documentos or membros, so
- * narrowed to those two instead of the whole card-hub family.
- */
-export function useNotaMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const invalidate = () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
-      qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
-    ]);
-
-  // `tipo` mirrors `card_hub/schemas.py::NotaCreateBody` — defaults to
-  // "comentario" (the composer's case); the description editor passes
-  // `tipo: "descricao"` explicitly. The backend enforces at most one
-  // non-deleted "descricao" per cliente and returns a typed 409
-  // (`ConflictError`) on a second — callers MUST surface `err.message`
-  // rather than let a rejected create read as a network failure.
-  const create = useMutation({
-    mutationFn: ({ corpo, tipo = "comentario" }: { corpo: string; tipo?: NotaTipo }) =>
-      api.post<Nota>(`${clienteBase(clienteId)}/notas`, { corpo, tipo }),
-    onSuccess: invalidate,
-  });
-
-  const update = useMutation({
-    mutationFn: ({ notaId, corpo }: { notaId: string; corpo: string }) =>
-      api.patch<Nota>(`${clienteBase(clienteId)}/notas/${encodeURIComponent(notaId)}`, { corpo }),
-    onSuccess: invalidate,
-  });
-
-  const remove = useMutation({
-    mutationFn: (notaId: string) =>
-      api.delete(`${clienteBase(clienteId)}/notas/${encodeURIComponent(notaId)}`),
-    onSuccess: invalidate,
-  });
-
-  return { create, update, remove };
-}
-
-// ─── Tags (D6 — one system) ─────────────────────────────────────────────────
-
-export function useTags() {
-  return useQuery({
-    queryKey: TAGS_KEY,
-    queryFn: async () => {
-      const res = await api.get<ItemsEnvelope<Tag>>("/api/clientes/tags");
-      return res?.items ?? [];
-    },
-  });
-}
-
-export function useTagCatalogMutations() {
-  const qc = useQueryClient();
-  // Renaming/recolouring/deleting a tag can change what any open card shows
-  // (its `tags` are a materialised snapshot at fetch time) — invalidate the
-  // whole cardHub root, not just the catalogue, rather than tracking which
-  // clientes reference this tag.
-  const invalidate = () => invalidateEverything(qc);
-
-  const create = useMutation({
-    mutationFn: (body: { nome: string; cor: string }) =>
-      api.post<Tag>("/api/clientes/tags", body),
-    onSuccess: invalidate,
-  });
-
-  const update = useMutation({
-    mutationFn: ({ tagId, body }: { tagId: string; body: { nome?: string; cor?: string } }) =>
-      api.patch<Tag>(`/api/clientes/tags/${encodeURIComponent(tagId)}`, body),
-    onSuccess: invalidate,
-  });
-
-  const remove = useMutation({
-    mutationFn: (tagId: string) => api.delete(`/api/clientes/tags/${encodeURIComponent(tagId)}`),
-    onSuccess: invalidate,
-  });
-
-  return { create, update, remove };
-}
-
-/**
- * PUT the full tag set for one cliente (Etiquetas chip toggle) — optimistic:
- * the checkbox flips instantly in `EtiquetasPopover`, and a failure rolls
- * `CardResumo.tags` back to the pre-toggle snapshot rather than leaving a
- * lying checked box the server never accepted.
- *
- * `onSettled` re-confirms `CARD_KEY` ONLY — the same key `onMutate`/`onError`
- * touch, and the only one `CardResumo.tags` lives on. It used to invalidate
- * the whole card-hub family, which meant toggling a tag chip also refetched
- * documentos, roteiros, agendamentos and the checklist for no reason a tag
- * write can produce.
- */
-export function useSetClienteTagsMutation(clienteId: string) {
-  const qc = useQueryClient();
-
-  return useMutation({
-    mutationFn: (tagIds: string[]) =>
-      api.put<ItemsEnvelope<Tag>>(`${clienteBase(clienteId)}/tags`, { tag_ids: tagIds }),
-    onMutate: async (tagIds: string[]) => {
-      await qc.cancelQueries({ queryKey: CARD_KEY(clienteId) });
-      const previous = qc.getQueryData<CardResumo>(CARD_KEY(clienteId));
-      if (previous) {
-        const allTags = qc.getQueryData<Tag[]>(TAGS_KEY) ?? previous.tags;
-        const optimisticTags = allTags.filter((t) => tagIds.includes(t.id));
-        qc.setQueryData<CardResumo>(CARD_KEY(clienteId), {
-          ...previous,
-          tags: optimisticTags,
-        });
-      }
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) {
-        qc.setQueryData(CARD_KEY(clienteId), context.previous);
-      }
-    },
-    onSettled: () => qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
-  });
-}
-
-// ─── Membros (D10 — points at lead_corretores) ─────────────────────────────
-
-export function useCardMembros(clienteId: string | null) {
-  return useQuery({
-    queryKey: MEMBROS_KEY(clienteId ?? "__none__"),
-    queryFn: async () => {
-      const res = await api.get<ItemsEnvelope<Membro>>(`${clienteBase(clienteId as string)}/membros`);
-      return res?.items ?? [];
-    },
-    enabled: !!clienteId,
-  });
-}
-
-/**
- * `card.data.membros` (`CardResumo.membros`) is what the header's Membros
- * control actually renders — `MEMBROS_KEY`/`useCardMembros` above has no
- * consumer today, but is invalidated alongside it anyway since it is this
- * write's own list and costs nothing to keep honest. Neither compradores,
- * roteiros, agendamentos, documentos nor the checklist can change from a
- * membros PUT, so this no longer invalidates the whole family.
- */
+export { flattenTimeline };
+export const useCardResumo = cardHub.useCardResumo;
+export const useTimeline = cardHub.useTimeline;
+export const useNotaMutations = cardHub.useNotaMutations;
+export const useTags = cardHub.useTags;
+export const useTagCatalogMutations = cardHub.useTagCatalogMutations;
+/** PUT the full tag set for one cliente — optimistic, rolled back on failure. */
+export const useSetClienteTagsMutation = cardHub.useSetTagsMutation;
+export const useCardMembros = cardHub.useCardMembros;
+/** PUT the card's membros. SW's member source is `lead_corretores`, so the
+ *  body key is `lead_corretor_ids` (D10 — points at lead_corretores). */
 export function useSetCardMembrosMutation(clienteId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (leadCorretorIds: string[]) =>
-      api.put<ItemsEnvelope<Membro>>(`${clienteBase(clienteId)}/membros`, {
-        lead_corretor_ids: leadCorretorIds,
-      }),
-    onSuccess: () =>
-      Promise.all([
-        qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
-        qc.invalidateQueries({ queryKey: MEMBROS_KEY(clienteId) }),
-      ]),
-  });
+  return cardHub.useSetMembrosMutation(clienteId, "lead_corretor_ids");
 }
-
-// ─── Datas + lembretes (screenshot 06) ─────────────────────────────────────
-
-export function useChecklists(clienteId: string | null) {
-  return useQuery({
-    queryKey: CHECKLISTS_KEY(clienteId ?? "__none__"),
-    queryFn: async () => {
-      const res = await api.get<ItemsEnvelope<Checklist>>(`${clienteBase(clienteId as string)}/checklists`);
-      return res?.items ?? [];
-    },
-    enabled: !!clienteId,
-  });
-}
-
-export function useChecklistMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const invalidate = () => invalidateChecklistFamily(qc, clienteId);
-  const base = clienteBase(clienteId);
-
-  const createChecklist = useMutation({
-    mutationFn: (titulo: string) => api.post<Checklist>(`${base}/checklists`, { titulo }),
-    onSuccess: invalidate,
-  });
-
-  const renameChecklist = useMutation({
-    mutationFn: ({ checklistId, titulo }: { checklistId: string; titulo: string }) =>
-      api.patch<Checklist>(`${base}/checklists/${encodeURIComponent(checklistId)}`, { titulo }),
-    onSuccess: invalidate,
-  });
-
-  const removeChecklist = useMutation({
-    mutationFn: (checklistId: string) =>
-      api.delete(`${base}/checklists/${encodeURIComponent(checklistId)}`),
-    onSuccess: invalidate,
-  });
-
-  /**
-   * Optimistic, for the same reason `toggleItem` is: typing an item and waiting
-   * for a round-trip before it appears reads as a stutter. The temporary id is
-   * namespaced so a render between mutate and settle cannot collide with a real
-   * one, and the whole list rolls back on failure.
-   */
-  const addItem = useMutation({
-    mutationFn: ({ checklistId, texto }: { checklistId: string; texto: string }) =>
-      api.post(`${base}/checklists/${encodeURIComponent(checklistId)}/itens`, { texto }),
-    onMutate: async ({ checklistId, texto }) => {
-      await qc.cancelQueries({ queryKey: CHECKLISTS_KEY(clienteId) });
-      const previous = qc.getQueryData<Checklist[]>(CHECKLISTS_KEY(clienteId));
-      if (previous) {
-        qc.setQueryData<Checklist[]>(
-          CHECKLISTS_KEY(clienteId),
-          previous.map((c) =>
-            c.id === checklistId
-              ? {
-                  ...c,
-                  itens: [
-                    ...c.itens,
-                    {
-                      id: `optimistic:${checklistId}:${c.itens.length}`,
-                      texto,
-                      concluido: false,
-                      concluido_em: null,
-                      concluido_por: null,
-                      posicao: c.itens.length,
-                    },
-                  ],
-                }
-              : c,
-          ),
-        );
-      }
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) qc.setQueryData(CHECKLISTS_KEY(clienteId), context.previous);
-    },
-    onSettled: invalidate,
-  });
-
-  /**
-   * Optimistic — the checkbox flips the instant a broker clicks it
-   * (mandatory rule: "Optimistic updates for checkbox ticks"). Rolls the
-   * whole checklist list back to its pre-toggle snapshot on failure.
-   */
-  const toggleItem = useMutation({
-    mutationFn: ({
-      checklistId,
-      itemId,
-      concluido,
-    }: {
-      checklistId: string;
-      itemId: string;
-      concluido: boolean;
-    }) =>
-      api.patch(
-        `${base}/checklists/${encodeURIComponent(checklistId)}/itens/${encodeURIComponent(itemId)}`,
-        { concluido },
-      ),
-    onMutate: async ({ checklistId, itemId, concluido }) => {
-      await qc.cancelQueries({ queryKey: CHECKLISTS_KEY(clienteId) });
-      const previous = qc.getQueryData<Checklist[]>(CHECKLISTS_KEY(clienteId));
-      if (previous) {
-        qc.setQueryData<Checklist[]>(
-          CHECKLISTS_KEY(clienteId),
-          previous.map((cl) =>
-            cl.id !== checklistId
-              ? cl
-              : {
-                  ...cl,
-                  itens: cl.itens.map((it) => (it.id === itemId ? { ...it, concluido } : it)),
-                  concluidos: cl.itens.filter((it) =>
-                    it.id === itemId ? concluido : it.concluido,
-                  ).length,
-                },
-          ),
-        );
-      }
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) {
-        qc.setQueryData(CHECKLISTS_KEY(clienteId), context.previous);
-      }
-    },
-    onSettled: invalidate,
-  });
-
-  const updateItemText = useMutation({
-    mutationFn: ({
-      checklistId,
-      itemId,
-      texto,
-    }: {
-      checklistId: string;
-      itemId: string;
-      texto: string;
-    }) =>
-      api.patch(
-        `${base}/checklists/${encodeURIComponent(checklistId)}/itens/${encodeURIComponent(itemId)}`,
-        { texto },
-      ),
-    onSuccess: invalidate,
-  });
-
-  const removeItem = useMutation({
-    mutationFn: ({ checklistId, itemId }: { checklistId: string; itemId: string }) =>
-      api.delete(
-        `${base}/checklists/${encodeURIComponent(checklistId)}/itens/${encodeURIComponent(itemId)}`,
-      ),
-    onMutate: async ({ checklistId, itemId }) => {
-      await qc.cancelQueries({ queryKey: CHECKLISTS_KEY(clienteId) });
-      const previous = qc.getQueryData<Checklist[]>(CHECKLISTS_KEY(clienteId));
-      if (previous) {
-        qc.setQueryData<Checklist[]>(
-          CHECKLISTS_KEY(clienteId),
-          previous.map((c) =>
-            c.id === checklistId ? { ...c, itens: c.itens.filter((i) => i.id !== itemId) } : c,
-          ),
-        );
-      }
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) qc.setQueryData(CHECKLISTS_KEY(clienteId), context.previous);
-    },
-    onSettled: invalidate,
-  });
-
-  return {
-    createChecklist,
-    renameChecklist,
-    removeChecklist,
-    addItem,
-    toggleItem,
-    updateItemText,
-    removeItem,
-  };
-}
+export const useChecklists = cardHub.useChecklists;
+export const useChecklistMutations = cardHub.useChecklistMutations;
+export const useDocumentos = cardHub.useDocumentos;
+export const useTiposDocumento = cardHub.useTiposDocumento;
+export const useDocumentoAcessos = cardHub.useDocumentoAcessos;
+/** Upload / remove (`motivo` query param) / signed URL / re-extract. An
+ *  attachment write also invalidates SW's `documento-checklist`. */
+export const useDocumentoMutations = cardHub.useDocumentoMutations;
+export const useChecklistExtras = cardHub.useChecklistExtras;
+export const useChecklistExtraMutations = cardHub.useChecklistExtraMutations;
 
 export type { ChecklistOrigem };
+
 
 
 // ─── Agendamentos (migration 061 — many per atendimento) ──────────────────
@@ -833,136 +502,6 @@ export async function baixarRoteiroPdf(clienteId: string, roteiroId: string): Pr
   URL.revokeObjectURL(url);
 }
 
-// ─── Documentos (LGPD, D5) ──────────────────────────────────────────────────
-
-export function useDocumentos(clienteId: string | null) {
-  return useQuery({
-    queryKey: DOCUMENTOS_KEY(clienteId ?? "__none__"),
-    queryFn: async () => {
-      const res = await api.get<ItemsEnvelope<Documento>>(`${clienteBase(clienteId as string)}/documentos`);
-      return res?.items ?? [];
-    },
-    enabled: !!clienteId,
-  });
-}
-
-export function useTiposDocumento() {
-  return useQuery({
-    queryKey: TIPOS_DOC_KEY,
-    queryFn: async () => {
-      const res = await api.get<ItemsEnvelope<TipoDocumento>>("/api/clientes/documentos/tipos");
-      return res?.items ?? [];
-    },
-  });
-}
-
-export function useDocumentoAcessos(clienteId: string | null, documentoId: string | null) {
-  return useQuery({
-    queryKey: ACESSOS_KEY(clienteId ?? "__none__", documentoId ?? "__none__"),
-    queryFn: async () => {
-      const res = await api.get<ItemsEnvelope<Acesso>>(
-        `${clienteBase(clienteId as string)}/documentos/${encodeURIComponent(documentoId as string)}/acessos`,
-      );
-      return res?.items ?? [];
-    },
-    enabled: !!clienteId && !!documentoId,
-  });
-}
-
-async function getAuthHeader(): Promise<Record<string, string>> {
-  const { data } = await supabase.auth.getSession();
-  const token = data?.session?.access_token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-/**
- * Uploading/removing a loose attachment touches four things, never the
- * whole family: `documentos` (its own list), `card` (`badges.documentos`),
- * `documento-checklist` (an `rg`/`cpf` upload satisfies that mandatory item
- * — ticks are DERIVED from documento existence too, see
- * `DocumentoChecklistSection`'s docblock) and `timeline` (a `documento`-kind
- * entry). Compradores, roteiros, agendamentos and membros cannot move from
- * an attachment write.
- */
-export function useDocumentoMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const invalidate = () =>
-    Promise.all([
-      qc.invalidateQueries({ queryKey: DOCUMENTOS_KEY(clienteId) }),
-      qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
-      qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) }),
-      qc.invalidateQueries({ queryKey: [...FAMILY_KEY(clienteId), "timeline"] }),
-    ]);
-  const base = clienteBase(clienteId);
-
-  // Multipart bypasses the JSON-only seed `api` client, same pattern as
-  // `useUpload.ts` — raw fetch with the auth header pulled from supabase.
-  const upload = useMutation({
-    mutationFn: async ({ file, tipoDocumento }: { file: File; tipoDocumento: string }) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("tipo_documento", tipoDocumento);
-      const headers = await getAuthHeader();
-      const response = await fetch(apiUrl(`${base}/documentos`), {
-        method: "POST",
-        headers, // no content-type — the browser sets the multipart boundary
-        body: formData,
-      });
-      if (!response.ok) {
-        const detail = await response.json().catch(() => null);
-        const message = detail?.error?.message ?? `Erro HTTP ${response.status}`;
-        throw new Error(message);
-      }
-      return (await response.json()) as Documento;
-    },
-    onSuccess: invalidate,
-  });
-
-  // Backend correction, landed on `origin/dev`
-  // (`card_hub/router.py::delete_documento_route`): `motivo` travels as a
-  // REQUIRED query param, not a JSON body — the seed `ApiClient.delete()`
-  // gap this file originally routed around no longer applies to THIS
-  // route (it may still bite elsewhere; the gap itself is real).
-  const remove = useMutation({
-    mutationFn: ({ documentoId, motivo }: { documentoId: string; motivo: string }) =>
-      api.delete(
-        `${base}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
-      ),
-    onSuccess: invalidate,
-  });
-
-  // `intent` mirrors `useFinanciamento.ts`'s `getUrl` — the more complete of
-  // the two shapes this hook family had drifted into (this one used to take
-  // a bare `documentoId`, defaulting the backend's `intent` query param to
-  // `"view"` always, so a caller wanting the DOWNLOAD access-log entry had
-  // no way to ask for it). 🔴 Each call is a RECORDED access
-  // (`cliente_documento_acessos`) — never call this speculatively.
-  const getUrl = useMutation({
-    mutationFn: ({
-      documentoId,
-      intent = "view",
-    }: {
-      documentoId: string;
-      intent?: "view" | "download";
-    }) =>
-      api.get<DocumentoUrlResponse>(
-        `${base}/documentos/${encodeURIComponent(documentoId)}/url?intent=${intent}`,
-      ),
-  });
-
-  // Re-queues a stuck/never-run extraction. `POST .../extrair` (contract §4)
-  // — never delete + re-upload, which would destroy the LGPD access log.
-  // Same invalidation set as `upload`: a resolved re-read can fill checklist
-  // fields and the extraction badge alike.
-  const reextrair = useMutation({
-    mutationFn: (documentoId: string) =>
-      api.post<Documento>(`${base}/documentos/${encodeURIComponent(documentoId)}/extrair`),
-    onSuccess: invalidate,
-  });
-
-  return { upload, remove, getUrl, reextrair };
-}
-
 // ─── Documento checklist (migration 067) ──────────────────────────────────
 
 /**
@@ -1105,110 +644,6 @@ export function useQualificacaoCompletude(clienteId: string | null) {
   });
 }
 
-// ─── Checklist extras (operator-created rows) ─────────────────────────────
-
-/**
- * The rows the OPERATOR added to this card, beside the server-defined six.
- *
- * A SEPARATE query rather than a wider `documento-checklist` payload, because
- * the two lists have opposite lifecycles: the mandatory list is immutable and
- * identical for every client, these rows are created and destroyed per deal.
- * Folding them together would mean every extras edit invalidated the derived
- * checklist, and every derivation refresh re-fetched rows nothing had touched.
- */
-export function useChecklistExtras(clienteId: string | null) {
-  return useQuery({
-    queryKey: CHECKLIST_EXTRAS_KEY(clienteId ?? "__none__"),
-    queryFn: async () => {
-      const res = await api.get<ChecklistExtrasResponse>(
-        `${clienteBase(clienteId as string)}/checklist-extras`,
-      );
-      return res?.items ?? [];
-    },
-    enabled: !!clienteId,
-  });
-}
-
-/**
- * Create / rename / fill / remove an extras row, and attach or discard its
- * file.
- *
- * 🔴 NOT optimistic, unlike the mandatory checklist's tick. That tick is a
- * local assertion over a value the server already holds and can be rolled back
- * invisibly; these mutations CREATE and DESTROY rows whose ids the server
- * assigns. Rendering an invented row would mean rendering upload and rename
- * controls addressed to an id that does not exist yet.
- *
- * 🔴 `documento` DISCARD KEEPS THE ROW. `DELETE .../{extraId}/documento`
- * removes the file; `DELETE .../{extraId}` removes the row. Two verbs, two
- * routes, because "delete" means two different things on that line and a
- * single one would eventually do the wrong one.
- *
- * Invalidates ONLY the extras list. An extra row is not derived from the
- * client record, so it cannot move a badge, a tag or an appointment — and a
- * wider invalidation is what used to make the whole card flash on every edit.
- */
-export function useChecklistExtraMutations(clienteId: string) {
-  const qc = useQueryClient();
-  const base = `${clienteBase(clienteId)}/checklist-extras`;
-  const invalidate = () =>
-    qc.invalidateQueries({ queryKey: CHECKLIST_EXTRAS_KEY(clienteId) });
-
-  const criar = useMutation({
-    mutationFn: (body: { label: string; tipo: ChecklistExtraTipo }) =>
-      api.post<ChecklistExtra>(base, body),
-    onSuccess: invalidate,
-  });
-
-  const atualizar = useMutation({
-    mutationFn: ({
-      extraId,
-      body,
-    }: {
-      extraId: string;
-      body: { label?: string; valor_texto?: string | null; ordem?: number };
-    }) => api.patch<ChecklistExtra>(`${base}/${encodeURIComponent(extraId)}`, body),
-    onSuccess: invalidate,
-  });
-
-  const remover = useMutation({
-    mutationFn: (extraId: string) => api.delete(`${base}/${encodeURIComponent(extraId)}`),
-    onSuccess: invalidate,
-  });
-
-  // Multipart bypasses the JSON-only seed `api` client, same pattern as
-  // `useDocumentoMutations.upload` — raw fetch with the auth header pulled
-  // from supabase, and no explicit content-type so the browser sets the
-  // multipart boundary.
-  const uploadDocumento = useMutation({
-    mutationFn: async ({ extraId, file }: { extraId: string; file: File }) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      const headers = await getAuthHeader();
-      const response = await fetch(
-        apiUrl(`${base}/${encodeURIComponent(extraId)}/documento`),
-        { method: "POST", headers, body: formData },
-      );
-      if (!response.ok) {
-        // The server's own message — never a client-side guess at the limit
-        // it hit, which is a platform constant this UI does not own.
-        const detail = await response.json().catch(() => null);
-        throw new Error(detail?.error?.message ?? `Erro HTTP ${response.status}`);
-      }
-      return (await response.json()) as ChecklistExtra;
-    },
-    onSuccess: invalidate,
-  });
-
-  const removerDocumento = useMutation({
-    mutationFn: (extraId: string) =>
-      api.delete(`${base}/${encodeURIComponent(extraId)}/documento`),
-    onSuccess: invalidate,
-  });
-
-  return { criar, atualizar, remover, uploadDocumento, removerDocumento };
-}
-
 // ─── Compradores / partes do atendimento (migration 073) ──────────────────
 
 /**
@@ -1336,8 +771,8 @@ export function useCompradorMutations(clienteId: string) {
  *   - `card` — its `badges.checklist_concluidos`/`checklist_total` move with
  *     the same ticks, and `cliente.nome` in the header can change too.
  *   - `timeline` — a satisfied item is a `checklist`-kind entry, the same
- *     activity a checklist tick produces (mirrors `invalidateChecklistFamily`
- *     below, applied here because satisfying an item via data IS a checklist
+ *     activity a checklist tick produces (mirrors the seed checklist
+ *     mutations' invalidation, applied here because satisfying an item via data IS a checklist
  *     edit, just routed through the clientes API).
  *   - `["sw", "clientes"]` — a SEPARATE root (the clientes list/board), kept
  *     as-is: that surface shows `nome`/`email` outside this card entirely.

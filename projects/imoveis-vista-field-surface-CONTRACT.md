@@ -122,7 +122,9 @@ the full live key set.
 ## 4 · Icon-buttons (display-only placeholders)
 
 Reuse the EXISTING component — do not fork one:
-`products/social-wiring/frontend/src/components/card/TooltipIconButton.tsx`
+`TooltipIconButton` from `@noctusai/lib/components`
+(`seed/lib/frontend/src/components/card-hub/TooltipIconButton.tsx` — moved out of
+SW's `components/card/` by the card-hub wave-a Slice F)
 (`variant="ghost"`, `size="icon"`, lucide icon, Radix tooltip, `label` drives both
 tooltip and `aria-label`; the props type forbids children and `aria-label`).
 

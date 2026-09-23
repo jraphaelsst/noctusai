@@ -63,7 +63,7 @@ import {
 
 import { ChecklistItemRow } from "./ChecklistItemRow";
 import type { DadosPessoais } from "./DadosPessoaisForm";
-import { formatarDataISO } from "./format";
+import { formatarDataISO } from "@noctusai/lib/components";
 
 /**
  * `sugestoes_extras` entries beyond `nome_oficial` (migration 110) — pt-BR
