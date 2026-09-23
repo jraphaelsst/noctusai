@@ -54,19 +54,50 @@ class ImovelDadosPatchBody(StrictHttpModel):
 
 
 class EnderecoManualPatchBody(StrictHttpModel):
-    """Manual override for the 4 address fields `contrato_gerador.derivacao`
-    reads (migration 149) — this product has no write-back to the Vista
-    mirror those fields normally come from.
+    """Manual override for all 7 address fields (migration 149, widened by
+    159 from the 4 `contrato_gerador.derivacao` gates the contract on to
+    also cover complemento/bairro/CEP — e.g. a condo UNIT's own address when
+    Vista mirrors only the building's gate) — this product has no write-back
+    to the Vista mirror those fields normally come from.
 
     Same `model_fields_set` contract as `ImovelDadosPatchBody`: absence means
     "leave alone", `None` means "clear the override and fall back to the
-    mirror".
+    mirror". Every field is optional here — a PARTIAL patch is legitimate
+    (e.g. correcting only the número); `RegistrarImovelBody` below is the
+    body that REQUIRES a full address, at manual-registration time only.
     """
 
     logradouro: Optional[str] = Field(default=None, max_length=200)
     numero: Optional[str] = Field(default=None, max_length=20)
+    complemento: Optional[str] = Field(default=None, max_length=100)
+    bairro: Optional[str] = Field(default=None, max_length=120)
     cidade: Optional[str] = Field(default=None, max_length=120)
     uf: Optional[str] = Field(default=None, max_length=2)
+    cep: Optional[str] = Field(default=None, max_length=9)
+
+
+class RegistrarImovelBody(StrictHttpModel):
+    """`POST /{codigo}/registrar` — the body for hand-registering a código
+    neither the Vista mirror nor the registry has ever seen (migration 149's
+    endpoint, migration 159's required address).
+
+    Owner rule (verbatim, 2026-09-23): "The address doesn't come from the
+    matrícula. The address comes from the property table; it will be
+    mandatory upon property registration that it has the address in it."
+    So every field but `complemento` is REQUIRED here (not `Optional`,
+    unlike `EnderecoManualPatchBody`'s partial-patch shape) — a missing one
+    is a 422 naming it, not a registry row nobody can ever find the address
+    for again. `complemento` stays optional: it names a unit inside a
+    building and has no meaning for a house or a standalone lot.
+    """
+
+    logradouro: str = Field(min_length=1, max_length=200)
+    numero: str = Field(min_length=1, max_length=20)
+    complemento: Optional[str] = Field(default=None, max_length=100)
+    bairro: str = Field(min_length=1, max_length=120)
+    cidade: str = Field(min_length=1, max_length=120)
+    uf: str = Field(min_length=2, max_length=2)
+    cep: str = Field(min_length=1, max_length=9)
 
 
 class ImovelDocumentoExtracaoPatchBody(StrictHttpModel):

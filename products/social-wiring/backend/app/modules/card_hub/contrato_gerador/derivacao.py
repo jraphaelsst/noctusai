@@ -206,27 +206,45 @@ def _verificar_coerencia_endereco(
     texto_matricula: str,
     rotulo: str,
 ) -> None:
-    """[owner-approved 2026-09-19] WARNING-ONLY: the CRM's público
-    logradouro is NOT a reliable "same property?" signal under the portaria
-    business rule (divergence is the EXPECTED state there), so a mismatch
-    only ever `avisa`, never `bloqueia`. AREA is a much stronger signal —
-    there is no policy reason to publish a fake square footage — but it is
-    ALSO only an `avisa` here: this platform has not yet observed it in
-    practice, and a false `bloqueia` on a legitimate rounding/measurement
-    difference would refuse a real contract on a signal nobody has
-    validated. Recommendation for a later pass: once real data confirms area
-    divergence beyond tolerance never fires on a genuine same-property
-    match, promote IT (not the street) to a `bloqueia`."""
+    """[owner-approved 2026-09-19; re-confirmed 2026-09-23] WARNING-ONLY:
+    `logradouro` is the PROPERTY TABLE's address (owner rule 2026-09-23 —
+    the manual override, `carregador._endereco_manual`, when an operator set
+    one, else the CRM/Vista mirror as-is) and is NOT a reliable "same
+    property?" signal against the matrícula, so a mismatch only ever
+    `avisa`, never `bloqueia`. Two known-legitimate reasons a divergence is
+    NOT an error, both already covered without special-casing (this stays a
+    dumb substring check either way — the human reading the warning is the
+    judge, not this function):
+      · the portaria business rule — at least one tenant deliberately
+        publishes the gatehouse address on the CRM's `imoveis.logradouro`
+        rather than the unit's (see the module header above);
+      · a condomínio's GATE address vs. a UNIT's own internal address (e.g.
+        Vista's "Itália, 343" vs. the unit's actual "Alameda Alemanha, 535")
+        — once an operator sets the internal address as the override
+        (migration 159), `logradouro` here already reads the OVERRIDE, not
+        the gate, so a genuine unit correctly stops divergent-warning
+        against its own matrícula; only an UNSET override still compares
+        the gate address and may still warn, which is the honest state
+        ("nobody has confirmed the internal address yet"), not a bug.
+    AREA is a much stronger signal — there is no policy reason to publish a
+    fake square footage — but it is ALSO only an `avisa` here: this platform
+    has not yet observed it in practice, and a false `bloqueia` on a
+    legitimate rounding/measurement difference would refuse a real contract
+    on a signal nobody has validated. Recommendation for a later pass: once
+    real data confirms area divergence beyond tolerance never fires on a
+    genuine same-property match, promote IT (not the street) to a
+    `bloqueia`."""
     if logradouro and texto_matricula:
         alvo = _dobra_acentos(logradouro).strip()
         corpo = _dobra_acentos(texto_matricula)
         if alvo and alvo not in corpo:
             av.avisa(
                 "ENDERECO_DIVERGENTE_DA_MATRICULA",
-                f"O logradouro público do CRM {rotulo} ('{logradouro}') não aparece na "
-                "descrição da matrícula — pode ser a política de publicar o endereço da "
-                "portaria em vez do imóvel; confira o endereço confirmado do registro "
-                "antes de assinar.",
+                f"O logradouro cadastrado do imóvel {rotulo} ('{logradouro}') não aparece "
+                "na descrição da matrícula — pode ser a política de publicar o endereço da "
+                "portaria em vez do imóvel, um condomínio cujo endereço interno da unidade "
+                "diverge do endereço da portaria, ou um endereço realmente divergente; "
+                "confira o endereço confirmado do registro antes de assinar.",
             )
     if area is not None:
         area_matricula = _area_da_matricula(texto_matricula)

@@ -181,19 +181,29 @@ CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "onus_credor_confirmado_em",
 ) + CAMPOS_ENDERECO_CONTRATO
 
-#: Migration 149 — the manual override for the 4 address fields
-#: `contrato_gerador.derivacao._imovel` reads (logradouro/número/cidade/UF).
-#: This product has no write-back to the Vista mirror those fields normally
-#: come from (`busca_service.enriquecer`) — see `carregador._endereco_imovel`
-#: for where the override wins per-field over the mirror. Written ONLY by
+#: Migration 149, widened by 159 — the manual override for all 7 address
+#: fields the `Endereco` dataclass carries. 149 shipped only the 4
+#: `contrato_gerador.derivacao._imovel` gates the contract on (logradouro/
+#: número/cidade/UF); 159 adds complemento/bairro/CEP so the override can
+#: also carry a condo UNIT's full address when the Vista mirror only holds
+#: the building's GATE address (owner rule 2026-09-23: the property table,
+#: not the matrícula, is the address of record). This product has no
+#: write-back to the Vista mirror those fields normally come from
+#: (`busca_service.enriquecer`) — see `carregador._endereco_manual` for
+#: where the override wins per-field over the mirror. Written ONLY by
 #: `gravar_endereco_manual`, which also logs every change to
 #: `imovel_endereco_historico` — a human overriding synced/external data
-#: needs no approval, but does need a trail.
+#: needs no approval, but does need a trail. Applies to ANY registered
+#: código (`ensure_imovel` only checks `imovel_registry`, never
+#: `origem_descoberta`) — Vista-synced or hand-registered alike.
 CAMPOS_ENDERECO_MANUAL: tuple[str, ...] = (
     "endereco_manual_logradouro",
     "endereco_manual_numero",
+    "endereco_manual_complemento",
+    "endereco_manual_bairro",
     "endereco_manual_cidade",
     "endereco_manual_uf",
+    "endereco_manual_cep",
 )
 
 #: The mirror-facing field name for each override column — what
@@ -201,9 +211,25 @@ CAMPOS_ENDERECO_MANUAL: tuple[str, ...] = (
 _CAMPO_MIRROR = {
     "endereco_manual_logradouro": "logradouro",
     "endereco_manual_numero": "numero",
+    "endereco_manual_complemento": "complemento",
+    "endereco_manual_bairro": "bairro",
     "endereco_manual_cidade": "cidade",
     "endereco_manual_uf": "uf",
+    "endereco_manual_cep": "cep",
 }
+
+#: Migration 159 — the fields `RegistrarImovelBody` requires at manual
+#: registration time (owner rule 2026-09-23). `complemento` is deliberately
+#: absent: it names a unit inside a building and has no meaning for a house
+#: or a lot, so the FE offers it but the backend never refuses its absence.
+CAMPOS_ENDERECO_MANUAL_OBRIGATORIOS: tuple[str, ...] = (
+    "endereco_manual_logradouro",
+    "endereco_manual_numero",
+    "endereco_manual_bairro",
+    "endereco_manual_cidade",
+    "endereco_manual_uf",
+    "endereco_manual_cep",
+)
 
 HISTORICO_ENDERECO_TABLE = "imovel_endereco_historico"
 
@@ -506,12 +532,15 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
             resolved, row.get("endereco_registro_confirmado_por")
         ),
         "endereco_registro_confirmado_em": row.get("endereco_registro_confirmado_em"),
-        # Migration 149 — the manual override for the 4 address fields the
-        # contract gate reads. `None` on every field means "use the mirror".
+        # Migration 149, widened by 159 — the manual override for all 7
+        # address fields. `None` on every field means "use the mirror".
         "endereco_manual_logradouro": row.get("endereco_manual_logradouro"),
         "endereco_manual_numero": row.get("endereco_manual_numero"),
+        "endereco_manual_complemento": row.get("endereco_manual_complemento"),
+        "endereco_manual_bairro": row.get("endereco_manual_bairro"),
         "endereco_manual_cidade": row.get("endereco_manual_cidade"),
         "endereco_manual_uf": row.get("endereco_manual_uf"),
+        "endereco_manual_cep": row.get("endereco_manual_cep"),
         "endereco_manual_confirmado_por": table_reads.actor(
             resolved, row.get("endereco_manual_confirmado_por")
         ),
@@ -776,9 +805,10 @@ def gravar_endereco_manual(
     mirror: dict,
     usuario_id: Optional[Any],
 ) -> dict:
-    """Manual override for the 4 address fields the contract gate reads
-    (migration 149). Only keys present in `valores` are touched — same
-    absence-means-leave-alone / `None`-clears contract `atualizar` uses.
+    """Manual override for all 7 address fields (migration 149, widened by
+    159 from the 4 the contract gate reads to also cover complemento/bairro/
+    CEP — a condo UNIT address). Only keys present in `valores` are touched —
+    same absence-means-leave-alone / `None`-clears contract `atualizar` uses.
 
     `mirror` is the imóvel's CURRENT read off the Vista/registry mirror
     (`busca_service.enriquecer`'s row for this código), supplied by the

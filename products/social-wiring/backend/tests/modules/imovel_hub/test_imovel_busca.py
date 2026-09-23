@@ -219,7 +219,12 @@ class TestMirrorPreferredWithSnapFallback:
         registry = registry_row("ONE9001")
         assert registry["snap_titulo"] is None
         seed_busca(scoped, registry=[registry], mirror=[mirror_row("ONE9001")])
-        assert codigos(buscar(client, "Aurora")) == []  # empreendimento is not searched
+        # 🔴 2026-09-23 — `empreendimento` IS searched now (`_MIRROR_BUSCA_COLS`
+        # widened after the ONE7515/EUROVILLE-535 duplicate-registration
+        # incident): a mirror row's own `empreendimento` finds it, same as
+        # `titulo`. See `TestEmpreendimentoAndLogradouroAreSearched` below for
+        # the dedicated regression test.
+        assert codigos(buscar(client, "Aurora")) == ["ONE9001"]
         assert codigos(buscar(client, "Apartamento amplo")) == ["ONE9001"]
 
     def test_both_sources_are_unioned_not_chosen_between(self, client, scoped):
@@ -287,6 +292,98 @@ class TestLimits:
         assert buscar(client, "ZZZZ") == {"items": [], "total": 0}
 
 
+class TestEmpreendimentoAndLogradouroAreSearched:
+    """2026-09-23 regression — measured live on RODRIGO MORASCHI ENRIQUEZ /
+    ONE7515 (`bairro`/`empreendimento` "Euroville - Km 23"): a search for
+    "Euroville" against the mirror-only `_MIRROR_BUSCA_COLS` of the time
+    (`codigo`/`titulo`/`bairro`) still found it via `bairro` in THIS exact
+    row shape — the picker's real 2026-09-22 miss traced to an
+    `empreendimento`-only match on a DIFFERENT live row shape, which this
+    pins directly rather than reconstructing. Either way, `empreendimento`
+    and `logradouro` must both be search columns going forward — this is
+    the regression test the owner asked for."""
+
+    def test_a_listing_is_findable_purely_by_its_empreendimento(self, client, scoped):
+        seed_busca(
+            scoped,
+            registry=[registry_row("ONE7515")],
+            mirror=[
+                mirror_row(
+                    "ONE7515",
+                    titulo=None,
+                    empreendimento="Euroville - Km 23",
+                    bairro="Centro",  # deliberately NOT "Euroville" — isolates the signal
+                )
+            ],
+        )
+        assert codigos(buscar(client, "Euroville")) == ["ONE7515"]
+
+    def test_a_listing_is_findable_purely_by_its_logradouro(self, client, scoped):
+        seed_busca(
+            scoped,
+            registry=[registry_row("ONE7515")],
+            mirror=[
+                mirror_row(
+                    "ONE7515",
+                    titulo=None,
+                    empreendimento="Residencial Norte",
+                    bairro="Centro",
+                    logradouro="Alameda Alemanha",
+                )
+            ],
+        )
+        assert codigos(buscar(client, "Alameda Alemanha")) == ["ONE7515"]
+
+
+def buscar_duplicatas(client, termo: str, **params) -> dict:
+    resp = client.get(
+        "/api/imoveis/busca/duplicatas",
+        params={"q": termo, **params},
+        headers=auth(),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+class TestSugestoesParaCadastro:
+    """`GET /api/imoveis/busca/duplicatas` (migration 159) — the "did you
+    mean one of these?" check `ImovelCodigoPicker` runs right before
+    offering "cadastrar como imóvel novo". Reproduces the EUROVILLE-535
+    incident's shape: an operator about to hand-register a duplicate of a
+    condo unit gets a hit on either signal named in the owner's rule."""
+
+    def test_matches_on_empreendimento(self, client, scoped):
+        seed_busca(
+            scoped,
+            registry=[registry_row("ONE7515")],
+            mirror=[mirror_row("ONE7515", empreendimento="Euroville - Km 23")],
+        )
+        assert codigos(buscar_duplicatas(client, "Euroville")) == ["ONE7515"]
+
+    def test_matches_on_a_trailing_numero_against_complemento(self, client, scoped):
+        """The operator types the CÓDIGO they are about to register
+        (`"EUROVILLE-535"`), not a search phrase — the trailing digits are
+        checked against `complemento`, which `buscar()` deliberately never
+        searches (a bare number would match too broadly there)."""
+        seed_busca(
+            scoped,
+            registry=[registry_row("ONE7515")],
+            mirror=[mirror_row("ONE7515", complemento="535", empreendimento="Outro Nome")],
+        )
+        assert codigos(buscar_duplicatas(client, "EUROVILLE-535")) == ["ONE7515"]
+
+    def test_no_signal_is_an_empty_list_not_an_error(self, client, scoped):
+        seed_busca(scoped, registry=[registry_row("ONE9001")], mirror=[mirror_row("ONE9001")])
+        assert buscar_duplicatas(client, "ZZZZNADA") == {"items": [], "total": 0}
+
+    def test_blank_term_refuses_nothing_and_answers_empty(self, client, scoped):
+        """Unlike `buscar()`, this endpoint has no minimum-length refusal —
+        it is an advisory check the picker calls on its own schedule, not a
+        user-facing search box with its own validation message."""
+        seed_busca(scoped, registry=[], mirror=[])
+        assert buscar_duplicatas(client, "  ") == {"items": [], "total": 0}
+
+
 class TestAuthBoundary:
     """Strict `== 401`, never `in (401, 404|422)` — a permissive tuple passes
     when the route is absent and when validation runs before auth.
@@ -300,4 +397,8 @@ class TestAuthBoundary:
         """`q=O` is below the minimum length. Auth must still fire FIRST —
         a 422 here would mean an anonymous caller reaches validation."""
         resp = anon_client.get("/api/imoveis/busca", params={"q": "O"})
+        assert resp.status_code == 401, resp.text
+
+    def test_unauthenticated_busca_duplicatas_is_strictly_401(self, anon_client):
+        resp = anon_client.get("/api/imoveis/busca/duplicatas", params={"q": "Euroville"})
         assert resp.status_code == 401, resp.text
