@@ -90,6 +90,7 @@ from noctusai_lib.integrations.documents.nacionalidade import (
     find_nacionalidade,
 )
 from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao, is_same_as_cpf
+from noctusai_lib.integrations.documents.misfile import classificar_tipo_provavel
 from noctusai_lib.integrations.documents.ladder import (
     DocumentTextLadder,
     looks_like_pdf,
@@ -288,6 +289,7 @@ __all__ = [
     "find_rg_orgao",
     "identity_document_render_dpi_policy",
     "is_same_as_cpf",
+    "classificar_tipo_provavel",
     "looks_like_a_name",
     "looks_like_pdf",
     "make_document_transcriber",

@@ -119,6 +119,112 @@ class TestEncodedSize:
         assert _encoded_size(raw) == len(base64.b64encode(raw))
 
 
+class TestVisionRasterIsJpegNotPng:
+    """🔴 `identity-vision-render-quality` (2026-09-23, real, measured).
+
+    A photographed/scanned identity document (a CamScanner-style capture,
+    not a vector "CNH Digital" PDF) is photographic content — PNG's
+    lossless encoding is 8-12x LARGER than JPEG for the same pixels there.
+    Measured on a real 1-page scanned CNH: at 400 DPI, PNG's base64 size
+    is 34.8MB (nowhere near Anthropic's 5MB ceiling) while JPEG at this
+    quality is 3.5MB. Every byte PNG spends the step-down ladder then has
+    to claw back by rendering at a LOWER DPI — the actual failure this
+    fixes: two independent vision runs against the SAME 100-DPI-forced
+    document transcribed mutually-inconsistent field VALUES (not just
+    wording) for the CPF/registration-number pair. This class locks in
+    the format choice with real PyMuPDF, invented pixels, no PII."""
+
+    @staticmethod
+    def _pdf_de_uma_pagina(width=400, height=550) -> bytes:
+        """A page dominated by a NOISY embedded image — the shape that
+        actually matters (a photographed/scanned card is photographic,
+        entropy-heavy content), not a flat vector rect. A flat fill/text
+        page is PNG's *best* case, not a real document's."""
+        import fitz  # type: ignore
+        import random
+
+        random.seed(0)
+        iw, ih = 300, 420
+        ruido = bytes(random.getrandbits(8) for _ in range(iw * ih * 3))
+        pix_ruido = fitz.Pixmap(fitz.csRGB, iw, ih, ruido, 0)
+        ruido_png = pix_ruido.tobytes("png")
+
+        doc = fitz.open()
+        page = doc.new_page(width=width, height=height)
+        page.insert_image(fitz.Rect(20, 20, 20 + iw / 2, 20 + ih / 2), stream=ruido_png)
+        for i in range(10):
+            page.insert_text((10, 20 + i * 20), f"LINHA {i} DE TEXTO DENSO", fontsize=8)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+        return pdf_bytes
+
+    def test_pdf_to_images_produces_jpeg_bytes(self) -> None:
+        from noctusai_lib.integrations.documents.transcription import _pdf_to_images
+
+        pdf_bytes = self._pdf_de_uma_pagina()
+        images = _pdf_to_images(pdf_bytes, [1], 200)
+        # JPEG's SOI marker (`\xff\xd8\xff`) — the PNG signature
+        # (`\x89PNG\r\n\x1a\n`) never appears here by construction.
+        assert images[1][:3] == b"\xff\xd8\xff"
+
+    def test_jpeg_is_substantially_smaller_than_png_at_the_same_dpi(self) -> None:
+        import fitz  # type: ignore
+
+        from noctusai_lib.integrations.documents.transcription import (
+            _VISION_JPEG_QUALITY,
+            _pdf_to_images,
+        )
+
+        pdf_bytes = self._pdf_de_uma_pagina()
+        jpeg_bytes = _pdf_to_images(pdf_bytes, [1], 200)[1]
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        png_bytes = doc[0].get_pixmap(matrix=fitz.Matrix(200 / 72, 200 / 72)).tobytes("png")
+        doc.close()
+
+        # A synthetic flat-colour fixture does not reproduce the measured
+        # 8-12x real-photograph ratio (PNG compresses flat/vector content
+        # well too) — the DIRECTION is what this asserts; the magnitude is
+        # the module docstring's own real, measured number.
+        assert len(jpeg_bytes) < len(png_bytes)
+        # And it really is JPEG at the pinned quality, not a coincidence of
+        # PyMuPDF's default — decoding it back must succeed.
+        reloaded = fitz.Pixmap(jpeg_bytes)
+        assert reloaded.width > 0 and reloaded.height > 0
+        assert _VISION_JPEG_QUALITY == 90
+
+    def test_dominant_embedded_image_crop_render_is_also_jpeg(self) -> None:
+        """The 2+-comparable-images union-crop branch — see
+        `TestDominantEmbeddedImage.test_two_comparable_images_crop_renders_
+        their_union_region` below for the shape; this only locks in the
+        format of THAT branch's own render."""
+        import fitz  # type: ignore
+
+        from noctusai_lib.integrations.documents.transcription import (
+            _dominant_embedded_image,
+        )
+
+        def _card(color):
+            d = fitz.open()
+            p = d.new_page(width=40, height=25)
+            p.draw_rect(p.rect, color=color, fill=color)
+            png = p.get_pixmap(matrix=fitz.Matrix(4, 4)).tobytes("png")
+            d.close()
+            return png
+
+        img_a, img_b = _card((0.1, 0.3, 0.7)), _card((0.7, 0.2, 0.1))
+        doc = fitz.open()
+        page = doc.new_page(width=200, height=280)
+        page.insert_image(fitz.Rect(20, 20, 60, 45), stream=img_a)
+        page.insert_image(fitz.Rect(100, 20, 140, 45), stream=img_b)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resultado = _dominant_embedded_image(pdf_bytes, 1)
+        assert resultado is not None
+        assert resultado[:3] == b"\xff\xd8\xff"
+
+
 class TestDominantEmbeddedImage:
     """Real PyMuPDF, synthetic one-page PDFs — invented pixels, no PII."""
 

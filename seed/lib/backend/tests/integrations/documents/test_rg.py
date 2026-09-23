@@ -194,6 +194,67 @@ class TestNothing:
         assert find_rg("NOME FULANO DE TAL SEXO MASCULINO") == (None, "nenhuma", None)
 
 
+class TestLabelledCandidateSurvivesTheCpfShapeGuard:
+    """🔴 THE NEW-MODEL CNH/CIN CASE — real, measured 2026-09-23.
+
+    A "CNH Digital" field prints `44886493866 SP` under `DOC IDENTIDADE /
+    ORG. EMISSOR / UF` — eleven digits that are ALSO, verbatim, the same
+    holder's own valid CPF (issuer `IIGDR`, the instant-identity
+    convention). Before this fix, `_e_um_cpf`'s guard ran for EVERY
+    candidate regardless of label and silently dropped this one — a real,
+    well-evidenced, explicitly-labelled RG. The guard still protects the
+    UNLABELLED case (`TestDecoys`, above) exactly as before.
+    """
+
+    #: A real holder's CPF, reused verbatim as the "DOC IDENTIDADE" value —
+    #: this is the actual CIN/IIGDR shape, not a copy-paste data-entry
+    #: error (see `is_same_as_cpf`'s own docstring on that distinction).
+    CPF_COMO_RG = "44886493866"
+
+    def test_a_labelled_identity_number_equal_to_a_valid_cpf_is_kept(self):
+        texto = f"DOC IDENTIDADE / ORG. EMISSOR / UF\n{self.CPF_COMO_RG} SP"
+        valor, conf, rotulo = find_rg(texto)
+        assert valor == self.CPF_COMO_RG
+        assert conf == "alta"
+
+    def test_the_kept_value_is_flagged_same_as_cpf_for_a_downstream_confirm(self):
+        # This module never refuses the write — it hands the caller enough
+        # to ask for a human confirm, same posture `is_same_as_cpf`'s own
+        # docstring documents.
+        assert is_same_as_cpf(self.CPF_COMO_RG, "448.864.938-66") is True
+
+    def test_an_unlabelled_eleven_digit_cpf_still_never_becomes_an_rg(self):
+        # The widened `_RG_RE` upper bound (5-11) does not, on its own,
+        # reopen the unlabelled guard — `_e_um_cpf` still runs for a
+        # candidate with no RG label anchoring it at all.
+        assert find_rg(f"OBSERVACOES\n{self.CPF_COMO_RG}") == (None, "nenhuma", None)
+
+
+class TestOrgaoBirthplaceContextIsNotAnIssuer:
+    """🔴 A CNH's OWN BIRTHPLACE FIELD MISREAD AS THE ISSUING BODY — real,
+    measured 2026-09-23. "16/02/1997 SAO PAULO/SP" sits under "DATA, LOCAL
+    E UF DE NASCIMENTO" — a place the holder was BORN, not who issued the
+    card — yet the shape-only issuer scan matched `PAULO` bound to `SP` and
+    returned a fabricated `rg_orgao`, exactly the `TestOrgaoJurisdiction
+    ContextIsNotAnIssuer` class above documents for a cartório's own
+    COMARCA/TABELIONATO address."""
+
+    def test_a_birthplace_city_under_nascimento_is_not_read_as_an_issuer(self):
+        assert find_rg_orgao(
+            "DATA, LOCAL E UF DE NASCIMENTO\n16/02/1997 SAO PAULO/SP"
+        ) == (None, "nenhuma")
+
+    def test_naturalidade_context_is_also_excluded(self):
+        assert find_rg_orgao("NATURALIDADE SAO PAULO/SP") == (None, "nenhuma")
+
+    def test_a_real_issuer_elsewhere_still_reads_through_the_birthplace(self):
+        texto = (
+            "DATA, LOCAL E UF DE NASCIMENTO\n16/02/1997 SAO PAULO/SP\n"
+            "DOC IDENTIDADE / ORG. EMISSOR / UF\n13032360 SSP/SP\n"
+        )
+        assert find_rg_orgao(texto) == ("SSP/SP", "alta")
+
+
 class TestIsSameAsCpf:
     """The real-contract bug: an RG field carrying the CPF verbatim."""
 
@@ -231,9 +292,15 @@ class TestOrgaoAnchoredToTheNumber:
         assert rg == "13032360"
         assert find_rg_orgao(self.CNH, rg) == ("SSP/SP", "alta")
 
-    def test_without_the_number_the_shape_scan_is_unchanged(self):
-        # The old contract still holds for callers that pass no RG.
-        assert find_rg_orgao(self.CNH) == ("PAULO/SP", "baixa")
+    def test_without_the_number_shape_scan_skips_the_birthplace(self):
+        # 2026-09-23: "SAO PAULO/SP" sits in a `NASCIMENTO` (birthplace)
+        # field, not an issuing-body one — `_ORGAO_CONTEXTO_JURISDICAO` now
+        # excludes it here too, same as it already excluded a cartório's
+        # own COMARCA/TABELIONATO address. Only the genuine issuer-shaped
+        # token (`SSP/SP`, field 4c) survives the shape scan, so a caller
+        # with no RG hint gets the right answer at `alta` instead of a
+        # birthplace city mistaken for the issuing body at `baixa`.
+        assert find_rg_orgao(self.CNH) == ("SSP/SP", "alta")
 
     def test_dash_separated_pair_on_a_qualification_line(self):
         texto = "portador do RG 13.032.360-3 - SSP-SP e CPF 041.333.248-97"

@@ -646,14 +646,41 @@ def _texto_confiavel_por_pagina(camada, num_paginas: int) -> dict[int, str]:
     return {p.number: p.text for p in camada.pages if p.is_substantive}
 
 
+#: 🔴 JPEG, NOT PNG (2026-09-23, real, measured) — the
+#: `identity-vision-render-quality` fix. A photographed/scanned identity
+#: document (a CamScanner-style capture of a physical CNH, not a vector
+#: "CNH Digital" PDF) is photographic content, and PNG's lossless encoding
+#: is 8-12x LARGER than JPEG for the SAME pixels on that content — measured
+#: on a real 1-page scanned CNH: at 400 DPI, PNG's base64 size is 34.8MB
+#: (nowhere close to Anthropic's 5MB `MAX_IMAGE_BYTES` ceiling) while JPEG
+#: at this quality is 3.5MB (comfortably under it). Every byte PNG spends
+#: on lossless fidelity is a byte `_pdf_to_images_within_budget`'s
+#: step-down ladder then has to claw back by rendering at a LOWER dpi — the
+#: exact live failure this fixes: `identity_document_render_dpi_policy`
+#: asked for 400 DPI on a 1-page CNH and the PNG budget forced it all the
+#: way down to 100 DPI, a render too coarse for the vision model to read
+#: reliably (two independent runs against the SAME 100-DPI-forced document
+#: transcribed different, mutually-inconsistent field VALUES — not just
+#: different wording — for the CPF/registration-number pair). JPEG at this
+#: quality lets the SAME document render at the full policy-requested DPI
+#: instead, which is the actual fix for that class of read failure — a
+#: cheaper `temperature` knob cannot substitute for legible input.
+_VISION_JPEG_QUALITY = 90
+
+
 def _pdf_to_images(
     pdf_bytes: bytes, paginas: list[int], render_dpi: int
 ) -> dict[int, bytes]:
-    """Rasterize the requested pages to PNG, keyed by 1-based page number.
+    """Rasterize the requested pages to JPEG, keyed by 1-based page number.
 
     Rendering only what rung 2 needs matters twice: a page we already read is
     wasted CPU here and wasted money one call later. Keying by page number is
     what lets the caller interleave OCR'd and text-layer pages in order.
+
+    JPEG, not PNG — see `_VISION_JPEG_QUALITY`'s comment for the measured
+    reasoning; this is a vision INPUT, never persisted or re-decoded losslessly
+    downstream, so JPEG's lossy compression costs nothing this module's
+    consumers observe.
     """
     import fitz  # type: ignore  # PyMuPDF
 
@@ -667,7 +694,9 @@ def _pdf_to_images(
             numero = index + 1
             if numero not in alvo:
                 continue
-            images[numero] = doc[index].get_pixmap(matrix=matrix).tobytes("png")
+            images[numero] = doc[index].get_pixmap(matrix=matrix).tobytes(
+                "jpg", jpg_quality=_VISION_JPEG_QUALITY
+            )
     finally:
         doc.close()
     return images
@@ -837,7 +866,9 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
         zoom = _CARD_REGION_DPI / 72
         try:
             pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=uniao)
-            return pix.tobytes("png")
+            # JPEG, not PNG — see `_VISION_JPEG_QUALITY`'s comment; this
+            # crop is also vision INPUT, same reasoning as `_pdf_to_images`.
+            return pix.tobytes("jpg", jpg_quality=_VISION_JPEG_QUALITY)
         except Exception:
             logger.debug("dominant-image: crop render failed on page %d", numero, exc_info=True)
             return None

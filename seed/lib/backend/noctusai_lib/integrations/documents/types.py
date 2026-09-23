@@ -347,6 +347,20 @@ class IdentityFields:
     aviso: Optional[str] = None
     aviso_mensagem: Optional[str] = None
 
+    #: 🔴 A CONTENT SIGNAL, NOT A VERDICT. `misfile.classificar_tipo_
+    #: provavel`'s best-effort read of what `tipo_documento` this text's
+    #: OWN markers suggest — independent of, and never compared against,
+    #: whatever the caller declared this document to be (this extractor is
+    #: type-agnostic by design — see the class docstring on the family's
+    #: other fields). `None` means no marker phrase was recognised, not
+    #: "this is not an identity document" — see that module's own
+    #: docstring. A consumer that DOES know the declared `tipo_documento`
+    #: (the product layer, never this seed module) is the one place a
+    #: mismatch becomes an `aviso` — this module never retypes, never
+    #: writes `tipo_documento`, and is not itself part of `CAMPOS` (it is
+    #: not a persistable per-person fact, it is a diagnostic).
+    tipo_provavel: Optional[str] = None
+
     def _valor(self, campo: str) -> object:
         return getattr(self, campo)
 

@@ -97,6 +97,7 @@ from noctusai_lib.integrations.documents import (
     IdentityFields,
     TitularEsperado,
     canonical_gender,
+    classificar_tipo_provavel,
     is_same_as_cpf,
     make_identity_extractor,
     nomes_compativeis,
@@ -1337,6 +1338,39 @@ async def extrair_identidade(
         or bool(conjuges)
         or any(v is not None for v, _, _, _ in lidos.values())
     )
+
+    # 🔴 MISFILE DETECTION — FLAGS, NEVER RETYPES (2026-09-23, owner
+    # directive). Two independent signals, both content-only, both never
+    # writing `tipo_documento` — a human confirms via the existing card_hub
+    # UI, same posture as every other `aviso` in this family:
+    #
+    # 1. `fields.tipo_provavel` disagrees with the declared `tipo`. Real,
+    #    measured: at least two CNHs were uploaded typed `rg`, read fine by
+    #    this type-agnostic extractor (so the field yield never looked
+    #    wrong), and nothing anywhere noticed the mismatch. `None` means no
+    #    marker was recognised — NOT a claim of disagreement, so it never
+    #    logs as one (see `classificar_tipo_provavel`'s own docstring).
+    # 2. No marker recognised AT ALL (`tipo_provavel is None`) on a
+    #    supposedly-identity `tipo` that came back with NOTHING extracted
+    #    (`not achou_algo`) — a real-estate "roteiro" and an ads report have
+    #    both been uploaded typed `rg` in production. Scoped OFF
+    #    `TIPOS_ENDERECO`: this module has no positive address-content
+    #    marker (see `classificar_tipo_provavel`'s scope note), so an
+    #    ordinary illegible comprovante would otherwise flag on this signal
+    #    alone for a reason that has nothing to do with misfiling.
+    if fields.tipo_provavel and fields.tipo_provavel != tipo:
+        logger.warning(
+            "extracao %s: possivel tipo_documento incorreto — declarado=%s "
+            "provavel=%s (documento nao foi retipado)",
+            documento_id, tipo, fields.tipo_provavel,
+        )
+    elif fields.tipo_provavel is None and not achou_algo and not so_endereco:
+        logger.warning(
+            "extracao %s: nenhum marcador de identidade reconhecido para "
+            "tipo declarado=%s e nada foi extraido (documento nao foi "
+            "retipado)",
+            documento_id, tipo,
+        )
 
     # Recorded whether or not it lands on the client — the `_confianca` and
     # `_rotulo` columns let a human audit the reasoning without re-opening the

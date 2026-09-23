@@ -381,3 +381,70 @@ class TestNomeAtualDosConjugesHeader:
 
     def test_a_cpf_label_is_not_name_shaped(self):
         assert looks_like_a_name("Número do CPF") is False
+
+
+class TestTrailingCitationClause:
+    """A name-shaped line with a registry citation or a same-row field
+    label glued onto its TAIL — real, measured 2026-09-23 — must not be
+    thrown away whole for a formatting accident. See `name.
+    _strip_trailing_citation`."""
+
+    def test_a_livro_folha_termo_citation_on_the_same_line_is_trimmed(self):
+        # Structure from a real certidão averbação (names invented): the
+        # spouse's post-marriage name and the averbação's own registry
+        # citation land on ONE transcribed line.
+        texto = (
+            "NOME QUE CADA UM DOS CONJUGES PASSOU A UTILIZAR\n"
+            "ELA: FULANA DE TAL SILVA LIVRO B-123 FOLHA 45 TERMO 6789\n"
+        )
+        valor, confianca, rotulo = find_name(texto)
+        assert valor == "FULANA DE TAL SILVA"
+        assert confianca == "alta"
+
+    def test_a_same_row_cpf_header_tail_is_trimmed_under_nomes(self):
+        # Structure from a real certidão's wide `NOMES` holder table (names
+        # invented): the NEXT column's `CPF` header lands on the same
+        # visual row as the first holder's name, joined onto one OCR line.
+        # Was `find_name_conflitos` returning ZERO candidates before this
+        # fix (2026-09-23) — the whole line failed `looks_like_a_name`
+        # outright because it contained the word "CPF".
+        texto = (
+            "NOMES\n"
+            "FULANO DE TAL SANTOS                          CPF\n"
+            "                                          042.654.468-95\n"
+            "CICLANA DE TAL PEREIRA                        CPF\n"
+            "                                          041.333.248-97\n"
+            "MATRICULA\n"
+            "1155568 01 55 2011 2 00198 278 0059433-91\n"
+        )
+        assert find_name_conflitos(texto) == [
+            "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
+        ]
+
+    def test_trimming_an_all_institutional_line_still_finds_nothing(self):
+        from noctusai_lib.integrations.documents.name import _strip_trailing_citation
+
+        # No real name survives the trim — the line stays rejected, not
+        # silently promoted to an empty-string "name".
+        assert looks_like_a_name(
+            _strip_trailing_citation("LIVRO FOLHA TERMO")
+        ) is False
+
+
+class TestAsteriskWrappedValue:
+    """A cartório template that wraps every printed value in a footnote
+    asterisk — real, measured 2026-09-23 (`* NOME COMPLETO *`). Neither
+    edge is a name character, so without trimming it the whole line failed
+    the shape check even though the name inside it is well-formed."""
+
+    def test_a_name_wrapped_in_asterisks_under_nomes_is_found(self):
+        texto = (
+            "NOMES:\n"
+            "* FULANO DE TAL SANTOS *\n"
+            "* CICLANA DE TAL PEREIRA *\n"
+            "MATRICULA:\n"
+            "119222 01 55 2017 2 00093 208 0027875-91\n"
+        )
+        assert find_name_conflitos(texto) == [
+            "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
+        ]

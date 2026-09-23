@@ -181,8 +181,13 @@ _INSTITUTIONAL_TOKENS = frozenset(
 #: a misread label or a document number.
 _NAME_CHARS = re.compile(r"^[A-Z' -]+$")
 
-#: Separators that sit between a label and its value.
-_SEPARATORS = " :\t-–—.|"
+#: Separators that sit between a label and its value. `*` joined 2026-09-23:
+#: a real cartório template (`CERTIDÃO DE CASAMENTO`, `NOMES:` block) wraps
+#: every printed value in a footnote asterisk — `* CAIO BRAGANTIN SPOLTORE
+#: *` — which `_NAME_CHARS` correctly refuses to treat as part of the name
+#: itself; without it here, the leading/trailing `*` alone was enough to
+#: fail the shape check on an otherwise well-formed, label-anchored name.
+_SEPARATORS = " :\t-–—.|*"
 
 
 def _label_at(line: str, pos: int) -> tuple[Optional[str], bool]:
@@ -272,6 +277,42 @@ def looks_like_a_name(candidate: str) -> bool:
 _CPF_SHAPE_RE = re.compile(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$|^\d{11}$")
 
 
+def _strip_trailing_citation(value: str) -> str:
+    """Drop a trailing registry-citation / same-row field-label clause that
+    rides on the SAME transcribed line as a real name.
+
+    Two real shapes measured on production certidões (2026-09-23), both
+    the same underlying mistake wearing a different label:
+
+    1. A registry citation glued onto the name line —
+       `FULANO DE TAL SILVA LIVRO B-123 FOLHA 45 TERMO 6789` — where the
+       averbação's own LIVRO/FOLHA/TERMO reference sits on the SAME OCR
+       line as the spouse's name.
+    2. A wide `NOMES` table where the next column's `CPF` header (or the
+       row's own `MATRICULA`/`NUMERO` label) lands on the same visual row
+       as a holder's name, so the joined line reads `ROBERTO CASSEMIRO
+       DOS SANTOS ... CPF` — one holder's name in a two-spouse certidão,
+       the OTHER spouse's row starting fresh below it.
+
+    `looks_like_a_name` correctly rejects either raw line outright (an
+    institutional token anywhere in it fails the whole-line check) — but
+    the REAL name is right there, unbroken, before the decoration starts.
+    Rejecting the whole line throws away well-evidenced holder data for a
+    formatting accident, so every candidate line is tried both AS-IS and
+    with its trailing institutional-token clause cut before being judged.
+
+    Only ever shortens the TAIL — trimming a prefix decoy would risk
+    cutting into the actual name — and only when the trim leaves at least
+    one word behind; an all-institutional line still correctly falls
+    through unchanged to `looks_like_a_name`'s ordinary rejection.
+    """
+    words = (value or "").split()
+    for i, w in enumerate(words):
+        if w in _INSTITUTIONAL_TOKENS and i > 0:
+            return " ".join(words[:i])
+    return value
+
+
 def _coleta_titulares_multiplos(
     lines: list[str], start: int, label: str
 ) -> list[tuple[str, str]]:
@@ -291,8 +332,13 @@ def _coleta_titulares_multiplos(
     j = start
     while j < len(lines):
         linha = lines[j]
-        if looks_like_a_name(linha):
-            candidatos.append((linha.strip(_SEPARATORS).strip(), label))
+        # See `_strip_trailing_citation`: a wide `NOMES` table routinely
+        # lands the NEXT column's `CPF` header on the same visual row as
+        # this holder's name — trim it before judging the line, so a real,
+        # well-evidenced name is not thrown away for a layout accident.
+        candidato = _strip_trailing_citation(linha)
+        if looks_like_a_name(candidato):
+            candidatos.append((candidato.strip(_SEPARATORS).strip(), label))
             j += 1
             continue
         if linha == "CPF" or _CPF_SHAPE_RE.match(linha):
@@ -352,15 +398,17 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
                 idx += 1
                 continue
             tail = line[end:].strip(_SEPARATORS).strip()
-            if tail and looks_like_a_name(tail):
-                candidates.append((tail, label))
+            tail_candidato = _strip_trailing_citation(tail)
+            if tail and looks_like_a_name(tail_candidato):
+                candidates.append((tail_candidato, label))
             idx += 1
             continue
 
         # Value on the same line, e.g. `NOME: FULANO DE TAL`.
         tail = line[end:].strip(_SEPARATORS).strip()
-        if tail and looks_like_a_name(tail):
-            candidates.append((tail, label))
+        tail_candidato = _strip_trailing_citation(tail)
+        if tail and looks_like_a_name(tail_candidato):
+            candidates.append((tail_candidato, label))
             idx += 1
             continue
 
@@ -370,9 +418,10 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
         # following field.
         if not tail and idx + 1 < len(lines):
             nxt = lines[idx + 1]
+            nxt_candidato = _strip_trailing_citation(nxt)
             n_label, n_decoy, _ = _find_label(nxt)
-            if n_label is None and looks_like_a_name(nxt):
-                candidates.append((nxt.strip(_SEPARATORS).strip(), label))
+            if n_label is None and looks_like_a_name(nxt_candidato):
+                candidates.append((nxt_candidato.strip(_SEPARATORS).strip(), label))
         idx += 1
 
     return candidates

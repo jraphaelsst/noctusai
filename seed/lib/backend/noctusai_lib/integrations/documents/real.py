@@ -56,6 +56,7 @@ from noctusai_lib.integrations.documents.cpf import (
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
+from noctusai_lib.integrations.documents.misfile import classificar_tipo_provavel
 from noctusai_lib.integrations.documents.transcription import (
     identity_document_render_dpi_policy,
 )
@@ -414,6 +415,7 @@ class LadderIdentityExtractor:
 
         return IdentityFields(
             kind=kind,
+            tipo_provavel=classificar_tipo_provavel(text),
             aviso=aviso,
             aviso_mensagem=aviso_mensagem,
             data_nascimento=data,

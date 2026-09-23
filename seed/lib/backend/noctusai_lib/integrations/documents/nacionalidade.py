@@ -126,26 +126,49 @@ _BLOCO_LABELS = (
 #: word -> canonical dict, mirroring `civil_status._REGIME_BENS_PADROES`:
 #: several of these need a hyphen-or-space variant (`norte-americano`) that
 #: a single reverse-lookup dict cannot express as cleanly.
+#: 🔴 EVERY PATTERN CARRIES AN OPTIONAL TRAILING `S?` FOR THE PLURAL
+#: (2026-09-23, real, measured). `\bBRASILEIR[OA]\b` never matched
+#: "BRASILEIROS" at all — the `O` in `[OA]` is a word character, and the
+#: following `S` is ALSO a word character, so `\b` (a boundary between a
+#: word char and a non-word char) never fires between them; the whole
+#: pattern silently failed on a certidão's collective "somos brasileiros"
+#: / "ambos... brasileiros" phrasing, the single most common gentílico
+#: shape after the singular. Canonicalisation is unaffected: the plural
+#: still maps to the SAME singular canonical token, exactly like the
+#: masculine/feminine collapse this module already does.
 _GENTILICOS: tuple[tuple["re.Pattern[str]", str], ...] = (
-    (re.compile(r"\bBRASILEIR[OA]\b"), "brasileiro"),
-    (re.compile(r"\bPORTUGUES[A]?\b"), "português"),
-    (re.compile(r"\bITALIAN[OA]\b"), "italiano"),
-    (re.compile(r"\bESPANHOL[A]?\b"), "espanhol"),
-    (re.compile(r"\bARGENTIN[OA]\b"), "argentino"),
-    (re.compile(r"\bNORTE[- ]AMERICAN[OA]\b"), "norte-americano"),
-    (re.compile(r"\bALEMA[O]?\b"), "alemão"),
-    (re.compile(r"\bJAPONES[A]?\b"), "japonês"),
-    (re.compile(r"\bCHINES[A]?\b"), "chinês"),
-    (re.compile(r"\bFRANCES[A]?\b"), "francês"),
-    (re.compile(r"\bURUGUAI[OA]\b"), "uruguaio"),
-    (re.compile(r"\bPARAGUAI[OA]\b"), "paraguaio"),
-    (re.compile(r"\bBOLIVIAN[OA]\b"), "boliviano"),
-    (re.compile(r"\bPERUAN[OA]\b"), "peruano"),
-    (re.compile(r"\bCHILEN[OA]\b"), "chileno"),
-    (re.compile(r"\bCOLOMBIAN[OA]\b"), "colombiano"),
-    (re.compile(r"\bVENEZUELAN[OA]\b"), "venezuelano"),
-    (re.compile(r"\bANGOLAN[OA]\b"), "angolano"),
-    (re.compile(r"\bLIBANES[A]?\b"), "libanês"),
+    (re.compile(r"\bBRASILEIR[OA]S?\b"), "brasileiro"),
+    # -ês/-esa family: masc plural adds `ES` (não apenas `S`) — "português"
+    # -> "portugueses", not "*portugueses" via a bare `S`. `[A]?S?` alone
+    # can reach "portuguesa"/"portuguesas" but never "portugueses"; every
+    # sibling in this family (japonês, chinês, francês, libanês) shares the
+    # same irregular masculine plural and gets the same fix.
+    (re.compile(r"\bPORTUGUES(?:ES|AS|A)?\b"), "português"),
+    (re.compile(r"\bITALIAN[OA]S?\b"), "italiano"),
+    # "espanhol" -> "espanhóis" (masc plural, `-OL` -> `-OIS`, irregular —
+    # not a suffix of the singular stem); "espanhola"/"espanholas" are
+    # regular. Kept as an explicit alternative rather than forced into the
+    # generic optional-suffix shape the rest of this table uses.
+    (re.compile(r"\b(?:ESPANHOL(?:A|AS)?|ESPANHOIS)\b"), "espanhol"),
+    (re.compile(r"\bARGENTIN[OA]S?\b"), "argentino"),
+    (re.compile(r"\bNORTE[- ]AMERICAN[OA]S?\b"), "norte-americano"),
+    # ALEMA (fem sing "alemã") / ALEMAO (masc sing "alemão") / ALEMAS (fem
+    # plural "alemãs") / ALEMAES (masc plural "alemães", O -> E in the
+    # plural) — the one gentílico whose plural does not just append `S` to
+    # the singular, so it cannot share the generic `S?` shape the rest do.
+    (re.compile(r"\bALEMA(?:O|ES|S)?\b"), "alemão"),
+    (re.compile(r"\bJAPONES(?:ES|AS|A)?\b"), "japonês"),
+    (re.compile(r"\bCHINES(?:ES|AS|A)?\b"), "chinês"),
+    (re.compile(r"\bFRANCES(?:ES|AS|A)?\b"), "francês"),
+    (re.compile(r"\bURUGUAI[OA]S?\b"), "uruguaio"),
+    (re.compile(r"\bPARAGUAI[OA]S?\b"), "paraguaio"),
+    (re.compile(r"\bBOLIVIAN[OA]S?\b"), "boliviano"),
+    (re.compile(r"\bPERUAN[OA]S?\b"), "peruano"),
+    (re.compile(r"\bCHILEN[OA]S?\b"), "chileno"),
+    (re.compile(r"\bCOLOMBIAN[OA]S?\b"), "colombiano"),
+    (re.compile(r"\bVENEZUELAN[OA]S?\b"), "venezuelano"),
+    (re.compile(r"\bANGOLAN[OA]S?\b"), "angolano"),
+    (re.compile(r"\bLIBANES(?:ES|AS|A)?\b"), "libanês"),
 )
 
 #: Every canonical (masculine) token this module can return, in the order
