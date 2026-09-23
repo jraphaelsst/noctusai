@@ -6,6 +6,7 @@ still work when it doesn't.
 """
 import pytest
 from noctusai_lib.integrations.persistence import SqliteRecordStore
+from noctusai_lib.integrations.storage import FakeStorageBackend
 
 from app.dependencies import coerce_org_uuid
 from app.repositories import Repositorios
@@ -22,20 +23,18 @@ def repos() -> Repositorios:
 
 
 @pytest.fixture
-def api(client, repos, monkeypatch):
+def api(client, repos):
     """`client` with a throwaway store and an in-memory storage backend."""
-    from app.config import settings
     from app.main import app
-    import app.storage as storage_mod
+    from app.storage import get_storage
 
-    monkeypatch.setattr(settings, "igig_storage_kind", "fake")
-    storage_mod.reset_storage()
     app.dependency_overrides[get_repositorios] = lambda: repos
     app.dependency_overrides[get_repositorios_admin] = lambda: repos
+    app.dependency_overrides[get_storage] = lambda: FakeStorageBackend()
     yield client
     app.dependency_overrides.pop(get_repositorios, None)
     app.dependency_overrides.pop(get_repositorios_admin, None)
-    storage_mod.reset_storage()
+    app.dependency_overrides.pop(get_storage, None)
 
 
 @pytest.fixture

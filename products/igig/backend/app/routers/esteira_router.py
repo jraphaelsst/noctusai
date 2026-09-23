@@ -43,6 +43,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from noctusai_lib.domain.pipeline import pipeline_stages_router
 from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
 from app.config import settings
@@ -288,6 +289,7 @@ async def ver_aprovacao_publica(
     request: Request,
     token: str,
     repos: Repositorios = Depends(get_repositorios_admin),
+    storage: StorageBackend = Depends(get_storage),
 ) -> AprovacaoPublicaOut:
     """What the client sees. No auth; narrow projection."""
     aprovacao = _resolver_link(repos, token)
@@ -309,7 +311,7 @@ async def ver_aprovacao_publica(
     pecas: list[PecaPublica] = []
     for peca in repos.peca.da_pauta(org_id, str(pauta["id"])):
         try:
-            url = await get_storage().signed_url(
+            url = await storage.signed_url(
                 bucket=settings.igig_storage_bucket, key=str(peca["storage_key"])
             )
         except Exception:  # noqa: BLE001 — storage outage must not block approval

@@ -8,6 +8,7 @@ asserted rather than assumed.
 import pytest
 from cryptography.fernet import Fernet
 from noctusai_lib.integrations.persistence import SqliteRecordStore
+from noctusai_lib.integrations.storage import FakeStorageBackend
 
 from app.dependencies import coerce_org_uuid
 from app.repositories import Repositorios
@@ -25,39 +26,46 @@ def repos() -> Repositorios:
 
 
 @pytest.fixture
-def api(client, repos, monkeypatch):
-    """`client` with domain persistence on a throwaway store + a vault key.
-
-    The key is set through the settings object because IgIg has no
-    `Depends(get_settings)` seam yet (its routers read `settings` directly, as
-    the scaffold ships). Flagged rather than hidden: if IgIg grows more
-    config-dependent tests, it should adopt the same DI seam social-wiring
-    uses. `# self-patch-ok` is not claimed — this is a product-level gap to
-    close, not a sanctioned exception.
-    """
+def cfg():
+    """A settings instance with the vault key set — via `get_settings` DI
+    rather than patching the singleton (KB § PATTERNS/backend/
+    di-test-seam.md Class-A)."""
     from app.config import settings
+
+    return settings.model_copy(update={"igig_cofre_key": CHAVE})
+
+
+@pytest.fixture
+def api(client, repos, cfg):
+    """`client` with domain persistence on a throwaway store + a vault key."""
+    from app.config import get_settings
     from app.main import app
 
-    monkeypatch.setattr(settings, "igig_cofre_key", CHAVE)
+    app.dependency_overrides[get_settings] = lambda: cfg
     app.dependency_overrides[get_repositorios] = lambda: repos
     app.dependency_overrides[get_repositorios_admin] = lambda: repos
     yield client
+    app.dependency_overrides.pop(get_settings, None)
     app.dependency_overrides.pop(get_repositorios, None)
     app.dependency_overrides.pop(get_repositorios_admin, None)
 
 
 @pytest.fixture
-def como_admin(monkeypatch):
+def como_admin():
     """Make the caller an org admin for the reveal gate.
 
-    Patches the TRUSTED resolver the router uses, not `user_metadata` — the
-    point of the gate is that metadata is forgeable, so a test that forged it
-    would prove nothing about the real path.
+    Overrides the `get_user_role_dep` FastAPI dependency — not
+    `user_metadata` — the point of the gate is that metadata is forgeable, so
+    a test that forged it would prove nothing about the real path. The
+    resolver itself is a DI seam (KB § PATTERNS/backend/di-test-seam.md), not
+    a monkeypatch of our own module reference.
     """
-    import app.routers.marca_router as mr
+    from app.main import app
+    from app.routers.marca_router import get_user_role_dep
 
-    monkeypatch.setattr(mr, "get_user_role", lambda _user: "owner")
-    return True
+    app.dependency_overrides[get_user_role_dep] = lambda: (lambda _user: "owner")
+    yield True
+    app.dependency_overrides.pop(get_user_role_dep, None)
 
 
 @pytest.fixture
@@ -214,15 +222,16 @@ class TestCofre:
         assert len(body["itens"]) == 1
         assert body["itens"][0]["rotulo"] == "Meta Business"
 
-    def test_listing_reports_unconfigured_vault_even_with_zero_entries(
-        self, api, cliente, monkeypatch
-    ):
+    def test_listing_reports_unconfigured_vault_even_with_zero_entries(self, api, cliente, cfg):
         """The gap this closes: an empty `itens` looks the same whether the
         client has no entries yet OR the vault can't accept one — only this
         flag tells them apart, and it must be right when `itens` is empty."""
-        from app.config import settings
+        from app.config import get_settings
+        from app.main import app
 
-        monkeypatch.setattr(settings, "igig_cofre_key", "")
+        app.dependency_overrides[get_settings] = lambda: cfg.model_copy(
+            update={"igig_cofre_key": ""}
+        )
         resp = api.get(f"/api/marcas/acessos/{cliente['id']}")
         body = resp.json()
         assert body["cofre_configurado"] is False
@@ -271,19 +280,25 @@ class TestCofre:
         )
         assert api.post(f"/api/marcas/acessos/{alheio['id']}/revelar").status_code == 404
 
-    def test_unconfigured_vault_refuses_to_store_a_password(self, api, cliente, monkeypatch):
+    def test_unconfigured_vault_refuses_to_store_a_password(self, api, cliente, cfg):
         """Never a silent plaintext downgrade — a loud 409 instead."""
-        from app.config import settings
+        from app.config import get_settings
+        from app.main import app
 
-        monkeypatch.setattr(settings, "igig_cofre_key", "")
+        app.dependency_overrides[get_settings] = lambda: cfg.model_copy(
+            update={"igig_cofre_key": ""}
+        )
         resp = self._criar(api, cliente)
         assert resp.status_code == 409
         assert "IGIG_COFRE_KEY" in resp.text
 
-    def test_unconfigured_vault_still_allows_passwordless_entries(self, api, cliente, monkeypatch):
-        from app.config import settings
+    def test_unconfigured_vault_still_allows_passwordless_entries(self, api, cliente, cfg):
+        from app.config import get_settings
+        from app.main import app
 
-        monkeypatch.setattr(settings, "igig_cofre_key", "")
+        app.dependency_overrides[get_settings] = lambda: cfg.model_copy(
+            update={"igig_cofre_key": ""}
+        )
         resp = api.post("/api/marcas/acessos", json={
             "cliente_id": cliente["id"], "rotulo": "Drive", "url": "https://x",
         })
@@ -321,15 +336,15 @@ class TestCofre:
 
 class TestLogoSignedUrlFreshness:
     @pytest.fixture(autouse=True)
-    def _fake_storage(self, monkeypatch):
-        """Select the in-memory backend and clear the lru_cache around it."""
-        from app.config import settings
-        from app import storage as storage_mod
+    def _fake_storage(self, api):
+        """Select the in-memory backend via the `get_storage` DI seam — no
+        monkeypatch of `settings` nor the `@lru_cache`d singleton."""
+        from app.main import app
+        from app.storage import get_storage
 
-        monkeypatch.setattr(settings, "igig_storage_kind", "fake")
-        storage_mod.get_storage.cache_clear()
+        app.dependency_overrides[get_storage] = lambda: FakeStorageBackend()
         yield
-        storage_mod.get_storage.cache_clear()
+        app.dependency_overrides.pop(get_storage, None)
 
     def _marca_com_logo(self, api):
         cliente = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()

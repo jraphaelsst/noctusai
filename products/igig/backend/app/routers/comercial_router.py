@@ -28,6 +28,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.primitives.responses import success_response
 from noctusai_lib.security.webhook_signatures import (
     ResolvedSecret,
     VerifiedWebhook,
@@ -35,12 +36,12 @@ from noctusai_lib.security.webhook_signatures import (
 )
 from pydantic import ValidationError
 
-from app.config import settings
+from app.config import get_settings, settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import get_admin_db
 from app.rate_limit import limiter
 from app.repositories import Repositorios
-from app.schemas.comercial import AssinaturaWebhookIn, LeadOut, LeadPublicoIn
+from app.schemas.comercial import AssinaturaWebhookIn, LeadOut, LeadPatchIn, LeadPublicoIn
 from app.services import comercial_funil
 from app.services.regras import RegraViolada
 from app.store import get_repositorios, get_repositorios_admin
@@ -53,6 +54,16 @@ router = APIRouter(prefix="/api/comercial", tags=["comercial"])
 def _org(auth: tuple) -> str:
     _user, _token, raw_org = auth
     return str(coerce_org_uuid(raw_org))
+
+
+def _cfg(request: Request) -> Any:
+    """Settings as FastAPI would resolve them, for the `(request, body)`
+    secret resolver below — it cannot declare a dependency. Honours
+    `app.dependency_overrides[get_settings]` instead of reading the module
+    singleton directly, the same Class-A seam `lead_webhooks_router._cfg`
+    uses (KB § PATTERNS/backend/di-test-seam.md)."""
+    override = request.app.dependency_overrides.get(get_settings)
+    return override() if override is not None else settings
 
 
 def _localizar_contrato(repos: Repositorios, external_id: str):
@@ -130,6 +141,28 @@ async def listar_leads(
     return [LeadOut(**l) for l in linhas]
 
 
+@router.patch("/leads/{lead_id}")
+async def atualizar_lead(
+    lead_id: str,
+    payload: LeadPatchIn,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> dict:
+    """Edit a lead's contact data — the negócio card's "Lead" subpage.
+
+    org-scoped by :class:`LeadRepository`'s `atualizar` (`BaseRepository`,
+    every write scoped to `org_id`); a 404 for a lead outside this org."""
+    org_id = _org(auth)
+    dados = payload.model_dump(exclude_unset=True)
+    if not dados:
+        raise HTTPException(status_code=422, detail="Nenhum campo para atualizar.")
+    try:
+        lead = repos.lead.atualizar(org_id, lead_id, dados)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Lead não encontrado")
+    return success_response(LeadOut(**lead).model_dump())
+
+
 @router.post("/leads/{lead_id}/converter", response_model=LeadOut)
 async def converter_lead(
     lead_id: str,
@@ -163,7 +196,7 @@ async def converter_lead(
 async def _segredo_assinatura(request: Request, body: bytes) -> ResolvedSecret:
     """Per-request read so a rotated secret (or a test's value) is honoured.
     Empty collapses to "unset", which `bypass_when_unset=False` refuses."""
-    return ResolvedSecret(secret=settings.igig_assinatura_webhook_secret or None)
+    return ResolvedSecret(secret=_cfg(request).igig_assinatura_webhook_secret or None)
 
 
 @router.post("/assinatura/webhook")

@@ -6,11 +6,13 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from noctusai_lib.api.schemas import StrictHttpModel
 
-__all__ = ["LeadPublicoIn", "LeadOut", "AssinaturaWebhookIn"]
+from app.schemas.email import _email as _validar_email
+
+__all__ = ["LeadPublicoIn", "LeadOut", "LeadPatchIn", "AssinaturaWebhookIn"]
 
 
 class LeadPublicoIn(StrictHttpModel):
@@ -57,6 +59,27 @@ class LeadOut(BaseModel):
     status: str = "novo"
     cliente_id: str | None = None
     created_at: str | None = None
+
+
+class LeadPatchIn(StrictHttpModel):
+    """Edit a lead's contact data — the negócio card's "Lead" subpage
+    (wave-2 contract, roadmap gap G-1). Every field optional: `exclude_unset`
+    at the router decides which columns actually write."""
+
+    nome: str | None = Field(default=None, min_length=1, max_length=200)
+    empresa: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=200)
+    telefone: str | None = Field(default=None, max_length=40)
+    instagram: str | None = Field(default=None, max_length=200)
+    observacoes: str | None = Field(default=None, max_length=2000)
+    especificacoes: dict | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _v_email(cls, valor: str | None) -> str | None:
+        if valor is None or not valor.strip():
+            return valor
+        return _validar_email(valor)
 
 
 class AssinaturaWebhookIn(StrictHttpModel):
