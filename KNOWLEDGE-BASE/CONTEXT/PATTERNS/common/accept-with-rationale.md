@@ -753,6 +753,14 @@ state change, not a removal.
 - **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke
   MCP directly flips this to formalize.
 
+### 9d `claude-guard-primary-write-post.py` retains shell (`[carve:hook]`, 2026-09-23)
+
+- **Subject:** the `PostToolUse` measurement half of the primary-checkout write guard (9a is its `PreToolUse` half). 9a now allows a Bash call whose write target it cannot resolve; this hook diffs the pre-call `git status` baseline against the real state afterwards and surfaces any genuinely new primary dirt.
+- **Decision `[A]`:** stays a script, same `[carve:hook]` bucket and the same structural reason as 9a–9c — the harness invokes it as a process on every `Bash` call, where the MCP server is not reachable and a round-trip would not fit the per-call budget. The decision logic lives in the toolkit (`tools/noctus/dev/primary_write_guard.py`, stdlib-only, imported BY PATH); only the protocol adapter is shell-shaped.
+- **Why a separate adapter rather than a branch inside 9a:** different harness EVENT (`PostToolUse` vs `PreToolUse`) — the measurement can only happen after the command ran — and independent fail-open isolation, the same reasoning as 9c.
+- **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke MCP directly flips this to formalize.
+
 ### Recurrence-expansion stays product-local across daily-life/erp/PF — domain-divergent, no `N≥3` unifiable contract
 
 - **Subject:** §3a seed-first audit of the daily-life recurring-events gap asked whether windowed recurrence-expansion is `N≥3`-duplicated → a seed primitive (`noctusai_lib.domain.scheduling`).
