@@ -68,6 +68,7 @@ from noctusai_lib.integrations.llm import chat_completion
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.integrations.storage import StorageBackend
 
+from app.modules.card_hub.proveniencia import fontes
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub.deps import BUCKET
 from app.services import documento_retencao, extracao_retentativa, table_reads
@@ -77,25 +78,35 @@ logger = logging.getLogger(__name__)
 
 TABLE = "imovel_documentos"
 
-#: The document types an imóvel accepts. Code-owned, per migration 075's note
-#: — the set will grow (certidão negativa, habite-se, convenção de condomínio)
-#: and a CHECK constraint would make each addition a migration. `cnd_iptu` /
-#: `cnd_condominio` joined in migration 118 — the contract's imóvel CND group.
-TIPOS_DOCUMENTO: tuple[str, ...] = (
-    "matricula", "guia_iptu", "cnd_iptu", "cnd_condominio",
+#: The document types an imóvel accepts — derived from `proveniencia.
+#: fontes.FONTES_REGISTRO` (contract-gate S1), the ONE catalog that also
+#: backs `card_hub/identidade_extracao_service.py`'s own `TIPOS_*`. Order
+#: preserved from that tuple's own declaration order, per migration 075's
+#: note: the set will grow (certidão negativa, habite-se, convenção de
+#: condomínio) and a CHECK constraint would make each addition a migration.
+#: `cnd_iptu` / `cnd_condominio` joined in migration 118 — the contract's
+#: imóvel CND group.
+TIPOS_DOCUMENTO: tuple[str, ...] = tuple(
+    f.tipo_documento for f in fontes.FONTES_REGISTRO if f.dominio == "imovel"
 )
 
 #: Which types are worth reading a número de matrícula off. Only the matrícula
 #: itself — a guia de IPTU carries an inscrição imobiliária, a DIFFERENT
 #: number that would be wrong in this column.
-TIPOS_EXTRAIVEIS = frozenset({"matricula"})
+TIPOS_EXTRAIVEIS = frozenset(
+    f.tipo_documento
+    for f in fontes.FONTES.values()
+    if f.dominio == "imovel" and "numero_matricula" in f.campos
+)
 
 #: Which types get the migration-118 structured read (`numero`/`emitida_em`/
 #: `validade_ate`/`resultado`/`inscricao_imobiliaria`, per-tipo subset below).
 #: Runs ALONGSIDE `TIPOS_EXTRAIVEIS`'s número-de-matrícula job for `matricula`
 #: — two different questions asked of the same PDF, so two independent jobs.
 TIPOS_ESTRUTURA_EXTRAIVEL = frozenset(
-    {"cnd_iptu", "cnd_condominio", "guia_iptu", "matricula"}
+    f.tipo_documento
+    for f in fontes.FONTES.values()
+    if f.dominio == "imovel" and f.estrutura_extraivel
 )
 
 #: Which structured fields matter per tipo. The AI prompt asks for exactly
