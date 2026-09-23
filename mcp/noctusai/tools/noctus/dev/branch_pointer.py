@@ -227,6 +227,49 @@ def _latest_per_branch(rows: list[dict]) -> dict[str, dict]:
     return best
 
 
+def effective_project(row: dict) -> str:
+    """The SHIP-CONSENT approval unit a pointer row belongs to.
+
+    `project` is optional on a row; an UNMAPPED branch is its own project —
+    the default is the branch name itself (never None, never guessed from a
+    sibling). KB § PATTERNS/devops/ship-consent-riders.md § attribution.
+    """
+    proj = str(row.get("project") or "").strip()
+    return proj or str(row.get("branch") or "")
+
+
+def project_for_branch(branch: str, rows: list[dict]) -> str:
+    """Resolve `branch` → project via its LATEST pointer row; an unknown
+    branch (no pointer at all) defaults to the branch name."""
+    row = _latest_per_branch(rows).get(branch)
+    return effective_project(row) if row else branch
+
+
+def _inherit_project(parent: str, rows: list[dict]) -> str | None:
+    """An engineer inherits its PARENT's project (owner decision 2026-09-22:
+    the approval unit is the project/roadmap, not the branch).
+
+    Resolution, most → least specific:
+      1. `parent` is itself a branch with a pointer carrying `project`;
+      2. the most recent pointer dispatched by the SAME `parent` that carries
+         an explicit `project` (siblings of one orchestrator share it).
+    Returns None when neither resolves — the row then stays unmapped and
+    `effective_project` falls back to the branch name (documented default).
+    """
+    if not parent:
+        return None
+    best = _latest_per_branch(rows)
+    prow = best.get(parent)
+    if prow and str(prow.get("project") or "").strip():
+        return str(prow["project"]).strip()
+    siblings = sorted(
+        (r for r in rows if r.get("parent") == parent and str(r.get("project") or "").strip()),
+        key=lambda r: r.get("ts", ""),
+        reverse=True,
+    )
+    return str(siblings[0]["project"]).strip() if siblings else None
+
+
 def _paths_overlap(a: list[str], b: list[str]) -> bool:
     """True iff two path lists share at least one common element."""
     sa = set(a or [])
@@ -280,11 +323,16 @@ def append(
     notes: str = "",
     worktree: str | None = None,
     session: str | None = None,
+    project: str | None = None,
     push_dev: bool = True,
     runner=None,
     dev_branch: str = "dev",
 ) -> dict[str, Any]:
     """Append a new pointer row for `branch` and (default) push to dev.
+
+    `project` (optional) is the ship-consent approval unit. Omitted ⇒ inherited
+    from `parent` (see `_inherit_project`); still unresolved ⇒ the key is left
+    off and `effective_project` reads the branch name.
 
     Called before self-branching to claim the collision zone immediately,
     and on any status transition that needs a fresh row.
@@ -326,6 +374,14 @@ def append(
         "brief": brief,
         "notes": notes,
     }
+    if project is None:
+        try:
+            project = _inherit_project(parent, _read_dev_ledger(runner=runner))
+        except Exception as exc:  # noqa: BLE001 — inheritance is advisory; say so
+            logger.warning("branch_pointer.append: project inheritance failed: %s", exc)
+            project = None
+    if project and str(project).strip():
+        row["project"] = str(project).strip()
 
     _write_row(row)  # writes BOTH the canonical ledger and its mirror
 
@@ -358,6 +414,7 @@ def update(
     paths: list[str] | None = None,
     brief: str | None = None,
     notes: str | None = None,
+    project: str | None = None,
     push_dev: bool = True,
     runner=None,
     dev_branch: str = "dev",
@@ -415,6 +472,9 @@ def update(
         "brief": brief if brief is not None else prev.get("brief", ""),
         "notes": notes if notes is not None else prev.get("notes", ""),
     }
+    carried_project = project if project is not None else prev.get("project")
+    if carried_project and str(carried_project).strip():
+        row["project"] = str(carried_project).strip()
 
     _write_row(row)  # writes BOTH the canonical ledger and its mirror
 
@@ -446,6 +506,7 @@ def query(
     branch: str | None = None,
     agent: str | None = None,
     paths_overlap: list[str] | None = None,
+    project: str | None = None,
     runner=None,
 ) -> list[dict]:
     """Resolve latest-per-branch from dev's copy and apply optional filters.
@@ -473,6 +534,8 @@ def query(
             continue
         if agent is not None and row.get("agent") != agent:
             continue
+        if project is not None and effective_project(row) != project:
+            continue
         if paths_overlap:
             if not _paths_overlap(row.get("paths", []), paths_overlap):
                 continue
@@ -486,6 +549,7 @@ def list_pointers(
     *,
     from_dev: bool = True,
     include_terminal: bool = False,
+    project: str | None = None,
     runner=None,
 ) -> list[dict]:
     """Return the live map: all non-terminal pointers by default.
@@ -493,7 +557,7 @@ def list_pointers(
     `include_terminal=True` adds shipped/canceled/stale rows (full history).
     Default from_dev=True so a fresh agent gets the globally-consistent view.
     """
-    all_rows = query(from_dev=from_dev, runner=runner)
+    all_rows = query(from_dev=from_dev, project=project, runner=runner)
     if include_terminal:
         return all_rows
     return [r for r in all_rows if r.get("status") not in TERMINAL_STATUSES]
@@ -509,16 +573,18 @@ def register(server) -> None:  # noqa: ANN001
             "ACTIONS\n"
             "  append  — create the first pointer row for a branch (pre-self-branch claim).\n"
             "            Required: branch, base, commit, role, agent, parent, paths, status, brief.\n"
-            "            Optional: notes, worktree, session, push_dev (default True).\n"
+            "            Optional: notes, worktree, session, project, push_dev (default True).\n"
+            "            `project` = the ship-consent approval unit (noctus.dev.ship_consent);\n"
+            "            omitted ⇒ inherited from parent's pointer; unmapped ⇒ branch name.\n"
             "  update  — append a delta row for an existing branch (latest-by-ts wins).\n"
-            "            Required: branch. Optional: status, commit, paths, brief, notes,\n"
+            "            Required: branch. Optional: status, commit, paths, brief, notes, project,\n"
             "            push_dev (default True), from_dev (default True).\n"
             "  query   — resolve latest-per-branch from dev's copy.\n"
-            "            Optional: status, branch, agent, paths_overlap, from_dev (default True).\n"
+            "            Optional: status, branch, agent, project, paths_overlap, from_dev (default True).\n"
             "            `paths_overlap=[...]` returns branches whose collision zone intersects\n"
             "            (the pre-dispatch planner — detect collisions before touch).\n"
             "  list    — live map: all non-terminal pointers (include_terminal=True for full view).\n"
-            "            Optional: from_dev (default True), include_terminal (default False).\n\n"
+            "            Optional: from_dev (default True), include_terminal (default False), project.\n\n"
             "PUSH IDIOM  push_dev=True (default): stage ONLY project-history/branch-tree.ndjson "
             "→ commit → FF-push to dev (retry on concurrent-push race). A pointer push must NEVER "
             "trigger cache refresh — this is the cache-exempt path (contract §3). "
@@ -543,6 +609,7 @@ def register(server) -> None:  # noqa: ANN001
         from_dev: bool = True,
         include_terminal: bool = False,
         paths_overlap: list[str] | None = None,
+        project: str | None = None,
     ) -> dict | list:
         if action == "append":
             missing = [f for f, v in [
@@ -556,22 +623,24 @@ def register(server) -> None:  # noqa: ANN001
                 branch=branch, base=base, commit=commit, role=role, agent=agent,
                 parent=parent, paths=paths, status=status, brief=brief,
                 notes=notes or "", worktree=worktree, session=session,
-                push_dev=push_dev,
+                project=project, push_dev=push_dev,
             )
         elif action == "update":
             if not branch:
                 return {"ok": False, "error": "update requires: branch"}
             return update(
                 branch=branch, status=status, commit=commit, paths=paths,
-                brief=brief, notes=notes, push_dev=push_dev, from_dev=from_dev,
+                brief=brief, notes=notes, project=project, push_dev=push_dev,
+                from_dev=from_dev,
             )
         elif action == "query":
             return query(
                 from_dev=from_dev, status=status, branch=branch, agent=agent,
-                paths_overlap=paths_overlap,
+                paths_overlap=paths_overlap, project=project,
             )
         elif action == "list":
-            return list_pointers(from_dev=from_dev, include_terminal=include_terminal)
+            return list_pointers(from_dev=from_dev, include_terminal=include_terminal,
+                                 project=project)
         else:
             return {
                 "ok": False,

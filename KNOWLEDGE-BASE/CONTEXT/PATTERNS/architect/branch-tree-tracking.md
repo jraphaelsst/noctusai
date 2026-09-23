@@ -40,6 +40,7 @@ The claude-tree's `session` field (the owning Claude session) is **never null by
   "role":   "engineer",                // orchestrator | engineer
   "agent":  "hd-deploy-tunnel",        // claude-tree node label (logical, stable — NOT the ephemeral harness id)
   "parent": "tech-lead",               // who dispatched this = claude parent edge (mirrors git `base`'s owner)
+  "project": "sw-extraction",          // OPTIONAL — ship-consent approval unit; omitted ⇒ inherited from parent's pointer; unmapped ⇒ the branch name (KB § PATTERNS/devops/ship-consent-riders.md)
   "session": "2026-06-01-hot-drift",   // owning session
 
   // ── collision zone (the whole point) ─────────────────
@@ -105,9 +106,9 @@ Mirror the existing ledger tools (`auto_improvement`, `_worktree_salvage`, `brie
 
 | action | signature | does |
 |---|---|---|
-| `append` | `branch, base, commit, role, agent, parent, paths, status, brief, notes?, worktree?, session?, push_dev=True` | append a row; if `push_dev`, commit+FF-push only the ndjson to dev |
-| `update` | `branch, status?, commit?, paths?, brief?, notes?, push_dev=True` | append a new row for `branch` carrying forward last values + the deltas (latest-wins) |
-| `query` | `from_dev=True, status?, branch?, agent?, paths_overlap?` | resolve latest-per-branch from **dev's** file; `paths_overlap=[…]` returns branches whose collision zone intersects (the pre-dispatch planner) |
+| `append` | `branch, base, commit, role, agent, parent, paths, status, brief, notes?, worktree?, session?, project?, push_dev=True` | append a row; if `push_dev`, commit+FF-push only the ndjson to dev |
+| `update` | `branch, status?, commit?, paths?, brief?, notes?, project?, push_dev=True` | append a new row for `branch` carrying forward last values + the deltas (latest-wins) |
+| `query` | `from_dev=True, status?, branch?, agent?, project?, paths_overlap?` | resolve latest-per-branch from **dev's** file; `paths_overlap=[…]` returns branches whose collision zone intersects (the pre-dispatch planner) |
 | `list` | `from_dev=True, include_terminal=False` | the live map: all non-terminal pointers (add terminal with the flag) |
 
 `query`/`list` default `from_dev=True` — read dev's copy, not the local branch's. Append/update default `push_dev=True` — the no-skip guarantee is the default, not an opt-in.
