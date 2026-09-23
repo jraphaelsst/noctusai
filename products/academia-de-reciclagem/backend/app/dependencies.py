@@ -387,6 +387,22 @@ def _get_approval_ring_store() -> AppConfigStore:
     return _approval_ring_store
 
 
+class _ApprovalAssertionKeys(list):
+    """A `list[str]` that supports `weakref.ref()` — the plain builtin
+    `list` does not. `get_approval_assertion_keys` is a FastAPI `Depends()`
+    target, and `noctus.dev.check_stand_in_conformance` leg B(i) resolves
+    every such dependency against a REAL call and probes the result with
+    `weakref.ref()` fleet-wide (the same defensive property that would
+    have caught `_SchemaPinnedAdminClient`'s missing `__weakref__` before
+    it 500'd every social-wiring route in production — see
+    `noctusai_seed.database._SchemaPinnedAdminClient.__slots__`, which adds
+    `"__weakref__"` for the identical reason). A `list` subclass gets a
+    `__weakref__` slot for free (no `__slots__` declared here) and is
+    otherwise indistinguishable from `list` for every consumer — iteration,
+    indexing, `in`, `==` against a plain list, etc. — so this changes
+    nothing observable, only makes the object weak-referenceable."""
+
+
 def get_approval_assertion_keys() -> list[str]:
     """FastAPI dependency returning every §D key academia accepts right now.
 
@@ -399,9 +415,14 @@ def get_approval_assertion_keys() -> list[str]:
     overrides `app.dependency_overrides[get_approval_assertion_keys]`
     instead of `monkeypatch.setattr(settings, "approval_assertion_secrets",
     ...)`, which trips `check_no_self_monkeypatch` (CLAUDE.md §1: no
-    monkey-patching our own code, incl. tests)."""
-    return approval_assertion_keys_from(
-        _get_approval_ring_store(), env_value=settings.approval_assertion_secrets
+    monkey-patching our own code, incl. tests).
+
+    Returns `_ApprovalAssertionKeys` (a weak-referenceable `list` subclass)
+    rather than a plain `list` — see that class's docstring."""
+    return _ApprovalAssertionKeys(
+        approval_assertion_keys_from(
+            _get_approval_ring_store(), env_value=settings.approval_assertion_secrets
+        )
     )
 
 

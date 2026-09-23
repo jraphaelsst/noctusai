@@ -85,7 +85,7 @@ except ImportError:  # pragma: no cover
         if not products_dir.exists():
             return []
         return sorted(
-            p for p in products_dir.iterdir()
+            p for p in products_dir.iterdir()  # product-scope: active (fallback mirrors compliance._active_product_dirs's choke point)
             if p.is_dir() and not p.name.startswith(".")
         )
 
