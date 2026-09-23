@@ -20,11 +20,15 @@ whichever router mounts first in the app's route table wins the match).
 
 What `register()` does
 ───────────────────────
-Registers this module's one router (all endpoints share the
-`/api/clientes` prefix) and, explicitly, the document-retention sweep on the
-seed scheduler (`documentos_service.configure()`, once, under its historical
-job id) — mirrors `app.services.clientes_backfill_job.configure()`'s
-identical "configure before `start_scheduler()` fires" shape.
+Registers this module's three routers — `router` (`/api/clientes`, the
+main one, below), `defaults_router` (`/api/negociacao/defaults` — an org
+setting, not a cliente resource, so its own prefix; see `router.py`'s own
+comment), and `proveniencia_router` (`/api/proveniencia/registro` — a
+static catalog, same reasoning) — and, explicitly, the document-retention
+sweep on the seed scheduler (`documentos_service.configure()`, once, under
+its historical job id) — mirrors `app.services.clientes_backfill_job.
+configure()`'s identical "configure before `start_scheduler()` fires"
+shape.
 
 The card's generic routes (tags, tipos, timeline, notas, cliente<->tags,
 membros, checklist extras, checklists, documentos, acessos, card) come from
@@ -67,6 +71,9 @@ Routes
     DELETE                  /api/clientes/{id}/contratos/{cid}/versoes/{vid}
     POST/GET                /api/clientes/{id}/contratos/{cid}/assinatura
     POST                    /api/clientes/{id}/contratos/{cid}/assinatura/cancelar
+    GET                     /api/clientes/{id}/contratos/{cid}/validacao-extracao
+    POST                    /api/clientes/{id}/contratos/{cid}/validacao-extracao/decisoes
+    GET                     /api/clientes/{id}/contratos/{cid}/proveniencia
     GET                     /api/clientes/{id}/negociacao/estruturada
     POST/PATCH/DELETE       /api/clientes/{id}/negociacao/parcelas[/{pid}]
     POST                    /api/clientes/{id}/negociacao/parcelas/dividir-saldo
@@ -91,7 +98,7 @@ def register() -> Any:
     `app.modules.n8n.register`)."""
     from app.main import ModuleRegistration
     from app.modules.card_hub import documentos_service, financiamento_service
-    from app.modules.card_hub.router import defaults_router, router
+    from app.modules.card_hub.router import defaults_router, proveniencia_router, router
 
     # Configured at import time — before `start_scheduler()` fires in
     # `app/lifespan.py` (see `clientes_backfill_job.configure()`'s
@@ -103,7 +110,7 @@ def register() -> Any:
     financiamento_service.configure()
 
     return ModuleRegistration(
-        routers=[router, defaults_router], standard_routers=()
+        routers=[router, defaults_router, proveniencia_router], standard_routers=()
     )
 
 

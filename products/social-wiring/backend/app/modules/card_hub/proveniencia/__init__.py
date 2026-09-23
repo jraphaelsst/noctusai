@@ -25,4 +25,13 @@ claim that outruns what the extractor it names can actually produce is a
 test failure, not a silent drift. `card_hub/identidade_extracao_service.py`'s
 and `imovel_hub/documentos_service.py`'s own `TIPOS_*` constants are
 re-derived from this catalog rather than hand-kept a second time.
+
+Slice S2 (`linhagem.py`) walks the ACTUAL contract data
+(`contrato_gerador.validacao_extracao.REGISTRO`) against this catalog and
+answers, per contract-feeding value: what it holds, its state, its source
+document, and — from `FONTES` — which document type(s) could still supply
+it. `router.py` mounts its two endpoints (`GET /api/proveniencia/registro`,
+the static FE-hint catalog; the per-contract lineage route lives on
+`contrato_gerador/router.py` instead, next to its sibling
+`.../validacao-extracao`).
 """
