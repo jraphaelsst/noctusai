@@ -62,7 +62,7 @@ vi.mock("@/hooks/useValidacaoExtracao", async () => {
 });
 
 import { GeradorContratoContainer } from "./GeradorContratoContainer";
-import type { PendenteValidacao } from "@/hooks/useValidacaoExtracao";
+import type { ConflitoExtracao, PendenteValidacao } from "@/hooks/useValidacaoExtracao";
 import { ContratoGeracaoError, type ContratoGeracaoStatus } from "@/hooks/useContratos";
 
 function statusFixture(over: Partial<ContratoGeracaoStatus> = {}): ContratoGeracaoStatus {
@@ -82,6 +82,7 @@ function statusFixture(over: Partial<ContratoGeracaoStatus> = {}): ContratoGerac
 }
 
 let pendentesAtuais: PendenteValidacao[] = [];
+let conflitosAtuais: ConflitoExtracao[] = [];
 
 beforeEach(() => {
   mockUseContratoGeracao.mockReset();
@@ -92,12 +93,21 @@ beforeEach(() => {
   mockSalvarMutate.mockReset();
   mockUseValidacaoExtracao.mockReset();
   pendentesAtuais = [];
+  conflitosAtuais = [];
   mockVerificarMutate.mockImplementation(
-    (_: unknown, opts: { onSuccess: (p: PendenteValidacao[]) => void }) =>
-      opts.onSuccess(pendentesAtuais),
+    (
+      _: unknown,
+      opts: {
+        onSuccess: (s: { pendentes: PendenteValidacao[]; conflitos: ConflitoExtracao[] }) => void;
+      },
+    ) =>
+      opts.onSuccess({
+        pendentes: pendentesAtuais,
+        conflitos: conflitosAtuais,
+      }),
   );
   mockUseValidacaoExtracao.mockImplementation(() => ({
-    data: pendentesAtuais,
+    data: { pendentes: pendentesAtuais, conflitos: conflitosAtuais },
     isPending: false,
     isFetching: false,
     isError: false,
@@ -147,7 +157,14 @@ describe("GeradorContratoContainer", () => {
     fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
     const [, opts] = mockGerarMutate.mock.calls[0];
     const erro = new ContratoGeracaoError("CONTRATO_INCOMPLETO", "Contrato incompleto.", {
-      faltando: [{ campo: "cpf", rotulo: "CPF do comprador", onde: "partes", parte_id: "p1" }],
+      faltando: [
+        {
+          campo: "cpf",
+          rotulo: "CPF do comprador",
+          onde: "partes",
+          parte_id: "p1",
+        },
+      ],
       bloqueios: [{ codigo: "sem_testemunha", mensagem: "Falta uma testemunha." }],
     });
     act(() => {
@@ -177,7 +194,12 @@ describe("GeradorContratoContainer", () => {
           rotulo: null,
           origem: "gerado",
         },
-        avisos: [{ codigo: "prazo_padrao", mensagem: "Cláusula de foro padrão aplicada." }],
+        avisos: [
+          {
+            codigo: "prazo_padrao",
+            mensagem: "Cláusula de foro padrão aplicada.",
+          },
+        ],
       });
     });
     expect(screen.getByTestId("gerador-contrato-avisos-pos-geracao").textContent).toContain(
@@ -220,7 +242,9 @@ describe("GeradorContratoContainer — D2 validation gate", () => {
     fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
     expect(mockGerarMutate).not.toHaveBeenCalled();
     expect(screen.getByTestId("validacao-dialog")).toBeTruthy();
-    expect(screen.getByTestId("validacao-item-cliente:v1:cpf").textContent).toContain("12345678909");
+    expect(screen.getByTestId("validacao-item-cliente:v1:cpf").textContent).toContain(
+      "12345678909",
+    );
     expect(mockUseValidacaoExtracao).toHaveBeenLastCalledWith("cli1", "c1", true);
   });
 
@@ -234,7 +258,7 @@ describe("GeradorContratoContainer — D2 validation gate", () => {
     expect(decisoes).toEqual([{ chave: "cliente:v1:cpf", decisao: "rejeitado" }]);
     act(() => {
       pendentesAtuais = [];
-      opts.onSuccess({ aplicadas: 1, pendentes: [] });
+      opts.onSuccess({ aplicadas: 1, pendentes: [], conflitos: [] });
     });
     // Nothing pending, but the rejected required value still blocks generation.
     expect((screen.getByTestId("validacao-prosseguir") as HTMLButtonElement).disabled).toBe(true);
@@ -251,6 +275,28 @@ describe("GeradorContratoContainer — D2 validation gate", () => {
     expect(screen.queryByTestId("validacao-rejeitado-cliente:v1:cpf")).toBeNull();
     fireEvent.click(screen.getByTestId("validacao-prosseguir"));
     expect(mockGerarMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("an open extraction conflict alone opens the dialog and blocks generation", async () => {
+    conflitosAtuais = [
+      {
+        id: "k1",
+        entidade: "imovel",
+        entidade_id: "EX001",
+        campo: "numero_matricula",
+        grupo: "Imóvel EX001",
+        rotulo: "Número da matrícula",
+        valor_atual: "12345",
+        valor_proposto: "12346",
+        origem_proposto: "matricula",
+        link: { rota: "/imoveis/EX001?conflito=k1", rotulo: "Imóvel EX001" },
+      },
+    ];
+    const { screen, fireEvent } = await render();
+    fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
+    expect(mockGerarMutate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("validacao-conflito-k1")).toBeTruthy();
+    expect((screen.getByTestId("validacao-prosseguir") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("🔴 a 409 EXTRACAO_PENDENTE_VALIDACAO from gerar reopens the dialog instead of erroring", async () => {

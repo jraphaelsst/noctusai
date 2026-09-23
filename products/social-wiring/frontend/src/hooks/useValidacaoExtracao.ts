@@ -11,9 +11,12 @@
  *
  * Contract (backend is the source of truth):
  * - `GET  /api/clientes/{cliente}/contratos/{contrato}/validacao-extracao`
- *   → `{ pendentes: PendenteValidacao[] }`
+ *   → `{ pendentes: PendenteValidacao[], conflitos: ConflitoExtracao[] }`
+ *   — `conflitos` are OPEN extraction conflicts (a later reading disagreed
+ *   with a set value); read-only here, decided on the screen `link` names.
+ *   Both block generation.
  * - `POST .../validacao-extracao/decisoes` body `{ decisoes: [{chave, decisao}] }`
- *   → `{ aplicadas, pendentes }` (what is STILL pending); 409
+ *   → `{ aplicadas, pendentes, conflitos }` (what STILL blocks); 409
  *   `EXTRACAO_VALIDACAO_DESATUALIZADA` when a `chave` is no longer pending
  *   (nothing written — refetch and retry).
  * - A REJECTED required value is typed back through the EXISTING manual
@@ -61,31 +64,42 @@ export interface PendenteValidacao {
   edicao: EdicaoManual | null;
 }
 
+/** An open extraction conflict on contract data — read-only in the modal. */
+export interface ConflitoExtracao {
+  id: string;
+  entidade: "cliente" | "imovel";
+  entidade_id: string;
+  campo: string;
+  grupo: string;
+  rotulo: string;
+  valor_atual: string | null;
+  valor_proposto: string | null;
+  origem_proposto: string | null;
+  link: { rota: string; rotulo: string };
+}
+
+/** Everything that blocks generation — the GET answer. */
+export interface SituacaoValidacao {
+  pendentes: PendenteValidacao[];
+  conflitos: ConflitoExtracao[];
+}
+
 export interface DecisaoInput {
   chave: string;
   decisao: Decisao;
 }
 
-export interface DecidirResult {
+export interface DecidirResult extends SituacaoValidacao {
   aplicadas: number;
-  pendentes: PendenteValidacao[];
 }
 
 /** The 409 `EXTRACAO_PENDENTE_VALIDACAO` code `POST .../gerar` answers while
  *  anything is pending — the container opens the modal on it. */
 export const CODIGO_PENDENTE_VALIDACAO = "EXTRACAO_PENDENTE_VALIDACAO";
-export const CODIGO_VALIDACAO_DESATUALIZADA =
-  "EXTRACAO_VALIDACAO_DESATUALIZADA";
+export const CODIGO_VALIDACAO_DESATUALIZADA = "EXTRACAO_VALIDACAO_DESATUALIZADA";
 
 export const VALIDACAO_KEY = (clienteId: string, contratoId: string) =>
-  [
-    "sw",
-    "clientes",
-    clienteId,
-    "contratos",
-    contratoId,
-    "validacao-extracao",
-  ] as const;
+  ["sw", "clientes", clienteId, "contratos", contratoId, "validacao-extracao"] as const;
 
 const url = (clienteId: string, contratoId: string) =>
   `/api/clientes/${encodeURIComponent(clienteId)}/contratos/${encodeURIComponent(
@@ -95,20 +109,14 @@ const url = (clienteId: string, contratoId: string) =>
 export async function fetchValidacaoExtracao(
   clienteId: string,
   contratoId: string,
-): Promise<PendenteValidacao[]> {
-  const res = await api.get<{ pendentes: PendenteValidacao[] }>(
-    url(clienteId, contratoId),
-  );
-  return res?.pendentes ?? [];
+): Promise<SituacaoValidacao> {
+  const res = await api.get<Partial<SituacaoValidacao>>(url(clienteId, contratoId));
+  return { pendentes: res?.pendentes ?? [], conflitos: res?.conflitos ?? [] };
 }
 
 /** `enabled` is the modal's open state — nothing is fetched until the
  *  operator actually asks to generate. */
-export function useValidacaoExtracao(
-  clienteId: string,
-  contratoId: string,
-  enabled: boolean,
-) {
+export function useValidacaoExtracao(clienteId: string, contratoId: string, enabled: boolean) {
   return useQuery({
     queryKey: VALIDACAO_KEY(clienteId, contratoId),
     queryFn: () => fetchValidacaoExtracao(clienteId, contratoId),
@@ -122,10 +130,7 @@ export function codigoDoErro(err: unknown): string | null {
   return err instanceof ApiError ? err.code ?? null : null;
 }
 
-export function useValidacaoExtracaoMutations(
-  clienteId: string,
-  contratoId: string,
-) {
+export function useValidacaoExtracaoMutations(clienteId: string, contratoId: string) {
   const qc = useQueryClient();
   const key = VALIDACAO_KEY(clienteId, contratoId);
 
@@ -134,8 +139,8 @@ export function useValidacaoExtracaoMutations(
    *  only buy a 409). Seeds the query the dialog then renders. */
   const verificar = useMutation({
     mutationFn: () => fetchValidacaoExtracao(clienteId, contratoId),
-    onSuccess: (pendentes) => {
-      qc.setQueryData(key, pendentes);
+    onSuccess: (situacao) => {
+      qc.setQueryData(key, situacao);
     },
   });
 
@@ -145,7 +150,10 @@ export function useValidacaoExtracaoMutations(
         decisoes,
       }),
     onSuccess: (res) => {
-      qc.setQueryData(key, res.pendentes);
+      qc.setQueryData<SituacaoValidacao>(key, {
+        pendentes: res.pendentes,
+        conflitos: res.conflitos,
+      });
     },
     onError: (err) => {
       // Stale list (decided elsewhere / re-extracted) — show the current one.

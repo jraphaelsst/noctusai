@@ -12,6 +12,10 @@
  * container keeps a snapshot to render the inline manual input here, which
  * writes through the item's own `edicao` route (`origem='manual'`).
  *
+ * `conflitos` are OPEN extraction conflicts on the same data (a later
+ * reading disagreed with a set value). They block generation too, but are
+ * READ-ONLY here — each links to the screen where an admin decides it.
+ *
  * No `@noctusai/lib` dialog organ exists; the product's own `ui/dialog`
  * primitives are what every sibling dialog (`EnviarAssinaturaDialog`,
  * `NovoContratoDialog`) uses.
@@ -20,6 +24,7 @@ import { useState, type ReactNode } from "react";
 import {
   AlertCircle,
   Check,
+  ExternalLink,
   FileText,
   Loader2,
   RefreshCw,
@@ -39,7 +44,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
-import type { Decisao, PendenteValidacao } from "@/hooks/useValidacaoExtracao";
+import type { ConflitoExtracao, Decisao, PendenteValidacao } from "@/hooks/useValidacaoExtracao";
 
 /** pt-BR for `origem` — the machine source of the value. */
 const ORIGEM_ROTULO: Record<string, string> = {
@@ -63,9 +68,7 @@ const CONFIANCA_ROTULO: Record<string, string> = {
   nenhuma: "Sem confiança",
 };
 
-function agruparPorGrupo(
-  itens: PendenteValidacao[],
-): [string, PendenteValidacao[]][] {
+function agruparPorGrupo(itens: PendenteValidacao[]): [string, PendenteValidacao[]][] {
   const mapa = new Map<string, PendenteValidacao[]>();
   for (const item of itens) {
     const lista = mapa.get(item.grupo) ?? [];
@@ -79,6 +82,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   pendentes: PendenteValidacao[] | undefined;
+  conflitos: ConflitoExtracao[];
   showSkeleton: boolean;
   isRefreshing: boolean;
   isError: boolean;
@@ -110,8 +114,8 @@ function LinhaRejeitada({
         className="rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800"
         data-testid={`validacao-rejeitado-${item.chave}`}
       >
-        <span className="font-medium">{item.rotulo}</span> ({item.grupo}) foi
-        rejeitado e é obrigatório — preencha no card antes de gerar.
+        <span className="font-medium">{item.rotulo}</span> ({item.grupo}) foi rejeitado e é
+        obrigatório — preencha no card antes de gerar.
       </li>
     );
   }
@@ -151,6 +155,7 @@ export default function ValidacaoExtracaoDialog({
   open,
   onOpenChange,
   pendentes,
+  conflitos,
   showSkeleton,
   isRefreshing,
   isError,
@@ -169,7 +174,7 @@ export default function ValidacaoExtracaoDialog({
   // no single-input route (a group, an enum) is only pointed at — `gerar`
   // then reports it `faltando`, the existing section's job.
   const aguardandoDigitacao = rejeitados.some((r) => r.edicao !== null);
-  const podeGerar = nadaPendente && !aguardandoDigitacao && !gerando;
+  const podeGerar = nadaPendente && conflitos.length === 0 && !aguardandoDigitacao && !gerando;
 
   function decidirTodos(decisao: Decisao) {
     onDecidir(lista.map((p) => ({ chave: p.chave, decisao })));
@@ -201,15 +206,14 @@ export default function ValidacaoExtracaoDialog({
         </Button>
       </div>
     );
-  } else if (nadaPendente) {
+  } else if (nadaPendente && conflitos.length === 0) {
     corpo = (
-      <p
-        className="text-xs text-muted-foreground"
-        data-testid="validacao-vazio"
-      >
+      <p className="text-xs text-muted-foreground" data-testid="validacao-vazio">
         Nenhum dado extraído aguardando validação.
       </p>
     );
+  } else if (nadaPendente) {
+    corpo = null;
   } else {
     corpo = (
       <div className="space-y-3" data-testid="validacao-lista">
@@ -260,9 +264,7 @@ export default function ValidacaoExtracaoDialog({
                       disabled={decidindo}
                       aria-label={`Aceitar ${item.rotulo}`}
                       title="Aceitar"
-                      onClick={() =>
-                        onDecidir([{ chave: item.chave, decisao: "aceito" }])
-                      }
+                      onClick={() => onDecidir([{ chave: item.chave, decisao: "aceito" }])}
                       data-testid={`validacao-aceitar-${item.chave}`}
                     >
                       <Check className="h-3.5 w-3.5" />
@@ -275,9 +277,7 @@ export default function ValidacaoExtracaoDialog({
                       disabled={decidindo}
                       aria-label={`Rejeitar ${item.rotulo}`}
                       title="Rejeitar"
-                      onClick={() =>
-                        onDecidir([{ chave: item.chave, decisao: "rejeitado" }])
-                      }
+                      onClick={() => onDecidir([{ chave: item.chave, decisao: "rejeitado" }])}
                       data-testid={`validacao-rejeitar-${item.chave}`}
                     >
                       <X className="h-3.5 w-3.5" />
@@ -301,14 +301,11 @@ export default function ValidacaoExtracaoDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             Validar dados extraídos
-            {isRefreshing && (
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-            )}
+            {isRefreshing && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
           </DialogTitle>
           <DialogDescription>
-            Estes dados foram lidos automaticamente de documentos e ainda não
-            foram conferidos. Aceite ou rejeite cada um antes de gerar o
-            contrato.
+            Estes dados foram lidos automaticamente de documentos e ainda não foram conferidos.
+            Aceite ou rejeite cada um antes de gerar o contrato.
           </DialogDescription>
         </DialogHeader>
 
@@ -336,13 +333,45 @@ export default function ValidacaoExtracaoDialog({
               <X className="mr-1.5 h-3.5 w-3.5" />
               Rejeitar tudo
             </Button>
-            {decidindo && (
-              <Loader2 className="h-4 w-4 animate-spin self-center" />
-            )}
+            {decidindo && <Loader2 className="h-4 w-4 animate-spin self-center" />}
           </div>
         )}
 
         {corpo}
+
+        {conflitos.length > 0 && (
+          <div className="space-y-1" data-testid="validacao-conflitos">
+            <p className="flex items-center gap-1 text-xs font-medium text-destructive">
+              <AlertCircle className="h-3.5 w-3.5" />
+              Conflitos em aberto — decida antes de gerar
+            </p>
+            <ul className="space-y-1">
+              {conflitos.map((c) => (
+                <li
+                  key={c.id}
+                  className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs"
+                  data-testid={`validacao-conflito-${c.id}`}
+                >
+                  <p>
+                    <span className="font-medium">{c.rotulo}</span>{" "}
+                    <span className="text-muted-foreground">({c.grupo})</span>
+                  </p>
+                  <p className="text-muted-foreground">
+                    Atual: {c.valor_atual ?? "—"} · Lido do documento: {c.valor_proposto ?? "—"}
+                  </p>
+                  <a
+                    href={c.link.rota}
+                    className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline"
+                    data-testid={`validacao-conflito-link-${c.id}`}
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Resolver em {c.link.rotulo}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {rejeitados.length > 0 && (
           <div className="space-y-1" data-testid="validacao-rejeitados">
@@ -364,11 +393,7 @@ export default function ValidacaoExtracaoDialog({
         )}
 
         <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-          >
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Fechar
           </Button>
           <Button

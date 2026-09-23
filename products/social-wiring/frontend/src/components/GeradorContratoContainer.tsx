@@ -10,7 +10,7 @@
  *
  * 🔴 OWNER DECISION D2 — "Gerar versão" first asks the backend which
  * machine-extracted values are still unvalidated (`useValidacaoExtracao`).
- * Any → `<ValidacaoExtracaoDialog/>` opens (✓/✗ per value, accept/reject
+ * Any (or an open extraction conflict) → `<ValidacaoExtracaoDialog/>` opens (✓/✗ per value, accept/reject
  * all, inline manual input for a rejected required value); none → the
  * existing generate call runs. A 409 `EXTRACAO_PENDENTE_VALIDACAO` from
  * `gerar` (the backend gate — a value extracted between the check and the
@@ -68,9 +68,7 @@ export function GeradorContratoContainer({
   const { gerar } = useContratoMutations(clienteId);
 
   const [assinaturaData, setAssinaturaData] = useState(hoje);
-  const [erroGeracao, setErroGeracao] = useState<ContratoGeracaoError | null>(
-    null,
-  );
+  const [erroGeracao, setErroGeracao] = useState<ContratoGeracaoError | null>(null);
   const [avisosGerados, setAvisosGerados] = useState<string[] | null>(null);
 
   const [validacaoAberta, setValidacaoAberta] = useState(false);
@@ -78,15 +76,8 @@ export function GeradorContratoContainer({
    *  list (the value is now empty), so a snapshot drives the inline input. */
   const [rejeitados, setRejeitados] = useState<PendenteValidacao[]>([]);
   const [salvandoChave, setSalvandoChave] = useState<string | null>(null);
-  const validacao = useValidacaoExtracao(
-    clienteId,
-    contratoId,
-    validacaoAberta,
-  );
-  const { verificar, decidir, salvarManual } = useValidacaoExtracaoMutations(
-    clienteId,
-    contratoId,
-  );
+  const validacao = useValidacaoExtracao(clienteId, contratoId, validacaoAberta);
+  const { verificar, decidir, salvarManual } = useValidacaoExtracaoMutations(clienteId, contratoId);
 
   // 🔴 Two signals off `data`, never `isLoading`: it is false mid-refetch, so
   // an empty/error branch keyed off it would lie over data still good to
@@ -111,10 +102,7 @@ export function GeradorContratoContainer({
           toast.success("Nova versão gerada.");
         },
         onError: (err) => {
-          if (
-            err instanceof ContratoGeracaoError &&
-            err.code === CODIGO_PENDENTE_VALIDACAO
-          ) {
+          if (err instanceof ContratoGeracaoError && err.code === CODIGO_PENDENTE_VALIDACAO) {
             // The backend gate: something became pending after the check.
             void validacao.refetch();
             abrirValidacao();
@@ -131,11 +119,7 @@ export function GeradorContratoContainer({
             void query.refetch();
             return;
           }
-          toast.error(
-            err instanceof Error
-              ? err.message
-              : "Não foi possível gerar o contrato.",
-          );
+          toast.error(err instanceof Error ? err.message : "Não foi possível gerar o contrato.");
         },
       },
     );
@@ -145,23 +129,21 @@ export function GeradorContratoContainer({
     setErroGeracao(null);
     setAvisosGerados(null);
     verificar.mutate(undefined, {
-      onSuccess: (pendentes) => {
-        if (pendentes.length > 0) {
+      onSuccess: ({ pendentes, conflitos }) => {
+        if (pendentes.length > 0 || conflitos.length > 0) {
           abrirValidacao();
           return;
         }
         executarGerar();
       },
       onError: () => {
-        toast.error(
-          "Não foi possível verificar os dados extraídos. Tente novamente.",
-        );
+        toast.error("Não foi possível verificar os dados extraídos. Tente novamente.");
       },
     });
   }
 
   function handleDecidir(decisoes: DecisaoInput[]) {
-    const atuais = new Map((validacao.data ?? []).map((p) => [p.chave, p]));
+    const atuais = new Map((validacao.data?.pendentes ?? []).map((p) => [p.chave, p]));
     decidir.mutate(decisoes, {
       onSuccess: () => {
         const novos = decisoes
@@ -199,11 +181,7 @@ export function GeradorContratoContainer({
           void query.refetch();
         },
         onError: (err) => {
-          toast.error(
-            err instanceof Error
-              ? err.message
-              : "Não foi possível salvar o valor.",
-          );
+          toast.error(err instanceof Error ? err.message : "Não foi possível salvar o valor.");
         },
         onSettled: () => setSalvandoChave(null),
       },
@@ -228,7 +206,8 @@ export function GeradorContratoContainer({
       <ValidacaoExtracaoDialog
         open={validacaoAberta}
         onOpenChange={setValidacaoAberta}
-        pendentes={validacao.data}
+        pendentes={validacao.data?.pendentes}
+        conflitos={validacao.data?.conflitos ?? []}
         showSkeleton={validacaoSkeleton}
         isRefreshing={validacaoRefreshing}
         isError={validacao.isError && !validacao.data}

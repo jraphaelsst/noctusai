@@ -6,11 +6,12 @@
  * key; loading / empty / error states (never `isLoading`); a rejected
  * required value renders an inline input (or a "fill it on the card" note
  * when it has no single-input route); "Gerar contrato" only enables once
- * nothing is pending and no inline input is still waiting.
+ * nothing is pending, no conflict is open and no inline input is still
+ * waiting; open conflicts render read-only with a link to decide them.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { PendenteValidacao } from "@/hooks/useValidacaoExtracao";
+import type { ConflitoExtracao, PendenteValidacao } from "@/hooks/useValidacaoExtracao";
 
 import ValidacaoExtracaoDialog from "./ValidacaoExtracaoDialog";
 
@@ -57,6 +58,7 @@ async function render(over: Partial<Parameters<typeof ValidacaoExtracaoDialog>[0
     open: true,
     onOpenChange: vi.fn(),
     pendentes: [pendente(), CERTIDAO],
+    conflitos: [] as ConflitoExtracao[],
     showSkeleton: false,
     isRefreshing: false,
     isError: false,
@@ -128,21 +130,30 @@ describe("ValidacaoExtracaoDialog", () => {
   });
 
   it("first load shows the skeleton, not an empty list", async () => {
-    const { screen } = await render({ pendentes: undefined, showSkeleton: true });
+    const { screen } = await render({
+      pendentes: undefined,
+      showSkeleton: true,
+    });
     expect(screen.getByTestId("validacao-skeleton")).toBeTruthy();
     expect(screen.queryByTestId("validacao-vazio")).toBeNull();
     expect((screen.getByTestId("validacao-prosseguir") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("a load error offers a retry", async () => {
-    const { screen, fireEvent, props } = await render({ pendentes: undefined, isError: true });
+    const { screen, fireEvent, props } = await render({
+      pendentes: undefined,
+      isError: true,
+    });
     fireEvent.click(screen.getByText("Tentar novamente"));
     expect(props.onRetry).toHaveBeenCalledTimes(1);
   });
 
   it("🔴 a rejected required value with a manual route gets an inline input and blocks generation", async () => {
     const item = pendente();
-    const { screen, fireEvent, props } = await render({ pendentes: [], rejeitados: [item] });
+    const { screen, fireEvent, props } = await render({
+      pendentes: [],
+      rejeitados: [item],
+    });
     expect((screen.getByTestId("validacao-prosseguir") as HTMLButtonElement).disabled).toBe(true);
     const salvar = screen.getByTestId("validacao-salvar-cliente:v1:cpf") as HTMLButtonElement;
     expect(salvar.disabled).toBe(true);
@@ -167,11 +178,43 @@ describe("ValidacaoExtracaoDialog", () => {
       chave: "cliente:v1:data_casamento",
       campo: "data_casamento",
       rotulo: "Data do casamento",
-      edicao: { rota: "/api/clientes/v1", campo: "data_casamento", tipo: "data" },
+      edicao: {
+        rota: "/api/clientes/v1",
+        campo: "data_casamento",
+        tipo: "data",
+      },
     });
     const { screen } = await render({ pendentes: [], rejeitados: [item] });
     expect(
       (screen.getByTestId("validacao-input-cliente:v1:data_casamento") as HTMLInputElement).type,
     ).toBe("date");
+  });
+});
+
+describe("ValidacaoExtracaoDialog — open conflicts", () => {
+  const CONFLITO: ConflitoExtracao = {
+    id: "k1",
+    entidade: "cliente",
+    entidade_id: "v1",
+    campo: "cpf",
+    grupo: "Fulano de Tal (proprietario)",
+    rotulo: "CPF",
+    valor_atual: "111",
+    valor_proposto: "222",
+    origem_proposto: "rg",
+    link: { rota: "/configuracoes", rotulo: "Configurações → Pendências" },
+  };
+
+  it("renders read-only with both values and a link, and blocks generation", async () => {
+    const { screen } = await render({ pendentes: [], conflitos: [CONFLITO] });
+    const linha = screen.getByTestId("validacao-conflito-k1");
+    expect(linha.textContent).toContain("111");
+    expect(linha.textContent).toContain("222");
+    expect(screen.getByTestId("validacao-conflito-link-k1").getAttribute("href")).toBe(
+      "/configuracoes",
+    );
+    expect(screen.queryByTestId("validacao-vazio")).toBeNull();
+    expect(screen.queryByTestId("validacao-aceitar-k1")).toBeNull();
+    expect((screen.getByTestId("validacao-prosseguir") as HTMLButtonElement).disabled).toBe(true);
   });
 });

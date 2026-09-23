@@ -93,11 +93,11 @@ class TestRegistroDerivadoDoCarregador:
         lidas = _chaves_lidas_pelo_carregador()
         for campo in (*vx.CAMPOS_CLIENTE, *vx.CAMPOS_IMOVEL):
             for coluna in campo.valores:
-                # `onus_fonte`'s columns are read as the `onus_fonte` dict
-                # `dados_service.obter` builds; `inscricao_municipal` is
-                # `prefeitura_cadastro_imobiliario` renamed by the loader.
-                if campo.campo == "onus_fonte":
-                    assert "onus_fonte" in lidas
+                # The two act pointers are read as the dicts `dados_service
+                # .obter` builds from these columns.
+                fonte = {"onus_fonte": "onus_fonte", "titulo_aquisitivo": "titulo_aquisitivo_fonte"}
+                if campo.campo in fonte:
+                    assert fonte[campo.campo] in lidas
                     continue
                 assert coluna in lidas, f"{campo.entidade}.{coluna} is not read by carregador"
 
@@ -295,6 +295,7 @@ class TestGerarRecusaEnquantoPendente:
         corpo = r.json()
         assert corpo["error"]["code"] == "EXTRACAO_PENDENTE_VALIDACAO"
         assert corpo["error"]["details"]["pendentes"] == pendentes
+        assert corpo["error"]["details"]["conflitos"] == []
         assert _rows(scoped, "atendimento_contrato_versoes") == []
 
 
@@ -309,7 +310,7 @@ class TestDecisoes:
 
         r = _decidir(client, ids, (chave, "aceito"))
         assert r.status_code == 200, r.text
-        assert r.json() == {"aplicadas": 1, "pendentes": []}
+        assert r.json() == {"aplicadas": 1, "pendentes": [], "conflitos": []}
 
         vendedor = _vendedor(scoped, ids)
         assert vendedor["cpf"] == cpf and vendedor["cpf_origem"] == "rg"
@@ -408,3 +409,84 @@ class TestDecisoes:
         ids = _seed_completo(scoped)
         r = client.post(_url(ids, "validacao-extracao/decisoes"), json=corpo, headers=_auth())
         assert r.status_code == 422, r.text
+
+
+class TestTituloAquisitivoSugerido:
+    """Migration 154 machine-fills the título pointer (`origem='sugerido'`,
+    unconfirmed); accepting it here IS the confirmation the gate reads."""
+
+    def _sugerido(self, scoped):
+        dados = [
+            {**d, "titulo_aquisitivo_origem": "sugerido", "titulo_aquisitivo_confirmado_em": None}
+            if d["codigo"] == "EX001" else d
+            for d in _rows(scoped, "imovel_dados")
+        ]
+        scoped.set_table_data("imovel_dados", dados)
+
+    def test_it_is_pending_labelled_by_its_act(self, client, scoped):
+        ids = _seed_completo(scoped)
+        self._sugerido(scoped)
+        [item] = _pendentes(client, ids)
+        assert item["chave"] == "imovel:EX001:titulo_aquisitivo"
+        assert item["valor"] == "R.1" and item["obrigatorio"] is True
+
+    def test_accepting_it_satisfies_the_existing_gate(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        self._sugerido(scoped)
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert any(f["campo"] == "matricula.titulo_aquisitivo" for f in geracao["faltando"])
+        assert _decidir(client, ids, ("imovel:EX001:titulo_aquisitivo", "aceito")).status_code == 200
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert geracao["pronto"] is True, geracao["faltando"]
+        assert _gerar(client, ids).status_code == 201
+
+
+class TestConflitosAbertos:
+    def _conflito_cliente(self, scoped, ids, campo="cpf") -> str:
+        cid = str(uuid4())
+        scoped.set_table_data("cliente_campo_conflitos", [{
+            "id": cid, "org_id": ORG_ID, "cliente_id": ids["vendedor"], "campo": campo,
+            "valor_anterior": "111", "origem_anterior": "manual", "valor_proposto": "222",
+            "origem_proposto": "rg", "confianca_proposta": "alta", "fonte_tabela": None,
+            "fonte_id": None, "status": "pendente", "notificado_em": None, "decidido_por": None,
+            "decidido_em": None, "created_at": _T0,
+        }])
+        return cid
+
+    def test_an_open_party_conflict_is_listed_and_blocks_generation(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        cid = self._conflito_cliente(scoped, ids)
+        corpo = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()
+        assert corpo["pendentes"] == []
+        [conflito] = corpo["conflitos"]
+        assert conflito["id"] == cid and conflito["campo"] == "cpf"
+        assert (conflito["valor_atual"], conflito["valor_proposto"]) == ("111", "222")
+        assert conflito["link"]["rota"] == "/configuracoes"
+        r = _gerar(client, ids)
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["details"]["conflitos"] == corpo["conflitos"]
+
+    def test_a_conflict_on_a_non_contract_field_does_not_block(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        self._conflito_cliente(scoped, ids, campo="data_nascimento")
+        assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
+        assert _gerar(client, ids).status_code == 201
+
+    def test_a_decided_conflict_does_not_block(self, client, scoped):
+        ids = _seed_completo(scoped)
+        self._conflito_cliente(scoped, ids)
+        linhas = [{**r, "status": "aceito"} for r in _rows(scoped, "cliente_campo_conflitos")]
+        scoped.set_table_data("cliente_campo_conflitos", linhas)
+        assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
+
+    def test_an_open_imovel_conflict_links_to_the_imovel(self, client, scoped):
+        ids = _seed_completo(scoped)
+        cid = str(uuid4())
+        scoped.set_table_data("imovel_campo_conflitos", [{
+            "id": cid, "org_id": ORG_ID, "codigo": "EX001", "campo": "numero_matricula",
+            "valor_anterior": "12345", "origem_anterior": "manual", "valor_proposto": "12346",
+            "origem_proposto": "matricula", "status": "pendente", "created_at": _T0,
+        }])
+        [conflito] = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"]
+        assert conflito["entidade"] == "imovel" and conflito["rotulo"] == "Número da matrícula"
+        assert conflito["link"]["rota"] == f"/imoveis/EX001?conflito={cid}"

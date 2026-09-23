@@ -38,6 +38,15 @@ parallel slices add (migration 153 identity, 154 imóvel); until they land, the
 entry is inert — exactly the "not pending" answer those columns would give
 while still empty. Writes likewise only touch columns present on the row.
 
+OPEN CONFLICTS BLOCK TOO
+------------------------
+D1 never overwrites a set value with a disagreeing reading — it opens a
+conflict (`cliente_campo_conflitos` 138, `imovel_campo_conflitos` 154) for an
+admin. While one is open on a contract field, the value the contract would
+print is contested, so `listar_conflitos` reports it beside the pending list
+and `gerar` refuses on either. Conflicts are READ-ONLY here: the modal links
+to the screen that decides them.
+
 ACCEPT / REJECT
 ---------------
 Accept → stamp `confirmado_por/_em` (value untouched). Reject → the value AND
@@ -253,6 +262,23 @@ CAMPOS_IMOVEL: tuple[CampoValidavel, ...] = (
         confirmado_por="onus_credor_confirmado_por", confirmado_em="onus_credor_confirmado_em",
         obrigatorio=False,
     ),
+    # 109 — the título aquisitivo's source ACT (a pointer into a transcribed
+    # matrícula). Machine-filled with `origem='sugerido'` by migration 154's
+    # preenchimento; `carregador` gates on its `confirmado_em`
+    # (`Imovel.titulo_aquisitivo_confirmado`), so accepting it here IS that
+    # confirmation. 109's CHECKs tie the pointer columns to the origem —
+    # reject empties them all together.
+    CampoValidavel(
+        entidade=ENTIDADE_IMOVEL, campo="titulo_aquisitivo",
+        rotulo="Título aquisitivo (ato da matrícula)",
+        valores=(
+            "titulo_aquisitivo_ato_id", "titulo_aquisitivo_extracao_id",
+            "titulo_aquisitivo_char_inicio", "titulo_aquisitivo_char_fim",
+        ),
+        origem="titulo_aquisitivo_origem",
+        confirmado_por="titulo_aquisitivo_confirmado_por",
+        confirmado_em="titulo_aquisitivo_confirmado_em",
+    ),
     # 109 — `'sugerido' | 'manual'`; a CHECK ties `onus_fonte_extracao_id` to
     # the origem, so reject empties both.
     CampoValidavel(
@@ -311,9 +337,10 @@ _POR_ENTIDADE_CAMPO: dict[tuple[str, str], CampoValidavel] = {
 
 class ExtracaoPendenteValidacao(AppException):
     """`gerar` refused: machine-extracted values a human has not validated
-    yet. `details.pendentes` is the same list the GET returns."""
+    yet, or open extraction conflicts on contract data. `details.{pendentes,
+    conflitos}` is the same answer the GET returns."""
 
-    def __init__(self, pendentes: list[dict]) -> None:
+    def __init__(self, pendentes: list[dict], conflitos: Optional[list[dict]] = None) -> None:
         super().__init__(
             code="EXTRACAO_PENDENTE_VALIDACAO",
             message=(
@@ -321,7 +348,7 @@ class ExtracaoPendenteValidacao(AppException):
                 "aguardando validação humana."
             ),
             status_code=409,
-            details={"pendentes": pendentes},
+            details={"pendentes": pendentes, "conflitos": conflitos or []},
         )
 
 
@@ -381,9 +408,13 @@ def _valor_exibicao(campo: CampoValidavel, row: dict, nomes: dict[str, str]) -> 
         if nomes_t:
             partes.append("transmitentes: " + ", ".join(nomes_t))
         return " · ".join(partes) or None
+    if campo.campo == "titulo_aquisitivo":
+        ato = row.get("titulo_aquisitivo_ato_id")
+        return nomes.get(str(ato), "ato da matrícula") if ato else None
     if campo.campo == "onus_fonte":
         atos = row.get("onus_fonte_atos") or []
-        return f"{len(atos)} ato(s) citado(s)" if atos else None
+        rotulos = [nomes.get(str(a.get("ato_id")), "ato") for a in atos if isinstance(a, dict)]
+        return ", ".join(rotulos) or None
     if len(campo.valores) == 1:
         return _texto(row.get(campo.valores[0]))
     return " · ".join(
@@ -536,6 +567,21 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
                 coleta.alvos.append(
                     _Alvo(CAMPOS_IMOVEL_PERMUTA, codigo, linha, f"Imóvel da permuta {codigo}")
                 )
+
+    # The act labels ("R.1", "AV.3") the título/ônus pointers render as.
+    ato_ids: set[str] = set()
+    for alvo in coleta.alvos:
+        if alvo.campos is CAMPOS_IMOVEL:
+            if alvo.row.get("titulo_aquisitivo_ato_id"):
+                ato_ids.add(str(alvo.row["titulo_aquisitivo_ato_id"]))
+            for a in alvo.row.get("onus_fonte_atos") or []:
+                if isinstance(a, dict) and a.get("ato_id"):
+                    ato_ids.add(str(a["ato_id"]))
+    for aid, ato in _rows_por_id(client, org_id, "matricula_atos", ato_ids,
+                                 select="id,kind,numero").items():
+        coleta.nomes[aid] = (
+            f"{ato['kind']}.{ato['numero']}" if ato.get("numero") is not None else str(ato.get("kind"))
+        )
     return coleta
 
 
@@ -609,6 +655,85 @@ def _item(alvo: _Alvo, campo: CampoValidavel, fontes: dict[str, dict], nomes: di
     }
 
 
+#: `cliente_campo_conflitos.campo` is the `CampoExtraido.item_key` — the same
+#: name as a `CAMPOS_CLIENTE` entry; only those feed the contract.
+_CAMPOS_CLIENTE_CONTRATO = frozenset(c.campo for c in CAMPOS_CLIENTE)
+
+
+def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[dict]:
+    """Open extraction CONFLICTS on this contract's data — a later reading
+    disagreed with a value already set (D1: never a silent overwrite), and an
+    admin has not decided it. Read-only here (deciding is the conflict
+    screens' job), but they block generation exactly like a pending value:
+    the value the contract would print is contested.
+
+    - `cliente_campo_conflitos` (138) on every parte, for a contract field;
+    - `imovel_campo_conflitos` (154, imóvel slice) on the imóvel + permuta
+      imóveis — every field that table carries is an `imovel_dados` field the
+      contract reads.
+    """
+    pessoas = {p.cliente_id: p for p in [*dados.compradores, *dados.vendedores]}
+    saida: list[dict] = []
+    if pessoas:
+        rows = table_reads.in_batched_rows(
+            client, "cliente_campo_conflitos", org_id, "cliente_id", sorted(pessoas)
+        )
+        for r in rows:
+            if r.get("status") != "pendente" or r.get("campo") not in _CAMPOS_CLIENTE_CONTRATO:
+                continue
+            p = pessoas[str(r["cliente_id"])]
+            campo = _POR_ENTIDADE_CAMPO[(ENTIDADE_CLIENTE, r["campo"])]
+            saida.append({
+                "id": str(r["id"]),
+                "entidade": ENTIDADE_CLIENTE,
+                "entidade_id": p.cliente_id,
+                "campo": r["campo"],
+                "grupo": _rotulo_pessoa(p, {}),
+                "rotulo": campo.rotulo,
+                "valor_atual": _texto(r.get("valor_anterior")),
+                "valor_proposto": _texto(r.get("valor_proposto")),
+                "origem_proposto": r.get("origem_proposto"),
+                "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
+            })
+
+    codigos: list[str] = []
+    if dados.imovel is not None:
+        codigos.append(dados.imovel.codigo)
+    ativo_ids = [p.permuta_ativo_id for p in dados.permuta_imoveis]
+    if ativo_ids:
+        for a in table_reads.in_batched_rows(client, "permuta_ativos", org_id, "id", ativo_ids):
+            if a.get("imovel_codigo") and a["imovel_codigo"] not in codigos:
+                codigos.append(a["imovel_codigo"])
+    if codigos:
+        rotulos_imovel = {c.campo: c.rotulo for c in CAMPOS_IMOVEL}
+        rows = (
+            table_reads.table(client, "imovel_campo_conflitos")
+            .select("*")
+            .eq("org_id", str(org_id))
+            .in_("codigo", codigos)
+            .eq("status", "pendente")
+            .execute()
+        ).data or []
+        for r in rows:
+            codigo = r["codigo"]
+            saida.append({
+                "id": str(r["id"]),
+                "entidade": ENTIDADE_IMOVEL,
+                "entidade_id": codigo,
+                "campo": r["campo"],
+                "grupo": f"Imóvel {codigo}",
+                "rotulo": rotulos_imovel.get(r["campo"], r["campo"]),
+                "valor_atual": _texto(r.get("valor_anterior")),
+                "valor_proposto": _texto(r.get("valor_proposto")),
+                "origem_proposto": r.get("origem_proposto"),
+                "link": {
+                    "rota": f"/imoveis/{codigo}?conflito={r['id']}",
+                    "rotulo": f"Imóvel {codigo}",
+                },
+            })
+    return saida
+
+
 def listar_pendentes(
     client: Any, org_id: UUID, dados: DadosContrato, *, usuario_id: Optional[Any]
 ) -> list[dict]:
@@ -620,12 +745,23 @@ def listar_pendentes(
     return [_item(alvo, campo, fontes, coleta.nomes) for alvo, campo in brutos]
 
 
+def situacao(
+    client: Any, org_id: UUID, dados: DadosContrato, *, usuario_id: Optional[Any]
+) -> dict:
+    """The GET answer: `{pendentes, conflitos}` — generation may proceed iff
+    both are empty."""
+    return {
+        "pendentes": listar_pendentes(client, org_id, dados, usuario_id=usuario_id),
+        "conflitos": listar_conflitos(client, org_id, dados),
+    }
+
+
 def exigir_sem_pendentes(
     client: Any, org_id: UUID, dados: DadosContrato, *, usuario_id: Optional[Any]
 ) -> None:
-    pendentes = listar_pendentes(client, org_id, dados, usuario_id=usuario_id)
-    if pendentes:
-        raise ExtracaoPendenteValidacao(pendentes)
+    estado = situacao(client, org_id, dados, usuario_id=usuario_id)
+    if estado["pendentes"] or estado["conflitos"]:
+        raise ExtracaoPendenteValidacao(estado["pendentes"], estado["conflitos"])
 
 
 # ─── Decisions ──────────────────────────────────────────────────────────────
@@ -751,10 +887,7 @@ def decidir(
             }
         ).execute()
 
-    return {
-        "aplicadas": len(decisoes),
-        "pendentes": listar_pendentes(client, org_id, dados, usuario_id=usuario_id),
-    }
+    return {"aplicadas": len(decisoes), **situacao(client, org_id, dados, usuario_id=usuario_id)}
 
 
 __all__ = [
@@ -773,5 +906,7 @@ __all__ = [
     "chave",
     "decidir",
     "exigir_sem_pendentes",
+    "listar_conflitos",
     "listar_pendentes",
+    "situacao",
 ]

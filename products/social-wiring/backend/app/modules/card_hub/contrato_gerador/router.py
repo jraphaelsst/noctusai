@@ -110,16 +110,13 @@ async def get_validacao_extracao_route(
 ) -> dict:
     """Owner decision D2: every contract-feeding value a machine extracted
     and no human validated yet — for THIS contract's partes, imóvel,
-    permuta imóveis and certidões. Empty `pendentes` = `gerar` may proceed.
-    See `validacao_extracao`."""
+    permuta imóveis and certidões — plus the open extraction `conflitos` on
+    that data (read-only; decided on the conflict screens). Both empty =
+    `gerar` may proceed. See `validacao_extracao`."""
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
-    return {
-        "pendentes": validacao_extracao.listar_pendentes(
-            client, org_id, dados, usuario_id=usuario_id
-        )
-    }
+    return validacao_extracao.situacao(client, org_id, dados, usuario_id=usuario_id)
 
 
 @router.post("/{cliente_id}/contratos/{contrato_id}/validacao-extracao/decisoes")
@@ -134,7 +131,7 @@ async def post_validacao_extracao_decisoes_route(
     NULL) each named pending value; one `extracao_validacoes` ledger row per
     decision (migration 156). 409 `EXTRACAO_VALIDACAO_DESATUALIZADA` — and
     nothing written — when any `chave` is not currently pending. Returns
-    `{aplicadas, pendentes}` (what is still pending)."""
+    `{aplicadas, pendentes, conflitos}` (what still blocks generation)."""
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
