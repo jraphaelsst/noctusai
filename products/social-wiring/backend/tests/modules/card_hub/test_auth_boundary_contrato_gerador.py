@@ -14,6 +14,9 @@ _ROUTES: tuple[tuple[str, str], ...] = (
     ("get", "/api/clientes/{cliente_id}/contratos/{contrato_id}/geracao"),
     ("post", "/api/clientes/{cliente_id}/contratos/{contrato_id}/gerar"),
     ("post", "/api/clientes/{cliente_id}/contratos/gerar"),
+    # Owner decision D2 (migration 156) — the extraction validation gate.
+    ("get", "/api/clientes/{cliente_id}/contratos/{contrato_id}/validacao-extracao"),
+    ("post", "/api/clientes/{cliente_id}/contratos/{contrato_id}/validacao-extracao/decisoes"),
 )
 
 

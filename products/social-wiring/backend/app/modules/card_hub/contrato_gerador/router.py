@@ -20,12 +20,14 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
+from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 
 from app.dependencies import get_current_user_org
 from app.modules.card_hub.auth import auth_parts
-from app.modules.card_hub.contrato_gerador import service
+from app.modules.card_hub.contrato_gerador import service, validacao_extracao
+from app.modules.card_hub.contrato_gerador.carregador import carregar
 from app.modules.card_hub.contrato_gerador.deps import (
     get_contrato_docx_adapter,
     get_politica_contrato,
@@ -33,6 +35,15 @@ from app.modules.card_hub.contrato_gerador.deps import (
 from app.modules.card_hub.deps import get_card_hub_client, get_storage_backend
 
 router = APIRouter()
+
+
+class DecisaoValidacao(StrictHttpModel):
+    chave: str = Field(min_length=1)
+    decisao: validacao_extracao.Decisao
+
+
+class DecisoesValidacaoBody(StrictHttpModel):
+    decisoes: list[DecisaoValidacao] = Field(min_length=1)
 
 
 class GerarContratoBody(StrictHttpModel):
@@ -90,6 +101,53 @@ async def get_contrato_geracao_route(
     )
 
 
+@router.get("/{cliente_id}/contratos/{contrato_id}/validacao-extracao")
+async def get_validacao_extracao_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Owner decision D2: every contract-feeding value a machine extracted
+    and no human validated yet — for THIS contract's partes, imóvel,
+    permuta imóveis and certidões. Empty `pendentes` = `gerar` may proceed.
+    See `validacao_extracao`."""
+    user, org_id = auth_parts(auth)
+    usuario_id = getattr(user, "id", None)
+    dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
+    return {
+        "pendentes": validacao_extracao.listar_pendentes(
+            client, org_id, dados, usuario_id=usuario_id
+        )
+    }
+
+
+@router.post("/{cliente_id}/contratos/{contrato_id}/validacao-extracao/decisoes")
+async def post_validacao_extracao_decisoes_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    body: DecisoesValidacaoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Accept (stamp `confirmado_por/_em`) or reject (value + provenance →
+    NULL) each named pending value; one `extracao_validacoes` ledger row per
+    decision (migration 156). 409 `EXTRACAO_VALIDACAO_DESATUALIZADA` — and
+    nothing written — when any `chave` is not currently pending. Returns
+    `{aplicadas, pendentes}` (what is still pending)."""
+    user, org_id = auth_parts(auth)
+    usuario_id = getattr(user, "id", None)
+    dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
+    return validacao_extracao.decidir(
+        client,
+        org_id,
+        dados,
+        contrato_id,
+        [(d.chave, d.decisao) for d in body.decisoes],
+        usuario_id=usuario_id,
+    )
+
+
 @router.post("/{cliente_id}/contratos/{contrato_id}/gerar", status_code=201)
 async def post_contrato_gerar_route(
     cliente_id: UUID,
@@ -115,4 +173,4 @@ async def post_contrato_gerar_route(
     )
 
 
-__all__ = ["GerarContratoBody", "router"]
+__all__ = ["DecisaoValidacao", "DecisoesValidacaoBody", "GerarContratoBody", "router"]

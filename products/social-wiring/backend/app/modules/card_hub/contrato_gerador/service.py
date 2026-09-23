@@ -30,6 +30,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
 from app.modules.card_hub.contrato_gerador.documento import MIME_PDF, gerar_pdf, renderizar
 from app.modules.card_hub.contrato_gerador.lint import lint
 from app.modules.card_hub.contrato_gerador.politica import Politica
+from app.modules.card_hub.contrato_gerador.validacao_extracao import exigir_sem_pendentes
 
 FUSO = ZoneInfo("America/Sao_Paulo")
 
@@ -199,6 +200,12 @@ async def gerar(
     politica: Politica,
 ) -> dict:
     dados, atendimento_id = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
+    # Owner decision D2 (migration 156): nothing a machine extracted may reach
+    # the instrument before a human validated it. Checked FIRST — a rejected
+    # value turns into a `faltando` below, so the validation is what the
+    # operator must clear before the completeness report is even meaningful.
+    # 409 `EXTRACAO_PENDENTE_VALIDACAO`; the modal is UI, this is the gate.
+    exigir_sem_pendentes(client, org_id, dados, usuario_id=usuario_id)
     data = data_assinatura(dados, assinatura)
     switches = derivar_switches(dados, politica)
     avaliacao = avaliar(dados, switches, politica, data)

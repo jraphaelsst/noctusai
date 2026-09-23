@@ -1,0 +1,410 @@
+"""Owner decision D2 — the human validation gate over machine-extracted
+contract data (`contrato_gerador.validacao_extracao`, migration 156).
+
+WHAT THESE PIN
+--------------
+- the registry is DERIVED from what `carregador` reads: every value column it
+  names is one the loader reads, and every column the loader reads that has
+  a provenance quintet in the migrated schema is covered (drift guard both
+  ways);
+- a provenance column that does not exist yet (parallel migrations 153/154)
+  makes its entry inert, never a crash — and writes only touch columns that
+  exist on the row;
+- GET .../validacao-extracao lists exactly the machine-pending values of THIS
+  contract's partes / imóvel / certidões / última transferência, with source
+  document, confidence, required flag and the manual-edit route;
+- POST .../gerar refuses with 409 EXTRACAO_PENDENTE_VALIDACAO while anything
+  is pending — the FE cannot bypass it;
+- accept stamps `confirmado_por/_em` (value kept); reject NULLs the value and
+  its provenance (the field becomes `faltando`, and the existing manual PATCH
+  then fills it with `origem='manual'`); both append one ledger row;
+- a stale `chave` is a 409 with NOTHING written.
+
+All data is synthetic (see `contrato_gerador_fixtures`).
+"""
+from __future__ import annotations
+
+import ast
+import inspect
+from pathlib import Path
+from uuid import UUID, uuid4
+
+import pytest
+
+from noctusai_lib.testing.migration_parser import parse_files
+
+from app.modules.card_hub import documento_checklist_service as checklist_svc
+from app.modules.card_hub import identidade_extracao_service as identidade_svc
+from app.modules.card_hub.contrato_gerador import carregador
+from app.modules.card_hub.contrato_gerador import validacao_extracao as vx
+from app.modules.card_hub.contrato_gerador.service import hoje
+from app.services import clientes_service as clientes_svc
+from tests.modules.card_hub.conftest import ORG_ID
+from tests.modules.card_hub.test_contrato_gerador_endpoints import (
+    _T0,
+    _auth,
+    _rows,
+    _seed_base,
+    _seed_completo,
+    _url,
+)
+
+_MIGRATIONS = Path(__file__).resolve().parents[3] / "migrations"
+
+
+def _schema() -> dict[str, set[str]]:
+    return parse_files(sorted(_MIGRATIONS.glob("[0-9]*.sql")))
+
+
+def _chaves_lidas_pelo_carregador() -> set[str]:
+    """Every literal key `carregador` reads off a row (`x.get("k")`), plus the
+    `_endereco(row)` expansion and the columns `completude_contratual`
+    selects (where `estado_civil` is read)."""
+    arvore = ast.parse(inspect.getsource(carregador))
+    chaves = {
+        no.args[0].value
+        for no in ast.walk(arvore)
+        if isinstance(no, ast.Call)
+        and isinstance(no.func, ast.Attribute)
+        and no.func.attr == "get"
+        and no.args
+        and isinstance(no.args[0], ast.Constant)
+        and isinstance(no.args[0].value, str)
+    }
+    chaves |= {f"endereco_{c}" for c in carregador._CAMPOS_ENDERECO}
+    chaves |= set(checklist_svc._COLUNAS_QUALIFICACAO_CONTRATO)
+    # `Pessoa.certidao_estado_civil_emitida_em` — read through completude's
+    # `certidao_estado_civil_mais_recente`, which `select`s the 148 column.
+    fonte_ec = ast.parse(inspect.getsource(identidade_svc.certidao_estado_civil_mais_recente).strip())
+    chaves |= {
+        no.args[0].value
+        for no in ast.walk(fonte_ec)
+        if isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+        and no.func.attr == "select" and no.args and isinstance(no.args[0], ast.Constant)
+    }
+    return chaves
+
+
+# ─── The registry, structurally ─────────────────────────────────────────────
+
+
+class TestRegistroDerivadoDoCarregador:
+    def test_every_registry_value_column_is_one_the_loader_reads(self):
+        lidas = _chaves_lidas_pelo_carregador()
+        for campo in (*vx.CAMPOS_CLIENTE, *vx.CAMPOS_IMOVEL):
+            for coluna in campo.valores:
+                # `onus_fonte`'s columns are read as the `onus_fonte` dict
+                # `dados_service.obter` builds; `inscricao_municipal` is
+                # `prefeitura_cadastro_imobiliario` renamed by the loader.
+                if campo.campo == "onus_fonte":
+                    assert "onus_fonte" in lidas
+                    continue
+                assert coluna in lidas, f"{campo.entidade}.{coluna} is not read by carregador"
+
+    def test_every_loaded_column_with_provenance_is_in_the_registry(self):
+        """The converse drift guard: a column the contract reads that ALREADY
+        has a `<campo>_origem` column must be gated — otherwise a machine
+        value reaches the instrument unvalidated."""
+        schema = _schema()
+        lidas = _chaves_lidas_pelo_carregador()
+        cobertas = {
+            ("clientes", c) for campo in vx.CAMPOS_CLIENTE for c in campo.valores
+        } | {("imovel_dados", c) for campo in vx.CAMPOS_IMOVEL for c in campo.valores}
+        for tabela in ("clientes", "imovel_dados"):
+            colunas = schema[f"social_wiring.{tabela}"]
+            for coluna in lidas & colunas:
+                if f"{coluna}_origem" in colunas and f"{coluna}_confirmado_em" in colunas:
+                    assert (tabela, coluna) in cobertas, (
+                        f"{tabela}.{coluna} feeds the contract and has provenance, "
+                        "but validacao_extracao.REGISTRO does not gate it"
+                    )
+
+    def test_the_ledger_table_matches_the_shared_contract(self):
+        colunas = _schema()["social_wiring.extracao_validacoes"]
+        assert {
+            "id", "org_id", "contrato_id", "entidade", "entidade_id", "campo", "valor_extraido",
+            "origem", "fonte_documento_id", "confianca", "decisao", "decidido_por", "decidido_em",
+            "created_at",
+        } <= colunas
+
+
+class TestColunaAindaInexistente:
+    """Parallel slices (153/154) add provenance columns; until they land an
+    entry is inert, and writes never name a column the row lacks."""
+
+    endereco = next(c for c in vx.CAMPOS_CLIENTE if c.campo == "endereco")
+
+    def test_a_row_without_the_provenance_columns_is_not_pending(self):
+        assert not self.endereco.pendente({"endereco_logradouro": "Rua X"})
+
+    def test_the_same_row_with_153s_columns_is_pending(self):
+        row = {
+            "endereco_logradouro": "Rua X", "endereco_origem": "comprovante_endereco",
+            "endereco_documento_id": str(uuid4()), "endereco_em": _T0,
+            "endereco_confirmado_por": None, "endereco_confirmado_em": None,
+        }
+        assert self.endereco.pendente(row)
+        assert not self.endereco.pendente({**row, "endereco_origem": "manual"})
+        assert not self.endereco.pendente({**row, "endereco_confirmado_em": _T0})
+        assert not self.endereco.pendente({**row, "endereco_logradouro": None})
+
+    def test_reject_only_names_columns_present_on_the_row(self):
+        row = {"endereco_logradouro": "Rua X", "endereco_cidade": "C", "endereco_origem": "x",
+               "endereco_confirmado_em": None}
+        patch = vx._patch_rejeite(self.endereco, row)
+        assert set(patch) == set(row)
+        assert all(v is None for v in patch.values())
+
+    def test_the_ato_detalhe_reject_keeps_its_not_null_origem(self):
+        row = {"data_registro": "2020-01-10", "transmitentes": [{"nome": "A"}],
+               "origem": "sugestao", "confirmado_por": None, "confirmado_em": None}
+        patch = vx._patch_rejeite(vx.CAMPO_ATO_DETALHE, row)
+        assert "origem" not in patch
+        assert patch["transmitentes"] == [] and patch["data_registro"] is None
+        assert not vx.CAMPO_ATO_DETALHE.pendente({**row, **patch})
+
+
+# ─── Over the mock DB, real loader ───────────────────────────────────────────
+
+
+def _vendedor(scoped, ids) -> dict:
+    return next(r for r in _rows(scoped, "clientes") if r["id"] == ids["vendedor"])
+
+
+def _cpf_extraido(scoped, ids, *, confianca="alta") -> str:
+    """The vendedor's CPF, as a machine read it off an RG upload."""
+    doc_id = str(uuid4())
+    scoped.set_table_data("cliente_documentos", _rows(scoped, "cliente_documentos") + [{
+        "id": doc_id, "org_id": ORG_ID, "cliente_id": ids["vendedor"], "tipo_documento": "rg",
+        "nome_original": "rg-fulano.pdf", "deleted_at": None, "extracao_descartada_em": None,
+        "extracao_cpf_confianca": confianca, "created_at": _T0,
+    }])
+    linhas = []
+    for r in _rows(scoped, "clientes"):
+        if r["id"] == ids["vendedor"]:
+            r = {**r, "cpf_origem": "rg", "cpf_documento_id": doc_id, "cpf_em": _T0,
+                 "cpf_confirmado_por": None, "cpf_confirmado_em": None}
+        linhas.append(r)
+    scoped.set_table_data("clientes", linhas)
+    return doc_id
+
+
+def _pendentes(client, ids) -> list[dict]:
+    r = client.get(_url(ids, "validacao-extracao"), headers=_auth())
+    assert r.status_code == 200, r.text
+    return r.json()["pendentes"]
+
+
+def _decidir(client, ids, *decisoes):
+    return client.post(
+        _url(ids, "validacao-extracao/decisoes"),
+        json={"decisoes": [{"chave": c, "decisao": d} for c, d in decisoes]},
+        headers=_auth(),
+    )
+
+
+def _gerar(client, ids):
+    return client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
+
+
+class TestListagem:
+    def test_a_fully_human_card_has_nothing_pending(self, client, scoped):
+        ids = _seed_completo(scoped)
+        assert _pendentes(client, ids) == []
+
+    def test_a_machine_read_value_is_listed_with_its_source(self, client, scoped):
+        ids = _seed_completo(scoped)
+        doc_id = _cpf_extraido(scoped, ids)
+        [item] = _pendentes(client, ids)
+        vendedor = _vendedor(scoped, ids)
+        assert item == {
+            "chave": f"cliente:{ids['vendedor']}:cpf",
+            "entidade": "cliente",
+            "entidade_id": ids["vendedor"],
+            "campo": "cpf",
+            "grupo": "Fulano de Tal (proprietario)",
+            "rotulo": "CPF",
+            "valor": vendedor["cpf"],
+            "origem": "rg",
+            "fonte_documento_id": doc_id,
+            "fonte_nome": "rg-fulano.pdf",
+            "confianca": "alta",
+            "obrigatorio": True,
+            "edicao": {"rota": f"/api/clientes/{ids['vendedor']}", "campo": "cpf", "tipo": "texto"},
+        }
+
+    def test_a_confirmed_or_manual_value_is_not_pending(self, client, scoped):
+        ids = _seed_completo(scoped)
+        _cpf_extraido(scoped, ids)
+        linhas = [
+            {**r, "cpf_confirmado_em": _T0} if r["id"] == ids["vendedor"] else r
+            for r in _rows(scoped, "clientes")
+        ]
+        scoped.set_table_data("clientes", linhas)
+        assert _pendentes(client, ids) == []
+
+    def test_an_api_certidao_and_a_suggested_last_transfer_are_listed(self, client, scoped):
+        ids = _seed_completo(scoped)
+        resultados = _rows(scoped, "certidao_resultados")
+        resultados[0] = {**resultados[0], "resultado_origem": "api",
+                         "confirmado_por": None, "confirmado_em": None}
+        scoped.set_table_data("certidao_resultados", resultados)
+        detalhes = [
+            {**d, "origem": "sugestao", "confirmado_em": None, "data_registro_confianca": "baixa"}
+            for d in _rows(scoped, "matricula_ato_detalhes")
+        ]
+        scoped.set_table_data("matricula_ato_detalhes", detalhes)
+
+        por_entidade = {i["entidade"]: i for i in _pendentes(client, ids)}
+        assert set(por_entidade) == {"certidao", "ato_detalhe"}
+        cert = por_entidade["certidao"]
+        assert cert["entidade_id"] == resultados[0]["id"]
+        assert cert["origem"] == "api" and cert["obrigatorio"] is True and cert["edicao"] is None
+        ato = por_entidade["ato_detalhe"]
+        assert ato["confianca"] == "baixa"
+        assert "Antiga Dona Exemplo" in ato["valor"]
+
+    def test_a_machine_matricula_number_on_the_imovel_is_listed(self, client, scoped):
+        ids = _seed_completo(scoped)
+        dados = [
+            {**d, "numero_matricula_origem": "matricula", "numero_matricula_confirmado_em": None}
+            for d in _rows(scoped, "imovel_dados") if d["codigo"] == "EX001"
+        ]
+        scoped.set_table_data("imovel_dados", dados)
+        [item] = _pendentes(client, ids)
+        assert item["chave"] == "imovel:EX001:numero_matricula"
+        assert item["edicao"]["rota"] == "/api/imoveis/EX001/dados"
+
+    @pytest.mark.parametrize("sufixo, metodo", [
+        ("validacao-extracao", "get"), ("validacao-extracao/decisoes", "post"),
+    ])
+    def test_a_deleted_contract_is_404(self, client, scoped, sufixo, metodo):
+        ids = _seed_base(scoped, contrato_over={"deleted_at": _T0})
+        kwargs = {"json": {"decisoes": [{"chave": "x", "decisao": "aceito"}]}} if metodo == "post" else {}
+        r = getattr(client, metodo)(_url(ids, sufixo), headers=_auth(), **kwargs)
+        assert r.status_code == 404, r.text
+
+
+class TestGerarRecusaEnquantoPendente:
+    def test_generation_is_refused_with_the_pending_list(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        _cpf_extraido(scoped, ids)
+        pendentes = _pendentes(client, ids)
+        r = _gerar(client, ids)
+        assert r.status_code == 409, r.text
+        corpo = r.json()
+        assert corpo["error"]["code"] == "EXTRACAO_PENDENTE_VALIDACAO"
+        assert corpo["error"]["details"]["pendentes"] == pendentes
+        assert _rows(scoped, "atendimento_contrato_versoes") == []
+
+
+class TestDecisoes:
+    def test_accept_stamps_the_confirmation_logs_it_and_unblocks_generation(
+        self, client, scoped, fake_storage
+    ):
+        ids = _seed_completo(scoped)
+        doc_id = _cpf_extraido(scoped, ids)
+        cpf = _vendedor(scoped, ids)["cpf"]
+        chave = f"cliente:{ids['vendedor']}:cpf"
+
+        r = _decidir(client, ids, (chave, "aceito"))
+        assert r.status_code == 200, r.text
+        assert r.json() == {"aplicadas": 1, "pendentes": []}
+
+        vendedor = _vendedor(scoped, ids)
+        assert vendedor["cpf"] == cpf and vendedor["cpf_origem"] == "rg"
+        assert vendedor["cpf_confirmado_em"] is not None
+        [linha] = _rows(scoped, vx.LEDGER)
+        assert linha["decisao"] == "aceito"
+        assert (linha["entidade"], linha["entidade_id"], linha["campo"]) == ("cliente", ids["vendedor"], "cpf")
+        assert linha["valor_extraido"] == cpf and linha["origem"] == "rg"
+        assert linha["fonte_documento_id"] == doc_id and linha["confianca"] == "alta"
+        assert linha["contrato_id"] == ids["contrato"] and linha["org_id"] == ORG_ID
+
+        assert _gerar(client, ids).status_code == 201
+
+    def test_reject_nulls_value_and_provenance_then_the_manual_patch_fills_it(
+        self, client, scoped, fake_storage
+    ):
+        ids = _seed_completo(scoped)
+        _cpf_extraido(scoped, ids)
+        cpf = _vendedor(scoped, ids)["cpf"]
+
+        r = _decidir(client, ids, (f"cliente:{ids['vendedor']}:cpf", "rejeitado"))
+        assert r.status_code == 200, r.text
+        vendedor = _vendedor(scoped, ids)
+        for coluna in ("cpf", "cpf_origem", "cpf_documento_id", "cpf_em", "cpf_confirmado_em"):
+            assert vendedor[coluna] is None, coluna
+        [linha] = _rows(scoped, vx.LEDGER)
+        assert linha["decisao"] == "rejeitado" and linha["valor_extraido"] == cpf
+
+        # Now a `faltando` in the EXISTING gate — no longer a pending validation.
+        assert _pendentes(client, ids) == []
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert any(f["campo"].endswith("cpf") for f in geracao["faltando"])
+
+        # The modal's inline input is `PATCH /api/clientes/{id}` (the route's
+        # own client seam is not the card_hub one this mock seeds), which
+        # delegates to this service — the write that stamps origem='manual'.
+        clientes_svc.update_cliente(scoped, UUID(ORG_ID), UUID(ids["vendedor"]), cpf=cpf)
+        assert _vendedor(scoped, ids)["cpf_origem"] == "manual"
+        assert _pendentes(client, ids) == []
+        assert _gerar(client, ids).status_code == 201
+
+    def test_accept_all_and_reject_all_in_one_request(self, client, scoped):
+        ids = _seed_completo(scoped)
+        _cpf_extraido(scoped, ids)
+        resultados = _rows(scoped, "certidao_resultados")
+        resultados[0] = {**resultados[0], "resultado_origem": "ia",
+                         "confirmado_por": None, "confirmado_em": None}
+        scoped.set_table_data("certidao_resultados", resultados)
+        pendentes = _pendentes(client, ids)
+        assert len(pendentes) == 2
+
+        r = _decidir(client, ids, *[(p["chave"], "rejeitado") for p in pendentes])
+        assert r.status_code == 200, r.text
+        assert r.json()["aplicadas"] == 2 and r.json()["pendentes"] == []
+        cert = next(x for x in _rows(scoped, "certidao_resultados") if x["id"] == resultados[0]["id"])
+        for coluna in ("numero", "emitida_em", "validade_ate", "resultado", "resultado_origem"):
+            assert cert[coluna] is None, coluna
+        assert {l["decisao"] for l in _rows(scoped, vx.LEDGER)} == {"rejeitado"}
+
+    def test_accepting_a_suggested_act_detail_confirms_it(self, client, scoped):
+        ids = _seed_completo(scoped)
+        detalhes = [{**d, "origem": "sugestao", "confirmado_em": None}
+                    for d in _rows(scoped, "matricula_ato_detalhes")]
+        scoped.set_table_data("matricula_ato_detalhes", detalhes)
+        [item] = _pendentes(client, ids)
+        assert _decidir(client, ids, (item["chave"], "aceito")).status_code == 200
+        [det] = [d for d in _rows(scoped, "matricula_ato_detalhes") if d["id"] == item["entidade_id"]]
+        assert det["origem"] == "confirmado" and det["confirmado_em"] is not None
+
+    def test_a_stale_key_is_409_and_nothing_is_written(self, client, scoped):
+        ids = _seed_completo(scoped)
+        _cpf_extraido(scoped, ids)
+        [item] = _pendentes(client, ids)
+        r = _decidir(client, ids, (item["chave"], "aceito"), ("cliente:nao-existe:cpf", "aceito"))
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "EXTRACAO_VALIDACAO_DESATUALIZADA"
+        assert r.json()["error"]["details"]["chaves"] == ["cliente:nao-existe:cpf"]
+        assert _rows(scoped, vx.LEDGER) == []
+        assert _vendedor(scoped, ids)["cpf_confirmado_em"] is None
+
+    def test_a_repeated_key_is_refused(self, client, scoped):
+        ids = _seed_completo(scoped)
+        _cpf_extraido(scoped, ids)
+        [item] = _pendentes(client, ids)
+        r = _decidir(client, ids, (item["chave"], "aceito"), (item["chave"], "rejeitado"))
+        # The seed `ValidationError_` — this app's 400 VALIDATION_ERROR.
+        assert r.status_code == 400, r.text
+        assert r.json()["error"]["code"] == "VALIDATION_ERROR"
+        assert _rows(scoped, vx.LEDGER) == []
+
+    @pytest.mark.parametrize("corpo", [
+        {"decisoes": []},
+        {"decisoes": [{"chave": "x", "decisao": "talvez"}]},
+    ])
+    def test_a_malformed_body_is_422(self, client, scoped, corpo):
+        ids = _seed_completo(scoped)
+        r = client.post(_url(ids, "validacao-extracao/decisoes"), json=corpo, headers=_auth())
+        assert r.status_code == 422, r.text
