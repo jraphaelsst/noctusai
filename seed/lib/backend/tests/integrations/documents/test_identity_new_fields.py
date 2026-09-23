@@ -399,6 +399,66 @@ class TestExtractorFallthrough:
         assert out.error == "insufficient_quota"
 
 
+class _FakeResolverCapturingMedia:
+    """Stands in for `get_media_resolver(real=True, ...)` — records every
+    `InboundMedia` it was asked to resolve, so a test can assert what the
+    REAL `DocumentTextLadder.to_text` (not the `_Ladder` DI stand-in used
+    above) actually builds when retrying."""
+
+    def __init__(self, resposta_texto: str) -> None:
+        self._resposta_texto = resposta_texto
+        self.medias: list = []
+
+    async def resolve(self, media):
+        self.medias.append(media)
+
+        class _Resolved:
+            error = None
+            error_message = None
+            text = self._resposta_texto
+
+        return _Resolved()
+
+
+class TestForcedRetryReachesTheResolverAsForceVision:
+    """`ladder.chamadas == [False, True]` above proves `pular_camada_texto`
+    is set — it does NOT prove the retry ever escapes a resolver that
+    independently re-derives "is this text layer substantive" and hands
+    the SAME text back (the actual 2026-09-23 `sem_dados` root cause on a
+    "CNH Digital" PDF). This exercises the REAL `DocumentTextLadder`, not
+    the `_Ladder` fake, end to end through `LadderIdentityExtractor`."""
+
+    @pytest.mark.asyncio
+    async def test_pular_camada_texto_sets_force_vision_on_the_resolved_media(self):
+        fitz = pytest.importorskip("fitz")
+        from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
+
+        # A REAL, `classify_pdf_text_layer`-substantive text layer (well
+        # above the char floor, no provenance-stamp match) that carries
+        # NONE of the identity fields — mirrors the "CNH Digital" card-
+        # cover boilerplate this fix was measured against, without any
+        # real document or PII.
+        doc = fitz.open()
+        page = doc.new_page()
+        texto = "TEXTO DIGITAL SEM CAMPOS DE IDENTIDADE. " * 10
+        page.insert_textbox(fitz.Rect(20, 20, 500, 500), texto, fontsize=10)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resolver = _FakeResolverCapturingMedia(RG_ANTIGO)
+        ladder = DocumentTextLadder(resolver=resolver)
+        extractor = LadderIdentityExtractor(ladder=ladder)
+
+        out = await extractor.extract(pdf_bytes, mimetype="application/pdf")
+
+        assert out.cpf == "412.954.238-98"  # the vision answer actually landed
+        # The rung-1 text layer never touches the resolver at all (it is
+        # non-empty, so `to_text` returns without calling `.resolve`) — the
+        # ONE call recorded here is the extractor's forced retry.
+        assert len(resolver.medias) == 1
+        assert resolver.medias[0].force_vision is True
+
+
 class TestExtractorNewFields:
     @pytest.mark.asyncio
     async def test_profissao_and_address_ride_on_the_result(self):

@@ -167,7 +167,14 @@ class TestDominantEmbeddedImage:
         assert camada.pages[0].is_substantive is False
         assert camada.pages[0].reason == "provenance stamp only"
 
-    def test_two_comparable_images_are_ambiguous_no_dominant_answer(self) -> None:
+    def test_two_comparable_images_crop_renders_their_union_region(self) -> None:
+        """Neither image alone IS the document — but a crop spanning both
+        is. Was `None` ("ambiguous, bail") before the `identity-vision-
+        render-dpi` follow-up fix (2026-09-23): a real "CNH Digital" PDF
+        stacks 2-3 same-area card images, and bailing to the whole-page
+        raster diluted them past legibility — see
+        `test_dominant_embedded_image_bug4_shape_with_qr_and_two_card_halves`
+        for the exact measured shape."""
         import fitz  # type: ignore
 
         img_a = self._card_png(color=(0.1, 0.3, 0.7))
@@ -179,7 +186,80 @@ class TestDominantEmbeddedImage:
         pdf_bytes = doc.tobytes()
         doc.close()
 
-        assert _dominant_embedded_image(pdf_bytes, 1) is None
+        resultado = _dominant_embedded_image(pdf_bytes, 1)
+
+        assert resultado is not None
+        assert resultado != img_a and resultado != img_b  # not one raw image
+        pix = fitz.Pixmap(resultado)
+        # The union rect (20,20)-(140,45) is far wider than tall (120x25pt)
+        # — a crop that only captured ONE image (40x25pt) would be roughly
+        # square-ish by comparison, not this wide.
+        assert pix.width / pix.height > 3.0
+
+    def test_barcode_shaped_image_is_excluded_leaving_the_single_card_dominant(
+        self,
+    ) -> None:
+        """A near-square, 1-bit/grayscale image next to a real card image
+        must not count as a competing candidate — see `_barcode_like`."""
+        import fitz  # type: ignore
+
+        card_png = self._card_png()
+        qr_doc = fitz.open()
+        qr_doc.new_page(width=60, height=60)
+        # 1 bit/pixel, single-component — exactly what a QR/barcode PNG
+        # embeds as, and what a photograph of a physical card never does.
+        qr_png = qr_doc[0].get_pixmap(
+            matrix=fitz.Matrix(4, 4), colorspace=fitz.csGRAY
+        ).tobytes("png")
+        qr_doc.close()
+
+        doc = fitz.open()
+        page = doc.new_page(width=200, height=280)
+        page.insert_image(fitz.Rect(20, 20, 60, 45), stream=card_png)
+        # Comparable AREA to the card (240x240 vs 40x25 scaled) — would
+        # defeat the OLD ratio-only dominance check.
+        page.insert_image(fitz.Rect(100, 20, 340, 260), stream=qr_png)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        assert _dominant_embedded_image(pdf_bytes, 1) == card_png
+
+    def test_dominant_embedded_image_bug4_shape_with_qr_and_two_card_halves(
+        self,
+    ) -> None:
+        """Reproduces the exact measured 2026-09-23 shape (structure only,
+        invented pixels): two same-area, non-square card images stacked
+        vertically, PLUS a near-square 1-bit/grayscale QR at a comparable
+        area — the QR alone used to defeat `_DOMINANT_IMAGE_AREA_RATIO`
+        (48372 vs 43008, a 1.12x ratio) and make `sem_dados` unfixable no
+        matter what DPI/budget policy ran downstream."""
+        import fitz  # type: ignore
+
+        metade_a = self._card_png(color=(0.1, 0.3, 0.7))
+        metade_b = self._card_png(color=(0.15, 0.35, 0.72))
+        qr_doc = fitz.open()
+        qr_doc.new_page(width=60, height=60)
+        qr_png = qr_doc[0].get_pixmap(
+            matrix=fitz.Matrix(4, 4), colorspace=fitz.csGRAY
+        ).tobytes("png")
+        qr_doc.close()
+
+        doc = fitz.open()
+        page = doc.new_page(width=200, height=280)
+        page.insert_image(fitz.Rect(10, 20, 50, 45), stream=metade_a)
+        page.insert_image(fitz.Rect(10, 45, 50, 70), stream=metade_b)
+        page.insert_image(fitz.Rect(100, 20, 150, 70), stream=qr_png)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resultado = _dominant_embedded_image(pdf_bytes, 1)
+
+        assert resultado is not None
+        pix = fitz.Pixmap(resultado)
+        # The two card halves stack TALLER than wide (40x50pt union); the
+        # QR sat well to the right and must not have pulled the crop out
+        # that far — a regression here would show up as a much wider crop.
+        assert pix.height > pix.width
 
     def test_page_with_no_images_returns_none(self) -> None:
         import fitz  # type: ignore
