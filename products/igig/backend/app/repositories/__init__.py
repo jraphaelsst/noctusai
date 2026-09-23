@@ -673,16 +673,20 @@ class LeadRepository(BaseRepository):
 
 
 class OrcamentoRepository(BaseRepository):
-    """Proposals — Módulo 1."""
+    """Proposals — Módulo 1. READ-side only here.
+
+    Every status transition (aceite, recusa, versões, expiração) is
+    `app/services/orcamentos.py` — the aceite in particular MUST run the
+    funnel's fechado transition, so there is deliberately no `aceitar` here: a
+    second accept path is how the negócio, the Cliente and the pautas get
+    skipped.
+    """
 
     table = "orcamento"
     default_order = (Order("created_at", descending=True),)
 
     def do_lead(self, org_id: str, lead_id: str) -> list[Record]:
         return self._por("lead_id", lead_id, org_id)
-
-    def aceitar(self, org_id: str, orcamento_id: str) -> Record:
-        return self.atualizar(org_id, orcamento_id, {"status": "aceito"})
 
 
 class PipelineStageRepository(BaseRepository):

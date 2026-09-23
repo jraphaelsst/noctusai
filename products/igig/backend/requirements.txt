@@ -21,4 +21,6 @@ redis==5.0.1
 
 # Testing
 pytest-asyncio>=0.21.0
-reportlab>=4.0.0
+# PDFs (orçamento/contrato) render through the seed's
+# noctusai_lib.integrations.documents.render_html_pdf — xhtml2pdf + reportlab
+# are declared by seed/lib/backend (installed above), not here.
