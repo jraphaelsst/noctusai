@@ -43,6 +43,9 @@ from app.routers.webhook_router import router as webhook_router
 from app.routers.integracoes_email_router import router as integracoes_email_router
 from app.routers.orcamento_email_router import router as orcamento_email_router
 from app.routers.gmail_webhook_router import router as gmail_webhook_router
+from app.routers.orcamento_router import router as orcamento_router
+from app.routers.produto_router import router as produto_router
+from app.routers.contrato_router import router as contrato_router
 from app.scheduler import configure as _configure_scheduler, start_scheduler, stop_scheduler
 
 # Registers igig's background jobs (daily Gmail watch renewal — slice B). They
@@ -90,6 +93,10 @@ _MAX_BODY_PATH_OVERRIDES = {
     "/api/clientes/*/checklist-extras/*/documento": 30 * 1024 * 1024,  # 30 MB
     "/api/comercial/negocios/*/documentos": 30 * 1024 * 1024,  # 30 MB
     "/api/comercial/negocios/*/checklist-extras/*/documento": 30 * 1024 * 1024,  # 30 MB
+    # Signed physical contract scan (POST /api/contratos/{id}/marcar-assinado —
+    # `routers/contrato_router.py::marcar_assinado`). Business limit
+    # `ASSINADO_MAX_BYTES` (25 MB) answers its own 413; ~20% headroom here.
+    "/api/contratos/*/marcar-assinado": 30 * 1024 * 1024,  # 30 MB
 }
 
 app = create_product_app(
@@ -120,6 +127,7 @@ app = create_product_app(
         # prefixes (`/api/integracoes/email/*`, `/api/orcamentos/{id}/enviar|emails`,
         # `/api/webhooks/gmail/push`) — no shape collision with the routers above.
         integracoes_email_router, orcamento_email_router, gmail_webhook_router,
+        orcamento_router, produto_router, contrato_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     lifespan_startup=start_scheduler,

@@ -1741,6 +1741,7 @@ _IGIG_SCHEMA = "igig"
 _IGIG_PIPELINE_MIGRATIONS = ("017_igig_pipeline.sql",)
 _IGIG_CRM_MIGRATIONS = ("018_igig_crm.sql",)
 _IGIG_CARD_HUB_MIGRATIONS = ("019_card_hub.sql",)
+_IGIG_ORCAMENTOS_MIGRATIONS = ("020_igig_orcamentos.sql",)
 
 #: Fixture snippets (PL/pgSQL statements), composed per probe.
 _IGIG_STAGE = (
@@ -1858,6 +1859,41 @@ def _igig_card_hub_probes(prefix: str, entity_setup: tuple[str, ...], entity_var
 
 
 _IGIG_PROBES: tuple[GuardProbe, ...] = (
+    _igig_probe(
+        probe_id="igig.produto_servico.nome.unique_per_secao",
+        guard_name="idx_igig_produto_servico_nome",
+        setup_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.produto_servico (org_id, secao, nome) "
+            "VALUES (v_org, 'criacao_conteudo', 'NOC probe');",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.produto_servico (org_id, secao, nome) "
+            "VALUES (v_org, 'criacao_conteudo', 'NOC probe');"
+        ),
+        what="the same catalogue name twice in one section",
+        rationale=(
+            "The lazy first-read catalogue seed upserts on (org_id, secao, nome) "
+            "with ignore_duplicates — without the index two concurrent first "
+            "reads would each seed the whole catalogue."
+        ),
+        migrations=_IGIG_ORCAMENTOS_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.produto_servico.formato.closed_vocabulary",
+        guard_name="produto_servico_formato_check",
+        setup_sql=(),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.produto_servico (org_id, secao, nome, formato) "
+            "VALUES (v_org, 'criacao_conteudo', 'NOC probe', 'noc_probe_invalido');"
+        ),
+        what="a catalogue product with a formato outside the pauta formats",
+        rationale=(
+            "An accepted orçamento copies the product's formato onto every "
+            "generated pauta, whose own CHECK would then reject the whole "
+            "aceite — the catalogue must refuse it at write time."
+        ),
+        migrations=_IGIG_ORCAMENTOS_MIGRATIONS,
+    ),
     _igig_probe(
         probe_id="igig.pipeline_stages.one_stage_per_role",
         guard_name="idx_igig_pipeline_stages_papel",

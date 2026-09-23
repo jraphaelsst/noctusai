@@ -1,10 +1,9 @@
 """CRM, orçamentos e onboarding — Módulo 1.
 
-Three properties carry the weight:
+Two properties carry the weight (the orçamento calculator moved to
+`test_orcamento_router.py` with wave 2):
   1. the PUBLIC lead form is write-only and cannot be used to read anything;
-  2. the calculator refuses to quote confidently without custo/hora data,
-     because quoting below cost loses money on every job it prices;
-  3. the signature webhook is idempotent — providers retry, and re-running the
+  2. the signature webhook is idempotent — providers retry, and re-running the
      side effects would re-activate a client and re-convert a lead — and it is
      HMAC-SIGNED: an unsigned or mis-signed call changes nothing (smoke
      finding 2, it used to accept anyone holding a guessable id).
@@ -17,6 +16,7 @@ from noctusai_lib.security.webhook_signatures import compute_hmac_sha256_hex
 
 from app.dependencies import coerce_org_uuid
 from app.repositories import Repositorios
+from app.services.contrato_documento import enviar_para_assinatura
 from app.store import aplicar_schema_sqlite, get_repositorios, get_repositorios_admin
 
 ORG = str(coerce_org_uuid("test-org-123"))
@@ -67,11 +67,6 @@ def assinado(monkeypatch):
         )
 
     return _post
-
-
-def _com_equipe(repos, custo_hora=100.0):
-    funcao = repos.funcao.criar(ORG, {"nome": "designer", "custo_hora_padrao": custo_hora})
-    repos.profissional.criar(ORG, {"nome": "Ana", "funcao_id": funcao["id"], "ativo": True})
 
 
 class TestFormularioPublico:
@@ -149,134 +144,47 @@ class TestConversao:
         assert api.post("/api/comercial/leads/nao-existe/converter").status_code == 404
 
 
-class TestCalculadoraDeEscopo:
-    def test_prices_from_the_teams_real_hourly_cost(self, api, repos):
-        _com_equipe(repos, custo_hora=100.0)
-        resp = api.post("/api/comercial/estimar?margem_alvo=50",
-                        json=[{"formato": "feed", "quantidade": 10}])
-        assert resp.status_code == 200
-        corpo = resp.json()
-        assert corpo["horas"] == 20.0          # 10 × 2h
-        assert corpo["custo"] == 2000.0        # 20h × R$100
-        assert corpo["preco_sugerido"] == 4000.0  # 50% margin ⇒ 2× cost
-        assert corpo["alertas"] == []
-
-    def test_hour_override_is_respected(self, api, repos):
-        _com_equipe(repos, custo_hora=100.0)
-        corpo = api.post("/api/comercial/estimar",
-                         json=[{"formato": "feed", "quantidade": 2,
-                                "horas_unitarias": 5}]).json()
-        assert corpo["horas"] == 10.0
-
-    def test_without_custo_hora_it_warns_loudly(self, api, repos):
-        """Quoting below cost loses money on every job — say so, don't guess."""
-        corpo = api.post("/api/comercial/estimar",
-                         json=[{"formato": "feed", "quantidade": 10}]).json()
-        assert corpo["preco_sugerido"] == 0.0
-        assert corpo["alertas"]
-        assert "NÃO deve ser usado" in corpo["alertas"][-1]
-
-    def test_professionals_without_a_rate_are_excluded_not_zeroed(self, api, repos):
-        """Averaging in a zero would drag the mean below cost."""
-        _com_equipe(repos, custo_hora=100.0)
-        repos.profissional.criar(ORG, {"nome": "Sem rate", "ativo": True})
-        corpo = api.post("/api/comercial/estimar",
-                         json=[{"formato": "feed", "quantidade": 1}]).json()
-        assert corpo["custo_hora_medio"] == 100.0
-        assert any("excluídos" in a for a in corpo["alertas"])
-
-    def test_margin_of_100_is_rejected(self, api, repos):
-        _com_equipe(repos)
-        assert api.post("/api/comercial/estimar?margem_alvo=100",
-                        json=[{"formato": "feed", "quantidade": 1}]).status_code == 422
-
-    def test_invalid_format_returns_422(self, api):
-        assert api.post("/api/comercial/estimar",
-                        json=[{"formato": "outdoor", "quantidade": 1}]).status_code == 422
-
-
-class TestOrcamento:
-    def test_stores_the_estimate_rather_than_recomputing(self, api, repos):
-        """A proposal already sent must keep the numbers it was sent with."""
-        _com_equipe(repos, custo_hora=100.0)
-        criado = api.post("/api/comercial/orcamentos", json={
-            "titulo": "Social media mensal",
-            "itens": [{"formato": "feed", "quantidade": 10}],
-        }).json()
-        assert criado["preco_sugerido"] == 4000.0
-
-        # Rate doubles afterwards — the stored proposal must not move.
-        for f in repos.funcao.listar(ORG):
-            repos.funcao.atualizar(ORG, str(f["id"]), {"custo_hora_padrao": 200.0})
-        assert api.get("/api/comercial/orcamentos").json()[0]["preco_sugerido"] == 4000.0
-
-    def test_director_may_price_below_the_suggestion(self, api, repos):
-        """The spec explicitly allows overriding the calculator."""
-        _com_equipe(repos, custo_hora=100.0)
-        orc = api.post("/api/comercial/orcamentos", json={
-            "titulo": "X", "itens": [{"formato": "feed", "quantidade": 10}],
-        }).json()
-        resp = api.post(f"/api/comercial/orcamentos/{orc['id']}/preco",
-                        json={"preco_final": 3000.0})
-        assert resp.status_code == 200
-        corpo = resp.json()
-        assert corpo["preco_final"] == 3000.0
-        # The suggestion is KEPT — the concession stays visible.
-        assert corpo["preco_sugerido"] == 4000.0
-
-    def test_unknown_orcamento_returns_404(self, api):
-        assert api.post("/api/comercial/orcamentos/nao-existe/preco",
-                        json={"preco_final": 1.0}).status_code == 404
-
-
 class TestContratoEAssinatura:
     def _gerar(self, api, repos):
+        """A contract awaiting signature, dispatched through the signing leg.
+
+        Generation itself (orçamento aceito → contrato + PDF) is covered in
+        `test_orcamento_router.py`; the webhook only needs a contract that the
+        signature path issued an external id for.
+        """
         cliente = repos.cliente.criar(ORG, {"nome": "Padaria Sol"})
-        return cliente, api.post("/api/comercial/contratos/gerar", json={
-            "cliente_id": cliente["id"], "valor_mensal": 5000.0,
-            "posts_por_mes": 12, "clausulas": ["Prazo de 12 meses."],
-        }).json()
+        solicitacao = enviar_para_assinatura(
+            org_id=ORG, provedor="interno", documento_nome="Contrato",
+            signatario_email="joao@sol.com",
+        )
+        contrato = repos.contrato.criar(ORG, {
+            "cliente_id": cliente["id"], "valor_mensal": 5000.0, "posts_por_mes": 12,
+            "status": "aguardando_assinatura",
+            "assinatura_external_id": solicitacao.external_id,
+        })
+        return cliente, {"contrato_id": contrato["id"], "external_id": solicitacao.external_id,
+                         "dry_run": solicitacao.dry_run}
 
-    def test_generates_a_pdf_and_dispatches(self, api, repos):
+    def test_dispatch_without_credentials_is_a_flagged_dry_run(self, api, repos):
         _cliente, corpo = self._gerar(api, repos)
-        assert corpo["documento_key"].endswith("contrato.pdf")
-        assert corpo["link_assinatura"]
         assert corpo["dry_run"] is True, "no provider credentials ⇒ dry run, surfaced"
-
-    def test_the_stored_document_is_a_real_pdf(self, api, repos):
-        """reportlab output, not a placeholder — check the magic bytes."""
-        import app.storage as storage_mod
-        from app.config import settings
-
-        _cliente, corpo = self._gerar(api, repos)
-        # Read back through the backend's own API rather than its internals.
-        import anyio
-
-        async def _ler():
-            return await storage_mod.get_storage().get(
-                bucket=settings.igig_storage_bucket, key=corpo["documento_key"]
-            )
-
-        stored = anyio.run(_ler)
-        assert stored is not None
-        assert stored.data.startswith(b"%PDF")
 
     def test_contract_starts_awaiting_signature(self, api, repos):
         _cliente, corpo = self._gerar(api, repos)
         contrato = repos.contrato.buscar(ORG, corpo["contrato_id"])
         assert contrato["status"] == "aguardando_assinatura"
 
-    def test_unknown_client_returns_404(self, api):
-        resp = api.post("/api/comercial/contratos/gerar",
-                        json={"cliente_id": "nao-existe", "valor_mensal": 1.0})
-        assert resp.status_code == 404
-
     def test_dry_run_external_id_is_not_guessable(self, api, repos):
         """Smoke finding 2: the id was `dry-<provedor>-<timestamp>`."""
         _c, primeiro = self._gerar(api, repos)
         _c, segundo = self._gerar(api, repos)
         assert primeiro["external_id"] != segundo["external_id"]
-        segredo = primeiro["external_id"].rsplit("-", 1)[-1]
+        # Split on the FIXED prefix, never on "-": the token is
+        # `secrets.token_urlsafe`, whose alphabet itself contains "-" (a
+        # rsplit("-") made this test flaky under pytest-randomly).
+        prefixo = f"{ORG}.dry-interno-"
+        assert primeiro["external_id"].startswith(prefixo)
+        segredo = primeiro["external_id"][len(prefixo):]
         assert len(segredo) >= 24 and not segredo.isdigit()
 
     def test_signature_activates_contract_and_client(self, api, repos, assinado):

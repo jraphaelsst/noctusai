@@ -604,11 +604,12 @@ class TestIgigCrmProbes:
     def _probes():
         return [p for p in DEFAULT_REGISTRY if p.product == "igig"]
 
-    def test_every_detected_guard_in_017_to_019_is_registered(self):
+    def test_every_detected_guard_in_017_to_020_is_registered(self):
         from tools.noctus.dev.compliance import _detect_guard_objects
 
         registered = {p.guard_name for p in self._probes()}
-        for name in ("017_igig_pipeline.sql", "018_igig_crm.sql", "019_card_hub.sql"):
+        for name in ("017_igig_pipeline.sql", "018_igig_crm.sql", "019_card_hub.sql",
+                     "020_igig_orcamentos.sql"):
             detected = {g["guard_name"] for g in _detect_guard_objects((self._ROOT / name).read_text())}
             assert detected and detected <= registered, (name, detected - registered)
 
