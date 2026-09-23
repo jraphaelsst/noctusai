@@ -37,7 +37,18 @@ export function HeroScene({ modules }: { modules: HeroModule[] }) {
   const [labelPositions, setLabelPositions] = useState<
     Record<string, { x: number; y: number; visible: boolean }>
   >({});
-  const lowPower = typeof window !== "undefined" ? isLowPower() : false;
+  // `false` on BOTH the server render and the client's first paint (matches
+  // SSR, which has no `window`) — computing `isLowPower()` synchronously
+  // during render instead (gated only on `typeof window`) reads real
+  // viewport/device signals on the client's very first render pass and
+  // diverges from the server output whenever the visitor is on a narrow/
+  // low-memory device, which is exactly React hydration error #418/#423
+  // (verified via a local Lighthouse run, 2026-09-23). The real value is
+  // adopted post-mount instead, same pattern as `SettingsProvider`.
+  const [lowPower, setLowPower] = useState(false);
+  useEffect(() => {
+    setLowPower(isLowPower());
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;

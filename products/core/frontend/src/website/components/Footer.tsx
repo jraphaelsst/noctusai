@@ -17,7 +17,7 @@ export function Footer() {
       <div className="nx-container">
         <div className="nx-footer-grid">
           <div>
-            <h4>{t("footer.products")}</h4>
+            <h3>{t("footer.products")}</h3>
             <ul>
               {visibleProducts.map((p) => (
                 <li key={p.slug}>
@@ -27,7 +27,7 @@ export function Footer() {
             </ul>
           </div>
           <div>
-            <h4>{t("footer.solutions")}</h4>
+            <h3>{t("footer.solutions")}</h3>
             <ul>
               <li>
                 <a href={pathFor("solutions", locale)}>{t("nav.solutions")}</a>
@@ -35,7 +35,7 @@ export function Footer() {
             </ul>
           </div>
           <div>
-            <h4>{t("footer.company")}</h4>
+            <h3>{t("footer.company")}</h3>
             <ul>
               <li>
                 <a href={pathFor("about", locale)}>{t("footer.about")}</a>
@@ -49,7 +49,7 @@ export function Footer() {
             </ul>
           </div>
           <div>
-            <h4>{t("footer.legal")}</h4>
+            <h3>{t("footer.legal")}</h3>
             <ul>
               <li>
                 <a href={EXTERNAL.privacyPolicy}>{t("footer.privacy")}</a>

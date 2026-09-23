@@ -22,7 +22,7 @@ export default function ProductsIndex() {
           return (
             <div key={p.slug} className="nx-audience-card">
               <span className={`nx-badge ${p.state === "disponivel" ? "nx-badge-disponivel" : ""}`}>{t(`productStates.${p.state}`)}</span>
-              <h3>{copy.name}</h3>
+              <h2>{copy.name}</h2>
               <p>{l10n(copy.tagline)}</p>
               <a href={pathFor(`product-${p.slug}`, locale)} className="nx-btn nx-btn-ghost">
                 {t("cta.seeProduct")}

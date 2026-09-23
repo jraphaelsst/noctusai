@@ -46,7 +46,7 @@ export default function Home() {
       <section className="nx-hero nx-band-inverse">
         <HeroScene modules={heroModules} />
         <div className="nx-container nx-hero-content">
-          <span className="nx-eyebrow" style={{ color: "var(--nx-cyan-6, #22d3ee)" }}>NOCTUSAI</span>
+          <span className="nx-eyebrow">NOCTUSAI</span>
           <h1 className="nx-display">
             {locale === "en" ? (
               <>
@@ -86,6 +86,7 @@ export default function Home() {
           <section className="nx-section" id="audiencias">
             <div className="nx-container">
               <span className="nx-eyebrow">{locale === "en" ? "WHO IT'S FOR" : "PARA QUEM É"}</span>
+              <h2>{locale === "en" ? "Is this for you?" : "É para você?"}</h2>
               <div className="nx-audience-grid">
                 <AudienceCard
                   title={locale === "en" ? "Small businesses" : "Pequenas empresas"}
@@ -167,6 +168,7 @@ export default function Home() {
           <section className="nx-section" id="confianca">
             <div className="nx-container">
               <span className="nx-eyebrow">{locale === "en" ? "WHY NOCTUSAI" : "POR QUE A NOCTUSAI"}</span>
+              <h2>{locale === "en" ? "What's verifiably true today" : "O que é verdade hoje"}</h2>
               <div className="nx-trust-grid">
                 {settings.trust_items
                   .filter((item) => item.verified_at)
@@ -186,6 +188,7 @@ export default function Home() {
           <section className="nx-section" id="prova-social">
             <div className="nx-container">
               <span className="nx-eyebrow">{locale === "en" ? "TRUSTED BY" : "QUEM CONFIA"}</span>
+              <h2>{locale === "en" ? "Trusted by" : "Quem confia"}</h2>
               <div className="nx-trust-grid">
                 {settings.social_proof_items.map((item, i) => (
                   <div key={i}>

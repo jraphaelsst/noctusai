@@ -10,13 +10,16 @@ import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import { StaticRouter } from "react-router";
 import { AppRoutes } from "./routes";
+import { PrerenderModeContext } from "./lib/markers";
 
 export function render(path: string): string {
   return renderToString(
     <StrictMode>
-      <StaticRouter location={path}>
-        <AppRoutes />
-      </StaticRouter>
+      <PrerenderModeContext.Provider value={true}>
+        <StaticRouter location={path}>
+          <AppRoutes />
+        </StaticRouter>
+      </PrerenderModeContext.Provider>
     </StrictMode>,
   );
 }
