@@ -104,7 +104,10 @@ logger = logging.getLogger(__name__)
 # history-rewriting or branch-switching action is structurally impossible.
 _ALLOWED_GIT = frozenset(
     {"fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "status",
-     "worktree", "rebase", "push", "branch"}
+     "worktree", "rebase", "push", "branch",
+     # integrate-time mechanisms (migration renumber, KB-count regen) commit
+     # on the branch itself; path-scoped add/mv/commit rewrite no history.
+     "mv", "add", "commit"}
 )
 _BANNED_TOKENS = (
     "reset", "checkout", "switch", "restore", "clean", "merge", "cherry-pick",
@@ -1101,7 +1104,7 @@ def _renumber_one_migration(
     old_name: str, new_number: str, verbose: bool,
 ) -> dict[str, Any]:
     """`git mv` + in-file self-reference rewrite + a scoped commit — the
-    mechanical half of one renumber. `runner(["git", "-C", wt_path, ...])` is
+    mechanical half of one renumber. `_git(runner, ..., cwd=wt_path)` is
     called directly (bypassing `_git()`'s allowlist deliberately), the same
     idiom `_benign_stash.commit_ledger_rows` already uses for `add`/`commit`
     — `mv`/`add`/`commit` are not on `_ALLOWED_GIT` (push/rebase/worktree
@@ -1114,18 +1117,18 @@ def _renumber_one_migration(
     new_stem = f"{new_number}_{rest}"
     new_name = f"{new_stem}.sql"
     new_rel = f"{directory}/{new_name}"
-    rc, out, err = runner(["git", "-C", wt_path, "mv", old_rel, new_rel])
+    rc, out, err = _git(runner, "mv", old_rel, new_rel, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "old": old_rel, "new": new_rel,
                 "error": f"git mv failed: {(err or out).strip()}"}
     _rewrite_migration_self_references(
         fs, os.path.join(abs_wt_path, new_rel), old_stem, new_stem, old_number, new_number)
-    rc, out, err = runner(["git", "-C", wt_path, "add", "--", new_rel])
+    rc, out, err = _git(runner, "add", "--", new_rel, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "old": old_rel, "new": new_rel,
                 "error": f"git add failed: {(err or out).strip()}"}
     msg = f"chore(migration): renumber {old_number}→{new_number} after rebase [auto]"
-    rc, out, err = runner(["git", "-C", wt_path, "commit", "-m", msg, "--", new_rel])
+    rc, out, err = _git(runner, "commit", "-m", msg, "--", new_rel, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "old": old_rel, "new": new_rel,
                 "error": f"git commit failed: {(err or out).strip()}"}
@@ -1354,8 +1357,8 @@ def _regenerate_and_commit_kb_counts(
         regen = regenerate_fn(abs_wt_path)
     except Exception as exc:  # never let the regenerator crash integrate
         return {"ok": False, "error": str(exc), "committed": False}
-    rc, out, err = runner(["git", "-C", wt_path, "status", "--porcelain", "--",
-                            "KNOWLEDGE-BASE/", "CLAUDE.md"])
+    rc, out, err = _git(runner, "status", "--porcelain", "--",
+                            "KNOWLEDGE-BASE/", "CLAUDE.md", cwd=wt_path)
     if rc != 0:
         return {"ok": False, "error": f"git status failed: {(err or out).strip()}",
                 "committed": False, "regenerate": regen}
@@ -1367,12 +1370,12 @@ def _regenerate_and_commit_kb_counts(
         paths.append(path)
     if not paths:
         return {"ok": True, "committed": False, "paths": [], "regenerate": regen}
-    rc, out, err = runner(["git", "-C", wt_path, "add", "--", *paths])
+    rc, out, err = _git(runner, "add", "--", *paths, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "error": f"git add failed: {(err or out).strip()}",
                 "committed": False, "paths": paths, "regenerate": regen}
     msg = "chore(kb-counts): regenerate derived counts at integrate [auto]"
-    rc, out, err = runner(["git", "-C", wt_path, "commit", "-m", msg, "--", *paths])
+    rc, out, err = _git(runner, "commit", "-m", msg, "--", *paths, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "error": f"git commit failed: {(err or out).strip()}",
                 "committed": False, "paths": paths, "regenerate": regen}
