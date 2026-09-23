@@ -51,6 +51,8 @@ from pathlib import Path
 from workspace import get_noctusai_home, get_workspace_root, resolve_caller_root
 from noctusai_lib.sql import prelude
 
+from .check_framework_deps import ensure_framework_deps_for_product
+
 logger = logging.getLogger(__name__)
 
 
@@ -620,7 +622,11 @@ def scaffold_product(
     so the new product auto-registers in the noc dashboard's `products`
     table on next migration apply. Mirror the migration to the live DB
     via `mcp__claude_ai_Supabase__apply_migration` (per "MCP migrations
-    mirror the file" rule).
+    mirror the file" rule). Also ensures FRAMEWORK_DEP + organ-transitive
+    frontend dep parity BY CONSTRUCTION (`ensure_framework_deps_for_product`,
+    see `framework_deps_ensured` in the return) — the standalone
+    `check_framework_deps`/`predeploy_check` audit remains the fleet-wide
+    backstop for drift introduced later.
     Returns {created: bool, path: str, files: int, seed_row_migration: str}.
 
     Args:
@@ -790,6 +796,18 @@ def scaffold_product(
             ),
         }
 
+    # ─── 3.b Framework-dep parity, BY CONSTRUCTION ──────────────────────
+    # Gates are a safety net behind a mechanism, not the mechanism itself
+    # (owner framing, 2026-09-23). `check_framework_deps`/`predeploy_check`
+    # stay as the fleet-wide backstop; this call makes the scaffold itself
+    # correct so a freshly-created product never depends on someone
+    # remembering to run the standalone audit. `products_dir.parent` is
+    # the repo/workspace root — same root every other step above resolves
+    # against (worktree-aware via `base_products_dir`).
+    framework_deps_ensured = ensure_framework_deps_for_product(
+        base_products_dir.parent, slug,
+    )
+
     # ─── 4. LLM rewrite of prose surfaces ───────────────────────────────
     # README.md + MASTER-PROMPT.md get rewritten by the LLM so the new
     # product never inherits the seed's narrative DNA. System prompt
@@ -884,6 +902,16 @@ def scaffold_product(
             + ". The files still contain seed-template content — fix manually "
             "or rerun the rewrite once the LLM call succeeds."
         )
+    if framework_deps_ensured.get("unresolved_deps"):
+        next_steps.append(
+            "Framework-dep parity is INCOMPLETE — "
+            + ", ".join(framework_deps_ensured["unresolved_deps"])
+            + " have no real version range in seed/lib/frontend/package.json, "
+            "seed/framework/frontend/package.json, or the donor product's "
+            "package.json. Add the dep to the seed's own package.json (or "
+            "run `noctus.dev.check_framework_deps(fix=True)` once it does) — "
+            "never hand-write \"*\"."
+        )
     # prod-exposure-consent (2026-07-20, orbity-incident closure) — this
     # scaffold NEVER registers the product on a prod-exposure surface
     # (deploy/fleet/docker-compose.prod.yml / deploy/tunnel/ingress.yml /
@@ -905,6 +933,7 @@ def scaffold_product(
         "skipped_files": skipped,
         "brief_write": brief_write,
         "mechanical_substitution": mechanical_status,
+        "framework_deps_ensured": framework_deps_ensured,
         "llm_rewrite": llm_rewrite,
         "seed_row_migration": seed_row_migration,
         "canonical_migration": canonical_migration,

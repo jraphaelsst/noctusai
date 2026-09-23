@@ -288,7 +288,7 @@ def main():
     parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
     parser.add_argument("--predeploy-check", metavar="PRODUCT", help="Pre-deploy gate for a product: framework-dep parity + frontend build + backend pytest; classify failures, auto-fix the framework-dep class (with --fix), report+learn unknowns. Exit 0 ready / 1 not-ready, where status distinguishes 'blocked' (a real failure) from 'inconclusive' (the harness could not measure — e.g. pytest died at collection because the interpreter lacks a dep the product DECLARES; that is a verdict on the setup, not the code). MCP: noctus.dev.predeploy_check.")
-    parser.add_argument("--fix", action="store_true", help="With --predeploy-check: auto-fix the safe (framework-dep) failure class in-process.")
+    parser.add_argument("--fix", action="store_true", help="With --predeploy-check: auto-fix the safe (framework-dep) failure class in-process. With --check-framework-deps: borrow real version ranges from the seed's own package.json(s)/donor product; never writes \"*\".")
     parser.add_argument("--deploy-pull", action="store_true", help="Run the §2a safe-pull drill on the deploy target over SSH (inspect→decide→backup→ff-only→verify). DRY-RUN unless --deploy-confirm; refuses non-FF / deploy-local overlap; never emits reset/checkout/clean/push. MCP: noctus.dev.deploy_pull.")
     parser.add_argument("--deploy-confirm", action="store_true", help="With --deploy-pull: actually perform the ff-only merge (a production action). Without it, plan/dry-run only.")
     parser.add_argument("--deploy-target", default="origin/prod", help="With --deploy-pull: the ref the VPS fast-forwards to (default origin/prod).")
@@ -2626,8 +2626,11 @@ def main():
         sys.exit(int(r.get("exit_code", 0)))
 
     elif args.check_framework_deps:
+        # drift-fix-on-contact (2026-09-23): the KB doc advertised `--fix`
+        # for this flag, but it was never wired through — `args.fix` exists
+        # only for `--predeploy-check`. Wiring it here makes the doc true.
         from tools.noctus.dev.check_framework_deps import check_framework_deps
-        r = check_framework_deps()
+        r = check_framework_deps(fix=args.fix)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 1 if r.get("drift") else 0)))
 

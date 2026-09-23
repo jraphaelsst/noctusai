@@ -265,33 +265,168 @@ def _audit(root: Path) -> tuple[dict[str, list[str]], int, int, list[str]]:
     return drift, total, audited, sorted(skipped)
 
 
-def _fix(root: Path, drift: dict[str, list[str]]) -> int:
-    """Borrow missing deps from the donor product. Returns entries added.
+# The seed's own package.json files — the CANONICAL source for a real
+# version range (never a naive donor-product copy). Checked in this order,
+# first dep-name hit wins: lib peerDependencies, lib devDependencies,
+# framework peerDependencies, framework devDependencies. Both are "the
+# seed itself" declaring what it actually requires — a range sourced here
+# is never a coincidence, unlike a donor PRODUCT's pin (see module
+# docstring "Seed defaults = canonical answer" family of rules).
+_SEED_PACKAGE_JSON_RELS: tuple[str, ...] = (
+    "seed/lib/frontend/package.json",
+    "seed/framework/frontend/package.json",
+)
 
-    Identical logic to the original ``fix()`` — versions sourced from the
-    donor's union deps (``"*"`` fallback), written back sorted with 4-space
-    indent + trailing newline.
+
+def _seed_dep_ranges(root: Path) -> dict[str, str]:
+    """Real semver ranges declared by the seed's own package.json(s).
+
+    Union of ``peerDependencies`` + ``devDependencies`` across both
+    ``_SEED_PACKAGE_JSON_RELS`` files, first-dep-name-wins in file+section
+    order. Missing/unreadable files are skipped, never fatal here — the
+    caller (``_fix``) is the one that decides whether the overall lookup
+    (seed ranges ∪ donor) failed to resolve a dep.
+    """
+    ranges: dict[str, str] = {}
+    for rel in _SEED_PACKAGE_JSON_RELS:
+        pkg_path = root / rel
+        if not pkg_path.is_file():
+            continue
+        try:
+            pkg = json.loads(pkg_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("check_framework_deps: cannot read %s (%s), skipping", pkg_path, exc)
+            continue
+        for section in ("peerDependencies", "devDependencies"):
+            for dep_name, version in pkg.get(section, {}).items():
+                ranges.setdefault(dep_name, version)
+    return ranges
+
+
+def _fix(root: Path, drift: dict[str, list[str]]) -> dict:
+    """Borrow missing deps' real version ranges — seed's own package.json(s)
+    first, the donor product second. NEVER writes ``"*"``.
+
+    Returns ``{"fixed": int, "unresolved": [dep, ...]}``. ``unresolved`` is
+    the (deduped, sorted) list of dep names that have no real range in
+    EITHER the seed's own ``package.json`` files OR the donor product's —
+    the donor lookup can no longer paper over that with a ``"*"`` literal,
+    which silently fooled `npm install` into resolving whatever registry
+    tip happened to exist at install time (2026-09-23 auto-improvement
+    finding; the seed declares real ranges, so a version-less write was
+    always a lookup bug, never a legitimate "we don't know" state).
+
+    ALL-OR-NOTHING per call: if ANY requested dep across ANY product in
+    ``drift`` is unresolved, NOTHING is written to disk — same refusal
+    shape as ``noctus.seed.absorb_file``'s safety contract ("nothing on
+    disk changes when the function refuses"). A caller that wants the
+    resolvable subset applied should split `drift` and retry.
     """
     if not drift:
-        return 0
-    donor = json.loads(
-        (root / "products" / _DONOR_SLUG / "frontend" / "package.json").read_text()
-    )
-    donor_deps = {
-        **donor.get("dependencies", {}),
-        **donor.get("devDependencies", {}),
-    }
-    fixed = 0
+        return {"fixed": 0, "unresolved": []}
+
+    seed_ranges = _seed_dep_ranges(root)
+    donor_path = root / "products" / _DONOR_SLUG / "frontend" / "package.json"
+    donor_deps: dict[str, str] = {}
+    if donor_path.is_file():
+        donor = json.loads(donor_path.read_text())
+        donor_deps = {
+            **donor.get("dependencies", {}),
+            **donor.get("devDependencies", {}),
+        }
+
+    resolved: dict[str, dict[str, str]] = {}
+    unresolved: set[str] = set()
     for slug, missing in drift.items():
+        per_slug: dict[str, str] = {}
+        for dep_name in missing:
+            version = seed_ranges.get(dep_name, donor_deps.get(dep_name))
+            if version is None:
+                unresolved.add(dep_name)
+            else:
+                per_slug[dep_name] = version
+        resolved[slug] = per_slug
+
+    if unresolved:
+        logger.warning(
+            "check_framework_deps: --fix refused to write \"*\" for %s — no "
+            "real version range in %s or the donor product (%s)'s "
+            "package.json. No package.json was modified.",
+            sorted(unresolved), " / ".join(_SEED_PACKAGE_JSON_RELS), _DONOR_SLUG,
+        )
+        return {"fixed": 0, "unresolved": sorted(unresolved)}
+
+    fixed = 0
+    for slug, per_slug in resolved.items():
         pkg_path = root / "products" / slug / "frontend" / "package.json"
         pkg = json.loads(pkg_path.read_text())
         deps = pkg.setdefault("dependencies", {})
-        for m in missing:
-            deps[m] = donor_deps.get(m, "*")
+        for dep_name, version in per_slug.items():
+            deps[dep_name] = version
             fixed += 1
         pkg["dependencies"] = dict(sorted(deps.items()))
         pkg_path.write_text(json.dumps(pkg, indent=4) + "\n")
-    return fixed
+    return {"fixed": fixed, "unresolved": []}
+
+
+def ensure_framework_deps_for_product(root: Path, slug: str) -> dict:
+    """Make ONE product frontend framework-dep-complete BY CONSTRUCTION.
+
+    The mechanism half of the check_framework_deps safety net (owner
+    framing, 2026-09-23: gates are safety nets behind a mechanism, not the
+    mechanism itself). Called by ``scaffold_product`` right after it writes
+    the new product's ``package.json`` so a freshly-scaffolded product is
+    dependency-complete before the tool ever returns — the standalone
+    ``check_framework_deps``/`predeploy_check` audit stays as the backstop
+    for everything else (drift introduced later, hand-authored products).
+
+    Deliberately bypasses the ``active-scope.txt`` filtering ``_audit``
+    applies: a just-scaffolded product isn't in the catalog yet (its
+    seed-row migration hasn't even been applied), so the fleet-wide audit
+    would skip it entirely — this function targets exactly ``slug``,
+    unconditionally.
+
+    Returns:
+        ``{"applied": False, "reason": str}`` — no package.json at that
+            path, or the product doesn't depend on ``@noctusai/seed``
+            (not a framework consumer; nothing to ensure).
+        ``{"applied": True, "already_complete": True, "fixed": []}`` —
+            every FRAMEWORK_DEP + organ-transitive dep was already
+            declared.
+        ``{"applied": True, "already_complete": False, "fixed": [...],
+            "unresolved_deps": [...]}`` — ``fixed`` lists the dep names
+            actually written; ``unresolved_deps`` (present, possibly
+            empty) lists any dep `_fix` could not find a real range for
+            anywhere — per `_fix`'s all-or-nothing contract, a non-empty
+            `unresolved_deps` means NOTHING was written this call, so
+            `fixed` is `[]` and the product is still drifted. Surfaced
+            loudly here rather than silently, never papered over with
+            ``"*"``.
+    """
+    pkg_path = root / "products" / slug / "frontend" / "package.json"
+    if not pkg_path.is_file():
+        return {"applied": False, "reason": f"no package.json at {pkg_path}"}
+    pkg = json.loads(pkg_path.read_text())
+    if not _consumes_framework(pkg):
+        return {
+            "applied": False,
+            "reason": (
+                f"'{slug}' frontend does not depend on {_FRAMEWORK_PACKAGE} "
+                "— not a framework consumer, nothing to ensure"
+            ),
+        }
+    required, _organ_transitive = _required_deps(root)
+    all_deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+    missing = [d for d in required if d not in all_deps]
+    if not missing:
+        return {"applied": True, "already_complete": True, "fixed": []}
+    fix_result = _fix(root, {slug: missing})
+    return {
+        "applied": True,
+        "already_complete": False,
+        "fixed": [d for d in missing if d not in fix_result["unresolved"]],
+        "unresolved_deps": fix_result["unresolved"],
+    }
 
 
 def check_framework_deps(
@@ -302,18 +437,22 @@ def check_framework_deps(
 ) -> dict:
     """Audit every product frontend ``package.json`` for FRAMEWORK_DEPS parity.
 
-    Behaviour-preserving native port of ``scripts/check-framework-deps.py``.
-    ``fix=False`` (default) is the read-only audit (the script's exit-1-on-
-    drift becomes ``status="drift"``). ``fix=True`` mirrors ``--fix`` —
-    borrows missing pinned versions from the donor product and writes the
-    package.json files back.
+    Behaviour-preserving native port of ``scripts/check-framework-deps.py``,
+    with one correctness fix (2026-09-23): ``fix=True`` used to fall back to
+    writing a literal ``"*"`` version when the donor product itself lacked a
+    dep. It no longer does — see ``_fix``'s docstring. ``fix=False``
+    (default) is the read-only audit (the script's exit-1-on-drift becomes
+    ``status="drift"``). ``fix=True`` mirrors ``--fix`` — borrows a REAL
+    version range, seed's own ``package.json``(s) first, the donor product
+    second, and writes the package.json files back.
 
     Args:
         repo_root: repo-root override (test seam). Wins over
             ``worktree_path``.
         worktree_path: caller-aware path resolution (same contract as the
             sibling dev tools).
-        fix: when ``True``, auto-add missing deps from the donor product
+        fix: when ``True``, auto-add missing deps from the seed's own
+            package.json(s), falling back to the donor product
             (``erp-imobiliario``). Mirrors the script's ``--fix``.
 
     Returns:
@@ -322,20 +461,24 @@ def check_framework_deps(
           "products_audited": int,
           "drift": {"<slug>": ["<missing dep>", ...], ...},
           "total_missing": int,
-          "fixed": int,                # entries written (0 unless fix=True)
-          "status": "clean"|"drift"|"fixed",
-          "exit_code": 0 | 1,          # verbatim shell exit (1 on drift, no fix)
+          "fixed": int,                # entries written (0 unless fix=True and fully resolved)
+          "status": "clean"|"drift"|"fixed"|"fix_unresolved",
+          "exit_code": 0 | 1,          # 1 on drift/fix_unresolved, 0 otherwise
+          "unresolved_deps": [str, ...],  # only present when status="fix_unresolved"
           "organ_transitive_deps": [str, ...],  # derived from seed/lib/frontend/src
           "manual_only_scope": ["seed/framework/frontend/src (@noctusai/seed)"],
         }
         ```
         ``status``/``exit_code`` mirror the script's ``main()``: clean → 0;
-        drift + no fix → exit 1 (``status="drift"``); drift + fix → exit 0
-        (``status="fixed"``). ``organ_transitive_deps`` is the LIVE derived
-        list this run found under ``ORGAN_SOURCE_DIR`` (``[]`` when that dir
-        doesn't exist, e.g. a synthetic test root) — see module docstring
-        "Seed-organ transitive deps" for what's derived vs. what stays
-        manual (``manual_only_scope``).
+        drift + no fix → exit 1 (``status="drift"``); drift + fix, every dep
+        resolved → exit 0 (``status="fixed"``); drift + fix, at least one dep
+        has no real range anywhere → exit 1 (``status="fix_unresolved"``,
+        NOTHING written — see ``_fix``'s all-or-nothing contract).
+        ``organ_transitive_deps`` is the LIVE derived list this run found
+        under ``ORGAN_SOURCE_DIR`` (``[]`` when that dir doesn't exist, e.g.
+        a synthetic test root) — see module docstring "Seed-organ
+        transitive deps" for what's derived vs. what stays manual
+        (``manual_only_scope``).
     """
     if repo_root is not None:
         root = repo_root
@@ -376,9 +519,24 @@ def check_framework_deps(
             "skipped_non_consumers": skipped_non_consumers,
         }
 
-    fixed = 0
     if fix:
-        fixed = _fix(root, drift)
+        fix_result = _fix(root, drift)
+        if fix_result["unresolved"]:
+            # All-or-nothing refusal (see `_fix`): nothing was written.
+            # Loud, not silent — never falls back to writing "*".
+            return {
+                "products_audited": count,
+                "drift": drift,
+                "total_missing": total,
+                "fixed": 0,
+                "status": "fix_unresolved",
+                "exit_code": 1,
+                "unresolved_deps": fix_result["unresolved"],
+                "organ_transitive_deps": organ_transitive_deps,
+                "manual_only_scope": manual_only_scope,
+                "skipped_non_consumers": skipped_non_consumers,
+            }
+        fixed = fix_result["fixed"]
         logger.info(
             "check_framework_deps: --fix added %d dep entries across %d product(s)",
             fixed, len(drift),
@@ -427,8 +585,15 @@ def register(server) -> None:
             "escapes a hand-curated list). A missing dep makes the product's "
             "container `npm run build` fail with `Rollup failed to resolve "
             "import`. Read-only by default (status=drift + exit_code 1 on "
-            "drift); fix=True borrows pinned versions from erp-imobiliario and "
-            "rewrites package.json. seed/framework/frontend/src "
+            "drift); fix=True borrows a real version range — the seed's own "
+            "package.json(s) first, erp-imobiliario second — and rewrites "
+            "package.json; NEVER writes \"*\" (a dep with no real range "
+            "anywhere returns status=fix_unresolved and touches nothing). "
+            "scaffold_product already calls the equivalent mechanism "
+            "(ensure_framework_deps_for_product) so a freshly-scaffolded "
+            "product is dependency-complete by construction — this tool "
+            "remains the fleet-wide backstop for everything else. "
+            "seed/framework/frontend/src "
             "(@noctusai/seed) deps stay manual-only (see "
             "manual_only_scope in the result) — not yet scanned. Port of "
             "scripts/check-framework-deps.py. Pass worktree_path when called "

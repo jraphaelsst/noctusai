@@ -24,8 +24,10 @@ from tools.noctus.dev.check_framework_deps import (
     ORGAN_SOURCE_DIR,
     _derive_organ_transitive_deps,
     _package_name_from_specifier,
+    _seed_dep_ranges,
     _strip_comments,
     check_framework_deps,
+    ensure_framework_deps_for_product,
 )
 
 
@@ -179,18 +181,82 @@ class TestFix:
         re_audit = check_framework_deps(repo_root=tmp_path)
         assert re_audit["status"] == "clean"
 
-    def test_fix_falls_back_to_star_when_donor_lacks_dep(self, tmp_path):
-        # Donor itself missing 'sonner' → fix uses "*".
+    def test_fix_refuses_to_write_star_when_no_range_anywhere(self, tmp_path):
+        """2026-09-23 fix: no seed/lib or seed/framework package.json in this
+        synthetic root, and the donor itself lacks 'sonner' → `_fix` must
+        refuse (never write "*"), report `status="fix_unresolved"`, and
+        leave the product's package.json byte-for-byte untouched."""
         donor_deps = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "sonner"}
         _write_pkg(tmp_path, "erp-imobiliario", donor_deps)
         partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "sonner"}
         _write_pkg(tmp_path, "x-prod", partial)
+        pkg_path = tmp_path / "products" / "x-prod" / "frontend" / "package.json"
+        before = pkg_path.read_text()
+
         result = check_framework_deps(repo_root=tmp_path, fix=True)
+
+        assert result["status"] == "fix_unresolved"
+        assert result["exit_code"] == 1
+        assert result["fixed"] == 0
+        assert result["unresolved_deps"] == ["sonner"]
+        assert pkg_path.read_text() == before  # untouched, not even reformatted
+
+    def test_fix_prefers_seed_lib_package_json_range_over_donor(self, tmp_path):
+        """The 2026-09-23 donor-lookup fix: a real range in the seed's own
+        seed/lib/frontend/package.json wins over the donor's pinned copy."""
+        seed_lib = tmp_path / "seed" / "lib" / "frontend" / "package.json"
+        seed_lib.parent.mkdir(parents=True)
+        seed_lib.write_text(json.dumps({
+            "peerDependencies": {"sonner": "^1.0.0"},
+        }))
+        donor_deps = {d: "9.9.9" for d in FRAMEWORK_DEPS}  # donor also has it, wrong version
+        _write_pkg(tmp_path, "erp-imobiliario", donor_deps)
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "sonner"}
+        _write_pkg(tmp_path, "x-prod", partial)
+
+        result = check_framework_deps(repo_root=tmp_path, fix=True)
+
         assert result["status"] == "fixed"
         pkg = json.loads(
             (tmp_path / "products" / "x-prod" / "frontend" / "package.json").read_text()
         )
-        assert pkg["dependencies"]["sonner"] == "*"
+        assert pkg["dependencies"]["sonner"] == "^1.0.0"
+
+    def test_fix_falls_back_to_donor_when_seed_lacks_the_dep(self, tmp_path):
+        seed_lib = tmp_path / "seed" / "lib" / "frontend" / "package.json"
+        seed_lib.parent.mkdir(parents=True)
+        seed_lib.write_text(json.dumps({"peerDependencies": {}}))
+        donor_deps = {d: f"^{i}.0.0" for i, d in enumerate(FRAMEWORK_DEPS)}
+        _write_pkg(tmp_path, "erp-imobiliario", donor_deps)
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "x-prod", partial)
+
+        result = check_framework_deps(repo_root=tmp_path, fix=True)
+
+        assert result["status"] == "fixed"
+        idx = FRAMEWORK_DEPS.index("zustand")
+        pkg = json.loads(
+            (tmp_path / "products" / "x-prod" / "frontend" / "package.json").read_text()
+        )
+        assert pkg["dependencies"]["zustand"] == f"^{idx}.0.0"
+
+    def test_fix_is_all_or_nothing_across_multiple_products(self, tmp_path):
+        """One unresolved dep in ANY product refuses the WHOLE fix call —
+        no partial writes."""
+        donor_deps = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "sonner"}
+        _write_pkg(tmp_path, "erp-imobiliario", donor_deps)
+        # a-prod is missing 'zustand' (resolvable from donor); b-prod is
+        # missing 'sonner' (unresolvable anywhere in this synthetic root).
+        _write_pkg(tmp_path, "a-prod", {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"})
+        _write_pkg(tmp_path, "b-prod", {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "sonner"})
+        a_path = tmp_path / "products" / "a-prod" / "frontend" / "package.json"
+        before = a_path.read_text()
+
+        result = check_framework_deps(repo_root=tmp_path, fix=True)
+
+        assert result["status"] == "fix_unresolved"
+        assert result["unresolved_deps"] == ["sonner"]
+        assert a_path.read_text() == before  # a-prod's resolvable fix was NOT applied either
 
 
 def _write_organ_source(root: Path, rel_path: str, content: str) -> None:
@@ -439,3 +505,103 @@ class TestNonConsumersAreOutOfScope:
             (tmp_path / "products" / "permutas" / "frontend" / "package.json").read_text()
         )
         assert pkg["dependencies"] == {"react": "18.0.0"}
+
+
+def _write_seed_pkg(root: Path, rel: str, peer: dict | None = None, dev: dict | None = None) -> None:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    payload = {}
+    if peer is not None:
+        payload["peerDependencies"] = peer
+    if dev is not None:
+        payload["devDependencies"] = dev
+    p.write_text(json.dumps(payload))
+
+
+class TestSeedDepRanges:
+    """Unit coverage for `_seed_dep_ranges` — the seed-first donor-lookup
+    fix (2026-09-23 auto-improvement finding: `--fix` used to ignore the
+    seed's own package.json(s) entirely and fall back to writing "*")."""
+
+    def test_no_seed_package_json_is_empty(self, tmp_path):
+        assert _seed_dep_ranges(tmp_path) == {}
+
+    def test_reads_lib_peer_dependencies(self, tmp_path):
+        _write_seed_pkg(tmp_path, "seed/lib/frontend/package.json",
+                         peer={"zustand": "^4.0.0"})
+        assert _seed_dep_ranges(tmp_path)["zustand"] == "^4.0.0"
+
+    def test_reads_framework_dev_dependencies(self, tmp_path):
+        _write_seed_pkg(tmp_path, "seed/framework/frontend/package.json",
+                         dev={"lucide-react": "^0.462.0"})
+        assert _seed_dep_ranges(tmp_path)["lucide-react"] == "^0.462.0"
+
+    def test_lib_peer_wins_over_framework_dev(self, tmp_path):
+        """First-hit-wins order: lib peer > lib dev > framework peer >
+        framework dev. Both files are 'the seed' — the precedence just
+        needs to be deterministic, not that either file is more correct."""
+        _write_seed_pkg(tmp_path, "seed/lib/frontend/package.json",
+                         peer={"sonner": "^1.0.0"})
+        _write_seed_pkg(tmp_path, "seed/framework/frontend/package.json",
+                         dev={"sonner": "^1.7.4"})
+        assert _seed_dep_ranges(tmp_path)["sonner"] == "^1.0.0"
+
+    def test_unreadable_seed_package_json_is_skipped_not_fatal(self, tmp_path):
+        p = tmp_path / "seed" / "lib" / "frontend" / "package.json"
+        p.parent.mkdir(parents=True)
+        p.write_text("{not valid json")
+        assert _seed_dep_ranges(tmp_path) == {}
+
+
+class TestEnsureFrameworkDepsForProduct:
+    """`ensure_framework_deps_for_product` — the scaffold-time mechanism
+    that makes a product dependency-complete BY CONSTRUCTION, independent
+    of active-scope.txt filtering."""
+
+    def test_no_package_json_reports_not_applied(self, tmp_path):
+        result = ensure_framework_deps_for_product(tmp_path, "nope")
+        assert result["applied"] is False
+        assert "no package.json" in result["reason"]
+
+    def test_non_consumer_reports_not_applied(self, tmp_path):
+        _write_pkg(tmp_path, "permutas", {"react": "18.0.0"}, consumes_framework=False)
+        result = ensure_framework_deps_for_product(tmp_path, "permutas")
+        assert result["applied"] is False
+        assert "not a framework consumer" in result["reason"]
+
+    def test_already_complete_reports_no_writes(self, tmp_path):
+        _write_pkg(tmp_path, "some-product", _full_deps())
+        result = ensure_framework_deps_for_product(tmp_path, "some-product")
+        assert result == {"applied": True, "already_complete": True, "fixed": []}
+
+    def test_missing_deps_resolved_from_seed_and_written(self, tmp_path):
+        _write_seed_pkg(tmp_path, "seed/lib/frontend/package.json",
+                         peer={"zustand": "^5.0.15"})
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "some-product", partial)
+
+        result = ensure_framework_deps_for_product(tmp_path, "some-product")
+
+        assert result["applied"] is True
+        assert result["already_complete"] is False
+        assert result["fixed"] == ["zustand"]
+        assert result["unresolved_deps"] == []
+        pkg = json.loads(
+            (tmp_path / "products" / "some-product" / "frontend" / "package.json").read_text()
+        )
+        assert pkg["dependencies"]["zustand"] == "^5.0.15"
+
+    def test_unresolvable_dep_surfaces_loudly_and_writes_nothing(self, tmp_path):
+        # No seed package.json, no donor at all — 'zustand' unresolvable.
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "some-product", partial)
+        pkg_path = tmp_path / "products" / "some-product" / "frontend" / "package.json"
+        before = pkg_path.read_text()
+
+        result = ensure_framework_deps_for_product(tmp_path, "some-product")
+
+        assert result["applied"] is True
+        assert result["already_complete"] is False
+        assert result["fixed"] == []
+        assert result["unresolved_deps"] == ["zustand"]
+        assert pkg_path.read_text() == before

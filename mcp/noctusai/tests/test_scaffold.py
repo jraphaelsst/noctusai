@@ -933,6 +933,88 @@ class TestScaffoldLLMRewrite:
         assert all(b is None for b in captured)
 
 
+class TestScaffoldEnsuresFrameworkDeps:
+    """`scaffold_product` calls `ensure_framework_deps_for_product` before
+    returning so a freshly-scaffolded product is FRAMEWORK_DEP-complete by
+    construction (2026-09-23) — the standalone `check_framework_deps` audit
+    remains the fleet-wide backstop, not the only line of defense."""
+
+    def test_real_template_is_already_complete(self, tmp_path):
+        # The checked-in templates/product-seed/frontend/package.json is
+        # expected to already list every FRAMEWORK_DEP + organ-transitive
+        # dep — this is itself a regression guard: if it ever drifts, this
+        # goes red instead of silently shipping an incomplete scaffold.
+        result = scaffold_product(
+            "Test Product", "framework-deps-scaffold-test", "test_schema",
+            8099, 8199, "Box",
+            brief={},
+            products_dir=tmp_path / "products",
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True
+        assert result["framework_deps_ensured"] == {
+            "applied": True, "already_complete": True, "fixed": [],
+        }
+        # And it never appears as an "incomplete" warning.
+        assert not any(
+            "Framework-dep parity is INCOMPLETE" in step
+            for step in result["next_steps"]
+        )
+
+    def test_mechanism_is_invoked_with_the_right_root_and_slug(self, tmp_path, monkeypatch):
+        """Wiring proof, independent of today's template drift state: the
+        exact (root, slug) `ensure_framework_deps_for_product` resolution
+        logic is unit-tested exhaustively in
+        `test_check_framework_deps.py::TestEnsureFrameworkDepsForProduct` —
+        this only proves scaffold_product calls it and threads the result
+        through unmodified."""
+        captured: dict = {}
+
+        def _spy(root, slug):
+            captured["root"] = root
+            captured["slug"] = slug
+            return {
+                "applied": True, "already_complete": False,
+                "fixed": ["zustand"], "unresolved_deps": [],
+            }
+
+        monkeypatch.setattr(scaffold_module, "ensure_framework_deps_for_product", _spy)
+
+        result = scaffold_product(
+            "Test Product", "framework-deps-scaffold-spy", "test_schema",
+            8099, 8199, "Box",
+            brief={},
+            products_dir=tmp_path / "products",
+            template_dir=WORKTREE_TEMPLATE,
+        )
+
+        assert captured["root"] == tmp_path
+        assert captured["slug"] == "framework-deps-scaffold-spy"
+        assert result["framework_deps_ensured"]["fixed"] == ["zustand"]
+
+    def test_unresolved_dep_surfaces_in_next_steps(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            scaffold_module, "ensure_framework_deps_for_product",
+            lambda root, slug: {
+                "applied": True, "already_complete": False,
+                "fixed": [], "unresolved_deps": ["some-new-dep"],
+            },
+        )
+
+        result = scaffold_product(
+            "Test Product", "framework-deps-scaffold-unresolved", "test_schema",
+            8099, 8199, "Box",
+            brief={},
+            products_dir=tmp_path / "products",
+            template_dir=WORKTREE_TEMPLATE,
+        )
+
+        assert any(
+            "Framework-dep parity is INCOMPLETE" in step and "some-new-dep" in step
+            for step in result["next_steps"]
+        )
+
+
 class TestDeleteProduct:
     """`noctus.dev.delete_product` — cascading delete inverse of
     scaffold_product. Mirrors the scaffold's three side-effects in reverse:

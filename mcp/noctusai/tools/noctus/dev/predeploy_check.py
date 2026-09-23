@@ -1020,14 +1020,18 @@ def _default_run_check(
 
 def _default_fix_framework_deps(root: pathlib.Path, product: str) -> bool:
     """Compose the existing check_framework_deps fixer for the one safely
-    code-fixable class. Returns True iff a fix was applied. Injectable in
-    predeploy_check so the orchestration is testable without touching disk."""
+    code-fixable class. Returns True iff a fix was actually applied (every
+    missing dep resolved to a real version range — `_fix` is all-or-nothing,
+    never writes "*"; an unresolved dep leaves package.json untouched, so
+    the check stays failing/classified rather than being silently marked
+    fixed). Injectable in predeploy_check so the orchestration is testable
+    without touching disk."""
     drift, _m, _o, _skipped = _cfd._audit(root)
     prod_drift = {p: d for p, d in (drift or {}).items() if p == product and d}
     if not prod_drift:
         return False
-    _cfd._fix(root, prod_drift)
-    return True
+    fix_result = _cfd._fix(root, prod_drift)
+    return not fix_result["unresolved"]
 
 
 def _render_report(product: str, unknowns: list[dict], when: str) -> str:
