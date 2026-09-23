@@ -113,3 +113,34 @@ export interface PipelineDescriptor<TCard> {
   /** Extra query keys to invalidate after a mutation settles. */
   invalidateOnSettle?: string[];
 }
+
+/**
+ * What `PipelineBoard`'s `onBeforeMove` returns:
+ *  - `false` — cancel. The card was never optimistically moved (see
+ *    `MoveIntentContext` doc), so cancelling is a no-op on the cache — the
+ *    board just re-renders in its unchanged state.
+ *  - `true` — proceed exactly as dropped, no `motivo`/`extra`.
+ *  - `{ motivo?, extra? }` — proceed, merging both into the `MoveVariables`
+ *    the mutation sends (`extra` is spread into the `mover-etapa` POST body).
+ */
+export type MoveDecision = false | true | { motivo?: string; extra?: Record<string, unknown> };
+
+/**
+ * Everything `PipelineBoard`'s `onBeforeMove` needs to decide whether a drag
+ * may proceed.
+ */
+export interface MoveIntentContext<TCard> {
+  card: TCard;
+  fromStage: PipelineStage;
+  toStage: PipelineStage;
+  toIndex: number;
+  /**
+   * Derived from the board's CURRENT column order (left→right), not the
+   * stages' raw `posicao` — a hidden/inactive stage sitting between two
+   * visible ones would otherwise inflate `stepDistance` for a move that
+   * looks adjacent on screen.
+   */
+  direction: 'forward' | 'backward' | 'same';
+  /** How many columns apart `fromStage` and `toStage` are, in display order. */
+  stepDistance: number;
+}

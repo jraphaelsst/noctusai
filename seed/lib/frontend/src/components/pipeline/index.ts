@@ -20,6 +20,9 @@ export type { StageHeaderMenuProps } from './StageHeaderMenu';
 export { DeleteStageDialog } from './DeleteStageDialog';
 export type { DeleteStageDialogProps } from './DeleteStageDialog';
 
+export { MotivoMoveDialog } from './MotivoMoveDialog';
+export type { MotivoMoveDialogProps } from './MotivoMoveDialog';
+
 export { AddStageColumn } from './AddStageColumn';
 export type { AddStageColumnProps } from './AddStageColumn';
 
@@ -51,4 +54,6 @@ export type {
   StageRole,
   DefaultStageRole,
   StageRoleLabels,
+  MoveDecision,
+  MoveIntentContext,
 } from './types';
