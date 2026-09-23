@@ -169,13 +169,22 @@ def _gather_lines(repo_root: Path, min_length: int) -> dict[str, list[tuple[str,
     if not products_dir.exists():
         return by_classification
 
-    for path in products_dir.rglob("*"):
+    from .product_scope import filter_active
+
+    # Asleep products are not scanned for recurrence: their duplicates are not
+    # formalized or "fixed" until they wake (product-working-scope § 4c).
+    active = set(filter_active(
+        [d.name for d in products_dir.iterdir() if d.is_dir()], repo_root,  # product-scope: active (this is the filter)
+    ))
+    for path in products_dir.rglob("*"):  # product-scope: active (filtered below)
         if not path.is_file():
             continue
         try:
             rel = path.relative_to(repo_root)
         except ValueError:
             logger.warning("recurrence: path outside repo root, skipping: %s", path)
+            continue
+        if len(rel.parts) > 1 and rel.parts[1] not in active:
             continue
         classification = _matches_target(rel)
         if classification is None:

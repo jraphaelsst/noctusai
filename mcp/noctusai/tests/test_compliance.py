@@ -87,7 +87,7 @@ def _real_product_names() -> list[str]:
     (`live_high_critical_fingerprints` → `check_all_products`) cannot ever
     produce a fingerprint for."""
     on_disk = sorted(
-        d.name for d in PRODUCTS_DIR.iterdir()
+        d.name for d in PRODUCTS_DIR.iterdir()  # product-scope: active (filtered below)
         if d.is_dir() and not d.name.startswith(".")
     )
     return sorted(filter_active(on_disk, REPO_ROOT))
@@ -2290,8 +2290,10 @@ class TestCheckSlowapiWithPep563:
         """
         products_dir = REPO_ROOT / "products"
         all_issues: list[dict] = []
-        for product_dir in sorted(products_dir.iterdir()):
+        for product_dir in sorted(products_dir.iterdir()):  # product-scope: active (filtered below)
             if not product_dir.is_dir() or product_dir.name.startswith("."):
+                continue
+            if not filter_active([product_dir.name], REPO_ROOT):
                 continue
             all_issues.extend(check_slowapi_with_pep563(product_dir))
         known_baseline: set[str] = set()

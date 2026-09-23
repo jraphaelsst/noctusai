@@ -97,7 +97,7 @@ def test_every_gate_surface_agrees_with_active_scope():
 
 _WALK = re.compile(
     r"(PRODUCTS_DIR|products_root|products_dir|base_products_dir|eff_products_dir|"
-    r"/ \"products\"\))[^#\n]*\.(iterdir|glob)\(|glob\([\"']products/\*"
+    r"/ \"products\"\))[^#\n]*\.(iterdir|r?glob)\(|r?glob\([\"']products/\*"
 )
 
 
@@ -108,10 +108,12 @@ def test_every_products_walk_declares_its_scope():
     lines above. A new unmarked walk is exactly how therapy-platform leaked into
     the pre-push ledger check after the first sweep — this fails CI instead.
     """
-    tools = REPO / "mcp" / "noctusai" / "tools" / "noctus" / "dev"
+    toolkit = REPO / "mcp" / "noctusai"
     unmarked = []
-    for path in sorted(tools.glob("*.py")):
-        if path.name == "product_scope.py":
+    # Tools AND the toolkit's own real-repo tests: the TS-corpus test walked asleep
+    # products too, and only surfaced when p-studio's wake-up ran the full suite.
+    for path in sorted([*(toolkit / "tools" / "noctus" / "dev").glob("*.py"), *(toolkit / "tests").glob("*.py")]):
+        if path.name in ("product_scope.py", "test_product_scope.py"):
             continue
         lines = path.read_text(encoding="utf-8").splitlines()
         for i, line in enumerate(lines):

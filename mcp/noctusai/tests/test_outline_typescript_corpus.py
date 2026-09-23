@@ -48,6 +48,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev import outline_typescript as ot
+from tools.noctus.dev.product_scope import is_active
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -76,7 +77,7 @@ def _walk_corpus() -> list[Path]:
     for base in CORPUS_GLOB_BASES:
         if not base.exists():
             continue
-        for p in base.rglob("*"):
+        for p in base.rglob("*"):  # product-scope: active (filtered below)
             if not p.is_file():
                 continue
             if p.suffix not in TS_EXTENSIONS:
@@ -96,6 +97,15 @@ def _walk_corpus() -> list[Path]:
             # symbols` and pollutes the baseline. The corpus measures PRODUCT
             # symbol coverage; exclude tests (same rationale as the e2e exclusion).
             if p.name.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx")):
+                continue
+            # Test-runner setup (`src/test/setup.ts` etc.) is test infra, not product
+            # code — polyfills and `vi.mock`s with no declarations (same rationale).
+            if "/frontend/src/test/" in str(p):
+                continue
+            # Asleep products (absent from deploy/fleet/active-scope.txt) are out of
+            # every gate — their TS is not outlined or baselined until they wake.
+            parts = p.relative_to(REPO_ROOT).parts
+            if parts[0] == "products" and not is_active(parts[1], REPO_ROOT):
                 continue
             files.append(p)
     return sorted(files)

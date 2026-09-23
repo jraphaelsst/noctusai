@@ -128,7 +128,7 @@ class TestCompliantConfigs:
     def test_all_real_products_pass(self):
         # Active products only (2026-09-22) — an asleep product's frontend
         # config is not being worked on.
-        dirs = sorted(d for d in PRODUCTS_DIR.iterdir() if d.is_dir() and not d.name.startswith("."))
+        dirs = sorted(d for d in PRODUCTS_DIR.iterdir() if d.is_dir() and not d.name.startswith("."))  # product-scope: active (filtered below)
         active = set(filter_active([d.name for d in dirs], REPO_ROOT))
         for d in dirs:
             if d.name not in active:
