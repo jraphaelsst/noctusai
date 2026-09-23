@@ -12,10 +12,12 @@
  * margin on every account they touch.
  */
 import { useState } from "react";
+import { toast } from "sonner";
 import { Badge, Button, Input, TableSkeleton } from "@noctusai/lib/design-system";
-import { AlertTriangle, Plus, Trash2, Users, Wallet } from "lucide-react";
+import { AlertTriangle, Check, Pencil, Plus, Trash2, Users, Wallet, X } from "lucide-react";
 
 import {
+  useAtualizarFuncao,
   useAtualizarProfissional,
   useCriarFuncao,
   useCriarProfissional,
@@ -90,7 +92,7 @@ export default function Custos() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
       <header>
         <h1 className="text-2xl font-semibold text-foreground">Custos</h1>
         <p className="text-sm text-muted-foreground">
@@ -172,21 +174,12 @@ export default function Custos() {
         ) : (
           <ul className="divide-y divide-border rounded-md border border-border">
             {funcoes.map((f) => (
-              <li key={f.id} className="flex items-center gap-3 p-3">
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground">{f.nome}</span>
-                <span className="text-sm font-medium text-foreground">
-                  {BRL.format(f.custo_hora_padrao)}/h
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Remover ${f.nome}`}
-                  disabled={removerFuncao.isPending}
-                  onClick={() => removerFuncao.mutate(f.id)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </li>
+              <LinhaFuncao
+                key={f.id}
+                funcao={f}
+                removendo={removerFuncao.isPending}
+                onRemover={() => removerFuncao.mutate(f.id)}
+              />
             ))}
           </ul>
         )}
@@ -338,5 +331,106 @@ export default function Custos() {
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * One função, editable in place. `PATCH /api/custos/funcoes/{id}` had no
+ * consumer, so a rate typed wrong could only be fixed by deleting the função
+ * — which unlinks every profissional pointing at it.
+ */
+function LinhaFuncao({
+  funcao,
+  removendo,
+  onRemover,
+}: {
+  funcao: Funcao;
+  removendo: boolean;
+  onRemover: () => void;
+}) {
+  const atualizar = useAtualizarFuncao();
+  const [editando, setEditando] = useState(false);
+  const [nome, setNome] = useState(funcao.nome);
+  const [custo, setCusto] = useState(String(funcao.custo_hora_padrao));
+
+  function abrir() {
+    setNome(funcao.nome);
+    setCusto(String(funcao.custo_hora_padrao));
+    setEditando(true);
+  }
+
+  function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    const n = nome.trim();
+    const valor = Number(custo.replace(",", "."));
+    if (!n || !Number.isFinite(valor) || valor < 0) return;
+    atualizar.mutate(
+      { id: funcao.id, nome: n, custo_hora_padrao: valor },
+      {
+        onSuccess: () => {
+          toast.success("Função atualizada — custos e DRE passam a usar o novo valor");
+          setEditando(false);
+        },
+        onError: (erro) =>
+          toast.error(erro instanceof Error ? erro.message : "Não foi possível salvar a função."),
+      },
+    );
+  }
+
+  if (editando) {
+    return (
+      <li className="p-3">
+        <form onSubmit={salvar} className="flex flex-wrap items-end gap-2">
+          <label className="min-w-0 flex-1 text-xs text-muted-foreground">
+            Nome
+            <Input className="mt-1 h-11" value={nome} onChange={(e) => setNome(e.target.value)} />
+          </label>
+          <label className="w-32 text-xs text-muted-foreground">
+            R$/hora
+            <Input
+              className="mt-1 h-11"
+              inputMode="decimal"
+              value={custo}
+              onChange={(e) => setCusto(e.target.value)}
+            />
+          </label>
+          <Button type="submit" size="sm" className="min-h-11" disabled={!nome.trim() || atualizar.isPending}>
+            <Check className="mr-1 h-4 w-4" />
+            {atualizar.isPending ? "Salvando…" : "Salvar"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="min-h-11"
+            aria-label="Cancelar edição"
+            onClick={() => setEditando(false)}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </form>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex items-center gap-3 p-3">
+      <span className="min-w-0 flex-1 truncate text-sm text-foreground">{funcao.nome}</span>
+      <span className="text-sm font-medium text-foreground">
+        {BRL.format(funcao.custo_hora_padrao)}/h
+      </span>
+      <Button variant="ghost" size="sm" aria-label={`Editar ${funcao.nome}`} onClick={abrir}>
+        <Pencil className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={`Remover ${funcao.nome}`}
+        disabled={removendo}
+        onClick={onRemover}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </li>
   );
 }
