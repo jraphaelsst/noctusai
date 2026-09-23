@@ -17,6 +17,8 @@ vi.mock("@/lib/api", () => ({
   api: { get: mockGet, post: mockPost, patch: mockPatch, put: vi.fn(), delete: vi.fn() },
 }));
 
+const DOCUMENTS_BATCH_PATH = "/api/studio/agents/isaia/knowledge/c1/documents/batch";
+
 function wrapper(qc: QueryClient) {
   return ({ children }: { children: React.ReactNode }) => React.createElement(QueryClientProvider, { client: qc }, children);
 }
@@ -57,6 +59,60 @@ describe("useCreateKnowledgeCollection", () => {
 
     expect(mockPost).toHaveBeenCalledWith("/api/studio/agents/isaia/knowledge", { slug: "brand", nome: "Marca", tag: null });
     expect(mockGet).toHaveBeenCalledTimes(2); // initial + invalidated refetch
+  });
+});
+
+describe("useUpdateKnowledgeCollection", () => {
+  it("PATCHes the collection payload (nome/tag/descricao/ordem) and invalidates the list", async () => {
+    mockGet.mockResolvedValue({ colecoes: [] });
+    mockPatch.mockResolvedValue({ id: "c1", slug: "audience", nome: "Audiência 2", tag: "AU", descricao: "nova", ordem: 5 });
+    const { useKnowledgeCollections, useUpdateKnowledgeCollection } = await import("@/hooks/studio/useKnowledge");
+    const qc = newClient();
+    const list = renderHook(() => useKnowledgeCollections("isaia"), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(list.result.current.showSkeleton).toBe(false));
+
+    const update = renderHook(() => useUpdateKnowledgeCollection("isaia"), { wrapper: wrapper(qc) });
+    await update.result.current.mutateAsync({
+      collectionId: "c1",
+      patch: { nome: "Audiência 2", tag: "AU", descricao: "nova", ordem: 5 },
+    });
+
+    expect(mockPatch).toHaveBeenCalledWith("/api/studio/agents/isaia/knowledge/c1", {
+      nome: "Audiência 2",
+      tag: "AU",
+      descricao: "nova",
+      ordem: 5,
+    });
+    expect(mockGet).toHaveBeenCalledTimes(2); // initial + invalidated refetch
+  });
+});
+
+describe("useBatchCreateDocuments", () => {
+  it("POSTs one call to the documents/batch route wrapped as {documentos}", async () => {
+    mockGet.mockResolvedValue({ colecoes: [] });
+    const response = {
+      resultados: [
+        { slug: "doc-1", status: "criado", doc_id: "d1" },
+        { slug: "doc-2", status: "atualizado", doc_id: "d2" },
+      ],
+      criados: 1,
+      atualizados: 1,
+      inalterados: 0,
+      erros: 0,
+    };
+    mockPost.mockResolvedValue(response);
+    const { useBatchCreateDocuments } = await import("@/hooks/studio/useKnowledge");
+    const qc = newClient();
+    const batch = renderHook(() => useBatchCreateDocuments("isaia", "c1"), { wrapper: wrapper(qc) });
+
+    const documentos = [
+      { slug: "doc-1", titulo: "Doc 1", tipo: "fonte" as const, conteudo: "conteúdo 1" },
+      { slug: "doc-2", titulo: "Doc 2", tipo: "fonte" as const, conteudo: "conteúdo 2" },
+    ];
+    const result = await batch.result.current.mutateAsync(documentos);
+
+    expect(mockPost).toHaveBeenCalledWith(DOCUMENTS_BATCH_PATH, { documentos });
+    expect(result).toEqual(response);
   });
 });
 

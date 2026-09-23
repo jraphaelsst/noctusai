@@ -16,6 +16,7 @@
  * otherwise the inspector shows a stale count until an unrelated refetch.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { knowledgeDocumentsBatchPath } from "@/api/studio/batchPaths";
 import { api } from "@/lib/api";
 import type {
   Document,
@@ -27,6 +28,8 @@ import type {
   KnowledgeCollectionCreate,
   KnowledgeCollectionPatch,
   KnowledgeCollectionsResponse,
+  KnowledgeDocumentBatchItem,
+  KnowledgeDocumentsBatchResponse,
   KnowledgeSearchResponse,
 } from "@/api/studio/types-ke";
 import { studioKeys } from "./keys";
@@ -124,6 +127,26 @@ export function useCreateDocument(agentKey: string, collectionId: string) {
   return useMutation({
     mutationFn: (payload: DocumentCreate) =>
       api.post<Document>(`/api/studio/agents/${agentKey}/knowledge/${collectionId}/documents`, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["studio", agentKey, "knowledge", "collections", collectionId, "documents"] });
+      qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });
+      qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
+    },
+  });
+}
+
+/**
+ * ONE call to `knowledgeDocumentsBatchPath` (max `KNOWLEDGE_DOCUMENTS_BATCH_MAX`
+ * documents — `@/api/studio/batchPaths.ts`). Chunking a larger upload into
+ * several calls is the UI's job (`sendInChunks`, `@/lib/batchUpload.ts`) —
+ * this hook is deliberately one wire call per `mutateAsync`, so the caller
+ * controls sequencing/progress instead of a mutation hiding a loop.
+ */
+export function useBatchCreateDocuments(agentKey: string, collectionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (documentos: KnowledgeDocumentBatchItem[]) =>
+      api.post<KnowledgeDocumentsBatchResponse>(knowledgeDocumentsBatchPath(agentKey, collectionId), { documentos }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["studio", agentKey, "knowledge", "collections", collectionId, "documents"] });
       qc.invalidateQueries({ queryKey: collectionsKey(agentKey) });

@@ -280,6 +280,54 @@ describe("useVersions — skills + files", () => {
   });
 });
 
+describe("useVersions — skill files batch upload (CONTRACT.md §G item 2)", () => {
+  it("PUTs {arquivos} to the files/batch route, one call per mutateAsync", async () => {
+    const response = {
+      resultados: [
+        { caminho: "references/a.md", status: "criado", id: "f-a" },
+        { caminho: "references/b.md", status: "atualizado", id: "f-b" },
+      ],
+      criados: 1,
+      atualizados: 1,
+      erros: 0,
+    };
+    const net = installFetch([{ method: "PUT" as const, path: `${A}/draft/skills/${SKILL_ID}/files/batch`, body: response }]);
+    const { useBatchUpsertSkillFiles } = await import("@/hooks/studio/useVersions");
+    const qc = newClient();
+    const batch = renderHook(() => useBatchUpsertSkillFiles("estrategista", V2_ID), { wrapper: wrap(qc) });
+
+    const arquivos = [
+      { caminho: "references/a.md", titulo: "A", conteudo: "conteúdo a" },
+      { caminho: "references/b.md", titulo: "B", conteudo: "conteúdo b" },
+    ];
+    const result = await act(() => batch.result.current.mutateAsync({ skillId: SKILL_ID, arquivos }));
+
+    expect(net.calls.map((c) => [c.method, c.path, c.body])).toEqual([["PUT", `${A}/draft/skills/${SKILL_ID}/files/batch`, { arquivos }]]);
+    expect(result).toEqual(response);
+  });
+
+  it("surfaces a whole-call failure (e.g. 409 version_immutable) as a rejection, not a partial response", async () => {
+    const net = installFetch([
+      {
+        method: "PUT" as const,
+        path: `${A}/draft/skills/${SKILL_ID}/files/batch`,
+        status: 409,
+        body: { detail: "A versão não é mais um rascunho.", code: "version_immutable" },
+      },
+    ]);
+    const { useBatchUpsertSkillFiles } = await import("@/hooks/studio/useVersions");
+    const qc = newClient();
+    const batch = renderHook(() => useBatchUpsertSkillFiles("estrategista", V2_ID), { wrapper: wrap(qc) });
+
+    await expect(
+      act(() =>
+        batch.result.current.mutateAsync({ skillId: SKILL_ID, arquivos: [{ caminho: "references/a.md", conteudo: "x" }] }),
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(net.unmatched).toEqual([]);
+  });
+});
+
 describe("useCompiled / usePromptByHash", () => {
   it("GETs /compiled without client_id when no client is selected", async () => {
     const net = installFetch([{ method: "GET", path: `${A}/versions/${V2_ID}/compiled`, body: COMPILED_DRAFT }]);
