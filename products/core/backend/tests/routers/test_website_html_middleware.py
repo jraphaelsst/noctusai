@@ -31,19 +31,34 @@ class TestHostSplit:
         assert resp.status_code == 301
         assert resp.headers["location"] == "https://noctusai.com/produtos"
 
-    def test_dev_override_query_param(self, unauth_client, website_site):
+    # The override is non-production only (`settings.is_production` is
+    # `not settings.debug`). Pin `debug` explicitly: CI runs without DEBUG,
+    # so relying on the ambient .env made these pass locally and fail in CI.
+    def test_dev_override_query_param(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "debug", True)
         mock_sb = unauth_client.mock_supabase
         mock_sb.set_table_data("website_settings", [])
         resp = unauth_client.get("/", params={"__site": "1"})
         assert resp.status_code == 200
         assert "<h1>" in resp.text
 
-    def test_dev_override_header(self, unauth_client, website_site):
+    def test_dev_override_header(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "debug", True)
         mock_sb = unauth_client.mock_supabase
         mock_sb.set_table_data("website_settings", [])
         resp = unauth_client.get("/", headers={"X-NX-Site": "1"})
         assert resp.status_code == 200
         assert "<h1>" in resp.text
+
+    def test_dev_override_refused_in_production(self, unauth_client, website_site, monkeypatch):
+        from app.config import settings
+        monkeypatch.setattr(settings, "debug", False)
+        mock_sb = unauth_client.mock_supabase
+        mock_sb.set_table_data("website_settings", [])
+        resp = unauth_client.get("/", params={"__site": "1"}, headers={"X-NX-Site": "1"})
+        assert "<h1>" not in resp.text
 
 
 class TestKillSwitch:
