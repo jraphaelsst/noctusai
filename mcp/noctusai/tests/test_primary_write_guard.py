@@ -36,8 +36,11 @@ from tools.noctus.dev.primary_write_guard import (  # noqa: E402
     GuardContext,
     _strip_redirections,
     bash_write_targets,
+    capture_pretool_baseline,
     decide,
+    diff_new_primary_dirt,
     is_guarded_path,
+    measure_posttool_dirt,
 )
 
 PRIMARY = "/repo/noctusai"
@@ -147,14 +150,19 @@ def test_redirecting_to_a_sink_is_not_a_write():
     assert _decide("Bash", {"command": f"cd {PRIMARY} && grep -rn foo . > /dev/null"}) is None
 
 
-def test_an_unparseable_interpreter_write_is_refused_conservatively():
-    """`python -c "open(...).write(...)"` cannot be resolved to a target. The
-    permissive answer is the one that lets the slip through, so it is refused
-    against its effective cwd and the message says so."""
+def test_an_unparseable_interpreter_write_is_now_allowed_pre_emptively():
+    """`python -c "open(...).write(...)"` cannot be resolved to an exact
+    target — MEASURE, DON'T PREDICT (2026-09-23): the old behavior refused
+    this against its effective cwd, a GUESS, which is exactly the shape that
+    turned this leg into a wall (13 `fix(guard)` commits chasing one more
+    quoting shape). It is now allowed pre-emptively; `bash_write_targets`
+    still reports `uncertain=True` so the PostToolUse measurement net
+    (`measure_posttool_dirt`) knows to look, and catches it AFTER the fact if
+    it really did land in the primary — see the tests below."""
     verdict = _decide("Bash", {"command": f"cd {PRIMARY} && python -c \"open('x','w').write('1')\""})
-    assert verdict is not None
-    assert verdict["uncertain"] is True
-    assert "could not be parsed" in verdict["reason"]
+    assert verdict is None
+    _, uncertain = bash_write_targets(f"cd {PRIMARY} && python -c \"open('x','w').write('1')\"", WT)
+    assert uncertain is True
 
 
 def test_writes_outside_the_repo_are_none_of_our_business():
@@ -226,11 +234,14 @@ def test_a_shell_variable_cd_is_not_read_as_a_relative_path():
     assert _decide("Bash", {"command": 'cd "$W" && python cli.py --verify'}) is None
 
 
-def test_a_shell_variable_write_target_falls_back_to_the_known_cwd():
-    """Unresolvable target ⇒ judge the cwd we DO know. From a worktree that is
-    a pass; from the primary it still blocks."""
+def test_a_shell_variable_write_target_is_now_allowed_pre_emptively():
+    """Unresolvable target ⇒ MEASURE, DON'T PREDICT (2026-09-23): this used to
+    fall back to judging the cwd we DO know, refusing from the primary on a
+    guess about what `$W` resolves to. Both cases are now allowed
+    pre-emptively — the PostToolUse net catches it if `$W` really did resolve
+    somewhere inside the primary."""
     assert _decide("Bash", {"command": 'touch "$W/out.txt"'}, cwd=WT) is None
-    assert _decide("Bash", {"command": 'touch "$W/out.txt"'}, cwd=PRIMARY) is not None
+    assert _decide("Bash", {"command": 'touch "$W/out.txt"'}, cwd=PRIMARY) is None
 
 
 def test_a_glob_target_is_not_resolved_literally():
@@ -549,10 +560,12 @@ def test_stderr_to_stdout_is_not_a_file():
     assert bash_write_targets("cmd 2>&1", PRIMARY) == ([], False)
 
 
-def test_an_unresolvable_redirect_target_falls_back_to_the_known_cwd():
-    """Same rule the `_ALWAYS_WRITE` branch already applied to `cp $X`."""
+def test_an_unresolvable_redirect_target_is_now_allowed_pre_emptively():
+    """Same rule `cp $X` follows now (see the `_ALWAYS_WRITE` test above) —
+    an unresolvable target is allowed pre-emptively rather than refused
+    against a guessed cwd, from a worktree AND from the primary alike."""
     assert _decide("Bash", {"command": "echo hi > $TARGET"}, cwd=WT) is None
-    assert _decide("Bash", {"command": "echo hi > $TARGET"}, cwd=PRIMARY) is not None
+    assert _decide("Bash", {"command": "echo hi > $TARGET"}, cwd=PRIMARY) is None
 
 
 def test_an_unterminated_expansion_terminates():
@@ -1081,12 +1094,16 @@ def test_a_single_positional_stays_conservative():
     assert _decide("Bash", {"command": f"cp {PRIMARY}/CLAUDE.md"}) is not None
 
 
-def test_an_unexpandable_dest_still_falls_back_to_the_cwd():
-    """A `$VAR` destination is unnameable; narrowing to it would allow a write
-    the guard cannot see. Must stay refused via the uncertain path."""
+def test_an_unexpandable_dest_is_now_allowed_pre_emptively():
+    """A `$VAR` destination is unnameable. Pre-2026-09-23 this fell back to
+    refusing the effective cwd (a guess); now it is allowed pre-emptively and
+    left to the PostToolUse measurement net — `uncertain` still comes back
+    True so a caller CAN tell the parse was incomplete, it just no longer
+    manufactures a target out of that fact."""
     verdict = _decide("Bash", {"command": f"cp {PRIMARY}/CLAUDE.md $DEST"}, cwd=PRIMARY)
-    assert verdict is not None
-    assert verdict["uncertain"]
+    assert verdict is None
+    _, uncertain = bash_write_targets(f"cp {PRIMARY}/CLAUDE.md $DEST", PRIMARY)
+    assert uncertain
 
 
 # ── git reset of a ledger: the index-side twin of restore (2026-09-17) ────
@@ -1136,3 +1153,108 @@ def test_worktree_touching_reset_modes_are_refused_even_on_a_ledger():
     for flag in ("--hard", "--merge", "--keep"):
         cmd = f"git reset {flag} -- project-history/vector-costs.ndjson"
         assert _decide("Bash", {"command": cmd}, cwd=PRIMARY) is not None, cmd
+
+
+# ── the measurement net (2026-09-23): "measure, don't predict" ────────────
+#
+# `decide()` no longer refuses a Bash write whose exact target it could not
+# parse — see the "MEASURE, DON'T PREDICT" note on `decide()` itself. These
+# tests pin the replacement contract end-to-end: an unresolvable-target
+# command is allowed PRE-emptively, and the PostToolUse leg
+# (`measure_posttool_dirt`) reports real new dirt in the primary AFTER the
+# fact, using a baseline `capture_pretool_baseline` wrote before the command
+# ran — minus the append-only ledger exemption.
+
+SCRATCHPAD = "/private/tmp/claude-501/scratchpad"
+
+
+def test_a_scratchpad_absolute_path_write_is_allowed():
+    """The exact reported incident: `cd <scratchpad> && curl … -o
+    <scratchpad>/x.js`. Both the `cd` and the `-o` target are absolute paths
+    OUTSIDE the repo — this guard has no business refusing either, and
+    `curl -o` was never a shape the parser recognized as a write in the first
+    place, which is the point: an unrecognized command must not become a
+    refusal just because the session's last known cwd happens to be a
+    worktree near the primary."""
+    assert _decide(
+        "Bash",
+        {"command": f"cd {SCRATCHPAD} && curl -sL https://example.com/x.js -o {SCRATCHPAD}/x.js"},
+    ) is None
+
+
+def test_a_primary_path_write_is_still_refused_exactly():
+    """An EXPLICITLY resolved target inside the primary is still a real proof,
+    not a guess, and stays refused — the measurement net only replaces the
+    GUESSING path, not the exact one."""
+    verdict = _decide("Bash", {"command": f"cd {PRIMARY} && sed -i '' 's/a/b/' CLAUDE.md"})
+    assert verdict is not None
+    assert any(t.endswith("CLAUDE.md") for t in verdict["targets"])
+
+
+def test_an_unparseable_write_is_allowed_and_the_post_measure_reports_it(tmp_path, monkeypatch):
+    """The end-to-end shape: PreToolUse allows an unresolvable target and
+    captures a baseline; the actual write lands in the primary anyway (an
+    interpreter one-liner the parser can't see through); PostToolUse diffs
+    the real `git status --porcelain` against that baseline and reports the
+    new dirt by name."""
+    import tools.noctus.dev.primary_write_guard as guard
+
+    ctx = GuardContext(primary_root=str(tmp_path), branch="dev", worktrees=())
+    snapshots = iter([
+        "",  # captured by the PreToolUse leg, before the command ran
+        " M app/main.py\n?? scratch_output.txt\n",  # after the command ran
+    ])
+    monkeypatch.setattr(guard, "primary_status_snapshot", lambda c: next(snapshots))
+
+    # PreToolUse: the write is allowed (parser can't resolve `python -c`'s
+    # target) and the baseline is captured.
+    verdict = decide(
+        "Bash",
+        {"command": "python -c \"open('scratch_output.txt','w').write('x')\""},
+        cwd=str(tmp_path),
+        ctx=ctx,
+        allow_override=False,
+    )
+    assert verdict is None
+    capture_pretool_baseline(ctx)
+
+    # PostToolUse: the real dirt is reported.
+    warning = measure_posttool_dirt(str(tmp_path), ctx=ctx)
+    assert warning is not None
+    assert "app/main.py" in warning
+    assert "scratch_output.txt" in warning
+    assert "dev" in warning
+
+
+def test_ledger_ndjson_dirt_is_not_reported():
+    """Ledger appends are legitimate primary-checkout writes by design (the
+    same `LEDGER_PREFIXES` `decide()`'s own git leg exempts) — the
+    measurement net must not cry wolf over the MCP toolkit doing its job."""
+    before = ""
+    after = "M  project-history/branch-tree.ndjson\n?? project-history/auto-improvement.ndjson\n"
+    assert diff_new_primary_dirt(before, after) == []
+
+
+def test_ledger_dirt_mixed_with_real_dirt_still_reports_the_real_part():
+    before = ""
+    after = "M  project-history/branch-tree.ndjson\n?? products/core/app/leaked.py\n"
+    dirt = diff_new_primary_dirt(before, after)
+    assert dirt == ["products/core/app/leaked.py"]
+
+
+def test_dirt_already_present_before_the_call_is_not_new():
+    before = "?? products/core/app/preexisting.py\n"
+    after = "?? products/core/app/preexisting.py\n?? products/core/app/new_one.py\n"
+    assert diff_new_primary_dirt(before, after) == ["products/core/app/new_one.py"]
+
+
+def test_a_clean_diff_reports_nothing():
+    same = "?? products/core/app/x.py\n"
+    assert diff_new_primary_dirt(same, same) == []
+
+
+def test_measurement_net_is_silent_off_a_shared_branch():
+    """A feature-branch primary never pays for or reports through this net —
+    it exists to guard `dev`/`main`/`prod` only."""
+    ctx = GuardContext(primary_root=PRIMARY, branch="feat/x", worktrees=())
+    assert measure_posttool_dirt(PRIMARY, ctx=ctx) is None

@@ -1111,8 +1111,28 @@ def decide(
     elif tool_name == "Bash":
         command = (tool_input or {}).get("command") or ""
         targets, uncertain = bash_write_targets(command, cwd)
-        if uncertain and not targets:
-            targets = [_effective_cwd(command, cwd)]
+        # 🔴 MEASURE, DON'T PREDICT (2026-09-23). This used to fall back to
+        # `targets = [_effective_cwd(command, cwd)]` whenever the parse was
+        # uncertain and nothing concrete resolved — refusing the WHOLE
+        # command against its cwd on the strength of a guess. That guess is
+        # what turned this leg into a wall: 13 `fix(guard)` commits since
+        # 2026-08 chasing one more shell quoting shape, and it still refused
+        # `cd <scratchpad-abs-path> && curl … -o <scratchpad-abs-path>/x.js`
+        # on 2026-09-23 — an absolute target OUTSIDE the repo, unparsed only
+        # because `curl -o` is not (and can never exhaustively be) a shape
+        # this parser recognizes. A PreToolUse hook can only ever be a good
+        # PARSER of an arbitrary shell command, never a proof of what it will
+        # do; guessing in the refusing direction is not more careful, it is
+        # wrong in the direction that gets the gate switched off
+        # (`KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`).
+        #
+        # An EXPLICITLY resolved target is still judged exactly below (`hits`)
+        # — that part of the parser is a real proof, not a guess, and stays a
+        # refusal. An unresolvable one is now ALLOWED here; if it actually
+        # lands in the primary, `measure_posttool_dirt` (this module, paired
+        # PostToolUse hook `claude-guard-primary-write-post.py`) reports it
+        # AFTER the fact by diffing real `git status --porcelain` output —
+        # measuring what happened instead of predicting what might.
     else:
         return None
 
@@ -1141,9 +1161,10 @@ def decide(
             f"  3. noctus.dev.task_branch action='integrate' slug='<kebab-slug>' confirm=True\n"
             f"Committing here diverges local '{ctx.branch}' from origin, and the failure "
             f"surfaces much later as a non-fast-forward at integrate or deploy time."
-            + ("\nThe command's write target could not be parsed exactly, so it is "
-               "judged against its effective working directory — name an absolute "
-               "path outside the primary checkout if that is wrong."
+            + ("\nThis command also names at least one OTHER target this guard "
+               "could not resolve exactly (an interpreted string, a shell "
+               "variable, a glob) — it is not part of this refusal, but check "
+               "`git -C <primary> status --porcelain` after running it."
                if uncertain else "")
             + (f"\nNOTE: this primary has DIVERGED from origin/{ctx.branch}, so it can "
                f"no longer fast-forward. Re-syncing it is sanctioned and allowed: "
@@ -1154,6 +1175,159 @@ def decide(
                if _primary_diverged(ctx) else "")
         ),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The measurement net — PostToolUse leg for Bash, paired with the now-
+# permissive uncertain-target path in `decide()` above (see the
+# "MEASURE, DON'T PREDICT" note there for why this exists as a SEPARATE pass
+# rather than a stricter parse).
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: Where the PreToolUse leg stashes its pre-Bash snapshot for the PostToolUse
+#: leg to diff against. ONE file, not one per invocation: tool calls run
+#: sequentially far more often than not, and no per-call id is available to a
+#: stdlib-only hook to pair them precisely anyway. A concurrent sibling call
+#: only widens or narrows the reported window by one call's worth of dirt —
+#: acceptable because this net is advisory ONLY (it never refuses anything;
+#: see `measure_posttool_dirt`'s docstring), so the imprecise-attribution cost
+#: of a shared baseline is strictly cheaper than the correctness cost of
+#: guessing a target beforehand ever was.
+_BASELINE_CACHE_REL = os.path.join(".claude", "cache", "primary-write-guard-baseline.txt")
+
+
+def _baseline_cache_path(ctx: GuardContext) -> str:
+    return os.path.join(ctx.primary_root, _BASELINE_CACHE_REL)
+
+
+def primary_status_snapshot(ctx: GuardContext) -> str | None:
+    """`git status --porcelain` of the primary checkout, or None if unanswerable.
+
+    The measurement net's one subprocess call. Only ever reached when
+    `ctx.guarded` — a feature-branch primary (the overwhelmingly common case)
+    never pays this cost at all, on either the Pre or the Post leg.
+    """
+    answered, out = _run_git_checked(["-C", ctx.primary_root, "status", "--porcelain"], None)
+    return out if answered else None
+
+
+def capture_pretool_baseline(ctx: GuardContext) -> None:
+    """Write the current primary status as the baseline the NEXT PostToolUse
+    measurement diffs against.
+
+    Best-effort BY DESIGN: an unwritable cache dir, or an unanswerable probe,
+    silently skips rather than raising. This net is advisory — see
+    `measure_posttool_dirt` — so "no report this time" is the correct failure
+    direction, not an exception the PreToolUse hook now has to handle on a
+    path that must never block the write it already decided to allow.
+    """
+    snapshot = primary_status_snapshot(ctx)
+    if snapshot is None:
+        return
+    path = _baseline_cache_path(ctx)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(snapshot)
+    except OSError:
+        pass
+
+
+def _read_baseline(ctx: GuardContext) -> str | None:
+    try:
+        with open(_baseline_cache_path(ctx), "r", encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _porcelain_path(line: str) -> str:
+    """The PATH half of one `git status --porcelain` line.
+
+    Format is two status chars + a space + the path (`XY PATH`), or for a
+    rename `XY ORIG -> PATH`. The rename's NEW path is what matters here —
+    that is where dirt actually landed, not where it came from.
+    """
+    body = line[3:] if len(line) > 3 else ""
+    if " -> " in body:
+        body = body.split(" -> ", 1)[1]
+    return body.strip().strip('"')
+
+
+def _is_ledger_ndjson(path: str) -> bool:
+    """The one sanctioned kind of "new dirt": an append-only ledger the MCP
+    toolkit writes into the primary BY DESIGN (`LEDGER_PREFIXES`, same set
+    `decide()`'s own git leg exempts). Narrowed to `.ndjson` specifically —
+    unlike the pre-write exemption above, this is a POST-HOC report about
+    what a tool actually did, and a ledger directory is not a blanket pass
+    for an unrelated file that happens to share its prefix.
+    """
+    return path.endswith(".ndjson") and any(path.startswith(prefix) for prefix in LEDGER_PREFIXES)
+
+
+def diff_new_primary_dirt(before: str | None, after: str | None) -> list[str]:
+    """Paths dirty in `after` but not in `before`, minus the ledger exemption.
+
+    Line-set difference, not per-path status comparison: a path that changed
+    STATUS between snapshots (e.g. `??` becomes `A `) is a different line and
+    correctly still reads as "new", because a still-open question either way
+    it changes shape.
+    """
+    if not after:
+        return []
+    before_lines = {ln for ln in (before or "").splitlines() if ln}
+    after_lines = {ln for ln in after.splitlines() if ln}
+    out: list[str] = []
+    for line in sorted(after_lines - before_lines):
+        path = _porcelain_path(line)
+        if not path or _is_ledger_ndjson(path):
+            continue
+        out.append(path)
+    return out
+
+
+def format_primary_dirt_warning(paths: Sequence[str], ctx: GuardContext) -> str:
+    shown = ", ".join(paths[:8])
+    if len(paths) > 8:
+        shown += f", +{len(paths) - 8} more"
+    return (
+        f"PRIMARY CHECKOUT GOT NEW DIRT on shared branch '{ctx.branch}' from this "
+        f"Bash call: {shown}.\n"
+        f"This guard allowed the write pre-emptively because its target could not "
+        f"be predicted, and measured the actual result afterward instead — it "
+        f"landed in the primary checkout ({ctx.primary_root}), which must stay "
+        f"clean here (CLAUDE.md §1, skill noc-self-branch).\n"
+        f"Fix it: move the intended output into your worktree, then clean the "
+        f"primary — `git -C {ctx.primary_root} checkout -- <file>` for a tracked "
+        f"change, `rm <file>` for a new untracked one."
+    )
+
+
+def measure_posttool_dirt(cwd: str | None = None, ctx: GuardContext | None = None) -> str | None:
+    """The PostToolUse entry point: None to say nothing, else warning text.
+
+    NEVER refuses anything — there is nothing left to refuse, the Bash call
+    already ran. This only diffs the primary's real `git status --porcelain`
+    against the baseline the paired PreToolUse leg captured and reports
+    anything genuinely new, minus the ledger exemption. Silent whenever the
+    context is unguarded, the probe cannot answer, or no baseline was ever
+    captured (e.g. this hook's own install postdates the Bash call) — an
+    advisory net that cannot see must not invent a finding, same posture as
+    every refusal path in this module toward an unanswerable probe, applied
+    in the opposite (never-block) direction.
+    """
+    cwd = cwd or os.getcwd()
+    if ctx is None:
+        ctx = discover_context(cwd)
+    if ctx is None or not ctx.guarded:
+        return None
+    after = primary_status_snapshot(ctx)
+    if after is None:
+        return None
+    new_dirt = diff_new_primary_dirt(_read_baseline(ctx), after)
+    if not new_dirt:
+        return None
+    return format_primary_dirt_warning(new_dirt, ctx)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

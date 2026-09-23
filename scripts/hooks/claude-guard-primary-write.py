@@ -14,6 +14,15 @@ stdout), and loads that ONE module ONCE per call — checking all three
 concerns costs no additional `importlib` round-trip, only extra function
 calls on an already-loaded module.
 
+**Also the measurement net's OTHER half.** When every decision above allows
+an in-flight `Bash` call and the primary checkout is on a shared branch, this
+leg stashes a `git status --porcelain` snapshot (`capture_pretool_baseline`)
+for the PAIRED `PostToolUse` hook (`claude-guard-primary-write-post.py`) to
+diff against. `decide()` no longer refuses a Bash write whose exact target it
+could not parse (see that function's own "MEASURE, DON'T PREDICT" note) — the
+snapshot here is how the guard still catches it if it actually landed in the
+primary, just AFTER the fact instead of guessing beforehand.
+
 Two deliberate properties:
 
 * **It loads the guard BY PATH, not as a package.** Importing
@@ -30,6 +39,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -63,12 +73,20 @@ def main() -> int:
         # universal, branch- and location-independent concerns (see each
         # function's own docstring), so a command that is also a
         # primary-checkout write gets the more specific reason.
-        cwd = payload.get("cwd")
+        cwd = payload.get("cwd") or os.getcwd()
         verdict = guard.decide_git_bypass(tool_name, tool_input)
         if verdict is None:
             verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
+        ctx = None
         if verdict is None:
-            verdict = guard.decide(tool_name, tool_input, cwd)
+            ctx = guard.discover_context(cwd)
+            verdict = guard.decide(tool_name, tool_input, cwd, ctx=ctx)
+        if verdict is None and tool_name == "Bash" and ctx is not None and ctx.guarded:
+            # The measurement net's baseline — see the module docstring's
+            # "Also the measurement net's OTHER half" note. Best-effort by
+            # construction (`capture_pretool_baseline` never raises); nothing
+            # here can turn an ALLOW back into a refusal.
+            guard.capture_pretool_baseline(ctx)
     except Exception as exc:  # fail open — see the module docstring
         print(f"claude-guard-primary-write: guard unavailable ({exc}) — not blocking", file=sys.stderr)
         return 0

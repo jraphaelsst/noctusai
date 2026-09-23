@@ -439,10 +439,48 @@ parser misses, and the two are independent:
 | `primary_write_guard` | the write | the mistake itself | exotic shell quoting, an interpreter one-liner |
 | `check_primary_checkout_commit` | the commit | the divergence | a LEDGER-ONLY staged set — see below |
 
-When the parser cannot resolve a target but sees write intent (a `python -c`
-that opens a file for writing), it refuses against the effective cwd and **says
-so in the message**. The permissive answer is the one that lets the slip
-through; an over-refusal costs one absolute path.
+### Measure, don't predict (2026-09-23)
+
+A gate is a **safety net behind a mechanism**, not a wall an agent steers by
+— driving with walls instead of a steering wheel. Until 2026-09-23 the Bash
+leg tried to be the wheel: when the parser could not resolve a target but saw
+write intent (a `python -c` that opens a file, a `$VAR` destination), it
+refused against the command's *effective cwd* — a **guess**, not a proof.
+That guess is what turned this leg into an arms race: 13 `fix(guard)` commits
+since 2026-08 chasing one more shell-quoting shape (heredocs, `${…}`
+expansions, redirect operators mistaken for `rm` targets, `2>&1` read as a
+path — see the sections above), and it still refused a live
+`cd <scratchpad-abs-path> && curl … -o <scratchpad-abs-path>/x.js` on
+2026-09-23 — an absolute target **outside the repo**, unresolved only because
+`curl -o` is not (and can never exhaustively be) a shape the parser
+recognizes as a write.
+
+**What changed.** An *explicitly* resolved target is still judged exactly —
+that half of the parser is a real proof, and stays a refusal. An
+*unresolvable* one is now **allowed** pre-emptively instead of refused
+against a guess. The Bash leg gained a second, PostToolUse half instead:
+
+* **PreToolUse** (`claude-guard-primary-write.py`, unchanged trigger) — when
+  every decision allows a `Bash` call and the primary is on a shared branch,
+  it stashes `git status --porcelain` of the primary as a baseline
+  (`capture_pretool_baseline`), written to a single gitignored cache file
+  (`.claude/cache/primary-write-guard-baseline.txt`) rather than one per
+  invocation — no per-call id is available to a stdlib-only hook to pair them
+  precisely, and a concurrent sibling call only widens the reported window by
+  one call's worth of dirt, which is acceptable because this net is advisory
+  only.
+* **PostToolUse** (new: `claude-guard-primary-write-post.py`, matcher
+  `Bash`) — after the command runs, `measure_posttool_dirt` re-snapshots the
+  primary, diffs it against that baseline, and reports any genuinely NEW dirt
+  by name (minus the `project-history/*.ndjson` ledger exemption — the MCP
+  toolkit legitimately writes those). It **never refuses anything**: the
+  command already ran, there is nothing left to block, only to surface
+  loudly so the agent cleans up (`git checkout -- <file>` / `rm <file>`)
+  before committing.
+
+`Edit`/`Write`/`NotebookEdit` are untouched by any of this — their target is
+always an exact path, so a PreToolUse refusal there is a proof, never a
+guess, and the wall/net distinction does not apply.
 
 🔴 **The commit keeper's one blind spot, and why it stays.** That table used to
 read "can be fooled by: nothing — it reads the real staged set". It is not
