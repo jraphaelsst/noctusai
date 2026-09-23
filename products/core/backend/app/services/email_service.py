@@ -135,6 +135,40 @@ def send_billing_alert(
     return _send(to, subject, html)
 
 
+def send_website_lead_notification(to: str, lead: dict) -> bool:
+    """Team notify e-mail for a new/updated website lead (`WEBSITE_LEADS_
+    NOTIFY_EMAIL`), part of the lead fan-out (`app/services/
+    website_lead_fanout.py`).
+
+    Deliberately reuses THIS module (Resend, `_get_resend()`), not
+    `noctusai_lib.integrations.email.make_email_sender` — that seed
+    factory's Real adapter is SMTP-only, and core's actually-configured,
+    actually-working channel in prod is Resend (`RESEND_API_KEY`, no SMTP
+    creds set). Routing the notification through the SMTP-only factory
+    with no SMTP creds would silently resolve to `FakeEmailSender` (a
+    fabricated "sent") and the lead notification would never arrive —
+    worse than the deviation from the brief's literal "use the seed
+    factory" instruction. See the website-be delivery note's
+    `scoped-improvement:` footer for the follow-up (absorb a Resend Real
+    adapter into the seed alongside SMTP, at which point this can consume
+    it too).
+    """
+    subject = f"Novo lead ({lead.get('source')}) — {lead.get('name')}"
+    contact = lead.get("email") or lead.get("phone_e164") or "—"
+    html = f"""
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Novo lead do site</h2>
+        <p><strong>Nome:</strong> {lead.get('name')}</p>
+        <p><strong>Origem:</strong> {lead.get('source')}</p>
+        <p><strong>Contato:</strong> {contact}</p>
+        <p><strong>Empresa:</strong> {lead.get('company') or '—'}</p>
+        <p><strong>Mensagem:</strong> {lead.get('message') or '—'}</p>
+        <p style="color: #666; font-size: 14px;">Lead id: {lead.get('id')}</p>
+    </div>
+    """
+    return _send(to, subject, html)
+
+
 def _send(to: str, subject: str, html: str) -> bool:
     """Send an email via Resend or log it if not configured."""
     client = _get_resend()

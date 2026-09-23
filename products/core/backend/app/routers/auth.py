@@ -50,7 +50,32 @@ async def signup(request: Request, body: SignupRequest):
     Self-serve billing: with `plan_price_id`, the chosen price is validated
     (sellable, audience fits `org_type`) before anything is created, and the
     response tells the client to continue to checkout.
+
+    Website signup gate (contract §6, §10): when the website's
+    `signup_enabled` switch is off, refuse BEFORE any user is created.
+    Invites (`/invite/:token`) are a separate flow and are unaffected.
     """
+    from app.services import website_settings_service
+
+    try:
+        _version, website_data = website_settings_service.get_current()
+    except website_settings_service.WebsiteDefaultsMissing:
+        # The website subsystem has no rows AND no FE-built defaults file —
+        # it has never been configured on this deploy (or this is a test
+        # that predates the website slice). Signup stays open: the gate is
+        # only meaningful once an admin has something to toggle, and
+        # blocking every signup because a DIFFERENT feature isn't wired
+        # would be the wrong kind of "fail loud" here — `get_current()`
+        # already fails loud for the website's OWN endpoints.
+        website_data = {"signup_enabled": True}
+    if not website_data.get("signup_enabled", True):
+        # `{"detail": <code>, "code": <code>}` — the seed's escape hatch for
+        # the LITERAL `{"detail": "signup_closed"}` shape the website
+        # contract specifies (`noctusai_lib.primitives.exceptions.
+        # http_exception_handler`); every other HTTPException here still
+        # gets the platform's historical `{"error": {"code","message"}}`.
+        raise HTTPException(status_code=403, detail={"detail": "signup_closed", "code": "signup_closed"})
+
     db = get_admin_client()
 
     chosen_price = None
