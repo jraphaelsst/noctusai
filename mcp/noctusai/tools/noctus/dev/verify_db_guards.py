@@ -2152,6 +2152,82 @@ _IGIG_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — core.audit_logs append-only guard (migration 053).
+# ---------------------------------------------------------------------------
+#
+# Fully self-provisioning: `audit_logs.user_id`/`.org_id` are nullable (no
+# FK dependency to satisfy), so each probe inserts its own throwaway row —
+# no production row is borrowed or touched. The `no_fixture` branch below
+# only guards against `public.audit_logs` itself not existing (core's base
+# migrations not applied) — a pre-053 database with the table already
+# present correctly reports `permitted` (the trigger genuinely doesn't
+# exist yet), the real finding, not a skip.
+
+_CORE_AUDIT_LOGS_GUARD = "guard_audit_logs_append_only"
+_CORE_AUDIT_LOGS_MIGRATIONS = ("053_audit_trail_expansion.sql",)
+
+
+def _core_audit_log_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("audit_logs_append_only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_id uuid;
+BEGIN
+  IF to_regclass('public.audit_logs') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.audit_logs does not exist (core base migrations not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO public.audit_logs (action, resource_type, resource_id)
+    VALUES ('noc_probe', 'noc_probe', 'noc-probe')
+    RETURNING id INTO v_id;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=_CORE_AUDIT_LOGS_GUARD,
+        kind="write_refusal",
+        migrations=_CORE_AUDIT_LOGS_MIGRATIONS,
+        sql=sql,
+        rationale=(
+            "audit_logs is the platform action-history trail (migration 053, "
+            "owner directive 2026-09-23) — a rewritable or deletable row "
+            "proves nothing happened the way the trail says it did. UPDATE is "
+            "refused unconditionally; DELETE is refused outside "
+            "`public.purge_expired_audit_logs()`, the only sanctioned "
+            "(400-day) retention door."
+        ),
+    )
+
+
+_CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
+    _core_audit_log_probe(
+        probe_id="audit_logs.update_refused",
+        op_sql="    UPDATE public.audit_logs SET action = 'tampered' WHERE id = v_id;",
+        what="UPDATE of an audit_logs row",
+    ),
+    _core_audit_log_probe(
+        probe_id="audit_logs.delete_refused_outside_purge",
+        op_sql="    DELETE FROM public.audit_logs WHERE id = v_id;",
+        what="DELETE of an audit_logs row outside purge_expired_audit_logs",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -2171,6 +2247,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     *_IGIG_PROBES,
+    *_CORE_AUDIT_LOGS_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
@@ -2271,8 +2348,10 @@ def register(server) -> None:
             "noctus.dev.predeploy_check as the db_guards leg. Seeded with the "
             "social_wiring.matricula_extracoes write-once trigger (6 frozen "
             "columns), its ruido shape CHECK, matricula_abertura_blocos's 3 "
-            "CHECK constraints + its (extracao_id, campo) UNIQUE index, and "
-            "the platform-wide zero-public-storage-buckets state assertion. "
+            "CHECK constraints + its (extracao_id, campo) UNIQUE index, the "
+            "platform-wide zero-public-storage-buckets state assertion, and "
+            "core.audit_logs's append-only guard (UPDATE always refused, "
+            "DELETE refused outside purge_expired_audit_logs). "
             "Returns {status, checked, results, findings, failures, error}. "
             "KB § PATTERNS/common/methodology-execution-discipline.md § 8."
         ),

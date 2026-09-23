@@ -19,6 +19,7 @@ from tests.billing_fakes import NOW, make_ctx, managed_subscription, seed_catalo
 
 JOB_IDS = {
     core_scheduler.WEBHOOK_RETENTION_JOB,
+    core_scheduler.AUDIT_LOG_RETENTION_JOB,
     core_scheduler.BILLING_AUTOMATIONS_JOB,
     core_scheduler.PTAX_JOB,
     core_scheduler.STORAGE_SNAPSHOT_JOB,
@@ -92,10 +93,28 @@ class _BrokenDb:
     def table(self, name):
         raise RuntimeError("DB down")
 
+    def rpc(self, name, params=None):
+        raise RuntimeError("DB down")
+
 
 @pytest.mark.asyncio
 async def test_retention_job_reports_errors_instead_of_raising(caplog):
     result = await core_scheduler.webhook_retention_sweep_job(_BrokenDb())
+    assert result == {"error": "DB down"}
+    assert "DB down" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_audit_log_retention_job_calls_the_purge_rpc_and_reports_count():
+    db = MockSupabaseClient()
+    db.set_rpc_data("purge_expired_audit_logs", 4)
+    result = await core_scheduler.audit_log_retention_sweep_job(db)
+    assert result == {"purged": 4}
+
+
+@pytest.mark.asyncio
+async def test_audit_log_retention_job_reports_errors_instead_of_raising(caplog):
+    result = await core_scheduler.audit_log_retention_sweep_job(_BrokenDb())
     assert result == {"error": "DB down"}
     assert "DB down" in caplog.text
 
