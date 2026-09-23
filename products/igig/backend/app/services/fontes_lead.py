@@ -27,7 +27,7 @@ from noctusai_lib.integrations.whatsapp import WhatsAppInboundMessage, is_phone_
 from noctusai_lib.primitives.phone import normalize_phone
 
 from app.services import automacoes, comercial_funil
-from app.services.automacoes import PortasAutomacao
+from app.services.automacoes import PortasAutomacao, violacao_unica
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,6 @@ _META_PRIMEIRO, _META_ULTIMO = "first_name", "last_name"
 _META_EMAIL = ("email", "work_email")
 _META_TELEFONE = ("phone_number", "work_phone_number")
 _META_EMPRESA = ("company_name",)
-
-
-def _violacao_unica(exc: Exception) -> bool:
-    code = str(getattr(exc, "code", "") or "")
-    return code == "23505" or "duplicate key" in str(exc).lower()
 
 
 def lead_existente(db: Any, org_id: str, coluna: str, valor: str) -> Optional[dict]:
@@ -72,7 +67,7 @@ async def _criar_lead_e_negocio(
             or []
         )
     except Exception as exc:  # noqa: BLE001 — only a unique violation is a duplicate
-        if _violacao_unica(exc):
+        if violacao_unica(exc):
             corrida = _lead_por(portas.db, org_id, chave, valor)
             logger.info("lead duplicado por corrida org=%s %s=%s", org_id, chave, valor)
             return {"status": "existente", "lead_id": str(corrida["id"]) if corrida else None}
