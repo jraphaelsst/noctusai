@@ -325,9 +325,16 @@ def _is_provenance_stamp_line(limpo: str) -> bool:
 def boilerplate_line_spans(text: str) -> tuple[tuple[int, int], ...]:
     """`(start, end)` byte-spans of every provenance-stamp LINE in `text`,
     each span INCLUDING its own trailing newline so deleting it never
-    leaves a naked blank line behind (the text's own last line, if it has
-    no trailing newline, is the one exception — its span simply ends at
-    `len(text)`). Spans are ordered and never overlap.
+    leaves a naked blank line behind. Spans are ordered and never overlap.
+
+    The text's own last line has no trailing newline to take with it, so
+    when the removed stamps run to the very end of the text, one extra span
+    also removes the line break that ended the last SURVIVING line.
+    Otherwise the result would end in an empty line where OLD had a stamp,
+    which is an edit rather than a deletion. The write-once guard on
+    `matricula_extracoes.texto_extraido` (SW migration 165) accepts only
+    whole-line deletions and refused exactly that shape in prod
+    (2026-09-23, a matrícula ending in "ri digital |").
 
     The offset-tracked sibling of `clean_extraction_output`: a caller that
     also needs to move OTHER offsets through the same removal (acts,
@@ -339,13 +346,39 @@ def boilerplate_line_spans(text: str) -> tuple[tuple[int, int], ...]:
     """
     spans: list[tuple[int, int]] = []
     pos = 0
+    # Until the first line of real content, a blank line is part of the
+    # stamp header too, so a document starts at its content ("Mat. 3917…",
+    # owner criterion 2026-09-23) and not at an empty line.
+    no_cabecalho = True
     for line in text.splitlines(keepends=True):
         sem_quebra = line.rstrip("\r\n")
         limpo = sem_quebra.strip()
         fim = pos + len(line)
         if limpo and _is_provenance_stamp_line(limpo):
             spans.append((pos, fim))
+        elif not limpo and no_cabecalho and spans:
+            spans.append((pos, fim))
+        elif limpo:
+            no_cabecalho = False
         pos = fim
+    if spans and spans[-1][1] == len(text) and not text.endswith(("\n", "\r")):
+        # Start of the contiguous removed tail (adjacent spans merge).
+        inicio = spans[-1][0]
+        for s, e in reversed(spans[:-1]):
+            if e != inicio:
+                break
+            inicio = s
+        quebra = inicio
+        if text[:quebra].endswith("\r\n"):
+            quebra -= 2
+        elif text[:quebra].endswith(("\n", "\r")):
+            quebra -= 1
+        if quebra < inicio:
+            # The newline belongs to a SURVIVING line, never to a stamp span
+            # (a stamp span ending there would have merged into the tail), so
+            # this span cannot overlap another one.
+            spans.append((quebra, inicio))
+            spans.sort()
     return tuple(spans)
 
 

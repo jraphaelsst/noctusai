@@ -429,6 +429,67 @@ class TestRiDigitalFooterVariants:
         assert strip_provenance_stamps("```") == ""
 
 
+class TestBoilerplateAtEndOfText:
+    """A stamp tail at the very end of a text with no trailing newline must
+    be removed as whole LINES, the line break that ended the last surviving
+    line included. Otherwise the result ends in an empty line where the stamp
+    was, which is an edit rather than a deletion, and SW migration 165's
+    write-once guard refused exactly that in prod (2026-09-23)."""
+
+    @staticmethod
+    def _aplicar(texto: str) -> str:
+        from noctusai_lib.integrations.media import boilerplate_line_spans
+
+        partes, cursor = [], 0
+        for s, e in boilerplate_line_spans(texto):
+            partes.append(texto[cursor:s])
+            cursor = e
+        partes.append(texto[cursor:])
+        return "".join(partes)
+
+    @staticmethod
+    def _e_remocao_de_linhas(antes: str, depois: str) -> bool:
+        """Every line of `depois` appears in `antes`, in order: a pure
+        whole-line deletion, the shape migration 165 accepts."""
+        restantes = iter(antes.split("\n"))
+        return all(any(linha == r for r in restantes) for linha in depois.split("\n"))
+
+    def test_a_single_trailing_stamp_line_takes_the_preceding_break(self) -> None:
+        texto = "Mat. 3917 - Página 1/3\nIMÓVEL: casa\nri digital |"
+        depois = self._aplicar(texto)
+        assert depois == "Mat. 3917 - Página 1/3\nIMÓVEL: casa"
+        assert self._e_remocao_de_linhas(texto, depois)
+
+    def test_a_multi_line_trailing_stamp_block(self) -> None:
+        texto = "Mat. 3917\nconteúdo\nValide aqui\neste documento\nri digital |"
+        depois = self._aplicar(texto)
+        assert depois == "Mat. 3917\nconteúdo"
+        assert self._e_remocao_de_linhas(texto, depois)
+
+    def test_a_trailing_newline_text_is_unchanged_behaviour(self) -> None:
+        texto = "Mat. 3917\nconteúdo\nri digital |\n"
+        assert self._aplicar(texto) == "Mat. 3917\nconteúdo\n"
+
+    def test_crlf_line_endings(self) -> None:
+        texto = "Mat. 3917\r\nconteúdo\r\nri digital |"
+        assert self._aplicar(texto) == "Mat. 3917\r\nconteúdo"
+
+    def test_a_text_that_is_only_stamps(self) -> None:
+        assert self._aplicar("Valide aqui\neste documento") == ""
+
+    def test_the_document_starts_at_its_content_after_a_stamp_header(self) -> None:
+        """Owner criterion: the matrícula starts at "Mat. 3917…", not at the
+        blank line that separated the stamp header from the content."""
+        texto = "```\nValide aqui\neste documento\n\nMat. 3917 - Página 1/3\n\nIMÓVEL: casa"
+        depois = self._aplicar(texto)
+        assert depois == "Mat. 3917 - Página 1/3\n\nIMÓVEL: casa"
+        assert self._e_remocao_de_linhas(texto, depois)
+
+    def test_blank_lines_inside_the_content_are_kept(self) -> None:
+        texto = "Mat. 3917\n\nR-1\n\nValide aqui\n\nR-2"
+        assert self._aplicar(texto) == "Mat. 3917\n\nR-1\n\n\nR-2"
+
+
 class TestCleanExtractionOutput:
     """`clean_extraction_output` — the OUTPUT-cleaning sibling of
     `strip_provenance_stamps`, applied before persisting `texto_extraido`
