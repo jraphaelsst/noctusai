@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS produto_servico (
     preco_base       REAL NOT NULL DEFAULT 0 CHECK (preco_base >= 0),
     unidade          TEXT NOT NULL DEFAULT 'unidade',
     horas_estimadas  REAL NOT NULL DEFAULT 0 CHECK (horas_estimadas >= 0),
+    -- 020: the pauta format a criação product delivers.
+    formato          TEXT CHECK (formato IS NULL OR formato IN ('feed', 'carrossel', 'reels', 'story', 'artigo', 'video')),
     ativo            INTEGER NOT NULL DEFAULT 1,
     ordem            INTEGER NOT NULL DEFAULT 0,
     created_at       TEXT NOT NULL,
