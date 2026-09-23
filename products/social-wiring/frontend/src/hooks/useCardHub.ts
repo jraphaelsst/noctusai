@@ -17,6 +17,7 @@
  * the error to the caller) on failure — never a silently-swallowed
  * mutation, per the brief's mandatory rule.
  */
+import { useEffect, useRef } from "react";
 import {
   keepPreviousData,
   useMutation,
@@ -567,6 +568,125 @@ export function useExtracaoSugestaoMutation(clienteId: string) {
       void qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY });
     },
   });
+}
+
+// 🔴 Bug 2 (prod card 755253934) — extraction runs SERVER-SIDE and
+// ASYNCHRONOUSLY. `useDocumentoMutations().upload`'s own `onSuccess`
+// invalidates `documentos`/`card`/`documento-checklist` the INSTANT the
+// upload request completes — before the OCR job that fills `clientes`
+// fields has even started. So the first refetch it triggers still reads the
+// PRE-extraction record, and nothing after that ever asks again: "Qualificação
+// para contrato", a party's "Dados obrigatórios" progress and negociação kept
+// showing the upload-time snapshot until a hard reload. A previous pass
+// (9ce161f82) invalidated `QUALIFICACAO_ROOT_KEY` from `useDadosPessoaisMutation`
+// / `useDecidirConflitoMutation` — both CLIENT-initiated writes — which never
+// fires for a write the SERVER makes on its own schedule.
+const EXTRACAO_POLL_INTERVAL_MS = 2500;
+// A stuck extraction job (or a document type that never resolves) stops
+// polling after this — "briefly (bounded)", never forever. The operator
+// still has the manual "Reenviar para leitura" retry
+// (`AnexosSection.onReextrairDocumento` → `useDocumentoMutations().reextrair`)
+// for a genuinely stuck read.
+const EXTRACAO_POLL_MAX_MS = 30_000;
+
+function extracaoEmAndamento(status: string | null): boolean {
+  // Deliberately NOT `status == null` — `null` is the PERMANENT, terminal
+  // value for a type `identidade_extracao_service.deve_extrair` never reads
+  // (a `contrato`, a `foto_imovel`; see `Documento.extracao_status`'s own
+  // docstring). Polling on `null` would poll forever for a card whose only
+  // attachments are that kind.
+  return status === "pendente" || status === "processando";
+}
+
+/**
+ * The dependent-surface invalidation set a `clientes` field write needs —
+ * shared by `useExtracaoPollingInvalidation` below (a SERVER write it only
+ * learns about by polling) AND `useNegociacaoMutation` (`useNegociacao.ts`,
+ * a CLIENT write whose own `onSuccess` only `setQueryData`s its own key,
+ * per that file's docblock — "Salvar" moves `imovel_codigo`/valor fields
+ * "Qualificação para contrato"/geração-readiness surfaces also read).
+ * Exported so neither caller hand-rolls its own subset and drifts from the
+ * other.
+ */
+export function invalidateExtracaoDependentes(
+  qc: ReturnType<typeof useQueryClient>,
+  clienteId: string,
+): Promise<unknown> {
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) }),
+    qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY }),
+    qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
+    qc.invalidateQueries({ queryKey: COMPRADORES_KEY(clienteId) }),
+    qc.invalidateQueries({ queryKey: COMPRADORES_KEY(clienteId, "vendedor") }),
+    // Broad prefix, same pattern `useDadosPessoaisMutation` /
+    // `useDecidirConflitoMutation` already use for this exact class of
+    // problem — covers `useNegociacao`'s `["sw","clientes",id,"negociacao"]`
+    // key (not exported for direct reuse here) and the clientes list.
+    qc.invalidateQueries({ queryKey: ["sw", "clientes"] }),
+  ]);
+}
+
+/**
+ * Mount once per person's documentos panel (the titular's Geral tab, and
+ * each party's `PessoaDocumentosPanel`) alongside `useDocumentos(clienteId)`
+ * — same query key, so this shares that hook's cache/fetch rather than
+ * doubling the request. While any of that person's documents reads
+ * `extracao_status` "pendente"/"processando" it refetches on an interval;
+ * the FIRST refetch that flips one from pending to terminal invalidates
+ * every surface a `clientes` field the extraction can write lands on:
+ * this person's checklist ("Dados obrigatórios"), the whole qualificação
+ * family (every party's, not just this one — `QUALIFICACAO_ROOT_KEY` is a
+ * shared root), this person's card badges, the compradores/vendedores
+ * lists (a linked cônjuge can gain a name), and — via the same broad
+ * `["sw","clientes"]` prefix `useDadosPessoaisMutation` already uses for
+ * this exact reason — the negociação snapshot and the clientes list.
+ * Returns nothing: callers that already hold `useDocumentos`'s own result
+ * keep using that for render data; this hook is mounted purely for the
+ * polling + invalidation side effect.
+ */
+export function useExtracaoPollingInvalidation(clienteId: string | null): void {
+  const qc = useQueryClient();
+  const prevStatusRef = useRef<Map<string, string | null>>(new Map());
+  const pollStartedAtRef = useRef<number | null>(null);
+
+  const query = useQuery({
+    queryKey: DOCUMENTOS_KEY(clienteId ?? "__none__"),
+    queryFn: async () => {
+      const res = await api.get<ItemsEnvelope<Documento>>(
+        `${clienteBase(clienteId as string)}/documentos`,
+      );
+      return res?.items ?? [];
+    },
+    enabled: !!clienteId,
+    refetchInterval: (q) => {
+      const docs = (q.state.data as Documento[] | undefined) ?? [];
+      if (!docs.some((d) => extracaoEmAndamento(d.extracao_status))) {
+        pollStartedAtRef.current = null;
+        return false;
+      }
+      pollStartedAtRef.current ??= Date.now();
+      if (Date.now() - pollStartedAtRef.current > EXTRACAO_POLL_MAX_MS) return false;
+      return EXTRACAO_POLL_INTERVAL_MS;
+    },
+  });
+
+  useEffect(() => {
+    if (!clienteId || !query.data) return;
+    const prev = prevStatusRef.current;
+    const proximo = new Map(query.data.map((d) => [d.id, d.extracao_status] as const));
+    const transicionou = query.data.some((d) => {
+      const antes = prev.get(d.id);
+      // `undefined` = this document's first appearance in the map (either the
+      // panel just mounted, or it was just uploaded) — never itself a
+      // transition; only a PREVIOUSLY-seen pending status turning terminal
+      // counts.
+      return antes !== undefined && extracaoEmAndamento(antes) && !extracaoEmAndamento(d.extracao_status);
+    });
+    prevStatusRef.current = proximo;
+    if (transicionou) {
+      void invalidateExtracaoDependentes(qc, clienteId);
+    }
+  }, [clienteId, query.data, qc]);
 }
 
 export function useDocumentoChecklistMutation(clienteId: string) {

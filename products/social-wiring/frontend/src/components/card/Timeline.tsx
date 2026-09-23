@@ -29,6 +29,7 @@ import type {
 } from "@noctusai/lib/components";
 
 import type { TimelineEntry, TimelineTouchEntry } from "@/types/cardHub";
+import { dataOnlyFromPossibleUtcMidnight } from "@/lib/utils";
 
 /**
  * "Novo contato via Meta Ads" — and the name only when it differs from the
@@ -60,13 +61,27 @@ export interface TimelineProps extends Omit<CardHubTimelineProps, "entries" | "r
   entries: TimelineEntry[];
 }
 
+/**
+ * Bug 4 — `touch` is the one kind whose `ocorrido_em` traces back to a DATE
+ * column (`data_entrada`). See `dataOnlyFromPossibleUtcMidnight`'s docblock
+ * (`@/lib/utils`) for why a UTC-midnight timestamp there renders 3h into the
+ * wrong calendar day, and why the rewrite is scoped to this one kind.
+ */
+function semDeslocamentoDeFuso(entries: TimelineEntry[]): TimelineEntry[] {
+  return entries.map((entry) =>
+    entry.kind === "touch"
+      ? { ...entry, ocorrido_em: dataOnlyFromPossibleUtcMidnight(entry.ocorrido_em) }
+      : entry,
+  );
+}
+
 export function Timeline({ entries, ...props }: TimelineProps) {
   return (
     <CardHubTimeline
       {...props}
       // SW's union adds `touch`; structurally every SW entry is a seed entry
       // (the seed union's open `TimelineUnknownEntry` member admits any kind).
-      entries={entries as CardHubTimelineEntry[]}
+      entries={semDeslocamentoDeFuso(entries) as CardHubTimelineEntry[]}
       renderers={SW_TIMELINE_RENDERERS}
     />
   );
