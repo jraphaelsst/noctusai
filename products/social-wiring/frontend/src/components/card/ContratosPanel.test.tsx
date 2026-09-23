@@ -455,6 +455,27 @@ describe("ContratosPanel", () => {
     expect(screen.getByTestId("gerador-stub").textContent).toBe("c1:true");
   });
 
+  // ─── Proveniência render prop (`sw-extraction-contract`) ──────────────
+  it("omits the proveniência section entirely when renderProveniencia is not wired", async () => {
+    const { screen } = await render({ contratos: [contrato()] });
+    expect(screen.queryByTestId("contrato-proveniencia-toggle-c1")).toBeNull();
+  });
+
+  it("🔴 'Proveniência' is a RENDER PROP that also carries the open state, same lazy-fetch discipline as 'Gerar contrato'", async () => {
+    const renderProveniencia = vi.fn((contratoId: string, aberto: boolean) => (
+      <div data-testid="proveniencia-stub">{`${contratoId}:${aberto}`}</div>
+    ));
+    const { screen, fireEvent } = await render({
+      contratos: [contrato()],
+      renderProveniencia,
+    });
+    expect(renderProveniencia).toHaveBeenCalledWith("c1", false);
+
+    fireEvent.click(screen.getByTestId("contrato-proveniencia-toggle-c1"));
+    expect(renderProveniencia).toHaveBeenCalledWith("c1", true);
+    expect(screen.getByTestId("proveniencia-stub").textContent).toBe("c1:true");
+  });
+
   it("🔴 a generated VERSION (not just a generated contract) is marked on the current-version block", async () => {
     const { screen } = await render({
       contratos: [contrato({ versao_atual: versao({ id: "v9", origem: "gerado" }) })],

@@ -78,3 +78,23 @@ export const CARD_SUBPAGES: readonly SubpageDef[] = [
   { key: "contratos", label: "Contratos", icon: FileSignature },
   { key: "campanha", label: "Campanha e imóvel", icon: Megaphone },
 ] as const;
+
+/**
+ * What a plain-string `destino` (`fontes_possiveis[].destino`,
+ * `GeracaoFaltando.sugestoes[].destino`) resolves to: a real SPA route to
+ * link to, or — when it names a `CardSubpageKey` instead — the subpage's
+ * pt-BR label for guidance text (there is no URL into a subpage the dialog
+ * owns in local state; see `GeradorContratoSection.FaltandoLinha`'s
+ * `destino.tela.startsWith("card_")` split, which this generalizes for the
+ * narrower plain-string shape). `null`/unrecognized destino → both null, so
+ * the caller renders the bare label with no action.
+ */
+export function resolverDestino(destino: string | null | undefined): {
+  rota: string | null;
+  subpageLabel: string | null;
+} {
+  if (!destino) return { rota: null, subpageLabel: null };
+  if (destino.startsWith("/")) return { rota: destino, subpageLabel: null };
+  const subpage = CARD_SUBPAGES.find((s) => s.key === destino);
+  return { rota: null, subpageLabel: subpage?.label ?? null };
+}
