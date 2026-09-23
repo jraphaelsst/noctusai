@@ -730,6 +730,37 @@ describe("Matriculas — ?extracao= deep-link", () => {
   });
 });
 
+// ─── Bug 2: `?codigo=` deep-link prefills the upload "Imóvel (opcional)" ──────
+//
+// `ImovelContratoCard`'s "Abrir a matrícula" links here as
+// `/matriculas?codigo=<codigo>` whenever the imóvel has no extraction yet
+// (see `linkDaMatricula`) — the upload field must already carry that código
+// so the next PDF the operator drops lands linked to the right imóvel.
+
+describe("Matriculas — ?codigo= deep-link prefills the upload field", () => {
+  it("🔴 prefills 'Imóvel (opcional)' from the query string", async () => {
+    const { getByTestId } = await renderPage("/matriculas?codigo=E2E-IMV-LIVRE");
+    const input = getByTestId("matricula-codigo-input") as HTMLInputElement;
+    expect(input.value).toBe("E2E-IMV-LIVRE");
+  });
+
+  it("leaves the field empty with no ?codigo= param", async () => {
+    const { getByTestId } = await renderPage();
+    const input = getByTestId("matricula-codigo-input") as HTMLInputElement;
+    expect(input.value).toBe("");
+  });
+
+  it("never overwrites a value the operator already typed", async () => {
+    const { getByTestId, fireEvent } = await renderPage("/matriculas?codigo=E2E-IMV-LIVRE");
+    const input = getByTestId("matricula-codigo-input") as HTMLInputElement;
+    expect(input.value).toBe("E2E-IMV-LIVRE");
+
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.change(input, { target: { value: "OUTRO123" } });
+    expect(input.value).toBe("OUTRO123");
+  });
+});
+
 // ─── F2: Atos + Fontes section ────────────────────────────────────────────────
 
 function makeAto(over: Record<string, unknown> = {}) {

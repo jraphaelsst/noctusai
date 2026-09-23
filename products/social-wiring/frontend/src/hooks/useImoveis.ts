@@ -223,6 +223,11 @@ export function useImovel(codigo: string | null) {
     // gets react-query's normal retry.
     retry: (failureCount, error) =>
       error instanceof ApiError && error.status === 404 ? false : failureCount < 3,
+    // Same reasoning extends to the global error toast (`query-client.ts`):
+    // this specific 404 is an expected, already-handled state — not a
+    // failure the user needs to be told about. A genuine 5xx/network error
+    // on this same query still surfaces loudly.
+    meta: { suppressErrorToastStatuses: [404] },
   });
 }
 
@@ -240,6 +245,10 @@ export function useImovelRegistro(codigo: string | null) {
     enabled: Boolean(codigo),
     retry: (failureCount, error) =>
       error instanceof ApiError && error.status === 404 ? false : failureCount < 3,
+    // A genuinely unknown código (neither mirror nor registry has ever
+    // seen it) is the SAME expected/handled 404 shape `useImovel` opts out
+    // of — see its comment and `query-client.ts`.
+    meta: { suppressErrorToastStatuses: [404] },
   });
 }
 
