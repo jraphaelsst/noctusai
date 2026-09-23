@@ -17,24 +17,15 @@
  * organ's registry is thunked), so an unopened tab fetches nothing.
  */
 import { useEffect, useState } from "react";
-import { Bot, ClipboardList, Copy, FilePlus2, FileText, ThumbsDown, UserRound } from "lucide-react";
-import {
-  CardHubDialog,
-  GeralActions,
-  GeralSubpage,
-  MotivoMoveDialog,
-  TooltipIconButton,
-  cardHubLoadingState,
-  flattenTimeline,
-  type CardSubpage,
-  type GeralPopoverKey,
-} from "@noctusai/lib/components";
+import { Bot, Copy, FilePlus2, FileText, ThumbsDown, UserRound } from "lucide-react";
+import { CardHubDialog, MotivoMoveDialog, TooltipIconButton, type CardSubpage } from "@noctusai/lib/components";
 import { Badge, Button, Field, FormError, Input, Select, Skeleton, Textarea } from "@noctusai/lib/design-system";
 import { toast } from "sonner";
 
 import { useAssistenteNegocio, useAtualizarLead, useAtualizarNegocio, useLeads, usePerderNegocio } from "@/hooks/useComercial";
 import { useProfissionais } from "@/hooks/useCustos";
-import { MEMBRO_IDS_FIELD, negocioCardHub as hub } from "@/hooks/useNegocioCardHub";
+import { useCardHubGeral } from "@/components/common/useCardHubGeral";
+import { negocioCardHub as hub } from "@/hooks/useNegocioCardHub";
 import { useOrcamentos } from "@/hooks/useOrcamentos";
 import { describeError } from "@/lib/errors";
 import { brl, dataBR } from "@/lib/format";
@@ -53,139 +44,17 @@ export function NegocioCardDialog({ negocio, onClose, onGerarOrcamento, onAbrirO
   const id = negocio?.id ?? null;
   const nomeCard = negocio ? negocio.lead?.empresa || negocio.lead?.nome || negocio.titulo : "";
 
-  // ── Seed card-hub data ─────────────────────────────────────────────────
-  const card = hub.useCardResumo(id);
-  const timeline = hub.useTimeline(id);
-  const tags = hub.useTags();
-  const membros = useProfissionais();
-  const checklists = hub.useChecklists(id);
-  const documentos = hub.useDocumentos(id);
-  const tipos = hub.useTiposDocumento();
-  const notas = hub.useNotaMutations(id ?? "__none__");
-  const setTags = hub.useSetTagsMutation(id ?? "__none__");
-  const setMembros = hub.useSetMembrosMutation(id ?? "__none__", MEMBRO_IDS_FIELD);
-  const tagCatalogo = hub.useTagCatalogMutations();
-  const checklistMut = hub.useChecklistMutations(id ?? "__none__");
-  const docMut = hub.useDocumentoMutations(id ?? "__none__");
-
-  const { showSkeleton } = cardHubLoadingState(card);
-  const docsState = cardHubLoadingState(documentos);
-  const [colorBlind, setColorBlind] = useState(false);
-  const [popover, setPopover] = useState<GeralPopoverKey | null>(null);
+  // ── Seed card-hub data: the shared Geral spine + activity column ────────
+  const hubGeral = useCardHubGeral(hub, id, {
+    afterTags: negocio ? <NegocioResumo negocio={negocio} /> : null,
+  });
   const [perdendo, setPerdendo] = useState(false);
   const perder = usePerderNegocio();
 
   const erroToast = (fallback: string) => (err: unknown) => toast.error(describeError(err, fallback));
 
-  function salvarDescricao(corpo: string) {
-    const d = card.data?.descricao;
-    if (d) notas.update.mutate({ notaId: d.id, corpo }, { onError: erroToast("Não foi possível salvar a descrição.") });
-    else notas.create.mutate({ corpo, tipo: "descricao" }, { onError: erroToast("Não foi possível criar a descrição.") });
-  }
-
-  function alternar(atual: string[], alvo: string) {
-    return atual.includes(alvo) ? atual.filter((x) => x !== alvo) : [...atual, alvo];
-  }
-
-  function editarTag(tagId: string) {
-    const tag = tags.data?.find((t) => t.id === tagId);
-    if (!tag) return;
-    const novoNome = window.prompt("Renomear etiqueta", tag.nome);
-    if (novoNome && novoNome.trim() && novoNome.trim() !== tag.nome) {
-      tagCatalogo.update.mutate(
-        { tagId, body: { nome: novoNome.trim() } },
-        { onError: erroToast("Não foi possível renomear a etiqueta.") },
-      );
-    }
-  }
-
-  const selectedTags = card.data?.tags ?? [];
-  const selectedMembros = card.data?.membros ?? [];
-
   const subpages: CardSubpage<SubpageKey>[] = [
-    {
-      key: "geral",
-      label: "Geral",
-      icon: ClipboardList,
-      toolbar: (
-        <GeralActions
-          etiquetas={{
-            allTags: tags.data ?? [],
-            selectedTagIds: selectedTags.map((t) => t.id),
-            onToggleTag: (tagId) =>
-              setTags.mutate(alternar(selectedTags.map((t) => t.id), tagId), {
-                onError: erroToast("Não foi possível atualizar as etiquetas."),
-              }),
-            onCreateTag: (nome, cor) =>
-              tagCatalogo.create.mutate({ nome, cor }, { onError: erroToast("Não foi possível criar a etiqueta.") }),
-            onEditTag: editarTag,
-            colorBlindMode: colorBlind,
-            onToggleColorBlindMode: setColorBlind,
-            saving: setTags.isPending,
-          }}
-          membros={{
-            allMembros: membros.profissionais.filter((p) => p.ativo).map((p) => ({ id: p.id, nome: p.nome })),
-            selectedMembroIds: selectedMembros.map((m) => m.id),
-            onToggleMembro: (membroId) =>
-              setMembros.mutate(alternar(selectedMembros.map((m) => m.id), membroId), {
-                onError: erroToast("Não foi possível atualizar os membros."),
-              }),
-            saving: setMembros.isPending,
-          }}
-          onCreateChecklist={(titulo) =>
-            checklistMut.createChecklist.mutate(titulo, { onError: erroToast("Não foi possível criar o checklist.") })
-          }
-          checklistSaving={checklistMut.createChecklist.isPending}
-          activePopover={popover}
-          onActivePopoverChange={setPopover}
-        />
-      ),
-      render: () => (
-        <GeralSubpage
-          tags={selectedTags}
-          descricao={{
-            corpo: card.data?.descricao?.corpo ?? "",
-            onSave: salvarDescricao,
-            saving: notas.create.isPending || notas.update.isPending,
-          }}
-          anexos={{
-            documentos: documentos.data ?? [],
-            tipos: tipos.data ?? [],
-            loading: docsState.showSkeleton,
-            refreshing: docsState.isRefreshing,
-            uploading: docMut.upload.isPending,
-            onUpload: (file, tipoDocumento) =>
-              docMut.upload.mutate({ file, tipoDocumento }, { onError: erroToast("Não foi possível enviar o anexo.") }),
-            onOpenDocumento: (documentoId) =>
-              docMut.getUrl.mutate(
-                { documentoId, intent: "view" },
-                {
-                  onSuccess: (r) => window.open(r.url, "_blank", "noopener,noreferrer"),
-                  onError: erroToast("Não foi possível abrir o anexo."),
-                },
-              ),
-            onDeleteDocumento: (documentoId, motivo) =>
-              docMut.remove.mutate({ documentoId, motivo }, { onError: erroToast("Não foi possível remover o anexo.") }),
-          }}
-          checklists={{
-            checklists: checklists.data ?? [],
-            loading: checklists.isPending && !checklists.data,
-            onRemoveChecklist: (cid) =>
-              checklistMut.removeChecklist.mutate(cid, { onError: erroToast("Não foi possível remover o checklist.") }),
-            onAddItem: (checklistId, texto) =>
-              checklistMut.addItem.mutate({ checklistId, texto }, { onError: erroToast("Não foi possível adicionar o item.") }),
-            onToggleItem: (checklistId, itemId, concluido) =>
-              checklistMut.toggleItem.mutate(
-                { checklistId, itemId, concluido },
-                { onError: erroToast("Não foi possível atualizar o item.") },
-              ),
-            onRemoveItem: (checklistId, itemId) =>
-              checklistMut.removeItem.mutate({ checklistId, itemId }, { onError: erroToast("Não foi possível remover o item.") }),
-          }}
-          slots={{ afterTags: negocio ? <NegocioResumo negocio={negocio} /> : null }}
-        />
-      ),
-    },
+    hubGeral.geral,
     { key: "lead", label: "Lead", icon: UserRound, render: () => (negocio ? <LeadSubpage negocio={negocio} /> : null) },
     {
       key: "orcamentos",
@@ -209,8 +78,8 @@ export function NegocioCardDialog({ negocio, onClose, onGerarOrcamento, onAbrirO
       <CardHubDialog<SubpageKey>
         open={!!negocio}
         onClose={onClose}
-        isLoading={showSkeleton}
-        error={card.isError ? describeError(card.error, "Não foi possível carregar o card.") : null}
+        isLoading={hubGeral.showSkeleton}
+        error={hubGeral.error}
         nome={nomeCard}
         testId="negocio-card-dialog"
         headerActions={
@@ -236,21 +105,7 @@ export function NegocioCardDialog({ negocio, onClose, onGerarOrcamento, onAbrirO
         }
         subpages={subpages}
         defaultSubpage="geral"
-        activity={{
-          composer: {
-            onPost: (corpo) =>
-              notas.create.mutate({ corpo, tipo: "comentario" }, { onError: erroToast("Não foi possível enviar o comentário.") }),
-            posting: notas.create.isPending,
-          },
-          timeline: {
-            entries: flattenTimeline(timeline.data?.pages),
-            loading: timeline.isPending && !timeline.data,
-            error: timeline.isError ? describeError(timeline.error, "Não foi possível carregar a atividade.") : null,
-            hasMore: timeline.hasNextPage,
-            loadingMore: timeline.isFetchingNextPage,
-            onLoadMore: () => void timeline.fetchNextPage(),
-          },
-        }}
+        activity={hubGeral.activity}
       />
       <PerderNegocioDialog
         negocio={perdendo ? negocio : null}

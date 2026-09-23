@@ -139,6 +139,22 @@ export function useAtualizarMarca() {
 }
 
 /**
+ * Delete a marca. Backend: `DELETE /api/marcas/{id}` → `{ok: true}`. Pautas
+ * that pointed at it keep existing (`pauta.marca_id` is ON DELETE SET NULL);
+ * the cofre is per CLIENTE and is untouched.
+ */
+export function useRemoverMarca() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/marcas/${id}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: MARCA_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: ["igig", "repertorio"] });
+    },
+  });
+}
+
+/**
  * Upload a brand logo (Módulo 2's "campos de upload de logotipos PNG/SVG").
  *
  * `api.upload`, never `api.post` — the latter JSON.stringify's its body, and

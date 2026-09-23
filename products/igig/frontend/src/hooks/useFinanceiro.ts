@@ -9,7 +9,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
+import { api, cleanParams, unwrapData } from "@/lib/api";
 
 export type StatusFatura = "aberta" | "enviada" | "paga" | "vencida" | "cancelada";
 export type TipoItem = "mensalidade" | "excedente" | "desconto" | "avulso";
@@ -70,16 +70,26 @@ export interface Inadimplente {
 
 export const FINANCEIRO_QUERY_KEY = ["igig", "financeiro"] as const;
 
-export function useFaturas(competencia?: string) {
+/**
+ * Invoices, optionally scoped to one competência OR one cliente (the Clientes
+ * card's Financeiro tab). The backend applies ONE filter: `cliente_id` wins
+ * over `competencia` (`financeiro_router.listar_faturas`).
+ */
+export function useFaturas(competencia?: string, opts: { clienteId?: string | null } = {}) {
+  const params = cleanParams({ cliente_id: opts.clienteId ?? undefined, competencia });
   const query = useQuery({
-    queryKey: [...FINANCEIRO_QUERY_KEY, "faturas", competencia ?? ""],
-    queryFn: () =>
-      api.get<Fatura[]>("/api/financeiro/faturas", competencia ? { competencia } : {}),
+    queryKey: [...FINANCEIRO_QUERY_KEY, "faturas", competencia ?? "", opts.clienteId ?? ""],
+    queryFn: () => api.get<Fatura[]>("/api/financeiro/faturas", params),
     // `competencia` rides in the key — switching it is a new key. Keep the
     // previous list on screen instead of blanking to a skeleton.
     placeholderData: (prev) => prev,
   });
-  return { ...query, faturas: query.data ?? [], loading: query.isPending && !query.data };
+  return {
+    ...query,
+    faturas: query.data ?? [],
+    loading: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
 }
 
 /**
@@ -163,4 +173,57 @@ export function useInadimplentes() {
     queryFn: () => api.get<Inadimplente[]>("/api/financeiro/inadimplentes"),
   });
   return { ...query, atrasadas: query.data ?? [], loading: query.isPending && !query.data };
+}
+
+// ─── Fechamento do mês + resumo (wave-2 contract, Slice E1) ──────────────
+
+/** `POST /faturas/gerar-competencia` answer. Idempotent per contrato × mês. */
+export interface GerarCompetenciaResultado {
+  criadas: Fatura[];
+  existentes: Fatura[];
+}
+
+export interface ResumoFinanceiro {
+  competencia: string | null;
+  /** Always the CURRENT active book — not scoped to `competencia`. */
+  mrr: number;
+  a_receber: number;
+  recebido: number;
+  inadimplente_valor: number;
+  inadimplente_qtd: number;
+}
+
+/**
+ * "Gerar competência": one invoice per active contract for the month
+ * (retainer + that month's excedentes). Safe to re-run — a contract already
+ * billed comes back under `existentes`, never twice.
+ */
+export function useGerarCompetencia() {
+  const qc = useQueryClient();
+  return useMutation({
+    // The router answers the bare model today (no `{data}` envelope);
+    // `unwrapData` accepts both so a later envelope alignment is a no-op here.
+    mutationFn: (competencia: string) =>
+      api
+        .post("/api/financeiro/faturas/gerar-competencia", { competencia })
+        .then(unwrapData<GerarCompetenciaResultado>),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  });
+}
+
+export function useResumoFinanceiro(competencia?: string) {
+  const params = cleanParams({ competencia });
+  const query = useQuery({
+    queryKey: [...FINANCEIRO_QUERY_KEY, "resumo", competencia ?? ""],
+    queryFn: () => api.get("/api/financeiro/resumo", params).then(unwrapData<ResumoFinanceiro>),
+    enabled: !competencia || /^\d{4}-\d{2}$/.test(competencia),
+    placeholderData: (prev) => prev,
+  });
+  const data = query.data;
+  return {
+    ...query,
+    resumo: data ?? null,
+    showSkeleton: query.isPending && !data,
+    isRefreshing: query.isFetching && !!data,
+  };
 }

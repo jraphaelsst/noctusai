@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3, Plug, Wallet, Briefcase, FileText, Package } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, CalendarDays, BarChart3, Plug, Wallet, Briefcase, FileText, Package, Workflow } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -20,6 +20,8 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Clientes = lazy(() => import("@/pages/Clientes"));
 const Esteira = lazy(() => import("@/pages/Esteira"));
+// `/marca` is a redirect to `/clientes` — the Central da Marca lives in the
+// cliente card now (Slice F). No sidebar entry.
 const Marca = lazy(() => import("@/pages/Marca"));
 const Calendario = lazy(() => import("@/pages/Calendario"));
 const Distribuicao = lazy(() => import("@/pages/Distribuicao"));
@@ -29,6 +31,7 @@ const Comercial = lazy(() => import("@/pages/Comercial"));
 const Orcamentos = lazy(() => import("@/pages/Orcamentos"));
 const ProdutosServicos = lazy(() => import("@/pages/ProdutosServicos"));
 const Custos = lazy(() => import("@/pages/Custos"));
+const Automacoes = lazy(() => import("@/pages/Automacoes"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
 // PUBLIC route — Módulo 1's pré-qualificação form, embedded on the agency's
@@ -52,11 +55,11 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Orçamentos", href: "/orcamentos", icon: FileText, route: "orcamentos" },
       { name: "Produtos e Serviços", href: "/produtos-servicos", icon: Package, route: "produtos_servicos" },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
-      { name: "Marca", href: "/marca", icon: PaletteIcon, route: "marca" },
       { name: "Calendário", href: "/calendario", icon: CalendarDays, route: "calendario" },
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3, route: "distribuicao" },
       { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
       { name: "Integrações", href: "/integracoes", icon: Plug, route: "integracoes" },
+      { name: "Automações", href: "/automacoes", icon: Workflow, route: "automacoes" },
       { name: "Custos", href: "/custos", icon: Boxes, route: "custos" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
@@ -76,11 +79,11 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Orçamentos", href: "/orcamentos", icon: FileText },
       { name: "Produtos e Serviços", href: "/produtos-servicos", icon: Package },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare },
-      { name: "Marca", href: "/marca", icon: PaletteIcon },
       { name: "Calendário", href: "/calendario", icon: CalendarDays },
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3 },
       { name: "Financeiro", href: "/financeiro", icon: Wallet },
       { name: "Integrações", href: "/integracoes", icon: Plug },
+      { name: "Automações", href: "/automacoes", icon: Workflow },
       { name: "Custos", href: "/custos", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
     ],
@@ -109,6 +112,7 @@ export default createProductApp({
     { path: "/distribuicao", component: Distribuicao },
     { path: "/financeiro", component: Financeiro },
     { path: "/integracoes", component: Integracoes },
+    { path: "/automacoes", component: Automacoes },
     { path: "/custos", component: Custos },
     { path: "/equipe", component: Equipe },
   ],

@@ -1,5 +1,6 @@
 /**
- * Financeiro — Módulo 6: DRE, excedentes, faturas e régua de cobrança.
+ * Financeiro — Módulo 6: resumo + fechamento do mês, DRE, excedentes,
+ * faturas e régua de cobrança; "Relatório" (comercial / financeiro, PDF/CSV).
  *
  * The DRE is the screen the agency makes decisions on, so two things are
  * deliberate:
@@ -13,7 +14,10 @@ import { Fragment, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, FilePlus2, Plus } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, FileBarChart2, FilePlus2, Plus } from "lucide-react";
+
+import { FechamentoMes } from "@/components/financeiro/FechamentoMes";
+import { RelatorioSheet } from "@/components/financeiro/RelatorioSheet";
 
 import { useClientes } from "@/hooks/useClientes";
 import {
@@ -57,6 +61,7 @@ export default function Financeiro() {
   const nomeCliente = (id: string) => clientes.find((c) => c.id === id)?.nome ?? null;
   /** Which invoice has its lines expanded, if any. */
   const [faturaAberta, setFaturaAberta] = useState<string | null>(null);
+  const [relatorioAberto, setRelatorioAberto] = useState(false);
 
   return (
     <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
@@ -67,16 +72,25 @@ export default function Financeiro() {
             Margem por conta, excedentes e cobrança.
           </p>
         </div>
-        <label className="text-xs text-muted-foreground">
-          Competência
-          <input
-            type="month"
-            value={competencia}
-            onChange={(e) => setCompetencia(e.target.value)}
-            className="ml-2 h-9 rounded border border-border bg-card px-2 text-sm text-foreground"
-          />
-        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs text-muted-foreground">
+            Competência
+            <input
+              type="month"
+              aria-label="Competência"
+              value={competencia}
+              onChange={(e) => setCompetencia(e.target.value)}
+              className="ml-2 h-10 rounded border border-border bg-card px-2 text-sm text-foreground sm:h-9"
+            />
+          </label>
+          <Button variant="outline" className="max-sm:h-10" onClick={() => setRelatorioAberto(true)} data-testid="abrir-relatorio">
+            <FileBarChart2 className="mr-1 h-4 w-4" /> Relatório
+          </Button>
+        </div>
       </header>
+
+      <FechamentoMes competencia={competencia} />
+      <RelatorioSheet open={relatorioAberto} onClose={() => setRelatorioAberto(false)} />
 
       {atrasadas.length > 0 && (
         <div className="rounded-lg border border-destructive/40 bg-card p-4">

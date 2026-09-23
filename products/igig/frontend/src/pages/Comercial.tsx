@@ -19,9 +19,7 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { PipelineBoard } from "@noctusai/lib/components";
-import { ADMIN_ROLES, resolveSSOContext, type OrgRole } from "@noctusai/lib";
 import { Button, Skeleton } from "@noctusai/lib/design-system";
-import { useAuthStore } from "@noctusai/seed/infra";
 import { toast } from "sonner";
 
 import { FechadoOrcamentoPicker, useFechadoGate } from "@/components/comercial/FechadoOrcamentoPicker";
@@ -33,14 +31,13 @@ import { OrcamentoModal } from "@/components/orcamento/OrcamentoModal";
 import { describeError } from "@/lib/errors";
 import { brl } from "@/lib/format";
 import { comercialPipeline } from "@/lib/pipelines";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 import type { Negocio } from "@/types/crm";
 
 const ROLE_LABELS = { fechado: "Fechado (exige orçamento aceito)" };
 
 export default function Comercial() {
-  const { user } = useAuthStore();
-  const sso = resolveSSOContext(user?.user_metadata);
-  const isAdmin = sso.isProductAdmin || ADMIN_ROLES.includes(sso.org.role as OrgRole);
+  const isAdmin = useIsOrgAdmin();
 
   // The board query is shared with `PipelineBoard` (same key: no filtros), so
   // the open card always reads the freshest row after any mutation.
