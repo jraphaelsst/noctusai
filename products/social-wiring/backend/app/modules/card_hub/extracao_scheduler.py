@@ -50,10 +50,24 @@ CRON = "17 * * * *"
 
 async def _sweep(admin, storage) -> dict:
     from app.modules.card_hub import identidade_extracao_service as identidade_svc
-    from app.modules.card_hub.deps import get_identity_extractor_factory
+    from app.modules.card_hub.deps import (
+        get_conflict_notification_service,
+        get_identity_extractor_factory,
+    )
 
+    try:
+        notificador = get_conflict_notification_service()
+    except Exception:  # noqa: BLE001 - a notifier outage must not stop recovery
+        # The sweep still runs; conflicts it opens are recorded and listed by
+        # `conflitos_pendentes`, and `notificar_conflitos` logs a WARNING
+        # naming each one it could not announce.
+        logger.exception("card_hub sweep: notification service unavailable")
+        notificador = None
     return await identidade_svc.varrer_extracoes_pendentes(
-        admin, storage, extractor_factory=get_identity_extractor_factory()
+        admin,
+        storage,
+        extractor_factory=get_identity_extractor_factory(),
+        notification_service=notificador,
     )
 
 

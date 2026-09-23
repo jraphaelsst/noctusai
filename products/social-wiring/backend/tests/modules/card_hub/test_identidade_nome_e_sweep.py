@@ -6,8 +6,9 @@ WHAT THESE PIN
    to whoever registered the lead. Extraction writes `nome_oficial` and only
    `nome_oficial`, because the whole value of holding both is comparing them —
    and a reconciliation destroys the comparison one row at a time.
-2. **A name read off a vision pass is a suggestion, not a fact.** It overwrites
-   nothing until a human agrees.
+2. **D1 (migration 153): a name read off a vision pass fills an EMPTY field
+   machine-pending, and overwrites nothing** — a differing reading is a
+   conflict for an admin, even against an earlier machine value.
 3. **A stranded extraction is recovered, but not forever.** `processando` with
    nobody working on it is a silent error; retrying a doomed document on every
    pass is an unbounded vision bill.
@@ -117,9 +118,14 @@ class TestTheRegistrationNameIsNeverTouched:
         assert row.get("nome_completo") is None
 
 
-class TestVisionReadsAreOnlySuggestions:
+class TestVisionReadsFillEmptyFieldsMachinePending:
+    """D1 (migration 153): a low-confidence read FILLS an empty field — the
+    contract's validation gate, not this pipeline, is where a human vouches
+    for it — and lands machine-pending (`confirmado_em IS NULL`). The
+    confidence stays on the document row for that gate to show."""
+
     @pytest.mark.asyncio
-    async def test_a_baixa_name_never_reaches_the_client(self, client, scoped):
+    async def test_a_baixa_name_fills_an_empty_field_machine_pending(self, client, scoped):
         cid, did, storage = await _setup(scoped)
         out = await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
@@ -127,21 +133,30 @@ class TestVisionReadsAreOnlySuggestions:
                 _com_nome(ExtractionConfidence.BAIXA, TextSource.OCR)
             ),
         )
-        assert out["aplicado_ao_cliente"]["nome_oficial"] is False
-        assert _cliente(scoped, cid).get("nome_oficial") is None
-        # …but it IS recorded on the document, as evidence to offer.
-        assert _documento(scoped, did)["extracao_nome"] == NOME_DOC
+        row = _cliente(scoped, cid)
+        assert out["aplicado_ao_cliente"]["nome_oficial"] is True
+        assert row["nome_oficial"] == NOME_DOC
+        assert row["nome_oficial_origem"] == "rg"
+        assert row["nome_oficial_documento_id"] == did
+        assert row.get("nome_oficial_confirmado_em") is None
+        assert row.get("nome_oficial_confirmado_por") is None
         assert _documento(scoped, did)["extracao_nome_confianca"] == "baixa"
 
     @pytest.mark.asyncio
-    async def test_it_is_offered_as_a_pending_suggestion(self, client, scoped):
-        cid, did, storage = await _setup(scoped)
+    async def test_a_human_cleared_field_is_offered_not_refilled(self, client, scoped):
+        """An operator who typed then CLEARED the field made a decision about
+        it (`origem='manual'`, value empty): the reading waits as a
+        suggestion instead of silently refilling it."""
+        cid, did, storage = await _setup(
+            scoped, cliente={"nome_oficial": None, "nome_oficial_origem": "manual"}
+        )
         await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(
                 _com_nome(ExtractionConfidence.BAIXA, TextSource.OCR)
             ),
         )
+        assert _cliente(scoped, cid).get("nome_oficial") is None
         sugestoes = svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
         assert sugestoes["nome_oficial"]["valor"] == NOME_DOC
         assert sugestoes["nome_oficial"]["documento_id"] == did
@@ -150,7 +165,9 @@ class TestVisionReadsAreOnlySuggestions:
     async def test_confirming_applies_it_and_records_who_vouched(
         self, client, scoped
     ):
-        cid, did, storage = await _setup(scoped)
+        cid, did, storage = await _setup(
+            scoped, cliente={"nome_oficial": None, "nome_oficial_origem": "manual"}
+        )
         await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(
@@ -174,18 +191,30 @@ class TestVisionReadsAreOnlySuggestions:
 
 class TestSecondDocumentDisagrees:
     @pytest.mark.asyncio
-    async def test_the_newer_reading_wins_nome_oficial(self, client, scoped):
+    async def test_a_differing_reading_opens_a_conflict_never_overwrites(
+        self, client, scoped
+    ):
+        """D1 (migration 153) retired "the newest document wins": an earlier
+        machine value that differs is a conflict for an admin, exactly like a
+        human's value — never a silent overwrite."""
         cid, did, storage = await _setup(
             scoped, cliente={"nome_oficial": "JOAO P SILVA",
                              "nome_oficial_origem": "cpf"}
         )
-        await svc.extrair_identidade(
+        scoped.set_table_data("cliente_campo_conflitos", [])
+        out = await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(_com_nome()),
         )
         row = _cliente(scoped, cid)
-        assert row["nome_oficial"] == NOME_DOC
-        assert row["nome_oficial_origem"] == "rg"
+        assert row["nome_oficial"] == "JOAO P SILVA"
+        assert row["nome_oficial_origem"] == "cpf"
+        assert out["conflitos_abertos"] == ["nome_oficial"]
+        conflito = scoped.table("cliente_campo_conflitos").select("*").execute().data[0]
+        assert (conflito["valor_anterior"], conflito["valor_proposto"]) == (
+            "JOAO P SILVA", NOME_DOC,
+        )
+        assert conflito["origem_anterior"] == "cpf"
 
     @pytest.mark.asyncio
     async def test_an_identical_reading_is_a_no_op(self, client, scoped):

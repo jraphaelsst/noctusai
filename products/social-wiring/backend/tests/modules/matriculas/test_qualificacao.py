@@ -199,7 +199,14 @@ class TestConfirming:
         assert cliente_atual["profissao"] == "comerciante"
         assert cliente_atual["estado_civil"] == "casado"
         assert cliente_atual["rg"] == "11.222.333"
-        assert cliente_atual["genero"] == "m"
+        # Migration 153: the matrícula's `m` code is canonicalised to the word
+        # `clientes.genero` holds everywhere else — writing the code made
+        # every later RG/CIN reading of the same fact look like a conflict.
+        assert cliente_atual["genero"] == "Masculino"
+        # A human confirmed this reading, so the fields land VALIDATED, not
+        # machine-pending for the contract gate.
+        assert cliente_atual["nacionalidade_confirmado_por"] is not None
+        assert cliente_atual["nacionalidade_confirmado_em"] is not None
 
     def test_confirming_never_overwrites_an_existing_value(
         self, client, scoped, fake_notification_service

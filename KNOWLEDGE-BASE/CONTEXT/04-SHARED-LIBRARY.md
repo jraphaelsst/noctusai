@@ -237,6 +237,11 @@ Composes `integrations.media` for "bytes → text" rather than re-doing it; owns
 | `find_birthdate(text, *, today=None)` | Pure, label-anchored Brazilian birthdate parser. Usable standalone. |
 | `find_name(text)` | Pure, label-anchored full-name parser. Returns `alta` or `nenhuma` only — never guesses from an unlabelled line. |
 | `looks_like_a_name(candidate)` | Structural full-name predicate (≥2 substantive words, no digits, not an institutional phrase). Normalises its own input, so it is safe on raw registration data. |
+| `find_profissao(text)` / `find_profissoes(text)` | Label-anchored profissão (`PROFISSÃO` box, "de profissão X" prose); a parent's profissão is never the holder's; two disagreeing readings → `nenhuma`. `profissao` is a `CAMPOS` member. |
+| `find_endereco(text)` → `EnderecoLido` | CEP-anchored comprovante-de-endereço reader (labelled bill, envelope block, single-line); skips the issuer's CNPJ-adjacent CEP; returns the bill's printed `titular` so the consumer checks whose address it is. Rides on `IdentityFields.endereco` (not a CAMPO — a 7-part group). |
+| `find_conjuges(text)` → `tuple[ConjugeLido, ...]` | Both spouses of a certidão de casamento, each with their own nome/cpf/nascimento/nacionalidade/profissão/gênero (grammar, `baixa`). Rides on `IdentityFields.conjuges`; the `titular` hint marks one and carries its facts onto the result. |
+| `canonical_gender(value)` / `nomes_compativeis(a, b)` | `m`/`f`/`masc`/… → `Masculino`/`Feminino` (the one normaliser for `genero` writers); the one "same person's name" test (exact or word containment). |
+| `LadderIdentityExtractor` text-layer fallthrough | A PDF text layer that yields NO field is re-read via the vision rung (`DocumentTextLadder.to_text(..., pular_camada_texto=True)`); a vision failure then is an `error`, not `sem_dados`. |
 | `strip_accents_upper(text)` / `normalize_lines(text)` | Shared text primitives. The date parser collapses newlines; the name parser must NOT, because a line break is the only thing that says where a name ends. |
 | `FakeIdentityExtractor(result=None)` | Deterministic; the dev/test default. |
 | `LadderIdentityExtractor` | PDF text layer → rasterize→vision. Lazily imported (no PyMuPDF/LLM at package import). |

@@ -5,9 +5,11 @@ WHAT THESE TESTS PIN
 Three rules, each protecting something a later refactor would find tempting to
 relax:
 
-1. **Only a high-confidence read is written.** A guess stored as a fact is
-   worse than a blank: a missing birthday is visibly missing, a wrong one is
-   not, and nobody re-checks a field that already looks filled in.
+1. **D1 (migration 153): any read fills an EMPTY field, machine-pending.** It
+   used to be "only a high-confidence read is written"; the owner's D1
+   decision moved the human check to the contract's validation gate, which
+   lists every machine value not yet confirmed (`_confirmado_em IS NULL`) —
+   so a vision read is no longer lost, and still never silently trusted.
 2. **First writer wins; a human always outranks the machine.** Re-uploading a
    document must not rewrite a value someone already corrected by hand.
 3. **Extraction is a logged content access.** Opening the bytes is a read under
@@ -96,7 +98,9 @@ class TestWhichTypesAreRead:
         # Migration 110 — a marriage/divórcio/óbito is averbado on a birth
         # certificate's margin too, not only on a certidão de casamento.
         ("certidao_nascimento", True),
-        ("contrato", False), ("foto_imovel", False), ("comprovante_endereco", False),
+        ("contrato", False), ("foto_imovel", False),
+        # Migration 153 — read for its ADDRESS only (`TIPOS_ENDERECO`).
+        ("comprovante_endereco", True),
         # `outro` is where the three certidões this org holds were actually
         # filed, which is why none of them was ever read (migration 103).
         ("outro", False),
@@ -115,7 +119,7 @@ class TestWhichTypesAreRead:
         assert _cliente(scoped, cid).get("data_nascimento") is None
 
 
-class TestOnlyHighConfidenceIsWritten:
+class TestD1FillEmptyAtAnyConfidence:
     @pytest.mark.asyncio
     async def test_high_confidence_fills_the_client_and_records_provenance(
         self, client, scoped
@@ -133,17 +137,24 @@ class TestOnlyHighConfidenceIsWritten:
         assert c["data_nascimento_documento_id"] == did
 
     @pytest.mark.asyncio
-    async def test_low_confidence_never_touches_the_client(self, client, scoped):
-        """🔴 The suggestion is kept ON THE DOCUMENT, where a human can
-        confirm it. A guess written into the record is indistinguishable
-        from a fact, and nobody re-checks a field that looks filled in."""
+    async def test_low_confidence_fills_an_empty_field_machine_pending(
+        self, client, scoped
+    ):
+        """🔴 D1 (migration 153) superseded "only `alta` is written": a
+        low-confidence read fills an EMPTY field, stamped with provenance and
+        left unconfirmed — the contract's validation gate lists it as
+        machine-pending, and THAT is where a human vouches for it. The
+        confidence stays on the document row for the gate to show."""
         cid, did, storage = await _setup(scoped)
         out = await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(_baixa()),
         )
-        assert out["aplicado_ao_cliente"]["data_nascimento"] is False
-        assert _cliente(scoped, cid).get("data_nascimento") is None
+        assert out["aplicado_ao_cliente"]["data_nascimento"] is True
+        c = _cliente(scoped, cid)
+        assert c["data_nascimento"] == "1980-05-12"
+        assert c["data_nascimento_origem"] == "rg"
+        assert c.get("data_nascimento_confirmado_em") is None
 
         doc = _documento(scoped, did)
         assert doc["extracao_data_nascimento"] == "1980-05-12"
@@ -325,11 +336,11 @@ class TestGeneroIsTheThirdExtractedField:
         assert row["genero_documento_id"] == did
 
     @pytest.mark.asyncio
-    async def test_a_low_confidence_read_never_reaches_the_record(
+    async def test_a_low_confidence_read_fills_an_empty_field_machine_pending(
         self, client, scoped
     ):
-        """It stays on the DOCUMENT row as a suggestion for a human. A guess
-        written unattended is how an OCR misread becomes someone's record."""
+        """D1 (migration 153): filled, unconfirmed — the validation gate is
+        where a human vouches for it."""
         cid, did, storage = await _setup(scoped)
         await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
@@ -337,8 +348,10 @@ class TestGeneroIsTheThirdExtractedField:
                 self._com_genero(ExtractionConfidence.BAIXA)
             ),
         )
-        assert _cliente(scoped, cid).get("genero") is None
-        assert _documento(scoped, did)["extracao_genero"] == "Masculino"
+        row = _cliente(scoped, cid)
+        assert row["genero"] == "Masculino"
+        assert row.get("genero_confirmado_em") is None
+        assert _documento(scoped, did)["extracao_genero_confianca"] == "baixa"
 
     @pytest.mark.asyncio
     async def test_a_typed_genero_is_not_overwritten_by_a_later_document(
@@ -484,9 +497,10 @@ class TestEstadoCivilERegimeBensSaoExtraidos:
         assert row["regime_bens_origem"] == "certidao_casamento"
 
     @pytest.mark.asyncio
-    async def test_a_low_confidence_read_stays_on_the_document_as_a_suggestion(
+    async def test_a_low_confidence_read_fills_empty_fields_machine_pending(
         self, client, scoped
     ):
+        """D1 (migration 153)."""
         cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
         await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
@@ -495,8 +509,9 @@ class TestEstadoCivilERegimeBensSaoExtraidos:
             ),
         )
         row = _cliente(scoped, cid)
-        assert row.get("estado_civil") is None
-        assert row.get("regime_bens") is None
+        assert row["estado_civil"] == "casado"
+        assert row["regime_bens"] == "comunhao_parcial"
+        assert row.get("estado_civil_confirmado_em") is None
 
         doc = _documento(scoped, did)
         assert doc["extracao_estado_civil"] == "casado"
@@ -640,7 +655,12 @@ class TestEstadoCivilERegimeBensSaoExtraidos:
         already does: `sugestoes_extras` on the checklist GET."""
         from app.modules.card_hub import documento_checklist_service as checklist_svc
 
-        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        # Human-cleared fields (`origem='manual'`, empty): D1 leaves the
+        # reading as a suggestion instead of refilling what a person cleared.
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"estado_civil_origem": "manual", "regime_bens_origem": "manual"},
+        )
         await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(
@@ -780,9 +800,10 @@ class TestDataCasamentoIsExtracted:
         assert row["data_casamento_documento_id"] == did
 
     @pytest.mark.asyncio
-    async def test_a_low_confidence_read_stays_on_the_document_as_a_suggestion(
+    async def test_a_low_confidence_read_fills_an_empty_field_machine_pending(
         self, client, scoped
     ):
+        """D1 (migration 153)."""
         cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
         await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
@@ -790,7 +811,9 @@ class TestDataCasamentoIsExtracted:
                 self._com_casamento(ExtractionConfidence.BAIXA)
             ),
         )
-        assert _cliente(scoped, cid).get("data_casamento") is None
+        row = _cliente(scoped, cid)
+        assert row["data_casamento"] == "2010-03-12"
+        assert row.get("data_casamento_confirmado_em") is None
         assert _documento(scoped, did)["extracao_data_casamento"] == "2010-03-12"
 
     @pytest.mark.asyncio
@@ -845,9 +868,10 @@ class TestNacionalidadeIsExtracted:
         assert row["nacionalidade_documento_id"] == did
 
     @pytest.mark.asyncio
-    async def test_a_low_confidence_read_stays_on_the_document_as_a_suggestion(
+    async def test_a_low_confidence_read_fills_an_empty_field_machine_pending(
         self, client, scoped
     ):
+        """D1 (migration 153)."""
         cid, did, storage = await _setup(scoped, tipo="cnh")
         await svc.extrair_identidade(
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
@@ -855,7 +879,8 @@ class TestNacionalidadeIsExtracted:
                 self._com_nacionalidade(ExtractionConfidence.BAIXA)
             ),
         )
-        assert _cliente(scoped, cid).get("nacionalidade") is None
+        assert _cliente(scoped, cid)["nacionalidade"] == "brasileiro"
+        assert _cliente(scoped, cid).get("nacionalidade_confirmado_em") is None
         assert _documento(scoped, did)["extracao_nacionalidade"] == "brasileiro"
 
     @pytest.mark.asyncio

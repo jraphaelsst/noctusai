@@ -46,6 +46,7 @@ is reported instead.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
@@ -388,7 +389,38 @@ def find_name_conflitos(text: str) -> Optional[list[str]]:
     return distinct if len(distinct) > 1 else None
 
 
+def chave_nome(valor: Optional[str]) -> str:
+    """Accent-stripped, upper-cased, whitespace-collapsed — for MATCHING."""
+    decomposto = unicodedata.normalize("NFKD", valor or "")
+    sem_acento = "".join(c for c in decomposto if not unicodedata.combining(c))
+    return " ".join(sem_acento.upper().split())
+
+
+def nomes_compativeis(a: Optional[str], b: Optional[str]) -> bool:
+    """Could these two spellings name the same person?
+
+    Equal modulo accents/case/spacing, OR every significant word (>2 letters)
+    of one is contained in the other — a registered "REGINA MARIA PELOSI"
+    against a certidão's maiden name "REGINA MARIA PELOSI RANGEL". The single
+    definition of "same name" for every consumer that has to decide whether a
+    document belongs to a person (the titular hint, a spouse, a comprovante's
+    printed holder). Word containment only — a shared surname alone ("SILVA")
+    never matches two different people, because every word of the shorter
+    name must appear in the longer.
+    """
+    ka, kb = chave_nome(a), chave_nome(b)
+    if not ka or not kb:
+        return False
+    if ka == kb:
+        return True
+    pa = {p for p in ka.split() if len(p) > 2}
+    pb = {p for p in kb.split() if len(p) > 2}
+    return bool(pa and pb and len(min(pa, pb, key=len)) >= 2 and (pa <= pb or pb <= pa))
+
+
 __all__ = [
+    "chave_nome",
+    "nomes_compativeis",
     "MAX_NAME_LEN",
     "MAX_WORDS",
     "MIN_NAME_LEN",

@@ -36,7 +36,6 @@ correctable rather than becoming an anonymous fact in a column.
 from __future__ import annotations
 
 import logging
-import unicodedata
 from dataclasses import replace
 from typing import Optional
 
@@ -58,7 +57,12 @@ from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
-from noctusai_lib.integrations.documents.name import find_name, find_name_conflitos
+from noctusai_lib.integrations.documents.name import (
+    chave_nome,
+    find_name,
+    find_name_conflitos,
+    nomes_compativeis,
+)
 from noctusai_lib.integrations.documents.profession import find_profissao
 from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
 from noctusai_lib.integrations.documents.types import (
@@ -465,9 +469,7 @@ def _conjuge_do_titular(
 
 def _chave_nome(valor: str) -> str:
     """Accent-stripped, upper-cased, whitespace-collapsed — for MATCHING."""
-    decomposto = unicodedata.normalize("NFKD", valor or "")
-    sem_acento = "".join(c for c in decomposto if not unicodedata.combining(c))
-    return " ".join(sem_acento.upper().split())
+    return chave_nome(valor)
 
 
 def _selecionar_nome(
@@ -475,11 +477,10 @@ def _selecionar_nome(
 ) -> Optional[str]:
     """The ONE printed candidate that is the hinted person, else None.
 
-    Exact match first. Then containment of every word of one name in the
-    other — a registered "REGINA MARIA PELOSI" against a maiden name
-    printed as "REGINA MARIA PELOSI RANGEL" — accepted only when it picks
-    out exactly one candidate. Returns the document's spelling, never the
-    hint's.
+    Exact match first. Then `name.nomes_compativeis` (word containment — a
+    registered "REGINA MARIA PELOSI" against a maiden name printed as
+    "REGINA MARIA PELOSI RANGEL") — accepted only when it picks out exactly
+    one candidate. Returns the document's spelling, never the hint's.
     """
     if titular is None or not titular.nome:
         return None
@@ -489,14 +490,7 @@ def _selecionar_nome(
     exatos = [c for c in candidatos if _chave_nome(c) == alvo]
     if len(exatos) == 1:
         return exatos[0]
-    palavras_alvo = {p for p in alvo.split() if len(p) > 2}
-    contidos = []
-    for c in candidatos:
-        palavras = {p for p in _chave_nome(c).split() if len(p) > 2}
-        if palavras_alvo and palavras and (
-            palavras_alvo <= palavras or palavras <= palavras_alvo
-        ):
-            contidos.append(c)
+    contidos = [c for c in candidatos if nomes_compativeis(c, titular.nome)]
     return contidos[0] if len(contidos) == 1 else None
 
 

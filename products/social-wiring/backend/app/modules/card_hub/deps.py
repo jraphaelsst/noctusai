@@ -184,6 +184,23 @@ def get_identity_extractor_factory() -> ExtractorFactory:
     return _build_identity_extractor
 
 
+def get_conflict_notification_service() -> Any:
+    """FastAPI dependency — the admin notifier for `cliente_campo_conflitos`
+    rows an identity extraction opens (owner decision D1: a machine value
+    that disagrees with the record is a conflict AND a notification).
+
+    Built exactly like `matriculas.deps.get_notification_service` —
+    `build_notification_service(get_admin_client())`, the one construction
+    path — and handed to the background task, which outlives the request
+    (hence the admin client, never the caller's token). Resolves
+    NOC-REMEDIATE[identidade-conflito-notificacao]. Tests override it
+    (`app.dependency_overrides`) with a recording fake.
+    """
+    from app.services.notification_service import build_notification_service
+
+    return build_notification_service(get_admin_client())
+
+
 SignatureAdapterFactory = Callable[[Optional[str]], SignatureAdapter]
 
 
@@ -233,6 +250,7 @@ __all__ = [
     "ExtractorFactory",
     "SignatureAdapterFactory",
     "get_card_hub_client",
+    "get_conflict_notification_service",
     "get_identity_extractor_factory",
     "get_signature_adapter_factory",
     "get_storage_backend",

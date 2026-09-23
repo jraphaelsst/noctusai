@@ -78,6 +78,7 @@ the schema binding per call when it wires the routers' DI.
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1216,13 +1217,46 @@ CONFLITOS_TABLE = "cliente_campo_conflitos"
 #: Every identity/qualificação field a document extractor can also write —
 #: `identidade_extracao_service.CAMPOS`' item_keys, plus `nome_oficial`
 #: (071, now also human-editable — see migration 148's note on why it was
-#: "never written by hand" before this dispatch). `rg_orgao_expedidor` is
-#: deliberately absent: it has no `_origem` column of its own (it rides with
-#: `rg`, same as on the extraction side — see the loop below).
+#: "never written by hand" before this dispatch). Migration 153 added
+#: `rg_orgao_expedidor` (its own provenance now, no longer riding with `rg`)
+#: and `profissao` (whose quintet 137 already had but which was missing
+#: here, so a hand edit never stamped `'manual'`).
 _CAMPOS_COM_ORIGEM: tuple[str, ...] = (
-    "nome_oficial", "cpf", "rg", "data_nascimento", "genero",
-    "estado_civil", "regime_bens", "data_casamento", "nacionalidade",
+    "nome_oficial", "cpf", "rg", "rg_orgao_expedidor", "data_nascimento", "genero",
+    "estado_civil", "regime_bens", "data_casamento", "nacionalidade", "profissao",
 )
+
+#: Migration 153 — fields whose provenance quintet covers a GROUP of columns.
+#: `campo` is the `cliente_campo_conflitos.campo` the group uses (the same
+#: constants `identidade_extracao_service` writes); `prefixo` names the
+#: `<prefixo>_origem/_documento_id/_em` columns; `colunas` are the members.
+#: A human edit of any member is gated and stamped as the whole group.
+_GRUPOS_COM_ORIGEM: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "endereco",
+        "endereco",
+        (
+            "endereco_cep", "endereco_logradouro", "endereco_numero",
+            "endereco_complemento", "endereco_bairro", "endereco_cidade",
+            "endereco_uf",
+        ),
+    ),
+    ("conjuge_cliente_id", "conjuge", ("conjuge_cliente_id",)),
+)
+
+
+def _valor_grupo(row: dict, colunas: tuple[str, ...]) -> Optional[str]:
+    """A group's value as the TEXT a conflict row holds: the bare value for a
+    one-column group, JSON of the parts otherwise (what
+    `identidade_extracao_service.resolver_conflito` parses back). None when
+    every member is empty."""
+    if all(not row.get(c) for c in colunas):
+        return None
+    if len(colunas) == 1:
+        return str(row.get(colunas[0]))
+    return json.dumps(
+        {c.removeprefix("endereco_"): row.get(c) for c in colunas}, ensure_ascii=False
+    )
 
 
 def _conflito_pendente_existente(
@@ -1440,11 +1474,31 @@ def update_cliente(
     # (since `rg`/`cpf` are both in `_CAMPOS_COM_ORIGEM`) the rg==cpf
     # collision guard that used to fetch this separately.
     atual: Optional[dict] = None
-    if payload.keys() & set(_CAMPOS_COM_ORIGEM):
+    colunas_de_grupo = {c for _campo, _pref, cols in _GRUPOS_COM_ORIGEM for c in cols}
+    if payload.keys() & (set(_CAMPOS_COM_ORIGEM) | colunas_de_grupo):
         atual = _require_cliente(client, org_id, cliente_id)
 
     pendentes: list[str] = []
     aprovados_admin: list[tuple[str, Any, Optional[str]]] = []
+    #: The proposed value of a deferred GROUP, as conflict TEXT.
+    valores_grupo_propostos: dict[str, Optional[str]] = {}
+    grupos = {campo: (prefixo, colunas) for campo, prefixo, colunas in _GRUPOS_COM_ORIGEM}
+
+    def _anterior(campo: str) -> Any:
+        assert atual is not None
+        if campo in grupos:
+            return _valor_grupo(atual, grupos[campo][1])
+        return atual.get(campo)
+
+    def _origem_anterior(campo: str) -> Optional[str]:
+        assert atual is not None
+        prefixo = grupos[campo][0] if campo in grupos else campo
+        return atual.get(f"{prefixo}_origem")
+
+    def _proposto(campo: str) -> Any:
+        if campo in grupos:
+            return valores_grupo_propostos.get(campo)
+        return updates.get(campo)
 
     if atual is not None:
         for campo in _CAMPOS_COM_ORIGEM:
@@ -1463,9 +1517,29 @@ def update_cliente(
             pendentes.append(campo)
             del payload[campo]
             if campo == "rg" and "rg_orgao_expedidor" in payload:
-                # Rides with `rg` (no provenance of its own) — must not
-                # apply on its own while `rg` itself is held back.
+                # The issuer belongs to the NUMBER: an issuer edit cannot land
+                # while the RG it qualifies is held back (true whether or not
+                # the issuer's own provenance — 153 — says it came from a
+                # document).
                 del payload["rg_orgao_expedidor"]
+
+        # Groups (153): the same gate, over the group as a unit.
+        for campo, prefixo, colunas in _GRUPOS_COM_ORIGEM:
+            tocadas = [c for c in colunas if c in payload]
+            if not tocadas:
+                continue
+            valor_atual = _valor_grupo(atual, colunas)
+            origem_atual = atual.get(f"{prefixo}_origem")
+            if valor_atual is None or origem_atual in (None, "manual"):
+                continue
+            if is_admin:
+                aprovados_admin.append((campo, valor_atual, origem_atual))
+                continue
+            pendentes.append(campo)
+            proposto = {**atual, **{c: payload[c] for c in tocadas}}
+            valores_grupo_propostos[campo] = _valor_grupo(proposto, colunas)
+            for c in tocadas:
+                del payload[c]
 
     if not payload:
         # Every touched field was deferred to admin confirmation — nothing
@@ -1475,9 +1549,9 @@ def update_cliente(
         for campo in pendentes:
             _abrir_conflito_edicao_manual(
                 client, org_id, cliente_id, campo,
-                valor_anterior=atual.get(campo),
-                origem_anterior=atual.get(f"{campo}_origem"),
-                valor_proposto=updates.get(campo),
+                valor_anterior=_anterior(campo),
+                origem_anterior=_origem_anterior(campo),
+                valor_proposto=_proposto(campo),
             )
         return {**atual, "pendente_confirmacao": pendentes}
 
@@ -1514,6 +1588,18 @@ def update_cliente(
         payload[f"{campo}_documento_id"] = None
         payload[f"{campo}_em"] = _now() if valor else None
 
+    # Groups (153): stamped as a unit — `'manual'` when the group ends up
+    # holding anything, NULL provenance when the edit cleared it entirely.
+    for _campo, prefixo, colunas in _GRUPOS_COM_ORIGEM:
+        if not any(c in payload for c in colunas):
+            continue
+        base = atual if atual is not None else {}
+        final = {**base, **{c: payload[c] for c in colunas if c in payload}}
+        preenchido = _valor_grupo(final, colunas) is not None
+        payload[f"{prefixo}_origem"] = "manual" if preenchido else None
+        payload[f"{prefixo}_documento_id"] = None
+        payload[f"{prefixo}_em"] = _now() if preenchido else None
+
     # 148 — the manual certidão-emission date. Same stamping shape as above,
     # minus `_documento_id`/`_confirmado_*`: that migration's column pair
     # has no such columns (no extractor ever writes it — see its header).
@@ -1539,16 +1625,20 @@ def update_cliente(
         assert atual is not None
         _abrir_conflito_edicao_manual(
             client, org_id, cliente_id, campo,
-            valor_anterior=atual.get(campo),
-            origem_anterior=atual.get(f"{campo}_origem"),
-            valor_proposto=updates.get(campo),
+            valor_anterior=_anterior(campo),
+            origem_anterior=_origem_anterior(campo),
+            valor_proposto=_proposto(campo),
         )
     for campo, valor_anterior, origem_anterior in aprovados_admin:
         _registrar_edicao_manual_confirmada(
             client, org_id, cliente_id, campo,
             valor_anterior=valor_anterior,
             origem_anterior=origem_anterior,
-            valor_proposto=resultado.get(campo),
+            valor_proposto=(
+                _valor_grupo(resultado, grupos[campo][1])
+                if campo in grupos
+                else resultado.get(campo)
+            ),
             decidido_por=acting_user_id,
         )
 

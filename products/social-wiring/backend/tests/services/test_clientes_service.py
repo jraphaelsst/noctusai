@@ -1112,8 +1112,9 @@ class TestEdicaoManualDeCampoDocumental:
         assert resultado2["pendente_confirmacao"] == []
 
     def test_rg_orgao_expedidor_rides_with_a_deferred_rg(self):
-        """`rg_orgao_expedidor` has no provenance of its own — it must not
-        apply on its own while the `rg` it travels with is held back."""
+        """The issuer belongs to the RG number — it must not apply on its
+        own while the `rg` it qualifies is held back (even for a pre-153 row
+        whose issuer carries no provenance of its own)."""
         client = _scoped_client()
         cid = str(uuid4())
         client.set_table_data(

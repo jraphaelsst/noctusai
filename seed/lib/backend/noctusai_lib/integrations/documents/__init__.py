@@ -34,9 +34,12 @@ narrative, and every consumer that needed a typed value out of it would
 otherwise re-parse that prose itself, differently, at each call site.
 
 🔴 **Consumer contract.** Confidence is PER FIELD. Only a value whose
-`persistable_<field>` property is true may be written unattended
-(`<field>_confianca == ALTA`); anything else is a suggestion for a human
-to confirm. Persist `source` and the field's `_rotulo` alongside any
+`persistable_<field>` property is true may be written unattended as a
+CONFIRMED fact (`<field>_confianca == ALTA`); anything else needs a human.
+A consumer with its own downstream human gate may write lower-confidence
+values UNCONFIRMED (social-wiring's D1, migration 153: machine-pending until
+its contract validation gate accepts them) — the confidence must then travel
+with the value so that gate can show it. Persist `source` and the field's `_rotulo` alongside any
 stored value — reading an identity document is a logged, LGPD-relevant
 access, and an unattributed value cannot be audited or corrected later.
 
@@ -73,6 +76,7 @@ from noctusai_lib.integrations.documents.gender import canonical_gender, find_ge
 from noctusai_lib.integrations.documents.address import EnderecoLido, UFS, find_endereco
 from noctusai_lib.integrations.documents.conjuges import ConjugeLido, find_conjuges
 from noctusai_lib.integrations.documents.profession import find_profissao, find_profissoes
+from noctusai_lib.integrations.documents.name import chave_nome, nomes_compativeis
 from noctusai_lib.integrations.documents.nacionalidade import (
     NACIONALIDADE_VALORES,
     find_nacionalidade,
@@ -200,6 +204,8 @@ __all__ = [
     "EnderecoLido",
     "UFS",
     "canonical_gender",
+    "chave_nome",
+    "nomes_compativeis",
     "find_conjuges",
     "find_endereco",
     "find_profissao",

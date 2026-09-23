@@ -63,9 +63,12 @@ from noctusai_lib.integrations.documents import (
 )
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
+from noctusai_lib.integrations.documents import canonical_gender
+
 from app.modules.card_hub.identidade_extracao_service import (
     CampoExtraido,
     aplicar_campos_ao_cliente,
+    notificar_conflitos,
 )
 from app.services import table_reads
 from app.services.documento_store import now_iso
@@ -96,12 +99,15 @@ AMBIGUO = "ambiguo"
 #: `endereco` is deliberately ABSENT — see migration 137's header
 #: (NOC-REMEDIATE[matricula-endereco-estruturado]).
 CAMPOS_QUALIFICACAO: tuple[CampoExtraido, ...] = (
+    # `sobrescreve` is not consulted on the write path any more — D1
+    # (migration 153): `aplicar_campos_ao_cliente` never overwrites, a
+    # differing value opens a conflict. Kept False everywhere for honesty.
     CampoExtraido(
         item_key="nome_oficial",
         coluna_valor="",
         coluna_confianca="",
         coluna_rotulo="",
-        sobrescreve=True,
+        sobrescreve=False,
     ),
     CampoExtraido(
         item_key="genero",
@@ -123,6 +129,17 @@ CAMPOS_QUALIFICACAO: tuple[CampoExtraido, ...] = (
         coluna_confianca="",
         coluna_rotulo="",
         sobrescreve=False,
+    ),
+    # Migration 153 — the issuer has its own provenance now instead of
+    # riding along with `rg` via a keyword argument; `depende_de="rg"`
+    # keeps it from landing beside somebody else's RG number.
+    CampoExtraido(
+        item_key="rg_orgao_expedidor",
+        coluna_valor="",
+        coluna_confianca="",
+        coluna_rotulo="",
+        sobrescreve=False,
+        depende_de="rg",
     ),
     CampoExtraido(
         item_key="estado_civil",
@@ -345,9 +362,16 @@ def _lidos(row: dict) -> dict[str, tuple[Any, str, Optional[str], bool]]:
     confianca = row["confianca"]
     valores = {
         "nome_oficial": row.get("nome"),
-        "genero": row.get("genero"),
+        # 🔴 The matrícula reader emits `m`/`f` codes; `clientes.genero` holds
+        # the words `Masculino`/`Feminino` (the card dropdown, the identity
+        # extractor). Writing the code made every later RG/CIN reading of the
+        # SAME fact look like a disagreement. Canonicalised here, at the one
+        # place a qualification becomes a client field (migration 153 also
+        # repairs the rows already written).
+        "genero": canonical_gender(row.get("genero")),
         "cpf": _formatar_cpf_para_cliente(row),
         "rg": row.get("rg"),
+        "rg_orgao_expedidor": row.get("rg_orgao_expedidor"),
         "estado_civil": row.get("estado_civil"),
         "nacionalidade": row.get("nacionalidade"),
         "profissao": row.get("profissao"),
@@ -411,9 +435,11 @@ async def confirmar(
             lidos,
             campos=CAMPOS_QUALIFICACAO,
             documento_id=None,
-            rg_orgao_expedidor=row.get("rg_orgao_expedidor"),
             fonte_tabela=TABLE,
             fonte_id=qualificacao_id,
+            # A human just confirmed this reading — the fields it fills are
+            # validated, not machine-pending.
+            confirmado_por=usuario_id,
         )
 
     agora = now_iso()
@@ -426,29 +452,11 @@ async def confirmar(
         "id", str(qualificacao_id)
     ).execute()
 
-    if conflitos and notification_service is not None:
-        for conflito in conflitos:
-            try:
-                await notification_service.notify_field_conflict(
-                    org_id=org_id, conflito=conflito, cliente_nome=row["nome"]
-                )
-                _t(client, "cliente_campo_conflitos").update(
-                    {"notificado_em": now_iso()}
-                ).eq("id", conflito["id"]).execute()
-            except Exception:  # noqa: BLE001 - a notify failure must not fail confirm
-                logger.exception(
-                    "qualificacao %s: could not notify conflict on campo %r",
-                    qualificacao_id,
-                    conflito.get("campo"),
-                )
-    elif conflitos:
-        logger.warning(
-            "qualificacao %s: %d conflict(s) opened with no notification_service "
-            "wired — recorded, not announced: %s",
-            qualificacao_id,
-            len(conflitos),
-            [c["campo"] for c in conflitos],
-        )
+    # The shared announcer (`identidade_extracao_service.notificar_
+    # conflitos`) — this module used to carry its own copy of that loop.
+    await notificar_conflitos(
+        client, org_id, conflitos, notification_service, cliente_nome=row["nome"]
+    )
 
     return {**row, **patch, "conflitos_abertos": [c["campo"] for c in conflitos]}
 
