@@ -308,6 +308,56 @@ class TestPredicateIsSafeForRawInput:
         assert looks_like_a_name(once) is looks_like_a_name("José da Silva")
 
 
+class TestNomeAdotadoPronomeLabels:
+    """🔴 THE LAYOUT VARIANT THIS CLASS COVERS
+    -------------------------------------------------------------
+    A certidão de casamento's "nome que passou a adotar" clause states each
+    spouse's post-marriage name under the PRONOUN (`Ele:` / `Ela:`), not
+    `NOME` — invisible to `_candidatos` before `_PRONOUN_NAME_LABELS`
+    existed, exactly like the plural `NOMES` header once was (see
+    `TestCertidaoDeCasamentoMultiHolderHeader`'s own header). Unlike `NOME`,
+    `ELE`/`ELA` are ordinary Portuguese words — `AQUELE`, `PELA`, `JANELA`
+    all contain one verbatim — so this class also regression-tests the two
+    guards that make recognising them safe: an explicit separator, and a
+    word-boundary check that now applies to every label, not just these two.
+    """
+
+    TEXTO = (
+        "CERTIDAO DE CASAMENTO\n"
+        "NOME QUE CADA UM DOS CONJUGES PASSA A USAR EM RAZAO DO CASAMENTO\n"
+        "Ele: JOAO PEREIRA DA SILVA\n"
+        "Ela: MARIA SOUZA DA SILVA\n"
+    )
+
+    def test_both_spouses_are_read_as_a_conflict(self):
+        assert find_name_conflitos(self.TEXTO) == [
+            "JOAO PEREIRA DA SILVA", "MARIA SOUZA DA SILVA",
+        ]
+
+    def test_find_name_still_declines_between_the_two(self):
+        assert find_name(self.TEXTO) == (None, "nenhuma", None)
+
+    def test_a_single_pronoun_labelled_name_is_read_normally(self):
+        texto = "Ele: CARLOS EDUARDO MENDES\n"
+        assert find_name(texto) == ("CARLOS EDUARDO MENDES", "alta", "ELE")
+
+    @pytest.mark.parametrize(
+        "texto",
+        [
+            # No separator after the pronoun — ordinary prose, not a label.
+            "ELE COMPARECEU PERANTE O OFICIAL\nELA TAMBEM COMPARECEU HOJE\n",
+            # `ELE`/`ELA` starting mid-word — the word-boundary rule that
+            # already protects `NOME` from `NOMEACAO` now protects these too.
+            "AQUELE HOMEM CHEGOU CEDO\n",
+            "PELA JANELA VIU O CEU AZUL\n",
+            "DAQUELA VEZ EM DIANTE\n",
+        ],
+    )
+    def test_ordinary_portuguese_words_never_become_a_label(self, texto):
+        assert find_name(texto) == (None, "nenhuma", None)
+        assert find_name_conflitos(texto) is None
+
+
 class TestNomeAtualDosConjugesHeader:
     """Newer CRC certidão layout (structure from a real document, names
     invented): the spouses' block is headed "Nome atual dos cônjuges" and
