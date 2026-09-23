@@ -14,6 +14,8 @@ reads. Most of what follows exercises that, plus the family's usual
 """
 from __future__ import annotations
 
+import pytest
+
 from noctusai_lib.integrations.documents import find_nacionalidade
 from noctusai_lib.integrations.documents.nacionalidade import (
     NACIONALIDADE_VALORES,
@@ -134,3 +136,48 @@ class TestFeminino:
 
     def test_an_unknown_value_returns_none(self):
         assert feminino("xyz") is None
+
+
+class TestPluralGentilicos:
+    """2026-09-23, real, measured: `\\bBRASILEIR[OA]\\b` never matched the
+    PLURAL at all — `\\b` cannot fire between two word characters (`O` then
+    `S`), so a certidão's "ambos... brasileiros" phrasing silently read as
+    `nenhuma`. Every gentílico now accepts its plural, canonicalising to
+    the SAME singular masculine token."""
+
+    @pytest.mark.parametrize(
+        "bruto,esperado",
+        [
+            ("BRASILEIROS", "brasileiro"),
+            ("BRASILEIRAS", "brasileiro"),
+            ("PORTUGUESES", "português"),  # irregular masc plural (+ES)
+            ("PORTUGUESAS", "português"),
+            ("ITALIANOS", "italiano"),
+            ("ESPANHOIS", "espanhol"),  # irregular masc plural (-OL -> -OIS)
+            ("ESPANHOLAS", "espanhol"),
+            ("ALEMAES", "alemão"),  # irregular masc plural (-AO -> -AES)
+            ("ALEMAS", "alemão"),
+            ("JAPONESES", "japonês"),
+            ("CHINESES", "chinês"),
+            ("FRANCESES", "francês"),
+            ("LIBANESES", "libanês"),
+            ("URUGUAIOS", "uruguaio"),
+        ],
+    )
+    def test_plural_canonicalises_to_the_singular_masculine(self, bruto, esperado):
+        assert canonico(bruto) == esperado
+
+    def test_a_certidao_style_collective_plural_is_found_labelled(self):
+        texto = "NACIONALIDADE: brasileiros"
+        valor, confianca, _ = find_nacionalidade(texto)
+        assert valor == "brasileiro"
+        assert confianca == "alta"
+
+    def test_brasileira_nata_still_resolves_the_gentilico_alone(self):
+        # "nata"/"nato" (natural-born) is a trailing qualifier, not part of
+        # the gentílico itself — the word-boundary match on "BRASILEIRA"
+        # is unaffected by what follows it.
+        texto = "de NACIONALIDADE brasileira nata"
+        valor, confianca, _ = find_nacionalidade(texto)
+        assert valor == "brasileiro"
+        assert confianca == "alta"
