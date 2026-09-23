@@ -138,6 +138,38 @@ Seed/refinement (triage per recurrence rule):
 - **R-g** Toolkit: `branch_pointer` CLI from a worktree writes the primary ledger (rows stranded); commit-msg hook was not installed in this clone (fixed via `install-hooks.sh` 2026-09-23 — other clones?); `task_branch` wire_env links `.vite-temp` (dangles after primary `npm ci`); the cut's kb-counts false-coupling (noctusai-1b building `feat/release-derived-file-exempt`).
 - **R-h** Esteira tarefa `etapa` column dropped in 017 without an expand/contract step — the schema-ahead-of-code window above is the cost; future breaking migrations ship expand → deploy → contract.
 
+
+**Status 2026-09-23 ~08:30 (session 5297f35f), owner asleep:**
+- **On dev, gated green:**
+  - wave 1: 4 slices + migrations 159/160 APPLIED to prod;
+  - real-doc fixes;
+  - provenance catalog S1–S3;
+  - CNH Digital fix. Measured on real docs: doc#4 0→5/6, doc#5 1→5/6.
+  - academia stand-in fix.
+  - Attribution: sw-extraction-contract.
+- **Release BLOCKED.** The cut refuses because hook-derived kb-counts blocks (02-LANDSCAPE.md) and INDEX.md prose chain unapproved riders into approved projects. The owner must type, in this session:
+  1. `I approve shipping project noctus-release-tooling to production.`
+  2. `I approve shipping project sw-extraction-contract to production.` (again, for wave 2)
+  3. `I approve shipping project noctus-website to production.` (again; it flips the apex to the new site)
+- **igig first after promote.** DB migrations 016–026 are ahead of the 2026-08-13 image.
+- **For owner review, not merged:** feat/release-derived-file-exempt c361f70fd (kb-counts-only hunks exempt via .gitattributes merge=kb-counts, regen commit on the cut).
+- **Backlog:**
+  - matrícula dedupe by content hash;
+  - vision nondeterminism on doc#0/#1 (consensus read?);
+  - certidão institutional-token-on-name-line (#3);
+  - misfile detection;
+  - stand-in gate findings on SW edicao_fotos/mailchimp deps (dummy env) + p-studio;
+  - `AtendimentoLead` embed missing lead fields (Observações etc.);
+  - accent-insensitive imóvel search (NOC-REMEDIATE[imovel-busca-accent-fold]);
+  - `imovel_documentos` estrutura_status not in API.
+- **After ship:**
+  - live smoke;
+  - finish the ZZ test card (RICARDO AUGUSTO FERREIRA LIMA, f83b2853) to full generation (física + digital);
+  - Rodrigo → ONE7515 + v8 vs contract 08 (1c's diff_contrato.py);
+  - 1–2 real cards with fake-filled gaps;
+  - reference-contract cards 01–08 (01→ONE9331, 04→ONE10251, 08→ONE7515; the rest manual with address);
+  - 1c's fake scenarios cv-parcelado/permuta/fgts.
+
 ## Anti-goals
 
 - ❌ No behaviour change in SW during wave A (pure refactor onto seed).
