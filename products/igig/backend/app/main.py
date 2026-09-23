@@ -40,6 +40,15 @@ from app.routers.pauta_router import router as pauta_router
 from app.routers.custos_router import router as custos_router
 from app.routers.relatorio_router import router as relatorio_router
 from app.routers.webhook_router import router as webhook_router
+from app.routers.integracoes_email_router import router as integracoes_email_router
+from app.routers.orcamento_email_router import router as orcamento_email_router
+from app.routers.gmail_webhook_router import router as gmail_webhook_router
+from app.scheduler import configure as _configure_scheduler, start_scheduler, stop_scheduler
+
+# Registers igig's background jobs (daily Gmail watch renewal — slice B). They
+# only FIRE in a deployed container (`NOCTUS_SCHEDULERS_ENABLED`, see
+# `noctusai_lib.api.scheduler.start_scheduler`).
+_configure_scheduler()
 
 # Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
 # 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
@@ -107,8 +116,14 @@ app = create_product_app(
         comercial_stages_router, negocio_card_hub_routers[0], comercial_funil_router,
         negocio_card_hub_routers[1], comercial_router,
         custos_router, relatorio_router, webhook_router,
+        # Wave-2 slice B — e-mail (SMTP + Gmail reply watch). Own files, own
+        # prefixes (`/api/integracoes/email/*`, `/api/orcamentos/{id}/enviar|emails`,
+        # `/api/webhooks/gmail/push`) — no shape collision with the routers above.
+        integracoes_email_router, orcamento_email_router, gmail_webhook_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
+    lifespan_startup=start_scheduler,
+    lifespan_shutdown=stop_scheduler,
     # 🔴 Chaves sem as quais este produto NÃO deve subir em produção. O guard
     # de boot (`require_prod_config`) aborta listando todas as faltantes de
     # uma vez, e `noctus.dev.predeploy_check` lê ESTA MESMA lista
