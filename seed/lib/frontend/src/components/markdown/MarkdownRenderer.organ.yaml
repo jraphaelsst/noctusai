@@ -1,0 +1,55 @@
+name: MarkdownRenderer
+path: seed/lib/frontend/src/components/markdown/MarkdownRenderer.tsx
+phase: pilot-seed
+registered_at: '2026-09-23'
+validation_status: emerging
+known_facts:
+- Canonical GFM markdown renderer organ — Phase-0 confirmed no renderer existed
+  ('KB § PATTERNS/architect/products-consume-canonical-organs.md' discipline);
+  the closest prior art (`academia-de-reciclagem/MarkdownBlock.tsx`,
+  `knowledge-extractor/Methodology.tsx`) both render prose via
+  `whitespace-pre-wrap` — plain text, no tables/headings/code/links. This organ
+  is a genuine new capability, not a duplicate.
+- 'Built for the core admin Website > Documentação viewer (products/core), first
+  consumer is `products/core/frontend/src/pages/admin/website/Docs.tsx`.'
+- Two seams as props — `resolveImage(src) => string | undefined` and
+  `onNavigate(href)` — so a host maps relative markdown paths to its own asset
+  pipeline / router without the organ importing either.
+- Uses `react-markdown` + `remark-gfm` (tables/task-lists/strikethrough/autolinks)
+  + `rehype-slug` (stable heading `id`s for `#anchor` links, github-slugger
+  dedupe: `Repetido` / `Repetido` → `repetido` / `repetido-1`).
+- Theme-aware via the existing design-system Tailwind tokens
+  (text-foreground/text-muted-foreground/bg-muted/border-border/text-primary) —
+  no `@tailwindcss/typography` `prose` plugin dependency, no product CSS.
+errors_encountered: []
+drifts_surfaced:
+- 'knowledge-extractor''s `Methodology.tsx` (whitespace-pre-wrap) is the natural
+  consumer #2 for real GFM rendering, but migrating it is OUT of this slice''s
+  scope — logged as `scoped-improvement:` in the delivery note, not migrated
+  here.'
+alternatives_considered:
+- 'rehype-raw + rehype-sanitize (allow raw HTML, then scrub it) — rejected:
+  `remark-rehype`''s default `allowDangerousHtml: false` (i.e. NOT adding
+  rehype-raw) already encodes raw HTML as inert text with zero extra
+  dependency and zero sanitizer-schema-drift risk. Verified empirically in
+  `MarkdownRenderer.test.tsx` (a literal `<script>`/`onerror` payload never
+  reaches the DOM as a live node).'
+- 'A `prose`/`@tailwindcss/typography`-based wrapper (precedent:
+  `erp-imobiliario`) — rejected for THIS organ: per-element custom
+  `components` mapping keeps every color on the platform''s existing design
+  tokens (so dark mode "just works" the same way every other organ does)
+  without adding a plugin dependency or touching the shared
+  `tailwind.config.factory.ts` for every product.'
+- 'A hand-rolled micromark-based renderer (zero deps) — rejected: GFM tables +
+  task lists + slugged headings + sanitization-by-omission is exactly what
+  `react-markdown`/`remark-gfm`/`rehype-slug` already give for a small,
+  well-audited dependency footprint; reinventing it is real surface area for
+  no benefit.'
+manual_validation_log: []
+integration_test_status: vitest_green
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

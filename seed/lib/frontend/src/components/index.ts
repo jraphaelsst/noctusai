@@ -117,3 +117,10 @@ export type {
 // data layer, query keys derived from `rootKey`). Moved from social-wiring's
 // lead card — `project-history/roadmaps/cardhub-igig-crm-2026-09.wave-a-design.md`.
 export * from './card-hub';
+
+// Markdown — canonical GFM renderer organ (tables/task-lists/strikethrough,
+// slugged headings, sanitized by construction — no raw HTML execution).
+// Consuming pages own the "where do docs live" question via the
+// `resolveImage`/`onNavigate` seams; the organ never touches a bundler API.
+export { MarkdownRenderer } from './markdown';
+export type { MarkdownRendererProps } from './markdown';
