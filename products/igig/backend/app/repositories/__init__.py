@@ -109,13 +109,21 @@ class PautaRepository(BaseRepository):
     def do_cliente(self, org_id: str, cliente_id: str) -> list[Record]:
         return self._por("cliente_id", cliente_id, org_id)
 
-    def no_periodo(self, org_id: str, inicio: str, fim: str) -> list[Record]:
-        """Calendário editorial window — Módulo 3, and Módulo 6's excedentes."""
+    def no_periodo(
+        self, org_id: str, inicio: str, fim: str, *, cliente_id: str | None = None
+    ) -> list[Record]:
+        """Calendário editorial window — Módulo 3, and Módulo 6's excedentes.
+
+        `cliente_id` narrows it to one cliente — the Clientes card's calendar
+        tab (roadmap R9) shows only that cliente's pautas.
+        """
         spec = (
             QuerySpec()
             .with_filter("data_publicacao", Op.GTE, inicio)
             .with_filter("data_publicacao", Op.LTE, fim)
         )
+        if cliente_id:
+            spec = spec.with_filter("cliente_id", Op.EQ, cliente_id)
         return self.listar(org_id, spec=spec)
 
     def por_funil(self, org_id: str, nivel: str) -> list[Record]:
