@@ -38,6 +38,7 @@ from app.routers.financeiro_router import router as financeiro_router
 from app.routers.integracoes_router import router as integracoes_router
 from app.routers.pauta_router import router as pauta_router
 from app.routers.custos_router import router as custos_router
+from app.routers.relatorio_router import router as relatorio_router
 from app.routers.webhook_router import router as webhook_router
 
 # Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
@@ -105,7 +106,7 @@ app = create_product_app(
         distribuicao_router, integracoes_router, financeiro_router,
         comercial_stages_router, negocio_card_hub_routers[0], comercial_funil_router,
         negocio_card_hub_routers[1], comercial_router,
-        custos_router, webhook_router,
+        custos_router, relatorio_router, webhook_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     # 🔴 Chaves sem as quais este produto NÃO deve subir em produção. O guard
