@@ -17,6 +17,11 @@
 # touch anything git has not been told is out-of-repo.
 /tmp/
 
+# Repo-root drop folder for real-customer documents (certidões PDFs carrying
+# CPF/CNPJ — LGPD personal data) used as working input for social-wiring.
+# Must never be committed; ignoring it also lets agents clean it up.
+/marina-tmp/
+
 # Dependencies
 # No trailing slash: also matches the §5a wire_env node_modules SYMLINKS
 # (`node_modules/` matches dirs only ⇒ a symlink-to-dir leaked as untracked and
