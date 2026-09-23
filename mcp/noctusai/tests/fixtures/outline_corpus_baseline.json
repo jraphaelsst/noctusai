@@ -32,7 +32,7 @@
   "products/core/frontend/src/lib/product-icon.tsx": 4,
   "products/core/frontend/src/lib/seed-auth-adapter.tsx": 2,
   "products/core/frontend/src/lib/utils.ts": 1,
-  "products/core/frontend/src/main.tsx": 29,
+  "products/core/frontend/src/main.tsx": 33,
   "products/core/frontend/src/pages/APIKeys.tsx": 5,
   "products/core/frontend/src/pages/AcceptInvite.tsx": 2,
   "products/core/frontend/src/pages/AccountSettings.tsx": 1,

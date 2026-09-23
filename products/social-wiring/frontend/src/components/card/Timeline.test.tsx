@@ -217,7 +217,10 @@ describe("Timeline — Bug 4 (prod card 755253934): a touch entry's date never s
 
     const texto = getAllByTestId("timeline-entry")[0].textContent ?? "";
     // Unshifted-by-this-fix means the SEED's own `formatDate` still parses
-    // it as a real UTC instant — 21:00 the day before, in America/Sao_Paulo.
-    expect(texto).toContain("22/09/2026");
+    // it as a real UTC instant — 21:00 the day before in America/Sao_Paulo,
+    // same day in a UTC runner (CI). Expect whatever LOCAL date that instant is.
+    const local = new Date("2026-09-23T00:00:00Z");
+    const esperado = `${String(local.getDate()).padStart(2, "0")}/${String(local.getMonth() + 1).padStart(2, "0")}/${local.getFullYear()}`;
+    expect(texto).toContain(esperado);
   });
 });
