@@ -35,8 +35,13 @@ was already going to a human anyway; here the demotion is the whole defence.
 
 CONSUMER CONTRACT
 -----------------
-Only `persistable` may be written unattended. Store `source` and
-`numero_matricula_rotulo` alongside any stored value: unlike an identity
+Only `persistable` may be written AND TRUSTED unattended. A consumer that
+also writes a `sugestao` (`baixa`) read must record it as unvalidated and
+gate its use on a human confirming it — social-wiring does exactly that
+(owner decision D1/D2, 2026-09-22: every machine value lands
+machine-pending and contract generation refuses until a human validates
+it), which is what makes writing a vision read safe there. Store `source`
+and `numero_matricula_rotulo` alongside any stored value: unlike an identity
 document, nobody re-reads a matrícula casually, so the provenance columns
 are the only way the number stays attributable and correctable.
 """
