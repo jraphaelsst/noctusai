@@ -64,7 +64,7 @@ CARD_HUB_CLIENTE = CardHubConfig(
     id_param="cliente_id",
     table_prefix="cliente",
     member_source=_MEMBROS,
-    bucket=settings.igig_storage_bucket,
+    bucket=settings.igig_cardhub_bucket,
     actor_resolver=_ATORES,
 )
 
@@ -75,7 +75,7 @@ CARD_HUB_NEGOCIO = CardHubConfig(
     id_param="negocio_id",
     table_prefix="negocio",
     member_source=_MEMBROS,
-    bucket=settings.igig_storage_bucket,
+    bucket=settings.igig_cardhub_bucket,
     actor_resolver=_ATORES,
 )
 
@@ -121,9 +121,11 @@ _CABECALHO_019 = """\
 -- `*_igig_*`): the card hub is reached ONLY through PostgREST (decision D-A1,
 -- `NOC-REMEDIATE[card-hub-recordstore]` in the seed package).
 --
--- Both sections emit the same `igig` bucket statements; every one of them is
--- idempotent (ON CONFLICT DO NOTHING / DROP POLICY IF EXISTS), so the repeat is
--- a no-op. Prerequisites: 006 (cliente), 008 (profissional), 017
+-- Documents live in their OWN private bucket `igig-cardhub`: the org-folder
+-- member policies below apply to that bucket only, so `igig` (peças/logos)
+-- stays service-role-only. Both sections emit the same bucket statements;
+-- every one is idempotent (ON CONFLICT DO NOTHING / DROP POLICY IF EXISTS), so
+-- the repeat is a no-op. Prerequisites: 006 (cliente), 008 (profissional), 017
 -- (pipeline_stages), 018 (negocio).
 -- ============================================================================
 """

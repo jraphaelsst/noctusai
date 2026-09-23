@@ -45,6 +45,11 @@ class IgIgSettings(ProductSettings):
     igig_storage_kind: str = "supabase"
     igig_storage_root: str = "var/assets"
     igig_storage_bucket: str = "igig"
+    # Card-hub documents (cliente + negócio cards, app/card_hub.py). A SEPARATE
+    # private bucket on purpose: 019 grants org members read/write on their own
+    # org folder of THIS bucket only, so `igig` (peças/logos) stays
+    # service-role-only exactly as before (tech-lead decision 2026-09-23).
+    igig_cardhub_bucket: str = "igig-cardhub"
 
     # ── Canais sociais (Módulo 5) ─────────────────────────────────────
     # Env-level FALLBACK only. The real path is a per-org credential stored

@@ -25,6 +25,19 @@ def test_migration_019_is_the_generators_output():
     )
 
 
+def test_card_hub_documents_never_touch_the_igig_bucket():
+    """019 grants org members read/write on their org folder of the card-hub
+    bucket; `igig` (peças/logos) must stay service-role-only."""
+    from app.card_hub import CARD_HUB_CLIENTE, CARD_HUB_NEGOCIO
+
+    assert CARD_HUB_CLIENTE.bucket == CARD_HUB_NEGOCIO.bucket == "igig-cardhub"
+    sql = MIGRATION.read_text(encoding="utf-8")
+    assert "bucket_id = 'igig'" not in sql
+    assert "('igig', 'igig'" not in sql
+    assert '"igig_storage_' not in sql
+    assert "bucket_id = 'igig-cardhub'" in sql
+
+
 def test_both_cards_use_the_profissional_team_as_members():
     from app.card_hub import CARD_HUB_CLIENTE, CARD_HUB_NEGOCIO
 
