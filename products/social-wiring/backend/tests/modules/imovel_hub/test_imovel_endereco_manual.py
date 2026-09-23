@@ -1,5 +1,7 @@
-"""Manual address override for the 4 fields `contrato_gerador.derivacao`
-gates on (migration 149) — `PUT /{codigo}/endereco-manual`.
+"""Manual address override — all 7 `Endereco` fields (migration 149, widened
+by 159 from the 4 `contrato_gerador.derivacao` gates the contract on) —
+`PUT /{codigo}/endereco-manual`, and `POST /{codigo}/registrar`'s own
+required-address body (`TestRegistrarImovel` below).
 
 WHAT THESE PIN
 --------------
@@ -163,10 +165,31 @@ class TestOverrideWinsOverMirror:
         assert body["endereco_manual_cidade"] == "Campinas"
 
 
+#: A valid, full `RegistrarImovelBody` — every request in this class starts
+#: from this and overrides what it needs, same convention `imovel_row()`
+#: uses above.
+ENDERECO_COMPLETO = {
+    "logradouro": "Alameda Alemanha",
+    "numero": "535",
+    "bairro": "Euroville - Km 23",
+    "cidade": "Barueri",
+    "uf": "SP",
+    "cep": "06355-465",
+}
+
+
 class TestRegistrarImovel:
+    """`POST /{codigo}/registrar` — migration 149's identity, migration
+    159's REQUIRED address (owner rule, 2026-09-23: "The address doesn't
+    come from the matrícula. The address comes from the property table; it
+    will be mandatory upon property registration that it has the address in
+    it.")."""
+
     def test_registering_a_new_codigo_gives_it_an_identity(self, client, scoped):
         seed(scoped, registry=[], imoveis=[])
-        r = client.post("/api/imoveis/OFFMKT01/registrar", headers=auth())
+        r = client.post(
+            "/api/imoveis/OFFMKT01/registrar", json=ENDERECO_COMPLETO, headers=auth()
+        )
         assert r.status_code == 200
         assert r.json()["codigo"] == "OFFMKT01"
 
@@ -174,8 +197,70 @@ class TestRegistrarImovel:
         d = client.get("/api/imoveis/OFFMKT01/dados", headers=auth())
         assert d.status_code == 200
 
+    def test_the_address_is_written_as_the_manual_override_in_the_same_request(
+        self, client, scoped
+    ):
+        seed(scoped, registry=[], imoveis=[])
+        r = client.post(
+            "/api/imoveis/OFFMKT01/registrar", json=ENDERECO_COMPLETO, headers=auth()
+        )
+        assert r.status_code == 200
+
+        dados = client.get("/api/imoveis/OFFMKT01/dados", headers=auth()).json()
+        assert dados["endereco_manual_logradouro"] == "Alameda Alemanha"
+        assert dados["endereco_manual_numero"] == "535"
+        assert dados["endereco_manual_bairro"] == "Euroville - Km 23"
+        assert dados["endereco_manual_cidade"] == "Barueri"
+        assert dados["endereco_manual_uf"] == "SP"
+        assert dados["endereco_manual_cep"] == "06355-465"
+        # Never sent — stays a real None, not an empty string.
+        assert dados["endereco_manual_complemento"] is None
+
+    def test_complemento_is_the_only_optional_field(self, client, scoped):
+        seed(scoped, registry=[], imoveis=[])
+        r = client.post(
+            "/api/imoveis/OFFMKT01/registrar",
+            json={**ENDERECO_COMPLETO, "complemento": "Apto 12"},
+            headers=auth(),
+        )
+        assert r.status_code == 200
+        dados = client.get("/api/imoveis/OFFMKT01/dados", headers=auth()).json()
+        assert dados["endereco_manual_complemento"] == "Apto 12"
+
     def test_registering_is_idempotent(self, client, scoped):
         seed(scoped, registry=[], imoveis=[])
-        first = client.post("/api/imoveis/OFFMKT01/registrar", headers=auth())
-        second = client.post("/api/imoveis/OFFMKT01/registrar", headers=auth())
+        first = client.post(
+            "/api/imoveis/OFFMKT01/registrar", json=ENDERECO_COMPLETO, headers=auth()
+        )
+        second = client.post(
+            "/api/imoveis/OFFMKT01/registrar", json=ENDERECO_COMPLETO, headers=auth()
+        )
         assert first.json() == second.json()
+
+    def test_a_missing_required_field_is_422_naming_it(self, client, scoped):
+        seed(scoped, registry=[], imoveis=[])
+        sem_bairro = {k: v for k, v in ENDERECO_COMPLETO.items() if k != "bairro"}
+        r = client.post(
+            "/api/imoveis/OFFMKT01/registrar", json=sem_bairro, headers=auth()
+        )
+        assert r.status_code == 422
+        campos = {erro["loc"][-1] for erro in r.json()["detail"]}
+        assert "bairro" in campos
+
+    def test_a_blank_required_field_is_also_422(self, client, scoped):
+        seed(scoped, registry=[], imoveis=[])
+        r = client.post(
+            "/api/imoveis/OFFMKT01/registrar",
+            json={**ENDERECO_COMPLETO, "cep": ""},
+            headers=auth(),
+        )
+        assert r.status_code == 422
+
+    def test_registering_with_no_body_at_all_is_422_not_a_silent_empty_registration(
+        self, client, scoped
+    ):
+        """The 2026-09-22 regression this closes: a hand-registered código
+        used to exist with no address at all (EUROVILLE-535)."""
+        seed(scoped, registry=[], imoveis=[])
+        r = client.post("/api/imoveis/OFFMKT01/registrar", headers=auth())
+        assert r.status_code == 422

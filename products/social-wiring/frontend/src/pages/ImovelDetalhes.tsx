@@ -57,6 +57,7 @@ import ImovelCondicoesComerciaisSection from "@/components/imovel/ImovelCondicoe
 import ImovelConstrucaoSection from "@/components/imovel/ImovelConstrucaoSection";
 import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
 import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
+import ImovelEnderecoCard from "@/components/imovel/ImovelEnderecoCard";
 import ImovelLocalizacaoSection from "@/components/imovel/ImovelLocalizacaoSection";
 import ImovelMetadadosSection from "@/components/imovel/ImovelMetadadosSection";
 import ImovelMidiaSection from "@/components/imovel/ImovelMidiaSection";
@@ -412,15 +413,25 @@ export default function ImovelDetalhes() {
             saving={dadosMutation.isPending}
             error={dadosMutation.error?.message ?? null}
             onSave={(patch) => dadosMutation.mutate(patch)}
+            mirror={{ empreendimento: imovel.empreendimento }}
+          />
+
+          {/* Migration 159 — the manual address override, own card (see
+              `ImovelEnderecoCard`'s header). */}
+          <ImovelEnderecoCard
+            dados={dadosQuery.data}
+            loading={dadosQuery.isPending && !dadosQuery.data}
+            saving={enderecoManualMutation.isPending}
+            onSave={(patch) => enderecoManualMutation.mutate(patch)}
             mirror={{
               logradouro: imovel.logradouro,
               numero: imovel.numero,
+              complemento: imovel.complemento,
+              bairro: imovel.bairro,
               cidade: imovel.cidade,
               uf: imovel.uf,
-              empreendimento: imovel.empreendimento,
+              cep: imovel.cep,
             }}
-            savingEnderecoManual={enderecoManualMutation.isPending}
-            onSaveEnderecoManual={(patch) => enderecoManualMutation.mutate(patch)}
           />
 
           <ImovelDocumentosCard
@@ -540,8 +551,16 @@ function ImovelManualLayout({
             saving={dadosMutation.isPending}
             error={dadosMutation.error?.message ?? null}
             onSave={(patch) => dadosMutation.mutate(patch)}
-            savingEnderecoManual={enderecoManualMutation.isPending}
-            onSaveEnderecoManual={(patch) => enderecoManualMutation.mutate(patch)}
+          />
+
+          {/* Migration 159 — a manually registered imóvel has no Vista
+              mirror row at all, so `mirror` is omitted here (matches the
+              rest of this layout's "no Vista data" posture). */}
+          <ImovelEnderecoCard
+            dados={dadosQuery.data}
+            loading={dadosQuery.isPending && !dadosQuery.data}
+            saving={enderecoManualMutation.isPending}
+            onSave={(patch) => enderecoManualMutation.mutate(patch)}
           />
 
           <ImovelDocumentosCard

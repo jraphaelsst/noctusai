@@ -43,6 +43,7 @@ debounced typeahead, which is the cheap side of that trade.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 from uuid import UUID
 
@@ -88,8 +89,34 @@ _SNAP_MAP = {
 #: carries the live listing text; the registry carries only what was snapshot
 #: at delist time, which is why a delisted imóvel is findable by its código
 #: and by its last-known título/bairro and by nothing else.
-_MIRROR_BUSCA_COLS = ("codigo", "titulo", "bairro")
+#:
+#: 🔴 `empreendimento`/`logradouro` added 2026-09-23 (measured live on
+#: RODRIGO MORASCHI ENRIQUEZ / ONE7515 — see
+#: `test_carregador_empreendimento_manual.py`'s header for the related
+#: EUROVILLE-535 incident): the picker's placeholder promises "código,
+#: título ou bairro" but the search itself only ever matched THREE columns,
+#: and neither `empreendimento` ("Euroville - Km 23") nor `logradouro` was
+#: among them — an operator searching the development's name and getting
+#: zero results hand-registered a duplicate. `snap_empreendimento`/
+#: `snap_logradouro` do NOT exist on the registry (063's delist-time
+#: snapshot is narrower on purpose — see `_SNAP_MAP`), so a DELISTED imóvel
+#: still cannot be found by empreendimento/logradouro; that gap is real and
+#: tracked below (NOC-REMEDIATE), not silently worked around by inventing
+#: new snapshot columns in this change.
+_MIRROR_BUSCA_COLS = ("codigo", "titulo", "bairro", "empreendimento", "logradouro")
 _REGISTRY_BUSCA_COLS = ("codigo_canonical", "snap_titulo", "snap_bairro")
+
+# NOC-REMEDIATE[imovel-busca-accent-fold]: `_ilike_rows` runs `ILIKE
+# %termo%` verbatim — case-insensitive (Postgres ILIKE) but NOT accent-
+# insensitive ("sao paulo" will not match a stored "São Paulo"). A true fix
+# needs a DB-side `unaccent()`-derived generated/indexed column on both
+# `imoveis` and `imovel_registry` (the `codigo_norm` generated column,
+# migration 062, is the established precedent for this shape) — deferred:
+# it touches the Vista-sync mirror's schema (owned by `imoveis_service`)
+# and needs the `unaccent` extension enabled + wrapped IMMUTABLE for a
+# STORED generated column, which no migration in this product has done
+# before. Batch with the `_REGISTRY_BUSCA_COLS` snapshot gap above when this
+# class reaches N≥3 (`KB § PATTERNS/common/remediation-markers.md`). — 2026-09-23
 
 
 def canonical(codigo: str) -> str:
@@ -304,6 +331,76 @@ def _ranking(termo_canonical: str):
     return chave
 
 
+# ── near-duplicate suggestions (2026-09-23) ─────────────────────────────────
+#
+# A term that finds NOTHING in `buscar()` is exactly the moment
+# `ImovelCodigoPicker` offers "Cadastrar '<termo>' como imóvel novo" — and
+# exactly the moment a genuine duplicate gets hand-registered, because a
+# zero-result search reads as "this property has no código yet" even when it
+# does. Measured live 2026-09-22: EUROVILLE-535 was hand-registered as a
+# duplicate of ONE7515 (`empreendimento`/`bairro` "Euroville - Km 23",
+# `complemento` "535") after a search for "Euroville" came back empty (the
+# `_MIRROR_BUSCA_COLS` gap above). This is the SECOND, independent net:
+# even once that gap is closed, an operator typing a proposed CÓDIGO
+# (`"EUROVILLE-535"`) rather than a search phrase still needs a check the
+# plain column search cannot do — `complemento` is deliberately NOT a
+# `buscar()` column (a bare number would match too broadly), but a trailing
+# numeric run in the typed text is exactly what a `complemento` holds for a
+# condo unit.
+_NUMERO_FINAL_RE = re.compile(r"(\d+)\s*$")
+
+
+def sugestoes_para_cadastro(
+    client: Any, org_id: UUID, *, termo: str, limite: int = 5
+) -> dict:
+    """Imóveis that MIGHT be what `termo` is actually about, for the
+    "cadastrar como novo" confirmation step — never a hard block (a genuine
+    new property is a real, common case), just a "did you mean one of
+    these?" the operator can dismiss.
+
+    Two independent signals, unioned:
+      1. `empreendimento` ILIKE `termo` — same building/condomínio, however
+         it is currently named ON THIS imóvel's own row (this covers a
+         `termo` typo/whitespace variant `buscar()`'s exact-ish ranking
+         would rank low, not only the exact `_MIRROR_BUSCA_COLS` gap above).
+      2. a trailing numeric run in `termo` (e.g. "535" out of
+         "EUROVILLE-535") ILIKE-matched against `complemento` — the
+         condo-unit-number signal the owner named explicitly.
+
+    Mirror-only (`imoveis`, not the registry): a delisted/hand-registered
+    imóvel's `complemento`/`empreendimento` are not in the registry's
+    delist-time snapshot at all (see `_SNAP_MAP`) — nothing to match against
+    there. Returns the same shape as `buscar()`, so the FE can render it
+    with `rotuloDoImovel` unchanged.
+    """
+    termo_limpo = (termo or "").strip()
+    if not termo_limpo:
+        return {"items": [], "total": 0}
+    limite = max(1, min(int(limite), LIMITE_MAXIMO))
+
+    codigos: set[str] = set()
+    codigos.update(
+        canonical(str(r["codigo"]))
+        for r in _ilike_rows(client, MIRROR_TABLE, org_id, "empreendimento", termo_limpo, limite)
+        if r.get("codigo")
+    )
+    numero = _NUMERO_FINAL_RE.search(termo_limpo)
+    if numero:
+        codigos.update(
+            canonical(str(r["codigo"]))
+            for r in _ilike_rows(
+                client, MIRROR_TABLE, org_id, "complemento", numero.group(1), limite
+            )
+            if r.get("codigo")
+        )
+
+    if not codigos:
+        return {"items": [], "total": 0}
+    enriquecidos = enriquecer(client, org_id, sorted(codigos))
+    itens = sorted(enriquecidos.values(), key=_ranking(canonical(termo_limpo)))[:limite]
+    return {"items": itens, "total": len(itens)}
+
+
 __all__ = [
     "LIMITE_MAXIMO",
     "LIMITE_PADRAO",
@@ -311,4 +408,5 @@ __all__ = [
     "buscar",
     "canonical",
     "enriquecer",
+    "sugestoes_para_cadastro",
 ]

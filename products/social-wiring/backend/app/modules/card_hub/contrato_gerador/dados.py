@@ -205,14 +205,25 @@ class Imovel:
     #: 149) has no mirror row at all, so without the authored override this
     #: is silently `None` forever and the title prints the address alone.
     empreendimento: Optional[str] = None
-    #: 🔴 [endereco-portaria-vs-imovel] The CRM/Vista mirror's PÚBLICO
-    #: endereço (`imoveis.logradouro`/`.numero`/`.complemento`). At at least
-    #: one tenant this is a DELIBERATE DECOY: the office publishes the
-    #: portaria/gatehouse address here — visible to agents outside the firm —
-    #: and keeps the real property address only on the matrícula, so outside
-    #: agents cannot harvest it. Safe for `cidade`/`uf`/labelling and for the
-    #: coherence check below; NEVER print `.logradouro`/`.numero` as the
-    #: property's location in a clause — use `endereco_registro_texto`.
+    #: 🔴 [endereco-portaria-vs-imovel] THE PROPERTY TABLE's address (owner
+    #: rule, 2026-09-23): `carregador._endereco_manual`'s per-field override
+    #: (`imovel_dados.endereco_manual_*`, migrations 149/159) over the CRM/
+    #: Vista mirror's PÚBLICO endereço (`imoveis.logradouro`/`.numero`/
+    #: `.complemento`/...) when set, else the mirror as-is. At at least one
+    #: tenant the mirror alone is a DELIBERATE DECOY: the office publishes
+    #: the portaria/gatehouse address there — visible to agents outside the
+    #: firm — and keeps the real property address only on the matrícula, so
+    #: outside agents cannot harvest it; a condomínio's mirror row can ALSO
+    #: carry only the GATE address with the unit's own address elsewhere —
+    #: the override is how an operator supplies the correct one for either
+    #: case. Safe for `cidade`/`uf`/labelling and for the coherence check
+    #: below (`derivacao._verificar_coerencia_endereco`, `avisa`-only —
+    #: never a reliable "same property?" signal against the matrícula, by
+    #: design); NEVER print `.logradouro`/`.numero` as the property's
+    #: location in a clause — use `endereco_registro_texto`/`endereco_curto`
+    #: (`derivacao.resolver_endereco_posse`), which derive from the
+    #: matrícula (with their OWN separate confirmed-override escape hatch)
+    #: and are unchanged by this field.
     endereco: Endereco = field(default_factory=Endereco)
     #: The CRM/Vista `AreaTotal` (m²) — used only by the coherence check
     #: below (never printed): a genuinely different property tends to differ

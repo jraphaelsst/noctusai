@@ -56,6 +56,7 @@ from app.modules.imovel_hub.schemas import (
     EnderecoManualPatchBody,
     ImovelDadosPatchBody,
     ImovelDocumentoExtracaoPatchBody,
+    RegistrarImovelBody,
 )
 # NOC-REMEDIATE[matricula-pipeline-consolidation] (partial — see module
 # docstring below): the imóvel-page upload now queues the SAME full
@@ -125,8 +126,10 @@ async def put_endereco_manual_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
 ) -> dict:
-    """Manual override for the 4 address fields `contrato_gerador.derivacao`
-    reads (migration 149) — see `dados_service.gravar_endereco_manual`."""
+    """Manual override for all 7 address fields (migration 149, widened by
+    159) — see `dados_service.gravar_endereco_manual`. Every field is
+    optional here (a partial patch is legitimate) — `registrar_imovel_route`
+    below is the body that REQUIRES a full address, at registration time."""
     user, org_id = _auth_parts(auth)
     codigo_canonico = codigo.upper()
     valores = {
@@ -162,6 +165,7 @@ async def get_endereco_manual_historico_route(
 @router.post("/{codigo}/registrar")
 async def registrar_imovel_route(
     codigo: str,
+    body: RegistrarImovelBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
 ) -> dict:
@@ -169,12 +173,36 @@ async def registrar_imovel_route(
     registry) a registry identity, so it becomes pickable everywhere
     `imovel_registry` is the FK target — `ImovelCodigoPicker`'s "cadastrar
     novo imóvel" affordance for a property that has no anúncio at all
-    (off-market, being tested manually). Idempotent — `registrar_imovel`
-    itself already is."""
+    (off-market, being tested manually).
+
+    🔴 Migration 159 — owner rule (verbatim, 2026-09-23): "The address
+    doesn't come from the matrícula. The address comes from the property
+    table; it will be mandatory upon property registration that it has the
+    address in it." So this route now REQUIRES the address (`body`,
+    `RegistrarImovelBody` — Pydantic 422s a missing field with its name) and
+    writes it as the manual override in the SAME request, right after the
+    registry row exists (`ensure_imovel` inside `gravar_endereco_manual`
+    would otherwise 404 a código that was never registered). Two writes, not
+    one transaction — same posture every other multi-table author in this
+    module takes (Supabase REST has no cross-table transaction here); both
+    are idempotent so a retry after a partial failure is safe.
+
+    `registrar_imovel` itself is idempotent — a second POST for the same
+    código simply re-applies the address override (legitimate: correcting a
+    typo right after registering)."""
     _user, org_id = _auth_parts(auth)
     canonico = dados_svc.registrar_imovel(client, org_id, codigo, origem="manual")
     if not canonico:
         raise HTTPException(status_code=400, detail="Código do imóvel é obrigatório.")
+    valores = {f"endereco_manual_{k}": v for k, v in body.model_dump().items()}
+    dados_svc.gravar_endereco_manual(
+        client,
+        org_id,
+        canonico,
+        valores=valores,
+        mirror={},
+        usuario_id=getattr(_user, "id", None),
+    )
     return {"codigo": canonico}
 
 

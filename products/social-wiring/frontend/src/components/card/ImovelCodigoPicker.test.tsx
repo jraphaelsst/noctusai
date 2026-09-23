@@ -10,18 +10,32 @@
  * The hook is mocked rather than the fetch: what is under test here is the
  * component's behaviour given a result set, and driving react-query + a
  * debounce timer through it would put neither in the assertions.
+ *
+ * Migration 159 — "Cadastrar como imóvel novo" no longer registers on a
+ * single click: it reveals a required-address form first (owner rule
+ * 2026-09-23), and a "did you mean one of these?" list of near-duplicates
+ * (`useImoveisPossiveisDuplicatas`) shows above it when the search's zero
+ * result might really be a mis-typed existing property — the EUROVILLE-535
+ * duplicate-registration incident this closes.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockUseImoveisBusca, mockUseRegistrarImovelManual, mockRegistrarMutate } = vi.hoisted(
-  () => ({
-    mockUseImoveisBusca: vi.fn(),
-    mockRegistrarMutate: vi.fn(),
-    mockUseRegistrarImovelManual: vi.fn(),
-  }),
-);
+const {
+  mockUseImoveisBusca,
+  mockUseImoveisPossiveisDuplicatas,
+  mockUseRegistrarImovelManual,
+  mockRegistrarMutate,
+} = vi.hoisted(() => ({
+  mockUseImoveisBusca: vi.fn(),
+  mockUseImoveisPossiveisDuplicatas: vi.fn(),
+  mockRegistrarMutate: vi.fn(),
+  mockUseRegistrarImovelManual: vi.fn(),
+}));
 vi.mock("@/hooks/useCardHub", () => ({
   useImoveisBusca: mockUseImoveisBusca,
+}));
+vi.mock("@/hooks/useImovelRegistro", () => ({
+  useImoveisPossiveisDuplicatas: mockUseImoveisPossiveisDuplicatas,
   useRegistrarImovelManual: mockUseRegistrarImovelManual,
 }));
 vi.mock("@/hooks/useDebouncedValue", () => ({
@@ -32,12 +46,15 @@ beforeEach(() => {
   mockUseRegistrarImovelManual.mockReturnValue({
     mutate: mockRegistrarMutate,
     isPending: false,
+    isError: false,
   });
+  mockUseImoveisPossiveisDuplicatas.mockReturnValue(busca([]));
 });
 
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
   mockUseImoveisBusca.mockReset();
+  mockUseImoveisPossiveisDuplicatas.mockReset();
   mockUseRegistrarImovelManual.mockReset();
   mockRegistrarMutate.mockReset();
 });
@@ -83,6 +100,30 @@ async function digitar(termo: string) {
   const rtl = await import("@testing-library/react");
   rtl.fireEvent.change(rtl.screen.getByTestId("imovel-picker-input"), {
     target: { value: termo },
+  });
+}
+
+/** Fills the 6 required fields of the "cadastrar novo" address form —
+ *  `complemento` stays blank (optional, house/lot has no unit number). */
+async function preencherEndereco(screen: Awaited<ReturnType<typeof render>>["screen"]) {
+  const rtl = await import("@testing-library/react");
+  rtl.fireEvent.change(screen.getByTestId("imovel-picker-novo-logradouro"), {
+    target: { value: "Alameda Alemanha" },
+  });
+  rtl.fireEvent.change(screen.getByTestId("imovel-picker-novo-numero"), {
+    target: { value: "535" },
+  });
+  rtl.fireEvent.change(screen.getByTestId("imovel-picker-novo-bairro"), {
+    target: { value: "Euroville - Km 23" },
+  });
+  rtl.fireEvent.change(screen.getByTestId("imovel-picker-novo-cidade"), {
+    target: { value: "Barueri" },
+  });
+  rtl.fireEvent.change(screen.getByTestId("imovel-picker-novo-uf"), {
+    target: { value: "SP" },
+  });
+  rtl.fireEvent.change(screen.getByTestId("imovel-picker-novo-cep"), {
+    target: { value: "06355-465" },
   });
 }
 
@@ -176,18 +217,104 @@ describe("ImovelCodigoPicker", () => {
     expect(screen.getByTestId("imovel-picker-cadastrar-novo")).toBeTruthy();
   });
 
-  it("registering picks the newly-given identity as the chosen imóvel", async () => {
+  it("clicking 'cadastrar novo' reveals the required-address form, not an immediate register (migration 159)", async () => {
     mockUseImoveisBusca.mockReturnValue(busca([]));
-    mockRegistrarMutate.mockImplementation((codigo: string, opts: { onSuccess: (r: { codigo: string }) => void }) => {
-      opts.onSuccess({ codigo });
-    });
+    const { screen, fireEvent } = await render();
+
+    await digitar("OFFMKT01");
+    fireEvent.click(screen.getByTestId("imovel-picker-cadastrar-novo"));
+
+    expect(screen.getByTestId("imovel-picker-formulario-cadastro")).toBeTruthy();
+    expect(mockRegistrarMutate).not.toHaveBeenCalled();
+  });
+
+  it("keeps 'cadastrar imóvel' disabled until every required field is filled", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    const { screen, fireEvent } = await render();
+
+    await digitar("OFFMKT01");
+    fireEvent.click(screen.getByTestId("imovel-picker-cadastrar-novo"));
+
+    expect(
+      (screen.getByTestId("imovel-picker-novo-salvar") as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await preencherEndereco(screen);
+
+    expect(
+      (screen.getByTestId("imovel-picker-novo-salvar") as HTMLButtonElement).disabled,
+    ).toBe(false);
+  });
+
+  it("registering sends the address and picks the newly-given identity as the chosen imóvel", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    mockRegistrarMutate.mockImplementation(
+      (
+        _body: { codigo: string; endereco: Record<string, unknown> },
+        opts: { onSuccess: (r: { codigo: string }) => void },
+      ) => {
+        opts.onSuccess({ codigo: _body.codigo });
+      },
+    );
     const { screen, fireEvent, onChange } = await render();
 
     await digitar("offmkt01");
     fireEvent.click(screen.getByTestId("imovel-picker-cadastrar-novo"));
+    await preencherEndereco(screen);
+    fireEvent.click(screen.getByTestId("imovel-picker-novo-salvar"));
 
-    expect(mockRegistrarMutate).toHaveBeenCalledWith("OFFMKT01", expect.anything());
+    expect(mockRegistrarMutate).toHaveBeenCalledWith(
+      {
+        codigo: "OFFMKT01",
+        endereco: {
+          logradouro: "Alameda Alemanha",
+          numero: "535",
+          complemento: null,
+          bairro: "Euroville - Km 23",
+          cidade: "Barueri",
+          uf: "SP",
+          cep: "06355-465",
+        },
+      },
+      expect.anything(),
+    );
     expect(onChange).toHaveBeenCalledWith("OFFMKT01");
+  });
+
+  it("shows near-duplicates above 'cadastrar novo' when the empty search might be a mis-typed existing property", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    mockUseImoveisPossiveisDuplicatas.mockReturnValue(
+      busca([hit("ONE7515", { empreendimento: "Euroville - Km 23" })]),
+    );
+    const { screen } = await render();
+
+    await digitar("Euroville");
+
+    expect(screen.getByTestId("imovel-picker-duplicatas")).toBeTruthy();
+    expect(screen.getByTestId("imovel-picker-duplicata-ONE7515")).toBeTruthy();
+    // Never instead of it — a genuine new property is still the common case.
+    expect(screen.getByTestId("imovel-picker-cadastrar-novo")).toBeTruthy();
+  });
+
+  it("picking a near-duplicate reports it up, same as a normal search hit", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    mockUseImoveisPossiveisDuplicatas.mockReturnValue(busca([hit("ONE7515")]));
+    const { screen, fireEvent, onChange } = await render();
+
+    await digitar("Euroville");
+    fireEvent.click(screen.getByTestId("imovel-picker-duplicata-ONE7515"));
+
+    expect(onChange).toHaveBeenCalledWith("ONE7515");
+  });
+
+  it("does not show near-duplicates when the search already found results", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([hit("ONE9001")]));
+    const { screen } = await render();
+
+    await digitar("ONE9");
+
+    expect(screen.queryByTestId("imovel-picker-duplicatas")).toBeNull();
+    expect(mockUseImoveisPossiveisDuplicatas).toHaveBeenCalledWith("ONE9", false);
   });
 
   it("does not claim 'nenhum imóvel' while a fetch is still in flight", async () => {

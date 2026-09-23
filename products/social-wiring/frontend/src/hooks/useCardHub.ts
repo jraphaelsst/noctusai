@@ -313,26 +313,16 @@ export function useImoveisBusca(termo: string) {
   });
 }
 
-/**
- * `POST /api/imoveis/{codigo}/registrar` (migration 149) — give a código
- * neither the Vista mirror nor the registry has ever seen a registry
- * identity, so `ImovelCodigoPicker` can offer it. Idempotent on the server;
- * invalidates every `imoveisBusca` query so a subsequent search (or the
- * SAME search, re-typed) finds it.
- */
-export function useRegistrarImovelManual() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (codigo: string) =>
-      api.post<{ codigo: string }>(
-        `/api/imoveis/${encodeURIComponent(codigo)}/registrar`,
-        {},
-      ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [...ROOT_KEY, "imoveisBusca"] });
-    },
-  });
-}
+// 🔴 `POST /api/imoveis/{codigo}/registrar`'s mutation hook (migration 149)
+// moved to `hooks/useImovelRegistro.ts` (migration 159): the endpoint now
+// REQUIRES a full address body, and the picker also needs the paired
+// "did you mean one of these?" near-duplicate check
+// (`GET /api/imoveis/busca/duplicatas`) — both live together there, in
+// their own file, so this shared card-hub file's query-invalidation
+// surface stays untouched by the imóvel-registration flow. `IMOVEIS_BUSCA_
+// KEY`/`useImoveisBusca` above are unaffected and stay exactly where they
+// were; the new file's mutation invalidates the SAME `[...ROOT_KEY,
+// "imoveisBusca"]` prefix by its literal value.
 
 /**
  * Create / rename / delete a roteiro, reorder it, and record each visita's
