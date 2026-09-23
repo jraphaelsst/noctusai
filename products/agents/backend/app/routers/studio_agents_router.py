@@ -58,9 +58,12 @@ from app.schemas.studio import (
     SectionOut,
     SectionsReplaceRequest,
     SkillCreateRequest,
+    SkillFileBatchItemResultOut,
     SkillFileMetaOut,
     SkillFileOut,
     SkillFileUpsertRequest,
+    SkillFilesBatchResultOut,
+    SkillFilesBatchUpsertRequest,
     SkillOut,
     SkillUpdateRequest,
     StudioAgentCreateRequest,
@@ -91,6 +94,15 @@ router = APIRouter(prefix="/api/studio", tags=["studio"])
 
 #: Version settings compared by the diff endpoint, in output order.
 _CONFIG_FIELDS = ("model", "effort", "max_turns", "idioma", "tool_policy")
+
+#: The body-cap pattern ``app.main`` registers for the skill-files batch
+#: route (UI-KB-BACKEND), same shape as ``studio_import_router.
+#: IMPORT_BODY_LIMIT_PATTERN`` / ``studio_knowledge_router.
+#: DOCUMENTS_BATCH_BODY_LIMIT_PATTERN``.
+SKILL_FILES_BATCH_BODY_LIMIT_PATTERN = "/api/studio/agents/*/draft/skills/*/files/batch"
+#: 50 items × `skill_file.conteudo` (120 KB) = 6 MB pathological max;
+#: 8 MB gives headroom without matching the (much larger) bundle-import cap.
+SKILL_FILES_BATCH_MAX_BYTES = 8 * 1024 * 1024
 
 
 # ── dependency seams ────────────────────────────────────────────────────────
@@ -580,6 +592,55 @@ async def upsert_draft_skill_file(
         )
     _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
     return SkillFileMetaOut(id=f.id, caminho=f.caminho, titulo=f.titulo, chars=len(f.conteudo))
+
+
+@router.put(
+    "/agents/{key}/draft/skills/{skill_id}/files/batch", response_model=SkillFilesBatchResultOut,
+)
+async def upsert_draft_skill_files_batch(
+    key: str,
+    skill_id: UUID,
+    payload: SkillFilesBatchUpsertRequest,
+    ctx: AuthContext = Depends(require_admin),
+    store=Depends(get_studio_definition_store_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
+) -> SkillFilesBatchResultOut:
+    """Bulk upsert of a skill's reference files (contract §D1 batch,
+    UI-KB-BACKEND) — same draft-only / immutability / caminho-caps rules as
+    the single-file route (``_resolve_draft_skill`` 409s the WHOLE call if
+    the version isn't a draft, same as today). PER-ITEM results: one bad
+    file never sinks the call."""
+    agent = resolve_agent(store, ctx.org_id, key)
+    _, draft = _resolve_draft_skill(store, ctx.org_id, agent, skill_id)
+    existing_caminhos = {
+        f.caminho for f in store.list_version_skill_files(ctx.org_id, draft.id) if f.skill_id == skill_id
+    }
+    resultados: list[SkillFileBatchItemResultOut] = []
+    criados = atualizados = erros = 0
+    for item in payload.arquivos:
+        was_existing = item.caminho in existing_caminhos
+        try:
+            f = store.upsert_skill_file(
+                ctx.org_id, skill_id, caminho=item.caminho, titulo=item.titulo, conteudo=item.conteudo,
+            )
+        except (ValueError, StudioConflict) as exc:
+            erros += 1
+            resultados.append(SkillFileBatchItemResultOut(caminho=item.caminho, status="erro", erro=str(exc)))
+            continue
+        existing_caminhos.add(item.caminho)
+        if was_existing:
+            atualizados += 1
+            status_pt = "atualizado"
+        else:
+            criados += 1
+            status_pt = "criado"
+        resultados.append(SkillFileBatchItemResultOut(
+            caminho=item.caminho, status=status_pt, id=f.id, titulo=f.titulo, chars=len(f.conteudo),
+        ))
+    _refresh_draft_hash(store, catalog, ctx.org_id, agent, draft.id)
+    return SkillFilesBatchResultOut(
+        resultados=resultados, criados=criados, atualizados=atualizados, erros=erros,
+    )
 
 
 @router.get("/agents/{key}/skills/{skill_id}/files/{file_id}", response_model=SkillFileOut)

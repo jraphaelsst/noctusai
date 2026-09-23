@@ -14,7 +14,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.studio.models import LIMITS, OVERRIDE_REASON_MIN_CHARS, PUBLICACAO_LIMIAR_MIN, override_reason_ok
+from app.studio.models import (
+    LIMITS,
+    OVERRIDE_REASON_MIN_CHARS,
+    PUBLICACAO_LIMIAR_MIN,
+    SKILL_FILES_BATCH_MAX,
+    override_reason_ok,
+)
 from noctusai_lib.api import StrictHttpModel
 
 #: 012 slug CHECK (agent key, section chave, skill nome, client slug).
@@ -189,6 +195,44 @@ class SkillFileUpsertRequest(StrictHttpModel):
         if ".." in v:
             raise ValueError("caminho must not contain '..'")
         return v
+
+
+class SkillFileBatchItemIn(StrictHttpModel):
+    """One file of a `files:batch` call — same fields/caps/path-traversal
+    guard as ``SkillFileUpsertRequest`` (no weaker validation path)."""
+
+    caminho: str = Field(..., min_length=1, max_length=255, pattern=CAMINHO_PATTERN)
+    titulo: str | None = None
+    conteudo: str = Field(..., max_length=LIMITS["skill_file.conteudo"])
+
+    @field_validator("caminho")
+    @classmethod
+    def _no_parent_segments(cls, v: str) -> str:
+        if ".." in v:
+            raise ValueError("caminho must not contain '..'")
+        return v
+
+
+class SkillFilesBatchUpsertRequest(StrictHttpModel):
+    #: 1..50 (`SKILL_FILES_BATCH_MAX`).
+    arquivos: list[SkillFileBatchItemIn] = Field(..., min_length=1, max_length=SKILL_FILES_BATCH_MAX)
+
+
+class SkillFileBatchItemResultOut(BaseModel):
+    caminho: str
+    #: "criado" | "atualizado" | "erro"
+    status: str
+    id: UUID | None = None
+    titulo: str | None = None
+    chars: int | None = None
+    erro: str | None = None
+
+
+class SkillFilesBatchResultOut(BaseModel):
+    resultados: list[SkillFileBatchItemResultOut]
+    criados: int
+    atualizados: int
+    erros: int
 
 
 class PublishRequest(StrictHttpModel):
