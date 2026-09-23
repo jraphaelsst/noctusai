@@ -32,7 +32,7 @@ Owner asked to smoke-test igig end-to-end, make the Esteira drag-and-drop, add a
 | T2 | Owner prod consent for SW | owner's explicit "promote SW" in chat | SW is live; prod exposure is the owner's decision |
 | T3 | Wave B shipped | igig bugfix + domain migrations green, lead/cliente/marca model live locally | C–E build on the new model |
 
-**Today's status**: none fired; roadmap authored, wave A design dispatched.
+**Today's status (2026-09-23)**: T1 ✅ (wave A A.1–A.4 integrated on dev AND in prod — seed card_hub 5224c4704 is an ancestor of origin/prod). T2 ✅ implicitly (SW wave A reached prod via the 2026-09-22 bless). Waves B–E executing in session 32f6dbc0 under the owner's 2026-09-23 instruction "finish leftovers … go all the way to prod" — see **Execution plan (2026-09-23)** below. igig catalog row is `ativo=true, deploy_scope=dev`; the running prod container is the 2026-08-13 build.
 
 ## Phase 1 — Spec capture (SHIPPED with this commit)
 
@@ -42,7 +42,7 @@ Owner asked to smoke-test igig end-to-end, make the Esteira drag-and-drop, add a
 
 **Smoke-test findings (2026-09-22, local, real Supabase):** (1) 🔴 `GET /financeiro/excedentes/{YYYY-MM}` 500s in any <31-day month (`financeiro_service.py:82` builds `-31T23:59:59`; SQLite tests hide it). (2) 🔴 unauthenticated signature webhook activates contracts with a guessable dry-run id. (3) timer trusts payload `usuario_id`. (4) approval portal ignores current stage; link mint doesn't move to `aprovacao_cliente`; refação increment non-atomic; "agência notificada" never sent. (5) Esteira page overflows horizontally (scrollWidth 2049 @1688); cards show no cliente/pauta/responsável/prazo; no delete. (6) Calendário grid has no weekday offset/headers. (7) hooks without UI (agendar publicação, criar fatura, apontamentos). (8) `tarefa.responsavel_id`=profissional vs `apontamento.usuario_id`=auth user.
 
-## Phase 2 — Wave A: seed CardHub + SW swap (IN PROGRESS)
+## Phase 2 — Wave A: seed CardHub + SW swap (SHIPPED — in prod 2026-09-22)
 
 | # | Title | Files | Trigger | Verify recipe |
 |---|---|---|---|---|
@@ -62,12 +62,24 @@ Owner asked to smoke-test igig end-to-end, make the Esteira drag-and-drop, add a
 | A.9 | SW tests: drop remaining `@/components/ui/select` mocks (ContratosPanel, NegociacaoEstruturadaPanel, TermosNegocioSection) now that SW test setup has pointer-events + user-event | SW frontend tests | T2 | those suites green on real Radix |
 | A.10 | Pre-existing SW vitest flake: 13 files time out at 15s under full-suite load (17 failures on baseline bef5ab17a) | SW vitest config | T2 | full SW vitest green twice in a row |
 
-## Phase 3 — Wave B: igig foundation (DEFERRED — T1)
+## Execution plan (2026-09-23, session 32f6dbc0)
+
+Wave 1 (parallel, file-disjoint):
+| slice | branch | scope |
+|---|---|---|
+| W1a | `feat/igig-crm-foundation` | igig BE spine: all new tables (pipeline_stages/movimentos comercial+esteira, negocio, lead enrichment, produto_servico, orcamento v1 + orcamento_item, tarefa→stage_id, pauta origin, contrato modalidade, integracao smtp/gmail/whatsapp/meta_leads, gmail_watch, orcamento_email, automacao), seed pipeline + card_hub mounts (cliente + negocio), move rules (Fechado needs orçamento → creates cliente; Esteira forward-1 / backward-with-motivo / refação), smoke bugs 1–4, 8 |
+| W1b | `feat/seed-pipeline-before-move` | seed PipelineBoard `onBeforeMove` intercept + `MotivoMoveDialog` + server-rollback |
+| W1c | `feat/seed-email-sender` | seed EmailSender Protocol + SMTP Real (attachments, Message-ID) + Fake + factory; SW EmailService shim |
+| W1d | `feat/seed-gmail-watch` | seed Gmail watch/history/push-envelope/OIDC verify/Pub/Sub provisioning + reply matcher |
+
+Wave 2 (after wave 1 integrates) — feature-vertical full-stack slices: Comercial funnel · Orçamentos + Produtos e Serviços + PDF · E-mail/Integrações/reply watcher · Clientes CardHub + marcas merge + calendário/esteira tabs · Esteira board + Calendário fix + portal · Financeiro alignment + report service + orphan hooks UI · Automations v1 + lead sources (WAHA, Meta) + AI assist. Mobile-first (R0) in every slice. Then: migrations → gate sweep → live browser smoke (desktop + 390px) → ship consent → prod.
+
+## Phase 3 — Wave B: igig foundation (IN PROGRESS — W1a)
 
 Bugfixes 1–8; data model: `lead`, `negocio`(funnel card), `cliente` enrichment, `marca` N per cliente, `orcamento` + `orcamento_item` (recurrence: weekdays bitmask + qty/day), `produto_servico` catalog, pipeline_stages/movimentos for `comercial` + `esteira`; mobile-first shell.
 
 ## Phase 4 — Wave C: Comercial + Orçamentos + Produtos e Serviços (DEFERRED — T3)
-## Phase 5 — Wave D: e-mail (SMTP seam + PDF attach), reply watcher (IMAP poll matching Message-ID), notifications, Integrações SMTP keys (DEFERRED — T3)
+## Phase 5 — Wave D: e-mail (SMTP seam + PDF attach), reply watcher (Gmail API push, matching Message-ID), notifications, Integrações SMTP keys (DEFERRED — T3)
 ## Phase 6 — Wave E: Clientes CardHub (marcas/calendário/esteira/financeiro tabs), calendar generation, Financeiro alignment + Report service, automations v1 (DEFERRED — T3)
 
 ## Anti-goals
