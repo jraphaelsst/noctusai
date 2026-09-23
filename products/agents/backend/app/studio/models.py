@@ -44,6 +44,8 @@ __all__ = [
     "SEARCH_QUERY_MAX",
     "LIST_QUERY_MAX",
     "RUN_CASE_IDS_MAX",
+    "DOCUMENTS_BATCH_MAX",
+    "SKILL_FILES_BATCH_MAX",
     "EVAL_RUN_MODEL_ALLOWLIST",
     "EVAL_RUN_BUDGET_USD_MIN",
     "EVAL_RUN_BUDGET_USD_MAX",
@@ -88,6 +90,14 @@ SEARCH_QUERY_MAX = 512
 LIST_QUERY_MAX = 200
 #: L6 — an explicit eval-run case list is deduped and capped at this size.
 RUN_CASE_IDS_MAX = 200
+#: UI-KB-BACKEND batch endpoints — bulk knowledge ingest for the Studio UI
+#: (382-document / 12-skill corpora can't go through one-document-per-call).
+#: `documents:batch` items per call (each still capped at
+#: `document.conteudo`, §H4 body-size override below).
+DOCUMENTS_BATCH_MAX = 100
+#: `skills/{id}/files:batch` items per call (each capped at
+#: `skill_file.conteudo`).
+SKILL_FILES_BATCH_MAX = 50
 
 # ── Cost control (contract §L) ──────────────────────────────────────────────
 

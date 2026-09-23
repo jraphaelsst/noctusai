@@ -249,6 +249,100 @@ class TestDraftEditing:
         assert studio.delete(f"{BASE}/isa/draft/skills/{skill['id']}").status_code == 204
         assert _draft(studio)["skills"] == []
 
+    def test_skill_files_batch(self, studio):
+        _create(studio)
+        skill = studio.post(
+            f"{BASE}/isa/draft/skills", json={"nome": "roteiro", "descricao": "Roteiros.", "corpo": "Passos"},
+        ).json()
+
+        resp = studio.put(f"{BASE}/isa/draft/skills/{skill['id']}/files/batch", json={"arquivos": [
+            {"caminho": "references/a.md", "conteudo": "abc"},
+            {"caminho": "references/b.md", "titulo": "B", "conteudo": "defg"},
+        ]})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["criados"] == 2 and body["atualizados"] == 0 and body["erros"] == 0
+        by_caminho = {r["caminho"]: r for r in body["resultados"]}
+        assert by_caminho["references/a.md"]["status"] == "criado"
+        assert by_caminho["references/a.md"]["chars"] == 3
+        assert by_caminho["references/b.md"]["titulo"] == "B"
+
+        detail = _draft(studio)
+        caminhos = {f["caminho"] for f in detail["skills"][0]["arquivos"]}
+        assert caminhos == {"references/a.md", "references/b.md"}
+
+        # Re-upserting one existing + one new path in the same call.
+        again = studio.put(f"{BASE}/isa/draft/skills/{skill['id']}/files/batch", json={"arquivos": [
+            {"caminho": "references/a.md", "conteudo": "abc novo"},
+            {"caminho": "references/c.md", "conteudo": "c"},
+        ]}).json()
+        assert again["criados"] == 1 and again["atualizados"] == 1 and again["erros"] == 0
+        by_caminho = {r["caminho"]: r for r in again["resultados"]}
+        assert by_caminho["references/a.md"]["status"] == "atualizado"
+        assert by_caminho["references/c.md"]["status"] == "criado"
+
+    def test_skill_files_batch_bad_caminho_422s(self, studio):
+        _create(studio)
+        skill = studio.post(
+            f"{BASE}/isa/draft/skills", json={"nome": "roteiro", "descricao": "d", "corpo": "c"},
+        ).json()
+        resp = studio.put(f"{BASE}/isa/draft/skills/{skill['id']}/files/batch", json={"arquivos": [
+            {"caminho": "../etc/passwd", "conteudo": "x"},
+        ]})
+        assert resp.status_code == 422
+
+    def test_skill_files_batch_over_limit_422s(self, studio):
+        _create(studio)
+        skill = studio.post(
+            f"{BASE}/isa/draft/skills", json={"nome": "roteiro", "descricao": "d", "corpo": "c"},
+        ).json()
+        arquivos = [{"caminho": f"references/f{i}.md", "conteudo": "x"} for i in range(51)]
+        resp = studio.put(f"{BASE}/isa/draft/skills/{skill['id']}/files/batch", json={"arquivos": arquivos})
+        assert resp.status_code == 422
+
+    def test_skill_files_batch_of_published_version_is_immutable(self, studio):
+        draft = _publishable(studio)
+        skill = studio.post(
+            f"{BASE}/isa/draft/skills", json={"nome": "roteiro", "descricao": "d", "corpo": "c"},
+        ).json()
+        _pass_gate(studio, _draft(studio))
+        published = studio.post(f"{BASE}/isa/draft/publish", json={}).json()
+        assert published["status"] == "ativa"
+
+        resp = studio.put(f"{BASE}/isa/draft/skills/{skill['id']}/files/batch", json={"arquivos": [
+            {"caminho": "references/a.md", "conteudo": "x"},
+        ]})
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "version_immutable"
+
+    def test_skill_files_batch_requires_auth(self, studio):
+        resp = studio.raw.put(
+            f"{BASE}/isa/draft/skills/00000000-0000-0000-0000-000000000000/files/batch",
+            json={"arquivos": [{"caminho": "a.md", "conteudo": "x"}]},
+        )
+        assert resp.status_code == 401
+
+    def test_skill_files_batch_member_forbidden(self, studio):
+        _create(studio)
+        skill = studio.post(
+            f"{BASE}/isa/draft/skills", json={"nome": "roteiro", "descricao": "d", "corpo": "c"},
+        ).json()
+        studio.as_role("member")
+        resp = studio.put(f"{BASE}/isa/draft/skills/{skill['id']}/files/batch", json={"arquivos": [
+            {"caminho": "references/a.md", "conteudo": "x"},
+        ]})
+        assert resp.status_code == 403
+
+    def test_skill_files_batch_of_other_agent_is_404(self, studio):
+        _create(studio)
+        _create(studio, key="outro")
+        skill = studio.post(f"{BASE}/outro/draft/skills", json={"nome": "s", "descricao": "d", "corpo": "c"}).json()
+        resp = studio.put(f"{BASE}/isa/draft/skills/{skill['id']}/files/batch", json={"arquivos": [
+            {"caminho": "a.md", "conteudo": "x"},
+        ]})
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "skill_not_found"
+
     def test_skill_of_other_agent_is_404(self, studio):
         _create(studio)
         _create(studio, key="outro")

@@ -52,11 +52,19 @@ from app.routers.agents_router import router as agents_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.persona_router import router as persona_router
+from app.routers.studio_agents_router import (
+    SKILL_FILES_BATCH_BODY_LIMIT_PATTERN,
+    SKILL_FILES_BATCH_MAX_BYTES,
+)
 from app.routers.studio_agents_router import router as studio_agents_router
 from app.routers.studio_clients_router import router as studio_clients_router
 from app.routers.studio_evals_router import router as studio_evals_router
 from app.routers.studio_import_router import IMPORT_BODY_LIMIT_PATTERN
 from app.routers.studio_import_router import router as studio_import_router
+from app.routers.studio_knowledge_router import (
+    DOCUMENTS_BATCH_BODY_LIMIT_PATTERN,
+    DOCUMENTS_BATCH_MAX_BYTES,
+)
 from app.routers.studio_knowledge_router import router as studio_knowledge_router
 from app.studio.importer import MAX_BUNDLE_BYTES
 from app.studio.wiring import install_studio_seams, register_anthropic_credential_override
@@ -203,9 +211,16 @@ app = create_product_app(
     # flow's ability to ever call academia (§D), and would let the
     # product boot with no way to reach social-wiring's One Chat bridge.
     required_prod_config=["APPROVAL_ASSERTION_SECRETS", "SOCIAL_WIRING_API_TOKEN"],
-    # Agent Studio §D5: the bundle import is the ONE route above the 1 MB
-    # default — an exact whole-segment wildcard, never a prefix.
-    max_body_path_overrides={IMPORT_BODY_LIMIT_PATTERN: MAX_BUNDLE_BYTES},
+    # Agent Studio §D5: the bundle import is above the 1 MB default — an
+    # exact whole-segment wildcard, never a prefix. UI-KB-BACKEND adds the
+    # two bulk-ingest batch routes the Studio UI uses in place of a bundle
+    # import (same reasoning, narrower caps — see each pattern's origin
+    # module for the byte-cap rationale).
+    max_body_path_overrides={
+        IMPORT_BODY_LIMIT_PATTERN: MAX_BUNDLE_BYTES,
+        DOCUMENTS_BATCH_BODY_LIMIT_PATTERN: DOCUMENTS_BATCH_MAX_BYTES,
+        SKILL_FILES_BATCH_BODY_LIMIT_PATTERN: SKILL_FILES_BATCH_MAX_BYTES,
+    },
 )
 
 # Agent Studio §J2: bind the fail-closed seams (eval gate, knowledge
