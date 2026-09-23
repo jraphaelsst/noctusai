@@ -30,9 +30,9 @@ interface ViteConfigOptions {
   backendPort?: number;
   /**
    * Database schema name — injected as `VITE_PRODUCT_SCHEMA` for the
-   * seed's `createProductSupabase` to consume. Default: `"public"`
-   * (Postgres' canonical default). Products with a non-public schema
-   * pass it explicitly.
+   * seed's `createProductSupabase` to consume. Default: derived from the
+   * product's `backend/app/database.py`; the factory throws when it
+   * cannot be derived (see `resolveProductSchema`).
    */
   schema?: string;
   /** Additional Vite plugins */
@@ -184,6 +184,52 @@ export function resolveFrameworkDeps(seedLib: string): string[] {
 }
 
 /**
+ * Resolve the product's Postgres schema for `VITE_PRODUCT_SCHEMA`.
+ *
+ * Order: explicit `schema` option → derived from the product's own
+ * `backend/app/database.py` → THROW.
+ *
+ * The backend's database module is the single source of truth for which
+ * schema a product owns (`create_database_module(settings, schema="igig")`
+ * or a module-level `SCHEMA = "p_studio"`). The SPA's Supabase client MUST
+ * target the same schema — otherwise every client-side read (the layout's
+ * `.from('status_pagina')`) hits `public` and 404s.
+ *
+ * History (2026-09-23): the previous default was `schema ?? "public"`. Only
+ * dev-team overrode it, so every other product's SPA silently targeted
+ * `public`, where no `status_pagina` exists. That is the consumer-#1
+ * coincidence default `KB § PATTERNS/architect/seed-canonical-defaults.md`
+ * forbids. Deriving removes the per-product literal; throwing keeps a
+ * product with no derivable schema from shipping a misrouted client.
+ */
+export function resolveProductSchema(
+  productDir: string,
+  explicit: string | undefined,
+): string {
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  const databasePy = path.resolve(productDir, "../backend/app/database.py");
+  if (fs.existsSync(databasePy)) {
+    const text = fs.readFileSync(databasePy, "utf-8");
+    const match =
+      /create_database_module\([^)]*?\bschema\s*=\s*["']([A-Za-z0-9_-]+)["']/.exec(text) ??
+      /^SCHEMA\s*=\s*["']([A-Za-z0-9_-]+)["']/m.exec(text);
+    if (match) {
+      return match[1];
+    }
+  }
+  throw new Error(
+    `vite.config.factory: cannot derive the product schema for ${productDir}. ` +
+    `Expected \`create_database_module(settings, schema="<schema>")\` or ` +
+    `\`SCHEMA = "<schema>"\` in ${databasePy}. Pass \`schema\` explicitly ` +
+    `to createViteConfig if the product's backend declares it elsewhere. ` +
+    `See KB § PATTERNS/architect/seed-canonical-defaults.md — the prior ` +
+    `\`?? "public"\` default silently pointed every SPA at the wrong schema.`,
+  );
+}
+
+/**
  * Parse `start.sh PRODUCTS` registry → `frontend_port → backend_port` map.
  *
  * `start.sh` carries the SINGLE source of truth for product → port
@@ -277,11 +323,10 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
   // + prod builds keep emptyOutDir:true (clean build). See seed/docker/local-watch.sh.
   const isWatch = process.argv.includes("--watch");
 
-  // Schema injection: explicit factory option → `"public"` (Postgres'
-  // architectural canonical default; products with a non-public schema
-  // pass it explicitly). NOT keyed by port — port→schema coupling was
-  // a per-product literal that drifted as products were added.
-  const resolvedSchema = schema ?? "public";
+  // Schema injection: explicit factory option → derived from the product's
+  // backend database module → THROW (see resolveProductSchema). NOT keyed
+  // by port — port→schema coupling was a per-product literal that drifted.
+  const resolvedSchema = resolveProductSchema(productDir, schema);
 
   // Single-container mode (project: containerization-single-container).
   // When `VITE_SAME_ORIGIN=1` is set (every product Dockerfile sets it

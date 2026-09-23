@@ -1,7 +1,7 @@
 /**
  * dev-team frontend Vite config.
  *
- * Uses the seed factory; passes `extend` to inject the dev_team schema +
+ * Uses the seed factory; passes the dev_team schema explicitly +
  * the dev-team backend port (8009) since the product is not yet in the
  * factory's PRODUCT_MAP. Promoting a PRODUCT_MAP entry into the seed is a
  * cross-cutting change that belongs in the next master-tree pass — flagged
@@ -36,13 +36,10 @@ const PEER_DEPS = [
 export default createViteConfig({
   port: 8123,
   backendPort: 8009,
+  // dev-team's backend has no `app/database.py` for the factory to derive
+  // the schema from, so it is declared here.
+  schema: "dev_team",
   extend: (config) => {
-    // Override the schema injection — factory defaulted to "public" because
-    // dev-team isn't in the PRODUCT_MAP yet.
-    config.define = {
-      ...(config.define ?? {}),
-      "import.meta.env.VITE_PRODUCT_SCHEMA": JSON.stringify("dev_team"),
-    };
     const existingAlias = (config.resolve?.alias ?? {}) as Record<string, string>;
     const peerAlias: Record<string, string> = {};
     for (const dep of PEER_DEPS) {

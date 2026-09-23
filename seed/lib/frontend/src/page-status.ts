@@ -49,8 +49,14 @@ export function usePageStatus(supabase: AnySupabaseClient, enabled = true) {
   return useQuery<StatusPagina[]>({
     queryKey: ['status-paginas'],
     queryFn: async () => {
-      const { data } = await supabase.from('status_pagina').select('*');
-      return (data || []) as StatusPagina[];
+      // Surface the error; never swallow it into `[]`. An empty list is a
+      // valid answer ("no status rows"), so swallowing made a misrouted
+      // schema look like "no gating" and hid a fleet-wide 404 for months
+      // (2026-09-23). On error the query has no data, and the layout falls
+      // back to the same ungated nav it uses while the query is loading.
+      const { data, error } = await supabase.from('status_pagina').select('*');
+      if (error) throw error;
+      return (data ?? []) as StatusPagina[];
     },
     staleTime: 10 * 60 * 1000, // 10 min — status changes rarely
     enabled,
