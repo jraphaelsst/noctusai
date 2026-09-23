@@ -35,13 +35,37 @@ def code(sql: str) -> str:
     return "\n".join(l for l in sql.splitlines() if not l.strip().startswith("--"))
 
 
-@pytest.fixture(scope="module")
-def flat(code: str) -> str:
-    """`code` with whitespace runs collapsed AND no padding just inside
-    parentheses — the DDL wraps long `IN (...)` lists across lines, so a
-    substring check must not depend on that layout."""
+def _flatten(text: str) -> str:
+    """Comment lines stripped, whitespace runs collapsed, no padding just
+    inside parentheses — the DDL wraps long `IN (...)` lists across lines,
+    so a substring check must not depend on that layout."""
+    code = "\n".join(l for l in text.splitlines() if not l.strip().startswith("--"))
     collapsed = " ".join(code.split())
     return re.sub(r"\s+\)", ")", re.sub(r"\(\s+", "(", collapsed))
+
+
+@pytest.fixture(scope="module")
+def flat(code: str) -> str:
+    return _flatten(code)
+
+
+@pytest.fixture(scope="module")
+def flat_all_termos_migrations() -> str:
+    """`flat`, UNIONED with every LATER migration that also `ALTER TABLE
+    social_wiring.atendimento_negociacao_termos` — 114 created the table,
+    but a service clause added afterwards (e.g. migration 163's
+    `itens_integrantes_ausente_confirmado`) legitimately lives in its OWN
+    migration file, never a hand-edit of 114 (forward-only, §1). Scoped
+    ONLY to `test_every_service_clause_is_a_column` below — every other
+    test here still pins 114's OWN declared shape specifically."""
+    partes = [MIGRATION.read_text(encoding="utf-8")]
+    for caminho in sorted(MIGRATION.parent.glob("*.sql")):
+        if caminho == MIGRATION:
+            continue
+        texto = caminho.read_text(encoding="utf-8")
+        if "ALTER TABLE social_wiring.atendimento_negociacao_termos" in texto:
+            partes.append(texto)
+    return _flatten("\n".join(partes))
 
 
 def test_migration_parses(sql: str):
@@ -73,9 +97,12 @@ def test_termos_is_one_row_per_atendimento_with_rls(flat: str):
     assert "USING (org_id = public.current_org_id())" in flat
 
 
-def test_every_service_clause_is_a_column(flat: str):
+def test_every_service_clause_is_a_column(flat_all_termos_migrations: str):
     for campo in svc.TERMOS_CAMPOS:
-        assert re.search(rf"\b{campo}\b", flat), f"{campo} missing from 114"
+        assert re.search(rf"\b{campo}\b", flat_all_termos_migrations), (
+            f"{campo} missing from 114 and every later migration that alters "
+            "atendimento_negociacao_termos"
+        )
 
 
 @pytest.mark.parametrize(
