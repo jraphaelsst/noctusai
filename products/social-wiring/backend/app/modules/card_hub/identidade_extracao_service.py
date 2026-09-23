@@ -564,6 +564,18 @@ def _mesmo_valor(item_key: str, a: Any, b: Any) -> bool:
         na, nb = nacionalidade_canonica(str(a)), nacionalidade_canonica(str(b))
         if na is not None and nb is not None:
             return na == nb
+    if item_key == "estado_civil":
+        # A human-typed legacy spelling (`Divorciado(a)`, `CASADA`) and the
+        # extractor's canonical token (`divorciado`) are one fact — the same
+        # normaliser the contract gate reads through. Local import: the
+        # checklist service already imports this module.
+        from app.modules.card_hub.documento_checklist_service import (
+            _estado_civil_normalizado,
+        )
+
+        ea, eb = _estado_civil_normalizado(str(a)), _estado_civil_normalizado(str(b))
+        if ea is not None and eb is not None:
+            return ea == eb
     if item_key in ("data_nascimento", "data_casamento"):
         return str(a)[:10] == str(b)[:10]
     return _mesmo_nome(str(a), str(b))
