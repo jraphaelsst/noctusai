@@ -63,6 +63,31 @@ describe("parseFrontMatter", () => {
   });
 });
 
+describe("parseFrontMatter — one level of nesting", () => {
+  it("reads an indented block under an empty-valued key into `nested`, JSON-unescaping quoted values", () => {
+    const raw = [
+      "---",
+      "slug: ke-00",
+      "proveniencia:",
+      '  origem: "Método Kênia — curadoria"',
+      '  notas: "diz \\"oi\\""',
+      "tipo: indice",
+      "---",
+      "corpo",
+    ].join("\n");
+    const { data, nested, content } = parseFrontMatter(raw);
+    expect(data).toEqual({ slug: "ke-00", tipo: "indice" });
+    expect(nested).toEqual({ proveniencia: { origem: "Método Kênia — curadoria", notas: 'diz "oi"' } });
+    expect(content).toBe("corpo");
+  });
+
+  it("ignores indented lines that follow a scalar key (no open map)", () => {
+    const { data, nested } = parseFrontMatter("---\nslug: a\n  solto: x\n---\nc");
+    expect(data).toEqual({ slug: "a" });
+    expect(nested).toEqual({});
+  });
+});
+
 describe("firstMarkdownHeading", () => {
   it("returns the first '# heading' line", () => {
     expect(firstMarkdownHeading("intro\n# Título Real\nresto")).toBe("Título Real");
@@ -111,15 +136,20 @@ describe("sanitizeCaminho / caminhoFromFile", () => {
     expect(caminhoFromFile(file)).toBe("references/tom-de-voz.md");
   });
 
-  it("falls back to the bare filename when there is no references/ segment", () => {
+  it("defaults a picked file (no relative path) to references/<filename> — the path a skill body cites", () => {
     const file = new File(["conteudo"], "Tom-De-Voz.md", { type: "text/markdown" });
-    expect(caminhoFromFile(file)).toBe("tom-de-voz.md");
+    expect(caminhoFromFile(file)).toBe("references/tom-de-voz.md");
   });
 
-  it("falls back to the bare filename when webkitRelativePath is present but has no references/ segment", () => {
+  it("defaults to references/<filename> when webkitRelativePath has no references/ segment", () => {
     const file = new File(["conteudo"], "tom-de-voz.md", { type: "text/markdown" });
     Object.defineProperty(file, "webkitRelativePath", { value: "isaia/skills/tom-de-voz.md" });
-    expect(caminhoFromFile(file)).toBe("tom-de-voz.md");
+    expect(caminhoFromFile(file)).toBe("references/tom-de-voz.md");
+  });
+
+  it("an explicit front-matter caminho wins", () => {
+    const file = new File(["conteudo"], "tom-de-voz.md", { type: "text/markdown" });
+    expect(caminhoFromFile(file, "assets/Voz.md")).toBe("assets/voz.md");
   });
 });
 

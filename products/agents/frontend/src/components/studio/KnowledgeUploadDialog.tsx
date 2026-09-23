@@ -16,7 +16,7 @@ import { useRef, useState } from "react";
 import { FileUp, Trash2, UploadCloud } from "lucide-react";
 import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader, FormError, Progress } from "@noctusai/lib/design-system";
 import { KNOWLEDGE_DOCUMENTS_BATCH_MAX, KNOWLEDGE_DOCUMENTS_BATCH_MAX_BYTES } from "@/api/studio/batchPaths";
-import type { DocumentTipo, KnowledgeDocumentBatchItem, KnowledgeDocumentsBatchResponse } from "@/api/studio/types-ke";
+import type { DocumentTipo, KnowledgeDocumentBatchItem, KnowledgeDocumentsBatchResponse, Provenance } from "@/api/studio/types-ke";
 import { DOCUMENT_TIPOS } from "@/api/studio/types-ke";
 import { useBatchCreateDocuments } from "@/hooks/studio/useKnowledge";
 import { errorMessage } from "@/lib/errors";
@@ -44,17 +44,35 @@ function isKnownTipo(value: string | undefined): value is DocumentTipo {
   return !!value && (DOCUMENT_TIPOS as readonly string[]).includes(value);
 }
 
+const PROVENANCE_KEYS: readonly (keyof Provenance)[] = ["autor", "origem", "referencia", "pagina", "licenca", "notas"];
+
+/**
+ * Backend `proveniencia` is the structured `Provenance` object. Two front-matter
+ * shapes reach it: a scalar line (`proveniencia: "Curso — aula 1"`, mapped onto
+ * `origem`, the field closest to "where this came from") or a nested block of
+ * `Provenance` fields. An unknown nested key THROWS — the server rejects it
+ * (strict model) and dropping it here would lose provenance silently; the
+ * caller reports it as that file's parse error.
+ */
+function provenanceFromFrontMatter(scalar: string | undefined, block: Record<string, string> | undefined): Provenance | undefined {
+  if (block) {
+    const unknown = Object.keys(block).filter((k) => !(PROVENANCE_KEYS as readonly string[]).includes(k));
+    if (unknown.length > 0) {
+      throw new Error(`proveniencia com campo(s) desconhecido(s): ${unknown.join(", ")} (aceitos: ${PROVENANCE_KEYS.join(", ")})`);
+    }
+    return Object.keys(block).length > 0 ? (block as Provenance) : undefined;
+  }
+  return scalar?.trim() ? { origem: scalar.trim() } : undefined;
+}
+
 async function parseKnowledgeFile(file: File): Promise<PreviewDoc> {
   const raw = await readFileAsText(file);
-  const { data, content } = parseFrontMatter(raw);
+  const { data, nested, content } = parseFrontMatter(raw);
   const slug = data.slug?.trim() || slugFromFilename(file.name);
   const titulo = data.titulo?.trim() || firstMarkdownHeading(content) || titleFromFilename(file.name);
   const tipo = isKnownTipo(data.tipo) ? data.tipo : DEFAULT_TIPO;
   const resumo = data.resumo?.trim() || undefined;
-  // Backend `proveniencia` is the structured `Provenance` object — the
-  // audit's example front matter is a single scalar line, mapped onto
-  // `Provenance.origem` (the field closest to "where this came from").
-  const proveniencia = data.proveniencia?.trim() ? { origem: data.proveniencia.trim() } : undefined;
+  const proveniencia = provenanceFromFrontMatter(data.proveniencia, nested.proveniencia);
   return {
     uid: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`,
     fileName: file.name,

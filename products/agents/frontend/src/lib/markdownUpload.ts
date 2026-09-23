@@ -13,9 +13,17 @@
  *   ---
  *   <conteúdo markdown>
  *
- * Only scalar `chave: valor` lines are read (no nesting/lists — nothing in
- * the audit's shape needs them); a value's surrounding quotes are stripped so
- * `proveniencia: "Curso Audience — aula 1"` reads as the bare string. A file
+ * Scalar `chave: valor` lines land in `data`; a value's surrounding quotes are
+ * stripped so `proveniencia: "Curso Audience — aula 1"` reads as the bare
+ * string. ONE level of nesting is read into `nested` — a key with an empty
+ * value followed by indented `  subchave: valor` lines — because structured
+ * provenance is written that way:
+ *
+ *   proveniencia:
+ *     origem: "Método Kênia — curadoria"
+ *     referencia: "00-comece-aqui.md"
+ *
+ * Deeper nesting and lists are not read. A file
  * with no front matter block falls all the way through: `data` is `{}` and
  * `content` is the raw text, unchanged — the caller derives slug/título from
  * the filename/first heading instead of erroring.
@@ -23,31 +31,65 @@
 
 export interface ParsedFrontMatter {
   data: Record<string, string>;
+  /** One-level maps: `chave:` (empty value) followed by indented `sub: valor` lines. */
+  nested: Record<string, Record<string, string>>;
   content: string;
 }
 
 const FRONT_MATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n?([\s\S]*)$/;
 const FRONT_MATTER_LINE_RE = /^([A-Za-z0-9_]+):[ \t]*(.*)$/;
+const FRONT_MATTER_NESTED_LINE_RE = /^[ \t]+([A-Za-z0-9_]+):[ \t]*(.*)$/;
+
+function unquote(raw: string): string {
+  const value = raw.trim();
+  if (value.length >= 2) {
+    const first = value[0];
+    const last = value[value.length - 1];
+    if (first === '"' && last === '"') {
+      // Double-quoted values are JSON strings when written by a tool (escapes
+      // like \" or \n); fall back to the bare slice for hand-written text.
+      try {
+        const parsed: unknown = JSON.parse(value);
+        if (typeof parsed === "string") return parsed;
+      } catch {
+        // not valid JSON — a hand-written quoted value; the bare slice below is the answer
+      }
+      return value.slice(1, -1);
+    }
+    if (first === "'" && last === "'") return value.slice(1, -1);
+  }
+  return value;
+}
 
 export function parseFrontMatter(raw: string): ParsedFrontMatter {
   const match = FRONT_MATTER_RE.exec(raw);
-  if (!match) return { data: {}, content: raw };
+  if (!match) return { data: {}, nested: {}, content: raw };
   const [, block, rest] = match;
   const data: Record<string, string> = {};
+  const nested: Record<string, Record<string, string>> = {};
+  let openMap: string | null = null;
   for (const line of block.split(/\r?\n/)) {
-    const m = FRONT_MATTER_LINE_RE.exec(line);
-    if (!m) continue;
-    let value = m[2].trim();
-    if (value.length >= 2) {
-      const first = value[0];
-      const last = value[value.length - 1];
-      if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
-        value = value.slice(1, -1);
-      }
+    const sub = FRONT_MATTER_NESTED_LINE_RE.exec(line);
+    if (sub) {
+      if (openMap === null) continue;
+      const value = unquote(sub[2]);
+      if (value) (nested[openMap] ??= {})[sub[1]] = value;
+      continue;
     }
-    if (value) data[m[1]] = value;
+    const m = FRONT_MATTER_LINE_RE.exec(line);
+    if (!m) {
+      openMap = null;
+      continue;
+    }
+    const value = unquote(m[2]);
+    if (value) {
+      data[m[1]] = value;
+      openMap = null;
+    } else {
+      openMap = m[1];
+    }
   }
-  return { data, content: rest };
+  return { data, nested, content: rest };
 }
 
 /** First `# heading` line of markdown content, or `null` if there is none. */
@@ -105,17 +147,24 @@ export function sanitizeCaminho(path: string): string {
   return out || "arquivo";
 }
 
+/** Where a skill's reference files live (Agent Skills layout) — the path a skill body cites. */
+export const SKILL_REFERENCES_DIR = "references/";
+
 /**
- * A dropped/picked `File`'s skill-file `caminho` (item 2 of the audit):
- * preserve a `references/` prefix when the file carries one (a folder drop
- * populates `webkitRelativePath`, e.g. `"isaia/references/tom-de-voz.md"`);
- * otherwise fall back to the bare filename. Either way the result is run
- * through `sanitizeCaminho` so it is always `CAMINHO_RE`-legal.
+ * A dropped/picked `File`'s skill-file `caminho` (item 2 of the audit).
+ * Precedence: an explicit front-matter `caminho` → the `references/…` tail of
+ * `webkitRelativePath` (folder pick) → `references/<filename>`. The default
+ * carries the prefix because a skill body cites its files as
+ * `references/<nome>.md` and `ler_arquivo_skill` matches `caminho` EXACTLY —
+ * a picked file (the common case: no relative path) stored as the bare
+ * filename is unreachable under the path the skill names. Always run through
+ * `sanitizeCaminho` so it is `CAMINHO_RE`-legal.
  */
-export function caminhoFromFile(file: File): string {
+export function caminhoFromFile(file: File, frontMatterCaminho?: string): string {
+  if (frontMatterCaminho?.trim()) return sanitizeCaminho(frontMatterCaminho.trim());
   const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || "";
-  const idx = relative.indexOf("references/");
-  const path = idx >= 0 ? relative.slice(idx) : file.name;
+  const idx = relative.indexOf(SKILL_REFERENCES_DIR);
+  const path = idx >= 0 ? relative.slice(idx) : `${SKILL_REFERENCES_DIR}${file.name}`;
   return sanitizeCaminho(path);
 }
 

@@ -1,9 +1,8 @@
 /**
  * Multi-file skill reference-file upload — CONTRACT.md §G item 2 (same
  * treatment as `KnowledgeUploadDialog`, one skill's `arquivos` instead of a
- * knowledge collection's documents). `caminho` is derived from the
- * filename, preserving a `references/` prefix when the file was dropped
- * with one (`caminhoFromFile`, `@/lib/markdownUpload.ts`); título comes
+ * knowledge collection's documents). `caminho` is front-matter `caminho`, else
+ * `references/<filename>` (`caminhoFromFile`, `@/lib/markdownUpload.ts`); título comes
  * from front matter or the first `# heading`. Chunked upload
  * (`SKILL_FILES_BATCH_MAX` items / `SKILL_FILES_BATCH_MAX_BYTES` per call)
  * with a progress indicator and a final per-file result summary — a failed
@@ -39,7 +38,7 @@ function isAcceptedFile(file: File): boolean {
 async function parseSkillFile(file: File): Promise<PreviewFile> {
   const raw = await readFileAsText(file);
   const { data, content } = parseFrontMatter(raw);
-  const caminho = caminhoFromFile(file);
+  const caminho = caminhoFromFile(file, data.caminho);
   const titulo = data.titulo?.trim() || firstMarkdownHeading(content) || titleFromFilename(file.name);
   return {
     uid: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`,
@@ -141,8 +140,8 @@ export function SkillFilesUploadDialog({ agentKey, draftId, skillId, onClose }: 
       <DialogBody className="space-y-4" data-testid="skill-files-upload-dialog">
         <p className="text-xs text-muted-foreground">
           Arraste arquivos <code>.md</code>/<code>.markdown</code>/<code>.txt</code> ou escolha-os abaixo. O caminho
-          preserva um prefixo <code>references/</code> quando o arquivo é solto com essa pasta; caso contrário, usa o
-          nome do arquivo. O título vem do front matter ou do primeiro <code># título</code>.
+          é <code>references/&lt;nome-do-arquivo&gt;</code> (como a skill cita o arquivo), a menos que o front matter
+          traga <code>caminho:</code>. O título vem do front matter ou do primeiro <code># título</code>.
         </p>
 
         <div
