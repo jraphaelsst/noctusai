@@ -40,6 +40,9 @@ export interface Pauta {
   canal: string | null;
   data_publicacao: string | null;
   caracteres_copy: number;
+  /** Generated from an accepted orçamento's recurring item (R9) — badged in the calendar. */
+  gerada_automaticamente?: boolean;
+  orcamento_item_id?: string | null;
 }
 
 export interface Calendario {
@@ -59,10 +62,15 @@ export interface Peca {
 
 export const PAUTAS_QUERY_KEY = ["igig", "pautas"] as const;
 
-export function useCalendario(inicio: string, fim: string) {
+/** `clienteId` narrows the window to one cliente (the Clientes card's calendar tab). */
+export function useCalendario(inicio: string, fim: string, clienteId?: string) {
   const query = useQuery({
-    queryKey: [...PAUTAS_QUERY_KEY, "calendario", inicio, fim],
-    queryFn: () => api.get<Calendario>("/api/pautas/calendario", { inicio, fim }),
+    queryKey: [...PAUTAS_QUERY_KEY, "calendario", inicio, fim, clienteId ?? ""],
+    queryFn: () =>
+      api.get<Calendario>(
+        "/api/pautas/calendario",
+        clienteId ? { inicio, fim, cliente_id: clienteId } : { inicio, fim },
+      ),
     // `inicio`/`fim` ride in the key — paging to another month is a brand
     // new key. Without this the whole grid would go back to a skeleton on
     // every page; with it, the previous month's pautas stay on screen until
@@ -73,6 +81,7 @@ export function useCalendario(inicio: string, fim: string) {
     ...query,
     itens: query.data?.itens ?? [],
     loading: query.isPending && !query.data,
+    refreshing: query.isFetching && !!query.data,
   };
 }
 

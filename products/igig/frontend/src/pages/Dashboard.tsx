@@ -24,22 +24,16 @@ import { Link } from "react-router-dom";
 import { useClientes } from "@/hooks/useClientes";
 import { useProfissionais } from "@/hooks/useCustos";
 import { useDRE, useInadimplentes } from "@/hooks/useFinanceiro";
-import { useQuadro } from "@/hooks/useEsteira";
+import { esteiraPipeline } from "@/hooks/useEsteira";
+import { PAPEL_APROVACAO_CLIENTE } from "@/components/esteira/moveRules";
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
-/** Stages still in flight — everything before "pronto para agendamento". */
-const EM_PRODUCAO = new Set([
-  "aguardando_roteiro",
-  "roteiro_em_producao",
-  "aguardando_design",
-  "design_em_producao",
-  "revisao_interna",
-]);
-
 export default function Dashboard() {
   const { clientes, loading: carregandoClientes } = useClientes();
-  const { quadro, loading: carregandoQuadro } = useQuadro();
+  // Same query (and cache entry) as the Esteira page's unfiltered board.
+  const { data: colunasEsteira, isPending: quadroPendente } = esteiraPipeline.useBoard();
+  const carregandoQuadro = quadroPendente && !colunasEsteira;
   const { profissionais } = useProfissionais();
   const { linhas: dre } = useDRE();
   const { atrasadas: inadimplentes } = useInadimplentes();
@@ -47,11 +41,17 @@ export default function Dashboard() {
   const ativos = clientes.filter((c) => c.status === "ativo").length;
   const inadimplentesCount = clientes.filter((c) => c.status === "inadimplente").length;
 
-  const colunas = quadro?.colunas ?? {};
-  const emProducao = Object.entries(colunas)
-    .filter(([etapa]) => EM_PRODUCAO.has(etapa))
-    .reduce((n, [, tarefas]) => n + (tarefas as unknown[]).length, 0);
-  const aguardandoCliente = (colunas["aprovacao_cliente"] as unknown[] | undefined)?.length ?? 0;
+  // Stages are the org's own editable rows, so "in production" is keyed on
+  // ORDER and ROLE, never on slugs or labels: every column BEFORE the
+  // approval-role stage is still being made.
+  const colunas = colunasEsteira ?? [];
+  const iAprovacao = colunas.findIndex((c) => c.stage?.papel === PAPEL_APROVACAO_CLIENTE);
+  const emProducao = colunas
+    .slice(0, iAprovacao === -1 ? colunas.length : iAprovacao)
+    .reduce((n, c) => n + (c.total ?? c.cards.length), 0);
+  const tarefasComCliente = iAprovacao === -1 ? [] : colunas[iAprovacao].cards;
+  const aguardandoCliente =
+    iAprovacao === -1 ? 0 : colunas[iAprovacao].total ?? tarefasComCliente.length;
 
   // The margin is only meaningful once hours have a cost. Said out loud rather
   // than shown as a number, because "0%" and "unknown" look identical.
@@ -132,7 +132,7 @@ export default function Dashboard() {
             </p>
           ) : (
             <ul className="space-y-2">
-              {((colunas["aprovacao_cliente"] as { id: string; titulo: string; refacoes: number }[]) ?? []).map(
+              {tarefasComCliente.map(
                 (t) => (
                   <li key={t.id} className="flex items-center justify-between gap-3 text-sm">
                     <span className="min-w-0 truncate text-foreground">{t.titulo}</span>

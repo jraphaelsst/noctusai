@@ -1,66 +1,50 @@
 /**
- * Esteira de Produção hooks — Módulo 4.
+ * Esteira de Produção hooks — Módulo 4, on the seed pipeline (roadmap R3).
  *
- * Backend mirror: `app/routers/esteira_router.py`.
+ * Backend mirror: `app/routers/esteira_router.py` + `app/services/esteira_quadro.py`.
  *
  * Two audiences in one file, deliberately separated below:
- *   - the agency's team (authenticated) — quadro, mover, timesheet, link
+ *   - the agency's team (authenticated) — the board, tarefa CRUD, timesheet, link
  *   - the agency's CLIENT (public, token-authenticated) — the approval portal
  *
- * `loading` is `isPending && !data` — first load only, never `isLoading`
- * and never `|| isFetching`. TanStack v5's `isLoading` is false during a
- * background refetch, so `|| isFetching` was true on EVERY refetch (not just
- * the first), and the kanban/portal below would replace their whole content
- * with a skeleton on every mutation-triggered invalidation — the collapsing
- * layout the fleet audit flagged. `check_lying_loading_state` blocks the
- * `isLoading` shape; this file must not reintroduce the `isFetching`
- * equivalent.
+ * THE BOARD is the seed `createPipelineHooks` over `/api/esteira/board`: the
+ * stages are the org's own editable rows (migration 017), so the column list,
+ * the optimistic drag and its rollback all come from the seed — this file only
+ * declares the descriptor. The legacy `/quadro` + `/mover` pair is gone
+ * server-side, and so is its hand-rolled optimistic mutation here.
+ *
+ * `loading` is `isPending && !data` — first load only, never `isLoading` and
+ * never `|| isFetching` (`KB § PATTERNS/frontend/lying-loading-state.md`).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createPipelineHooks } from "@noctusai/lib/components";
 
 import { api } from "@/lib/api";
 
-// ─── Types (mirror backend app/schemas/esteira.py) ─────────────────────
-export type Etapa =
-  | "aguardando_roteiro"
-  | "roteiro_em_producao"
-  | "aguardando_design"
-  | "design_em_producao"
-  | "revisao_interna"
-  | "aprovacao_cliente"
-  | "pronto_para_agendamento"
-  | "agendado";
-
-/** Portuguese labels for the 8 kanban columns. */
-export const ETAPA_LABEL: Record<Etapa, string> = {
-  aguardando_roteiro: "Aguardando roteiro",
-  roteiro_em_producao: "Roteiro em produção",
-  aguardando_design: "Aguardando design",
-  design_em_producao: "Design em produção",
-  revisao_interna: "Revisão interna",
-  aprovacao_cliente: "Aprovação do cliente",
-  pronto_para_agendamento: "Pronto para agendamento",
-  agendado: "Agendado",
-};
-
-export interface Tarefa {
+// ─── Types (mirror backend app/schemas/esteira.py + esteira_quadro.quadro) ──
+/** A tarefa as the board serves it — the row plus what a phone needs to read it. */
+export interface TarefaCard {
   id: string;
   org_id: string;
   pauta_id: string;
+  cliente_id: string | null;
   titulo: string;
-  etapa: Etapa;
+  etapa_id: string;
+  kanban_pos?: number | string | null;
   responsavel_id: string | null;
   prazo: string | null;
   refacoes: number;
   observacao_cliente: string | null;
   created_at: string | null;
   updated_at: string | null;
-}
-
-export interface Quadro {
-  /** Column order comes from the BACKEND — the sequence is a business rule. */
-  etapas: Etapa[];
-  colunas: Record<Etapa, Tarefa[]>;
+  pauta: {
+    id: string;
+    titulo: string;
+    formato: string | null;
+    data_publicacao: string | null;
+  } | null;
+  cliente: { id: string; nome: string } | null;
+  responsavel: { id: string; nome: string } | null;
 }
 
 export interface Apontamento {
@@ -68,6 +52,7 @@ export interface Apontamento {
   org_id: string;
   tarefa_id: string;
   usuario_id: string;
+  profissional_id: string | null;
   iniciado_em: string;
   encerrado_em: string | null;
   minutos: number;
@@ -83,128 +68,124 @@ export interface LinkAprovacao {
 }
 
 export const ESTEIRA_QUERY_KEY = ["igig", "esteira"] as const;
-const QUADRO_KEY = [...ESTEIRA_QUERY_KEY, "quadro"] as const;
+/** Root key of the seed board query (`[ESTEIRA_BOARD_KEY, filtros]`). */
+export const ESTEIRA_BOARD_KEY = "igig-esteira-board";
 
-// ─── Agency-side (authenticated) ───────────────────────────────────────
-export function useQuadro() {
-  const query = useQuery({
-    queryKey: QUADRO_KEY,
-    queryFn: () => api.get<Quadro>("/api/esteira/quadro"),
-  });
+/**
+ * The esteira board. A tarefa has no money, so `getCardValue` is 0 and the
+ * column total stays empty (the board renders `formatValue` → "").
+ */
+export const esteiraPipeline = createPipelineHooks<TarefaCard>(
+  {
+    queryKey: ESTEIRA_BOARD_KEY,
+    boardEndpoint: "/api/esteira/board",
+    stagesEndpoint: "/api/esteira/stages",
+    moveEndpoint: "/api/esteira/tarefas",
+    getCardId: (t) => t.id,
+    getCardValue: () => 0,
+    entityLabel: "tarefa",
+  },
+  api,
+);
 
-  return {
-    ...query,
-    quadro: query.data ?? null,
-    loading: query.isPending && !query.data,
+/** After any tarefa write: the board (every filter variant) and the side queries. */
+function useInvalidarEsteira() {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey: [ESTEIRA_BOARD_KEY] });
+    void qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY });
   };
 }
 
+// ─── Agency-side (authenticated) ───────────────────────────────────────
 /**
- * Move a tarefa to another etapa — optimistic. The select-driven move is
- * instant in the UI (`onMutate`); without this the card would visibly snap
- * back to its old column for a full round-trip before the refetch confirms
- * the move. `onError` restores the pre-move board from the snapshot.
- */
-/**
- * Create a tarefa on the board.
- *
- * `POST /api/esteira/tarefas` shipped with the router but had no consumer, so
- * the MVP module — the one the spec names as the priority deliverable — could
- * not be started from the UI at all: the eight columns rendered and stayed
- * permanently empty. A tarefa always belongs to a pauta, so the caller must
- * supply one; the backend 404s otherwise rather than creating an orphan.
+ * Create a tarefa. It lands in the board's FIRST stage (server rule) and takes
+ * its cliente from the pauta — so the caller supplies a pauta, never a cliente.
  */
 export function useCriarTarefa() {
-  const qc = useQueryClient();
+  const invalidar = useInvalidarEsteira();
   return useMutation({
     mutationFn: (payload: {
       pauta_id: string;
       titulo: string;
       responsavel_id?: string | null;
       prazo?: string | null;
-    }) => api.post<Tarefa>("/api/esteira/tarefas", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY }),
+    }) => api.post<TarefaCard>("/api/esteira/tarefas", payload),
+    onSuccess: invalidar,
   });
 }
 
-export function useMoverTarefa() {
-  const qc = useQueryClient();
+/** `DELETE /api/esteira/tarefas/{id}` → 204. Apontamentos + links cascade. */
+export function useExcluirTarefa() {
+  const invalidar = useInvalidarEsteira();
   return useMutation({
-    mutationFn: ({ id, etapa }: { id: string; etapa: Etapa }) =>
-      api.post<Tarefa>(`/api/esteira/tarefas/${id}/mover`, { etapa }),
-    onMutate: async ({ id, etapa }) => {
-      await qc.cancelQueries({ queryKey: QUADRO_KEY });
-      const previous = qc.getQueryData<Quadro>(QUADRO_KEY);
-      const origem = previous
-        ? (Object.keys(previous.colunas) as Etapa[]).find((e) =>
-            previous.colunas[e].some((t) => t.id === id),
-          )
-        : undefined;
-      const tarefa = previous && origem ? previous.colunas[origem].find((t) => t.id === id) : undefined;
-
-      if (previous && origem && tarefa) {
-        qc.setQueryData<Quadro>(QUADRO_KEY, {
-          ...previous,
-          colunas: {
-            ...previous.colunas,
-            [origem]: previous.colunas[origem].filter((t) => t.id !== id),
-            [etapa]: [...(previous.colunas[etapa] ?? []), { ...tarefa, etapa }],
-          },
-        });
-      }
-
-      return { previous };
-    },
-    onError: (_err, _vars, context) => {
-      if (context?.previous) qc.setQueryData(QUADRO_KEY, context.previous);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY }),
+    mutationFn: (tarefaId: string) => api.delete<null>(`/api/esteira/tarefas/${tarefaId}`),
+    onSuccess: invalidar,
   });
 }
 
-export function useApontamentos(tarefaId: string | null) {
+/**
+ * The timesheet of one tarefa, plus what the timer button needs.
+ *
+ * `emAndamento` is the CALLER's open segment — the server runs the timer as the
+ * authenticated user (no `usuario_id` in the body, smoke finding 3), so "is my
+ * timer running here" is the only question the play/pause button can ask.
+ * Derived here, once, rather than in every consumer.
+ */
+export function useApontamentos(tarefaId: string | null, usuarioId: string | null) {
   const query = useQuery({
     queryKey: [...ESTEIRA_QUERY_KEY, "apontamentos", tarefaId],
     queryFn: () => api.get<Apontamento[]>(`/api/esteira/tarefas/${tarefaId}/apontamentos`),
-    // Only fetch once a task is actually selected.
     enabled: Boolean(tarefaId),
   });
+  const apontamentos = query.data ?? [];
   return {
     ...query,
-    apontamentos: query.data ?? [],
+    apontamentos,
+    emAndamento:
+      apontamentos.find((a) => a.encerrado_em === null && a.usuario_id === usuarioId) ?? null,
+    minutosTotais: apontamentos.reduce((soma, a) => soma + (a.minutos || 0), 0),
     loading: query.isPending && !query.data,
+    refreshing: query.isFetching && !!query.data,
   };
 }
 
+/** Play — no body: the server times the AUTHENTICATED caller. */
 export function useIniciarTimer() {
-  const qc = useQueryClient();
+  const invalidar = useInvalidarEsteira();
   return useMutation({
-    mutationFn: ({ tarefaId, usuarioId }: { tarefaId: string; usuarioId: string }) =>
-      api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/iniciar`, {
-        usuario_id: usuarioId,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY }),
+    mutationFn: (tarefaId: string) =>
+      api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/iniciar`),
+    onSuccess: invalidar,
   });
 }
 
+/** Pause the caller's running segment on this tarefa. */
 export function useEncerrarTimer() {
-  const qc = useQueryClient();
+  const invalidar = useInvalidarEsteira();
   return useMutation({
-    mutationFn: ({ tarefaId, usuarioId }: { tarefaId: string; usuarioId: string }) =>
-      api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/encerrar`, {
-        usuario_id: usuarioId,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY }),
+    mutationFn: (tarefaId: string) =>
+      api.post<Apontamento>(`/api/esteira/tarefas/${tarefaId}/timer/encerrar`),
+    onSuccess: invalidar,
   });
 }
 
+/**
+ * Mint the client's approval link. Server-side this ALSO moves the tarefa into
+ * the approval stage (smoke finding 4), so the board is invalidated too.
+ */
 export function useEmitirLinkAprovacao() {
-  const qc = useQueryClient();
+  const invalidar = useInvalidarEsteira();
   return useMutation({
     mutationFn: (tarefaId: string) =>
       api.post<LinkAprovacao>(`/api/esteira/tarefas/${tarefaId}/link-aprovacao`, {}),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ESTEIRA_QUERY_KEY }),
+    onSuccess: invalidar,
   });
+}
+
+/** The public portal URL for a token — one definition for every copy button. */
+export function urlAprovacao(token: string, origin: string = window.location.origin): string {
+  return `${origin}/aprovar/${token}`;
 }
 
 // ─── Client-side (PUBLIC — token is the auth) ──────────────────────────
@@ -223,6 +204,8 @@ export interface AprovacaoPublica {
   formato: string | null;
   cliente_nome: string | null;
   ja_decidida: boolean;
+  /** False once the agency pulled the tarefa out of approval — read-only portal. */
+  aguardando_aprovacao: boolean;
 }
 
 export type Decisao = "aprovado" | "ajuste";
