@@ -14,34 +14,14 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
 
-// The real `Select` is a Radix popover (pointer-capture + portal) that jsdom
-// does not model faithfully — same convention `ContratosPanel.test.tsx`
-// established. This variant renders every `SelectItem` inline (no open/close
-// step) so a click reaches `onValueChange` directly.
-vi.mock("@/components/ui/select", async () => {
-  const React = await import("react");
-  const Ctx = React.createContext<{ onValueChange?: (v: string) => void }>({});
-  return {
-    Select: ({ value, onValueChange, children }: any) =>
-      React.createElement(
-        Ctx.Provider,
-        { value: { onValueChange } },
-        React.createElement("div", { "data-value": value }, children),
-      ),
-    SelectTrigger: ({ children, ...rest }: any) =>
-      React.createElement("div", { role: "combobox", ...rest }, children),
-    SelectValue: () => null,
-    SelectContent: ({ children }: any) => React.createElement("div", null, children),
-    SelectItem: ({ value, children }: any) => {
-      const ctx = React.useContext(Ctx);
-      return React.createElement(
-        "button",
-        { type: "button", onClick: () => ctx.onValueChange?.(value) },
-        children,
-      );
-    },
-  };
-});
+// The REAL seed Radix `Select` — no module mock. The jsdom Pointer Events
+// polyfill in `src/test/setup.ts` is what lets Radix open here, so the picker
+// is exercised end to end: open the trigger, pick the option (mirrors the
+// seed's own `card-hub/AnexosSection.test.tsx`).
+async function abrirTipos(getByTestId: (id: string) => HTMLElement) {
+  const { default: userEvent } = await import("@testing-library/user-event");
+  await userEvent.setup().click(getByTestId("anexo-tipo-select"));
+}
 
 import { AnexosSection, type AnexosSectionProps } from "./AnexosSection";
 import type { Documento, TipoDocumento } from "@/types/cardHub";
@@ -139,7 +119,7 @@ describe("AnexosSection — the tipo picker (Gap 1: never a silent default)", ()
 
   it("picking a tipo enables the trigger, and the chosen file uploads under EXACTLY that tipo", async () => {
     const onUpload = vi.fn();
-    const { getByTestId, getByText, container } = await render(
+    const { getByTestId, container } = await render(
       baseProps({
         tipos: [
           tipo("outro", { descricao: "Outro" }),
@@ -154,7 +134,11 @@ describe("AnexosSection — the tipo picker (Gap 1: never a silent default)", ()
     // exactly the value the old hardcoded default silently picked. Picking
     // the IDENTITY type instead and asserting on it is the regression guard:
     // a leftover `tipos[0]` default would upload as `outro`, not as this.
-    rtl.fireEvent.click(getByText("Certidão de casamento"));
+    await abrirTipos(getByTestId);
+    const { default: userEvent } = await import("@testing-library/user-event");
+    await userEvent.setup().click(
+      await rtl.screen.findByRole("option", { name: "Certidão de casamento" }),
+    );
     expect((getByTestId("anexo-enviar-btn") as HTMLButtonElement).disabled).toBe(false);
 
     const file = new File(["%PDF-1.4"], "certidao.pdf", { type: "application/pdf" });
@@ -174,7 +158,7 @@ describe("AnexosSection — the tipo picker (Gap 1: never a silent default)", ()
   });
 
   it("groups identity types separately from everything else", async () => {
-    const { getByText } = await render(
+    const { getByText, getByTestId } = await render(
       baseProps({
         tipos: [
           tipo("contrato", { descricao: "Contrato" }),
@@ -182,6 +166,7 @@ describe("AnexosSection — the tipo picker (Gap 1: never a silent default)", ()
         ],
       }),
     );
+    await abrirTipos(getByTestId);
     expect(getByText("Identidade")).toBeTruthy();
     expect(getByText("Outros")).toBeTruthy();
   });
