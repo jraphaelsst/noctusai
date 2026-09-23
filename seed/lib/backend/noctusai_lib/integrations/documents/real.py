@@ -37,8 +37,10 @@ from __future__ import annotations
 
 import logging
 import unicodedata
+from dataclasses import replace
 from typing import Optional
 
+from noctusai_lib.integrations.documents.address import find_endereco
 from noctusai_lib.integrations.documents.birthdate import find_birthdate
 from noctusai_lib.integrations.documents.civil_status import (
     find_data_casamento,
@@ -46,6 +48,7 @@ from noctusai_lib.integrations.documents.civil_status import (
     find_estado_civil,
     find_regime_bens,
 )
+from noctusai_lib.integrations.documents.conjuges import ConjugeLido, find_conjuges
 from noctusai_lib.integrations.documents.cpf import (
     find_cpf,
     find_cpf_conflitos,
@@ -56,8 +59,10 @@ from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
 from noctusai_lib.integrations.documents.name import find_name, find_name_conflitos
+from noctusai_lib.integrations.documents.profession import find_profissao
 from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
 from noctusai_lib.integrations.documents.types import (
+    CAMPOS,
     ExtractionConfidence,
     IdentityFields,
     TextSource,
@@ -81,8 +86,12 @@ class LadderIdentityExtractor:
         resolver=None,
         max_pages: int | None = -1,
         provider: Optional[str] = None,
+        ladder: Optional[DocumentTextLadder] = None,
     ) -> None:
-        self._ladder = DocumentTextLadder(
+        # `ladder` is a DI seam for tests that must drive BOTH rungs (the
+        # text-layer-then-vision fallthrough) without a real PDF or model.
+        # Every real caller omits it.
+        self._ladder = ladder or DocumentTextLadder(
             org_id=org_id,
             document_prompt=document_prompt,
             resolver=resolver,
@@ -115,6 +124,43 @@ class LadderIdentityExtractor:
             # because retrying it is pointless.
             return IdentityFields(kind=kind, source=source)
 
+        fields = self._ler(text, source, kind, titular)
+        if source is TextSource.TEXT_LAYER and not _achou_algo(fields):
+            # 🔴 A TEXT LAYER THAT YIELDS NOTHING FALLS THROUGH TO VISION.
+            # `classify_pdf_text_layer` judges whether a text layer is
+            # SUBSTANTIVE, not whether it holds the fields THIS extractor
+            # reads — and it cannot, it is field-agnostic by design. Live,
+            # 2026-09-22: three genuine RG PDFs carried a real, selectable text
+            # layer (issuer header, QR payload, signature block) with none of
+            # the identity fields in it, and ended `sem_dados` with
+            # `fonte=texto` — a legible document reported as empty, never
+            # retried, because "nothing found" is not an error. Only a vision
+            # pass over the rendered page can read what the text layer
+            # omitted, so this extractor — the one layer that knows what
+            # "nothing found" means here — asks the ladder again, skipping
+            # rung 1.
+            texto_ocr, fonte_ocr, err_ocr = await self._ladder.to_text(
+                content, mimetype, filename, pular_camada_texto=True
+            )
+            if err_ocr is not None:
+                # The text layer had nothing and vision could not run: that
+                # is a failure to read, not an empty document — report it so
+                # the consumer's bounded retry can try again.
+                return IdentityFields(
+                    kind=kind, source=fonte_ocr, error=err_ocr[0], error_message=err_ocr[1]
+                )
+            if texto_ocr.strip():
+                return self._ler(texto_ocr, fonte_ocr, kind, titular)
+        return fields
+
+    def _ler(
+        self,
+        text: str,
+        source: TextSource,
+        kind,
+        titular: Optional[TitularEsperado],
+    ) -> IdentityFields:
+        """Pure half: text + the rung that produced it -> typed fields."""
         data, data_conf, data_label = find_birthdate(text)
         nome, nome_conf, nome_label = find_name(text)
         nome_conf = self._temper_name_confidence(nome_conf, source)
@@ -236,6 +282,54 @@ class LadderIdentityExtractor:
                 else:
                     multiplos_titulares.append(f"cpf ({len(conflito_cpf)} titulares)")
 
+        # Profissão — label-anchored only, NOT tempered by source for the
+        # same reason `nacionalidade` is not: it needs an explicit label, so a
+        # misread can only lose it or make two readings disagree (`nenhuma`).
+        profissao, profissao_conf, profissao_label = find_profissao(text)
+
+        # Endereço — read on every document (the extractor is type-agnostic);
+        # WHICH document types may promote it is the consumer's decision (a
+        # certidão prints its CARTÓRIO's address, which is nobody's home).
+        endereco = find_endereco(text)
+
+        # Both spouses, when the document names two. The one the caller's
+        # `titular` hint picked (by the name or CPF selected above) is marked,
+        # and ITS per-person facts replace the whole-document readings, which
+        # would otherwise mix the two spouses (two birthdates -> `nenhuma`,
+        # or worse, the wrong one alone).
+        conjuges = find_conjuges(text)
+        if conjuges:
+            escolhido_idx = _conjuge_do_titular(conjuges, nome, cpf)
+            if escolhido_idx is not None:
+                marcados = []
+                for i, c in enumerate(conjuges):
+                    marcados.append(replace(c, titular=(i == escolhido_idx)))
+                conjuges = tuple(marcados)
+                eu = conjuges[escolhido_idx]
+                if eu.data_nascimento is not None:
+                    data, data_conf, data_label = (
+                        eu.data_nascimento, eu.data_nascimento_confianca, "certidão (cônjuge titular)"
+                    )
+                if eu.nacionalidade is not None:
+                    nacionalidade, nacionalidade_conf, nacionalidade_label = (
+                        eu.nacionalidade, eu.nacionalidade_confianca, "certidão (cônjuge titular)"
+                    )
+                if eu.profissao is not None:
+                    profissao, profissao_conf, profissao_label = (
+                        eu.profissao, eu.profissao_confianca, "certidão (cônjuge titular)"
+                    )
+                if eu.genero is not None and genero is None:
+                    genero, genero_conf, genero_label = (
+                        eu.genero, eu.genero_confianca, "certidão (concordância)"
+                    )
+                if cpf is None and eu.cpf:
+                    cpf, cpf_conf, cpf_label = eu.cpf, eu.cpf_confianca, "CPF (titular do card)"
+                    # The spouse pairing resolved what the bare CPF hint could
+                    # not — it is no longer a withheld field.
+                    multiplos_titulares = [
+                        m for m in multiplos_titulares if not m.startswith("cpf ")
+                    ]
+
         aviso: Optional[str] = None
         aviso_mensagem: Optional[str] = None
         if multiplos_titulares:
@@ -282,6 +376,11 @@ class LadderIdentityExtractor:
             nacionalidade=nacionalidade,
             nacionalidade_confianca=ExtractionConfidence(nacionalidade_conf),
             nacionalidade_rotulo=nacionalidade_label,
+            profissao=profissao,
+            profissao_confianca=ExtractionConfidence(profissao_conf),
+            profissao_rotulo=profissao_label,
+            endereco=endereco if endereco.presente else None,
+            conjuges=conjuges,
             source=source,
         )
 
@@ -329,6 +428,39 @@ class LadderIdentityExtractor:
         return confidence
 
 
+
+
+def _achou_algo(fields: IdentityFields) -> bool:
+    """Did this read find ANY field a consumer can use?"""
+    return (
+        any(fields.presente(c) for c in CAMPOS)
+        or fields.data_emissao is not None
+        or fields.endereco is not None
+        or bool(fields.conjuges)
+    )
+
+
+def _conjuge_do_titular(
+    conjuges: tuple[ConjugeLido, ...], nome: Optional[str], cpf: Optional[str]
+) -> Optional[int]:
+    """Index of the spouse the titular selection above landed on, else None.
+
+    Keyed on what `_selecionar_nome` / `_selecionar_cpf` already CHOSE (the
+    document's own spelling / digits), so the two selections cannot disagree
+    about who the titular is.
+    """
+    idx: Optional[int] = None
+    if nome:
+        alvo = _chave_nome(nome)
+        achados = [i for i, c in enumerate(conjuges) if _chave_nome(c.nome) == alvo]
+        if len(achados) == 1:
+            idx = achados[0]
+    if idx is None and cpf:
+        alvo_cpf = only_digits(cpf)
+        achados = [i for i, c in enumerate(conjuges) if c.cpf and only_digits(c.cpf) == alvo_cpf]
+        if len(achados) == 1:
+            idx = achados[0]
+    return idx
 
 
 def _chave_nome(valor: str) -> str:

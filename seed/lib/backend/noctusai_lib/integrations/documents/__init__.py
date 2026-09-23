@@ -69,7 +69,10 @@ from noctusai_lib.integrations.documents.civil_status import (
 )
 from noctusai_lib.integrations.documents.factory import make_identity_extractor
 from noctusai_lib.integrations.documents.cpf import find_cpf
-from noctusai_lib.integrations.documents.gender import find_gender
+from noctusai_lib.integrations.documents.gender import canonical_gender, find_gender
+from noctusai_lib.integrations.documents.address import EnderecoLido, UFS, find_endereco
+from noctusai_lib.integrations.documents.conjuges import ConjugeLido, find_conjuges
+from noctusai_lib.integrations.documents.profession import find_profissao, find_profissoes
 from noctusai_lib.integrations.documents.nacionalidade import (
     NACIONALIDADE_VALORES,
     find_nacionalidade,
@@ -193,6 +196,14 @@ def __getattr__(name: str):  # pragma: no cover - lazy proxy
 __all__ = [
     "AtoKind",
     "BlocoAbertura",
+    "ConjugeLido",
+    "EnderecoLido",
+    "UFS",
+    "canonical_gender",
+    "find_conjuges",
+    "find_endereco",
+    "find_profissao",
+    "find_profissoes",
     "CampoAbertura",
     "DocumentTextLadder",
     "DocumentTranscriber",

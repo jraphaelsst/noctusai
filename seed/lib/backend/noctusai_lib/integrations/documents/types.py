@@ -24,7 +24,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
-from typing import Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
+
+if TYPE_CHECKING:  # the carriers below are imported lazily to keep this module leaf-level
+    from noctusai_lib.integrations.documents.address import EnderecoLido
+    from noctusai_lib.integrations.documents.conjuges import ConjugeLido
 
 
 class IdentityDocumentKind(str, Enum):
@@ -76,6 +80,7 @@ class TextSource(str, Enum):
 CAMPOS: tuple[str, ...] = (
     "data_nascimento", "nome", "genero", "cpf", "rg",
     "estado_civil", "regime_bens", "data_casamento", "nacionalidade",
+    "profissao",
 )
 
 
@@ -297,6 +302,34 @@ class IdentityFields:
     nacionalidade_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
     nacionalidade_rotulo: Optional[str] = None
 
+    # ─── Profissão ───────────────────────────────────────────────────────
+    #: Label-anchored only (`profession.py`) — there is no closed vocabulary,
+    #: so an unlabelled word is never read as a profissão. Lower-cased, with
+    #: the document's accents. Printed by a certidão de casamento (per
+    #: spouse) and by fichas; never by an RG/CIN/CNH.
+    profissao: Optional[str] = None
+    profissao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    profissao_rotulo: Optional[str] = None
+
+    # ─── Endereço (comprovante de endereço) ─────────────────────────────
+    #: 🔴 Deliberately NOT a member of :data:`CAMPOS` — it is a GROUP of seven
+    #: parts that must be written together or not at all (a CEP from one bill
+    #: with a street from another is an address nobody lives at), and it
+    #: carries the bill's printed holder, which a consumer must check against
+    #: the person before trusting it. `None` when no address was read. See
+    #: `address.EnderecoLido`.
+    endereco: Optional["EnderecoLido"] = None
+
+    # ─── Both spouses (certidão de casamento) ────────────────────────────
+    #: Every spouse `conjuges.find_conjuges` could attribute facts to, in
+    #: document order — `()` for any document that does not name exactly two.
+    #: When the caller's `titular` hint picked one, that entry has
+    #: `titular=True` and its per-person facts ALSO populate this result's own
+    #: `nome`/`cpf`/`data_nascimento`/`nacionalidade`/`profissao`/`genero`.
+    #: The OTHER entry is what lets a consumer fill the second spouse's
+    #: record from the same document instead of dropping it.
+    conjuges: tuple["ConjugeLido", ...] = ()
+
     # ─── Provenance, shared by every field on this result ─────────────
     source: TextSource = TextSource.NENHUMA
     error: Optional[str] = None
@@ -397,6 +430,10 @@ class IdentityFields:
         return self.persistable("nacionalidade")
 
     @property
+    def persistable_profissao(self) -> bool:
+        return self.persistable("profissao")
+
+    @property
     def sugestao_data_nascimento(self) -> bool:
         return self.sugestao("data_nascimento")
 
@@ -431,6 +468,10 @@ class IdentityFields:
     @property
     def sugestao_nacionalidade(self) -> bool:
         return self.sugestao("nacionalidade")
+
+    @property
+    def sugestao_profissao(self) -> bool:
+        return self.sugestao("profissao")
 
 
 @dataclass(frozen=True)

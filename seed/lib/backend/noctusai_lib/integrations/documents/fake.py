@@ -119,6 +119,10 @@ class FakeIdentityExtractor:
             nacionalidade="brasileiro",
             nacionalidade_confianca=ExtractionConfidence.ALTA,
             nacionalidade_rotulo="NACIONALIDADE",
+            # Same parity rule: the Real adapter reads a labelled profissão.
+            profissao="engenheiro",
+            profissao_confianca=ExtractionConfidence.ALTA,
+            profissao_rotulo="PROFISSAO",
             source=TextSource.TEXT_LAYER,
         )
 

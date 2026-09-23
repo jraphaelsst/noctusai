@@ -107,6 +107,8 @@ class DocumentTextLadder:
         content: bytes,
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
+        *,
+        pular_camada_texto: bool = False,
     ) -> tuple[str, TextSource, Optional[tuple[str, str]]]:
         """Return `(text, source, error)`. NEVER raises.
 
@@ -114,8 +116,17 @@ class DocumentTextLadder:
         so an exception here would surface nowhere and would leave the
         document stuck mid-pipeline forever. Every failure is returned as a
         value instead.
+
+        `pular_camada_texto=True` goes straight to rung 2. It exists for the
+        extractor ABOVE this ladder, which is the only layer that can tell a
+        substantive-but-useless text layer apart from a useful one: a PDF
+        whose text layer passed `classify_pdf_text_layer` (real, selectable
+        text — a header, a QR payload, a signature block) yet carries none of
+        the fields the extractor reads. That is "readable, wrong content", and
+        only a vision pass over the rendered page can answer it. The ladder
+        itself stays field-agnostic; the caller decides when to ask again.
         """
-        if looks_like_pdf(mimetype, filename):
+        if looks_like_pdf(mimetype, filename) and not pular_camada_texto:
             # `classify_pdf_text_layer`, NOT `extract_pdf_text`: a cartório
             # scan carries a digital-signature stamp as real, selectable
             # text, so "the text layer is non-empty" is not evidence that
