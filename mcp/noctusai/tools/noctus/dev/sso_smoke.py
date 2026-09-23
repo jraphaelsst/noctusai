@@ -86,27 +86,13 @@ def _load_env_file(path: str) -> dict[str, str]:
     return out
 
 
-# Per-developer smoke-account file, OUTSIDE the repo (0600): holds the prod
-# test admin (`NOCTUS_SSO_SMOKE_EMAIL` + password for manual browser login),
-# created via core's test-account mechanism in an isolated `category='test'`
-# org. Kept out of the repo tree so no worktree/.env copy can leak it.
-SMOKE_ACCOUNT_FILE = pathlib.Path.home() / ".config" / "noctusai" / "sso-smoke.env"
-
-
 def _resolve_creds(env_file: str | None, creds: dict | None) -> dict:
     """Caller-injected creds win (tests); else env overlaid by an env file
-    (defaults to the repo-root .env, then the per-developer smoke-account file
-    ``~/.config/noctusai/sso-smoke.env``). Later sources take precedence."""
+    (defaults to the repo-root .env). File values take precedence."""
     if creds is not None:
         return creds
-    if env_file:
-        env = {**os.environ, **_load_env_file(env_file)}
-    else:
-        env = {
-            **os.environ,
-            **_load_env_file(str(pathlib.Path(REPO_ROOT) / ".env")),
-            **_load_env_file(str(SMOKE_ACCOUNT_FILE)),
-        }
+    path = env_file or str(pathlib.Path(REPO_ROOT) / ".env")
+    env = {**os.environ, **_load_env_file(path)}
     return {
         "supabase_url": env.get("SUPABASE_URL", ""),
         "service_key": env.get("SUPABASE_SERVICE_ROLE_KEY", ""),
