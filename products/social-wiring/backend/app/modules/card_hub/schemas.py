@@ -567,13 +567,23 @@ class _IntermediarioQualificacao(StrictHttpModel):
 class IntermediarioCreateBody(_IntermediarioQualificacao):
     """`nome`/`creci` are always accepted directly — `corretor_id` is an
     optional pointer into `lead_corretores` when the intermediary happens to
-    be in-house (migration 108's header)."""
+    be in-house (migration 108's header).
+
+    `natureza` (migration 162): 'intermediario' (default) is a contracted,
+    CRECI-qualified party — the only meaning this table had before 162.
+    'parceiro_split' is a commission-split beneficiary never qualified in
+    the clause header and never required to carry a CRECI — the service
+    refuses pairing it with a `corretor_id` (an in-house corretor is always
+    a qualified party). `papel` is free-text CRM metadata, never rendered
+    into the generated contract — see the migration's header."""
 
     corretor_id: Optional[UUID] = None
     nome: str = Field(min_length=1, max_length=255)
     creci: Optional[str] = Field(default=None, max_length=64)
     tipo: Literal["percentual", "valor_fixo"] = "percentual"
     valor: Optional[Decimal] = Field(default=None, ge=0)
+    natureza: Literal["intermediario", "parceiro_split"] = "intermediario"
+    papel: Optional[str] = Field(default=None, max_length=160)
 
 
 class IntermediarioPatchBody(_IntermediarioQualificacao):
@@ -582,6 +592,8 @@ class IntermediarioPatchBody(_IntermediarioQualificacao):
     creci: Optional[str] = Field(default=None, max_length=64)
     tipo: Optional[Literal["percentual", "valor_fixo"]] = None
     valor: Optional[Decimal] = Field(default=None, ge=0)
+    natureza: Optional[Literal["intermediario", "parceiro_split"]] = None
+    papel: Optional[str] = Field(default=None, max_length=160)
 
 
 # ─── Termos do negócio (migration 114) ────────────────────────────────────

@@ -519,6 +519,10 @@ def carregar(
                 endereco=_endereco(i),
                 representante_nome=i.get("representante_nome"),
                 representante_cpf=i.get("representante_cpf"),
+                # Migration 162 — old rows read as the table's original,
+                # only-ever meaning: a qualified, CRECI-required party.
+                natureza=i.get("natureza") or "intermediario",
+                papel=i.get("papel"),
             )
             for i in estruturada.get("intermediarios") or []
         ],

@@ -74,6 +74,23 @@ export interface NegociacaoFavorecido {
 
 export type IntermediarioTipo = "percentual" | "valor_fixo";
 
+/**
+ * Migration 162. `"intermediario"` (default): a contracted party the
+ * generated contract's commission-clause header QUALIFIES (CRECI required)
+ * — the only meaning this table had before 162. `"parceiro_split"`: a
+ * commission-split beneficiary that is never qualified in the header and
+ * never requires a CRECI (a company or person sharing a cut of the
+ * commission, not a licensed broker) — matches reference contract 08's own
+ * shape, where a 3rd beneficiary appears only in the split-payment
+ * paragraph, never in "as empresas a seguir qualificadas".
+ */
+export type IntermediarioNatureza = "intermediario" | "parceiro_split";
+
+export const INTERMEDIARIO_NATUREZA_LABELS: Record<IntermediarioNatureza, string> = {
+  intermediario: "Corretor / intermediário (com CRECI)",
+  parceiro_split: "Parceiro sem CRECI (recebe parte da comissão)",
+};
+
 export type PessoaTipo = "pf" | "pj";
 
 /** Migration 114 — PF/PJ qualification shared by create/patch/read. Every
@@ -104,6 +121,11 @@ export interface NegociacaoIntermediario extends IntermediarioQualificacao {
   /** Percentage (0-100) as a string when `tipo === "percentual"`, BRL
    *  decimal string when `tipo === "valor_fixo"`. Never parsed to float. */
   valor: string | null;
+  /** Migration 162 — see `IntermediarioNatureza`. */
+  natureza: IntermediarioNatureza;
+  /** Free-text CRM metadata (why a 'parceiro_split' shares the commission)
+   *  — never rendered into the generated contract. */
+  papel: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -281,6 +303,9 @@ export interface IntermediarioCreate extends Partial<IntermediarioQualificacao> 
   /** Defaults server-side to "percentual". */
   tipo?: IntermediarioTipo;
   valor?: string | null;
+  /** Defaults server-side to "intermediario". See `IntermediarioNatureza`. */
+  natureza?: IntermediarioNatureza;
+  papel?: string | null;
 }
 
 export type IntermediarioPatch = Partial<IntermediarioCreate>;

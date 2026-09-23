@@ -3,7 +3,10 @@
 org's standing testemunhas; plus (migration 114) the per-deal CLAUSES the
 contract generator prints: posse, itens integrantes / ad corpus, ônus,
 confissão de dívida, corretagem, permuta-as-payment, and PF/PJ qualification
-of intermediários.
+of intermediários; plus (migration 162) `atendimento_intermediarios.natureza`
+— a 'parceiro_split' row is a commission-split beneficiary the generated
+contract never qualifies as a contracted party and never requires a CRECI
+for, distinct from the table's original 'intermediario' meaning.
 
 WHAT THIS ADDS ON TOP OF `negociacao_service.py`
 --------------------------------------------------
@@ -72,6 +75,11 @@ TIPOS_PARCELA: tuple[str, ...] = (
     "permuta",
 )
 TIPOS_INTERMEDIARIO: tuple[str, ...] = ("percentual", "valor_fixo")
+#: Migration 162. 'intermediario' (default): a contracted, CRECI-qualified
+#: party — the only meaning this table had before 162. 'parceiro_split': a
+#: commission-split beneficiary never qualified in the clause header and
+#: never required to carry a CRECI (see the migration's header).
+NATUREZAS_INTERMEDIARIO: tuple[str, ...] = ("intermediario", "parceiro_split")
 PESSOA_TIPOS: tuple[str, ...] = ("pf", "pj")
 
 #: Migration 114 vocabularies — mirrored by the DB CHECKs.
@@ -121,7 +129,8 @@ _INTERMEDIARIO_QUALIFICACAO: tuple[str, ...] = (
     "representante_nome", "representante_cpf",
 )
 _INTERMEDIARIO_CAMPOS_EDITAVEIS: tuple[str, ...] = (
-    "corretor_id", "nome", "creci", "tipo", "valor", *_INTERMEDIARIO_QUALIFICACAO,
+    "corretor_id", "nome", "creci", "tipo", "valor", "natureza", "papel",
+    *_INTERMEDIARIO_QUALIFICACAO,
 )
 
 #: Every clause `atendimento_negociacao_termos` holds (114). PUT replaces the
@@ -298,6 +307,11 @@ def _intermediario_out(row: dict) -> dict:
         "creci": row.get("creci"),
         "tipo": row.get("tipo", "percentual"),
         "valor": None if row.get("valor") is None else str(_dec(row.get("valor"))),
+        #: Migration 162 — old rows (pre-162, or written by a stale worker)
+        #: read as the table's original, only-ever meaning: a qualified,
+        #: CRECI-required party.
+        "natureza": row.get("natureza") or "intermediario",
+        "papel": row.get("papel"),
         **{campo: row.get(campo) for campo in _INTERMEDIARIO_QUALIFICACAO},
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -341,6 +355,25 @@ def _validar_intermediario_valor(tipo: str, valor: Optional[Decimal]) -> None:
         )
     if tipo == "valor_fixo" and valor < 0:
         raise ValidationError_("valor fixo não pode ser negativo", field="valor")
+
+
+def _validar_natureza(natureza: str, corretor_id: Optional[str]) -> None:
+    """Migration 162 ships no matching DB CHECK (see its header) — these two
+    rules are enforced HERE, at the service layer, plus the Pydantic
+    `Literal` at the API boundary for the vocabulary itself. Named,
+    actionable 400s, same posture as `_validar_intermediario_valor`."""
+    if natureza not in NATUREZAS_INTERMEDIARIO:
+        raise ValidationError_(
+            f"natureza inválida: {natureza!r}. Permitidos: "
+            f"{', '.join(NATUREZAS_INTERMEDIARIO)}",
+            field="natureza",
+        )
+    if corretor_id and natureza != "intermediario":
+        raise ValidationError_(
+            "um intermediário vinculado a um corretor cadastrado "
+            "(corretor_id) não pode ter natureza 'parceiro_split'",
+            field="natureza",
+        )
 
 
 def _normalizar_documento(bruto: str) -> tuple[str, str]:
@@ -475,7 +508,10 @@ def criar_intermediario(
 ) -> dict:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     tipo = valores.get("tipo") or "percentual"
+    corretor_id = valores.get("corretor_id")
+    natureza = valores.get("natureza") or "intermediario"
     _validar_intermediario_valor(tipo, _dec(valores.get("valor")))
+    _validar_natureza(natureza, str(corretor_id) if corretor_id else None)
     # A create body is `model_dump()`ed, so every omitted field arrives as
     # None — on a CREATE that means "not sent" (nothing to clear), and
     # treating it as an explicit null would stop `pessoa_tipo` being inferred
@@ -497,6 +533,11 @@ def criar_intermediario(
         "valor": (
             str(_dec(valores["valor"])) if valores.get("valor") is not None else None
         ),
+        # Migration 162 — see `_validar_natureza` for the corretor_id pairing
+        # rule and `derivacao.py::_intermediacao` for the readiness gate this
+        # unlocks.
+        "natureza": natureza,
+        "papel": valores.get("papel"),
         **{campo: qualificacao.get(campo) for campo in _INTERMEDIARIO_QUALIFICACAO},
         "created_at": _now(),
         "created_por": str(usuario_id) if usuario_id else None,
@@ -512,7 +553,7 @@ def atualizar_intermediario(
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     atual = _exigir_intermediario(client, org_id, atendimento_id, intermediario_id)
 
-    for campo in ("nome", "tipo"):
+    for campo in ("nome", "tipo", "natureza"):
         if campo in valores and valores[campo] is None:
             raise ValidationError_(f"{campo} não pode ser nulo", field=campo)
 
@@ -520,10 +561,26 @@ def atualizar_intermediario(
     if "valor" in valores:
         _validar_intermediario_valor(tipo, _dec(valores.get("valor")))
 
+    # Effective natureza/corretor_id AFTER this patch — whichever side of the
+    # pair the caller did not send keeps its stored value, same treatment
+    # `_normalizar_qualificacao` gives `pessoa_tipo` vs `documento`.
+    natureza_efetiva = valores.get(
+        "natureza", atual.get("natureza") or "intermediario"
+    )
+    corretor_id_efetivo = (
+        valores["corretor_id"] if "corretor_id" in valores
+        else atual.get("corretor_id")
+    )
+    if "natureza" in valores or "corretor_id" in valores:
+        _validar_natureza(
+            natureza_efetiva,
+            str(corretor_id_efetivo) if corretor_id_efetivo else None,
+        )
+
     patch: dict = _normalizar_qualificacao(
         client, org_id, atendimento_id, valores, atual
     )
-    for campo in ("corretor_id", "nome", "creci", "tipo", "valor"):
+    for campo in ("corretor_id", "nome", "creci", "tipo", "valor", "natureza", "papel"):
         if campo not in valores:
             continue
         if campo == "corretor_id":

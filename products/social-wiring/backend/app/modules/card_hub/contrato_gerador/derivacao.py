@@ -1424,7 +1424,13 @@ def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
     termos = d.termos
     favorecidos = {f.id: f for f in d.favorecidos}
     for it in d.intermediarios:
-        if not it.creci:
+        # Migration 162 — a 'parceiro_split' row is a commission-split
+        # beneficiary the clause header never qualifies (never rendered by
+        # `frases.qualificacao_intermediario` — see `contexto.py`'s
+        # `qualificados` list), so it is never a licensed broker and never
+        # required to carry a CRECI. Only a (default) 'intermediario' row —
+        # a party the header DOES qualify — needs one.
+        if it.natureza == "intermediario" and not it.creci:
             av.falta(f"negociacao.intermediario.{it.id}.creci", f"CRECI de {it.nome}", "negociacao")
         if it.valor is None:
             av.falta(f"negociacao.intermediario.{it.id}.valor", f"Valor da corretagem de {it.nome}", "negociacao")
