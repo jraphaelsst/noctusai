@@ -159,6 +159,27 @@ async def buscar_imoveis(
     return busca_svc.buscar(db, org_id, termo=q, limite=limit)
 
 
+@router.get("/busca/duplicatas")
+async def buscar_possiveis_duplicatas(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(5, ge=1, le=busca_svc.LIMITE_MAXIMO),
+    auth=Depends(get_current_user_org),
+    db=Depends(get_imovel_hub_client),
+) -> dict:
+    """"Did you mean one of these?" for `ImovelCodigoPicker`'s "cadastrar
+    como imóvel novo" step (migration 159) — see `busca_service.
+    sugestoes_para_cadastro`. Called only when `/busca` for the same term
+    already came back empty; never a hard block.
+
+    Declared BEFORE `/{codigo}` for the same reason `/busca` is: FastAPI
+    matches path segments in declaration order and `busca` (a literal
+    prefix segment here, not a `codigo` value) would otherwise be shadowed.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    return busca_svc.sugestoes_para_cadastro(db, org_id, termo=q, limite=limit)
+
+
 @router.get("/filtros", response_model=FiltrosOut)
 async def get_filtros(
     auth=Depends(get_current_user_org),

@@ -169,21 +169,26 @@ def _pessoa(
 
 
 def _endereco_manual(catalogo: dict, dados: dict) -> Endereco:
-    """The imóvel's address for the contract: a manual override (migration
-    147) wins PER-FIELD over the CRM/Vista mirror for the 4 fields
-    `derivacao._imovel` gates on — logradouro/número/cidade/UF. This product
-    has no write-back to Vista (see `dados_service.CAMPOS_ENDERECO_MANUAL`'s
-    docstring), so the override is the only correction path for those 4;
-    `complemento`/`bairro`/`cep` stay mirror-only — nothing gates on them."""
+    """The imóvel's address for the contract — THE property table (owner
+    rule, 2026-09-23): a manual override (migration 149, widened by 159)
+    wins PER-FIELD over the CRM/Vista mirror for all 7 `Endereco` fields.
+    149 shipped only the 4 `derivacao._imovel` gates the contract on
+    (logradouro/número/cidade/UF); 159 extends the same per-field-override
+    shape to complemento/bairro/CEP, so a condo UNIT's own address (e.g.
+    "Alameda Alemanha, 535") can win over the mirror's GATE address (e.g.
+    "Itália, 343, compl. 535") when Vista mirrors only the building's
+    entrance. This product has no write-back to Vista (see `dados_service.
+    CAMPOS_ENDERECO_MANUAL`'s docstring), so the override is the only
+    correction path."""
     base = _endereco(catalogo, prefixo="")
     return Endereco(
         logradouro=dados.get("endereco_manual_logradouro") or base.logradouro,
         numero=dados.get("endereco_manual_numero") or base.numero,
-        complemento=base.complemento,
-        bairro=base.bairro,
+        complemento=dados.get("endereco_manual_complemento") or base.complemento,
+        bairro=dados.get("endereco_manual_bairro") or base.bairro,
         cidade=dados.get("endereco_manual_cidade") or base.cidade,
         uf=dados.get("endereco_manual_uf") or base.uf,
-        cep=base.cep,
+        cep=dados.get("endereco_manual_cep") or base.cep,
     )
 
 
