@@ -722,3 +722,77 @@ class TestNocGraphExclusion:
         )
         # auto-improvement.ndjson is still included (not exempt)
         assert "project-history/auto-improvement.ndjson" in rel_paths
+
+
+# ── project field (ship-consent approval unit, 2026-09-22) ────────────────────
+def _ledger_at(tmp_path, monkeypatch, rows=()):
+    ledger = tmp_path / "project-history" / "branch-tree.ndjson"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(_ndjson(list(rows)) if rows else "", encoding="utf-8")
+    monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
+    monkeypatch.setattr(BP, "LEDGER_REL", "project-history/branch-tree.ndjson")
+    return ledger
+
+
+def _append_kwargs(**over):
+    kw = dict(base="origin/dev", commit="abc", role="engineer", agent="eng",
+              paths=["x.py"], status="on_going", brief="b", push_dev=False)
+    kw.update(over)
+    return kw
+
+
+class TestProjectField:
+    def test_effective_project_defaults_to_branch_name(self):
+        assert BP.effective_project({"branch": "feat/a"}) == "feat/a"
+        assert BP.effective_project({"branch": "feat/a", "project": ""}) == "feat/a"
+        assert BP.effective_project({"branch": "feat/a", "project": "roadmap-x"}) == "roadmap-x"
+
+    def test_project_for_unknown_branch_is_the_branch(self):
+        assert BP.project_for_branch("feat/nope", []) == "feat/nope"
+
+    def test_append_explicit_project_is_written(self, tmp_path, monkeypatch):
+        ledger = _ledger_at(tmp_path, monkeypatch)
+        res = BP.append(branch="feat/o", parent="tech-lead", project="sw-extraction",
+                        runner=FakeRunner(dev_content=""), **_append_kwargs())
+        assert res["ok"] and res["row"]["project"] == "sw-extraction"
+        assert json.loads(ledger.read_text().splitlines()[0])["project"] == "sw-extraction"
+
+    def test_engineer_inherits_parent_branch_project(self, tmp_path, monkeypatch):
+        parent = {**_row("feat/orch", "2026-09-01T00:00:00+00:00"), "project": "sw-extraction"}
+        _ledger_at(tmp_path, monkeypatch, [parent])
+        res = BP.append(branch="feat/eng1", parent="feat/orch",
+                        runner=FakeRunner(dev_content=_ndjson([parent])), **_append_kwargs())
+        assert res["row"]["project"] == "sw-extraction"
+
+    def test_engineer_inherits_sibling_project_under_same_parent(self, tmp_path, monkeypatch):
+        sib = {**_row("feat/eng1", "2026-09-01T00:00:00+00:00"), "parent": "sw-orchestrator",
+               "project": "sw-extraction"}
+        _ledger_at(tmp_path, monkeypatch, [sib])
+        res = BP.append(branch="feat/eng2", parent="sw-orchestrator",
+                        runner=FakeRunner(dev_content=_ndjson([sib])), **_append_kwargs())
+        assert res["row"]["project"] == "sw-extraction"
+
+    def test_unmapped_append_omits_project_and_reads_as_branch(self, tmp_path, monkeypatch):
+        _ledger_at(tmp_path, monkeypatch)
+        res = BP.append(branch="feat/solo", parent="tech-lead",
+                        runner=FakeRunner(dev_content=""), **_append_kwargs())
+        assert "project" not in res["row"]
+        assert BP.effective_project(res["row"]) == "feat/solo"
+
+    def test_update_carries_project_forward_and_can_override(self, tmp_path, monkeypatch):
+        prev = {**_row("feat/p", "2026-09-01T00:00:00+00:00"), "project": "alpha"}
+        _ledger_at(tmp_path, monkeypatch, [prev])
+        r1 = BP.update(branch="feat/p", notes="n", push_dev=False,
+                       runner=FakeRunner(dev_content=_ndjson([prev])))
+        assert r1["row"]["project"] == "alpha"
+        r2 = BP.update(branch="feat/p", project="beta", push_dev=False,
+                       runner=FakeRunner(dev_content=_ndjson([prev])))
+        assert r2["row"]["project"] == "beta"
+
+    def test_query_and_list_filter_by_effective_project(self):
+        a = {**_row("feat/a", "2026-09-01T00:00:00+00:00"), "project": "alpha"}
+        b = _row("feat/b", "2026-09-01T00:00:01+00:00")
+        runner = FakeRunner(dev_content=_ndjson([a, b]))
+        assert [r["branch"] for r in BP.query(project="alpha", runner=runner)] == ["feat/a"]
+        assert [r["branch"] for r in BP.query(project="feat/b", runner=runner)] == ["feat/b"]
+        assert [r["branch"] for r in BP.list_pointers(project="alpha", runner=runner)] == ["feat/a"]

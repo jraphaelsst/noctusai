@@ -15,7 +15,11 @@ on:
   # not.
   workflow_dispatch:
   push:
-    branches: [main, dev]
+    # `release/**` (2026-09-22): a ship-consent CUT (noctus.dev.release
+    # stage=bless mode=cut) pushes release/<stamp>; bless REQUIRES this
+    # workflow GREEN on that exact sha before main may fast-forward to it.
+    # KB § PATTERNS/devops/ship-consent-riders.md.
+    branches: [main, dev, 'release/**']
   pull_request:
     branches: [main, dev]
 
@@ -96,7 +100,8 @@ jobs:
           # never be scoped down, no matter what the diff looks like.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || \
              [ "${{ github.ref }}" = "refs/heads/main" ] || \
-             [ "${{ github.ref }}" = "refs/heads/prod" ]; then
+             [ "${{ github.ref }}" = "refs/heads/prod" ] || \
+             [ "${GITHUB_REF#refs/heads/release/}" != "${GITHUB_REF}" ]; then
             echo "run_heavy=true" >> "$GITHUB_OUTPUT"
             echo "shared_changed=true" >> "$GITHUB_OUTPUT"
             echo "changed_products=," >> "$GITHUB_OUTPUT"

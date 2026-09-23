@@ -12774,6 +12774,13 @@ _HOOK_FILE_TAMPERING_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "scripts/hooks/install-hooks.sh",
+        'rm -f "$HOOKS_DIR/commit-msg"',
+        "Same installer, same pattern, for commit-msg (the ship-consent "
+        "Noc-Branch attribution trailer, KB § PATTERNS/devops/"
+        "ship-consent-riders.md).",
+    ),
+    (
+        "scripts/hooks/install-hooks.sh",
         'rm -f "$HOOKS_DIR/post-merge"',
         "Same installer, same pattern, for post-merge.",
     ),
