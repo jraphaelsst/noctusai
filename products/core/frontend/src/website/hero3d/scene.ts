@@ -27,6 +27,20 @@ export interface SceneHandle {
 
 const LINKS: [number, number][] = [[0, 1], [1, 2], [2, 3], [1, 3], [0, 3]];
 
+/**
+ * Fixed world position of the cluster's own pivot (2026-09-23 review fix).
+ * `n.position` on each `SceneNode` is now a LOCAL offset from this anchor,
+ * not an absolute world coordinate — the anchor itself never rotates, only
+ * an inner `spin` group nested inside it does. Rotating the OLD flat
+ * `group` (which held nodes already offset to world X≈+3.5) around the
+ * WORLD origin made the whole "right-biased" cluster sweep in a wide arc
+ * across the entire frame every ~4s, periodically landing directly on the
+ * H1 — the bug the tech-lead's screenshots caught. With the anchor/spin
+ * split, the cluster's SCREEN position stays fixed (wherever this world
+ * point projects to); only the nodes orbit locally, in place, around it.
+ */
+const CLUSTER_ANCHOR: [number, number, number] = [5.6, -0.6, -1];
+
 function readCssVar(el: Element, name: string, fallback: string): string {
   const value = getComputedStyle(el).getPropertyValue(name).trim();
   return value || fallback;
@@ -53,11 +67,21 @@ export function createConstellationScene(
   const fogColor = new THREE.Color(readCssVar(themeRootEl, "--scene-bg", "#07080f"));
   scene.fog = new THREE.FogExp2(fogColor, 0.03);
 
+  // `anchor` holds a FIXED world position (never rotated) — the cluster's
+  // on-screen location. `spin` is nested inside it and is the ONLY thing
+  // the tick loop rotates, so nodes orbit in place around the anchor
+  // instead of sweeping across the whole scene.
+  const anchor = new THREE.Group();
+  anchor.position.set(...CLUSTER_ANCHOR);
+  scene.add(anchor);
   const group = new THREE.Group();
-  scene.add(group);
+  anchor.add(group);
 
   const nodeMeshes: THREE.Mesh[] = [];
-  const sphereGeo = new THREE.SphereGeometry(0.18, 16, 16);
+  // Smaller nodes (2026-09-23 review): 0.18 world radius read as large,
+  // heavy-looking dots (~26px at 1440px) that competed visually with the
+  // now right-biased text column's neighbourhood.
+  const sphereGeo = new THREE.SphereGeometry(0.12, 16, 16);
   nodes.forEach((n) => {
     const mat = new THREE.MeshBasicMaterial({ color: accentColor });
     const mesh = new THREE.Mesh(sphereGeo, mat);
@@ -90,12 +114,16 @@ export function createConstellationScene(
   }
   container.addEventListener("pointermove", onPointerMove);
 
+  const worldPos = new THREE.Vector3();
   function projectPositions() {
     if (!projectedCb) return;
     const out: Record<string, { x: number; y: number; visible: boolean }> = {};
     nodes.forEach((n, i) => {
       const mesh = nodeMeshes[i];
-      const vector = mesh.position.clone().project(camera);
+      // `mesh.position` is LOCAL to `group` (nested in the fixed `anchor`)
+      // — must resolve the WORLD position before projecting, or every HUD
+      // label lands at the pre-anchor (world-origin-relative) coordinate.
+      const vector = mesh.getWorldPosition(worldPos).project(camera);
       out[n.slug] = {
         x: (vector.x * 0.5 + 0.5) * width,
         y: (-vector.y * 0.5 + 0.5) * height,

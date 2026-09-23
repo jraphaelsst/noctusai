@@ -43,7 +43,7 @@ const COPY: Record<Locale, Record<string, { title: string; description: string }
   "pt-BR": {
     home: {
       title: "NoctusAI — IA que trabalha pela sua empresa",
-      description: "Produtos prontos com IA para imobiliárias, agências e finanças, ou um projeto de IA construído sob medida para o seu negócio.",
+      description: "Automação de WhatsApp, e-mail e redes com IA, o sistema operacional da sua agência, ou um projeto de IA sob medida para o seu negócio.",
     },
     "products-index": {
       title: "Produtos | NoctusAI",
@@ -77,7 +77,7 @@ const COPY: Record<Locale, Record<string, { title: string; description: string }
   en: {
     home: {
       title: "NoctusAI — AI that works for your business",
-      description: "Ready-made AI products for real estate, agencies and finance, or a custom AI project built for your business.",
+      description: "AI-driven WhatsApp, email and social automation, your agency's operating system, or a custom AI project for your business.",
     },
     "products-index": {
       title: "Products | NoctusAI",

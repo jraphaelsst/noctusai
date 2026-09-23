@@ -134,6 +134,15 @@ html[data-theme="dark"] [data-surface="site"] {
      leaves them white-on-dark-band with `--fg-inverse` (light) text on top
      — light-on-light, unreadable. */
   --bg-elevated: var(--nx-night-9);
+  /* Same bug, second instance (2026-09-23 review): `--scene-*` was left at
+     the AMBIENT theme's value, and in light theme `--scene-bg` is a near-
+     white ramp step — the hero poster/scene rendered as a washed-out light
+     grey gradient behind white H1/subhead text. The hero is an always-dark
+     band in BOTH themes (06 §Theming), so the scene it frames must ALSO
+     stay dark in both. */
+  --scene-bg: var(--nx-night-11);
+  --scene-accent: var(--nx-accent-5);
+  --scene-fog: rgba(5, 6, 11, 0.7);
 }
 
 /* ---------- Base / reset (SSR-safe: nothing here hides content by
@@ -152,7 +161,7 @@ html[data-theme="dark"] [data-surface="site"] {
   margin: 0 0 0.5em 0;
 }
 [data-surface="site"] h1 { font-size: clamp(40px, 5vw, 72px); letter-spacing: -0.025em; }
-[data-surface="site"] .nx-display { font-size: clamp(56px, 8vw, 128px); line-height: 0.95; font-weight: 500; letter-spacing: -0.035em; }
+[data-surface="site"] .nx-display { font-size: clamp(40px, 5.2vw, 84px); line-height: 1.02; font-weight: 500; letter-spacing: -0.03em; }
 [data-surface="site"] h2 { font-size: clamp(32px, 4vw, 48px); }
 [data-surface="site"] h3 { font-size: clamp(22px, 2.5vw, 28px); }
 [data-surface="site"] p { margin: 0 0 1em 0; color: var(--fg-muted); }
@@ -251,6 +260,52 @@ html[data-theme="dark"] [data-surface="site"] {
 [data-surface="site"] .nx-logo { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
 [data-surface="site"] .nx-nav { display: none; align-items: center; gap: 24px; font-size: 14px; font-weight: 500; }
 [data-surface="site"] .nx-nav-right { display: flex; align-items: center; gap: 12px; }
+/* Mobile header overflow fix (2026-09-23 review): below 900px (the SAME
+   breakpoint the full nav already collapses at) the locale switch, the
+   3-way theme switch, and "Entrar" move into the drawer instead of
+   crowding the header row — at 390px the old layout clipped mid-label
+   ("Sistema Claro E…") with no room left for the hamburger. Only the
+   primary CTA + the hamburger stay in the header at every width. */
+[data-surface="site"] .nx-nav-right > .nx-locale-switch,
+[data-surface="site"] .nx-nav-right > .nx-theme-switch,
+[data-surface="site"] .nx-nav-right > .nx-btn-ghost {
+  display: none;
+}
+[data-surface="site"] .nx-theme-toggle-mobile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 16px;
+  cursor: pointer;
+}
+@media (min-width: 768px) {
+  [data-surface="site"] .nx-theme-toggle-mobile { display: none; }
+}
+@media (min-width: 900px) {
+  [data-surface="site"] .nx-nav-right > .nx-locale-switch,
+  [data-surface="site"] .nx-nav-right > .nx-theme-switch,
+  [data-surface="site"] .nx-nav-right > .nx-btn-ghost {
+    display: inline-flex;
+  }
+}
+[data-surface="site"] .nx-mobile-drawer .nx-drawer-utilities {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+  margin-top: 8px;
+}
+@media (min-width: 900px) {
+  [data-surface="site"] .nx-mobile-drawer { display: none; }
+}
 [data-surface="site"] .nx-nav a,
 [data-surface="site"] .nx-nav .nx-nav-link {
   color: var(--fg);
@@ -342,19 +397,40 @@ html[data-theme="dark"] [data-surface="site"] {
   inset: 0;
   z-index: 1;
 }
+/* Contrast scrim (P1/06 §3D hero "with a contrast scrim"): sits ABOVE the
+   poster/scene, BELOW the text. Guarantees WCAG AA for the H1/subhead over
+   ANY poster colour in ANY theme — the poster/scene tokens alone (fixed
+   below to force dark `--scene-*` values regardless of ambient theme)
+   already fix the light-theme wash-out, but the scrim is the belt-and-
+   braces fix per the tech-lead's review (2026-09-23): it also visually
+   dims whatever part of the 3D scene happens to sit under the text column,
+   independent of the scene's own node-position bias. */
+[data-surface="site"] .nx-hero-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    to right,
+    rgba(5, 6, 11, 0.72) 0%,
+    rgba(5, 6, 11, 0.5) 45%,
+    rgba(5, 6, 11, 0.12) 72%,
+    rgba(5, 6, 11, 0) 88%
+  );
+}
 [data-surface="site"] .nx-hero-content {
   position: relative;
-  z-index: 2;
+  z-index: 3;
   padding: 64px 0 72px;
-  max-width: 760px;
+  max-width: min(1100px, 90vw);
 }
 [data-surface="site"] .nx-hero h1 { color: var(--fg-inverse); }
-[data-surface="site"] .nx-hero p.nx-subhead { color: var(--nx-night-3); font-size: 18px; max-width: 620px; }
+[data-surface="site"] .nx-hero p.nx-subhead { color: var(--nx-night-3); font-size: 18px; max-width: min(680px, 85vw); }
 [data-surface="site"] .nx-hero-update-card {
   position: absolute;
   right: 24px;
   bottom: 24px;
-  z-index: 2;
+  z-index: 3;
   background: color-mix(in srgb, var(--nx-night-9) 80%, transparent);
   border: 1px solid var(--hairline);
   border-radius: 12px;
@@ -384,10 +460,13 @@ html[data-theme="dark"] [data-surface="site"] {
 }
 [data-surface="site"] .nx-explore-3d {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   right: 24px;
   top: 24px;
   font-size: 13px;
+}
+[data-surface="site"] .nx-hero-hud-label {
+  z-index: 2;
 }
 
 /* ---------- Audience row ---------- */

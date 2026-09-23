@@ -7,6 +7,8 @@ import { pathFor, twinPath, EXTERNAL } from "../lib/routes";
 import { useTrackEvent } from "../hooks/useTrackEvent";
 
 const THEME_CHOICES: ThemeChoice[] = ["system", "light", "dark"];
+const THEME_CYCLE: Record<ThemeChoice, ThemeChoice> = { system: "light", light: "dark", dark: "system" };
+const THEME_ICON: Record<ThemeChoice, string> = { system: "\u{1F5A5}", light: "☀", dark: "\u{1F319}" };
 
 /**
  * Header (05 §Navigation, P8: exactly one filled CTA). `currentPath` drives
@@ -100,6 +102,19 @@ export function SiteHeader({ currentPath }: { currentPath: string }) {
             ))}
           </div>
 
+          <button
+            type="button"
+            className="nx-theme-toggle-mobile"
+            aria-label={`${t("theme.label")}: ${t(`theme.${choice}`)}`}
+            onClick={() => {
+              const next = THEME_CYCLE[choice];
+              setChoice(next);
+              track("theme_change", { theme: next });
+            }}
+          >
+            <span aria-hidden="true">{THEME_ICON[choice]}</span>
+          </button>
+
           <a href={EXTERNAL.login} className="nx-btn nx-btn-ghost">
             {t("nav.login")}
           </a>
@@ -135,6 +150,31 @@ export function SiteHeader({ currentPath }: { currentPath: string }) {
           <a href={pathFor("about", locale)}>{t("nav.about")}</a>
           <a href={pathFor("contact", locale)}>{t("nav.contact")}</a>
           <a href={EXTERNAL.login}>{t("nav.login")}</a>
+
+          <div className="nx-drawer-utilities">
+            <a
+              href={otherLocalePath}
+              className="nx-locale-switch"
+              onClick={() => track("locale_change", { locale: locale === "en" ? "pt-BR" : "en" })}
+            >
+              {otherLocaleLabel}
+            </a>
+            <div className="nx-theme-switch" role="group" aria-label={t("theme.label")}>
+              {THEME_CHOICES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={choice === c}
+                  onClick={() => {
+                    setChoice(c);
+                    track("theme_change", { theme: c });
+                  }}
+                >
+                  {t(`theme.${c}`)}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </header>

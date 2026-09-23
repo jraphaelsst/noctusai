@@ -78,12 +78,21 @@ export function HeroScene({ modules }: { modules: HeroModule[] }) {
       if (cancelled) return;
       import("./scene").then(({ createConstellationScene }) => {
         if (cancelled || !el) return;
+        // LOCAL offsets only — the right-third screen bias now lives
+        // entirely in `scene.ts`'s fixed `CLUSTER_ANCHOR` (2026-09-23
+        // review, take 2): baking the world-X offset into each node's OWN
+        // position and then rotating the shared group around the WORLD
+        // origin made the whole cluster sweep in a wide arc across the
+        // full frame every few seconds, periodically landing on the H1.
+        // A small local radius here just gives the anchor's own orbit its
+        // shape; the anchor's fixed world position is what keeps the
+        // cluster's SCREEN location constant.
         const nodes: SceneNode[] = modules.map((m, i) => {
           const angle = (i / modules.length) * Math.PI * 2;
           return {
             slug: m.slug,
             label: m.label,
-            position: [Math.cos(angle) * 3.4, Math.sin(angle) * 2.2, Math.sin(angle * 2) * 1.2],
+            position: [Math.cos(angle) * 1.1, Math.sin(angle) * 1.0, Math.sin(angle * 2) * 0.7],
           };
         });
         const handle = createConstellationScene(el, nodes, document.documentElement);
@@ -119,8 +128,16 @@ export function HeroScene({ modules }: { modules: HeroModule[] }) {
 
   return (
     <>
-      <HeroPoster />
-      <div ref={containerRef} className="nx-hero-scene" style={{ opacity: showCanvas ? 1 : 0 }} aria-hidden="true" />
+      {/* The canvas is transparent (`alpha: true`, no opaque clear colour)
+          so the theme shows through around the scene's own geometry — but
+          that also means the poster's OWN 8 static nodes stayed visible
+          underneath even after the live scene mounted, doubling every
+          circle on screen (2026-09-23 review). The poster must actually
+          crossfade OUT as the canvas fades in, not just sit there forever. */}
+      <div style={{ opacity: showCanvas ? 0 : 1, transition: "opacity 600ms ease" }}>
+        <HeroPoster />
+      </div>
+      <div ref={containerRef} className="nx-hero-scene" style={{ opacity: showCanvas ? 1 : 0, transition: "opacity 600ms ease" }} aria-hidden="true" />
       {lowPower && !optedIn && (
         <button type="button" className="nx-btn nx-explore-3d" onClick={() => setOptedIn(true)}>
           Explorar em 3D
@@ -130,6 +147,14 @@ export function HeroScene({ modules }: { modules: HeroModule[] }) {
         modules.map((m) => {
           const pos = labelPositions[m.slug];
           if (!pos || !pos.visible) return null;
+          // Never place a HUD label over the H1/subhead box (2026-09-23
+          // review): the text column can run up to 90vw wide, so — on top
+          // of the node-position bias above — also refuse to render any
+          // label whose PROJECTED x still falls inside the left ~58% of
+          // the hero, a cheap-but-effective backstop that doesn't need
+          // exact per-line text measurement.
+          const containerWidth = containerRef.current?.clientWidth ?? 0;
+          if (containerWidth > 0 && pos.x < containerWidth * 0.58) return null;
           return (
             <a
               key={m.slug}
@@ -139,7 +164,7 @@ export function HeroScene({ modules }: { modules: HeroModule[] }) {
                 position: "absolute",
                 left: pos.x,
                 top: pos.y,
-                zIndex: 3,
+                zIndex: 2,
                 transform: "translate(-50%, -50%)",
                 fontSize: 12,
                 fontFamily: "var(--nx-mono, monospace)",
