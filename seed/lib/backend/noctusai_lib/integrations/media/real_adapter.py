@@ -420,7 +420,13 @@ class RealMediaResolver:
         # `is_substantive`, not "is non-empty": a scanned document carries a
         # digital-signature stamp in its text layer, and forwarding that to
         # the chatbot as the document's contents is worse than saying nothing.
-        if camada.is_substantive:
+        #
+        # `media.force_vision` overrides this even when substantive — see its
+        # own docstring (`media.types.InboundMedia`). Without the override, a
+        # caller retrying because THIS SAME text carried none of the fields
+        # it needed gets THIS SAME text back, silently: the classifier has
+        # no way to know a downstream field-reader already rejected it.
+        if camada.is_substantive and not media.force_vision:
             return ResolvedMedia(kind=kind, text=f"[documento PDF]\n{camada.text}")
 
         if not fitz_ok:
@@ -441,7 +447,10 @@ class RealMediaResolver:
         # its own cap, brings the correct provider→model pairing, and
         # classifies a quota failure instead of a generic one.
         transcricao = await self._get_document_transcriber().transcribe(
-            media.content, mimetype=media.mimetype, filename=media.filename
+            media.content,
+            mimetype=media.mimetype,
+            filename=media.filename,
+            force_vision=media.force_vision,
         )
         if not transcricao.ok:
             return ResolvedMedia(
