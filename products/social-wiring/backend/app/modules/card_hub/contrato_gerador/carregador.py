@@ -187,6 +187,19 @@ def _endereco_manual(catalogo: dict, dados: dict) -> Endereco:
     )
 
 
+def _empreendimento(catalogo: dict, dados: dict) -> Optional[str]:
+    """The development/condomínio name `titulo_curto` prefixes onto the
+    address (migration 158): the operator-authored override
+    (`imovel_dados.empreendimento_manual`) wins when set, falling back to
+    the CRM/Vista mirror's own `empreendimento` otherwise. A manually
+    registered imóvel (migration 149) has NO mirror row at all, so without
+    the override `catalogo` is `{}` and this is unconditionally `None` —
+    exactly the gap this migration closes. `titulo_curto` itself
+    (`contexto.py`) is unchanged: it already prints `empreendimento` when
+    present and falls through to the address alone when it is not."""
+    return dados.get("empreendimento_manual") or catalogo.get("empreendimento")
+
+
 def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -> Imovel:
     canonico = busca_service.canonical(codigo)
     catalogo = busca_service.enriquecer(client, org_id, [codigo]).get(canonico) or {}
@@ -216,7 +229,10 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
     return Imovel(
         codigo=codigo,
         titulo=catalogo.get("titulo"),
-        empreendimento=catalogo.get("empreendimento"),
+        # Migration 158 — the authored override wins over the mirror; see
+        # `_empreendimento`'s docstring for why a manually registered imóvel
+        # needs this at all.
+        empreendimento=_empreendimento(catalogo, dados),
         endereco=_endereco_manual(catalogo, dados),
         # Migration 093 — the CRM/Vista mirror's own m², used only by the
         # `derivacao` coherence check (never printed) — see `dados.Imovel

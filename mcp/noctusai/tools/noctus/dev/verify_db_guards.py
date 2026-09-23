@@ -1038,6 +1038,45 @@ _ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE = GuardProbe(
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imovel_dados_empreendimento_manual_confirmado
+# CHECK (migration 158).
+# ---------------------------------------------------------------------------
+#
+# Same fixture shape as `_ENDERECO_REGISTRO_PROBE`/`_ULTIMA_TRANSFERENCIA_
+# MANUAL_PROBE` above (same table, borrowing an `imoveis` código with no
+# `imovel_dados` row yet) — the same family of bug: an authored
+# empreendimento name recorded WITHOUT its confirmation stamp is
+# indistinguishable from a half-written row, and `carregador._empreendimento`
+# would happily read it anyway (it does not check the stamp), so this is the
+# guard that keeps a half-written override from silently landing.
+
+_EMPREENDIMENTO_MANUAL_PROBE = GuardProbe(
+    id="imovel_dados.empreendimento_manual.confirmed_pair",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_dados_empreendimento_manual_confirmado",
+    kind="write_refusal",
+    migrations=("158_imovel_empreendimento_manual.sql",),
+    rationale=(
+        "empreendimento_manual (the authored development/condomínio name "
+        "for a manually registered imóvel with no Vista mirror row, "
+        "migration 158) and its confirmation timestamp must be set/cleared "
+        "together — the same half-written-row risk 139's endereco_registro "
+        "and 152's ultima_transferencia_manual already guard against."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table=_IMOVEL_DADOS_TABLE,
+        columns_sql="org_id, codigo, empreendimento_manual, empreendimento_manual_confirmado_em",
+        values_sql="fx.org_id, fx.codigo, 'Residencial Teste', NULL",
+        fixture_from=_ENDERECO_REGISTRO_FIXTURE_FROM,
+        fixture_description=_ENDERECO_REGISTRO_FIXTURE_DESC,
+        guard_fragment='constraint "imovel_dados_empreendimento_manual_confirmado"',
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — zero public storage.buckets (platform-wide; the LGPD guard).
 # ---------------------------------------------------------------------------
 #
@@ -1696,6 +1735,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_REQUER_DATA_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE,
+    _EMPREENDIMENTO_MANUAL_PROBE,
     _STORAGE_BUCKETS_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,

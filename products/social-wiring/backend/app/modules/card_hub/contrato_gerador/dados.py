@@ -197,6 +197,13 @@ class AtoCitado:
 class Imovel:
     codigo: str
     titulo: Optional[str] = None
+    #: The development/condomínio name `titulo_curto` prefixes onto the
+    #: address (contexto.py). Migration 158 — `carregador._empreendimento`
+    #: resolves this: `imovel_dados.empreendimento_manual` (the operator's
+    #: authored value) wins when set, falling back to the Vista mirror's own
+    #: `imoveis.empreendimento` — a MANUALLY registered imóvel (migration
+    #: 149) has no mirror row at all, so without the authored override this
+    #: is silently `None` forever and the title prints the address alone.
     empreendimento: Optional[str] = None
     #: 🔴 [endereco-portaria-vs-imovel] The CRM/Vista mirror's PÚBLICO
     #: endereço (`imoveis.logradouro`/`.numero`/`.complemento`). At at least

@@ -45,6 +45,8 @@ class TestReading:
         assert body["numero_registro_imoveis"] is None
         assert body["prefeitura_cadastro_imobiliario"] is None
         assert body["captador"] is None
+        assert body["empreendimento_manual"] is None
+        assert body["empreendimento_manual_confirmado_por"] is None
 
     def test_an_unknown_imovel_is_a_404(self, client, scoped):
         seed(scoped)
@@ -214,6 +216,56 @@ class TestWriting:
         assert body["numero_matricula"] is None
         assert body["numero_matricula_origem"] is None
         assert body["numero_matricula_em"] is None
+
+    def test_typing_an_empreendimento_stamps_its_confirmation(self, client, scoped):
+        """Migration 158. Single stamp (mirrors `endereco_manual_*`, 149),
+        not the 154 quintet — no `_origem`/`_documento_id` to accompany it."""
+        seed(scoped)
+        r = client.patch(
+            f"/api/imoveis/{CODIGO}/dados",
+            json={"empreendimento_manual": "Residencial Euroville"},
+            headers=auth(),
+        )
+        body = r.json()
+        assert body["empreendimento_manual"] == "Residencial Euroville"
+        assert body["empreendimento_manual_confirmado_em"] is not None
+
+    def test_clearing_an_empreendimento_clears_its_confirmation_too(self, client, scoped):
+        seed(
+            scoped,
+            dados=[
+                dados_row(
+                    empreendimento_manual="Residencial Euroville",
+                    empreendimento_manual_confirmado_em="2026-01-01T00:00:00+00:00",
+                )
+            ],
+        )
+        body = client.patch(
+            f"/api/imoveis/{CODIGO}/dados",
+            json={"empreendimento_manual": None},
+            headers=auth(),
+        ).json()
+        assert body["empreendimento_manual"] is None
+        assert body["empreendimento_manual_confirmado_em"] is None
+
+    def test_resaving_the_same_empreendimento_does_not_restamp_the_confirmation(
+        self, client, scoped
+    ):
+        seed(
+            scoped,
+            dados=[
+                dados_row(
+                    empreendimento_manual="Residencial Euroville",
+                    empreendimento_manual_confirmado_em="2026-01-01T00:00:00+00:00",
+                )
+            ],
+        )
+        body = client.patch(
+            f"/api/imoveis/{CODIGO}/dados",
+            json={"empreendimento_manual": "Residencial Euroville"},
+            headers=auth(),
+        ).json()
+        assert body["empreendimento_manual_confirmado_em"] == "2026-01-01T00:00:00+00:00"
 
     def test_a_provenance_column_cannot_be_set_from_the_body(self, client, scoped):
         """Stamped, never accepted. `StrictHttpModel` refuses the unknown key

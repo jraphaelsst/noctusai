@@ -74,6 +74,12 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     "onus_observacoes",
     "onus_certidao_em",
     "onus_documento_id",
+    # Migration 158 — the development/condomínio name for a manually
+    # registered imóvel (migration 149), which has no Vista mirror row and
+    # therefore no `imoveis.empreendimento` at all. Confirmed like
+    # `endereco_manual_*` (149) — a single stamp, not the 154 quintet: there
+    # is no document extraction for this field to reconcile against.
+    "empreendimento_manual",
 )
 
 #: What the UI offers for `situacao_onus`. Here rather than as a schema CHECK
@@ -103,6 +109,14 @@ CAMPOS_QUINTETO_MANUAL: tuple[str, ...] = (
 
 _SUFIXOS_QUINTETO: tuple[str, ...] = (
     "_origem", "_documento_id", "_em", "_confirmado_por", "_confirmado_em",
+)
+
+#: Migration 158 — fields with a bare `_confirmado_por`/`_confirmado_em`
+#: stamp (mirrors `endereco_manual_*`, 149) rather than the full 154 quintet
+#: above: nothing extracts these from a document, so `_origem`/
+#: `_documento_id`/`_em` would be columns that could never be written.
+CAMPOS_CONFIRMADO_SIMPLES: tuple[str, ...] = (
+    "empreendimento_manual",
 )
 
 #: Provenance columns — stamped, never accepted from a body. Listed so the
@@ -518,6 +532,16 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
         "ultima_transferencia_manual_confirmado_em": row.get(
             "ultima_transferencia_manual_confirmado_em"
         ),
+        # Migration 158 — the authored development/condomínio name, read by
+        # `carregador._empreendimento` ahead of the Vista mirror's own
+        # `imoveis.empreendimento`. `None` means "use the mirror".
+        "empreendimento_manual": row.get("empreendimento_manual"),
+        "empreendimento_manual_confirmado_por": table_reads.actor(
+            resolved, row.get("empreendimento_manual_confirmado_por")
+        ),
+        "empreendimento_manual_confirmado_em": row.get(
+            "empreendimento_manual_confirmado_em"
+        ),
         # Migration 154 — where each extracted contract field came from, and
         # whether it still awaits a human (the D2 gate's "machine-pending").
         "proveniencia": _proveniencia(row, resolved),
@@ -555,6 +579,7 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("endereco_registro_confirmado_por"),
         (row or {}).get("endereco_manual_confirmado_por"),
         (row or {}).get("ultima_transferencia_manual_confirmado_por"),
+        (row or {}).get("empreendimento_manual_confirmado_por"),
         (row or {}).get("numero_registro_imoveis_confirmado_por"),
         (row or {}).get("prefeitura_cadastro_imobiliario_confirmado_por"),
         (row or {}).get("situacao_onus_confirmado_por"),
@@ -614,6 +639,21 @@ def atualizar(
             # pointing at a value that is no longer there is worse than none.
             for sufixo in _SUFIXOS_QUINTETO:
                 patch[f"{campo}{sufixo}"] = None
+
+    # Migration 158 — single-stamp confirmation (mirrors `endereco_manual_*`,
+    # 149), not the quintet above: this field has no document/origem to
+    # reconcile against, only a confirmed value and when it was set.
+    for campo in CAMPOS_CONFIRMADO_SIMPLES:
+        if campo not in patch:
+            continue
+        if patch[campo] == (atual or {}).get(campo):
+            continue
+        if patch[campo]:
+            patch[f"{campo}_confirmado_por"] = str(usuario_id) if usuario_id else None
+            patch[f"{campo}_confirmado_em"] = _now()
+        else:
+            patch[f"{campo}_confirmado_por"] = None
+            patch[f"{campo}_confirmado_em"] = None
 
     if "captador_user_id" in patch and patch["captador_user_id"] is not None:
         patch["captador_user_id"] = str(patch["captador_user_id"])

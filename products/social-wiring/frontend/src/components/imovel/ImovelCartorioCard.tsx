@@ -65,7 +65,17 @@ interface Props {
   // above — `dados_service.gravar_endereco_manual` is not part of
   // `atualizar`'s `CAMPOS_EDITAVEIS`, because every touched field logs an
   // `imovel_endereco_historico` row (see the section below).
-  mirror?: { logradouro: string | null; numero: string | null; cidade: string | null; uf: string | null };
+  mirror?: {
+    logradouro?: string | null;
+    numero?: string | null;
+    cidade?: string | null;
+    uf?: string | null;
+    // Migration 158 — the Vista mirror's own `imoveis.empreendimento`,
+    // shown so an operator can see what the mirror already has before
+    // typing an override. Absent (not merely null) on the manual layout —
+    // that código has no mirror row at all.
+    empreendimento?: string | null;
+  };
   savingEnderecoManual?: boolean;
   onSaveEnderecoManual?: (patch: EnderecoManualPatch) => void;
 }
@@ -78,6 +88,7 @@ interface Draft {
   situacao_onus: string;
   onus_observacoes: string;
   onus_certidao_em: string;
+  empreendimento_manual: string;
 }
 
 /** Sentinel for "not assessed" — Radix treats `value=""` as uncontrolled, so
@@ -116,6 +127,7 @@ function toDraft(dados: ImovelDados | undefined): Draft {
     situacao_onus: dados?.situacao_onus ?? SEM_ONUS,
     onus_observacoes: dados?.onus_observacoes ?? "",
     onus_certidao_em: dados?.onus_certidao_em ?? "",
+    empreendimento_manual: dados?.empreendimento_manual ?? "",
   };
 }
 
@@ -165,6 +177,7 @@ export default function ImovelCartorioCard({
     dados?.situacao_onus,
     dados?.onus_observacoes,
     dados?.onus_certidao_em,
+    dados?.empreendimento_manual,
   ]);
 
   useEffect(() => {
@@ -207,6 +220,7 @@ export default function ImovelCartorioCard({
         draft.situacao_onus === SEM_ONUS ? null : draft.situacao_onus,
       onus_observacoes: blank(draft.onus_observacoes),
       onus_certidao_em: blank(draft.onus_certidao_em),
+      empreendimento_manual: blank(draft.empreendimento_manual),
     });
   }
 
@@ -282,6 +296,29 @@ export default function ImovelCartorioCard({
             placeholder="Ex.: 23231.42.11.0377.00.000"
             disabled={loading}
           />
+        </div>
+
+        <div className="space-y-1.5">
+          {/* Migration 158. Feeds `contrato_gerador.contexto.titulo_curto`
+              ("EMPREENDIMENTO – endereço") — the only input for it on a
+              manually registered imóvel, which has no Vista mirror row and
+              therefore no `imoveis.empreendimento` at all. */}
+          <Label htmlFor="empreendimento-manual">
+            Empreendimento / condomínio
+            {mirror?.empreendimento ? ` (CRM: ${mirror.empreendimento})` : ""}
+          </Label>
+          <Input
+            id="empreendimento-manual"
+            value={draft.empreendimento_manual}
+            onChange={(e) => set("empreendimento_manual")(e.target.value)}
+            placeholder={mirror?.empreendimento ?? "Ex.: Residencial Euroville"}
+            disabled={loading}
+            data-testid="imovel-empreendimento-manual"
+          />
+          <p className="text-xs text-muted-foreground">
+            Usado no título do contrato. Deixe em branco para usar o nome do CRM,
+            quando houver.
+          </p>
         </div>
 
         <div className="space-y-1.5">
