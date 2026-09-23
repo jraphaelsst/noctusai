@@ -92,6 +92,20 @@ class Fonte:
     estrutura_extraivel: bool = False
 
 
+#: `REGISTRO`/`Avaliacao.falta()` field-name suffix -> `capacidades.py`'s
+#: canonical vocabulary, for the three spots where they differ (see this
+#: module's `Fonte` docstring). Shared by `proveniencia.linhagem`
+#: (`REGISTRO`'s own field names, unabridged) and `contrato_gerador.
+#: derivacao` (`falta()`'s dotted `campo` strings, translated via their
+#: LAST segment) so neither keeps its own copy — importing each other is
+#: not an option: `derivacao` is imported BY `validacao_extracao`, which
+#: `linhagem` also imports, so `derivacao -> linhagem` would cycle back.
+RENOMEADOS_CAMPO: dict[str, str] = {
+    "nome_oficial": "nome",
+    "rg_orgao_expedidor": "rg_orgao",
+    "certidao_estado_civil_emitida_em": "data_emissao",
+}
+
 #: `identidade_extracao_service.CAMPOS`' full canonical vocabulary, mapped
 #: onto `capacidades.py`'s names (`nome_oficial -> nome`, `rg_orgao_
 #: expedidor -> rg_orgao`) — every cliente-document `Fonte` below claims this
@@ -225,6 +239,36 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
 #: reason: the tuple is what a human reads top-to-bottom, the dict is what
 #: code looks a `tipo_documento` up in.
 FONTES: dict[str, Fonte] = {f.tipo_documento: f for f in FONTES_REGISTRO}
+
+#: Human label per `tipo_documento` — `proveniencia.linhagem`'s
+#: `fontes_possiveis[].rotulo` and `GET /api/proveniencia/registro`'s FE
+#: hints both read this rather than each inventing its own copy.
+ROTULOS_TIPO_DOCUMENTO: dict[str, str] = {
+    "rg": "RG",
+    "cpf": "CPF",
+    "cnh": "CNH",
+    "certidao_casamento": "Certidão de casamento",
+    "certidao_nascimento": "Certidão de nascimento",
+    "comprovante_endereco": "Comprovante de endereço",
+    "matricula": "Matrícula do imóvel",
+    "guia_iptu": "Guia do IPTU",
+    "cnd_iptu": "CND de IPTU",
+    "cnd_condominio": "CND de condomínio",
+}
+
+#: The table a `<campo>_documento_id` resolved into, mapped onto the
+#: `Entrada` it stands for — `validacao_extracao.documentos_de_origem`
+#: tags each resolved row `_tabela`; this is the other half of that join,
+#: kept here (not there) so that module stays free of `Entrada` vocabulary.
+#: `cliente_documentos` covers both cliente-upload channels (`CLIENTE_CARD_
+#: UPLOAD`/`PARTE_PAINEL_UPLOAD`) — the row itself does not say which, so
+#: this picks the operator-facing one; `Fonte.entradas` is still the
+#: authoritative "which channels can feed this tipo_documento" answer.
+TABELA_ENTRADA: dict[str, Entrada] = {
+    "cliente_documentos": Entrada.CLIENTE_CARD_UPLOAD,
+    "imovel_documentos": Entrada.IMOVEL_PAGE_UPLOAD,
+    "matricula_extracoes": Entrada.MATRICULAS,
+}
 
 
 def resolver_extrator(fonte: Fonte) -> Any:

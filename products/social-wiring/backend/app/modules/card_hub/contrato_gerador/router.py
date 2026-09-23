@@ -1,5 +1,6 @@
-"""`/api/clientes/{cliente_id}/contratos/{contrato_id}/{geracao,gerar}` and
-`POST /api/clientes/{cliente_id}/contratos/gerar` (start one) — F5.
+"""`/api/clientes/{cliente_id}/contratos/{contrato_id}/{geracao,gerar,
+proveniencia}` and `POST /api/clientes/{cliente_id}/contratos/gerar`
+(start one) — F5.
 
 A separate file, `include_router`'d into `card_hub/router.py`'s `router` with
 one line (same layout `negociacao_estruturada_router.py` uses), so every path
@@ -33,6 +34,7 @@ from app.modules.card_hub.contrato_gerador.deps import (
     get_politica_contrato,
 )
 from app.modules.card_hub.deps import get_card_hub_client, get_storage_backend
+from app.modules.card_hub.proveniencia import linhagem
 
 router = APIRouter()
 
@@ -117,6 +119,22 @@ async def get_validacao_extracao_route(
     usuario_id = getattr(user, "id", None)
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
     return validacao_extracao.situacao(client, org_id, dados, usuario_id=usuario_id)
+
+
+@router.get("/{cliente_id}/contratos/{contrato_id}/proveniencia")
+async def get_contrato_proveniencia_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """The card's "Proveniência" tab: every contract-feeding value's state
+    (empty / machine-pending / confirmed / manual / conflicted), its source
+    document, and — for the ones not yet filled — which document type(s)
+    could still supply it (`fontes.FONTES`). Read-only; see
+    `proveniencia.linhagem.linhagem_do_card`."""
+    _user, org_id = auth_parts(auth)
+    return linhagem.linhagem_do_card(client, org_id, cliente_id, contrato_id)
 
 
 @router.post("/{cliente_id}/contratos/{contrato_id}/validacao-extracao/decisoes")
