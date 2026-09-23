@@ -27,8 +27,10 @@ from app.services.bi_service import BIService
 __all__ = [
     "Excedente",
     "LinhaDRE",
+    "ResumoFinanceiro",
     "FinanceiroService",
     "proxima_competencia",
+    "competencia_anterior",
     "limites_da_competencia",
 ]
 
@@ -65,6 +67,27 @@ def proxima_competencia(competencia: str) -> str:
     return f"{ano + 1}-01" if mes == 12 else f"{ano}-{mes + 1:02d}"
 
 
+def competencia_anterior(competencia: str) -> str:
+    """'2026-09' → '2026-08'. January rolls back the year. Inverse of
+    :func:`proxima_competencia` — used to find which delivery month's
+    excedentes land on a given invoice month (see `gerar_faturas_da_competencia`)."""
+    ano, mes = (int(p) for p in competencia.split("-"))
+    return f"{ano - 1}-12" if mes == 1 else f"{ano}-{mes - 1:02d}"
+
+
+def _vencimento(competencia: str, dia_vencimento: int | None) -> str | None:
+    """The invoice due date for a competência, given the contract's
+    `dia_vencimento`. `None` when the contract names no day — an invoice
+    without a due date is legitimate (the payment terms are handled
+    manually), not an error."""
+    if not dia_vencimento:
+        return None
+    ano, mes = (int(p) for p in competencia.split("-"))
+    ultimo_dia = calendar.monthrange(ano, mes)[1]
+    dia = min(int(dia_vencimento), ultimo_dia)
+    return f"{ano:04d}-{mes:02d}-{dia:02d}"
+
+
 @dataclass(slots=True)
 class Excedente:
     cliente_id: str
@@ -98,6 +121,21 @@ class LinhaDRE:
     def margem_percentual(self) -> float:
         """Margin over revenue. 0 when there is no revenue — NOT a division error."""
         return round((self.margem / self.receita) * 100, 1) if self.receita else 0.0
+
+
+@dataclass(slots=True)
+class ResumoFinanceiro:
+    competencia: str | None
+    #: Current monthly recurring revenue — the sum of every ACTIVE contract's
+    #: `valor_mensal`, independent of `competencia` (a snapshot of NOW, not of
+    #: the filtered month).
+    mrr: float
+    #: Open invoices (not paga, not cancelada) — `competencia`-scoped when given.
+    a_receber: float
+    #: Paid invoices — `competencia`-scoped when given.
+    recebido: float
+    inadimplente_valor: float
+    inadimplente_qtd: int
 
 
 class FinanceiroService:
@@ -186,6 +224,114 @@ class FinanceiroService:
         for alvo in linhas.values():
             alvo.receita = round(alvo.receita, 2)
         return sorted(linhas.values(), key=lambda l: l.cliente_nome)
+
+    # ── Fechamento mensal ───────────────────────────────────────────
+    def gerar_faturas_da_competencia(self, org_id: str, competencia: str) -> dict:
+        """Open (or find) this month's invoice for every active contract.
+
+        Idempotent per contrato ativo × competência: a contract that already
+        has a non-cancelled invoice for this month is reported under
+        `existentes` rather than billed a second time — the same guarantee
+        the manual `POST /faturas` unique index gives, applied to the whole
+        active book at once. Each NEW invoice carries a "Retainer mensal"
+        line (`contrato.valor_mensal`) plus any excedentes DELIVERED the
+        month before and billed onto this one (see the module docstring —
+        the charge always lands on the month after the work).
+        """
+        limites_da_competencia(competencia)  # raises ValueError on malformed
+        mes_entrega = competencia_anterior(competencia)
+        excedentes_por_contrato = {
+            e.contrato_id: e
+            for e in self.excedentes(org_id, mes_entrega)
+            if e.competencia_cobranca == competencia
+        }
+        existentes_por_contrato = {
+            str(f["contrato_id"]): f
+            for f in self._repos.fatura.da_competencia(org_id, competencia)
+            # A cancelled invoice does not hold the slot — the DB's own
+            # unique index (`idx_igig_fatura_competencia`) excludes it too.
+            if f.get("contrato_id") and f.get("status") != "cancelada"
+        }
+
+        criadas: list[dict] = []
+        existentes: list[dict] = []
+        for contrato in self._repos.contrato.ativos(org_id):
+            contrato_id = str(contrato["id"])
+            ja_existente = existentes_por_contrato.get(contrato_id)
+            if ja_existente is not None:
+                existentes.append(ja_existente)
+                continue
+
+            fatura = self._repos.fatura.criar(org_id, {
+                "cliente_id": contrato["cliente_id"],
+                "contrato_id": contrato_id,
+                "competencia": competencia,
+                "vencimento": _vencimento(competencia, contrato.get("dia_vencimento")),
+            })
+            self._repos.fatura_item.criar(org_id, {
+                "fatura_id": fatura["id"],
+                "descricao": "Retainer mensal",
+                "tipo": "mensalidade",
+                "quantidade": 1,
+                "valor_unit": float(contrato.get("valor_mensal") or 0),
+            })
+            excedente = excedentes_por_contrato.get(contrato_id)
+            if excedente is not None and excedente.excedentes > 0:
+                self._repos.fatura_item.criar(org_id, {
+                    "fatura_id": fatura["id"],
+                    "descricao": f"Excedentes de {mes_entrega}",
+                    "tipo": "excedente",
+                    "quantidade": excedente.excedentes,
+                    "valor_unit": excedente.valor_unitario,
+                })
+            itens = self._repos.fatura_item.da_fatura(org_id, fatura["id"])
+            criadas.append(self._repos.fatura.recalcular_total(org_id, fatura["id"], itens))
+
+        return {"criadas": criadas, "existentes": existentes}
+
+    # ── Resumo ───────────────────────────────────────────────────────
+    def resumo(self, org_id: str, competencia: str | None = None) -> ResumoFinanceiro:
+        """A receber, recebido, inadimplente e MRR — the financeiro snapshot.
+
+        `competencia` scopes `a_receber`/`recebido`/`inadimplente_*`; `mrr` is
+        always the CURRENT active book, since a recurring-revenue figure
+        filtered to a past month would answer a different question than "what
+        do we bill every month right now".
+        """
+        if competencia:
+            limites_da_competencia(competencia)  # raises ValueError on malformed
+        mrr = round(
+            sum(float(c.get("valor_mensal") or 0) for c in self._repos.contrato.ativos(org_id)), 2
+        )
+
+        faturas = (
+            self._repos.fatura.da_competencia(org_id, competencia)
+            if competencia else self._repos.fatura.listar(org_id)
+        )
+        a_receber = 0.0
+        recebido = 0.0
+        for fatura in faturas:
+            status = fatura.get("status")
+            if status == "cancelada":
+                continue
+            valor = float(fatura.get("valor_total") or 0)
+            if status == "paga":
+                recebido += valor
+            else:
+                a_receber += valor
+
+        atrasadas = self.inadimplentes(org_id)
+        if competencia:
+            atrasadas = [f for f in atrasadas if f["competencia"] == competencia]
+
+        return ResumoFinanceiro(
+            competencia=competencia,
+            mrr=mrr,
+            a_receber=round(a_receber, 2),
+            recebido=round(recebido, 2),
+            inadimplente_valor=round(sum(f["valor_total"] for f in atrasadas), 2),
+            inadimplente_qtd=len(atrasadas),
+        )
 
     # ── Régua de cobrança ───────────────────────────────────────────
     def inadimplentes(self, org_id: str, *, hoje: date | None = None) -> list[dict]:

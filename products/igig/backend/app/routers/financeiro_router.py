@@ -1,6 +1,8 @@
 """Financeiro e Gestão de Contratos — Módulo 6.
 
   FATURAS      /api/financeiro/faturas …              CRUD + lines + mark paid
+  FECHAMENTO   /api/financeiro/faturas/gerar-competencia   monthly close, idempotent
+  RESUMO       /api/financeiro/resumo                 a receber/recebido/inadimplente/MRR
   EXCEDENTES   /api/financeiro/excedentes/{comp}      delivered vs contracted
   DRE          /api/financeiro/dre                    revenue vs real hour-cost
   COBRANÇA     /api/financeiro/inadimplentes          overdue, with days late
@@ -33,7 +35,10 @@ from app.schemas.financeiro import (
     FaturaItemCreate,
     FaturaItemOut,
     FaturaOut,
+    GerarCompetenciaIn,
+    GerarCompetenciaOut,
     InadimplenteOut,
+    ResumoFinanceiroOut,
 )
 from app.services.financeiro_service import FinanceiroService
 from app.store import get_repositorios
@@ -143,6 +148,47 @@ async def marcar_paga(
         return FaturaOut(**repos.fatura.marcar_paga(org_id, fatura_id))
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Fatura não encontrada")
+
+
+@router.post("/faturas/gerar-competencia", response_model=GerarCompetenciaOut,
+             status_code=status.HTTP_200_OK)
+async def gerar_competencia(
+    payload: GerarCompetenciaIn,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> GerarCompetenciaOut:
+    """Close the month: open an invoice for every active contract at once.
+
+    Safe to re-run — a contract that already has an invoice for this
+    competência comes back under `existentes`, never billed twice. See
+    `FinanceiroService.gerar_faturas_da_competencia`.
+    """
+    org_id = _org(auth)
+    try:
+        resultado = FinanceiroService(repos).gerar_faturas_da_competencia(
+            org_id, payload.competencia
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return GerarCompetenciaOut(
+        criadas=[FaturaOut(**f) for f in resultado["criadas"]],
+        existentes=[FaturaOut(**f) for f in resultado["existentes"]],
+    )
+
+
+@router.get("/resumo", response_model=ResumoFinanceiroOut)
+async def resumo(
+    competencia: str | None = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> ResumoFinanceiroOut:
+    """A receber, recebido, inadimplente e MRR — o retrato financeiro atual.
+
+    `competencia` scopes a_receber/recebido/inadimplente; MRR is always the
+    current active book (see `FinanceiroService.resumo`).
+    """
+    resultado = FinanceiroService(repos).resumo(_org(auth), competencia)
+    return ResumoFinanceiroOut(**asdict(resultado))
 
 
 # ── Excedentes ──────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ from noctusai_lib.api.schemas import StrictHttpModel
 __all__ = [
     "FaturaCreate", "FaturaOut", "FaturaItemCreate", "FaturaItemOut",
     "ExcedenteOut", "DREOut", "InadimplenteOut",
+    "GerarCompetenciaIn", "GerarCompetenciaOut", "ResumoFinanceiroOut",
 ]
 
 TipoItem = Literal["mensalidade", "excedente", "desconto", "avulso"]
@@ -87,3 +88,25 @@ class InadimplenteOut(BaseModel):
     valor_total: float
     vencimento: str
     dias_atraso: int
+
+
+class GerarCompetenciaIn(StrictHttpModel):
+    #: 'YYYY-MM' — the invoice month being closed.
+    competencia: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+class GerarCompetenciaOut(BaseModel):
+    #: Invoices this call actually created.
+    criadas: list[FaturaOut] = Field(default_factory=list)
+    #: Contracts that already had a (non-cancelled) invoice for the month —
+    #: reported, not re-billed. Idempotency made visible to the caller.
+    existentes: list[FaturaOut] = Field(default_factory=list)
+
+
+class ResumoFinanceiroOut(BaseModel):
+    competencia: str | None = None
+    mrr: float
+    a_receber: float
+    recebido: float
+    inadimplente_valor: float
+    inadimplente_qtd: int

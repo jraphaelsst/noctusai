@@ -40,6 +40,8 @@ __all__ = [
     "LeadRepository",
     "OrcamentoRepository",
     "PipelineStageRepository",
+    "NegocioRepository",
+    "PipelineMovimentoRepository",
     "Repositorios",
 ]
 
@@ -704,6 +706,35 @@ class PipelineStageRepository(BaseRepository):
         return self.buscar(org_id, etapa_id).get("papel")
 
 
+class NegocioRepository(BaseRepository):
+    """Sales funnel cards (migration 018).
+
+    Full lifecycle (open/move/close/lose) lives in
+    `app/services/comercial_funil.py`, over the PostgREST seam directly
+    (decision D-A1 — the board needs `in_`/ordering shapes this RecordStore
+    seam does not carry). This repository exists so a RecordStore-side
+    READER — `app/services/relatorios.py`'s comercial report — can ask "which
+    negócios won/lost in this period" without a second client. Nothing here
+    may move a negócio between stages, for the same reason `TarefaRepository`
+    stays read-only on the board: a second move path is how the transition
+    history and the close rules get skipped.
+    """
+
+    table = "negocio"
+    default_order = (Order("created_at", descending=True),)
+
+
+class PipelineMovimentoRepository(BaseRepository):
+    """Stage-transition history for BOTH boards (migration 017), READ side.
+
+    Written exclusively by the seed's `move_card`; this repository never
+    writes, for the same reason as :class:`NegocioRepository` above.
+    """
+
+    table = "pipeline_movimentos"
+    default_order = (Order("created_at", descending=True),)
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -733,3 +764,5 @@ class Repositorios:
         self.lead = LeadRepository(store)
         self.orcamento = OrcamentoRepository(store)
         self.etapa = PipelineStageRepository(store)
+        self.negocio = NegocioRepository(store)
+        self.movimento = PipelineMovimentoRepository(store)
