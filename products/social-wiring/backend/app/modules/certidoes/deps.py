@@ -137,6 +137,7 @@ class CertidoesService:
     read_certidao_bytes: Callable
     delete_storage_files: Callable
     process_manual_upload: Callable
+    process_manual_extraction: Callable
     cancelar_processamento: Callable
     queued_tjsp_for_org: Callable
     tjsp_cooldown_status: Callable
@@ -167,6 +168,7 @@ def _build_default_service() -> CertidoesService:
         read_certidao_bytes=service.read_certidao_bytes,
         delete_storage_files=service.delete_storage_files,
         process_manual_upload=service.process_manual_upload,
+        process_manual_extraction=service.process_manual_extraction,
         cancelar_processamento=service.cancelar_processamento,
         queued_tjsp_for_org=service.queued_tjsp_for_org,
         tjsp_cooldown_status=service.tjsp_cooldown_status,

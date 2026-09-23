@@ -963,21 +963,36 @@ class TestUploadManual:
         self, client, certidoes_db, override_service
     ):
         db, _ = certidoes_db
-        _seed(db, consultas=[_consulta()], resultados=[_resultado(id="r1")])
+        _seed(db, consultas=[_consulta()], resultados=[
+            _resultado(id="r1", resultado_origem="api", confirmado_por="user-1"),
+        ])
         proc = AsyncMock(
-            return_value={"status": "sucesso", "arquivo_nome": "cnd_federal.pdf"}
+            return_value={"status": "processando", "arquivo_nome": "cnd_federal.pdf"}
         )
-        override_service(process_manual_upload=proc)
+        extrair = AsyncMock(return_value={"status": "sucesso"})
+        override_service(process_manual_upload=proc, process_manual_extraction=extrair)
         resp = client.post(f"{BASE}/resultados/r1/upload", files=self._file())
         assert resp.status_code == 200
-        assert resp.json()["data"]["status"] == "sucesso"
-        # The route hands the pipeline the CALLER's org, the resultado's tipo
-        # and the PDF bytes — the contract the automated flow also relies on.
+        assert resp.json()["data"]["status"] == "processando"
+        # The route hands the storage leg the CALLER's org, the resultado's
+        # tipo and the PDF bytes — the contract the automated flow also
+        # relies on. The extraction leg (scheduled via BackgroundTasks, not
+        # awaited inline — the point of the split) gets the same PDF bytes
+        # plus the resultado's provenance, so a human's prior confirmation is
+        # still respected by the background job.
         kw = proc.await_args.kwargs
         assert kw["org_id"] == CALLER_ORG
         assert kw["tipo"] == "cnd_federal"
         assert kw["resultado_id"] == "r1"
         assert kw["pdf_bytes"] == b"%PDF-1.4 scan"
+
+        extrair.assert_awaited_once()
+        ekw = extrair.await_args.kwargs
+        assert ekw["resultado_id"] == "r1"
+        assert ekw["consulta_id"] == "consulta-001"
+        assert ekw["pdf_bytes"] == b"%PDF-1.4 scan"
+        assert ekw["resultado_origem_atual"] == "api"
+        assert ekw["confirmado_por_atual"] == "user-1"
 
     def test_nao_pdf_e_422(self, client, certidoes_db):
         db, _ = certidoes_db

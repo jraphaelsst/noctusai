@@ -98,11 +98,17 @@ RESULTADOS = "certidao_resultados"
 #: frontend as part of a LIST (a consulta's `resultados[]`, the per-parte
 #: panel) — the two dedicated `.../transcricao` routes are the only place
 #: the full text travels, and each of those LGPD-logs the read.
+#: `estrutura_erro`/`estrutura_tentativas` (migration 155) are the
+#: manual-upload structured/vision-extraction leg's own status — a UI can
+#: show a PT-BR reason (or a "tentativa 2 de 3") next to a `sucesso` resultado
+#: whose structured fields never landed, instead of that looking identical to
+#: one nothing was ever asked to read. See `process_manual_extraction`.
 RESULTADO_COLUNAS_SEM_TEXTO = (
     "id,consulta_id,org_id,tipo,nome_display,ordem,status,analise_ia,"
     "arquivo_url,arquivo_nome,api_response,erro_mensagem,api_requested_at,"
     "created_at,updated_at,numero,emitida_em,validade_ate,resultado,"
-    "resultado_origem,confirmado_por,confirmado_em,tem_transcricao"
+    "resultado_origem,confirmado_por,confirmado_em,tem_transcricao,"
+    "estrutura_erro,estrutura_tentativas"
 )
 
 MAX_RETRIES = 3
@@ -847,6 +853,14 @@ class ExtractedPdfText:
     para_ia: Optional[str]
     texto_extraido: Optional[str] = None
     formatacao: tuple[FormatRange, ...] = ()
+    #: PT-BR sentence a UI can render when the transcription leg did NOT
+    #: produce a trustworthy read — `None` on success (including the benign
+    #: "nothing to extract" case an empty PDF page produces). Independent of
+    #: `para_ia`/`texto_extraido` being `None`: those already mean "nothing
+    #: usable came out"; this says WHY, for the one caller
+    #: (`process_manual_extraction`) that persists it onto the row. See
+    #: `_extract_pdf_text`.
+    erro: Optional[str] = None
 
 
 #: Vision pages a certidão transcription may bill. 0 = text layer only (the
@@ -854,9 +868,79 @@ class ExtractedPdfText:
 #: and why the vision provider is only resolved when this is above 0.
 CERTIDAO_MAX_VISION_PAGES = 0
 
+#: The MANUAL-upload sibling of the constant above — a bounded, one-time,
+#: human-triggered read, not a recurring scheduler bill. A human just
+#: uploaded a PDF the automation could not obtain; keeping this at 0 (migration
+#: 113's original choice, made for the SCHEDULER path) meant a scanned
+#: certidão got no analysis, no structured fields, and nothing said about why
+#: — indistinguishable from "nothing was ever asked to read it". 3 pages
+#: covers every certificate this registry issues (`CERTIDOES_CONFIG` — none of
+#: them is a multi-page bundle); `too_many_vision_pages` is the honest refusal
+#: for the one that would exceed it, never a silent partial read. Only
+#: `process_manual_extraction` uses this — the scheduler flow
+#: (`_process_single_certidao`) keeps `CERTIDAO_MAX_VISION_PAGES` unchanged.
+CERTIDAO_MANUAL_MAX_VISION_PAGES = 3
+
+#: D3 (KB roadmap `sw-extraction-contract-gate-2026-09.md`). How many times
+#: `process_manual_extraction` may be STARTED for one resultado, including the
+#: first — same shape `card_hub.identidade_extracao_service.MAX_TENTATIVAS`
+#: already established, and the same reasoning: a deterministically-broken
+#: read (a corrupt PDF, an exhausted quota, a revoked key) must not be retried
+#: forever by `recover_stale_processando`, paying for a vision call on every
+#: pass. 3 = the first attempt plus 2 automatic retries.
+MAX_ESTRUTURA_TENTATIVAS = 3
+
+#: PT-BR sentences for `ExtractedPdfText.erro` / `certidao_resultados.
+#: estrutura_erro` — a due-diligence operator reads this COLUMN, never a log
+#: line, so the vendor's own error code (`_classify_failure`'s vocabulary,
+#: `transcription.py`) is translated here rather than written raw. Falls back
+#: to a generic-but-still-PT-BR sentence carrying the code for anything this
+#: module has not named yet — never a bare English exception string (the same
+#: rule `_analyze_with_ai`'s docstring states for `analise_ia`).
+_ESTRUTURA_ERRO_MENSAGENS: dict[str, str] = {
+    "no_pages": "Não foi possível abrir o PDF (arquivo corrompido ou inválido).",
+    "too_many_vision_pages": (
+        "Documento digitalizado tem mais páginas do que o limite permitido "
+        "para leitura por IA."
+    ),
+    "missing_credentials": (
+        "Provedor de IA de visão não configurado. Configure em "
+        "Configurações → Chaves de API."
+    ),
+    "insufficient_quota": (
+        "Cota do provedor de IA esgotada. Verifique o faturamento em "
+        "Configurações → Chaves de API."
+    ),
+    "rate_limited": "Limite de requisições do provedor de IA atingido.",
+    "invalid_credentials": (
+        "Credencial do provedor de IA inválida. Verifique em "
+        "Configurações → Chaves de API."
+    ),
+    "rasterize_failed": (
+        "Falha ao converter o documento digitalizado em imagem para leitura."
+    ),
+    "transcription_failed": "Falha inesperada ao ler o documento digitalizado.",
+    "vision_disabled": "Documento digitalizado — leitura por IA desabilitada.",
+    "empty_document": "Arquivo vazio — nada para ler.",
+}
+
+
+def _estrutura_erro_mensagem(codigo: Optional[str]) -> Optional[str]:
+    """`codigo` (a `Transcription.error` value) → the PT-BR sentence
+    `estrutura_erro` stores, or `None` when there is nothing to report."""
+    if not codigo:
+        return None
+    return _ESTRUTURA_ERRO_MENSAGENS.get(
+        codigo, f"Falha na leitura automática do documento ({codigo})."
+    )
+
 
 async def _extract_pdf_text(
-    pdf_bytes: bytes, nome_display: str, org_id: Optional[str] = None
+    pdf_bytes: bytes,
+    nome_display: str,
+    org_id: Optional[str] = None,
+    *,
+    max_vision_pages: int = CERTIDAO_MAX_VISION_PAGES,
 ) -> ExtractedPdfText:
     """Extract text (and its formatting) from a certidão PDF.
 
@@ -865,20 +949,21 @@ async def _extract_pdf_text(
     layer is a digital-signature stamp, not content — is not handed to
     `_analyze_with_ai` (nor persisted) as if it were the document.
 
-    `max_vision_pages=0` keeps this path on the free, exact half of the
-    ladder — UNCHANGED by migration 113. Certidões arrive here from a
-    background scheduler that runs per org on a timer, so switching rung 2
-    on would start billing vision calls on a loop nobody is watching. Raise
-    it (or drop the argument for the seed default of 40) to transcribe
-    scanned certidões too — that is a cost decision, not a technical
-    blocker.
+    `max_vision_pages` defaults to `CERTIDAO_MAX_VISION_PAGES` (0 — text layer
+    only), UNCHANGED by migration 113 for the scheduler flow
+    (`_process_single_certidao`), which never passes this argument.
+    `process_manual_extraction` passes `CERTIDAO_MANUAL_MAX_VISION_PAGES`
+    instead — see that constant's own docstring for why the two paths differ.
 
     Never raises: a failed or empty transcription is
-    `ExtractedPdfText(para_ia=None)` (contract §4 — "never fails the
-    certidão"). The `vision_disabled` case is logged rather than silently
-    dropped: a scanned certidão getting no AI analysis (nor a persisted
-    transcript) is a real gap and should be visible in the logs, not
-    inferred from an empty column.
+    `ExtractedPdfText(para_ia=None, erro=...)` (contract §4 — "never fails the
+    certidão"). `erro` carries the PT-BR reason (`None` on success, including
+    the benign case where nothing was there to read) — the automated flow
+    ignores it entirely (unchanged behaviour); `process_manual_extraction` is
+    the one caller that persists it onto `certidao_resultados.estrutura_erro`.
+    The `vision_disabled` case is ALSO logged (never silently dropped) rather
+    than just carried in `erro`: a scanned certidão getting no AI analysis
+    should be visible in the logs too, not inferred from an empty column.
     """
     try:
         from noctusai_lib.integrations.documents import make_document_transcriber
@@ -890,35 +975,38 @@ async def _extract_pdf_text(
         # made a text-layer-only transcription depend on a credential lookup:
         # without Supabase config it raised, the broad `except` below turned
         # that into "no transcript", and every certidão silently lost its AI
-        # analysis. Tying both to ONE constant keeps the original intent — the
-        # day the cap is raised, the rung starts at the vendor the operator
-        # picked, not at the seed default.
+        # analysis. Tying both to ONE parameter keeps the original intent — a
+        # caller that raises the cap gets the vendor the operator picked, not
+        # the seed default.
         provider = (
-            resolve_vision_provider(org_id) if CERTIDAO_MAX_VISION_PAGES > 0 else None
+            resolve_vision_provider(org_id) if max_vision_pages > 0 else None
         )
         transcriber = make_document_transcriber(
             real=True,
             org_id=org_id,
-            max_vision_pages=CERTIDAO_MAX_VISION_PAGES,
+            max_vision_pages=max_vision_pages,
             provider=provider,
         )
         resultado = await transcriber.transcribe(
             pdf_bytes, mimetype="application/pdf"
         )
+        erro: Optional[str] = None
         if resultado.error == "vision_disabled":
             logger.info(
                 "Certidão %s: %s — analysing the %d page(s) with a real text layer",
                 nome_display, resultado.error_message, len(resultado.pages),
             )
+            erro = _estrutura_erro_mensagem(resultado.error)
         elif not resultado.ok:
             logger.warning(
                 "Certidão %s: transcription failed (%s) %s",
                 nome_display, resultado.error, resultado.error_message or "",
             )
+            erro = _estrutura_erro_mensagem(resultado.error)
 
         extracted = resultado.text
         if not extracted:
-            return ExtractedPdfText(para_ia=None)
+            return ExtractedPdfText(para_ia=None, erro=erro)
         # Prefix with certificate type for context (mirrors how the automated
         # flow sends structured API response data). Truncate to avoid exceeding
         # token limits. UNCHANGED shape — see `ExtractedPdfText.para_ia`.
@@ -927,10 +1015,13 @@ async def _extract_pdf_text(
             para_ia=para_ia,
             texto_extraido=extracted,
             formatacao=resultado.formatting,
+            erro=erro,
         )
     except Exception as e:
         logger.warning("PDF text extraction failed: %s", e)
-        return ExtractedPdfText(para_ia=None)
+        return ExtractedPdfText(
+            para_ia=None, erro=_estrutura_erro_mensagem("transcription_failed")
+        )
 
 
 # --------------- One certificate ---------------
@@ -1360,19 +1451,44 @@ async def processar_consulta(
 # --------------- Recovery ---------------
 
 
-def recover_stale_processando(db) -> int:
+def recover_stale_processando(
+    db,
+    storage: Optional[StorageBackend] = None,
+    *,
+    http_client_factory: Optional[Callable[[], httpx.AsyncClient]] = None,
+    schedule: Optional[Callable[..., Any]] = None,
+) -> int:
     """Detect and recover resultados stuck in 'processando' for too long.
 
     Called on every list fetch (throttled) so the frontend never loops forever
-    on stuck items. Uses `api_requested_at` (set right before the API call in
-    `_process_single_certidao`) to determine staleness — NOT `updated_at`,
-    which may reflect the original creation time.
+    on stuck items. Uses `api_requested_at` to determine staleness — NOT
+    `updated_at`, which may reflect the original creation time. Set right
+    before the API call in `_process_single_certidao` for the automated flow,
+    and right before scheduling the background extraction in
+    `process_manual_upload` for a manual one — both mean the same thing here:
+    "background work this row is waiting on started at this time".
 
     Only recovers items whose `api_requested_at` is older than the threshold.
     Items in 'processando' WITHOUT an `api_requested_at` are waiting to start
     and are handled by `recover_stuck_processando`.
 
-    Returns the number of recovered items.
+    D3 (KB roadmap `sw-extraction-contract-gate-2026-09.md`). When `storage`
+    is given, a stale row that already has a file in the bucket (`arquivo_url`
+    — only true for a manual upload whose extraction leg stalled; the
+    automated flow never writes `arquivo_url` before reaching `sucesso`) and
+    has not exhausted `MAX_ESTRUTURA_TENTATIVAS` gets its structured/AI read
+    RETRIED instead of closed out — `_retomar_extracao_manual`, scheduled
+    fire-and-forget via `schedule` (default `schedule_coro`, the same
+    primitive `schedule_tjsp_for_org` already uses in this module). Every
+    other stale row — the automated InfoSimples flow, or a manual row that
+    exhausted its retries or never actually made it to storage — keeps the
+    original, unconditional "mark erro" behaviour; a human already has a
+    reprocess button for those. `storage=None` (the default) is the pre-D3
+    behaviour unchanged, so an existing caller (or a test with no storage
+    backend to inject) is unaffected.
+
+    Returns the total number of items this call acted on — retried plus
+    closed out.
     """
     cutoff = (
         datetime.now(timezone.utc) - timedelta(seconds=STALE_PROCESSANDO_SECONDS)
@@ -1385,7 +1501,10 @@ def recover_stale_processando(db) -> int:
     def _page(start: int, end: int):
         return (
             db.table(RESULTADOS)
-            .select("id, tipo, consulta_id, org_id, api_requested_at")
+            .select(
+                "id, tipo, nome_display, consulta_id, org_id, api_requested_at, "
+                "arquivo_url, estrutura_tentativas"
+            )
             .eq("status", "processando")
             .order("id")
             .range(start, end)
@@ -1403,12 +1522,32 @@ def recover_stale_processando(db) -> int:
     if not stale:
         return 0
 
+    retry_candidates: list[dict] = []
+    terminal = stale
+    if storage is not None:
+        retry_candidates = [
+            item for item in stale
+            if item.get("arquivo_url")
+            and int(item.get("estrutura_tentativas") or 0) < MAX_ESTRUTURA_TENTATIVAS
+        ]
+        retry_ids = {item["id"] for item in retry_candidates}
+        terminal = [item for item in stale if item["id"] not in retry_ids]
+
+    if retry_candidates:
+        _agendar_retomada_extracao_manual(
+            db, retry_candidates, storage,
+            http_client_factory=http_client_factory, schedule=schedule,
+        )
+
+    if not terminal:
+        return len(retry_candidates)
+
     logger.warning(
         "Auto-recovering %d stale 'processando' items (>%ds old)",
-        len(stale), STALE_PROCESSANDO_SECONDS,
+        len(terminal), STALE_PROCESSANDO_SECONDS,
     )
 
-    stale_ids = [item["id"] for item in stale]
+    stale_ids = [item["id"] for item in terminal]
     for batch in in_batches(stale_ids):
         db.table(RESULTADOS).update({
             "status": "erro",
@@ -1419,7 +1558,7 @@ def recover_stale_processando(db) -> int:
         }).in_("id", batch).execute()
 
     consultas: dict[str, Optional[str]] = {}
-    for item in stale:
+    for item in terminal:
         consultas[item["consulta_id"]] = item.get("org_id")
         logger.info(
             "Auto-recovered stale resultado %s (api_requested_at=%s) → erro",
@@ -1429,7 +1568,54 @@ def recover_stale_processando(db) -> int:
     for cid, oid in consultas.items():
         _atualizar_status_consulta(cid, oid, db)
 
-    return len(stale)
+    return len(retry_candidates) + len(terminal)
+
+
+def _agendar_retomada_extracao_manual(
+    db,
+    candidates: list[dict],
+    storage: StorageBackend,
+    *,
+    http_client_factory: Optional[Callable[[], httpx.AsyncClient]],
+    schedule: Optional[Callable[..., Any]],
+) -> None:
+    """Fire-and-forget one `_retomar_extracao_manual` per stale manual-upload
+    candidate. Split out of `recover_stale_processando` (a SYNC function — the
+    retry itself is async) so each row's own `schedule_coro` call is
+    independent: one row's task failing to schedule must not stop the others
+    from being retried, or the delete-storage-files-on-error class of bug this
+    module's other sweeps avoid would apply here too.
+    """
+    schedule_fn = schedule or schedule_coro
+    client_factory = http_client_factory or httpx.AsyncClient
+
+    async def _retry(item: dict, tentativa: int) -> None:
+        async with client_factory() as http_client:
+            await _retomar_extracao_manual(
+                db=db,
+                storage=storage,
+                http_client=http_client,
+                resultado_id=item["id"],
+                consulta_id=item["consulta_id"],
+                org_id=item.get("org_id"),
+                nome_display=item.get("nome_display") or item.get("tipo") or "certidão",
+                arquivo_url=item["arquivo_url"],
+                tentativa=tentativa,
+            )
+
+    for item in candidates:
+        tentativa = int(item.get("estrutura_tentativas") or 0) + 1
+        logger.info(
+            "Certidão %s (resultado %s): retomando extração manual — "
+            "tentativa %d/%d",
+            item.get("nome_display"), item["id"], tentativa,
+            MAX_ESTRUTURA_TENTATIVAS,
+        )
+        schedule_fn(
+            _retry(item, tentativa),
+            logger=logger,
+            name=f"certidao_extracao_manual_retry_{item['id']}",
+        )
 
 
 def recover_stuck_processando(db) -> None:
@@ -1558,82 +1744,179 @@ async def process_manual_upload(
     org_id: Optional[str],
     db,
     storage: StorageBackend,
+) -> dict:
+    """Persist a manually uploaded certificate PDF and mark the resultado
+    `processando`. Returns fast — same reason `card_hub.router.
+    upload_documento_route` and `imovel_hub`'s upload routes already split
+    storage from extraction: storage is a single bucket `PUT`, but the
+    structured/AI read that follows (`process_manual_extraction`) may need a
+    vision call per page, and blocking the upload response on a per-page
+    network round trip would make a routine upload feel broken.
+
+    1. Put it in the bucket (same key shape `_process_single_certidao` uses)
+    2. Mark the resultado `processando` with the file already attached, so
+       `arquivo_url` (and therefore download/view) is available immediately
+       even while the extraction leg is still running.
+
+    The caller (`routers/certidoes.py::upload_certidao_manual`) schedules
+    `process_manual_extraction` as a FastAPI `BackgroundTasks` job right
+    after this returns — see that function's own docstring for the rest of
+    the pipeline (AI analysis, structured-field determination, retry).
+    """
+    consulta_id = consulta["id"]
+    arquivo_url = await _persist_pdf(pdf_bytes, storage, org_id, consulta_id, tipo)
+    update_data: dict = {
+        "status": "processando",
+        # Reused, not a new column: `recover_stale_processando` already keys
+        # staleness off this timestamp for the automated flow, and "the
+        # background work this row is waiting on started at this time" is
+        # exactly as true for the extraction leg about to be scheduled.
+        "api_requested_at": datetime.now(timezone.utc).isoformat(),
+        "arquivo_url": arquivo_url,
+        "arquivo_nome": f"{tipo}.pdf",
+        "api_response": None,
+        "erro_mensagem": None,
+        "estrutura_erro": None,
+    }
+    db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
+    return update_data
+
+
+async def process_manual_extraction(
+    pdf_bytes: bytes,
+    resultado_id: str,
+    consulta_id: str,
+    nome_display: str,
+    org_id: Optional[str],
+    db,
     *,
     resultado_origem_atual: Optional[str] = None,
     confirmado_por_atual: Optional[str] = None,
+    tentativa: int = 1,
     extract_text: Optional[Callable[..., Any]] = None,
     analyze: Optional[Callable[..., Any]] = None,
     analyze_estrutura: Optional[Callable[..., Any]] = None,
 ) -> dict:
-    """Run a manually uploaded certificate PDF through the SAME pipeline as the
-    automated flow (the post-download steps of `_process_single_certidao`).
+    """The AI/vision leg of a manual certidão upload — the post-storage steps
+    of the pipeline `process_manual_upload` starts.
 
-    1. Put it in the bucket (same key shape)
-    2. Extract text for AI analysis
-    3. Run AI analysis on the extracted text
-    4. Derive the structured fields (numero/emitida_em/validade_ate/resultado)
+    1. Extract text (bounded vision, `CERTIDAO_MANUAL_MAX_VISION_PAGES`) for
+       AI analysis
+    2. Run AI analysis on the extracted text
+    3. Derive the structured fields (numero/emitida_em/validade_ate/resultado)
        from the SAME extracted text, unless a human already owns them
-    5. Update resultado → sucesso
-    6. Recalculate consulta status
+    4. Update resultado → `sucesso`, recalculate consulta status
 
-    Returns the update_data dict applied to the resultado — WITHOUT
-    `texto_extraido` / `formatacao` (migration 113): the router echoes this
-    dict straight into the HTTP response (`upload_certidao_manual`), and
-    certidão text must never round-trip through that JSON envelope, same
-    rule as the polling reads (`RESULTADO_COLUNAS_SEM_TEXTO`). Those two
-    columns ARE written — to the database, via a superset dict this
-    function builds separately and never returns.
+    Scheduled by `routers/certidoes.py::upload_certidao_manual` via FastAPI
+    `BackgroundTasks` right after `process_manual_upload` persists the file
+    (`tentativa=1`), and re-run by `recover_stale_processando` — with an
+    incremented `tentativa` and the bytes re-read from storage — when a prior
+    attempt was interrupted mid-flight (a deploy, an OOM kill). Never raises:
+    a background job that dies here is, to the sweep, identical to one that
+    never ran; see `recover_stale_processando`'s own header for why that must
+    never happen silently.
 
-    `resultado_origem_atual` / `confirmado_por_atual` are the caller's job to
-    fetch — the router already reads the resultado row before calling this
-    (it needs `tipo`/`nome_display` from it anyway), so a second lookup here
-    for two more columns off the same id would be a redundant round trip.
-    Manual uploads have no `api_response` to parse, so the AI structured
-    read is the ONLY source for these fields on this path — unlike the
-    automated flow, there is no `registry.parse_resultado` leg to try first.
+    D3 (KB roadmap `sw-extraction-contract-gate-2026-09.md`). A failed
+    extraction (`extracted.erro` set) below `MAX_ESTRUTURA_TENTATIVAS` leaves
+    `status='processando'` UNTOUCHED and records only the attempt count + the
+    reason — `recover_stale_processando` retries it once the row goes stale.
+    Reaching the cap closes the resultado out as `sucesso` (the certidão
+    itself IS valid; only the automated structured read gave up — same
+    posture `_analyze_with_ai`'s own docstring states for its failure class)
+    with `estrutura_erro` carrying the human-readable, terminal reason.
 
-    `extract_text` / `analyze` / `analyze_estrutura` are DI seams (default:
-    the real `_extract_pdf_text` / `_analyze_with_ai` / `_analyze_estrutura_
-    with_ai`), the same shape `_process_single_certidao` already exposes for
-    `analyze` — a test injects a stub INSTEAD of patching this module's own
-    functions out from under it. → KB § PATTERNS/backend/di-test-seam.md
+    Returns the update_data dict WRITTEN to the row — WITHOUT `texto_extraido`
+    / `formatacao` (migration 113, `RESULTADO_COLUNAS_SEM_TEXTO`'s rule) — for
+    tests to assert on; the router never echoes this into an HTTP response
+    (it runs after the response was already sent).
+
+    `resultado_origem_atual` / `confirmado_por_atual` mirror
+    `process_manual_upload`'s original contract: the FIRST call passes the
+    caller's already-fetched values (no redundant round trip); a
+    sweep-triggered RETRY has none to pass (the caller is not a request
+    handler) and leaves them `None`, so `_retomar_extracao_manual` re-reads
+    the row fresh instead — a human confirmation that landed WHILE this row
+    sat stale must still be respected.
+
+    `extract_text` / `analyze` / `analyze_estrutura` are the same DI seams
+    the pre-split function exposed. → KB § PATTERNS/backend/di-test-seam.md
     """
     extract_text = extract_text or _extract_pdf_text
     analyze = analyze or _analyze_with_ai
     analyze_estrutura = analyze_estrutura or _analyze_estrutura_with_ai
-    consulta_id = consulta["id"]
     travado = resultado_origem_atual == "manual" or bool(confirmado_por_atual)
 
-    # Mark as processando (same as automated flow)
-    db.table(RESULTADOS).update({
-        "status": "processando",
-    }).eq("id", resultado_id).execute()
+    try:
+        extracted = await extract_text(
+            pdf_bytes, nome_display, org_id,
+            max_vision_pages=CERTIDAO_MANUAL_MAX_VISION_PAGES,
+        )
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): extract_text raised inesperadamente "
+            "na tentativa %d: %s",
+            nome_display, resultado_id, tentativa, exc, exc_info=True,
+        )
+        return {}
 
-    # 1. Storage — same key shape as `_process_single_certidao`
-    arquivo_url = await _persist_pdf(pdf_bytes, storage, org_id, consulta_id, tipo)
+    esgotado = tentativa >= MAX_ESTRUTURA_TENTATIVAS
+    if extracted.erro and not esgotado:
+        # Retry pending — status stays `processando`, untouched. `api_
+        # requested_at` IS refreshed (unlike status): otherwise this row
+        # would still read as stale on the VERY NEXT sweep tick — 5 minutes
+        # later, and this attempt may still be in flight — and get a SECOND
+        # concurrent retry scheduled on top of the first. Refreshing restarts
+        # the 15-minute staleness window, which is what paces retries apart
+        # instead of racing them.
+        update_data = {
+            "estrutura_tentativas": tentativa,
+            "estrutura_erro": extracted.erro,
+            "api_requested_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            db.table(RESULTADOS).update(update_data).eq(
+                "id", resultado_id
+            ).execute()
+        except Exception as exc:  # noqa: BLE001 - background job must not die
+            logger.error(
+                "Certidão %s (resultado %s): falha ao registrar tentativa "
+                "%d/%d: %s",
+                nome_display, resultado_id, tentativa,
+                MAX_ESTRUTURA_TENTATIVAS, exc, exc_info=True,
+            )
+            return {}
+        logger.warning(
+            "Certidão %s (resultado %s): extração falhou na tentativa %d/%d "
+            "(%s) — nova tentativa via varredura de pendências",
+            nome_display, resultado_id, tentativa, MAX_ESTRUTURA_TENTATIVAS,
+            extracted.erro,
+        )
+        return update_data
 
-    # 2. Extract text — replaces the API response data the automated flow
-    #    uses as `_analyze_with_ai`'s input, and (migration 113) also carries
-    #    the untruncated transcript + formatting this function persists below.
-    extracted = await extract_text(pdf_bytes, nome_display, org_id)
+    # Either a trustworthy read, or retries are exhausted — either way this
+    # is the FINAL write for this resultado; `text_for_analysis` is `None` in
+    # the exhausted-with-no-text case, so `analyze`/`analyze_estrutura` are
+    # skipped naturally rather than run against a document we already know
+    # failed to read.
     text_for_analysis = extracted.para_ia
-
-    # 3. AI analysis — same function as automated flow
     analise = None
     if text_for_analysis:
         analise = await analyze(text_for_analysis, org_id)
 
-    # 4. Update resultado → sucesso (same fields as automated flow)
-    update_data: dict = {
+    update_data = {
         "status": "sucesso",
-        "arquivo_url": arquivo_url,
-        "arquivo_nome": f"{tipo}.pdf",
         "analise_ia": analise,
-        "api_response": None,
         "erro_mensagem": None,
+        "estrutura_erro": extracted.erro,
+        "estrutura_tentativas": tentativa,
     }
+    if extracted.erro:
+        logger.warning(
+            "Certidão %s (resultado %s): extração automática esgotada após "
+            "%d tentativa(s) (%s) — certidão válida, sem leitura estruturada",
+            nome_display, resultado_id, tentativa, extracted.erro,
+        )
 
-    # 4b. Structured fields — AI-only on this path, and never over a human's.
     if not travado and text_for_analysis:
         via_ia = await analyze_estrutura(text_for_analysis, nome_display, org_id)
         if via_ia:
@@ -1648,12 +1931,85 @@ async def process_manual_upload(
         "texto_extraido": extracted.texto_extraido,
         "formatacao": ranges_to_json(extracted.formatacao),
     }
-    db.table(RESULTADOS).update(persist_data).eq("id", resultado_id).execute()
-
-    # 5. Recalculate consulta status — same function as automated flow
-    _atualizar_status_consulta(consulta_id, org_id, db)
+    try:
+        db.table(RESULTADOS).update(persist_data).eq("id", resultado_id).execute()
+        _atualizar_status_consulta(consulta_id, org_id, db)
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): falha ao persistir resultado da "
+            "extração: %s",
+            nome_display, resultado_id, exc, exc_info=True,
+        )
+        return {}
 
     return update_data
+
+
+async def _retomar_extracao_manual(
+    *,
+    db,
+    storage: StorageBackend,
+    http_client: httpx.AsyncClient,
+    resultado_id: str,
+    consulta_id: str,
+    org_id: Optional[str],
+    nome_display: str,
+    arquivo_url: str,
+    tentativa: int,
+) -> None:
+    """`recover_stale_processando`'s retry half: re-read a manually uploaded
+    certidão's already-stored bytes and re-run `process_manual_extraction`.
+
+    Never raises past this point (`schedule_coro`'s done-callback would log
+    it regardless, but every OTHER function in this family states its own
+    "never raises" boundary explicitly, and this one is no different).
+    Re-reads `resultado_origem`/`confirmado_por` FRESH rather than trusting a
+    value the sweep captured earlier — a human confirmation that landed while
+    this row sat stale must still lock the row against being overwritten.
+    """
+    try:
+        pdf_bytes = await read_certidao_bytes(arquivo_url, storage, http_client)
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): retomada da extração — leitura do "
+            "arquivo armazenado falhou: %s",
+            nome_display, resultado_id, exc, exc_info=True,
+        )
+        return
+    if not pdf_bytes:
+        logger.error(
+            "Certidão %s (resultado %s): retomada da extração — arquivo %s "
+            "não encontrado no armazenamento",
+            nome_display, resultado_id, arquivo_url,
+        )
+        return
+
+    try:
+        atual = (
+            db.table(RESULTADOS)
+            .select("resultado_origem, confirmado_por")
+            .eq("id", resultado_id)
+            .execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): retomada da extração — leitura do "
+            "estado atual falhou: %s",
+            nome_display, resultado_id, exc, exc_info=True,
+        )
+        return
+
+    await process_manual_extraction(
+        pdf_bytes=pdf_bytes,
+        resultado_id=resultado_id,
+        consulta_id=consulta_id,
+        nome_display=nome_display,
+        org_id=org_id,
+        db=db,
+        resultado_origem_atual=(atual[0].get("resultado_origem") if atual else None),
+        confirmado_por_atual=(atual[0].get("confirmado_por") if atual else None),
+        tentativa=tentativa,
+    )
 
 
 # --------------- TJSP On-Demand Scheduler ---------------
@@ -2393,6 +2749,7 @@ __all__ = [
     "mint_resultado_url",
     "obter_transcricao_resultado",
     "process_manual_upload",
+    "process_manual_extraction",
     "processar_consulta",
     "in_batches",
     "queued_tjsp_for_org",

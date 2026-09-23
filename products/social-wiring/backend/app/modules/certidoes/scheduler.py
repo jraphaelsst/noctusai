@@ -4,10 +4,16 @@
 ----------------------------------------------
 Two states in this module outlive the request that created them:
 
-- `processando` — a `BackgroundTask` is mid-flight against InfoSimples. If the
-  process dies (deploy, OOM kill, container restart), **nothing ever moves that
-  row again**. The frontend polls a spinner forever, and no error is raised
-  anywhere.
+- `processando` — a `BackgroundTask` is mid-flight against InfoSimples (the
+  automated flow) OR running `process_manual_extraction` (a manual upload's
+  AI/vision leg). If the process dies (deploy, OOM kill, container restart),
+  **nothing ever moves that row again**. The frontend polls a spinner forever,
+  and no error is raised anywhere. `service.recover_stale_processando` treats
+  the two differently once it finds one stale: the automated flow still goes
+  straight to `erro` (a human already has a reprocess button); a manual
+  upload whose file already made it to storage gets its extraction RETRIED —
+  bounded by `service.MAX_ESTRUTURA_TENTATIVAS` — because the certidão itself
+  is not the thing that stalled.
 - `na_fila` — a TJSP item waiting out the 45-minute cooldown, held by an
   in-memory `asyncio.Task`. A restart takes the task with it and leaves the row
   queued behind a timer that no longer exists.
@@ -108,7 +114,7 @@ async def sweep_stranded(
         db, storage = resolve()
         if db is None:
             return
-        recovered = service.recover_stale_processando(db)
+        recovered = service.recover_stale_processando(db, storage)
         if recovered:
             logger.info("certidoes sweep: recovered %d stale resultado(s)", recovered)
         service.schedule_all_pending_tjsp(db, storage)

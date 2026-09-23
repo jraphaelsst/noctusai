@@ -10,7 +10,7 @@
     DELETE /api/certidoes/consultas/{id}                 + storage cleanup
     GET    /api/certidoes/download                       one file, proxied
     GET    /api/certidoes/consultas/{id}/download-zip    all of them, zipped
-    POST   /api/certidoes/resultados/{id}/upload         manual PDF, same pipeline
+    POST   /api/certidoes/resultados/{id}/upload         manual PDF, same pipeline (async extraction)
     GET    /api/certidoes/fila-tjsp                      queue + live cooldown
     POST   /api/certidoes/consultas/{id}/vincular-parte  attach to an atendimento_parte
     GET    /api/certidoes/partes/{id}/resultados          every certidão for one parte
@@ -137,7 +137,10 @@ def _maybe_recover(
 
     - `recover_stale_processando` — the ERP behaviour: a resultado stuck in
       `processando` for over 15 minutes goes to `erro` so the spinner stops and
-      the user gets a reprocess button instead of an infinite wait.
+      the user gets a reprocess button instead of an infinite wait. `storage`
+      is what lets it tell a stalled MANUAL upload apart from that (D3): one
+      whose file already made it to the bucket gets its AI/vision extraction
+      retried instead, bounded by `service.MAX_ESTRUTURA_TENTATIVAS`.
     - `schedule_tjsp_for_org` — NOT in the ERP, which resumed the TJSP queue
       only from its lifespan hook. `app/lifespan.py` is not this slice's to
       edit, and the seed scheduler refuses to run at all without
@@ -151,7 +154,7 @@ def _maybe_recover(
     if now - _last_stale_check < _STALE_CHECK_INTERVAL:
         return
     _last_stale_check = now
-    svc.recover_stale_processando(db)
+    svc.recover_stale_processando(db, storage)
     svc.schedule_tjsp_for_org(str(org_id), db, storage)
 
 
@@ -825,6 +828,7 @@ async def download_consulta_zip(
 @router.post("/resultados/{resultado_id}/upload")
 async def upload_certidao_manual(
     resultado_id: str,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     auth=Depends(get_current_user_org),
     db=Depends(get_certidoes_client),
@@ -833,11 +837,16 @@ async def upload_certidao_manual(
 ):
     """Upload a certificate PDF by hand for a resultado the automation failed.
 
-    Delegates to the service layer, which replicates the exact post-download
-    pipeline of the automated flow: storage → PDF text extraction → AI analysis
-    → update resultado → recalculate consulta status. The operator's manual
-    certidão ends up indistinguishable from an automated one, which is the
-    point: the next person reading the file cannot tell, and should not need to.
+    Storage happens here, synchronously — a single bucket `PUT`. The AI/vision
+    read that follows (text extraction, analysis, structured-field
+    determination — bounded vision, `service.CERTIDAO_MANUAL_MAX_VISION_
+    PAGES`, for a scanned PDF) is scheduled as a `BackgroundTasks` job instead
+    of awaited here, the same split `card_hub.router.upload_documento_route`
+    already uses for identity documents: a vision call is a per-page network
+    round trip, and this response would otherwise hang on it. The response
+    below reflects the resultado as `processando`; the existing consulta-detail
+    poll picks up `sucesso` once the background job finishes — same as the
+    automated flow already works.
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -876,6 +885,15 @@ async def upload_certidao_manual(
         org_id=str(org_id),
         db=db,
         storage=storage,
+    )
+    background_tasks.add_task(
+        svc.process_manual_extraction,
+        pdf_bytes=pdf_bytes,
+        resultado_id=resultado_id,
+        consulta_id=resultado["consulta_id"],
+        nome_display=resultado["nome_display"],
+        org_id=str(org_id),
+        db=db,
         resultado_origem_atual=resultado.get("resultado_origem"),
         confirmado_por_atual=resultado.get("confirmado_por"),
     )

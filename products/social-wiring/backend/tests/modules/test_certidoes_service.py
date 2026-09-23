@@ -126,6 +126,9 @@ def _resultado(**overrides) -> dict:
         "resultado_origem": None,
         "confirmado_por": None,
         "confirmado_em": None,
+        # Migration 155
+        "estrutura_erro": None,
+        "estrutura_tentativas": 0,
         "created_at": "2026-03-05T10:00:00+00:00",
         "updated_at": "2026-03-05T10:00:00+00:00",
     }
@@ -1878,6 +1881,132 @@ class TestRecoverStaleProcessando:
         assert service.recover_stale_processando(db) == 0
 
 
+class TestRecoverStaleProcessandoRetryManual:
+    """D3 (KB roadmap `sw-extraction-contract-gate-2026-09.md`): a stale
+    MANUAL upload — a file already in storage, only its extraction leg
+    stalled — gets retried instead of closed out, up to
+    `MAX_ESTRUTURA_TENTATIVAS`. `storage=None` (every test above) is the
+    pre-D3 behaviour, unchanged."""
+
+    def _stale_manual_row(self, **overrides) -> dict:
+        old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        row = dict(
+            id="r1", status="processando", api_requested_at=old,
+            arquivo_url=f"{ORG}/certidoes/consulta-001/serasa.pdf",
+            estrutura_tentativas=1,
+        )
+        row.update(overrides)
+        return _resultado(**row)
+
+    def test_com_arquivo_e_retentativas_disponiveis_e_retomado_nao_fechado(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[self._stale_manual_row()],
+        )
+        scheduled: list[str] = []
+
+        def _fake_schedule(coro, **kwargs):
+            coro.close()  # never actually run — this test is not async
+            scheduled.append(kwargs.get("name"))
+
+        recovered = service.recover_stale_processando(
+            db, FakeStorageBackend(), schedule=_fake_schedule,
+        )
+        assert recovered == 1
+        assert scheduled == ["certidao_extracao_manual_retry_r1"]
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r1"
+        ).execute().data[0]
+        # Untouched by the retry branch itself — the (never-run) retry
+        # coroutine is what would eventually update it.
+        assert row["status"] == "processando"
+
+    def test_esgotado_fecha_como_erro_igual_ao_fluxo_automatico(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[self._stale_manual_row(
+                estrutura_tentativas=service.MAX_ESTRUTURA_TENTATIVAS,
+            )],
+        )
+        recovered = service.recover_stale_processando(db, FakeStorageBackend())
+        assert recovered == 1
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r1"
+        ).execute().data[0]
+        assert row["status"] == "erro"
+
+    def test_fluxo_automatico_sem_arquivo_continua_indo_direto_para_erro(self):
+        """No `arquivo_url` (the automated flow never writes one before
+        `sucesso`) — passing `storage` changes nothing for it."""
+        old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[
+                _resultado(id="r1", status="processando", api_requested_at=old),
+            ],
+        )
+        recovered = service.recover_stale_processando(db, FakeStorageBackend())
+        assert recovered == 1
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r1"
+        ).execute().data[0]
+        assert row["status"] == "erro"
+
+
+class TestRetomarExtracaoManual:
+    @pytest.mark.asyncio
+    async def test_le_do_storage_e_reexecuta_a_extracao(self):
+        storage = FakeStorageBackend()
+        key = f"{ORG}/certidoes/consulta-001/serasa.pdf"
+        await storage.put(
+            bucket=service.BUCKET, key=key, data=b"%PDF-1.4",
+            content_type="application/pdf",
+        )
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(
+                id="r1", tipo="serasa", nome_display="Serasa",
+                status="processando", arquivo_url=key, estrutura_tentativas=1,
+            )],
+        )
+        async with httpx.AsyncClient() as http_client:
+            await service._retomar_extracao_manual(
+                db=db, storage=storage, http_client=http_client,
+                resultado_id="r1", consulta_id="consulta-001", org_id=ORG,
+                nome_display="Serasa", arquivo_url=key, tentativa=2,
+            )
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r1"
+        ).execute().data[0]
+        # `b"%PDF-1.4"` is not a real, openable PDF — deterministically
+        # `no_pages`, no credential/network call needed. The point is that
+        # the row MOVED (the attempt was recorded), not that this particular
+        # bare PDF ever succeeds.
+        assert row["estrutura_tentativas"] == 2
+        assert row["estrutura_erro"]
+        assert row["status"] == "processando"
+
+    @pytest.mark.asyncio
+    async def test_arquivo_ausente_no_storage_nao_levanta(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(id="r1", status="processando")],
+        )
+        async with httpx.AsyncClient() as http_client:
+            await service._retomar_extracao_manual(
+                db=db, storage=FakeStorageBackend(), http_client=http_client,
+                resultado_id="r1", consulta_id="consulta-001", org_id=ORG,
+                nome_display="Serasa", arquivo_url=f"{ORG}/certidoes/x/sumiu.pdf",
+                tentativa=2,
+            )
+        # Never raised, and never touched the row it could not read bytes for.
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "r1"
+        ).execute().data[0]
+        assert row["status"] == "processando"
+        assert row["estrutura_tentativas"] == 0
+
+
 # ---------------------------------------------------------------------------
 # cancelar_processamento
 # ---------------------------------------------------------------------------
@@ -2664,15 +2793,13 @@ class TestProcessManualUploadEstruturado:
             certidao_resultados=[_resultado(tipo="serasa", nome_display="Serasa")],
         )
         estrutura_ia = AsyncMock(return_value={"resultado": "negativa"})
-        update_data = await service.process_manual_upload(
+        update_data = await service.process_manual_extraction(
             pdf_bytes=b"%PDF-1.4",
             resultado_id="resultado-001",
-            consulta=_consulta_row(),
-            tipo="serasa",
+            consulta_id="consulta-001",
             nome_display="Serasa",
             org_id=ORG,
             db=db,
-            storage=FakeStorageBackend(),
             extract_text=AsyncMock(
                 return_value=service.ExtractedPdfText(para_ia="texto extraído")
             ),
@@ -2681,6 +2808,7 @@ class TestProcessManualUploadEstruturado:
         )
         assert update_data["resultado"] == "negativa"
         assert update_data["resultado_origem"] == "ia"
+        assert update_data["status"] == "sucesso"
         estrutura_ia.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -2692,15 +2820,13 @@ class TestProcessManualUploadEstruturado:
                 tipo="serasa", resultado_origem="api", confirmado_por="user-1",
             )],
         )
-        update_data = await service.process_manual_upload(
+        update_data = await service.process_manual_extraction(
             pdf_bytes=b"%PDF-1.4",
             resultado_id="resultado-001",
-            consulta=_consulta_row(),
-            tipo="serasa",
+            consulta_id="consulta-001",
             nome_display="Serasa",
             org_id=ORG,
             db=db,
-            storage=FakeStorageBackend(),
             resultado_origem_atual="api",
             confirmado_por_atual="user-1",
             extract_text=AsyncMock(
@@ -2721,15 +2847,13 @@ class TestProcessManualUploadEstruturado:
                 tipo="tjsp_esaj", resultado_origem="manual",
             )],
         )
-        await service.process_manual_upload(
+        await service.process_manual_extraction(
             pdf_bytes=b"%PDF-1.4",
             resultado_id="resultado-001",
-            consulta=_consulta_row(),
-            tipo="tjsp_esaj",
+            consulta_id="consulta-001",
             nome_display="TJSP e-SAJ",
             org_id=ORG,
             db=db,
-            storage=FakeStorageBackend(),
             resultado_origem_atual="manual",
             extract_text=AsyncMock(
                 return_value=service.ExtractedPdfText(para_ia="texto extraído")
@@ -2746,19 +2870,162 @@ class TestProcessManualUploadEstruturado:
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(tipo="serasa")],
         )
-        await service.process_manual_upload(
+        await service.process_manual_extraction(
             pdf_bytes=b"%PDF-1.4",
             resultado_id="resultado-001",
-            consulta=_consulta_row(),
-            tipo="serasa",
+            consulta_id="consulta-001",
             nome_display="Serasa",
             org_id=ORG,
             db=db,
-            storage=FakeStorageBackend(),
             extract_text=AsyncMock(return_value=service.ExtractedPdfText(para_ia=None)),
             analyze_estrutura=estrutura_ia,
         )
         estrutura_ia.assert_not_awaited()
+
+
+class TestProcessManualExtractionEstruturaErro:
+    """The scanned-manual-upload leg: bounded vision, surfaced failures, and
+    the D3 retry cap. KB roadmap `sw-extraction-contract-gate-2026-09.md`."""
+
+    @pytest.mark.asyncio
+    async def test_falha_abaixo_do_limite_mantem_processando_e_agenda_retry(self):
+        """A failed extraction below `MAX_ESTRUTURA_TENTATIVAS` does NOT flip
+        `status` — `recover_stale_processando` is what retries it once the
+        row goes stale, not this call itself."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", status="processando")],
+        )
+        analyze = AsyncMock()
+        analyze_estrutura = AsyncMock()
+        update_data = await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            tentativa=1,
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(
+                    para_ia=None, erro="Cota do provedor de IA esgotada. ...",
+                )
+            ),
+            analyze=analyze,
+            analyze_estrutura=analyze_estrutura,
+        )
+        assert update_data["estrutura_tentativas"] == 1
+        assert update_data["estrutura_erro"]
+        assert "status" not in update_data
+        analyze.assert_not_awaited()
+        analyze_estrutura.assert_not_awaited()
+
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["status"] == "processando"
+        assert row["estrutura_tentativas"] == 1
+        assert row["estrutura_erro"]
+
+    @pytest.mark.asyncio
+    async def test_esgotado_fecha_como_sucesso_com_erro_terminal(self):
+        """D3: the THIRD attempt (2 retries used) closes the resultado out —
+        the certidão itself is still valid (`status='sucesso'`), only the
+        structured read gave up, and `estrutura_erro` says so."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", status="processando")],
+        )
+        update_data = await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            tentativa=service.MAX_ESTRUTURA_TENTATIVAS,
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(
+                    para_ia=None, erro="Cota do provedor de IA esgotada. ...",
+                )
+            ),
+        )
+        assert update_data["status"] == "sucesso"
+        assert update_data["estrutura_erro"]
+        assert update_data["estrutura_tentativas"] == service.MAX_ESTRUTURA_TENTATIVAS
+
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["status"] == "sucesso"
+        assert row["estrutura_erro"]
+
+    @pytest.mark.asyncio
+    async def test_sucesso_limpa_estrutura_erro_de_uma_tentativa_anterior(self):
+        """A retry that finally succeeds clears the reason a prior attempt
+        left behind — a stale `estrutura_erro` next to a `sucesso` row would
+        misreport the certidão as still failing."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(
+                tipo="serasa", status="processando",
+                estrutura_erro="tentativa anterior falhou", estrutura_tentativas=1,
+            )],
+        )
+        update_data = await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            tentativa=2,
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(para_ia="texto extraído")
+            ),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value=None),
+        )
+        assert update_data["status"] == "sucesso"
+        assert update_data["estrutura_erro"] is None
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["estrutura_erro"] is None
+
+    @pytest.mark.asyncio
+    async def test_travado_e_respeitado_mesmo_no_esgotamento(self):
+        """A human-owned resultado stays untouched by the structured leg even
+        on the terminal attempt — `resultado`/`numero`/etc. never move."""
+        estrutura_ia = AsyncMock()
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(
+                tipo="serasa", status="processando",
+                resultado="negativa", resultado_origem="manual",
+            )],
+        )
+        update_data = await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            resultado_origem_atual="manual",
+            tentativa=service.MAX_ESTRUTURA_TENTATIVAS,
+            extract_text=AsyncMock(
+                return_value=service.ExtractedPdfText(para_ia="texto extraído")
+            ),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=estrutura_ia,
+        )
+        assert "resultado" not in update_data
+        estrutura_ia.assert_not_awaited()
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["resultado"] == "negativa"
 
 
 # ---------------------------------------------------------------------------
@@ -3054,15 +3321,19 @@ class TestExtractPdfText:
     @pytest.mark.asyncio
     async def test_pdf_invalido_nunca_levanta(self):
         """Contract §4: a failed transcription is logged, never raised, and
-        leaves both fields empty."""
+        leaves both fields empty — `erro` now names why."""
         resultado = await service._extract_pdf_text(b"nao e um pdf", "X", org_id=None)
-        assert resultado == service.ExtractedPdfText(para_ia=None)
+        assert resultado.para_ia is None
+        assert resultado.texto_extraido is None
+        assert resultado.erro == service._ESTRUTURA_ERRO_MENSAGENS["no_pages"]
 
     @pytest.mark.asyncio
     async def test_pdf_sem_texto_confiavel_fica_vazio(self):
         """A page too short to clear the substantive-text floor routes to
-        vision, which is disabled here (`max_vision_pages=0`) — `vision_
-        disabled`, not an exception, and still `ExtractedPdfText(None)`."""
+        vision, which is disabled here (`max_vision_pages=0`, the automated
+        flow's default) — `vision_disabled`, not an exception, still no
+        `para_ia`, and `erro` names it (harmless: `_process_single_certidao`
+        never reads this field)."""
         import fitz
 
         doc = fitz.open()
@@ -3072,7 +3343,46 @@ class TestExtractPdfText:
         doc.close()
 
         resultado = await service._extract_pdf_text(pdf_bytes, "X", org_id=None)
-        assert resultado == service.ExtractedPdfText(para_ia=None)
+        assert resultado.para_ia is None
+        assert resultado.erro == service._ESTRUTURA_ERRO_MENSAGENS["vision_disabled"]
+
+    @pytest.mark.asyncio
+    async def test_max_vision_pages_zero_e_o_padrao(self):
+        """`_extract_pdf_text`'s own default, UNCHANGED for any caller that
+        does not pass `max_vision_pages` — the automated scheduler flow."""
+        import fitz
+
+        doc = fitz.open()
+        doc.new_page().insert_text((72, 72), "curto", fontsize=11)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resultado = await service._extract_pdf_text(pdf_bytes, "X", org_id=None)
+        assert resultado.erro == service._ESTRUTURA_ERRO_MENSAGENS["vision_disabled"]
+
+    @pytest.mark.asyncio
+    async def test_max_vision_pages_acima_de_zero_tenta_a_visao(self, monkeypatch):
+        """Raising the cap (`CERTIDAO_MANUAL_MAX_VISION_PAGES`, the manual-
+        upload path) actually reaches rung 2 — `missing_credentials`, not
+        `vision_disabled`, is the proof the vision leg was attempted rather
+        than skipped."""
+        monkeypatch.setattr(
+            "noctusai_lib.config.credentials.resolve_credential",
+            lambda key, org_id=None: None,
+        )
+        import fitz
+
+        doc = fitz.open()
+        doc.new_page().insert_text((72, 72), "curto", fontsize=11)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resultado = await service._extract_pdf_text(
+            pdf_bytes, "X", org_id=None,
+            max_vision_pages=service.CERTIDAO_MANUAL_MAX_VISION_PAGES,
+        )
+        assert resultado.para_ia is None
+        assert resultado.erro == service._ESTRUTURA_ERRO_MENSAGENS["missing_credentials"]
 
 
 # ---------------------------------------------------------------------------
@@ -3185,7 +3495,41 @@ class TestProcessSingleCertidaoTranscricao:
 # ---------------------------------------------------------------------------
 
 
-class TestProcessManualUploadTranscricao:
+class TestProcessManualUpload:
+    """The SYNCHRONOUS, storage-only half — `process_manual_extraction`
+    (the AI/vision leg) is its own class below; splitting them is the point
+    of the D3/item-4 redesign (KB roadmap
+    `sw-extraction-contract-gate-2026-09.md`)."""
+
+    @pytest.mark.asyncio
+    async def test_persiste_arquivo_e_marca_processando(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", nome_display="Serasa")],
+        )
+        update_data = await service.process_manual_upload(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta=_consulta_row(),
+            tipo="serasa",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            storage=FakeStorageBackend(),
+        )
+        assert update_data["status"] == "processando"
+        assert update_data["arquivo_url"] is not None
+        assert update_data["arquivo_nome"] == "serasa.pdf"
+
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["status"] == "processando"
+        assert row["arquivo_url"] is not None
+        assert row["api_requested_at"] is not None
+
+
+class TestProcessManualExtractionTranscricao:
     @pytest.mark.asyncio
     async def test_persiste_no_banco_mas_nunca_devolve_ao_chamador(self):
         db = _db(
@@ -3197,20 +3541,20 @@ class TestProcessManualUploadTranscricao:
             texto_extraido="Bold word here",
             formatacao=(FormatRange(start=0, end=4, bold=True),),
         )
-        update_data = await service.process_manual_upload(
+        update_data = await service.process_manual_extraction(
             pdf_bytes=b"%PDF-1.4",
             resultado_id="resultado-001",
-            consulta=_consulta_row(),
-            tipo="serasa",
+            consulta_id="consulta-001",
             nome_display="Serasa",
             org_id=ORG,
             db=db,
-            storage=FakeStorageBackend(),
             extract_text=AsyncMock(return_value=extraido),
             analyze=AsyncMock(return_value="resumo"),
             analyze_estrutura=AsyncMock(return_value=None),
         )
-        # 🔴 The router echoes THIS dict straight into the HTTP response.
+        # 🔴 The router never echoes THIS dict — it runs after the response
+        # already went out — but `RESULTADO_COLUNAS_SEM_TEXTO`'s rule still
+        # holds for whatever a caller (tests, the retry sweep) inspects here.
         assert "texto_extraido" not in update_data
         assert "formatacao" not in update_data
 
