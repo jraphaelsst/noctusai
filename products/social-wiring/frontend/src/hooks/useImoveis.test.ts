@@ -2,12 +2,14 @@
  * useImoveis — display-helper tests, plus `useImovel`'s 404-does-not-retry
  * contract (Bug A: a manually-registered código's mirror 404 is a STABLE
  * state, retrying it three times just stretches the skeleton for an answer
- * that will not change).
+ * that will not change) and its global-toast opt-out (a stable "not found"
+ * state shouldn't also surface an "Erro ao carregar dados" toast — see
+ * `query-client.test.ts` for the suppression mechanism itself).
  *
  * The display helpers are covered against the pure functions directly (no
- * TanStack wiring needed); the retry contract mocks `@tanstack/react-query`
- * to capture the options object `useQuery` receives, same convention
- * `useMatriculas.test.ts`/`useN8nWorkflows.test.ts` use — no
+ * TanStack wiring needed); the retry/meta contracts mock
+ * `@tanstack/react-query` to capture the options object `useQuery` receives,
+ * same convention `useMatriculas.test.ts`/`useN8nWorkflows.test.ts` use — no
  * QueryClientProvider needed to inspect a `retry` function's own logic.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -125,9 +127,12 @@ describe("caracteristicasAusentes", () => {
 
 // ─── useImovel — Bug A: a 404 on the Vista mirror never retries ────────────
 
-describe("useImovel — 404 does not retry", () => {
+describe("useImovel — 404 does not retry, and does not toast", () => {
   it("does not retry a 404 — a manually-registered código's stable mirror-miss", async () => {
-    const capturedOptions: Array<{ retry?: (failureCount: number, error: unknown) => boolean }> = [];
+    const capturedOptions: Array<{
+      retry?: (failureCount: number, error: unknown) => boolean;
+      meta?: { suppressErrorToastStatuses?: number[] };
+    }> = [];
     vi.doMock("@noctusai/seed/infra", () => ({
       api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
     }));
@@ -144,7 +149,7 @@ describe("useImovel — 404 does not retry", () => {
     const { ApiError } = await import("@noctusai/lib");
 
     useImovel("AP1234");
-    const { retry } = capturedOptions[capturedOptions.length - 1];
+    const { retry, meta } = capturedOptions[capturedOptions.length - 1];
 
     expect(retry?.(0, new ApiError(404, "não encontrado"))).toBe(false);
     expect(retry?.(2, new ApiError(404, "não encontrado"))).toBe(false);
@@ -159,6 +164,40 @@ describe("useImovel — 404 does not retry", () => {
     // also keeps the default retry — the 404 carve-out is specific to a
     // real HTTP 404, never a blanket "stop retrying on any error".
     expect(retry?.(0, new Error("network"))).toBe(true);
+
+    // Bug 1: the same 404 also opts out of the global error toast
+    // (`query-client.ts`'s `suppressErrorToastStatuses`) — a genuinely
+    // unsynced manual código is not something the user needs an "Erro ao
+    // carregar dados" toast about.
+    expect(meta?.suppressErrorToastStatuses).toEqual([404]);
+
+    vi.doUnmock("@noctusai/seed/infra");
+    vi.doUnmock("@tanstack/react-query");
+    vi.resetModules();
+  });
+});
+
+describe("useImovelRegistro — genuinely unknown código does not toast either", () => {
+  it("carries the same 404 toast opt-out as useImovel", async () => {
+    const capturedOptions: Array<{ meta?: { suppressErrorToastStatuses?: number[] } }> = [];
+    vi.doMock("@noctusai/seed/infra", () => ({
+      api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
+    }));
+    vi.doMock("@tanstack/react-query", () => ({
+      useQuery: (opts: (typeof capturedOptions)[number]) => {
+        capturedOptions.push(opts);
+        return { data: undefined, isPending: false, isError: false };
+      },
+      useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+      useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+    }));
+    vi.resetModules();
+    const { useImovelRegistro } = await import("./useImoveis");
+
+    useImovelRegistro("AP1234");
+    const { meta } = capturedOptions[capturedOptions.length - 1];
+
+    expect(meta?.suppressErrorToastStatuses).toEqual([404]);
 
     vi.doUnmock("@noctusai/seed/infra");
     vi.doUnmock("@tanstack/react-query");
