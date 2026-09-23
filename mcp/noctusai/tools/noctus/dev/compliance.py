@@ -20689,6 +20689,16 @@ _CONTRACT_JINJA_BUILTIN_TOKENS = frozenset({"loop.index", "loop.last"})
 #: ref` ``, `` `V.*`, `C.*` ``) do NOT match: the closing backtick is not
 #: immediately followed by the next `|`.
 _CONTRACT_DOC_TOKEN_ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|", re.M)
+#: § 0a (S2) — generated from `card_hub/proveniencia/fontes.py` via
+#: `app.modules.card_hub.proveniencia.linhagem.bloco_secao_0a()`. This
+#: keeper cannot import product code (see the module comment above this
+#: function), so it only checks the markers are PRESENT — a doc reverted to
+#: hand-written prose with the markers stripped is the drift class this
+#: catches. Byte-for-byte drift (the markers present but stale) is the
+#: product's own `tests/modules/card_hub/test_proveniencia_kb_sync.py`'s
+#: job, which CAN import `fontes.py` live.
+_CONTRACT_SECAO_0A_INICIO = "<!-- AUTOGEN:fontes-secao-0a:begin -->"
+_CONTRACT_SECAO_0A_FIM = "<!-- AUTOGEN:fontes-secao-0a:end -->"
 
 
 def _contract_gerador_template_source(modelo_path: Path) -> str:
@@ -20768,6 +20778,13 @@ def check_contract_field_provenance_map(repo_root: Path | None = None) -> list[d
     drift class KB § PATTERNS/devops/product-lockfile-and-slug-drift.md
     catalogues, applied to a KB doc instead of a CI manifest. KB §
     CONTEXT/PRODUCTS/social-wiring/CONTRACT-FIELD-PROVENANCE-MAP.md § 3/§ 5.
+
+    Also guards § 0a (S2, `card_hub/proveniencia/fontes.py`): STRUCTURALLY,
+    that its `AUTOGEN:fontes-secao-0a` marker pair is present at all — this
+    tool cannot import product code, so a BYTE-identical drift check lives
+    in the product's own `tests/modules/card_hub/test_proveniencia_kb_sync.
+    py` instead (which CAN import `fontes.py` live via `linhagem.
+    bloco_secao_0a()`).
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -20833,6 +20850,25 @@ def check_contract_field_provenance_map(repo_root: Path | None = None) -> list[d
                 "enter the F5 instrument without a documented, verifiable "
                 "origin. KB § CONTEXT/PRODUCTS/social-wiring/"
                 "CONTRACT-FIELD-PROVENANCE-MAP.md § 3."
+            ),
+            "severity": "high",
+        })
+
+    if _CONTRACT_SECAO_0A_INICIO not in doc_text or _CONTRACT_SECAO_0A_FIM not in doc_text:
+        issues.append({
+            "product": "social-wiring",
+            "file": _CONTRACT_PROVENANCE_MAP_REL,
+            "issue": (
+                f"§ 0a's generated marker block ({_CONTRACT_SECAO_0A_INICIO!r} "
+                f".. {_CONTRACT_SECAO_0A_FIM!r}) is missing or incomplete. "
+                "§ 0a's per-tipo_documento table must be GENERATED from "
+                "`card_hub/proveniencia/fontes.py` (`app.modules.card_hub."
+                "proveniencia.linhagem.bloco_secao_0a()`) — never hand-"
+                "written prose again, the exact drift class this section "
+                "used to have (fontes.py's own module docstring). "
+                "Byte-identical drift (markers present but stale) is "
+                "caught separately by `tests/modules/card_hub/"
+                "test_proveniencia_kb_sync.py`."
             ),
             "severity": "high",
         })

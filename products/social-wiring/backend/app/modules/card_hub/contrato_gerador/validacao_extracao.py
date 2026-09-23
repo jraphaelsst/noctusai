@@ -162,7 +162,7 @@ class CampoValidavel:
             return False
         if row.get(self.confirmado_em) is not None:
             return False
-        return any(_preenchido(row.get(c)) for c in self.valores)
+        return any(preenchido(row.get(c)) for c in self.valores)
 
 
 def _quinteto(
@@ -372,7 +372,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _preenchido(valor: Any) -> bool:
+def preenchido(valor: Any) -> bool:
     if valor is None:
         return False
     if isinstance(valor, str):
@@ -396,7 +396,7 @@ def chave(entidade: str, entidade_id: str, campo: str) -> str:
     return f"{entidade}:{entidade_id}:{campo}"
 
 
-def _valor_exibicao(campo: CampoValidavel, row: dict, nomes: dict[str, str]) -> Optional[str]:
+def valor_exibicao(campo: CampoValidavel, row: dict, nomes: dict[str, str]) -> Optional[str]:
     if campo.entidade == ENTIDADE_CLIENTE and campo.campo == "conjuge":
         alvo = row.get("conjuge_cliente_id")
         return nomes.get(str(alvo), str(alvo)) if alvo else None
@@ -418,7 +418,7 @@ def _valor_exibicao(campo: CampoValidavel, row: dict, nomes: dict[str, str]) -> 
     if len(campo.valores) == 1:
         return _texto(row.get(campo.valores[0]))
     return " · ".join(
-        f"{c}: {_texto(row.get(c))}" for c in campo.valores if _preenchido(row.get(c))
+        f"{c}: {_texto(row.get(c))}" for c in campo.valores if preenchido(row.get(c))
     ) or None
 
 
@@ -442,7 +442,7 @@ def _obrigatorio(campo: CampoValidavel, row: dict) -> bool:
 
 
 @dataclass
-class _Alvo:
+class Alvo:
     """One entity row to check, with how the modal should label it."""
 
     campos: tuple[CampoValidavel, ...]
@@ -456,8 +456,8 @@ class _Alvo:
 
 
 @dataclass
-class _Coleta:
-    alvos: list[_Alvo] = field(default_factory=list)
+class Coleta:
+    alvos: list[Alvo] = field(default_factory=list)
     nomes: dict[str, str] = field(default_factory=dict)
 
 
@@ -477,8 +477,8 @@ def _rotulo_pessoa(p: Pessoa, row: dict) -> str:
     return f"{nome} ({papel})"
 
 
-def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Optional[Any]) -> _Coleta:
-    coleta = _Coleta()
+def coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Optional[Any]) -> Coleta:
+    coleta = Coleta()
     pessoas: list[Pessoa] = []
     vistos: set[str] = set()
     for p in [*dados.compradores, *dados.vendedores]:
@@ -500,7 +500,7 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
         if row is None:
             continue
         grupo = _rotulo_pessoa(p, row)
-        coleta.alvos.append(_Alvo(CAMPOS_CLIENTE, p.cliente_id, row, grupo))
+        coleta.alvos.append(Alvo(CAMPOS_CLIENTE, p.cliente_id, row, grupo))
         brutas = (
             certidoes_svc.certidoes_por_parte(client, org_id, p.parte_id)
             if p.parte_id
@@ -508,7 +508,7 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
         )
         for r in brutas:
             coleta.alvos.append(
-                _Alvo(
+                Alvo(
                     (CAMPO_CERTIDAO,), str(r["id"]), r, f"Certidões — {grupo}",
                     rotulo_sufixo=r.get("nome_display") or r.get("tipo"),
                     # The resultado IS the document (its uploaded/fetched file).
@@ -521,7 +521,7 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
     if im is not None:
         linha = dados_service.linha(client, org_id, im.codigo) or {}
         if linha:
-            coleta.alvos.append(_Alvo(CAMPOS_IMOVEL, im.codigo, linha, f"Imóvel {im.codigo}"))
+            coleta.alvos.append(Alvo(CAMPOS_IMOVEL, im.codigo, linha, f"Imóvel {im.codigo}"))
         itens = imovel_docs_svc.certidoes(client, org_id, im.codigo)["items"]
         docs = _rows_por_id(
             client, org_id, "imovel_documentos", [i["documento_id"] for i in itens],
@@ -533,7 +533,7 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
             if doc is None:
                 continue
             coleta.alvos.append(
-                _Alvo(
+                Alvo(
                     (CAMPO_IMOVEL_DOCUMENTO,), str(doc["id"]), doc,
                     f"Certidões do imóvel {im.codigo}", rotulo_sufixo=item["tipo"],
                     fonte_nome_propria=doc.get("nome_original"), fonte_id_propria=str(doc["id"]),
@@ -552,7 +552,7 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
             ).data or []
             if det:
                 coleta.alvos.append(
-                    _Alvo((CAMPO_ATO_DETALHE,), str(det[0]["id"]), det[0], f"Imóvel {im.codigo}")
+                    Alvo((CAMPO_ATO_DETALHE,), str(det[0]["id"]), det[0], f"Imóvel {im.codigo}")
                 )
 
     ativo_ids = [p.permuta_ativo_id for p in dados.permuta_imoveis]
@@ -565,7 +565,7 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
             linha = dados_service.linha(client, org_id, codigo) or {}
             if linha:
                 coleta.alvos.append(
-                    _Alvo(CAMPOS_IMOVEL_PERMUTA, codigo, linha, f"Imóvel da permuta {codigo}")
+                    Alvo(CAMPOS_IMOVEL_PERMUTA, codigo, linha, f"Imóvel da permuta {codigo}")
                 )
 
     # The act labels ("R.1", "AV.3") the título/ônus pointers render as.
@@ -585,33 +585,39 @@ def _coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Option
     return coleta
 
 
-def _fontes(client: Any, org_id: UUID, pendentes: list[tuple[_Alvo, CampoValidavel]]) -> dict[str, dict]:
-    """The source document of each pending value: `cliente_documentos` for a
-    cliente field, `imovel_documentos` or `matricula_extracoes` for an
-    imóvel field (154's `_documento_id` may point at either)."""
+def documentos_de_origem(client: Any, org_id: UUID, pares: list[tuple[Alvo, CampoValidavel]]) -> dict[str, dict]:
+    """The source document of each value in `pares` (pending or not —
+    `listar_pendentes`/`decidir` call this with only-pending pairs,
+    `proveniencia.linhagem` with every active one): `cliente_documentos`
+    for a cliente field, `imovel_documentos` or `matricula_extracoes` for
+    an imóvel field (154's `_documento_id` may point at either). Each
+    returned row is tagged `_tabela` with the table it was actually found
+    in, so a caller can tell the three apart without re-deriving it —
+    `proveniencia.linhagem` turns that into an `Entrada` (`fontes.
+    TABELA_ENTRADA`); this module stays free of that vocabulary."""
     ids_cliente, ids_imovel = set(), set()
-    for alvo, campo in pendentes:
+    for alvo, campo in pares:
         doc_id = alvo.row.get(campo.documento_id) if campo.documento_id else None
         if not doc_id:
             continue
         (ids_cliente if campo.entidade == ENTIDADE_CLIENTE else ids_imovel).add(str(doc_id))
     fontes: dict[str, dict] = {}
     for did, r in _rows_por_id(client, org_id, "cliente_documentos", ids_cliente).items():
-        fontes[did] = r | {"_nome": r.get("nome_original")}
+        fontes[did] = r | {"_nome": r.get("nome_original"), "_tabela": "cliente_documentos"}
     for did, r in _rows_por_id(client, org_id, "imovel_documentos", ids_imovel,
-                               select="id,nome_original,extracao_confianca").items():
-        fontes[did] = r | {"_nome": r.get("nome_original")}
+                               select="id,nome_original,tipo_documento,extracao_confianca").items():
+        fontes[did] = r | {"_nome": r.get("nome_original"), "_tabela": "imovel_documentos"}
     restantes = ids_imovel - set(fontes)
     for did, r in _rows_por_id(client, org_id, "matricula_extracoes", restantes,
                                select="id,nome_arquivo").items():
-        fontes[did] = r | {"_nome": r.get("nome_arquivo")}
+        fontes[did] = r | {"_nome": r.get("nome_arquivo"), "_tabela": "matricula_extracoes"}
     return fontes
 
 
 _CONFIANCA_IDENTIDADE = {c.item_key: c.coluna_confianca for c in CAMPOS_IDENTIDADE}
 
 
-def _confianca(campo: CampoValidavel, alvo: _Alvo, fonte: Optional[dict]) -> Optional[str]:
+def _confianca(campo: CampoValidavel, alvo: Alvo, fonte: Optional[dict]) -> Optional[str]:
     if campo.confianca_coluna:
         return alvo.row.get(campo.confianca_coluna)
     if fonte is None:
@@ -622,11 +628,11 @@ def _confianca(campo: CampoValidavel, alvo: _Alvo, fonte: Optional[dict]) -> Opt
     return fonte.get("extracao_confianca") if campo.campo == "numero_matricula" else None
 
 
-def _pendentes_brutos(coleta: _Coleta) -> list[tuple[_Alvo, CampoValidavel]]:
+def _pendentes_brutos(coleta: Coleta) -> list[tuple[Alvo, CampoValidavel]]:
     return [(alvo, campo) for alvo in coleta.alvos for campo in alvo.campos if campo.pendente(alvo.row)]
 
 
-def _item(alvo: _Alvo, campo: CampoValidavel, fontes: dict[str, dict], nomes: dict[str, str]) -> dict:
+def _item(alvo: Alvo, campo: CampoValidavel, fontes: dict[str, dict], nomes: dict[str, str]) -> dict:
     doc_id = alvo.row.get(campo.documento_id) if campo.documento_id else alvo.fonte_id_propria
     fonte = fontes.get(str(doc_id)) if doc_id else None
     rotulo = f"{campo.rotulo} — {alvo.rotulo_sufixo}" if alvo.rotulo_sufixo else campo.rotulo
@@ -637,7 +643,7 @@ def _item(alvo: _Alvo, campo: CampoValidavel, fontes: dict[str, dict], nomes: di
         "campo": campo.campo,
         "grupo": alvo.grupo,
         "rotulo": rotulo,
-        "valor": _valor_exibicao(campo, alvo.row, nomes),
+        "valor": valor_exibicao(campo, alvo.row, nomes),
         "origem": alvo.row.get(campo.origem),
         "fonte_documento_id": str(doc_id) if doc_id else None,
         "fonte_nome": (fonte or {}).get("_nome") or alvo.fonte_nome_propria,
@@ -745,9 +751,9 @@ def listar_pendentes(
 ) -> list[dict]:
     """Every machine-pending contract-feeding value of the contract `dados`
     was loaded for — the GET answer and `gerar`'s precondition."""
-    coleta = _coletar(client, org_id, dados, usuario_id)
+    coleta = coletar(client, org_id, dados, usuario_id)
     brutos = _pendentes_brutos(coleta)
-    fontes = _fontes(client, org_id, brutos)
+    fontes = documentos_de_origem(client, org_id, brutos)
     return [_item(alvo, campo, fontes, coleta.nomes) for alvo, campo in brutos]
 
 
@@ -852,14 +858,14 @@ def decidir(
     if repetidas:
         raise ValidationError_(f"Chave repetida na mesma requisição: {', '.join(repetidas)}", field="decisoes")
 
-    coleta = _coletar(client, org_id, dados, usuario_id)
+    coleta = coletar(client, org_id, dados, usuario_id)
     brutos = _pendentes_brutos(coleta)
     por_chave = {chave(c.entidade, a.entidade_id, c.campo): (a, c) for a, c in brutos}
     desconhecidas = [c for c in chaves if c not in por_chave]
     if desconhecidas:
         raise ValidacaoDesatualizada(desconhecidas)
 
-    fontes = _fontes(client, org_id, [por_chave[c] for c in chaves])
+    fontes = documentos_de_origem(client, org_id, [por_chave[c] for c in chaves])
     agora = _now()
     for ch, decisao in decisoes:
         alvo, campo = por_chave[ch]
@@ -897,6 +903,7 @@ def decidir(
 
 
 __all__ = [
+    "Alvo",
     "CAMPOS_CLIENTE",
     "CAMPOS_IMOVEL",
     "CAMPOS_IMOVEL_PERMUTA",
@@ -904,15 +911,20 @@ __all__ = [
     "CAMPO_CERTIDAO",
     "CAMPO_IMOVEL_DOCUMENTO",
     "CampoValidavel",
+    "Coleta",
     "Decisao",
     "ExtracaoPendenteValidacao",
     "LEDGER",
     "REGISTRO",
     "ValidacaoDesatualizada",
     "chave",
+    "coletar",
     "decidir",
+    "documentos_de_origem",
     "exigir_sem_pendentes",
     "listar_conflitos",
     "listar_pendentes",
+    "preenchido",
     "situacao",
+    "valor_exibicao",
 ]

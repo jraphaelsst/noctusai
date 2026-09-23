@@ -62,6 +62,15 @@ _DERIVACAO_OK = '''def derivar_switches():
     return {"tem_financiamento": True}
 '''
 
+#: § 0a's marker pair (S2) — present in every fixture below EXCEPT
+#: `TestSecao0aMarkerGuard`'s own, so the § 3 token-inventory tests stay
+#: focused on that one concern (§ 0a's guard is structural-only here; see
+#: `_CONTRACT_SECAO_0A_INICIO`/`_FIM` in `compliance.py`).
+_SECAO_0A_MARCADORES = (
+    "<!-- AUTOGEN:fontes-secao-0a:begin -->\n"
+    "<!-- AUTOGEN:fontes-secao-0a:end -->\n"
+)
+
 _MAP_FULLY_DOCUMENTED = """# Contract field provenance map (fixture)
 
 | token | §2 group |
@@ -71,7 +80,7 @@ _MAP_FULLY_DOCUMENTED = """# Contract field provenance map (fixture)
 | `imovel.cidade` | Imóvel objeto |
 | `imovel.uf` | Imóvel objeto |
 | `tem_financiamento` | Contrato / assinatura (§1.1 switches) |
-"""
+""" + _SECAO_0A_MARCADORES
 
 # Same generator, but the map is missing `imovel.uf`'s row.
 _MAP_MISSING_ONE_TOKEN = """# Contract field provenance map (fixture)
@@ -82,7 +91,7 @@ _MAP_MISSING_ONE_TOKEN = """# Contract field provenance map (fixture)
 | `imovel` | Imóvel objeto |
 | `imovel.cidade` | Imóvel objeto |
 | `tem_financiamento` | Contrato / assinatura (§1.1 switches) |
-"""
+""" + _SECAO_0A_MARCADORES
 
 
 def _write_gerador(root: Path, *, modelo=_MODELO_TEXTO, contexto=_CONTEXTO_OK, derivacao=_DERIVACAO_OK) -> None:
@@ -114,7 +123,7 @@ class TestMissingTokenIsFlagged:
 
     def test_multiple_undocumented_tokens_each_get_their_own_issue(self, tmp_path):
         _write_gerador(tmp_path)
-        _write_map(tmp_path, "# empty map\n\n| token | group |\n|---|---|\n")
+        _write_map(tmp_path, "# empty map\n\n| token | group |\n|---|---|\n" + _SECAO_0A_MARCADORES)
 
         issues = check_contract_field_provenance_map(repo_root=tmp_path)
 
@@ -185,6 +194,40 @@ class TestHonestDegradation:
         issues = check_contract_field_provenance_map(repo_root=tmp_path)
 
         assert issues == []
+
+
+class TestSecao0aMarkerGuard:
+    """§ 0a (S2) — structural only: both `AUTOGEN:fontes-secao-0a` markers
+    must be present. Byte-identical drift is a different test
+    (`test_proveniencia_kb_sync.py`, product-side, imports `fontes.py`
+    live) — this keeper never imports product code."""
+
+    def test_missing_both_markers_is_flagged(self, tmp_path):
+        _write_gerador(tmp_path)
+        _write_map(tmp_path, _MAP_FULLY_DOCUMENTED.replace(_SECAO_0A_MARCADORES, ""))
+
+        issues = check_contract_field_provenance_map(repo_root=tmp_path)
+
+        secao_0a = [i for i in issues if "fontes-secao-0a" in i["issue"]]
+        assert len(secao_0a) == 1, issues
+        assert secao_0a[0]["severity"] == "high"
+
+    def test_missing_one_marker_is_flagged(self, tmp_path):
+        _write_gerador(tmp_path)
+        so_metade = "<!-- AUTOGEN:fontes-secao-0a:begin -->\n"
+        _write_map(tmp_path, _MAP_FULLY_DOCUMENTED.replace(_SECAO_0A_MARCADORES, so_metade))
+
+        issues = check_contract_field_provenance_map(repo_root=tmp_path)
+
+        assert any("fontes-secao-0a" in i["issue"] for i in issues), issues
+
+    def test_both_markers_present_no_secao_0a_issue(self, tmp_path):
+        _write_gerador(tmp_path)
+        _write_map(tmp_path, _MAP_FULLY_DOCUMENTED)
+
+        issues = check_contract_field_provenance_map(repo_root=tmp_path)
+
+        assert not any("fontes-secao-0a" in i["issue"] for i in issues), issues
 
 
 class TestContractFieldProvenanceMap:

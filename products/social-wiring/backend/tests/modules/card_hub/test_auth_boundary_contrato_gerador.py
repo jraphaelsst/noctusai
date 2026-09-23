@@ -17,6 +17,11 @@ _ROUTES: tuple[tuple[str, str], ...] = (
     # Owner decision D2 (migration 156) — the extraction validation gate.
     ("get", "/api/clientes/{cliente_id}/contratos/{contrato_id}/validacao-extracao"),
     ("post", "/api/clientes/{cliente_id}/contratos/{contrato_id}/validacao-extracao/decisoes"),
+    # S2 — the card's "Proveniência" tab.
+    ("get", "/api/clientes/{cliente_id}/contratos/{contrato_id}/proveniencia"),
+    # S2 — the static FE-hint catalog, a SEPARATE router (`proveniencia_router`,
+    # `/api/proveniencia`) — see `card_hub/proveniencia/router.py`.
+    ("get", "/api/proveniencia/registro"),
 )
 
 

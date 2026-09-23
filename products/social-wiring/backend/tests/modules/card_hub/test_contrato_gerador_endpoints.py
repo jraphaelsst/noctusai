@@ -509,7 +509,7 @@ class TestGeracao:
                 "negociacao.parcelas", "negociacao.posse_prazo_dias", "imobiliaria.razao_social",
                 "imobiliaria.testemunhas", "imobiliaria.plataforma_assinatura"} <= campos
         for f in body["faltando"]:
-            assert set(f) == {"campo", "rotulo", "onde", "parte_id", "destino"}
+            assert set(f) == {"campo", "rotulo", "onde", "parte_id", "destino", "sugestoes"}
 
     def test_every_missing_field_says_which_screen_fixes_it(self, client, scoped):
         """The `destino` contract the readiness UI links from."""
