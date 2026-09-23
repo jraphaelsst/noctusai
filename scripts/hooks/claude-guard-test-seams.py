@@ -9,10 +9,10 @@ It is a SECOND hook entry rather than a branch inside the existing guard so
 that branch-isolation and test-seam enforcement stay independently readable
 and independently testable — a failure in one must not disable the other.
 
-Fails OPEN, deliberately: every Edit/Write in the repo passes through here,
-so a guard that raises must not become a guard that blocks all work. The
-commit-time `check_no_self_monkeypatch` keeper remains the backstop for
-anything that leaks past.
+Fails OPEN, deliberately: every Edit/Write/Bash call in the repo passes
+through here, so a guard that raises must not become a guard that blocks all
+work. The commit-time `check_no_self_monkeypatch` keeper remains the backstop
+for anything that leaks past.
 """
 from __future__ import annotations
 

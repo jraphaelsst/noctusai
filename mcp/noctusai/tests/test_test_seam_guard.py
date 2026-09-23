@@ -5,6 +5,12 @@ Per `KB § PATTERNS/common/methodology-execution-discipline.md` principle 4
 every case below is paired: the guard must DENY the violation and must stay
 silent on the legitimate shape next to it. A guard that only ever allows is
 indistinguishable from no guard at all.
+
+A safety net that also catches things nobody threw stops being trusted as a
+net — `TestDiffScopedJudgement` pins that the guard judges only what a call
+ADDS, never a pre-existing violation sitting untouched elsewhere in the file.
+`TestBashHeredocIsCaught` pins the second hole: a test file authored through
+`cat > ... <<EOF` no longer bypasses this guard the way it used to.
 """
 from __future__ import annotations
 
@@ -220,8 +226,17 @@ class TestTheHookActuallyFiresInProduction:
         import json as _json
 
         settings = _json.loads((REPO_ROOT / ".claude" / "settings.json").read_text())
-        wired = _json.dumps(settings.get("hooks", {}).get("PreToolUse", []))
+        entries = settings.get("hooks", {}).get("PreToolUse", [])
+        wired = _json.dumps(entries)
         assert "claude-guard-test-seams.py" in wired
+        matcher = next(
+            (e["matcher"] for e in entries if "claude-guard-test-seams.py" in _json.dumps(e)),
+            "",
+        )
+        assert "Bash" in matcher.split("|"), (
+            "the Bash matcher closes the heredoc bypass — dropping it silently "
+            "reopens the 2026-09-07 hole"
+        )
 
 
 class TestSysModulesSetitemIsTheSameViolation:
@@ -276,3 +291,181 @@ class TestSysModulesSetitemIsTheSameViolation:
             "    monkeypatch.setitem(cfg, 'a', 2)\n"
         )
         assert guard.find_self_patches(src, TEST_PATH) == []
+
+
+class TestDiffScopedJudgement:
+    """The guard must judge only what THIS call adds.
+
+    Owner's framing: gates are safety nets behind a mechanism, not walls —
+    a net that also catches what nobody just threw stops being trusted. The
+    2026-09-14 auto-improvement: a whole-file scan made a PRE-EXISTING
+    violation elsewhere in the file block every later edit, including an
+    unrelated one and including the fix itself.
+    """
+
+    def _write_file(self, tmp_path, content):
+        f = tmp_path / "products" / "x" / "backend" / "tests" / "test_thing.py"
+        f.parent.mkdir(parents=True)
+        f.write_text(content)
+        return f
+
+    def test_unrelated_edit_in_a_file_with_a_pre_existing_violation_is_allowed(self, tmp_path):
+        original = (
+            "from app.services import clientes_service\n"
+            "\n\n"
+            "def test_a(monkeypatch):\n"
+            "    monkeypatch.setattr(clientes_service, \"resolve\", lambda *_: None)\n"
+            "\n\n"
+            "def test_b():\n"
+            "    assert 1 == 1\n"
+        )
+        f = self._write_file(tmp_path, original)
+        verdict = guard.decide(
+            "Edit",
+            {
+                "file_path": str(f),
+                "old_string": "def test_b():\n    assert 1 == 1\n",
+                "new_string": "def test_b():\n    assert 2 == 2\n",
+            },
+        )
+        assert verdict is None, "an unrelated edit must not be blocked by a violation it never touched"
+
+    def test_edit_that_adds_a_violation_is_refused(self, tmp_path):
+        original = "def test_a():\n    assert True\n"
+        f = self._write_file(tmp_path, original)
+        verdict = guard.decide(
+            "Edit",
+            {
+                "file_path": str(f),
+                "old_string": original,
+                "new_string": (
+                    "from app.services import clientes_service\n\n\n"
+                    "def test_a(monkeypatch):\n"
+                    "    monkeypatch.setattr(clientes_service, \"resolve\", lambda *_: None)\n"
+                ),
+            },
+        )
+        assert verdict is not None
+        assert "clientes_service.resolve" in " ".join(verdict["targets"])
+
+    def test_edit_that_removes_the_only_violation_is_allowed(self, tmp_path):
+        original = (
+            "from app.services import clientes_service\n\n\n"
+            "def test_a(monkeypatch):\n"
+            "    monkeypatch.setattr(clientes_service, \"resolve\", lambda *_: None)\n"
+        )
+        f = self._write_file(tmp_path, original)
+        verdict = guard.decide(
+            "Edit",
+            {
+                "file_path": str(f),
+                "old_string": (
+                    "def test_a(monkeypatch):\n"
+                    "    monkeypatch.setattr(clientes_service, \"resolve\", lambda *_: None)\n"
+                ),
+                "new_string": "def test_a():\n    assert True\n",
+            },
+        )
+        assert verdict is None
+
+    def test_write_that_overwrites_an_existing_file_and_adds_a_violation_is_refused(self, tmp_path):
+        f = self._write_file(tmp_path, "def test_a():\n    assert True\n")
+        verdict = guard.decide(
+            "Write",
+            {
+                "file_path": str(f),
+                "content": (
+                    "from app.services import clientes_service\n\n\n"
+                    "def test_a(monkeypatch):\n"
+                    "    monkeypatch.setattr(clientes_service, \"resolve\", lambda *_: None)\n"
+                ),
+            },
+        )
+        assert verdict is not None
+
+    def test_write_of_a_brand_new_file_is_judged_in_full(self, tmp_path):
+        """No on-disk predecessor to diff against — everything IS new."""
+        target = tmp_path / "products" / "x" / "backend" / "tests" / "test_new.py"
+        verdict = guard.decide(
+            "Write",
+            {"file_path": str(target), "content": SELF_PATCH},
+        )
+        assert verdict is not None
+
+
+class TestBashHeredocIsCaught:
+    """The 2026-09-07 hole: a test file written via `cat > ... <<EOF` skipped
+    this guard entirely and reached CI. `check_no_self_monkeypatch` caught it
+    there, three violations late — this class pins that the write-time half
+    now sees the same content through the same predicate.
+    """
+
+    def test_heredoc_that_writes_a_new_test_file_with_a_violation_is_refused(self):
+        command = (
+            "cat > products/x/backend/tests/test_new.py <<'EOF'\n"
+            "from app.services import clientes_service\n"
+            "\n\n"
+            "def test_a(monkeypatch):\n"
+            "    monkeypatch.setattr(clientes_service, \"resolve\", lambda *_: None)\n"
+            "EOF\n"
+        )
+        verdict = guard.decide("Bash", {"command": command})
+        assert verdict is not None
+        assert "clientes_service.resolve" in " ".join(verdict["targets"])
+
+    def test_heredoc_that_writes_a_clean_test_file_is_allowed(self):
+        command = (
+            "cat > products/x/backend/tests/test_new.py <<'EOF'\n"
+            "def test_a():\n"
+            "    assert True\n"
+            "EOF\n"
+        )
+        assert guard.decide("Bash", {"command": command}) is None
+
+    def test_heredoc_that_patches_an_external_boundary_is_allowed(self):
+        command = (
+            "cat > products/x/backend/tests/test_new.py <<'EOF'\n"
+            "import httpx\n"
+            "\n\n"
+            "def test_a(monkeypatch):\n"
+            "    monkeypatch.setattr(httpx, \"get\", lambda *_: None)\n"
+            "EOF\n"
+        )
+        assert guard.decide("Bash", {"command": command}) is None
+
+    def test_heredoc_writing_a_non_test_path_is_not_policed(self):
+        command = (
+            "cat > products/x/backend/app/svc.py <<'EOF'\n"
+            "from app.services import clientes_service\n"
+            "monkeypatch.setattr(clientes_service, \"resolve\", None)\n"
+            "EOF\n"
+        )
+        assert guard.decide("Bash", {"command": command}) is None
+
+    def test_append_redirect_into_a_test_file_is_also_caught(self):
+        command = (
+            "cat >> products/x/backend/tests/test_new.py <<'EOF'\n"
+            "from app.services import clientes_service\n"
+            "\n\n"
+            "def test_b(monkeypatch):\n"
+            "    monkeypatch.setattr(clientes_service, \"resolve\", lambda *_: None)\n"
+            "EOF\n"
+        )
+        verdict = guard.decide("Bash", {"command": command})
+        assert verdict is not None
+
+    def test_a_command_with_no_heredoc_is_unaffected(self):
+        assert guard.decide("Bash", {"command": "pytest products/x -k test_a"}) is None
+
+    def test_the_allowlist_comment_is_honoured_in_a_heredoc_body(self):
+        command = (
+            "cat > products/x/backend/tests/test_new.py <<'EOF'\n"
+            "from app.services import clientes_service\n"
+            "\n\n"
+            "def test_a(monkeypatch):\n"
+            "    monkeypatch.setattr(  # self-patch-ok: neutralises ambient .env\n"
+            "        clientes_service, \"resolve\", lambda *_: None\n"
+            "    )\n"
+            "EOF\n"
+        )
+        assert guard.decide("Bash", {"command": command}) is None

@@ -993,9 +993,40 @@ accurate description of a backstop with no construction half.
 
 **The fix is the shape CLAUDE.md §1 already prescribes for self-branching:**
 gate at both ends. `test_seam_guard.decide` runs as a **PreToolUse hook** and
-DENIES a `Write`/`Edit`/`MultiEdit` that would introduce a self-patch into a
-test file, with a refusal naming the offending symbols *and* the remedy.
-`check_no_self_monkeypatch` stays exactly as it was — the backstop.
+DENIES a `Write`/`Edit`/`MultiEdit`/`Bash` call that would introduce a
+self-patch into a test file, with a refusal naming the offending symbols
+*and* the remedy. `check_no_self_monkeypatch` stays exactly as it was — the
+backstop.
+
+### A gate is a safety net behind a mechanism, not a wall
+
+Two holes shipped with the first version, both from the guard judging more
+than the call in front of it:
+
+* **Whole-file scan.** It re-parsed the entire resulting file, so a
+  PRE-EXISTING self-patch anywhere in a test file blocked EVERY later edit to
+  that file — an unrelated change, or even the fix itself (2026-09-14, a
+  legacy `unittest.mock.patch` in a seed-lib fixture file made it un-editable
+  from the write-time end). `decide` now judges only the lines a `Write` adds
+  relative to the current on-disk content (or, for a brand-new file, the
+  whole thing), and only the lines an `Edit`/`MultiEdit` adds relative to
+  `old_string` — via a `difflib.SequenceMatcher` line diff, checked against
+  each violating statement's full `lineno..end_lineno` span so a multi-line
+  `monkeypatch.setattr(...)` call is judged as one unit. An edit that
+  *removes* the only violation is allowed, same as it always was; an edit
+  that never touches the violating lines no longer sees them at all.
+* **Bash bypass.** It only fired on `Write`/`Edit`/`MultiEdit`, so a test file
+  authored via `cat > tests/test_x.py <<'EOF' ... EOF` skipped it entirely —
+  three self-monkeypatch violations reached CI that way on 2026-09-07 and
+  were only caught by the commit-time keeper. `decide` now also matches on
+  `Bash`: it resolves any heredoc/redirect in the command whose write target
+  `is_test_file()` recognises (reusing `primary_write_guard`'s own
+  `_HEREDOC_RE` / `_redirect_targets` parser rather than a second one) and
+  runs the SAME `find_self_patches` predicate over the heredoc body. One
+  heredoc per opening line; a test file produced by some other shell
+  construct (`printf`, `python3 -c "open(...).write(...)"`) is still only
+  caught by the commit-time keeper — stated as a deliberate limit, not
+  hidden.
 
 ### One predicate, two enforcement points
 
