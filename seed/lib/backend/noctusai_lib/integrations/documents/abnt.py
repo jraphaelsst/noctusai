@@ -482,26 +482,14 @@ def render_abnt_pdf(doc: FormattedDocument) -> bytes:
     Imports `xhtml2pdf`/`reportlab` lazily — declared in `pyproject.toml`
     for `check_seed_declared_imports`, but a caller who only needs
     `render_word_html` should not need either importable."""
-    import io
-
-    from reportlab import rl_config
-    from xhtml2pdf import pisa
+    from noctusai_lib.integrations.documents.html_pdf import render_html_pdf
 
     _assert_renders_with_core_font(doc)
-    html = _pdf_html_document(doc)
-
-    buffer = io.BytesIO()
-    # `rl_config.invariant` is a PROCESS-GLOBAL flag (see module
-    # docstring) — flip it only around this build, restore unconditionally.
-    # xhtml2pdf builds on reportlab underneath, so the same flag still
-    # fixes `/CreationDate` and file `/ID` here.
-    previous_invariant = rl_config.invariant
-    rl_config.invariant = 1
-    try:
-        pisa.CreatePDF(html, dest=buffer, raise_exception=True)
-    finally:
-        rl_config.invariant = previous_invariant
-    return buffer.getvalue()
+    # `deterministic=True`: `rl_config.invariant` is a PROCESS-GLOBAL flag
+    # (see module docstring) — the shared helper flips it only around this
+    # build and restores it unconditionally; xhtml2pdf builds on reportlab
+    # underneath, so the same flag still fixes `/CreationDate` and file `/ID`.
+    return render_html_pdf(_pdf_html_document(doc), deterministic=True)
 
 
 # ─── render_word_html ──────────────────────────────────────────────────────

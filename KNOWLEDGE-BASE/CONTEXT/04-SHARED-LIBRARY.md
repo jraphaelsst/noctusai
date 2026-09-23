@@ -245,6 +245,8 @@ Landed 2026-08-22 with the social-wiring card checklist, as **the canonical RG/C
 
 Composes `integrations.media` for "bytes → text" rather than re-doing it; owns only rung selection and the text→fields parse.
 
+**Generating PDFs (the other direction).** Every platform PDF renders through `render_html_pdf(html, *, deterministic=False) -> bytes` (`html_pdf.py`, lifted 2026-09-23 at N=4 — `render_abnt_pdf`, ERP's and social-wiring's certidão converters, igig's orçamento/contrato documents): one self-contained HTML document → `xhtml2pdf` with a **no-fetch** `ResourceAccessPolicy` (user data must never make the server fetch a URL — embed images as `data:` URIs) and **raise-on-error** (`HtmlPdfError`; xhtml2pdf only reports an error COUNT). `cp1252_safe(text)` strips what the core fonts cannot draw. Never call `pisa.CreatePDF` directly. The two certidão converters (ERP `certidoes_service`, social-wiring `modules/certidoes/service.py`) still hand-roll it — migrating them (catching `HtmlPdfError` where they keep the provider URL as fallback) is the open follow-up.
+
 | Symbol | Purpose |
 |---|---|
 | `IdentityFields(kind, data_nascimento*, nome*, source, error, error_message)` | Extraction result. Confidence is **per field**: `data_nascimento_confianca` / `nome_confianca` and `_rotulo` each. `.persistable_<field>` is the ONE write gate — true only for `ALTA` with a value; `.sugestao_<field>` marks a `BAIXA` read worth offering a human. There is deliberately no bare `.confidence`, so "which field is this about?" cannot be spelled wrong. |
