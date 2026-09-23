@@ -947,3 +947,4 @@
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/igig-crm-foundation", "branch": "feat/igig-crm-foundation", "sha": "13734fd31e08f5f52e02bc18d17da029d8bf857b", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/website-be", "branch": "feat/website-be", "sha": "dce74b0c7234bee0c4fdb5915d20fe08bcfcbfb8", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/website-admin", "branch": "feat/website-admin", "sha": "0dd8034427be43b68b95a2526cf5d234c4e35ea3", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/igig-orcamentos-be", "branch": "feat/igig-orcamentos-be", "sha": "fc93618ea0f40c3aeedab4cdd9fce115bbbbf27a", "reason": "task_branch cleanup (learn-before-delete)"}
