@@ -25,8 +25,12 @@ over `gpt-4o-mini`):
 from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
+from app.card_hub import cliente_card_hub_routers, negocio_card_hub_routers
 from app.routers.cliente_router import router as cliente_router
+from app.routers.comercial_funil_router import router as comercial_funil_router
+from app.routers.comercial_funil_router import stages_router as comercial_stages_router
 from app.routers.esteira_router import router as esteira_router
+from app.routers.esteira_router import stages_router as esteira_stages_router
 from app.routers.marca_router import router as marca_router
 from app.routers.distribuicao_router import router as distribuicao_router
 from app.routers.comercial_router import router as comercial_router
@@ -65,6 +69,17 @@ _MAX_BODY_PATH_OVERRIDES = {
     # it — 3 MB gives headroom above the 2 MB cap without approaching
     # the pecas ceiling.
     "/api/marcas/*/logo": 3 * 1024 * 1024,  # 3 MB
+    # Card-hub documents (seed `noctusai_lib.domain.card_hub` — the cliente
+    # and negócio cards, `app/card_hub.py`). The seed's `DocumentoPolicy`
+    # default (25 MB) is the business limit and answers its own clear 413;
+    # this outer bound sits ~20% above it, same reasoning as pecas. BOTH
+    # upload leaves of each card need their own entry — a `*` matches exactly
+    # one segment, so `/documentos` does not cover the checklist-extra
+    # `/checklist-extras/{eid}/documento` shape.
+    "/api/clientes/*/documentos": 30 * 1024 * 1024,  # 30 MB
+    "/api/clientes/*/checklist-extras/*/documento": 30 * 1024 * 1024,  # 30 MB
+    "/api/comercial/negocios/*/documentos": 30 * 1024 * 1024,  # 30 MB
+    "/api/comercial/negocios/*/checklist-extras/*/documento": 30 * 1024 * 1024,  # 30 MB
 }
 
 app = create_product_app(
@@ -78,9 +93,18 @@ app = create_product_app(
     # once the six módulos landed — it shipped a live /api/example CRUD in a
     # production agency ERP. `webhook_router` stays as the signed-receiver
     # shape the signature provider will use (NOC-REMEDIATE[igig-assinatura]).
+    #
+    # 🔴 ORDER MATTERS for the card hubs: each seed `card_hub_routers` pair is
+    # (collection, entity). The COLLECTION router carries literal paths
+    # (`/tags`, `/documentos/tipos`) that have the same SHAPE as a bare
+    # `/{id}` route, so it must mount before any router declaring one under
+    # the same prefix (`cliente_router`'s `GET /api/clientes/{cliente_id}`).
     routers=[
-        cliente_router, esteira_router, marca_router, pauta_router,
-        distribuicao_router, integracoes_router, financeiro_router, comercial_router,
+        cliente_card_hub_routers[0], cliente_router, cliente_card_hub_routers[1],
+        esteira_stages_router, esteira_router, marca_router, pauta_router,
+        distribuicao_router, integracoes_router, financeiro_router,
+        comercial_stages_router, negocio_card_hub_routers[0], comercial_funil_router,
+        negocio_card_hub_routers[1], comercial_router,
         custos_router, webhook_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,

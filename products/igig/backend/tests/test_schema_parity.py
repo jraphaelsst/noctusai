@@ -44,6 +44,11 @@ DOMAIN_TABLES = {
     "fatura", "fatura_item",
     # 012 — comercial
     "lead", "orcamento",
+    # 017 — pipelines (Comercial + Esteira stages, transition history)
+    "pipeline_stages", "pipeline_movimentos",
+    # 018 — CRM foundation
+    "produto_servico", "negocio", "orcamento_item", "gmail_watch", "orcamento_email",
+    "automacao", "automacao_execucao",
 }
 
 
@@ -118,6 +123,16 @@ def _parse_tables(sql: str) -> dict[str, set[str]]:
     )
     for tabela, coluna in alter_re.findall(sql):
         tables.setdefault(tabela, set()).add(coluna)
+    # ...and REMOVE columns with DROP COLUMN (017 drops `tarefa.etapa`). Applied
+    # after the ADDs, which is correct for this corpus: no column is dropped
+    # and later re-added. Without this the parser would keep reporting a
+    # dropped Postgres column the SQLite mirror correctly no longer has.
+    drop_re = re.compile(
+        r"ALTER TABLE\s+(?:igig\.)?(\w+)\s+DROP COLUMN(?:\s+IF EXISTS)?\s+(\w+)",
+        re.IGNORECASE,
+    )
+    for tabela, coluna in drop_re.findall(sql):
+        tables.get(tabela, set()).discard(coluna)
     return tables
 
 
@@ -217,8 +232,8 @@ def test_sqlite_enforces_one_open_timesheet_segment_per_user():
             " VALUES ('p1','o1','c1','T','t')"
         )
         conn.execute(
-            "INSERT INTO tarefa (id, org_id, pauta_id, titulo, created_at)"
-            " VALUES ('t1','o1','p1','T','t')"
+            "INSERT INTO tarefa (id, org_id, pauta_id, titulo, etapa_id, created_at)"
+            " VALUES ('t1','o1','p1','T','s1','t')"
         )
         conn.execute(
             "INSERT INTO apontamento (id, org_id, tarefa_id, usuario_id, iniciado_em, created_at)"
@@ -233,11 +248,15 @@ def test_sqlite_enforces_one_open_timesheet_segment_per_user():
         conn.close()
 
 
-def test_sqlite_rejects_an_invalid_kanban_etapa():
-    """The 8-step esteira is a closed set on both backends."""
+def test_tarefa_stage_is_a_row_not_a_closed_enum():
+    """Since 017 the esteira's stages are the org's editable rows: `etapa_id` is
+    required, and the old 8-value `etapa` column no longer exists anywhere."""
     conn = sqlite3.connect(":memory:")
     try:
         conn.executescript(_read_all(_sqlite_files()))
+        colunas = {r[1] for r in conn.execute("PRAGMA table_info(tarefa)").fetchall()}
+        assert "etapa" not in colunas
+        assert {"etapa_id", "kanban_pos", "cliente_id"} <= colunas
         conn.execute(
             "INSERT INTO cliente (id, org_id, nome, created_at) VALUES ('c1','o1','X','t')"
         )
@@ -247,8 +266,49 @@ def test_sqlite_rejects_an_invalid_kanban_etapa():
         )
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute(
-                "INSERT INTO tarefa (id, org_id, pauta_id, titulo, etapa, created_at)"
-                " VALUES ('t1','o1','p1','T','etapa_inventada','t')"
+                "INSERT INTO tarefa (id, org_id, pauta_id, titulo, created_at)"
+                " VALUES ('t1','o1','p1','T','t')"
             )
+    finally:
+        conn.close()
+    assert "etapa" not in _parse_tables(_read_all(PG_FILES))["tarefa"]
+
+
+def test_one_accepted_orcamento_per_negocio_on_both_backends():
+    """Owner decision 2026-09-22: only one acceptable version per negócio."""
+    sql = _read_all(PG_FILES)
+    assert "idx_igig_orcamento_um_aceito" in sql
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(_read_all(_sqlite_files()))
+        inserir = (
+            "INSERT INTO orcamento (id, org_id, titulo, negocio_id, versao, status, created_at)"
+            " VALUES (?, 'org', 'A', 'n1', ?, 'aceito', 't')"
+        )
+        conn.execute(inserir, ("o1", 1))
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(inserir, ("o2", 2))
+    finally:
+        conn.close()
+
+
+def test_recurring_orcamento_item_needs_weekdays_and_quantity():
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(_read_all(_sqlite_files()))
+        conn.execute(
+            "INSERT INTO orcamento (id, org_id, titulo, created_at) VALUES ('o1','org','A','t')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO orcamento_item (id, org_id, orcamento_id, secao, descricao,"
+                " recorrente, dias_semana, qtd_por_dia, created_at)"
+                " VALUES ('i1','org','o1','criacao_conteudo','Reels',1,0,0,'t')"
+            )
+        conn.execute(
+            "INSERT INTO orcamento_item (id, org_id, orcamento_id, secao, descricao,"
+            " recorrente, dias_semana, qtd_por_dia, created_at)"
+            " VALUES ('i2','org','o1','criacao_conteudo','Reels',1,5,1,'t')"
+        )
     finally:
         conn.close()

@@ -220,7 +220,8 @@ class TestBIEficiencia:
         cliente = repos.cliente.criar(ORG, {"nome": "Padaria Sol"})
         pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Post"})
         tarefa = repos.tarefa.criar(
-            ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "refacoes": refacoes}
+            ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "refacoes": refacoes,
+                  "etapa_id": "etapa-1"}
         )
         if com_rate:
             funcao = repos.funcao.criar(
@@ -272,3 +273,25 @@ class TestBIEficiencia:
 
     def test_requires_auth(self, api):
         assert api.raw().get("/api/distribuicao/bi/eficiencia").status_code == 401
+
+    def test_a_segments_profissional_wins_over_its_usuario(self, api, repos):
+        """Since 017 the timer records the caller's profissional — the SAME
+        record `tarefa.responsavel_id` uses (smoke finding 8). That rate is the
+        one that applies, even when the auth user maps elsewhere."""
+        cliente = repos.cliente.criar(ORG, {"nome": "Padaria Sol"})
+        pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Post"})
+        tarefa = repos.tarefa.criar(
+            ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "etapa-1"}
+        )
+        barata = repos.funcao.criar(ORG, {"nome": "estagio", "custo_hora_padrao": 10.0})
+        cara = repos.funcao.criar(ORG, {"nome": "senior", "custo_hora_padrao": 200.0})
+        repos.profissional.criar(
+            ORG, {"nome": "Via usuario", "usuario_id": "user-1", "funcao_id": barata["id"]}
+        )
+        prof = repos.profissional.criar(ORG, {"nome": "Ana", "funcao_id": cara["id"]})
+        repos.apontamento.criar(ORG, {
+            "tarefa_id": tarefa["id"], "usuario_id": "user-1", "profissional_id": prof["id"],
+            "iniciado_em": "2026-01-01T09:00:00", "minutos": 60,
+        })
+        linha = api.get("/api/distribuicao/bi/eficiencia").json()[0]
+        assert linha["custo_reais"] == 200.0

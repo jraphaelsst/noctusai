@@ -195,7 +195,7 @@ class TestPortalMostraAPeca:
                 files={"arquivo": ("arte.png", b"\x89PNG...", "image/png")},
                 headers={"Authorization": "Bearer test-token-valid"},
             )
-        tarefa = repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte"})
+        tarefa = repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "etapa-1"})
         return repos.aprovacao.emitir(ORG, tarefa["id"])["token"]
 
     def test_peca_appears_beside_the_legenda(self, api, repos, cliente):

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import logging
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -116,7 +117,9 @@ def enviar_para_assinatura(
         raise ValueError(f"provedor inválido: {provedor!r}; esperado um de {PROVEDORES}")
 
     if provedor == "interno" or not token:
-        marca = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        # 🔴 A CSPRNG token, not a timestamp: the id was `dry-<provedor>-
+        # <YYYYmmddHHMMSS>`, i.e. guessable to the second (smoke finding 2).
+        marca = secrets.token_urlsafe(24)
         # `<org_id>.<resto>` — the SAME shape the approval portal's token uses,
         # and for the same reason: the signature webhook arrives with no
         # session, and the store requires an org on every call. Embedding it

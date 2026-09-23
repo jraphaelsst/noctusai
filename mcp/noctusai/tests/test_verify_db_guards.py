@@ -591,3 +591,46 @@ class TestAgentsStudioProbes:
         parser = pytest.importorskip("pglast.parser")
         for p in self._probes():
             parser.parse_plpgsql_json(p.sql.replace("DO $noc_probe$", "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $noc_probe$", 1))
+
+
+class TestIgigCrmProbes:
+    """igig CRM foundation (017/018/019 + the 006/010 guards whose SQLite
+    mirrors that change touched): every detected guard is probed, and every
+    probe fabricates its own rows (no production data borrowed)."""
+
+    _ROOT = Path(__file__).resolve().parents[3] / "products" / "igig" / "backend" / "migrations"
+
+    @staticmethod
+    def _probes():
+        return [p for p in DEFAULT_REGISTRY if p.product == "igig"]
+
+    def test_every_detected_guard_in_017_to_019_is_registered(self):
+        from tools.noctus.dev.compliance import _detect_guard_objects
+
+        registered = {p.guard_name for p in self._probes()}
+        for name in ("017_igig_pipeline.sql", "018_igig_crm.sql", "019_card_hub.sql"):
+            detected = {g["guard_name"] for g in _detect_guard_objects((self._ROOT / name).read_text())}
+            assert detected and detected <= registered, (name, detected - registered)
+
+    def test_the_touched_pre_017_guards_are_probed_too(self):
+        registered = {p.guard_name for p in self._probes()}
+        assert {"idx_igig_apontamento_aberto", "idx_igig_integracao_canal"} <= registered
+
+    def test_every_probe_migration_file_exists(self):
+        for p in self._probes():
+            for m in p.migrations:
+                assert (self._ROOT / m).is_file(), (p.id, m)
+
+    def test_probes_self_provision_and_borrow_nothing(self):
+        for p in self._probes():
+            assert "v_org uuid := gen_random_uuid()" in p.sql, p.id
+            assert "SELECT org_id" not in p.sql, p.id
+            assert "to_regclass('igig.negocio')" in p.sql, p.id
+            assert f"'%{p.guard_name}%'" in p.sql, p.id
+
+    def test_probe_bodies_parse_as_plpgsql(self):
+        parser = pytest.importorskip("pglast.parser")
+        for p in self._probes():
+            parser.parse_plpgsql_json(p.sql.replace(
+                "DO $noc_probe$", "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $noc_probe$", 1
+            ))

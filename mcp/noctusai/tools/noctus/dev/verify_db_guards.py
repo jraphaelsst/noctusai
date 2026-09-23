@@ -1724,6 +1724,355 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — igig CRM foundation (migrations 017 pipelines, 018 CRM, 019 card
+# hub; plus the 006/010 guards whose SQLite mirrors that change touched).
+# ---------------------------------------------------------------------------
+#
+# Fully self-provisioning, same shape as the agents probes: every igig table's
+# `org_id` has no FK, so each probe fabricates its own org, stage, lead,
+# negócio, cliente… inside the rolled-back transaction — no production row is
+# borrowed or touched. The only `no_fixture` path is "migration 018 is not
+# applied" (checked on the newest table every fixture here depends on). Setup
+# statements live INSIDE the classified sub-block, so a setup failure surfaces
+# as `ambiguous`, never a false `refused`.
+
+_IGIG_SCHEMA = "igig"
+_IGIG_PIPELINE_MIGRATIONS = ("017_igig_pipeline.sql",)
+_IGIG_CRM_MIGRATIONS = ("018_igig_crm.sql",)
+_IGIG_CARD_HUB_MIGRATIONS = ("019_card_hub.sql",)
+
+#: Fixture snippets (PL/pgSQL statements), composed per probe.
+_IGIG_STAGE = (
+    f"INSERT INTO {_IGIG_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label) "
+    "VALUES (v_org, 'comercial', 'noc_probe', 'NOC probe') RETURNING id INTO v_stage;"
+)
+_IGIG_ESTEIRA_STAGE = (
+    f"INSERT INTO {_IGIG_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label) "
+    "VALUES (v_org, 'esteira', 'noc_probe', 'NOC probe') RETURNING id INTO v_stage;"
+)
+_IGIG_LEAD = (
+    f"INSERT INTO {_IGIG_SCHEMA}.lead (org_id, nome) VALUES (v_org, 'NOC probe') "
+    "RETURNING id INTO v_lead;"
+)
+_IGIG_NEGOCIO = (
+    f"INSERT INTO {_IGIG_SCHEMA}.negocio (org_id, lead_id, titulo, etapa_id) "
+    "VALUES (v_org, v_lead, 'NOC probe', v_stage) RETURNING id INTO v_negocio;"
+)
+_IGIG_CLIENTE = (
+    f"INSERT INTO {_IGIG_SCHEMA}.cliente (org_id, nome) VALUES (v_org, 'NOC probe') "
+    "RETURNING id INTO v_cliente;"
+)
+
+
+def _igig_probe(
+    *, probe_id: str, guard_name: str, setup_sql: tuple[str, ...], attack_sql: str, what: str,
+    rationale: str, migrations: tuple[str, ...],
+) -> GuardProbe:
+    """One self-provisioned igig write-refusal probe. The expected refusal is
+    classified on `guard_name` itself appearing in SQLERRM — Postgres names the
+    violated constraint/index in both the CHECK and the UNIQUE message."""
+    name_lit = _sql_lit(guard_name)
+    what_lit = _sql_lit(what)
+    setup = "\n".join(f"    {stmt}" for stmt in setup_sql)
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_stage uuid;
+  v_lead uuid;
+  v_negocio uuid;
+  v_cliente uuid;
+  v_pauta uuid;
+  v_tarefa uuid;
+  v_orcamento uuid;
+BEGIN
+  IF to_regclass('{_IGIG_SCHEMA}.negocio') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_IGIG_SCHEMA}.negocio does not exist (migration 018 not applied)';
+  END IF;
+  BEGIN
+{setup}
+    {attack_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard under test did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{name_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="igig",
+        schema=_IGIG_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=migrations,
+        sql=sql,
+        rationale=rationale,
+    )
+
+
+def _igig_card_hub_probes(prefix: str, entity_setup: tuple[str, ...], entity_var: str) -> tuple[GuardProbe, ...]:
+    t = _IGIG_SCHEMA
+    return (
+        _igig_probe(
+            probe_id=f"{prefix}_notas.one_descricao",
+            guard_name=f"uq_{prefix}_notas_one_descricao",
+            setup_sql=entity_setup + (
+                f"INSERT INTO {t}.{prefix}_notas (org_id, {prefix}_id, tipo, corpo) "
+                f"VALUES (v_org, {entity_var}, 'descricao', 'a');",
+            ),
+            attack_sql=(
+                f"INSERT INTO {t}.{prefix}_notas (org_id, {prefix}_id, tipo, corpo) "
+                f"VALUES (v_org, {entity_var}, 'descricao', 'b');"
+            ),
+            what=f"a second live descricao on one {prefix} card",
+            rationale=(
+                "The card has ONE description (the seed card hub answers a typed "
+                "409 on a second); two would make the card render whichever the "
+                "read happened to return first."
+            ),
+            migrations=_IGIG_CARD_HUB_MIGRATIONS,
+        ),
+        _igig_probe(
+            probe_id=f"{prefix}_tags.unique_name_case_insensitive",
+            guard_name=f"uq_{prefix}_tags_org_nome",
+            setup_sql=(
+                f"INSERT INTO {t}.{prefix}_tags (org_id, nome, cor) VALUES (v_org, 'NOC Probe', '#000000');",
+            ),
+            attack_sql=(
+                f"INSERT INTO {t}.{prefix}_tags (org_id, nome, cor) VALUES (v_org, 'noc probe', '#000000');"
+            ),
+            what=f"a case-variant duplicate {prefix} tag name",
+            rationale=(
+                "One org tag catalogue: 'VIP' and 'vip' as two tags would split "
+                "every filter and count by an invisible difference."
+            ),
+            migrations=_IGIG_CARD_HUB_MIGRATIONS,
+        ),
+    )
+
+
+_IGIG_PROBES: tuple[GuardProbe, ...] = (
+    _igig_probe(
+        probe_id="igig.pipeline_stages.one_stage_per_role",
+        guard_name="idx_igig_pipeline_stages_papel",
+        setup_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, papel) "
+            "VALUES (v_org, 'comercial', 'noc_a', 'A', 'fechado');",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, papel) "
+            "VALUES (v_org, 'comercial', 'noc_b', 'B', 'fechado');"
+        ),
+        what="a second 'fechado' stage on one board",
+        rationale=(
+            "Closing a deal keys on THE stage with role `fechado` (orçamento "
+            "required); two such stages make the rule pick one arbitrarily."
+        ),
+        migrations=_IGIG_PIPELINE_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.lead.origem.closed_vocabulary",
+        guard_name="lead_origem_check",
+        setup_sql=(),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.lead (org_id, nome, origem) "
+            "VALUES (v_org, 'NOC probe', 'noc_probe_invalida');"
+        ),
+        what="a lead with an origem outside formulario|manual|whatsapp|meta_ads",
+        rationale="Source statistics and the dedupe paths branch on the channel set.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.lead.meta_lead_id.unique_per_org",
+        guard_name="idx_igig_lead_meta",
+        setup_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.lead (org_id, nome, meta_lead_id) VALUES (v_org, 'A', 'noc-meta');",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.lead (org_id, nome, meta_lead_id) VALUES (v_org, 'B', 'noc-meta');"
+        ),
+        what="the same Meta lead id twice in one org",
+        rationale="A re-delivered Meta Lead Ads webhook must not create a second lead + card.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.lead.waha_chat_id.unique_per_org",
+        guard_name="idx_igig_lead_waha",
+        setup_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.lead (org_id, nome, waha_chat_id) VALUES (v_org, 'A', 'noc@c.us');",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.lead (org_id, nome, waha_chat_id) VALUES (v_org, 'B', 'noc@c.us');"
+        ),
+        what="the same WhatsApp chat twice in one org",
+        rationale="One WhatsApp conversation is one lead; a second row would split its history.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.negocio.perdido_requires_reason",
+        guard_name="negocio_perdido_com_motivo",
+        setup_sql=(_IGIG_STAGE, _IGIG_LEAD),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.negocio (org_id, lead_id, titulo, etapa_id, status) "
+            "VALUES (v_org, v_lead, 'NOC probe', v_stage, 'perdido');"
+        ),
+        what="a lost negócio without motivo_perda/perdido_em",
+        rationale="Loss statistics by reason are the point of archiving a lost deal (owner, 2026-09-22).",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.orcamento.status.closed_vocabulary",
+        guard_name="orcamento_status_check",
+        setup_sql=(),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.orcamento (org_id, titulo, status) "
+            "VALUES (v_org, 'NOC probe', 'noc_probe_invalida');"
+        ),
+        what="an orçamento status outside the six the funnel branches on",
+        rationale="Closing a deal refuses recusado/expirado/substituido by status; an unknown one would slip through.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.orcamento.one_aceito_per_negocio",
+        guard_name="idx_igig_orcamento_um_aceito",
+        setup_sql=(
+            _IGIG_STAGE, _IGIG_LEAD, _IGIG_NEGOCIO,
+            f"INSERT INTO {_IGIG_SCHEMA}.orcamento (org_id, negocio_id, titulo, versao, status) "
+            "VALUES (v_org, v_negocio, 'v1', 1, 'aceito');",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.orcamento (org_id, negocio_id, titulo, versao, status) "
+            "VALUES (v_org, v_negocio, 'v2', 2, 'aceito');"
+        ),
+        what="a second accepted orçamento on one negócio",
+        rationale="Only one version is acceptable (owner, 2026-09-22) — two would bill two scopes.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.orcamento.versao.unique_per_negocio",
+        guard_name="idx_igig_orcamento_versao",
+        setup_sql=(
+            _IGIG_STAGE, _IGIG_LEAD, _IGIG_NEGOCIO,
+            f"INSERT INTO {_IGIG_SCHEMA}.orcamento (org_id, negocio_id, titulo, versao) "
+            "VALUES (v_org, v_negocio, 'a', 1);",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.orcamento (org_id, negocio_id, titulo, versao) "
+            "VALUES (v_org, v_negocio, 'b', 1);"
+        ),
+        what="two orçamentos with the same versao on one negócio",
+        rationale="'v2' must name exactly one proposal when the lead replies to it.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.orcamento_item.recurring_needs_days_and_qty",
+        guard_name="orcamento_item_recorrencia",
+        setup_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.orcamento (org_id, titulo) VALUES (v_org, 'NOC probe') "
+            "RETURNING id INTO v_orcamento;",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.orcamento_item "
+            "(org_id, orcamento_id, secao, descricao, recorrente, dias_semana, qtd_por_dia) "
+            "VALUES (v_org, v_orcamento, 'criacao_conteudo', 'Reels', true, 0, 0);"
+        ),
+        what="a recurring item with no weekday",
+        rationale="A recurring item that never occurs would price and schedule nothing, silently.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.cliente.one_per_lead",
+        guard_name="idx_igig_cliente_lead",
+        setup_sql=(
+            _IGIG_LEAD,
+            f"INSERT INTO {_IGIG_SCHEMA}.cliente (org_id, nome, lead_id) VALUES (v_org, 'A', v_lead);",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.cliente (org_id, nome, lead_id) VALUES (v_org, 'B', v_lead);"
+        ),
+        what="a second cliente for one lead",
+        rationale="Closing a deal creates the Cliente idempotently; this index is the database half of that.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.contrato.modalidade_assinatura.closed_vocabulary",
+        guard_name="contrato_modalidade_assinatura_check",
+        setup_sql=(_IGIG_CLIENTE,),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.contrato (org_id, cliente_id, modalidade_assinatura) "
+            "VALUES (v_org, v_cliente, 'noc_probe');"
+        ),
+        what="a contract signing modality outside digital|fisica",
+        rationale="The modality gates the e-signature flow vs manual signature lines (R12).",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.integracao.canal.closed_vocabulary",
+        guard_name="integracao_canal_check",
+        setup_sql=(),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.integracao (org_id, canal) VALUES (v_org, 'noc_probe');"
+        ),
+        what="an integration channel outside the supported set",
+        rationale="Each channel decrypts and uses its credential differently; an unknown one has no reader.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.integracao.one_per_canal",
+        guard_name="idx_igig_integracao_canal",
+        setup_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.integracao (org_id, canal) VALUES (v_org, 'smtp');",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.integracao (org_id, canal) VALUES (v_org, 'smtp');"
+        ),
+        what="a second credential row for one channel in one org",
+        rationale="`por_canal` reads ONE row per channel; a second would make which token is used arbitrary.",
+        migrations=("010_igig_integracoes.sql",),
+    ),
+    _igig_probe(
+        probe_id="igig.automacao.sla_requires_hours",
+        guard_name="automacao_sla_com_horas",
+        setup_sql=(_IGIG_STAGE,),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.automacao (org_id, pipeline, etapa_id, gatilho) "
+            "VALUES (v_org, 'comercial', v_stage, 'sla');"
+        ),
+        what="an SLA automation with no sla_horas",
+        rationale="An SLA with no duration can never fire — a configured alert that silently never alerts.",
+        migrations=_IGIG_CRM_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.apontamento.one_open_segment_per_user",
+        guard_name="idx_igig_apontamento_aberto",
+        setup_sql=(
+            _IGIG_ESTEIRA_STAGE, _IGIG_CLIENTE,
+            f"INSERT INTO {_IGIG_SCHEMA}.pauta (org_id, cliente_id, titulo) "
+            "VALUES (v_org, v_cliente, 'NOC probe') RETURNING id INTO v_pauta;",
+            f"INSERT INTO {_IGIG_SCHEMA}.tarefa (org_id, pauta_id, titulo, etapa_id) "
+            "VALUES (v_org, v_pauta, 'NOC probe', v_stage) RETURNING id INTO v_tarefa;",
+            f"INSERT INTO {_IGIG_SCHEMA}.apontamento (org_id, tarefa_id, usuario_id) "
+            "VALUES (v_org, v_tarefa, v_org);",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.apontamento (org_id, tarefa_id, usuario_id) "
+            "VALUES (v_org, v_tarefa, v_org);"
+        ),
+        what="a second running timer for one user",
+        rationale="Play pauses whatever else was running; two open segments double-count the hours billed as cost.",
+        migrations=("006_igig_dominio.sql",),
+    ),
+    *_igig_card_hub_probes("cliente", (_IGIG_CLIENTE,), "v_cliente"),
+    *_igig_card_hub_probes("negocio", (_IGIG_STAGE, _IGIG_LEAD, _IGIG_NEGOCIO), "v_negocio"),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -1742,6 +2091,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_STUDIO_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
+    *_IGIG_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
