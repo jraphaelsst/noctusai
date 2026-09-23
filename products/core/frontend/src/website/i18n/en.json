@@ -83,7 +83,11 @@
     "loading": "Loading plans...",
     "empty": "No plans available right now.",
     "error": "Couldn't load plans right now.",
-    "fullComparison": "See full comparison"
+    "fullComparison": "See full comparison",
+    "users": "Up to {n} users",
+    "usersUnlimited": "Unlimited users",
+    "products": "Up to {n} products",
+    "productsUnlimited": "All products"
   },
   "faq": {
     "title": "Frequently asked questions"

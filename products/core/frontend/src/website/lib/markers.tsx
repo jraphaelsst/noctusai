@@ -15,6 +15,7 @@
  * no regex-vs-nested-tag risk).
  */
 import { createContext, useContext, type ReactNode } from "react";
+import { SectionErrorBoundary } from "../components/SectionErrorBoundary";
 
 /**
  * True ONLY inside `entry-server.tsx`'s `render()` (the build-time prerender
@@ -56,22 +57,24 @@ export function productMarkerEnd(slug: string): string {
 }
 
 export function MarkedSection({ sectionKey, children }: { sectionKey: string; children: ReactNode }) {
-  if (!usePrerenderMode()) return <>{children}</>;
+  const guarded = <SectionErrorBoundary name={sectionKey}>{children}</SectionErrorBoundary>;
+  if (!usePrerenderMode()) return guarded;
   return (
     <>
       {sectionMarkerStart(sectionKey)}
-      {children}
+      {guarded}
       {sectionMarkerEnd(sectionKey)}
     </>
   );
 }
 
 export function MarkedProduct({ slug, children }: { slug: string; children: ReactNode }) {
-  if (!usePrerenderMode()) return <>{children}</>;
+  const guarded = <SectionErrorBoundary name={`product:${slug}`}>{children}</SectionErrorBoundary>;
+  if (!usePrerenderMode()) return guarded;
   return (
     <>
       {productMarkerStart(slug)}
-      {children}
+      {guarded}
       {productMarkerEnd(slug)}
     </>
   );
