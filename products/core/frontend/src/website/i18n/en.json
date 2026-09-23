@@ -1,0 +1,101 @@
+{
+  "nav": {
+    "products": "Products",
+    "solutions": "Solutions",
+    "pricing": "Pricing",
+    "about": "About",
+    "contact": "Contact",
+    "login": "Log in",
+    "signup": "Create free account",
+    "waitlist": "Join the waitlist",
+    "seeAll": "See all",
+    "menu": "Menu"
+  },
+  "theme": {
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark",
+    "label": "Theme"
+  },
+  "locale": {
+    "label": "Language",
+    "switchTo": "View in English",
+    "suggestion": "This page is also available in Portuguese.",
+    "switch": "Switch"
+  },
+  "footer": {
+    "products": "Products",
+    "solutions": "Solutions",
+    "company": "Company",
+    "legal": "Legal",
+    "about": "About",
+    "contact": "Contact",
+    "waitlist": "Waitlist",
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Use",
+    "cookiePreferences": "Cookie preferences",
+    "rights": "All rights reserved."
+  },
+  "cta": {
+    "whatsapp": "Talk on WhatsApp",
+    "signup": "Create free account",
+    "waitlist": "Join the waitlist",
+    "waitlistShort": "Join the list",
+    "learnMore": "Learn more",
+    "seeProduct": "See product",
+    "seePricing": "See full pricing",
+    "continueWhatsapp": "Continue on WhatsApp"
+  },
+  "consent": {
+    "message": "We use cookies to measure site usage and improve your experience. You can accept, reject or customize.",
+    "reject": "Reject",
+    "accept": "Accept",
+    "customize": "Customize",
+    "necessary": "Necessary",
+    "necessaryDesc": "Essential for the site to function. Always on.",
+    "measurement": "Measurement",
+    "measurementDesc": "Helps us understand how the site is used.",
+    "marketing": "Marketing",
+    "marketingDesc": "Used to measure campaign effectiveness.",
+    "save": "Save preferences"
+  },
+  "form": {
+    "name": "Name",
+    "email": "Email",
+    "phone": "WhatsApp",
+    "company": "Company",
+    "message": "Message",
+    "projectType": "Project type",
+    "profile": "Profile",
+    "consent": "I agree to be contacted by NoctusAI about this.",
+    "submit": "Submit",
+    "submitting": "Sending...",
+    "success": "We received your message! We'll be in touch soon.",
+    "error": "Couldn't submit right now. Please try again shortly.",
+    "required": "Required field"
+  },
+  "pricing": {
+    "monthly": "Monthly",
+    "yearly": "Yearly",
+    "discount": "2 months free",
+    "mostChosen": "Most chosen",
+    "fromMonth": "starting at R$ {price}/mo",
+    "loading": "Loading plans...",
+    "empty": "No plans available right now.",
+    "error": "Couldn't load plans right now.",
+    "fullComparison": "See full comparison"
+  },
+  "faq": {
+    "title": "Frequently asked questions"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "body": "The page you're looking for doesn't exist or has moved.",
+    "home": "Back to home"
+  },
+  "productStates": {
+    "disponivel": "Available",
+    "lista_de_espera": "Waitlist",
+    "em_breve": "Coming soon"
+  }
+}
