@@ -1,32 +1,35 @@
-"""SMTP email sender — minimal wrapper for upload-completion notifications.
+"""SMTP email sender — thin shim over the seed's canonical
+`noctusai_lib.integrations.email` sender.
 
-Single chokepoint for ``smtplib`` calls so the SMTP envelope shape stays
-consistent + every send goes through the same retry / error funnel.
-Phase 4 only needs ``send_email(to, subject, html_body)``; richer HTML
-templating + bulk sends are deferred to the cross-product
-``notification-templates-seed`` follow-up if a second product needs the
-same shape.
+Promoted 2026-09-23 (`cardhub-igig-crm` R7) — this module's own prior
+docstring named the trigger exactly: "when a 2nd product needs SMTP,
+absorb into `noctusai_lib.integrations.email` with the canonical
+Protocol + Fake + Real + factory shape." igig's orçamento-PDF-to-lead
+flow (R7) is that second product, and R8's reply watcher needs the same
+`Message-ID` generation the new seed sender ships.
 
-Why product-local (not seed-side):
-- N=1 — only Social Wiring ships SMTP today. Therapy uses Resend
-  via its own service. Mailing uses its own SMTP-via-Mailgun shape.
-- The ``SocialWiringSettings.smtp_*`` fields are product-local config; lifting
-  to seed would require a config-injection seam not yet justified.
-- When a 2nd product needs SMTP, absorb into
-  ``noctusai_lib.integrations.email`` with the canonical Protocol +
-  Fake (logs-instead-of-sends) + Real (smtplib) + factory shape per
-  ``KB § PATTERNS/seed-fake-real-adapter.md``.
-"""
+This module keeps its OWN public API (class name, constructor kwargs,
+`send_email(...)` signature, exception types) unchanged — social-wiring
+is live in prod and every call site (`notification_service.py`,
+`settings_router.py`'s `/email/test`) depends on it — and delegates the
+actual SMTP work to `noctusai_lib.integrations.email.SmtpEmailSender`.
+Zero behaviour change: always SSL (this module never exposed a security
+knob — `EmailService` always used `smtplib.SMTP_SSL`, so the shim pins
+`security="ssl"` to match exactly)."""
 from __future__ import annotations
 
-import asyncio
-import logging
-import smtplib
-import ssl
-from dataclasses import dataclass
-from email.message import EmailMessage
+import re
+from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+from noctusai_lib.integrations.email import (
+    EmailSendError as _SeedEmailSendError,
+    OutgoingEmail,
+    SmtpConfig,
+    SmtpEmailSender,
+)
+
+_STRIP_TAGS_RE = re.compile(r"<[^>]+>")
+_COLLAPSE_WHITESPACE_RE = re.compile(r"\s+")
 
 
 class EmailServiceError(Exception):
@@ -54,6 +57,8 @@ class EmailService:
     smtp_user: str
     smtp_password: str
 
+    _sender: SmtpEmailSender = field(init=False, repr=False)
+
     def __post_init__(self):
         # Fail fast at construction so routers translate to a 503 with
         # an operator-actionable message, instead of a 500 trace at the
@@ -64,6 +69,18 @@ class EmailService:
                 "Password in .env (NOT the account password — see "
                 "https://support.google.com/accounts/answer/185833)."
             )
+        config = SmtpConfig(
+            host=self.smtp_host,
+            port=self.smtp_port,
+            username=self.smtp_user,
+            password=self.smtp_password,
+            # Always implicit-TLS — this module never had a security
+            # knob; it always called smtplib.SMTP_SSL directly. Pinning
+            # "ssl" here is what makes the shim zero-behaviour-change.
+            security="ssl",
+            from_email=self.smtp_user,
+        )
+        self._sender = SmtpEmailSender(config)
 
     async def send_email(
         self,
@@ -78,69 +95,30 @@ class EmailService:
         per-recipient log row.
 
         ``text_body`` is the plaintext fallback for clients that don't
-        render HTML; if None, we strip tags from ``html_body`` to
-        produce a minimal fallback. Real templates ship both."""
-        message = self._build_message(
-            to=to,
+        render HTML; if None, the seed sender strips tags from
+        ``html_body`` to produce a minimal fallback (same behaviour this
+        module always had)."""
+        email = OutgoingEmail(
+            to=[to],
             subject=subject,
-            html_body=html_body,
-            text_body=text_body or _strip_html(html_body),
+            html=html_body,
+            text=text_body,
         )
-
-        # smtplib is sync; wrap in to_thread so the event loop stays
-        # responsive while the SMTP handshake completes (TLS handshake
-        # alone can be 100-300ms on first connection).
         try:
-            await asyncio.to_thread(self._send_sync, message)
-        except smtplib.SMTPAuthenticationError as exc:
-            raise EmailServiceError(
-                f"SMTP auth failed for {self.smtp_user!r}: {exc}. "
-                "Verify the App Password is current."
-            ) from exc
-        except smtplib.SMTPRecipientsRefused as exc:
-            raise EmailServiceError(
-                f"Recipient {to!r} refused by SMTP server: {exc}. "
-                "Bad address or upstream block."
-            ) from exc
-        except smtplib.SMTPException as exc:
-            raise EmailServiceError(
-                f"SMTP send failed for {to!r}: {exc}"
-            ) from exc
-        except OSError as exc:
-            # Connection-level failure (DNS, TLS, network).
-            raise EmailServiceError(
-                f"SMTP transport failed reaching {self.smtp_host}:{self.smtp_port}: {exc}"
-            ) from exc
-
-    # ─── Internals ─────────────────────────────────────────────────────
-    def _build_message(
-        self, *, to: str, subject: str, html_body: str, text_body: str
-    ) -> EmailMessage:
-        message = EmailMessage()
-        message["From"] = self.smtp_user
-        message["To"] = to
-        message["Subject"] = subject
-        message.set_content(text_body)
-        message.add_alternative(html_body, subtype="html")
-        return message
-
-    def _send_sync(self, message: EmailMessage) -> None:
-        """Sync SMTP send. Runs inside ``asyncio.to_thread``."""
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(
-            host=self.smtp_host,
-            port=self.smtp_port,
-            context=context,
-            timeout=30,
-        ) as smtp:
-            smtp.login(self.smtp_user, self.smtp_password)
-            smtp.send_message(message)
+            await self._sender.send(email)
+        except _SeedEmailSendError as exc:
+            raise EmailServiceError(str(exc)) from exc
 
 
 def _strip_html(html: str) -> str:
     """Cheap HTML→text fallback. Not a full renderer — just strips tags
-    + collapses whitespace so the plaintext alternative is readable."""
-    import re
-    text = re.sub(r"<[^>]+>", "", html)
-    text = re.sub(r"\s+", " ", text)
+    + collapses whitespace so the plaintext alternative is readable.
+
+    Kept here (duplicated from the seed's own private
+    `smtp_adapter._strip_html`) because `tests/services/test_email_service.py`
+    imports this symbol directly — it is this module's own public-ish
+    surface, not exercised by `send_email` anymore (the seed sender does
+    its own stripping internally when `text` is omitted)."""
+    text = _STRIP_TAGS_RE.sub("", html)
+    text = _COLLAPSE_WHITESPACE_RE.sub(" ", text)
     return text.strip()

@@ -202,7 +202,7 @@ for row in rows:
     })
 ```
 
-### `integrations/email/` — Templates + scheduled-digest helper + Jinja renderer
+### `integrations/email/` — Templates + scheduled-digest helper + Jinja renderer + general-purpose transactional sender
 
 The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expansion Tier 2 Phase 4) so the new `digest.py` could land alongside the existing invitation-email helper. Two callers were updated (`noctusai_seed.routers` + `therapy-platform invitations` router); no compat shim ships. **Jinja-based `render()` was formalized 2026-04-25 (ai-expansion Phase 12 close)** after 5 digest adopters surfaced — the prior inline-f-string pattern was retired in the same change.
 
@@ -213,6 +213,23 @@ The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expa
 | `DigestSendResult(sent, dry_run, external_id, error, subject)` | Structured outcome — `send_digest` never raises. |
 | `send_digest(digest, *, recipient, org_id=None, log_prefix="DIGEST")` | Resend POST + dry-run-on-no-key fallback + Resend-failure swallow. |
 | `render(*, html_template, text_template, context, search_paths)` | Jinja-backed `(html, text)` renderer. Auto-escape on by default; `keep_trailing_newline=True`; products extend the lib's `_digest_base.{html,txt}.j2` and override blocks. |
+
+**General-purpose transactional sender — Protocol+Fake+Real+factory, formalized 2026-09-23** (`cardhub-igig-crm` R7) at N=2, promoting social-wiring's product-local `email_service.py` per that module's own stated trigger ("when a 2nd product needs SMTP"). Distinct from `digest.py` on purpose: `EmailSender.send(...)` **raises** on failure (a transactional send — an orçamento PDF to a lead, an invite, a "Testar envio" click — is a request the caller is actively waiting on; swallowing it would be a silent-error), where `send_digest` swallows-and-returns (a scheduled narrative must not crash its endpoint). Pick this family for anything with attachments, cc/bcc, reply-to, or threading headers; pick `digest` for fire-and-forget scheduled sends.
+
+| Symbol | Purpose |
+|---|---|
+| `Attachment(filename, content: bytes, mime_type="application/octet-stream")` | One file on an `OutgoingEmail`. |
+| `OutgoingEmail(to, subject, html=None, text=None, cc=[], bcc=[], reply_to=None, attachments=[], headers={}, message_id=None)` | The send request. `headers` carries `In-Reply-To`/`References` for threaded replies (igig R8's reply watcher). |
+| `SentEmail(message_id, in_reply_to=None, references=())` | Outcome of a successful send. |
+| `EmailSender` (Protocol) | `async def send(self, email: OutgoingEmail) -> SentEmail`. |
+| `SmtpConfig(host, port, username, password, security="starttls", from_email="", from_name="", timeout_seconds=15.0)` | `security` ∈ `ssl` (465) / `starttls` (587) / `none` (local test servers only). `SmtpConfig.from_credentials(dict)` builds from the SAME credential-dict key names as `digest._resolve_smtp_config` (`smtp_host`/`smtp_port`/`smtp_username`/`smtp_password`/`smtp_security`/`email_from`/`email_from_name`) so both paths agree; raises `EmailNotConfigured` on an incomplete dict. |
+| `EmailError` / `EmailNotConfigured` / `EmailSendError` | Typed errors — `EmailNotConfigured` at construction (missing creds), `EmailSendError` at send time (SMTP auth/transport/recipient failure). |
+| `FakeEmailSender()` | Deterministic in-memory double; `.sent` list; monotonic `<fake-N@fake.noctus.test>` ids. |
+| `SmtpEmailSender(config: SmtpConfig)` | Stdlib `smtplib`; SSL and STARTTLS; builds attachments via `EmailMessage.add_attachment`; generates a proper `Message-ID` from the sender's domain via `email.utils.make_msgid` when the caller doesn't supply one — the id the reply watcher threads on. Bcc is addressed via the SMTP envelope only, never as a header (would otherwise leak the blind-copy to every other recipient). |
+| `make_email_sender(config: SmtpConfig \| None = None)` | Factory — `None` → `FakeEmailSender`, a config → `SmtpEmailSender`. |
+| `send_test(sender, *, to, subject="Teste de envio", from_label="NoctusAI")` | "Testar envio" button's zero-effort default — composes a minimal `OutgoingEmail` and sends it through whichever sender the caller already picked. |
+
+**Pilot consumer:** social-wiring's `products/social-wiring/backend/app/services/email_service.py` — `EmailService` is now a thin shim (unchanged public API/exceptions; SW is live in prod) that builds an `SmtpConfig(security="ssl", ...)` (matching its always-`SMTP_SSL` prior behaviour exactly) and delegates to `SmtpEmailSender`.
 
 ### `integrations/documents/` — Documents → typed fields, or the whole text (Protocol+Fake+Real+factory)
 
