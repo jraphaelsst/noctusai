@@ -34,6 +34,7 @@ from fastapi import FastAPI
 from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging, resolve_json_logs
 from noctusai_lib.api.app_factory import configure_app
+from noctusai_lib.api.audit import make_audit_sink
 from noctusai_lib.api.middleware import MaxBodyOverrideValue
 from noctusai_lib.config.credentials import configure_credentials
 from noctusai_lib.config.deploy_config import (
@@ -238,6 +239,22 @@ def create_product_app(
     db = create_database_module(settings, schema)
     deps = create_dependencies(db)
 
+    # 3a. Audit trail (owner directive 2026-09-23 — "record history of
+    #     actions for everything"). `audit_trail_enabled` defaults False
+    #     (see `ProductSettings`) — until flipped, `make_audit_sink`
+    #     still builds a `RealAuditSink` (harmless: `AuditMiddleware`
+    #     mounted in `configure_app` below is also passed `enabled=False`
+    #     and never calls it), so flipping the flag alone — no redeploy of
+    #     this wiring — is what activates recording.
+    #     `db.get_core_client` (public schema, service role — the SAME
+    #     client `get_current_user_org`'s trusted org_id lookup uses) is
+    #     passed as the zero-arg callable, never invoked eagerly: the
+    #     sink re-derives `.schema("public")` on every flush, never
+    #     caching a `.schema()` result (`KB § PATTERNS/backend
+    #     /admin-client-schema-pinning.md`).
+    _audit_trail_enabled = bool(getattr(settings, "audit_trail_enabled", False))
+    audit_sink = make_audit_sink(db.get_core_client if _audit_trail_enabled else None)
+
     # 4. Auto-wire LLM access. Products inherit platform defaults unless they
     #    override via the llm_config parameter. `REDIS_URL` flips the
     #    response cache on; `LLM_USAGE_TRACKING=1` flips the DB usage sink on.
@@ -371,6 +388,12 @@ def create_product_app(
                     )
             # Framework-level cleanup — release LLM provider pools.
             await shutdown_llm()
+            # Drain the audit sink's buffered queue so a clean shutdown
+            # never loses the last <2s (or <50-row) batch. Safe to call
+            # unconditionally — `FakeAuditSink.drain()` and an inert
+            # `RealAuditSink` (never started because `AuditMiddleware`
+            # is mounted `enabled=False`) both no-op.
+            await audit_sink.drain()
 
     has_lifespan = True  # now always true — we own shutdown_llm
 
@@ -399,6 +422,8 @@ def create_product_app(
     _effective_max_body_path_overrides = configure_app(
         app, settings, limiter=limiter,
         max_body_path_overrides=max_body_path_overrides,
+        product_name=name,
+        audit_sink=audit_sink,
     )
 
     # 9. Register the standard routers the product opted into.
