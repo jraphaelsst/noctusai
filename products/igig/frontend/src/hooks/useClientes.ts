@@ -86,6 +86,8 @@ export function useClientes(filtros: ClientesFiltros = {}) {
     // See the module docstring: isPending && !data, never isLoading and
     // never `|| isFetching`.
     loading: query.isPending && !query.data,
+    /** Indicator only (never gates what renders): a refetch over data. */
+    isRefreshing: query.isFetching && !!query.data,
   };
 }
 
