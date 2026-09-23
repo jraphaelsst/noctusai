@@ -1301,6 +1301,87 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str, timeout: int = 90)
     return gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, run_gate=_boxed_run_gate)
 
 
+# ── KB-counts regeneration at integrate (mechanism 3) ─────────────────────
+#
+# THE PRINCIPLE (same owner directive): `scripts/hooks/pre-commit` step 2
+# used to mutate + auto-stage the KB derived-count blocks (02-LANDSCAPE.md's
+# product/schema/tool counts, etc.) on EVERY commit to a feature branch. Two
+# parallel worktrees that never touch the same PROSE still wrote DIFFERENT
+# snapshots of the SAME derived numbers into their own history, colliding at
+# merge time (auto-improvement 2026-09-14; the merge-driver patch at
+# 0d95a7250 papered over the conflict shape rather than the cause). The
+# pre-commit hook now regenerates the mutating way ONLY on `dev` itself
+# (`--check`-only elsewhere, see the hook's own § 2 comment); THIS is the
+# other half — `integrate` regenerates once, on the REBASED tip, and commits
+# the result as its OWN scoped commit before push, mirroring the migration-
+# renumber commit's `add`/`commit`-via-`runner` idiom above.
+def _default_regenerate_kb_counts(abs_wt_path: str) -> dict[str, Any]:
+    """Production default: shells out to the WORKTREE's OWN `cli.py
+    --update-kb-counts --worktree-path <abs_wt_path>` — the SAME subprocess
+    idiom `scripts/hooks/pre-commit` step 2 already uses — rather than
+    calling `tools.kb_sync.update_kb_counts()` in-process, which reads the
+    module-level `settings.REPO_ROOT` this long-running MCP server process
+    is fixed at (the primary checkout); mutating that global in place to
+    point at a worktree, from inside a live server, would leak across every
+    OTHER concurrent call this process ever serves."""
+    import subprocess
+
+    from settings import resolve_test_python
+
+    py = resolve_test_python()
+    cli = os.path.join(abs_wt_path, "mcp", "noctusai", "cli.py")
+    try:
+        proc = subprocess.run(
+            [py, cli, "--update-kb-counts", "--worktree-path", abs_wt_path],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": proc.returncode == 0, "exit_code": proc.returncode,
+            "stdout": proc.stdout, "stderr": proc.stderr}
+
+
+def _regenerate_and_commit_kb_counts(
+    runner, wt_path: str, abs_wt_path: str,
+    regenerate_fn: "Callable[[str], dict[str, Any]]", verbose: bool,
+) -> dict[str, Any]:
+    """Regenerate KB derived counts on the rebased tip and commit them as
+    ONE clean, path-scoped commit before push. Best-effort by construction —
+    a regen or commit failure is REPORTED (`ok=False`), never raised; the
+    caller treats it exactly like `settle_fn` (never blocks a clean
+    integrate on a side-channel failure)."""
+    try:
+        regen = regenerate_fn(abs_wt_path)
+    except Exception as exc:  # never let the regenerator crash integrate
+        return {"ok": False, "error": str(exc), "committed": False}
+    rc, out, err = runner(["git", "-C", wt_path, "status", "--porcelain", "--",
+                            "KNOWLEDGE-BASE/", "CLAUDE.md"])
+    if rc != 0:
+        return {"ok": False, "error": f"git status failed: {(err or out).strip()}",
+                "committed": False, "regenerate": regen}
+    paths: list[str] = []
+    for line in (out or "").splitlines():
+        if not line.strip():
+            continue
+        path = line[3:].strip() if len(line) > 3 and line[2] == " " else line.strip()
+        paths.append(path)
+    if not paths:
+        return {"ok": True, "committed": False, "paths": [], "regenerate": regen}
+    rc, out, err = runner(["git", "-C", wt_path, "add", "--", *paths])
+    if rc != 0:
+        return {"ok": False, "error": f"git add failed: {(err or out).strip()}",
+                "committed": False, "paths": paths, "regenerate": regen}
+    msg = "chore(kb-counts): regenerate derived counts at integrate [auto]"
+    rc, out, err = runner(["git", "-C", wt_path, "commit", "-m", msg, "--", *paths])
+    if rc != 0:
+        return {"ok": False, "error": f"git commit failed: {(err or out).strip()}",
+                "committed": False, "paths": paths, "regenerate": regen}
+    if verbose:
+        logger.debug("task_branch.integrate: committed KB-counts regen (%d file(s)): %s",
+                     len(paths), paths)
+    return {"ok": True, "committed": True, "paths": paths, "regenerate": regen}
+
+
 class PointerOps:
     """The branch-tree pointer lifecycle, owned by the git lifecycle.
 
@@ -1427,6 +1508,8 @@ def task_branch(
     verify_merged_tip: bool = True,
     merged_tip_check: Callable[[str, str], dict[str, Any]] | None = None,
     merged_tip_timeout: int = 90,
+    regenerate_kb_counts_at_integrate: bool = True,
+    kb_counts_regenerate: "Callable[[str], dict[str, Any]] | None" = None,
     pointer_ops: "PointerOps | None" = None,
     project: str | None = None,
     brief: str | None = None,
@@ -1502,6 +1585,10 @@ def task_branch(
     merged_tip_check_fn = merged_tip_check if merged_tip_check is not None else (
         (lambda p, d: _default_merged_tip_check(p, d, timeout=merged_tip_timeout))
         if run is None else None)
+    # Same production-only rule — the real default shells out to the
+    # worktree's own `cli.py` and must never fire under an injected `run`.
+    kb_counts_regenerate_fn = kb_counts_regenerate if kb_counts_regenerate is not None else (
+        _default_regenerate_kb_counts if run is None else None)
     # wire_env defaults True (KB § self-branching-mode.md § 5a — "a fresh
     # worktree must come ready to run gates"), but ONLY in the real
     # production path OR when the caller supplies an explicit primary_root.
@@ -1733,6 +1820,7 @@ def task_branch(
                              "proceeding with rebase")
 
         all_renumbered: list[dict] = []  # accumulates across retry attempts (rare — see the loop body)
+        kb_counts_result: dict[str, Any] | None = None  # last attempt's regen result
         for attempt in range(1, max_retries + 1):
             if verbose:
                 logger.debug("task_branch.integrate: attempt %d/%d — fetch + rebase",
@@ -1923,6 +2011,16 @@ def task_branch(
                     logger.debug("task_branch.integrate: merged-tip check status=%s "
                                  "(pushing regardless — no NEW red found)",
                                  (merged_tip_result or {}).get("status"))
+            # ── KB-counts regeneration — ONCE, here, not per feature commit
+            # (see the module comment above `_default_regenerate_kb_counts`
+            # and `scripts/hooks/pre-commit` § 2). Best-effort: a failure is
+            # reported, never blocks a clean integrate.
+            if regenerate_kb_counts_at_integrate and kb_counts_regenerate_fn is not None:
+                kb_counts_result = _regenerate_and_commit_kb_counts(
+                    runner, wt_path, abs_wt_path, kb_counts_regenerate_fn, verbose)
+                if kb_counts_result.get("committed") and verbose:
+                    logger.debug("task_branch.integrate: KB-counts regen committed: %s",
+                                 kb_counts_result.get("paths"))
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc == 0:
                 # Pop stash AFTER the push so the worktree ends clean (the benign
@@ -1944,6 +2042,10 @@ def task_branch(
                         "see migration_renumber.")
                 if merged_tip_result is not None:
                     result["merged_tip_check"] = merged_tip_result
+                if kb_counts_result is not None:
+                    result["kb_counts_regenerate"] = kb_counts_result
+                    if kb_counts_result.get("committed"):
+                        result["message"] += " Regenerated + committed KB derived counts."
                 # Record the POST-REBASE sha: the pre-rebase commit a hand
                 # pointer carried is never on dev, which is why pointers could
                 # not be proven integrated and stayed on_going for months.

@@ -736,3 +736,36 @@ pre-fix code and land cleanly (`pushed=True`, primary level with `origin/dev`) a
 the fix. A fake-runner test cannot express this: a scripted `rebase` call returns a
 canned code regardless of tree state, which is precisely why this bug survived three
 rounds before a real-git harness caught it.
+
+## §12c · The recurring rider stops being generated on feature branches at all (2026-09-23)
+
+§12/§12a/§12b all treat a dirty KB-counts doc as an unavoidable rider to be tolerated
+(stashed, restaged, or globbed) — a mechanism to survive the file existing. The owner's
+gates-are-nets-not-walls directive names the deeper fix: stop generating that rider on
+a feature branch in the first place. `scripts/hooks/pre-commit` step 2 now runs the
+MUTATING `--update-kb-counts` (and its auto-stage) only when the committing branch is
+`dev` itself; every other branch — i.e. essentially every commit under self-branching
+mode — gets `--update-kb-counts --check` instead: read-only, warns on drift, writes
+nothing, so there is nothing left to stash, restage, or glob-tolerate at the pre-rebase
+dirty check `§12`/`§12a`/`§12b` hardened.
+
+The regeneration itself did not disappear — it moved to the ONE place a derived
+snapshot is actually meaningful: `noctus.dev.task_branch(action='integrate')`, on the
+REBASED tip, right before the push. It shells out to the worktree's own `cli.py
+--update-kb-counts --worktree-path <wt>` (the identical subprocess idiom the hook
+itself used), then `git add`s + commits whatever that regen actually dirtied as ONE
+scoped `chore(kb-counts): regenerate derived counts at integrate [auto]` commit —
+mirroring the migration-renumber commit's `add`/`commit`-via-`runner` idiom
+(`KB § PATTERNS/backend/database-rls.md` § the collision RENUMBERS). Best-effort:
+a regen or commit failure is reported under the `kb_counts_regenerate` result key,
+never raised — it never blocks a clean integrate, the same posture `settle_fn` and
+the merged-tip check (`KB § PATTERNS/common/methodology-execution-discipline.md` § 6
+addendum) already hold. Opt out with `regenerate_kb_counts_at_integrate=False`.
+
+Why this closes §12b's root cause rather than adding a FOURTH tolerance layer: the
+auto-improvement this section answers (2026-09-14) and the merge-driver patch
+(`0d95a7250`) were both papering over PARALLEL branches each writing their OWN
+snapshot of the SAME derived numbers into their own history — a conflict shape no
+amount of stash/restage/glob widening on the READING side can prevent, because the
+WRITING side kept happening N times (once per feature commit, per branch) instead of
+once (at the moment a tip is actually about to land).

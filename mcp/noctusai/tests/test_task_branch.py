@@ -2690,6 +2690,125 @@ class TestMergedTipVerificationMechanism:
         assert "merged_tip_check" not in res
 
 
+# ---------------------------------------------------------------------------
+# KB-counts regeneration at integrate (mechanism 3) — pre-commit stops
+# auto-staging the derived count blocks per feature commit; `integrate`
+# regenerates once, on the rebased tip, and commits before push.
+# ---------------------------------------------------------------------------
+
+
+class FakeGitKbCountsDirty(FakeGit):
+    """Distinguishes the bare pre-rebase `git status --porcelain` (must
+    read clean so the rebase is never blocked) from the SCOPED post-rebase
+    `git status --porcelain -- KNOWLEDGE-BASE/ CLAUDE.md` the KB-counts
+    regen step runs (returns the scripted `kb_status_output`) — `FakeGit`'s
+    own `status_output` is one fixed value for every status call, which
+    cannot express "clean before, dirty after the regen ran" by itself."""
+
+    def __init__(self, *args, kb_status_output: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.kb_status_output = kb_status_output
+
+    def __call__(self, cmd, cwd=None):
+        if "KNOWLEDGE-BASE/" in cmd:
+            self.calls.append((cmd, cwd))
+            return (0, self.kb_status_output, "")
+        return super().__call__(cmd, cwd=cwd)
+
+
+class TestKbCountsRegenerationMechanism:
+    @staticmethod
+    def _fake(**kw):
+        return FakeGitKbCountsDirty(
+            refs={"origin/dev": "d0", "feat/x": "b0"},
+            anc=_anc_pairs([]),
+            logs={"d0..b0": "c1 x", "b0..d0": ""},
+            head_sha="b0",
+            **kw,
+        )
+
+    def test_dirty_after_regen_commits_then_pushes(self):
+        fake = self._fake(kb_status_output=" M KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md\n")
+        seen = []
+
+        def regen(abs_wt_path):
+            seen.append(abs_wt_path)
+            return {"ok": True}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             kb_counts_regenerate=regen)
+
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert len(seen) == 1
+        kb = res["kb_counts_regenerate"]
+        assert kb["committed"] is True
+        assert kb["paths"] == ["KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"]
+        commit_calls = [
+            (i, c) for i, (c, _cwd) in enumerate(fake.calls)
+            if "commit" in c and "kb-counts" in " ".join(c)
+        ]
+        assert commit_calls, fake.calls
+        commit_idx = commit_calls[0][0]
+        push_idx = next(i for i, (c, _cwd) in enumerate(fake.calls) if "push" in c)
+        assert commit_idx < push_idx, "the kb-counts commit must land BEFORE the push"
+
+    def test_nothing_dirty_after_regen_pushes_without_committing(self):
+        fake = self._fake(kb_status_output="")
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             kb_counts_regenerate=lambda p: {"ok": True})
+
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert res["kb_counts_regenerate"]["committed"] is False
+        assert not any("commit" in c and "kb-counts" in " ".join(c)
+                        for c, _cwd in fake.calls)
+
+    def test_regenerate_raising_does_not_crash_integrate(self):
+        fake = self._fake(kb_status_output=" M KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md\n")
+
+        def broken(abs_wt_path):
+            raise RuntimeError("boom")
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             kb_counts_regenerate=broken)
+
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert res["kb_counts_regenerate"]["ok"] is False
+
+    def test_opt_out_skips_regeneration_entirely(self):
+        fake = self._fake(kb_status_output=" M KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md\n")
+        called = []
+
+        def regen(abs_wt_path):
+            called.append(1)
+            return {"ok": True}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             kb_counts_regenerate=regen,
+                             regenerate_kb_counts_at_integrate=False)
+
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert called == [], "kb_counts_regenerate must not run at all when opted out"
+        assert "kb_counts_regenerate" not in res
+
+    def test_no_regenerate_injected_with_real_run_never_runs(self):
+        """Production-only-default symmetry with `migration_check` /
+        `merged_tip_check`: an injected `run` (test/custom context) must NOT
+        trigger the REAL `_default_regenerate_kb_counts` (which would shell
+        out to the worktree's own `cli.py`)."""
+        fake = self._fake(kb_status_output=" M KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md\n")
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert "kb_counts_regenerate" not in res
+
+
 # ── ledger drain: the stranded-row recurrence (4+ incidents, ~4 months) ──────
 #
 # `worktree-salvage.ndjson` always had a commit+push leg; `auto-improvement.ndjson`

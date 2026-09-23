@@ -12,7 +12,14 @@
 #
 # Steps (all pre-commit, no amend; auto-derived updates staged in-commit):
 #   1. seed → template mirror            (cli --sync-seed-template)
-#   2. KB auto-derived count blocks      (cli --update-kb-counts)
+#   2. KB auto-derived count blocks      (cli --update-kb-counts; mutating
+#                                          only on `dev` itself — `--check`
+#                                          only on a feature branch. The
+#                                          regenerate-and-commit that used to
+#                                          run per-commit fleet-wide now runs
+#                                          ONCE, at `task_branch
+#                                          action='integrate'`, on the
+#                                          rebased tip.)
 #   3. seed version stamp                (cli --stamp-seed-version)
 #   3b. ledger → PROJECT-HISTORY.md      (cli --render-project-history)
 #   4. KB ↔ CLAUDE.md sync (blocking)    (cli --verify-kb-sync)
@@ -110,41 +117,65 @@ if [[ -d "$REPO_ROOT/products/seed" ]] && have_py; then
 fi
 
 # ─── 2. KB auto-derived counts ──────────────────────────────────
+# 2026-09-23: the mutating regenerate + auto-stage now runs ONLY on `dev`
+# itself (the rare ledger-only auto-commit from the primary checkout) — and
+# once more, deliberately, at `task_branch action='integrate'` on the
+# REBASED tip, right before push (see task_branch.py's `_regenerate_kb_counts_
+# commit`). On every OTHER branch (i.e. every feature worktree under
+# self-branching mode — the common case) this step is now `--check`-only:
+# cheap, read-only, never writes a byte, so there is nothing to stage.
+#
+# WHY: auto-staging a machine-regenerated count block (02-LANDSCAPE.md's
+# product/schema/tool counts, etc.) on EVERY feature-branch commit meant
+# every parallel worktree wrote its OWN snapshot of the SAME derived
+# numbers into ITS OWN history — two branches that never touched the same
+# PROSE still conflicted on the same derived NUMBER at merge time
+# (auto-improvement 2026-09-14; the merge-driver patch at 0d95a7250 papered
+# over the merge-conflict shape without addressing why every branch was
+# writing that block at all). Regenerating once, on the tip that is
+# actually about to land, is the root fix; per-commit auto-staging was
+# ceremony standing in for it.
 if have_py; then
-    echo "[pre-commit] Updating KB auto-derived counts..."
-    # Snapshot which KB docs are ALREADY dirty BEFORE the count refresh. This
-    # lets us tell a MACHINE-generated count-block regen (a file that was clean
-    # → dirtied solely by --update-kb-counts) apart from a CONCURRENT/human edit
-    # (a file already dirty before we touched anything).
-    DIRTY_BEFORE=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
-    "$PY" "$CLI" --update-kb-counts --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /'
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ "$CURRENT_BRANCH" == "dev" ]]; then
+        echo "[pre-commit] Updating KB auto-derived counts (on dev)..."
+        # Snapshot which KB docs are ALREADY dirty BEFORE the count refresh. This
+        # lets us tell a MACHINE-generated count-block regen (a file that was clean
+        # → dirtied solely by --update-kb-counts) apart from a CONCURRENT/human edit
+        # (a file already dirty before we touched anything).
+        DIRTY_BEFORE=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
+        "$PY" "$CLI" --update-kb-counts --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /'
 
-    # Restage count-refreshed docs. THREE cases per changed doc:
-    #   (a) already staged in THIS commit → restage (count-refresh rides along).
-    #   (b) NOT staged AND was CLEAN before --update-kb-counts → the change is
-    #       100% the machine-generated count block (the hook itself just made
-    #       it from a clean file) → SAFE to auto-stage. Fixes the "auto-derived
-    #       count regen left dirty → blocks task_branch integrate/cleanup"
-    #       recurrence (N=3, 2026-06-01) WITHOUT re-opening the 2026-05-19 bug.
-    #   (c) NOT staged AND was ALREADY dirty before → a CONCURRENT/human edit
-    #       (observed 4× 2026-05-19: a parallel session's KB doc swept into an
-    #       unrelated commit). NOT ours to absorb — loudly SKIP (the committer
-    #       stages it explicitly if intended).
-    # A pre-commit hook must only ever stage what's in the commit OR what IT
-    # itself derived from a clean file — never sweep a peer's in-progress edit.
-    # KB § PATTERNS/project-execution.md (hook-scope rule).
-    CHANGED_DOCS=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
-    if [[ -n "$CHANGED_DOCS" ]]; then
-        while IFS= read -r _doc; do
-            [[ -z "$_doc" ]] && continue
-            if git diff --cached --name-only -- "$_doc" 2>/dev/null | grep -qxF "$_doc"; then
-                git add -- "$_doc" && echo "[pre-commit]   restaged (count-refresh, already in commit): $_doc"
-            elif ! grep -qxF "$_doc" <<< "$DIRTY_BEFORE"; then
-                git add -- "$_doc" && echo "[pre-commit]   auto-staged (machine count-refresh of a clean file): $_doc"
-            else
-                echo "[pre-commit]   SKIP $_doc — modified BEFORE this commit (concurrent/human edit; not ours to absorb; stage it explicitly if intended)" >&2
-            fi
-        done <<< "$CHANGED_DOCS"
+        # Restage count-refreshed docs. THREE cases per changed doc:
+        #   (a) already staged in THIS commit → restage (count-refresh rides along).
+        #   (b) NOT staged AND was CLEAN before --update-kb-counts → the change is
+        #       100% the machine-generated count block (the hook itself just made
+        #       it from a clean file) → SAFE to auto-stage. Fixes the "auto-derived
+        #       count regen left dirty → blocks task_branch integrate/cleanup"
+        #       recurrence (N=3, 2026-06-01) WITHOUT re-opening the 2026-05-19 bug.
+        #   (c) NOT staged AND was ALREADY dirty before → a CONCURRENT/human edit
+        #       (observed 4× 2026-05-19: a parallel session's KB doc swept into an
+        #       unrelated commit). NOT ours to absorb — loudly SKIP (the committer
+        #       stages it explicitly if intended).
+        # A pre-commit hook must only ever stage what's in the commit OR what IT
+        # itself derived from a clean file — never sweep a peer's in-progress edit.
+        # KB § PATTERNS/project-execution.md (hook-scope rule).
+        CHANGED_DOCS=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
+        if [[ -n "$CHANGED_DOCS" ]]; then
+            while IFS= read -r _doc; do
+                [[ -z "$_doc" ]] && continue
+                if git diff --cached --name-only -- "$_doc" 2>/dev/null | grep -qxF "$_doc"; then
+                    git add -- "$_doc" && echo "[pre-commit]   restaged (count-refresh, already in commit): $_doc"
+                elif ! grep -qxF "$_doc" <<< "$DIRTY_BEFORE"; then
+                    git add -- "$_doc" && echo "[pre-commit]   auto-staged (machine count-refresh of a clean file): $_doc"
+                else
+                    echo "[pre-commit]   SKIP $_doc — modified BEFORE this commit (concurrent/human edit; not ours to absorb; stage it explicitly if intended)" >&2
+                fi
+            done <<< "$CHANGED_DOCS"
+        fi
+    else
+        echo "[pre-commit] KB auto-derived counts — drift-check only on '$CURRENT_BRANCH' (regenerated once at task_branch integrate)..."
+        "$PY" "$CLI" --update-kb-counts --check --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /' || true
     fi
 else
     echo "[pre-commit] Skipping count refresh — python not found"
