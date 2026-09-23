@@ -401,6 +401,112 @@ class TestIntermediarios:
         assert removed.status_code == 204
 
 
+class TestIntermediarioNaturezaParceiroSemCreci:
+    """Migration 162. `natureza='parceiro_split'` — a commission-split
+    beneficiary the generated contract never qualifies as a contracted
+    party (matches reference contract 08's own shape: its 3rd beneficiary
+    appears only in the split-payment paragraph, never in "as empresas a
+    seguir qualificadas"), and is therefore never required to carry a
+    CRECI. Before 162, every `atendimento_intermediarios` row required one
+    unconditionally — making it impossible to add this party at all without
+    either fabricating a CRECI or leaving it out (the observed bug: a
+    generated commission clause 2 recipients wide instead of 3)."""
+
+    def test_natureza_defaults_to_intermediario(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "Corretor Parceiro", "creci": "12345-F"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["intermediarios"][0]["natureza"] == "intermediario"
+        assert r.json()["intermediarios"][0]["papel"] is None
+
+    def test_a_parceiro_sem_creci_round_trips_without_creci(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={
+                "nome": "SBCM Parceiros Imobiliários LTDA",
+                "natureza": "parceiro_split",
+                "tipo": "percentual",
+                "valor": "5",
+                "pessoa_tipo": "pj",
+                "documento": "45646535000172",
+                "papel": "indicação",
+            },
+            headers=_auth(),
+        )
+        assert r.status_code == 201, r.text
+        item = r.json()["intermediarios"][0]
+        assert item["natureza"] == "parceiro_split"
+        assert item["creci"] is None
+        assert item["valor"] == "5"
+        assert item["papel"] == "indicação"
+
+    def test_natureza_invalida_is_refused(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "X", "natureza": "bogus"},
+            headers=_auth(),
+        )
+        assert r.status_code == 422, r.text  # pydantic Literal rejects it first
+
+    def test_parceiro_split_paired_with_corretor_id_is_refused(self, client, scoped):
+        """A `corretor_id`-linked row IS one of the office's own qualified
+        parties by definition (`contexto.py` qualifies `Imobiliaria`
+        whenever any row carries a `corretor_id`) — pairing it with
+        `parceiro_split` is a contradiction the service refuses with a
+        named 400 (migration 162's DB CHECK is the backstop)."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        r = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={
+                "nome": "Corretor da Casa",
+                "corretor_id": str(uuid4()),
+                "natureza": "parceiro_split",
+            },
+            headers=_auth(),
+        )
+        assert r.status_code == 400, r.text
+        assert "parceiro_split" in r.text
+
+    def test_patch_can_switch_natureza_to_parceiro_split(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        created = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "X", "creci": "12345-F"},
+            headers=_auth(),
+        ).json()
+        iid = created["intermediarios"][0]["id"]
+        patched = client.patch(
+            f"/api/clientes/{cid}/negociacao/intermediarios/{iid}",
+            json={"natureza": "parceiro_split", "papel": "indicação"},
+            headers=_auth(),
+        )
+        assert patched.status_code == 200, patched.text
+        item = patched.json()["intermediarios"][0]
+        assert item["natureza"] == "parceiro_split"
+        assert item["papel"] == "indicação"
+
+    def test_patch_natureza_to_null_is_refused(self, client, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        created = client.post(
+            f"/api/clientes/{cid}/negociacao/intermediarios",
+            json={"nome": "X"},
+            headers=_auth(),
+        ).json()
+        iid = created["intermediarios"][0]["id"]
+        r = client.patch(
+            f"/api/clientes/{cid}/negociacao/intermediarios/{iid}",
+            json={"natureza": None},
+            headers=_auth(),
+        )
+        assert r.status_code == 400, r.text
+
+
 class TestDividirSaldo:
     """The pure split helper (`noctusai_lib.domain.real_estate.
     parcelamento`), wired into a convenience endpoint."""

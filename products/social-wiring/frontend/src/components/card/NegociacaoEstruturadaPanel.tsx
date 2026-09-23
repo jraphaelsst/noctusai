@@ -78,12 +78,14 @@ import {
   useUpdateParcela,
 } from "@/hooks/useNegociacaoEstruturada";
 import {
+  INTERMEDIARIO_NATUREZA_LABELS,
   INTERMEDIARIO_TIPO_LABELS,
   PARCELA_TIPOS_CRIAVEIS,
   PARCELA_TIPO_LABELS,
   type DividirSaldoPayload,
   type FavorecidoCreate,
   type IntermediarioCreate,
+  type IntermediarioNatureza,
   type IntermediarioTipo,
   type NegociacaoCompletude,
   type NegociacaoEstruturada,
@@ -124,6 +126,7 @@ const INTERMEDIARIO_COMPLEMENTO_MAX = 120;
 const INTERMEDIARIO_BAIRRO_MAX = 120;
 const INTERMEDIARIO_CIDADE_MAX = 120;
 const INTERMEDIARIO_REPRESENTANTE_NOME_MAX = 255;
+const INTERMEDIARIO_PAPEL_MAX = 160;
 
 function errorMessage(err: unknown, fallback: string): string {
   return (err as { message?: string } | null)?.message ?? fallback;
@@ -1300,7 +1303,12 @@ function IntermediariosSection({
                   {i.creci ? ` — ${i.creci}` : ""}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {INTERMEDIARIO_TIPO_LABELS[i.tipo]}
+                  {i.natureza === "parceiro_split"
+                    ? INTERMEDIARIO_NATUREZA_LABELS.parceiro_split
+                    : INTERMEDIARIO_TIPO_LABELS[i.tipo]}
+                  {i.natureza === "parceiro_split"
+                    ? ` · ${INTERMEDIARIO_TIPO_LABELS[i.tipo]}`
+                    : ""}
                   {i.valor != null
                     ? ` · ${
                         i.tipo === "percentual"
@@ -1309,6 +1317,9 @@ function IntermediariosSection({
                       }`
                     : ""}
                 </p>
+                {i.natureza === "parceiro_split" && i.papel ? (
+                  <p className="text-xs text-muted-foreground">{i.papel}</p>
+                ) : null}
               </div>
               <div className="flex gap-1">
                 <Button
@@ -1373,6 +1384,8 @@ interface IntermediarioDraft {
   valorTexto: string;
   corretor_id: string;
   favorecido_id: string;
+  natureza: IntermediarioNatureza;
+  papel: string;
   /** "" = automático (o backend infere a partir do documento). */
   pessoaTipo: PessoaTipo | "";
   documento: string;
@@ -1398,6 +1411,8 @@ function toIntermediarioDraft(
     valorTexto: i?.valor ?? "",
     corretor_id: i?.corretor_id ?? "",
     favorecido_id: i?.favorecido_id ?? "",
+    natureza: i?.natureza ?? "intermediario",
+    papel: i?.papel ?? "",
     pessoaTipo: i?.pessoa_tipo ?? "",
     documento: i?.documento ?? "",
     email: i?.email ?? "",
@@ -1479,11 +1494,16 @@ function IntermediarioFormDialog({
     // `IntermediarioCreate`'s doc comment.
     const payload: IntermediarioCreate = {
       nome: draft.nome.trim(),
-      creci: draft.creci.trim() || null,
+      // 'parceiro_split' never carries a CRECI (see `IntermediarioNatureza`)
+      // — send null even if a stale draft value lingers from a natureza
+      // switch, so the payload never contradicts itself.
+      creci: draft.natureza === "parceiro_split" ? null : draft.creci.trim() || null,
       tipo: draft.tipo,
       valor: draft.valorTexto.trim() || null,
-      corretor_id: draft.corretor_id.trim() || null,
+      corretor_id: draft.natureza === "parceiro_split" ? null : draft.corretor_id.trim() || null,
       favorecido_id: draft.favorecido_id || null,
+      natureza: draft.natureza,
+      papel: draft.papel.trim() || null,
       documento: limparDocumento(draft.documento) || null,
       email: draft.email.trim() || null,
       endereco_cep: draft.endereco_cep.trim() || null,
@@ -1512,6 +1532,40 @@ function IntermediarioFormDialog({
         </DialogHeader>
         <div className="space-y-3">
           <div className="space-y-1.5">
+            <Label htmlFor="int-natureza">Natureza</Label>
+            <Select
+              value={draft.natureza}
+              onValueChange={(v) =>
+                setDraft((d) => ({ ...d, natureza: v as IntermediarioNatureza }))
+              }
+            >
+              <SelectTrigger id="int-natureza" data-testid="int-natureza">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(
+                  Object.keys(INTERMEDIARIO_NATUREZA_LABELS) as IntermediarioNatureza[]
+                ).map((n) => (
+                  <SelectItem key={n} value={n}>
+                    {INTERMEDIARIO_NATUREZA_LABELS[n]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* 🔴 [parceiro-sem-creci] "parceiro_split" is a commission-split
+                beneficiary the generated contract never qualifies as a
+                contracted party (matches reference contract 08's own
+                shape) — it never needs a CRECI, so that field is hidden
+                below instead of asking the operator for data nothing uses. */}
+            {draft.natureza === "parceiro_split" && (
+              <p className="text-xs text-muted-foreground">
+                Recebe parte da comissão, mas não é qualificado como parte
+                contratada na cláusula de intermediação — sem exigência de
+                CRECI.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
             <Label htmlFor="int-nome">Nome</Label>
             <Input
               id="int-nome"
@@ -1520,15 +1574,31 @@ function IntermediarioFormDialog({
               onChange={(e) => setDraft((d) => ({ ...d, nome: e.target.value }))}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="int-creci">CRECI</Label>
-            <Input
-              id="int-creci"
-              value={draft.creci}
-              maxLength={INTERMEDIARIO_CRECI_MAX}
-              onChange={(e) => setDraft((d) => ({ ...d, creci: e.target.value }))}
-            />
-          </div>
+          {draft.natureza === "intermediario" ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="int-creci">CRECI</Label>
+              <Input
+                id="int-creci"
+                value={draft.creci}
+                maxLength={INTERMEDIARIO_CRECI_MAX}
+                onChange={(e) => setDraft((d) => ({ ...d, creci: e.target.value }))}
+              />
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="int-papel">Papel/descrição (opcional)</Label>
+              <Input
+                id="int-papel"
+                value={draft.papel}
+                maxLength={INTERMEDIARIO_PAPEL_MAX}
+                placeholder="Ex.: indicação, parceria comercial"
+                onChange={(e) => setDraft((d) => ({ ...d, papel: e.target.value }))}
+              />
+              <p className="text-xs text-muted-foreground">
+                Uso interno — nunca aparece no contrato gerado.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="int-tipo">Tipo</Label>

@@ -40,6 +40,7 @@ from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
 from app.modules.card_hub.contrato_gerador import carregador, derivacao, documento, frases, lint
 from app.modules.card_hub.contrato_gerador.concordancia import lado
+from app.modules.card_hub.contrato_gerador.dados import DadosContrato
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
 
@@ -1177,3 +1178,74 @@ class TestTextoPessoaSemProfissao:
         p = self._pessoa(profissao="empresária")
         texto = frases.texto_pessoa(p, em_nucleo=False)
         assert "divorciada, empresária, portadora" in texto
+
+
+class TestParceiroSemCreci:
+    """[sw-comissao-parceiro-sem-creci] Migration 162:
+    `natureza='parceiro_split'` — a commission-split beneficiary the
+    generated contract never qualifies as a contracted party. Reference
+    contract 08's own commission clause has exactly this shape: TWO
+    qualified parties in the "DA INTERMEDIAÇÃO" header, but THREE
+    beneficiaries in the payment split paragraph — the 3rd (a company with
+    no CRECI) appears only as a bank-deposit line. Before 162,
+    `derivacao._intermediacao` required a CRECI on EVERY row unconditionally
+    — a 3rd party added the way the schema already allowed (nome + tipo/
+    valor + favorecido_id, `creci` genuinely absent) made `avaliacao.pronto`
+    False and blocked generation outright, which is why the only way to
+    generate at all was to leave that party out — the observed bug: a
+    commission clause 2 recipients / R$ 82.650 wide instead of the signed
+    reference's 3 recipients / R$ 87.000."""
+
+    def _com_parceiro_sem_creci(self) -> DadosContrato:
+        d = fx.variante(1)
+        corretor = replace(d.intermediarios[0], valor=Decimal("5"))
+        parceiro = replace(
+            corretor,
+            id="int-2",
+            corretor_id=None,
+            nome="Parceiro Sem Creci Exemplo LTDA",
+            creci=None,
+            valor=Decimal("1"),
+            natureza="parceiro_split",
+            pessoa_tipo="pj",
+            documento="45646535000172",
+            favorecido_id="fav-parceiro",
+        )
+        favorecidos = list(d.favorecidos) + [
+            fx.Favorecido(
+                id="fav-parceiro", nome="Parceiro Sem Creci Exemplo LTDA",
+                cpf_cnpj="45646535000172", banco="Banco Exemplo", agencia="0001",
+                conta="99999-9",
+            )
+        ]
+        # 5% + 1% = 6% == pct_comissao — keeps the unrelated
+        # CORRETAGEM_PERCENTUAL_DIVERGE aviso quiet so this test pins only
+        # the readiness/qualification behaviour under test.
+        return replace(d, intermediarios=[corretor, parceiro], favorecidos=favorecidos)
+
+    def test_gate_does_not_require_creci_for_a_parceiro_split(self):
+        d = self._com_parceiro_sem_creci()
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert not [f for f in av.faltando if f["campo"].endswith(".creci")]
+
+    def test_the_same_missing_creci_still_blocks_a_plain_intermediario(self):
+        """Regression guard: the fix is `natureza`-gated, not a blanket
+        removal of the CRECI requirement for the table's original meaning."""
+        d = self._com_parceiro_sem_creci()
+        # Same row, but AS the table's original meaning (no natureza override).
+        d = replace(d, intermediarios=[
+            replace(d.intermediarios[1], natureza="intermediario"),
+        ])
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert not av.pronto
+        assert any(f["campo"].endswith(".creci") for f in av.faltando)
+
+    def test_parceiro_split_is_summed_into_the_split_payment_but_not_qualified(self):
+        d = self._com_parceiro_sem_creci()
+        texto = "\n".join(_render(1, d).paragrafos)
+        # Summed into the split-payment paragraph (`frases.split_corretagem`).
+        assert "por meio de depósito bancário em favor de Parceiro Sem Creci Exemplo LTDA" in texto
+        # NEVER added to "as empresas a seguir qualificadas" — no PJ
+        # qualification sentence is printed for it anywhere.
+        assert "Parceiro Sem Creci Exemplo LTDA, pessoa jurídica inscrita" not in texto
