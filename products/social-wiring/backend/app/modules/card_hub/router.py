@@ -58,6 +58,7 @@ from app.modules.card_hub.contrato_gerador.router import (
 from app.modules.card_hub.negociacao_estruturada_router import (
     router as negociacao_estruturada_router,
 )
+from app.modules.card_hub.proveniencia.router import router as proveniencia_router
 from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
 from app.modules.card_hub import roteiros_service as roteiros_svc
 from app.modules.card_hub import services as svc
@@ -1246,4 +1247,4 @@ async def patch_negociacao_defaults_route(
     )
 
 
-__all__ = ["defaults_router", "router"]
+__all__ = ["defaults_router", "proveniencia_router", "router"]

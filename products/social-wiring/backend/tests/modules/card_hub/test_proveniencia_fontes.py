@@ -22,6 +22,7 @@ from noctusai_lib.integrations.documents.capacidades import CAPACIDADES
 
 from app.modules.card_hub.contrato_gerador import validacao_extracao as vx
 from app.modules.card_hub.proveniencia import fontes
+from app.modules.card_hub.proveniencia.linhagem import CANONICOS_REGISTRO
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "migrations"
@@ -47,36 +48,18 @@ def _tipos_documento_seedados() -> set[str]:
     return tipos
 
 
-def _canonicais_do_registro() -> dict[tuple[str, str], frozenset[str]]:
-    """`(entidade, campo) -> {canonical field name(s) it corresponds to}`.
-
-    A tiny, EXPLICIT translation table — `REGISTRO` uses `clientes`' own
-    column names (`nome_oficial`), `capacidades.py` uses the seed's
-    (`nome`); see `fontes.Fonte`'s own docstring for why they differ.
-    Every `CAMPOS_CLIENTE` entry not listed here is assumed to already be
-    the canonical name (true for all but the three renamed below).
-    """
-    renomeados = {
-        "nome_oficial": "nome",
-        "rg_orgao_expedidor": "rg_orgao",
-        "certidao_estado_civil_emitida_em": "data_emissao",
-    }
-    out: dict[tuple[str, str], frozenset[str]] = {}
-    for campo in vx.CAMPOS_CLIENTE:
-        canonico = renomeados.get(campo.campo, campo.campo)
-        out[(campo.entidade, campo.campo)] = frozenset({canonico})
-    # `numero_matricula` is spelled the same on both sides.
-    for campo in vx.CAMPOS_IMOVEL:
-        if campo.campo == "numero_matricula":
-            out[(campo.entidade, campo.campo)] = frozenset({"numero_matricula"})
-    return out
-
-
 class TestRegistroCoberto:
-    """Guard 1 — every `REGISTRO` field is accounted for, exactly once."""
+    """Guard 1 — every `REGISTRO` field is accounted for, exactly once.
+
+    The `(entidade, campo) -> canonical field name(s)` translation table
+    (`REGISTRO` uses `clientes`' own column names, `capacidades.py` uses
+    the seed's — see `fontes.Fonte`'s own docstring for why they differ)
+    is `proveniencia.linhagem.CANONICOS_REGISTRO` — S2's real code needs
+    the same table, so this used to keep its own private copy and now
+    imports the shipped one instead (single source of truth)."""
 
     def test_toda_entrada_do_registro_tem_destino(self):
-        canonicais = _canonicais_do_registro()
+        canonicais = CANONICOS_REGISTRO
         campos_com_fonte = frozenset().union(*(f.campos for f in fontes.FONTES.values()))
         estrutura_tipos = frozenset(
             f.tipo_documento for f in fontes.FONTES.values() if f.estrutura_extraivel
@@ -104,7 +87,7 @@ class TestRegistroCoberto:
         )
 
     def test_fora_do_escopo_nao_se_sobrepoe_ao_catalogo(self):
-        canonicais = _canonicais_do_registro()
+        canonicais = CANONICOS_REGISTRO
         campos_com_fonte = frozenset().union(*(f.campos for f in fontes.FONTES.values()))
         for entidade, campo in fontes.FORA_DO_ESCOPO_S1:
             canonico = canonicais.get((entidade, campo))
@@ -119,7 +102,7 @@ class TestRegistroCoberto:
         # `capacidades.py`'s vocabulary — a silent rename on either side
         # would otherwise pass guard 1 by accident (both sides drifting the
         # same way) rather than by a checked translation.
-        canonicais = _canonicais_do_registro()
+        canonicais = CANONICOS_REGISTRO
         assert canonicais[(vx.ENTIDADE_CLIENTE, "nome_oficial")] == frozenset({"nome"})
         assert canonicais[(vx.ENTIDADE_CLIENTE, "rg_orgao_expedidor")] == frozenset({"rg_orgao"})
         assert canonicais[

@@ -4,7 +4,10 @@ Pure over `DadosContrato`. Three outputs, never mixed:
 
 - `faltando`  — a value the contract needs and nobody has entered. Named field
                 + pt-BR label + where in the card it is fixed + a machine-usable
-                `destino` the UI links to.
+                `destino` the UI links to + `sugestoes` (S2, additive): which
+                `tipo_documento`(s) — `proveniencia.fontes.FONTES` — could
+                supply it, `[]` when none does (most negotiation/office
+                fields genuinely have no document behind them).
 - `bloqueios` — the data is there but contradicts itself, the law of the
                 instrument, or the wording the office actually wrote
                 (Σ parcelas ≠ preço, RG = CPF, old certidão, a stored enum with
@@ -59,6 +62,7 @@ from app.modules.card_hub.contrato_gerador.politica import (
     SITUACOES_PJ_EXIGIDAS,
     Politica,
 )
+from app.modules.card_hub.proveniencia import fontes as fontes_mod
 
 MODELO_COMPRA_VENDA = "compra_venda"
 MODELO_A_VISTA = "compra_venda_a_vista"
@@ -319,6 +323,28 @@ class Destinos:
         return {"tela": tela, "rota": rota, "ancora": ancora or ancora_padrao, "ids": ids}
 
 
+def _sugestoes_para_campo(campo: str) -> list[dict]:
+    """`fontes.FONTES` candidates for a `falta()` `campo` string (S2,
+    additive) — matched on its LAST dotted segment (`qualificacao.
+    nome_oficial` -> `nome_oficial` -> canonical `nome` via `fontes.
+    RENOMEADOS_CAMPO`, the same translation `REGISTRO` needs). Most
+    `falta()` fields (negotiation terms, office data, testemunhas, ...) are
+    genuinely `fontes.MANUAL_APENAS` — no document backs them — so `[]` is
+    their honest answer, not a gap; `destino` is NOT set here (the caller
+    already computed the one `destino` shared with the `faltando` entry
+    itself and injects it)."""
+    sufixo = campo.rsplit(".", 1)[-1]
+    canonico = fontes_mod.RENOMEADOS_CAMPO.get(sufixo, sufixo)
+    return [
+        {
+            "tipo_documento": f.tipo_documento,
+            "rotulo": fontes_mod.ROTULOS_TIPO_DOCUMENTO.get(f.tipo_documento, f.tipo_documento),
+        }
+        for f in fontes_mod.FONTES.values()
+        if canonico in f.campos
+    ]
+
+
 @dataclass
 class Avaliacao:
     faltando: list[dict] = field(default_factory=list)
@@ -342,13 +368,17 @@ class Avaliacao:
         chave = (campo, parte_id)
         if any((f["campo"], f["parte_id"]) == chave for f in self.faltando):
             return
+        destino = self.destinos.para(onde, parte_id=parte_id, ancora=ancora)
         self.faltando.append(
             {
                 "campo": campo,
                 "rotulo": rotulo,
                 "onde": onde,
                 "parte_id": parte_id,
-                "destino": self.destinos.para(onde, parte_id=parte_id, ancora=ancora),
+                "destino": destino,
+                "sugestoes": [
+                    {**s, "destino": destino} for s in _sugestoes_para_campo(campo)
+                ],
             }
         )
 

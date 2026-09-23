@@ -327,7 +327,7 @@ class TestGate:
     def test_every_missing_field_carries_a_destino_the_ui_can_link_to(self):
         _d, _pol, _sw, av = _avaliar(1, fx.sem_termos(fx.variante(1)))
         for f in av.faltando:
-            assert set(f) == {"campo", "rotulo", "onde", "parte_id", "destino"}
+            assert set(f) == {"campo", "rotulo", "onde", "parte_id", "destino", "sugestoes"}
             destino = f["destino"]
             assert set(destino) == {"tela", "rota", "ancora", "ids"}
             assert destino["rota"].startswith("/")
@@ -337,6 +337,21 @@ class TestGate:
         assert destino["tela"] == "card_negociacao"
         assert (destino["rota"], destino["ancora"]) == ("/clientes", "negociacao")
         assert destino["ids"]["cliente_id"] == "c1"
+
+    def test_a_missing_identity_field_suggests_the_documents_that_carry_it(self):
+        d = fx.variante(1)
+        sem_nome = replace(d.vendedores[0], faltando_qualificacao=["nome_oficial"])
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[sem_nome]))
+        item = next(f for f in av.faltando if f["campo"] == "qualificacao.nome_oficial")
+        tipos = {s["tipo_documento"] for s in item["sugestoes"]}
+        assert tipos == {"rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento"}
+        assert all(s["destino"] == item["destino"] for s in item["sugestoes"])
+        assert all(set(s) == {"tipo_documento", "rotulo", "destino"} for s in item["sugestoes"])
+
+    def test_a_manual_only_field_has_no_sugestoes(self):
+        _d, _pol, _sw, av = _avaliar(1, fx.sem_termos(fx.variante(1)))
+        item = next(f for f in av.faltando if f["campo"] == "negociacao.corretagem_contratantes")
+        assert item["sugestoes"] == []
 
     def test_a_party_destino_points_at_that_partys_own_side_and_id(self):
         d = fx.variante(1)
