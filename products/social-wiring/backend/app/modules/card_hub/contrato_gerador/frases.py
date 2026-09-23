@@ -576,12 +576,23 @@ def qualificacao_intermediario(it: Intermediario) -> str:
     The office's own intermediação (`corretor_id` set) is qualified from
     `Imobiliaria` by `qualificacao_imobiliaria` instead — same clause, but the
     data lives on the org row, not on the intermediário.
+
+    🔴 GENDER-NEUTRAL BY CONSTRUCTION (2026-09-23). `Intermediario` (`dados.py`)
+    carries no `genero` column — unlike `Pessoa`, whose qualification agrees
+    per `p.genero` via `concordancia.normalizar_genero` — because neither
+    `atendimento_intermediarios` nor `lead_corretores` (migrations 108/025)
+    stores one. `corretor de imóveis inscrito` hardcoded the masculine form
+    regardless, so a female corretora (contract 08's own human-typed
+    reference qualifies RENATA DIAS GONÇALVES as "corretora ... inscrita")
+    rendered with the wrong gender every time. `"(a)"` is this file's own
+    established convention for a term that must stay correct with no gender
+    fact to agree from — see `nacionalidade_flex`'s "brasileiro(a)" above.
     """
     rotulo, numero = documento(it.documento)
     if it.pessoa_tipo == "pj":
         texto = f"{it.nome}, pessoa jurídica inscrita no {rotulo} sob o nº {numero}"
     else:
-        texto = f"{it.nome}, corretor de imóveis inscrito no {rotulo} sob o nº {numero}"
+        texto = f"{it.nome}, corretor(a) de imóveis inscrito(a) no {rotulo} sob o nº {numero}"
     if it.creci:
         texto += f", com inscrição no CRECI sob o nº {it.creci}"
     if it.representante_nome:
