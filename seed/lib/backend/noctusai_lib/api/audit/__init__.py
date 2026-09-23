@@ -12,7 +12,11 @@ Wiring (``noctusai_seed.app.create_product_app`` +
 
 1. ``create_product_app`` builds a sink via :func:`make_audit_sink`
    (Real when ``audit_trail_enabled`` and a DB is wired, Fake
-   otherwise) and passes it to ``configure_app``.
+   otherwise — and ALWAYS Fake under pytest, see
+   :func:`running_under_pytest`) and passes it to ``configure_app``.
+   ``create_product_app(audit_sink=...)`` overrides this entirely —
+   the seam a product's own test fixtures use to inject a
+   ``FakeAuditSink`` they want to assert against.
 2. ``configure_app`` mounts :class:`AuditMiddleware` next to
    ``RequestLoggingMiddleware`` — see that function's docstring for
    why the mount position (nested inside ``CorrelationIdMiddleware``)
@@ -42,6 +46,7 @@ from .sink import (
     log_overflow_or_failure,
     make_audit_sink,
     overflow_or_failure_count,
+    running_under_pytest,
 )
 from .types import ActorKind, AuditActor, AuditEntry
 
@@ -58,4 +63,5 @@ __all__ = [
     "log_overflow_or_failure",
     "make_audit_sink",
     "overflow_or_failure_count",
+    "running_under_pytest",
 ]

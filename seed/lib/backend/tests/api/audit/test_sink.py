@@ -19,6 +19,7 @@ from noctusai_lib.api.audit.sink import (
     log_overflow_or_failure,
     make_audit_sink,
     overflow_or_failure_count,
+    running_under_pytest,
 )
 from noctusai_lib.api.audit.types import AuditActor, AuditEntry
 
@@ -93,14 +94,33 @@ class TestFakeAuditSink:
         assert len(sink.entries) == 1
 
 
+def test_running_under_pytest_is_true_in_this_process() -> None:
+    # This file only runs under pytest — the obviously-true direction.
+    assert running_under_pytest() is True
+
+
 class TestMakeAuditSink:
     def test_no_admin_client_returns_fake(self) -> None:
-        assert isinstance(make_audit_sink(None), FakeAuditSink)
+        assert isinstance(make_audit_sink(None, force_real=True), FakeAuditSink)
 
-    def test_admin_client_present_returns_real(self) -> None:
+    def test_admin_client_present_with_force_real_returns_real(self) -> None:
+        """`force_real=True` is the deliberate escape hatch THIS test
+        uses — without it, the pytest-safety default below always wins."""
         admin = _FakeAdmin()
-        sink = make_audit_sink(lambda: admin)
+        sink = make_audit_sink(lambda: admin, force_real=True)
         assert isinstance(sink, RealAuditSink)
+
+    def test_defaults_to_fake_under_pytest_even_with_an_admin_client(self) -> None:
+        """The pytest-safety default (2026-09-23 redirect): a product's
+        `app.main` builds its sink at IMPORT time, before any per-test
+        `unittest.mock.patch` on `DatabaseModule.get_core_client` is
+        active — `make_audit_sink` refuses to hand back a `RealAuditSink`
+        at all while running under pytest, regardless of
+        `get_admin_client`, so a slow test can never reach a real DB
+        through this factory by omission."""
+        admin = _FakeAdmin()
+        sink = make_audit_sink(lambda: admin)  # this test genuinely runs under pytest
+        assert isinstance(sink, FakeAuditSink)
 
 
 class TestRealAuditSinkFlush:

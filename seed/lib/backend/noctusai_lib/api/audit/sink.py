@@ -300,17 +300,47 @@ class RealAuditSink:
             await self._write_batch(remaining)
 
 
+def running_under_pytest() -> bool:
+    """``True`` for the WHOLE pytest process — collection AND execution.
+
+    Deliberately ``"pytest" in sys.modules``, not ``PYTEST_CURRENT_TEST``
+    (only set while a specific test is actively running): a product's
+    ``app.main`` builds its app — and this sink — at MODULE IMPORT
+    time, during pytest's collection phase, before any test body (and
+    therefore before ``PYTEST_CURRENT_TEST``) exists. The broader
+    signal is what actually needs to be true at that moment.
+    """
+    return "pytest" in sys.modules
+
+
 def make_audit_sink(
     get_admin_client: Optional[Callable[[], Any]] = None,
     *,
     schema: str = _SCHEMA,
     table: str = _TABLE,
+    force_real: bool = False,
 ) -> AuditSink:
     """Return the appropriate sink for the environment.
 
-    ``get_admin_client=None`` (no DB wired — dev/test) returns the
-    in-memory Fake; otherwise the batched Real adapter.
+    Defaults to the in-memory Fake whenever the process is running
+    under pytest (:func:`running_under_pytest`) — REGARDLESS of
+    ``get_admin_client``. A product's ``app.main`` builds its app (and
+    this sink) at IMPORT time, before any per-test
+    ``unittest.mock.patch`` on ``DatabaseModule.get_core_client`` is
+    active; a ``RealAuditSink`` built from an admin-client accessor at
+    that point would attempt a REAL write the moment its flush timer
+    fires during ANY test — closed here, at the one place that decides
+    Real vs. Fake, rather than trusting every call site to remember.
+    ``force_real=True`` is the deliberate escape hatch for a test that
+    exercises ``RealAuditSink``'s own wiring on purpose (see
+    ``seed/lib/backend/tests/api/audit/test_sink.py``).
+
+    Outside pytest: ``get_admin_client=None`` (no DB wired — a direct
+    dev run with no Supabase configured) returns the in-memory Fake;
+    otherwise the batched Real adapter.
     """
+    if not force_real and running_under_pytest():
+        return FakeAuditSink()
     if get_admin_client is not None:
         return RealAuditSink(get_admin_client, schema=schema, table=table)
     return FakeAuditSink()
@@ -323,4 +353,5 @@ __all__ = [
     "log_overflow_or_failure",
     "make_audit_sink",
     "overflow_or_failure_count",
+    "running_under_pytest",
 ]
