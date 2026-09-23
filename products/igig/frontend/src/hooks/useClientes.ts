@@ -89,6 +89,25 @@ export function useClientes(filtros: ClientesFiltros = {}) {
   };
 }
 
+/**
+ * One cliente by id — what the card needs when it is opened by deep link
+ * (`/clientes?id=…`) before (or without) the list containing it: a filtered
+ * list, a second page, or a cliente the list has not refetched yet.
+ */
+export function useCliente(id: string | null) {
+  const query = useQuery({
+    queryKey: [...CLIENTES_QUERY_KEY, "detalhe", id ?? "__none__"],
+    queryFn: () => api.get<Cliente>(`/api/clientes/${encodeURIComponent(id as string)}`),
+    enabled: !!id,
+  });
+  return {
+    ...query,
+    cliente: query.data ?? null,
+    showSkeleton: !!id && query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
+}
+
 export function useCriarCliente() {
   const qc = useQueryClient();
   return useMutation({
