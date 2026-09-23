@@ -2500,6 +2500,66 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — public.erase_test_org_audit_logs's own org-category guard
+# (migration 054). Companion to _CORE_AUDIT_LOGS_PROBES above: that pair
+# proves the append-only TRIGGER still refuses a plain UPDATE/DELETE
+# (unchanged by 054); this probe proves the new erasure FUNCTION refuses to
+# even attempt the delete for anything that isn't a
+# `category = 'test' AND slug LIKE 'test-realdb-%'` organization — a
+# real ('normal'-category) org, in this case. Self-provisioning: the probe
+# INSERTs its own throwaway `organizations` row (inside the same
+# rollback-only wrapper every probe runs under — never a real org, never
+# committed) rather than borrowing one from `tests/realdb`.
+
+_ERASE_TEST_ORG_AUDIT_LOGS_GUARD = "erase_test_org_audit_logs"
+_ERASE_TEST_ORG_AUDIT_LOGS_MIGRATIONS = ("054_erase_test_org_audit_logs.sql",)
+
+_ERASE_TEST_ORG_AUDIT_LOGS_PROBE = GuardProbe(
+    id="erase_test_org_audit_logs.refuses_non_test_org",
+    product="core",
+    schema="public",
+    guard_name=_ERASE_TEST_ORG_AUDIT_LOGS_GUARD,
+    kind="write_refusal",
+    migrations=_ERASE_TEST_ORG_AUDIT_LOGS_MIGRATIONS,
+    sql=_do_block(f"""
+DECLARE
+  v_org uuid;
+BEGIN
+  IF to_regprocedure('public.erase_test_org_audit_logs(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.erase_test_org_audit_logs does not exist (migration 054 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO public.organizations (nome, slug, category)
+    VALUES ('NOC probe org (not a test-realdb fixture)', 'noc-probe-' || gen_random_uuid()::text, 'normal')
+    RETURNING id INTO v_org;
+    PERFORM public.erase_test_org_audit_logs(v_org);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: erase_test_org_audit_logs erased a normal-category org — the org-category guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{_sql_lit("org_not_erasable_test_org")}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    rationale=(
+        "erase_test_org_audit_logs (migration 054) is the second sanctioned "
+        "audit_logs deletion door, opened specifically so the realdb test "
+        "suite can tear down its own throwaway orgs (053 made audit_logs "
+        "append-only, and the org<->audit_logs FK is NO ACTION, so a "
+        "category='test' org that had ever logged an action could never be "
+        "deleted). It must refuse anything that isn't a "
+        "`category = 'test' AND slug LIKE 'test-realdb-%'` org — a real org "
+        "reaching this function would otherwise have its entire audit trail "
+        "erased through what is nominally a test-fixture cleanup path."
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -2522,6 +2582,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
