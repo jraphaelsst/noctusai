@@ -37,6 +37,7 @@ import { useAuthStore } from "@noctusai/seed/infra";
 import { ApiError, resolveSSOContext } from "@noctusai/lib";
 
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
+import type { GeracaoDestino } from "@/components/card/GeradorContratoSection";
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
 import { ProvenienciaContainer } from "@/components/ProvenienciaContainer";
 import { EnviarAssinaturaDialog } from "@/components/card/EnviarAssinaturaDialog";
@@ -65,9 +66,12 @@ function toastServerError(err: unknown, fallback: string) {
 export function ContratosContainer({
   clienteId,
   onNovoContrato,
+  onIrPara,
 }: {
   clienteId: string;
   onNovoContrato: () => void;
+  /** The card dialog's "Resolver" jump — forwarded to the readiness list. */
+  onIrPara?: (destino: GeracaoDestino) => void;
 }) {
   const query = useContratos(clienteId);
   const mutations = useContratoMutations(clienteId);
@@ -234,7 +238,12 @@ export function ContratosContainer({
           />
         )}
         renderGeradorContrato={(contratoId, aberto) => (
-          <GeradorContratoContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
+          <GeradorContratoContainer
+            clienteId={clienteId}
+            contratoId={contratoId}
+            aberto={aberto}
+            onIrPara={onIrPara}
+          />
         )}
         renderProveniencia={(contratoId, aberto) => (
           <ProvenienciaContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />

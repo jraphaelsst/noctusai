@@ -277,6 +277,30 @@ describe("DadosPessoaisForm — RG igual ao CPF é uma notícia, não um erro (C
   });
 });
 
+describe("DadosPessoaisForm — RG == CPF nunca é sinalizado para a CIN (2026-09-23)", () => {
+  it("🔴 some quando há uma CIN no cadastro", async () => {
+    const { fireEvent, screen } = await abrir({ temCin: true });
+    fireEvent.change(screen.getByTestId("dados-pessoais-cpf"), {
+      target: { value: "448.864.938-66" },
+    });
+    fireEvent.change(screen.getByTestId("dados-pessoais-rg"), {
+      target: { value: "448.864.938-66" },
+    });
+    expect(screen.queryByTestId("dados-pessoais-rg-igual-cpf")).toBeNull();
+  });
+
+  it("🔴 some quando o órgão expedidor é o IIGDR da CIN", async () => {
+    const { fireEvent, screen } = await abrir({
+      valores: { cpf: "448.864.938-66", rg: "448.864.938-66", rg_orgao_expedidor: "IIGDR-SP" },
+    });
+    expect(screen.queryByTestId("dados-pessoais-rg-igual-cpf")).toBeNull();
+    fireEvent.change(screen.getByTestId("dados-pessoais-rg-orgao"), {
+      target: { value: "SSP/SP" },
+    });
+    expect(screen.getByTestId("dados-pessoais-rg-igual-cpf")).toBeTruthy();
+  });
+});
+
 describe("DadosPessoaisForm — surfacing a rejected save (migration 110)", () => {
   it("🔴 mostra a mensagem do servidor mesmo depois do editor fechar", async () => {
     // `submit()` fecha o editor de imediato; a rejeição chega DEPOIS,

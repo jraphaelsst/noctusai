@@ -178,6 +178,32 @@ export interface QualificacaoCompletude {
  * "52.179.965-X"), a CPF's only punctuation is dots and a dash so stripping
  * to digits reduces it the same way.
  */
+/**
+ * Is this identity a CIN (Carteira de Identidade Nacional)? Its RG IS the CPF
+ * by design (órgão "IIGDR", contract 08: "RG 448.864.938-66-IIGDR-SP"), so an
+ * RG equal to the CPF must never be flagged for one (owner directive,
+ * 2026-09-23). True when a CIN file is on record, or the órgão reads IIGDR —
+ * the same two signals the server's `identidade_extracao_service._e_cin`
+ * reads.
+ */
+export function ehCin(
+  orgaoExpedidor: string | null | undefined,
+  temArquivoCin = false,
+): boolean {
+  return temArquivoCin || (orgaoExpedidor ?? "").toUpperCase().includes("IIGDR");
+}
+
+/** Does this person's checklist hold a CIN file (the identity item's `cin`
+ *  slot)? Read off the checklist response the card already has — never a
+ *  second fetch. */
+export function temArquivoCin(
+  itens: { documentos?: { tipo_documento: string; documento: unknown }[] }[] | undefined,
+): boolean {
+  return (itens ?? []).some((item) =>
+    (item.documentos ?? []).some((s) => s.tipo_documento === "cin" && !!s.documento),
+  );
+}
+
 export function rgIgualAoCpf(
   rg: string | null | undefined,
   cpf: string | null | undefined,

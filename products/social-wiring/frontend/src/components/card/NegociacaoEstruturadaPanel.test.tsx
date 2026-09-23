@@ -141,6 +141,7 @@ function termosVazios() {
     permuta_posse_marco_parcela_id: null,
     permuta_obrigacoes_entrega: null,
     itens_integrantes: null,
+    itens_integrantes_ausente_confirmado: false,
     ad_corpus: null,
     obrigacoes_vendedor: null,
     onus_quitacao: null,

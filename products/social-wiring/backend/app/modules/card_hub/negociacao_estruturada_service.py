@@ -1050,6 +1050,27 @@ def atualizar_termos(
     if termos["ad_corpus"] is not None and not isinstance(termos["ad_corpus"], bool):
         raise ValidationError_("ad_corpus deve ser verdadeiro ou falso", field="ad_corpus")
 
+    # 🔴 Migration 163 made this column `NOT NULL DEFAULT FALSE`, but a PUT
+    # stores an ABSENT key as null — so every save from a client that does
+    # not send it (every client before this control existed) would write NULL
+    # into a NOT NULL column and 500. Absent/null means "not confirmed",
+    # which is exactly `False`; anything else that is not a bool is refused.
+    ausente = termos["itens_integrantes_ausente_confirmado"]
+    if ausente is None:
+        termos["itens_integrantes_ausente_confirmado"] = False
+    elif not isinstance(ausente, bool):
+        raise ValidationError_(
+            "itens_integrantes_ausente_confirmado deve ser verdadeiro ou falso",
+            field="itens_integrantes_ausente_confirmado",
+        )
+    # Listing items AND confirming there are none are two contradictory
+    # answers to one question — refused rather than silently picking one.
+    if termos["itens_integrantes"] is not None and termos["itens_integrantes_ausente_confirmado"]:
+        raise ValidationError_(
+            "informe os itens integrantes OU confirme que não há nenhum, não ambos",
+            field="itens_integrantes_ausente_confirmado",
+        )
+
     # Belt-and-suspenders with the router's `Literal` fields — mirrors
     # `contratos_service.atualizar`.
     for campo, permitidos in (

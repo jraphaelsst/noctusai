@@ -52,6 +52,7 @@ import {
   ChecklistExtrasSection,
 } from "@noctusai/lib/components";
 import type {
+  CardHubRenderCtx,
   CardSubpage,
   DetailSection,
   GeralPopoverKey,
@@ -98,6 +99,8 @@ import { PAPEIS_POR_LADO } from "@/types/cardHub";
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { RoteirosSection } from "./RoteirosSection";
 import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
+import type { GeracaoDestino } from "./GeradorContratoSection";
+import { rolarAteAlvo } from "@/hooks/useRolarAteAlvo";
 import { SW_TIMELINE_RENDERERS } from "./Timeline";
 import {
   DocumentoChecklistSection,
@@ -105,7 +108,7 @@ import {
 } from "./DocumentoChecklistSection";
 import { CasadoToggle } from "./CasadoToggle";
 import { CertidaoCasamentoSlot, TIPO_CERTIDAO_CASAMENTO } from "./CertidaoCasamentoSlot";
-import { estadoCivilExigeConjuge } from "@/types/qualificacaoCompletude";
+import { estadoCivilExigeConjuge, temArquivoCin } from "@/types/qualificacaoCompletude";
 
 export interface ClienteCardDialogProps {
   open: boolean;
@@ -246,8 +249,11 @@ export interface ClienteCardDialogProps {
    */
   renderNegociacao?: () => ReactNode;
   renderFinanciamento?: () => ReactNode;
-  /** The Contratos subpage — same render-prop reasoning as the two above. */
-  renderContratos?: () => ReactNode;
+  /** The Contratos subpage — same render-prop reasoning as the two above.
+   *  Handed `irPara`: the readiness list's card-scoped "Resolver" — switches
+   *  THIS dialog's subpage (`destino.ancora`) and lands on `destino.alvo`.
+   *  The dialog owns its subpage in local state, so only it can do this. */
+  renderContratos?: (nav: { irPara: (destino: GeracaoDestino) => void }) => ReactNode;
 
   /** Current values behind the typed checklist items — read by the inline row
    *  editors AND by the full form on the Dados do cliente tab. */
@@ -344,7 +350,11 @@ export interface ClienteCardDialogProps {
   onToggleDocumentoChecklist: (key: string, concluido: boolean | null) => void;
   /** Uploads the file that satisfies `rg` / `cpf`, filed under that item's key
    *  as its `tipo_documento` — the row IS the type. */
-  onUploadDocumentoChecklist?: (item: DocumentoChecklistItem, file: File) => void;
+  onUploadDocumentoChecklist?: (
+    item: DocumentoChecklistItem,
+    file: File,
+    tipoDocumento: string,
+  ) => void;
   /** Discards that file. The ROW stays: the mandatory list is server-defined
    *  and there is no such thing as deleting "CPF" from it. */
   onRemoverDocumentoChecklist?: (
@@ -693,7 +703,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   );
 
   // ── The SW subpage renders, keyed by the registry ─────────────────────────
-  const renders: Record<CardSubpageKey, () => ReactNode> = {
+  const renders: Record<CardSubpageKey, (ctx: CardHubRenderCtx<CardSubpageKey>) => ReactNode> = {
     geral: renderGeral,
 
     // 🔴 The Dados do cliente tab is no longer read-only: the editor is
@@ -719,6 +729,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               saving={props.dadosPessoaisSaving}
               saveError={props.dadosPessoaisError}
               pendenteConfirmacao={props.dadosPessoaisPendente}
+              temCin={temArquivoCin(props.documentoChecklist)}
             />
             {props.renderConflitosPendentes?.() ?? null}
             {/* Same gate, same reasoning as the per-party panel
@@ -859,9 +870,15 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
       </div>
     ),
 
-    contratos: () => (
+    contratos: (ctx) => (
       <div data-testid="card-subpage-contratos">
-        {props.renderContratos?.() ?? (
+        {props.renderContratos?.({
+          irPara: (destino) => {
+            const alvoSubpage = CARD_SUBPAGES.find((s) => s.key === destino.ancora);
+            if (alvoSubpage) ctx.select(alvoSubpage.key);
+            if (destino.alvo) rolarAteAlvo(destino.alvo);
+          },
+        }) ?? (
           <p className="text-sm text-muted-foreground">Contratos indisponível.</p>
         )}
       </div>

@@ -65,6 +65,10 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 #:                   `tipo_documento` exists.
 #:
 #: - ``exige``     — an extra predicate the value must satisfy to count.
+#: - ``campos_todos`` — done only when EVERY listed column is non-empty; a
+#:                   file never satisfies it alone. ``documentos`` /
+#:                   ``documentos_legado`` name its upload slots. Today only
+#:                   `identidade` — see `_IDENTIDADE_ROTULOS`.
 #:
 #: 🔴 WHY ``nome_completo`` READS TWO COLUMNS THROUGH A PREDICATE
 #: --------------------------------------------------------------
@@ -146,13 +150,57 @@ ITENS: tuple[dict[str, Any], ...] = (
      "campos": ("data_nascimento",)},
     {"key": "profissao", "label": "Profissão", "campos": ("profissao",)},
     {"key": "genero", "label": "Gênero", "campos": ("genero",)},
-    # Migration 097 gave both a real column, so each now carries `campos` too
-    # and is satisfied by EITHER the number or the scan — see `derivar`.
-    {"key": "rg", "label": "RG", "campos": ("rg",), "documento": "rg"},
-    {"key": "cpf", "label": "CPF", "campos": ("cpf",), "documento": "cpf"},
+    # 🔴 ONE item for RG + CPF (owner directive, 2026-09-23) — it replaced the
+    # separate `rg` and `cpf` items. See `_IDENTIDADE_*` below for the whole
+    # rule; in short: satisfied when BOTH numbers are on the record (read off
+    # the CIN/CNH and confirmed, or typed by the operator), never by a file
+    # alone, and it names which of the two is still missing.
+    {"key": "identidade", "label": "Documento de identidade (RG e CPF)",
+     "campos_todos": ("rg", "cpf"),
+     "documentos": ("cin", "cnh"),
+     "documentos_legado": ("rg", "cpf"),
+     "dica": "Basta um dos dois (CIN ou CNH), desde que dele se leiam o RG e o CPF."},
 )
 
 ITEM_KEYS = tuple(item["key"] for item in ITENS)
+
+#: 🔴 THE IDENTITY ITEM — WHY ONE ITEM, WHY VALUES, WHY TWO SLOTS
+#: ----------------------------------------------------------------
+#: [Owner directive, 2026-09-23] "make rg/cpf 1 single checklist item. then i
+#: need the CIN field and the CNH field. only one of those fields need to be
+#: filled, if they are able to extract rg and cpf from it, otherwise the
+#: mechanism shall block generation missing one of those fields (rg/cpf)."
+#:
+#: - ``campos_todos`` — done only when EVERY listed column is filled (the
+#:   ordinary ``campos`` is ANY-of). A CIN or a CNH carries both numbers, so
+#:   one document is enough exactly when both were read off it (and
+#:   confirmed) or the operator typed them in; an uploaded file whose numbers
+#:   were never read satisfies nothing. That keeps this item and the contract
+#:   gate (`_CAMPOS_QUALIFICACAO_CONTRATO` — `rg` and `cpf` stay separate
+#:   there, so the refusal names WHICH one is missing) on one fact.
+#: - ``documentos`` — the upload slots, in order: CIN, CNH. A CIN is never
+#:   extracted (no real one exists yet; migration 164) — its numbers are
+#:   validated by hand. A CIN's RG legitimately equals its CPF (órgão IIGDR);
+#:   nothing here compares the two.
+#: - ``documentos_legado`` — `rg`/`cpf`-typed files already on record. Shown
+#:   read-only (no new uploads under those types from this item) so a CNH
+#:   that was filed as `rg` before `cnh` existed (migration 142) stays
+#:   visible and keeps counting through the numbers read off it. Rows are
+#:   never retyped.
+#:
+#: Keys: `rg`/`cpf` overrides (`cliente_documento_checklist.item_key`) are
+#: orphaned by the collapse — a per-number override does not say anything
+#: about the pair, so carrying it onto `identidade` would invent a decision
+#: nobody made.
+_IDENTIDADE_ROTULOS: dict[str, str] = {
+    "cin": "CIN",
+    "cnh": "CNH",
+    "rg": "Arquivado como RG",
+    "cpf": "Arquivado como CPF",
+}
+
+#: Label per identity column, for the "which one is missing" read-out.
+_IDENTIDADE_CAMPO_ROTULOS: dict[str, str] = {"rg": "RG", "cpf": "CPF"}
 
 #: Named readers for facts that are not simply "is this column filled in?".
 #:
@@ -189,6 +237,7 @@ _CLIENTE_COLUNAS_EXIBICAO: tuple[str, ...] = ()
 _CLIENTE_COLUNAS = tuple(
     dict.fromkeys(
         [col for i in ITENS for col in i.get("campos", ())]
+        + [col for i in ITENS for col in i.get("campos_todos", ())]
         + [
             col
             for i in ITENS
@@ -236,6 +285,11 @@ def derivar(
     cliente = cliente or {}
     out: dict[str, bool] = {}
     for item in ITENS:
+        # ALL-of items (the identity item) — values only; a file never
+        # satisfies one on its own. See `_IDENTIDADE_ROTULOS`' docblock.
+        if item.get("campos_todos"):
+            out[item["key"]] = not campos_faltando(cliente, item["key"])
+            continue
         # 🔴 EITHER SATISFIES, and the `or` replaced an early `continue`.
         #
         # Until migration 097 the two ways of satisfying an item were disjoint:
@@ -269,6 +323,72 @@ def derivar(
     return out
 
 
+def campos_faltando(cliente: Optional[dict], item_key: str) -> list[str]:
+    """The ``campos_todos`` columns of one item still empty, in declared order.
+
+    `[]` for an item with no ``campos_todos`` — "nothing missing" is the
+    honest answer for a question the item does not ask. Pure, like `derivar`,
+    which reads its verdict off this same function so the tick and the
+    "which one is missing" read-out can never disagree.
+    """
+    item = next((i for i in ITENS if i["key"] == item_key), None)
+    if item is None:
+        raise KeyError(item_key)
+    cliente = cliente or {}
+    return [
+        col for col in item.get("campos_todos", ())
+        if not _preenchido(cliente.get(col))
+    ]
+
+
+def _identidade_slots(item: dict, documentos: dict[str, dict]) -> list[dict]:
+    """The upload slots (CIN, CNH) plus any legacy `rg`/`cpf` file on record.
+
+    Upload slots are always present — an empty one is what the operator
+    fills. Legacy entries appear only when a file of that type exists, and
+    are marked ``upload=False``: this item never files anything new as
+    `rg`/`cpf`, it only keeps what is already there visible.
+    """
+    slots = [
+        {
+            "tipo_documento": tipo,
+            "rotulo": _IDENTIDADE_ROTULOS.get(tipo, tipo),
+            "upload": True,
+            "documento": docs_svc.documento_resumo(documentos.get(tipo)),
+        }
+        for tipo in item.get("documentos", ())
+    ]
+    slots += [
+        {
+            "tipo_documento": tipo,
+            "rotulo": _IDENTIDADE_ROTULOS.get(tipo, tipo),
+            "upload": False,
+            "documento": docs_svc.documento_resumo(documentos[tipo]),
+        }
+        for tipo in item.get("documentos_legado", ())
+        if documentos.get(tipo)
+    ]
+    return slots
+
+
+def _extras_do_item(
+    item: dict, cliente: Optional[dict], documentos: dict[str, dict]
+) -> dict:
+    """Additive keys for an ALL-of item: its slots, what is missing, the hint.
+
+    Empty for every other item, so their line shape is unchanged.
+    """
+    if not item.get("campos_todos"):
+        return {}
+    faltando = campos_faltando(cliente, item["key"])
+    return {
+        "faltando": faltando,
+        "faltando_rotulos": [_IDENTIDADE_CAMPO_ROTULOS.get(c, c) for c in faltando],
+        "documentos": _identidade_slots(item, documentos),
+        "dica": item.get("dica"),
+    }
+
+
 def valor_de(cliente: Optional[dict], item_key: str) -> Any:
     """The value backing one item, by the same precedence the tick uses.
 
@@ -295,6 +415,7 @@ def _out(
     override: Optional[dict],
     sugestao: Optional[dict] = None,
     documento: Optional[dict] = None,
+    extras: Optional[dict] = None,
 ) -> dict:
     """One checklist line: the canonical definition + derivation + override.
 
@@ -329,6 +450,9 @@ def _out(
         "sugestao": sugestao,
         "concluido_em": override.get("concluido_em") if override else None,
         "concluido_por": override.get("concluido_por") if override else None,
+        # The identity item's slots / missing numbers / hint
+        # (`_extras_do_item`). Absent on every other item.
+        **(extras or {}),
     }
 
 
@@ -427,6 +551,7 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             by_key.get(item["key"]),
             sugestoes.get(item["key"]),
             docs_svc.documento_resumo(documentos.get(item.get("documento", ""))),
+            _extras_do_item(item, cliente, documentos),
         )
         for item in ITENS
     ]
@@ -438,7 +563,13 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     #
     # Kept OUT of `items` deliberately: anything in `items` is a requirement
     # whose absence makes a client incomplete, and the official name is not
-    # that — whether we hold the document is already asked by `rg` / `cpf`.
+    # that — whether we hold the document is already asked by `identidade`.
+    #
+    # The RG and CPF readings land here too since the `rg`/`cpf` items
+    # collapsed into `identidade` (2026-09-23): their suggestion keys are
+    # COLUMNS, and the single item that now asks for both has no one column
+    # to hang a single suggestion on. The card renders them beside the
+    # checklist like the other qualificação extras.
     extras = {
         key: valor for key, valor in sugestoes.items()
         if key not in {i["key"] for i in ITENS}
@@ -465,8 +596,8 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
 
 
 #: Items whose value can be TYPED, whether or not a document also satisfies
-#: them. `rg`/`cpf` joined this set in migration 097: they now have `campos`,
-#: so they are editable by hand AND satisfiable by an upload. The predicate is
+#: them. `rg`/`cpf` joined this set in migration 097 and, since they became
+#: the ONE `identidade` item (2026-09-23), are emitted per column below. The predicate is
 #: `"campos" in item`, not `"documento" not in item` — keying it on the ABSENCE
 #: of a document would have silently kept both out of the form.
 def valores_editaveis(cliente: Optional[dict]) -> dict:
@@ -476,11 +607,18 @@ def valores_editaveis(cliente: Optional[dict]) -> dict:
     the tick was decided from — a form seeded by a second, subtly different
     rule would show an empty "Celular" box beside a ticked "Celular" item.
     """
-    return {
+    valores = {
         item["key"]: valor_de(cliente, item["key"])
         for item in ITENS
         if item.get("campos")
     }
+    # An ALL-of item has no single value — it edits each of its columns, keyed
+    # by COLUMN (`rg`, `cpf`), which is the shape the form already reads.
+    for item in ITENS:
+        for col in item.get("campos_todos", ()):
+            valor = (cliente or {}).get(col)
+            valores[col] = valor if _preenchido(valor) else None
+    return valores
 
 
 def _nome_registro(cliente: Optional[dict]) -> Optional[str]:
@@ -561,10 +699,8 @@ def marcar(
 
     item = next(i for i in ITENS if i["key"] == item_key)
     documentos = _documentos_por_tipo(client, org_id, cliente_id)
-    derivado = derivar(
-        _cliente_row(client, org_id, cliente_id),
-        frozenset(documentos),
-    )
+    cliente = _cliente_row(client, org_id, cliente_id)
+    derivado = derivar(cliente, frozenset(documentos))
     # Same line shape the GET returns, `documento` included — the card writes
     # the PATCH response straight back into its list, so a narrower shape here
     # would blank the trash button until the next refetch.
@@ -574,6 +710,7 @@ def marcar(
         merged,
         None,
         docs_svc.documento_resumo(documentos.get(item.get("documento", ""))),
+        _extras_do_item(item, cliente, documentos),
     )
 
 
@@ -783,6 +920,7 @@ __all__ = [
     "derivar",
     "listar",
     "marcar",
+    "campos_faltando",
     "cliente_para_derivacao",
     "valor_de",
     "valores_editaveis",

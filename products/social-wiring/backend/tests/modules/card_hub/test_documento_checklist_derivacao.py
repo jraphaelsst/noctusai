@@ -62,10 +62,11 @@ class TestDerivarIsPure:
         assert out["data_nascimento"] is True
         assert out["email"] is False
 
-    def test_an_uploaded_type_satisfies_its_item(self):
-        out = svc.derivar({}, frozenset({"rg"}))
-        assert out["rg"] is True
-        assert out["cpf"] is False
+    def test_an_uploaded_identity_file_alone_satisfies_nothing(self):
+        """Since the `rg`/`cpf` collapse (2026-09-23) a file is never enough
+        on its own — only the numbers read off it (or typed) are."""
+        out = svc.derivar({}, frozenset({"rg", "cpf", "cin", "cnh"}))
+        assert out["identidade"] is False
 
     def test_whitespace_only_is_not_filled_in(self):
         """A name of "   " satisfies a NOT NULL check and satisfies nobody
@@ -89,27 +90,38 @@ class TestDerivarIsPure:
         the combination rather than protect anything.
         """
         for item in svc.ITENS:
-            de_cliente = ("campos" in item) or ("fontes" in item)
+            de_cliente = ("campos" in item) or ("fontes" in item) or ("campos_todos" in item)
             assert de_cliente or ("documento" in item), item["key"]
 
-    def test_rg_and_cpf_are_satisfied_by_the_number_or_by_the_scan(self):
-        """The combination 097 introduced, asserted in both directions.
+    def test_identidade_needs_both_the_rg_and_the_cpf(self):
+        """[Owner directive, 2026-09-23] ONE item — satisfied only when BOTH
+        numbers are on the record, and it names the one still missing."""
+        so_cpf = {"cpf": "412.954.238-98"}
+        assert svc.derivar(so_cpf, frozenset({"cnh"}))["identidade"] is False
+        assert svc.campos_faltando(so_cpf, "identidade") == ["rg"]
 
-        A CPF typed in by hand must tick without an upload — otherwise the
-        card reads "CPF pendente" over a number that is on file.
-        """
-        so_documento = svc.derivar({}, frozenset({"cpf"}))
-        assert so_documento["cpf"] is True
+        so_rg = {"rg": "52.179.965-X"}
+        assert svc.derivar(so_rg, frozenset())["identidade"] is False
+        assert svc.campos_faltando(so_rg, "identidade") == ["cpf"]
 
-        so_valor = svc.derivar({"cpf": "412.954.238-98"}, frozenset())
-        assert so_valor["cpf"] is True
+        ambos = {"rg": "52.179.965-X", "cpf": "412.954.238-98"}
+        assert svc.derivar(ambos, frozenset())["identidade"] is True
+        assert svc.campos_faltando(ambos, "identidade") == []
 
-        so_valor_rg = svc.derivar({"rg": "52.179.965-X"}, frozenset())
-        assert so_valor_rg["rg"] is True
+        assert svc.campos_faltando({"rg": "  ", "cpf": None}, "identidade") == ["rg", "cpf"]
 
-        nenhum = svc.derivar({}, frozenset())
-        assert nenhum["cpf"] is False
-        assert nenhum["rg"] is False
+    def test_a_cin_rg_equal_to_its_cpf_satisfies_identidade(self):
+        """A CIN prints the CPF as the identity number — never flagged."""
+        cin = {"rg": "448.864.938-66", "cpf": "448.864.938-66"}
+        assert svc.derivar(cin, frozenset({"cin"}))["identidade"] is True
+
+    def test_rg_and_cpf_stay_editable_by_column(self):
+        """The form reads `valores.rg` / `valores.cpf` — the collapse must not
+        drop them from the editable values."""
+        valores = svc.valores_editaveis({"rg": "52.179.965-X", "cpf": "  "})
+        assert valores["rg"] == "52.179.965-X"
+        assert valores["cpf"] is None
+        assert "identidade" not in valores
 
 
 class TestCelularEEmailReadTheRegistrationKey:
@@ -387,27 +399,24 @@ class TestFieldsTickThemselves:
         assert _items(client, cid)["nome_completo"]["concluido"] is True
 
 
-class TestDocumentsTickThemselves:
-    def test_an_uploaded_rg_ticks_rg(self, client, scoped):
-        cid = _seed(scoped)
-        scoped.set_table_data("cliente_documentos", [_doc(cid, "rg")])
-        items = _items(client, cid)
-        assert items["rg"]["concluido"] is True
-        assert items["cpf"]["concluido"] is False
+class TestIdentidadeFollowsTheNumbers:
+    def test_the_numbers_tick_it_without_any_upload(self, client, scoped):
+        cid = _seed(scoped, rg="52.179.965-X", cpf="412.954.238-98")
+        scoped.set_table_data("cliente_documentos", [])
+        assert _items(client, cid)["identidade"]["concluido"] is True
 
-    def test_a_soft_deleted_document_stops_satisfying_its_item(self, client, scoped):
-        """A document the client asked us to delete cannot go on backing a
-        requirement — otherwise the checklist claims we still hold it."""
+    def test_an_uploaded_cnh_with_no_numbers_read_does_not_tick_it(self, client, scoped):
         cid = _seed(scoped)
-        scoped.set_table_data(
-            "cliente_documentos", [_doc(cid, "rg", deleted_at="2026-08-22T00:00:00+00:00")]
-        )
-        assert _items(client, cid)["rg"]["concluido"] is False
+        scoped.set_table_data("cliente_documentos", [_doc(cid, "cnh")])
+        item = _items(client, cid)["identidade"]
+        assert item["concluido"] is False
+        assert item["faltando"] == ["rg", "cpf"]
 
-    def test_another_clients_document_does_not_tick_this_one(self, client, scoped):
+    def test_another_clients_document_is_not_listed_on_this_one(self, client, scoped):
         cid = _seed(scoped)
-        scoped.set_table_data("cliente_documentos", [_doc(str(uuid4()), "rg")])
-        assert _items(client, cid)["rg"]["concluido"] is False
+        scoped.set_table_data("cliente_documentos", [_doc(str(uuid4()), "cnh")])
+        slots = {s["tipo_documento"]: s for s in _items(client, cid)["identidade"]["documentos"]}
+        assert slots["cnh"]["documento"] is None
 
 
 class TestManualOverride:
@@ -470,8 +479,11 @@ class TestManualOverride:
         assert r.status_code == 422
 
     def test_concluidos_counts_the_effective_state(self, client, scoped):
-        cid = _seed(scoped, email="ana@example.com", genero="feminino")
-        scoped.set_table_data("cliente_documentos", [_doc(cid, "cpf")])
+        cid = _seed(
+            scoped, email="ana@example.com", genero="feminino",
+            rg="52.179.965-X", cpf="412.954.238-98",
+        )
+        scoped.set_table_data("cliente_documentos", [])
         body = client.get(
             f"/api/clientes/{cid}/documento-checklist", headers=_auth()
         ).json()

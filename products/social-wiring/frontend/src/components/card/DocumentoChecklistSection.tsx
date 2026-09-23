@@ -64,6 +64,7 @@ import {
 } from "@/types/qualificacaoCompletude";
 
 import { ChecklistItemRow } from "./ChecklistItemRow";
+import { IdentidadeChecklistRow } from "./IdentidadeChecklistRow";
 import type { DadosPessoais } from "./DadosPessoaisForm";
 import { formatarDataISO } from "@noctusai/lib/components";
 
@@ -85,6 +86,11 @@ const EXTRAS_QUALIFICACAO: Record<
   string,
   { label: string; formatar: (valor: string) => string }
 > = {
+  // The two numbers the ONE identity item needs (2026-09-23). Their readings
+  // used to ride on the `rg`/`cpf` items themselves; with those collapsed
+  // into `identidade`, the server sends them here, keyed by column.
+  rg: { label: "RG (Documento de identidade)", formatar: (v) => v },
+  cpf: { label: "CPF (Documento de identidade)", formatar: (v) => v },
   estado_civil: { label: "Estado civil", formatar: rotuloEstadoCivil },
   regime_bens: { label: "Regime de bens", formatar: rotuloRegimeBens },
   data_casamento: { label: "Data do casamento", formatar: formatarDataISO },
@@ -115,12 +121,13 @@ export interface DocumentoChecklistSectionProps {
   /** Saves ONE field — the row sends only what was edited. */
   onSaveCampo?: (patch: DadosPessoais) => void;
   savingCampo?: boolean;
-  /** Uploads the file that satisfies a DOCUMENT item (`rg` / `cpf`). */
-  onUploadDocumento?: (item: DocumentoChecklistItem, file: File) => void;
+  /** Uploads a file that satisfies a DOCUMENT item, filed under
+   *  `tipoDocumento` (the identity item's slot: `cin` / `cnh`). */
+  onUploadDocumento?: (item: DocumentoChecklistItem, file: File, tipoDocumento: string) => void;
   /** Discards that file. The row stays — the list is server-defined. */
   onRemoverDocumento?: (documentoId: string, item: DocumentoChecklistItem) => void;
   uploading?: boolean;
-  /** Opens a checklist document (`rg` / `cpf`) inline in a new tab. */
+  /** Opens a checklist document (an identity-slot file) inline in a new tab. */
   onVisualizarDocumento?: (documentoId: string) => void;
   /** Downloads a checklist document under its original filename. */
   onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
@@ -219,7 +226,21 @@ export function DocumentoChecklistSection({
         </p>
       ) : (
         <ul className="space-y-1">
-          {items.map((item) => (
+          {items.map((item) =>
+            item.documentos ? (
+              // The identity item — two upload slots under one tick.
+              <IdentidadeChecklistRow
+                key={item.key}
+                item={item}
+                onToggle={onToggle}
+                onUploadDocumento={onUploadDocumento}
+                onRemoverDocumento={onRemoverDocumento}
+                uploading={uploading}
+                onVisualizarDocumento={onVisualizarDocumento}
+                onBaixarDocumento={onBaixarDocumento}
+                testIdPrefix={testIdPrefix}
+              />
+            ) : (
             <ChecklistItemRow
               key={item.key}
               item={item}
@@ -227,14 +248,10 @@ export function DocumentoChecklistSection({
               onToggle={onToggle}
               onSaveCampo={onSaveCampo}
               savingCampo={savingCampo}
-              onUploadDocumento={onUploadDocumento}
-              onRemoverDocumento={onRemoverDocumento}
-              uploading={uploading}
-              onVisualizarDocumento={onVisualizarDocumento}
-              onBaixarDocumento={onBaixarDocumento}
               testIdPrefix={testIdPrefix}
             />
-          ))}
+            ),
+          )}
           {/* Suggestions render BELOW the rows rather than inside them: a
               machine-read value is a question, and a question folded into the
               row it is about reads as an answer already applied. */}
@@ -475,18 +492,18 @@ function SugestaoExtraida({
       {s.rotulo && (
         <p className="text-xs text-muted-foreground">Campo lido: “{s.rotulo}”</p>
       )}
-      {/* Migration 110 — an extracted RG that collapses onto the CPF already
-          on file. The server keeps it as a SUGGESTION rather than refusing it
-          outright (unlike a manual PATCH's 400): confirming it here still
-          hits the same guard on `PATCH /clientes/{id}` and would be rejected
-          there too, so this warns rather than silently applying it. */}
+      {/* An extracted RG equal to the CPF on file. Informational only: the
+          server refuses RG == CPF nowhere any more (a CIN prints the CPF as
+          its identity number), so confirming it succeeds. The server never
+          sends this for a CIN (cin-typed file or órgão IIGDR) — there the
+          equality is the document's valid state, not something to check. */}
       {s.aviso === "rg_igual_cpf" && (
         <p
-          className="mt-1 flex items-center gap-1 text-xs font-medium text-destructive"
+          className="mt-1 flex items-center gap-1 text-xs text-amber-700"
           data-testid={`${tid}-aviso-rg-cpf`}
         >
           <AlertTriangle className="h-3 w-3 shrink-0" />
-          RG idêntico ao CPF já cadastrado — confirmar vai falhar até um dos dois mudar.
+          RG idêntico ao CPF já cadastrado — confira o documento antes de confirmar.
         </p>
       )}
       <div className="mt-2 flex gap-2">

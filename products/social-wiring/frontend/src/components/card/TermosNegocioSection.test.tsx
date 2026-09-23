@@ -66,6 +66,7 @@ function termosVazios() {
     permuta_posse_marco_parcela_id: null,
     permuta_obrigacoes_entrega: null,
     itens_integrantes: null,
+    itens_integrantes_ausente_confirmado: false,
     ad_corpus: null,
     obrigacoes_vendedor: null,
     onus_quitacao: null,
@@ -192,7 +193,7 @@ describe("marco = 'parcela' exige uma parcela", () => {
 });
 
 describe("PUT — o corpo inteiro é sempre enviado", () => {
-  it("🔴 salvar envia as 16 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
+  it("🔴 salvar envia as 17 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
     const { getByTestId } = await render(aggregate());
     const { fireEvent } = await import("@testing-library/react");
 
@@ -210,6 +211,7 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
         "permuta_posse_marco_parcela_id",
         "permuta_obrigacoes_entrega",
         "itens_integrantes",
+        "itens_integrantes_ausente_confirmado",
         "ad_corpus",
         "obrigacoes_vendedor",
         "onus_quitacao",
@@ -231,6 +233,75 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
 
     const payload = mockAtualizarTermos.mock.calls[0][0];
     expect(payload.posse_prazo_dias).toBe(30);
+  });
+});
+
+describe("itens integrantes e ad corpus — respostas explícitas", () => {
+  it("🔴 sem resposta, salvar NÃO responde por acidente (ad_corpus null, nenhum não confirmado)", async () => {
+    const { getByTestId } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+
+    expect(getByTestId("termos-itens-integrantes-resposta-pendente")).toBeTruthy();
+    expect(getByTestId("termos-ad-corpus-resposta-pendente")).toBeTruthy();
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+
+    const payload = mockAtualizarTermos.mock.calls[0][0];
+    expect(payload.ad_corpus).toBeNull();
+    expect(payload.itens_integrantes).toBeNull();
+    expect(payload.itens_integrantes_ausente_confirmado).toBe(false);
+  });
+
+  it("'Nenhum item integrante' envia a confirmação e nenhum texto", async () => {
+    const { getByTestId, queryByTestId } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("termos-itens-integrantes-resposta-nenhum"));
+    expect(queryByTestId("termos-itens-integrantes")).toBeNull();
+    fireEvent.click(getByTestId("termos-ad-corpus-resposta-nao"));
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+
+    const payload = mockAtualizarTermos.mock.calls[0][0];
+    expect(payload.itens_integrantes_ausente_confirmado).toBe(true);
+    expect(payload.itens_integrantes).toBeNull();
+    expect(payload.ad_corpus).toBe(false);
+  });
+
+  it("'Sim — listar' envia o texto e bloqueia o salvar enquanto vazio", async () => {
+    const { getByTestId } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("termos-itens-integrantes-resposta-lista"));
+    expect(getByTestId("negest-termos-salvar")).toHaveProperty("disabled", true);
+    fireEvent.change(getByTestId("termos-itens-integrantes"), {
+      target: { value: "Armários planejados" },
+    });
+    fireEvent.click(getByTestId("termos-ad-corpus-resposta-sim"));
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+
+    const payload = mockAtualizarTermos.mock.calls[0][0];
+    expect(payload.itens_integrantes).toBe("Armários planejados");
+    expect(payload.itens_integrantes_ausente_confirmado).toBe(false);
+    expect(payload.ad_corpus).toBe(true);
+  });
+
+  it("uma resposta salva é relida como tal (nenhum confirmado + ad corpus não)", async () => {
+    const { getByTestId, queryByTestId } = await render(
+      aggregate({
+        termos: { ...termosVazios(), itens_integrantes_ausente_confirmado: true, ad_corpus: false },
+      }),
+    );
+    expect(
+      getByTestId("termos-itens-integrantes-resposta-nenhum").getAttribute("aria-checked"),
+    ).toBe("true");
+    expect(getByTestId("termos-ad-corpus-resposta-nao").getAttribute("aria-checked")).toBe("true");
+    expect(queryByTestId("termos-itens-integrantes-resposta-pendente")).toBeNull();
+    expect(queryByTestId("termos-ad-corpus-resposta-pendente")).toBeNull();
+  });
+
+  it("os controles carregam os ids que o 'Resolver' mira", async () => {
+    const { container } = await render(aggregate());
+    expect(container.querySelector("#termos-itens-integrantes-resposta")).not.toBeNull();
+    expect(container.querySelector("#termos-ad-corpus-resposta")).not.toBeNull();
   });
 });
 

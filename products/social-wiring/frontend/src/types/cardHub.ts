@@ -596,6 +596,8 @@ export interface ExtracaoSugestao {
    * `null`/absent for every ordinary pending suggestion.
    */
   aviso?: "rg_igual_cpf" | null;
+  /* Never set for a CIN (a cin-typed file, or órgão IIGDR): there RG == CPF
+     is the document's valid state (2026-09-23). */
 }
 
 export interface DocumentoChecklistItem {
@@ -628,8 +630,9 @@ export interface DocumentoChecklistItem {
   /**
    * The file that satisfies this item, when the item is satisfied BY a file.
    *
-   * Populated only for `rg` / `cpf` — the two items collected by uploading
-   * rather than by typing. `null` (or absent) everywhere else, which is what
+   * Populated only for an item satisfied by ONE file of its own type. No
+   * item is today — the identity item names its files per slot instead
+   * (`documentos`). `null` (or absent) everywhere else, which is what
    * the row keys the trash icon off: an item with no file has nothing to
    * discard, and a text item can never have one.
    *
@@ -639,6 +642,29 @@ export interface DocumentoChecklistItem {
    * simply does not appear until the server starts sending the file.
    */
   documento?: ChecklistDocumentoRef | null;
+  /**
+   * The identity item only (`identidade`, 2026-09-23) — its upload slots:
+   * CIN and CNH (`upload: true`, always present), plus any legacy file
+   * already filed as `rg`/`cpf` (`upload: false`, read-only). Absent on
+   * every other item.
+   */
+  documentos?: IdentidadeSlot[];
+  /** The identity item only — which of its numbers (`rg`, `cpf`) are still
+   *  missing, and their labels. Empty when satisfied. */
+  faltando?: string[];
+  faltando_rotulos?: string[];
+  /** The identity item only — "only one of CIN/CNH is needed" hint. */
+  dica?: string | null;
+}
+
+/** One slot of the identity item (`DocumentoChecklistItem.documentos`). */
+export interface IdentidadeSlot {
+  /** The `tipo_documento` a file in this slot is filed under. */
+  tipo_documento: string;
+  rotulo: string;
+  /** `false` for a legacy `rg`/`cpf` file: shown, never a new-upload target. */
+  upload: boolean;
+  documento: ChecklistDocumentoRef | null;
 }
 
 /**
@@ -714,8 +740,8 @@ export interface DocumentoChecklist {
    */
   nome_registro?: string | null;
   /**
-   * The current value behind each TYPED item (`rg`/`cpf` are absent — they are
-   * satisfied by uploading, not typing).
+   * The current value behind each TYPED item, plus `rg` / `cpf` by COLUMN —
+   * the two numbers the identity item needs.
    *
    * Rides on the checklist response rather than a second endpoint: the card
    * already fetches this once, and the form that edits these values sits
