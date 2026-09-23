@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3, Plug, Wallet, Briefcase } from "lucide-react";
+import { LayoutDashboard, Users, Home, Palette, Boxes, Building2, KanbanSquare, Palette as PaletteIcon, CalendarDays, BarChart3, Plug, Wallet, Briefcase, FileText, Package } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -26,6 +26,8 @@ const Distribuicao = lazy(() => import("@/pages/Distribuicao"));
 const Integracoes = lazy(() => import("@/pages/Integracoes"));
 const Financeiro = lazy(() => import("@/pages/Financeiro"));
 const Comercial = lazy(() => import("@/pages/Comercial"));
+const Orcamentos = lazy(() => import("@/pages/Orcamentos"));
+const ProdutosServicos = lazy(() => import("@/pages/ProdutosServicos"));
 const Custos = lazy(() => import("@/pages/Custos"));
 // PUBLIC route — the agency's client, no noc account. Token is the auth.
 const AprovacaoPublica = lazy(() => import("@/pages/AprovacaoPublica"));
@@ -47,6 +49,8 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Comercial", href: "/comercial", icon: Briefcase, route: "comercial" },
       { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
+      { name: "Orçamentos", href: "/orcamentos", icon: FileText, route: "orcamentos" },
+      { name: "Produtos e Serviços", href: "/produtos-servicos", icon: Package, route: "produtos_servicos" },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
       { name: "Marca", href: "/marca", icon: PaletteIcon, route: "marca" },
       { name: "Calendário", href: "/calendario", icon: CalendarDays, route: "calendario" },
@@ -69,6 +73,8 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Comercial", href: "/comercial", icon: Briefcase },
       { name: "Clientes", href: "/clientes", icon: Building2 },
+      { name: "Orçamentos", href: "/orcamentos", icon: FileText },
+      { name: "Produtos e Serviços", href: "/produtos-servicos", icon: Package },
       { name: "Esteira", href: "/esteira", icon: KanbanSquare },
       { name: "Marca", href: "/marca", icon: PaletteIcon },
       { name: "Calendário", href: "/calendario", icon: CalendarDays },
@@ -95,6 +101,8 @@ export default createProductApp({
     { path: "/", component: Dashboard },
     { path: "/comercial", component: Comercial },
     { path: "/clientes", component: Clientes },
+    { path: "/orcamentos", component: Orcamentos },
+    { path: "/produtos-servicos", component: ProdutosServicos },
     { path: "/esteira", component: Esteira },
     { path: "/marca", component: Marca },
     { path: "/calendario", component: Calendario },

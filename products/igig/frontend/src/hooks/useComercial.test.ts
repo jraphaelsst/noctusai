@@ -1,12 +1,13 @@
 /**
  * Tests for `useComercial` — the refetch-unmount + key-change-flicker
  * regression (fleet audit, 2026-08-31). `useLeads` is keyed on `status`
- * (Category B); `useOrcamentos` is Category A only (static key).
+ * (Category B); `useOrcamentos` (now `@/hooks/useOrcamentos`) is keyed on its filters too.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
 vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet } }));
+vi.mock("@noctusai/lib/components", () => ({ createPipelineHooks: vi.fn(() => ({})) }));
 
 let queryState: Record<string, unknown> = {};
 const { capturedOpts } = vi.hoisted(() => ({ capturedOpts: [] as Record<string, unknown>[] }));
@@ -21,7 +22,8 @@ vi.mock("@tanstack/react-query", () => {
   return { useQuery, useMutation, useQueryClient };
 });
 
-import { useLeads, useOrcamentos } from "./useComercial";
+import { useLeads } from "./useComercial";
+import { useOrcamentos } from "./useOrcamentos";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -51,8 +53,8 @@ describe("useLeads — loading formula + placeholderData", () => {
   });
 });
 
-describe("useOrcamentos — loading formula", () => {
-  it("REGRESSION: does not report loading mid-background-refetch once orçamentos exist", () => {
+describe("useOrcamentos (moved to @/hooks/useOrcamentos) — loading formula", () => {
+  it("REGRESSION: never shows a skeleton mid-background-refetch once orçamentos exist", () => {
     queryState = {
       data: [{ id: "o1", titulo: "Social media mensal" }],
       isPending: false,
@@ -60,8 +62,16 @@ describe("useOrcamentos — loading formula", () => {
       isError: false,
       error: null,
     };
-    const { loading, orcamentos } = useOrcamentos();
-    expect(loading).toBe(false);
+    const { showSkeleton, isRefreshing, orcamentos } = useOrcamentos({ aba: "ativos" });
+    expect(showSkeleton).toBe(false);
+    expect(isRefreshing).toBe(true);
     expect(orcamentos).toHaveLength(1);
+  });
+
+  it("keeps placeholderData wired so switching tabs does not blank the list", () => {
+    useOrcamentos({ aba: "aceitos" });
+    const placeholderData = capturedOpts[0]?.placeholderData as (prev: unknown) => unknown;
+    const previous: unknown[] = [];
+    expect(placeholderData(previous)).toBe(previous);
   });
 });

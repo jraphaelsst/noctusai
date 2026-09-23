@@ -1,19 +1,21 @@
 /**
- * CRM, orçamentos e contratos — Módulo 1.
+ * Comercial — leads + the negócio funnel card's own writes.
  *
- * Backend mirror: `app/routers/comercial_router.py`.
+ * Backend mirror: `app/routers/comercial_router.py` (leads) and
+ * `app/routers/comercial_funil_router.py` (negócios). The board itself (query,
+ * optimistic move, stage editor) is the seed pipeline organ declared in
+ * `@/lib/pipelines`; orçamentos live in `@/hooks/useOrcamentos`.
  *
- * `useEstimar` is a MUTATION rather than a query even though it only reads:
- * it is an explicit "price this scope" action driven by a form, and caching it
- * by scope would surface a stale price after someone edits the team's rates.
+ * The legacy calculator / orçamento / contrato endpoints of this module
+ * (`/api/comercial/estimar`, `/api/comercial/orcamentos*`,
+ * `/api/comercial/contratos/gerar`) are GONE (wave-2 contract, Slice A) — the
+ * orçamento lifecycle is `/api/orcamentos/*` now.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api } from "@/lib/api";
-
-export type FormatoEscopo = "feed" | "carrossel" | "story" | "reels" | "video" | "artigo";
-export const FORMATOS_ESCOPO: FormatoEscopo[] =
-  ["feed", "carrossel", "story", "reels", "video", "artigo"];
+import { api, unwrapData } from "@/lib/api";
+import { COMERCIAL_BOARD_KEY } from "@/lib/pipelines";
+import type { AssistenteAcao, LeadManualInput, Negocio } from "@/types/crm";
 
 export interface Lead {
   id: string;
@@ -22,118 +24,115 @@ export interface Lead {
   telefone: string | null;
   empresa: string | null;
   nicho: string | null;
+  canais_atuais?: string | null;
   dores: string | null;
   orcamento_disponivel: number | null;
+  origem?: string | null;
+  como_conheceu?: string | null;
+  instagram?: string | null;
+  especificacoes?: Record<string, unknown>;
+  observacoes?: string | null;
   status: "novo" | "qualificado" | "descartado" | "convertido";
   cliente_id: string | null;
+  created_at?: string | null;
 }
 
-export interface ItemEscopo {
-  formato: FormatoEscopo;
-  quantidade: number;
-  horas_unitarias?: number;
-}
-
-export interface Estimativa {
-  horas: number;
-  custo: number;
-  preco_sugerido: number;
-  custo_hora_medio: number;
-  margem_alvo: number;
-  /** Non-empty ⇒ the suggestion is unreliable. Must be shown before quoting. */
-  alertas: string[];
-}
-
-export interface Orcamento {
-  id: string;
-  titulo: string;
-  escopo: ItemEscopo[];
-  horas_estimadas: number;
-  custo_estimado: number;
-  preco_sugerido: number;
-  preco_final: number | null;
-  margem_alvo: number;
-  status: string;
-}
-
-export interface ContratoDocumento {
-  contrato_id: string;
-  documento_key: string;
-  provedor: string;
-  link_assinatura: string;
-  external_id: string;
-  /** True ⇒ no signing vendor was contacted. Must be surfaced. */
-  dry_run: boolean;
-}
+export type LeadPatch = Partial<
+  Pick<Lead, "nome" | "email" | "telefone" | "empresa" | "instagram" | "nicho" | "observacoes">
+>;
 
 export const COMERCIAL_QUERY_KEY = ["igig", "comercial"] as const;
 
 export function useLeads(status?: string) {
   const query = useQuery({
     queryKey: [...COMERCIAL_QUERY_KEY, "leads", status ?? ""],
-    queryFn: () => api.get<Lead[]>("/api/comercial/leads", status ? { status_filtro: status } : {}),
+    queryFn: () =>
+      api.get("/api/comercial/leads", status ? { status_filtro: status } : {}).then(unwrapData<Lead[]>),
     // `status` rides in the key — switching the filter is a new key. Keep
     // the previous list on screen instead of blanking to a skeleton.
     placeholderData: (prev) => prev,
   });
-  return { ...query, leads: query.data ?? [], loading: query.isPending && !query.data };
+  return {
+    ...query,
+    leads: query.data ?? [],
+    loading: query.isPending && !query.data,
+    refreshing: query.isFetching && !!query.data,
+  };
 }
 
-export function useConverterLead() {
+function useInvalidateFunil() {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (leadId: string) => api.post<Lead>(`/api/comercial/leads/${leadId}/converter`, {}),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: COMERCIAL_QUERY_KEY });
-      // A converted lead becomes a cliente — that list is now stale too.
-      qc.invalidateQueries({ queryKey: ["igig", "clientes"] });
-    },
-  });
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: [COMERCIAL_BOARD_KEY] }),
+      qc.invalidateQueries({ queryKey: COMERCIAL_QUERY_KEY }),
+    ]);
 }
 
-export function useEstimar() {
-  return useMutation({
-    mutationFn: ({ itens, margem_alvo }: { itens: ItemEscopo[]; margem_alvo: number }) =>
-      api.post<Estimativa>(`/api/comercial/estimar?margem_alvo=${margem_alvo}`, itens),
-  });
-}
-
-export function useOrcamentos() {
-  const query = useQuery({
-    queryKey: [...COMERCIAL_QUERY_KEY, "orcamentos"],
-    queryFn: () => api.get<Orcamento[]>("/api/comercial/orcamentos"),
-  });
-  return { ...query, orcamentos: query.data ?? [], loading: query.isPending && !query.data };
-}
-
-export function useCriarOrcamento() {
-  const qc = useQueryClient();
+/** "Novo lead" — a manual lead lands on the funnel's entry stage, on top. */
+export function useCriarNegocio() {
+  const invalidate = useInvalidateFunil();
   return useMutation({
     mutationFn: (payload: {
-      titulo: string; itens: ItemEscopo[]; margem_alvo: number;
-      lead_id?: string; cliente_id?: string;
-    }) => api.post<Orcamento>("/api/comercial/orcamentos", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: COMERCIAL_QUERY_KEY }),
+      lead?: LeadManualInput;
+      lead_id?: string;
+      titulo?: string;
+      valor_estimado?: number;
+      responsavel_id?: string;
+    }) => api.post("/api/comercial/negocios", payload).then(unwrapData<Negocio>),
+    onSuccess: invalidate,
   });
 }
 
-export function useDefinirPrecoFinal() {
-  const qc = useQueryClient();
+export function useAtualizarNegocio() {
+  const invalidate = useInvalidateFunil();
   return useMutation({
-    mutationFn: ({ id, preco_final }: { id: string; preco_final: number }) =>
-      api.post<Orcamento>(`/api/comercial/orcamentos/${id}/preco`, { preco_final }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: COMERCIAL_QUERY_KEY }),
+    mutationFn: ({
+      id,
+      ...payload
+    }: { id: string; titulo?: string; valor_estimado?: number | null; responsavel_id?: string | null }) =>
+      api.patch(`/api/comercial/negocios/${encodeURIComponent(id)}`, payload).then(unwrapData<Negocio>),
+    onSuccess: invalidate,
   });
 }
 
-export function useGerarContrato() {
-  const qc = useQueryClient();
+/** "Marcar como perdido" — archive with a REQUIRED reason (loss statistics). */
+export function usePerderNegocio() {
+  const invalidate = useInvalidateFunil();
   return useMutation({
-    mutationFn: (payload: {
-      cliente_id: string; valor_mensal: number; titulo?: string;
-      posts_por_mes?: number; vigencia?: string; clausulas?: string[];
-      orcamento_id?: string;
-    }) => api.post<ContratoDocumento>("/api/comercial/contratos/gerar", payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: COMERCIAL_QUERY_KEY }),
+    mutationFn: ({ id, motivo }: { id: string; motivo: string }) =>
+      api.post(`/api/comercial/negocios/${encodeURIComponent(id)}/perder`, { motivo }).then(unwrapData<Negocio>),
+    onSuccess: invalidate,
+  });
+}
+
+/**
+ * Edit the lead's contact data from the negócio card's "Lead" subpage.
+ *
+ * `contract-deviation`: the wave-2 contract names "Lead (dados editáveis)"
+ * but lists no lead-write endpoint; this targets `PATCH /api/comercial/leads/{id}`
+ * (same router as the lead list) — reported to the tech-lead for a BE slice.
+ */
+export function useAtualizarLead() {
+  const invalidate = useInvalidateFunil();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: LeadPatch & { id: string }) =>
+      api.patch(`/api/comercial/leads/${encodeURIComponent(id)}`, payload).then(unwrapData<Lead>),
+    onSuccess: invalidate,
+  });
+}
+
+/** Assistente IA (Slice E2) — Claude via the seed LLM seam. */
+export function useAssistenteNegocio() {
+  return useMutation({
+    mutationFn: ({
+      negocioId,
+      acao,
+      canal,
+    }: { negocioId: string; acao: AssistenteAcao; canal?: "email" | "whatsapp" }) =>
+      api.post(
+        `/api/comercial/negocios/${encodeURIComponent(negocioId)}/assistente`,
+        canal ? { acao, canal } : { acao },
+      ).then(unwrapData<{ texto: string }>),
   });
 }
