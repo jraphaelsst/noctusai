@@ -238,6 +238,12 @@ export function useCertidaoConsulta(id?: string) {
       if (data && (data.status === "pendente" || data.status === "processando")) {
         return 3000; // Poll every 3s for real-time progress updates
       }
+      // A manual upload onto an already-concluded consulta reads its PDF in a
+      // background task (migration 155) — the consulta stays `concluida` while
+      // that one resultado is `processando`, so poll on the resultado too.
+      if (data?.resultados?.some((r) => r.status === "pendente" || r.status === "processando")) {
+        return 3000;
+      }
       return false;
     },
   });
