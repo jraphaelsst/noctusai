@@ -633,6 +633,68 @@ END;
     )
 
 
+def _self_provisioned_insert_check_probe(
+    *,
+    probe_id: str,
+    product: str,
+    schema: str,
+    table: str,
+    guard_name: str,
+    declare_extra: str,
+    setup_sql: str,
+    insert_sql: str,
+    guard_fragment: str,
+    rationale: str,
+    migrations: tuple[str, ...],
+) -> GuardProbe:
+    """Self-provisioning sibling of `_insert_check_probe`: for a CHECK whose
+    fixture needs MORE than one borrowed row (an FK chain this probe must
+    build itself — see `imovel_dados`'s `(org_id, codigo)` FK to `imoveis`,
+    which itself FKs `imovel_registry`), `setup_sql` INSERTs whatever the
+    chain needs, inside the same rolled-back transaction, before the ONE
+    INSERT under test (`insert_sql`) runs against `table`. The only
+    remaining external dependency is an existing `org_id` to borrow — same
+    `no_fixture` shape `_self_provisioned_frozen_column_probe` uses, for
+    the identical reason (a genuinely org-less database is the only case
+    this cannot self-provision past).
+    """
+    guard_fragment_lit = _sql_lit(guard_fragment)
+    sql = _do_block(f"""
+DECLARE
+  v_org_id uuid;
+{declare_extra}
+BEGIN
+  SELECT org_id INTO v_org_id FROM {schema}.{table} LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no existing {schema}.{table} row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+{setup_sql}
+  BEGIN
+    {insert_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: INSERT into {schema}.{table} succeeded — the constraint under test did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product=product,
+        schema=schema,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=migrations,
+        rationale=rationale,
+        sql=sql,
+    )
+
+
 # A fresh, collision-proof "código" value for the two probes that need one
 # (`codigo` itself, and `imovel_documento_id`'s FK chain, which also needs
 # a `codigo` — see the module docstring). Hyphens stripped only for
@@ -830,6 +892,87 @@ _RUIDO_SHAPE_PROBE = GuardProbe(
         fixture_description=f"no row in {_SW_SCHEMA}.{_MATRICULA_TABLE} to borrow an org_id from",
         guard_fragment='constraint "matricula_extracoes_ruido_shape"',
     ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Registry — imovel_dados título/ônus "pareado" CHECKs (migration 166,
+# replacing 115's confirmado_em-paired ones — see that migration's header
+# for why: 154's D1 machine-pending write for these two fields was
+# refused by the OLD CHECK, a live prod bug (E2E-IMV-LIVRE), fixed by
+# re-keying onto `_origem`). Each probe proves the RE-KEYED constraint
+# still refuses a genuinely malformed row (value present, `_origem` NULL)
+# — the fix must not have accidentally dropped enforcement entirely.
+# ---------------------------------------------------------------------------
+
+_IMOVEL_DADOS_TABLE_166 = "imovel_dados"
+_IMOVEL_DADOS_MIGRATIONS = (
+    "075_imovel_dados_cartorio.sql",
+    "115_matricula_ato_detalhes.sql",
+    "166_titulo_onus_confirmado_check_rekey.sql",
+)
+#: The self-provisioning chain `imovel_dados(org_id, codigo)` needs — its
+#: own FK to `imoveis(org_id, codigo)`, which FKs `imovel_registry(org_id,
+#: codigo_canonical)` — identical to the `imovel_documento_id` matricula
+#: probe's first two steps (verified there to carry no INSERT trigger and
+#: no unaccounted NOT-NULL column). Runs INSIDE the generic helper's outer
+#: `BEGIN` block (after the org_id borrow it already performs), exactly
+#: like every `_self_provisioned_frozen_column_probe.setup_sql` — a plain
+#: statement sequence, no nested DECLARE/BEGIN (`v_codigo` must stay in
+#: the OUTER scope so `insert_sql`, which runs after this, can still see it).
+_IMOVEL_DADOS_DECLARE_EXTRA = (
+    "  v_codigo text := 'NOC-PROBE-' || replace(gen_random_uuid()::text, '-', '');"
+)
+_IMOVEL_DADOS_SETUP_SQL = f"""
+  INSERT INTO {_SW_SCHEMA}.imovel_registry (org_id, codigo_canonical) VALUES (v_org_id, v_codigo);
+  INSERT INTO {_SW_SCHEMA}.imoveis (org_id, codigo) VALUES (v_org_id, v_codigo);
+"""
+
+_TITULO_PAREADO_PROBE = _self_provisioned_insert_check_probe(
+    probe_id="imovel_dados.titulo_aquisitivo_texto_pareado.shape_check",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    table=_IMOVEL_DADOS_TABLE_166,
+    guard_name="imovel_dados_titulo_aquisitivo_texto_pareado",
+    declare_extra=_IMOVEL_DADOS_DECLARE_EXTRA,
+    setup_sql=_IMOVEL_DADOS_SETUP_SQL,
+    insert_sql=(
+        f"INSERT INTO {_SW_SCHEMA}.{_IMOVEL_DADOS_TABLE_166} "
+        "(org_id, codigo, titulo_aquisitivo_texto, titulo_aquisitivo_texto_origem) "
+        "VALUES (v_org_id, v_codigo, 'NOC-PROBE-titulo-sem-origem', NULL);"
+    ),
+    guard_fragment='constraint "imovel_dados_titulo_aquisitivo_texto_pareado"',
+    rationale=(
+        "Migration 166 re-keyed this CHECK off `titulo_aquisitivo_texto_origem` "
+        "(replacing 115's `_confirmado_em`-paired one, which refused 154's D1 "
+        "machine-pending write — the live prod bug E2E-IMV-LIVRE hit) — this "
+        "proves the re-keyed constraint still refuses a genuinely malformed "
+        "row (a value with no `_origem` at all, machine-pending or "
+        "otherwise), so relaxing the constraint for the pending case did not "
+        "accidentally drop enforcement entirely."
+    ),
+    migrations=_IMOVEL_DADOS_MIGRATIONS,
+)
+
+_ONUS_CREDOR_PAREADO_PROBE = _self_provisioned_insert_check_probe(
+    probe_id="imovel_dados.onus_credor_pareado.shape_check",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    table=_IMOVEL_DADOS_TABLE_166,
+    guard_name="imovel_dados_onus_credor_pareado",
+    declare_extra=_IMOVEL_DADOS_DECLARE_EXTRA,
+    setup_sql=_IMOVEL_DADOS_SETUP_SQL,
+    insert_sql=(
+        f"INSERT INTO {_SW_SCHEMA}.{_IMOVEL_DADOS_TABLE_166} "
+        "(org_id, codigo, onus_credor, onus_credor_origem) "
+        "VALUES (v_org_id, v_codigo, 'NOC-PROBE-credor-sem-origem', NULL);"
+    ),
+    guard_fragment='constraint "imovel_dados_onus_credor_pareado"',
+    rationale=(
+        "Same reasoning and shape as `imovel_dados.titulo_aquisitivo_texto_"
+        "pareado.shape_check`, for `onus_credor`."
+    ),
+    migrations=_IMOVEL_DADOS_MIGRATIONS,
 )
 
 
@@ -2360,6 +2503,8 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
+    _TITULO_PAREADO_PROBE,
+    _ONUS_CREDOR_PAREADO_PROBE,
     _ACAO_CHECK_PROBE,
     *_ABERTURA_PROBES,
     _ABERTURA_UNIQUE_PROBE,

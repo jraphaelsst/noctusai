@@ -18,10 +18,27 @@ acts the operator already chose in 109:
   override (a typed date, or an explicit "não consta transferência
   registrada" statement) answers it instead.
 
-A suggestion is recomputed on every read and is never stored. What IS stored
-is the operator's confirmation (`imovel_dados.titulo_aquisitivo_texto` /
-`onus_credor`, migration 115) — the confirmed wording may differ from the
-suggestion, and the confirmation is what the contract uses.
+🔴 UPDATED FOR MIGRATION 154's D1 WRITE POLICY (2026-09-23, migration 166).
+`obter_titulo`/`obter_onus_credor` below still recompute a live SUGGESTION on
+every read (`sugestao`, from the acts) and never store it directly — but
+`imovel_dados.titulo_aquisitivo_texto` / `onus_credor` are no longer
+confirmed-only, as 115 originally shipped them. Two paths write the stored
+value now, exactly like every other contract-feeding `imovel_dados` field:
+`preenchimento_service.preencher_sincrono` (154) machine-fills it from the
+confirmed título act's instrumento — MACHINE-PENDING (`_origem` set,
+`_confirmado_em` NULL, D2) until a human validates it — and
+`confirmar_titulo`/`confirmar_onus_credor` below is the human's own edit,
+always stamped `origem='manual'` + the confirmation together
+(`_patch_confirmacao`). `imovel_dados_titulo_aquisitivo_texto_pareado` /
+`imovel_dados_onus_credor_pareado` (migration 166, replacing 115's
+confirmed-only CHECKs) enforce that the value and `_origem` always travel
+together and a confirmation timestamp never appears without a value — NOT
+that the value is always confirmed. The CONTRACT still only accepts the
+CONFIRMED wording (`contrato_gerador.validacao_extracao`'s
+`CAMPOS_IMOVEL` — a machine-pending phrase alone does not satisfy the
+readiness gate), so "the confirmation is what the contract uses" remains
+true; what changed is that a stored, unconfirmed suggestion is now a
+legal, expected intermediate state instead of a database contradiction.
 
 🔴 OFFICE RULE — CERTIDÕES OF THE PREVIOUS OWNERS
 ------------------------------------------------

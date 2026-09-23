@@ -101,6 +101,49 @@ class TestFillFromATranscription:
         assert _conflitos(scoped) == []
 
     @pytest.mark.asyncio
+    async def test_titulo_aquisitivo_texto_fills_machine_pending_when_the_act_has_an_instrumento(
+        self, client, scoped
+    ):
+        """🔴 The missing coverage migration 166 was written to close: `ATOS`
+        above never gives the título act (R-4) enough for `seed.
+        frase_titulo_aquisitivo` to return non-`None` (no instrumento —
+        tipo/data/tabelionato/livro/folhas — anywhere in its text), so
+        `preencher_sincrono`'s `aplicar("titulo_aquisitivo_texto", frase)`
+        call (line ~297) never actually fired in this suite before now —
+        exactly the gap that let migration 115's stale, confirmed-only
+        `imovel_dados_titulo_aquisitivo_texto_confirmado` CHECK ship
+        unnoticed against 154's D1 machine-pending write policy until a
+        real prod imóvel (E2E-IMV-LIVRE) hit it. This fixture's R-4 line
+        DOES carry a full instrumento, so the write branch fires here."""
+        eid = str(uuid4())
+        texto = TEXTO.replace(
+            "R-4/45.678 - Em 1 de junho de 2015. VENDA E COMPRA. Transmitente: Beltrano "
+            "Modelo; adquirente: Cicrana Amostra.\n",
+            "R-4/45.678 - Em 1 de junho de 2015. COMPRA E VENDA por Escritura Pública "
+            "lavrada em 20 de maio de 2015 no 2º Tabelionato de Notas de Cotia, "
+            "Livro 300, fls. 45. Transmitente: Beltrano Modelo; adquirente: "
+            "Cicrana Amostra.\n",
+        )
+        assert texto != TEXTO  # the .replace() actually matched
+        seed(scoped, registry=[registry_row()], extracoes=[extracao_row(eid, texto=texto)])
+
+        resumo = await preench.preencher_imovel(scoped, ORG_ID, eid)
+
+        assert resumo["status"] == "ok"
+        row = _dados(scoped)
+        # Machine-pending — origem set, confirmado_em NULL (D2) — exactly the
+        # state migration 115's confirmado_em-paired CHECK used to refuse and
+        # 166's origem-paired CHECK now explicitly permits.
+        assert row["titulo_aquisitivo_texto"] == (
+            "por Escritura Pública lavrada em 20/05/2015 no 2º Tabelionato de "
+            "Notas de Cotia, Livro 300, fls. 45, registrada sob o R-4"
+        )
+        assert row["titulo_aquisitivo_texto_origem"] == "matricula"
+        assert row["titulo_aquisitivo_texto_confirmado_por"] is None
+        assert row["titulo_aquisitivo_texto_confirmado_em"] is None
+        assert _conflitos(scoped) == []
+
+    @pytest.mark.asyncio
     async def test_a_second_run_changes_nothing(self, client, scoped):
         eid = str(uuid4())
         seed(scoped, registry=[registry_row()], extracoes=[extracao_row(eid, texto=TEXTO)])
