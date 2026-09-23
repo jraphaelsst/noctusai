@@ -28,12 +28,13 @@ WHAT THESE PIN
    (`imovel.endereco_registro_texto` faltando) rather than falling back to
    the CRM's público endereço.
 7. The INSTRUMENT'S OWN TITLE (`imovel.titulo_curto`, `modelo_texto.
-   TEMPLATE`'s opening line) carries `empreendimento` when present, the
-   SAME registry-derived address the posse clauses print when it is not —
-   NEVER the CRM's público street in either branch — and refuses when
-   neither `empreendimento` nor a registry address is available. This is
-   the branch `ONE7515` never exercised (it happens to carry an
-   `empreendimento`): every OTHER property falls through to it.
+   TEMPLATE`'s opening line) carries `empreendimento` AND the SAME
+   registry-derived address the posse clauses print — NEVER just one or
+   the other, and NEVER the CRM's público street in either segment — and
+   refuses when neither `empreendimento` nor a registry address is
+   available. This is the branch `ONE7515` never exercised (it happens to
+   carry an `empreendimento`): every OTHER property falls through to the
+   address-only shape.
 
 All names, streets and matrícula numbers are invented — nothing here is
 copied from a real CRM or matrícula.
@@ -170,15 +171,35 @@ class TestTituloCurtoUsaEnderecoDoRegistro:
     falls back to the CRM's público `logradouro`/`numero` whenever there is
     no `empreendimento`. `base_v1()` always carries one ("Edifício
     Exemplo"), so every OTHER test in this module exercises only the SAFE
-    branch — these pin the branch that was untested."""
+    branch — these pin the branch that was untested.
 
-    def test_com_empreendimento_o_titulo_usa_o_empreendimento_nao_a_rua(self):
+    [titulo-empreendimento-omitido] `empreendimento` present must carry the
+    REGISTRY address too, never replace it — reference contract 08
+    (RESIDENCIAL EUROVILLE) reads "… – RESIDENCIAL EUROVILLE – ALAMEDA
+    ALEMANHA, Nº 535 – …", not "… – RESIDENCIAL EUROVILLE – …" alone."""
+
+    def test_com_empreendimento_o_titulo_usa_o_empreendimento_e_o_endereco(self):
         d = _com_matricula_de_registro()  # base_v1() keeps "Edifício Exemplo"
         assert d.imovel.empreendimento == "Edifício Exemplo"
 
         ctx = _contexto(d)
-        assert ctx["imovel"]["titulo_curto"] == "Edifício Exemplo – Apto 11"
+        assert ctx["imovel"]["titulo_curto"] == (
+            "Edifício Exemplo – Apto 11 – Alameda Fictícia, nº 535"
+        )
         assert "Rua Fictícia" not in ctx["imovel"]["titulo_curto"]
+
+    def test_com_empreendimento_sem_complemento_omite_o_segmento_limpo(self):
+        """No apto/unit segment (a loteamento, not a condomínio building) —
+        no double dash, no dangling separator: just EMPREENDIMENTO – rua."""
+        d = _com_matricula_de_registro()
+        d = replace(d, imovel=replace(d.imovel, empreendimento="Residencial Euroville"))
+        d = replace(d, imovel=replace(d.imovel, endereco=replace(d.imovel.endereco, complemento=None)))
+
+        ctx = _contexto(d)
+        assert ctx["imovel"]["titulo_curto"] == (
+            "Residencial Euroville – Alameda Fictícia, nº 535"
+        )
+        assert " –  –" not in ctx["imovel"]["titulo_curto"]
 
     def test_sem_empreendimento_o_titulo_usa_o_endereco_do_registro(self):
         d = _com_matricula_de_registro()

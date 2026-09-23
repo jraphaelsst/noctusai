@@ -39,7 +39,7 @@ TEXTO_TITULO = (
 )
 
 FRASE_ESPERADA = (
-    "adquirido por Escritura Pública de Venda e Compra lavrada em 12/03/2020 no 2º "
+    "por Escritura Pública de Venda e Compra lavrada em 12/03/2020 no 2º "
     "Tabelionato de Notas de Cotia, Livro 100, fls. 20, registrada sob o R-1"
 )
 

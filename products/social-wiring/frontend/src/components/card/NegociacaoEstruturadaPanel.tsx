@@ -156,6 +156,26 @@ function lerValorDigitado(entrada: string): string {
   return limpo;
 }
 
+/** DISPLAY-ONLY preview of "X% do valor do imóvel" — mirrors `contexto.py`'s
+ *  `d.valor_negociado * it.valor / 100` (the intermediário's own base) so an
+ *  operator can see the amount BEFORE saving, never composed into a stored
+ *  value. `null` when either side isn't a parseable number yet (mid-typing,
+ *  or no negotiated value on the card). Found live 2026-09-22: this same
+ *  "Valor (%)" field is ALSO used, unlabelled, on the "Divisão da comissão"
+ *  panel — where the base is the COMMISSION, not the property price — and a
+ *  contract once stated R$ 1.377.500,00 of commission instead of
+ *  R$ 87.000,00 because the two panels share the word "%" with different
+ *  bases. */
+function exibirPercentualDoValor(
+  valorNegociado: string | null | undefined,
+  pctTexto: string,
+): string | null {
+  const base = Number(valorNegociado);
+  const pct = Number(lerValorDigitado(pctTexto));
+  if (!Number.isFinite(base) || !Number.isFinite(pct) || pctTexto.trim() === "") return null;
+  return exibirMoeda(String((base * pct) / 100));
+}
+
 /** Pure STRING pattern — never floats a decimal to compare it to zero. */
 function isZeroDecimal(v: string | null | undefined): boolean {
   if (v == null || v.trim() === "") return true;
@@ -235,6 +255,7 @@ export default function NegociacaoEstruturadaPanel({ clienteId }: Props) {
         clienteId={clienteId}
         intermediarios={data.intermediarios}
         favorecidos={data.favorecidos}
+        valorNegociado={data.valor_negociado}
       />
       <PosseSection clienteId={clienteId} data={data} />
       <TermosNegocioSection clienteId={clienteId} data={data} />
@@ -1214,10 +1235,12 @@ function IntermediariosSection({
   clienteId,
   intermediarios,
   favorecidos,
+  valorNegociado,
 }: {
   clienteId: string;
   intermediarios: NegociacaoIntermediario[];
   favorecidos: NegociacaoFavorecido[];
+  valorNegociado: string;
 }) {
   const criar = useCreateIntermediario(clienteId);
   const atualizar = useUpdateIntermediario(clienteId);
@@ -1318,6 +1341,7 @@ function IntermediariosSection({
         }}
         intermediario={editando}
         favorecidos={favorecidos}
+        valorNegociado={valorNegociado}
         saving={criar.isPending || atualizar.isPending}
         error={formError}
         onSubmit={(payload) => {
@@ -1425,6 +1449,7 @@ function IntermediarioFormDialog({
   onOpenChange,
   intermediario,
   favorecidos,
+  valorNegociado,
   onSubmit,
   saving,
   error,
@@ -1433,6 +1458,7 @@ function IntermediarioFormDialog({
   onOpenChange: (v: boolean) => void;
   intermediario: NegociacaoIntermediario | null;
   favorecidos: NegociacaoFavorecido[];
+  valorNegociado: string;
   onSubmit: (payload: IntermediarioCreate) => void;
   saving: boolean;
   error: string | null;
@@ -1528,7 +1554,9 @@ function IntermediarioFormDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="int-valor">
-                {draft.tipo === "percentual" ? "Valor (%)" : "Valor (R$)"}
+                {draft.tipo === "percentual"
+                  ? "Valor (%) — do valor do imóvel"
+                  : "Valor (R$)"}
               </Label>
               <Input
                 id="int-valor"
@@ -1537,6 +1565,20 @@ function IntermediarioFormDialog({
                   setDraft((d) => ({ ...d, valorTexto: e.target.value }))
                 }
               />
+              {/* 🔴 [pct-base-imovel-vs-comissao] This "%" is of the SALE
+                  PRICE (contexto.py: `valor_negociado * it.valor / 100`) —
+                  the "Divisão da comissão" panel's own "%" is of the
+                  COMMISSION instead, and typing the same number into both
+                  once produced R$ 1.377.500,00 where R$ 87.000,00 was
+                  meant. The computed amount makes the base unmistakable
+                  before saving. */}
+              {draft.tipo === "percentual" &&
+                exibirPercentualDoValor(valorNegociado, draft.valorTexto) && (
+                  <p className="text-xs text-muted-foreground">
+                    ≈ {exibirPercentualDoValor(valorNegociado, draft.valorTexto)} do
+                    valor do imóvel ({exibirMoeda(valorNegociado)})
+                  </p>
+                )}
             </div>
           </div>
           <div className="space-y-1.5">

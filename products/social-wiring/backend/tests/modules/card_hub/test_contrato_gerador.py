@@ -33,6 +33,7 @@ import pytest
 from reportlab.lib.units import cm
 
 from noctusai_lib.domain.texto_ptbr import dias_por_extenso, parse_brl, reais_por_extenso
+from noctusai_lib.integrations.documents import Instrumento, frase_titulo_aquisitivo
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
@@ -202,6 +203,111 @@ class TestTextoRenderizado:
         assert '"VENDEDORES"' in texto and "Os VENDEDORES" in texto
         assert lado(["f"], "vendedor").NOME == "VENDEDORA"
         assert "VENDEDORA" not in texto
+
+
+class TestTituloAquisitivoFraseComposta:
+    """[titulo-aquisitivo-adquirido-quebra-frase] The confirmed título
+    aquisitivo phrase is injected into the frame `A VENDEDORA, {frase},
+    tornou-se legítima proprietária` — the composed SENTENCE must read as
+    correct Portuguese, not just the standalone helper. Found live on the
+    RODRIGO MORASCHI ENRIQUEZ contract, 2026-09-22."""
+
+    def test_a_sugestao_nao_confirmada_pelo_operador_compoe_frase_correta(self):
+        """The UI's "Usar esta frase" suggestion, taken verbatim (never
+        hand-edited), must not break the frame it gets injected into."""
+        sugestao = frase_titulo_aquisitivo(
+            Instrumento(
+                tipo="Escritura",
+                data=date(2023, 2, 28),
+                tabelionato="1º Tabelião de Notas de Guarujá",
+            ),
+            kind="R",
+            numero=4,
+        )
+        assert sugestao == (
+            "por Escritura lavrada em 28/02/2023 no 1º Tabelião de Notas de "
+            "Guarujá, registrada sob o R-4"
+        )
+
+        vendedora = fx.pessoa(
+            "v1", "vendedor", "proprietario", "Fulana de Tal", "Feminino",
+            "123456789", "11.111.111-1",
+        )
+        d = fx.variante(1)
+        d = replace(
+            d,
+            vendedores=[vendedora],
+            imovel=replace(d.imovel, titulo_aquisitivo_texto=sugestao),
+        )
+        texto = "\n".join(_render(1, d).paragrafos)
+
+        assert (
+            "A VENDEDORA, por Escritura lavrada em 28/02/2023 no 1º Tabelião "
+            "de Notas de Guarujá, registrada sob o R-4, tornou-se legítima "
+            "proprietária do imóvel descrito a seguir:"
+        ) in texto
+        assert "adquirido" not in texto.lower()
+        assert "adquirida" not in texto.lower()
+
+    def test_um_texto_confirmado_antigo_com_o_defeito_e_higienizado_na_renderizacao(self):
+        """A `titulo_aquisitivo_texto` CONFIRMED before this fix shipped
+        keeps the old broken shape in the database (migration data is never
+        rewritten) — the render frame strips the leading "adquirido"/
+        "adquirida" defensively rather than trusting every row was
+        re-confirmed."""
+        vendedora = fx.pessoa(
+            "v1", "vendedor", "proprietario", "Fulana de Tal", "Feminino",
+            "123456789", "11.111.111-1",
+        )
+        d = fx.variante(1)
+        d = replace(
+            d,
+            vendedores=[vendedora],
+            imovel=replace(
+                d.imovel,
+                titulo_aquisitivo_texto="adquirido por escritura lavrada em 28/02/2023, registrada sob o R-4",
+            ),
+        )
+        texto = "\n".join(_render(1, d).paragrafos)
+        assert "A VENDEDORA, por escritura lavrada em 28/02/2023" in texto
+        assert "A VENDEDORA, adquirido" not in texto
+
+
+class TestPronomeComprarLheLhes:
+    """[pronome-lhe-lhes-lado-errado] "comprar-lhe(s)" agrees with `C`
+    (comprador), never `V` — reference contract 08 (RESIDENCIAL EUROVILLE)
+    reads "estes a comprar-lhes" with ONE seller and TWO buyers, proving the
+    clitic tracks the buyer side."""
+
+    def test_um_vendedor_e_um_comprador_usa_lhe(self):
+        texto = "\n".join(_render(1).paragrafos)
+        assert "a comprar-lhe o referido imóvel" in texto
+        assert "a comprar-lhes o referido imóvel" not in texto
+
+    def test_um_vendedor_e_dois_compradores_usa_lhes(self):
+        """The exact reference shape: a SINGLE seller, TWO buyers → "lhes"."""
+        d = fx.variante(1)
+        segundo_comprador = fx.pessoa(
+            "c2", "comprador", "comprador", "Segundo Comprador Exemplo",
+            "Masculino", "555666777", "77.777.777-7",
+        )
+        d = replace(d, compradores=[d.compradores[0], segundo_comprador])
+        texto = "\n".join(_render(1, d).paragrafos)
+        assert "a comprar-lhes o referido imóvel" in texto
+        assert "a comprar-lhe o referido imóvel" not in texto
+
+    def test_dois_vendedores_e_um_comprador_ainda_usa_lhe(self):
+        """TWO sellers must NOT flip this to "lhes" — the seller side no
+        longer governs this clitic at all."""
+        d = fx.variante(1)
+        segunda_vendedora = fx.pessoa(
+            "v2", "vendedor", "proprietario", "Segunda Vendedora Exemplo",
+            "Feminino", "888999000", "88.888.888-8",
+        )
+        d = replace(d, vendedores=[d.vendedores[0], segunda_vendedora])
+        texto = "\n".join(_render(1, d).paragrafos)
+        assert "a comprar-lhe o referido imóvel" in texto
+        assert "a comprar-lhes o referido imóvel" not in texto
 
 
 class TestGate:

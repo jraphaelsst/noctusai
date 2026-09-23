@@ -568,7 +568,7 @@ def test_document_helpers():
 def test_the_title_phrase_of_a_notarial_deed():
     d = extrair_detalhes_ato(ESCRITURA_COMPLETA)
     assert frase_titulo_aquisitivo(d.instrumento, kind="R", numero=3) == (
-        "adquirido por Escritura Pública de Venda e Compra lavrada em 12/03/2020 no "
+        "por Escritura Pública de Venda e Compra lavrada em 12/03/2020 no "
         "2º Tabelionato de Notas de Cotia, Livro 100, fls. 20, registrada sob o R-3"
     )
 
@@ -576,13 +576,13 @@ def test_the_title_phrase_of_a_notarial_deed():
 def test_the_title_phrase_agrees_in_gender_and_omits_what_is_missing():
     assert frase_titulo_aquisitivo(
         Instrumento(tipo="Instrumento particular", data=date(2015, 6, 5)), kind="R", numero=5
-    ) == "adquirido por Instrumento particular datado de 05/06/2015, registrado sob o R-5"
+    ) == "por Instrumento particular datado de 05/06/2015, registrado sob o R-5"
     assert frase_titulo_aquisitivo(
         Instrumento(tipo="Formal de Partilha", data=date(2010, 10, 10)), kind="R", numero=5
-    ) == "adquirido por Formal de Partilha expedido em 10/10/2010, registrado sob o R-5"
+    ) == "por Formal de Partilha expedido em 10/10/2010, registrado sob o R-5"
     assert frase_titulo_aquisitivo(
         Instrumento(tipo="Carta de Arrematação"), kind="AV", numero=7
-    ) == "adquirido por Carta de Arrematação, averbada sob a AV-7"
+    ) == "por Carta de Arrematação, averbada sob a AV-7"
 
 
 def test_no_instrument_type_means_no_phrase():

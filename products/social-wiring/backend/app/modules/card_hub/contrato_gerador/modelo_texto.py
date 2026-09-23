@@ -19,6 +19,13 @@ Conventions (spec §2.0):
 - Long, data-dependent phrases (qualificação, each parcela line, certidão
   items, pendências) are composed in `frases.py` — also plain wording, kept
   next to the rules that choose between variants.
+- 🔴 [pronome-lhe-lhes-lado-errado] `"comprar-{{ C.pl('lhe','lhes') }}"` (DO
+  PREÇO) is the one dative clitic in this template that agrees with `C`
+  (comprador), not `V` — verified against reference contract 08 (RESIDENCIAL
+  EUROVILLE): "A VENDEDORA [ONE seller] compromete-se a vender para os
+  COMPRADORES e, estes a comprar-**lhes** o referido imóvel" — plural
+  despite a SINGLE seller, so the clitic tracks who is doing the buying
+  (`C`), never the seller side a naive reading of "buy FROM him" suggests.
 
 Divergences from the sample contracts are the spec's merged forms (§2.3–2.17
 "Divergence" notes). Wording whose data is MISSING (§6.1: parcela splits,
@@ -41,7 +48,7 @@ IMÓVEL: {{r imovel.descricao_matricula }} Imóvel devidamente cadastrado pela P
 {%p endif %}
 
 CLÁUSULA {{ cl.preco.ORD }} – DO PREÇO E CONDIÇÕES DE PAGAMENTO
-{{ V.ART }} {{ V.NOME }} {{ V.pl('compromete-se','comprometem-se') }} a vender para {{ C.art }} {{ C.NOME }} e, {{ C.estes }} a comprar-{{ V.pl('lhe','lhes') }} o referido imóvel{% if ad_corpus %} na situação ad corpus (no estado em que se encontra){% endif %}, descrito na {{ cl.objeto.ref }}, pelo preço certo, firme e irreajustável de {{ brl(preco) }}, que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
+{{ V.ART }} {{ V.NOME }} {{ V.pl('compromete-se','comprometem-se') }} a vender para {{ C.art }} {{ C.NOME }} e, {{ C.estes }} a comprar-{{ C.pl('lhe','lhes') }} o referido imóvel{% if ad_corpus %} na situação ad corpus (no estado em que se encontra){% endif %}, descrito na {{ cl.objeto.ref }}, pelo preço certo, firme e irreajustável de {{ brl(preco) }}, que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
 {%p for p in parcelas %}
 Parcela {{ p.num }}:{{ p.texto }}
 {%p endfor %}

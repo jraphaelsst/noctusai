@@ -992,10 +992,19 @@ def frase_titulo_aquisitivo(
     instrumento: Optional[Instrumento], *, kind: str, numero: int
 ) -> Optional[str]:
     """The paraphrased título aquisitivo a contract states, built ONLY from
-    what the act says (e.g. `adquirido por Escritura Pública de Venda e
-    Compra lavrada em 12/03/2020 no 2º Tabelionato de Notas de Cotia, Livro
-    100, fls. 20, registrada sob o R-3`). Missing pieces are omitted, never
+    what the act says (e.g. `por Escritura Pública de Venda e Compra
+    lavrada em 12/03/2020 no 2º Tabelionato de Notas de Cotia, Livro 100,
+    fls. 20, registrada sob o R-3`). Missing pieces are omitted, never
     invented; None when there is no instrument type to name.
+
+    🔴 [titulo-aquisitivo-adquirido-quebra-frase] The phrase is injected
+    into the contract frame `A VENDEDORA, {frase}, tornou-se legítima
+    proprietária` (`contexto.py`/`modelo_texto.TEMPLATE`) — a leading
+    "adquirido por …" there reads as "A VENDEDORA, adquirido por …",
+    a participle agreeing with nothing in the frame (found live on the
+    RODRIGO MORASCHI ENRIQUEZ contract, 2026-09-22). The frame already
+    supplies the verb ("tornou-se … proprietária"); this phrase only needs
+    to name the INSTRUMENT, so it starts with the bare preposition "por".
     """
     if kind not in ("R", "AV"):
         raise ValueError(f"kind deve ser 'R' ou 'AV', recebeu {kind!r}")
@@ -1006,7 +1015,7 @@ def frase_titulo_aquisitivo(
     sufixo = "a" if primeira in _FEMININOS else "o"
     verbo = _VERBOS_DATA.get(primeira, f"datad{sufixo} de")
 
-    cabeca = f"adquirido por {tipo}"
+    cabeca = f"por {tipo}"
     if instrumento.data:
         cabeca += f" {verbo} {instrumento.data:%d/%m/%Y}"
     if instrumento.tabelionato:

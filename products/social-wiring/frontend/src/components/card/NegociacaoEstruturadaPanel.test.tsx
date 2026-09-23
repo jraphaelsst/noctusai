@@ -546,3 +546,202 @@ describe("nova parcela — fgts removido, permuta e corretagem", () => {
     expect(payload.dispara_corretagem).toBe(true);
   });
 });
+
+describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)", () => {
+  // 🔴 Found live 2026-09-22: creating "RENATA DIAS GONÇALVES" right after
+  // editing "ONE CONSULTORIA IMOBILIÁRIA LTDA" must NEVER carry ONE's
+  // address/e-mail onto Renata's row. These pin the three shapes the report
+  // named: edit shows that record, a fresh "novo" after an edit starts
+  // empty, and a second edit of a DIFFERENT record never shows the first
+  // one's values.
+
+  const UM = {
+    id: "int-one",
+    nome: "ONE CONSULTORIA IMOBILIARIA LTDA",
+    creci: null,
+    tipo: "percentual" as const,
+    valor: "50",
+    corretor_id: null,
+    favorecido_id: null,
+    pessoa_tipo: "pj" as const,
+    documento: "11222333000181",
+    email: "gilson@oneconsultoriaimobiliaria.com.br",
+    endereco_cep: "06709015",
+    endereco_logradouro: "Rodovia Raposo Tavares",
+    endereco_numero: "km 22",
+    endereco_complemento: null,
+    endereco_bairro: "Parque Frondoso",
+    endereco_cidade: "Cotia",
+    endereco_uf: "SP",
+    representante_nome: null,
+    representante_cpf: null,
+    created_at: null,
+    updated_at: null,
+  };
+  const DOIS = {
+    ...UM,
+    id: "int-two",
+    nome: "SEGUNDA CORRETORA EXEMPLO",
+    documento: "22333444000199",
+    email: "segunda@exemplo.test",
+    endereco_cidade: "Barueri",
+  };
+
+  it("editar ONE mostra os valores de ONE", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ intermediarios: [UM] }) }),
+    );
+    const { getByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText(/Editar ONE/));
+    expect((document.getElementById("int-nome") as HTMLInputElement).value).toBe(UM.nome);
+    expect((document.getElementById("int-email") as HTMLInputElement).value).toBe(UM.email);
+    expect((document.getElementById("int-cidade") as HTMLInputElement).value).toBe(
+      UM.endereco_cidade,
+    );
+  });
+
+  it("🔴 abrir 'Novo intermediário' logo após editar ONE começa vazio", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ intermediarios: [UM] }) }),
+    );
+    mockUpdateIntermediario.mockImplementation(
+      (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
+    );
+    const { getByLabelText, getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText(/Editar ONE/));
+    expect((document.getElementById("int-nome") as HTMLInputElement).value).toBe(UM.nome);
+    fireEvent.click(getByTestId("negest-intermediario-salvar"));
+    expect(mockUpdateIntermediario).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByTestId("negest-intermediario-novo"));
+    expect((document.getElementById("int-nome") as HTMLInputElement).value).toBe("");
+    expect((document.getElementById("int-email") as HTMLInputElement).value).toBe("");
+    expect((document.getElementById("int-cidade") as HTMLInputElement).value).toBe("");
+    expect((document.getElementById("int-cep") as HTMLInputElement).value).toBe("");
+  });
+
+  it("🔴 editar DOIS logo após editar UM mostra os valores de DOIS, não de UM", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ intermediarios: [UM, DOIS] }) }),
+    );
+    const { getByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText(/Editar ONE/));
+    expect((document.getElementById("int-nome") as HTMLInputElement).value).toBe(UM.nome);
+    fireEvent.click(getByLabelText(/Editar SEGUNDA/));
+    expect((document.getElementById("int-nome") as HTMLInputElement).value).toBe(DOIS.nome);
+    expect((document.getElementById("int-email") as HTMLInputElement).value).toBe(DOIS.email);
+    expect((document.getElementById("int-cidade") as HTMLInputElement).value).toBe(
+      DOIS.endereco_cidade,
+    );
+  });
+});
+
+describe("Valor (%) do intermediário — a base é o valor do imóvel, não a comissão", () => {
+  it("🔴 o rótulo nomeia a base para não ser confundido com % da comissão", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ valor_negociado: "1450000.00" }) }),
+    );
+    const { getByTestId, getByText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-intermediario-novo"));
+    expect(getByText("Valor (%) — do valor do imóvel")).toBeTruthy();
+  });
+
+  it("🔴 mostra o valor calculado para o percentual digitado", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ valor_negociado: "1450000.00" }) }),
+    );
+    const { getByTestId, getByText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-intermediario-novo"));
+    fireEvent.change(document.getElementById("int-valor") as HTMLInputElement, {
+      target: { value: "6" },
+    });
+    // 6% de R$ 1.450.000,00 = R$ 87.000,00 — the exact commission-vs-price
+    // mismatch this fix exists to prevent (R$ 1.377.500,00 was what an
+    // operator once got from reading this as "% of the commission").
+    expect(getByText(/R\$\s*87\.000,00/)).toBeTruthy();
+  });
+});
+
+describe("diálogo de favorecido — reset ao trocar de alvo", () => {
+  const FAV_UM = {
+    id: "fav-one",
+    nome: "ONE CONSULTORIA IMOBILIARIA LTDA",
+    cpf_cnpj: "11222333000181",
+    banco: "Banco Exemplo",
+    agencia: "0001",
+    conta: "12345-6",
+    pix: "one@exemplo.test",
+  };
+
+  it("🔴 abrir 'Novo favorecido' logo após editar UM começa vazio", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ favorecidos: [FAV_UM] }) }),
+    );
+    mockUpdateFavorecido.mockImplementation(
+      (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
+    );
+    const { getByLabelText, getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText(/Editar ONE/));
+    expect((document.getElementById("fav-nome") as HTMLInputElement).value).toBe(FAV_UM.nome);
+    fireEvent.click(getByTestId("negest-favorecido-salvar"));
+    expect(mockUpdateFavorecido).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByTestId("negest-favorecido-novo"));
+    expect((document.getElementById("fav-nome") as HTMLInputElement).value).toBe("");
+    expect((document.getElementById("fav-pix") as HTMLInputElement).value).toBe("");
+  });
+});
+
+describe("diálogo de parcela — reset ao trocar de alvo", () => {
+  it("🔴 abrir 'Nova parcela' logo após editar uma parcela existente começa vazio", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          parcelas: [
+            {
+              id: "p1",
+              tipo: "sinal",
+              valor: "50000.00",
+              vencimento: "2026-10-01",
+              evento: "um evento qualquer",
+              forma_pagamento: "PIX",
+              favorecido_id: null,
+              confissao_divida: false,
+              dispara_corretagem: false,
+              permuta_ativo_ids: [],
+              ordem: 1,
+              created_at: null,
+              updated_at: null,
+            },
+          ],
+        }),
+      }),
+    );
+    mockUpdateParcela.mockImplementation(
+      (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
+    );
+    const { getByLabelText, getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText("Editar parcela"));
+    expect((getByTestId("parc-evento") as HTMLInputElement).value).toBe("um evento qualquer");
+    fireEvent.click(getByTestId("negest-parcela-salvar"));
+    expect(mockUpdateParcela).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+    expect((getByTestId("parc-evento") as HTMLInputElement).value).toBe("");
+    expect((getByTestId("parc-valor") as HTMLInputElement).value).toBe("");
+  });
+});

@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import asdict
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
@@ -63,6 +64,21 @@ from app.modules.card_hub.contrato_gerador.politica import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: [titulo-aquisitivo-adquirido-quebra-frase] `frase_titulo_aquisitivo`
+#: (noctusai_lib) no longer generates a leading "adquirido"/"adquirida" —
+#: but the OPERATOR'S CONFIRMED wording (`titulo_aquisitivo_texto`) is
+#: free text an operator can still edit or type from scratch, and an
+#: existing DB row confirmed BEFORE this fix keeps the old broken shape
+#: (migration data is never rewritten). The template frame already supplies
+#: the verb ("tornou-se … proprietária"), so a leading "adquirido(a) " here
+#: would repeat the same grammar break this fix closes — stripped
+#: defensively rather than trusted to have been re-confirmed.
+_ADQUIRIDO_INICIAL_RE = re.compile(r"^adquirid[oa]\s+", re.IGNORECASE)
+
+
+def _sem_adquirido_inicial(texto: str) -> str:
+    return _ADQUIRIDO_INICIAL_RE.sub("", texto)
 
 
 def _generos(pessoas: list[Pessoa]) -> list[str]:
@@ -233,12 +249,23 @@ def montar_contexto(
     # a separate loteamento-name extraction: a street+número reads correctly
     # for any property (a loteamento's own "situado na Alameda X" IS its
     # street), the mechanism is already built and tested for the posse
-    # clauses, and reusing it means one value to keep correct instead of
-    # two. `empreendimento` still wins when present — it names the
-    # condomínio/edifício, which reads better in a title than a street ever
-    # would.
+    # clauses, and reusing it means one value to keep correct instead of two.
+    #
+    # 🔴 [titulo-empreendimento-omitido] The title MUST carry BOTH pieces when
+    # `empreendimento` is present, never one OR the other — reference contract
+    # 08 (RESIDENCIAL EUROVILLE / RODRIGO MORASCHI ENRIQUEZ, 2026-09-22) reads
+    # "… – RESIDENCIAL EUROVILLE – ALAMEDA ALEMANHA, Nº 535 – …", and a
+    # `titulo_curto` that dropped to `empreendimento` alone silently omitted
+    # the very street the instrument is about. `e.complemento` (the CRM's
+    # own apto/unit number, e.g. "Apto 11") stays folded into the
+    # `empreendimento` segment when present — it names a unit WITHIN the
+    # building, not a street, so it carries none of the CRM-público-endereço
+    # decoy risk `e.logradouro`/`e.numero` do.
     if im.empreendimento:
-        titulo_curto = f"{im.empreendimento} – {e.complemento}" if e.complemento else im.empreendimento
+        nome_empreendimento = (
+            f"{im.empreendimento} – {e.complemento}" if e.complemento else im.empreendimento
+        )
+        titulo_curto = f"{nome_empreendimento} – {endereco_curto}"
     else:
         titulo_curto = endereco_curto
     em_condominio = EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO and bool(im.empreendimento)
@@ -458,7 +485,7 @@ def montar_contexto(
         "V_signatarios": [frases.signatario_linha(p) for p in vend],
         "C_signatarios": [frases.signatario_linha(p) for p in comp_pessoas],
         "imovel": imovel,
-        "titulo_aquisitivo": (im.titulo_aquisitivo_texto or "").strip(),
+        "titulo_aquisitivo": _sem_adquirido_inicial((im.titulo_aquisitivo_texto or "").strip()),
         "itens_integrantes": (termos.itens_integrantes or "").strip(),
         "preco": d.valor_negociado,
         "parcelas": linhas_parcelas,
