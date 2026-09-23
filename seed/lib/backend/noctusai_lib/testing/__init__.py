@@ -72,6 +72,7 @@ from noctusai_lib.testing.framework_test_suites import (
     AuthBoundarySuite,
 )
 from noctusai_lib.testing.fixtures import reset_rate_limiter
+from noctusai_lib.testing.realdb import get_realdb_credentials
 
 __all__ = [
     "TEST_USER_ID",
@@ -105,6 +106,7 @@ __all__ = [
     "NotificationFlowSuite",
     "AuthBoundarySuite",
     "reset_rate_limiter",
+    "get_realdb_credentials",
     "SingletonSpec",
     "DEFAULT_SPECS",
     "snapshot_seed_singletons",

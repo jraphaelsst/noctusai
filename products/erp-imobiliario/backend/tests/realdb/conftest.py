@@ -4,39 +4,37 @@ Fixtures for real-DB integration tests against a live Supabase instance (ERP sch
 Uses the service-role key (bypasses RLS) for speed.  The `erp_db` client targets
 the ``erp`` schema; `core_db` targets ``public`` for org/user management.
 
-Tests skip automatically when SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY are not set.
+Tests are opt-in only (`NOCTUS_REALDB_TESTS=1`) and refuse to run against the
+production project even with the opt-in set — see
+`noctusai_lib.testing.get_realdb_credentials` for why. erp-imobiliario is
+currently asleep (see `deploy/fleet/active-scope.txt`); this suite stays
+wired to the seed helper so it is the only credential path even while
+dormant.
 """
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
 from supabase import create_client
 from supabase.lib.client_options import ClientOptions
 
+from noctusai_lib.testing import get_realdb_credentials
+
 pytestmark = pytest.mark.realdb
-
-
-def _get_credentials():
-    url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not url or not key:
-        pytest.skip("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — skipping real-DB tests")
-    return url, key
 
 
 @pytest.fixture(scope="session")
 def core_db():
     """Service-role client for the public schema (org/user management)."""
-    url, key = _get_credentials()
+    url, key = get_realdb_credentials()
     return create_client(url, key)
 
 
 @pytest.fixture(scope="session")
 def erp_db():
     """Service-role client for the erp schema."""
-    url, key = _get_credentials()
+    url, key = get_realdb_credentials()
     return create_client(url, key, options=ClientOptions(schema="erp"))
 
 

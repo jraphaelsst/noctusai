@@ -4,31 +4,28 @@ Fixtures for real-DB integration tests against a live Supabase instance.
 These tests use the service-role key (bypasses RLS) for speed and simplicity.
 All test data is cleaned up after each test via the `cleanup` fixture.
 
-Tests skip automatically when SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY are not set.
+Tests are opt-in only (`NOCTUS_REALDB_TESTS=1`) and refuse to run against the
+production project even with the opt-in set — see
+`noctusai_lib.testing.get_realdb_credentials` for why (2026-09-23 prod-leak
+incident: mere credential presence used to be enough to run this suite).
 """
 from __future__ import annotations
 
-import os
 import uuid
+import warnings
 
 import pytest
 from supabase import create_client
 
+from noctusai_lib.testing import get_realdb_credentials
+
 pytestmark = pytest.mark.realdb
-
-
-def _get_credentials():
-    url = os.environ.get("SUPABASE_URL", "")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-    if not url or not key:
-        pytest.skip("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — skipping real-DB tests")
-    return url, key
 
 
 @pytest.fixture(scope="session")
 def admin_db():
     """Service-role client for the public schema (core tables)."""
-    url, key = _get_credentials()
+    url, key = get_realdb_credentials()
     return create_client(url, key)
 
 
@@ -54,6 +51,16 @@ def test_org(admin_db):
     subscriptions, …) so the final DELETE on organizations doesn't trip
     23503. CASCADE dependents (licenses, noctus_users, notifications,
     org_settings, webhook_endpoints) clear themselves.
+
+    NOTE — `audit_logs` is append-only BY DESIGN: core migration 053
+    (`guard_audit_logs_append_only` trigger, `products/core/backend/
+    migrations/053_audit_trail_expansion.sql`) refuses any DELETE against
+    it. A real-DB run targeting a database with 053 applied therefore
+    CANNOT clear this org's audit_logs rows, and consequently cannot
+    delete the org itself (FK 23503 on the final DELETE below). That is
+    expected, not a teardown bug — real-DB runs must point at a
+    disposable Supabase branch (never prod), where a leftover test org
+    is thrown away with the whole branch.
     """
     slug = f"test-realdb-{uuid.uuid4().hex[:8]}"
     org = admin_db.table("organizations").insert({
@@ -66,11 +73,28 @@ def test_org(admin_db):
     for tbl in _ORG_NO_ACTION_DEPENDENTS:
         try:
             admin_db.table(tbl).delete().eq("org_id", org["id"]).execute()
-        except Exception:
-            # Stale schema or missing table — keep going so the org delete
-            # still runs against everything that does exist.
-            pass
-    admin_db.table("organizations").delete().eq("id", org["id"]).execute()
+        except Exception as exc:
+            # Loud, never silent: expected for `audit_logs` (append-only,
+            # see docstring above); for any other table this is a genuine
+            # teardown problem (stale schema, missing table, permission
+            # drift) worth someone's attention.
+            warnings.warn(
+                f"test_org teardown: DELETE FROM {tbl} WHERE org_id="
+                f"{org['id']!r} failed ({exc!r}) — org {org['id']!r} "
+                f"({org['slug']!r}) may be left behind.",
+                stacklevel=2,
+            )
+    try:
+        admin_db.table("organizations").delete().eq("id", org["id"]).execute()
+    except Exception as exc:
+        warnings.warn(
+            f"test_org teardown: DELETE FROM organizations WHERE id="
+            f"{org['id']!r} failed ({exc!r}) — org {org['id']!r} "
+            f"({org['slug']!r}) was NOT deleted. Expected when audit_logs "
+            "still holds rows for it (append-only, migration 053); point "
+            "real-DB runs at a disposable Supabase branch, never prod.",
+            stacklevel=2,
+        )
 
 
 @pytest.fixture
