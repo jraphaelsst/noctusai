@@ -926,3 +926,4 @@
 {"ts": "2026-09-22", "event": "worktree-sweep", "path": ".claude/worktrees/cardhub-b-ui-primitives", "branch": "feat/cardhub-b-ui-primitives", "sha": "3ea23767a282f21eb3ab0eccff7fa6c750eb437b", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-22", "event": "worktree-sweep", "path": ".claude/worktrees/cardhub-d-pipeline-columns", "branch": "feat/cardhub-d-pipeline-columns", "sha": "79fece141632c8a380fd68a037f810f93a39d255", "reason": "task_branch cleanup (learn-before-delete)"}
 {"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/cardhub-a-seed-be", "branch": "feat/cardhub-a-seed-be", "sha": "5224c470412d5b15c7b7e05dd0fa682d037fb84e", "reason": "task_branch cleanup (learn-before-delete)"}
+{"ts": "2026-09-23", "event": "worktree-sweep", "path": ".claude/worktrees/ship-haiku-015", "branch": "feat/ship-haiku-015", "sha": "bba1edae7217cb736c707aed97867edbb248ad86", "reason": "task_branch cleanup (learn-before-delete)"}
