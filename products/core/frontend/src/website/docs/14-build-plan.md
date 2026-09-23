@@ -1,6 +1,6 @@
 # 14 · Build plan
 
-> Nothing here starts before **owner approval of docs 01–13** and answers to the [open decisions](#open-decisions).
+> **Superseded for v1 by [15 · Build contract](15-api-contract.md).** The owner authorized the build + prod deploy on 2026-09-23. The v1 answers to D1–D11 are in 15 §0 (notably D1 = host split: the website owns `noctusai.com/`, the app stays on `core.noctusai.com`, no `/app` move). The waves below remain the roadmap for everything v1 defers (seed promotion, blog, marketing copy editor, rebrand).
 
 ## Open decisions
 
