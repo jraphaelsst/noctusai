@@ -1785,6 +1785,25 @@ def _oferecer(campo: CampoExtraido, atual: Optional[str], valor: Any) -> bool:
     return not atual
 
 
+#: The issuing body a CIN prints beside its number ("448.864.938-66-IIGDR-SP",
+#: contract 08). Matched as a substring of the órgão, case-insensitively.
+ORGAO_CIN = "IIGDR"
+
+
+def _e_cin(doc: dict, cliente: dict) -> bool:
+    """Is this identity reading a CIN's — where RG == CPF is correct?
+
+    Yes when the file was filed as a CIN, or when the órgão expedidor (read
+    off this same document, or already on the record) is the CIN's IIGDR.
+    """
+    if doc.get("tipo_documento") == "cin":
+        return True
+    for orgao in (doc.get("extracao_rg_orgao"), cliente.get("rg_orgao_expedidor")):
+        if isinstance(orgao, str) and ORGAO_CIN in orgao.upper():
+            return True
+    return False
+
+
 def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """Per checklist-item, the newest extracted value still awaiting a decision.
 
@@ -1827,12 +1846,16 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             if not _oferecer(campo, atual, valor):
                 continue
             # Flags a still-pending RG reading that matches the CPF on file —
-            # correct for a Carteira de Identidade Nacional (CIN) holder,
             # confirm against the document. `None` for every other field and
             # every RG that is simply a normal pending suggestion.
+            # 🔴 NEVER for a CIN (owner directive, 2026-09-23): a Carteira de
+            # Identidade Nacional prints the CPF as the identity number, so
+            # RG == CPF is its VALID state — see `_e_cin`.
             aviso = (
                 "rg_igual_cpf"
-                if campo.item_key == "rg" and is_same_as_cpf(valor, cliente.get("cpf"))
+                if campo.item_key == "rg"
+                and is_same_as_cpf(valor, cliente.get("cpf"))
+                and not _e_cin(doc, cliente)
                 else None
             )
             out[campo.item_key] = {

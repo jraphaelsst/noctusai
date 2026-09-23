@@ -335,7 +335,7 @@ class TestGate:
         for f in av.faltando:
             assert set(f) == {"campo", "rotulo", "onde", "parte_id", "destino", "sugestoes"}
             destino = f["destino"]
-            assert set(destino) == {"tela", "rota", "ancora", "ids"}
+            assert set(destino) == {"tela", "rota", "ancora", "alvo", "ids"}
             assert destino["rota"].startswith("/")
             assert destino["ids"]["contrato_id"] == "contrato-1"
         # The termos clauses are all fixed on the card's Negociação subpage.
@@ -343,6 +343,17 @@ class TestGate:
         assert destino["tela"] == "card_negociacao"
         assert (destino["rota"], destino["ancora"]) == ("/clientes", "negociacao")
         assert destino["ids"]["cliente_id"] == "c1"
+
+    def test_itens_integrantes_and_ad_corpus_land_on_their_own_controls(self):
+        """"Resolver" lands on the explicit answer in the Negociação termos
+        panel — not merely on the subpage (2026-09-23)."""
+        _d, _pol, _sw, av = _avaliar(1, fx.sem_termos(fx.variante(1)))
+        por_campo = {f["campo"]: f["destino"] for f in av.faltando}
+        itens = por_campo["negociacao.itens_integrantes"]
+        assert (itens["tela"], itens["ancora"]) == ("card_negociacao", "negociacao")
+        assert itens["alvo"] == derivacao.ALVO_ITENS_INTEGRANTES
+        assert por_campo["negociacao.ad_corpus"]["alvo"] == derivacao.ALVO_AD_CORPUS
+        assert por_campo["negociacao.posse_marco"]["alvo"] is None
 
     def test_a_missing_identity_field_suggests_the_documents_that_carry_it(self):
         d = fx.variante(1)
@@ -427,6 +438,18 @@ class TestGate:
         assert "RG_IGUAL_CPF" not in _codigos(av.avisos) + _codigos(av.bloqueios)
         assert not any(f["campo"].startswith("qualificacao.rg") for f in av.faltando)
         assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_a_missing_rg_blocks_and_names_the_identity_document(self):
+        """[Owner directive, 2026-09-23] Only one of CIN/CNH is needed — but a
+        missing RG or CPF still blocks, naming WHICH one, and the label names
+        the one checklist item the operator fixes it on."""
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], faltando_qualificacao=["rg"])
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
+        item = next(f for f in av.faltando if f["campo"] == "qualificacao.rg")
+        assert item["rotulo"].startswith("RG (Documento de identidade: CIN ou CNH) — ")
+        assert not any(f["campo"] == "qualificacao.cpf" for f in av.faltando)
+        assert not av.pronto
 
     def test_missing_profissao_blocks(self):
         """🔴 [Owner directive, 2026-09-23 — supersedes the 2026-09-22
@@ -1308,6 +1331,20 @@ class TestComarcaDaMatricula:
         d = replace(fx.variante(1), matricula=replace(fx.variante(1).matricula, comarca=None))
         _d, _pol, _sw, av = _avaliar(1, d)
         assert ("negociacao.foro_comarca", None) in _campos(av)
+
+    def test_the_foro_falta_resolves_on_the_imoveis_documents(self):
+        """🔴 Not the generic `/matriculas` extractor list: the imóvel's own
+        page, on the documents card where its matrícula is uploaded — still
+        grouped under "Matrícula"."""
+        d = replace(fx.variante(1), matricula=replace(fx.variante(1).matricula, comarca=None))
+        _d, _pol, _sw, av = _avaliar(1, d)
+        item = next(f for f in av.faltando if f["campo"] == "negociacao.foro_comarca")
+        assert item["onde"] == "matricula"
+        destino = item["destino"]
+        assert destino["tela"] == "imovel"
+        assert destino["rota"] == f"/imoveis/{d.imovel.codigo}"
+        assert destino["alvo"] == derivacao.ALVO_DOCUMENTOS_DO_IMOVEL
+        assert destino["ids"]["imovel_codigo"] == d.imovel.codigo
 
     def test_a_resolved_comarca_prints_in_the_foro_clause(self):
         texto = _texto(1)

@@ -543,12 +543,13 @@ class TestGeracao:
             "tela": "configuracoes",
             "rota": "/configuracoes",
             "ancora": "imobiliaria",
+            "alvo": None,
             "ids": {"contrato_id": ids["contrato"], "cliente_id": ids["cliente"]},
         }
         assert por_campo["partes.vendedores"]["ancora"] == "vendedor"
         assert por_campo["negociacao.posse_prazo_dias"]["tela"] == "card_negociacao"
         for destino in por_campo.values():
-            assert set(destino) == {"tela", "rota", "ancora", "ids"}
+            assert set(destino) == {"tela", "rota", "ancora", "alvo", "ids"}
             assert destino["rota"].startswith("/")
 
     @pytest.mark.parametrize("sufixo, metodo", [("geracao", "get"), ("gerar", "post")])

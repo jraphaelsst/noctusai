@@ -87,6 +87,13 @@ ROTULO_QUALIFICACAO = {
     "data_casamento": "Data do casamento",
 }
 
+#: The qualificação keys read off the ONE "Documento de identidade (RG e CPF)"
+#: checklist item (2026-09-23). Their `falta` names that item, so the operator
+#: knows the fix is to send the CIN or the CNH (or type the number) — not to
+#: look for a separate "RG" upload that no longer exists.
+_CHAVES_DO_DOCUMENTO_DE_IDENTIDADE = frozenset({"rg", "cpf"})
+SUFIXO_DOCUMENTO_DE_IDENTIDADE = " (Documento de identidade: CIN ou CNH)"
+
 #: [Q9] `classificar_grupo_pj` outcomes.
 PJ_EXIGIDO = "exigido"
 PJ_EXIGIDO_BAIXADA = "exigido_baixada"
@@ -349,7 +356,12 @@ class Destinos:
     imovel_codigo: Optional[str] = None
 
     def para(
-        self, onde: str, *, parte_id: Optional[str] = None, ancora: Optional[str] = None
+        self,
+        onde: str,
+        *,
+        parte_id: Optional[str] = None,
+        ancora: Optional[str] = None,
+        alvo: Optional[str] = None,
     ) -> dict:
         tela, rota, ancora_padrao = _DESTINO_POR_ONDE[onde]
         escopo_imovel = onde in ("imovel", "matricula")
@@ -365,7 +377,30 @@ class Destinos:
             )
             if valor
         }
-        return {"tela": tela, "rota": rota, "ancora": ancora or ancora_padrao, "ids": ids}
+        return {
+            "tela": tela,
+            "rota": rota,
+            "ancora": ancora or ancora_padrao,
+            # The CONTROL on that screen that answers the falta — a DOM id the
+            # screen renders (`ALVO_*` below). `None` = the screen itself is
+            # the answer. Lets "Resolver" land on the field, not just the page.
+            "alvo": alvo,
+            "ids": ids,
+        }
+
+
+#: DOM ids of the controls a `destino.alvo` may name. Declared here — the
+#: producer — and rendered verbatim as `id=` by the screen that owns each
+#: control, so the two halves share one spelling.
+#:
+#: - the Negociação subpage's "Termos do negócio" answers
+#:   (`TermosNegocioSection`): the explicit itens-integrantes choice and the
+#:   explicit ad-corpus sim/não.
+#: - the imóvel page's documents card (`ImovelDocumentosCard`), where the
+#:   matrícula the foro comarca is read from is uploaded.
+ALVO_ITENS_INTEGRANTES = "termos-itens-integrantes-resposta"
+ALVO_AD_CORPUS = "termos-ad-corpus-resposta"
+ALVO_DOCUMENTOS_DO_IMOVEL = "imovel-documentos"
 
 
 def _sugestoes_para_campo(campo: str) -> list[dict]:
@@ -409,11 +444,20 @@ class Avaliacao:
         parte_id: Optional[str] = None,
         *,
         ancora: Optional[str] = None,
+        alvo: Optional[str] = None,
+        destino_em: Optional[str] = None,
     ) -> None:
+        """`onde` GROUPS the falta (the readiness list's section header);
+        `destino_em` — default `onde` — is the screen the "Resolver" link
+        opens, for the rare falta grouped under one screen but fixed on
+        another (the foro comarca: a matrícula fact, fixed on the imóvel's
+        documents)."""
         chave = (campo, parte_id)
         if any((f["campo"], f["parte_id"]) == chave for f in self.faltando):
             return
-        destino = self.destinos.para(onde, parte_id=parte_id, ancora=ancora)
+        destino = self.destinos.para(
+            destino_em or onde, parte_id=parte_id, ancora=ancora, alvo=alvo
+        )
         self.faltando.append(
             {
                 "campo": campo,
@@ -726,9 +770,14 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                 # 2026-09-22 aviso arguing the office's own reference
                 # contract 08 qualifies a party with none): it now blocks
                 # like every other qualificação field, generic path below.
+                sufixo = (
+                    SUFIXO_DOCUMENTO_DE_IDENTIDADE
+                    if chave in _CHAVES_DO_DOCUMENTO_DE_IDENTIDADE
+                    else ""
+                )
                 av.falta(
                     f"qualificacao.{chave}",
-                    f"{ROTULO_QUALIFICACAO.get(chave, chave)} — {_nome(p)}",
+                    f"{ROTULO_QUALIFICACAO.get(chave, chave)}{sufixo} — {_nome(p)}",
                     "partes",
                     p.parte_id,
                     ancora=_ancora(p),
@@ -1499,13 +1548,17 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
             "negociacao.itens_integrantes",
             "Itens integrantes (relacione-os, ou confirme que não há nenhum)",
             "negociacao",
+            alvo=ALVO_ITENS_INTEGRANTES,
         )
     # [Owner directive, 2026-09-23] "None → block, and an explicit false is
     # fine" — same tri-state shape `itens_integrantes_ausente_confirmado`
     # gives `itens_integrantes` above, except `ad_corpus` was ALREADY a
     # real bool (no text-collapses-blank ambiguity to solve).
     if d.termos.ad_corpus is None:
-        av.falta("negociacao.ad_corpus", "Venda ad corpus (sim ou não)", "negociacao")
+        av.falta(
+            "negociacao.ad_corpus", "Venda ad corpus (sim ou não)", "negociacao",
+            alvo=ALVO_AD_CORPUS,
+        )
     # Stored by 114, with no clause in any sample contract — announced so the
     # operator knows the text they typed is NOT on the instrument.
     for valor, codigo, rotulo in (
@@ -1526,11 +1579,19 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     # (an always-on aviso computing it from the imóvel address) is
     # deleted — an unreadable matrícula now blocks instead of silently
     # guessing.
+    #
+    # 🔴 Resolver lands on the IMÓVEL's documents (2026-09-23), not on the
+    # generic `/matriculas` extractor list: the comarca is missing because
+    # this imóvel's matrícula was never uploaded/read, or its text lacks the
+    # cartório heading — both are fixed where the imóvel's matrícula lives.
+    # Still GROUPED under "Matrícula" (`onde`), since that is what it is.
     if d.imovel is not None and not d.matricula.comarca:
         av.falta(
             "negociacao.foro_comarca",
             "Comarca do cartório da matrícula (não encontrada no texto da matrícula)",
             "matricula",
+            destino_em="imovel",
+            alvo=ALVO_DOCUMENTOS_DO_IMOVEL,
         )
 
 
@@ -1557,12 +1618,16 @@ def avaliar(
 
 
 __all__ = [
+    "ALVO_AD_CORPUS",
+    "ALVO_DOCUMENTOS_DO_IMOVEL",
+    "ALVO_ITENS_INTEGRANTES",
     "Avaliacao",
     "Destinos",
     "MODELO_A_VISTA",
     "MODELO_COMPRA_VENDA",
     "MODELO_PERMUTA",
     "ORDEM_CERTIDOES_IMOVEL",
+    "SUFIXO_DOCUMENTO_DE_IDENTIDADE",
     "SUFIXO_PJ_BAIXADA",
     "anos_antes",
     "antigos_proprietarios",

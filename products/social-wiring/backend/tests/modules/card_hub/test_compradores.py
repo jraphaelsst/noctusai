@@ -332,7 +332,7 @@ class TestEachCompradorGetsTheSameChecklist:
         ).json()["cliente_id"]
         scoped.set_table_data("cliente_documentos", [{
             "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": nova,
-            "tipo_documento": "rg", "deleted_at": None,
+            "tipo_documento": "cnh", "deleted_at": None,
         }])
         dela = client.get(
             f"/api/clientes/{nova}/documento-checklist", headers=_auth()
@@ -340,8 +340,13 @@ class TestEachCompradorGetsTheSameChecklist:
         dele = client.get(
             f"/api/clientes/{cid}/documento-checklist", headers=_auth()
         ).json()
-        assert {i["key"]: i["concluido"] for i in dela["items"]}["rg"] is True
-        assert {i["key"]: i["concluido"] for i in dele["items"]}["rg"] is False
+
+        def cnh(body):
+            item = {i["key"]: i for i in body["items"]}["identidade"]
+            return {s["tipo_documento"]: s for s in item["documentos"]}["cnh"]["documento"]
+
+        assert cnh(dela) is not None
+        assert cnh(dele) is None
 
 
 class TestListing:

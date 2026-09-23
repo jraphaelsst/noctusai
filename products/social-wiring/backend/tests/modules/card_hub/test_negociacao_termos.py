@@ -218,6 +218,34 @@ class TestTermosRoundTrip:
         # One row per deal — the second PUT updated, it did not insert.
         assert len(scoped.table("atendimento_negociacao_termos").select("*").execute().data) == 1
 
+    def test_an_absent_itens_ausente_flag_is_stored_false_never_null(self, client, scoped):
+        """🔴 Migration 163's column is NOT NULL — a PUT that omits it (every
+        client before the explicit control) must store `False`, not the null
+        a whole-replacement PUT writes for every other absent key."""
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, obrigacoes_vendedor="Entregar as chaves")
+        assert r.status_code == 200, r.text
+        assert r.json()["termos"]["itens_integrantes_ausente_confirmado"] is False
+        linha = scoped.table("atendimento_negociacao_termos").select("*").execute().data[0]
+        assert linha["itens_integrantes_ausente_confirmado"] is False
+
+    def test_confirming_no_itens_integrantes_round_trips(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, itens_integrantes_ausente_confirmado=True, ad_corpus=False)
+        assert r.status_code == 200, r.text
+        termos = r.json()["termos"]
+        assert termos["itens_integrantes_ausente_confirmado"] is True
+        assert termos["itens_integrantes"] is None
+        assert termos["ad_corpus"] is False
+
+    def test_listing_items_and_confirming_none_is_refused(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(
+            client, cid, itens_integrantes="Armários", itens_integrantes_ausente_confirmado=True,
+        )
+        assert r.status_code == 400, r.text
+        assert scoped.table("atendimento_negociacao_termos").select("*").execute().data == []
+
     def test_blank_text_is_stored_as_null_not_as_an_empty_clause(self, client, scoped):
         cid, _aid = _seed(scoped)
         r = _put_termos(client, cid, itens_integrantes="   ")

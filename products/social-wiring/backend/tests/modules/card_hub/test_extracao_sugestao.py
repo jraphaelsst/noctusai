@@ -263,3 +263,49 @@ class TestHighConfidenceNeverBecomesAPrompt:
         item = _item(client, cid)
         assert item["concluido"] is True
         assert item["sugestao"] is None
+
+
+class TestRgIgualCpfIsNeverFlaggedForACin:
+    """[Owner directive, 2026-09-23] A CIN prints the CPF as the identity
+    number (órgão IIGDR) — RG == CPF is its VALID state, never flagged. The
+    RG/CPF readings ride on `sugestoes_extras` since the `rg`/`cpf` items
+    collapsed into the one `identidade` item."""
+
+    CPF = "448.864.938-66"
+
+    def _rg_sugestao(self, client, cid) -> dict:
+        body = client.get(f"/api/clientes/{cid}/documento-checklist", headers=_auth()).json()
+        return body["sugestoes_extras"]["rg"]
+
+    def _rg_doc(self, **over) -> dict:
+        return _doc(
+            extracao_data_nascimento=None,
+            extracao_rg=self.CPF,
+            extracao_rg_confianca="baixa",
+            **over,
+        )
+
+    def test_a_non_cin_reading_equal_to_the_cpf_is_flagged(self, client, scoped):
+        cid = _seed(scoped, cliente={"cpf": self.CPF}, docs=[self._rg_doc()])
+        assert self._rg_sugestao(client, cid)["aviso"] == "rg_igual_cpf"
+
+    def test_a_cin_file_is_never_flagged(self, client, scoped):
+        cid = _seed(
+            scoped, cliente={"cpf": self.CPF},
+            docs=[self._rg_doc(tipo_documento="cin")],
+        )
+        assert self._rg_sugestao(client, cid)["aviso"] is None
+
+    def test_an_iigdr_orgao_read_off_the_document_is_never_flagged(self, client, scoped):
+        cid = _seed(
+            scoped, cliente={"cpf": self.CPF},
+            docs=[self._rg_doc(tipo_documento="cnh", extracao_rg_orgao="IIGDR-SP")],
+        )
+        assert self._rg_sugestao(client, cid)["aviso"] is None
+
+    def test_an_iigdr_orgao_on_the_record_is_never_flagged(self, client, scoped):
+        cid = _seed(
+            scoped, cliente={"cpf": self.CPF, "rg_orgao_expedidor": "iigdr/sp"},
+            docs=[self._rg_doc()],
+        )
+        assert self._rg_sugestao(client, cid)["aviso"] is None
