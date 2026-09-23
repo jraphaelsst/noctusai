@@ -38,6 +38,58 @@ export const mockProfile = {
   last_activity_at: '2026-06-01T10:00:00Z',
 };
 
+// ─── Platform (in-home) contacts fixtures ─────────────────────────────────
+// Backs /api/email-marketing/contacts (social_wiring.contacts) — the
+// Contatos page's data source since the contacts/identity FE rework
+// (commit bdcfe0ad5). NOT the Mailchimp audience-member shape below.
+
+export function makePlatformContact(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'contact-1',
+    org_id: 'org-sw-001',
+    nome: 'João Silva',
+    email: 'joao@exemplo.com',
+    telefone: '+5511999998888',
+    empresa: 'Acme Ltda.',
+    tags: ['vip'],
+    source: 'manual',
+    status: 'active',
+    whatsapp_phone: null,
+    whatsapp_lids: [],
+    whatsapp_jid: null,
+    created_at: '2026-06-01T10:00:00Z',
+    updated_at: null,
+    custom_fields: {},
+    ...overrides,
+  };
+}
+
+export const mockPlatformContacts = [
+  makePlatformContact(),
+  makePlatformContact({
+    id: 'contact-2',
+    nome: 'Maria Santos',
+    email: 'maria@exemplo.com',
+    telefone: null,
+    empresa: null,
+    tags: [],
+    source: 'whatsapp',
+    whatsapp_phone: '+5511988887777',
+  }),
+];
+
+export function makePlatformContactsPage(contacts = mockPlatformContacts) {
+  return {
+    data: contacts,
+    pagination: {
+      page: 1,
+      page_size: 20,
+      total: contacts.length,
+      total_pages: 1,
+    },
+  };
+}
+
 // ─── Mailchimp fixtures ────────────────────────────────────────────────────
 
 export const mockConnectionConnected = {

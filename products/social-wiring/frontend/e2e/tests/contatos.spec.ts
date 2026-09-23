@@ -1,26 +1,29 @@
+/**
+ * Contatos — platform (in-home) contact management.
+ *
+ * The Contatos page shows LOCAL platform contacts (social_wiring.contacts,
+ * via /api/email-marketing/contacts) — NOT Mailchimp audience members. It
+ * has no MailchimpGate. See src/pages/Contatos.tsx and the
+ * contacts/identity FE rework (commit bdcfe0ad5).
+ */
 import { test, expect } from '../fixtures/auth.fixture';
-import {
-  mockMailchimpConnectionConnected,
-  mockMailchimpConnectionDisconnected,
-  mockMailchimpContacts,
-} from '../fixtures/mailchimp';
+import { mockContactsList, mockContactsEmpty } from '../fixtures/contacts';
+import { mockPlatformContacts } from '../fixtures/mock-data';
 
 test.describe('Contatos', () => {
-  test('gate shows NotConnected when probe returns disconnected', async ({
+  test('renders empty state when there are no contacts', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionDisconnected(page);
+    await mockContactsEmpty(page);
     await page.goto('/contatos');
 
-    await expect(page.getByTestId('mailchimp-not-connected')).toBeVisible();
-    await expect(page.getByRole('link', { name: /Conectar Mailchimp/i })).toBeVisible();
+    await expect(page.getByTestId('contatos-empty')).toBeVisible();
   });
 
-  test('with connection — rows render with contact emails', async ({
+  test('contacts list — rows render with contact emails', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionConnected(page);
-    await mockMailchimpContacts(page);
+    await mockContactsList(page);
     await page.goto('/contatos');
 
     await expect(page.getByText('joao@exemplo.com')).toBeVisible();
@@ -30,9 +33,8 @@ test.describe('Contatos', () => {
   test('shows loading state while fetching contacts', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionConnected(page);
-    // Don't mock contacts — causes loading state
-    await page.route('**/api/mailchimp/contacts**', async (route) => {
+    // Don't mock the list route — causes loading state (route never resolves).
+    await page.route('**/api/email-marketing/contacts**', async (route) => {
       await new Promise((r) => setTimeout(r, 2000));
       await route.continue();
     });
@@ -41,21 +43,20 @@ test.describe('Contatos', () => {
     await expect(page.getByTestId('contatos-loading')).toBeVisible();
   });
 
-  test('status badge renders correctly for subscribed contact', async ({
+  test('source badge renders correctly for whatsapp contact', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionConnected(page);
-    await mockMailchimpContacts(page);
+    await mockContactsList(page);
     await page.goto('/contatos');
 
-    await expect(page.getByText('Inscrito').first()).toBeVisible();
+    await expect(page.getByTestId('source-badge-whatsapp')).toBeVisible();
+    await expect(page.getByTestId('source-badge-manual')).toBeVisible();
   });
 
   test('create contact modal opens and has email field', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionConnected(page);
-    await mockMailchimpContacts(page);
+    await mockContactsList(page);
     await page.goto('/contatos');
 
     await page.getByTestId('btn-novo-contato').click();
@@ -63,52 +64,54 @@ test.describe('Contatos', () => {
     await expect(page.getByTestId('contact-email-input')).toBeVisible();
   });
 
-  test('create contact modal submit fires PUT request', async ({
+  test('create contact modal submit fires POST request', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionConnected(page);
-    await mockMailchimpContacts(page);
+    await mockContactsList(page);
     await page.goto('/contatos');
 
     await page.getByTestId('btn-novo-contato').click();
     await page.getByTestId('contact-email-input').fill('novo@exemplo.com');
-    await page.getByTestId('contact-first-name-input').fill('Novo');
+    await page.getByTestId('contact-nome-input').fill('Novo');
 
-    const requestPromise = page.waitForRequest('**/api/mailchimp/contacts/**');
+    const requestPromise = page.waitForRequest('**/api/email-marketing/contacts');
     await page.getByTestId('contact-modal-submit').click();
     const req = await requestPromise;
 
-    expect(req.method()).toBe('PUT');
+    expect(req.method()).toBe('POST');
   });
 
   test('archive confirm fires DELETE request', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionConnected(page);
-    await mockMailchimpContacts(page);
+    await mockContactsList(page);
     await page.goto('/contatos');
 
-    // Click archive button for first contact
-    await page.getByTestId('archive-contato-joao@exemplo.com').click();
+    const contactId = mockPlatformContacts[0].id;
+    await page.getByTestId(`archive-contato-${contactId}`).click();
     await expect(page.getByTestId('confirm-archive-contato')).toBeVisible();
 
-    const requestPromise = page.waitForRequest('**/api/mailchimp/contacts/**');
+    const requestPromise = page.waitForRequest('**/api/email-marketing/contacts/**');
     await page.getByTestId('confirm-archive-contato').click();
     const req = await requestPromise;
 
     expect(req.method()).toBe('DELETE');
   });
 
-  test('edit contact — email field is read-only', async ({
+  test('edit contact — prefills existing fields, email stays editable', async ({
     authenticatedPage: page,
   }) => {
-    await mockMailchimpConnectionConnected(page);
-    await mockMailchimpContacts(page);
+    await mockContactsList(page);
     await page.goto('/contatos');
 
-    await page.getByTestId('edit-contato-joao@exemplo.com').click();
+    const contact = mockPlatformContacts[0];
+    await page.getByTestId(`edit-contato-${contact.id}`).click();
     const emailInput = page.getByTestId('contact-email-input');
-    await expect(emailInput).toBeDisabled();
-    await expect(emailInput).toHaveValue('joao@exemplo.com');
+    // ContactUpdate schema accepts `email` (backend comment: a typo'd
+    // address must be correctable) — the field is intentionally NOT
+    // disabled on edit, unlike the old Mailchimp-backed contract.
+    await expect(emailInput).toBeEnabled();
+    await expect(emailInput).toHaveValue(contact.email);
+    await expect(page.getByTestId('contact-nome-input')).toHaveValue(contact.nome);
   });
 });
