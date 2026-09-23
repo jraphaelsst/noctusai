@@ -73,6 +73,7 @@ class DocumentTextLadder:
         resolver=None,
         max_pages: int | None = -1,
         provider: Optional[str] = None,
+        render_dpi_policy: Optional[object] = None,
     ) -> None:
         self._org_id = org_id
         self._document_prompt = document_prompt
@@ -85,6 +86,13 @@ class DocumentTextLadder:
         # default (the resolver's own provider/model) — a MANUAL selection,
         # forwarded verbatim, never a fallback. See `resolve_llm_provider`.
         self._provider = provider
+        # `None` (the default) leaves the resolver's own render DPI
+        # unchanged for every caller that does not set this — see
+        # `documents.transcription.RenderDpiPolicy`. Typed loosely
+        # (`object`) so importing this module never drags in
+        # `documents.transcription`. `LadderIdentityExtractor` is today's
+        # only caller that passes one (`identity_document_render_dpi_policy`).
+        self._render_dpi_policy = render_dpi_policy
         # Injected in tests; built lazily otherwise so importing this module
         # never drags in PyMuPDF / the LLM stack.
         self._resolver = resolver
@@ -99,6 +107,7 @@ class DocumentTextLadder:
                 document_prompt=self._document_prompt,
                 max_pages=self._max_pages,
                 provider=self._provider,
+                render_dpi_policy=self._render_dpi_policy,
             )
         return self._resolver
 
