@@ -1,14 +1,20 @@
 """Repair the existing matrícula corpus WITHOUT re-transcribing it (migration
 154). Idempotent: a second run changes nothing.
 
-THE TWO DEFECTS (prod, 2026-09-22)
-----------------------------------
-- 5 of 8 `matricula_extracoes` carry literal `**` / `<u>` in `texto_extraido`
-  (`possui_marcacao_bruta = true`) — pre-113 vision output. The contract
-  generator BLOCKS on them, and they hide every line-start label
-  (`**IMÓVEL:**`) from the abertura segmenter.
-- 5 lack `matricula_abertura_blocos` — the same markers, or a row whose acts
-  predate migration 136.
+THE DEFECTS
+-----------
+- (prod, 2026-09-22) 5 of 8 `matricula_extracoes` carry literal `**` / `<u>`
+  in `texto_extraido` (`possui_marcacao_bruta = true`) — pre-113 vision
+  output. The contract generator BLOCKS on them, and they hide every
+  line-start label (`**IMÓVEL:**`) from the abertura segmenter.
+- (prod, 2026-09-22) 5 lack `matricula_abertura_blocos` — the same
+  markers, or a row whose acts predate migration 136.
+- (prod, 2026-09-23) `texto_extraido` opens with a registry provenance
+  stamp (`Valide aqui\\neste documento`, an ONR "ri digital" footer, ...)
+  ahead of the matrícula's real content — see `matricula_marcacao.
+  remover_boilerplate` and `media.pdf_text._PROVENANCE_STAMP_PATTERNS`.
+  Fresh transcriptions strip these at extraction time (`transcription.py`,
+  both rungs); this repairs rows transcribed before that shipped.
 
 WHAT `normalizar_extracao` DOES
 -------------------------------
@@ -16,16 +22,20 @@ WHAT `normalizar_extracao` DOES
    `parse_markup` a fresh transcription runs, so the result (clean text +
    bold/underline ranges) is what a re-transcription would have produced
    from this text, at zero LLM cost. The markers ARE the formatting;
-   nothing is lost.
-2. Move every offset that points into the text through the one map
-   (`MarcacaoRemovida.mapear`): acts, abertura blocks, page-noise spans,
-   qualification name spans, the imóvel's título/ônus pointers. The text,
-   `ruido` and `formatacao` land in ONE update — the only shape migration
-   154's trigger exception accepts.
-3. Re-derive what was READ from the markered text: act-detail and
-   qualification SUGGESTIONS (confirmed ones are a human's, and are kept);
-   and, when the clean text segments into DIFFERENT acts than the markered
-   one did (a `**R-3/...**` header the segmenter could not see) and nothing
+   nothing is lost. Then strip registry provenance stamps with
+   `remover_boilerplate`, on whatever step 1 left behind — same offset
+   shape, applied second and independently.
+2. Move every offset that points into the text through EACH pass's own
+   map (`MarcacaoRemovida.mapear`, composed by running `_aplicar_remocao`
+   once per pass): acts, abertura blocks, page-noise spans, qualification
+   name spans, the imóvel's título/ônus pointers. Each pass's text, `ruido`
+   and `formatacao` land in ONE update — the only shape migration 154's
+   trigger exception accepts.
+3. Re-derive what was READ from the pre-clean text, after EACH pass: act-
+   detail and qualification SUGGESTIONS (confirmed ones are a human's, and
+   are kept); and, when the clean text segments into DIFFERENT acts than
+   before (a `**R-3/...**` header the segmenter could not see, or a
+   provenance stamp that happened to straddle an act boundary) and nothing
    quotes this extraction yet, the acts themselves.
 4. Heal the abertura blocks (`estrutura_service.blocos_abertura_da_extracao`).
 5. Feed `imovel_dados` (`preenchimento_service`, D1).
@@ -51,6 +61,7 @@ from noctusai_lib.integrations.documents.formatting import (
 )
 from noctusai_lib.integrations.documents.matricula_marcacao import (
     MarcacaoRemovida,
+    remover_boilerplate,
     remover_marcacao,
 )
 
@@ -196,58 +207,116 @@ def _remapear_offsets(client: Any, org_id: Any, extracao: dict, r: MarcacaoRemov
             dados_service.gravar_fontes_matricula(client, org_id, codigo, patch)
 
 
+def _aplicar_remocao(
+    client: Any,
+    org_id: Any,
+    extracao: dict,
+    r: MarcacaoRemovida,
+    *,
+    relatorio: dict,
+    flag_key: str,
+    extra_update: Optional[dict] = None,
+) -> dict:
+    """Apply ONE offset-tracked removal pass (`remover_marcacao` OR
+    `remover_boilerplate`) to `extracao`: write text + ruido + formatacao
+    in ONE update (migration 154's trigger exception accepts exactly this
+    shape), remap every offset-bearing table through `r.mapear`, and
+    re-derive acts when the clean text segments differently.
+
+    A no-op `r` (`not r.alterou`) changes nothing and returns `extracao`
+    UNCHANGED — the caller can feed that same value straight into the next
+    pass, which is what makes two calls to this function compose two
+    `MarcacaoRemovida`s correctly: `_remapear_offsets` always reads the
+    table's CURRENT row, so calling it once per pass (each against
+    whatever the previous pass just wrote) is the same as chaining the two
+    `mapear` functions by hand.
+    """
+    eid = str(extracao["id"])
+    if not r.alterou:
+        return extracao
+    ruido = [
+        {**span, "start": r.mapear(int(span["start"])), "end": r.mapear(int(span["end"]))}
+        for span in extracao.get("ruido") or []
+    ]
+    formatacao = _remapear_formatacao(r, ranges_from_json(extracao.get("formatacao")))
+    _t(client, estrutura_svc.EXTRACOES_TABLE).update(
+        {
+            "texto_extraido": r.texto,
+            "ruido": ruido,
+            "formatacao": ranges_to_json(formatacao),
+            **(extra_update or {}),
+        }
+    ).eq("org_id", str(org_id)).eq("id", eid).execute()
+    _remapear_offsets(client, org_id, extracao, r)
+    relatorio[flag_key] = True
+    extracao = estrutura_svc.exigir_extracao(client, org_id, UUID(eid))
+
+    atos = _linhas(client, org_id, estrutura_svc.ATOS_TABLE, eid)
+    if atos and not _mesmos_atos(atos, r.texto):
+        if _referenciada(client, org_id, eid):
+            relatorio["atos_divergentes"] = True
+            logger.warning(
+                "matricula %s: clean text segments into different acts, but the "
+                "extraction is quoted — acts kept (remapped); needs a human",
+                eid,
+            )
+            _remover_derivados(client, org_id, eid, atos_tambem=False)
+        else:
+            _remover_derivados(client, org_id, eid, atos_tambem=True)
+            relatorio["atos_ressegmentados"] = estrutura_svc.persistir_atos(
+                client, eid, org_id, r.texto
+            )
+    else:
+        _remover_derivados(client, org_id, eid, atos_tambem=False)
+    return extracao
+
+
 def normalizar_extracao(client: Any, org_id: Any, extracao_id: Any) -> dict:
     """Steps 1–4 of the module docstring for ONE extraction. Synchronous;
-    `backfill` adds step 5 (the async fill)."""
+    `backfill` adds step 5 (the async fill).
+
+    Two independent removal passes, composed sequentially:
+    `remover_marcacao` (the `**`/`<u>` markers) first, `remover_boilerplate`
+    (registry provenance/validation stamps — 2026-09-23) second, on
+    whatever `remover_marcacao` left behind. Each is verified against its
+    own reconstruction independently; `_aplicar_remocao` is what makes
+    running it twice equivalent to chaining the two offset maps.
+    """
     extracao = estrutura_svc.exigir_extracao(client, org_id, UUID(str(extracao_id)))
     eid = str(extracao["id"])
     texto = extracao.get("texto_extraido")
     if extracao.get("status") != estrutura_svc.STATUS_CONCLUIDA or not texto:
         return {"extracao_id": eid, "status": "sem_texto"}
 
-    relatorio: dict = {"extracao_id": eid, "status": "ok", "marcacao_removida": False}
-    r = remover_marcacao(texto)
-    if r.alterou:
-        ruido = [
-            {**span, "start": r.mapear(int(span["start"])), "end": r.mapear(int(span["end"]))}
-            for span in extracao.get("ruido") or []
-        ]
-        formatacao = _remapear_formatacao(r, ranges_from_json(extracao.get("formatacao")))
-        # ONE update: texto + ruido + formatacao together — migration 154's
-        # trigger exception accepts exactly this (text = old minus markers).
-        _t(client, estrutura_svc.EXTRACOES_TABLE).update(
-            {
-                "texto_extraido": r.texto,
-                "ruido": ruido,
-                "formatacao": ranges_to_json(formatacao),
-                "possui_marcacao_bruta": has_raw_markup(r.texto),
-            }
-        ).eq("org_id", str(org_id)).eq("id", eid).execute()
-        _remapear_offsets(client, org_id, extracao, r)
-        relatorio["marcacao_removida"] = True
-        extracao = estrutura_svc.exigir_extracao(client, org_id, UUID(eid))
+    relatorio: dict = {
+        "extracao_id": eid,
+        "status": "ok",
+        "marcacao_removida": False,
+        "boilerplate_removida": False,
+    }
 
-        atos = _linhas(client, org_id, estrutura_svc.ATOS_TABLE, eid)
-        if atos and not _mesmos_atos(atos, r.texto):
-            if _referenciada(client, org_id, eid):
-                relatorio["atos_divergentes"] = True
-                logger.warning(
-                    "matricula %s: clean text segments into different acts, but the "
-                    "extraction is quoted — acts kept (remapped); needs a human",
-                    eid,
-                )
-                _remover_derivados(client, org_id, eid, atos_tambem=False)
-            else:
-                _remover_derivados(client, org_id, eid, atos_tambem=True)
-                relatorio["atos_ressegmentados"] = estrutura_svc.persistir_atos(
-                    client, eid, org_id, r.texto
-                )
-        else:
-            _remover_derivados(client, org_id, eid, atos_tambem=False)
+    r1 = remover_marcacao(texto)
+    extracao = _aplicar_remocao(
+        client,
+        org_id,
+        extracao,
+        r1,
+        relatorio=relatorio,
+        flag_key="marcacao_removida",
+        # Written on the SAME update as the marker pass, not the
+        # boilerplate one — a stray unbalanced `**` is what this flag
+        # means, and boilerplate removal can neither cause nor cure one.
+        extra_update={"possui_marcacao_bruta": has_raw_markup(r1.texto)},
+    )
     # Re-read above when the text changed, so this is the stored flag. Still
     # true only for an UNBALANCED marker `parse_markup` keeps literal — a
     # human's call, reported rather than guessed at.
     relatorio["possui_marcacao_bruta"] = bool(extracao.get("possui_marcacao_bruta"))
+
+    r2 = remover_boilerplate(extracao.get("texto_extraido") or "")
+    extracao = _aplicar_remocao(
+        client, org_id, extracao, r2, relatorio=relatorio, flag_key="boilerplate_removida"
+    )
 
     # Step 4 — heals acts, then blocks, then (on read) suggestions.
     atos = estrutura_svc.atos_da_extracao(client, org_id, extracao)
@@ -296,6 +365,7 @@ async def backfill(
     return {
         "total": len(itens),
         "marcacao_removida": sum(1 for i in itens if i.get("marcacao_removida")),
+        "boilerplate_removida": sum(1 for i in itens if i.get("boilerplate_removida")),
         "atos_divergentes": sum(1 for i in itens if i.get("atos_divergentes")),
         "erros": sum(1 for i in itens if i.get("status") == "erro"),
         "items": itens,

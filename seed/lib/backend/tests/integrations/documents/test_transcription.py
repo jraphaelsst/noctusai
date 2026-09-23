@@ -193,6 +193,55 @@ class TestAScanIsNotATextLayer:
         assert out.num_paginas == 4
 
 
+class TestProvenanceBoilerplateComesOutOfTheOutput:
+    """🔴 Owner-reported 2026-09-23: the EUROVILLE certidão's
+    `texto_extraido` still opened with `Valide aqui\\neste documento` ahead
+    of its real content, because a SUBSTANTIVE page (real content present,
+    so it is never routed to vision) kept its stamp verbatim — the whole
+    point of `classify_pdf_text_layer` keeping `page.text` unstripped.
+
+    `pdf_text.clean_extraction_output` is that rewrite, wired into BOTH
+    rungs of the ladder — this class pins that the STAMP never reaches
+    `Transcription.text` from either rung, while the real content does.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rung_one_strips_a_stamp_that_shares_a_page_with_real_content(
+        self, monkeypatch
+    ) -> None:
+        pagina = (
+            "Valide aqui\neste documento\n\n"
+            "Mat. 3917 - Página 1/3 - PROT. 89.029\n\n"
+            "IMOVEL: Terreno situado na Alameda Alemanha."
+        )
+        t = _transcriber(monkeypatch, _camada((pagina, True)), num_paginas=1)
+        out = await t.transcribe(b"%PDF")
+
+        assert out.paginas_por_camada == (1,), "never billed for vision"
+        assert out.text.startswith("Mat. 3917 - Página 1/3 - PROT. 89.029")
+        assert "IMOVEL: Terreno situado na Alameda Alemanha." in out.text
+        assert "Valide aqui" not in out.text
+
+    @pytest.mark.asyncio
+    async def test_rung_two_strips_a_stamp_the_vision_reply_carries(
+        self, monkeypatch
+    ) -> None:
+        vision = _Vision(
+            texto=lambda n: (
+                "Valide aqui\neste documento\n\n"
+                f"OCR CONTEUDO REAL PAGINA {n}"
+            )
+        )
+        t = _transcriber(
+            monkeypatch, _camada((ONR_STAMP, False)), num_paginas=1, vision=vision
+        )
+        out = await t.transcribe(b"%PDF")
+
+        assert out.paginas_por_visao == (1,)
+        assert out.text == "OCR CONTEUDO REAL PAGINA 1"
+        assert "Valide aqui" not in out.text
+
+
 class TestFailuresAreValuesNotExceptions:
     """Transcription runs detached in background jobs — an exception would
     surface nowhere and strand the document mid-pipeline."""

@@ -1,5 +1,14 @@
-"""Strip literal `**` / `<u>` markers out of an ALREADY-STORED transcription,
-and say exactly how every offset into it moves.
+"""Strip literal `**` / `<u>` markers — and, since 2026-09-23,
+`pdf_text`-style provenance/validation boilerplate — out of an
+ALREADY-STORED transcription, and say exactly how every offset into it
+moves.
+
+`remover_marcacao` (markers) and `remover_boilerplate` (registry stamps)
+are the two independent removal passes; `backfill_service.normalizar_extracao`
+composes them sequentially and chains their two `mapear` functions, because
+each is verified against its own reconstruction independently and
+composing two correct maps is simpler to get right than one function that
+tries to do both removals at once.
 
 WHY THIS EXISTS
 ---------------
@@ -74,6 +83,42 @@ class MarcacaoRemovida:
         return offset - deslocamento
 
 
+def remover_boilerplate(texto: str) -> MarcacaoRemovida:
+    """`texto` with every registry provenance/validation stamp removed —
+    the SAME offset-tracking shape as `remover_marcacao`, so a caller can
+    compose the two: `r1 = remover_marcacao(texto); r2 =
+    remover_boilerplate(r1.texto)`, then move every downstream offset
+    through BOTH via `r2.mapear(r1.mapear(offset))`.
+
+    Line-based, not token-based: a removed span is one whole boilerplate
+    LINE, its own trailing newline included, from
+    `media.boilerplate_line_spans` — the SAME predicate
+    `pdf_text.clean_extraction_output` uses at fresh-extraction time, so a
+    backfilled row and a freshly-transcribed one can never disagree about
+    what counts as boilerplate. `formatacao` is always `()`: removing a
+    stamp line never ADDS a bold/underline range — only `remover_marcacao`
+    does that, by construction.
+
+    Unlike `clean_extraction_output`, this does NOT trim a leading/
+    trailing blank line left behind by a removed stamp: every character
+    NOT accounted for by `removidos` must survive unchanged, or `mapear`
+    would silently misplace an offset into an act, an abertura block, or a
+    qualification name span — the exact failure `remover_marcacao`'s own
+    reconstruction check guards against.
+    """
+    texto = texto or ""
+    from noctusai_lib.integrations.media import boilerplate_line_spans
+
+    removidos = boilerplate_line_spans(texto)
+    reconstruido = []
+    cursor = 0
+    for s, e in removidos:
+        reconstruido.append(texto[cursor:s])
+        cursor = e
+    reconstruido.append(texto[cursor:])
+    return MarcacaoRemovida(texto="".join(reconstruido), formatacao=(), removidos=removidos)
+
+
 def remover_marcacao(texto: str) -> MarcacaoRemovida:
     """`texto` with every well-formed marker removed — see module docstring."""
     texto = texto or ""
@@ -119,4 +164,4 @@ def remover_marcacao(texto: str) -> MarcacaoRemovida:
     return MarcacaoRemovida(texto=limpo, formatacao=formatacao, removidos=removidos)
 
 
-__all__ = ["MarcacaoRemovida", "remover_marcacao"]
+__all__ = ["MarcacaoRemovida", "remover_boilerplate", "remover_marcacao"]
