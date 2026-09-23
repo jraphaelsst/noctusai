@@ -12,9 +12,11 @@
 -- `*_igig_*`): the card hub is reached ONLY through PostgREST (decision D-A1,
 -- `NOC-REMEDIATE[card-hub-recordstore]` in the seed package).
 --
--- Both sections emit the same `igig` bucket statements; every one of them is
--- idempotent (ON CONFLICT DO NOTHING / DROP POLICY IF EXISTS), so the repeat is
--- a no-op. Prerequisites: 006 (cliente), 008 (profissional), 017
+-- Documents live in their OWN private bucket `igig-cardhub`: the org-folder
+-- member policies below apply to that bucket only, so `igig` (peças/logos)
+-- stays service-role-only. Both sections emit the same bucket statements;
+-- every one is idempotent (ON CONFLICT DO NOTHING / DROP POLICY IF EXISTS), so
+-- the repeat is a no-op. Prerequisites: 006 (cliente), 008 (profissional), 017
 -- (pipeline_stages), 018 (negocio).
 -- ============================================================================
 
@@ -248,24 +250,24 @@ CREATE POLICY "service_role_bypass" ON igig.cliente_documento_acessos FOR ALL TO
 
 -- Private document bucket; object RLS keys on the org_id first path segment.
 INSERT INTO storage.buckets (id, name, public)
-VALUES ('igig', 'igig', false)
+VALUES ('igig-cardhub', 'igig-cardhub', false)
 ON CONFLICT (id) DO NOTHING;
-DROP POLICY IF EXISTS "igig_storage_select" ON storage.objects;
-CREATE POLICY "igig_storage_select" ON storage.objects FOR SELECT TO authenticated
-  USING (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_insert" ON storage.objects;
-CREATE POLICY "igig_storage_insert" ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_update" ON storage.objects;
-CREATE POLICY "igig_storage_update" ON storage.objects FOR UPDATE TO authenticated
-  USING (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_delete" ON storage.objects;
-CREATE POLICY "igig_storage_delete" ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_service" ON storage.objects;
-CREATE POLICY "igig_storage_service" ON storage.objects FOR ALL TO service_role
-  USING (bucket_id = 'igig')
-  WITH CHECK (bucket_id = 'igig');
+DROP POLICY IF EXISTS "igig-cardhub_storage_select" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_select" ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_insert" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_update" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_update" ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_delete" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_delete" ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_service" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_service" ON storage.objects FOR ALL TO service_role
+  USING (bucket_id = 'igig-cardhub')
+  WITH CHECK (bucket_id = 'igig-cardhub');
 
 -- Operator-authored checklist lines. NO `concluido` column: completion is
 -- DERIVED (valor_texto / a live documento_id). Deleting the file keeps the line.
@@ -524,24 +526,24 @@ CREATE POLICY "service_role_bypass" ON igig.negocio_documento_acessos FOR ALL TO
 
 -- Private document bucket; object RLS keys on the org_id first path segment.
 INSERT INTO storage.buckets (id, name, public)
-VALUES ('igig', 'igig', false)
+VALUES ('igig-cardhub', 'igig-cardhub', false)
 ON CONFLICT (id) DO NOTHING;
-DROP POLICY IF EXISTS "igig_storage_select" ON storage.objects;
-CREATE POLICY "igig_storage_select" ON storage.objects FOR SELECT TO authenticated
-  USING (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_insert" ON storage.objects;
-CREATE POLICY "igig_storage_insert" ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_update" ON storage.objects;
-CREATE POLICY "igig_storage_update" ON storage.objects FOR UPDATE TO authenticated
-  USING (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_delete" ON storage.objects;
-CREATE POLICY "igig_storage_delete" ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'igig' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
-DROP POLICY IF EXISTS "igig_storage_service" ON storage.objects;
-CREATE POLICY "igig_storage_service" ON storage.objects FOR ALL TO service_role
-  USING (bucket_id = 'igig')
-  WITH CHECK (bucket_id = 'igig');
+DROP POLICY IF EXISTS "igig-cardhub_storage_select" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_select" ON storage.objects FOR SELECT TO authenticated
+  USING (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_insert" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_insert" ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_update" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_update" ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_delete" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_delete" ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'igig-cardhub' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text);
+DROP POLICY IF EXISTS "igig-cardhub_storage_service" ON storage.objects;
+CREATE POLICY "igig-cardhub_storage_service" ON storage.objects FOR ALL TO service_role
+  USING (bucket_id = 'igig-cardhub')
+  WITH CHECK (bucket_id = 'igig-cardhub');
 
 -- Operator-authored checklist lines. NO `concluido` column: completion is
 -- DERIVED (valor_texto / a live documento_id). Deleting the file keeps the line.
