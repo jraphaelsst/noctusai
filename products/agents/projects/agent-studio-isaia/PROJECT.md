@@ -3,7 +3,7 @@
 > Living document. Write-for-a-zero-context-reader: everything needed to continue is here or in `CONTRACT.md`.
 
 - **Created:** 2026-09-21
-- **Last updated:** 2026-09-21
+- **Last updated:** 2026-09-23
 - **Status:** On `dev` (5626935dc) — live-verified in the prod image; prod promotion awaits the owner
 - **Owner / stakeholders:** repo owner (product decisions) · tech-lead session (orchestration)
 - **Related docs:** `CONTRACT.md` (this folder — the binding shape) · `products/agents/MASTER-PROMPT.md` · `project-history/roadmaps/julia-agents-academia-2026-09.md` (Julia's plan; Julia stays untouched here) · `KB § PATTERNS/frontend/lying-loading-state.md` · `KB § PATTERNS/backend/database-rls.md`
@@ -143,7 +143,7 @@ A better route than the brief ⇒ STOP and report (no silent divergence).
 
 **Improvements:** applied — uvicorn `--loop asyncio` (uvloop rejected subprocess `user=`, every slot quarantined in the prod image); studio system prompt via `{type:file}` (neutral identity line); judge aligns by criterion number; eval-run writes retry transient transport errors; startup steps independent + retried; studio turns decoupled from Julia-only config; trigram index dropped (pg_trgm lives in another product's schema); tests can never reach the shared DB (conftest blanks the service key); pre-commit always refreshes the shared auto-improvement cache; `cli.py --validate` no longer crashes on global issues. Deferred → owner decision: prod promotion; Julia migration to studio (CONTRACT §K).
 
-### Phase 4 — IsaIA built through the UI in prod (2026-09-23) ⏳
+### Phase 4 — IsaIA built through the UI in prod (2026-09-23) ✅
 Source: `products/agents/projects/IsaIA/PLAYGROUND` only (gitignored), split per record by
 `isaia-private/playground/split_for_ui.py` — regenerated from PLAYGROUND and byte-identical. Target: the owner's
 real org, agent `isaia` (created empty by the owner). The bundle import was deliberately NOT used.
@@ -155,7 +155,9 @@ real org, agent `isaia` (created empty by the owner). The bundle import was deli
 | 12 skills (nome · descrição · corpo) | Skills → "+ Skill" (bodies pasted from the .md, as a person would) | md5 of 12 desc + 12 corpo = source |
 | 5 collections (slug · nome · tag · descrição · ordem) | Conhecimento → Nova coleção | compiled catalog lines = source |
 | 32 eval cases (entrada · contexto · deve[] · não deve[] · rubrica · tags) | Avaliações → Novo caso | one md5 over all 32 = `authoring/evals.json` (PLAYGROUND carries no evals; the publish gate needs them) |
-| 382 knowledge documents · 21 skill reference files | Conhecimento / Skills → "Enviar arquivos" | ⏳ waits for the uploader fix to reach prod |
+| 21 skill reference files | Skills → skill → "Enviar arquivos" (multi-file) | one md5 over (skill, caminho, content) = source; all under `references/` |
+| 382 knowledge documents | Conhecimento → collection → "Enviar arquivos" (84 · 62 · 30 · 10 · 196; the dialog chunks at 100) | one md5 over (collection, slug, título, tipo, content, provenance) = source |
+| eval run → publish → chat | Avaliações → Rodar (Opus, cap US$10) · Versões → Publicar · Conversar | run 0.981 (29/32, US$5.03) on the draft hash; v1 published 13:22; chat turn stamped with the same hash |
 
 **Master-prompt validity.** PLAYGROUND's `01_MASTER_PROMPT_RUNTIME.md` IS the compiler's output (manifest hash
 `sha256:3e51b0b5…`), so the UI-built draft is checked by hash, not by eye. With sections + skills + collections in
@@ -164,12 +166,21 @@ and 0 documents, the inspector shows `sha256:4de28ad0…` / 22 474 chars — exa
 tool (8), skill (88), reference path (53) and document slug (390) resolves; `carrossel` reads `roteiro-reels`'
 references through `ler_arquivo_skill("roteiro-reels", …)`, which the tool allows.
 
+**Result.** The published v1 compiles to `sha256:3e51b0b51fc2ec561e737aad657a61484fae38ad34a5e7ce808097555479817e`,
+22 480 chars — byte-identical to PLAYGROUND's runtime prompt (its `manifest.json` hash). A real chat turn (pt-BR, 3
+hooks citing `[AU]` M05-T27/T03/T23 via `kb_buscar`/`kb_ler`) links to `/studio/prompts/<that hash>`. The 3 failed
+cases: `diag-cta-falso-diagnostico` (no discriminating test), `diag-vaidade-de-metrica` (judge penalised a rate
+derived from the user's own numbers — judge-side ambiguity), `recuperacao-sem-exagero` (asked for extra context).
+
 **Improvements** (found only by driving the real UI — the QA "pre-flight" called the API with its own parser):
 - fixed `2d9cbf8bf` — KnowledgeUploadDialog dropped the nested `proveniencia:` block (all 382 docs carry one);
   SkillFilesUploadDialog stored a picked file as `arquivos.md` while skill bodies cite `references/arquivos.md`
   (`ler_arquivo_skill` matches exactly).
 - open → next Studio FE slice: no file/bulk path for **skill bodies** (12 × ~14 KB pasted by hand) nor for **eval
-  cases** (32 forms, 198 criteria typed one by one); the upload preview does not show parsed provenance.
+  cases** (32 forms, 198 criteria typed one by one); the upload preview does not show parsed provenance;
+  Conversar's "Nova conversa" creates but does not open the conversation (Julia's page auto-opens since `6c542ab64`)
+  and renders a tool-only assistant message as "[mensagem vazia]"; the Versões hash column shows the draft's
+  last-stamped hash (`4de28ad0…`) until publish refreshes it.
 
 ## 7. Open questions
 - Rights to use the third-party course material in a commercial agent — owner's call; content stays DB-only regardless.
@@ -193,3 +204,4 @@ Read `CONTRACT.md` first. Backend: `cd products/agents/backend && pytest`. Front
 - 2026-09-21 — Project created; contract v1 locked; Wave 1 dispatch.
 - 2026-09-21 — Waves 1+2 merged; security/compliance hardening; 012/013 applied (owner go); integrated to dev.
 - 2026-09-22 — Live verification in the prod image (QA org): 3 eval rounds, 5 production bugs found and fixed; paused on Anthropic credit exhaustion.
+- 2026-09-23 — IsaIA built entirely through the Studio UI in the owner's org from PLAYGROUND; 2 uploader defects fixed + shipped (`isaia-ui-build`, owner-approved); master-prompt hash = PLAYGROUND; eval 0.981; v1 published; chat verified.
