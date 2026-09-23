@@ -116,6 +116,34 @@ O conteúdo da certidão é verdadeiro. Dou fé.
 CARAPICUÍBA, 17 de agosto de 2022
 """
 
+#: Some certidão de casamento layouts state the "nome que passou a adotar"
+#: clause with the value under the PRONOUN (`Ele:` / `Ela:`) instead of
+#: `NOME` — `name._PRONOUN_NAME_LABELS`. This layout carries NO `NOMES`/`CPF`
+#: interleaved header at all (unlike `CERTIDAO_DOIS_CONJUGES`, a different
+#: layout variant) — the pronoun clause is its only holder-naming block.
+#: Every name below is invented.
+CERTIDAO_NOME_ADOTADO_PRONOME = """REPÚBLICA FEDERATIVA DO BRASIL
+REGISTRO CIVIL DAS PESSOAS NATURAIS
+CERTIDÃO DE CASAMENTO
+
+RODRIGO MORAES ENRIQUES, CPF 412.954.238-98, de profissão engenheiro, de
+nacionalidade brasileira, e TAUANE GONÇALVES DIAS, CPF 478.982.096-30, de
+profissão professora, de nacionalidade brasileira, compareceram perante o
+Oficial do Registro Civil e contraíram casamento sob o regime de comunhão
+parcial de bens.
+
+REGIME DE BENS DO CASAMENTO
+COMUNHÃO PARCIAL DE BENS
+
+NOME QUE CADA UM DOS CÔNJUGES PASSA A USAR EM RAZÃO DO CASAMENTO
+
+Ele: RODRIGO MORAES ENRIQUES
+Ela: TAUANE GONÇALVES DIAS ENRIQUES
+
+O conteúdo da certidão é verdadeiro. Dou fé.
+CARAPICUÍBA, 17 de agosto de 2022
+"""
+
 CONTA_LUZ_ENEL = """ENEL DISTRIBUIÇÃO SÃO PAULO
 Rua Ática, 673 - Jardim Brasil - São Paulo - SP - CEP 04634-042
 CNPJ 61.695.227/0001-93  Inscrição Estadual 108.042.323.117
@@ -296,6 +324,25 @@ class TestConjuges:
     def test_a_single_holder_document_has_no_conjuges(self):
         assert find_conjuges(RG_ANTIGO) == ()
         assert find_conjuges(CNH) == ()
+
+    def test_the_adopted_name_clause_under_ele_ela_still_resolves_both_spouses(self):
+        """🔴 THE LAYOUT VARIANT THIS TEST COVERS
+
+        `find_name`/`find_conjuges` see ZERO candidates on a certidão whose
+        only holder-naming block is this pronoun clause — `NOME` never
+        matches (the value sits under `Ele`/`Ela`, not `NOME`), so
+        `extracao_conjuges` would land `null` without
+        `name._PRONOUN_NAME_LABELS`.
+        """
+        # The wife's resolved `nome` is her POST-marriage name (the value
+        # under `Ela:`, including the husband's surname) — `find_conjuges`
+        # matches a candidate's OWN occurrences to find its CPF/qualification
+        # window, and "TAUANE GONCALVES DIAS ENRIQUES" only occurs once, at
+        # the `Ela:` line, so no CPF window is found for her from this
+        # layout. The name itself is what this test protects.
+        a, b = find_conjuges(CERTIDAO_NOME_ADOTADO_PRONOME)
+        assert (a.nome, a.cpf) == ("RODRIGO MORAES ENRIQUES", "412.954.238-98")
+        assert b.nome == "TAUANE GONCALVES DIAS ENRIQUES"
 
 
 # ─── the extractor ────────────────────────────────────────────────────────
