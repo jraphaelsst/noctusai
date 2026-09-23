@@ -99,7 +99,12 @@ describe.skipIf(!BUILT)("build output — dist/_site (contract §4)", () => {
 
   it("home wraps every switchable section in the nx:section comment markers", () => {
     const html = fs.readFileSync(routeFile("/"), "utf-8");
-    for (const key of ["audiences", "products", "custom_builds", "trust", "pricing", "faq"]) {
+    // "trust" is deliberately excluded: it renders (and therefore markers
+    // it too) only once at least one trust item is admin-verified — see
+    // Home.tsx's empty-state guard (2026-09-23 review). With
+    // `content/defaults.ts` shipping zero verified items, the section is
+    // genuinely absent from the default build, not a bug.
+    for (const key of ["audiences", "products", "custom_builds", "pricing", "faq"]) {
       expect(html, `missing start marker for ${key}`).toContain(`<!--nx:section:${key}-->`);
       expect(html, `missing end marker for ${key}`).toContain(`<!--/nx:section:${key}-->`);
     }
