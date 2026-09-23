@@ -34,12 +34,15 @@ This is the same instinct as **fix-on-contact** ([[drift-fix-on-contact]]) and *
 
 The owner's framing: *"gates only function as safety nets, not as part of the dev methodology flow. This is like driving a car and using walls to help you turn the wheel."* A gate that fires during ordinary work is a **wall**: its mechanism is missing or broken, and agents are steering by collision. The signal is measurable. Count the commits that exist only to satisfy a gate (baseline bumps, hand-closed pointers, renumbers, `fix(ci)` on the merged tip, ledger-only commits) and the auto-improvement rows naming a gate. A recurring count is a mechanism bug, not agent carelessness.
 
-Design rules a safety net must meet:
+**This is a direction, not a new checklist.** The owner, same day: *"we dont want to be too strict in a sense that our deving loses criative potencial."* The goal is less friction, never more process in its name. Most work needs no gate at all. Spikes, prototypes and exploratory branches are free to be rough, and nothing here asks them to justify themselves. Reach for a gate only when an invariant's silent breakage is expensive: prod, data, consent, shared multi-agent state. When a gate starts firing on ordinary work, the fix is usually to remove the friction upstream, and sometimes to delete the gate.
+
+Design rules, for the gates that earn their place:
 - **Measure, don't predict.** A guard that parses intent (shell commands) turns into an arms race of fix commits. Where the exact target can't be known up front, allow the action and measure its effect (e.g. the primary-checkout dirt delta), then surface it.
 - **Scope the block to the actor who can fix it.** In a shared multi-agent repo, a global-state gate blocks only the session that owns the violation. Peers get a warning (`check_stale_branch_pointers`).
 - **Unmeasurable is not red.** A gate that can't run (no venv, no deps) says `SKIPPED — unmeasurable`. It never blocks on its own harness failure (`KB § PATTERNS/common/methodology-execution-discipline.md`, verdict-channel integrity).
 - **Judge the change, not the file.** A pre-existing violation elsewhere in a file is the commit-time keeper's job. A write-time guard judges only what the write adds (`test_seam_guard`).
 - **Mechanism first, then backfill, then the gate.** Otherwise the new gate goes red on legacy state and trains everyone to route around it.
+- **Prefer removing a gate to adding one.** A gate that has never caught a real problem, or only guards ceremony (e.g. a baseline measured against live product code), is cost with no net.
 
 The 2026-09-23 audit ranked the walls; the fixes landed as mechanisms:
 
@@ -47,8 +50,10 @@ The 2026-09-23 audit ranked the walls; the fixes landed as mechanisms:
 |---|---|
 | branch-tree pointers left `on_going` for months | `task_branch` start/integrate/cleanup write the transitions; healer proves rebased branches via `Noc-Branch` trailers; net: `check_stale_branch_pointers` |
 | follow-up branch read as an unapproved ship-consent project | `task_branch start project=` / inherited from `parent` |
+| outline corpus baseline bumped by every UI change (a gate that guarded ceremony) | frozen vendored corpus; the baseline moves only when the outliner changes |
+| `check_framework_deps` red after scaffold/absorb; its fix wrote `"*"` | `scaffold_product` runs the fix; ranges come from seed's own package.json |
 
-In flight from that audit: the `primary_write_guard` Bash leg (13 fix commits), the outline corpus baseline, `test_seam_guard` scoping, and `check_framework_deps` at scaffold/absorb. Still open (serialized behind `task_branch.py`, or awaiting an owner decision): migration renumber at integrate, a gate sweep on the rebased tip before FF-push, derived KB counts at integrate instead of per commit, and moving append-only ops ledgers off the `dev` code line (23% of dev commits are ledger-only).
+In flight from that audit: the `primary_write_guard` Bash leg (predict only exact targets, measure primary dirt afterwards), `test_seam_guard` scoping (judge added lines; share the predicate with a Bash leg), and three integrate-time mechanisms in `task_branch` (migration renumber, a time-boxed merged-tip check that refuses only on a new measured red, KB counts regenerated at integrate). Proposal pending an owner decision: moving append-only ops ledgers off the `dev` code line (23% of dev commits are ledger-only).
 
 ## How to apply (the authoring checklist)
 
