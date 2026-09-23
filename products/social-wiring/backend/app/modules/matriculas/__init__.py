@@ -17,10 +17,27 @@ text goes through ONE pipeline — ``service.processar_extracao`` — which also
 persists the acts (``estrutura_service.persistir_atos``, offsets from the seed
 segmenter).
 
+🔴 A THIRD ENTRY POINT NOW REACHES THE SAME PIPELINE (2026-09-23): the
+imóvel-page upload (``POST /api/imoveis/{codigo}/documentos`` with
+``tipo_documento=matricula``, in ``imovel_hub.router``) used to stop at the
+número-de-matrícula read below and migration 118's structured read — it
+never created a ``matricula_extracoes`` row at all, so cartório, inscrição,
+situação de ônus, atos and título suggestions only ever filled in for a
+matrícula uploaded through THIS module's own ``/extrair``. It now calls
+``estrutura_service.criar_extracao_de_documento`` off the document it just
+stored (the same call ``/extracoes/de-documento`` makes for an
+already-held PDF) and schedules ``service.processar_extracao_de_documento``
+— the identical background job, not a copy. The two entry points still each
+mint their OWN ``imovel_documentos`` row for the same physical PDF if a user
+uploads it through both (no content hash exists to dedupe on); converging
+onto one document is a separate, larger change.
+
 ``app/modules/imovel_hub/matricula_extracao_service.py`` still reads the
 número de matrícula off the same PDF with its own seed ladder
-(``make_matricula_extractor``). This module queues THAT job rather than
-copying it, but a scanned PDF is still read twice.
+(``make_matricula_extractor``). This module (now from THREE call sites —
+its own ``/extrair``, and both of ``imovel_hub``'s upload routes) queues
+THAT job rather than copying it, but a scanned PDF is still read twice per
+upload.
 
 NOC-REMEDIATE[matricula-pipeline-consolidation]: collapse the número read
 onto this module's single transcription. Blocked on the seed: the
@@ -30,7 +47,11 @@ existing ``Transcription`` product-side would fork that safety rule. Named
 destination: a seed ``matricula_fields_from_transcription(Transcription)``,
 after which ``imovel_hub.matricula_extracao_service.extrair`` becomes a
 projection of the matrícula extraction and its ``extracao_*`` columns stop
-being a second pipeline's state. — 2026-09-14
+being a second pipeline's state. — 2026-09-14. STILL OPEN as of 2026-09-23:
+the 2026-09-23 change above makes the imóvel-page upload reach the SAME
+transcription pipeline every other entry point reaches (closing the
+missing-fields gap), but it does not collapse the double PDF read this
+marker names — that is still blocked on the same seed work.
 
 Seam contract
 ─────────────
