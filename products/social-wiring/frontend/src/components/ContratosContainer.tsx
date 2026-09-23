@@ -38,6 +38,7 @@ import { ApiError, resolveSSOContext } from "@noctusai/lib";
 
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
+import { ProvenienciaContainer } from "@/components/ProvenienciaContainer";
 import { EnviarAssinaturaDialog } from "@/components/card/EnviarAssinaturaDialog";
 import ContratosPanel from "@/components/card/ContratosPanel";
 import { useCompradores } from "@/hooks/useCardHub";
@@ -234,6 +235,9 @@ export function ContratosContainer({
         )}
         renderGeradorContrato={(contratoId, aberto) => (
           <GeradorContratoContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
+        )}
+        renderProveniencia={(contratoId, aberto) => (
+          <ProvenienciaContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
         )}
         assinaturas={assinaturas}
         onAbrirEnvioAssinatura={(contratoId, versaoId) => {

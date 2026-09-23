@@ -248,6 +248,63 @@ describe("GeradorContratoSection", () => {
     ).toBeNull();
   });
 
+  it("🔴 a `faltando` item's `sugestoes` render as 'Envie X em Y' hints, with a routable destino as a link", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "matricula",
+            rotulo: "Matrícula transcrita",
+            onde: "matricula",
+            parte_id: null,
+            sugestoes: [
+              { tipo_documento: "Matrícula", rotulo: "Extrator de matrículas", destino: "/matriculas" },
+            ],
+          },
+        ],
+      }),
+    });
+    const sugestoes = screen.getByTestId("gerador-contrato-faltando-sugestoes-matricula-");
+    expect(sugestoes.textContent).toContain("Envie Matrícula");
+    const link = screen.getByTestId(
+      "gerador-contrato-faltando-sugestao-link-matricula--0",
+    ) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/matriculas");
+  });
+
+  it("🔴 a sugestão with a card-scoped destino renders guidance, never a fabricated link", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "certidao",
+            rotulo: "Certidão de casamento",
+            onde: "certidoes",
+            parte_id: "p1",
+            sugestoes: [
+              { tipo_documento: "Certidão de casamento", rotulo: "Certidão", destino: "contratos" },
+            ],
+          },
+        ],
+      }),
+    });
+    const sugestoes = screen.getByTestId("gerador-contrato-faltando-sugestoes-certidao-p1");
+    expect(sugestoes.querySelector("a")).toBeNull();
+    expect(sugestoes.textContent).toContain("Contratos");
+  });
+
+  it("omits the sugestões block entirely when the item carries none", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [{ campo: "cpf", rotulo: "CPF do comprador", onde: "partes", parte_id: "p1" }],
+      }),
+    });
+    expect(screen.queryByTestId("gerador-contrato-faltando-sugestoes-cpf-p1")).toBeNull();
+  });
+
   it("🔴 `bloqueios` render as errors, distinct from `avisos` as warnings", async () => {
     const { screen } = await render({
       status: status({

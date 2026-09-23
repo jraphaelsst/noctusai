@@ -32,7 +32,7 @@ import {
   type GeracaoOnde,
 } from "@/hooks/useContratos";
 
-import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
+import { CARD_SUBPAGES, resolverDestino, type CardSubpageKey } from "./cardSubpages";
 
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
  *  by WHERE to go fill the field, not just what field it is. */
@@ -67,7 +67,26 @@ export interface GeracaoDestino {
   };
 }
 
-export type FaltandoComDestino = GeracaoFaltando & { destino?: GeracaoDestino };
+/**
+ * `faltando[].sugestoes` — `sw-extraction-contract` (proveniência slice):
+ * which document could fill this missing field and where to go send it.
+ * Same "not yet declared on `GeracaoFaltando` itself" carve-out as
+ * `destino` above — `sugestoes[].destino` is a PLAIN STRING (a route or a
+ * `CardSubpageKey`), unlike `GeracaoFaltando.destino`'s richer object, the
+ * same shape `ProvenienciaFontePossivel.destino` uses
+ * (`hooks/useProveniencia.ts`) — both resolved through
+ * `cardSubpages.resolverDestino`.
+ */
+export interface GeracaoSugestao {
+  tipo_documento: string | null;
+  rotulo: string;
+  destino: string | null;
+}
+
+export type FaltandoComDestino = GeracaoFaltando & {
+  destino?: GeracaoDestino;
+  sugestoes?: GeracaoSugestao[];
+};
 
 /** Card subpage labels, canonical source (`cardSubpages.CARD_SUBPAGES`) —
  *  never a second hand-written copy of the rail's labels. */
@@ -93,6 +112,54 @@ function agruparPorOnde(faltando: GeracaoFaltando[]): [GeracaoOnde, GeracaoFalta
 }
 
 /**
+ * `faltando[].sugestoes` — actionable hints below the missing-field line:
+ * "envie X em Y". Same routable-vs-card-scoped split `FaltandoLinha` already
+ * runs for `destino`, generalized through `resolverDestino` since
+ * `GeracaoSugestao.destino` is the narrower plain-string shape.
+ */
+function SugestoesLista({
+  sugestoes,
+  campo,
+  parteId,
+}: {
+  sugestoes?: GeracaoSugestao[];
+  campo: string;
+  parteId: string | null;
+}) {
+  if (!sugestoes || sugestoes.length === 0) return null;
+  return (
+    <ul
+      className="ml-3 mt-0.5 list-disc space-y-0.5 text-muted-foreground/80"
+      data-testid={`gerador-contrato-faltando-sugestoes-${campo}-${parteId ?? ""}`}
+    >
+      {sugestoes.map((sugestao, i) => {
+        const { rota, subpageLabel } = resolverDestino(sugestao.destino);
+        const documentoRotulo = sugestao.tipo_documento ?? sugestao.rotulo;
+        return (
+          <li key={`${documentoRotulo}-${i}`}>
+            Envie {documentoRotulo}
+            {rota && (
+              <>
+                {" "}
+                em{" "}
+                <Link
+                  to={rota}
+                  className="text-primary hover:underline"
+                  data-testid={`gerador-contrato-faltando-sugestao-link-${campo}-${parteId ?? ""}-${i}`}
+                >
+                  {sugestao.rotulo}
+                </Link>
+              </>
+            )}
+            {!rota && subpageLabel && ` em ${subpageLabel} (abra a aba do card).`}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
  * One `faltando` item, rendered actionable off its own `destino`.
  *
  * 🔴 A card-scoped destino (`tela` prefixed `card_`) points at a
@@ -109,7 +176,12 @@ function FaltandoLinha({ item }: { item: FaltandoComDestino }) {
 
   if (!destino) {
     // No `destino` on the payload — same rendering as before this slice.
-    return <li>{item.rotulo}</li>;
+    return (
+      <li>
+        {item.rotulo}
+        <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
+      </li>
+    );
   }
 
   if (destino.tela.startsWith("card_")) {
@@ -124,30 +196,34 @@ function FaltandoLinha({ item }: { item: FaltandoComDestino }) {
             Abra o card do cliente, aba &ldquo;{subpageLabel}&rdquo;.
           </span>
         )}
+        <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
       </li>
     );
   }
 
   const abaRotulo = destino.ancora ? CONFIGURACOES_ABA_ROTULOS[destino.ancora] : undefined;
   return (
-    <li className="flex items-center justify-between gap-2">
-      <span>
-        {item.rotulo}
-        {abaRotulo && <span className="text-muted-foreground/70"> (aba {abaRotulo})</span>}
-      </span>
-      <Button
-        asChild
-        type="button"
-        variant="link"
-        size="sm"
-        className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
-        data-testid={`gerador-contrato-faltando-link-${item.campo}-${item.parte_id ?? ""}`}
-      >
-        <Link to={destino.rota}>
-          Resolver
-          <ArrowRight className="h-3 w-3" />
-        </Link>
-      </Button>
+    <li>
+      <div className="flex items-center justify-between gap-2">
+        <span>
+          {item.rotulo}
+          {abaRotulo && <span className="text-muted-foreground/70"> (aba {abaRotulo})</span>}
+        </span>
+        <Button
+          asChild
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
+          data-testid={`gerador-contrato-faltando-link-${item.campo}-${item.parte_id ?? ""}`}
+        >
+          <Link to={destino.rota}>
+            Resolver
+            <ArrowRight className="h-3 w-3" />
+          </Link>
+        </Button>
+      </div>
+      <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
     </li>
   );
 }
