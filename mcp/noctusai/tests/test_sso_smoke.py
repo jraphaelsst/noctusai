@@ -201,3 +201,24 @@ def test_no_resolvable_origins_is_not_configured_never_a_faked_pass():
     r = S.sso_cors_smoke(origins={})
     assert r["status"] == "not_configured"
     assert r["exit_code"] == 1
+
+
+def test_smoke_account_file_fills_email_without_touching_repo_env(tmp_path, monkeypatch):
+    """No env_file → repo .env, then the per-developer smoke-account file
+    (outside the repo) overlays it; an explicit env_file skips the home file."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".env").write_text("SUPABASE_URL=https://proj.supabase.co\nNOCTUS_SSO_SMOKE_EMAIL=\n")
+    home_file = tmp_path / "sso-smoke.env"
+    home_file.write_text("NOCTUS_SSO_SMOKE_EMAIL=smoke@example.com\n")
+    monkeypatch.setattr(S, "REPO_ROOT", str(repo))
+    monkeypatch.setattr(S, "SMOKE_ACCOUNT_FILE", home_file)
+    monkeypatch.delenv("NOCTUS_SSO_SMOKE_EMAIL", raising=False)
+
+    c = S._resolve_creds(None, None)
+    assert c["supabase_url"] == "https://proj.supabase.co"
+    assert c["email"] == "smoke@example.com"
+
+    explicit = tmp_path / "explicit.env"
+    explicit.write_text("NOCTUS_SSO_SMOKE_EMAIL=explicit@example.com\n")
+    assert S._resolve_creds(str(explicit), None)["email"] == "explicit@example.com"
