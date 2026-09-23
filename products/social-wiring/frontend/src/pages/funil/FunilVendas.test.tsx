@@ -41,21 +41,29 @@ const ATENDIMENTOS: any[] = [];
 // Partial mock: the module also exports auth/layout pieces the app shell
 // pulls in. Replacing the whole module would break imports that have nothing
 // to do with this test.
+// Bug 5 — records every `filtros` this page hands the board, so a test can
+// assert on the DEBOUNCED value the board actually queries with, not just
+// the input's own (immediate) display value.
+const mockFiltros = vi.fn();
+
 vi.mock("@noctusai/lib/components", async (importOriginal) => ({
   ...(await importOriginal<any>()),
   // `toolbar` IS rendered here — the real board renders it whenever the prop
   // is set, and the page's "Novo lead" button lives in it. A stub that
   // dropped it would hide the button from every test that looks for it.
-  PipelineBoard: ({ onCardClick, toolbar }: any) => (
-    <div>
-      {toolbar}
-      {ATENDIMENTOS.map((a) => (
-        <button key={a.id} data-testid={`card-${a.id}`} onClick={() => onCardClick(a)}>
-          {a.titulo}
-        </button>
-      ))}
-    </div>
-  ),
+  PipelineBoard: ({ onCardClick, toolbar, filtros }: any) => {
+    mockFiltros(filtros);
+    return (
+      <div>
+        {toolbar}
+        {ATENDIMENTOS.map((a) => (
+          <button key={a.id} data-testid={`card-${a.id}`} onClick={() => onCardClick(a)}>
+            {a.titulo}
+          </button>
+        ))}
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/hooks/usePipelineSeam", () => ({
@@ -112,6 +120,7 @@ beforeEach(() => {
   mockClienteDetailModal.mockReset();
   mockLeadDetailModal.mockReset();
   mockCreateLead.mockReset();
+  mockFiltros.mockReset();
   ATENDIMENTOS.length = 0;
 });
 
@@ -174,5 +183,65 @@ describe("FunilVendas — clicking a card opens the CARD", () => {
 
     expect(queryByTestId("cliente-card-dialog")).toBeNull();
     expect(queryByTestId("lead-detail-modal")).toBeNull();
+  });
+});
+
+describe("FunilVendas — Bug 5 (prod card 755253934): a debounced search, not one GET per keystroke", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("🔴 does NOT hand the board a fresh `filtros.busca` on every keystroke", async () => {
+    const { act } = await import("@testing-library/react");
+    const { fireEvent, getByPlaceholderText } = await renderFunil();
+    const input = getByPlaceholderText(
+      "Buscar por nome, contato ou empreendimento...",
+    ) as HTMLInputElement;
+
+    mockFiltros.mockClear();
+    act(() => {
+      fireEvent.change(input, { target: { value: "A" } });
+    });
+    act(() => {
+      fireEvent.change(input, { target: { value: "AN" } });
+    });
+    act(() => {
+      fireEvent.change(input, { target: { value: "ANA" } });
+    });
+
+    // Three keystrokes, three re-renders (React state updates on every
+    // change) — but every one of them must still carry the PRE-typing
+    // `busca` (`undefined`) into `filtros`, because the debounced value has
+    // not settled yet. The old code handed the board a fresh non-empty
+    // `busca` on the FIRST keystroke already.
+    for (const call of mockFiltros.mock.calls) {
+      expect(call[0].busca).toBeUndefined();
+    }
+
+    // `act` flushes the effect the debounce's `setTimeout` schedules AND the
+    // resulting state update in the same synchronous pass — no `waitFor`
+    // polling needed (and polling against fake timers is exactly the kind
+    // of mismatch that flakes under load).
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    const calls = mockFiltros.mock.calls;
+    const last = calls[calls.length - 1]?.[0];
+    expect(last?.busca).toBe("ANA");
+  });
+
+  it("the input itself stays IMMEDIATE — typing is never visibly delayed", async () => {
+    const { fireEvent, getByPlaceholderText } = await renderFunil();
+    const input = getByPlaceholderText(
+      "Buscar por nome, contato ou empreendimento...",
+    ) as HTMLInputElement;
+
+    fireEvent.change(input, { target: { value: "Ana" } });
+    expect(input.value).toBe("Ana");
   });
 });

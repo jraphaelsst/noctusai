@@ -1080,6 +1080,26 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     expect(screen.getByTestId("painel-da-parte")).toBeTruthy();
   });
 
+  it("🔴 a papel=conjuge party's document panel is keyed on the PARTY'S OWN cliente_id — `papel` never changes routing (prod card 755253934)", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderPanel = vi.fn(() => <div data-testid="painel-da-parte" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          // A titular exists implicitly (props.dadosPessoais/props.documentos);
+          // this party is flagged papel="conjuge" with its OWN, DISTINCT
+          // cliente_id — the reported bug would route this to the titular's
+          // documentos endpoint instead of "cli-conjuge".
+          compradores: [parte({ papel: "conjuge", cliente_id: "cli-conjuge" })],
+          renderDocumentosDePessoa: renderPanel,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("pessoa-documentos-comprador-parte-1-toggle"));
+    expect(renderPanel).toHaveBeenCalledWith("cli-conjuge");
+    expect(renderPanel).not.toHaveBeenCalledWith("cli-esposa");
+  });
+
   it("🔴 renders a party's certidões by PARTE id, only once expanded", async () => {
     const { fireEvent, render, screen } = await import("@testing-library/react");
     const renderCertidoes = vi.fn(() => <div data-testid="certidoes-da-parte" />);

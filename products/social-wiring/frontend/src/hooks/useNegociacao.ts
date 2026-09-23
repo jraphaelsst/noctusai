@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 import type { ImovelVisita } from "@/types/cardHub";
+import { invalidateExtracaoDependentes } from "@/hooks/useCardHub";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -141,6 +142,12 @@ export function useNegociacaoMutation(clienteId: string) {
       // seeding beats invalidating: the numbers on screen are the ones the
       // server just calculated, not a second read that could disagree.
       qc.setQueryData(NEGOCIACAO_KEY(clienteId), data);
+      // Bug 2 (prod card 755253934) — Salvar changes `imovel_codigo`/deal
+      // terms that "Qualificação para contrato" and geração-readiness read
+      // alongside negociação itself; without this they kept the
+      // pre-Salvar snapshot until reload, same class as the extraction
+      // staleness `useExtracaoPollingInvalidation` (`useCardHub.ts`) fixes.
+      void invalidateExtracaoDependentes(qc, clienteId);
     },
   });
 }
