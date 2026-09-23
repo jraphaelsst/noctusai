@@ -33,7 +33,11 @@ class ImovelDadosPatchBody(StrictHttpModel):
     onus_observacoes: Optional[str] = Field(default=None, max_length=4000)
     onus_certidao_em: Optional[date] = None
     onus_documento_id: Optional[UUID] = None
-    numero_registro_imoveis: Optional[str] = Field(default=None, max_length=64)
+    #: 200, not 64: the value is the cartório's full name as the certidão
+    #: heading prints it ("OFICIAL DE REGISTRO DE IMÓVEIS DA COMARCA DE SÃO
+    #: PAULO/SP"), which migration 154's extraction now fills — a human must
+    #: be able to save back what the machine wrote.
+    numero_registro_imoveis: Optional[str] = Field(default=None, max_length=200)
     prefeitura_cadastro_imobiliario: Optional[str] = Field(
         default=None, max_length=200
     )
@@ -82,7 +86,16 @@ class ImovelDocumentoExtracaoPatchBody(StrictHttpModel):
     inscricao_imobiliaria: Optional[str] = Field(default=None, max_length=64)
 
 
+class DecidirConflitoImovelBody(StrictHttpModel):
+    """A human's decision on an `imovel_campo_conflitos` row (migration 154,
+    D1). `aceitar=True` lands the extracted value, confirmed by the decider;
+    `aceitar=False` leaves `imovel_dados` untouched."""
+
+    aceitar: bool
+
+
 __all__ = [
+    "DecidirConflitoImovelBody",
     "EnderecoManualPatchBody",
     "ImovelDadosPatchBody",
     "ImovelDocumentoExtracaoPatchBody",

@@ -20,6 +20,7 @@ reasons that both matter:
 from __future__ import annotations
 
 import weakref
+from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from noctusai_lib.integrations.documents import (
@@ -111,8 +112,46 @@ def get_matricula_extractor_factory() -> MatriculaExtractorFactory:
     return _build_matricula_extractor
 
 
+@dataclass(frozen=True)
+class EstruturaSeams:
+    """The two IO legs of `documentos_service.extrair_estrutura` (migration
+    118) — text off the bytes, fields off the text. `None` = the real ones
+    (`_extrair_texto` / `_analisar_estrutura`), which resolve credentials
+    and can reach a transcription/LLM provider."""
+
+    extract_text: Optional[Callable[..., Any]] = None
+    analyze_estrutura: Optional[Callable[..., Any]] = None
+
+
+def get_estrutura_seams() -> EstruturaSeams:
+    """FastAPI dependency — the structured read's IO seams.
+
+    Tests MUST override this (the `fake_extractor` fixtures do), for the
+    same reason `get_matricula_extractor_factory` must be: the real legs
+    resolve an org's credentials and can reach a provider, so an
+    un-overridden upload test was reaching out of the sandbox (found
+    2026-09-22 while wiring the structured read into `/api/matriculas/
+    extrair`)."""
+    return EstruturaSeams()
+
+
+def get_imovel_notification_service() -> Any:
+    """FastAPI dependency — the notifier for `imovel_campo_conflitos`
+    (migration 154, D1). Built exactly like `matriculas.deps.
+    get_notification_service` (`build_notification_service(admin)`); a
+    separate function object so a test can override this module's notifier
+    without re-pointing the matrículas one (`dependency_overrides` keys on
+    the function)."""
+    from app.services.notification_service import build_notification_service
+
+    return build_notification_service(get_admin_client())
+
+
 __all__ = [
     "BUCKET",
+    "EstruturaSeams",
+    "get_estrutura_seams",
+    "get_imovel_notification_service",
     "MatriculaExtractorFactory",
     "get_imovel_hub_client",
     "get_matricula_extractor_factory",

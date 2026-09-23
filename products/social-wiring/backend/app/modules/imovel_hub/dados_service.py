@@ -13,19 +13,19 @@ seen and is append-only. A property leaves the Vista catalog when it is
 SOLD — so keying to the mirror would have made this feature 404 exactly the
 imóveis whose paperwork is being handled.
 
-WRITE SEMANTICS FOR `numero_matricula`
---------------------------------------
-The column has a provenance quintuple, mirroring `clientes.data_nascimento`
-(migration 068), and the same rule: **first writer wins.** A number a human
-typed is never overwritten by a machine read, and a machine read never
-overwrites a machine read. The extraction path (`matricula_extracao_service`)
-offers a value; only an empty column accepts it unattended.
-
-That asymmetry is deliberate and is the opposite of `nome`'s (where the
-official document is meant to win). A matrícula number has no plausibility
-gate — see `noctusai_lib.integrations.documents.matricula_extractor` — so
-letting a read overwrite a human's entry would trade a value somebody
-verified for one nobody can check.
+WRITE SEMANTICS FOR THE EXTRACTED FIELDS (D1, migration 154)
+-------------------------------------------------------------
+`numero_matricula`, `numero_registro_imoveis`, `prefeitura_cadastro_
+imobiliario` and `situacao_onus` each carry a provenance quintet
+(`_origem/_documento_id/_em/_confirmado_por/_confirmado_em`), mirroring
+`clientes.data_nascimento` (068). A human write through `atualizar` stamps
+`origem='manual'`; a machine reading goes ONLY through
+`campos_extraidos_service.aplicar`, which fills an empty column and turns a
+disagreement into a conflict a human decides — never an overwrite. A machine
+read never overwrites a machine read either: a matrícula number has no
+plausibility gate (see `noctusai_lib.integrations.documents.
+matricula_extractor`), so trading a value for another nobody can check is
+exactly what the conflict exists to stop.
 """
 from __future__ import annotations
 
@@ -90,15 +90,26 @@ SITUACOES_ONUS: tuple[str, ...] = (
     "outro",
 )
 
+#: The scalar fields whose full provenance quintet a human write stamps
+#: `manual` (and a clear empties) — migration 068's shape for
+#: `numero_matricula`, extended by 154 to the other three contract-feeding
+#: cartório fields. `campos_extraidos_service` re-exports this.
+CAMPOS_QUINTETO_MANUAL: tuple[str, ...] = (
+    "numero_matricula",
+    "numero_registro_imoveis",
+    "prefeitura_cadastro_imobiliario",
+    "situacao_onus",
+)
+
+_SUFIXOS_QUINTETO: tuple[str, ...] = (
+    "_origem", "_documento_id", "_em", "_confirmado_por", "_confirmado_em",
+)
+
 #: Provenance columns — stamped, never accepted from a body. Listed so the
 #: refusal below names them rather than silently dropping them, which is the
 #: silent-error shape this codebase forbids.
-CAMPOS_PROVENIENCIA: tuple[str, ...] = (
-    "numero_matricula_origem",
-    "numero_matricula_documento_id",
-    "numero_matricula_em",
-    "numero_matricula_confirmado_por",
-    "numero_matricula_confirmado_em",
+CAMPOS_PROVENIENCIA: tuple[str, ...] = tuple(
+    f"{campo}{sufixo}" for campo in CAMPOS_QUINTETO_MANUAL for sufixo in _SUFIXOS_QUINTETO
 )
 
 
@@ -145,9 +156,13 @@ CAMPOS_ENDERECO_CONTRATO: tuple[str, ...] = (
 
 CAMPOS_TEXTO_CONTRATO: tuple[str, ...] = (
     "titulo_aquisitivo_texto",
+    # Migration 154 — `manual` when an operator's PUT wrote it (vs. `matricula`
+    # when `campos_extraidos_service` filled it from the acts).
+    "titulo_aquisitivo_texto_origem",
     "titulo_aquisitivo_texto_confirmado_por",
     "titulo_aquisitivo_texto_confirmado_em",
     "onus_credor",
+    "onus_credor_origem",
     "onus_credor_confirmado_por",
     "onus_credor_confirmado_em",
 ) + CAMPOS_ENDERECO_CONTRATO
@@ -503,8 +518,27 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
         "ultima_transferencia_manual_confirmado_em": row.get(
             "ultima_transferencia_manual_confirmado_em"
         ),
+        # Migration 154 — where each extracted contract field came from, and
+        # whether it still awaits a human (the D2 gate's "machine-pending").
+        "proveniencia": _proveniencia(row, resolved),
         "updated_at": row.get("updated_at"),
     }
+
+
+def _proveniencia(row: dict, resolved: dict) -> dict:
+    from app.modules.imovel_hub.campos_extraidos_service import CAMPOS, pendente
+
+    saida: dict = {}
+    for chave, campo in CAMPOS.items():
+        saida[chave] = {
+            "origem": row.get(campo.origem),
+            "documento_id": row.get(campo.documento_id) if campo.documento_id else None,
+            "em": row.get(campo.em) if campo.em else None,
+            "confirmado_por": table_reads.actor(resolved, row.get(campo.confirmado_por)),
+            "confirmado_em": row.get(campo.confirmado_em),
+            "pendente": pendente(row, campo),
+        }
+    return saida
 
 
 def obter(client: Any, org_id: UUID, codigo: str) -> dict:
@@ -521,6 +555,9 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("endereco_registro_confirmado_por"),
         (row or {}).get("endereco_manual_confirmado_por"),
         (row or {}).get("ultima_transferencia_manual_confirmado_por"),
+        (row or {}).get("numero_registro_imoveis_confirmado_por"),
+        (row or {}).get("prefeitura_cadastro_imobiliario_confirmado_por"),
+        (row or {}).get("situacao_onus_confirmado_por"),
     }
     return _saida(codigo, row, table_reads.resolve_actors(ids))
 
@@ -552,22 +589,31 @@ def atualizar(
     atual = linha(client, org_id, codigo)
     patch = {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
 
-    # A human typing the number IS the provenance. Stamped here rather than
+    # A human typing the value IS the provenance. Stamped here rather than
     # left null so a later extraction can tell the column is already spoken
-    # for — that check is what makes first-writer-wins work.
-    if "numero_matricula" in patch and patch["numero_matricula"]:
-        patch["numero_matricula_origem"] = "manual"
-        patch["numero_matricula_documento_id"] = None
-        patch["numero_matricula_em"] = _now()
-        patch["numero_matricula_confirmado_por"] = (
-            str(usuario_id) if usuario_id else None
-        )
-        patch["numero_matricula_confirmado_em"] = _now()
-    elif "numero_matricula" in patch:
-        # Cleared. Its provenance must go with it — a stale origin pointing
-        # at a number that is no longer there is worse than none.
-        for coluna in CAMPOS_PROVENIENCIA:
-            patch[coluna] = None
+    # for — that check is what turns a disagreeing reading into a conflict
+    # instead of an overwrite (D1, `campos_extraidos_service.aplicar`).
+    for campo in CAMPOS_QUINTETO_MANUAL:
+        if campo not in patch:
+            continue
+        if patch[campo] == (atual or {}).get(campo):
+            # Unchanged — a form re-saving the block it belongs to (the ônus
+            # block always sends `situacao_onus`) is not a human deciding
+            # this value. Its provenance stays as it was: a machine-pending
+            # value is validated through the D2 gate, never as a side effect
+            # of saving a neighbouring field.
+            continue
+        if patch[campo]:
+            patch[f"{campo}_origem"] = "manual"
+            patch[f"{campo}_documento_id"] = None
+            patch[f"{campo}_em"] = _now()
+            patch[f"{campo}_confirmado_por"] = str(usuario_id) if usuario_id else None
+            patch[f"{campo}_confirmado_em"] = _now()
+        else:
+            # Cleared. Its provenance must go with it — a stale origin
+            # pointing at a value that is no longer there is worse than none.
+            for sufixo in _SUFIXOS_QUINTETO:
+                patch[f"{campo}{sufixo}"] = None
 
     if "captador_user_id" in patch and patch["captador_user_id"] is not None:
         patch["captador_user_id"] = str(patch["captador_user_id"])
@@ -599,7 +645,7 @@ def _gravar(
     client: Any, org_id: UUID, codigo: str, atual: Optional[dict], patch: dict
 ) -> None:
     """Insert the imóvel's row, or update it — the ONE write shape every
-    author of this table uses (`atualizar`, `aplicar_matricula_extraida`,
+    author of this table uses (`atualizar`, `gravar_extraido`,
     `gravar_fontes_matricula`).
 
     `atual` is the row the caller just re-read. Read-then-write rather than
@@ -618,41 +664,29 @@ def _gravar(
         ).eq("codigo", codigo).execute()
 
 
-def aplicar_matricula_extraida(
-    client: Any,
-    org_id: UUID,
-    codigo: str,
-    *,
-    numero: str,
-    documento_id: UUID,
-) -> bool:
-    """Write an extracted number into an EMPTY column. Returns whether it landed.
+def gravar_extraido(
+    client: Any, org_id: UUID, codigo: str, atual: Optional[dict], patch: dict
+) -> None:
+    """The write `campos_extraidos_service` (D1, migration 154) makes — a
+    machine reading filling an empty field, or a human accepting a conflict.
 
-    🔴 FIRST WRITER WINS, CHECKED AGAINST THE ROW, NOT AGAINST A FLAG.
-    Re-read immediately before the write rather than trusting anything the
-    caller passed: the extraction runs detached, minutes may separate the
-    upload from this call, and a human may well have typed the number in
-    between. Returning `False` here is the normal, correct outcome in that
-    race — not a failure.
+    Refuses any column outside that module's field registry: this is not a
+    back door to the other authored fields. `atual` is the row the caller
+    just re-read (the D1 decision was made against it).
     """
-    ensure_imovel(client, org_id, codigo)
-    atual = linha(client, org_id, codigo)
-    if atual and atual.get("numero_matricula"):
-        return False
+    from app.modules.imovel_hub.campos_extraidos_service import CAMPOS
 
-    patch = {
-        "numero_matricula": numero,
-        "numero_matricula_origem": "matricula",
-        "numero_matricula_documento_id": str(documento_id),
-        "numero_matricula_em": _now(),
-        # Deliberately NOT confirmed: a machine read is attributable to a
-        # document, never to a person. `confirmado_por` stays null until a
-        # human agrees with it.
-        "numero_matricula_confirmado_por": None,
-        "numero_matricula_confirmado_em": None,
+    permitidas = {
+        coluna
+        for campo in CAMPOS.values()
+        for coluna in (*campo.colunas, *campo.colunas_proveniencia())
     }
+    recusados = sorted(set(patch) - permitidas)
+    if recusados:
+        raise ValueError(
+            f"gravar_extraido: colunas fora dos campos extraídos: {', '.join(recusados)}"
+        )
     _gravar(client, org_id, codigo, atual, patch)
-    return True
 
 
 def gravar_fontes_matricula(
@@ -833,11 +867,12 @@ __all__ = [
     "CAMPOS_TITULO_AQUISITIVO",
     "HISTORICO_ENDERECO_TABLE",
     "TABLE",
-    "aplicar_matricula_extraida",
+    "CAMPOS_QUINTETO_MANUAL",
     "atualizar",
     "ensure_imovel",
     "extracao_referenciada",
     "gravar_endereco_manual",
+    "gravar_extraido",
     "gravar_fontes_matricula",
     "gravar_texto_contrato",
     "historico_endereco",

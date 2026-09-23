@@ -89,19 +89,28 @@ from fastapi import (
 )
 from fastapi import Path as PathParam
 from fastapi.responses import Response
+from noctusai_lib.api.auth.session import is_org_admin
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 
-from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_client
+from app.dependencies import (
+    coerce_org_uuid,
+    get_core_client,
+    get_current_user_org,
+    get_user_client,
+)
 from app.modules.imovel_hub import dados_service as imovel_dados_svc
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
 from app.modules.imovel_hub import matricula_extracao_service as imovel_matricula_svc
 from app.modules.imovel_hub.deps import (
     MatriculaExtractorFactory,
+    get_estrutura_seams,
     get_matricula_extractor_factory,
     get_storage_backend,
 )
 from app.modules.matriculas import arquivos_service as arquivos_svc
+from app.modules.matriculas import backfill_service as backfill_svc
+from app.modules.matriculas import preenchimento_service as preenchimento_svc
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.modules.matriculas import qualificacao_service as qualificacao_svc
 from app.modules.matriculas import titulo_service as titulo_svc
@@ -230,6 +239,8 @@ async def extrair_matricula(
     extractor_factory: MatriculaExtractorFactory = Depends(
         get_matricula_extractor_factory
     ),
+    notificador=Depends(get_notification_service),
+    estrutura_seams=Depends(get_estrutura_seams),
 ):
     """Upload a matrícula PDF and start text extraction in the background.
 
@@ -332,10 +343,13 @@ async def extrair_matricula(
         org_da_linha,
         background_db,
         transcriber_factory,
+        notificador,
     )
     if documento is not None:
-        # The imóvel's número-de-matrícula read, queued exactly as the imóvel
-        # page's own upload queues it — the same job, not a second copy.
+        # The imóvel's own document jobs, queued exactly as the imóvel page's
+        # upload queues them — the same jobs, not second copies: the
+        # número-de-matrícula read AND (migration 154) the structured read
+        # (the certidão's own emissão date), which this route used to skip.
         background_tasks.add_task(
             imovel_matricula_svc.extrair,
             matriculas_client,
@@ -344,7 +358,20 @@ async def extrair_matricula(
             codigo_canonico,
             UUID(documento["id"]),
             extractor=extractor_factory(org_id),
+            notificador=notificador,
         )
+        if imovel_docs_svc.deve_extrair_estrutura("matricula"):
+            background_tasks.add_task(
+                imovel_docs_svc.extrair_estrutura,
+                matriculas_client,
+                storage,
+                UUID(org_id),
+                codigo_canonico,
+                UUID(documento["id"]),
+                notificador=notificador,
+                extract_text=estrutura_seams.extract_text,
+                analyze_estrutura=estrutura_seams.analyze_estrutura,
+            )
 
     return success_response(extracao)
 
@@ -358,6 +385,7 @@ async def extrair_de_documento(
     background_db=Depends(get_background_client),
     storage=Depends(get_storage_backend),
     transcriber_factory: TranscriberFactory = Depends(get_transcriber_factory),
+    notificador=Depends(get_notification_service),
 ):
     """Transcribe a matrícula PDF the imóvel already holds (no re-upload)."""
     user, _token, org_id = _auth_parts(auth)
@@ -379,6 +407,7 @@ async def extrair_de_documento(
         background_db,
         storage,
         transcriber_factory,
+        notificador,
     )
     return success_response(extracao)
 
@@ -388,6 +417,7 @@ async def criar_extracao_manual_route(
     body: ExtracaoManualBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
+    notificador=Depends(get_notification_service),
 ):
     """Create a matrícula transcription straight from typed/pasted text —
     no PDF, no vision AI (migration 149). Runs synchronously (no background
@@ -402,6 +432,11 @@ async def criar_extracao_manual_route(
         usuario_id=getattr(user, "id", None),
     )
     registrar_transcricao_manual(client, extracao["id"], org_id, body.texto)
+    # Migration 154 — the pasted text feeds `imovel_dados` exactly like an
+    # AI transcription's does (D1: fill empty, conflict otherwise).
+    await preenchimento_svc.preencher_imovel(
+        client, org_id, extracao["id"], notificador=notificador
+    )
     return success_response(
         estrutura_svc.exigir_extracao(client, UUID(org_id), UUID(extracao["id"]))
     )
@@ -578,6 +613,7 @@ async def retranscrever_extracao(
     background_db=Depends(get_background_client),
     storage=Depends(get_storage_backend),
     transcriber_factory: TranscriberFactory = Depends(get_transcriber_factory),
+    notificador=Depends(get_notification_service),
 ):
     """Re-run transcription of a concluded extraction from its RETAINED
     source (migration 135) — linked or standalone. SUPERSEDES: a new row is
@@ -596,6 +632,7 @@ async def retranscrever_extracao(
     background_tasks.add_task(
         _run_extraction_de_documento,
         nova["id"], storage_path, org_id, background_db, storage, transcriber_factory,
+        notificador,
     )
     return success_response(nova)
 
@@ -628,6 +665,7 @@ async def vincular_imovel_route(
     body: VincularImovelBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_matriculas_client),
+    notificador=Depends(get_notification_service),
 ):
     """Link an already-transcribed matrícula to a property (migration
     150) — the picker's escape hatch for an extraction that was never
@@ -658,16 +696,21 @@ async def vincular_imovel_route(
                 "(POST /api/imoveis/{codigo}/registrar) antes de vincular."
             ),
         )
-    return success_response(
-        estrutura_svc.vincular_imovel(
-            client,
-            UUID(org_id),
-            extracao_id,
-            codigo=canonico,
-            substituir=body.substituir,
-            usuario_id=getattr(user, "id", None),
-        )
+    vinculada = estrutura_svc.vincular_imovel(
+        client,
+        UUID(org_id),
+        extracao_id,
+        codigo=canonico,
+        substituir=body.substituir,
+        usuario_id=getattr(user, "id", None),
     )
+    # Migration 154 — linked LATER is linked all the same: the imóvel gets
+    # the same D1 fill a transcription uploaded with its código gets.
+    # Idempotent (an already-linked re-link finds every field `igual`).
+    await preenchimento_svc.preencher_imovel(
+        client, org_id, str(extracao_id), notificador=notificador
+    )
+    return success_response(vinculada)
 
 
 # ─── the structured half (migration 109) ──────────────────────────────────
@@ -961,6 +1004,38 @@ async def confirmar_ultima_transferencia_route(
     )
 
 
+# ─── maintenance (migration 154) ──────────────────────────────────────────
+
+
+@router.post("/manutencao/normalizar")
+async def normalizar_corpus_route(
+    extracao_id: Optional[UUID] = Query(
+        None, description="Only this extraction. Omitted: every concluded one of the org."
+    ),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_matriculas_client),
+    notificador=Depends(get_notification_service),
+):
+    """Repair the stored corpus without re-transcribing (no LLM cost):
+    strip legacy `**`/`<u>` markers (moving every offset with them), heal
+    the abertura blocks, then feed `imovel_dados` (D1). Idempotent — a
+    second call reports `marcacao_removida: 0`. See `backfill_service`.
+
+    🔴 Owner/admin only (trusted `noctus_users` row): it rewrites stored
+    transcriptions — the one rewrite migration 154's trigger allows."""
+    user, _token, org_id = _auth_parts(auth)
+    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="A normalização das transcrições é restrita a administradores.",
+        )
+    return success_response(
+        await backfill_svc.backfill(
+            client, org_id, extracao_id=extracao_id, notificador=notificador
+        )
+    )
+
+
 # ─── background bridges ───────────────────────────────────────────────────
 
 
@@ -970,6 +1045,7 @@ def _run_extraction(
     org_id: str,
     db,
     transcriber_factory: TranscriberFactory,
+    notificador=None,
 ) -> None:
     """Bridge the async pipeline into FastAPI's sync background-task slot.
 
@@ -984,6 +1060,7 @@ def _run_extraction(
             org_id,
             db,
             transcriber_factory=transcriber_factory,
+            notificador=notificador,
         )
     )
 
@@ -995,6 +1072,7 @@ def _run_extraction_de_documento(
     db,
     storage,
     transcriber_factory: TranscriberFactory,
+    notificador=None,
 ) -> None:
     """Same bridge, reading the kept PDF back out of storage first."""
     asyncio.run(
@@ -1005,6 +1083,7 @@ def _run_extraction_de_documento(
             db,
             storage,
             transcriber_factory=transcriber_factory,
+            notificador=notificador,
         )
     )
 

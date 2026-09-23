@@ -116,11 +116,28 @@ def fake_extractor(client):
     app.dependency_overrides[get_matricula_extractor_factory] = (
         lambda: lambda org_id: extractor
     )
+
+    # Migration 154 — the structured read's IO legs, stubbed with the SAME
+    # fixture: an upload route schedules both reads, and the real legs
+    # resolve credentials and can reach a provider.
+    from app.modules.imovel_hub.deps import EstruturaSeams, get_estrutura_seams
+
+    async def _sem_texto(*_a, **_k):
+        return None
+
+    prev_seams = app.dependency_overrides.get(get_estrutura_seams)
+    app.dependency_overrides[get_estrutura_seams] = lambda: EstruturaSeams(
+        extract_text=_sem_texto, analyze_estrutura=_sem_texto
+    )
     yield extractor
     if prev is None:
         app.dependency_overrides.pop(get_matricula_extractor_factory, None)
     else:
         app.dependency_overrides[get_matricula_extractor_factory] = prev
+    if prev_seams is None:
+        app.dependency_overrides.pop(get_estrutura_seams, None)
+    else:
+        app.dependency_overrides[get_estrutura_seams] = prev_seams
 
 
 # ─── row builders ────────────────────────────────────────────────────────
@@ -221,7 +238,9 @@ def documento_row(id_=None, codigo=CODIGO, *, tipo_documento="matricula", **extr
     return row
 
 
-def seed(scoped, *, registry=None, imoveis=None, dados=None, documentos=None) -> None:
+def seed(
+    scoped, *, registry=None, imoveis=None, dados=None, documentos=None, conflitos=None
+) -> None:
     # The REGISTRY is what this module reads. The mirror is seeded too, so a
     # test can assert it is never written.
     scoped.set_table_data(
@@ -230,3 +249,36 @@ def seed(scoped, *, registry=None, imoveis=None, dados=None, documentos=None) ->
     scoped.set_table_data("imoveis", imoveis if imoveis is not None else [imovel_row()])
     scoped.set_table_data("imovel_dados", dados or [])
     scoped.set_table_data("imovel_documentos", documentos or [])
+    # Migration 154 — D1 conflicts. Reset every time: a conflict left by an
+    # earlier test would read as "already pending" and suppress a new one.
+    scoped.set_table_data("imovel_campo_conflitos", conflitos or [])
+
+
+class FakeImovelNotifier:
+    """Records `notify_imovel_field_conflict` calls instead of touching WAHA
+    / SMTP — the migration-154 DI seam (`imovel_hub.deps.
+    get_imovel_notification_service`)."""
+
+    def __init__(self) -> None:
+        self.conflitos: list[dict] = []
+
+    async def notify_imovel_field_conflict(self, *, org_id, conflito, codigo):
+        from app.services.notification_service import DispatchOutcome
+
+        self.conflitos.append({"org_id": str(org_id), "conflito": conflito, "codigo": codigo})
+        return DispatchOutcome()
+
+
+@pytest.fixture
+def fake_notifier(client):
+    from app.main import app
+    from app.modules.imovel_hub.deps import get_imovel_notification_service
+
+    fake = FakeImovelNotifier()
+    prev = app.dependency_overrides.get(get_imovel_notification_service)
+    app.dependency_overrides[get_imovel_notification_service] = lambda: fake
+    yield fake
+    if prev is None:
+        app.dependency_overrides.pop(get_imovel_notification_service, None)
+    else:
+        app.dependency_overrides[get_imovel_notification_service] = prev

@@ -27,12 +27,31 @@ CRON = "43 * * * *"
 
 
 async def _sweep(admin, storage) -> dict:
+    """Both imóvel-document jobs: the número read and (migration 154, D3)
+    the structured read. Each sweep never raises past its own rows; the two
+    counts are summed so the wrapper's "anything found?" log still works."""
+    from app.modules.imovel_hub import documentos_service as docs_svc
     from app.modules.imovel_hub import matricula_extracao_service as matricula_svc
-    from app.modules.imovel_hub.deps import get_matricula_extractor_factory
-
-    return await matricula_svc.varrer_pendentes(
-        admin, storage, extractor_factory=get_matricula_extractor_factory()
+    from app.modules.imovel_hub.deps import (
+        get_imovel_notification_service,
+        get_matricula_extractor_factory,
     )
+
+    notificador = get_imovel_notification_service()
+    numero = await matricula_svc.varrer_pendentes(
+        admin,
+        storage,
+        extractor_factory=get_matricula_extractor_factory(),
+        notificador=notificador,
+    )
+    estrutura = await docs_svc.varrer_estrutura_pendentes(
+        admin, storage, notificador=notificador
+    )
+    return {
+        "encontrados": numero["encontrados"] + estrutura["encontrados"],
+        "numero_matricula": numero,
+        "estrutura": estrutura,
+    }
 
 
 matricula_sweep_job = make_sweep_job(label="imovel_hub", sweep=_sweep)

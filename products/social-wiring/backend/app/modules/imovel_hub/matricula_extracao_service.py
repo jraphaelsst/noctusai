@@ -35,18 +35,20 @@ from uuid import UUID
 
 from noctusai_lib.integrations.storage import StorageBackend
 
-from app.modules.imovel_hub import dados_service, documentos_service
+from app.modules.imovel_hub import campos_extraidos_service as campos_svc
+from app.modules.imovel_hub import documentos_service
 from app.modules.imovel_hub.deps import BUCKET
-from app.services import table_reads
+from app.services import extracao_retentativa, table_reads
 
 logger = logging.getLogger(__name__)
 
 TABLE = documentos_service.TABLE
 
-#: Give up after this many attempts. A document that cannot be read after
-#: three tries is not going to become readable on the fourth, and retrying
-#: forever burns vision calls on a corrupt file.
-MAX_TENTATIVAS = 3
+#: Give up after this many attempts — the first plus D3's two automatic
+#: retries (`app.services.extracao_retentativa`). A document that cannot be
+#: read after three tries is not going to become readable on the fourth, and
+#: retrying forever burns vision calls on a corrupt file.
+MAX_TENTATIVAS = extracao_retentativa.MAX_TENTATIVAS
 
 #: A document stuck in a non-terminal state longer than this was orphaned by
 #: a process that died. Generous enough that a slow vision pass is never
@@ -76,8 +78,20 @@ async def extrair(
     documento_id: UUID,
     *,
     extractor: Optional[Any] = None,
+    notificador: Optional[Any] = None,
 ) -> dict:
-    """Read one matrícula and record the outcome. NEVER raises."""
+    """Read one matrícula and record the outcome. NEVER raises.
+
+    🔴 D1 (owner, 2026-09-22) REPLACES the old "text-layer `alta` only" rule:
+    any labelled reading (`alta` OR `baixa` — a vision read is `baixa` by
+    construction, see the seed extractor) is applied through
+    `campos_extraidos_service.aplicar`. That is safe now because an applied
+    machine value is never trusted unattended any more — it stays
+    machine-pending until a human validates it at contract generation (D2),
+    and it never overwrites anything (a disagreement is a conflict).
+    `nenhuma` (no label, or heading numbers that disagree) is still never
+    written: there is no reading to validate.
+    """
     rows = (
         _t(client, TABLE)
         .select("*")
@@ -129,7 +143,7 @@ async def extrair(
             client,
             documento_id,
             extracao_status="erro",
-            extracao_erro="objeto ausente no storage",
+            extracao_erro="objeto_ausente: objeto ausente no storage",
             extracao_em=_now(),
         )
         return {"status": "erro", "erro": "objeto_ausente"}
@@ -172,14 +186,33 @@ async def extrair(
     )
 
     aplicado = False
-    if campos.persistable:
-        aplicado = dados_service.aplicar_matricula_extraida(
-            client,
-            org_id,
-            codigo,
-            numero=campos.numero_matricula,
-            documento_id=documento_id,
-        )
+    conflito = False
+    if campos.persistable or campos.sugestao:
+        try:
+            resultado = campos_svc.aplicar(
+                client,
+                org_id,
+                codigo,
+                "numero_matricula",
+                campos.numero_matricula,
+                origem="matricula",
+                documento_id=documento_id,
+                confianca=campos.numero_matricula_confianca.value,
+                fonte_tabela=campos_svc.FONTE_DOCUMENTOS,
+                fonte_id=documento_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - detached job; the read is recorded above
+            logger.error(
+                "extracao matricula %s: reading recorded but not applied to imovel_dados: %s",
+                documento_id, exc, exc_info=True,
+            )
+        else:
+            aplicado = resultado.preenchido
+            if resultado.conflito is not None:
+                conflito = True
+                await campos_svc.notificar(
+                    client, org_id, codigo, [resultado.conflito], notificador
+                )
 
     return {
         "status": "ok" if campos.presente else "sem_dados",
@@ -188,6 +221,7 @@ async def extrair(
         "fonte": campos.source.value,
         "tentativas": tentativas,
         "aplicado_ao_imovel": aplicado,
+        "conflito_aberto": conflito,
     }
 
 
@@ -200,6 +234,7 @@ async def varrer_pendentes(
     storage: StorageBackend,
     *,
     extractor_factory: Optional[Any] = None,
+    notificador: Optional[Any] = None,
     limite: int = 50,
 ) -> dict:
     """Re-run extractions that were started and never finished.
@@ -238,9 +273,31 @@ async def varrer_pendentes(
         .execute()
     ).data or []
 
+    # D3 (migration 154): a FAILED read is retried too — at most twice
+    # (`extracao_tentativas < MAX_TENTATIVAS`), and only when the failure is
+    # one a retry can fix (an exhausted provider account, a rate limit — not
+    # an empty PDF). `lt(cutoff)` spaces the retry from the failure.
+    falhos = [
+        r
+        for r in (
+            _t(client, TABLE)
+            .select("*")
+            .eq("extracao_status", "erro")
+            .is_("deleted_at", "null")
+            .lt("extracao_tentativas", MAX_TENTATIVAS)
+            .lt("extracao_em", cutoff)
+            .limit(limite)
+            .execute()
+        ).data
+        or []
+        if extracao_retentativa.retentavel(
+            extracao_retentativa.codigo_de_erro(r.get("extracao_erro"))
+        )
+    ]
+
     vistos: set[str] = set()
     alvos: list[dict] = []
-    for row in list(rows) + list(nunca_iniciados):
+    for row in list(rows) + list(nunca_iniciados) + falhos:
         if row["id"] in vistos:
             continue
         vistos.add(row["id"])
@@ -274,6 +331,7 @@ async def varrer_pendentes(
             row["codigo"],
             UUID(str(row["id"])),
             extractor=extractor,
+            notificador=notificador,
         )
         reprocessados += 1
 

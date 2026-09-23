@@ -352,13 +352,15 @@ class TestTheExtraction:
         assert body["numero_matricula_confirmado_por"] is None
 
     @pytest.mark.asyncio
-    async def test_a_low_confidence_read_is_recorded_but_not_written(
+    async def test_a_low_confidence_read_fills_the_empty_field_as_machine_pending(
         self, client, scoped, fake_storage
     ):
-        """🔴 The rule that keeps a misread digit out of the registry.
-
-        The read is kept on the DOCUMENT so the UI can offer it, and kept off
-        the record so nobody mistakes it for a checked fact.
+        """🔴 D1 (owner, 2026-09-22) replaced the old "text-layer `alta`
+        only" rule. A `baixa` (e.g. vision) read now FILLS an empty field —
+        safe because it lands machine-pending (`origem='matricula'`, no
+        confirmation), and the D2 gate refuses contract generation until a
+        human validates it. The misread-digit defence moved from "never
+        write" to "never trust unvalidated".
         """
         did = str(uuid4())
         path = f"{ORG_ID}/imoveis/{CODIGO}/x"
@@ -378,10 +380,15 @@ class TestTheExtraction:
             extractor=_Extractor(_baixa()),
         )
         assert out["status"] == "ok"
-        assert out["aplicado_ao_imovel"] is False
+        assert out["aplicado_ao_imovel"] is True
 
         dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
-        assert dados["numero_matricula"] is None
+        assert dados["numero_matricula"] == "12345"
+        prov = dados["proveniencia"]["numero_matricula"]
+        assert prov["origem"] == "matricula"
+        assert prov["documento_id"] == did
+        assert prov["confirmado_em"] is None
+        assert prov["pendente"] is True
 
         docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
         assert docs["items"][0]["extracao_matricula"] == "12345"

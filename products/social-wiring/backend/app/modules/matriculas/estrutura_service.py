@@ -606,6 +606,13 @@ def _blocos_abertura(client: Any, org_id: UUID, extracao: dict) -> list[dict]:
     return sorted(rows, key=lambda r: r["char_inicio"])
 
 
+def blocos_abertura_da_extracao(client: Any, org_id: UUID, extracao: dict) -> list[dict]:
+    """The abertura's typed blocks (migration 136) — healing on first read,
+    see `_blocos_abertura`. Public for `preenchimento_service` (the
+    `CADASTRO MUNICIPAL` block feeds the inscrição) and the backfill."""
+    return _blocos_abertura(client, org_id, extracao)
+
+
 def listar_atos(
     client: Any, org_id: UUID, extracao_id: UUID, *, usuario_id: Optional[Any] = None
 ) -> dict:
@@ -765,6 +772,29 @@ def criar_extracao_manual(
     }
     _t(client, EXTRACOES_TABLE).insert(row).execute()
     return row
+
+
+def caminho_da_fonte(client: Any, org_id: UUID, extracao: dict) -> Optional[str]:
+    """The storage path of the PDF this extraction was (or will be)
+    transcribed from — the imóvel's document, or the standalone retained
+    file (migration 135). `None` when nothing was kept (a pre-135 row) or
+    the kept file was since removed: there is nothing to re-read, and the
+    caller must say so rather than retry forever."""
+    try:
+        if extracao.get("imovel_documento_id"):
+            return docs_svc.STORE.exigir(
+                client, org_id, extracao["codigo"], UUID(str(extracao["imovel_documento_id"]))
+            )["storage_path"]
+        if extracao.get("arquivo_origem_id"):
+            return arquivos_svc.exigir(
+                client, org_id, UUID(str(extracao["arquivo_origem_id"]))
+            )["storage_path"]
+    except NotFoundError:
+        logger.warning(
+            "matricula %s: its retained source is gone — nothing to re-read",
+            extracao.get("id"),
+        )
+    return None
 
 
 def criar_retranscricao(
@@ -1648,6 +1678,8 @@ __all__ = [
     "PERMUTA_ATIVOS_TABLE",
     "SELECAO_TABLE",
     "atos_da_extracao",
+    "blocos_abertura_da_extracao",
+    "caminho_da_fonte",
     "criar_extracao_de_documento",
     "criar_retranscricao",
     "definir_fontes",

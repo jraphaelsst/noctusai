@@ -60,7 +60,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
@@ -70,7 +70,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub.deps import BUCKET
-from app.services import documento_retencao, table_reads
+from app.services import documento_retencao, extracao_retentativa, table_reads
 from app.services.documento_store import DocumentoStore, documento_base, now_iso, today
 
 logger = logging.getLogger(__name__)
@@ -270,6 +270,11 @@ async def upload(
             # invisibly lost, and the sweeper can find it.
             "extracao_status": "pendente" if deve_extrair(tipo_documento) else None,
             "extracao_tentativas": 0,
+            # Migration 154 — the structured read gets the same lifecycle
+            # (D3): `pendente` at upload so a job that never ran is visible
+            # and the sweep can find it.
+            "estrutura_status": "pendente" if deve_extrair_estrutura(tipo_documento) else None,
+            "estrutura_tentativas": 0,
             "retencao_ate": retencao_ate,
         },
     )
@@ -368,6 +373,18 @@ def listar_acessos(client: Any, org_id: UUID, codigo: str, documento_id: UUID) -
 
 def _marcar(client: Any, documento_id: UUID, **updates: Any) -> None:
     _t(client, TABLE).update(updates).eq("id", str(documento_id)).execute()
+
+
+class EstruturaFalhou(Exception):
+    """The structured read FAILED (provider unreachable, no key, call error)
+    — as opposed to reading fine and finding nothing. Only a failure is
+    `erro` and retried (D3); "nothing found" is `sem_dados`, terminal.
+
+    `codigo` is the machine code `extracao_retentativa.retentavel` judges."""
+
+    def __init__(self, codigo: str, mensagem: str) -> None:
+        super().__init__(f"{codigo}: {mensagem}")
+        self.codigo = codigo
 
 
 _DESCRICAO_CAMPO: dict[str, str] = {
@@ -491,13 +508,13 @@ async def _analisar_estrutura(
 
     try:
         provider = resolve_chat_provider(org_id)
-    except Exception as exc:  # noqa: BLE001 - background job must not die
+    except Exception as exc:  # noqa: BLE001 - surfaced as a recorded erro
         logger.error(
             "extracao estrutura: nao foi possivel ler o provedor de IA para "
             "org=%s: %s",
             org_id, exc,
         )
-        return None
+        raise EstruturaFalhou("provider_setting", str(exc)) from exc
 
     modelo = ANALYSIS_MODELS.get(provider, ANALYSIS_MODELS[DEFAULT_ANALYSIS_PROVIDER])
     api_key = resolve_key(provider_api_key(provider), org_id)
@@ -506,7 +523,9 @@ async def _analisar_estrutura(
             "extracao estrutura: %s nao configurada (provedor selecionado)",
             provider_api_key(provider),
         )
-        return None
+        raise EstruturaFalhou(
+            "missing_credentials", f"{provider_api_key(provider)} nao configurada"
+        )
 
     try:
         raw = await chat_completion(
@@ -519,9 +538,9 @@ async def _analisar_estrutura(
             org_id=org_id,
             max_tokens=300,
         )
-    except Exception as e:  # noqa: BLE001 - background job must not die
+    except Exception as e:  # noqa: BLE001 - surfaced as a recorded erro
         logger.error("extracao estrutura: chamada de IA falhou: %s", e)
-        return None
+        raise EstruturaFalhou("chat_failed", str(e)) from e
 
     return _parse_json_estrutura(raw, campos)
 
@@ -555,27 +574,45 @@ async def _extrair_texto(
         resultado = await transcriber.transcribe(
             conteudo, mimetype=mimetype or "application/pdf"
         )
-        return resultado.text or None
-    except Exception as exc:  # noqa: BLE001 - background job must not die
+    except Exception as exc:  # noqa: BLE001 - surfaced as a recorded erro
         logger.warning("extracao estrutura: leitura de texto falhou: %s", exc)
-        return None
+        raise EstruturaFalhou("transcription_exception", str(exc)) from exc
+    if not resultado.ok:
+        # A transcription that FAILED (no credits, rate limit, corrupt PDF)
+        # is not "the document has no text" — the code says which, and
+        # decides whether the sweep retries it.
+        raise EstruturaFalhou(
+            resultado.error or "transcription_failed", resultado.error_message or ""
+        )
+    return resultado.text or None
 
 
-def _sugestao_imovel_dados(tipo_documento: str, campos: dict) -> Optional[tuple[str, Any]]:
-    """The ONE `imovel_dados` field this tipo's read may suggest, or `None`.
+#: tipo → (structured field, `imovel_dados` field it feeds under D1). The
+#: guia de IPTU and the CND de IPTU both print the inscrição cadastral; if
+#: they disagree with each other (or with the matrícula's CADASTRO MUNICIPAL
+#: block), that is a real discrepancy and becomes a conflict for a human —
+#: which is why both may feed the field now that D1 never overwrites.
+_ALIMENTA_IMOVEL_DADOS: dict[str, tuple[str, str]] = {
+    "guia_iptu": ("inscricao_imobiliaria", "prefeitura_cadastro_imobiliario"),
+    "cnd_iptu": ("inscricao_imobiliaria", "prefeitura_cadastro_imobiliario"),
+}
 
-    Only the two pairings the contract asked for: a guia de IPTU's inscrição
-    into `prefeitura_cadastro_imobiliario`, and a matrícula certidão's own
-    emissão date into `onus_certidao_em`. `cnd_iptu` also carries an
-    `inscricao_imobiliaria` but is deliberately NOT wired here — the guia de
-    IPTU is the canonical source for the cadastral number, and widening this
-    silently would make two documents race to suggest the same field.
-    """
-    if tipo_documento == "guia_iptu" and campos.get("inscricao_imobiliaria"):
-        return ("prefeitura_cadastro_imobiliario", campos["inscricao_imobiliaria"])
-    if tipo_documento == "matricula" and campos.get("emitida_em"):
-        return ("onus_certidao_em", campos["emitida_em"])
-    return None
+
+def _preencher_onus_certidao_em(
+    client: Any, org_id: UUID, codigo: str, emitida_em: str
+) -> bool:
+    """A matrícula certidão's own emissão date → `imovel_dados.
+    onus_certidao_em`, EMPTY column only. Not a D1 field (it has no
+    provenance columns and is not in the contract's validation set) — the
+    certidão date the contract gate checks is the document's own
+    `emitida_em`, which the certidões rollup reads directly."""
+    atual = dados_service.linha(client, org_id, codigo)
+    if atual and atual.get("onus_certidao_em"):
+        return False
+    dados_service.atualizar(
+        client, org_id, codigo, valores={"onus_certidao_em": emitida_em}, usuario_id=None
+    )
+    return True
 
 
 async def extrair_estrutura(
@@ -587,28 +624,36 @@ async def extrair_estrutura(
     *,
     extract_text: Optional[Any] = None,
     analyze_estrutura: Optional[Any] = None,
+    notificador: Optional[Any] = None,
 ) -> dict:
     """Read numero/emitida_em/validade_ate/resultado/inscricao_imobiliaria
-    off a CND/guia/matrícula upload, and suggest into `imovel_dados` when
-    applicable (migration 118).
+    off a CND/guia/matrícula upload, and feed `imovel_dados` (migration 118).
 
-    NEVER raises — this runs detached from the upload request, same posture
-    as `matricula_extracao_service.extrair`. Unlike that job there is no
-    status/tentativas lifecycle: a failure logs its reason and leaves the
-    document exactly as it was, never stuck in an intermediate state a sweep
-    would need to recover.
+    NEVER raises — this runs detached from the upload request.
+
+    LIFECYCLE (migration 154, D3). `estrutura_status` moves `pendente` →
+    `processando` → `ok` | `sem_dados` | `erro` | `ignorado`, and
+    `estrutura_tentativas` counts attempts. Only `erro` (a FAILED read — see
+    `EstruturaFalhou`) is retried by `varrer_estrutura_pendentes`, at most
+    twice; `sem_dados` (read fine, nothing there) is terminal.
 
     🔴 A HUMAN'S CONFIRMATION IS NEVER OVERWRITTEN. `origem == "manual"` (or
     a non-null `confirmado_por`) means a human already reviewed this
-    document's fields — a retry must never silently override that, same
-    enforcement `certidoes.service._derive_estrutura`'s `travado` gives its
-    own surface.
+    document's fields — a retry must never silently override that.
+
+    🔴 `imovel_dados` IS FED ONLY THROUGH D1 (`campos_extraidos_service.
+    aplicar`): the inscrição fills an empty `prefeitura_cadastro_imobiliario`
+    (origem = this document's tipo) or opens a conflict — never an
+    overwrite, and never stamped as if a human had typed it.
 
     `extract_text` / `analyze_estrutura` are DI seams (default: the real
     `_extrair_texto` / `_analisar_estrutura`) — a test injects a stub instead
-    of patching this module's own functions. → KB § PATTERNS/backend/
-    di-test-seam.md
+    of patching this module's own functions. A seam signals FAILURE by
+    raising `EstruturaFalhou`, and "nothing found" by returning None.
+    → KB § PATTERNS/backend/di-test-seam.md
     """
+    from app.modules.imovel_hub import campos_extraidos_service as campos_svc
+
     extract_text = extract_text or _extrair_texto
     analyze_estrutura = analyze_estrutura or _analisar_estrutura
 
@@ -634,7 +679,27 @@ async def extrair_estrutura(
     if not deve_extrair_estrutura(tipo):
         return {"status": "erro", "erro": "tipo_nao_extraivel"}
     if doc.get("origem") == "manual" or doc.get("confirmado_por"):
+        _marcar(client, documento_id, estrutura_status="ignorado", estrutura_em=now_iso())
         return {"status": "ignorado", "erro": "confirmado_manualmente"}
+
+    tentativas = int(doc.get("estrutura_tentativas") or 0) + 1
+    _marcar(
+        client,
+        documento_id,
+        estrutura_status="processando",
+        estrutura_tentativas=tentativas,
+        estrutura_em=now_iso(),
+    )
+
+    def _falhou(codigo_erro: str, mensagem: str) -> dict:
+        _marcar(
+            client,
+            documento_id,
+            estrutura_status="erro",
+            estrutura_erro=f"{codigo_erro}: {mensagem}".strip(": "),
+            estrutura_em=now_iso(),
+        )
+        return {"status": "erro", "erro": codigo_erro, "tentativas": tentativas}
 
     try:
         blob = await storage.get(bucket=BUCKET, key=doc["storage_path"])
@@ -642,36 +707,161 @@ async def extrair_estrutura(
         logger.warning(
             "extracao estrutura %s: storage read failed: %s", documento_id, exc
         )
-        return {"status": "erro", "erro": "storage"}
+        return {**_falhou("storage", str(exc)), "erro": "storage"}
     if blob is None:
         logger.warning(
             "extracao estrutura %s: objeto ausente no storage", documento_id
         )
-        return {"status": "erro", "erro": "objeto_ausente"}
+        return _falhou("objeto_ausente", "objeto ausente no storage")
 
-    texto = await extract_text(blob.data, doc.get("mime_type"), str(org_id))
+    try:
+        texto = await extract_text(blob.data, doc.get("mime_type"), str(org_id))
+        via_ia = await analyze_estrutura(texto, tipo, str(org_id)) if texto else None
+    except EstruturaFalhou as falha:
+        return _falhou(falha.codigo, str(falha).split(": ", 1)[-1])
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "extracao estrutura %s: unexpected failure: %s", documento_id, exc, exc_info=True
+        )
+        return _falhou("erro_inesperado", str(exc))
+
     if not texto:
         logger.info("extracao estrutura %s: sem texto legivel", documento_id)
+        _marcar(
+            client, documento_id,
+            estrutura_status="sem_dados", estrutura_erro=None, estrutura_em=now_iso(),
+        )
         return {"status": "sem_dados", "erro": "sem_texto"}
-
-    via_ia = await analyze_estrutura(texto, tipo, str(org_id))
     if not via_ia:
+        _marcar(
+            client, documento_id,
+            estrutura_status="sem_dados", estrutura_erro=None, estrutura_em=now_iso(),
+        )
         return {"status": "sem_dados"}
 
-    _marcar(client, documento_id, **via_ia, origem="ia")
+    _marcar(
+        client,
+        documento_id,
+        **via_ia,
+        origem="ia",
+        estrutura_status="ok",
+        estrutura_erro=None,
+        estrutura_em=now_iso(),
+    )
 
     sugerido = False
-    sugestao = _sugestao_imovel_dados(tipo, via_ia)
-    if sugestao:
-        campo, valor = sugestao
-        atual = dados_service.linha(client, org_id, codigo)
-        if not (atual and atual.get(campo)):
-            dados_service.atualizar(
-                client, org_id, codigo, valores={campo: valor}, usuario_id=None
+    conflitos: list[dict] = []
+    try:
+        alimenta = _ALIMENTA_IMOVEL_DADOS.get(tipo)
+        if alimenta and via_ia.get(alimenta[0]):
+            resultado = campos_svc.aplicar(
+                client,
+                org_id,
+                codigo,
+                alimenta[1],
+                via_ia[alimenta[0]],
+                origem=tipo,
+                documento_id=documento_id,
+                fonte_tabela=campos_svc.FONTE_DOCUMENTOS,
+                fonte_id=documento_id,
             )
-            sugerido = True
+            sugerido = resultado.preenchido
+            if resultado.conflito is not None:
+                conflitos.append(resultado.conflito)
+        if tipo == "matricula" and via_ia.get("emitida_em"):
+            sugerido = _preencher_onus_certidao_em(
+                client, org_id, codigo, via_ia["emitida_em"]
+            ) or sugerido
+    except Exception as exc:  # noqa: BLE001 - the read itself is recorded above
+        logger.error(
+            "extracao estrutura %s: read recorded but imovel_dados not fed: %s",
+            documento_id, exc, exc_info=True,
+        )
+    await campos_svc.notificar(client, org_id, codigo, conflitos, notificador)
 
-    return {"status": "ok", "campos": sorted(via_ia), "sugerido_em_dados": sugerido}
+    return {
+        "status": "ok",
+        "campos": sorted(via_ia),
+        "sugerido_em_dados": sugerido,
+        "conflito_aberto": bool(conflitos),
+        "tentativas": tentativas,
+    }
+
+
+#: A read stuck in a non-terminal state longer than this was orphaned by a
+#: process that died — the same 20 minutes the número read uses.
+ESTRUTURA_STALE_APOS = timedelta(minutes=20)
+
+
+async def varrer_estrutura_pendentes(
+    client: Any,
+    storage: StorageBackend,
+    *,
+    notificador: Optional[Any] = None,
+    extract_text: Optional[Any] = None,
+    analyze_estrutura: Optional[Any] = None,
+    limite: int = 50,
+) -> dict:
+    """Re-run structured reads that never finished, and retry FAILED ones —
+    at most `extracao_retentativa.MAX_RETENTATIVAS` times (D3), then leave
+    them `erro` for a human. Called from the imovel_hub hourly sweep.
+    `extract_text`/`analyze_estrutura` pass straight to `extrair_estrutura`
+    (its DI seams; None = the real ones)."""
+    cutoff = (datetime.now(timezone.utc) - ESTRUTURA_STALE_APOS).isoformat()
+    base = lambda: (  # noqa: E731 - three variants of one bounded select
+        _t(client, TABLE).select("*").is_("deleted_at", "null")
+    )
+    # postgrest-unbounded-ok: every variant carries `.limit(limite)`.
+    presos = (
+        base().in_("estrutura_status", ["pendente", "processando"])
+        .lt("estrutura_em", cutoff).limit(limite).execute()
+    ).data or []
+    nunca = (
+        base().eq("estrutura_status", "pendente").is_("estrutura_em", "null")
+        .limit(limite).execute()
+    ).data or []
+    falhos = [
+        r
+        for r in (
+            base().eq("estrutura_status", "erro")
+            .lt("estrutura_tentativas", extracao_retentativa.MAX_TENTATIVAS)
+            .lt("estrutura_em", cutoff).limit(limite).execute()
+        ).data or []
+        if extracao_retentativa.retentavel(
+            extracao_retentativa.codigo_de_erro(r.get("estrutura_erro"))
+        )
+    ]
+
+    vistos: set[str] = set()
+    reprocessados = desistidos = 0
+    for row in [*presos, *nunca, *falhos]:
+        if row["id"] in vistos:
+            continue
+        vistos.add(row["id"])
+        if int(row.get("estrutura_tentativas") or 0) >= extracao_retentativa.MAX_TENTATIVAS:
+            _marcar(
+                client,
+                UUID(str(row["id"])),
+                estrutura_status="erro",
+                estrutura_erro=(
+                    f"desistiu apos {extracao_retentativa.MAX_TENTATIVAS} tentativas"
+                ),
+                estrutura_em=now_iso(),
+            )
+            desistidos += 1
+            continue
+        await extrair_estrutura(
+            client,
+            storage,
+            UUID(str(row["org_id"])),
+            row["codigo"],
+            UUID(str(row["id"])),
+            notificador=notificador,
+            extract_text=extract_text,
+            analyze_estrutura=analyze_estrutura,
+        )
+        reprocessados += 1
+    return {"encontrados": len(vistos), "reprocessados": reprocessados, "desistidos": desistidos}
 
 
 def confirmar_extracao(
@@ -768,7 +958,9 @@ __all__ = [
     "confirmar_extracao",
     "deve_extrair",
     "deve_extrair_estrutura",
+    "EstruturaFalhou",
     "extrair_estrutura",
+    "varrer_estrutura_pendentes",
     "validar_upload",
     "listar",
     "listar_acessos",

@@ -476,6 +476,10 @@ _MATRICULA_MIGRATIONS = (
     "111_matricula_lgpd_followups.sql",
     "135_matricula_retencao_fonte.sql",
     "136_matricula_ruido_e_abertura.sql",
+    # 154 redefines the function with ONE exception (a legacy **/<u> markup
+    # strip, verified in the trigger); every probe below is a rewrite that is
+    # NOT a markup strip, so each must still be refused.
+    "154_imovel_extracao_proveniencia.sql",
 )
 
 
@@ -1593,6 +1597,94 @@ _AGENTS_STUDIO_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — migration 154 (imóvel extraction under D1): the structured-read
+# lifecycle CHECK and the one-open-conflict-per-field UNIQUE.
+# ---------------------------------------------------------------------------
+#
+# Both borrow `(org_id, codigo_canonical)` from `imovel_registry` — the FK
+# target of both tables — and INSERT a throwaway specimen inside the
+# rolled-back transaction, the self-provisioning shape (no dependency on
+# production already holding a document or a conflict).
+
+_REGISTRY_FIXTURE_FROM = f"{_SW_SCHEMA}.imovel_registry"
+_REGISTRY_FIXTURE_DESC = f"no row in {_SW_SCHEMA}.imovel_registry to borrow (org_id, codigo) from"
+
+_ESTRUTURA_STATUS_PROBE = GuardProbe(
+    id="imovel_documentos.estrutura_status.allowed_values",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="imovel_documentos_estrutura_status_check",
+    kind="write_refusal",
+    migrations=("154_imovel_extracao_proveniencia.sql",),
+    rationale=(
+        "`estrutura_status` drives the D3 retry sweep (`documentos_service."
+        "varrer_estrutura_pendentes` selects `pendente`/`processando`/`erro` "
+        "by exact value) — a value outside the vocabulary would make a "
+        "document invisible to recovery AND to its terminal states at once."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="imovel_documentos",
+        columns_sql=(
+            "org_id, codigo, storage_path, nome_original, mime_type, "
+            "tamanho_bytes, tipo_documento, estrutura_status"
+        ),
+        values_sql=(
+            "org_id, codigo_canonical, 'noc-probe', 'noc-probe.pdf', "
+            "'application/pdf', 0, 'matricula', 'noc_probe_bogus'"
+        ),
+        fixture_from=_REGISTRY_FIXTURE_FROM,
+        fixture_description=_REGISTRY_FIXTURE_DESC,
+        guard_fragment='constraint "imovel_documentos_estrutura_status_check"',
+    ),
+)
+
+_IMOVEL_CONFLITO_ABERTO_PROBE = GuardProbe(
+    id="imovel_campo_conflitos.one_open_per_field",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_sw_imovel_campo_conflitos_aberto",
+    kind="write_refusal",
+    migrations=("154_imovel_extracao_proveniencia.sql",),
+    rationale=(
+        "One PENDING conflict per (imóvel, field): a re-extraction must not "
+        "pile up a second question (and a second notification) while the "
+        "first is unanswered — D1's 'a human is notified and decides' "
+        "degrades into noise otherwise. The app checks first "
+        "(`campos_extraidos_service.aplicar`); this index is the backstop."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_codigo text;
+BEGIN
+  SELECT org_id, codigo_canonical INTO v_org_id, v_codigo FROM {_REGISTRY_FIXTURE_FROM} LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(_REGISTRY_FIXTURE_DESC)}';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.imovel_campo_conflitos
+      (org_id, codigo, campo, valor_proposto, origem_proposto, status)
+    VALUES (v_org_id, v_codigo, 'noc_probe_campo', '"a"'::jsonb, 'matricula', 'pendente');
+    INSERT INTO {_SW_SCHEMA}.imovel_campo_conflitos
+      (org_id, codigo, campo, valor_proposto, origem_proposto, status)
+    VALUES (v_org_id, v_codigo, 'noc_probe_campo', '"b"'::jsonb, 'matricula', 'pendente');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a second pending conflict for the same field was accepted — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%uq_sw_imovel_campo_conflitos_aberto%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -1608,6 +1700,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
+    _ESTRUTURA_STATUS_PROBE,
+    _IMOVEL_CONFLITO_ABERTO_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

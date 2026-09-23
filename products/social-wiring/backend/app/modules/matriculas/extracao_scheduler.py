@@ -33,9 +33,21 @@ CRON = "29 * * * *"
 
 
 async def _sweep(admin, storage) -> dict:
+    """Close out orphans AND (migration 154, D3) retry failed transcriptions
+    whose PDF was kept — which needs the org-bound transcriber factory, so
+    this sweep now does mint vision calls (bounded: ≤ 2 retries per row)."""
     from app.modules.matriculas import service as matriculas_svc
+    from app.modules.matriculas.deps import (
+        get_notification_service,
+        get_transcriber_factory,
+    )
 
-    return await matriculas_svc.varrer_pendentes(admin, storage)
+    return await matriculas_svc.varrer_pendentes(
+        admin,
+        storage,
+        transcriber_factory=get_transcriber_factory(),
+        notificador=get_notification_service(),
+    )
 
 
 matriculas_sweep_job = make_sweep_job(label="matriculas", sweep=_sweep)

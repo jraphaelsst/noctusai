@@ -173,9 +173,22 @@ def fake_storage(client):
 
 @pytest.fixture
 def fake_extractor(client):
+    """The número read's extractor AND (migration 154) the structured read's
+    IO legs — `/extrair` with a código schedules both, and the real legs
+    resolve credentials and can reach a provider."""
+    from app.modules.imovel_hub.deps import EstruturaSeams, get_estrutura_seams
+
+    async def _sem_texto(*_a, **_k):
+        return None
+
     extractor = FakeMatriculaExtractor()
     restaurar = _instalar(get_matricula_extractor_factory, lambda: lambda _org: extractor)
+    restaurar_seams = _instalar(
+        get_estrutura_seams,
+        lambda: EstruturaSeams(extract_text=_sem_texto, analyze_estrutura=_sem_texto),
+    )
     yield extractor
+    restaurar_seams()
     restaurar()
 
 
@@ -203,6 +216,13 @@ class FakeNotificationService:
 
     def __init__(self) -> None:
         self.conflitos: list[dict] = []
+
+    async def notify_imovel_field_conflict(self, *, org_id, conflito, codigo):
+        """Migration 154 — the imóvel twin (D1 conflicts on imovel_dados)."""
+        from app.services.notification_service import DispatchOutcome
+
+        self.conflitos.append({"org_id": str(org_id), "conflito": conflito, "codigo": codigo})
+        return DispatchOutcome()
 
     async def notify_field_conflict(self, *, org_id, conflito, cliente_nome):
         self.conflitos.append(
@@ -388,6 +408,8 @@ def seed(
     scoped.set_table_data("clientes", clientes or [])
     # Migration 138 — admin-adjudicated field conflicts.
     scoped.set_table_data("cliente_campo_conflitos", [])
+    # Migration 154 — imóvel-field conflicts (D1).
+    scoped.set_table_data("imovel_campo_conflitos", [])
     scoped.set_table_data("permuta_ativos", permutas or [])
     scoped.set_table_data("imovel_documentos", documentos or [])
     scoped.set_table_data("imovel_documento_acessos", [])

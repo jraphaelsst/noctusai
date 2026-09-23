@@ -39,8 +39,8 @@ from noctusai_lib.integrations.documents import detectar_ruido, has_raw_markup
 from noctusai_lib.integrations.documents.formatting import ranges_to_json
 
 from app.modules.imovel_hub.deps import BUCKET as IMOVEL_BUCKET
-from app.modules.matriculas import estrutura_service
-from app.services import documento_retencao
+from app.modules.matriculas import estrutura_service, preenchimento_service
+from app.services import documento_retencao, extracao_retentativa
 
 logger = logging.getLogger(__name__)
 
@@ -171,8 +171,15 @@ async def processar_extracao(
     db,
     transcriber=None,
     transcriber_factory=None,
+    notificador=None,
 ) -> None:
     """Full extraction pipeline — runs as a background task. NEVER raises.
+
+    Migration 154: once the text and its acts land, a transcription LINKED
+    to an imóvel feeds `imovel_dados` (`preenchimento_service`, D1 — fill
+    empty, conflict otherwise); `notificador` announces any conflict. A
+    failure stores the seed's machine code in `erro_codigo`, which is what
+    the sweep's D3 retry decision reads.
 
     An exception escaping here surfaces NOWHERE: no user sees it, no
     response carries it, and the row sits in `processando` forever. So every
@@ -207,6 +214,7 @@ async def processar_extracao(
                 db, extracao_id, org_id,
                 status="erro",
                 erro_mensagem=_mensagem_de_erro(resultado),
+                erro_codigo=resultado.error or "transcription_failed",
             )
             return
 
@@ -282,6 +290,8 @@ async def processar_extracao(
             retencao_ate=retencao_ate,
             possui_marcacao_bruta=possui_marcacao_bruta,
             ruido=ruido,
+            erro_mensagem=None,
+            erro_codigo=None,
         )
 
         # The acts (migration 109), as offsets into the text that just landed.
@@ -307,6 +317,15 @@ async def processar_extracao(
             "Matrícula %s extraction failed: %s", extracao_id, e, exc_info=True
         )
         _registrar_erro(db, extracao_id, org_id, f"Erro inesperado: {e}", e)
+        return
+
+    # Outside the try above on purpose: the transcription is DONE and
+    # recorded; nothing the imóvel fill does may flip it to `erro`.
+    # `preencher_imovel` never raises and no-ops for an unlinked extraction.
+    resumo = await preenchimento_service.preencher_imovel(
+        db, org_id, extracao_id, notificador=notificador
+    )
+    logger.info("Matrícula %s: imovel_dados fill %s", extracao_id, resumo)
 
 
 def registrar_transcricao_manual(db, extracao_id: str, org_id: str, texto: str) -> None:
@@ -354,7 +373,9 @@ def registrar_transcricao_manual(db, extracao_id: str, org_id: str, texto: str) 
         )
 
 
-def _registrar_erro(db, extracao_id: str, org_id: str, mensagem: str, causa) -> None:
+def _registrar_erro(
+    db, extracao_id: str, org_id: str, mensagem: str, causa, *, codigo: str = "erro_inesperado"
+) -> None:
     """Write `erro` onto the row — the last thing a detached task can do.
 
     If even that fails (bad org_id, DB down) there is nowhere else to report
@@ -362,7 +383,10 @@ def _registrar_erro(db, extracao_id: str, org_id: str, mensagem: str, causa) -> 
     mask the original failure.
     """
     try:
-        _marcar(db, extracao_id, org_id, status="erro", erro_mensagem=mensagem)
+        _marcar(
+            db, extracao_id, org_id,
+            status="erro", erro_mensagem=mensagem, erro_codigo=codigo,
+        )
     except Exception as falha:  # noqa: BLE001 - last resort; say so
         logger.error(
             "Matrícula %s: could not even record the failure: %s "
@@ -380,6 +404,7 @@ async def processar_extracao_de_documento(
     *,
     transcriber=None,
     transcriber_factory=None,
+    notificador=None,
 ) -> None:
     """Read an imóvel's KEPT matrícula PDF back out of storage, then run the
     one transcription pipeline (`processar_extracao`). NEVER raises.
@@ -391,6 +416,7 @@ async def processar_extracao_de_documento(
         _registrar_erro(
             db, extracao_id, org_id,
             "Não foi possível ler o PDF guardado no imóvel. Tente novamente.", e,
+            codigo="storage",
         )
         return
     if blob is None:
@@ -401,6 +427,7 @@ async def processar_extracao_de_documento(
             db, extracao_id, org_id,
             "O PDF da matrícula não foi encontrado no armazenamento do imóvel.",
             "objeto ausente",
+            codigo="objeto_ausente",
         )
         return
     await processar_extracao(
@@ -410,10 +437,18 @@ async def processar_extracao_de_documento(
         db,
         transcriber=transcriber,
         transcriber_factory=transcriber_factory,
+        notificador=notificador,
     )
 
 
-async def varrer_pendentes(client, _storage=None, *, limite: int = 50) -> dict:
+async def varrer_pendentes(
+    client,
+    _storage=None,
+    *,
+    limite: int = 50,
+    transcriber_factory=None,
+    notificador=None,
+) -> dict:
     """Close out extractions that were started and never finished.
 
     🔴 WHY THIS EXISTS. `status` moves to `processando` before the work and
@@ -441,6 +476,15 @@ async def varrer_pendentes(client, _storage=None, *, limite: int = 50) -> dict:
     `_storage` is accepted and ignored: `app.services.extraction_sweep`'s
     `SweepFn` contract is `(admin_client, storage_backend)`, shared with the
     two sweeps that DO need storage.
+
+    🔴 D3 RETRY (migration 154). When the scheduler hands a
+    `transcriber_factory`, a second phase retries FAILED rows
+    (`status='erro'`) whose source PDF was kept — the credit-exhaustion
+    shape, where the fix (credits added) happens outside the document.
+    At most `extracao_retentativa.MAX_RETENTATIVAS` times per row, only for a
+    retryable `erro_codigo`, in place (same row, same id — an `erro` row has
+    no text and no acts, so nothing quotes it), then the row stays `erro`
+    for a human. See `_retentar_falhas`.
     """
     cutoff = (_now() - STALE_APOS).isoformat()
 
@@ -486,7 +530,70 @@ async def varrer_pendentes(client, _storage=None, *, limite: int = 50) -> dict:
         )
         marcados += 1
 
-    return {"encontrados": len(presos), "marcados": marcados}
+    resultado = {"encontrados": len(presos), "marcados": marcados}
+    if transcriber_factory is not None:
+        resultado.update(
+            await _retentar_falhas(
+                client, _storage, transcriber_factory, notificador, limite=limite
+            )
+        )
+    return resultado
+
+
+async def _retentar_falhas(
+    client, storage, transcriber_factory, notificador, *, limite: int
+) -> dict:
+    """The D3 retry phase of `varrer_pendentes` — see its docstring.
+
+    A row a retry cannot help (no retained source, or a permanent failure
+    such as an empty PDF) gets `retentativas` set to the cap, with a log
+    line: it leaves the retry pool for good, instead of being re-read and
+    skipped every hour (and crowding the `limite` window forever).
+    """
+    cutoff = (_now() - STALE_APOS).isoformat()
+    # postgrest-unbounded-ok: `.limit(limite)` — a recovery job, bounded per run.
+    falhas = (
+        client.table(TABLE)
+        .select("*")
+        .eq("status", "erro")
+        .lt("retentativas", extracao_retentativa.MAX_RETENTATIVAS)
+        .lt("updated_at", cutoff)
+        .limit(limite)
+        .execute()
+    ).data or []
+
+    retentadas = 0
+    esgotadas = 0
+    for row in falhas:
+        org_id = str(row.get("org_id") or "")
+        if not org_id or row.get("substituida_por"):
+            continue
+        caminho = None
+        if extracao_retentativa.retentavel(row.get("erro_codigo")):
+            caminho = estrutura_service.caminho_da_fonte(client, org_id, row)
+        if caminho is None:
+            logger.info(
+                "matricula sweep: %s (erro_codigo=%s) cannot be retried — no kept "
+                "source or a permanent failure; leaving it erro for a human",
+                row["id"], row.get("erro_codigo"),
+            )
+            _marcar(
+                client, row["id"], org_id,
+                retentativas=extracao_retentativa.MAX_RETENTATIVAS,
+            )
+            esgotadas += 1
+            continue
+        _marcar(
+            client, row["id"], org_id,
+            status="pendente",
+            retentativas=int(row.get("retentativas") or 0) + 1,
+        )
+        await processar_extracao_de_documento(
+            row["id"], caminho, org_id, client, storage,
+            transcriber_factory=transcriber_factory, notificador=notificador,
+        )
+        retentadas += 1
+    return {"retentadas": retentadas, "esgotadas": esgotadas}
 
 
 def check_required_credentials(org_id: Optional[str] = None) -> list[str]:

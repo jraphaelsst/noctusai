@@ -34,17 +34,23 @@ from fastapi import (
     status,
 )
 
-from app.dependencies import coerce_org_uuid, get_current_user_org
+from noctusai_lib.api.auth.session import is_org_admin
+
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
 from app.modules.imovel_hub import busca_service
+from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.imovel_hub import matricula_extracao_service as matricula_svc
 from app.modules.imovel_hub.deps import (
+    get_estrutura_seams,
     get_imovel_hub_client,
+    get_imovel_notification_service,
     get_matricula_extractor_factory,
     get_storage_backend,
 )
 from app.modules.imovel_hub.schemas import (
+    DecidirConflitoImovelBody,
     EnderecoManualPatchBody,
     ImovelDadosPatchBody,
     ImovelDocumentoExtracaoPatchBody,
@@ -197,6 +203,8 @@ async def upload_documento_route(
     client=Depends(get_imovel_hub_client),
     storage=Depends(get_storage_backend),
     extractor_factory=Depends(get_matricula_extractor_factory),
+    notificador=Depends(get_imovel_notification_service),
+    estrutura_seams=Depends(get_estrutura_seams),
 ) -> dict:
     user, org_id = _auth_parts(auth)
     codigo = codigo.upper()
@@ -228,6 +236,7 @@ async def upload_documento_route(
             codigo,
             UUID(documento["id"]),
             extractor=extractor_factory(str(org_id)),
+            notificador=notificador,
         )
     # Migration 118 — a SECOND, independent job: numero/emitida_em/
     # validade_ate/resultado/inscricao_imobiliaria. Runs alongside the
@@ -241,6 +250,9 @@ async def upload_documento_route(
             org_id,
             codigo,
             UUID(documento["id"]),
+            notificador=notificador,
+            extract_text=estrutura_seams.extract_text,
+            analyze_estrutura=estrutura_seams.analyze_estrutura,
         )
     return documento
 
@@ -311,6 +323,55 @@ async def list_certidoes_route(
     latest per tipo (migration 118)."""
     _user, org_id = _auth_parts(auth)
     return docs_svc.certidoes(client, org_id, codigo.upper())
+
+
+# ─── D1 conflicts (migration 154) ─────────────────────────────────────────
+
+
+@router.get("/{codigo}/conflitos")
+async def list_conflitos_route(
+    codigo: str,
+    todos: bool = Query(False, description="Include decided conflicts too."),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Where a matrícula / guia de IPTU / CND reading disagreed with a value
+    already on the imóvel. Each row carries `valor_anterior` beside
+    `valor_proposto` and `origem_proposto`. Read-only; not admin-gated —
+    seeing what's pending is not the sensitive half, deciding it is."""
+    _user, org_id = _auth_parts(auth)
+    return campos_svc.listar(client, org_id, codigo.upper(), apenas_pendentes=not todos)
+
+
+@router.put("/{codigo}/conflitos/{conflito_id}/decidir")
+async def decidir_conflito_route(
+    codigo: str,
+    conflito_id: UUID,
+    body: DecidirConflitoImovelBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Accept (the extracted value lands, confirmed by you) or reject
+    (nothing changes). First decision wins (400 on a decided conflict).
+
+    🔴 Owner/admin only — the TRUSTED `public.noctus_users` row, same gate
+    `card_hub`'s `decidir_conflito_route` uses for `cliente_campo_conflitos`:
+    replacing a value a human typed is exactly the confirmation that must
+    not be any org member's to give."""
+    user, org_id = _auth_parts(auth)
+    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="Decidir um conflito de dados é restrito a administradores.",
+        )
+    return campos_svc.resolver(
+        client,
+        org_id,
+        codigo.upper(),
+        conflito_id,
+        aceitar=body.aceitar,
+        decidido_por=getattr(user, "id", None),
+    )
 
 
 @router.delete(

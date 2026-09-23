@@ -125,13 +125,20 @@ def _confirmacao(linha: dict, coluna: str, chave: str) -> Optional[dict]:
         chave: valor,
         "confirmado_por": table_reads.actor(resolved, linha.get(f"{coluna}_confirmado_por")),
         "confirmado_em": linha.get(f"{coluna}_confirmado_em"),
+        # Migration 154 — `matricula` when the value was machine-filled from
+        # the acts and not yet confirmed (the D2 gate lists it as pending).
+        "origem": linha.get(f"{coluna}_origem"),
     }
 
 
 def _patch_confirmacao(coluna: str, valor: Optional[str], usuario_id: Optional[Any]) -> dict:
+    """An operator's PUT: the value, `manual` provenance (migration 154 — so a
+    later extraction reading a different phrase opens a conflict instead of
+    overwriting), and the confirmation. Clearing clears all of it."""
     texto = (valor or "").strip() or None
     return {
         coluna: texto,
+        f"{coluna}_origem": "manual" if texto else None,
         f"{coluna}_confirmado_por": str(usuario_id) if texto and usuario_id else None,
         f"{coluna}_confirmado_em": now_iso() if texto else None,
     }
