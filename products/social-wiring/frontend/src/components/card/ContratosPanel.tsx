@@ -167,6 +167,12 @@ interface Props {
    *  by this callback being invoked at all. Same optional-omission discipline
    *  as `renderMatriculaAtos`. */
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
+  /** Renders the "Proveniência" section (`sw-extraction-contract`) for one
+   *  contract — data lineage per field: where the value came from and its
+   *  confirmation state. `aberto` gates the caller's lazy fetch, same
+   *  discipline as `renderGeradorContrato`. Optional — omitted entirely
+   *  while the caller has not wired it. */
+  renderProveniencia?: (contratoId: string, aberto: boolean) => ReactNode;
   /** `contrato.id` → its `useAssinaturas` entry. A missing key means "never
    *  eligible" (no `gerado` version ever existed) and reads the same as a
    *  resolved `data: null` — see `_AssinaturaSection`. */
@@ -221,6 +227,7 @@ export default function ContratosPanel({
   onDownload,
   renderMatriculaAtos,
   renderGeradorContrato,
+  renderProveniencia,
   assinaturas = {},
   onAbrirEnvioAssinatura,
   onCancelarAssinatura,
@@ -320,6 +327,7 @@ export default function ContratosPanel({
               onDownload={(versaoId, formato) => onDownload(contrato.id, versaoId, formato)}
               renderMatriculaAtos={renderMatriculaAtos}
               renderGeradorContrato={renderGeradorContrato}
+              renderProveniencia={renderProveniencia}
               recemIniciado={contratoIniciadoId === contrato.id}
               assinaturaEntry={assinaturas[contrato.id]}
               onAbrirEnvioAssinatura={
@@ -373,6 +381,7 @@ function ContratoCard({
   onDownload,
   renderMatriculaAtos,
   renderGeradorContrato,
+  renderProveniencia,
   recemIniciado = false,
   assinaturaEntry,
   onAbrirEnvioAssinatura,
@@ -403,6 +412,7 @@ function ContratoCard({
   onDownload: (versaoId: string, formato?: "pdf" | "docx") => void;
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
+  renderProveniencia?: (contratoId: string, aberto: boolean) => ReactNode;
   recemIniciado?: boolean;
   /** This contract's `useAssinaturas` entry — `undefined` when the contract
    *  was never eligible (no `gerado` version ever existed). */
@@ -423,6 +433,7 @@ function ContratoCard({
   const [processoLegadoDialogOpen, setProcessoLegadoDialogOpen] = useState(false);
   const [matriculaAberta, setMatriculaAberta] = useState(recemIniciado);
   const [geradorAberto, setGeradorAberto] = useState(recemIniciado);
+  const [provenienciaAberta, setProvenienciaAberta] = useState(false);
 
   // Local drafts for the two migration-114 fields — a plain string, parsed
   // only on save. `prazo_pendencias_dias` null reads as "" (the placeholder
@@ -776,6 +787,26 @@ function ContratoCard({
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
               {renderGeradorContrato(contrato.id, geradorAberto)}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {renderProveniencia && (
+          <Collapsible open={provenienciaAberta} onOpenChange={setProvenienciaAberta}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                data-testid={`contrato-proveniencia-toggle-${contrato.id}`}
+              >
+                <ChevronDown
+                  className={`h-3 w-3 transition-transform ${provenienciaAberta ? "rotate-180" : ""}`}
+                />
+                Proveniência
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              {renderProveniencia(contrato.id, provenienciaAberta)}
             </CollapsibleContent>
           </Collapsible>
         )}
