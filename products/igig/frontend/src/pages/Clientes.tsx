@@ -38,7 +38,7 @@ export default function Clientes() {
   const [novo, setNovo] = useState(false);
   const [orcamentoId, setOrcamentoId] = useState<string | null>(null);
 
-  const { clientes, total, loading, isError, error, isFetching } = useClientes({
+  const { clientes, total, loading, isError, error, isRefreshing } = useClientes({
     busca: buscaDebounced || undefined,
     status: status || undefined,
   });
@@ -66,7 +66,7 @@ export default function Clientes() {
           <h1 className="text-xl font-semibold text-foreground sm:text-2xl">Clientes</h1>
           <p className="text-sm text-muted-foreground">
             {loading ? "Carregando…" : `${total} ${total === 1 ? "cliente" : "clientes"}`}
-            {isFetching && !loading ? " · atualizando…" : ""}
+            {isRefreshing && <span> · atualizando…</span>}
           </p>
         </div>
         <Button variant="primary" className="max-sm:h-10" onClick={() => setNovo(true)} data-testid="clientes-novo">
