@@ -7399,6 +7399,34 @@ def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# `check_stand_in_conformance` — thin delegating shim. The real
+# implementation lives in `tools/noctus/dev/stand_in_conformance.py` (a
+# separate file by design — this detector composes a per-product subprocess
+# harness + a migration-CHECK-constraint scanner, too much surface to add
+# safely to this already-huge module). This shim exists ONLY so
+# `_detector_function_names()`'s self-parse of THIS file (see the module
+# docstring's "ADDING A NEW DETECTOR" note) picks the detector up for the
+# regression-test + keeper-cache-mirror machinery.
+#
+# 2026-09-23 — built against three same-day production failures where a
+# test double was more permissive than the real thing it replaced
+# (`imovel_dados`'s unencodable date, `_SchemaPinnedAdminClient`'s missing
+# `__weakref__`, `atendimento_contrato_versoes`'s cross-column CHECK). See
+# `stand_in_conformance.py`'s module docstring for the full account.
+# ---------------------------------------------------------------------------
+def check_stand_in_conformance(repo_root: Path | None = None) -> list[dict]:
+    """A stand-in (mock/wrapper) must satisfy the same CONTRACT as the real
+    thing it replaces. See `tools/noctus/dev/stand_in_conformance.py` for
+    the full two-leg implementation (dependency resolution against a real
+    client object; weak-referenceability/identity-stability/write-payload/
+    CHECK-constraint-coverage conformance)."""
+    from tools.noctus.dev.stand_in_conformance import (
+        check_stand_in_conformance as _impl,
+    )
+    return _impl(repo_root)
+
+
+# ---------------------------------------------------------------------------
 # `check_hardcoded_fleet_size_literal` — a seed test
 # (`seed/lib/backend/tests/`) must NOT assert a frozen *fleet-size* numeric
 # literal (`len(...) >= 10`, `== 12`, `> 8`, …) against a registry-derived
