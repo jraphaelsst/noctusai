@@ -97,15 +97,21 @@ export interface ImovelDados {
   titulo_aquisitivo_fonte: ImovelFonteTituloAquisitivo | null;
   onus_fonte: ImovelFonteOnus | null;
 
-  // ─── Manual address override (migration 149) ───────────────────────────
-  // The 4 fields `contrato_gerador.derivacao` gates on — this product has
-  // no write-back to the Vista mirror those normally come from. `null` on
-  // every field means "use the mirror". Written ONLY by `PUT .../endereco-
-  // manual` (`useEnderecoManualMutation`), never by the PATCH route above.
+  // ─── Manual address override (migration 149, widened by 159) ───────────
+  // All 7 `Endereco` fields — this product has no write-back to the Vista
+  // mirror those normally come from. `null` on every field means "use the
+  // mirror". Written ONLY by `PUT .../endereco-manual`
+  // (`useEnderecoManualMutation`) or at registration time
+  // (`useRegistrarImovelManual`, `hooks/useImovelRegistro.ts`), never by the PATCH route
+  // above. `complemento`/`bairro`/`cep` (159) let an operator override a
+  // condo UNIT's full address when Vista mirrors only the building's gate.
   endereco_manual_logradouro: string | null;
   endereco_manual_numero: string | null;
+  endereco_manual_complemento: string | null;
+  endereco_manual_bairro: string | null;
   endereco_manual_cidade: string | null;
   endereco_manual_uf: string | null;
+  endereco_manual_cep: string | null;
   endereco_manual_confirmado_por: Ator | null;
   endereco_manual_confirmado_em: string | null;
 
@@ -122,18 +128,22 @@ export interface ImovelDados {
 }
 
 /** `PUT .../endereco-manual` body — absence means "leave alone", `null`
- *  means "clear the override and fall back to the mirror". */
+ *  means "clear the override and fall back to the mirror" (migration 149,
+ *  widened by 159 to all 7 fields). */
 export interface EnderecoManualPatch {
   logradouro?: string | null;
   numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
   cidade?: string | null;
   uf?: string | null;
+  cep?: string | null;
 }
 
 /** One row of `GET .../endereco-manual/historico` — an append-only log of
- *  every field-level override (migration 149). */
+ *  every field-level override (migration 149, widened by 159). */
 export interface EnderecoManualHistoricoItem {
-  campo: "logradouro" | "numero" | "cidade" | "uf";
+  campo: "logradouro" | "numero" | "complemento" | "bairro" | "cidade" | "uf" | "cep";
   valor_anterior: string | null;
   valor_novo: string | null;
   alterado_por: Ator | null;
