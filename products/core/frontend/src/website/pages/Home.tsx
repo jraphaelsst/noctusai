@@ -45,23 +45,24 @@ export default function Home() {
     <>
       <section className="nx-hero nx-band-inverse">
         <HeroScene modules={heroModules} />
+        <div className="nx-hero-scrim" aria-hidden="true" />
         <div className="nx-container nx-hero-content">
           <span className="nx-eyebrow">NOCTUSAI</span>
           <h1 className="nx-display">
             {locale === "en" ? (
               <>
-                AI that works for your <span className="nx-accent-word">business</span> — ready-made or custom built.
+                AI that works for your <span className="nx-accent-word">business</span> — ready-made or custom-built.
               </>
             ) : (
               <>
-                IA que trabalha pela sua <span className="nx-accent-word">empresa</span> — com produtos prontos ou sob medida.
+                IA que trabalha pela sua <span className="nx-accent-word">empresa</span> — pronta ou sob medida.
               </>
             )}
           </h1>
           <p className="nx-subhead">
             {locale === "en"
-              ? "AI systems for real estate, clinics and finance — and AI projects built for your business."
-              : "Sistemas com IA para imobiliárias, clínicas e finanças — e projetos de IA construídos para o seu negócio."}
+              ? "WhatsApp, email and social channels automated with AI — and your agency's own operating system, ready-made or custom-built."
+              : "WhatsApp, e-mail e redes sociais automatizados com IA — e o sistema operacional da sua agência, pronto ou sob medida."}
           </p>
           <CtaPair actions={heroActions} />
           {heroModules.length > 0 && (
@@ -163,25 +164,32 @@ export default function Home() {
         </MarkedSection>
       )}
 
-      {settings.sections.trust && (
-        <MarkedSection sectionKey="trust">
-          <section className="nx-section" id="confianca">
-            <div className="nx-container">
-              <span className="nx-eyebrow">{locale === "en" ? "WHY NOCTUSAI" : "POR QUE A NOCTUSAI"}</span>
-              <h2>{locale === "en" ? "What's verifiably true today" : "O que é verdade hoje"}</h2>
-              <div className="nx-trust-grid">
-                {settings.trust_items
-                  .filter((item) => item.verified_at)
-                  .map((item) => (
+      {(() => {
+        const verifiedTrustItems = settings.trust_items.filter((item) => item.verified_at);
+        // Empty-state guard (2026-09-23 full-page review): a heading with
+        // zero items under it reads as a broken/unfinished section, not an
+        // honest one — the honesty requirement (P7: nothing unverified) is
+        // served just as well by not rendering the section at all until at
+        // least one claim is verified, same pattern as `social_proof`.
+        if (!settings.sections.trust || verifiedTrustItems.length === 0) return null;
+        return (
+          <MarkedSection sectionKey="trust">
+            <section className="nx-section" id="confianca">
+              <div className="nx-container">
+                <span className="nx-eyebrow">{locale === "en" ? "WHY NOCTUSAI" : "POR QUE A NOCTUSAI"}</span>
+                <h2>{locale === "en" ? "What's verifiably true today" : "O que é verdade hoje"}</h2>
+                <div className="nx-trust-grid">
+                  {verifiedTrustItems.map((item) => (
                     <div className="nx-trust-item" key={item.key}>
                       <span>{l10n(item.text)}</span>
                     </div>
                   ))}
+                </div>
               </div>
-            </div>
-          </section>
-        </MarkedSection>
-      )}
+            </section>
+          </MarkedSection>
+        );
+      })()}
 
       {settings.sections.social_proof && settings.social_proof_items.length > 0 && (
         <MarkedSection sectionKey="social_proof">
