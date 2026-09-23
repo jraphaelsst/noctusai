@@ -45,6 +45,7 @@ import {
   useAgendamentos,
   useDocumentoChecklist,
   useDocumentoChecklistMutation,
+  useExtracaoPollingInvalidation,
   useExtracaoSugestaoMutation,
   useDocumentoMutations,
   useDocumentos,
@@ -156,6 +157,10 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // is unchanged and still pays off for the tabs that remain — agendamentos,
   // roteiros, negociação and financiamento are still fetched on first open.
   const documentos = useDocumentos(idSeAbriu("geral"));
+  // Bug 2 (prod card 755253934) — the titular's own polling/invalidation
+  // side effect; each open party panel mounts its OWN copy scoped to ITS
+  // clienteId (`PessoaDocumentosPanel`). See the hook's docblock.
+  useExtracaoPollingInvalidation(idSeAbriu("geral"));
   const documentoChecklist = useDocumentoChecklist(idSeAbriu("geral"));
   const checklistExtras = useChecklistExtras(idSeAbriu("geral"));
   const checklistExtraMutations = useChecklistExtraMutations(id ?? "__none__");

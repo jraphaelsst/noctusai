@@ -10,7 +10,7 @@
  * container.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 
 afterEach(() => {
   cleanup();
@@ -22,26 +22,59 @@ vi.mock("@/components/ConflitosPendentesPanel", () => ({
   ConflitosPendentesPanel: () => <div data-testid="conflitos-pendentes-stub" />,
 }));
 
-const { mockChecklist, mockDadosMutate, mockUploadMutate } = vi.hoisted(() => ({
-  mockChecklist: vi.fn(),
-  mockDadosMutate: vi.fn(),
-  mockUploadMutate: vi.fn(),
-}));
+// 🔴 `useDocumentoChecklist`/`useDocumentoMutations` are keyed by the
+// `clienteId` ARGUMENT, never by call order — a blind `() => ({...})` mock
+// (the shape every test below but the multi-party one uses) would still pass
+// if a future refactor accidentally shared one party's upload mutation with
+// another's, because nothing would ever assert on WHICH id the hook was
+// invoked with. `checklistById`/`uploadMutateById` let the multi-party test
+// below pin that "upload from party X posts to X's cliente_id" by keeping a
+// SEPARATE spy per id — cross-contamination would show up as the wrong
+// spy (or both spies) firing.
+const { mockChecklist, mockDadosMutate, mockUploadMutate, checklistById, uploadMutateById } =
+  vi.hoisted(() => ({
+    mockChecklist: vi.fn(),
+    mockDadosMutate: vi.fn(),
+    mockUploadMutate: vi.fn(),
+    checklistById: new Map<string, unknown>(),
+    uploadMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
+  }));
+
+// The single-party tests below all use clienteId="cli-1" — route that id's
+// mutation through the ORIGINAL shared spy so they keep working unchanged.
+uploadMutateById.set("cli-1", mockUploadMutate);
 
 vi.mock("@/hooks/useCardHub", () => ({
   useConflitosPendentes: () => ({ data: [], isPending: false, isFetching: false }),
-  useDocumentoChecklist: () => mockChecklist(),
+  useDocumentoChecklist: (id: string) => checklistById.get(id) ?? mockChecklist(),
   useDocumentoChecklistMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useDocumentoMutations: () => ({
-    upload: { mutate: mockUploadMutate, isPending: false },
-    remove: { mutate: vi.fn(), isPending: false },
-    getUrl: { mutate: vi.fn(), isPending: false },
-    reextrair: { mutate: vi.fn(), isPending: false, variables: undefined },
-  }),
+  useDocumentoMutations: (id: string) => {
+    if (!uploadMutateById.has(id)) uploadMutateById.set(id, vi.fn());
+    return {
+      upload: { mutate: uploadMutateById.get(id), isPending: false },
+      remove: { mutate: vi.fn(), isPending: false },
+      getUrl: { mutate: vi.fn(), isPending: false },
+      reextrair: { mutate: vi.fn(), isPending: false, variables: undefined },
+    };
+  },
   useDadosPessoaisMutation: () => ({ mutate: mockDadosMutate, isPending: false }),
   useDocumentos: () => ({ data: [], isPending: false, isFetching: false }),
+  // Bug 2 (prod card 755253934) — the polling/invalidation side effect;
+  // this suite is about the marriage-gated UI, not the poll (see
+  // `useCardHub.test.ts` for that).
+  useExtracaoPollingInvalidation: () => {},
   useExtracaoSugestaoMutation: () => ({ mutate: vi.fn(), isPending: false }),
-  useTiposDocumento: () => ({ data: [] }),
+  useTiposDocumento: () => ({
+    data: [
+      { tipo_documento: "outro", categoria_lgpd: "contratual", descricao: "Outro", identidade: false },
+      {
+        tipo_documento: "certidao_casamento",
+        categoria_lgpd: "identidade",
+        descricao: "Certidão de casamento",
+        identidade: true,
+      },
+    ],
+  }),
 }));
 
 function checklist(estadoCivil: string | null) {
@@ -114,5 +147,100 @@ describe("PessoaDocumentosPanel — marriage-gated UI (this slice)", () => {
       { file, tipoDocumento: "certidao_casamento" },
       expect.any(Object),
     );
+  });
+});
+
+describe("PessoaDocumentosPanel — a party's upload posts to THAT party's cliente_id (prod card 755253934)", () => {
+  // 🔴 Two married parties on the SAME card (e.g. a comprador and their
+  // papel="conjuge") mounted side by side — the exact shape `ClienteCardDialog`
+  // produces for `compradores.map(renderParte)`. `useDocumentoMutations`
+  // (and `useDocumentoChecklist`) are keyed by the `clienteId` PROP each
+  // `<PessoaDocumentosPanel>` receives — never by mount order or a shared
+  // instance — so party B's upload must never reach party A's spy (which is
+  // what "posts to the titular's endpoint" would look like from here: one
+  // spy firing for BOTH parties instead of two spies firing once each).
+  it("🔴 the certidão-de-casamento slot: each party's file lands on THEIR OWN upload mutation, never the other party's", async () => {
+    checklistById.set("cli-parte-a", checklist("casado"));
+    checklistById.set("cli-parte-b", checklist("casado"));
+    const { PessoaDocumentosPanel } = await import("./PessoaDocumentosPanel");
+    render(
+      <>
+        <PessoaDocumentosPanel clienteId="cli-parte-a" />
+        <PessoaDocumentosPanel clienteId="cli-parte-b" />
+      </>,
+    );
+
+    const fileA = new File(["a"], "certidao-a.pdf", { type: "application/pdf" });
+    fireEvent.change(
+      screen.getByTestId("certidao-casamento-cli-parte-a-arquivo-input"),
+      { target: { files: [fileA] } },
+    );
+    const fileB = new File(["b"], "certidao-b.pdf", { type: "application/pdf" });
+    fireEvent.change(
+      screen.getByTestId("certidao-casamento-cli-parte-b-arquivo-input"),
+      { target: { files: [fileB] } },
+    );
+
+    const uploadA = uploadMutateById.get("cli-parte-a")!;
+    const uploadB = uploadMutateById.get("cli-parte-b")!;
+    expect(uploadA).toHaveBeenCalledWith(
+      { file: fileA, tipoDocumento: "certidao_casamento" },
+      expect.any(Object),
+    );
+    expect(uploadB).toHaveBeenCalledWith(
+      { file: fileB, tipoDocumento: "certidao_casamento" },
+      expect.any(Object),
+    );
+    // The regression this pins: TWO INDEPENDENT spies fired exactly ONCE
+    // each — a shared/titular-scoped hook (the reported bug) would instead
+    // route both uploads onto ONE spy (either firing twice, or firing on the
+    // wrong party's mutation while the other stays uncalled).
+    expect(uploadA).toHaveBeenCalledTimes(1);
+    expect(uploadB).toHaveBeenCalledTimes(1);
+    expect(uploadA).not.toBe(uploadB);
+  });
+
+  it("🔴 the generic Anexos upload: each party's file lands on THEIR OWN upload mutation, never the other party's", async () => {
+    checklistById.set("cli-parte-c", checklist("solteiro"));
+    checklistById.set("cli-parte-d", checklist("solteiro"));
+    const { PessoaDocumentosPanel } = await import("./PessoaDocumentosPanel");
+    render(
+      <>
+        <PessoaDocumentosPanel clienteId="cli-parte-c" />
+        <PessoaDocumentosPanel clienteId="cli-parte-d" />
+      </>,
+    );
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+
+    async function enviarAnexo(clienteId: string, file: File) {
+      const container = screen.getByTestId(`anexos-section-${clienteId}`);
+      const secao = within(container);
+      await user.click(secao.getByTestId("anexo-tipo-select"));
+      await user.click(
+        await screen.findByRole("option", { name: "Certidão de casamento" }),
+      );
+      const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(input, "files", { value: [file] });
+      fireEvent.change(input);
+    }
+
+    const fileC = new File(["c"], "certidao-c.pdf", { type: "application/pdf" });
+    await enviarAnexo("cli-parte-c", fileC);
+    const fileD = new File(["d"], "certidao-d.pdf", { type: "application/pdf" });
+    await enviarAnexo("cli-parte-d", fileD);
+
+    const uploadC = uploadMutateById.get("cli-parte-c")!;
+    const uploadD = uploadMutateById.get("cli-parte-d")!;
+    expect(uploadC).toHaveBeenCalledWith(
+      { file: fileC, tipoDocumento: "certidao_casamento" },
+      expect.any(Object),
+    );
+    expect(uploadD).toHaveBeenCalledWith(
+      { file: fileD, tipoDocumento: "certidao_casamento" },
+      expect.any(Object),
+    );
+    expect(uploadC).toHaveBeenCalledTimes(1);
+    expect(uploadD).toHaveBeenCalledTimes(1);
   });
 });
