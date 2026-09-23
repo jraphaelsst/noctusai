@@ -26,14 +26,71 @@
  * value in, `onChange` out.
  */
 import { useState } from "react";
-import { Check, Loader2, Plus, Search, X } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Plus, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
-import { useImoveisBusca, useRegistrarImovelManual } from "@/hooks/useCardHub";
+import { useImoveisBusca } from "@/hooks/useCardHub";
+import {
+  useImoveisPossiveisDuplicatas,
+  useRegistrarImovelManual,
+  type RegistrarImovelManualBody,
+} from "@/hooks/useImovelRegistro";
 import { cn } from "@/lib/utils";
 import type { ImovelBusca } from "@/types/cardHub";
+
+/** `RegistrarImovelManualBody`'s draft shape while the operator types it —
+ *  every field is a controlled string; `complemento` blank means "not sent"
+ *  (the only optional one). */
+interface EnderecoNovoDraft {
+  logradouro: string;
+  numero: string;
+  complemento: string;
+  bairro: string;
+  cidade: string;
+  uf: string;
+  cep: string;
+}
+
+const ENDERECO_NOVO_VAZIO: EnderecoNovoDraft = {
+  logradouro: "",
+  numero: "",
+  complemento: "",
+  bairro: "",
+  cidade: "",
+  uf: "",
+  cep: "",
+};
+
+/** The 6 REQUIRED fields — `complemento` is the one field a house/lot has no
+ *  use for, so it alone stays optional (matches `RegistrarImovelBody` on
+ *  the backend, migration 159). */
+const CAMPOS_OBRIGATORIOS: (keyof EnderecoNovoDraft)[] = [
+  "logradouro",
+  "numero",
+  "bairro",
+  "cidade",
+  "uf",
+  "cep",
+];
+
+function draftCompleto(d: EnderecoNovoDraft): boolean {
+  return CAMPOS_OBRIGATORIOS.every((k) => d[k].trim() !== "");
+}
+
+function paraBody(d: EnderecoNovoDraft): RegistrarImovelManualBody {
+  return {
+    logradouro: d.logradouro.trim(),
+    numero: d.numero.trim(),
+    complemento: d.complemento.trim() || null,
+    bairro: d.bairro.trim(),
+    cidade: d.cidade.trim(),
+    uf: d.uf.trim().toUpperCase(),
+    cep: d.cep.trim(),
+  };
+}
 
 export interface ImovelCodigoPickerProps {
   /** The canonical código currently chosen, or `null`/`""` for none. */
@@ -58,6 +115,8 @@ export function ImovelCodigoPicker({
   "data-testid": testId = "imovel-picker",
 }: ImovelCodigoPickerProps) {
   const [termo, setTermo] = useState("");
+  const [mostrandoFormulario, setMostrandoFormulario] = useState(false);
+  const [endereco, setEndereco] = useState<EnderecoNovoDraft>(ENDERECO_NOVO_VAZIO);
   const termoDebounced = useDebouncedValue(termo, 250);
   const busca = useImoveisBusca(termoDebounced);
   const registrar = useRegistrarImovelManual();
@@ -69,6 +128,27 @@ export function ImovelCodigoPicker({
   const buscando = busca.isPending || busca.isFetching;
   const termoUtil = termoDebounced.trim().length >= 2;
   const resultados = busca.data?.items ?? [];
+  const buscaVazia = termoUtil && !buscando && resultados.length === 0;
+
+  // 🔴 Migration 159 — "did you mean one of these?" checked ONLY once the
+  // exact search already came back empty (the moment a genuine duplicate
+  // gets hand-registered — see `busca_service.sugestoes_para_cadastro`'s
+  // header for the EUROVILLE-535/ONE7515 incident). Never a hard block: a
+  // real new property is the common case, so these are shown ABOVE
+  // "Cadastrar…", never instead of it.
+  const duplicatas = useImoveisPossiveisDuplicatas(termoDebounced, buscaVazia);
+  const possiveisDuplicatas = duplicatas.data?.items ?? [];
+
+  function fecharFormulario() {
+    setMostrandoFormulario(false);
+    setEndereco(ENDERECO_NOVO_VAZIO);
+  }
+
+  function escolher(codigo: string) {
+    onChange(codigo);
+    setTermo("");
+    fecharFormulario();
+  }
 
   if (value) {
     return (
@@ -89,6 +169,7 @@ export function ImovelCodigoPicker({
           onClick={() => {
             onChange(null);
             setTermo("");
+            fecharFormulario();
           }}
           aria-label="Remover o imóvel da negociação"
           data-testid={`${testId}-limpar`}
@@ -128,39 +209,224 @@ export function ImovelCodigoPicker({
         <p className="text-xs text-muted-foreground">
           Digite ao menos 2 caracteres.
         </p>
-      ) : resultados.length === 0 && !buscando ? (
-        <div className="space-y-1.5">
+      ) : buscaVazia ? (
+        <div className="space-y-2">
           <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
             Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
           </p>
+
+          {/* 🔴 Migration 159 — shown BEFORE "Cadastrar…", never instead of
+              it: a genuine new property is the common case, so these are a
+              nudge to check first, not a block. See `useImoveisPossiveisDuplicatas`. */}
+          {possiveisDuplicatas.length > 0 && (
+            <div
+              className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-2 dark:border-amber-900 dark:bg-amber-950"
+              data-testid={`${testId}-duplicatas`}
+            >
+              <p className="flex items-center gap-1.5 text-xs font-medium text-amber-900 dark:text-amber-200">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                Você quis dizer um destes? Confira antes de cadastrar um novo.
+              </p>
+              <ul className="divide-y divide-amber-200 dark:divide-amber-900">
+                {possiveisDuplicatas.map((imovel) => (
+                  <li key={imovel.codigo}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-1 py-1.5 text-left text-sm hover:bg-amber-100 dark:hover:bg-amber-900"
+                      disabled={disabled}
+                      onClick={() => escolher(imovel.codigo)}
+                      data-testid={`${testId}-duplicata-${imovel.codigo}`}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{rotuloDoImovel(imovel)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* 🔴 Migration 149 — an off-market imóvel (no anúncio, being
               tested manually) has no row in the mirror NOR the registry, so
               it can never turn up here by SEARCHING. This is the only way
-              to give one an identity from this picker. */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 text-xs"
-            disabled={disabled || registrar.isPending}
-            onClick={() => {
-              const codigo = termoDebounced.trim().toUpperCase();
-              registrar.mutate(codigo, {
-                onSuccess: (res) => {
-                  onChange(res.codigo);
-                  setTermo("");
-                },
-              });
-            }}
-            data-testid={`${testId}-cadastrar-novo`}
-          >
-            {registrar.isPending ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
+              to give one an identity from this picker. Migration 159 — the
+              address is now REQUIRED before this actually registers
+              anything: clicking reveals the form below rather than
+              submitting immediately. */}
+          {!mostrandoFormulario ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              disabled={disabled}
+              onClick={() => setMostrandoFormulario(true)}
+              data-testid={`${testId}-cadastrar-novo`}
+            >
               <Plus className="h-3 w-3" />
-            )}
-            Cadastrar “{termoDebounced.trim()}” como imóvel novo
-          </Button>
+              Cadastrar “{termoDebounced.trim()}” como imóvel novo
+            </Button>
+          ) : (
+            <div
+              className="space-y-2 rounded-md border p-3"
+              data-testid={`${testId}-formulario-cadastro`}
+            >
+              <p className="text-xs font-medium">
+                Endereço de “{termoDebounced.trim().toUpperCase()}”
+              </p>
+              <p className="text-xs text-muted-foreground">
+                O endereço vem do imóvel, não da matrícula — obrigatório para cadastrar um
+                imóvel novo.
+              </p>
+
+              {/* Mobile-first: one field per row, no grid — this popover is
+                  narrow on the phone form-factor `NegociacaoContainer` runs
+                  on more than a desktop layout would suggest. */}
+              <div className="space-y-1.5">
+                <div className="space-y-1">
+                  <Label htmlFor={`${id ?? testId}-novo-logradouro`} className="text-xs">
+                    Logradouro *
+                  </Label>
+                  <Input
+                    id={`${id ?? testId}-novo-logradouro`}
+                    value={endereco.logradouro}
+                    onChange={(e) => setEndereco((d) => ({ ...d, logradouro: e.target.value }))}
+                    placeholder="Ex.: Alameda Alemanha"
+                    disabled={disabled || registrar.isPending}
+                    data-testid={`${testId}-novo-logradouro`}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <div className="space-y-1">
+                    <Label htmlFor={`${id ?? testId}-novo-numero`} className="text-xs">
+                      Número *
+                    </Label>
+                    <Input
+                      id={`${id ?? testId}-novo-numero`}
+                      value={endereco.numero}
+                      onChange={(e) => setEndereco((d) => ({ ...d, numero: e.target.value }))}
+                      placeholder="Ex.: 535"
+                      disabled={disabled || registrar.isPending}
+                      data-testid={`${testId}-novo-numero`}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={`${id ?? testId}-novo-complemento`} className="text-xs">
+                      Complemento
+                    </Label>
+                    <Input
+                      id={`${id ?? testId}-novo-complemento`}
+                      value={endereco.complemento}
+                      onChange={(e) =>
+                        setEndereco((d) => ({ ...d, complemento: e.target.value }))
+                      }
+                      placeholder="Ex.: Apto 535"
+                      disabled={disabled || registrar.isPending}
+                      data-testid={`${testId}-novo-complemento`}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor={`${id ?? testId}-novo-bairro`} className="text-xs">
+                    Bairro *
+                  </Label>
+                  <Input
+                    id={`${id ?? testId}-novo-bairro`}
+                    value={endereco.bairro}
+                    onChange={(e) => setEndereco((d) => ({ ...d, bairro: e.target.value }))}
+                    placeholder="Ex.: Euroville - Km 23"
+                    disabled={disabled || registrar.isPending}
+                    data-testid={`${testId}-novo-bairro`}
+                  />
+                </div>
+                <div className="grid grid-cols-[1fr_auto] gap-1.5">
+                  <div className="space-y-1">
+                    <Label htmlFor={`${id ?? testId}-novo-cidade`} className="text-xs">
+                      Cidade *
+                    </Label>
+                    <Input
+                      id={`${id ?? testId}-novo-cidade`}
+                      value={endereco.cidade}
+                      onChange={(e) => setEndereco((d) => ({ ...d, cidade: e.target.value }))}
+                      placeholder="Ex.: São Paulo"
+                      disabled={disabled || registrar.isPending}
+                      data-testid={`${testId}-novo-cidade`}
+                    />
+                  </div>
+                  <div className="w-16 space-y-1">
+                    <Label htmlFor={`${id ?? testId}-novo-uf`} className="text-xs">
+                      UF *
+                    </Label>
+                    <Input
+                      id={`${id ?? testId}-novo-uf`}
+                      value={endereco.uf}
+                      onChange={(e) =>
+                        setEndereco((d) => ({ ...d, uf: e.target.value.toUpperCase() }))
+                      }
+                      maxLength={2}
+                      placeholder="SP"
+                      disabled={disabled || registrar.isPending}
+                      data-testid={`${testId}-novo-uf`}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor={`${id ?? testId}-novo-cep`} className="text-xs">
+                    CEP *
+                  </Label>
+                  <Input
+                    id={`${id ?? testId}-novo-cep`}
+                    value={endereco.cep}
+                    onChange={(e) => setEndereco((d) => ({ ...d, cep: e.target.value }))}
+                    maxLength={9}
+                    placeholder="Ex.: 06355-465"
+                    disabled={disabled || registrar.isPending}
+                    data-testid={`${testId}-novo-cep`}
+                  />
+                </div>
+              </div>
+
+              {registrar.isError && (
+                <p className="text-xs text-destructive" data-testid={`${testId}-erro`}>
+                  Não foi possível cadastrar — confira os campos obrigatórios.
+                </p>
+              )}
+
+              <div className="flex gap-1.5">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  disabled={disabled || registrar.isPending || !draftCompleto(endereco)}
+                  onClick={() => {
+                    const codigo = termoDebounced.trim().toUpperCase();
+                    registrar.mutate(
+                      { codigo, endereco: paraBody(endereco) },
+                      { onSuccess: (res) => escolher(res.codigo) },
+                    );
+                  }}
+                  data-testid={`${testId}-novo-salvar`}
+                >
+                  {registrar.isPending ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Plus className="h-3 w-3" />
+                  )}
+                  Cadastrar imóvel
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  disabled={registrar.isPending}
+                  onClick={fecharFormulario}
+                  data-testid={`${testId}-novo-cancelar`}
+                >
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <ul className="max-h-56 divide-y overflow-y-auto rounded-md border">
@@ -170,10 +436,7 @@ export function ImovelCodigoPicker({
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted"
                 disabled={disabled}
-                onClick={() => {
-                  onChange(imovel.codigo);
-                  setTermo("");
-                }}
+                onClick={() => escolher(imovel.codigo)}
                 data-testid={`${testId}-opcao-${imovel.codigo}`}
               >
                 <span className="min-w-0 flex-1 truncate">
