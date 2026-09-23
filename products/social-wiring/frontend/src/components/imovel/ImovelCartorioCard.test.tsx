@@ -42,12 +42,27 @@ function dados(over: Partial<ImovelDados> = {}): ImovelDados {
     endereco_manual_uf: null,
     endereco_manual_confirmado_por: null,
     endereco_manual_confirmado_em: null,
+    empreendimento_manual: null,
+    empreendimento_manual_confirmado_por: null,
+    empreendimento_manual_confirmado_em: null,
     updated_at: null,
     ...over,
   };
 }
 
-async function render(dadosOverride?: Partial<ImovelDados>) {
+async function render(
+  dadosOverride?: Partial<ImovelDados>,
+  opts?: {
+    onSave?: (patch: unknown) => void;
+    mirror?: {
+      logradouro?: string | null;
+      numero?: string | null;
+      cidade?: string | null;
+      uf?: string | null;
+      empreendimento?: string | null;
+    };
+  },
+) {
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
   const { MemoryRouter } = await import("react-router-dom");
@@ -61,7 +76,8 @@ async function render(dadosOverride?: Partial<ImovelDados>) {
         loading: false,
         saving: false,
         error: null,
-        onSave: vi.fn(),
+        onSave: opts?.onSave ?? vi.fn(),
+        mirror: opts?.mirror,
       }),
     ),
   );
@@ -107,6 +123,60 @@ describe("ImovelCartorioCard — matrícula source badges", () => {
     const badge = screen.getByTestId("imovel-onus-fonte-badge");
     expect(badge.textContent).toContain("Ônus (1)");
     expect(badge.textContent).toContain("manual");
+  });
+});
+
+describe("ImovelCartorioCard — empreendimento manual override (migration 158)", () => {
+  it("renders with no mirror prop at all — the manual-layout case", async () => {
+    // `ImovelManualLayout` (ImovelDetalhes.tsx) never passes `mirror` — a
+    // manually registered imóvel has no Vista mirror row to show. The field
+    // must still render and take the generic placeholder.
+    const { screen } = await render();
+    const input = screen.getByTestId("imovel-empreendimento-manual") as HTMLInputElement;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("");
+    expect(input.getAttribute("placeholder")).toBe("Ex.: Residencial Euroville");
+  });
+
+  it("shows the CRM mirror value in the label and uses it as the placeholder", async () => {
+    const { screen } = await render(undefined, {
+      mirror: { empreendimento: "Edifício Exemplo" },
+    });
+    expect(screen.getByText(/Empreendimento \/ condomínio/)).toBeTruthy();
+    expect(screen.getByText(/\(CRM: Edifício Exemplo\)/)).toBeTruthy();
+    const input = screen.getByTestId("imovel-empreendimento-manual") as HTMLInputElement;
+    expect(input.getAttribute("placeholder")).toBe("Edifício Exemplo");
+  });
+
+  it("pre-fills the stored authored value", async () => {
+    const { screen } = await render({ empreendimento_manual: "Residencial Euroville" });
+    const input = screen.getByTestId("imovel-empreendimento-manual") as HTMLInputElement;
+    expect(input.value).toBe("Residencial Euroville");
+  });
+
+  it("saves the typed value through the generic PATCH", async () => {
+    const onSave = vi.fn();
+    const { screen, fireEvent } = await render(undefined, { onSave });
+    const input = screen.getByTestId("imovel-empreendimento-manual") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Residencial Euroville" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ empreendimento_manual: "Residencial Euroville" }),
+    );
+  });
+
+  it("clearing a stored value saves null, never an invented value", async () => {
+    const onSave = vi.fn();
+    const { screen, fireEvent } = await render(
+      { empreendimento_manual: "Residencial Euroville" },
+      { onSave },
+    );
+    const input = screen.getByTestId("imovel-empreendimento-manual") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ empreendimento_manual: null }),
+    );
   });
 });
 

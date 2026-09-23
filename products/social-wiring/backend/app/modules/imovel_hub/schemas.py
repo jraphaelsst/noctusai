@@ -46,6 +46,11 @@ class ImovelDadosPatchBody(StrictHttpModel):
     #: aggregated: two spellings become two people and "what did I earn this
     #: month" stops being answerable.
     captador_user_id: Optional[UUID] = None
+    #: Migration 158 — the development/condomínio name, for a manually
+    #: registered imóvel (149) that has no Vista mirror `imoveis.
+    #: empreendimento` to read at all. `carregador._empreendimento` prefers
+    #: this over the mirror when set.
+    empreendimento_manual: Optional[str] = Field(default=None, max_length=200)
 
 
 class EnderecoManualPatchBody(StrictHttpModel):
