@@ -8,13 +8,23 @@ The send needs the PDF slice A generates (``pdf_key`` → 409 ``pdf_nao_gerado``
 and a recipient (the lead's e-mail by default → 422
 ``email_destinatario_ausente``). Business logic lives in
 ``app/services/orcamento_email.py``.
+
+`enviar_orcamento` answers the FULL `Orcamento` shape — slice A's serializer
+(`app/services/orcamentos.py::obter`), the same one every other orçamento
+endpoint answers — not the raw stored row `orcamento_email.enviar_orcamento`
+returns (no `itens`/`lead`/`negocio`/`limites_escopo`). Building `repos` from
+the SAME PostgREST client `get_db` injects (rather than the independently
+resolved `Depends(get_repositorios)`) keeps the write and the re-read on one
+store, as production already does — `SupabaseRecordStore` over ``db`` IS
+`get_repositorios`'s production path (`app/store.py::make_store`).
 """
 # NOTE: no `from __future__ import annotations` — consistent with the other
 # IgIg routers.
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.integrations.persistence import RecordNotFound, get_record_store
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.config import settings
@@ -25,10 +35,12 @@ from app.email_deps import (
     get_email_settings,
     get_pdf_storage,
 )
+from app.pipelines import get_db
 from app.repositories import Repositorios
 from app.repositories.email import repositorios_email
 from app.schemas.email import EnviarOrcamentoIn
 from app.services import orcamento_email
+from app.services import orcamentos as orcamentos_svc
 from app.services.email_config import EmailSettings
 from app.services.regras import RegraViolada, http_de
 from app.store import get_repositorios
@@ -60,14 +72,16 @@ async def enviar_orcamento(
     orcamento_id: str,
     payload: EnviarOrcamentoIn,
     auth: tuple = Depends(get_current_user_org),
-    repos: Repositorios = Depends(get_repositorios),
+    db: Any = Depends(get_db),
     sender_factory: EmailSenderFactory = Depends(get_email_sender_factory),
     cfg: EmailSettings = Depends(get_email_settings),
     storage: StorageBackend = Depends(get_pdf_storage),
 ) -> dict:
+    org_id = _org(auth)
+    repos = Repositorios(get_record_store(supabase_client=db))
     try:
-        orcamento, message_id = await orcamento_email.enviar_orcamento(
-            repos, repositorios_email(repos.store), _org(auth), orcamento_id,
+        _atualizado, message_id = await orcamento_email.enviar_orcamento(
+            repos, repositorios_email(repos.store), org_id, orcamento_id,
             para=payload.para, cc=payload.cc,  # type: ignore[arg-type] — normalized to lists
             assunto=payload.assunto, mensagem=payload.mensagem,
             sender_factory=sender_factory,
@@ -77,6 +91,7 @@ async def enviar_orcamento(
         raise _nao_encontrado() from erro
     except RegraViolada as erro:
         raise http_de(erro) from erro
+    orcamento = orcamentos_svc.obter(db, org_id, orcamento_id)
     return {"data": {"orcamento": orcamento, "message_id": message_id}}
 
 

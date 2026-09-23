@@ -201,7 +201,18 @@ describe("OrcamentoModal — lifecycle", () => {
       throw new Error(`GET inesperado ${path}`);
     });
     api.post.mockImplementation(async (path: string) => {
-      if (path === "/api/orcamentos/o1/contrato") return { data: { id: "k1", modalidade_assinatura: "fisica", valor_mensal: 1200, status: "aguardando_assinatura" } };
+      if (path === "/api/orcamentos/o1/contrato") {
+        return {
+          data: {
+            contrato: {
+              id: "k1", modalidade_assinatura: "fisica", valor_mensal: 1200,
+              status: "aguardando_assinatura",
+            },
+            url: "https://igig.example.test/contratos/k1.pdf",
+            assinatura: null,
+          },
+        };
+      }
       throw new Error(`POST inesperado ${path}`);
     });
     renderModal({ orcamentoId: "o1" });

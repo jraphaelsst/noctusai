@@ -126,6 +126,27 @@ class TestFaturas:
         assert resp.status_code == 201
         assert resp.json()["valor_total"] == 5450.0  # 5000 + 3×150
 
+    def test_a_paid_invoice_refuses_new_items(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        api.post(f"/api/financeiro/faturas/{fatura['id']}/pagar")
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/itens", json={
+            "descricao": "Tarde demais", "valor_unit": 100.0,
+        })
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "fatura_fechada"
+
+    def test_a_cancelled_invoice_refuses_new_items(self, api, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08", "status": "cancelada",
+        })
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/itens", json={
+            "descricao": "Não deveria entrar", "valor_unit": 100.0,
+        })
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "fatura_fechada"
+
     def test_mark_paid(self, api, cliente):
         fatura = api.post("/api/financeiro/faturas", json={
             "cliente_id": cliente["id"], "competencia": "2026-08",

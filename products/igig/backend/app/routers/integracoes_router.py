@@ -17,11 +17,12 @@ for a single-tenant deployment.
 # NOTE: no `from __future__ import annotations` — consistent with the other
 # IgIg routers; see esteira_router.py.
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from noctusai_lib.integrations.persistence import RecordNotFound
 
-from app.config import settings
+from app.config import get_settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.repositories import Repositorios
 from app.schemas.integracoes import ConectarCanal, IntegracaoStatus
@@ -38,9 +39,9 @@ def _org(auth: tuple) -> str:
     return str(coerce_org_uuid(raw_org))
 
 
-def _chave() -> bytes:
+def _chave(cfg: Any) -> bytes:
     """The Fernet key, or a loud 409 — same contract as the Cofre."""
-    if not settings.igig_cofre_key:
+    if not cfg.igig_cofre_key:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -48,22 +49,23 @@ def _chave() -> bytes:
                 "Nenhum token é gravado em texto puro."
             ),
         )
-    return settings.igig_cofre_key.encode("utf-8")
+    return cfg.igig_cofre_key.encode("utf-8")
 
 
-def _fallback_env(canal: str) -> bool:
+def _fallback_env(canal: str, cfg: Any) -> bool:
     """Whether an env-level token exists for this channel."""
     if canal in ("instagram", "facebook"):
-        return bool(settings.igig_meta_token)
+        return bool(cfg.igig_meta_token)
     if canal == "tiktok":
-        return bool(settings.igig_tiktok_token)
-    return bool(settings.igig_linkedin_token)
+        return bool(cfg.igig_tiktok_token)
+    return bool(cfg.igig_linkedin_token)
 
 
 @router.get("", response_model=list[IntegracaoStatus])
 async def listar_integracoes(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    cfg: Any = Depends(get_settings),
 ) -> list[IntegracaoStatus]:
     """Status for EVERY channel, including the ones never connected.
 
@@ -72,15 +74,15 @@ async def listar_integracoes(
     an operator can see what is still missing.
     """
     org_id = _org(auth)
-    cofre_ok = bool(settings.igig_cofre_key)
+    cofre_ok = bool(cfg.igig_cofre_key)
     saida: list[IntegracaoStatus] = []
     for canal in CANAIS:
         registro = repos.integracao.por_canal(org_id, canal)
         if registro is None:
             saida.append(IntegracaoStatus(
                 canal=canal,
-                conectado=_fallback_env(canal),
-                origem="env" if _fallback_env(canal) else "nenhuma",
+                conectado=_fallback_env(canal, cfg),
+                origem="env" if _fallback_env(canal, cfg) else "nenhuma",
                 cofre_configurado=cofre_ok,
             ))
             continue
@@ -102,6 +104,7 @@ async def conectar_canal(
     payload: ConectarCanal,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    cfg: Any = Depends(get_settings),
 ) -> IntegracaoStatus:
     """Store a channel token, encrypted. Re-connecting replaces it."""
     if canal not in CANAIS:
@@ -109,7 +112,7 @@ async def conectar_canal(
     org_id = _org(auth)
     registro = repos.integracao.conectar(
         org_id, canal,
-        token=payload.token, chave=_chave(), conta_externa=payload.conta_externa,
+        token=payload.token, chave=_chave(cfg), conta_externa=payload.conta_externa,
     )
     logger.info("canal conectado org=%s canal=%s", org_id, canal)
     return IntegracaoStatus(

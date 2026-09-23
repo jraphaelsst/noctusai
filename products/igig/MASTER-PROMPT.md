@@ -20,17 +20,28 @@ Canonical spec: `IgIg Agency/PROJETO-IGIG-ERP.md` (6 módulos).
 Progress ledger: `IgIg Agency/CHECKLIST.md`.
 Roadmap + promotion record: `project-history/roadmaps/igig-2026-08.md`.
 
-## The six módulos → where they live
+## The módulos → where they live
+
+The original six módulos (`IgIg Agency/PROJETO-IGIG-ERP.md`), plus the
+wave-2 CRM rebuild (`project-history/roadmaps/cardhub-igig-crm-2026-09.
+wave-2-contract.md`) that replaced M1's calculadora with a full funnel +
+orçamento lifecycle:
 
 | # | Módulo | Backend | Frontend |
 |---|---|---|---|
-| 1 | CRM, orçamentos, onboarding | `comercial_router` · `cliente_router` | `Comercial` · `Clientes` |
+| 1 | Comercial — lead triage funnel, CRM, automações, assistente IA, lead sources | `comercial_router` · `comercial_funil_router` · `cliente_router` · `automacao_router` · `assistente_router` · `integracoes_leads_router` · `lead_webhooks_router` | `Comercial` · `Clientes` |
+| — | Orçamentos, catálogo, contrato, e-mail | `orcamento_router` · `orcamento_email_router` · `produto_router` (catálogo) · `contrato_router` · `integracoes_email_router` · `gmail_webhook_router` | `Orcamentos` · `ProdutosServicos` · `OrcamentoModal` |
 | 2 | Repertório / Central da Marca (+ Cofre) | `marca_router` | `Marca` · `RepertorioSidebar` |
 | 3 | Planejamento editorial + copywriting | `pauta_router` | `Calendario` |
-| 4 | Esteira de produção + portal de aprovação (**the MVP**) | `esteira_router` | `Esteira` · `AprovacaoPublica` |
+| 4 | Esteira de produção + portal de aprovação | `esteira_router` | `Esteira` · `AprovacaoPublica` |
 | 5 | Distribuição e métricas | `distribuicao_router` · `integracoes_router` | `Distribuicao` · `Integracoes` |
-| 6 | Financeiro e contratos | `financeiro_router` | `Financeiro` |
-| — | Custo/hora (feeds 1, 5 and 6) | `custos_router` | `Custos` |
+| 6 | Financeiro, contratos, relatórios | `financeiro_router` · `relatorio_router` | `Financeiro` |
+| — | Custo/hora (feeds Orçamentos, 5 and 6) | `custos_router` | `Custos` |
+
+Orçamentos, comercial funil, produtos, e-mail and automações all answer the
+seed `{"data": ...}` envelope (`unwrapData` in `src/lib/api.ts`); the older
+módulo routers (marca, pauta, financeiro, integracoes) answer bare payloads —
+a hook's mismatch shows up as `undefined`, not a thrown error.
 
 Uploads (marca logo, pauta peça) go through `api.upload()` from
 `@noctusai/lib` — NEVER `api.post`, which JSON.stringify's its body and turns
@@ -97,8 +108,11 @@ Seed-first. Backend is `create_product_app()` from `noctusai_seed`; frontend is
   to expire (prod, 2026-09-01). Migration `015` + `_com_logo` fixed it.
 - Auth tests assert strict `== 401`.
 - Request models are `StrictHttpModel` (unknown key ⇒ 422).
-- `IGIG_COFRE_KEY` is a boot requirement; without it the Cofre and Integrações
-  refuse every write rather than storing plaintext.
+- `IGIG_COFRE_KEY` is a boot requirement; without it the Cofre, Integrações
+  and WAHA/Meta lead-source secrets all refuse to write rather than storing
+  plaintext.
+- SMTP/Gmail/Gmail-push env vars are all optional (each gap reported loudly,
+  never faked) — see `README.md § E-mail` for the full table.
 
 ## Deliberately not built (vendor-side, each with a named destination)
 
@@ -110,9 +124,9 @@ Nothing is ever marked published or paid without platform confirmation.
 ## Testing
 
 ```bash
-cd products/igig/backend  && pytest              # 330 tests
+cd products/igig/backend  && pytest              # 700 tests
 cd products/igig/frontend && npx tsc --noEmit    # must be clean
-cd products/igig/frontend && npx vitest run      # 56 tests
+cd products/igig/frontend && npx vitest run      # 123 tests
 cd products/igig/frontend && npx vite build      # must build clean
 ```
 

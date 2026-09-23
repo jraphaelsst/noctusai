@@ -37,14 +37,17 @@ __all__ = [
     "mover_negocio",
     "perder_negocio",
     "quadro",
+    "listar_negocios",
+    "buscar_negocio",
 ]
 
 CFG = PIPELINE_COMERCIAL
 
 NEGOCIO_SELECT = (
     "id, org_id, lead_id, titulo, valor_estimado, etapa_id, kanban_pos, responsavel_id, "
-    "status, stage_entered_at, ganho_em, perdido_em, motivo_perda, orcamento_aceito_id, "
-    "cliente_id, data_inicio, data_entrega, entrega_concluida, created_at, updated_at"
+    "status, stage_entered_at, ganho_em, perdido_em, motivo_perda, perdido_stage_id, "
+    "orcamento_aceito_id, cliente_id, data_inicio, data_entrega, entrega_concluida, "
+    "created_at, updated_at"
 )
 _LEAD_CARD = "id, nome, empresa, email, telefone, instagram, origem, status"
 
@@ -58,14 +61,40 @@ def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _dwell_dias(row: dict) -> float | None:
+    """Days spent in the stage a `perdido` negócio was archived from.
+
+    `None` for anything else, or when a timestamp is missing (a row from
+    before either column existed) — an approximate number would be worse
+    than none."""
+    if row.get("status") != "perdido":
+        return None
+    entrada, saida = row.get("stage_entered_at"), row.get("perdido_em")
+    if not entrada or not saida:
+        return None
+    inicio = datetime.fromisoformat(str(entrada))
+    fim = datetime.fromisoformat(str(saida))
+    if inicio.tzinfo is None:
+        inicio = inicio.replace(tzinfo=timezone.utc)
+    if fim.tzinfo is None:
+        fim = fim.replace(tzinfo=timezone.utc)
+    return round((fim - inicio).total_seconds() / 86400, 1)
+
+
 # ── Read ─────────────────────────────────────────────────────────────
-def _card_dto(row: dict, leads: dict[str, dict], responsaveis: dict[str, dict]) -> dict:
+def _card_dto(
+    row: dict, leads: dict[str, dict], responsaveis: dict[str, dict],
+    etapas_por_id: dict[str, dict] | None = None,
+) -> dict:
     lead = leads.get(str(row.get("lead_id")))
     resp = responsaveis.get(str(row.get("responsavel_id")))
+    estagio = (etapas_por_id or {}).get(str(row.get("perdido_stage_id")))
     return {
         **row,
         "lead": lead,
         "responsavel": {"id": resp["id"], "nome": resp.get("nome")} if resp else None,
+        "perdido_stage": {"id": estagio["id"], "label": estagio.get("label")} if estagio else None,
+        "dwell_dias": _dwell_dias(row),
     }
 
 
@@ -90,6 +119,44 @@ def quadro(db: Any, org_id: str, *, limite_por_etapa: int | None = None) -> list
         row_to_dto=lambda r: _card_dto(r, leads, responsaveis),
         limite_cards=limite_por_etapa,
     )
+
+
+def listar_negocios(
+    db: Any, org_id: str, *, status: str | None = None, q: str | None = None,
+) -> list[dict]:
+    """Every negócio for the org, ANY status — the board (`quadro`) only ever
+    holds `aberto`/`ganho` ones, so this is how a `perdido` archive (or a
+    deep-linked lookup) is listed. `q` searches the card's título.
+    """
+    def _refine(query: Any) -> Any:
+        if status:
+            query = query.eq("status", status)
+        if q:
+            query = query.ilike("titulo", f"%{q}%")
+        return query
+
+    linhas = paged_rows(db, CFG.card_table, org_id, refine=_refine, select=NEGOCIO_SELECT)
+    leads = qc.por_ids(db, "lead", org_id, (r.get("lead_id") for r in linhas), select=_LEAD_CARD)
+    responsaveis = qc.por_ids(
+        db, "profissional", org_id, (r.get("responsavel_id") for r in linhas), select="id, nome"
+    )
+    estagios = qc.por_ids(
+        db, "pipeline_stages", org_id, (r.get("perdido_stage_id") for r in linhas), select="id, label"
+    )
+    return [_card_dto(r, leads, responsaveis, estagios) for r in linhas]
+
+
+def buscar_negocio(db: Any, org_id: str, negocio_id: str) -> dict:
+    """One negócio card, ANY status — the same shape `quadro` puts on the
+    board, so the FE can open a card regardless of where it links from
+    (perdido archive, an orçamento, a search result)."""
+    row = qc.carregar(db, CFG.card_table, org_id, negocio_id, select=NEGOCIO_SELECT, rotulo="negócio")
+    leads = qc.por_ids(db, "lead", org_id, [row.get("lead_id")], select=_LEAD_CARD)
+    responsaveis = qc.por_ids(db, "profissional", org_id, [row.get("responsavel_id")], select="id, nome")
+    estagios = qc.por_ids(
+        db, "pipeline_stages", org_id, [row.get("perdido_stage_id")], select="id, label"
+    )
+    return _card_dto(row, leads, responsaveis, estagios)
 
 
 # ── Open ─────────────────────────────────────────────────────────────

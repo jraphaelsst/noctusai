@@ -12,6 +12,7 @@ import json
 
 import pytest
 from noctusai_lib.integrations.persistence import SqliteRecordStore
+from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.security.webhook_signatures import compute_hmac_sha256_hex
 
 from app.dependencies import coerce_org_uuid
@@ -30,30 +31,33 @@ def repos() -> Repositorios:
 
 
 @pytest.fixture
-def api(client, repos, monkeypatch):
-    from app.config import settings
+def api(client, repos):
     from app.main import app
-    import app.storage as storage_mod
+    from app.storage import get_storage
 
-    monkeypatch.setattr(settings, "igig_storage_kind", "fake")
-    storage_mod.reset_storage()
     app.dependency_overrides[get_repositorios] = lambda: repos
     app.dependency_overrides[get_repositorios_admin] = lambda: repos
+    app.dependency_overrides[get_storage] = lambda: FakeStorageBackend()
     yield client
     app.dependency_overrides.pop(get_repositorios, None)
     app.dependency_overrides.pop(get_repositorios_admin, None)
-    storage_mod.reset_storage()
+    app.dependency_overrides.pop(get_storage, None)
 
 
 SEGREDO = "segredo-de-teste-assinatura"
 
 
 @pytest.fixture
-def assinado(monkeypatch):
-    """Configure the webhook secret; return a poster that signs its body."""
-    from app.config import settings
+def assinado():
+    """Configure the webhook secret (via `get_settings` DI — no monkeypatch
+    of the singleton, KB § PATTERNS/backend/di-test-seam.md); return a poster
+    that signs its body."""
+    from app.config import get_settings, settings
+    from app.main import app
 
-    monkeypatch.setattr(settings, "igig_assinatura_webhook_secret", SEGREDO)
+    app.dependency_overrides[get_settings] = lambda: settings.model_copy(
+        update={"igig_assinatura_webhook_secret": SEGREDO}
+    )
 
     def _post(api, payload: dict, *, segredo: str = SEGREDO):
         corpo = json.dumps(payload).encode()
@@ -66,7 +70,8 @@ def assinado(monkeypatch):
             },
         )
 
-    return _post
+    yield _post
+    app.dependency_overrides.pop(get_settings, None)
 
 
 class TestFormularioPublico:
@@ -120,6 +125,59 @@ class TestFormularioPublico:
 
     def test_listing_leads_still_requires_auth(self, api):
         assert api.raw().get("/api/comercial/leads").status_code == 401
+
+
+class TestAtualizarLead:
+    def test_requires_auth(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João"})
+        resp = api.raw().patch(f"/api/comercial/leads/{lead['id']}", json={"nome": "X"})
+        assert resp.status_code == 401
+
+    def test_edits_the_contact_fields(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João", "empresa": "Padaria Sol"})
+        resp = api.patch(f"/api/comercial/leads/{lead['id']}", json={
+            "nome": "João Silva", "empresa": "Padaria do Sol", "email": "joao@sol.com",
+            "telefone": "11999990000", "instagram": "@padariasol",
+            "observacoes": "prefere WhatsApp",
+        })
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()["data"]
+        assert corpo["nome"] == "João Silva"
+        assert corpo["empresa"] == "Padaria do Sol"
+        assert corpo["email"] == "joao@sol.com"
+        assert corpo["telefone"] == "11999990000"
+        assert corpo["instagram"] == "@padariasol"
+        assert corpo["observacoes"] == "prefere WhatsApp"
+
+    def test_partial_update_keeps_other_fields(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João", "empresa": "Padaria Sol"})
+        resp = api.patch(f"/api/comercial/leads/{lead['id']}", json={"observacoes": "ligar amanhã"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["nome"] == "João"
+        assert resp.json()["data"]["empresa"] == "Padaria Sol"
+        assert resp.json()["data"]["observacoes"] == "ligar amanhã"
+
+    def test_invalid_email_is_422(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João"})
+        resp = api.patch(f"/api/comercial/leads/{lead['id']}", json={"email": "não-é-email"})
+        assert resp.status_code == 422
+
+    def test_empty_body_is_422(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João"})
+        assert api.patch(f"/api/comercial/leads/{lead['id']}", json={}).status_code == 422
+
+    def test_unknown_lead_is_404(self, api):
+        assert api.patch("/api/comercial/leads/nao-existe", json={"nome": "X"}).status_code == 404
+
+    def test_rejects_unknown_fields(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João"})
+        resp = api.patch(f"/api/comercial/leads/{lead['id']}", json={"status": "convertido"})
+        assert resp.status_code == 422
+
+    def test_is_org_scoped(self, api, repos):
+        outro = repos.lead.criar("outra-org", {"nome": "De outra org"})
+        resp = api.patch(f"/api/comercial/leads/{outro['id']}", json={"nome": "X"})
+        assert resp.status_code == 404
 
 
 class TestConversao:

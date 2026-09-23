@@ -28,6 +28,35 @@ def test_migration_017_seeds_exactly_the_python_esteira_defaults():
     ] == [(s.slug, s.label, s.cor, i, s.papel) for i, s in enumerate(ESTEIRA_PADRAO)]
 
 
+def test_migration_025_seeds_exactly_the_python_comercial_defaults():
+    """025 backfills pre-funnel leads' comercial stages against these rows —
+    a drift between the SQL list and COMERCIAL_PADRAO would seed the wrong
+    board for every org this backfill touches."""
+    sql = (MIGRATIONS / "025_backfill_negocios_orcamentos.sql").read_text(encoding="utf-8")
+    linhas = re.findall(
+        r"\('(\w+)',\s*'([^']+)',\s*'(\w+)',\s*(\d+),\s*(NULL|'\w+')\)", sql
+    )
+    assert [
+        (slug, label, cor, int(pos), None if papel == "NULL" else papel.strip("'"))
+        for slug, label, cor, pos, papel in linhas
+    ] == [(s.slug, s.label, s.cor, i, s.papel) for i, s in enumerate(COMERCIAL_PADRAO)]
+
+
+def test_migration_025_is_idempotent_by_construction():
+    """Every write in 025 is guarded so a second run is a no-op — the seed
+    upsert by `ON CONFLICT ... DO NOTHING`, the two negócio backfills by
+    `NOT EXISTS (... WHERE lead_id = l.id)`, and the orçamento link by
+    `WHERE o.negocio_id IS NULL` (so an already-linked row is excluded from
+    the join and RESEQUENCES nothing on a second pass)."""
+    sql = (MIGRATIONS / "025_backfill_negocios_orcamentos.sql").read_text(encoding="utf-8")
+    insert_stmts = re.findall(r"INSERT INTO[\s\S]*?(?=INSERT INTO|WITH alvo|\Z)", sql)
+    assert len(insert_stmts) == 3, "expected the stage-seed + two negócio backfill INSERTs"
+    assert "ON CONFLICT" in insert_stmts[0]
+    assert "NOT EXISTS" in insert_stmts[1]
+    assert "NOT EXISTS" in insert_stmts[2]
+    assert "o.negocio_id IS NULL" in sql, "the orçamento link must skip already-linked rows"
+
+
 def test_every_role_is_in_the_papel_check():
     sql = (MIGRATIONS / "017_igig_pipeline.sql").read_text(encoding="utf-8")
     check = re.search(r"papel\s+TEXT CHECK \(papel IN \(([^)]*)\)\)", sql).group(1)

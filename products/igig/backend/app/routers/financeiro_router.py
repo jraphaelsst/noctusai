@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/financeiro", tags=["financeiro"])
 
+#: Statuses an invoice cannot add lines to.
+_FATURA_FECHADA = frozenset({"paga", "cancelada"})
+
 
 def _org(auth: tuple) -> str:
     _user, _token, raw_org = auth
@@ -120,12 +123,23 @@ async def adicionar_item(
     Returning the invoice rather than the line means a caller cannot end up
     holding a stale total — the number the client will see is the one that
     comes back.
+
+    A `paga`/`cancelada` invoice is closed: adding a line to it would change
+    a number a client already paid (or that was voided), silently.
     """
     org_id = _org(auth)
     try:
-        repos.fatura.buscar(org_id, fatura_id)
+        fatura = repos.fatura.buscar(org_id, fatura_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Fatura não encontrada")
+    if fatura.get("status") in _FATURA_FECHADA:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": f"Fatura {fatura['status']} não aceita novos itens.",
+                "code": "fatura_fechada",
+            },
+        )
     repos.fatura_item.criar(org_id, {"fatura_id": fatura_id, **payload.model_dump()})
     itens = repos.fatura_item.da_fatura(org_id, fatura_id)
     return FaturaOut(**repos.fatura.recalcular_total(org_id, fatura_id, itens))

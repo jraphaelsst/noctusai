@@ -165,14 +165,39 @@ export interface AceiteResultado {
 
 export type ModalidadeAssinatura = "digital" | "fisica";
 
-export interface ContratoGerado {
+/** The `contrato` row `POST /api/orcamentos/{id}/contrato` writes (+ the
+ * signature-provider fields it fills in for `digital`). */
+export interface Contrato {
   id: string;
-  modalidade_assinatura: ModalidadeAssinatura;
+  cliente_id: string;
+  orcamento_id: string;
   valor_mensal: number;
-  status?: string;
+  posts_por_mes: number;
+  valor_excedente: number;
+  dia_vencimento: number | null;
+  data_inicio: string;
+  status: string;
+  modalidade_assinatura: ModalidadeAssinatura;
+  documento_key: string;
+  provedor_assinatura?: string | null;
+  assinatura_external_id?: string | null;
   link_assinatura?: string | null;
-  dry_run?: boolean;
-  [key: string]: unknown;
+}
+
+/** `assinatura` is only set for `modalidade === "digital"` (the dry-run
+ * signature-provider dispatch, `NOC-REMEDIATE[igig-assinatura]`). */
+export interface ContratoAssinatura {
+  provedor: string;
+  link_assinatura: string | null;
+  external_id: string;
+  dry_run: boolean;
+}
+
+/** `POST /api/orcamentos/{id}/contrato` → `{data: ContratoGerado}`. */
+export interface ContratoGerado {
+  contrato: Contrato;
+  url: string;
+  assinatura: ContratoAssinatura | null;
 }
 
 // ─── Funil comercial ───────────────────────────────────────────────────────
@@ -217,6 +242,11 @@ export interface Negocio {
   created_at: string;
   lead: LeadResumo | null;
   responsavel: { id: string; nome: string | null } | null;
+  /** The stage this card was in when marked `perdido` — `null` otherwise. */
+  perdido_stage: { id: string; label: string } | null;
+  /** Days between entering `perdido_stage` and being marked lost —
+   * `null` unless `status === "perdido"`. */
+  dwell_dias: number | null;
 }
 
 export interface LeadManualInput {
