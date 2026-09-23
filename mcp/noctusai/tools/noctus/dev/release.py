@@ -85,10 +85,17 @@ from typing import Any, Callable
 # `patch-id` for the rider manifest, and `merge-tree`/`commit-tree` for the
 # release CUT — both write only unreachable OBJECTS (never a ref, never a
 # working tree, never an index), so a cut is a cherry-pick with no checkout.
-# Refs still move ONLY via `push`.
+# 2026-09-23 (derived-file dependency exemption + kb-counts regen commit):
+# + read-only `check-attr` (is a path `merge=kb-counts`-attributed, per
+# `.gitattributes`) and `read-tree`/`hash-object`/`update-index`/
+# `write-tree` — git's sanctioned "build a tree with no checkout" plumbing,
+# operated ONLY against a THROWAWAY `GIT_INDEX_FILE` (never the real index),
+# so they carry the SAME "no working tree, no ref move outside `push`"
+# guarantee as `merge-tree`/`commit-tree`. Refs still move ONLY via `push`.
 _ALLOWED_GIT = frozenset({
     "fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "push",
     "show", "cherry", "cat-file", "patch-id", "merge-tree", "commit-tree",
+    "check-attr", "read-tree", "hash-object", "update-index", "write-tree",
 })
 
 # The CI workflow whose green is a bless PRECONDITION (skill `noc-ship` step 0b).
@@ -450,10 +457,13 @@ def _stamp(now) -> str:
 
 
 def _bless_cut(git, base, man, mode, confirm, remote, main, main_branch,
-               dev_branch, ff, now) -> dict[str, Any]:
+               dev_branch, ff, now, render_kb_counts) -> dict[str, Any]:
     """Unapproved riders (or a diverged main after an earlier cut): never FF
     the whole dev tip. mode='refuse' → blocked; mode='cut' (default) → build
-    `release/<stamp>` = main + approved/exempt commits in dev order.
+    `release/<stamp>` = main + approved/exempt commits in dev order, then
+    one bookkeeping commit that regenerates any `kb-counts` blocks the cut
+    left stale (`regenerate_kb_counts_commit` — a no-op, no extra commit, on
+    a repo with no `merge=kb-counts` files or nothing to update).
 
     NOC-REMEDIATE[release-cut-qualifying-green]: `_bless_release_branch`
     (the 2nd call, blessing a pushed cut) still requires CI green on the
@@ -467,7 +477,9 @@ def _bless_cut(git, base, man, mode, confirm, remote, main, main_branch,
     if a THIRD CI-trust shape ever appears (N=3 → formalize) — deferred,
     not silently dropped.
     """
-    from tools.noctus.dev._release_riders import cherry_pick_chain
+    from tools.noctus.dev._release_riders import (
+        cherry_pick_chain, regenerate_kb_counts_commit,
+    )
 
     info = {"unapproved_riders": man["unapproved_riders"], "projects": man["projects"],
             "deferred": man["deferred"], "ff": ff}
@@ -496,22 +508,29 @@ def _bless_cut(git, base, man, mode, confirm, remote, main, main_branch,
                 "reason": (f"approved commit {str(chain.get('conflict') or '')[:9]} does not "
                            f"apply cleanly onto {main_branch} without the riders left behind — "
                            "it depends on unapproved work. " + str(chain.get("error") or ""))}
+    regen = regenerate_kb_counts_commit(git, chain["tip"], render_kb_counts)
+    if not regen["ok"]:
+        return {**base, **info, "status": "blocked", "exit_code": 1,
+                "reason": f"kb-counts regen on the cut failed: {regen.get('error')}"}
+    final_tip = regen["tip"]
     name = f"release/{_stamp(now)}"
     plan = {**base, **info, "mode": "cut", "release_branch": name,
-            "release_sha": chain["tip"], "ship": man["ship"], "picked": chain["picked"],
-            "would_advance": f"{remote}/{name} → {chain['tip'][:9]} "
-                             f"({len(man['ship'])} commit(s) on {main[:9]})"}
+            "release_sha": final_tip, "ship": man["ship"], "picked": chain["picked"],
+            "kb_counts_regen": regen.get("changed", False),
+            "would_advance": f"{remote}/{name} → {final_tip[:9]} "
+                             f"({len(man['ship'])} commit(s) on {main[:9]}"
+                             + (" + kb-counts regen)" if regen.get("changed") else ")")}
     if not confirm:
         return {**plan, "status": "planned_cut", "exit_code": 0,
                 "message": (f"cut planned: {len(man['ship'])} approved/exempt commit(s), "
                             f"{len(man['unapproved_riders'])} rider(s) left on {dev_branch}. "
                             "confirm=True pushes the release branch (NOT main).")}
-    rc, out, err = git("push", remote, f"{chain['tip']}:refs/heads/{name}")
+    rc, out, err = git("push", remote, f"{final_tip}:refs/heads/{name}")
     if rc != 0:
         return {**plan, "status": "error", "exit_code": 1,
                 "error": f"push of {name} failed: {err.strip() or out.strip()}"}
     return {**plan, "status": "cut_pushed", "exit_code": 0,
-            "message": (f"pushed {name} @ {chain['tip'][:9]}. Wait for '{_CI_WORKFLOW}' "
+            "message": (f"pushed {name} @ {final_tip[:9]}. Wait for '{_CI_WORKFLOW}' "
                         f"GREEN on that sha, then noctus.dev.release stage='bless' "
                         f"release_branch='{name}' confirm=True. After promote: "
                         "stage='backmerge'.")}
@@ -539,8 +558,14 @@ def _bless_release_branch(git, runner, base, manifest, remote, main, main_branch
         return {**base, "status": "blocked", "exit_code": 1,
                 "reason": f"cannot verify the cut: {err or man.get('error')}"}
     shippable = set(man["ship"]) | set(man.get("on_main") or [])
+    # A `regenerate_kb_counts_commit` bookkeeping commit (REGEN_MARK) carries
+    # no `from` — it is not a cherry-pick of any dev rider — but it IS built
+    # by THIS tool as part of THIS cut (same trust boundary as the
+    # cherry-picked commits, which are also self-generated), so it is never
+    # "foreign" the way a hand-added commit is.
     foreign = [s["sha"][:9] for s in sources
-               if s["merge"] or not s["from"] or s["from"] not in shippable]
+               if s["merge"] or (not s["from"] and not s.get("regen"))
+               or (s["from"] and s["from"] not in shippable)]
     if foreign:
         return {**base, "status": "blocked", "exit_code": 1, "release_sha": rel,
                 "foreign_commits": foreign,
@@ -589,15 +614,31 @@ def release(
     pointer_rows: list[dict] | None = None,
     verify_consent: Callable[[dict], tuple[bool, str]] | None = None,
     transcript_home=None,
+    render_kb_counts: Callable[[str, str], str] | None = None,
 ) -> dict[str, Any]:
     """`stage` ∈ {status, manifest, bless, promote, backmerge}. Dry-run unless
     `confirm`. Returns a structured plan/result; never raises on a refusal —
     it returns it. `consent_rows`/`pointer_rows`/`verify_consent` are DI seams
-    (default: dev's ledgers + transcript re-verification)."""
+    (default: dev's ledgers + transcript re-verification). `render_kb_counts`
+    is the DI seam for the CUT's kb-counts regen commit (default:
+    `kb_sync.render_kb_counts` bound against `settings.REPO_ROOT` — see
+    `_bless_cut` / `_release_riders.regenerate_kb_counts_commit`)."""
     runner = run or _default_run_local
 
     def git(*args, env_extra=None, stdin=None):
         return _git(runner, *args, env_extra=env_extra, stdin=stdin)
+
+    def _default_render_kb_counts(path: str, text: str) -> str:
+        # Lazy: avoids the settings/kb_sync import cost for every stage that
+        # never cuts a release (mirrors `_default_run_local`'s own REPO_ROOT
+        # lazy-import discipline).
+        from pathlib import Path as _Path
+
+        from settings import REPO_ROOT as _REPO_ROOT
+        from tools.kb_sync import render_kb_counts as _render_kb_counts
+        return _render_kb_counts(_Path(_REPO_ROOT) / path, text)
+
+    render_regions = render_kb_counts or _default_render_kb_counts
 
     if stage not in {"status", "manifest", "bless", "promote", "backmerge"}:
         return {"ok": False, "status": "error", "exit_code": 1,
@@ -757,7 +798,7 @@ def release(
                                    "run stage='backmerge' confirm=True first, then bless.")}
         elif not (man["all_approved"] and ff):
             return _bless_cut(git, base, man, mode, confirm, remote, main,
-                              main_branch, dev_branch, ff, now)
+                              main_branch, dev_branch, ff, now, render_regions)
         # R1 (2026-09-24): bless the newest QUALIFYING green descendant of
         # main, not necessarily the exact dev tip — see
         # `_newest_qualifying_green_descendant`'s docstring for why.

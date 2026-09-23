@@ -46,11 +46,21 @@ A consent covers the project's commits **reachable from the `origin/dev` sha rec
 
 Built with **no working tree**: per approved commit `git merge-tree --write-tree --merge-base=<C>^ <tip> <C>` (cherry-pick's exact 3-way merge; `.gitattributes` `merge=union` honoured) then `git commit-tree` with the original author + message + `(cherry picked from commit <C>)`. The dry-run already builds the chain (unreachable objects only), so `planned_cut` means "this applies cleanly". REFUSES, naming the dependency:
 
-- an **approved** commit touches a file (outside `project-history/`) that an **earlier unshipped** rider changed — shipping it alone would ship a state that never existed on dev (approve that rider's project, or wait);
+- an **approved** commit touches a file (outside `project-history/`, and outside a pure counts-refresh — see below) that an **earlier unshipped** rider changed — shipping it alone would ship a state that never existed on dev (approve that rider's project, or wait);
 - a cherry-pick conflicts;
 - nothing is approved.
 
 An exempt (docs) commit in that position is `deferred`, not refused. Finalizing re-checks the pushed `release/*` branch: every commit must be a cut of a CURRENTLY-approved commit (hand-added commit or consent revoked since ⇒ blocked), `main` must still be its ancestor, and CI must be green on its sha. `.github/workflows/test.yml` runs on `release/**` pushes (full suite, never scoped down).
+
+### Derived-file (kb-counts) dependency exemption (2026-09-23)
+
+The pre-commit hook's `kb_sync --update-kb-counts` step folds an auto-regenerated counts refresh into nearly every commit that touches `KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md` / `06-AGENTS.md` / `AGENT-CONTEXT.md` (the 3 files `.gitattributes` declares `merge=kb-counts` for). Left unhandled, `plan_ship_set` treated that shared touch as a real code dependency — chaining an approved rider's cut to whatever unrelated project's commit last happened to regenerate the SAME counts block (3 cuts refused before this was root-caused).
+
+The fix reads `.gitattributes` — the SAME declarative surface `scripts/hooks/merge-kb-counts.sh` already reads, never a hand-copied filename list — as the single source of "is this file derived", via `git check-attr --source=<sha> merge -- <path>` (pattern-aware: a future `.gitattributes` GLOB entry resolves correctly, not just today's 3 literal lines). For a `merge=kb-counts`-attributed file, a rider's specific touch to it is `regen_only` when the masked (marker-blocks-blanked) content is byte-identical before/after that commit — i.e. its ENTIRE diff to that file lives inside a `<!-- kb-counts:start -->…<!-- kb-counts:end -->` block. `plan_ship_set` then skips recording that unshipped touch as a dependency pointer, hopping over pure counts churn to the nearest REAL (or no) unshipped edit. Prose changed in the same file, or any touch to a non-attributed file, still couples exactly as before — the exemption is strictly per-(commit, file), never per-file. `mcp/noctusai/tools/noctus/dev/_release_riders.py::_kb_counts_attributed` / `_is_regen_only_touch` / `_mark_regen_only_files`.
+
+### kb-counts regen commit — keeping `main` self-consistent
+
+A cut ships only a SUBSET of dev's riders, so whichever cherry-picked rider happens to carry the counts blocks leaves `main` with a snapshot from ITS branch, not a fresh recount of what actually shipped. After `cherry_pick_chain` builds the cut tip, `regenerate_kb_counts_commit` appends ONE bookkeeping commit (marked `(kb-counts regen on <tip>)` in its body) that rewrites every `merge=kb-counts`-declared file's marker blocks — still **no working tree**: a THROWAWAY `GIT_INDEX_FILE` (`git read-tree` the cut's tree → `git hash-object -w` the new blob(s) → `git update-index --add --cacheinfo` → `git write-tree` → `git commit-tree`), never the real index. A no-op (nothing changed) adds no commit. The rendering itself is DI'd (`render_kb_counts` on `noctus.dev.release`, default `kb_sync.render_kb_counts` bound against the ambient checkout — the best available signal, since the cut itself has no working tree to walk); `_bless_release_branch`'s foreign-commit re-check recognizes the regen mark and does not flag it foreign, the same trust boundary as the cherry-picked commits (both are built by the tool itself, as part of this same cut).
 
 ## Backmerge
 

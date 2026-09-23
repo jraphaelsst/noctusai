@@ -390,6 +390,157 @@ def test_unit_plan_ship_set_ignores_ledger_paths_for_dependencies():
     assert plan["ship"] == ["a"] and plan["dependencies"] == []
 
 
+# ── derived-file (kb-counts) dependency exemption ─────────────────────────────
+_LANDSCAPE = "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"
+
+
+def test_unit_plan_ship_set_ignores_regen_only_derived_file_touches():
+    """A rider whose ONLY touch to a `merge=kb-counts` file is a counts
+    refresh (`regen_only_files`, set by `_mark_regen_only_files`) never
+    chains a dependency — the write-side skip in `plan_ship_set`."""
+    riders = [
+        {"sha": "u", "subject": "", "project": "p", "state": "unapproved",
+         "files": [_LANDSCAPE, "website.py"], "regen_only_files": {_LANDSCAPE}},
+        {"sha": "a", "subject": "", "project": "q", "state": "approved",
+         "files": [_LANDSCAPE]},
+    ]
+    plan = RR.plan_ship_set(riders)
+    assert plan["ship"] == ["a"] and plan["dependencies"] == []
+
+
+def test_unit_plan_ship_set_real_derived_file_edit_still_couples():
+    """A rider whose touch to the SAME file is NOT in `regen_only_files`
+    (a real, e.g. prose, edit) still records the dependency normally."""
+    riders = [
+        {"sha": "u", "subject": "", "project": "p", "state": "unapproved",
+         "files": [_LANDSCAPE, "website.py"], "regen_only_files": set()},
+        {"sha": "a", "subject": "", "project": "q", "state": "approved",
+         "files": [_LANDSCAPE]},
+    ]
+    plan = RR.plan_ship_set(riders)
+    assert plan["ship"] == [] and plan["dependencies"][0]["commit"] == "a"
+    assert plan["dependencies"][0]["depends_on"] == ["u"]
+
+
+def _kb_counts_body(marker_content: str, prose: str = "") -> str:
+    return (f"{prose}<!-- kb-counts:start:inventory -->\n{marker_content}\n"
+           f"<!-- kb-counts:end:inventory -->\n")
+
+
+def test_kb_counts_only_overlap_creates_no_dependency(repo):
+    """Real-git integration: an unapproved rider AND an approved rider both
+    touch the SAME `merge=kb-counts` file, each edit confined to the counts
+    marker block (the pre-commit hook's auto-regen) — no dependency forms
+    purely through the shared derived doc."""
+    repo.commit(".gitattributes", f"{_LANDSCAPE} merge=kb-counts\n", "chore: attrs")
+    repo.commit(_LANDSCAPE, _kb_counts_body("N=0"), "docs: seed landscape")
+    (repo.author / "website.py").write_text("w = 1\n")
+    web = repo.commit(_LANDSCAPE, _kb_counts_body("N=1"),
+                      "feat(website): ship page", "feat/website")
+    (repo.author / "agents.py").write_text("a = 1\n")
+    agents = repo.commit(_LANDSCAPE, _kb_counts_body("N=2"),
+                         "feat(agents): ship tool", "feat/agents")
+    out = repo.release(stage="manifest", consent_rows=[_consent("feat/agents", agents)])
+    assert out["dependencies"] == []
+    states = {c["sha"]: c["state"] for c in out["commits"]}
+    assert states[web] == "unapproved" and states[agents] == "approved"
+    assert agents in out["ship"]
+
+
+def test_kb_counts_prose_overlap_still_creates_dependency(repo):
+    """Real-git integration: the SAME `merge=kb-counts` file, but the
+    earlier rider's edit ALSO changes prose OUTSIDE the marker block —
+    couples normally, exactly as before this fix."""
+    repo.commit(".gitattributes", f"{_LANDSCAPE} merge=kb-counts\n", "chore: attrs")
+    repo.commit(_LANDSCAPE, _kb_counts_body("N=0", "intro\n"), "docs: seed landscape")
+    (repo.author / "website.py").write_text("w = 1\n")
+    web = repo.commit(_LANDSCAPE, _kb_counts_body("N=1", "CHANGED PROSE\n"),
+                      "feat(website): ship page + doc rewrite", "feat/website")
+    (repo.author / "agents.py").write_text("a = 1\n")
+    agents = repo.commit(_LANDSCAPE, _kb_counts_body("N=2", "CHANGED PROSE\n"),
+                         "feat(agents): ship tool", "feat/agents")
+    out = repo.release(stage="manifest", consent_rows=[_consent("feat/agents", agents)])
+    assert out["dependencies"] and out["dependencies"][0]["commit"] == agents
+    assert out["dependencies"][0]["depends_on"] == [web]
+
+
+def test_kb_counts_exemption_never_applies_to_non_attributed_file(repo):
+    """A file that LOOKS like a kb-counts doc (same marker syntax) but
+    carries NO `merge=kb-counts` gitattribute is never exempt — gating is
+    strictly on the attribute, not on content shape. Also covered
+    implicitly by `test_cut_refuses_approved_commit_that_depends_on_unapproved_rider`
+    (shared.py, no `.gitattributes` at all)."""
+    (repo.author / "KNOWLEDGE-BASE").mkdir(exist_ok=True)
+    (repo.author / "KNOWLEDGE-BASE/u.md").write_text(_kb_counts_body("N=0"))
+    repo.commit("KNOWLEDGE-BASE/u.md", _kb_counts_body("N=0"), "docs: seed u")
+    (repo.author / "website.py").write_text("w = 1\n")
+    web = repo.commit("KNOWLEDGE-BASE/u.md", _kb_counts_body("N=1"),
+                      "feat(website): ship page", "feat/website")
+    (repo.author / "agents.py").write_text("a = 1\n")
+    agents = repo.commit("KNOWLEDGE-BASE/u.md", _kb_counts_body("N=2"),
+                         "feat(agents): ship tool", "feat/agents")
+    out = repo.release(stage="manifest", consent_rows=[_consent("feat/agents", agents)])
+    assert out["dependencies"] and out["dependencies"][0]["commit"] == agents
+    assert out["dependencies"][0]["depends_on"] == [web]
+
+
+def test_kb_counts_attribute_is_read_from_gitattributes_not_hardcoded(repo):
+    """The exemption is not scoped to the platform's 3 known kb-counts docs
+    — ANY path `.gitattributes` declares `merge=kb-counts` for is honoured,
+    proving there is no hand-copied path list to fall out of sync (KB §
+    PATTERNS/devops/ship-consent-riders.md § The cut)."""
+    novel = "docs/NOVEL.md"
+    repo.commit(".gitattributes", f"{novel} merge=kb-counts\n", "chore: attrs")
+    repo.commit(novel, _kb_counts_body("N=0"), "docs: seed novel")
+    (repo.author / "website.py").write_text("w = 1\n")
+    repo.commit(novel, _kb_counts_body("N=1"), "feat(website): ship page", "feat/website")
+    (repo.author / "agents.py").write_text("a = 1\n")
+    agents = repo.commit(novel, _kb_counts_body("N=2"), "feat(agents): ship tool", "feat/agents")
+    out = repo.release(stage="manifest", consent_rows=[_consent("feat/agents", agents)])
+    assert out["dependencies"] == []
+
+
+def test_bless_cut_appends_kb_counts_regen_commit_when_stale(repo):
+    """After a CUT, one extra bookkeeping commit regenerates the
+    `merge=kb-counts` blocks it left stale — `main` stays self-consistent
+    (KB § PATTERNS/devops/ship-consent-riders.md § The cut). The finalize
+    re-check (`_bless_release_branch`'s foreign-commit gate) does NOT flag
+    it foreign."""
+    (repo.author / "KNOWLEDGE-BASE/CONTEXT").mkdir(parents=True, exist_ok=True)
+    (repo.author / _LANDSCAPE).write_text(_kb_counts_body("STALE"))
+    a = repo.commit(".gitattributes", f"{_LANDSCAPE} merge=kb-counts\n",
+                    "feat(a): one + landscape", "feat/a")
+    repo.commit("u.py", "u\n", "feat(u): wip", "feat/u")  # unapproved + mode="cut" -> a cut
+
+    fresh = _kb_counts_body("FRESH")
+    kw = dict(consent_rows=[_consent("feat/a", a)],
+              render_kb_counts=lambda _path, _text: fresh)
+    out = repo.release(stage="bless", mode="cut", confirm=True, **kw)
+    assert out["status"] == "cut_pushed" and out["kb_counts_regen"] is True, out
+    rel = repo.ref(out["release_branch"])
+    assert rel == out["release_sha"]  # release_sha already reflects the regen tip
+    body = _sh(repo.origin, "log", "-1", "--format=%B", rel)
+    assert "kb-counts regen" in body and "(kb-counts regen on " in body
+    content = _sh(repo.origin, "show", f"{rel}:{_LANDSCAPE}")
+    assert "FRESH" in content and "STALE" not in content
+
+    blessed = repo.release(stage="bless", release_branch=out["release_branch"],
+                           confirm=True, **kw)
+    assert blessed["status"] == "blessed", blessed
+    assert repo.ref("main") == rel
+
+
+def test_regenerate_kb_counts_commit_is_a_noop_when_nothing_changed(repo):
+    a = repo.commit(".gitattributes", f"{_LANDSCAPE} merge=kb-counts\n", "chore: attrs")
+
+    def git(*args, env_extra=None, stdin=None):
+        return R._git(repo.run, *args, env_extra=env_extra, stdin=stdin)
+
+    git("fetch", "origin", "--quiet")
+    out = RR.regenerate_kb_counts_commit(git, a, lambda _p, text: text)
+    assert out == {"ok": True, "changed": False, "tip": a}
+
+
 def test_default_runner_roundtrips_non_utf8_bytes(tmp_path, monkeypatch):
     """stage=manifest crashed on a non-UTF-8 byte in `git log -p` (2026-09-23)."""
     import subprocess as sp

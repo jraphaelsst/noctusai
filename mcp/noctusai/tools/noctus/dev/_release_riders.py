@@ -22,18 +22,42 @@ unattributed  no `Noc-Branch:` trailer and no branch-tree evidence — treated
 """
 from __future__ import annotations
 
+import re
+import tempfile
 from typing import Any, Callable
 
 GitFn = Callable[..., tuple[int, str, str]]
 
 TRAILER = "Noc-Branch"
 PICKED_MARK = "(cherry picked from commit "
+REGEN_MARK = "(kb-counts regen on "
 _REC, _FLD = "\x1e", "\x1f"
 
 #: Append-only, `merge=union` ledgers — every agent appends to them, so a
 #: "last touched by an unapproved rider" edge on these paths is not a code
 #: dependency (merge-tree replays them conflict-free by the union driver).
 _DEPENDENCY_EXEMPT_PREFIXES = ("project-history/",)
+
+# Matches an entire `<!-- kb-counts:start:X -->…<!-- kb-counts:end:X -->`
+# marker block, regardless of region name. Local copy of `kb_sync`'s marker
+# SYNTAX (never its FILE LIST — that single source is `.gitattributes`, read
+# via `git check-attr`, see `_kb_counts_attributed`) so this module's only
+# real dependency stays the injected `git` callable (module docstring), not
+# `settings.REPO_ROOT` / a `kb_sync` import.
+_ANY_REGION_RE = re.compile(
+    r"<!-- kb-counts:start:[A-Za-z0-9_-]+ -->.*?<!-- kb-counts:end:[A-Za-z0-9_-]+ -->",
+    re.DOTALL,
+)
+
+
+def _mask_kb_counts_regions(text: str) -> str:
+    """Blank every `kb-counts` marker block (markers + content) with a
+    single stable placeholder. Comparing masked before/after text of the
+    SAME file across one commit answers "did this edit change anything
+    OTHER than the auto-derived counts?" without recomputing what the
+    counts WERE at that point in history (they are a function of the
+    CURRENT tree, not of a historical commit)."""
+    return _ANY_REGION_RE.sub("<!-- kb-counts: region -->", text)
 
 
 def is_docs_only(paths: list[str]) -> bool:
@@ -167,6 +191,75 @@ def attribute(git: GitFn, riders: list[dict], pointer_rows: list[dict]) -> None:
                 r["branch"], r["attribution"] = br, "patch-id"
 
 
+# ── derived-file regen-only touches ─────────────────────────────────────────
+def _kb_counts_attributed(git: GitFn, sha: str, paths: list[str]) -> set[str]:
+    """Subset of `paths` carrying the `merge=kb-counts` git attribute, as of
+    `sha`'s tree. THE single source — `.gitattributes`, the SAME declarative
+    surface `scripts/hooks/merge-kb-counts.sh` reads (KB §
+    PATTERNS/common/auto-generated-merge-drivers.md) — read via `git
+    check-attr --source=<sha>`, never a hand-copied filename list. Two wins
+    over a bare `_regions()` walk: pattern-aware (a future GLOB entry in
+    `.gitattributes` resolves correctly, not just today's 3 literal lines),
+    and historically precise (`--source` reads THAT commit's
+    `.gitattributes`, never whatever the runner's working checkout
+    currently has checked out)."""
+    if not paths:
+        return set()
+    rc, out, _e = git("check-attr", f"--source={sha}", "merge", "--", *paths)
+    if rc != 0:
+        return set()
+    hits: set[str] = set()
+    for line in out.splitlines():
+        path, sep, value = line.partition(": merge: ")
+        if sep and value.strip() == "kb-counts":
+            hits.add(path)
+    return hits
+
+
+def _is_regen_only_touch(git: GitFn, sha: str, path: str) -> bool:
+    """True iff `sha`'s ENTIRE change to `path` lives inside a `kb-counts`
+    marker block — the pre-commit hook's auto-derived-counts refresh
+    (`noctus.dev.kb_sync --update-kb-counts`), which folds into nearly
+    every commit that touches `KNOWLEDGE-BASE/` or `products/`. Caller must
+    already know `path` is `merge=kb-counts`-attributed (see
+    `_kb_counts_attributed`) — a NON-attributed file is never regen-only,
+    however small its diff.
+
+    Masked-content equality (not a diff-hunk parse, not recomputing what the
+    counts WERE at that point in history — they are a function of the
+    CURRENT tree) answers "did this commit change anything other than the
+    counts" from the two blobs alone: prose changed in the SAME file still
+    fails the equality check (couples normally), counts-only churn passes.
+    Fail-closed: a missing parent (root commit) or a missing blob on either
+    side (file created/deleted this commit) is NEVER regen-only —
+    refuse-not-null, never a false "no dependency". KB §
+    PATTERNS/devops/ship-consent-riders.md § The cut.
+    """
+    rc, parent, _e = git("rev-parse", f"{sha}^")
+    if rc != 0 or not parent.strip():
+        return False
+    rc_p, old, _ep = git("show", f"{parent.strip()}:{path}")
+    rc_n, new, _en = git("show", f"{sha}:{path}")
+    if rc_p != 0 or rc_n != 0:
+        return False
+    return _mask_kb_counts_regions(old) == _mask_kb_counts_regions(new)
+
+
+def _mark_regen_only_files(git: GitFn, riders: list[dict]) -> None:
+    """Fill `regen_only_files` on each rider, in place — the subset of its
+    `files` that are BOTH `merge=kb-counts`-attributed (as of this commit)
+    AND, for THIS commit, `_is_regen_only_touch`. `plan_ship_set` reads it
+    to skip recording a dependency edge on a pure counts refresh; a
+    NON-attributed file (e.g. a hand-authored KB doc with no counts region)
+    is untouched by this — its dependency behaviour is unchanged."""
+    for r in riders:
+        attributed = _kb_counts_attributed(git, r["sha"], r["files"])
+        r["regen_only_files"] = (
+            {f for f in attributed if _is_regen_only_touch(git, r["sha"], f)}
+            if attributed else set()
+        )
+
+
 # ── the manifest ─────────────────────────────────────────────────────────────
 def build_manifest(
     git: GitFn,
@@ -193,6 +286,7 @@ def build_manifest(
     if err:
         return {"ok": False, "error": err}
     attribute(git, riders, pointer_rows)
+    _mark_regen_only_files(git, riders)
 
     projects: dict[str, dict[str, Any]] = {}
     coverage: dict[str, set[str]] = {}
@@ -270,6 +364,19 @@ def plan_ship_set(riders: list[dict]) -> dict[str, Any]:
     alone would ship a state that never existed on dev); an EXEMPT (docs) one
     ⇒ deferred (it simply waits for the rider), and from then on counts as
     unshipped for later commits.
+
+    An unshipped rider's touch to a `kb-counts`-attributed file is recorded
+    as "the last thing that touched it" (`unshipped_touch[f] = r["sha"]")
+    ONLY when that touch was a REAL edit — a rider in `r["regen_only_files"]`
+    (set by `_mark_regen_only_files`: `merge=kb-counts`-attributed AND its
+    whole diff to that file lives inside the marker block) leaves the
+    pointer at whatever it already was, hopping over pure counts churn to
+    find the nearest genuine unshipped edit. This is WHY two unrelated
+    projects' commits, each carrying nothing but the pre-commit hook's
+    auto-count refresh of the SAME derived doc, no longer chain a
+    dependency between them (KB § PATTERNS/devops/ship-consent-riders.md §
+    The cut) — a PROSE edit to that same file still couples normally, since
+    it is never in `regen_only_files`.
     """
     unshipped_touch: dict[str, str] = {}
     ship: list[str] = []
@@ -294,7 +401,10 @@ def plan_ship_set(riders: list[dict]) -> dict[str, Any]:
         if shipping:
             ship.append(r["sha"])
         else:
+            regen_only = r.get("regen_only_files") or ()
             for f in r["files"]:
+                if f in regen_only:
+                    continue
                 unshipped_touch[f] = r["sha"]
     return {"ship": ship, "deferred": deferred, "dependencies": dependencies}
 
@@ -338,7 +448,11 @@ def cherry_pick_chain(git: GitFn, base: str, shas: list[str]) -> dict[str, Any]:
 
 def release_branch_sources(git: GitFn, main: str, release_tip: str) -> tuple[list[dict], str]:
     """For every commit `main..release_tip`: the dev commit it was picked from
-    (None when the commit carries no cut mark — i.e. was not made by a cut)."""
+    (None when the commit carries no cut mark — i.e. was not made by a cut),
+    and whether it is a `regenerate_kb_counts_commit` bookkeeping commit
+    (`REGEN_MARK` — never a cherry-pick, so `from` is always None for it;
+    `_bless_release_branch`'s foreign-commit check reads `regen` to NOT
+    flag it foreign)."""
     rc, out, err = git("log", "--reverse", f"--format={_REC}%H{_FLD}%P{_FLD}%B",
                        f"{main}..{release_tip}")
     if rc != 0:
@@ -349,12 +463,103 @@ def release_branch_sources(git: GitFn, main: str, release_tip: str) -> tuple[lis
             continue
         sha, parents, body = (rec.split(_FLD, 2) + ["", ""])[:3]
         src = None
+        regen = False
         for ln in body.splitlines():
             ln = ln.strip()
             if ln.startswith(PICKED_MARK) and ln.endswith(")"):
                 src = ln[len(PICKED_MARK):-1].strip()
-        rows.append({"sha": sha.strip(), "merge": len(parents.split()) > 1, "from": src})
+            elif ln.startswith(REGEN_MARK) and ln.endswith(")"):
+                regen = True
+        rows.append({"sha": sha.strip(), "merge": len(parents.split()) > 1,
+                     "from": src, "regen": regen})
     return rows, ""
+
+
+# ── kb-counts regen commit (keeps `main` self-consistent after a cut) ───────
+def _kb_counts_declared_paths(git: GitFn, sha: str) -> list[str]:
+    """Every path literally declared `merge=kb-counts` in `.gitattributes`
+    at `sha` — parsed straight from the file the merge driver itself reads
+    (`scripts/hooks/merge-kb-counts.sh`, KB §
+    PATTERNS/common/auto-generated-merge-drivers.md). Literal-line scoped:
+    today's `.gitattributes` carries 3 literal entries, no globs; a future
+    GLOB entry would need `_kb_counts_attributed`'s pattern-aware
+    `check-attr` here too (not silently assumed correct forever — see
+    scoped-improvement note in this module's dispatch return)."""
+    rc, text, _e = git("show", f"{sha}:.gitattributes")
+    if rc != 0:
+        return []
+    paths: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and "merge=kb-counts" in parts[1:]:
+            paths.append(parts[0])
+    return paths
+
+
+def regenerate_kb_counts_commit(
+    git: GitFn, tip: str, render: Callable[[str, str], str],
+) -> dict[str, Any]:
+    """Build ONE extra commit atop `tip` that regenerates every
+    `merge=kb-counts`-declared file's counts blocks — keeping `main`
+    self-consistent after a cut ships only a SUBSET of dev's riders (a
+    cherry-picked rider's own dev-time regen reflected whatever the tree
+    looked like on ITS branch, not the cut's actual shipped subset). KB §
+    PATTERNS/devops/ship-consent-riders.md § The cut.
+
+    `render(path, current_text) -> new_text` is the DI seam — production
+    wires `kb_sync.render_kb_counts` bound against the ambient checkout
+    (the best available signal: this module has no working tree for the CUT
+    itself, by design — `render_kb_counts`'s renderers walk the repo the
+    release tool runs in, which in the standard workflow sits at-or-near
+    the dev tip the cut was carved from); tests script a fake.
+
+    No working tree: a THROWAWAY on-disk git index (`GIT_INDEX_FILE`) reads
+    `tip`'s tree, gets exactly the changed blobs re-hashed into it, and
+    `write-tree`s the result — the real working tree/index is never
+    touched. A no-op (nothing changed) returns `tip` unchanged, never an
+    empty commit.
+    """
+    paths = _kb_counts_declared_paths(git, tip)
+    if not paths:
+        return {"ok": True, "changed": False, "tip": tip}
+    updates: dict[str, str] = {}
+    for path in paths:
+        rc, cur, _e = git("show", f"{tip}:{path}")
+        if rc != 0:
+            continue  # not present on the cut — nothing to regenerate
+        new = render(path, cur)
+        if new != cur:
+            updates[path] = new
+    if not updates:
+        return {"ok": True, "changed": False, "tip": tip}
+    with tempfile.TemporaryDirectory(prefix="noctus-release-idx-") as tmp:
+        index_path = f"{tmp}/index"
+        env = {"GIT_INDEX_FILE": index_path}
+        rc, _o, err = git("read-tree", tip, env_extra=env)
+        if rc != 0:
+            return {"ok": False, "error": f"read-tree failed: {err.strip()}"}
+        for path, new_text in sorted(updates.items()):
+            rc, blob, err = git("hash-object", "-w", "--path", path, "--stdin",
+                                stdin=new_text, env_extra=env)
+            if rc != 0 or not blob.strip():
+                return {"ok": False, "error": f"hash-object failed for {path}: {err.strip()}"}
+            rc, _o, err = git("update-index", "--add", "--cacheinfo",
+                              f"100644,{blob.strip()},{path}", env_extra=env)
+            if rc != 0:
+                return {"ok": False, "error": f"update-index failed for {path}: {err.strip()}"}
+        rc, tree, err = git("write-tree", env_extra=env)
+        if rc != 0 or not tree.strip():
+            return {"ok": False, "error": f"write-tree failed: {err.strip()}"}
+    msg = (f"chore(release): regenerate kb-counts on the cut\n\n"
+          f"{len(updates)} file(s): {', '.join(sorted(updates))}\n"
+          f"{REGEN_MARK}{tip})\n")
+    rc, new_sha, err = git("commit-tree", tree.strip(), "-p", tip, "-F", "-", stdin=msg)
+    if rc != 0 or not new_sha.strip():
+        return {"ok": False, "error": f"commit-tree failed: {err.strip()}"}
+    return {"ok": True, "changed": True, "tip": new_sha.strip(), "files": sorted(updates)}
 
 
 def backmerge_commit(git: GitFn, dev: str, main: str) -> dict[str, Any]:
