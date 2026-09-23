@@ -35,6 +35,7 @@ import { ClienteDetailModal } from "@/components/ClienteDetailModal";
 import { formatValor } from "./formatValor";
 import { funilPipeline } from "@/lib/pipelines";
 import { useAceitarProposta } from "@/hooks/usePipelineSeam";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useLeadMutations } from "@/hooks/useLeads";
 import {
   LeadFormDialog,
@@ -51,6 +52,15 @@ const CARDS_POR_ETAPA = 50;
 
 export default function FunilVendas() {
   const [busca, setBusca] = useState("");
+  // Bug 5 (prod card 755253934) — one `GET /api/funil?busca=...` per
+  // keystroke. The input itself stays wired to the IMMEDIATE `busca` (typing
+  // must never feel delayed); `filtros.busca` reads the debounced value, so
+  // a fetch fires once typing pauses (~300ms) rather than once per
+  // character. The seed's `createPipelineHooks` already keys its query on
+  // `filtros` with `placeholderData: keepPreviousData` — this debounce is
+  // what keeps that mechanism from generating (and discarding) a fresh key
+  // on every keystroke in the first place.
+  const buscaDebounced = useDebouncedValue(busca, 300);
   // How many cards to request per column. Raised by "Carregar mais" — one
   // control for the whole board rather than one per column, because the
   // columns that overflow are the early ones and a user working the board
@@ -101,7 +111,7 @@ export default function FunilVendas() {
 
       <PipelineBoard
         hooks={funilPipeline}
-        filtros={{ busca: busca || undefined, limite_por_etapa: limite }}
+        filtros={{ busca: buscaDebounced || undefined, limite_por_etapa: limite }}
         formatValue={formatValor}
         emptyColumnLabel="Nenhum lead nesta etapa"
         onLoadMore={() => setLimite((n) => n + CARDS_POR_ETAPA)}

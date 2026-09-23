@@ -143,3 +143,81 @@ describe("Timeline — um contato diz o que aconteceu", () => {
     );
   });
 });
+
+describe("Timeline — Bug 4 (prod card 755253934): a touch entry's date never shifts to the previous day", () => {
+  it("🔴 data_entrada 2026-09-23, serialized as UTC midnight, renders 23/09/2026 — never 22/09/2026 21:00", async () => {
+    const { getAllByTestId } = await render({
+      loading: false,
+      error: null,
+      entries: [
+        {
+          id: "t3",
+          kind: "touch",
+          // What the backend sends for a DATE column (`data_entrada`)
+          // widened into a tz-aware timestamp — exactly midnight UTC,
+          // which is 21:00 the PREVIOUS day in America/Sao_Paulo.
+          ocorrido_em: "2026-09-23T00:00:00Z",
+          ator: null,
+          origem_tabela: "leads",
+          origem_id: "L3",
+          origem_rotulo: null,
+          resumo: null,
+          dados: {},
+        },
+      ] as any,
+    });
+
+    const texto = getAllByTestId("timeline-entry")[0].textContent ?? "";
+    expect(texto).toContain("23/09/2026");
+    expect(texto).not.toContain("22/09/2026");
+  });
+
+  it("the +00:00 offset spelling is treated the same as Z", async () => {
+    const { getAllByTestId } = await render({
+      loading: false,
+      error: null,
+      entries: [
+        {
+          id: "t4",
+          kind: "touch",
+          ocorrido_em: "2026-09-23T00:00:00+00:00",
+          ator: null,
+          origem_tabela: "leads",
+          origem_id: "L4",
+          origem_rotulo: null,
+          resumo: null,
+          dados: {},
+        },
+      ] as any,
+    });
+
+    const texto = getAllByTestId("timeline-entry")[0].textContent ?? "";
+    expect(texto).toContain("23/09/2026");
+    expect(texto).not.toContain("22/09/2026");
+  });
+
+  it("a REAL midnight-adjacent timestamp for a non-touch kind is left untouched (never over-corrected)", async () => {
+    const { getAllByTestId } = await render({
+      loading: false,
+      error: null,
+      entries: [
+        {
+          id: "t5",
+          kind: "sistema",
+          // A genuine event at 21:00 local (00:00 UTC) — NOT a date-only
+          // fact, so it must render at its real time, not get collapsed to
+          // a bare date. Only `touch` traces back to a DATE column.
+          ocorrido_em: "2026-09-23T00:00:00Z",
+          ator: null,
+          evento: "Cartão criado",
+          detalhe: null,
+        },
+      ] as any,
+    });
+
+    const texto = getAllByTestId("timeline-entry")[0].textContent ?? "";
+    // Unshifted-by-this-fix means the SEED's own `formatDate` still parses
+    // it as a real UTC instant — 21:00 the day before, in America/Sao_Paulo.
+    expect(texto).toContain("22/09/2026");
+  });
+});

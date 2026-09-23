@@ -58,6 +58,10 @@ vi.mock("@/hooks/useCardHub", () => ({
     documentosIds.push(id);
     return { data: [], isPending: false, isFetching: false };
   },
+  // Bug 2 (prod card 755253934) — the polling/invalidation side effect;
+  // this suite covers routing/fetch-shape only, not the poll itself (see
+  // `useCardHub.test.ts` for that).
+  useExtracaoPollingInvalidation: () => {},
   useDocumentoChecklist: () => mockDocumentoChecklist(),
   useDocumentoChecklistMutation: () => ({ mutate: vi.fn(), isPending: false }),
   // Checklist extras — the operator-created rows the remodel added beside the

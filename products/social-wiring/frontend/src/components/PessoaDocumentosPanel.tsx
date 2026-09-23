@@ -39,6 +39,7 @@ import {
   useDocumentoMutations,
   useDadosPessoaisMutation,
   useDocumentos,
+  useExtracaoPollingInvalidation,
   useExtracaoSugestaoMutation,
   useTiposDocumento,
 } from "@/hooks/useCardHub";
@@ -64,6 +65,10 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
   const checklist = useDocumentoChecklist(clienteId);
   const documentos = useDocumentos(clienteId);
   const tipos = useTiposDocumento();
+  // Bug 2 (prod card 755253934) — keeps THIS party's checklist/qualificação
+  // from going stale once the server finishes extracting a document they
+  // just uploaded. Side-effect only; see the hook's own docblock.
+  useExtracaoPollingInvalidation(clienteId);
 
   const toggle = useDocumentoChecklistMutation(clienteId);
   const sugestao = useExtracaoSugestaoMutation(clienteId);
