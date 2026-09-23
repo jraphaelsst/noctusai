@@ -23,6 +23,13 @@
  * extraction as a comprador. A separate `AdicionarVendedorDialog` would have
  * been this file with three strings changed, and the copy that stopped being
  * edited would be the bug.
+ *
+ * 🔴 …AND A THIRD VARIANT FOR THE SAME REASON. `"conjuge"` (the Cônjuge tab's
+ * empty-state action) is COPY ONLY too — it creates the exact same buyer-side
+ * party `"comprador"` does, and the container is what sends `papel: "conjuge"`
+ * on `onCreate`'s values (this file never learns a role). `lado` stays
+ * whatever the request defaults to (`comprador`) — see `ClienteDetailModal
+ * .handleAdicionarConjuge`.
  */
 import { useEffect, useState } from "react";
 
@@ -38,20 +45,27 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+/** Copy variant — the two negotiation sides plus the Cônjuge tab's own
+ *  dedicated action. Not `LadoParte` itself: this prop never reaches the
+ *  server (see the module docblock), so it is free to name a THIRD flavor
+ *  that still creates a `lado: "comprador"` party underneath. */
+export type AdicionarCompradorVariant = LadoParte | "conjuge";
+
 export interface AdicionarCompradorDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (values: { nome: string; celular?: string }) => void;
   saving?: boolean;
-  /** Which side this dialog is adding to. Copy only — the container owns the
-   *  request and sends `lado` itself. Defaults to the buyer side so every
-   *  existing call site keeps its meaning. */
-  lado?: LadoParte;
+  /** Which flavor of "add a party" this is. Copy only — the container owns
+   *  the request and sends `lado`/`papel` itself. Defaults to the buyer side
+   *  so every existing call site keeps its meaning. */
+  lado?: AdicionarCompradorVariant;
 }
 
-/** Copy per side. The seller-side description names the OWNER, because that
- *  is what the first vendedor on a deal is. */
-const COPY: Record<LadoParte, { titulo: string; descricao: string; placeholder: string }> = {
+/** Copy per variant. The seller-side description names the OWNER, because
+ *  that is what the first vendedor on a deal is; the cônjuge variant names
+ *  the legal reason the tab exists at all. */
+const COPY: Record<AdicionarCompradorVariant, { titulo: string; descricao: string; placeholder: string }> = {
   comprador: {
     titulo: "Adicionar comprador",
     descricao:
@@ -66,6 +80,14 @@ const COPY: Record<LadoParte, { titulo: string; descricao: string; placeholder: 
       "procurador. Terá o mesmo checklist e os mesmos documentos de qualquer " +
       "outra parte.",
     placeholder: "Carlos Eduardo Ramos",
+  },
+  conjuge: {
+    titulo: "Adicionar cônjuge",
+    descricao:
+      "O cônjuge do titular — a assinatura que uma venda por pessoa casada " +
+      "exige ao lado da dele/dela (CC art. 1.647). Terá o mesmo checklist e " +
+      "os mesmos documentos do titular.",
+    placeholder: "Maria Mauricio",
   },
 };
 

@@ -144,6 +144,14 @@ export interface ClienteCardDialogProps {
    * shape: the PARTE id, never the person's.
    */
   onAlterarPapelComprador?: (parteId: string, papel: string) => void;
+  /**
+   * The Cônjuge tab's own empty-state action — creates the buyer-side party
+   * with `papel: "conjuge"` directly, rather than routing through the
+   * generic `onAdicionarComprador` and asking the operator to set the role
+   * afterwards from the badge. Absent ⇒ the empty state shows no button, the
+   * same shape as every other optional add-handler here.
+   */
+  onAdicionarConjuge?: () => void;
 
   // ─── Vendedores — the other side of the table (migration 098) ──────────
   /**
@@ -448,6 +456,29 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   const compradores = props.compradores ?? [];
   const vendedores = props.vendedores ?? [];
 
+  // 🔴 ONE predicate for every marriage-gated surface this card has — the
+  // "Casado(a)" toggle and the certidão slot on "Dados do cliente", AND
+  // (this slice) the Cônjuge rail entry. All three read this SAME boolean so
+  // switching the toggle shows or hides every one of them together, never
+  // just some — never re-derived per surface.
+  const titularCasado = estadoCivilExigeConjuge(props.dadosPessoais?.estado_civil);
+  // The buyer-side party whose role IS "cônjuge" — the titular's own spouse.
+  // Always searched on `compradores`, never `vendedores`: the titular is a
+  // buyer by construction (`compradores_service.adicionar`'s own comment on
+  // `atendimentos.cliente_id`), so THIS card's marriage is always a
+  // buyer-side fact.
+  const conjugeParte = compradores.find((p) => p.papel === "conjuge");
+  // 🔴 Not shown twice. Once the Cônjuge tab exists, the spouse's panel lives
+  // there — a full-width dedicated tab, not a card buried in a general list
+  // — so Geral drops that one row rather than rendering it in both places.
+  // Gated on `titularCasado`, not on `conjugeParte` alone: an existing
+  // conjuge-tagged party survives here undisturbed if the tab that would
+  // otherwise hold it is gone (estado_civil cleared after the role was set),
+  // so nobody ever silently disappears from the card.
+  const compradoresGeral = titularCasado
+    ? compradores.filter((p) => p.papel !== "conjuge")
+    : compradores;
+
   const agendamentoPopover = (
     <AgendamentoPopover
       open={activePopover === "agendamento"}
@@ -462,7 +493,11 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
    * Keyed by the PARTE id; the side picks the role vocabulary, the handlers
    * and the testid prefix.
    */
-  function renderParte(parte: Comprador, lado: "comprador" | "vendedor") {
+  function renderParte(
+    parte: Comprador,
+    lado: "comprador" | "vendedor",
+    opts?: { defaultOpen?: boolean },
+  ) {
     const onAlterarPapel =
       lado === "comprador" ? props.onAlterarPapelComprador : props.onAlterarPapelVendedor;
     const onRemover = lado === "comprador" ? props.onRemoverComprador : props.onRemoverVendedor;
@@ -474,6 +509,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         papeisDisponiveis={PAPEIS_POR_LADO[lado]}
         onPapelChange={onAlterarPapel && ((papel) => onAlterarPapel(parte.id, papel))}
         papelSalvando={props.papelSalvandoParteId === parte.id}
+        defaultOpen={opts?.defaultOpen}
         testId={`${lado}-${parte.id}`}
         acao={
           onRemover && (
@@ -644,12 +680,12 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         //    titular IS the card. Collapsible because each panel's queries only
         //    run when opened.
         beforeAnexos:
-          compradores.length > 0 ? (
+          compradoresGeral.length > 0 ? (
             <div className="mb-4" data-testid="compradores-section">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Compradores
               </p>
-              {compradores.map((parte) => renderParte(parte, "comprador"))}
+              {compradoresGeral.map((parte) => renderParte(parte, "comprador"))}
             </div>
           ) : undefined,
       }}
@@ -663,52 +699,80 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
     // 🔴 The Dados do cliente tab is no longer read-only: the editor is
     // `DadosPessoaisForm` — the SAME form each party's panel uses, writing
     // through the SAME `onSaveDadosPessoais` path the inline rows use.
-    cliente: () => {
-      const titularCasado = estadoCivilExigeConjuge(props.dadosPessoais?.estado_civil);
-      return (
-        <>
-          {props.onSaveDadosPessoais && (
-            <>
-              {/* Visible only while married — see `CasadoToggle`'s docblock
-                  for why turning it off writes `estado_civil` directly
-                  rather than a second, component-local flag. */}
-              {titularCasado && (
-                <CasadoToggle
-                  testId="casado-toggle-titular"
-                  salvando={props.dadosPessoaisSaving}
-                  onDesmarcar={() => props.onSaveDadosPessoais!({ estado_civil: null })}
-                />
-              )}
-              <DadosPessoaisForm
-                valores={props.dadosPessoais ?? {}}
-                onSave={props.onSaveDadosPessoais}
-                saving={props.dadosPessoaisSaving}
-                saveError={props.dadosPessoaisError}
-                pendenteConfirmacao={props.dadosPessoaisPendente}
+    cliente: () => (
+      <>
+        {props.onSaveDadosPessoais && (
+          <>
+            {/* Visible only while married — see `CasadoToggle`'s docblock
+                for why turning it off writes `estado_civil` directly
+                rather than a second, component-local flag. */}
+            {titularCasado && (
+              <CasadoToggle
+                testId="casado-toggle-titular"
+                salvando={props.dadosPessoaisSaving}
+                onDesmarcar={() => props.onSaveDadosPessoais!({ estado_civil: null })}
               />
-              {props.renderConflitosPendentes?.() ?? null}
-              {/* Same gate, same reasoning as the per-party panel
-                  (`PessoaDocumentosPanel`) — reads the titular's OWN
-                  `documentos` list, the same one Geral's Anexos renders, so
-                  there is no second fetch and no second source of truth. */}
-              {titularCasado && (
-                <CertidaoCasamentoSlot
-                  testId="certidao-casamento-titular"
-                  documentos={props.documentos}
-                  uploading={props.uploadingDocumento}
-                  onUpload={(file) => props.onUploadDocumento(file, TIPO_CERTIDAO_CASAMENTO)}
-                  onVisualizar={props.onOpenDocumento}
-                  onRemover={props.onDeleteDocumento}
-                />
-              )}
-              {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
-              {props.renderQualificacaoDoTitular?.() ?? null}
-            </>
+            )}
+            <DadosPessoaisForm
+              valores={props.dadosPessoais ?? {}}
+              onSave={props.onSaveDadosPessoais}
+              saving={props.dadosPessoaisSaving}
+              saveError={props.dadosPessoaisError}
+              pendenteConfirmacao={props.dadosPessoaisPendente}
+            />
+            {props.renderConflitosPendentes?.() ?? null}
+            {/* Same gate, same reasoning as the per-party panel
+                (`PessoaDocumentosPanel`) — reads the titular's OWN
+                `documentos` list, the same one Geral's Anexos renders, so
+                there is no second fetch and no second source of truth. */}
+            {titularCasado && (
+              <CertidaoCasamentoSlot
+                testId="certidao-casamento-titular"
+                documentos={props.documentos}
+                uploading={props.uploadingDocumento}
+                onUpload={(file) => props.onUploadDocumento(file, TIPO_CERTIDAO_CASAMENTO)}
+                onVisualizar={props.onOpenDocumento}
+                onRemover={props.onDeleteDocumento}
+              />
+            )}
+            {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
+            {props.renderQualificacaoDoTitular?.() ?? null}
+          </>
+        )}
+        <RecordSubpage sections={record.cliente} subpage="cliente" />
+      </>
+    ),
+
+    // 🔴 Conditional entry — see `cardSubpages.CARD_SUBPAGES`'s own docblock
+    // on `"conjuge"` for why this key can still be present in `renders`
+    // (the `Record<CardSubpageKey, …>` type demands it) while never being
+    // reachable in the rail unless `titularCasado`.
+    conjuge: () =>
+      conjugeParte ? (
+        <div data-testid="card-subpage-conjuge" className="space-y-4">
+          {/* `defaultOpen` — unlike the same party's card under Geral's
+              Compradores list, this tab has exactly ONE thing to show, so
+              there is no fold worth making the operator open by hand. */}
+          {renderParte(conjugeParte, "comprador", { defaultOpen: true })}
+        </div>
+      ) : (
+        <div data-testid="card-subpage-conjuge-vazio" className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Nenhum cônjuge cadastrado neste atendimento.
+          </p>
+          {props.onAdicionarConjuge && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={props.onAdicionarConjuge}
+              data-testid="adicionar-conjuge-btn"
+            >
+              <Plus className="mr-1 h-4 w-4" />
+              Adicionar cônjuge
+            </Button>
           )}
-          <RecordSubpage sections={record.cliente} subpage="cliente" />
-        </>
-      );
-    },
+        </div>
+      ),
 
     vendedor: () => (
       <div data-testid="card-subpage-vendedor" className="space-y-4">
@@ -811,7 +875,20 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
     (key === "cliente" && record.cliente.length === 0) ||
     (key === "campanha" && record.campanha.length === 0);
 
-  const subpages: CardSubpage<CardSubpageKey>[] = CARD_SUBPAGES.map((def) => ({
+  // 🔴 HIDDEN, not disabled — `CardSidebarNav`'s `isEmpty` greys out a rail
+  // entry but never drops it (nothing-to-show is itself information worth
+  // showing). "Cônjuge" is the opposite kind of absence: an unmarried
+  // titular has no such entry AT ALL, the same way this card never grows a
+  // rail item for a relationship it does not have. Dropped from the ARRAY
+  // `CardHubDialog` renders, not merely marked empty — the one place this
+  // registry is conditional. If "Cônjuge" was the active subpage when it
+  // drops out, `CardHubDialog` itself falls back to the first entry
+  // (`geral`) the next time it re-renders — no extra state needed here.
+  const subpagesVisiveis = titularCasado
+    ? CARD_SUBPAGES
+    : CARD_SUBPAGES.filter((def) => def.key !== "conjuge");
+
+  const subpages: CardSubpage<CardSubpageKey>[] = subpagesVisiveis.map((def) => ({
     ...def,
     render: renders[def.key],
     isEmpty: isEmpty(def.key),

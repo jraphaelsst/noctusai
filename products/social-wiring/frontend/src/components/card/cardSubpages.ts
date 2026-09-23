@@ -16,6 +16,7 @@ import {
   ClipboardList,
   FileSignature,
   Handshake,
+  Heart,
   Landmark,
   Megaphone,
   Route,
@@ -27,6 +28,7 @@ import {
 export type CardSubpageKey =
   | "geral"
   | "cliente"
+  | "conjuge"
   | "vendedor"
   | "agendamentos"
   | "roteiros"
@@ -62,6 +64,15 @@ export interface SubpageDef {
 export const CARD_SUBPAGES: readonly SubpageDef[] = [
   { key: "geral", label: "Geral", icon: ClipboardList },
   { key: "cliente", label: "Dados do cliente", icon: User },
+  // 🔴 CONDITIONAL — the one entry in this list that is not always in the
+  // rail. Sits directly above "Vendedor": the titular's own marriage is
+  // still a fact about THIS side of the table, read right after "Dados do
+  // cliente" and before the counterparty starts. `ClienteCardDialog` drops
+  // this entry from the array entirely (never merely disables it) unless
+  // the titular's `estado_civil` is one `estadoCivilExigeConjuge` gates —
+  // the SAME predicate that shows the "Casado(a)" toggle and the certidão
+  // slot on "Dados do cliente", so the three appear and vanish together.
+  { key: "conjuge", label: "Cônjuge", icon: Heart },
   // Migration 098. Sits DIRECTLY under "Dados do cliente" because it is the
   // same job for the other side of the table — who the counterparty is —
   // rather than a step in the funnel. Reading the rail top-to-bottom now gives

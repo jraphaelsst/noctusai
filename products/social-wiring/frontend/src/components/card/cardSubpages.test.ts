@@ -5,7 +5,17 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { resolverDestino } from "./cardSubpages";
+import { CARD_SUBPAGES, resolverDestino } from "./cardSubpages";
+
+describe("CARD_SUBPAGES — registry order", () => {
+  it("🔴 places Cônjuge directly ABOVE Vendedor — the owner's ask", () => {
+    const keys = CARD_SUBPAGES.map((s) => s.key);
+    const conjugeIdx = keys.indexOf("conjuge");
+    const vendedorIdx = keys.indexOf("vendedor");
+    expect(conjugeIdx).toBeGreaterThanOrEqual(0);
+    expect(vendedorIdx).toBe(conjugeIdx + 1);
+  });
+});
 
 describe("resolverDestino", () => {
   it("treats a leading-slash destino as a real SPA route", () => {

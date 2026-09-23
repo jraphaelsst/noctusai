@@ -99,6 +99,10 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   const [colorBlindMode, setColorBlindMode] = useState(false);
   const [compradorDialogOpen, setCompradorDialogOpen] = useState(false);
   const [vendedorDialogOpen, setVendedorDialogOpen] = useState(false);
+  // Cônjuge tab's own empty-state action — sibling of the two above, its own
+  // boolean rather than reusing `compradorDialogOpen` so the two "add a
+  // buyer-side party" flows never fight over which dialog is showing.
+  const [conjugeDialogOpen, setConjugeDialogOpen] = useState(false);
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
   // Sibling of `roteiroDialogOpen` for the same reason: a Dialog nested inside
   // `ClienteCardDialog`'s own Dialog content fights the outer focus trap.
@@ -298,6 +302,23 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       { ...values, lado: "vendedor" },
       {
         onSuccess: () => setVendedorDialogOpen(false),
+        onError: (err) => toastServerError(err, "Não foi possível adicionar."),
+      },
+    );
+  }
+
+  /**
+   * The Cônjuge tab's own empty-state action — the ONE call site that sends
+   * `papel: "conjuge"` on CREATE rather than fixing it afterwards from the
+   * badge (`handleAlterarPapel` below). `lado` is left unset: the server
+   * defaults it to `comprador`, which is exactly where this card's own
+   * marriage lives (the titular is a buyer by construction).
+   */
+  function handleAdicionarConjuge(values: { nome: string; celular?: string }) {
+    compradorMutations.adicionar.mutate(
+      { ...values, papel: "conjuge" },
+      {
+        onSuccess: () => setConjugeDialogOpen(false),
         onError: (err) => toastServerError(err, "Não foi possível adicionar."),
       },
     );
@@ -703,6 +724,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
         })
       }
       onAlterarPapelComprador={handleAlterarPapel}
+      onAdicionarConjuge={() => setConjugeDialogOpen(true)}
       vendedores={vendedores.data?.items ?? []}
       vendedoresLoading={vendedores.isPending || vendedores.isFetching}
       onAdicionarVendedor={() => setVendedorDialogOpen(true)}
@@ -830,6 +852,17 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       open={vendedorDialogOpen}
       onOpenChange={setVendedorDialogOpen}
       onCreate={handleAdicionarVendedor}
+      saving={compradorMutations.adicionar.isPending}
+    />
+
+    {/* The same dialog again, Cônjuge-tab copy — same sibling reasoning as
+        the two above. `handleAdicionarConjuge` is what actually sets
+        `papel: "conjuge"`; this dialog only ever collects nome/celular. */}
+    <AdicionarCompradorDialog
+      lado="conjuge"
+      open={conjugeDialogOpen}
+      onOpenChange={setConjugeDialogOpen}
+      onCreate={handleAdicionarConjuge}
       saving={compradorMutations.adicionar.isPending}
     />
 

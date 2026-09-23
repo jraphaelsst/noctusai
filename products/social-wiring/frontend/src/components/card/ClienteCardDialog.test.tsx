@@ -2006,6 +2006,162 @@ describe("a aba Dados do cliente ganhou um editor", () => {
   });
 });
 
+describe("ClienteCardDialog — Cônjuge (rail entry above Vendedor, marriage-gated)", () => {
+  const conjugeParte = (over: Record<string, unknown> = {}) => ({
+    id: "parte-conjuge",
+    atendimento_id: "atd-1",
+    cliente_id: "cli-conjuge",
+    papel: "conjuge",
+    ordem: 0,
+    observacao: null,
+    created_at: "2026-08-24T00:00:00Z",
+    cliente: {
+      id: "cli-conjuge",
+      nome: "Maria",
+      nome_completo: "Maria Mauricio",
+      celular: "+5511977776666",
+      email: null,
+    },
+    ...over,
+  }) as any;
+
+  it("🔴 hidden entirely — no rail entry — while the titular is not married", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ dadosPessoais: { estado_civil: "Solteiro(a)" } })}
+      />,
+    );
+    expect(screen.queryByTestId("card-subpage-tab-conjuge")).toBeNull();
+  });
+
+  it("appears the instant the titular is married — the SAME predicate as the Casado(a) toggle, never re-derived", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ dadosPessoais: { estado_civil: "Casado(a)" } })}
+      />,
+    );
+    expect(screen.getByTestId("card-subpage-tab-conjuge")).toBeTruthy();
+  });
+
+  it("🔴 sits directly ABOVE Vendedor in the rail — the owner's ask", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ dadosPessoais: { estado_civil: "Casado(a)" } })}
+      />,
+    );
+    const tabs = screen
+      .getAllByTestId(/^card-subpage-tab-/)
+      .map((el) => el.getAttribute("data-testid"));
+    const conjugeIdx = tabs.indexOf("card-subpage-tab-conjuge");
+    const vendedorIdx = tabs.indexOf("card-subpage-tab-vendedor");
+    expect(conjugeIdx).toBeGreaterThanOrEqual(0);
+    expect(vendedorIdx).toBe(conjugeIdx + 1);
+  });
+
+  it("offers Adicionar cônjuge, and fires onAdicionarConjuge, when no spouse party exists yet", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const onAdicionar = vi.fn();
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          dadosPessoais: { estado_civil: "Casado(a)" },
+          onAdicionarConjuge: onAdicionar,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-conjuge"));
+    expect(screen.getByTestId("card-subpage-conjuge-vazio")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("adicionar-conjuge-btn"));
+    expect(onAdicionar).toHaveBeenCalledTimes(1);
+  });
+
+  it("🔴 uploads from this tab post to the SPOUSE's own cliente_id — expanded by default, no extra click first", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const renderPanel = vi.fn(() => <div data-testid="painel-conjuge" />);
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          dadosPessoais: { estado_civil: "Casado(a)" },
+          compradores: [conjugeParte()],
+          renderDocumentosDePessoa: renderPanel,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-conjuge"));
+    // No `-toggle` click first — unlike the same party's card under Geral's
+    // Compradores list, this tab has exactly one thing to show and opens it.
+    expect(renderPanel).toHaveBeenCalledWith("cli-conjuge");
+    expect(screen.getByTestId("painel-conjuge")).toBeTruthy();
+  });
+
+  it("🔴 not shown twice — Geral's Compradores list drops the papel=conjuge row once the Cônjuge tab exists", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          dadosPessoais: { estado_civil: "Casado(a)" },
+          compradores: [conjugeParte()],
+        })}
+      />,
+    );
+    // The spouse was the only comprador — with that one row excluded the
+    // section has nothing left, so it hides entirely (same rule as an
+    // ordinary empty Compradores list).
+    expect(screen.queryByTestId("compradores-section")).toBeNull();
+    expect(screen.queryByTestId("pessoa-documentos-comprador-parte-conjuge")).toBeNull();
+  });
+
+  it("never disappears — an already-tagged conjuge party stays on Geral once the tab that would hold it is gone", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          // No `dadosPessoais` — an unmarried titular, the same as if the
+          // toggle had since been switched off — but the party still carries
+          // `papel: "conjuge"` from before.
+          compradores: [conjugeParte()],
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("card-subpage-tab-conjuge")).toBeNull();
+    expect(screen.getByTestId("compradores-section")).toBeTruthy();
+    expect(screen.getByTestId("pessoa-documentos-comprador-parte-conjuge")).toBeTruthy();
+  });
+
+  it("🔴 falls back to Geral when Cônjuge disappears while it was the active tab", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const { rerender } = render(
+      <ClienteCardDialog
+        {...baseProps({
+          descricaoCorpo: "Interessado",
+          dadosPessoais: { estado_civil: "Casado(a)" },
+          compradores: [conjugeParte()],
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-conjuge"));
+    expect(screen.getByTestId("card-subpage-conjuge")).toBeTruthy();
+
+    // The toggle switched off elsewhere on the card — a fresh `dadosPessoais`
+    // arrives with no `estado_civil`, same as `onSaveDadosPessoais({
+    // estado_civil: null })`'s own effect.
+    rerender(
+      <ClienteCardDialog
+        {...baseProps({
+          descricaoCorpo: "Interessado",
+          dadosPessoais: { estado_civil: null },
+          compradores: [conjugeParte()],
+        })}
+      />,
+    );
+    expect(screen.queryByTestId("card-subpage-tab-conjuge")).toBeNull();
+    expect(screen.getByTestId("descricao-section")).toBeTruthy();
+  });
+});
+
 describe("o resumo de contato no topo do Geral", () => {
   it("shows nome · celular · email as one-line rows", async () => {
     const { render, screen } = await import("@testing-library/react");
