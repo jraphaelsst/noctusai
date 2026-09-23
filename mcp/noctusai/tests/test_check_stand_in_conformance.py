@@ -294,11 +294,14 @@ class TestCheckStandInConformanceLegA:
         issues = _leg_a_check_product("widget", product_dir, tmp_path, Path(sys.executable))
         assert any(i["leg"] == "B(ii)" for i in issues), issues
 
-    def test_resolve_product_venv_python_finds_the_real_repo_venv(self):
-        from settings import REPO_ROOT
-
-        python_exe = _resolve_product_venv_python(REPO_ROOT)
-        assert python_exe is not None
+    def test_resolve_product_venv_python_finds_the_primary_venv(self, tmp_path):
+        """Hermetic (CI has no repo-root venv/): a root carrying
+        venv/bin/python resolves to it."""
+        py = tmp_path / "venv" / "bin" / "python"
+        py.parent.mkdir(parents=True)
+        py.write_text("#!/bin/sh\n")
+        python_exe = _resolve_product_venv_python(tmp_path)
+        assert python_exe == py
         assert python_exe.is_file()
 
     def test_resolve_product_venv_python_is_inconclusive_not_crashing_outside_a_repo(self, tmp_path):
