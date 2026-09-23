@@ -82,6 +82,42 @@ Bugfixes 1–8; data model: `lead`, `negocio`(funnel card), `cliente` enrichment
 ## Phase 5 — Wave D: e-mail (SMTP seam + PDF attach), reply watcher (Gmail API push, matching Message-ID), notifications, Integrações SMTP keys (DEFERRED — T3)
 ## Phase 6 — Wave E: Clientes CardHub (marcas/calendário/esteira/financeiro tabs), calendar generation, Financeiro alignment + Report service, automations v1 (DEFERRED — T3)
 
+## Phase 2c — SW live e2e, extraction + contract ownership (IN PROGRESS — 2026-09-23, session 5297f35f)
+
+**Why:** the owner asked for a live e2e (upload → auto-extraction → full contract) on prod. noctusai-39 (extraction) and noctusai-1c (contract/card) handed their workstreams to this session. Their state and blockers are in memory `project-sw-extraction-ownership-handover`.
+
+**Live results (prod 755253934, synthetic set `tests/e2e_extracao`, texto variants, test card RICARDO AUGUSTO FERREIRA LIMA):**
+- Persons: every core field OK (titular, cônjuge, vendedor).
+- Imóvel: matrícula 4/5 (título texto is the human step), guia IPTU 1/1, CND IPTU 5/5.
+- Scan variants and full generation are still pending.
+
+**Owner decisions (2026-09-23):**
+- Address comes from the property table and is mandatory at registration. The matrícula-read address is used only to WARN on divergence. Condo units need an internal address on the property table: Vista stores the gate address plus complemento.
+- The agent may read all real document files to diagnose extraction. Migrations and a prod ship for this work are pre-approved. PII never leaves local scratch.
+- The owner wants a data→file→source catalog (entry point: lead/card/party/imóvel page/matrículas/Vista/human). Architect design pending.
+- Move Rodrigo's card from hand-registered EUROVILLE-535 to Vista ONE7515 (same matrícula 3917). The old matrícula link is write-once, so a new extraction is created for ONE7515.
+- Ship bce607e74 (empreendimento title override, mig 158 already applied), 9bd6ac926 (stand-in-conformance gate) and 55ba0c313 (estado-civil equivalence) with this wave.
+- Reference contracts (`products/social-wiring/contracts/`, git-ignored): 01→ONE9331 and 04→ONE10251 (unpublished, found only in the mirror), 08→ONE7515. Build 02, 03, 05, 06 and 07 from the contract addresses as manual registrations. The Vista key cannot read unpublished records.
+
+**Slices (wave 1, file-disjoint, dispatched 2026-09-23):**
+| Slice | Scope | Verify recipe |
+|---|---|---|
+| sw-card-ui-fixes (FE) | Cônjuge upload goes to the titular; stale panels after server-side extraction; lead Observações dropped; date-only TZ shift; /funil search debounce | Live: upload from the party panel lands on the party; panels refresh without reload |
+| sw-imovel-pages-ui (FE) | Manual-code 404 toast; /matriculas?codigo prefill; IPTU/CND values + expired/positiva warning | Live on E2E-IMV-LIVRE |
+| sw-matricula-pipeline-consolidation (BE) | Imóvel-page matrícula upload queues the full transcription (dedupe with /matriculas); doc-type labels leak internal LGPD notes | Live: an imóvel-page upload fills cartório/inscrição/ônus |
+| sw-imovel-endereco-obrigatorio (full-stack) | Mandatory address at manual registration; condo internal address; divergence warning; endereco_curto per the rule; picker search covers bairro/empreendimento + near-match before "cadastrar novo" | Live: "Euroville" finds ONE7515; registration without an address is refused |
+| sw-extracao-docs-reais (BE, seed parsers) | Real-corpus diagnosis (scans: CNH, certidão de casamento names/spouse split, nacionalidade, misfiles); synthetic layout fixtures | Before/after yield counts per tipo |
+| catalog (architect → slices) | data→file→source catalog | Per-card field lineage view |
+
+**Next (wave 2):**
+1. Integrate, then run predeploy, CI, bless, deploy and verify.
+2. Finish the test card to full generation (física + digital).
+3. Move Rodrigo to ONE7515, re-validate extractions and generate v8, diffed against contract 08 with 1c's `diff_contrato.py`.
+4. Take 1–2 real cards with files: fill gaps with fake data and report what was invented and why.
+5. Build cards for reference contracts 01–08.
+6. Build the 4 fake atendimentos 1c never finished (cv-parcelado/permuta/fgts).
+7. Clean up the integrated sw-extr-* worktrees.
+
 ## Anti-goals
 
 - ❌ No behaviour change in SW during wave A (pure refactor onto seed).
