@@ -18,6 +18,7 @@ import {
   FileText,
   Globe,
   BookOpen,
+  UserPlus,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
@@ -25,7 +26,7 @@ import { NotificationBell } from '../NotificationBell';
 import { AppShell, Sidebar, Header, useTheme } from '@noctusai/lib/design-system';
 import type { NavGroup } from '@noctusai/lib/design-system';
 
-const NAV_GROUPS: NavGroup[] = [
+export const NAV_GROUPS: NavGroup[] = [
   {
     key: 'admin',
     label: 'Administracao',
@@ -53,9 +54,25 @@ const NAV_GROUPS: NavGroup[] = [
     key: 'website',
     label: 'Website',
     icon: Globe,
-    items: [{ name: 'Documentação', href: '/admin/website/docs', icon: BookOpen }],
+    items: [
+      { name: 'Documentação', href: '/admin/website/docs', icon: BookOpen },
+      { name: 'Configurações', href: '/admin/website/settings', icon: Settings },
+      { name: 'Leads', href: '/admin/website/leads', icon: UserPlus },
+    ],
   },
 ];
+
+/**
+ * A `marketing` user reaches only `/admin/website/*` (`CoreLayout`'s gate),
+ * so the sidebar must show only the `website` group — derived from the SAME
+ * `NAV_GROUPS` array (never a second hand-maintained list, contract §6 /
+ * `docs/11 §Sidebar`). Any other role sees the full set (today: `admin`,
+ * the only role `CoreLayout` otherwise lets through).
+ */
+export function visibleNavGroups(role: string | undefined): NavGroup[] {
+  if (role === 'marketing') return NAV_GROUPS.filter((group) => group.key === 'website');
+  return NAV_GROUPS;
+}
 
 export function Layout({ children }: { children?: React.ReactNode }) {
   const { user, logout, refresh } = useAuth();
@@ -80,7 +97,10 @@ export function Layout({ children }: { children?: React.ReactNode }) {
     admin: 'Administrador',
     manager: 'Gerente',
     user: 'Membro',
+    marketing: 'Marketing',
   };
+
+  const navGroups = visibleNavGroups(user?.role);
 
   const headerUser = {
     name: user?.nome || '',
@@ -97,7 +117,7 @@ export function Layout({ children }: { children?: React.ReactNode }) {
           brandTitle="NoctusAI"
           brandSubtitle="Admin"
           brandHref="/"
-          navGroups={NAV_GROUPS}
+          navGroups={navGroups}
         />
       }
       header={({ onMenuToggle }) => (

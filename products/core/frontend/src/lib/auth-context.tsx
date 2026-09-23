@@ -23,6 +23,13 @@ interface AuthState {
   user: User | null;
   organization: Organization | null;
   isAdmin: boolean;
+  /**
+   * `role === 'marketing'` — the website-only admin role (contract
+   * `15-api-contract.md` §1/§6). Exposed alongside `isAdmin` so consumers
+   * (the `CoreLayout` route gate, the `Layout` sidebar) branch on a stable
+   * boolean instead of re-deriving `user?.role === 'marketing'` themselves.
+   */
+  isMarketing: boolean;
   loading: boolean;
 }
 
@@ -35,6 +42,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   organization: null,
   isAdmin: false,
+  isMarketing: false,
   loading: true,
   logout: () => {},
   refresh: async () => {},
@@ -45,12 +53,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user: null,
     organization: null,
     isAdmin: false,
+    isMarketing: false,
     loading: true,
   });
 
   async function fetchProfile() {
     if (!isAuthenticated()) {
-      setState({ user: null, organization: null, isAdmin: false, loading: false });
+      setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false });
       return;
     }
 
@@ -60,11 +69,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user: data.user,
         organization: data.organization,
         isAdmin: data.user?.role === 'admin',
+        isMarketing: data.user?.role === 'marketing',
         loading: false,
       });
     } catch {
       clearToken();
-      setState({ user: null, organization: null, isAdmin: false, loading: false });
+      setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false });
     }
   }
 
@@ -101,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   function logout() {
     clearToken();
-    setState({ user: null, organization: null, isAdmin: false, loading: false });
+    setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false });
   }
 
   // Proactive token refresh while user is active (every 5 min)

@@ -5,6 +5,10 @@
  *
  * Core never had a global layout on non-admin routes — this keeps that
  * behavior unchanged while still letting the framework own routing.
+ *
+ * **Marketing role carve-out** (contract `15-api-contract.md` §6, `docs/11
+ * §Roles & access`): a `role === 'marketing'` user may reach `/admin/website/*`
+ * ONLY — every other `/admin/*` route stays admin-only, same as before.
  */
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../lib/auth-context';
@@ -14,7 +18,7 @@ import { Layout as AdminShell } from './Layout';
 
 export function CoreLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { isAdmin, logout } = useAuth();
+  const { isAdmin, isMarketing, logout } = useAuth();
 
   const onExtend = async () => {
     const rt = getRefreshToken();
@@ -30,7 +34,9 @@ export function CoreLayout({ children }: { children: React.ReactNode }) {
   };
 
   if (location.pathname.startsWith('/admin')) {
-    if (!isAdmin) return <Navigate to="/" replace />;
+    const isWebsiteAdminPath = location.pathname.startsWith('/admin/website');
+    const allowed = isAdmin || (isMarketing && isWebsiteAdminPath);
+    if (!allowed) return <Navigate to="/" replace />;
     return (
       <>
         <AdminShell>{children}</AdminShell>
