@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { FileText, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, FileText, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, EmptyState } from "@noctusai/lib/design-system";
 import {
@@ -19,6 +19,7 @@ import {
   type SkillFileSummary,
 } from "@/api/studio/types";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
+import { SkillFilesUploadDialog } from "@/components/studio/SkillFilesUploadDialog";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import {
   useAgentVersionRefs,
@@ -82,6 +83,7 @@ function SkillFilesPanel({
   const [titulo, setTitulo] = useState("");
   const [conteudo, setConteudo] = useState("");
   const [erro, setErro] = useState<string | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
 
   useEffect(() => {
     setSelected(null);
@@ -138,11 +140,19 @@ function SkillFilesPanel({
         <h3 className="text-sm font-semibold">Arquivos de referência</h3>
         <span className="text-xs text-muted-foreground">lidos sob demanda com ler_arquivo_skill</span>
         {editable && (
-          <Button size="sm" variant="outline" className="ml-auto" onClick={() => setSelected(NOVA)}>
-            <Plus className="mr-1 h-3.5 w-3.5" /> Arquivo
-          </Button>
+          <div className="ml-auto flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setShowUpload(true)} data-testid="skill-files-upload-toggle">
+              <Upload className="mr-1 h-3.5 w-3.5" /> Enviar arquivos
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setSelected(NOVA)}>
+              <Plus className="mr-1 h-3.5 w-3.5" /> Arquivo
+            </Button>
+          </div>
         )}
       </div>
+      {showUpload && (
+        <SkillFilesUploadDialog agentKey={agentKey} draftId={draftId} skillId={skill.id} onClose={() => setShowUpload(false)} />
+      )}
       {skill.arquivos.length === 0 && selected !== NOVA ? (
         <p className="text-xs text-muted-foreground">Nenhum arquivo anexado.</p>
       ) : (
@@ -296,6 +306,29 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
     }
   }
 
+  /**
+   * Reorders `skills` (position `idx` ↔ `idx + delta`), then renumbers by
+   * position (10, 20, …, mirroring `PromptTab.tsx`'s `rowsToPayload`) —
+   * safer than swapping the two `ordem` values directly, which is a no-op
+   * when two skills share an `ordem` (the list's own tie-break falls back
+   * to `nome`, so a tie is reachable). Only the skills whose `ordem`
+   * actually changes get PATCHed.
+   */
+  async function moveSkill(idx: number, delta: -1 | 1) {
+    const j = idx + delta;
+    if (j < 0 || j >= skills.length) return;
+    const next = [...skills];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    const patches = next
+      .map((s, i) => ({ skillId: s.id, ordem: (i + 1) * 10 }))
+      .filter((p) => skills.find((s) => s.id === p.skillId)?.ordem !== p.ordem);
+    try {
+      await Promise.all(patches.map((p) => update.mutateAsync({ skillId: p.skillId, patch: { ordem: p.ordem } })));
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  }
+
   const pending = create.isPending || update.isPending;
 
   return (
@@ -319,12 +352,12 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
           <EmptyState message="Nenhuma skill nesta versão." />
         ) : (
           <ul className="divide-y divide-border rounded-lg border border-border bg-card">
-            {skills.map((s) => (
-              <li key={s.id}>
+            {skills.map((s, idx) => (
+              <li key={s.id} className="flex items-center gap-1 px-1">
                 <button
                   type="button"
                   onClick={() => select(s.id)}
-                  className={cn("w-full px-3 py-2 text-left hover:bg-accent", s.id === selectedId && "bg-accent")}
+                  className={cn("min-w-0 flex-1 px-2 py-2 text-left hover:bg-accent", s.id === selectedId && "bg-accent")}
                   data-testid={`skill-item-${s.nome}`}
                 >
                   <div className="flex items-center gap-2">
@@ -334,6 +367,30 @@ export default function SkillsTab({ agentKey }: { agentKey: string }) {
                   </div>
                   <p className="line-clamp-2 text-[11px] text-muted-foreground">{s.descricao}</p>
                 </button>
+                {editable && (
+                  <div className="flex flex-col">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Subir ${s.nome}`}
+                      disabled={idx === 0 || update.isPending}
+                      onClick={() => moveSkill(idx, -1)}
+                      data-testid={`skill-move-up-${s.nome}`}
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Descer ${s.nome}`}
+                      disabled={idx === skills.length - 1 || update.isPending}
+                      onClick={() => moveSkill(idx, 1)}
+                      data-testid={`skill-move-down-${s.nome}`}
+                    >
+                      <ArrowDown className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

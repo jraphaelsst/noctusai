@@ -14,8 +14,10 @@ const mockUseDocument = vi.fn();
 const mockUseDocumentRevisions = vi.fn();
 const mockUseKnowledgeSearch = vi.fn();
 const mockUseCreateKnowledgeCollection = vi.fn();
+const mockUseUpdateKnowledgeCollection = vi.fn();
 const mockUseCreateDocument = vi.fn();
 const mockUseUpdateDocument = vi.fn();
+const mockUseBatchCreateDocuments = vi.fn();
 const mockUseIsAdmin = vi.fn();
 
 vi.mock("@/hooks/studio/useKnowledge", () => ({
@@ -25,8 +27,10 @@ vi.mock("@/hooks/studio/useKnowledge", () => ({
   useDocumentRevisions: () => mockUseDocumentRevisions(),
   useKnowledgeSearch: () => mockUseKnowledgeSearch(),
   useCreateKnowledgeCollection: () => mockUseCreateKnowledgeCollection(),
+  useUpdateKnowledgeCollection: () => mockUseUpdateKnowledgeCollection(),
   useCreateDocument: () => mockUseCreateDocument(),
   useUpdateDocument: () => mockUseUpdateDocument(),
+  useBatchCreateDocuments: () => mockUseBatchCreateDocuments(),
 }));
 
 vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => mockUseIsAdmin() }));
@@ -43,8 +47,10 @@ beforeEach(() => {
   mockUseDocumentRevisions.mockReturnValue({ data: [] });
   mockUseKnowledgeSearch.mockReturnValue({ data: undefined, showSkeleton: false, isError: false });
   mockUseCreateKnowledgeCollection.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  mockUseUpdateKnowledgeCollection.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseCreateDocument.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseUpdateDocument.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+  mockUseBatchCreateDocuments.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
 });
 
 afterEach(() => cleanup());
@@ -155,5 +161,99 @@ describe("KnowledgeTab — new document form: content required non-empty", () =>
 
     expect(mutateAsync).not.toHaveBeenCalled();
     expect(screen.getByText("Informe o conteúdo do documento.")).toBeTruthy();
+  });
+});
+
+describe("KnowledgeTab — new document form: proveniência settable at creation", () => {
+  it("includes a filled provenance field in the create payload", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    mockUseCreateDocument.mockReturnValue({ mutateAsync, isPending: false });
+    await renderTab();
+
+    fireEvent.click(screen.getByTestId("knowledge-new-document-toggle"));
+    const form = await screen.findByTestId("knowledge-new-document-form");
+    fireEvent.change(within(form).getAllByRole("textbox")[0], { target: { value: "slug-x" } }); // slug
+    fireEvent.change(within(form).getAllByRole("textbox")[1], { target: { value: "Título X" } }); // titulo
+    fireEvent.change(within(form).getByTestId("knowledge-new-document-provenance-autor"), { target: { value: "Curso Audience" } });
+    const textareas = within(form).getAllByRole("textbox").filter((el) => el.tagName === "TEXTAREA") as HTMLTextAreaElement[];
+    const conteudoField = textareas[textareas.length - 1]; // Resumo then Conteúdo — last one is Conteúdo
+    fireEvent.change(conteudoField, { target: { value: "conteúdo" } });
+    fireEvent.submit(form);
+
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ proveniencia: expect.objectContaining({ autor: "Curso Audience" }) }),
+    );
+  });
+});
+
+describe("KnowledgeTab — collection edit", () => {
+  it("admin: opens the edit form and the update payload carries nome/tag/descricao/ordem", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    const mutateAsync = vi.fn().mockResolvedValue({});
+    mockUseUpdateKnowledgeCollection.mockReturnValue({ mutateAsync, isPending: false });
+    await renderTab();
+
+    fireEvent.click(screen.getByTestId("knowledge-collection-edit-audience"));
+    const form = await screen.findByTestId("knowledge-edit-collection-form");
+    const nome = within(form).getByDisplayValue("Audiência") as HTMLInputElement;
+    fireEvent.change(nome, { target: { value: "Audiência 2" } });
+    fireEvent.submit(form);
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      collectionId: "c1",
+      patch: { nome: "Audiência 2", tag: "AU", descricao: "", ordem: 1 },
+    });
+  });
+
+  it("member: has no edit control", async () => {
+    await renderTab();
+    expect(screen.queryByTestId("knowledge-collection-edit-audience")).toBeNull();
+  });
+});
+
+describe("KnowledgeTab — document metadata (titulo/tipo/ativo)", () => {
+  const DOC_DETAIL = {
+    id: "d1",
+    collection_id: "c1",
+    slug: "doc-1",
+    titulo: "Doc 1",
+    tipo: "fonte" as const,
+    resumo: "resumo",
+    conteudo: "Conteúdo original.",
+    proveniencia: {},
+    ativo: true,
+    chars: 120,
+    updated_at: "t",
+  };
+
+  it("admin: edits título/tipo/ativo and the save payload carries them", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    mockUseDocument.mockReturnValue({ data: DOC_DETAIL, showSkeleton: false, isError: false, error: null });
+    const mutateAsync = vi.fn().mockResolvedValue(DOC_DETAIL);
+    mockUseUpdateDocument.mockReturnValue({ mutateAsync, isPending: false });
+    await renderTab();
+
+    fireEvent.click(screen.getByTestId("knowledge-document-row-doc-1"));
+    const titulo = (await screen.findByTestId("knowledge-document-titulo")) as HTMLInputElement;
+    expect(titulo.value).toBe("Doc 1");
+    fireEvent.change(titulo, { target: { value: "Doc 1 renomeado" } });
+    fireEvent.change(screen.getByTestId("knowledge-document-tipo"), { target: { value: "sintese" } });
+    fireEvent.click(screen.getByTestId("knowledge-document-ativo"));
+
+    fireEvent.click(screen.getByTestId("knowledge-document-save"));
+
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ titulo: "Doc 1 renomeado", tipo: "sintese", ativo: false }),
+    );
+  });
+
+  it("the ativo checkbox is labeled honestly as archive-only (no delete)", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    mockUseDocument.mockReturnValue({ data: DOC_DETAIL, showSkeleton: false, isError: false, error: null });
+    await renderTab();
+    fireEvent.click(screen.getByTestId("knowledge-document-row-doc-1"));
+    await screen.findByTestId("knowledge-document-ativo");
+    expect(screen.getByText(/não há exclusão de documentos, apenas arquivamento/i)).toBeTruthy();
   });
 });

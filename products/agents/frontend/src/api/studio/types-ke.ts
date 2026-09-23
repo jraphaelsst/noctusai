@@ -120,6 +120,44 @@ export interface KnowledgeSearchResponse {
   items: KnowledgeSearchResult[];
 }
 
+// ─── Batch document upload (multi-file, CONTRACT.md §G item 1) ────────────
+
+/**
+ * One `documentos[]` entry of `knowledgeDocumentsBatchPath` —
+ * `@/api/studio/batchPaths.ts`. `proveniencia` is the SAME structured
+ * `Provenance` object as `DocumentCreate.proveniencia` (confirmed against
+ * the landed backend — a flat string is rejected). The audit's example
+ * front matter shows a single scalar line (`proveniencia: "Curso Audience
+ * — aula 1"`); the uploader maps that string onto `Provenance.origem`
+ * (`KnowledgeUploadDialog.tsx`) rather than inventing a new front-matter
+ * shape for structured provenance.
+ */
+export interface KnowledgeDocumentBatchItem {
+  slug: string;
+  titulo: string;
+  tipo: DocumentTipo;
+  conteudo: string;
+  resumo?: string;
+  proveniencia?: Provenance;
+}
+
+export type KnowledgeDocumentBatchStatus = "criado" | "atualizado" | "inalterado" | "erro";
+
+export interface KnowledgeDocumentBatchResult {
+  slug: string;
+  status: KnowledgeDocumentBatchStatus;
+  doc_id?: string;
+  erro?: string;
+}
+
+export interface KnowledgeDocumentsBatchResponse {
+  resultados: KnowledgeDocumentBatchResult[];
+  criados: number;
+  atualizados: number;
+  inalterados: number;
+  erros: number;
+}
+
 // ─── §D4 Evals ──────────────────────────────────────────────────────────────
 
 export interface EvalCriterios {

@@ -10,7 +10,7 @@
  * hidden for members (server also enforces via `require_admin`, §H.1).
  */
 import { useMemo, useState, type FormEvent } from "react";
-import { BookOpen, FilePlus2, FolderPlus, History, Save, Search } from "lucide-react";
+import { BookOpen, FilePlus2, FolderPlus, History, Pencil, Save, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge,
@@ -25,6 +25,7 @@ import {
   Select,
   Textarea,
 } from "@noctusai/lib/design-system";
+import { KnowledgeUploadDialog } from "@/components/studio/KnowledgeUploadDialog";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
 import {
@@ -36,8 +37,9 @@ import {
   useKnowledgeCollections,
   useKnowledgeSearch,
   useUpdateDocument,
+  useUpdateKnowledgeCollection,
 } from "@/hooks/studio/useKnowledge";
-import type { DocumentTipo, Provenance } from "@/api/studio/types-ke";
+import type { DocumentTipo, KnowledgeCollection, Provenance } from "@/api/studio/types-ke";
 import { DOCUMENT_TIPOS } from "@/api/studio/types-ke";
 
 const PROVENANCE_FIELDS: { key: keyof Provenance; label: string }[] = [
@@ -59,6 +61,8 @@ function NewCollectionForm({ agentKey, onDone }: { agentKey: string; onDone: () 
   const [slug, setSlug] = useState("");
   const [nome, setNome] = useState("");
   const [tag, setTag] = useState("");
+  const [descricao, setDescricao] = useState("");
+  const [ordem, setOrdem] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const create = useCreateKnowledgeCollection(agentKey);
 
@@ -66,11 +70,13 @@ function NewCollectionForm({ agentKey, onDone }: { agentKey: string; onDone: () 
     e.preventDefault();
     setError(null);
     try {
-      await create.mutateAsync({ slug, nome, tag: tag || null });
+      await create.mutateAsync({ slug, nome, tag: tag || null, descricao, ordem });
       toast.success("Coleção criada.");
       setSlug("");
       setNome("");
       setTag("");
+      setDescricao("");
+      setOrdem(0);
       onDone();
     } catch (err) {
       setError(errorMessage(err));
@@ -89,6 +95,12 @@ function NewCollectionForm({ agentKey, onDone }: { agentKey: string; onDone: () 
       <Field label="Tag (proveniência, ex.: AU)">
         <Input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="AU" maxLength={16} />
       </Field>
+      <Field label="Descrição">
+        <Textarea rows={2} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+      </Field>
+      <Field label="Ordem (posição no “# Base de conhecimento” compilado)">
+        <Input type="number" value={ordem} onChange={(e) => setOrdem(Number(e.target.value))} />
+      </Field>
       <Button type="submit" size="sm" variant="primary" disabled={create.isPending}>
         <FolderPlus className="mr-1.5 h-3.5 w-3.5" />
         Criar coleção
@@ -97,10 +109,60 @@ function NewCollectionForm({ agentKey, onDone }: { agentKey: string; onDone: () 
   );
 }
 
+function EditCollectionForm({ agentKey, collection, onDone }: { agentKey: string; collection: KnowledgeCollection; onDone: () => void }) {
+  const [nome, setNome] = useState(collection.nome);
+  const [tag, setTag] = useState(collection.tag ?? "");
+  const [descricao, setDescricao] = useState(collection.descricao);
+  const [ordem, setOrdem] = useState(collection.ordem);
+  const [error, setError] = useState<string | null>(null);
+  const update = useUpdateKnowledgeCollection(agentKey);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await update.mutateAsync({ collectionId: collection.id, patch: { nome, tag: tag || null, descricao, ordem } });
+      toast.success("Coleção salva.");
+      onDone();
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2 rounded-md border border-border p-3" data-testid="knowledge-edit-collection-form">
+      <FormError message={error} />
+      <Field label="Nome" required>
+        <Input value={nome} onChange={(e) => setNome(e.target.value)} required />
+      </Field>
+      <Field label="Tag (proveniência, ex.: AU)">
+        <Input value={tag} onChange={(e) => setTag(e.target.value)} maxLength={16} />
+      </Field>
+      <Field label="Descrição">
+        <Textarea rows={2} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
+      </Field>
+      <Field label="Ordem (posição no “# Base de conhecimento” compilado)">
+        <Input type="number" value={ordem} onChange={(e) => setOrdem(Number(e.target.value))} />
+      </Field>
+      <div className="flex gap-2">
+        <Button type="button" size="sm" variant="ghost" onClick={onDone}>
+          Cancelar
+        </Button>
+        <Button type="submit" size="sm" variant="primary" disabled={update.isPending}>
+          Salvar coleção
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId: string; isAdmin: boolean }) {
   const { data: doc, showSkeleton, isError, error } = useDocument(agentKey, docId);
   const { data: revisions } = useDocumentRevisions(agentKey, docId);
   const update = useUpdateDocument(agentKey, docId);
+  const [titulo, setTitulo] = useState("");
+  const [tipo, setTipo] = useState<DocumentTipo>("fonte");
+  const [ativo, setAtivo] = useState(true);
   const [conteudo, setConteudo] = useState("");
   const [resumo, setResumo] = useState("");
   const [proveniencia, setProveniencia] = useState<Provenance>(emptyProvenance());
@@ -109,6 +171,9 @@ function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId:
   const [saveError, setSaveError] = useState<string | null>(null);
 
   if (doc && loadedFor !== doc.id) {
+    setTitulo(doc.titulo);
+    setTipo(doc.tipo);
+    setAtivo(doc.ativo);
     setConteudo(doc.conteudo);
     setResumo(doc.resumo ?? "");
     setProveniencia({ ...emptyProvenance(), ...doc.proveniencia });
@@ -121,7 +186,15 @@ function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId:
       Object.entries(proveniencia).filter(([, v]) => !!v),
     ) as Provenance;
     try {
-      await update.mutateAsync({ conteudo, resumo, proveniencia: provenienciaPayload, motivo: motivo || undefined });
+      await update.mutateAsync({
+        titulo,
+        tipo,
+        ativo,
+        conteudo,
+        resumo,
+        proveniencia: provenienciaPayload,
+        motivo: motivo || undefined,
+      });
       toast.success("Documento salvo.");
       setMotivo("");
     } catch (err) {
@@ -146,6 +219,27 @@ function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId:
       </div>
 
       <FormError message={saveError} />
+
+      <div className="grid gap-2 sm:grid-cols-[1fr_160px]">
+        <Field label="Título">
+          <Input value={titulo} onChange={(e) => setTitulo(e.target.value)} disabled={!isAdmin} data-testid="knowledge-document-titulo" />
+        </Field>
+        <Field label="Tipo">
+          <Select value={tipo} onChange={(e) => setTipo(e.target.value as DocumentTipo)} disabled={!isAdmin} data-testid="knowledge-document-tipo">
+            {DOCUMENT_TIPOS.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      {isAdmin && (
+        <label className="flex items-center gap-1.5 text-xs text-foreground">
+          <input type="checkbox" checked={ativo} onChange={(e) => setAtivo(e.target.checked)} data-testid="knowledge-document-ativo" />
+          Ativo (desmarque para arquivar — não há exclusão de documentos, apenas arquivamento)
+        </label>
+      )}
 
       <div className="grid gap-2 rounded-md border border-border bg-muted/30 p-2 sm:grid-cols-3" data-testid="knowledge-document-provenance">
         {PROVENANCE_FIELDS.map(({ key, label }) => (
@@ -258,10 +352,12 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
   const { data: collections, showSkeleton, isError, error } = useKnowledgeCollections(agentKey);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [showNewCollection, setShowNewCollection] = useState(false);
+  const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null);
   const [qInput, setQInput] = useState("");
   const [filters, setFilters] = useState<{ q?: string; tipo?: DocumentTipo | ""; page: number }>({ page: 1 });
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [showNewDoc, setShowNewDoc] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
 
   const activeCollectionId = selectedCollection ?? collections?.[0]?.id ?? null;
 
@@ -288,24 +384,41 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
           <EmptyState message="Nenhuma coleção ainda." />
         ) : (
           <ul className="space-y-1">
-            {collections.map((c) => (
-              <li key={c.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedCollection(c.id);
-                    setSelectedDoc(null);
-                    setFilters({ page: 1 });
-                  }}
-                  data-testid={`knowledge-collection-${c.slug}`}
-                  className={`w-full rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent ${
-                    activeCollectionId === c.id ? "bg-accent font-medium" : "text-foreground"
-                  }`}
-                >
-                  {c.nome} <span className="text-xs text-muted-foreground">({c.total_documentos})</span>
-                </button>
-              </li>
-            ))}
+            {collections.map((c) =>
+              isAdmin && editingCollectionId === c.id ? (
+                <li key={c.id}>
+                  <EditCollectionForm agentKey={agentKey} collection={c} onDone={() => setEditingCollectionId(null)} />
+                </li>
+              ) : (
+                <li key={c.id} className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedCollection(c.id);
+                      setSelectedDoc(null);
+                      setFilters({ page: 1 });
+                    }}
+                    data-testid={`knowledge-collection-${c.slug}`}
+                    className={`flex-1 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent ${
+                      activeCollectionId === c.id ? "bg-accent font-medium" : "text-foreground"
+                    }`}
+                  >
+                    {c.nome} <span className="text-xs text-muted-foreground">({c.total_documentos})</span>
+                  </button>
+                  {isAdmin && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Editar coleção ${c.nome}`}
+                      onClick={() => setEditingCollectionId(c.id)}
+                      data-testid={`knowledge-collection-edit-${c.slug}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </li>
+              ),
+            )}
           </ul>
         )}
         {isAdmin &&
@@ -349,6 +462,12 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
                   <Button variant="outline" size="sm" onClick={() => setShowNewDoc((v) => !v)} data-testid="knowledge-new-document-toggle">
                     <FilePlus2 className="mr-1.5 h-3.5 w-3.5" />
                     Novo documento
+                  </Button>
+                )}
+                {isAdmin && (
+                  <Button variant="outline" size="sm" onClick={() => setShowUpload(true)} data-testid="knowledge-upload-toggle">
+                    <Upload className="mr-1.5 h-3.5 w-3.5" />
+                    Enviar arquivos
                   </Button>
                 )}
               </div>
@@ -413,6 +532,10 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
             {selectedDoc && <DocumentDetail agentKey={agentKey} docId={selectedDoc} isAdmin={isAdmin} />}
 
             <SearchPlayground agentKey={agentKey} />
+
+            {showUpload && activeCollectionId && (
+              <KnowledgeUploadDialog agentKey={agentKey} collectionId={activeCollectionId} onClose={() => setShowUpload(false)} />
+            )}
           </>
         )}
       </div>
@@ -423,13 +546,21 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
 function NewDocumentForm({
   onCreate,
 }: {
-  onCreate: (payload: { slug: string; titulo: string; tipo: DocumentTipo; conteudo: string; resumo?: string }) => Promise<void>;
+  onCreate: (payload: {
+    slug: string;
+    titulo: string;
+    tipo: DocumentTipo;
+    conteudo: string;
+    resumo?: string;
+    proveniencia?: Provenance;
+  }) => Promise<void>;
 }) {
   const [slug, setSlug] = useState("");
   const [titulo, setTitulo] = useState("");
   const [tipo, setTipo] = useState<DocumentTipo>("fonte");
   const [resumo, setResumo] = useState("");
   const [conteudo, setConteudo] = useState("");
+  const [proveniencia, setProveniencia] = useState<Provenance>(emptyProvenance());
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -444,12 +575,21 @@ function NewDocumentForm({
       return;
     }
     setSaving(true);
+    const provenienciaPayload = Object.fromEntries(Object.entries(proveniencia).filter(([, v]) => !!v)) as Provenance;
     try {
-      await onCreate({ slug, titulo, tipo, conteudo, resumo: resumo || undefined });
+      await onCreate({
+        slug,
+        titulo,
+        tipo,
+        conteudo,
+        resumo: resumo || undefined,
+        proveniencia: Object.keys(provenienciaPayload).length > 0 ? provenienciaPayload : undefined,
+      });
       setSlug("");
       setTitulo("");
       setResumo("");
       setConteudo("");
+      setProveniencia(emptyProvenance());
       toast.success("Documento criado.");
     } catch (err) {
       setError(errorMessage(err));
@@ -478,6 +618,17 @@ function NewDocumentForm({
           ))}
         </Select>
       </Field>
+      <div className="grid gap-2 rounded-md border border-border bg-muted/30 p-2 sm:grid-cols-3" data-testid="knowledge-new-document-provenance">
+        {PROVENANCE_FIELDS.map(({ key, label }) => (
+          <Field key={key} label={label}>
+            <Input
+              value={proveniencia[key] ?? ""}
+              onChange={(e) => setProveniencia((p) => ({ ...p, [key]: e.target.value }))}
+              data-testid={`knowledge-new-document-provenance-${key}`}
+            />
+          </Field>
+        ))}
+      </div>
       <Field label="Resumo">
         <Textarea rows={2} value={resumo} onChange={(e) => setResumo(e.target.value)} />
       </Field>

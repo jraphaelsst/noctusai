@@ -13,6 +13,7 @@
  *                            version (the previous `ativa` became `substituida`).
  */
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { skillFilesBatchPath } from "@/api/studio/batchPaths";
 import { api } from "@/lib/api";
 import type {
   DraftCreateInput,
@@ -22,6 +23,8 @@ import type {
   Skill,
   SkillCreateInput,
   SkillFile,
+  SkillFileBatchItem,
+  SkillFilesBatchResponse,
   SkillFileSummary,
   SkillFileUpsertInput,
   SkillPatchInput,
@@ -188,6 +191,24 @@ export function useUpsertSkillFile(key: string, draftId: string | null) {
     onSuccess: (saved, { skillId }) => {
       if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
       void qc.invalidateQueries({ queryKey: studioKeys.skillFile(key, skillId, saved.id) });
+      afterDraftWrite(qc, key);
+    },
+  });
+}
+
+/**
+ * ONE call to `skillFilesBatchPath` (max `SKILL_FILES_BATCH_MAX` files —
+ * `@/api/studio/batchPaths.ts`). Like `useBatchCreateDocuments`
+ * (`useKnowledge.ts`), chunking belongs to the caller (`sendInChunks`,
+ * `@/lib/batchUpload.ts`), not this hook.
+ */
+export function useBatchUpsertSkillFiles(key: string, draftId: string | null) {
+  const qc = useQueryClient();
+  return useMutation<SkillFilesBatchResponse, unknown, { skillId: string; arquivos: SkillFileBatchItem[] }>({
+    mutationFn: ({ skillId, arquivos }) =>
+      api.put<SkillFilesBatchResponse>(skillFilesBatchPath(key, skillId), { arquivos }),
+    onSuccess: () => {
+      if (draftId) void qc.invalidateQueries({ queryKey: studioKeys.version(key, draftId) });
       afterDraftWrite(qc, key);
     },
   });

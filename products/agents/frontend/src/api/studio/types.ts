@@ -213,6 +213,39 @@ export interface PublishInput {
   override_reason?: string;
 }
 
+// ─── Batch skill-file upload (multi-file, CONTRACT.md §G item 2) ───────────
+
+/** One `arquivos[]` entry of `skillFilesBatchPath` — `@/api/studio/batchPaths.ts`. */
+export interface SkillFileBatchItem {
+  caminho: string;
+  titulo?: string | null;
+  conteudo: string;
+}
+
+/** Confirmed against the landed backend — NO `"inalterado"` for skill files
+ * (unlike the knowledge documents batch, which does have one). */
+export type SkillFileBatchStatus = "criado" | "atualizado" | "erro";
+
+export interface SkillFileBatchResult {
+  caminho: string;
+  status: SkillFileBatchStatus;
+  id?: string;
+  titulo?: string;
+  chars?: number;
+  erro?: string;
+}
+
+/** No `inalterados` tally (matches the landed response shape — the status
+ * enum itself has no `"inalterado"` to count). A whole-call 409
+ * `version_immutable` (the version is no longer a rascunho) throws instead
+ * of resolving this shape — never a per-item failure. */
+export interface SkillFilesBatchResponse {
+  resultados: SkillFileBatchResult[];
+  criados: number;
+  atualizados: number;
+  erros: number;
+}
+
 // ── §C · Compiled prompt ──────────────────────────────────────────────────────
 
 export interface ManifestOrigin {
