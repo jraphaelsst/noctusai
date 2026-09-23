@@ -33,6 +33,7 @@ __all__ = [
     "TAREFA_SELECT",
     "criar_tarefa",
     "decidir_aprovacao",
+    "excluir_tarefa",
     "levar_para_aprovacao",
     "mover_tarefa",
     "quadro",
@@ -130,6 +131,20 @@ def criar_tarefa(
         user_id=user_id, cliente_id=pauta.get("cliente_id"),
     )
     return tarefa
+
+
+# ── Delete ───────────────────────────────────────────────────────────
+def excluir_tarefa(db: Any, org_id: str, *, tarefa_id: str, user_id: Any = None) -> None:
+    """Remove a tarefa from the board (smoke finding 5: there was no delete).
+
+    Org-scoped lookup first so another org's id is a 404, never a silent no-op.
+    Apontamentos and approval links go with it (`ON DELETE CASCADE`, migrations
+    006/007); the `pipeline_movimentos` history is kept on purpose — it is the
+    audit trail of what happened to the card, and a delete is part of it.
+    """
+    qc.carregar(db, CFG.card_table, org_id, tarefa_id, select="id")
+    db.table(CFG.card_table).delete().eq("id", tarefa_id).eq("org_id", org_id).execute()
+    logger.info("tarefa excluída org=%s tarefa=%s por=%s", org_id, tarefa_id, user_id)
 
 
 # ── Move ─────────────────────────────────────────────────────────────

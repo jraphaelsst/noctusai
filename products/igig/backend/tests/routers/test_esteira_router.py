@@ -183,6 +183,32 @@ class TestCriarTarefa:
         assert resp.status_code == 404
 
 
+# ── Delete ──────────────────────────────────────────────────────────
+class TestExcluirTarefa:
+    def test_requires_auth(self, api, tarefa):
+        assert api.raw().delete(f"/api/esteira/tarefas/{tarefa['id']}").status_code == 401
+
+    def test_deletes_and_returns_204(self, api, igig_db, tarefa):
+        resp = api.delete(f"/api/esteira/tarefas/{tarefa['id']}")
+        assert resp.status_code == 204
+        assert resp.content == b""
+        assert all(t["id"] != tarefa["id"] for t in igig_db.table("tarefa")._data)
+        colunas = api.get("/api/esteira/board").json()["data"]
+        assert sum(c["total"] for c in colunas) == 0
+
+    def test_keeps_the_history_as_the_audit_trail(self, api, igig_db, tarefa):
+        api.delete(f"/api/esteira/tarefas/{tarefa['id']}")
+        assert len(_historico(igig_db, tarefa["id"])) == 1
+
+    def test_unknown_tarefa_returns_404(self, api, etapas):
+        assert api.delete("/api/esteira/tarefas/nao-existe").status_code == 404
+
+    def test_another_orgs_tarefa_is_404_and_untouched(self, api, igig_db, tarefa):
+        igig_db.table("tarefa").update({"org_id": "outra-org"}).eq("id", tarefa["id"]).execute()
+        assert api.delete(f"/api/esteira/tarefas/{tarefa['id']}").status_code == 404
+        assert any(t["id"] == tarefa["id"] for t in igig_db.table("tarefa")._data)
+
+
 # ── Move rules ──────────────────────────────────────────────────────
 class TestMoverEtapa:
     def test_requires_auth(self, api, tarefa, etapas):
