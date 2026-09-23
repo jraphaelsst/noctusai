@@ -38,7 +38,10 @@ probe declares: the product/schema it lives in, the exact DB object
 probe` in `compliance.py` for how `guard_name` membership is what a
 future migration is checked against), a human rationale, its `kind`
 (`"write_refusal"` — attempt the forbidden write, expect an exception —
-or `"state_assertion"` — read live state, expect it to be clean), and
+`"write_allowed"` — attempt a SANCTIONED write, expect it to succeed, an
+unexpected refusal is the finding (migration 165's boilerplate-line
+exception) — or `"state_assertion"` — read live state, expect it to be
+clean), and
 `sql` — the probe BODY, always exactly one `DO $noc_probe$ ... $noc_probe$;`
 statement (see `_do_block`).
 
@@ -80,10 +83,17 @@ for the sentinel and classifies from THAT, tolerant of whatever prefix/
 wrapping the Management API's HTTP error body adds.
 
 Outcome -> status:
-  refused / clean        -> "pass"      (the guard did what it claims)
-  permitted / violation  -> "finding"   (the guard did NOT fire — the bug)
+  refused / clean / allowed -> "pass"      (the guard did what it claims)
+  permitted / violation / blocked -> "finding"   (the guard did NOT fire — the bug)
   no_fixture / ambiguous -> "failure"   (could not verify at all)
   (executor ok=True, or no sentinel found in the error text) -> "failure"
+
+`allowed` / `blocked` are the INVERSE-POLARITY pair for a `"write_allowed"`
+probe (migration 165 — see `_self_provisioned_write_allowed_probe`): the
+write under test is SANCTIONED, so success is the pass (`allowed`) and an
+unexpected refusal is the finding (`blocked`) — the opposite mapping from
+`permitted`/`refused`, which is why they are separate sentinel words rather
+than a reused pair.
 
 KB § PATTERNS/common/methodology-execution-discipline.md § 8 (structure-
 green is not behaviour-green) · KB § PATTERNS/backend/database-rls.md.
@@ -182,7 +192,8 @@ def wrap_rollback_only(probe_sql: str) -> str:
 # field, etc.). `re.DOTALL` so a `detail` spanning "lines" (RAISE's `%`
 # substitutions can carry newlines from a caught SQLERRM) is captured whole.
 _SENTINEL_RE = re.compile(
-    r"NOC_PROBE:(?P<outcome>refused|permitted|clean|violation|no_fixture|ambiguous):"
+    r"NOC_PROBE:(?P<outcome>refused|permitted|clean|violation|allowed|blocked|"
+    r"no_fixture|ambiguous):"
     r"\s*(?P<detail>.*)",
     re.DOTALL,
 )
@@ -190,14 +201,17 @@ _SENTINEL_RE = re.compile(
 _OUTCOME_STATUS: dict[str, str] = {
     "refused": "pass",
     "clean": "pass",
+    "allowed": "pass",
     "permitted": "finding",
     "violation": "finding",
+    "blocked": "finding",
     "no_fixture": "failure",
     "ambiguous": "failure",
 }
 _OUTCOME_SEVERITY: dict[str, str] = {
     "permitted": "high",
     "violation": "critical",
+    "blocked": "high",
     "no_fixture": "high",
     "ambiguous": "high",
 }
@@ -211,7 +225,7 @@ class GuardProbe:
     product: str
     schema: str
     guard_name: str
-    kind: str  # "write_refusal" | "state_assertion"
+    kind: str  # "write_refusal" | "write_allowed" | "state_assertion"
     sql: str  # exactly one `DO $noc_probe$ ... $noc_probe$;` statement
     rationale: str
     migrations: tuple[str, ...] = field(default_factory=tuple)
@@ -480,6 +494,12 @@ _MATRICULA_MIGRATIONS = (
     # strip, verified in the trigger); every probe below is a rewrite that is
     # NOT a markup strip, so each must still be refused.
     "154_imovel_extracao_proveniencia.sql",
+    # 165 adds a SECOND exception (whole-line boilerplate deletion, verified
+    # via matricula_texto_e_remocao_boilerplate) — see the write_allowed
+    # probe below (the sanctioned edit) and the accompanying write_refusal
+    # probe (a non-boilerplate line deletion, the shape a naive "is it
+    # shorter and a subsequence" check alone would wrongly let through).
+    "165_matricula_boilerplate_guard.sql",
 )
 
 
@@ -547,6 +567,67 @@ END;
             "instrument is understood to have quoted. Same function, "
             "extended by 135/136 without weakening what 111 established for "
             "the earlier columns. " + rationale_extra
+        ),
+        sql=sql,
+    )
+
+
+def _self_provisioned_write_allowed_probe(
+    *,
+    probe_id: str,
+    column: str,
+    declare_extra: str,
+    setup_sql: str,
+    good_value_sql: str,
+    rationale_extra: str,
+) -> GuardProbe:
+    """INVERSE-POLARITY sibling of `_self_provisioned_frozen_column_probe`
+    (migration 165): the write under test is SANCTIONED — success is the
+    pass (`allowed`), an unexpected refusal is the finding (`blocked`).
+    Same self-provisioning discipline (own specimen row(s), inside the same
+    rolled-back transaction, borrowing only an existing `org_id`) and the
+    same `no_fixture` escape hatch on a genuinely org-less database.
+    """
+    guard_fragment_lit = _sql_lit(_MATRICULA_GUARD_FRAGMENT)
+    sql = _do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_id uuid;
+{declare_extra}
+BEGIN
+  SELECT org_id INTO v_org_id FROM {_SW_SCHEMA}.{_MATRICULA_TABLE} LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no existing {_SW_SCHEMA}.{_MATRICULA_TABLE} row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+{setup_sql}
+  BEGIN
+    UPDATE {_SW_SCHEMA}.{_MATRICULA_TABLE} SET {column} = {good_value_sql} WHERE id = v_id;
+    RAISE EXCEPTION 'NOC_PROBE:allowed: UPDATE {_SW_SCHEMA}.{_MATRICULA_TABLE}.{column} for id=% succeeded — the sanctioned boilerplate-only edit was let through, as it should be', v_id;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:allowed:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:blocked: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=_MATRICULA_GUARD_FN,
+        kind="write_allowed",
+        migrations=_MATRICULA_MIGRATIONS,
+        rationale=(
+            f"`{_MATRICULA_GUARD_FN}` (BEFORE UPDATE trigger) must let a "
+            "boilerplate-only line deletion through — `backfill_service."
+            "normalizar_extracao`'s second pass (`remover_boilerplate`) "
+            "writes exactly this shape for 7 of 8 real prod rows, including "
+            "EUROVILLE-535's matrícula. A guard that (correctly) refuses "
+            "every OTHER rewrite must not ALSO refuse this one. " + rationale_extra
         ),
         sql=sql,
     )
@@ -666,6 +747,54 @@ _MATRICULA_PROBES: tuple[GuardProbe, ...] = (
 """,
         bad_value_sql="'[{\"start\":0,\"end\":1,\"kind\":\"noc_probe\"}]'::jsonb",
         rationale_extra="Self-provisions a throwaway `concluida` row (`ruido` defaults to `[]`) — no ambient fixture required.",
+    ),
+    # ------------------------------------------------------------------
+    # Migration 165 — the boilerplate-line exception, both directions.
+    # ------------------------------------------------------------------
+    _self_provisioned_write_allowed_probe(
+        probe_id="matricula_extracoes.texto_extraido.boilerplate_only_deletion_allowed",
+        column="texto_extraido",
+        declare_extra="",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status, texto_extraido)
+  VALUES (
+    v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'concluida',
+    E'Valide aqui\\neste documento\\n\\nMat. 3917 - conteudo real do probe'
+  )
+  RETURNING id INTO v_id;
+""",
+        good_value_sql="'Mat. 3917 - conteudo real do probe'",
+        rationale_extra=(
+            "The EUROVILLE-535 shape: two boilerplate lines "
+            "('Valide aqui' / 'este documento') and a blank line ahead of "
+            "the real content, all deleted in one UPDATE, the real content "
+            "line kept byte-identical — exactly what "
+            "matricula_texto_e_remocao_boilerplate must return true for."
+        ),
+    ),
+    _self_provisioned_frozen_column_probe(
+        probe_id="matricula_extracoes.texto_extraido.non_boilerplate_line_deletion_still_refused",
+        column="texto_extraido",
+        declare_extra="",
+        setup_sql=f"""
+  INSERT INTO {_SW_SCHEMA}.{_MATRICULA_TABLE} (org_id, user_id, nome_arquivo, status, texto_extraido)
+  VALUES (
+    v_org_id, gen_random_uuid(), 'noc-probe.pdf', 'concluida',
+    E'Valide aqui\\nLinha real numero um\\nLinha real numero dois'
+  )
+  RETURNING id INTO v_id;
+""",
+        bad_value_sql="E'Valide aqui\\nLinha real numero um'",
+        rationale_extra=(
+            "THE shape that could fool a naive 'is NEW shorter and a "
+            "subsequence of OLD' check alone: this rewrite deletes the "
+            "boilerplate line's sibling — a genuine, real content line "
+            "('Linha real numero dois') — while still being strictly "
+            "shorter and a valid in-order subsequence of OLD's lines. "
+            "Deletability is per-LINE (matricula_linha_e_boilerplate), not "
+            "'the edit looks boilerplate-shaped overall', so this must "
+            "still be refused."
+        ),
     ),
 )
 

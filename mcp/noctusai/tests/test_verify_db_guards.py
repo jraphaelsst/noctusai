@@ -148,6 +148,24 @@ class TestRunProbeClassification:
         assert result["outcome"] == "permitted"
         assert result["severity"] == "high"
 
+    def test_allowed_is_a_pass(self):
+        """The `write_allowed` (migration 165) inverse-polarity pair:
+        success is the pass."""
+        ex = _CannedExecutor(ok=False, error="ERROR: NOC_PROBE:allowed: UPDATE succeeded, sanctioned edit let through")
+        result = run_probe(_ANY_PROBE, ex)
+        assert result["status"] == "pass"
+        assert result["outcome"] == "allowed"
+        assert result["severity"] is None
+
+    def test_blocked_is_a_high_severity_finding(self):
+        """THE core case for a write_allowed probe: the guard fired on a
+        SANCTIONED write. This must never read as a pass."""
+        ex = _CannedExecutor(ok=False, error="ERROR: NOC_PROBE:blocked: texto_extraido não pode ser alterado")
+        result = run_probe(_ANY_PROBE, ex)
+        assert result["status"] == "finding"
+        assert result["outcome"] == "blocked"
+        assert result["severity"] == "high"
+
     def test_violation_state_assertion_is_a_critical_finding(self):
         ex = _CannedExecutor(ok=False, error="NOC_PROBE:violation: 2 public bucket(s) found")
         result = run_probe(_ANY_PROBE, ex)
@@ -358,7 +376,11 @@ class TestSelfProvisioning:
 
     def test_every_frozen_column_probe_inserts_its_own_specimen_row(self):
         probes = self._matricula_frozen_column_probes()
-        assert len(probes) == 6
+        # 6 pre-165 (texto_extraido, codigo, imovel_documento_id,
+        # arquivo_origem_id, substituida_por, ruido) + 2 from migration 165
+        # (the boilerplate-only deletion, both the allowed and the
+        # still-refused directions).
+        assert len(probes) == 8
         for probe in probes:
             assert "INSERT INTO social_wiring.matricula_extracoes" in probe.sql, (
                 f"{probe.id} does not self-provision a matricula_extracoes row"
@@ -424,8 +446,17 @@ class TestRegistrySanity:
             assert "no_fixture" in probe.sql
 
     def test_every_probe_ends_in_a_sentinel_raising_branch_for_permitted(self):
+        """Every probe's 'the guard misbehaved' branch raises a
+        recognised sentinel — `permitted`/`violation` for the
+        write_refusal/state_assertion pair, or `blocked` for the
+        INVERSE-polarity `write_allowed` kind (migration 165), where the
+        guard misbehaving means it wrongly refused a sanctioned write."""
         for probe in DEFAULT_REGISTRY:
-            assert "NOC_PROBE:permitted" in probe.sql or "NOC_PROBE:violation" in probe.sql
+            assert (
+                "NOC_PROBE:permitted" in probe.sql
+                or "NOC_PROBE:violation" in probe.sql
+                or "NOC_PROBE:blocked" in probe.sql
+            )
 
     def test_every_probe_wrapped_sql_parses_as_exactly_three_statements(self):
         """Structural sanity check (statement-count only — see the NEXT
