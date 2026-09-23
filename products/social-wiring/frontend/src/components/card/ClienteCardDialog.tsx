@@ -103,6 +103,9 @@ import {
   DocumentoChecklistSection,
   progressoChecklist,
 } from "./DocumentoChecklistSection";
+import { CasadoToggle } from "./CasadoToggle";
+import { CertidaoCasamentoSlot, TIPO_CERTIDAO_CASAMENTO } from "./CertidaoCasamentoSlot";
+import { estadoCivilExigeConjuge } from "@/types/qualificacaoCompletude";
 
 export interface ClienteCardDialogProps {
   open: boolean;
@@ -660,25 +663,52 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
     // 🔴 The Dados do cliente tab is no longer read-only: the editor is
     // `DadosPessoaisForm` — the SAME form each party's panel uses, writing
     // through the SAME `onSaveDadosPessoais` path the inline rows use.
-    cliente: () => (
-      <>
-        {props.onSaveDadosPessoais && (
-          <>
-            <DadosPessoaisForm
-              valores={props.dadosPessoais ?? {}}
-              onSave={props.onSaveDadosPessoais}
-              saving={props.dadosPessoaisSaving}
-              saveError={props.dadosPessoaisError}
-              pendenteConfirmacao={props.dadosPessoaisPendente}
-            />
-            {props.renderConflitosPendentes?.() ?? null}
-            {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
-            {props.renderQualificacaoDoTitular?.() ?? null}
-          </>
-        )}
-        <RecordSubpage sections={record.cliente} subpage="cliente" />
-      </>
-    ),
+    cliente: () => {
+      const titularCasado = estadoCivilExigeConjuge(props.dadosPessoais?.estado_civil);
+      return (
+        <>
+          {props.onSaveDadosPessoais && (
+            <>
+              {/* Visible only while married — see `CasadoToggle`'s docblock
+                  for why turning it off writes `estado_civil` directly
+                  rather than a second, component-local flag. */}
+              {titularCasado && (
+                <CasadoToggle
+                  testId="casado-toggle-titular"
+                  salvando={props.dadosPessoaisSaving}
+                  onDesmarcar={() => props.onSaveDadosPessoais!({ estado_civil: null })}
+                />
+              )}
+              <DadosPessoaisForm
+                valores={props.dadosPessoais ?? {}}
+                onSave={props.onSaveDadosPessoais}
+                saving={props.dadosPessoaisSaving}
+                saveError={props.dadosPessoaisError}
+                pendenteConfirmacao={props.dadosPessoaisPendente}
+              />
+              {props.renderConflitosPendentes?.() ?? null}
+              {/* Same gate, same reasoning as the per-party panel
+                  (`PessoaDocumentosPanel`) — reads the titular's OWN
+                  `documentos` list, the same one Geral's Anexos renders, so
+                  there is no second fetch and no second source of truth. */}
+              {titularCasado && (
+                <CertidaoCasamentoSlot
+                  testId="certidao-casamento-titular"
+                  documentos={props.documentos}
+                  uploading={props.uploadingDocumento}
+                  onUpload={(file) => props.onUploadDocumento(file, TIPO_CERTIDAO_CASAMENTO)}
+                  onVisualizar={props.onOpenDocumento}
+                  onRemover={props.onDeleteDocumento}
+                />
+              )}
+              {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
+              {props.renderQualificacaoDoTitular?.() ?? null}
+            </>
+          )}
+          <RecordSubpage sections={record.cliente} subpage="cliente" />
+        </>
+      );
+    },
 
     vendedor: () => (
       <div data-testid="card-subpage-vendedor" className="space-y-4">

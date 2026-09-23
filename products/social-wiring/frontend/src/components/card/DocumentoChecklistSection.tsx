@@ -56,6 +56,8 @@ import type {
   ExtracaoSugestao,
 } from "@/types/cardHub";
 import {
+  estadoCivilExigeConjuge,
+  estadoCivilExigeDataCasamento,
   rotuloEstadoCivil,
   rotuloNacionalidade,
   rotuloRegimeBens,
@@ -264,11 +266,27 @@ export function DocumentoChecklistSection({
 
       {/* Migration 110 — estado civil / regime de bens suggestions. Same
           "question, not an answer" treatment as `nome_oficial` above: a
-          machine-read civil status is offered, never applied silently. */}
+          machine-read civil status is offered, never applied silently.
+          🔴 `regime_bens`/`data_casamento` are asked ONLY of a party the
+          CURRENT record already reads as married (this checklist's own
+          `valores.estado_civil`, the confirmed value — not the sibling
+          suggestion also possibly sitting in this same batch): asking for a
+          marriage-only fact nobody has confirmed the marriage of is the
+          exact "empty card, asked for nothing" failure this slice exists to
+          close. Same predicate `DadosPessoaisForm`'s own fields gate on. */}
       {onResolverSugestao &&
         Object.entries(EXTRAS_QUALIFICACAO).map(([key, { label, formatar }]) => {
           const sugestao = sugestoesExtras?.[key];
           if (!sugestao) return null;
+          if (key === "regime_bens" && !estadoCivilExigeConjuge(valores?.estado_civil)) {
+            return null;
+          }
+          if (
+            key === "data_casamento" &&
+            !estadoCivilExigeDataCasamento(valores?.estado_civil)
+          ) {
+            return null;
+          }
           return (
             <SugestaoExtraida
               key={key}

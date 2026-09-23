@@ -1911,6 +1911,79 @@ describe("a aba Dados do cliente ganhou um editor", () => {
       "CPF inválido.",
     );
   });
+
+  describe("🔴 casamento — o toggle e a certidão do titular (this slice)", () => {
+    it("a married titular (Casado(a)) renders the toggle AND the certidão slot", async () => {
+      const { fireEvent, render, screen } = await import("@testing-library/react");
+      render(
+        <ClienteCardDialog
+          {...baseProps({
+            ...COM_REGISTRO,
+            dadosPessoais: { estado_civil: "Casado(a)" },
+            onSaveDadosPessoais: vi.fn(),
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+      expect(screen.getByTestId("casado-toggle-titular")).toBeTruthy();
+      expect(screen.getByTestId("certidao-casamento-titular-row")).toBeTruthy();
+    });
+
+    it("🔴 a single titular renders NEITHER — no empty card, no '—' placeholder", async () => {
+      const { fireEvent, render, screen } = await import("@testing-library/react");
+      render(
+        <ClienteCardDialog
+          {...baseProps({
+            ...COM_REGISTRO,
+            dadosPessoais: { estado_civil: "Solteiro(a)" },
+            onSaveDadosPessoais: vi.fn(),
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+      expect(screen.queryByTestId("casado-toggle-titular")).toBeNull();
+      expect(screen.queryByTestId("certidao-casamento-titular-row")).toBeNull();
+    });
+
+    it("🔴 toggling off writes estado_civil THROUGH onSaveDadosPessoais — never local-only state", async () => {
+      const onSaveDadosPessoais = vi.fn();
+      const { fireEvent, render, screen } = await import("@testing-library/react");
+      render(
+        <ClienteCardDialog
+          {...baseProps({
+            ...COM_REGISTRO,
+            dadosPessoais: { estado_civil: "Casado(a)" },
+            onSaveDadosPessoais,
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+      fireEvent.click(screen.getByTestId("casado-toggle-titular-checkbox"));
+      expect(onSaveDadosPessoais).toHaveBeenCalledWith({ estado_civil: null });
+    });
+
+    it("uploads the certidão typed as 'certidao_casamento' through the titular's own Anexos path", async () => {
+      const onUploadDocumento = vi.fn();
+      const { fireEvent, render, screen } = await import("@testing-library/react");
+      render(
+        <ClienteCardDialog
+          {...baseProps({
+            ...COM_REGISTRO,
+            dadosPessoais: { estado_civil: "Casado(a)" },
+            onSaveDadosPessoais: vi.fn(),
+            onUploadDocumento,
+          })}
+        />,
+      );
+      fireEvent.click(screen.getByTestId("card-subpage-tab-cliente"));
+      const file = new File(["x"], "certidao.pdf", { type: "application/pdf" });
+      const input = screen.getByTestId(
+        "certidao-casamento-titular-arquivo-input",
+      ) as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [file] } });
+      expect(onUploadDocumento).toHaveBeenCalledWith(file, "certidao_casamento");
+    });
+  });
 });
 
 describe("o resumo de contato no topo do Geral", () => {

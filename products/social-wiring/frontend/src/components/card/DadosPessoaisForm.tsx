@@ -46,7 +46,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { rgIgualAoCpf } from "@/types/qualificacaoCompletude";
+import {
+  estadoCivilExigeConjuge,
+  estadoCivilExigeDataCasamento,
+  rgIgualAoCpf,
+} from "@/types/qualificacaoCompletude";
 
 import { TooltipIconButton } from "@noctusai/lib/components";
 
@@ -454,40 +458,50 @@ export function DadosPessoaisForm({
           </Select>
           <PendenteAviso ativo={pendente("estado_civil")} testId={`${testId}-estado-civil`} />
         </Campo>
-        {/* Always rendered, never conditional on `estado_civil`. A field that
-            appears and disappears as the box above changes moves the form
-            under the cursor of somebody filling it top-to-bottom — and the
-            database deliberately does not tie the two either (097). */}
-        <Campo rotulo="Regime de bens" htmlFor={`${testId}-regime-bens`}>
-          <Select
-            value={draft.regime_bens ?? NAO_INFORMADO}
-            onValueChange={(v) =>
-              campo("regime_bens", v === NAO_INFORMADO ? "" : v)
-            }
-          >
-            <SelectTrigger
-              id={`${testId}-regime-bens`}
-              data-testid={`${testId}-regime-bens`}
+        {/* 🔴 CONDITIONED ON MARRIAGE (owner directive, this slice). Used to
+            render unconditionally on the argument that a field appearing and
+            disappearing moves the form under the cursor of someone filling
+            it top-to-bottom — but a regime de bens is meaningless for a
+            single person, and asking every operator to skip a field that
+            never applies to most cards is worse than the field moving once,
+            the one time `estado_civil` is set. `estadoCivilExigeConjuge`
+            (CC art. 1.647) is the SAME predicate the cônjuge panel, the
+            certidão slot and the checklist suggestions below gate on — one
+            rule, not four. */}
+        {estadoCivilExigeConjuge(draft.estado_civil) && (
+          <Campo rotulo="Regime de bens" htmlFor={`${testId}-regime-bens`}>
+            <Select
+              value={draft.regime_bens ?? NAO_INFORMADO}
+              onValueChange={(v) =>
+                campo("regime_bens", v === NAO_INFORMADO ? "" : v)
+              }
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NAO_INFORMADO}>Não informado</SelectItem>
-              {REGIMES_BENS.map((r) => (
-                <SelectItem key={r} value={r}>
-                  {r}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <PendenteAviso ativo={pendente("regime_bens")} testId={`${testId}-regime-bens`} />
-        </Campo>
+              <SelectTrigger
+                id={`${testId}-regime-bens`}
+                data-testid={`${testId}-regime-bens`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NAO_INFORMADO}>Não informado</SelectItem>
+                {REGIMES_BENS.map((r) => (
+                  <SelectItem key={r} value={r}>
+                    {r}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <PendenteAviso ativo={pendente("regime_bens")} testId={`${testId}-regime-bens`} />
+          </Campo>
+        )}
       </div>
 
-      {/* Migration 117 (contract F6) — shown only for a married party. Not
-          gated the way estado_civil/regime_bens above are visually flagged
-          twice: it is its OWN CAMPOS entry, so it gets its OWN notice. */}
-      {draft.estado_civil === "Casado(a)" && (
+      {/* Migration 117 (contract F6) — shown only for a LEGALLY married party
+          (`uniao_estavel` has no "casamento" to date — see
+          `estadoCivilExigeDataCasamento`'s docblock). Not gated the way
+          estado_civil/regime_bens above are visually flagged twice: it is
+          its OWN CAMPOS entry, so it gets its OWN notice. */}
+      {estadoCivilExigeDataCasamento(draft.estado_civil) && (
         <Campo rotulo="Data de casamento" htmlFor={`${testId}-data-casamento`}>
           <Input
             id={`${testId}-data-casamento`}

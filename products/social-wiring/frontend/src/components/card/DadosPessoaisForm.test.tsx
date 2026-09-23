@@ -46,6 +46,11 @@ describe("DadosPessoaisForm", () => {
     // address fields (which are not) — AFTER them, deliberately: the operator
     // still collects contact details first, and inserting a CPF box between
     // "Celular" and "Email" would reorder a form somebody uses daily.
+    //
+    // 🔴 "Regime de bens" is ABSENT here (this slice) — `valores={}` means no
+    // `estado_civil` is on file, and a regime is meaningless for a single
+    // person. See the "casamento gates" describe block below for both sides
+    // of that gate.
     expect(rotulos).toEqual([
       "Nome Completo",
       "Celular",
@@ -63,7 +68,6 @@ describe("DadosPessoaisForm", () => {
       "Órgão expedidor",
       "Nacionalidade",
       "Estado civil",
-      "Regime de bens",
       // Migration 148 — always shown (required for a vendedor regardless
       // of estado civil). "Data de casamento" is absent here: it only
       // renders while estado_civil reads "Casado(a)", which this cliente
@@ -88,6 +92,30 @@ describe("DadosPessoaisForm", () => {
   it("shows Data de casamento while estado civil reads Casado(a)", async () => {
     const { screen } = await abrir({ valores: { estado_civil: "Casado(a)" } });
     expect(screen.getByTestId("dados-pessoais-data-casamento")).toBeTruthy();
+  });
+
+  describe("🔴 Regime de bens is conditioned on marriage (this slice)", () => {
+    it("hides it when estado civil is not on file", async () => {
+      const { screen } = await abrir();
+      expect(screen.queryByTestId("dados-pessoais-regime-bens")).toBeNull();
+    });
+
+    it("hides it for a single person", async () => {
+      const { screen } = await abrir({ valores: { estado_civil: "Solteiro(a)" } });
+      expect(screen.queryByTestId("dados-pessoais-regime-bens")).toBeNull();
+    });
+
+    it("shows it while estado civil reads Casado(a)", async () => {
+      const { screen } = await abrir({ valores: { estado_civil: "Casado(a)" } });
+      expect(screen.getByTestId("dados-pessoais-regime-bens")).toBeTruthy();
+    });
+
+    it("shows it for União estável too — CC art. 1.647 covers both", async () => {
+      const { screen } = await abrir({ valores: { estado_civil: "União estável" } });
+      expect(screen.getByTestId("dados-pessoais-regime-bens")).toBeTruthy();
+      // But NOT "Data de casamento" — a união estável has no casamento to date.
+      expect(screen.queryByTestId("dados-pessoais-data-casamento")).toBeNull();
+    });
   });
 
   it("sends nome_oficial and certidao_estado_civil_emitida_em", async () => {

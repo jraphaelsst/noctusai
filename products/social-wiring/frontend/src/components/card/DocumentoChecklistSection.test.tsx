@@ -193,11 +193,16 @@ describe("sugestões de estado civil / regime de bens (migration 110)", () => {
     ).toContain("Casado(a)");
   });
 
-  it("oferece a sugestão de regime de bens com rótulo em pt-BR", async () => {
+  it("oferece a sugestão de regime de bens com rótulo em pt-BR — quando o registro já lê casado (this slice)", async () => {
     const { getByTestId } = await renderSection(
       baseProps({
         items: [],
         onResolverSugestao: vi.fn(),
+        // 🔴 GATED (this slice): a regime de bens sugestão só faz sentido para
+        // quem o registro CONFIRMADO já lê como casado — ver o describe
+        // "sugestões de regime de bens / data do casamento são condicionadas
+        // ao casamento" abaixo para o lado oposto.
+        valores: { estado_civil: "casado" },
         sugestoesExtras: {
           regime_bens: {
             valor: "comunhao_parcial",
@@ -249,11 +254,12 @@ describe("sugestões de estado civil / regime de bens (migration 110)", () => {
     ).toContain("Brasileiro");
   });
 
-  it("oferece a sugestão de data do casamento formatada em pt-BR (migration 117 — encontrado ao lado da 145)", async () => {
+  it("oferece a sugestão de data do casamento formatada em pt-BR (migration 117 — encontrado ao lado da 145) — quando já casado (this slice)", async () => {
     const { getByTestId } = await renderSection(
       baseProps({
         items: [],
         onResolverSugestao: vi.fn(),
+        valores: { estado_civil: "casado" },
         sugestoesExtras: {
           data_casamento: {
             valor: "2010-03-12",
@@ -271,6 +277,93 @@ describe("sugestões de estado civil / regime de bens (migration 110)", () => {
     expect(
       getByTestId("documento-checklist-data_casamento-sugestao-valor").textContent,
     ).toContain("12/03/2010");
+  });
+});
+
+describe("🔴 sugestões de regime de bens / data do casamento são condicionadas ao casamento (this slice)", () => {
+  const regimeBensSugestao = {
+    valor: "comunhao_parcial",
+    documento_id: "doc-2",
+    documento_nome: "certidao.pdf",
+    tipo_documento: "certidao_casamento",
+    confianca: "alta",
+    fonte: "texto",
+    rotulo: "comunhão parcial",
+    valor_atual: null,
+  } as const;
+
+  const dataCasamentoSugestao = {
+    valor: "2010-03-12",
+    documento_id: "doc-4",
+    documento_nome: "certidao.pdf",
+    tipo_documento: "certidao_casamento",
+    confianca: "alta",
+    fonte: "texto",
+    rotulo: "CASARAM-SE EM",
+    valor_atual: null,
+  } as const;
+
+  it("🔴 suprime AMBAS quando o registro não lê casado — nada é perguntado a quem é solteiro", async () => {
+    const { queryByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        valores: { estado_civil: "solteiro" },
+        sugestoesExtras: {
+          regime_bens: regimeBensSugestao,
+          data_casamento: dataCasamentoSugestao,
+        },
+      }),
+    );
+    expect(queryByTestId("documento-checklist-regime_bens-sugestao-valor")).toBeNull();
+    expect(queryByTestId("documento-checklist-data_casamento-sugestao-valor")).toBeNull();
+  });
+
+  it("suprime AMBAS quando ainda não há estado_civil confirmado no registro", async () => {
+    const { queryByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        sugestoesExtras: {
+          regime_bens: regimeBensSugestao,
+          data_casamento: dataCasamentoSugestao,
+        },
+      }),
+    );
+    expect(queryByTestId("documento-checklist-regime_bens-sugestao-valor")).toBeNull();
+    expect(queryByTestId("documento-checklist-data_casamento-sugestao-valor")).toBeNull();
+  });
+
+  it("mostra regime de bens mas NÃO data de casamento para união estável (sem casamento a datar)", async () => {
+    const { getByTestId, queryByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        valores: { estado_civil: "uniao_estavel" },
+        sugestoesExtras: {
+          regime_bens: regimeBensSugestao,
+          data_casamento: dataCasamentoSugestao,
+        },
+      }),
+    );
+    expect(getByTestId("documento-checklist-regime_bens-sugestao-valor")).toBeTruthy();
+    expect(queryByTestId("documento-checklist-data_casamento-sugestao-valor")).toBeNull();
+  });
+
+  it("mostra AMBAS quando o registro já lê casado", async () => {
+    const { getByTestId } = await renderSection(
+      baseProps({
+        items: [],
+        onResolverSugestao: vi.fn(),
+        valores: { estado_civil: "Casado(a)" },
+        sugestoesExtras: {
+          regime_bens: regimeBensSugestao,
+          data_casamento: dataCasamentoSugestao,
+        },
+      }),
+    );
+    expect(getByTestId("documento-checklist-regime_bens-sugestao-valor")).toBeTruthy();
+    expect(getByTestId("documento-checklist-data_casamento-sugestao-valor")).toBeTruthy();
   });
 });
 

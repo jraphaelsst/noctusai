@@ -46,8 +46,11 @@ import {
 import { AnexosSection } from "@/components/card/AnexosSection";
 import { DocumentoChecklistSection } from "@/components/card/DocumentoChecklistSection";
 import { DadosPessoaisForm } from "@/components/card/DadosPessoaisForm";
+import { CasadoToggle } from "@/components/card/CasadoToggle";
+import { CertidaoCasamentoSlot, TIPO_CERTIDAO_CASAMENTO } from "@/components/card/CertidaoCasamentoSlot";
 import { baixarArquivo } from "@noctusai/lib/components";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
+import { estadoCivilExigeConjuge } from "@/types/qualificacaoCompletude";
 
 export interface PessoaDocumentosPanelProps {
   clienteId: string;
@@ -71,8 +74,31 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
   // mutation's own transient response.
   const conflitosPendentes = useConflitosPendentes(clienteId);
 
+  // 🔴 Gates the "Casado(a)" toggle + the certidão-de-casamento slot below.
+  // Read off the SAME checklist response the values/rows below already use
+  // — never a second fetch — so the gate can never disagree with the record
+  // the rest of this panel is showing.
+  const casado = estadoCivilExigeConjuge(checklist.data?.valores?.estado_civil);
+
   return (
     <>
+      {/* Visible only while married — see `CasadoToggle`'s docblock for why
+          turning it off writes `estado_civil`, not a second column. */}
+      {casado && (
+        <CasadoToggle
+          testId={`casado-toggle-${clienteId}`}
+          salvando={dados.isPending}
+          onDesmarcar={() =>
+            dados.mutate(
+              { estado_civil: null },
+              {
+                onError: (e) =>
+                  toast.error(erro(e, "Não foi possível salvar os dados.")),
+              },
+            )
+          }
+        />
+      )}
       {/* Same form the titular gets, for the same reason the checklist is the
           same: a comprador's paperwork is collected exactly like anyone
           else's. Without it her items would be unfillable and her checklist
@@ -178,6 +204,56 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
           )
         }
       />
+      {/* Visible only while married, same gate as the toggle above — see the
+          file docblock on `CertidaoCasamentoSlot` for why this exists at
+          all. Reads `documentos` off the SAME list Anexos below renders,
+          never a second fetch. */}
+      {casado && (
+        <CertidaoCasamentoSlot
+          testId={`certidao-casamento-${clienteId}`}
+          documentos={documentos.data ?? []}
+          uploading={docs.upload.isPending}
+          onUpload={(file) =>
+            docs.upload.mutate(
+              { file, tipoDocumento: TIPO_CERTIDAO_CASAMENTO },
+              {
+                onError: (e) =>
+                  toast.error(erro(e, "Não foi possível enviar a certidão de casamento.")),
+              },
+            )
+          }
+          onVisualizar={(documentoId) =>
+            docs.getUrl.mutate(
+              { documentoId, intent: "view" },
+              {
+                onSuccess: (res) =>
+                  window.open(res.url, "_blank", "noopener,noreferrer"),
+                onError: (e) =>
+                  toast.error(erro(e, "Não foi possível abrir a certidão de casamento.")),
+              },
+            )
+          }
+          onBaixar={(documentoId, nomeArquivo) =>
+            docs.getUrl.mutate(
+              { documentoId, intent: "download" },
+              {
+                onSuccess: (res) => void baixarArquivo(res.url, nomeArquivo),
+                onError: (e) =>
+                  toast.error(erro(e, "Não foi possível baixar a certidão de casamento.")),
+              },
+            )
+          }
+          onRemover={(documentoId, motivo) =>
+            docs.remove.mutate(
+              { documentoId, motivo },
+              {
+                onError: (e) =>
+                  toast.error(erro(e, "Não foi possível descartar a certidão de casamento.")),
+              },
+            )
+          }
+        />
+      )}
       <AnexosSection
         testId={`anexos-section-${clienteId}`}
         documentos={documentos.data ?? []}

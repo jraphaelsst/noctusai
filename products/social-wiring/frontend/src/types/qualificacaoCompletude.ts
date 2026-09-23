@@ -63,6 +63,49 @@ export function rotuloRegimeBens(valor: string | null | undefined): string {
 }
 
 /**
+ * `clientes.estado_civil` values that name a MARRIED state under CC art.
+ * 1.647 — the same closed pair the backend gates a spouse's outorga on
+ * (`documento_checklist_service._ESTADOS_QUE_EXIGEM_CONJUGE`).
+ *
+ * Two spellings per state, not a generic legacy-parsing table: this column
+ * only ever arrives here in one of two shapes — the canonical snake_case
+ * token an extraction CONFIRMATION writes (`"casado"`), or the pt-BR string
+ * `DadosPessoaisForm`'s own `<Select>` writes (`"Casado(a)"`). The server's
+ * `_ESTADO_CIVIL_LEGADO` table normalises a much wider set of historical
+ * spellings on READ; duplicating that whole table client-side would be a
+ * second copy of a rule this file does not own — these two forms are the
+ * only ones any write path in THIS product ever produces.
+ */
+const ESTADOS_QUE_EXIGEM_CONJUGE: ReadonlySet<string> = new Set([
+  "casado",
+  "uniao_estavel",
+  "Casado(a)",
+  "União estável",
+]);
+
+/**
+ * Does this `estado_civil` value put a spouse's consent on the table (CC
+ * art. 1.647)? Gates every marriage-only block on a party's panel: the
+ * "Casado(a)" toggle, the cônjuge qualification, the certidão-de-casamento
+ * slot, and the `regime_bens` field/suggestion. `uniao_estavel` is included
+ * — it needs a regime and a cônjuge exactly like `casado` does — but see
+ * `estadoCivilExigeDataCasamento` below for the ONE thing it does NOT need.
+ */
+export function estadoCivilExigeConjuge(valor: string | null | undefined): boolean {
+  return !!valor && ESTADOS_QUE_EXIGEM_CONJUGE.has(valor);
+}
+
+/**
+ * Narrower than `estadoCivilExigeConjuge` — mirrors
+ * `documento_checklist_service._ESTADO_QUE_EXIGE_DATA_CASAMENTO`. A
+ * `uniao_estavel` party has no "casamento" to date, so `data_casamento` is
+ * asked only of a LEGALLY married one.
+ */
+export function estadoCivilExigeDataCasamento(valor: string | null | undefined): boolean {
+  return valor === "casado" || valor === "Casado(a)";
+}
+
+/**
  * Display form of a `nacionalidade` value (migration 146) — a suggested
  * value arrives lower-case (the extractor's canonical gentílico, e.g.
  * "brasileiro"); this only capitalises it for display, same fallback shape
