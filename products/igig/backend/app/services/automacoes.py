@@ -75,6 +75,7 @@ __all__ = [
     "ao_entrar_etapa",
     "listar_execucoes",
     "varrer_sla",
+    "violacao_unica",
 ]
 
 PIPELINES = {"comercial": PIPELINE_COMERCIAL, "esteira": PIPELINE_ESTEIRA}
@@ -325,7 +326,7 @@ def _reivindicar(
             ).execute().data or []
         )
     except Exception as exc:  # noqa: BLE001 — only a unique violation means "already claimed"
-        if _violacao_unica(exc):
+        if violacao_unica(exc):
             logger.info("automação %s já reivindicada card=%s entrada=%s", regra["id"], card_id,
                         movimento_id)
             return None
@@ -351,7 +352,9 @@ def _finalizar(portas: PortasAutomacao, org_id: str, execucao: dict, status: str
         return {**execucao, **valores}
 
 
-def _violacao_unica(exc: Exception) -> bool:
+def violacao_unica(exc: Exception) -> bool:
+    """A PostgREST/psycopg unique violation (23505) — the DB's own "already
+    exists" answer, read as a duplicate rather than a failure."""
     code = str(getattr(exc, "code", "") or "")
     return code == "23505" or "duplicate key" in str(exc).lower()
 
