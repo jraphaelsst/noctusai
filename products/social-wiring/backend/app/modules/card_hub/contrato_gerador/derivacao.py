@@ -37,7 +37,7 @@ from decimal import Decimal
 from typing import Optional
 
 from noctusai_lib.domain.texto_ptbr import formatar_brl, parse_brl
-from noctusai_lib.integrations.documents import derivar_endereco, has_raw_markup, is_same_as_cpf
+from noctusai_lib.integrations.documents import derivar_endereco, has_raw_markup
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
 from app.modules.card_hub.contrato_gerador import frases
@@ -200,6 +200,51 @@ def _area_da_matricula(texto: str) -> Optional[Decimal]:
         return parse_brl(m.group(1))
     except ValueError:
         return None
+
+
+#: "nesta cidade, município e comarca de Carapicuíba" — the abertura's own
+#: registry boilerplate. Deliberately narrow: "Foro e Comarca de Sorocaba"
+#: (a citation INSIDE an averbação, about a DIFFERENT instrument) never
+#: reads "município e comarca de" and so never matches.
+_COMARCA_MUNICIPIO_RE = re.compile(r"munic[íi]pio\s+e\s+comarca\s+de\s+([^,;.\n]+)", re.IGNORECASE)
+#: "Registro de imóveis da comarca de Cotia – SP" — the cartório's own
+#: heading. Deliberately narrow: "registro civil da comarca de X" (a
+#: person's marriage/birth registry, cited in a qualificação paragraph)
+#: reads "civil", never "de imóveis", and so never matches either.
+_COMARCA_REGISTRO_RE = re.compile(
+    r"registro\s+de\s+im[óo]veis\s+da\s+comarca\s+de\s+"
+    r"([^,;.\n\-–—]+?)(?:\s*[-–—]\s*([A-Za-z]{2}))?(?=[,;.\n]|$)",
+    re.IGNORECASE,
+)
+
+
+def comarca_de_texto(texto: Optional[str]) -> Optional[str]:
+    """[Owner directive, 2026-09-23] The DA ELEIÇÃO DO FORO clause's
+    comarca, read off a matrícula's OWN transcription — never a manual
+    field, never the imóvel's registration address (which can legitimately
+    differ from the registering comarca). Called once at load time
+    (`carregador.carregar`) over the resolved extraction's FULL raw text,
+    independent of which acts the operator selected to quote — the comarca
+    is a fact about the property's registry, not a clause excerpt.
+
+    Matches ONLY the two shapes a matrícula's own abertura/registry
+    boilerplate uses (see the two regexes above); `None` when neither is
+    found — the caller (`_contrato`) treats that as a real gap to name,
+    never a guess."""
+    if not texto:
+        return None
+    m = _COMARCA_MUNICIPIO_RE.search(texto)
+    if m:
+        cidade = re.sub(r"\s+", " ", m.group(1)).strip(" .")
+        if cidade:
+            return cidade
+    m = _COMARCA_REGISTRO_RE.search(texto)
+    if m:
+        cidade = re.sub(r"\s+", " ", m.group(1)).strip(" .")
+        if cidade:
+            uf = m.group(2)
+            return f"{cidade}/{uf.upper()}" if uf else cidade
+    return None
 
 
 def _verificar_coerencia_endereco(
@@ -675,17 +720,12 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                 conjuge = ids_lado.get(p.conjuge_cliente_id or "")
                 if chave == "conjuge_qualificacao" and conjuge is not None:
                     continue  # the spouse is a signatory and is gated on their own
-                if chave == "profissao":
-                    # [2026-09-22] A missing profissão is not a blocker: the
-                    # office's own reference contract (08) qualifies REGINA
-                    # MARIA PELOSI with no profession at all, and `frases.
-                    # texto_pessoa` already omits it cleanly (no dangling
-                    # comma) when absent.
-                    av.avisa(
-                        "PARTE_SEM_PROFISSAO",
-                        f"{_nome(p)} está sem profissão informada — a qualificação sai sem esse dado.",
-                    )
-                    continue
+                # [Owner directive, 2026-09-23] "all those data are
+                # mandatory for the deal contract" — `profissao` is no
+                # longer waved through with `PARTE_SEM_PROFISSAO` (a
+                # 2026-09-22 aviso arguing the office's own reference
+                # contract 08 qualifies a party with none): it now blocks
+                # like every other qualificação field, generic path below.
                 av.falta(
                     f"qualificacao.{chave}",
                     f"{ROTULO_QUALIFICACAO.get(chave, chave)} — {_nome(p)}",
@@ -713,20 +753,19 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                 av.avisa("PARTE_SEM_EMAIL", f"{_nome(p)} não tem e-mail; o bloco de assinatura sai sem ele.")
             if p.cpf and not cpf_valido(p.cpf):
                 av.bloqueia("CPF_INVALIDO", f"O CPF de {_nome(p)} não confere (dígitos verificadores).")
-            if is_same_as_cpf(p.rg, p.cpf):
-                # [2026-09-22] Warning, not block: the new Carteira de
-                # Identidade Nacional (CIN) uses the CPF number as the
-                # identity number by design — contract 08 (human-typed
-                # reference) qualifies "TAUANE GONÇALVES DIAS ... RG
-                # 448.864.938-66-IIGDR-SP e inscrita no CPF/MF
-                # 448.864.938-66", the same eleven digits in both, correctly.
-                # An operator confirms against the document; the generator
-                # no longer refuses to run.
-                av.avisa(
-                    "RG_IGUAL_CPF",
-                    f"O RG de {_nome(p)} é igual ao CPF — correto apenas para a "
-                    "Carteira de Identidade Nacional (CIN); confira o documento.",
-                )
+            # [Owner revision, 2026-09-23 — supersedes the 2026-09-22
+            # RG_IGUAL_CPF aviso] "Documento de identidade (RG e CPF)" is
+            # ONE checklist item per person, already blocking: `rg`/`cpf`
+            # are both `documento_checklist_service._CAMPOS_QUALIFICACAO_
+            # CONTRATO` entries, so a MISSING one already reaches `av.falta`
+            # via `faltando_qualificacao` above, naming exactly which is
+            # absent — no separate check needed. An RG that happens to read
+            # identical to the CPF is not itself an error: the Carteira de
+            # Identidade Nacional (CIN) uses the CPF number as the identity
+            # number BY DESIGN (contract 08 qualifies "TAUANE GONÇALVES DIAS
+            # ... RG 448.864.938-66-IIGDR-SP e inscrita no CPF/MF
+            # 448.864.938-66", correctly) — so the collision itself needs no
+            # confirmation and is never checked here.
             for valor in (p.cpf, p.rg):
                 norm = _doc_norm(valor)
                 if not norm:
@@ -1159,7 +1198,15 @@ def _certidoes(
             rotulo = frases.rotulo_certidao(tipo, None)
             c = idx.get(tipo)
             if c is None or not c.resultado:
-                av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", p.parte_id)
+                # [Owner directive, 2026-09-23] A vendedor (lado="vendedor" —
+                # every signing seller AND, since they are stored in
+                # `d.vendedores` too, an `antigo_proprietario`) never NEEDS
+                # this CPF/CNPJ set (CND federal, TRF, TRT, TJSP, Serasa,
+                # Cenprot, Fazenda SP): "sellers only need what's already
+                # there." A comprador (permuta) keeps the full requirement —
+                # this is a one-sided relief, not a general relaxation.
+                if p.lado != "vendedor":
+                    av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", p.parte_id)
                 continue
             if c.resultado == "nao_emitida":
                 continue
@@ -1324,16 +1371,14 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
         # `posse_multa_diaria`/`prazo_pendencias` take below.
         if t.cpf and not cpf_valido(t.cpf):
             av.bloqueia("CPF_INVALIDO", f"O CPF da testemunha {i} não confere (dígitos verificadores).")
-        # E-mail is required to SEND for signature (`assinatura_service.
-        # enviar` / D4Sign), never to GENERATE the document — an aviso, not a
-        # faltando, so a witness the office hasn't e-mail'd yet never blocks
-        # `av.pronto` (readiness), only surfaces before the operator tries to
-        # send it.
+        # [Owner directive, 2026-09-23] E-mail used to gate only SENDING for
+        # signature (`assinatura_service.enviar` / D4Sign), never generating
+        # the document — an aviso a witness the office hadn't e-mail'd yet
+        # never blocked on. It now blocks readiness itself, same terms as
+        # nome/rg above, for a digital contract (a física one still never
+        # needs it — no signature-platform clause at all).
         if not t.email and d.modalidade_assinatura != "fisica":
-            av.avisa(
-                "TESTEMUNHA_SEM_EMAIL",
-                f"A testemunha {i} não tem e-mail cadastrado — necessário apenas para o envio de assinatura digital.",
-            )
+            av.falta(f"imobiliaria.testemunha.{i}.email", f"E-mail da testemunha {i}", "imobiliaria")
     # Only the DIGITAL clause names the platform — a física contract
     # (migration 157) has no such clause, so it never needs one.
     if d.modalidade_assinatura != "fisica" and (
@@ -1356,6 +1401,21 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     # [Q11] pendências prazo.
     if prazo_pendencias(d, politica) <= 0:
         av.bloqueia("PRAZO_PENDENCIAS_INVALIDO", "O prazo para apresentar as pendências precisa ser maior que zero.")
+
+
+def pct_intermediarios(d: DadosContrato) -> Decimal:
+    """[§6.1 #5] The sum of every percentual-type intermediário's cut.
+
+    A SINGLE function on purpose — [owner directive, 2026-09-23] a parallel
+    slice adds "parceiro sem CRECI" favorecidos that must count in this same
+    sum, and folding that in here (once it exists) is the one place both
+    `_intermediacao`'s readiness check and anything else that needs the
+    total stay in agreement, instead of a second ad-hoc sum growing beside
+    this one."""
+    return sum(
+        (i.valor for i in d.intermediarios if i.tipo == "percentual" and i.valor is not None),
+        Decimal("0"),
+    )
 
 
 def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
@@ -1404,19 +1464,42 @@ def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
     if d.pct_comissao is None:
         av.falta("negociacao.pct_comissao", "Percentual de comissão", "negociacao")
     else:
-        pct_total = sum((i.valor for i in d.intermediarios if i.tipo == "percentual" and i.valor is not None), Decimal("0"))
+        pct_total = pct_intermediarios(d)
         if pct_total and pct_total != d.pct_comissao:
-            av.avisa("CORRETAGEM_PERCENTUAL_DIVERGE", "Os percentuais dos intermediários não somam o percentual de comissão.")
+            # [Owner directive, 2026-09-23] A mismatched sum is deal DATA
+            # that disagrees with itself, not an unfilled field — a
+            # bloqueio, same footing as SOMA_PARCELAS_DIFERENTE_DO_PRECO.
+            av.bloqueia(
+                "CORRETAGEM_PERCENTUAL_DIVERGE",
+                f"Os percentuais dos intermediários somam {pct_total}%, mas o "
+                f"percentual de comissão do contrato é {d.pct_comissao}%.",
+            )
 
 
 def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     derivado = modelo_derivado(sw)
     if d.modelo != derivado:
         av.avisa("MODELO_DIVERGENTE", f"O modelo do contrato é '{d.modelo}', mas os dados indicam '{derivado}'.")
-    if d.termos.itens_integrantes is None:
-        av.avisa("ITENS_INTEGRANTES_NAO_INFORMADOS", "Itens integrantes não informados; o parágrafo foi omitido.")
+    # [Owner directive, 2026-09-23] "the paragraph is required, so no
+    # silent omission" — `itens_integrantes` alone cannot tell "nobody
+    # answered" from "confirmed: none" (blank collapses to `None` on write,
+    # Migration 163's header). A human EITHER fills the text OR ticks
+    # `itens_integrantes_ausente_confirmado`; only then does the paragraph's
+    # legitimate omission (spec §1.3 variant 3 — no itens integrantes at
+    # all) stay reachable without leaving the question permanently
+    # unanswered.
+    if d.termos.itens_integrantes is None and not d.termos.itens_integrantes_ausente_confirmado:
+        av.falta(
+            "negociacao.itens_integrantes",
+            "Itens integrantes (relacione-os, ou confirme que não há nenhum)",
+            "negociacao",
+        )
+    # [Owner directive, 2026-09-23] "None → block, and an explicit false is
+    # fine" — same tri-state shape `itens_integrantes_ausente_confirmado`
+    # gives `itens_integrantes` above, except `ad_corpus` was ALREADY a
+    # real bool (no text-collapses-blank ambiguity to solve).
     if d.termos.ad_corpus is None:
-        av.avisa("AD_CORPUS_NAO_INFORMADO", "Venda ad corpus não informada; a expressão foi omitida.")
+        av.falta("negociacao.ad_corpus", "Venda ad corpus (sim ou não)", "negociacao")
     # Stored by 114, with no clause in any sample contract — announced so the
     # operator knows the text they typed is NOT on the instrument.
     for valor, codigo, rotulo in (
@@ -1429,8 +1512,20 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     ):
         if (valor or "").strip():
             av.avisa(codigo, f"{rotulo} foram preenchidas, mas o gerador ainda não tem cláusula para elas; o texto não entra no contrato.")
-    if d.imovel is not None:
-        av.avisa("FORO_PELA_CIDADE", "O foro usa a cidade do imóvel como comarca.")
+    # [Owner revision, 2026-09-23 — supersedes an earlier `foro_comarca`
+    # manual-field draft] NO manual field, NO imóvel-city fallback: the
+    # comarca is read off the SAME matrícula transcription the contract
+    # already quotes, resolved once at load time (`carregador.carregar` ->
+    # `comarca_de_texto`) onto `d.matricula.comarca`. `FORO_PELA_CIDADE`
+    # (an always-on aviso computing it from the imóvel address) is
+    # deleted — an unreadable matrícula now blocks instead of silently
+    # guessing.
+    if d.imovel is not None and not d.matricula.comarca:
+        av.falta(
+            "negociacao.foro_comarca",
+            "Comarca do cartório da matrícula (não encontrada no texto da matrícula)",
+            "matricula",
+        )
 
 
 def avaliar(
@@ -1468,6 +1563,7 @@ __all__ = [
     "avaliar",
     "certidoes_imovel",
     "classificar_grupo_pj",
+    "comarca_de_texto",
     "corretagem_marcos",
     "derivar_switches",
     "exige_antigo_proprietario",
@@ -1479,6 +1575,7 @@ __all__ = [
     "numero_da_parcela",
     "parcelas_antes_de",
     "parcelas_ordenadas",
+    "pct_intermediarios",
     "pessoas_certificadas",
     "prazo_pendencias",
     "tipos_exigidos",

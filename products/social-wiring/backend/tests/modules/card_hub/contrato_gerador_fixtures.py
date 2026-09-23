@@ -278,7 +278,16 @@ def base_v1() -> DadosContrato:
             ),
             ultima_transferencia_em=date(2020, 1, 10),
         ),
-        matricula=Matricula(codigo="EX001", texto=MATRICULA_TEXTO, num_atos=2),
+        matricula=Matricula(
+            codigo="EX001", texto=MATRICULA_TEXTO, num_atos=2,
+            # [Owner directive, 2026-09-23] Resolved (in real carregamento)
+            # from the matrícula's own text — the fixture supplies the
+            # RESULT directly rather than embedding the phrase into
+            # `MATRICULA_TEXTO`, which byte-for-byte contract-quote
+            # assertions elsewhere key on. `comarca_de_texto` itself is
+            # tested directly (see TestComarcaDaMatricula).
+            comarca="Cidade Exemplo/SP",
+        ),
         valor_negociado=Decimal("500000.00"),
         pct_comissao=Decimal("6"),
         parcelas=[
@@ -313,8 +322,16 @@ def base_v1() -> DadosContrato:
             plataforma_assinatura_nome="Plataforma Exemplo",
             plataforma_assinatura_url="https://assinatura.exemplo.test",
         ),
-        testemunhas=[Testemunha(nome="Testemunha Um", rg="33.333.333-3", cpf=cpf_sintetico("321654987")),
-                     Testemunha(nome="Testemunha Dois", rg="44.444.444-4", cpf=cpf_sintetico("456789123"))],
+        # [Owner directive, 2026-09-23] `email` now blocks readiness (see
+        # `derivacao._imobiliaria`), so the base fixture must carry one for
+        # every variant to stay `pronto` by default; the dedicated
+        # `test_a_witness_with_no_email_blocks` clears it explicitly.
+        testemunhas=[
+            Testemunha(nome="Testemunha Um", rg="33.333.333-3", cpf=cpf_sintetico("321654987"),
+                       email="testemunha.um@exemplo.test"),
+            Testemunha(nome="Testemunha Dois", rg="44.444.444-4", cpf=cpf_sintetico("456789123"),
+                       email="testemunha.dois@exemplo.test"),
+        ],
         termos=_termos_base(),
     )
 
@@ -354,7 +371,13 @@ def variante(n: int) -> DadosContrato:
         d = replace(d, financiamento=Financiamento(True, "aprovado", True))
         return _saldo_devedor(d, "interveniente_quitante")
     if n == 3:
-        return replace(d, termos=replace(d.termos, itens_integrantes=None, ad_corpus=True))
+        return replace(
+            d,
+            termos=replace(
+                d.termos, itens_integrantes=None,
+                itens_integrantes_ausente_confirmado=True, ad_corpus=True,
+            ),
+        )
     if n == 4:
         parcelas = [
             parcela("p1", "sinal", "100000.00", 1, evento="no ato da assinatura do presente instrumento",
@@ -375,13 +398,15 @@ def variante(n: int) -> DadosContrato:
                     favorecido_id="fav-v", confissao_divida=True),
         ]
         d = replace(d, parcelas=parcelas, intermediarios=[], valor_negociado=Decimal("550000.00"),
-                    termos=replace(d.termos, confissao_juros_am=Decimal("1"), itens_integrantes=None))
+                    termos=replace(d.termos, confissao_juros_am=Decimal("1"), itens_integrantes=None,
+                                   itens_integrantes_ausente_confirmado=True))
         d = _saldo_devedor(_permuta(d, "150000.00", ordem=5), "compradores_prazo", onus_prazo_dias=30)
         return d
     if n == 6:
         parcelas = [d.parcelas[0], d.parcelas[1], replace(d.parcelas[2], valor=Decimal("300000.00"))]
         d = replace(d, parcelas=parcelas, intermediarios=[],
-                    termos=replace(d.termos, ad_corpus=True, itens_integrantes=None))
+                    termos=replace(d.termos, ad_corpus=True, itens_integrantes=None,
+                                   itens_integrantes_ausente_confirmado=True))
         return _permuta(d, "100000.00", ordem=4)
     raise ValueError(n)
 

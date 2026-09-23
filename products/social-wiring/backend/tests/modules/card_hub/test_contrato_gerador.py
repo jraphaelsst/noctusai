@@ -320,6 +320,11 @@ class TestGate:
             "negociacao.posse_prazo_dias",
             "negociacao.posse_marco",
             "negociacao.corretagem_contratantes",
+            # [Owner directive, 2026-09-23] Both now block on "unanswered"
+            # (`Termos()`'s bare defaults), same footing as every other
+            # termos clause above.
+            "negociacao.itens_integrantes",
+            "negociacao.ad_corpus",
         }
         assert all(f["onde"] in {"partes", "certidoes", "imovel", "matricula", "negociacao",
                                  "financiamento", "imobiliaria", "contrato"} for f in av.faltando)
@@ -406,34 +411,44 @@ class TestGate:
         _d, _pol, _sw, av = _avaliar(5, d)
         assert "MATRICULA_COM_MARCACAO_BRUTA" in _codigos(av.bloqueios)
 
-    def test_rg_igual_ao_cpf_warns_but_does_not_block(self):
-        """🔴 [2026-09-22] Warning, not block — the Carteira de Identidade
-        Nacional (CIN) legitimately uses the CPF number as the identity
-        number, so this must never stop the contract from generating."""
+    def test_rg_igual_ao_cpf_is_never_flagged_here(self):
+        """🔴 [Owner revision, 2026-09-23 — supersedes the 2026-09-22
+        RG_IGUAL_CPF aviso] The Carteira de Identidade Nacional (CIN)
+        legitimately uses the CPF number as the identity number by design
+        (contract 08 qualifies "TAUANE GONÇALVES DIAS ... RG
+        448.864.938-66-IIGDR-SP e inscrita no CPF/MF 448.864.938-66"), so
+        the collision is not checked at all — "Documento de identidade (RG
+        e CPF)" is satisfied by the pre-existing `rg`/`cpf` qualificação
+        checklist alone (both are present here, just numerically equal)."""
         d = fx.variante(1)
         v = replace(d.vendedores[0], rg=d.vendedores[0].cpf)
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        assert "RG_IGUAL_CPF" in _codigos(av.avisos)
-        assert "RG_IGUAL_CPF" not in _codigos(av.bloqueios)
+        assert "RG_IGUAL_CPF" not in _codigos(av.avisos) + _codigos(av.bloqueios)
+        assert not any(f["campo"].startswith("qualificacao.rg") for f in av.faltando)
         assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_missing_profissao_warns_but_does_not_block(self):
-        """🔴 [2026-09-22] `profissao` is not a hard gate: contract 08 (the
-        office's own reference) qualifies REGINA MARIA PELOSI with no
-        profession at all."""
+    def test_missing_profissao_blocks(self):
+        """🔴 [Owner directive, 2026-09-23 — supersedes the 2026-09-22
+        PARTE_SEM_PROFISSAO aviso] "all those data are mandatory for the
+        deal contract": a missing profissão now blocks like every other
+        qualificação field, generic path."""
         d = fx.variante(1)
         v = replace(d.vendedores[0], faltando_qualificacao=["profissao"])
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        assert "PARTE_SEM_PROFISSAO" in _codigos(av.avisos)
-        assert not any(f["campo"] == "qualificacao.profissao" for f in av.faltando)
-        assert av.pronto, (av.faltando, av.bloqueios)
+        assert "PARTE_SEM_PROFISSAO" not in _codigos(av.avisos)
+        assert any(f["campo"] == "qualificacao.profissao" for f in av.faltando)
+        assert not av.pronto
 
     def test_a_missing_certidao_is_named_per_parte(self):
-        d = fx.variante(1)
-        v = replace(d.vendedores[0], certidoes=[c for c in d.vendedores[0].certidoes if c.tipo != "serasa"])
-        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        assert [(f["campo"], f["parte_id"], f["onde"]) for f in av.faltando] == [
-            ("certidao.serasa", "parte-v1", "certidoes")
+        """Buyer-side (a permuta signatory) certidões stay fully required —
+        unlike sellers, whose set is no longer required at all (see
+        `TestSellerCertidoesNaoExigidas`)."""
+        d = fx.variante(5)
+        original = d.compradores[0]
+        c = replace(original, certidoes=[cc for cc in original.certidoes if cc.tipo != "serasa"])
+        _d, _pol, _sw, av = _avaliar(5, replace(d, compradores=[c]))
+        assert ("certidao.serasa", original.parte_id, "certidoes") in [
+            (f["campo"], f["parte_id"], f["onde"]) for f in av.faltando
         ]
 
     def test_a_manually_registered_certidao_closes_the_gap_even_while_status_stays_pendente(self):
@@ -444,8 +459,12 @@ class TestGate:
         _certidao` reads only the structured fields (`numero`/`emitida_em`/
         `validade_ate`/`resultado`), never `status` and never `resultado_
         origem`, so a resultado a human filled by hand satisfies the gate
-        exactly like an automated `status='sucesso'` one would."""
-        d = fx.variante(1)
+        exactly like an automated `status='sucesso'` one would. Uses the
+        buyer side (variante 5's comprador) — a seller's certidões are no
+        longer required at all, so this mechanism would be untestable
+        there (see `TestSellerCertidoesNaoExigidas`)."""
+        d = fx.variante(5)
+        original = d.compradores[0]
         registrado_a_mao = {
             "tipo": "serasa",
             "status": "pendente",  # never advanced — no automation ran for it
@@ -455,14 +474,14 @@ class TestGate:
             "emitida_em": "2026-09-01",
             "validade_ate": "2026-12-01",
         }
-        v = replace(
-            d.vendedores[0],
+        c = replace(
+            original,
             certidoes=[
-                c for c in d.vendedores[0].certidoes if c.tipo != "serasa"
+                cc for cc in original.certidoes if cc.tipo != "serasa"
             ] + [carregador._certidao(registrado_a_mao)],
         )
-        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        assert ("certidao.serasa", "parte-v1", "certidoes") not in [
+        _d, _pol, _sw, av = _avaliar(5, replace(d, compradores=[c]))
+        assert ("certidao.serasa", original.parte_id, "certidoes") not in [
             (f["campo"], f["parte_id"], f["onde"]) for f in av.faltando
         ]
 
@@ -584,9 +603,13 @@ class TestQ9CertidoesDeEmpresa:
         return replace(d, vendedores=[replace(v, certidoes=v.certidoes + pj)])
 
     @pytest.mark.parametrize("situacao", ["ativa", "inapta"])
-    def test_an_active_or_inapta_company_is_required_and_rendered(self, situacao):
+    def test_an_active_or_inapta_company_is_rendered_and_not_required(self, situacao):
+        """The PJ group's own EXIGIDO classification is unaffected — only
+        the CND/TRF/.../Fazenda SP SET inside it is no longer required for
+        a seller's company (same relief `conferir()` gives the seller's
+        own CPF certidões)."""
         _d, _pol, _sw, av = _avaliar(1, self._com_empresa(situacao, sem_tipo="cnd_federal"))
-        assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
+        assert av.pronto, (av.faltando, av.bloqueios)
         texto = _texto(1, self._com_empresa(situacao))
         assert "- Em nome de EMPRESA AMOSTRA LTDA\n" in texto + "\n"
         assert "Baixada" not in texto
@@ -604,9 +627,9 @@ class TestQ9CertidoesDeEmpresa:
         assert av.pronto, (av.faltando, av.bloqueios)
         assert "EMPRESA AMOSTRA" not in _texto(1, d)
 
-    def test_baixada_less_than_five_years_before_signing_is_required_with_the_suffix(self):
+    def test_baixada_less_than_five_years_before_signing_is_rendered_with_the_suffix_and_not_required(self):
         _d, _pol, _sw, av = _avaliar(1, self._com_empresa("baixada", date(2021, 9, 15), sem_tipo="cnd_federal"))
-        assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
+        assert av.pronto, (av.faltando, av.bloqueios)
         assert "- Em nome de EMPRESA AMOSTRA LTDA - Baixada" in _texto(1, self._com_empresa("baixada", date(2021, 9, 15)))
 
     def test_unknown_situacao_is_missing(self):
@@ -616,6 +639,62 @@ class TestQ9CertidoesDeEmpresa:
     def test_baixada_without_its_date_is_missing(self):
         _d, _pol, _sw, av = _avaliar(1, self._com_empresa("baixada"))
         assert _campos(av) == [(f"certidoes.pj.{CNPJ}.data_situacao", "parte-v1")]
+
+
+class TestSellerCertidoesNaoExigidas:
+    """[Owner directive, 2026-09-23] "Sellers don't need certidões. They
+    only need what's already there." The CPF/CNPJ certidão SET (CND
+    federal, TRF 1ª/2ª, TRT ×3, TJSP ×2, Serasa, Cenprot, Fazenda SP) is no
+    longer required for a vendedor (`derivacao.conferir`'s `p.lado`
+    guard) — a buyer-side (permuta) signatory keeps the full requirement
+    (`TestGate.test_a_missing_certidao_is_named_per_parte`)."""
+
+    def test_zero_seller_certidoes_is_pronto_when_all_data_present(self):
+        v = replace(fx.vendedor(), certidoes=[])
+        _d, _pol, _sw, av = _avaliar(1, replace(fx.variante(1), vendedores=[v]))
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_zero_seller_certidoes_renders_without_the_section_and_no_keyerror(self):
+        """The live 500: `idx[t]` in `contexto.py` KeyErrors the moment a
+        seller's certidão type is missing, once missing no longer blocks."""
+        v = replace(fx.vendedor(), certidoes=[])
+        texto = _texto(1, replace(fx.variante(1), vendedores=[v]))
+        assert "Em nome de FULANO DE TAL" not in texto
+
+    def test_a_seller_certidao_that_does_exist_still_renders(self):
+        """"Certidões present on the card still render" — a seller with
+        SOME (not all) certidões on file gets exactly those printed, and
+        NOTHING else in the group — `idx.get(t)` skips every absent type
+        (`contexto.py`'s `if t in idx`), never a fabricated line for a
+        type nobody ever consulted."""
+        v = fx.vendedor()
+        so_serasa = [c for c in v.certidoes if c.tipo == "serasa"]
+        v = replace(v, certidoes=so_serasa)
+        d = replace(fx.variante(1), vendedores=[v])
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        paragrafos = _render(1, d).paragrafos
+        assert "1 - Em nome de FULANO DE TAL" in paragrafos
+        assert any(p.startswith("1.1 – ") and "Serasa" in p for p in paragrafos)
+        # A single item is the loop's LAST (and only) one — no "1.2 – ...".
+        assert not any(p.startswith("1.2 – ") for p in paragrafos)
+
+    def test_a_present_seller_certidao_that_is_expired_still_blocks(self):
+        """The relief is scoped to MISSING types — a certidão a seller DOES
+        have is validated exactly as strictly as before (§Q10)."""
+        v = fx.vendedor()
+        certs = [replace(c, validade_ate=fx.dias_antes(1)) if c.tipo == "cnd_federal" else c for c in v.certidoes]
+        _d, _pol, _sw, av = _avaliar(1, replace(fx.variante(1), vendedores=[replace(v, certidoes=certs)]))
+        assert "CERTIDAO_VENCIDA" in _codigos(av.bloqueios)
+
+    def test_a_seller_company_with_no_pj_certidoes_at_all_is_not_required(self):
+        """The same relief extends to CNPJ (a seller's own company) — the
+        owner's directive names "CPF/CNPJ" explicitly."""
+        d = fx.variante(1)
+        v = d.vendedores[0]
+        pj = [c for c in fx.certidoes_pj(CNPJ, "Empresa Amostra Ltda", "ativa") if c.tipo != "cnd_federal"]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[replace(v, certidoes=v.certidoes + pj)]))
+        assert av.pronto, (av.faltando, av.bloqueios)
 
 
 class TestQ9AntigoProprietario:
@@ -664,11 +743,15 @@ class TestQ9AntigoProprietario:
         assert "ANTIGO_PROPRIETARIO_DISPENSADO" in _codigos(av.avisos)
         assert "ANTIGA DONA" not in _texto(1, d)
 
-    def test_the_previous_owner_needs_full_certidoes(self):
+    def test_the_previous_owner_is_not_required_to_have_certidoes_either(self):
+        """An antigo proprietário is stored on the SELLER side
+        (`lado="vendedor"`, `dados.antigos_proprietarios`) — the same
+        certidão relief `conferir()` gives every other seller applies to
+        them too."""
         antiga = fx.antiga_proprietaria()
         antiga = replace(antiga, certidoes=[c for c in antiga.certidoes if c.tipo != "serasa"])
         _d, _pol, _sw, av = _avaliar(1, self._transferido_em(date(2021, 9, 15), antiga))
-        assert _campos(av) == [("certidao.serasa", "parte-a1")]
+        assert av.pronto, (av.faltando, av.bloqueios)
 
     def test_the_previous_owner_presents_certidoes_with_agreement(self):
         texto = _texto(1, self._transferido_em(date(2021, 9, 15), fx.antiga_proprietaria()))
@@ -935,27 +1018,36 @@ class TestQ14Assinaturas:
         _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, cpf="111.111.111-11"), t2]))
         assert any(b["codigo"] == "CPF_INVALIDO" for b in av.bloqueios)
 
-    def test_a_witness_with_no_email_is_an_aviso_not_a_blocker(self):
-        """A witness with no e-mail can still generate the document (it is
-        needed only to SEND for digital signature) — `av.pronto` must not
-        depend on it."""
+    def test_a_witness_with_no_email_blocks(self):
+        """🔴 [Owner directive, 2026-09-23 — supersedes the 2026-09-22
+        TESTEMUNHA_SEM_EMAIL aviso] E-mail used to gate only SENDING for
+        digital signature; it now blocks readiness itself, same footing as
+        nome/RG."""
         d = fx.variante(1)
         t1, t2 = d.testemunhas
         _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, email=None), t2]))
-        assert av.pronto, (av.faltando, av.bloqueios)
-        assert any(a["codigo"] == "TESTEMUNHA_SEM_EMAIL" for a in av.avisos)
+        assert not av.pronto
+        assert ("imobiliaria.testemunha.1.email", None) in _campos(av)
 
     def test_witnesses_print_rg_and_email_beside_the_name_never_cpf(self):
         """Contract 08's exact witness-block shape: NOME + E-MAIL (when
-        present) + RG. Signatories (compradores/vendedores) are unaffected."""
+        present) + RG. Signatories (compradores/vendedores) are unaffected.
+
+        [Owner directive, 2026-09-23] e-mail now BLOCKS a digital
+        contract's readiness (`derivacao._imobiliaria`) when absent — this
+        test is about the WORDING only, so it renders directly
+        (`documento.renderizar`, bypassing `_render`'s `pronto` gate)
+        rather than switching to física, which changes the witness block's
+        shape entirely (no e-mail line at all, ever — migration 157)."""
         d = fx.variante(1)
         t1, t2 = d.testemunhas
-        d = replace(d, testemunhas=[replace(t1, email="testemunha.um@exemplo.test"), t2])
+        d = replace(d, testemunhas=[replace(t1, email="testemunha.um@exemplo.test"), replace(t2, email=None)])
+        sw = derivacao.derivar_switches(d, fx.POLITICA_PADRAO)
 
-        r = _render(1, d)
+        r = documento.renderizar(get_docx_render_adapter(real=True), d, sw, fx.POLITICA_PADRAO, fx.ASSINATURA)
         assert "TESTEMUNHA UM    testemunha.um@exemplo.test" in r.paragrafos
         assert "RG 33.333.333-3" in r.paragrafos
-        # t2 has no e-mail set in the fixture — bare name, no dangling blank.
+        # t2 has no e-mail — bare name, no dangling blank.
         assert "TESTEMUNHA DOIS" in r.paragrafos
         assert "RG 44.444.444-4" in r.paragrafos
         assert not any(p.startswith("CPF ") for p in r.paragrafos)
@@ -1177,3 +1269,62 @@ class TestTextoPessoaSemProfissao:
         p = self._pessoa(profissao="empresária")
         texto = frases.texto_pessoa(p, em_nucleo=False)
         assert "divorciada, empresária, portadora" in texto
+
+
+class TestComarcaDaMatricula:
+    """[Owner directive, 2026-09-23] `derivacao.comarca_de_texto` — the DA
+    ELEIÇÃO DO FORO clause's comarca, read off the matrícula's OWN
+    transcription. NO manual field, NO imóvel-address fallback."""
+
+    def test_matches_municipio_e_comarca_shape(self):
+        texto = "O imóvel está situado nesta cidade, município e comarca de Carapicuíba, Estado de São Paulo."
+        assert derivacao.comarca_de_texto(texto) == "Carapicuíba"
+
+    def test_matches_registro_de_imoveis_shape_with_uf(self):
+        texto = "Registro de imóveis da comarca de Cotia – SP"
+        assert derivacao.comarca_de_texto(texto) == "Cotia/SP"
+
+    def test_does_not_match_a_foro_e_comarca_citation_inside_an_ato(self):
+        """A DIFFERENT instrument's forum, cited inside an averbação — not
+        the property's own registering comarca."""
+        texto = "R.3/12.345 - as partes elegeram o Foro e Comarca de Sorocaba para dirimir eventuais questões."
+        assert derivacao.comarca_de_texto(texto) is None
+
+    def test_does_not_match_a_civil_registry_mention(self):
+        """A person's marriage/birth registry, cited in a qualificação —
+        `registro CIVIL`, never `registro DE IMÓVEIS`."""
+        texto = "conforme certidão do registro civil da comarca de Sorocaba."
+        assert derivacao.comarca_de_texto(texto) is None
+
+    def test_none_and_empty_text_is_none(self):
+        assert derivacao.comarca_de_texto(None) is None
+        assert derivacao.comarca_de_texto("") is None
+
+    def test_no_recognizable_phrase_is_none(self):
+        assert derivacao.comarca_de_texto("MATRÍCULA Nº 12.345 - IMÓVEL: apartamento nº 11.") is None
+
+    def test_an_unresolvable_comarca_blocks_generation(self):
+        d = replace(fx.variante(1), matricula=replace(fx.variante(1).matricula, comarca=None))
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert ("negociacao.foro_comarca", None) in _campos(av)
+
+    def test_a_resolved_comarca_prints_in_the_foro_clause(self):
+        texto = _texto(1)
+        assert "elegem o foro da Comarca de Cidade Exemplo/SP" in texto
+
+
+class TestCorretagemPercentualDivergeBlocks:
+    def test_a_mismatched_split_blocks(self):
+        """[Owner directive, 2026-09-23] A mismatched sum is deal DATA that
+        disagrees with itself — a bloqueio, same footing as
+        SOMA_PARCELAS_DIFERENTE_DO_PRECO, never a silent aviso."""
+        d = fx.variante(1)
+        it = d.intermediarios[0]
+        d = replace(d, intermediarios=[replace(it, valor=Decimal("4"))])
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert "CORRETAGEM_PERCENTUAL_DIVERGE" in _codigos(av.bloqueios)
+        assert not av.pronto
+
+    def test_a_matching_split_does_not_block(self):
+        _d, _pol, _sw, av = _avaliar(1)
+        assert "CORRETAGEM_PERCENTUAL_DIVERGE" not in _codigos(av.bloqueios)

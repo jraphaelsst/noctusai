@@ -43,6 +43,19 @@ from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 _T0 = "2026-01-01T00:00:00+00:00"
 
+#: [Owner directive, 2026-09-23] `derivacao.comarca_de_texto` reads the
+#: RAW extraction text (`matricula_extracoes.texto_extraido`), never the
+#: selected-acts quote — appended after `fx.MATRICULA_TEXTO` (never
+#: inside it: `fx.MATRICULA_TEXTO`'s own exact shape is pinned byte-for-
+#: byte elsewhere, `test_contrato_gerador.py`'s
+#: `test_descricao_imovel_block_narrows_the_imovel_clause_when_present`).
+#: `_imovel()`'s `texto_len` stays `len(fx.MATRICULA_TEXTO)` (the OLD,
+#: shorter length) so the confirmed título aquisitivo quote keeps citing
+#: only the R.1 sentence, never this suffix.
+_MATRICULA_TEXTO_COM_COMARCA = (
+    fx.MATRICULA_TEXTO + " Situado nesta cidade, município e comarca de Cidade Exemplo."
+)
+
 #: Every table the generator's loader reads. Seeded empty by `_seed_base` so a
 #: sparse card exercises "nothing filled in" rather than an unknown table.
 _TABELAS = (
@@ -248,6 +261,10 @@ def _termos_row(ids: dict, **over) -> dict:
         "permuta_posse_prazo_dias": None, "permuta_posse_marco": None,
         "permuta_posse_marco_parcela_id": None, "permuta_obrigacoes_entrega": None,
         "itens_integrantes": "armários planejados da cozinha e dos dormitórios.",
+        # [Owner directive, 2026-09-23] `False` (unanswered) by default;
+        # every variant below that nulls `itens_integrantes` also confirms
+        # this, same tri-state shape `ad_corpus` already uses.
+        "itens_integrantes_ausente_confirmado": False,
         "ad_corpus": False, "obrigacoes_vendedor": None,
         "onus_quitacao": None, "onus_prazo_dias": None,
         "confissao_juros_am": None, "confissao_garantia": None,
@@ -304,7 +321,7 @@ def _seed_completo(scoped, n: int = 1) -> dict:
         "created_at": _T0, "updated_at": None,
     }])
 
-    objeto = _matricula(scoped, ids, codigo="EX001", texto=fx.MATRICULA_TEXTO, corte_em="R.1/12.345")
+    objeto = _matricula(scoped, ids, codigo="EX001", texto=_MATRICULA_TEXTO_COM_COMARCA, corte_em="R.1/12.345")
     onus = "alienacao_fiduciaria" if n in (2, 4, 5) else "livre"
     credor = "Banco Credor Exemplo S.A." if onus != "livre" else None
     _imovel(
@@ -354,7 +371,8 @@ def _seed_completo(scoped, n: int = 1) -> dict:
         ]
         parcelas[2]["vencimento"] = "2027-01-10"
         parcelas[3]["vencimento"] = "2027-02-10"
-        termos_extra = {"itens_integrantes": None, "confissao_juros_am": "1",
+        termos_extra = {"itens_integrantes": None, "itens_integrantes_ausente_confirmado": True,
+                        "confissao_juros_am": "1",
                         "onus_quitacao": "compradores_prazo", "onus_prazo_dias": 30}
     elif n == 6:
         parcelas = [
@@ -365,7 +383,7 @@ def _seed_completo(scoped, n: int = 1) -> dict:
             _parcela_row(ids, "p3", "financiamento", "300000.00", 3, evento="na liberação do financiamento"),
             _parcela_row(ids, "p-permuta", "permuta", "100000.00", 4),
         ]
-        termos_extra = {"itens_integrantes": None, "ad_corpus": True}
+        termos_extra = {"itens_integrantes": None, "itens_integrantes_ausente_confirmado": True, "ad_corpus": True}
     else:
         parcelas = [
             _parcela_row(ids, "p1", "sinal", "50000.00", 1, evento="no ato da assinatura do presente instrumento",
@@ -378,7 +396,7 @@ def _seed_completo(scoped, n: int = 1) -> dict:
         if n == 2:
             termos_extra = {"onus_quitacao": "interveniente_quitante"}
         elif n == 3:
-            termos_extra = {"itens_integrantes": None, "ad_corpus": True}
+            termos_extra = {"itens_integrantes": None, "itens_integrantes_ausente_confirmado": True, "ad_corpus": True}
     scoped.set_table_data("atendimento_negociacao_parcelas", parcelas)
 
     # ── permuta: the parcela's ativo, its imóvel, and its own matrícula quote ──
@@ -451,10 +469,14 @@ def _seed_completo(scoped, n: int = 1) -> dict:
         "updated_at": _T0,
     }])
     scoped.set_table_data("org_testemunhas", [
+        # [Owner directive, 2026-09-23] e-mail now blocks readiness (see
+        # `derivacao._imobiliaria`) for a digital contract.
         {"id": str(uuid4()), "org_id": ORG_ID, "nome": nome, "cpf": fx.cpf_sintetico(base), "rg": rg,
-         "created_at": _T0, "updated_at": None}
-        for nome, rg, base in (("Testemunha Um", "33.333.333-3", "321654987"),
-                               ("Testemunha Dois", "44.444.444-4", "456789123"))
+         "email": email, "created_at": _T0, "updated_at": None}
+        for nome, rg, base, email in (
+            ("Testemunha Um", "33.333.333-3", "321654987", "testemunha.um@exemplo.test"),
+            ("Testemunha Dois", "44.444.444-4", "456789123", "testemunha.dois@exemplo.test"),
+        )
     ])
     ids.update(fav_org=fav_org, fav_vendedor=fav_v, intermediario=int_id,
                vendedor=vendedor_id, parte_vendedor=parte_id)
@@ -575,7 +597,13 @@ class TestGerar:
         body = r.json()
         assert body["versao"]["origem"] == "gerado"
         assert body["versao"]["numero"] == 1
-        assert isinstance(body["avisos"], list) and body["avisos"]
+        # [Owner directive, 2026-09-23] Several formerly-guaranteed avisos on
+        # this exact fixture (missing profissão, RG==CPF, witness e-mail,
+        # itens integrantes, ad corpus, the imóvel-city foro) all became
+        # blocking `faltando` or were removed outright — a fully-answered
+        # card can legitimately carry ZERO avisos now. This only asserts the
+        # response shape, not that this particular card produces one.
+        assert isinstance(body["avisos"], list)
 
         versoes = _rows(scoped, "atendimento_contrato_versoes")
         assert len(versoes) == 1 and versoes[0]["origem"] == "gerado"
@@ -756,12 +784,19 @@ class TestIniciar:
         assert geracao["pronto"] is False and geracao["faltando"]
 
     def test_on_a_complete_card_only_the_per_contract_selection_is_missing(self, client, scoped, fake_storage):
-        """The matrícula acts are chosen PER CONTRACT — a new contract has none
-        yet, and that is the one thing the readiness report names."""
+        """The matrícula acts are chosen PER CONTRACT — a new contract has
+        none yet. [Owner directive, 2026-09-23] the comarca derivation
+        (`derivacao.comarca_de_texto`) also has nothing to read yet: this
+        seed's matrícula never went through the imóvel-page upload flow
+        `estrutura_service._extracao_padrao_do_imovel` resolves against, so
+        a brand-new contract's `obter_selecao` finds no default extraction
+        either — the readiness report names BOTH gaps."""
         ids = _seed_completo(scoped)
         body = self._iniciar(client, ids).json()
         assert body["contrato"]["modelo"] == "compra_venda"
-        assert {f["campo"] for f in body["geracao"]["faltando"]} == {"matricula.atos"}
+        assert {f["campo"] for f in body["geracao"]["faltando"]} == {
+            "matricula.atos", "negociacao.foro_comarca",
+        }
 
     def test_a_card_with_no_open_atendimento_is_refused_and_writes_nothing(self, client, scoped, fake_storage):
         """Same `cliente_id` resolution every contratos route inherits: no

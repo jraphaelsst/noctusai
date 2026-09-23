@@ -295,6 +295,15 @@ class Matricula:
     #: `formatacao` above and logs that it did.
     descricao_imovel_texto: Optional[str] = None
     descricao_imovel_formatacao: tuple[FormatRange, ...] = ()
+    #: [Owner directive, 2026-09-23] The DA ELEIÇÃO DO FORO clause's
+    #: comarca, read off THIS matrícula's own FULL transcription
+    #: (`derivacao.comarca_de_texto`, run once at load time over the
+    #: resolved extraction's raw text — independent of which acts are
+    #: selected, same "independent of selection" footing as
+    #: `descricao_imovel_texto` above) — never a manual field, never the
+    #: imóvel's registration address. `None` blocks
+    #: (`derivacao._contrato`, `negociacao.foro_comarca`).
+    comarca: Optional[str] = None
 
 
 @dataclass
@@ -408,6 +417,13 @@ class Termos:
     #: Stored by 114; no sample contract has a clause for it (see module doc).
     permuta_obrigacoes_entrega: Optional[str] = None
     itens_integrantes: Optional[str] = None
+    #: [Migration 163 / owner directive, 2026-09-23] `itens_integrantes`
+    #: alone cannot tell "nobody answered" from "confirmed: none" (blank
+    #: text collapses to `None` on write, like every other termos text
+    #: field). `True` = a human confirmed there are none — same tri-state
+    #: shape `ad_corpus` already uses. `False` (default) blocks
+    #: (`derivacao._contrato`, `negociacao.itens_integrantes`).
+    itens_integrantes_ausente_confirmado: bool = False
     ad_corpus: Optional[bool] = None
     #: Stored by 114; no sample contract has a clause for it (see module doc).
     obrigacoes_vendedor: Optional[str] = None

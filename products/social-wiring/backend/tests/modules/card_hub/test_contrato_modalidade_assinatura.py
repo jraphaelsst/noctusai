@@ -41,23 +41,26 @@ from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 LINHA = "______________________________"
 
-#: Captured from `origin/dev` @ 3e6cf4d52 (pre-157; re-pinned after b24c85f00's
-#: legitimate contract-text fix — verified identical on pure dev vs this slice), variants 1..6 of
-#: `contrato_gerador_fixtures`: sha256(word/document.xml),
+#: [Owner directive, 2026-09-23] Re-pinned: the base fixture now carries
+#: witness e-mails (a witness's e-mail moved from aviso to a hard
+#: `faltando`) and a matrícula-derived `Matricula.comarca` (the DA
+#: ELEIÇÃO DO FORO clause no longer silently computes the comarca from
+#: the imóvel address) — both real, intended content changes, not drift.
+#: Variants 1..6 of `contrato_gerador_fixtures`: sha256(word/document.xml),
 #: sha256(PDF text via PyMuPDF).
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
-    1: ("3c3c1be710267a11d4b61de2e0729107611127a89fe914e2569331c62c0000f2",
-        "1a64a509a2b26ec28147654c76b967a70b57af774a03dd8227724eee8422d010"),
-    2: ("d10e2e45d2522d4ae12a6dd993c596b0224a9f0df6f7a3d153e3452ce25a8fc6",
-        "d39fa90f2c944c02fafbae62e8272d21e3ec7e7e1959d2f9bf0ba88b529f844d"),
-    3: ("9a5b724d3139db0f227ec2f49e1015abd89872f104a203a95d95588a42455b91",
-        "f2354649f3cb482ad0a2a6874677ce347a789cb1fa191a8945d3c2813b88751a"),
-    4: ("453be04c577479bb48462c1c4a3fce22d97613976b4a18a49982e03c9b2422fd",
-        "666137b23ba08e0cec89dcd1437b394c87e7f9240c5d7e7e5e587d9d85eacbb0"),
-    5: ("98fb4479730bb5f3d21df6b70bdf8860a0666e9a69b5ef7ea5995c9050e03736",
-        "a180c4a46c9a344ad51cf6e5f6d4319543a9ccf84035be5e386f10a277c4bd1a"),
-    6: ("8ff2a13c55d14ff571cf5a08a5b241ec987a574db25e1393ccdef051ef0a9280",
-        "724a92e4d51894d9e10ae95bac085550e8d1ed4dbd6b12df60e2c7e8edae0c44"),
+    1: ("a8b83886b035ad96ce221f444b65d6ef59363e506ed30b1c3c5b0aad0c18a9ea",
+        "e1a2c89cb443fdc768c313805c2d882067d5adfef9f6f531f0aea336d19c7103"),
+    2: ("0895a928325c856a8daa4acaf35fcf60b7dadc5772e4bdf196796749d3635596",
+        "79ee973a69ff4a683aef319ddac3081306dfe19c7010c939ef3dfd9b8bb55d4b"),
+    3: ("c8d351dbcda9e5ada05ac4de76dec42c1da36403044637e0d6782ab55e4bba6b",
+        "d7ed933fe5a1fa24cc38b3fb8836147bc5e3b2549669760b3fd64e66b78978e7"),
+    4: ("654d76006fe6779078a53848aa6832f56c599e7f37beb33cd8a0c3b7ff0f67f8",
+        "d2009718bb6cffe8cac0311bc040e0470d4654b78b6f24c8c5079b45e25dad26"),
+    5: ("fc06fae5f648559dc525b3eba639774e8ec9780bd094240adeba689cd16df35e",
+        "a6b1e153d6c1675fe74237a993fc32b594263242566cd73ec6f7c41bc9b9b427"),
+    6: ("1cfd315c7099754f3d7d604df03d47b8991a12397b79eb19e09125f652d38534",
+        "63146523a1ade8e3cbed8a1af76a45c23ee935a0850f434b26eef7eb11a5e136"),
 }
 
 
@@ -199,7 +202,13 @@ class TestFisicaGate:
         assert sw["tem_assinatura_digital"] is False
         assert av_fisica.pronto, (av_fisica.faltando, av_fisica.bloqueios)
 
-    def test_missing_emails_are_not_an_aviso_for_a_fisica_contract(self):
+    def test_missing_emails_are_gated_only_for_a_digital_contract(self):
+        """🔴 [Owner directive, 2026-09-23 — supersedes the 2026-09-22
+        TESTEMUNHA_SEM_EMAIL aviso] A missing witness e-mail now BLOCKS a
+        digital contract (`imobiliaria.testemunha.N.email`, same footing
+        as nome/RG) instead of only warning; the comprador's own missing
+        e-mail (`PARTE_SEM_EMAIL`) is unaffected — still an aviso. Neither
+        gate applies at all to a física contract (migration 157)."""
         d = fx.variante(1)
         t1, t2 = d.testemunhas
         d = replace(
@@ -208,12 +217,14 @@ class TestFisicaGate:
             compradores=[replace(d.compradores[0], email=None)],
         )
         _d, _pol, _sw, av_digital = _avaliar(1, d)
-        codigos_digital = {a["codigo"] for a in av_digital.avisos}
-        assert {"TESTEMUNHA_SEM_EMAIL", "PARTE_SEM_EMAIL"} <= codigos_digital
+        assert {"imobiliaria.testemunha.1.email", "imobiliaria.testemunha.2.email"} <= {
+            f["campo"] for f in av_digital.faltando
+        }
+        assert "PARTE_SEM_EMAIL" in {a["codigo"] for a in av_digital.avisos}
 
         _d, _pol, _sw, av_fisica = _avaliar(1, _fisica(d))
-        codigos_fisica = {a["codigo"] for a in av_fisica.avisos}
-        assert not ({"TESTEMUNHA_SEM_EMAIL", "PARTE_SEM_EMAIL"} & codigos_fisica)
+        assert not any(f["campo"].startswith("imobiliaria.testemunha.") for f in av_fisica.faltando)
+        assert "PARTE_SEM_EMAIL" not in {a["codigo"] for a in av_fisica.avisos}
 
 
 # ─── API ──────────────────────────────────────────────────────────────────
