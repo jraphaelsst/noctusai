@@ -94,5 +94,30 @@ class IgIgSettings(ProductSettings):
     gmail_push_audience: str = ""
     gmail_push_service_account: str = ""
 
+    # ── Fontes de lead + automações (slice E2, roadmap R11) ───────────
+    # WAHA inbound webhook HMAC (hex SHA-256 of the raw body, header
+    # `X-Webhook-Hmac-SHA256`), GLOBAL exactly like social-wiring's
+    # `waha_webhook_hmac_secret` (the owner asked for WAHA "configured like
+    # SW"). Empty ⇒ the per-org TOKEN in the URL is the only gate and every
+    # delivery logs a WARNING — SW's same early-dev affordance.
+    igig_waha_webhook_hmac_secret: str = ""
+    # Meta Lead-Ads delivery signature (`X-Hub-Signature-256`) = the Meta APP
+    # SECRET. Platform FALLBACK only: an org that runs its own Meta app stores
+    # its own (encrypted) in Integrações › Meta Lead Ads. Neither set ⇒ every
+    # delivery is refused (401) — a forged POST would write lead PII.
+    igig_meta_app_secret: str = ""
+
 
 settings = IgIgSettings()
+
+
+def get_settings() -> IgIgSettings:
+    """FastAPI dependency seam for settings.
+
+    Tests override it (`app.dependency_overrides[get_settings]`) instead of
+    patching the singleton. Callables that cannot declare a dependency (the
+    `webhook_endpoint` secret resolvers) read it through
+    `app.routers.lead_webhooks_router._cfg` — the same Class-A seam
+    social-wiring's `_cfg_for_request` uses (KB § PATTERNS/backend/di-test-seam.md).
+    """
+    return settings

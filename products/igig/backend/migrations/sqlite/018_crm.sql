@@ -128,7 +128,10 @@ CREATE TABLE IF NOT EXISTS automacao_execucao (
     org_id        TEXT NOT NULL,
     automacao_id  TEXT NOT NULL REFERENCES automacao (id) ON DELETE CASCADE,
     entidade_id   TEXT NOT NULL,
-    status        TEXT NOT NULL CHECK (status IN ('sucesso', 'erro', 'ignorada')),
+    -- 023: the pipeline_movimentos entry this execution belongs to + the
+    -- `executando` claim state (declared here per the mirror convention).
+    movimento_id  TEXT REFERENCES pipeline_movimentos (id) ON DELETE SET NULL,
+    status        TEXT NOT NULL CHECK (status IN ('executando', 'sucesso', 'erro', 'ignorada')),
     detalhe       TEXT,
     executado_em  TEXT NOT NULL,
     created_at    TEXT NOT NULL

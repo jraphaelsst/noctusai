@@ -1742,6 +1742,7 @@ _IGIG_PIPELINE_MIGRATIONS = ("017_igig_pipeline.sql",)
 _IGIG_CRM_MIGRATIONS = ("018_igig_crm.sql",)
 _IGIG_CARD_HUB_MIGRATIONS = ("019_card_hub.sql",)
 _IGIG_ORCAMENTOS_MIGRATIONS = ("020_igig_orcamentos.sql",)
+_IGIG_AUTOMACOES_MIGRATIONS = ("018_igig_crm.sql", "023_igig_automacoes.sql")
 
 #: Fixture snippets (PL/pgSQL statements), composed per probe.
 _IGIG_STAGE = (
@@ -1765,6 +1766,18 @@ _IGIG_CLIENTE = (
     "RETURNING id INTO v_cliente;"
 )
 
+_IGIG_AUTOMACAO = (
+    f"INSERT INTO {_IGIG_SCHEMA}.automacao (org_id, pipeline, etapa_id, gatilho) "
+    "VALUES (v_org, 'comercial', v_stage, 'entrada_etapa');"
+)
+#: One execution keyed on the probe's single automação + single entry row.
+_IGIG_EXECUCAO_DA_ENTRADA = (
+    f"INSERT INTO {_IGIG_SCHEMA}.automacao_execucao "
+    "(org_id, automacao_id, entidade_id, movimento_id, status) "
+    "SELECT v_org, a.id, v_org, m.id, 'sucesso' "
+    f"FROM {_IGIG_SCHEMA}.automacao a, {_IGIG_SCHEMA}.pipeline_movimentos m "
+    "WHERE a.org_id = v_org AND m.org_id = v_org;"
+)
 
 def _igig_probe(
     *, probe_id: str, guard_name: str, setup_sql: tuple[str, ...], attack_sql: str, what: str,
@@ -2103,6 +2116,36 @@ _IGIG_PROBES: tuple[GuardProbe, ...] = (
         what="a second running timer for one user",
         rationale="Play pauses whatever else was running; two open segments double-count the hours billed as cost.",
         migrations=("006_igig_dominio.sql",),
+    ),
+    # 023 — Automações v1: the execution log's closed status set (incl. the
+    # `executando` claim state) and one execution per (rule, card, entry).
+    _igig_probe(
+        probe_id="igig.automacao_execucao.status_closed_set",
+        guard_name="automacao_execucao_status_check",
+        setup_sql=(_IGIG_STAGE, _IGIG_AUTOMACAO),
+        attack_sql=(
+            f"INSERT INTO {_IGIG_SCHEMA}.automacao_execucao (org_id, automacao_id, entidade_id, status) "
+            f"SELECT v_org, a.id, v_org, 'pendente' FROM {_IGIG_SCHEMA}.automacao a WHERE a.org_id = v_org;"
+        ),
+        what="an automation execution with a status outside the closed set",
+        rationale="The Automações log and the engine's claim both key on the status set; an unknown "
+                  "status is a row neither the log nor a retry can interpret.",
+        migrations=_IGIG_AUTOMACOES_MIGRATIONS,
+    ),
+    _igig_probe(
+        probe_id="igig.automacao_execucao.one_per_entry",
+        guard_name="idx_igig_automacao_execucao_entrada",
+        setup_sql=(
+            _IGIG_STAGE, _IGIG_AUTOMACAO,
+            f"INSERT INTO {_IGIG_SCHEMA}.pipeline_movimentos (org_id, pipeline, entidade_id, para_etapa_id) "
+            "VALUES (v_org, 'comercial', v_org, v_stage);",
+            _IGIG_EXECUCAO_DA_ENTRADA,
+        ),
+        attack_sql=_IGIG_EXECUCAO_DA_ENTRADA,
+        what="a second execution of one automation for the same stage entry",
+        rationale="The engine claims (rule, card, entry) before acting; without the unique index a move "
+                  "racing the SLA sweep (or a retried request) runs the action — an e-mail, a WhatsApp — twice.",
+        migrations=_IGIG_AUTOMACOES_MIGRATIONS,
     ),
     *_igig_card_hub_probes("cliente", (_IGIG_CLIENTE,), "v_cliente"),
     *_igig_card_hub_probes("negocio", (_IGIG_STAGE, _IGIG_LEAD, _IGIG_NEGOCIO), "v_negocio"),
