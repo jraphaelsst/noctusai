@@ -75,6 +75,56 @@ from noctusai_lib.integrations.documents.types import (
 
 logger = logging.getLogger(__name__)
 
+#: The vision prompt for rung 2, when the caller names none. Every field
+#: parser in this module is LABEL-ANCHORED (`_candidatos`'s same-line
+#: `LABEL: value` match) — so the transcription this prompt produces is
+#: parser input, not a human-facing description, and MUST preserve the
+#: document's own labels next to their values rather than paraphrase them
+#: into prose.
+#:
+#: 🔴 WITHOUT THIS, THE CALLER INHERITED A PROMPT BUILT FOR SOMETHING ELSE.
+#: `DocumentTextLadder(document_prompt=None)` used to fall through to
+#: `media`'s generic `_DEFAULT_DOCUMENT_PROMPT` — "classify the type, then
+#: extract and LIST all fields" — tuned for the resolver's OTHER callers
+#: (a contract, a spreadsheet, a scene photo), where a type-first summary is
+#: the right answer. Measured against org 2026-09 production uploads: a
+#: certidão de casamento read through that generic prompt came back as
+#: flowing narrative prose — the document's own `NOME`/`CPF` labels never
+#: survived — and every label-anchored parser found nothing, even though
+#: the SAME fact was present as a substring somewhere in a sentence.
+#: `transcription.OCR_PROMPT` already solved this for the matrícula/
+#: certidão-estrutura pipeline ("extract the exact text... without
+#: corrections"); this is that same verbatim, anti-helpful posture, worded
+#: for a field-dense identity document instead of a full registry page
+#: (which is why it is its own constant rather than a straight re-export —
+#: matrícula's prompt also asks for `**bold**`/`<u>underline</u>` markup
+#: irrelevant here).
+#:
+#: 🔴 A PROMPT CHANGE ALONE DID NOT RECOVER EVERY MEASURED FAILURE — an
+#: official "CNH Digital" (Detran/Serpro) PDF still returned no
+#: `nome`/`cpf` under this prompt at the resolver's default render DPI (the
+#: card's data sits in a small embedded image on a page dominated by a
+#: legal disclaimer). A higher render DPI recovered it in the same
+#: measurement, but `DocumentTextLadder`/`RealMediaResolver` have no
+#: render-DPI passthrough today.
+#: NOC-REMEDIATE[identity-vision-render-dpi]: thread a render-DPI override
+#: through `DocumentTextLadder` -> `get_media_resolver` ->
+#: `RealMediaResolver` -> its `LadderDocumentTranscriber`, capped by page
+#: count (a naive global DPI bump 413'd a 2-page document against the
+#: Anthropic vision endpoint in the same measurement) — see the delivery
+#: note for the numbers. — 2026-09-23
+_IDENTITY_DOCUMENT_PROMPT = (
+    "Transcreva o texto deste documento de identidade (RG, CNH, CIN, "
+    "certidão, comprovante) exatamente como aparece, sem corrigir, "
+    "resumir, parafrasear ou omitir nenhum campo legível. Preserve cada "
+    "rótulo impresso seguido do respectivo valor na MESMA linha, no "
+    "formato 'RÓTULO: valor' — um campo por linha, na ordem em que "
+    "aparecem no documento. Se um valor estiver ilegível, escreva o "
+    "rótulo seguido de '(ilegível)' e continue com o restante. Não "
+    "recuse e não descreva a aparência do documento — apenas transcreva "
+    "o texto."
+)
+
 
 class LadderIdentityExtractor:
     """Text-layer-first, vision-second identity extractor.
@@ -97,7 +147,7 @@ class LadderIdentityExtractor:
         # Every real caller omits it.
         self._ladder = ladder or DocumentTextLadder(
             org_id=org_id,
-            document_prompt=document_prompt,
+            document_prompt=document_prompt or _IDENTITY_DOCUMENT_PROMPT,
             resolver=resolver,
             max_pages=max_pages,
             provider=provider,

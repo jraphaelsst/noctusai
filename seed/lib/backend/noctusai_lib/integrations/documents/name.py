@@ -72,6 +72,18 @@ _NAME_LABELS = (
     "NOME",
 )
 
+#: A certidão de casamento's "nome que passou a adotar" clause can state
+#: each spouse's post-marriage name under the PRONOUN, not `NOME`
+#: (`Ele: <nome dele>` / `Ela: <nome dela>`, one per line). Kept
+#: OUT of `_NAME_LABELS`: `ELE`/`ELA` are common Portuguese words, so
+#: `_candidatos` below requires an EXPLICIT separator (`:` or `-`)
+#: immediately after the label before treating the tail as a value — a bare
+#: `ELE COMPARECEU PERANTE O OFICIAL` never reaches this path. The
+#: word-boundary fix on `_label_at` (below) is what makes recognising a
+#: 3-letter label safe at all — without it `ELE`/`ELA` match mid-word
+#: (`AQUELE`, `PELA`, `JANELA`).
+_PRONOUN_NAME_LABELS = ("ELE", "ELA")
+
 #: A certidão de casamento's own convention: ONE header over TWO co-equal
 #: names (the spouses), unlike an RG/CNH's singular "NOME" over one. It is a
 #: SEPARATE set, not folded into `_NAME_LABELS`, because it is handled by a
@@ -178,12 +190,25 @@ def _label_at(line: str, pos: int) -> tuple[Optional[str], bool]:
 
     Longest-first is the entire defence against `NOME DO PAI` being read
     as `NOME` followed by a value of `DO PAI`.
+
+    🔴 BOTH ENDS OF THE LABEL MUST SIT ON A WORD BOUNDARY, NOT JUST THE
+    RIGHT ONE. The original rule only checked the character AFTER the
+    match (`NOMEACAO` must not match `NOME`) — a match starting mid-word
+    was never excluded, because every existing label was long/distinctive
+    enough that it never came up. It matters now: `ELE`/`ELA`
+    (`_PRONOUN_NAME_LABELS`) are common Portuguese word FRAGMENTS —
+    `AQUELE`, `PELA`, `JANELA` all contain one verbatim — so a short label
+    is only safe to add once a mid-word start is rejected here, for every
+    label, not merely the new ones.
     """
+    if pos > 0 and (line[pos - 1].isalnum() or line[pos - 1] == "'"):
+        return (None, False)
     best: tuple[str, bool] | None = None
     for label, is_decoy in (
         [(x, True) for x in _DECOY_NAME_LABELS]
         + [(x, False) for x in _NAME_LABELS]
         + [(x, False) for x in _MULTI_HOLDER_LABELS]
+        + [(x, False) for x in _PRONOUN_NAME_LABELS]
     ):
         if not line.startswith(label, pos):
             continue
@@ -310,6 +335,25 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
 
         if label in _MULTI_HOLDER_LABELS:
             candidates.extend(_coleta_titulares_multiplos(lines, idx + 1, label))
+            idx += 1
+            continue
+
+        if label in _PRONOUN_NAME_LABELS:
+            # `ELE`/`ELA` are ordinary Portuguese words as well as a label —
+            # unlike every other entry here, an EXPLICIT separator right
+            # after the pronoun is required before its tail is trusted as a
+            # value at all ("ELE COMPARECEU..." never reaches `tail`, since
+            # nothing follows `ELE` but a space). No next-line fallback for
+            # the same reason: a pronoun that starts a SENTENCE, with the
+            # actual value nowhere nearby, is the common case for these two
+            # words — unlike `NOME`, where a label with no same-line value
+            # genuinely means "the value is on the line below".
+            if line[end : end + 1] not in ":-":
+                idx += 1
+                continue
+            tail = line[end:].strip(_SEPARATORS).strip()
+            if tail and looks_like_a_name(tail):
+                candidates.append((tail, label))
             idx += 1
             continue
 
