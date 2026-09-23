@@ -4,6 +4,10 @@
 > "make sure all data a contract needs is correctly extracted from files and stored on the DB";
 > contract generation itself was validated 100% by a previous session.
 
+> **Evidence for D2 (2026-09-23):** a real certidão sweep found the vision rung misreads identifiers
+> (6/10 CENPROT protocolos) while getting every status right — vision-read numbers are machine-pending by
+> default. → `KB § CONTEXT/PRODUCTS/social-wiring/CERTIDOES-LEVANTAMENTO-LEARNINGS.md`
+
 ## Owner decisions (verbatim intent, 2026-09-22)
 
 - **D1 Write policy.** Machinery writes extracted values straight into the contract column.
