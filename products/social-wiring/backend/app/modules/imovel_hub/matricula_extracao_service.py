@@ -151,7 +151,14 @@ async def extrair(
     if extractor is None:
         from noctusai_lib.integrations.documents import make_matricula_extractor
 
-        extractor = make_matricula_extractor(real=True, org_id=str(org_id))
+        from app.services.api_keys_store import resolve_vision_provider
+
+        # Same per-org manual switch `deps._build_matricula_extractor`
+        # applies — this fallback used to omit `provider=`, so an org's
+        # explicit choice was ignored on this path.
+        extractor = make_matricula_extractor(
+            real=True, org_id=str(org_id), provider=resolve_vision_provider(str(org_id))
+        )
 
     campos = await extractor.extract(
         blob.data,

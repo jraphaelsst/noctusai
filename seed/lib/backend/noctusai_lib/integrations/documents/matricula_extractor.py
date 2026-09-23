@@ -248,8 +248,8 @@ def make_matricula_extractor(
 
     Args:
         provider: Which vendor reads a scanned page — any key of
-            `documents.transcription.OCR_MODELS`. `None` (the default)
-            changes nothing — see `LadderIdentityExtractor`'s sibling
+            `documents.providers.OCR_MODELS`. `None` (the default) = the
+            canonical document provider — see `LadderIdentityExtractor`'s sibling
             parameter for the full reasoning; this extractor shares the
             same `DocumentTextLadder`.
     """

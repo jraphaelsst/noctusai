@@ -57,6 +57,7 @@ from noctusai_lib.integrations.llm import (
     analyze_image_with_refusal_retry,
     transcribe_audio,
 )
+from noctusai_lib.integrations.llm.exceptions import LLMNotConfigured
 from noctusai_lib.integrations.media.types import (
     InboundMedia,
     MediaKind,
@@ -126,11 +127,9 @@ class RealMediaResolver:
         org_id: Forwarded to the seed LLM entry points for per-org key
             resolution + budget accounting.
         provider: Which vendor answers a vision call — any key of
-            `documents.transcription.OCR_MODELS`. `None` (the default)
-            changes NOTHING: every call site keeps using
-            `LLMConfig.default_vision_model` exactly as before, which is
-            what makes this behaviour-preserving for a caller that has not
-            opted into the per-org switch. A NON-default provider always
+            `documents.providers.OCR_MODELS`. `None` (the default) resolves
+            to `DEFAULT_DOCUMENT_PROVIDER` (Anthropic) — every caller of
+            this resolver reads documents. A non-OpenAI provider always
             gets paired with that provider's OCR_MODELS pin — never the
             OpenAI-tuned default model, which is not portable across
             vendors (see `OCR_MODELS`'s own docstring).
@@ -156,10 +155,19 @@ class RealMediaResolver:
         # caller reading averbações opts IN to the bill rather than inheriting
         # a truncation it cannot see.
         self._max_pages = max_pages
-        # `None` = "not specified" — every `analyze_image_with_refusal_retry`
-        # call below omits `provider=`/`model=` entirely in that case, so an
-        # unset org is byte-identical to before this parameter existed.
-        self._provider = provider
+        # `None` = "not specified" → the seed's canonical DOCUMENT provider
+        # (`documents.providers.DEFAULT_DOCUMENT_PROVIDER`, Anthropic since
+        # 2026-09-22). Every caller of this resolver reads documents (the
+        # identity / matrícula ladder), so the process-wide chat default
+        # (`LLMConfig.default_provider`, still "openai") is the wrong answer
+        # here — an org that chose nothing used to be read by a vendor with
+        # no credit. An EXPLICIT provider is forwarded verbatim; nothing here
+        # fails over. Imported lazily: `documents` must not load at import.
+        from noctusai_lib.integrations.documents.providers import (
+            DEFAULT_DOCUMENT_PROVIDER,
+        )
+
+        self._provider = provider or DEFAULT_DOCUMENT_PROVIDER
         self._analyze: AnalyzeFn = analyze or analyze_image_with_refusal_retry
         # Injected in tests; built lazily otherwise (see
         # `_get_document_transcriber`) so importing this module never drags
@@ -185,6 +193,24 @@ class RealMediaResolver:
                 ),
                 error="unsupported_media_type",
                 error_message=f"unclassifiable mimetype={media.mimetype!r}",
+            )
+        except LLMNotConfigured as exc:
+            # The selected vendor has no key. Named, not folded into the
+            # generic `resolve_failed`: the operator's fix is "configure THIS
+            # key", and a silent swap to another vendor is forbidden (manual
+            # switch). Same code the transcriber's pre-check returns.
+            # `exc` names the vendor itself — for audio that is the Whisper
+            # vendor, not `self._provider` (vision only), so it is not
+            # re-derived here.
+            logger.warning("media.resolve: missing credential kind=%s: %s", kind.value, exc)
+            return ResolvedMedia(
+                kind=kind,
+                text=(
+                    f"Não foi possível processar o anexo ({kind.value}) — "
+                    "provedor de IA não configurado."
+                ),
+                error="missing_credentials",
+                error_message=str(exc),
             )
         except Exception as exc:  # noqa: BLE001 — must never raise into the chatbot loop
             logger.exception(
@@ -479,10 +505,11 @@ class RealMediaResolver:
     def _model_for_provider(self) -> Optional[str]:
         """The OCR model paired with `self._provider`, or `None`.
 
-        `None` when `self._provider` is unset OR is `"openai"` — both cases
-        keep `analyze_image`'s own default (`LLMConfig.default_vision_model`,
-        `gpt-4o`), unchanged, so an org that has not opted into the switch
-        (or has explicitly picked OpenAI) sees byte-identical behaviour.
+        `None` when `self._provider` is `"openai"` — that keeps
+        `analyze_image`'s own default (`LLMConfig.default_vision_model`,
+        `gpt-4o`), unchanged, for an org that explicitly picked OpenAI.
+        (An unset provider no longer exists here: `__init__` resolves it to
+        the canonical document provider.)
 
         A NON-OpenAI provider has no such tuned default at this layer, so
         this borrows the seed's canonical per-provider OCR pin
@@ -491,9 +518,9 @@ class RealMediaResolver:
         sending an OpenAI-only model name to a different vendor's API,
         which is a 404, not a degraded answer.
         """
-        if self._provider is None or self._provider == "openai":
+        if self._provider == "openai":
             return None
-        from noctusai_lib.integrations.documents.transcription import OCR_MODELS
+        from noctusai_lib.integrations.documents.providers import OCR_MODELS
 
         return OCR_MODELS.get(self._provider)
 

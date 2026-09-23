@@ -670,7 +670,8 @@ class TestTheProviderChoice:
             "openai", "anthropic", "gemini",
         ]
         assert all(o["label"] for o in entry["options"])
-        assert entry["default"] == "openai"
+        # Document reads default to Claude (owner directive 2026-09-22).
+        assert entry["default"] == "anthropic"
         assert entry["is_secret"] is False
 
     def test_the_embedding_switch_also_reaches_the_client(

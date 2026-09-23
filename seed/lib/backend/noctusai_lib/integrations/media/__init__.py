@@ -86,9 +86,10 @@ def get_media_resolver(
             certidão's averbação, for instance. The sentinel `-1` means
             "not specified" so `None` can keep its own meaning. Real only.
         provider: Which vendor reads a scanned page / image — any key of
-            `documents.transcription.OCR_MODELS`. `None` keeps every
-            existing default (behaviour-preserving for a caller that has
-            not opted into the per-org vision-provider switch). Real only.
+            `documents.providers.OCR_MODELS`. `None` = the seed's canonical
+            DOCUMENT provider (`DEFAULT_DOCUMENT_PROVIDER`, Anthropic since
+            2026-09-22) for the vision paths; audio still goes to Whisper.
+            Real only.
     """
     if not real:
         return FakeMediaResolver()

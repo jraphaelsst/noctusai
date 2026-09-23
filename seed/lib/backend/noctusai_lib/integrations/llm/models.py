@@ -266,9 +266,9 @@ MODELS: Tuple[ModelEntry, ...] = (
     #: That is not a missing feature, it is a disabled safety net that still
     #: looks armed.
     #:
-    #: `claude-opus-5` is the model `documents/transcription.py::OCR_MODELS`
-    #: pins for the `anthropic` rung, so it was already reachable in
-    #: production before it was priced here.
+    #: `claude-opus-5` was the model `documents.providers.OCR_MODELS` pinned
+    #: for the `anthropic` rung until 2026-09-22 (now Haiku 4.5, measured), so
+    #: it was reachable in production before it was priced here.
     ModelEntry(
         id="claude-opus-5",
         label="Claude Opus 5",
@@ -287,10 +287,9 @@ MODELS: Tuple[ModelEntry, ...] = (
         cost_per_1m_input_tokens=5.00,
         cost_per_1m_output_tokens=25.00,
     ),
-    #: Registered for the same reason, one step down: `OCR_MODELS`' own
-    #: comment names `claude-sonnet-5` as the cheaper current-generation swap,
-    #: so a consumer taking that documented advice must not land on the
-    #: zero-cost path either.
+    #: Registered for the same reason, one step down: the mid-tier swap
+    #: between the old Opus pin and the current Haiku pin, so a consumer
+    #: moving a document pin up must not land on the zero-cost path either.
     ModelEntry(
         id="claude-sonnet-5",
         label="Claude Sonnet 5",
@@ -327,14 +326,29 @@ MODELS: Tuple[ModelEntry, ...] = (
         cost_per_1m_input_tokens=3.00,
         cost_per_1m_output_tokens=15.00,
     ),
+    #: $1 / $5 per 1M — Anthropic's list price for Haiku 4.5. It was
+    #: registered at $0.80 / $4.00 (Haiku 3.5's price), under-counting every
+    #: call by 20%; that mattered little while nothing hot called it, and a lot
+    #: once `documents.providers` pinned it on both document-read rungs.
     ModelEntry(
         id="claude-haiku-4-5",
         label="Claude Haiku 4.5",
         provider="anthropic",
         kind="chat",
         description="Anthropic cost-tier — fast and cheap.",
-        cost_per_1m_input_tokens=0.80,
-        cost_per_1m_output_tokens=4.00,
+        cost_per_1m_input_tokens=1.00,
+        cost_per_1m_output_tokens=5.00,
+    ),
+    #: The document-transcription pin (`documents.providers.OCR_MODELS`) —
+    #: a vision call, so it needs its own vision-kind row like its siblings.
+    ModelEntry(
+        id="claude-haiku-4-5",
+        label="Claude Haiku 4.5 (Vision)",
+        provider="anthropic",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=1.00,
+        cost_per_1m_output_tokens=5.00,
     ),
     ModelEntry(
         id="claude-sonnet-4-6",

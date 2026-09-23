@@ -331,11 +331,27 @@ class TestTheProtocolShape:
 
 class TestTheVisionProviderIsSelectable:
     @pytest.mark.asyncio
-    async def test_openai_stays_the_default(self, monkeypatch) -> None:
-        """An existing consumer that passes nothing must not move vendors."""
+    async def test_anthropic_is_the_document_default(self, monkeypatch) -> None:
+        """🔴 Owner directive 2026-09-22: OpenAI has no credit, so a consumer
+        that names no vendor reads documents with Claude — the seed's
+        canonical document provider, paired with ITS model."""
         vision = _Vision()
         t = _transcriber(
             monkeypatch, _camada(("", False)), num_paginas=1, vision=vision
+        )
+        await t.transcribe(b"%PDF")
+
+        assert DEFAULT_VISION_PROVIDER == "anthropic"
+        assert vision.calls == [("anthropic", OCR_MODELS["anthropic"])]
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_openai_choice_is_still_honoured(self, monkeypatch) -> None:
+        """The default moved; the manual switch did not. An org that picked
+        OpenAI keeps OpenAI and OpenAI's own model."""
+        vision = _Vision()
+        t = _transcriber(
+            monkeypatch, _camada(("", False)), num_paginas=1, vision=vision,
+            provider="openai",
         )
         await t.transcribe(b"%PDF")
 
@@ -361,7 +377,7 @@ class TestTheVisionProviderIsSelectable:
         )
         await t.transcribe(b"%PDF")
 
-        assert vision.calls == [("anthropic", "claude-opus-5")]
+        assert vision.calls == [("anthropic", OCR_MODELS["anthropic"])]
 
     @pytest.mark.asyncio
     async def test_an_explicit_model_still_wins(self, monkeypatch) -> None:
@@ -373,11 +389,11 @@ class TestTheVisionProviderIsSelectable:
             num_paginas=1,
             vision=vision,
             provider="anthropic",
-            ocr_model="claude-haiku-4-5",
+            ocr_model="claude-opus-5",
         )
         await t.transcribe(b"%PDF")
 
-        assert vision.calls == [("anthropic", "claude-haiku-4-5")]
+        assert vision.calls == [("anthropic", "claude-opus-5")]
 
     def test_every_provider_in_the_map_has_a_model(self) -> None:
         """A provider without a pinned model would fall back to OpenAI's,
@@ -444,6 +460,36 @@ class TestTheVisionProviderIsSelectable:
         assert out.ok is False
         assert out.error == "missing_credentials"
         assert "anthropic" in (out.error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_a_whitespace_key_is_a_missing_key(self, monkeypatch) -> None:
+        """A saved-but-blank key must surface as `missing_credentials` (the
+        operator's fix: configure it), never reach the vendor as a 401 — and
+        never make the transcriber try a different vendor."""
+        from noctusai_lib.config.credentials import register_credential_override
+
+        vision = _Vision()
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        register_credential_override(lambda key, org_id=None: "   ")
+        try:
+            t = _transcriber(monkeypatch, _camada(("", False)), num_paginas=1)
+            t._analyze = None  # the real lazy key check is what is under test
+            out = await t.transcribe(b"%PDF")
+        finally:
+            register_credential_override(None)
+
+        assert out.error == "missing_credentials"
+        assert "anthropic" in (out.error_message or "")
+        assert vision.calls == []
+
+    def test_a_key_lost_between_precheck_and_call_is_named(self) -> None:
+        """`LLMNotConfigured` raised by the call itself is the same condition
+        as the pre-check's miss — `missing_credentials`, not the generic
+        `transcription_failed`."""
+        from noctusai_lib.integrations.documents.transcription import _classify_failure
+        from noctusai_lib.integrations.llm.exceptions import LLMNotConfigured
+
+        assert _classify_failure(LLMNotConfigured("anthropic")) == "missing_credentials"
 
     def test_the_factory_forwards_the_selection(self) -> None:
         t = make_document_transcriber(real=True, provider="anthropic")

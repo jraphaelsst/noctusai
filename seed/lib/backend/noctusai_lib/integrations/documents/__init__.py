@@ -17,6 +17,9 @@
   why it tempers a vision read harder than anything else here.
 - `DocumentTextLadder` — the shared "bytes → cheapest readable text" rung
   chooser both real extractors compose.
+- `DEFAULT_DOCUMENT_PROVIDER` / `OCR_MODELS` / `DOCUMENT_ANALYSIS_MODELS` —
+  the ONE place the document-read vendor default and per-rung model pins
+  live (`providers.py`, with the measurement behind them).
 
 **Why this is a seed module and not product code.** RG/CPF extraction is
 requested as *the canonical procedure*, and the platform already has the
@@ -140,6 +143,12 @@ from noctusai_lib.integrations.documents.fake import (
     FakeIdentityExtractor,
     classify_kind,
 )
+from noctusai_lib.integrations.documents.providers import (
+    DEFAULT_DOCUMENT_PROVIDER,
+    DOCUMENT_ANALYSIS_MODELS,
+    DOCUMENT_PROVIDERS,
+    OCR_MODELS,
+)
 from noctusai_lib.integrations.documents.transcription import (
     DocumentTranscriber,
     FakeDocumentTranscriber,
@@ -198,6 +207,10 @@ def __getattr__(name: str):  # pragma: no cover - lazy proxy
 
 
 __all__ = [
+    "DEFAULT_DOCUMENT_PROVIDER",
+    "DOCUMENT_ANALYSIS_MODELS",
+    "DOCUMENT_PROVIDERS",
+    "OCR_MODELS",
     "AtoKind",
     "BlocoAbertura",
     "ConjugeLido",

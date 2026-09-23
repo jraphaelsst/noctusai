@@ -41,7 +41,10 @@ from __future__ import annotations
 
 import pytest
 
-from noctusai_lib.integrations.documents.transcription import OCR_MODELS
+from noctusai_lib.integrations.documents.providers import (
+    DOCUMENT_ANALYSIS_MODELS,
+    OCR_MODELS,
+)
 from noctusai_lib.integrations.llm.models import MODELS
 from noctusai_lib.integrations.llm.usage import estimate_cost_usd
 
@@ -98,6 +101,24 @@ def test_every_selectable_ocr_model_is_priced(provider: str, model: str) -> None
     )
 
 
+@pytest.mark.parametrize("provider,model", sorted(DOCUMENT_ANALYSIS_MODELS.items()))
+def test_every_selectable_document_analysis_model_is_priced(provider: str, model: str) -> None:
+    """The analysis rung (`llm_chat_provider` in social-wiring) is selectable
+    the same way the OCR rung is — same silent-zero risk, same invariant."""
+    if (provider, model) in UNPRICED_KNOWN_GAPS:
+        pytest.xfail(f"NOC-REMEDIATE[llm-model-unpriced]: {provider}/{model}")
+    assert _priced(provider, model), f"{provider}/{model} is selectable but unpriced"
+
+
+def test_the_document_pins_are_priced_at_list_price() -> None:
+    """Haiku 4.5 is both document rungs' Anthropic pin — it must be priced at
+    Anthropic's list rate ($1 / $5 per 1M), not an older tier's."""
+    assert estimate_cost_usd(
+        provider="anthropic", model=OCR_MODELS["anthropic"],
+        prompt_tokens=1_000_000, completion_tokens=1_000_000,
+    ) == pytest.approx(6.00)
+
+
 def test_the_gap_list_does_not_outlive_the_gap() -> None:
     """An exemption for a model that HAS since been priced is stale paperwork
     pretending to be a known issue. Fail when the fix landed and the marker
@@ -118,9 +139,8 @@ def test_the_gap_list_does_not_outlive_the_gap() -> None:
     ],
 )
 def test_the_documented_anthropic_swaps_are_priced(provider: str, model: str) -> None:
-    """`OCR_MODELS` names the cheaper current-generation swaps in its own
-    comment. A consumer taking that documented advice must not land on the
-    zero-cost path either."""
+    """The Anthropic tiers a document pin can move between (Haiku today, Opus
+    before 2026-09-22). Moving a pin must not land on the zero-cost path."""
     assert _priced(provider, model), f"{provider}/{model} unpriced"
 
 

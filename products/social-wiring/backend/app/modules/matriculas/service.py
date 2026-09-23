@@ -620,7 +620,9 @@ def check_required_credentials(org_id: Optional[str] = None) -> list[str]:
     provider = resolve_vision_provider(org_id)
     spec = get_spec(f"{provider}_api_key")
     rotulo = spec.label if spec else f"{provider}_api_key"
-    if not resolve_credential(f"{provider}_api_key", org_id):
+    # `.strip()`: a blank saved key is as missing as no key — same rule the
+    # seed transcriber's own pre-check applies.
+    if not (resolve_credential(f"{provider}_api_key", org_id) or "").strip():
         missing.append(
             f"{rotulo} não configurada — é o provedor selecionado para "
             "extração de matrículas digitalizadas (PDFs com camada de texto "

@@ -59,6 +59,11 @@ from datetime import datetime
 from typing import Any, Callable, Literal, Optional
 
 from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.integrations.documents.providers import (
+    DEFAULT_DOCUMENT_PROVIDER,
+    DOCUMENT_ANALYSIS_MODELS,
+    OCR_MODELS,
+)
 from noctusai_lib.security.token_store import CredentialStore, StoredCredential
 
 from app.services.credential_vault import (
@@ -201,34 +206,40 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         name="llm_vision_provider",
         label="Provedor de leitura de documentos",
         description=(
-            "Qual IA transcreve páginas digitalizadas (matrículas e "
-            "certidões escaneadas). Troque para a Anthropic quando a conta "
-            "OpenAI estiver sem créditos. A chave do provedor escolhido "
-            "precisa estar configurada acima."
+            "Qual IA transcreve páginas digitalizadas (documentos de "
+            "identidade, matrículas e certidões escaneadas). Padrão: "
+            "Anthropic (Claude). A chave do provedor escolhido precisa estar "
+            "configurada acima — sem ela a leitura falha dizendo qual chave "
+            "falta; nunca troca de provedor sozinha."
         ),
         is_secret=False,
         testable=False,
         input_type="select",
+        # Model names DERIVED from the seed pins (`documents.providers`) —
+        # a hand-typed copy here said `claude-opus-5` for weeks after nothing
+        # it described was true any more.
         options=(
             ApiKeyOption(
                 value="openai",
                 label="OpenAI",
-                description="Usa a OpenAI API Key (modelo gpt-4.1-mini).",
+                description=f"Usa a OpenAI API Key (modelo {OCR_MODELS['openai']}).",
             ),
             ApiKeyOption(
                 value="anthropic",
                 label="Anthropic (Claude)",
                 description=(
-                    "Usa a Anthropic API Key (modelo claude-opus-5)."
+                    f"Usa a Anthropic API Key (modelo {OCR_MODELS['anthropic']})."
                 ),
             ),
             ApiKeyOption(
                 value="gemini",
                 label="Google Gemini",
-                description="Usa a Gemini API Key (modelo gemini-2.0-flash).",
+                description=f"Usa a Gemini API Key (modelo {OCR_MODELS['gemini']}).",
             ),
         ),
-        default="openai",
+        # The seed's canonical DOCUMENT provider — never a literal here, so
+        # this spec, the transcriber and the resolver can't disagree.
+        default=DEFAULT_DOCUMENT_PROVIDER,
     ),
     #: 🔴 A SECOND, SEPARATE SWITCH — AND IT CANNOT OFFER ANTHROPIC.
     #:
@@ -300,7 +311,8 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
             "(débitos, pendências, restrições). Independente do provedor de "
             "transcrição acima: uma certidão digital nunca passa pela "
             "transcrição, mas sempre passa por aqui. A chave do provedor "
-            "escolhido precisa estar configurada acima."
+            "escolhido precisa estar configurada acima. Padrão: Anthropic "
+            "(Claude)."
         ),
         is_secret=False,
         testable=False,
@@ -309,20 +321,30 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
             ApiKeyOption(
                 value="openai",
                 label="OpenAI",
-                description="Usa a OpenAI API Key (modelo gpt-4.1-mini).",
+                description=(
+                    f"Usa a OpenAI API Key (modelo {DOCUMENT_ANALYSIS_MODELS['openai']})."
+                ),
             ),
             ApiKeyOption(
                 value="anthropic",
                 label="Anthropic (Claude)",
-                description="Usa a Anthropic API Key (modelo claude-opus-5).",
+                description=(
+                    "Usa a Anthropic API Key "
+                    f"(modelo {DOCUMENT_ANALYSIS_MODELS['anthropic']})."
+                ),
             ),
             ApiKeyOption(
                 value="gemini",
                 label="Google Gemini",
-                description="Usa a Gemini API Key (modelo gemini-2.0-flash).",
+                description=(
+                    f"Usa a Gemini API Key (modelo {DOCUMENT_ANALYSIS_MODELS['gemini']})."
+                ),
             ),
         ),
-        default="openai",
+        # Every consumer of this switch reads a DOCUMENT's text (certidão
+        # analysis, imóvel-document structured read) — so the seed's
+        # canonical document provider, not the fleet's chat default.
+        default=DEFAULT_DOCUMENT_PROVIDER,
     ),
     ApiKeySpec(
         name="infosimples_token",

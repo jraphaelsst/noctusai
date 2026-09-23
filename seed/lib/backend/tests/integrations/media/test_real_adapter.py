@@ -71,21 +71,47 @@ def _scanned_pdf(num_pages: int) -> bytes:
     return out
 
 
-class TestProviderIsBehaviourPreservingByDefault:
-    """(b) An org that never touched `llm_vision_provider` must see NO
-    change: no `provider=`/`model=` divergence from before this parameter
-    existed."""
+class TestUnsetProviderIsTheDocumentDefault:
+    """(b) An org that never touched `llm_vision_provider` reads documents
+    with the seed's canonical DOCUMENT provider (Anthropic since 2026-09-22 —
+    OpenAI had no credit), paired with its pinned model. Before, `None` fell
+    through to the fleet chat default ("openai") and every read 429'd."""
 
     @pytest.mark.asyncio
-    async def test_unset_provider_passes_none_through(self) -> None:
+    async def test_unset_provider_resolves_to_the_document_default(self) -> None:
+        from noctusai_lib.integrations.documents.providers import (
+            DEFAULT_DOCUMENT_PROVIDER,
+            OCR_MODELS,
+        )
+
         analyze = _FakeAnalyze()
         resolver = RealMediaResolver(org_id="org-1", analyze=analyze)
 
         await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
 
         assert len(analyze.calls) == 1
-        assert analyze.calls[0]["provider"] is None
-        assert analyze.calls[0]["model"] is None
+        assert analyze.calls[0]["provider"] == DEFAULT_DOCUMENT_PROVIDER == "anthropic"
+        assert analyze.calls[0]["model"] == OCR_MODELS["anthropic"]
+
+    @pytest.mark.asyncio
+    async def test_a_missing_key_is_named_not_swapped(self) -> None:
+        """🔴 No silent fallback: the selected vendor's missing key comes back
+        as `missing_credentials` on the result — never a retry on OpenAI."""
+        from noctusai_lib.integrations.llm.exceptions import LLMNotConfigured
+
+        calls: list[dict] = []
+
+        async def _sem_chave(image, prompt, **kwargs):
+            calls.append(kwargs)
+            raise LLMNotConfigured(kwargs.get("provider") or "?")
+
+        resolver = RealMediaResolver(org_id="org-1", analyze=_sem_chave)
+
+        out = await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
+
+        assert out.error == "missing_credentials"
+        assert "Anthropic" in (out.error_message or "")
+        assert [c["provider"] for c in calls] == ["anthropic"]
 
     @pytest.mark.asyncio
     async def test_explicit_openai_also_keeps_the_tuned_default_model(self) -> None:
@@ -102,7 +128,7 @@ class TestProviderIsBehaviourPreservingByDefault:
 
 
 class TestProviderRoutesVendorAndModelTogether:
-    """(a) `documents.transcription.OCR_MODELS` says the model is NOT
+    """(a) `documents.providers.OCR_MODELS` says the model is NOT
     portable across providers — selecting a provider must select its model
     too, or a switch to Anthropic sends it OpenAI's model name."""
 
@@ -114,7 +140,7 @@ class TestProviderRoutesVendorAndModelTogether:
         await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
 
         assert analyze.calls[0]["provider"] == "anthropic"
-        assert analyze.calls[0]["model"] == "claude-opus-5"
+        assert analyze.calls[0]["model"] == "claude-haiku-4-5"
 
     @pytest.mark.asyncio
     async def test_gemini_selects_its_own_model(self) -> None:
@@ -248,4 +274,4 @@ class TestMaxPagesMapsToMaxVisionPages:
 
         assert isinstance(transcriber, LadderDocumentTranscriber)
         assert transcriber._provider == "anthropic"
-        assert transcriber._ocr_model == "claude-opus-5"
+        assert transcriber._ocr_model == "claude-haiku-4-5"

@@ -767,7 +767,8 @@ class TestAnalyzeWithAi:
         assert out == "Consta débito."
         kwargs = chat.await_args.kwargs
         assert kwargs["provider"] == "anthropic"
-        assert kwargs["model"] == "claude-opus-5"
+        # The measured document-analysis pin (seed `documents.providers`).
+        assert kwargs["model"] == "claude-haiku-4-5"
 
     @pytest.mark.asyncio
     async def test_a_chave_conferida_e_a_do_provedor_escolhido(self):

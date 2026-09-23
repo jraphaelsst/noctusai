@@ -266,7 +266,9 @@ class TestExtrairSemCredencial:
 
         assert resp.status_code == 422
         mensagem = resp.json()["error"]["message"]
-        assert "OpenAI" in mensagem
+        # The default document provider since 2026-09-22 — the 422 names the
+        # SELECTED vendor's key, never OpenAI's regardless.
+        assert "Anthropic" in mensagem
         assert "Chaves de API" in mensagem, (
             "the 422 must name the page the user has to go to"
         )

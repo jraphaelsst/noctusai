@@ -9,6 +9,32 @@ is merely **unwired** (the mechanism exists, nobody flipped it).
 
 **Status**: born 2026-09-18, from the `llm-provider-dependency-sweep` slice.
 
+## 2026-09-22 — DOCUMENT reads default to Claude (seed canonical)
+
+Owner directive: "OpenAI has no credit — swap the mechanism fully to Claude,
+the cheapest one that does the job." Every DOCUMENT read now defaults to
+Anthropic at the seed level, not by per-org rows:
+
+- **One place per rung** — `noctusai_lib.integrations.documents.providers`:
+  `DEFAULT_DOCUMENT_PROVIDER = "anthropic"`, `OCR_MODELS` (vision
+  transcription) and `DOCUMENT_ANALYSIS_MODELS` (chat over a document's text).
+  Both Anthropic pins = `claude-haiku-4-5`, chosen by measurement (synthetic
+  scans: Haiku 42/42 + 10/10 fields vs Opus 5 42/42 + 10/10, ~1/11th the OCR
+  cost; table in that module's docstring). Real-document re-measurement is
+  still owed.
+- **Consumers**: `LadderDocumentTranscriber` (`DEFAULT_VISION_PROVIDER` aliases
+  it), `RealMediaResolver` (`provider=None` → the document default, image +
+  PDF paths), social-wiring's `llm_vision_provider` / `llm_chat_provider` spec
+  defaults and `certidoes.service.ANALYSIS_MODELS` (now the seed object).
+- **Not a fallback**: an org that saved "openai"/"gemini" keeps it; a missing
+  or blank key for the selected vendor is `missing_credentials` (the
+  transcriber pre-check, `LLMNotConfigured` from the call, and the media
+  resolver all name it) — never a silent swap.
+- **Unchanged**: the process-wide `LLMConfig.default_provider` ("openai") for
+  non-document chat, embeddings (Anthropic has none), audio (Whisper), and
+  erp-imobiliario (inativo) — whose `resolve_llm_provider(..., default="openai")`
+  and own `ANALYSIS_MODELS` copy still read openai.
+
 ## Why
 
 On 2026-09-17 the platform OpenAI key hit `insufficient_quota` (429). A large

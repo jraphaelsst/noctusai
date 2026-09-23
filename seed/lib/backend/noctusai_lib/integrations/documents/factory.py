@@ -38,8 +38,8 @@ def make_identity_extractor(
             the opposite answer.
         provider: Which vendor reads a scanned page — any key of
             `documents.transcription.OCR_MODELS` (`"openai"` /
-            `"anthropic"` / `"gemini"`). `None` keeps every existing
-            default (the vision rung's own provider/model, unchanged) —
+            `"anthropic"` / `"gemini"`). `None` = the seed's canonical
+            document provider (`providers.DEFAULT_DOCUMENT_PROVIDER`) —
             this is a MANUAL selection, nothing here fails over to another
             vendor. See `noctusai_lib.integrations.llm.resolve_llm_provider`
             for the per-org switch a caller resolves this from.

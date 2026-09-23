@@ -72,10 +72,25 @@ class TestTheSwitchIsWiredEndToEnd:
             assert provider in OCR_MODELS, provider
             assert get_spec(f"{provider}_api_key") is not None, provider
 
-    def test_the_default_is_openai_so_nothing_moves_on_upgrade(self) -> None:
+    def test_the_default_is_the_seeds_document_provider(self) -> None:
+        """🔴 Owner directive 2026-09-22: OpenAI has no credit. An org that
+        never saved this setting reads documents with Claude — and the spec
+        takes that from the seed constant, never a literal, so the UI's
+        "effective value" and the transcriber cannot disagree."""
+        from noctusai_lib.integrations.documents.providers import (
+            DEFAULT_DOCUMENT_PROVIDER,
+        )
+
         spec = get_spec(VISION_PROVIDER_KEY)
-        assert spec.default == "openai"
+        assert spec.default == DEFAULT_DOCUMENT_PROVIDER == "anthropic"
         assert spec.default in spec.allowed_values
+
+    def test_the_option_labels_name_the_real_pinned_model(self) -> None:
+        """The option description used to hand-type `claude-opus-5` — it must
+        name whatever the seed actually pins."""
+        spec = get_spec(VISION_PROVIDER_KEY)
+        for option in spec.options:
+            assert OCR_MODELS[option.value] in option.description, option.value
 
     def test_the_choice_is_not_stored_as_a_secret(self) -> None:
         """A masked provider name would show as `...ropic` on the screen
@@ -121,7 +136,11 @@ class TestTheSwitchIsWiredEndToEnd:
 
 class TestResolveVisionProvider:
     def test_unset_falls_back_to_the_documented_default(self) -> None:
-        assert _resolvido_como(None)(ORG) == "openai"
+        assert _resolvido_como(None)(ORG) == "anthropic"
+
+    def test_an_explicit_openai_choice_is_still_honoured(self) -> None:
+        """The default moved; the manual switch did not."""
+        assert _resolvido_como("openai")(ORG) == "openai"
 
     def test_a_saved_choice_is_honoured(self) -> None:
         assert _resolvido_como("anthropic")(ORG) == "anthropic"
@@ -139,13 +158,13 @@ class TestResolveVisionProvider:
         layer down with a message about a missing key.
         """
         with caplog.at_level("WARNING"):
-            assert _resolvido_como("cohere")(ORG) == "openai"
+            assert _resolvido_como("cohere")(ORG) == "anthropic"
         assert "cohere" in caplog.text
 
     def test_an_org_less_call_still_answers(self) -> None:
         """The transcriber factory is also reachable from paths with no org
         (a sweep, a CLI); it must get a routable provider, not a crash."""
-        assert _resolvido_como(None)(None) == "openai"
+        assert _resolvido_como(None)(None) == "anthropic"
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +212,9 @@ class TestTheChatSwitchIsWiredEndToEnd:
         assert get_spec(CHAT_PROVIDER_KEY).default == DEFAULT_ANALYSIS_PROVIDER
 
     def test_unset_falls_back_to_the_documented_default(self) -> None:
-        assert _chat_resolvido_como(None)(ORG) == "openai"
+        """Every consumer of this switch reads a document's text, so the
+        seed's canonical document provider — not the fleet chat default."""
+        assert _chat_resolvido_como(None)(ORG) == "anthropic"
 
     def test_a_saved_choice_is_honoured(self) -> None:
         assert _chat_resolvido_como("anthropic")(ORG) == "anthropic"
@@ -202,7 +223,7 @@ class TestTheChatSwitchIsWiredEndToEnd:
         """A retired or hand-written value must not reach the LLM stack: it
         would fail one layer down as a missing credential for a vendor that
         does not exist, instead of running on the documented default."""
-        assert _chat_resolvido_como("mistral")(ORG) == "openai"
+        assert _chat_resolvido_como("mistral")(ORG) == "anthropic"
 
     def test_it_is_a_separate_setting_from_the_vision_switch(self) -> None:
         """The whole point of the third spec. If these ever became one key,

@@ -60,6 +60,10 @@ from noctusai_lib.integrations.documents.formatting import (
     ranges_from_json,
     ranges_to_json,
 )
+from noctusai_lib.integrations.documents.providers import (
+    DEFAULT_DOCUMENT_PROVIDER,
+    DOCUMENT_ANALYSIS_MODELS,
+)
 from noctusai_lib.integrations.llm import chat_completion
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.storage import StorageBackend
@@ -514,17 +518,16 @@ async def delete_storage_files(
 #: call reasons about a legal document and writes the summary a human acts on,
 #: where the transcription rung only has to copy characters faithfully. Tune
 #: here, not at the call site.
-ANALYSIS_MODELS: dict[str, str] = {
-    "openai": "gpt-4.1-mini",
-    "anthropic": "claude-opus-5",
-    "gemini": "gemini-2.0-flash",
-}
+#:
+#: The pins live in the seed (`noctusai_lib.integrations.documents.providers`
+#: — ONE place per rung, with the measurement that chose them); this is the
+#: same object under the name this module's callers already import.
+ANALYSIS_MODELS: dict[str, str] = DOCUMENT_ANALYSIS_MODELS
 
-#: The provider assumed when the org never chose — must match the
-#: `llm_chat_provider` spec's own default, or an org that never opened
-#: Settings would be analysed by one vendor and billed against another's
-#: pre-flight check.
-DEFAULT_ANALYSIS_PROVIDER = "openai"
+#: The provider assumed when the org never chose — the SAME seed constant the
+#: `llm_chat_provider` spec defaults to, so an org that never opened Settings
+#: is analysed by, and pre-flight-checked against, one vendor.
+DEFAULT_ANALYSIS_PROVIDER = DEFAULT_DOCUMENT_PROVIDER
 
 
 async def _analyze_with_ai(

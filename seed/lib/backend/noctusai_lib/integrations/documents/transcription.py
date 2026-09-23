@@ -56,6 +56,10 @@ from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
+from noctusai_lib.integrations.documents.providers import (
+    DEFAULT_DOCUMENT_PROVIDER,
+    OCR_MODELS,
+)
 from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
 from noctusai_lib.integrations.documents.types import TextSource
 
@@ -67,35 +71,10 @@ logger = logging.getLogger(__name__)
 RENDER_DPI = 200
 
 #: Which vendor's vision model reads a scanned page, when the consumer does
-#: not say. OpenAI stays the default so no existing consumer changes
-#: behaviour by upgrading.
-DEFAULT_VISION_PROVIDER = "openai"
-
-#: Pinned OCR model PER PROVIDER, separate from any chat-model pin a product
-#: carries. Tuned for page throughput at transcription quality; tune here,
-#: not at the call site.
-#:
-#: 🔴 THE MODEL IS NOT PORTABLE ACROSS PROVIDERS — that is why this is a
-#: mapping and not a string. `gpt-4.1-mini` sent to Anthropic is a 404, and
-#: a consumer that switches provider without switching model gets a failure
-#: that reads like a broken key. Selecting a provider MUST select its model
-#: unless the caller overrides both.
-OCR_MODELS: dict[str, str] = {
-    "openai": "gpt-4.1-mini",
-    # Registry documents are dense small print where a misread digit names a
-    # DIFFERENT PROPERTY (see `matricula_extractor`'s header), so the
-    # Anthropic side is pinned to the strongest current model rather than
-    # the cheapest. A 3-page matrícula costs on the order of cents.
-    # `claude-sonnet-5` / `claude-haiku-4-5` are the cheaper current-
-    # generation swaps if a consumer decides the tradeoff differently.
-    "anthropic": "claude-opus-5",
-    # Gemini's flash tier reads registry pages well and is the cheapest of the
-    # three; it earns its place as a THIRD fallback rather than a replacement,
-    # because an agency that runs out of credit at one vendor should not be
-    # left with a single alternative. Same reasoning as the Anthropic pin: the
-    # model is chosen WITH the provider, never inherited across one.
-    "gemini": "gemini-2.0-flash",
-}
+#: not say — the seed's canonical DOCUMENT provider (Anthropic since
+#: 2026-09-22). The pins themselves live in ONE place,
+#: `documents.providers` — see its docstring for the measurement behind them.
+DEFAULT_VISION_PROVIDER = DEFAULT_DOCUMENT_PROVIDER
 
 #: Back-compat alias for the OpenAI pin. Consumers that imported this before
 #: provider selection existed keep working unchanged.
@@ -163,6 +142,15 @@ def _classify_failure(exc: Exception) -> str:
     generic "Erro inesperado" with no mention of billing. Caught 2026-09-04
     by asserting the mapping directly rather than by waiting for prod.
     """
+    # A key that vanished between the pre-check and the call (or that the
+    # call-site `key_provider` resolves differently from `resolve_credential`)
+    # raises `LLMNotConfigured`. That is "no credential for the selected
+    # vendor", not an unexpected failure — named as such so the consumer tells
+    # the operator which key to configure instead of "Erro inesperado".
+    from noctusai_lib.integrations.llm.exceptions import LLMNotConfigured
+
+    if isinstance(exc, LLMNotConfigured):
+        return "missing_credentials"
     text = f"{type(exc).__name__}: {exc}".lower()
     # The 6 vendor-agnostic quota markers are the seed's single canonical
     # list (`noctusai_lib.integrations.llm.credit_probe.QUOTA_MARKERS`) — this
@@ -510,7 +498,10 @@ class LadderDocumentTranscriber:
             return self._analyze
         from noctusai_lib.config.credentials import resolve_credential
 
-        if not resolve_credential(f"{self._provider}_api_key", self._org_id):
+        # `.strip()`: a whitespace-only saved key is as absent as a missing
+        # one, and must surface as `missing_credentials`, not as a vendor 401.
+        chave = resolve_credential(f"{self._provider}_api_key", self._org_id)
+        if not (chave or "").strip():
             return None
         from noctusai_lib.integrations.llm import analyze_image
 
