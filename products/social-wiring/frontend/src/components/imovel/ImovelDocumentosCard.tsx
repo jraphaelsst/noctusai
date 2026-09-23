@@ -23,6 +23,7 @@
 import { useRef, useState } from "react";
 import {
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   FileText,
   Loader2,
@@ -43,6 +44,9 @@ import {
 
 import type { ImovelDocumento } from "@/hooks/useImovelDados";
 import { TIPOS_DOCUMENTO, formatBytes } from "@/hooks/useImovelDados";
+import { CAMPOS_POR_TIPO, RESULTADO_LABEL } from "@/hooks/useImovelContrato";
+import { isValidadeVencida } from "@/types/certidoesEstruturadas";
+import { formatDate } from "@/lib/utils";
 
 interface Props {
   documentos: ImovelDocumento[];
@@ -156,6 +160,7 @@ export default function ImovelDocumentosCard({
                     {formatBytes(d.tamanho_bytes)}
                   </p>
                   <ExtracaoLinha documento={d} />
+                  <EstruturaLinha documento={d} />
                 </div>
                 <Button
                   variant="ghost"
@@ -226,6 +231,81 @@ function ExtracaoLinha({ documento }: { documento: ImovelDocumento }) {
         <Badge variant="outline" className="text-[10px]">
           confirme antes de usar
         </Badge>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Bug 3: the migration-118 structured read (`numero`/`emitida_em`/
+ * `validade_ate`/`resultado`/`inscricao_imobiliaria`) — a SECOND,
+ * independent read of the same PDF from a different question than
+ * `ExtracaoLinha`'s matrícula número. The API already returns all five
+ * fields (`documentos_service._documento_out`); this was purely a display
+ * gap — a guia de IPTU or CND de IPTU could carry a fully-read
+ * `inscricao_imobiliaria`/`resultado`/`validade_ate` and the card showed
+ * nothing for it.
+ *
+ * `CAMPOS_POR_TIPO` (from `useImovelContrato`, mirrors the backend's
+ * `CAMPOS_ESTRUTURA_POR_TIPO`) drives WHICH fields a given tipo_documento
+ * can carry — never guessing per-tipo shape twice. Silent (renders nothing)
+ * when the tipo carries none of these fields, or when it does but the read
+ * has not produced any of them yet — same "no misleading state" discipline
+ * `ExtracaoLinha` uses; there is no `estrutura_status` in the API response
+ * to distinguish "still reading" from "nothing there" for THIS read (unlike
+ * `extracao_status` for the matrícula número — see this slice's delivery
+ * note).
+ */
+function EstruturaLinha({ documento }: { documento: ImovelDocumento }) {
+  const campos = CAMPOS_POR_TIPO[documento.tipo_documento];
+  if (!campos) return null;
+
+  const {
+    numero,
+    emitida_em,
+    validade_ate,
+    resultado,
+    inscricao_imobiliaria,
+  } = documento;
+
+  if (!numero && !emitida_em && !validade_ate && !resultado && !inscricao_imobiliaria) {
+    return null;
+  }
+
+  const vencida = campos.includes("validade_ate") && isValidadeVencida(validade_ate);
+  // "positiva" (unqualified) is the ONE resultado this vocabulary treats as
+  // a real problem — `positiva_com_efeito_de_negativa` still counts as
+  // resolved, same distinction `RESULTADO_VALOR_VARIANT` draws for the
+  // wider certidões vocabulary.
+  const positiva = campos.includes("resultado") && resultado === "positiva";
+
+  return (
+    <div className="space-y-0.5 text-xs text-muted-foreground">
+      {campos.includes("inscricao_imobiliaria") && inscricao_imobiliaria && (
+        <p>
+          Inscrição imobiliária: <strong>{inscricao_imobiliaria}</strong>
+        </p>
+      )}
+      {campos.includes("numero") && numero && (
+        <p>
+          Nº <strong>{numero}</strong>
+        </p>
+      )}
+      {campos.includes("emitida_em") && emitida_em && (
+        <p>Emitida em {formatDate(emitida_em)}</p>
+      )}
+      {campos.includes("resultado") && resultado && (
+        <p className={positiva ? "flex items-center gap-1 text-destructive" : ""}>
+          {positiva && <AlertTriangle className="h-3 w-3 shrink-0" />}
+          Resultado: {RESULTADO_LABEL[resultado] ?? resultado}
+        </p>
+      )}
+      {campos.includes("validade_ate") && validade_ate && (
+        <p className={vencida ? "flex items-center gap-1 text-destructive" : ""}>
+          {vencida && <AlertTriangle className="h-3 w-3 shrink-0" />}
+          Validade {formatDate(validade_ate)}
+          {vencida && " (vencida)"}
+        </p>
       )}
     </div>
   );

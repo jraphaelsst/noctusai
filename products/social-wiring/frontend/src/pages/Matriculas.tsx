@@ -185,6 +185,19 @@ export default function Matriculas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
+  // Bug 2: `ImovelContratoCard`'s "Abrir a matrícula" action lands here as
+  // `/matriculas?codigo=<codigo>` — prefill the "Imóvel (opcional)" upload
+  // field with it once, same one-shot-never-override discipline as the
+  // `extracao` deep-link above (never fights an operator who already typed
+  // something into the field).
+  useEffect(() => {
+    const fromQuery = searchParams.get('codigo');
+    if (fromQuery && codigoUpload === '') {
+      setCodigoUpload(fromQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Auto-select newly created extraction for live status tracking
   const handleUpload = useCallback((file: File) => {
     if (file.type !== 'application/pdf') {

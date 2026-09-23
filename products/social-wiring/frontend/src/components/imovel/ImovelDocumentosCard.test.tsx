@@ -163,3 +163,104 @@ describe("ImovelDocumentosCard", () => {
     expect(screen.getByText("Carregando…")).toBeTruthy();
   });
 });
+
+// ─── Bug 3: the migration-118 structured read (guia de IPTU / CND de IPTU) ────
+
+describe("ImovelDocumentosCard — structured read (guia de IPTU / CND de IPTU)", () => {
+  it("shows the guia de IPTU's inscrição imobiliária", async () => {
+    const { screen } = await render({
+      documentos: [
+        doc({
+          tipo_documento: "guia_iptu",
+          nome_original: "guia.pdf",
+          inscricao_imobiliaria: "123.456.789-0",
+        }),
+      ],
+    });
+    expect(screen.getByText("123.456.789-0")).toBeTruthy();
+  });
+
+  it("shows the CND de IPTU's número, emissão, validade and resultado", async () => {
+    const { screen } = await render({
+      documentos: [
+        doc({
+          tipo_documento: "cnd_iptu",
+          nome_original: "cnd.pdf",
+          numero: "CND-999",
+          emitida_em: "2026-08-01",
+          validade_ate: "2099-01-01",
+          resultado: "negativa",
+          inscricao_imobiliaria: "123.456.789-0",
+        }),
+      ],
+    });
+    expect(screen.getByText("CND-999")).toBeTruthy();
+    expect(screen.getByText(/Emitida em/)).toBeTruthy();
+    expect(screen.getByText(/Negativa/)).toBeTruthy();
+    expect(screen.queryByText(/vencida/i)).toBeNull();
+  });
+
+  it("🔴 warns when a CND's validade_ate is already in the past", async () => {
+    const { screen } = await render({
+      documentos: [
+        doc({
+          tipo_documento: "cnd_iptu",
+          nome_original: "cnd.pdf",
+          validade_ate: "2020-01-01",
+          resultado: "negativa",
+        }),
+      ],
+    });
+    expect(screen.getByText(/vencida/i)).toBeTruthy();
+  });
+
+  it("🔴 warns when a CND's resultado is positiva", async () => {
+    const { screen } = await render({
+      documentos: [
+        doc({
+          tipo_documento: "cnd_iptu",
+          nome_original: "cnd.pdf",
+          resultado: "positiva",
+          validade_ate: "2099-01-01",
+        }),
+      ],
+    });
+    const resultadoText = screen.getByText(/Resultado: Positiva/);
+    expect(resultadoText).toBeTruthy();
+  });
+
+  it("does not warn on positiva_com_efeito_de_negativa — the narrower vocabulary treats it as resolved", async () => {
+    const { screen } = await render({
+      documentos: [
+        doc({
+          tipo_documento: "cnd_iptu",
+          nome_original: "cnd.pdf",
+          resultado: "positiva_com_efeito_de_negativa",
+        }),
+      ],
+    });
+    expect(screen.getByText(/Positiva com efeito de negativa/)).toBeTruthy();
+  });
+
+  it("renders nothing extra when the structured read has produced no fields yet", async () => {
+    const { container } = await render({
+      documentos: [doc({ tipo_documento: "cnd_iptu", nome_original: "cnd.pdf" })],
+    });
+    expect(container.querySelector("[data-testid]")).toBeTruthy(); // sanity: still rendered
+    expect(container.textContent).not.toMatch(/Inscrição imobiliária|Resultado:|Validade/);
+  });
+
+  it("never shows structured fields the tipo does not carry (a matrícula gets no inscrição imobiliária line)", async () => {
+    const { screen, container } = await render({
+      documentos: [
+        doc({
+          tipo_documento: "matricula",
+          nome_original: "matricula.pdf",
+          inscricao_imobiliaria: "should-not-render",
+        }),
+      ],
+    });
+    expect(screen.getByText("matricula.pdf")).toBeTruthy();
+    expect(container.textContent).not.toContain("should-not-render");
+  });
+});
