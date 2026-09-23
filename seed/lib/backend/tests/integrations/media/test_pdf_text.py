@@ -10,6 +10,7 @@ import pytest
 
 from noctusai_lib.integrations.media import (
     classify_pdf_text_layer,
+    clean_extraction_output,
     strip_provenance_stamps,
     extract_pdf_text,
     pdf_text_tooling_available,
@@ -369,3 +370,135 @@ class TestSerproCnhEletronica:
         letterhead AND real content stays substantive."""
         pagina = self.LAYER + "\n" + ("VEICULO PLACA ABC1D23 RENAVAM 00123456789 " * 30)
         assert _classify_page(pagina, image_coverage=0.0)[0] is True
+
+
+class TestRiDigitalFooterVariants:
+    """New provenance-stamp variants added 2026-09-23 from the real
+    `social_wiring.matricula_extracoes.texto_extraido` corpus (EUROVILLE /
+    CANTAGALO), reproduced here as synthetic fixtures — same wording as
+    the platform's own boilerplate, no document bytes and no personal
+    data (the platform stamps themselves carry none)."""
+
+    def test_the_selo_verification_footer_strips(self) -> None:
+        assert (
+            strip_provenance_stamps(
+                "Para verificar a autenticidade do documento acesse o site:\n"
+                "https://selodigital.tjsp.jus.br\n"
+                "Selo: 1484293C3XC000339972JO265"
+            )
+            == ""
+        )
+
+    def test_every_ri_digital_wordmark_rendering_strips(self) -> None:
+        for linha in (
+            "ri digital",
+            "ridigital",
+            "ri digital.onr",
+            "ri digital |",
+            "ri digital | Todos os Registros de Imóveis do Brasil em um só lugar",
+            "ridigital | Todos os Registros de Imóveis do Brasil em um só lugar",
+        ):
+            assert strip_provenance_stamps(linha) == "", linha
+
+    def test_the_dash_variant_of_the_platform_url_strips(self) -> None:
+        """The pre-existing pattern only covered `via www...`; the corpus
+        also carries a `- www...` rendering of the same line."""
+        assert strip_provenance_stamps("Registro de Imóveis - www.ridigital.org.br") == ""
+
+    def test_the_operador_nacional_masthead_strips_split_or_combined(self) -> None:
+        """The ONR platform masthead sometimes shares a line with the `onr`
+        wordmark (behind an OCR'd glyph) and sometimes lands on ITS OWN
+        line, with `onr` a separate line above it — or dropped by the OCR
+        entirely."""
+        combinado = "⋰onr Operador Nacional\ndo Sistema de Registro\nEletrônico de Imóveis"
+        dividido = "onr\nOperador Nacional\ndo Sistema de Registro\nEletrônico de Imóveis"
+        sem_onr = "Operador Nacional\ndo Sistema de Registro\nEletrônico de Imóveis"
+        assert strip_provenance_stamps(combinado) == ""
+        assert strip_provenance_stamps(dividido) == ""
+        assert strip_provenance_stamps(sem_onr) == ""
+
+    def test_valide_aqui_este_documento_on_one_line_strips(self) -> None:
+        """The two-line `Valide aqui` / `este documento` stamp sometimes
+        lands as a single combined line instead."""
+        assert strip_provenance_stamps("Valide aqui este documento") == ""
+
+    def test_the_bare_vision_transcription_fence_strips(self) -> None:
+        """Not a registry stamp — the vision transcriber's OWN markdown
+        artifact, wrapping a stamp/header region in a fenced code block.
+        Grouped in the same pattern list per the single-list rule."""
+        assert strip_provenance_stamps("```") == ""
+
+
+class TestCleanExtractionOutput:
+    """`clean_extraction_output` — the OUTPUT-cleaning sibling of
+    `strip_provenance_stamps`, applied before persisting `texto_extraido`
+    on both extraction rungs (`transcription.py`). Unlike that function it
+    must never disturb blank lines: downstream act-segmentation and
+    abertura-block detection read paragraph breaks."""
+
+    def test_empty_input_is_empty_output(self) -> None:
+        assert clean_extraction_output("") == ""
+
+    def test_content_with_no_boilerplate_is_untouched_byte_for_byte(self) -> None:
+        corpo = "IMOVEL: Terreno situado na Alameda Alemanha.\n\nPROPRIETARIOS: Fulano."
+        assert clean_extraction_output(corpo) == corpo
+
+    def test_blank_lines_between_kept_content_survive(self) -> None:
+        """The one behavioural difference from `strip_provenance_stamps`:
+        that function drops every blank line (it only needs a char count
+        for classification); this one must not, or a paragraph-boundary
+        parser downstream (act segmentation, abertura blocks) breaks."""
+        texto = "PARAGRAFO UM.\n\nValide aqui\n\nPARAGRAFO DOIS."
+        assert clean_extraction_output(texto) == "PARAGRAFO UM.\n\n\nPARAGRAFO DOIS."
+
+    def test_the_eurovile_defect_the_owner_reported(self) -> None:
+        """🔴 VERBATIM structure from the real EUROVILLE certidão
+        (`social_wiring.matricula_extracoes`, 2026-09-23): the vision
+        transcriber wraps the stamp block in a bare code fence, then
+        `Valide aqui` / `este documento`, then the real header — all on
+        the SAME page that also carries the matrícula's actual content
+        (so the page is substantive and never reaches vision). The
+        owner's own acceptance test: after cleaning, the document starts
+        with `Mat. 3917`, not with the validation stamp."""
+        pagina = (
+            "```\n"
+            "Valide aqui\n"
+            "este documento\n"
+            "\n"
+            "Mat. 3917 - Página 1/3 - PROT. 89.029\n"
+            "\n"
+            "CNM: 148429.2.0003917-55\n"
+            "\n"
+            "LIVRO Nº 2 - REGISTRO GERAL\n"
+            "\n"
+            "IMOVEL: Terreno situado na Alameda Alemanha."
+        )
+        limpo = clean_extraction_output(pagina)
+        assert limpo.startswith("Mat. 3917 - Página 1/3 - PROT. 89.029")
+        # The CNM / LIVRO / property description are legally meaningful —
+        # none of it is boilerplate, all of it survives.
+        assert "CNM: 148429.2.0003917-55" in limpo
+        assert "LIVRO Nº 2 - REGISTRO GERAL" in limpo
+        assert "IMOVEL: Terreno situado na Alameda Alemanha." in limpo
+        assert "Valide aqui" not in limpo
+        assert "```" not in limpo
+
+    def test_a_footer_stamp_block_at_the_end_of_a_page_also_comes_out(self) -> None:
+        pagina = (
+            "AVERBACAO NUMERO UM. Conteudo real da matricula.\n"
+            "\n"
+            "Para verificar a autenticidade do documento acesse o site:\n"
+            "https://selodigital.tjsp.jus.br\n"
+            "\n"
+            "Selo: 1484293C3XC000339972JO265\n"
+            "\n"
+            "Valide este documento clicando no link a seguir: "
+            "https://assinador-web.onr.org.br/docs/ABCDE\n"
+            "\n"
+            "ri digital | Todos os Registros de Imóveis do Brasil em um só lugar"
+        )
+        limpo = clean_extraction_output(pagina)
+        assert limpo.startswith("AVERBACAO NUMERO UM. Conteudo real da matricula.")
+        assert "selodigital" not in limpo
+        assert "ri digital" not in limpo
+        assert "Selo:" not in limpo

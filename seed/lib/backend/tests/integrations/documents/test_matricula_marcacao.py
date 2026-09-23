@@ -6,7 +6,10 @@ import pytest
 
 from noctusai_lib.integrations.documents.matricula_abertura import segmentar_abertura
 from noctusai_lib.integrations.documents.matricula_atos import segment_matricula_atos
-from noctusai_lib.integrations.documents.matricula_marcacao import remover_marcacao
+from noctusai_lib.integrations.documents.matricula_marcacao import (
+    remover_boilerplate,
+    remover_marcacao,
+)
 from noctusai_lib.integrations.documents.transcription import has_raw_markup
 
 LEGADO = (
@@ -85,3 +88,66 @@ def test_clean_text_is_a_noop():
 @pytest.mark.parametrize("texto", ["", "**", "<u></u>", "**x**<u>y</u>"])
 def test_edge_shapes_never_raise(texto):
     remover_marcacao(texto)
+
+
+# ── `remover_boilerplate` — registry provenance stamps, offset-tracked ──
+
+EUROVILLE_PAGINA_1 = (
+    "```\n"
+    "Valide aqui\n"
+    "este documento\n"
+    "\n"
+    "Mat. 3917 - Página 1/3 - PROT. 89.029\n"
+    "\n"
+    "CNM: 148429.2.0003917-55\n"
+    "\n"
+    "LIVRO Nº 2 - REGISTRO GERAL\n"
+    "\n"
+    "IMOVEL: Terreno situado na Alameda Alemanha.\n"
+)
+
+
+def test_the_eurovile_stamp_comes_out_and_offsets_still_land_on_the_same_char():
+    r = remover_boilerplate(EUROVILLE_PAGINA_1)
+    assert r.alterou
+    assert "Valide aqui" not in r.texto
+    assert "```" not in r.texto
+    assert "Mat. 3917 - Página 1/3 - PROT. 89.029" in r.texto
+    # Nothing was trimmed OUTSIDE `removidos` — every surviving character
+    # maps back onto itself, the same invariant `remover_marcacao` pins.
+    removido = set()
+    for s, e in r.removidos:
+        removido.update(range(s, e))
+    for i, ch in enumerate(EUROVILLE_PAGINA_1):
+        if i in removido:
+            continue
+        assert r.texto[r.mapear(i)] == ch
+
+
+def test_a_page_with_no_boilerplate_is_a_noop():
+    r = remover_boilerplate("IMOVEL: Terreno na Alameda Alemanha.\n")
+    assert not r.alterou
+    assert r.texto == "IMOVEL: Terreno na Alameda Alemanha.\n"
+
+
+def test_composes_with_remover_marcacao_the_way_normalizar_extracao_does():
+    """The shape `backfill_service.normalizar_extracao` relies on: run
+    `remover_marcacao` first, `remover_boilerplate` on ITS clean text
+    second, then chain the two maps for every downstream offset."""
+    bruto = "Valide aqui\neste documento\n\n**IMÓVEL:** Apartamento nº 12.\n"
+    r1 = remover_marcacao(bruto)
+    r2 = remover_boilerplate(r1.texto)
+
+    assert "Valide aqui" not in r2.texto
+    assert not has_raw_markup(r2.texto)
+    assert "IMÓVEL: Apartamento nº 12." in r2.texto
+
+    # An offset into the ORIGINAL (markered, stamped) text still lands on
+    # the same character after both passes.
+    alvo = bruto.index("Apartamento")
+    assert r2.texto[r2.mapear(r1.mapear(alvo))] == bruto[alvo]
+
+
+@pytest.mark.parametrize("texto", ["", "Valide aqui\n", "sem marcas\n"])
+def test_edge_shapes_never_raise_boilerplate(texto):
+    remover_boilerplate(texto)

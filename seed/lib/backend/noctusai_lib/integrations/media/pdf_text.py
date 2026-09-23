@@ -322,6 +322,33 @@ def _is_provenance_stamp_line(limpo: str) -> bool:
     return any(re.match(p, chave) for p in _PROVENANCE_STAMP_PATTERNS)
 
 
+def boilerplate_line_spans(text: str) -> tuple[tuple[int, int], ...]:
+    """`(start, end)` byte-spans of every provenance-stamp LINE in `text`,
+    each span INCLUDING its own trailing newline so deleting it never
+    leaves a naked blank line behind (the text's own last line, if it has
+    no trailing newline, is the one exception — its span simply ends at
+    `len(text)`). Spans are ordered and never overlap.
+
+    The offset-tracked sibling of `clean_extraction_output`: a caller that
+    also needs to move OTHER offsets through the same removal (acts,
+    abertura blocks, qualification spans — see
+    `matricula_marcacao.remover_boilerplate`) needs the spans, not just
+    the resulting string. `clean_extraction_output` is built on this same
+    function, so the two can never disagree about what counts as
+    boilerplate.
+    """
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        sem_quebra = line.rstrip("\r\n")
+        limpo = sem_quebra.strip()
+        fim = pos + len(line)
+        if limpo and _is_provenance_stamp_line(limpo):
+            spans.append((pos, fim))
+        pos = fim
+    return tuple(spans)
+
+
 def strip_provenance_stamps(text: str) -> str:
     """Drop the registry provenance boilerplate, keep everything else.
 
@@ -372,12 +399,13 @@ def clean_extraction_output(text: str) -> str:
     """
     if not text:
         return text
-    kept_lines = [
-        line
-        for line in text.splitlines()
-        if not (line.strip() and _is_provenance_stamp_line(line.strip()))
-    ]
-    return "\n".join(kept_lines).strip("\n")
+    kept: list[str] = []
+    cursor = 0
+    for inicio, fim in boilerplate_line_spans(text):
+        kept.append(text[cursor:inicio])
+        cursor = fim
+    kept.append(text[cursor:])
+    return "".join(kept).strip("\n")
 
 
 @dataclass(frozen=True)
@@ -561,6 +589,7 @@ def _classify_without_pymupdf(pdf_bytes: bytes) -> PdfTextLayer:
 __all__ = [
     "PdfPage",
     "PdfTextLayer",
+    "boilerplate_line_spans",
     "classify_pdf_text_layer",
     "clean_extraction_output",
     "extract_pdf_text",

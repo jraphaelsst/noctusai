@@ -42,6 +42,7 @@ from noctusai_lib.integrations.media.fake_adapter import FakeMediaResolver
 from noctusai_lib.integrations.media.pdf_text import (
     PdfPage,
     PdfTextLayer,
+    boilerplate_line_spans,
     classify_pdf_text_layer,
     clean_extraction_output,
     extract_pdf_text,
@@ -127,6 +128,7 @@ __all__ = [
     "FakeMediaResolver",
     "PdfPage",
     "PdfTextLayer",
+    "boilerplate_line_spans",
     "classify_media_kind",
     "classify_pdf_text_layer",
     "clean_extraction_output",
