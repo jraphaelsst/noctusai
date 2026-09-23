@@ -76,15 +76,13 @@ export function SiteHeader({ currentPath }: { currentPath: string }) {
         </nav>
 
         <div className="nx-nav-right">
-          <button
-            type="button"
+          <a
+            href={otherLocalePath}
             className="nx-locale-switch"
             onClick={() => track("locale_change", { locale: locale === "en" ? "pt-BR" : "en" })}
           >
-            <a href={otherLocalePath} style={{ color: "inherit" }}>
-              {otherLocaleLabel}
-            </a>
-          </button>
+            {otherLocaleLabel}
+          </a>
 
           <div className="nx-theme-switch" role="group" aria-label={t("theme.label")}>
             {THEME_CHOICES.map((c) => (

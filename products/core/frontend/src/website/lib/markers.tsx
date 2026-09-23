@@ -14,7 +14,29 @@
  * for the real HTML comment via plain string `split/join` (no HTML parsing,
  * no regex-vs-nested-tag risk).
  */
-import type { ReactNode } from "react";
+import { createContext, useContext, type ReactNode } from "react";
+
+/**
+ * True ONLY inside `entry-server.tsx`'s `render()` (the build-time prerender
+ * pass). Default `false` so `entry-client.tsx`'s hydration — and every
+ * subsequent client render — never emits the sentinel at all.
+ *
+ * This split is required, not cosmetic: the prerender script converts the
+ * sentinel to a real HTML COMMENT in the string it writes to disk, so the
+ * comment (not a text node) is what the browser's DOM actually contains at
+ * that position. If the client tree ALSO rendered the sentinel as a text
+ * node, `hydrateRoot` would expect a TEXT node there and find a COMMENT
+ * node instead — a type mismatch, not a tolerable "extra node" — which is
+ * exactly React hydration error #418/#423 (reproduced 2026-09-23 via a
+ * local dev-mode build + Playwright). With the sentinel absent from the
+ * client tree, React's hydration walker simply skips the pre-existing
+ * comment nodes it has no corresponding vdom entry for, and matches the
+ * `<section>` element that follows normally.
+ */
+export const PrerenderModeContext = createContext(false);
+function usePrerenderMode(): boolean {
+  return useContext(PrerenderModeContext);
+}
 
 function sentinel(kind: "SECTION" | "PRODUCT", edge: "START" | "END", key: string): string {
   return `\u0000NX_${kind}_${edge}:${key}\u0000`;
@@ -34,6 +56,7 @@ export function productMarkerEnd(slug: string): string {
 }
 
 export function MarkedSection({ sectionKey, children }: { sectionKey: string; children: ReactNode }) {
+  if (!usePrerenderMode()) return <>{children}</>;
   return (
     <>
       {sectionMarkerStart(sectionKey)}
@@ -44,6 +67,7 @@ export function MarkedSection({ sectionKey, children }: { sectionKey: string; ch
 }
 
 export function MarkedProduct({ slug, children }: { slug: string; children: ReactNode }) {
+  if (!usePrerenderMode()) return <>{children}</>;
   return (
     <>
       {productMarkerStart(slug)}
