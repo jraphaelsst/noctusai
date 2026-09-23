@@ -46,6 +46,7 @@ from noctusai_lib.integrations.persistence import RecordNotFound
 from noctusai_lib.primitives.responses import success_response
 
 from app.config import settings
+from app.automacoes_deps import get_portas_automacao_esteira
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import (
     PAPEL_APROVACAO_CLIENTE,
@@ -69,7 +70,7 @@ from app.schemas.esteira import (
     TarefaOut,
 )
 from app.schemas.pipeline import MoverCardIn, TarefaCreate
-from app.services import esteira_quadro
+from app.services import automacoes, esteira_quadro
 from app.services.notificacoes import notificar
 from app.services.regras import RegraViolada, http_de
 from app.storage import get_storage
@@ -163,6 +164,7 @@ async def mover_etapa(
     payload: MoverCardIn,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
+    portas: automacoes.PortasAutomacao = Depends(get_portas_automacao_esteira),
 ) -> dict:
     """Drag a card. 409 `etapa_invalida` (skip forward / inactive stage),
     422 `motivo_obrigatorio` (backwards without a reason). Backwards out of
@@ -178,6 +180,7 @@ async def mover_etapa(
         )
     except RegraViolada as erro:
         raise http_de(erro) from erro
+    await automacoes.ao_entrar_etapa(portas, _org(auth), pipeline="esteira", card_id=tarefa_id, user_id=_usuario(auth))
     return success_response(linha)
 
 

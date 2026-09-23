@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from noctusai_lib.domain.pipeline import pipeline_stages_router
 from noctusai_lib.primitives.responses import success_response
 
+from app.automacoes_deps import get_portas_automacao
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import (
     PIPELINE_COMERCIAL,
@@ -37,7 +38,7 @@ from app.pipelines import (
     pipeline_context,
 )
 from app.schemas.pipeline import MoverNegocioIn, NegocioCreate, NegocioUpdate, PerderNegocioIn
-from app.services import comercial_funil
+from app.services import automacoes, comercial_funil
 from app.services import quadro_comum as qc
 from app.services.regras import RegraViolada, http_de
 
@@ -82,6 +83,7 @@ async def criar_negocio(
     payload: NegocioCreate,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
+    portas: automacoes.PortasAutomacao = Depends(get_portas_automacao),
 ) -> dict:
     """Put a lead on the funnel — an existing `lead_id`, or a new `lead`
     typed in by the agency (`origem='manual'`). Lands in the entry stage, on top."""
@@ -107,6 +109,7 @@ async def criar_negocio(
         )
     except RegraViolada as erro:
         raise http_de(erro) from erro
+    await automacoes.ao_entrar_etapa(portas, org_id, pipeline="comercial", card_id=negocio["id"], user_id=_usuario(auth))
     return success_response(negocio)
 
 
@@ -140,6 +143,7 @@ async def mover_etapa(
     payload: MoverNegocioIn,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
+    portas: automacoes.PortasAutomacao = Depends(get_portas_automacao),
 ) -> dict:
     """Drag a negócio. Dropping on the `fechado` stage needs `orcamento_id`
     (409 `orcamento_obrigatorio`): the orçamento is accepted, the deal marked
@@ -157,6 +161,7 @@ async def mover_etapa(
         )
     except RegraViolada as erro:
         raise http_de(erro) from erro
+    await automacoes.ao_entrar_etapa(portas, _org(auth), pipeline="comercial", card_id=negocio_id, user_id=_usuario(auth))
     return success_response(linha)
 
 
