@@ -1,222 +1,88 @@
-"""Documents, LGPD-complete (contract §2 `057`, ruling S2 / D5).
+"""Documents, LGPD-complete (contract §2 `057`, ruling S2 / D5) —
+social-wiring's half of them.
+
+The mechanics — upload validation, storage layout, the access log
+(`cliente_documento_acessos`), the short-TTL signed URL, LGPD soft delete
+with a recorded reason, the retention sweep — are the seed's
+`noctusai_lib.domain.card_hub.documentos`, lifted out of THIS file as a MOVE
+(wave A, 2026-09-22). The functions below keep their historical
+`(client, ...)` signatures as thin shims over it, bound to social-wiring's
+`CardHubConfig` (`app.modules.card_hub.config.CARD_HUB`), whose
+`DocumentoPolicy` carries what is ABOUT this product: retention read from the
+editable policy table (migration 079), and the identity-extraction state
+(migration 068) stamped at upload and served on reads. What genuinely stays
+here is `reextrair_documento` — the re-run half of that extraction.
 
 Every read of a document's CONTENT (a minted signed URL) and every delete
-appends to `cliente_documento_acessos` — the access log. Listing document
-METADATA (`GET .../documentos`) or listing the access log itself
-(`GET .../acessos`) does NOT append — neither one accesses the file's
-bytes.
+appends to the access log. Listing document METADATA or listing the access
+log itself does NOT — neither one accesses the file's bytes.
 
-Retention is table-driven (`cliente_documento_tipos`, migration `057`),
-never a hardcoded `if`: `retencao_ate` is computed once, at upload time,
-from that type's `retencao_dias`. The allow-list check the upload route
-enforces is `ativo = true` on that same row — enabling a withheld type
-(RG/CPF-class, seeded `ativo = false`) is a data change, not a deploy.
-
-Storage: `noctusai_lib.integrations.storage.StorageBackend` (Protocol +
-Fake + Real + factory), resolved via
-`app.modules.card_hub.deps.get_storage_backend`. Object path
-`{org_id}/clientes/{cliente_id}/{document_id}` — see migration `057`'s
-object-RLS policies for why the first path segment must always be the
-literal `org_id`.
+Retention is table-driven, never a hardcoded `if`; the upload allow-list is
+`ativo = true` on the type catalogue (`cliente_documento_tipos`) — enabling a
+withheld type (RG/CPF-class, seeded `ativo = false`) is a data change, not a
+deploy. Object path `{org_id}/clientes/{cliente_id}/{document_id}` — see
+migration `057`'s object-RLS policies for why the first path segment must
+always be the literal `org_id`.
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from noctusai_lib.api import scheduler as seed_scheduler
-from noctusai_lib.integrations.persistence import iter_paged_rows
+from noctusai_lib.domain.card_hub import documentos as seed_docs
+from noctusai_lib.domain.card_hub.documentos import (
+    DOCUMENTO_RESUMO_COLUNAS,
+    documento_resumo,
+)
 from noctusai_lib.integrations.storage import StorageBackend
-from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
-
-from app.services import documento_retencao
-from app.services.documento_store import documento_base
+from noctusai_lib.primitives.exceptions import ValidationError_
 
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
-from app.modules.card_hub.deps import BUCKET, get_card_hub_client
-from app.modules.card_hub.services import (
-    _actor,
-    _paged_rows,
-    _resolve_actors,
-    _t,
-    ensure_cliente,
-)
+from app.modules.card_hub.deps import card_hub_config, get_card_hub_client
+from app.modules.card_hub.services import _now, _resolve_actors, _t
 
 logger = logging.getLogger(__name__)
 
 # Conservative server-side limits (contract §3: "Limits enforced
 # server-side ... A rejected upload returns a typed error naming the
-# limit it hit"). Module-local constants — mirrors
-# `erp-imobiliario/app/services/storage_service.py`'s `MAX_FILE_SIZE`/
-# `ALLOWED_TYPES` shape rather than a new `Settings` field, since this is
-# a fixed platform policy, not per-deployment configuration.
+# limit it hit"). Module-local constants — a fixed platform policy, not
+# per-deployment configuration. `app.modules.card_hub.config.CARD_HUB`'s
+# `DocumentoPolicy` is built FROM these; they stay the one place the policy
+# is written.
 #
-# This is now the REAL business-policy limit, not a value squeezed under
-# the platform's flat body-size guard. Every request in this product
-# passes through `MaxBodySizeMiddleware`, but `app/main.py` declares a
-# per-route override for this exact endpoint (`/api/clientes/*/documentos`,
-# 30 MB — see that file's `_MAX_BODY_PATH_OVERRIDES` comment), so 25 MB
-# sits comfortably under the platform's own ceiling with headroom for
-# multipart boundary/header overhead. Covers a phone photo (3-8 MB) and a
-# larger HDR/RAW-derived export (25 MB+) — see `_format_bytes_human` for
-# why the rejection message stays truthful at both this size AND the
-# legacy 800 KB one (which used to integer-divide to a misleading "0MB").
+# This is the REAL business-policy limit, not a value squeezed under the
+# platform's flat body-size guard: `app/main.py` declares a per-route
+# override for this exact endpoint (`/api/clientes/*/documentos`, 30 MB —
+# see that file's `_MAX_BODY_PATH_OVERRIDES` comment), so 25 MB sits
+# comfortably under the platform's own ceiling with headroom for multipart
+# boundary/header overhead. Covers a phone photo (3-8 MB) and a larger
+# HDR/RAW-derived export (25 MB+) — see `_format_bytes_human` for why the
+# rejection message stays truthful at both this size AND the legacy 800 KB
+# one (which used to integer-divide to a misleading "0MB").
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB — see the note above
 ALLOWED_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 )
 
+#: The retention sweep's scheduler job id. STABLE across releases:
+#: re-registering the same id replaces the job, a changed id would register a
+#: second sweep next to the first.
+RETENTION_SWEEP_JOB_ID = "card_hub_documento_retention_sweep"
 
-def _format_bytes_human(n: int) -> str:
-    """Human-readable byte count for user-facing limit messages.
-
-    Never integer-divides to a misleading "0MB": the legacy 800 KB cap's
-    `MAX_UPLOAD_BYTES // (1024 * 1024)` formatting evaluated to exactly 0,
-    so a user who exceeded the (sub-megabyte) limit was told "excede o
-    limite de 0MB" — worse than no number at all, since it reads as a
-    broken feature rather than a real limit. MB with one decimal at/above
-    1 MB (truthful for any fractional-MB value, not just whole ones);
-    whole KB below 1 MB.
-    """
-    mb = n / (1024 * 1024)
-    if mb >= 1:
-        return f"{mb:.1f}MB"
-    return f"{n / 1024:.0f}KB"
-
-
-_SIGNED_URL_TTL_SECONDS = 300  # short TTL, minted per request (contract §2)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _today() -> "datetime.date":
-    return datetime.now(timezone.utc).date()
-
-
-def _require_tipo_documento(client: Any, tipo_documento: str) -> dict:
-    rows = (
-        _t(client, "cliente_documento_tipos")
-        .select("*")
-        .eq("tipo_documento", tipo_documento)
-        .execute()
-    ).data or []
-    if not rows:
-        raise ValidationError_(
-            f"tipo_documento desconhecido: {tipo_documento!r}", field="tipo_documento"
-        )
-    row = rows[0]
-    if not row.get("ativo", False):
-        raise ValidationError_(
-            f"tipo_documento {tipo_documento!r} não está habilitado para upload "
-            "(pendente de intake LGPD)",
-            field="tipo_documento",
-        )
-    return row
+_format_bytes_human = seed_docs.format_bytes_human
 
 
 def list_tipos_documento(client: Any) -> dict:
-    rows = (
-        _t(client, "cliente_documento_tipos")
-        .select("*")
-        .eq("ativo", True)
-        .execute()
-    ).data or []
-    items = [
-        {
-            "tipo_documento": r["tipo_documento"],
-            "categoria_lgpd": r["categoria_lgpd"],
-            "descricao": r.get("descricao"),
-            # 🔴 Added so a tipo picker can group/flag identity types instead
-            # of guessing off `categoria_lgpd` string-matching "identidade"
-            # (which is also true of a certidão, itself an identity document
-            # but not one of THIS flag's original RG/CPF-class rows) — the
-            # column already exists on the catalogue (migration 057); this
-            # was simply never read by the endpoint before.
-            "identidade": bool(r.get("identidade", False)),
-        }
-        for r in rows
-    ]
-    items.sort(key=lambda t: t["tipo_documento"])
-    return {"items": items, "total": len(items)}
-
-
-#: The columns a checklist line needs to NAME the document that satisfies it.
-#:
-#: Narrower than `_documento_out` on purpose: a checklist row is not a document
-#: browser. It needs enough to render "arquivo.pdf · 1,2 MB" beside a trash
-#: button and nothing more — no `retencao_ate`, no `enviado_por` (which would
-#: drag in an actor resolution across a second schema client for a name the
-#: line never shows), no signed URL.
-#:
-#: 5 of `app.services.documento_store.documento_base`'s 7 core columns —
-#: everything but `tipo_documento` and `enviado_por` (see above). Not built
-#: as a slice of `documento_base(row, {})`: that call still REQUIRES
-#: `tipo_documento` on `row` (a `KeyError`) and still runs the actor
-#: resolution this projection exists specifically to skip.
-DOCUMENTO_RESUMO_COLUNAS = (
-    "id",
-    "nome_original",
-    "mime_type",
-    "tamanho_bytes",
-    "created_at",
-)
-
-
-def documento_resumo(row: Optional[dict]) -> Optional[dict]:
-    """The document summary a checklist line carries, or `None`.
-
-    ONE definition, two callers — `documento_checklist_service` (the mandatory
-    rg/cpf items) and `checklist_extras_service` (operator-authored `arquivo`
-    lines). Two copies of a five-key projection would drift the moment one side
-    added a field, and the frontend renders both through the same row
-    component, so a divergence would show up as a blank cell rather than an
-    error.
-
-    `.get()` throughout: a caller may hand over a row it selected narrowly.
-    """
-    if row is None:
-        return None
-    return {key: row.get(key) for key in DOCUMENTO_RESUMO_COLUNAS}
+    return seed_docs.list_tipos_documento(card_hub_config(), client)
 
 
 def _documento_out(row: dict, resolved_actors: dict) -> dict:
-    return {
-        **documento_base(row, resolved_actors),
-        "categoria_lgpd": row["categoria_lgpd"],
-        "retencao_ate": row.get("retencao_ate"),
-        # No thumbnail pipeline in this slice (no image-processing step
-        # exists anywhere in this product yet) — always `None`, which the
-        # contract's `|null` shape explicitly allows. Not a silent gap:
-        # surfaced in the delivery note, not hidden behind a fabricated URL.
-        "thumbnail_url": None,
-        # 🔴 Extraction state, surfaced. Before this it was written by
-        # `identidade_extracao_service` and read only by the sweep and by
-        # `sugestoes_pendentes` — a document stuck in `erro` (an OpenAI 429,
-        # a corrupt PDF) showed nowhere on the card, indistinguishable from
-        # one that was never meant to be read at all. `None` for a
-        # non-identity type (never queued) is the honest value, not a gap.
-        "extracao_status": row.get("extracao_status"),
-        "extracao_erro": row.get("extracao_erro"),
-    }
+    return seed_docs.documento_out(card_hub_config(), row, resolved_actors)
 
 
 def list_documentos(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    rows = _paged_rows(
-        client,
-        "cliente_documentos",
-        org_id,
-        eq_filters={"cliente_id": str(cliente_id)},
-        refine=lambda q: q.is_("deleted_at", "null"),
-    )
-    resolved = _resolve_actors({r["enviado_por"] for r in rows if r.get("enviado_por")})
-    items = [_documento_out(r, resolved) for r in rows]
-    items.sort(key=lambda d: d["created_at"], reverse=True)
-    return {"items": items, "total": len(items)}
+    return seed_docs.list_documentos(card_hub_config(), client, org_id, cliente_id)
 
 
 async def upload_documento(
@@ -231,100 +97,26 @@ async def upload_documento(
     tipo_documento: str,
     enviado_por: Optional[UUID],
 ) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-
-    if content_type not in ALLOWED_MIME_TYPES:
-        raise ValidationError_(
-            f"Tipo de arquivo não permitido: {content_type}. "
-            f"Permitidos: {', '.join(sorted(ALLOWED_MIME_TYPES))}",
-            field="mime_type",
-        )
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise ValidationError_(
-            f"Arquivo excede o limite de {_format_bytes_human(MAX_UPLOAD_BYTES)} "
-            f"({_format_bytes_human(len(data))} enviado)",
-            field="tamanho_bytes",
-        )
-
-    tipo_row = _require_tipo_documento(client, tipo_documento)
-
-    document_id = uuid4()
-    storage_path = f"{org_id}/clientes/{cliente_id}/{document_id}"
-    await storage.put(
-        bucket=BUCKET,
-        key=storage_path,
-        data=data,
+    """Validate → put → insert (seed). `max_bytes` is THIS module's
+    `MAX_UPLOAD_BYTES`, read at CALL time — the one place the limit is
+    written, not a value frozen into the config when it was built."""
+    return await seed_docs.upload_documento(
+        card_hub_config(),
+        client,
+        storage,
+        org_id,
+        cliente_id,
+        filename=filename,
         content_type=content_type,
-        metadata={"nome_original": filename},
+        data=data,
+        tipo_documento=tipo_documento,
+        enviado_por=enviado_por,
+        max_bytes=MAX_UPLOAD_BYTES,
     )
-
-    # 🔴 The POLICY, not the catalogue. Migration 079 moved `retencao_dias`
-    # off `cliente_documento_tipos` (which only a migration could change) into
-    # `documento_retencao_politicas` (which the Settings screen can). The
-    # catalogue column still exists as a one-release rollback path and is
-    # marked superseded in the database itself — reading it here again would
-    # silently ignore whatever the controller set on the screen.
-    retencao_dias = documento_retencao.dias_para(
-        client, org_id, "cliente", tipo_documento
-    )
-    retencao_ate = (
-        (_today() + timedelta(days=retencao_dias)).isoformat() if retencao_dias else None
-    )
-
-    row = {
-        "id": str(document_id),
-        "org_id": str(org_id),
-        "cliente_id": str(cliente_id),
-        "storage_path": storage_path,
-        "nome_original": filename,
-        "mime_type": content_type,
-        "tamanho_bytes": len(data),
-        "tipo_documento": tipo_documento,
-        "categoria_lgpd": tipo_row["categoria_lgpd"],
-        "retencao_ate": retencao_ate,
-        "enviado_por": str(enviado_por) if enviado_por else None,
-        "deleted_at": None,
-        "delete_motivo": None,
-        "delete_solicitado_por": None,
-        "created_at": _now(),
-        # An identity document is queued for a birthdate read the moment it
-        # lands (migration 068). `pendente` is set HERE rather than by the
-        # background job so a job that never starts — worker died, process
-        # recycled mid-request — is visibly waiting instead of invisibly lost.
-        "extracao_status": (
-            "pendente" if identidade_svc.deve_extrair(tipo_documento) else None
-        ),
-    }
-    _t(client, "cliente_documentos").insert(row).execute()
-    resolved = _resolve_actors({row["enviado_por"]} if row["enviado_por"] else set())
-    return _documento_out(row, resolved)
 
 
 def _require_documento(client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID) -> dict:
-    rows = (
-        _t(client, "cliente_documentos")
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .eq("id", str(documento_id))
-        .execute()
-    ).data or []
-    if not rows or rows[0].get("deleted_at"):
-        raise NotFoundError("cliente_documentos", str(documento_id))
-    return rows[0]
-
-
-def _log_acesso(client: Any, org_id: UUID, documento_id: UUID, usuario_id: Optional[UUID], acao: str) -> None:
-    _t(client, "cliente_documento_acessos").insert(
-        {
-            "id": str(uuid4()),
-            "org_id": str(org_id),
-            "documento_id": str(documento_id),
-            "usuario_id": str(usuario_id) if usuario_id else None,
-            "acao": acao,
-            "created_at": _now(),
-        }
-    ).execute()
+    return seed_docs.require_documento(card_hub_config(), client, org_id, cliente_id, documento_id)
 
 
 async def get_documento_url(
@@ -337,24 +129,10 @@ async def get_documento_url(
     usuario_id: Optional[UUID],
     intent: str = "view",
 ) -> dict:
-    """Mints a short-TTL signed URL and appends to the access log.
-
-    `intent` selects the logged `acao` (`'view'` or `'download'`) — the
-    contract names one endpoint (`GET .../url`) but requires BOTH actions
-    to be loggable; a query param is the smallest surface that satisfies
-    both without inventing a second route. Surfaced in the delivery note
-    as an interpretation call."""
-    if intent not in ("view", "download"):
-        raise ValidationError_(f"intent inválido: {intent!r}", field="intent")
-    documento = _require_documento(client, org_id, cliente_id, documento_id)
-    url = await storage.signed_url(
-        bucket=BUCKET, key=documento["storage_path"], expires_in_seconds=_SIGNED_URL_TTL_SECONDS
+    return await seed_docs.get_documento_url(
+        card_hub_config(), client, storage, org_id, cliente_id, documento_id,
+        usuario_id=usuario_id, intent=intent,
     )
-    _log_acesso(client, org_id, documento_id, usuario_id, intent)
-    expires_at = (
-        datetime.now(timezone.utc) + timedelta(seconds=_SIGNED_URL_TTL_SECONDS)
-    ).isoformat()
-    return {"url": url, "expires_at": expires_at}
 
 
 async def delete_documento(
@@ -367,15 +145,10 @@ async def delete_documento(
     motivo: str,
     usuario_id: Optional[UUID],
 ) -> None:
-    documento = _require_documento(client, org_id, cliente_id, documento_id)
-    _t(client, "cliente_documentos").update(
-        {
-            "deleted_at": _now(),
-            "delete_motivo": motivo,
-            "delete_solicitado_por": str(usuario_id) if usuario_id else None,
-        }
-    ).eq("id", str(documento_id)).execute()
-    _log_acesso(client, org_id, documento_id, usuario_id, "delete")
+    await seed_docs.delete_documento(
+        card_hub_config(), client, storage, org_id, cliente_id, documento_id,
+        motivo=motivo, usuario_id=usuario_id,
+    )
 
 
 #: Non-terminal extraction states — mirrors
@@ -453,127 +226,46 @@ def reextrair_documento(client: Any, org_id: UUID, cliente_id: UUID, documento_i
 
 
 def list_acessos(client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID) -> dict:
-    # `_require_documento` would reject an already-soft-deleted document,
-    # but its access log (including its own delete entry) must remain
-    # readable — soft-delete is not erasure. A lighter existence check
-    # (any row, deleted or not) is used here instead.
-    exists = (
-        _t(client, "cliente_documentos")
-        .select("id")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .eq("id", str(documento_id))
-        .execute()
-    ).data or []
-    if not exists:
-        raise NotFoundError("cliente_documentos", str(documento_id))
-
-    # An access log for one document can genuinely grow large over years
-    # of view/download/delete traffic — paged, never a bare `.execute()`.
-    rows = _paged_rows(
-        client, "cliente_documento_acessos", org_id, eq_filters={"documento_id": str(documento_id)}
-    )
-    resolved = _resolve_actors({r["usuario_id"] for r in rows if r.get("usuario_id")})
-    items = [
-        {
-            "id": r["id"],
-            "usuario": _actor(resolved, r.get("usuario_id")),
-            "acao": r["acao"],
-            "created_at": r["created_at"],
-        }
-        for r in rows
-    ]
-    items.sort(key=lambda a: a["created_at"], reverse=True)
-    return {"items": items, "total": len(items)}
+    return seed_docs.list_acessos(card_hub_config(), client, org_id, cliente_id, documento_id)
 
 
 # ─── Retention sweep ──────────────────────────────────────────────────
 
 
 def run_retention_sweep(client: Any, org_id: UUID) -> int:
-    """Soft-deletes every non-deleted document past its `retencao_ate`
-    date for `org_id`, appending a `delete` access-log entry attributed
-    to no user (`usuario_id=None` — a system action, not a person's).
-    Returns the count swept. Table-driven: the caller never encodes a
-    per-type policy — `retencao_ate` was already computed at upload time
-    from `cliente_documento_tipos`."""
-    today = _today().isoformat()
-    rows = (
-        _t(client, "cliente_documentos")
-        .select("id")
-        .eq("org_id", str(org_id))
-        .is_("deleted_at", "null")
-        .lte("retencao_ate", today)
-        .execute()
-    ).data or []
-    for row in rows:
-        _t(client, "cliente_documentos").update(
-            {
-                "deleted_at": _now(),
-                "delete_motivo": "retenção expirada (sweep automático)",
-                "delete_solicitado_por": None,
-            }
-        ).eq("id", row["id"]).execute()
-        _log_acesso(client, org_id, UUID(row["id"]), None, "delete")
-    return len(rows)
-
-
-def _list_org_ids(client: Any) -> list[UUID]:
-    """Every org owning at least one `cliente_documentos` row — mirrors
-    `app.services.clientes_backfill_job._list_org_ids`'s shape (single
-    read column, paged, dedup in Python — PostgREST has no DISTINCT),
-    composing the seed's shared pager instead of a hand-rolled loop."""
-
-    def fetch_page(start: int, end: int):
-        return _t(client, "cliente_documentos").select("org_id").order("id").range(start, end).execute().data
-
-    seen: set[str] = set()
-    for row in iter_paged_rows(fetch_page, label="cliente_documentos org_id scan"):
-        if row.get("org_id"):
-            seen.add(str(row["org_id"]))
-    return [UUID(o) for o in sorted(seen)]
+    """Soft-delete every live document past its `retencao_ate` for `org_id`
+    (seed body — a `delete` access-log entry attributed to no user). Returns
+    the count swept."""
+    return seed_docs.run_retention_sweep(card_hub_config(), client, org_id)
 
 
 def run_retention_sweep_all_orgs(*, client: Any = None) -> int:
-    """The scheduled sweep's body — every org, one pass. Returns the
-    total rows swept across all orgs."""
-    resolved_client = client or get_card_hub_client()
-    total = 0
-    for org_id in _list_org_ids(resolved_client):
-        total += run_retention_sweep(resolved_client, org_id)
-    return total
-
-
-def _run_retention_sweep_job(*, run_fn: Any = None) -> None:
-    """Scheduler entrypoint — swallows ALL exceptions so a bug in one run
-    never crashes the scheduler or de-registers the job (mirrors
-    `clientes_backfill_job._run_clientes_backfill_job`'s identical
-    shape). `run_fn` is the test seam."""
-    try:
-        (run_fn or run_retention_sweep_all_orgs)()
-    except Exception:
-        logger.error("card_hub.documentos: retention sweep failed", exc_info=True)
+    """The scheduled sweep's body — every org, one pass."""
+    return seed_docs.run_retention_sweep_all_orgs(
+        card_hub_config(), client or get_card_hub_client()
+    )
 
 
 def configure(*, scheduler: Any = None) -> None:
-    """Register the retention sweep on the seed-side scheduler. Called
-    from `app.modules.card_hub.register()` at import time, before
-    `start_scheduler()` fires in `app/lifespan.py` — mirrors
-    `clientes_backfill_job.configure()`'s identical shape. A fixed 24h
-    interval (module-local, not a `Settings` field — this is a platform
-    policy, not per-deployment configuration)."""
-    (scheduler or seed_scheduler).register(
-        "card_hub_documento_retention_sweep",
-        _run_retention_sweep_job,
+    """Register the retention sweep on the seed-side scheduler — ONCE, under
+    the job id this product has always used (`RETENTION_SWEEP_JOB_ID`).
+    Called from `app.modules.card_hub.register()` before `start_scheduler()`
+    fires in `app/lifespan.py`. `get_card_hub_client` is resolved per run,
+    never captured."""
+    seed_docs.register_retention_sweep(
+        card_hub_config(),
+        get_db=get_card_hub_client,
+        scheduler=scheduler,
+        job_id=RETENTION_SWEEP_JOB_ID,
         hours=24,
     )
-    logger.info("card_hub retention sweep scheduler configured: every 24h")
 
 
 __all__ = [
     "ALLOWED_MIME_TYPES",
     "DOCUMENTO_RESUMO_COLUNAS",
     "MAX_UPLOAD_BYTES",
+    "RETENTION_SWEEP_JOB_ID",
     "configure",
     "documento_resumo",
     "delete_documento",
@@ -581,6 +273,7 @@ __all__ = [
     "list_acessos",
     "list_documentos",
     "list_tipos_documento",
+    "reextrair_documento",
     "run_retention_sweep",
     "run_retention_sweep_all_orgs",
     "upload_documento",

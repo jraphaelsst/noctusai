@@ -1,12 +1,30 @@
-"""The unified timeline (D9) + the card summary / badges (contract §3).
+"""The unified timeline (D9) + the card summary / badges (contract §3) —
+social-wiring's half of them.
+
+The MECHANICS (cursor codec, pager, the `nota` / `documento` / `checklist`
+gatherers, the seed badges, the resumo skeleton) are the seed's
+`noctusai_lib.domain.card_hub` — this module used to be their original and
+they were lifted out of it as a MOVE (wave A, 2026-09-22). What stays here is
+what is ABOUT social-wiring, plugged in through the config's named seams
+(`app.modules.card_hub.config.CARD_HUB`):
+
+- the `touch`, `movimento`, `visita` and `sistema` gatherers
+  (`timeline_gatherers`);
+- the `touches` + `temperatura` badges, spliced back into the badge row at
+  the positions the API contract has always served them in
+  (`badge_extensions`);
+- the resumo's `atendimentos` key (`resumo_extensions`).
+
+`get_timeline` / `compute_badges` / `get_card_resumo` survive as thin shims
+with their historical `(client, org_id, cliente_id)` signatures.
 
 `ocorrido_em` is the sort key and it is the event's OWN time, never
 `created_at` of the row that records it (contract §3) — a backfilled
-touch from March must sort in March. Every source function below sets
+touch from March must sort in March. Every gatherer below sets
 `ocorrido_em` from the domain event's own timestamp column, never from a
-recording-row `created_at`, EXCEPT where the row IS the event (a note is
-created at the moment it's written; a movement IS the moment it happened)
-— those two coincide by construction, not by mistake.
+recording-row `created_at`, EXCEPT where the row IS the event (a movement
+IS the moment it happened) — those coincide by construction, not by
+mistake.
 
 `movimento` reads `pipeline_movimentos` — written by
 `app.modules.pipeline` (migration 034) — via a READ-ONLY join through
@@ -21,85 +39,37 @@ over-time state, not a bug in this module.
 """
 from __future__ import annotations
 
-import base64
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.domain.card_hub import SEED_GATHERERS, CardHubConfig
+from noctusai_lib.domain.card_hub import badges as seed_badges
+from noctusai_lib.domain.card_hub import timeline as seed_timeline
+from noctusai_lib.domain.card_hub.badges import count_rows
+
 from app.modules.card_hub import services as card_hub_services
+from app.modules.card_hub.deps import card_hub_config
 from app.modules.card_hub.services import (
     _actor,
     _in_batched_rows,
     _paged_rows,
     _resolve_actors,
-    _t,
-    ensure_cliente,
 )
 
-_ALL_KINDS = {
-    "nota", "touch", "movimento", "documento", "checklist", "sistema", "visita",
-}
-_DEFAULT_LIMIT = 50
+_DEFAULT_LIMIT = seed_timeline.DEFAULT_LIMIT
 
 
-# ─── cursor codec ───────────────────────────────────────────────────────
+# ─── social-wiring's gatherers (registered via `CARD_HUB.timeline_gatherers`) ─
+#
+# Seed gatherer signature: `(cfg, db, org_id, entity_id, entity)`. The
+# parameters keep their historical names here (`client`, `cliente_id`,
+# `cliente`) so every body below reads exactly as it did before the lift.
 
 
-def _encode_cursor(ocorrido_em: str, entry_id: str) -> str:
-    raw = f"{ocorrido_em}|{entry_id}".encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii")
-
-
-def _decode_cursor(cursor: str) -> tuple[str, str]:
-    try:
-        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8")
-        ocorrido_em, entry_id = raw.split("|", 1)
-        return ocorrido_em, entry_id
-    except Exception as exc:  # noqa: BLE001 — any decode failure is "bad cursor"
-        from noctusai_lib.primitives.exceptions import ValidationError_
-
-        raise ValidationError_(f"cursor inválido: {cursor!r}") from exc
-
-
-def _sort_key(entry: dict) -> tuple[str, str]:
-    return (entry["ocorrido_em"], entry["id"])
-
-
-# ─── per-kind gatherers ─────────────────────────────────────────────────
-
-
-def _gather_notas(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
-    # Contract correction: `tipo='descricao'` is card STATE (surfaced via
-    # `CardResumo.descricao`), not a timeline event — showing it in the
-    # thread would make every edit of the description look like a new
-    # comment. Only `tipo='comentario'` rows are gathered here.
-    rows = _paged_rows(
-        client,
-        "cliente_notas",
-        org_id,
-        eq_filters={"cliente_id": str(cliente_id), "tipo": "comentario"},
-    )
-    autor_ids = {r["autor_id"] for r in rows if r.get("autor_id")}
-    resolved = _resolve_actors(autor_ids)
-    return [
-        {
-            "id": r["id"],
-            "kind": "nota",
-            "ocorrido_em": r["created_at"],
-            "ator": _actor(resolved, r.get("autor_id")),
-            "payload": {
-                "id": r["id"],
-                "corpo": r["corpo"],
-                "autor": _actor(resolved, r.get("autor_id")),
-                "editado_em": r.get("editado_em"),
-                "deleted_at": r.get("deleted_at"),
-            },
-        }
-        for r in rows
-    ]
-
-
-def _gather_touches(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+def _gather_touches(
+    cfg: CardHubConfig, client: Any, org_id: UUID, cliente_id: UUID, cliente: dict
+) -> list[dict]:
     # A prolific cliente's touch trail is exactly the "hundreds/thousands
     # accumulated over a lifetime" shape the 1 000-row cap has bitten in
     # this product before — paged, never a bare `.execute()`.
@@ -123,7 +93,9 @@ def _gather_touches(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
     ]
 
 
-def _gather_movimentos(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+def _gather_movimentos(
+    cfg: CardHubConfig, client: Any, org_id: UUID, cliente_id: UUID, cliente: dict
+) -> list[dict]:
     atendimentos = _paged_rows(client, "atendimentos", org_id, eq_filters={"cliente_id": str(cliente_id)})
     atendimento_ids = [n["id"] for n in atendimentos]
     if not atendimento_ids:
@@ -183,64 +155,9 @@ def _gather_movimentos(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict
     ]
 
 
-def _gather_documentos(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
-    rows = _paged_rows(
-        client,
-        "cliente_documentos",
-        org_id,
-        eq_filters={"cliente_id": str(cliente_id)},
-        refine=lambda q: q.is_("deleted_at", "null"),
-    )
-    return [
-        {
-            "id": r["id"],
-            "kind": "documento",
-            "ocorrido_em": r["created_at"],
-            "ator": None,
-            "payload": {
-                "id": r["id"],
-                "nome_original": r["nome_original"],
-                "mime_type": r["mime_type"],
-                "tamanho_bytes": r["tamanho_bytes"],
-            },
-        }
-        for r in rows
-    ]
-
-
-def _gather_checklist_events(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
-    """One timeline entry per COMPLETED checklist item — derived, per
-    contract §3. A never-completed item has no event to show; this
-    product does not track a separate "created" audit trail for
-    checklist items, so completion is the only derivable moment."""
-    checklists = _paged_rows(client, "cliente_checklists", org_id, eq_filters={"cliente_id": str(cliente_id)})
-    if not checklists:
-        return []
-    titulo_by_id = {c["id"]: c["titulo"] for c in checklists}
-    itens = _in_batched_rows(
-        client, "cliente_checklist_itens", org_id, "checklist_id", list(titulo_by_id.keys())
-    )
-    completed = [i for i in itens if i.get("concluido") and i.get("concluido_em")]
-    autor_ids = {i["concluido_por"] for i in completed if i.get("concluido_por")}
-    resolved = _resolve_actors(autor_ids)
-    return [
-        {
-            "id": i["id"],
-            "kind": "checklist",
-            "ocorrido_em": i["concluido_em"],
-            "ator": _actor(resolved, i.get("concluido_por")),
-            "payload": {
-                "checklist_id": i["checklist_id"],
-                "titulo": titulo_by_id.get(i["checklist_id"]),
-                "item_texto": i["texto"],
-                "concluido": True,
-            },
-        }
-        for i in completed
-    ]
-
-
-def _gather_sistema(client: Any, org_id: UUID, cliente_id: UUID, cliente: dict) -> list[dict]:
+def _gather_sistema(
+    cfg: CardHubConfig, client: Any, org_id: UUID, cliente_id: UUID, cliente: dict
+) -> list[dict]:
     """Derived system events: created, archived, merged, and the undo of
     a merge. 🔴 "restored" (D4's manual un-archive) is DELIBERATELY
     ABSENT here: `clientes.arquivado_em` is NULLED (not stamped with a
@@ -298,7 +215,9 @@ def _gather_sistema(client: Any, org_id: UUID, cliente_id: UUID, cliente: dict) 
     return events
 
 
-def _gather_visitas(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+def _gather_visitas(
+    cfg: CardHubConfig, client: Any, org_id: UUID, cliente_id: UUID, cliente: dict
+) -> list[dict]:
     """Routes planned and visits that resolved — DERIVED, like every other
     gatherer here (migration 082).
 
@@ -385,14 +304,21 @@ def _gather_visitas(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
     return events
 
 
-_GATHERERS = {
-    "nota": _gather_notas,
+#: The card's full kind registry — the seed's three plus ours, in the order
+#: this module always gathered them (`sistema` last). The served order is the
+#: sort, so this only decides tie-order between identical `(ocorrido_em, id)`
+#: keys — kept anyway, so the lift changes nothing observable.
+TIMELINE_GATHERERS = {
+    "nota": SEED_GATHERERS["nota"],
     "touch": _gather_touches,
     "movimento": _gather_movimentos,
-    "documento": _gather_documentos,
-    "checklist": _gather_checklist_events,
+    "documento": SEED_GATHERERS["documento"],
+    "checklist": SEED_GATHERERS["checklist"],
     "visita": _gather_visitas,
+    "sistema": _gather_sistema,
 }
+
+# ─── Timeline ───────────────────────────────────────────────────────────
 
 
 def get_timeline(
@@ -404,94 +330,34 @@ def get_timeline(
     cursor: Optional[str] = None,
     limit: int = _DEFAULT_LIMIT,
 ) -> dict:
-    cliente = ensure_cliente(client, org_id, cliente_id)
-    requested = kinds & _ALL_KINDS if kinds else set(_ALL_KINDS)
-
-    entries: list[dict] = []
-    for kind, gather in _GATHERERS.items():
-        if kind in requested:
-            entries.extend(gather(client, org_id, cliente_id))
-    if "sistema" in requested:
-        entries.extend(_gather_sistema(client, org_id, cliente_id, cliente))
-
-    entries.sort(key=_sort_key, reverse=True)
-    total = len(entries)
-
-    if cursor:
-        cursor_ocorrido_em, cursor_id = _decode_cursor(cursor)
-        entries = [
-            e
-            for e in entries
-            if (e["ocorrido_em"], e["id"]) < (cursor_ocorrido_em, cursor_id)
-        ]
-
-    page = entries[:limit]
-    next_cursor = None
-    if len(entries) > limit:
-        last = page[-1]
-        next_cursor = _encode_cursor(last["ocorrido_em"], last["id"])
-
-    items = [
-        {
-            "id": e["id"],
-            "kind": e["kind"],
-            "ocorrido_em": e["ocorrido_em"],
-            "ator": e["ator"],
-            **e["payload"],
-        }
-        for e in page
-    ]
-    return {"items": items, "total": total, "next_cursor": next_cursor}
+    return seed_timeline.get_timeline(
+        card_hub_config(), client, org_id, cliente_id, kinds=kinds, cursor=cursor, limit=limit
+    )
 
 
 # ─── Card summary (the badge row) ────────────────────────────────────────
 
 
-def _count(client: Any, table: str, org_id: UUID, cliente_id: UUID, **extra_eq) -> int:
-    """A head-only count query — never fetch-then-`len()` (contract §3:
-    the board renders ~1200 cards; badges must be served, computed in
-    SQL)."""
-    query = (
-        _t(client, table)
-        .select("id", count="exact")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-    )
-    for key, value in extra_eq.items():
-        query = query.eq(key, value)
-    result = query.execute()
-    return getattr(result, "count", None) or 0
+def badges_sw(
+    cfg: CardHubConfig, client: Any, org_id: UUID, cliente_id: UUID, cliente: dict, badges: dict
+) -> dict:
+    """`CARD_HUB.badge_extensions` — adds `touches` + `temperatura` and
+    REBUILDS the dict so the served key order is the contract's own
+    (`touches` between `documentos` and `checklist_total`; `temperatura`
+    last), not "seed keys, then ours".
 
-
-def compute_badges(client: Any, org_id: UUID, cliente_id: UUID, cliente: dict) -> dict:
-    # Contract correction: `notas` counts COMMENTS only (`tipo='comentario'`)
-    # — the description has its own `tem_descricao` boolean, mirroring
-    # Trello's own split between the `comments` and `description` badges.
-    notas_count = _count(client, "cliente_notas", org_id, cliente_id, tipo="comentario")
-    descricao = card_hub_services.get_descricao(client, org_id, cliente_id)
-    documentos_count = _count(client, "cliente_documentos", org_id, cliente_id)
-    touches_count = _count(client, "cliente_touches", org_id, cliente_id)
-
-    checklists = _paged_rows(client, "cliente_checklists", org_id, eq_filters={"cliente_id": str(cliente_id)})
-    checklist_ids = [c["id"] for c in checklists]
-    if checklist_ids:
-        itens = _in_batched_rows(client, "cliente_checklist_itens", org_id, "checklist_id", checklist_ids)
-        checklist_total = len(itens)
-        checklist_concluidos = sum(1 for i in itens if i.get("concluido"))
-    else:
-        checklist_total = 0
-        checklist_concluidos = 0
-
-    temperatura = _compute_temperatura(cliente)
-
+    `touches` is a head-only count query like every other badge — never
+    fetch-then-`len()` (contract §3: the board renders ~1200 cards; badges
+    must be served, computed in SQL)."""
+    touches_count = count_rows(cfg, client, "cliente_touches", org_id, cliente_id)
     return {
-        "notas": notas_count,
-        "documentos": documentos_count,
+        "notas": badges["notas"],
+        "documentos": badges["documentos"],
         "touches": touches_count,
-        "checklist_total": checklist_total,
-        "checklist_concluidos": checklist_concluidos,
-        "tem_descricao": descricao is not None,
-        "temperatura": temperatura,
+        "checklist_total": badges["checklist_total"],
+        "checklist_concluidos": badges["checklist_concluidos"],
+        "tem_descricao": badges["tem_descricao"],
+        "temperatura": _compute_temperatura(cliente),
     }
 
 
@@ -517,26 +383,24 @@ def _compute_temperatura(cliente: dict) -> Optional[dict]:
     return {"valor": valor, "rotulo": rotulo, "provisoria": True}
 
 
-def get_card_resumo(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+def resumo_sw(
+    cfg: CardHubConfig, client: Any, org_id: UUID, cliente_id: UUID, cliente: dict, resumo: dict
+) -> dict:
+    """`CARD_HUB.resumo_extensions` — appends `atendimentos` (the last key
+    the contract serves).
+
+    The card shows the person's OWN data, and for a lead that data lives on
+    the ORIGIN record (`leads` / `meta_ads_leads`) — `clientes` deliberately
+    holds identity + card state, never contact fields. So each atendimento
+    arrives with its origin embedded, under the SAME projection the boards
+    use (`pipeline.configs.CARD_ORIGIN_SELECT`): one definition of "what a
+    lead card projects", so the card and the board cannot end up showing
+    different subsets of the same record."""
     # Local import: `pipeline.configs` imports nothing from card_hub, but
     # keeping this at call scope makes the one-way direction obvious and
     # avoids a module-level cycle if that ever changes.
     from app.modules.pipeline.configs import CARD_ORIGIN_SELECT
 
-    cliente = ensure_cliente(client, org_id, cliente_id)
-
-    # Reuses `services.py`'s own paginated tag/membro reads rather than a
-    # second copy of the same join — one bug surface, not two.
-    tags_out = card_hub_services.get_cliente_tags(client, org_id, cliente_id)["items"]
-    membros_out = card_hub_services.get_membros(client, org_id, cliente_id)["items"]
-
-    # The card shows the person's OWN data, and for a lead that data lives on
-    # the ORIGIN record (`leads` / `meta_ads_leads`) — `clientes` deliberately
-    # holds identity + card state, never contact fields. So each atendimento
-    # arrives with its origin embedded, under the SAME projection the boards
-    # use (`pipeline.configs.CARD_ORIGIN_SELECT`): one definition of "what a
-    # lead card projects", so the card and the board cannot end up showing
-    # different subsets of the same record.
     atendimentos = _paged_rows(
         client,
         "atendimentos",
@@ -544,24 +408,22 @@ def get_card_resumo(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         eq_filters={"cliente_id": str(cliente_id)},
         select=CARD_ORIGIN_SELECT,
     )
-
-    return {
-        "cliente": cliente,
-        "tags": tags_out,
-        "membros": membros_out,
-        # Contract correction: the card's single Descrição is card STATE,
-        # surfaced here (never in the timeline — see `_gather_notas`).
-        "descricao": card_hub_services.get_descricao(client, org_id, cliente_id),
-        "datas": {
-            "data_inicio": cliente.get("data_inicio"),
-            "data_entrega": cliente.get("data_entrega"),
-            "entrega_concluida": cliente.get("entrega_concluida", False),
-            "lembrete_minutos_antes": cliente.get("lembrete_minutos_antes"),
-            "recorrencia": cliente.get("recorrencia"),
-        },
-        "badges": compute_badges(client, org_id, cliente_id, cliente),
-        "atendimentos": atendimentos,
-    }
+    return {**resumo, "atendimentos": atendimentos}
 
 
-__all__ = ["compute_badges", "get_card_resumo", "get_timeline"]
+def compute_badges(client: Any, org_id: UUID, cliente_id: UUID, cliente: dict) -> dict:
+    return seed_badges.compute_badges(card_hub_config(), client, org_id, cliente_id, cliente)
+
+
+def get_card_resumo(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+    return seed_badges.get_card_resumo(card_hub_config(), client, org_id, cliente_id)
+
+
+__all__ = [
+    "TIMELINE_GATHERERS",
+    "badges_sw",
+    "compute_badges",
+    "get_card_resumo",
+    "get_timeline",
+    "resumo_sw",
+]

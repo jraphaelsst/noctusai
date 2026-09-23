@@ -18,64 +18,23 @@ from pydantic import Field, field_validator, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
-_HEX_COLOR_LEN = 7  # "#rrggbb"
-
-
-def _validate_hex_color(value: str) -> str:
-    if (
-        len(value) != _HEX_COLOR_LEN
-        or not value.startswith("#")
-        or not all(c in "0123456789abcdefABCDEF" for c in value[1:])
-    ):
-        raise ValueError(f"cor must be a hex colour like #a1b2c3, got {value!r}")
-    return value
-
-
-# ─── Notas ──────────────────────────────────────────────────────────────
-
-
-class NotaCreateBody(StrictHttpModel):
-    corpo: str = Field(min_length=1)
-    # Contract correction (surfaced by the frontend engineer): Descrição
-    # (one per card) and Comentários (many, chronological) are distinct
-    # Trello concepts the original contract conflated. Defaults to
-    # 'comentario' — the common case, and the one every existing caller
-    # (built before this correction) already assumes.
-    tipo: Literal["descricao", "comentario"] = "comentario"
-
-
-class NotaUpdateBody(StrictHttpModel):
-    corpo: str = Field(min_length=1)
-
-
-# ─── Tags ───────────────────────────────────────────────────────────────
-
-
-class TagCreateBody(StrictHttpModel):
-    nome: str = Field(min_length=1)
-    cor: str
-
-    _validate_cor = field_validator("cor")(_validate_hex_color)
-
-
-class TagUpdateBody(StrictHttpModel):
-    nome: Optional[str] = Field(default=None, min_length=1)
-    cor: Optional[str] = None
-
-    _validate_cor = field_validator("cor")(
-        lambda v: _validate_hex_color(v) if v is not None else v
-    )
-
-
-class ClienteTagsSetBody(StrictHttpModel):
-    tag_ids: list[UUID] = Field(default_factory=list)
-
-
-# ─── Membros ────────────────────────────────────────────────────────────
-
-
-class MembrosSetBody(StrictHttpModel):
-    lead_corretor_ids: list[UUID] = Field(default_factory=list)
+# The card's generic bodies are the seed's (`noctusai_lib.domain.card_hub`,
+# lifted from this file — wave A, 2026-09-22). Re-exported so this module stays
+# the one place the card_hub routes' bodies are importable from. The two
+# config-shaped ones (`ClienteTagsSetBody`, `MembrosSetBody` — their schema
+# name / field name come from `CARD_HUB`) are built by the seed router factory.
+from noctusai_lib.domain.card_hub.schemas import (  # noqa: F401 — re-export
+    ChecklistCreateBody,
+    ChecklistExtraCreateBody,
+    ChecklistExtraPatchBody,
+    ChecklistItemCreateBody,
+    ChecklistItemUpdateBody,
+    ChecklistUpdateBody,
+    NotaCreateBody,
+    NotaUpdateBody,
+    TagCreateBody,
+    TagUpdateBody,
+)
 
 
 # ─── Datas + lembretes ──────────────────────────────────────────────────
@@ -216,58 +175,6 @@ class VisitaPropostaBody(StrictHttpModel):
     aceita: Optional[bool] = None
 
 
-# ─── Checklists ─────────────────────────────────────────────────────────
-
-
-class ChecklistCreateBody(StrictHttpModel):
-    titulo: str = Field(min_length=1)
-
-
-class ChecklistUpdateBody(StrictHttpModel):
-    titulo: Optional[str] = Field(default=None, min_length=1)
-    posicao: Optional[int] = None
-
-
-class ChecklistItemCreateBody(StrictHttpModel):
-    texto: str = Field(min_length=1)
-
-
-class ChecklistItemUpdateBody(StrictHttpModel):
-    texto: Optional[str] = Field(default=None, min_length=1)
-    concluido: Optional[bool] = None
-    posicao: Optional[int] = None
-
-
-# ─── Checklist extras (migration 083) ───────────────────────────────────
-#
-# The operator-authored half of the card's checklist. The mandatory half is
-# code-owned (`documento_checklist_service.ITENS`) and has no create/delete
-# surface at all — see `router.py`'s note there for why.
-
-
-class ChecklistExtraCreateBody(StrictHttpModel):
-    label: str = Field(min_length=1)
-    #: Decided at creation and immutable afterwards. Flipping a line's `tipo`
-    #: would either strand a `valor_texto` nothing reads or strand a document
-    #: nothing points at, so the PATCH body below deliberately has no `tipo`
-    #: field — a line of the wrong kind is deleted and re-added, which is one
-    #: click and leaves no ambiguous row behind.
-    tipo: Literal["texto", "arquivo"]
-
-
-class ChecklistExtraPatchBody(StrictHttpModel):
-    """Every field optional; ABSENCE means "leave alone".
-
-    `None` is a real value here — clearing `valor_texto` unticks the line on
-    purpose — so the route reads `model_fields_set` rather than
-    `exclude_none`, the same way `NegociacaoPatchBody` is read.
-    """
-
-    label: Optional[str] = Field(default=None, min_length=1)
-    valor_texto: Optional[str] = None
-    ordem: Optional[int] = None
-
-
 # ─── Documentos ─────────────────────────────────────────────────────────
 #
 # No body model for DELETE — contract correction: the seed `ApiClient
@@ -283,9 +190,7 @@ __all__ = [
     "ChecklistItemCreateBody",
     "ChecklistItemUpdateBody",
     "ChecklistUpdateBody",
-    "ClienteTagsSetBody",
     "DatasPatchBody",
-    "MembrosSetBody",
     "NotaCreateBody",
     "NotaUpdateBody",
     "TagCreateBody",

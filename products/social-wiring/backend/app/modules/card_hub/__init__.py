@@ -21,10 +21,16 @@ whichever router mounts first in the app's route table wins the match).
 What `register()` does
 ───────────────────────
 Registers this module's one router (all endpoints share the
-`/api/clientes` prefix) and, as a side effect at import time, the
-document-retention sweep on the seed scheduler (`documentos_service.
-configure()`) — mirrors `app.services.clientes_backfill_job.configure()`'s
+`/api/clientes` prefix) and, explicitly, the document-retention sweep on the
+seed scheduler (`documentos_service.configure()`, once, under its historical
+job id) — mirrors `app.services.clientes_backfill_job.configure()`'s
 identical "configure before `start_scheduler()` fires" shape.
+
+The card's generic routes (tags, tipos, timeline, notas, cliente<->tags,
+membros, checklist extras, checklists, documentos, acessos, card) come from
+the seed factory `noctusai_lib.domain.card_hub.card_hub_routers`, bound to
+`config.CARD_HUB` and spliced into `router` at their historical positions —
+see `router.py`. Everything else below is social-wiring's own.
 
 Routes
 ──────

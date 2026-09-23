@@ -1,6 +1,15 @@
-"""Business logic for the `card_hub` module — everything in contract §2/§3
-EXCEPT documents (see `documentos_service.py` — LGPD-complete storage is
-its own file, ruling S2).
+"""Business logic for the `card_hub` module — social-wiring's half of it.
+
+The card's generic state (notas, tags, membros, checklists) is the seed's
+`noctusai_lib.domain.card_hub.services`, lifted out of THIS file as a MOVE
+(wave A, 2026-09-22 — the "lifting later must be a MOVE, not a rewrite" debt
+recorded by `lead-card-hub-p2-PROJECT.md` D13/S3). The functions below keep
+their historical `(client, org_id, cliente_id, ...)` signatures as thin
+shims over it, bound to social-wiring's `CardHubConfig`
+(`app.modules.card_hub.config.CARD_HUB`), so every caller in this product
+reads unchanged. What genuinely stays here is social-wiring's own: which
+atendimento a card-level write belongs to (`resolve_atendimento_id`), and the
+shared read helpers the product's other card_hub services import.
 
 `client` is always the `social_wiring`-scoped admin client from
 `app.modules.card_hub.deps.get_card_hub_client` — every function here
@@ -9,36 +18,22 @@ request (and a single test) sees one consistent view of the mock/real
 backend (see that dependency's docstring for why a second independently-
 derived `.schema()` call would NOT see the same data).
 
-Pagination: every unbounded read composes
-`noctusai_lib.integrations.persistence.iter_paged_rows` — see that
-module's docstring for the two hazards it closes (PostgREST's 1 000-row
-cap, and a pager that never terminates if the backend disregards
-`range()`). `.in_()` filters over `_IN_FILTER_BATCH` are chunked first —
-PostgREST rides `in_()` values in the URL query string, and an unbatched
-~1 000-item list is a bare 400.
-
-Those read helpers no longer live here. This module used to keep its own
-copy of `_batched` (a fork of `clientes_service`'s, and it said so); a
-third consumer arrived and they moved to `app.services.table_reads`. The
-`_t` / `_batched` / `_paged_rows` / `_resolve_actors` / `_actor` names
-below are aliases over the canonical definitions, so every call site in
-this file reads unchanged.
+Pagination: every unbounded read composes the canonical read helpers in
+`app.services.table_reads` (PostgREST's 1 000-row cap + the `in_()`
+URL-length limit). The `_t` / `_batched` / `_paged_rows` / `_resolve_actors`
+/ `_actor` names below are aliases over those canonical definitions, so every
+importer of them reads unchanged.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from noctusai_lib.integrations.persistence import iter_paged_rows
-from noctusai_lib.primitives.exceptions import (
-    AppException,
-    ConflictError,
-    NotFoundError,
-)
+from noctusai_lib.domain.card_hub import services as seed_svc
+from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 
-from app.dependencies import get_core_client
-from app.services import clientes_service as clientes_svc
+from app.modules.card_hub.deps import card_hub_config
 from app.services import table_reads
 
 _PAGE_SIZE = table_reads.PAGE_SIZE
@@ -54,14 +49,9 @@ def _now() -> str:
 
 # ─── PostgREST read helpers — canonical definitions in `table_reads` ────
 #
-# These were defined here, and `_batched` was already a copy of
-# `clientes_service`'s. `imovel_hub` made a third consumer, so they moved to
-# `app.services.table_reads` (see that module's header for why THESE
-# helpers in particular are worth one home: each one's real body is a
-# defence against a limit that is invisible at the call site).
-#
-# The private names survive as aliases so every existing call site in this
-# module reads exactly as it did.
+# The private names survive as aliases so every existing importer (the
+# agendamentos / compradores / roteiros / documento-checklist services, ...)
+# reads exactly as it did.
 
 _t = table_reads.table
 _batched = table_reads.batched
@@ -72,13 +62,10 @@ _actor = table_reads.actor
 
 
 def ensure_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
-    cliente = clientes_svc.get_cliente(client, org_id, cliente_id)
-    if cliente is None:
-        raise NotFoundError("clientes", str(cliente_id))
-    return cliente
-
-
-# ─── Notas ──────────────────────────────────────────────────────────────
+    """The `clientes` row, or `NotFoundError("clientes", id)` — the seed's
+    `ensure_entity` over `CARD_HUB.ensure_entity` (`clientes_service
+    .get_cliente`)."""
+    return seed_svc.ensure_entity(card_hub_config(), client, org_id, cliente_id)
 
 
 # ─── Which atendimento does this belong to? ─────────────────────────────────
@@ -155,16 +142,12 @@ def resolve_atendimento_id(
         raise AmbiguousAtendimento([])
     raise AmbiguousAtendimento([str(r["id"]) for r in abertos])
 
-
-def _nota_out(row: dict, resolved_actors: dict[str, dict]) -> dict:
-    return {
-        "id": row["id"],
-        "tipo": row.get("tipo", "comentario"),
-        "corpo": row["corpo"],
-        "autor": _actor(resolved_actors, row.get("autor_id")),
-        "editado_em": row.get("editado_em"),
-        "deleted_at": row.get("deleted_at"),
-    }
+# ─── Notas / tags / membros / checklists — shims over the seed ──────────
+#
+# Bodies: `noctusai_lib.domain.card_hub.services`. Two names differ there
+# because the seed is not about a `cliente`: `set_cliente_tags` /
+# `get_cliente_tags` are `set_entity_tags` / `get_entity_tags`, and
+# `set_membros`' `lead_corretor_ids` is the generic `member_ids`.
 
 
 def create_nota(
@@ -176,388 +159,87 @@ def create_nota(
     autor_id: Optional[UUID],
     tipo: str = "comentario",
 ) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    if tipo == "descricao":
-        # Application-level check ahead of the DB's partial unique index
-        # (migration 056) — a second `descricao` must return a typed
-        # 409, never a raw 500 from the constraint (contract correction).
-        existing_descricao = (
-            _t(client, "cliente_notas")
-            .select("id")
-            .eq("org_id", str(org_id))
-            .eq("cliente_id", str(cliente_id))
-            .eq("tipo", "descricao")
-            .is_("deleted_at", "null")
-            .execute()
-        ).data or []
-        if existing_descricao:
-            raise ConflictError(
-                "Este cliente já possui uma descrição — edite a existente em vez de criar outra.",
-                resource="cliente_notas",
-            )
-    row = {
-        "id": str(uuid4()),
-        "org_id": str(org_id),
-        "cliente_id": str(cliente_id),
-        "autor_id": str(autor_id) if autor_id else None,
-        "tipo": tipo,
-        "corpo": corpo,
-        "editado_em": None,
-        "deleted_at": None,
-        "created_at": _now(),
-    }
-    _t(client, "cliente_notas").insert(row).execute()
-    resolved = _resolve_actors({row["autor_id"]} if row["autor_id"] else set())
-    return _nota_out(row, resolved)
+    return seed_svc.create_nota(
+        card_hub_config(), client, org_id, cliente_id, corpo=corpo, autor_id=autor_id, tipo=tipo
+    )
 
 
 def update_nota(client: Any, org_id: UUID, cliente_id: UUID, nota_id: UUID, *, corpo: str) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    existing = (
-        _t(client, "cliente_notas")
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .eq("id", str(nota_id))
-        .execute()
-    ).data or []
-    if not existing or existing[0].get("deleted_at"):
-        raise NotFoundError("cliente_notas", str(nota_id))
-    updates = {"corpo": corpo, "editado_em": _now()}
-    _t(client, "cliente_notas").update(updates).eq("id", str(nota_id)).execute()
-    merged = {**existing[0], **updates}
-    resolved = _resolve_actors({merged["autor_id"]} if merged.get("autor_id") else set())
-    return _nota_out(merged, resolved)
+    return seed_svc.update_nota(card_hub_config(), client, org_id, cliente_id, nota_id, corpo=corpo)
 
 
 def get_descricao(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[dict]:
-    """The card's single `tipo='descricao'` note (contract correction) —
-    `{id, corpo, editado_em}` or `None`. Never the `autor`/`deleted_at`
-    shape `_nota_out` returns for comentários; the description is card
-    state, not a timeline-shaped resource."""
-    rows = (
-        _t(client, "cliente_notas")
-        .select("id,corpo,editado_em")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .eq("tipo", "descricao")
-        .is_("deleted_at", "null")
-        .execute()
-    ).data or []
-    if not rows:
-        return None
-    row = rows[0]
-    return {"id": row["id"], "corpo": row["corpo"], "editado_em": row.get("editado_em")}
+    return seed_svc.get_descricao(card_hub_config(), client, org_id, cliente_id)
 
 
 def delete_nota(client: Any, org_id: UUID, cliente_id: UUID, nota_id: UUID) -> None:
-    ensure_cliente(client, org_id, cliente_id)
-    existing = (
-        _t(client, "cliente_notas")
-        .select("id,deleted_at")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .eq("id", str(nota_id))
-        .execute()
-    ).data or []
-    if not existing or existing[0].get("deleted_at"):
-        raise NotFoundError("cliente_notas", str(nota_id))
-    _t(client, "cliente_notas").update({"deleted_at": _now()}).eq("id", str(nota_id)).execute()
-
-
-# ─── Tags ───────────────────────────────────────────────────────────────
-
-
-def _tag_out(row: dict) -> dict:
-    return {"id": row["id"], "nome": row["nome"], "cor": row["cor"]}
+    seed_svc.delete_nota(card_hub_config(), client, org_id, cliente_id, nota_id)
 
 
 def list_tags(client: Any, org_id: UUID) -> dict:
-    rows = _paged_rows(client, "cliente_tags", org_id, order_col="nome")
-    items = [_tag_out(r) for r in rows]
-    return {"items": items, "total": len(items)}
+    return seed_svc.list_tags(card_hub_config(), client, org_id)
 
 
 def create_tag(client: Any, org_id: UUID, *, nome: str, cor: str) -> dict:
-    existing = (
-        _t(client, "cliente_tags")
-        .select("id")
-        .eq("org_id", str(org_id))
-        .ilike("nome", nome)
-        .execute()
-    ).data or []
-    if existing:
-        raise ConflictError(f"Tag '{nome}' já existe", resource="cliente_tags")
-    row = {"id": str(uuid4()), "org_id": str(org_id), "nome": nome, "cor": cor, "created_at": _now()}
-    _t(client, "cliente_tags").insert(row).execute()
-    return _tag_out(row)
+    return seed_svc.create_tag(card_hub_config(), client, org_id, nome=nome, cor=cor)
 
 
 def update_tag(client: Any, org_id: UUID, tag_id: UUID, *, nome: Optional[str], cor: Optional[str]) -> dict:
-    existing = (
-        _t(client, "cliente_tags").select("*").eq("org_id", str(org_id)).eq("id", str(tag_id)).execute()
-    ).data or []
-    if not existing:
-        raise NotFoundError("cliente_tags", str(tag_id))
-    updates: dict = {}
-    if nome is not None:
-        dupes = (
-            _t(client, "cliente_tags")
-            .select("id")
-            .eq("org_id", str(org_id))
-            .ilike("nome", nome)
-            .execute()
-        ).data or []
-        if any(d["id"] != str(tag_id) for d in dupes):
-            raise ConflictError(f"Tag '{nome}' já existe", resource="cliente_tags")
-        updates["nome"] = nome
-    if cor is not None:
-        updates["cor"] = cor
-    if updates:
-        _t(client, "cliente_tags").update(updates).eq("id", str(tag_id)).execute()
-    return _tag_out({**existing[0], **updates})
+    return seed_svc.update_tag(card_hub_config(), client, org_id, tag_id, nome=nome, cor=cor)
 
 
 def delete_tag(client: Any, org_id: UUID, tag_id: UUID) -> None:
-    existing = (
-        _t(client, "cliente_tags").select("id").eq("org_id", str(org_id)).eq("id", str(tag_id)).execute()
-    ).data or []
-    if not existing:
-        raise NotFoundError("cliente_tags", str(tag_id))
-    # Refuse-then-unlink, never a silent orphan (contract §3): the DELETE
-    # itself also removes every link, but a caller relying on "delete
-    # refuses if in use" would be surprised by a silent cascade — this
-    # product's convention (see `clientes_router.py`'s own
-    # `manter_separados`/merge shapes) is to act, not warn, so the
-    # cascade below IS the intended behaviour, not a shortcut around it.
-    _t(client, "cliente_tag_links").delete().eq("org_id", str(org_id)).eq("tag_id", str(tag_id)).execute()
-    _t(client, "cliente_tags").delete().eq("id", str(tag_id)).execute()
+    seed_svc.delete_tag(card_hub_config(), client, org_id, tag_id)
 
 
-def set_cliente_tags(client: Any, org_id: UUID, cliente_id: UUID, *, tag_ids: list[UUID], criado_por: Optional[UUID]) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    valid_tags = _in_batched_rows(client, "cliente_tags", org_id, "id", [str(t) for t in tag_ids])
-    valid_ids = {row["id"] for row in valid_tags}
-    unknown = {str(t) for t in tag_ids} - valid_ids
-    if unknown:
-        raise NotFoundError("cliente_tags", ",".join(sorted(unknown)))
-
-    _t(client, "cliente_tag_links").delete().eq("org_id", str(org_id)).eq("cliente_id", str(cliente_id)).execute()
-    for tag_id in valid_ids:
-        _t(client, "cliente_tag_links").insert(
-            {
-                "cliente_id": str(cliente_id),
-                "tag_id": tag_id,
-                "org_id": str(org_id),
-                "criado_por": str(criado_por) if criado_por else None,
-                "created_at": _now(),
-            }
-        ).execute()
-    return get_cliente_tags(client, org_id, cliente_id)
+def set_cliente_tags(
+    client: Any, org_id: UUID, cliente_id: UUID, *, tag_ids: list[UUID], criado_por: Optional[UUID]
+) -> dict:
+    return seed_svc.set_entity_tags(
+        card_hub_config(), client, org_id, cliente_id, tag_ids=tag_ids, criado_por=criado_por
+    )
 
 
 def get_cliente_tags(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
-    # `cliente_tag_links` has NO `id` column — its PK is the composite
-    # `(cliente_id, tag_id)` (migration 056). `tag_id` is the pager's
-    # dedup/order key here since `cliente_id` is already pinned by the
-    # `eq_filters` below, making `tag_id` unique within this result set.
-    links = _paged_rows(
-        client,
-        "cliente_tag_links",
-        org_id,
-        eq_filters={"cliente_id": str(cliente_id)},
-        order_col="tag_id",
-        id_key="tag_id",
-    )
-    tag_ids = [link["tag_id"] for link in links]
-    tags = _in_batched_rows(client, "cliente_tags", org_id, "id", tag_ids)
-    items = [_tag_out(t) for t in tags]
-    items.sort(key=lambda t: t["nome"])
-    return {"items": items, "total": len(items)}
-
-
-# ─── Membros ────────────────────────────────────────────────────────────
-
-
-def _membro_out(row: dict) -> dict:
-    return {"id": row["id"], "nome": row["nome"], "cor": row.get("cor")}
+    return seed_svc.get_entity_tags(card_hub_config(), client, org_id, cliente_id)
 
 
 def get_membros(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    # `cliente_membros` has NO `id` column either — see `get_cliente_tags`'s
-    # identical note; `lead_corretor_id` is the pager's key here.
-    links = _paged_rows(
-        client,
-        "cliente_membros",
-        org_id,
-        eq_filters={"cliente_id": str(cliente_id)},
-        order_col="lead_corretor_id",
-        id_key="lead_corretor_id",
-    )
-    corretor_ids = [link["lead_corretor_id"] for link in links]
-    corretores = _in_batched_rows(client, "lead_corretores", org_id, "id", corretor_ids)
-    items = [_membro_out(c) for c in corretores]
-    items.sort(key=lambda m: m["nome"])
-    return {"items": items, "total": len(items)}
+    return seed_svc.get_membros(card_hub_config(), client, org_id, cliente_id)
 
 
 def set_membros(client: Any, org_id: UUID, cliente_id: UUID, *, lead_corretor_ids: list[UUID]) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    valid_corretores = _in_batched_rows(
-        client, "lead_corretores", org_id, "id", [str(c) for c in lead_corretor_ids]
+    return seed_svc.set_membros(
+        card_hub_config(), client, org_id, cliente_id, member_ids=lead_corretor_ids
     )
-    valid_ids = {row["id"] for row in valid_corretores}
-    unknown = {str(c) for c in lead_corretor_ids} - valid_ids
-    if unknown:
-        raise NotFoundError("lead_corretores", ",".join(sorted(unknown)))
-
-    _t(client, "cliente_membros").delete().eq("org_id", str(org_id)).eq("cliente_id", str(cliente_id)).execute()
-    for corretor_id in valid_ids:
-        _t(client, "cliente_membros").insert(
-            {
-                "cliente_id": str(cliente_id),
-                "lead_corretor_id": corretor_id,
-                "org_id": str(org_id),
-                "created_at": _now(),
-            }
-        ).execute()
-    return get_membros(client, org_id, cliente_id)
-
-
-# ─── Datas + lembretes ──────────────────────────────────────────────────
-
-
-def _checklist_out(row: dict, itens: list[dict]) -> dict:
-    total = len(itens)
-    concluidos = sum(1 for i in itens if i.get("concluido"))
-    return {
-        "id": row["id"],
-        "titulo": row["titulo"],
-        "posicao": row["posicao"],
-        "origem": row["origem"],
-        "etapa_id": row.get("etapa_id"),
-        "itens": [_checklist_item_out(i) for i in sorted(itens, key=lambda x: x["posicao"])],
-        "total_itens": total,
-        "concluidos": concluidos,
-    }
-
-
-def _checklist_item_out(row: dict) -> dict:
-    return {
-        "id": row["id"],
-        "texto": row["texto"],
-        "concluido": row["concluido"],
-        "concluido_em": row.get("concluido_em"),
-        "concluido_por": row.get("concluido_por"),
-        "posicao": row["posicao"],
-    }
 
 
 def list_checklists(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    checklists = _paged_rows(
-        client, "cliente_checklists", org_id, eq_filters={"cliente_id": str(cliente_id)}, order_col="posicao"
-    )
-    checklist_ids = [c["id"] for c in checklists]
-    itens = _in_batched_rows(client, "cliente_checklist_itens", org_id, "checklist_id", checklist_ids)
-    itens_by_checklist: dict[str, list[dict]] = {}
-    for item in itens:
-        itens_by_checklist.setdefault(item["checklist_id"], []).append(item)
-    out = [_checklist_out(c, itens_by_checklist.get(c["id"], [])) for c in checklists]
-    return {"items": out, "total": len(out)}
+    return seed_svc.list_checklists(card_hub_config(), client, org_id, cliente_id)
 
 
 def create_checklist(client: Any, org_id: UUID, cliente_id: UUID, *, titulo: str) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    existing = (
-        _t(client, "cliente_checklists")
-        .select("posicao")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .execute()
-    ).data or []
-    next_pos = (max((c["posicao"] for c in existing), default=-1)) + 1
-    row = {
-        "id": str(uuid4()),
-        "org_id": str(org_id),
-        "cliente_id": str(cliente_id),
-        "titulo": titulo,
-        "posicao": next_pos,
-        "origem": "ad_hoc",
-        "etapa_id": None,
-        "created_at": _now(),
-    }
-    _t(client, "cliente_checklists").insert(row).execute()
-    return _checklist_out(row, [])
+    return seed_svc.create_checklist(card_hub_config(), client, org_id, cliente_id, titulo=titulo)
 
 
 def update_checklist(
     client: Any, org_id: UUID, cliente_id: UUID, checklist_id: UUID, *, titulo: Optional[str], posicao: Optional[int]
 ) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    existing = _require_checklist(client, org_id, cliente_id, checklist_id)
-    updates: dict = {}
-    if titulo is not None:
-        updates["titulo"] = titulo
-    if posicao is not None:
-        updates["posicao"] = posicao
-    if updates:
-        _t(client, "cliente_checklists").update(updates).eq("id", str(checklist_id)).execute()
-    merged = {**existing, **updates}
-    itens = (
-        _t(client, "cliente_checklist_itens").select("*").eq("org_id", str(org_id)).eq("checklist_id", str(checklist_id)).execute()
-    ).data or []
-    return _checklist_out(merged, itens)
+    return seed_svc.update_checklist(
+        card_hub_config(), client, org_id, cliente_id, checklist_id, titulo=titulo, posicao=posicao
+    )
 
 
 def delete_checklist(client: Any, org_id: UUID, cliente_id: UUID, checklist_id: UUID) -> None:
-    ensure_cliente(client, org_id, cliente_id)
-    _require_checklist(client, org_id, cliente_id, checklist_id)
-    _t(client, "cliente_checklist_itens").delete().eq("org_id", str(org_id)).eq("checklist_id", str(checklist_id)).execute()
-    _t(client, "cliente_checklists").delete().eq("id", str(checklist_id)).execute()
-
-
-def _require_checklist(client: Any, org_id: UUID, cliente_id: UUID, checklist_id: UUID) -> dict:
-    rows = (
-        _t(client, "cliente_checklists")
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .eq("id", str(checklist_id))
-        .execute()
-    ).data or []
-    if not rows:
-        raise NotFoundError("cliente_checklists", str(checklist_id))
-    return rows[0]
+    seed_svc.delete_checklist(card_hub_config(), client, org_id, cliente_id, checklist_id)
 
 
 def create_checklist_item(
     client: Any, org_id: UUID, cliente_id: UUID, checklist_id: UUID, *, texto: str
 ) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    _require_checklist(client, org_id, cliente_id, checklist_id)
-    existing = (
-        _t(client, "cliente_checklist_itens")
-        .select("posicao")
-        .eq("org_id", str(org_id))
-        .eq("checklist_id", str(checklist_id))
-        .execute()
-    ).data or []
-    next_pos = (max((i["posicao"] for i in existing), default=-1)) + 1
-    row = {
-        "id": str(uuid4()),
-        "org_id": str(org_id),
-        "checklist_id": str(checklist_id),
-        "texto": texto,
-        "concluido": False,
-        "concluido_em": None,
-        "concluido_por": None,
-        "posicao": next_pos,
-        "created_at": _now(),
-    }
-    _t(client, "cliente_checklist_itens").insert(row).execute()
-    return _checklist_item_out(row)
+    return seed_svc.create_checklist_item(
+        card_hub_config(), client, org_id, cliente_id, checklist_id, texto=texto
+    )
 
 
 def update_checklist_item(
@@ -572,52 +254,28 @@ def update_checklist_item(
     posicao: Optional[int],
     concluido_por: Optional[UUID],
 ) -> dict:
-    ensure_cliente(client, org_id, cliente_id)
-    _require_checklist(client, org_id, cliente_id, checklist_id)
-    existing = (
-        _t(client, "cliente_checklist_itens")
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("checklist_id", str(checklist_id))
-        .eq("id", str(item_id))
-        .execute()
-    ).data or []
-    if not existing:
-        raise NotFoundError("cliente_checklist_itens", str(item_id))
-
-    updates: dict = {}
-    if texto is not None:
-        updates["texto"] = texto
-    if posicao is not None:
-        updates["posicao"] = posicao
-    if concluido is not None:
-        updates["concluido"] = concluido
-        updates["concluido_em"] = _now() if concluido else None
-        updates["concluido_por"] = str(concluido_por) if (concluido and concluido_por) else None
-    if updates:
-        _t(client, "cliente_checklist_itens").update(updates).eq("id", str(item_id)).execute()
-    return _checklist_item_out({**existing[0], **updates})
+    return seed_svc.update_checklist_item(
+        card_hub_config(),
+        client,
+        org_id,
+        cliente_id,
+        checklist_id,
+        item_id,
+        texto=texto,
+        concluido=concluido,
+        posicao=posicao,
+        concluido_por=concluido_por,
+    )
 
 
 def delete_checklist_item(
     client: Any, org_id: UUID, cliente_id: UUID, checklist_id: UUID, item_id: UUID
 ) -> None:
-    ensure_cliente(client, org_id, cliente_id)
-    _require_checklist(client, org_id, cliente_id, checklist_id)
-    existing = (
-        _t(client, "cliente_checklist_itens")
-        .select("id")
-        .eq("org_id", str(org_id))
-        .eq("checklist_id", str(checklist_id))
-        .eq("id", str(item_id))
-        .execute()
-    ).data or []
-    if not existing:
-        raise NotFoundError("cliente_checklist_itens", str(item_id))
-    _t(client, "cliente_checklist_itens").delete().eq("id", str(item_id)).execute()
+    seed_svc.delete_checklist_item(card_hub_config(), client, org_id, cliente_id, checklist_id, item_id)
 
 
 __all__ = [
+    "AmbiguousAtendimento",
     "create_checklist",
     "create_checklist_item",
     "create_nota",
@@ -632,6 +290,7 @@ __all__ = [
     "get_membros",
     "list_checklists",
     "list_tags",
+    "resolve_atendimento_id",
     "set_cliente_tags",
     "set_membros",
     "update_checklist",

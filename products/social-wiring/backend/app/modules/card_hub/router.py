@@ -22,7 +22,7 @@ ordering constraint applies within this file.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import (
@@ -38,11 +38,11 @@ from fastapi import (
 )
 
 from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.domain.card_hub import CardHubContext, card_hub_routers
 
-from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
+from app.dependencies import get_core_client, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
-from app.modules.card_hub import checklist_extras_service as extras_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
@@ -61,7 +61,7 @@ from app.modules.card_hub.negociacao_estruturada_router import (
 from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
 from app.modules.card_hub import roteiros_service as roteiros_svc
 from app.modules.card_hub import services as svc
-from app.modules.card_hub import timeline_service
+from app.modules.card_hub.config import CARD_HUB
 from app.modules.card_hub.deps import (
     get_card_hub_client,
     get_identity_extractor_factory,
@@ -75,26 +75,14 @@ from app.modules.card_hub.schemas import (
     NegociacaoPatchBody,
     AgendamentoCreateBody,
     AgendamentoPatchBody,
-    ChecklistCreateBody,
-    ChecklistExtraCreateBody,
-    ChecklistExtraPatchBody,
-    ChecklistItemCreateBody,
-    ChecklistItemUpdateBody,
-    ChecklistUpdateBody,
-    ClienteTagsSetBody,
     DecidirConflitoBody,
     DocumentoChecklistPatchBody,
     ExtracaoSugestaoBody,
-    MembrosSetBody,
-    NotaCreateBody,
-    NotaUpdateBody,
     PartePapelPatchBody,
     ProcessoLegadoBody,
     RoteiroCreateBody,
     RoteiroOrdemBody,
     RoteiroPatchBody,
-    TagCreateBody,
-    TagUpdateBody,
     VisitaCreateBody,
     VisitaPatchBody,
     VisitaPropostaBody,
@@ -118,158 +106,84 @@ router.include_router(assinatura_router)
 _auth_parts = auth_parts
 
 
-# ─── Tags (org catalogue — literal path, see module docstring) ─────────
+# ─── The seed card hub (`noctusai_lib.domain.card_hub`) ─────────────────
+#
+# The card's generic routes (tags, tipos, timeline, notas, cliente<->tags,
+# membros, checklist extras, checklists, documentos, acessos, card) are the
+# seed router factory's, bound to `CARD_HUB`. They arrive as two routers
+# (collection = literal paths, entity = `/{cliente_id}/...`), but this
+# product's own routes sit BETWEEN them — so rather than mounting the two
+# wholesale (which would reorder the `/api/clientes*` route table), each
+# factory route is `_splice`d into `router` at the exact position its
+# hand-written predecessor held. Route order, names, operation ids, paths,
+# methods and status codes are therefore unchanged.
+#
+# 🔴 NOT spliced: the factory's `upload_documento_route`. This product's
+# upload does two things the factory's cannot: it enforces
+# `documentos_service.MAX_UPLOAD_BYTES` read at CALL time (the shim passes it
+# as `max_bytes=`), and it queues the identity extraction with the
+# per-request, DI-overridable extractor factory. It stays below, local.
+# Every other factory route MUST be spliced — `_assert_all_spliced()` at the
+# bottom of this file refuses an import that dropped one.
 
 
-@router.get("/tags")
-async def list_tags_route(
-    auth=Depends(get_current_user_org), client=Depends(get_card_hub_client)
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.list_tags(client, org_id)
-
-
-@router.post("/tags", status_code=201)
-async def create_tag_route(
-    body: TagCreateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.create_tag(client, org_id, nome=body.nome, cor=body.cor)
-
-
-@router.patch("/tags/{tag_id}")
-async def update_tag_route(
-    tag_id: UUID,
-    body: TagUpdateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.update_tag(client, org_id, tag_id, nome=body.nome, cor=body.cor)
-
-
-@router.delete("/tags/{tag_id}", status_code=204)
-async def delete_tag_route(
-    tag_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-):
-    _user, org_id = _auth_parts(auth)
-    svc.delete_tag(client, org_id, tag_id)
-
-
-# ─── Documentos tipos catalogue (literal path) ─────────────────────────
-
-
-@router.get("/documentos/tipos")
-async def list_tipos_documento_route(
-    auth=Depends(get_current_user_org), client=Depends(get_card_hub_client)
-) -> dict:
-    _auth_parts(auth)
-    return docs_svc.list_tipos_documento(client)
-
-
-# ─── Timeline ───────────────────────────────────────────────────────────
-
-
-@router.get("/{cliente_id}/timeline")
-async def get_timeline_route(
-    cliente_id: UUID,
-    cursor: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    kinds: Optional[str] = Query(None),
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    kind_set = {k.strip() for k in kinds.split(",") if k.strip()} if kinds else None
-    return timeline_service.get_timeline(
-        client, org_id, cliente_id, kinds=kind_set, cursor=cursor, limit=limit
-    )
-
-
-# ─── Notas ──────────────────────────────────────────────────────────────
-
-
-@router.post("/{cliente_id}/notas", status_code=201)
-async def create_nota_route(
-    cliente_id: UUID,
-    body: NotaCreateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
+def _card_hub_context(auth: tuple, db: Any) -> CardHubContext:
     user, org_id = _auth_parts(auth)
-    return svc.create_nota(
-        client, org_id, cliente_id, corpo=body.corpo, tipo=body.tipo, autor_id=getattr(user, "id", None)
-    )
+    return CardHubContext(db=db, org_id=org_id, user_id=getattr(user, "id", None))
 
 
-@router.patch("/{cliente_id}/notas/{nota_id}")
-async def update_nota_route(
-    cliente_id: UUID,
-    nota_id: UUID,
-    body: NotaUpdateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.update_nota(client, org_id, cliente_id, nota_id, corpo=body.corpo)
+_collection_router, _entity_router = card_hub_routers(
+    CARD_HUB,
+    auth_dependency=get_current_user_org,
+    resolve_context=_card_hub_context,
+    get_db=get_card_hub_client,
+    get_storage=get_storage_backend,
+    prefix="/api/clientes",
+    tags=["card_hub"],
+)
+_LOCAL_OVERRIDES = frozenset({"upload_documento_route"})
+_factory_routes = {
+    route.name: route
+    for route in (*_collection_router.routes, *_entity_router.routes)
+    if route.name not in _LOCAL_OVERRIDES
+}
 
 
-@router.delete("/{cliente_id}/notas/{nota_id}", status_code=204)
-async def delete_nota_route(
-    cliente_id: UUID,
-    nota_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-):
-    _user, org_id = _auth_parts(auth)
-    svc.delete_nota(client, org_id, cliente_id, nota_id)
+def _splice(*names: str) -> None:
+    """Append these factory routes to `router`, in order, here."""
+    for name in names:
+        router.routes.append(_factory_routes.pop(name))
 
 
-# ─── Cliente <-> tags ───────────────────────────────────────────────────
+def _assert_all_spliced() -> None:
+    if _factory_routes:
+        raise RuntimeError(
+            "card_hub router: seed factory routes never spliced into "
+            f"/api/clientes: {sorted(_factory_routes)} — splice each one where "
+            "it belongs, or declare it in _LOCAL_OVERRIDES with a reason."
+        )
 
 
-@router.put("/{cliente_id}/tags")
-async def set_cliente_tags_route(
-    cliente_id: UUID,
-    body: ClienteTagsSetBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    user, org_id = _auth_parts(auth)
-    return svc.set_cliente_tags(
-        client, org_id, cliente_id, tag_ids=body.tag_ids, criado_por=getattr(user, "id", None)
-    )
+# ─── Tags · tipos · timeline · notas · cliente<->tags · membros (seed) ──
+#
+# `/tags` and `/documentos/tipos` are the literal paths — see the module
+# docstring's route-ordering hazard; they stay FIRST among this file's own
+# routes, exactly where they always were.
 
-
-# ─── Membros ────────────────────────────────────────────────────────────
-
-
-@router.get("/{cliente_id}/membros")
-async def get_membros_route(
-    cliente_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.get_membros(client, org_id, cliente_id)
-
-
-@router.put("/{cliente_id}/membros")
-async def set_membros_route(
-    cliente_id: UUID,
-    body: MembrosSetBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.set_membros(client, org_id, cliente_id, lead_corretor_ids=body.lead_corretor_ids)
-
-
-# ─── Datas + lembretes ──────────────────────────────────────────────────
+_splice(
+    "list_tags_route",
+    "create_tag_route",
+    "update_tag_route",
+    "delete_tag_route",
+    "list_tipos_documento_route",
+    "get_timeline_route",
+    "create_nota_route",
+    "update_nota_route",
+    "delete_nota_route",
+    "set_cliente_tags_route",
+    "get_membros_route",
+    "set_membros_route",
+)
 
 
 # ─── Documento checklist (migration 067) ────────────────────────────────
@@ -355,126 +269,14 @@ async def get_qualificacao_completude_route(
 # mappings for "you sent the wrong shape".
 
 
-@router.get("/{cliente_id}/checklist-extras")
-async def list_checklist_extras_route(
-    cliente_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return extras_svc.listar(client, org_id, cliente_id)
-
-
-@router.post("/{cliente_id}/checklist-extras", status_code=201)
-async def create_checklist_extra_route(
-    cliente_id: UUID,
-    body: ChecklistExtraCreateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return extras_svc.criar(client, org_id, cliente_id, label=body.label, tipo=body.tipo)
-
-
-@router.patch("/{cliente_id}/checklist-extras/{extra_id}")
-async def patch_checklist_extra_route(
-    cliente_id: UUID,
-    extra_id: UUID,
-    body: ChecklistExtraPatchBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    # `model_fields_set`, NOT `exclude_none`: `None` is a real value here
-    # (clearing `valor_texto` unticks the line on purpose), so absence is the
-    # only thing that can mean "leave alone".
-    enviados = {k: getattr(body, k) for k in body.model_fields_set}
-    try:
-        return extras_svc.atualizar(
-            client,
-            org_id,
-            cliente_id,
-            extra_id,
-            label=enviados.get("label", ...),
-            valor_texto=enviados.get("valor_texto", ...),
-            ordem=enviados.get("ordem", ...),
-        )
-    except extras_svc.TipoIncompativel as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-
-@router.delete("/{cliente_id}/checklist-extras/{extra_id}", status_code=204)
-async def delete_checklist_extra_route(
-    cliente_id: UUID,
-    extra_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-):
-    _user, org_id = _auth_parts(auth)
-    extras_svc.remover(client, org_id, cliente_id, extra_id)
-
-
-@router.post("/{cliente_id}/checklist-extras/{extra_id}/documento")
-async def upload_checklist_extra_documento_route(
-    cliente_id: UUID,
-    extra_id: UUID,
-    file: UploadFile = File(...),
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-    storage=Depends(get_storage_backend),
-) -> dict:
-    """Attach (or REPLACE) the file answering one `arquivo` line.
-
-    No `tipo_documento` form field, unlike `/documentos`: an operator-authored
-    line is by definition the request the catalogue did not anticipate, so the
-    service files it under `outro` — see `checklist_extras_service
-    .TIPO_DOCUMENTO`. No identity-extraction background task either, for the
-    same reason: `outro` is not an identity document and
-    `identidade_svc.deve_extrair` would decline it anyway.
-    """
-    user, org_id = _auth_parts(auth)
-    data = await file.read()
-    try:
-        return await extras_svc.anexar_documento(
-            client,
-            storage,
-            org_id,
-            cliente_id,
-            extra_id,
-            filename=file.filename or "arquivo",
-            content_type=file.content_type or "application/octet-stream",
-            data=data,
-            enviado_por=getattr(user, "id", None),
-        )
-    except extras_svc.TipoIncompativel as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-
-@router.delete("/{cliente_id}/checklist-extras/{extra_id}/documento", status_code=204)
-async def delete_checklist_extra_documento_route(
-    cliente_id: UUID,
-    extra_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-    storage=Depends(get_storage_backend),
-):
-    """Discard the FILE, keep the LINE — see `remover_documento`'s docstring.
-
-    No `motivo` query param, unlike `DELETE /documentos/{id}`: there the reason
-    is the operator's and an LGPD delete without one is not an LGPD delete;
-    here the reason is structural and always the same ("removed from a
-    checklist line so a new file can replace it"), so the service states it
-    rather than asking the caller to retype it.
-    """
-    user, org_id = _auth_parts(auth)
-    await extras_svc.remover_documento(
-        client,
-        storage,
-        org_id,
-        cliente_id,
-        extra_id,
-        usuario_id=getattr(user, "id", None),
-    )
+_splice(
+    "list_checklist_extras_route",
+    "create_checklist_extra_route",
+    "patch_checklist_extra_route",
+    "delete_checklist_extra_route",
+    "upload_checklist_extra_documento_route",
+    "delete_checklist_extra_documento_route",
+)
 
 
 # ─── Agendamentos (migration 061 — many per atendimento) ────────────────
@@ -763,110 +565,26 @@ async def delete_visita_route(
 # ─── Checklists ─────────────────────────────────────────────────────────
 
 
-@router.get("/{cliente_id}/checklists")
-async def list_checklists_route(
-    cliente_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.list_checklists(client, org_id, cliente_id)
-
-
-@router.post("/{cliente_id}/checklists", status_code=201)
-async def create_checklist_route(
-    cliente_id: UUID,
-    body: ChecklistCreateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.create_checklist(client, org_id, cliente_id, titulo=body.titulo)
-
-
-@router.patch("/{cliente_id}/checklists/{checklist_id}")
-async def update_checklist_route(
-    cliente_id: UUID,
-    checklist_id: UUID,
-    body: ChecklistUpdateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.update_checklist(client, org_id, cliente_id, checklist_id, titulo=body.titulo, posicao=body.posicao)
-
-
-@router.delete("/{cliente_id}/checklists/{checklist_id}", status_code=204)
-async def delete_checklist_route(
-    cliente_id: UUID,
-    checklist_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-):
-    _user, org_id = _auth_parts(auth)
-    svc.delete_checklist(client, org_id, cliente_id, checklist_id)
-
-
-@router.post("/{cliente_id}/checklists/{checklist_id}/itens", status_code=201)
-async def create_checklist_item_route(
-    cliente_id: UUID,
-    checklist_id: UUID,
-    body: ChecklistItemCreateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return svc.create_checklist_item(client, org_id, cliente_id, checklist_id, texto=body.texto)
-
-
-@router.patch("/{cliente_id}/checklists/{checklist_id}/itens/{item_id}")
-async def update_checklist_item_route(
-    cliente_id: UUID,
-    checklist_id: UUID,
-    item_id: UUID,
-    body: ChecklistItemUpdateBody,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    user, org_id = _auth_parts(auth)
-    return svc.update_checklist_item(
-        client,
-        org_id,
-        cliente_id,
-        checklist_id,
-        item_id,
-        texto=body.texto,
-        concluido=body.concluido,
-        posicao=body.posicao,
-        concluido_por=getattr(user, "id", None),
-    )
-
-
-@router.delete("/{cliente_id}/checklists/{checklist_id}/itens/{item_id}", status_code=204)
-async def delete_checklist_item_route(
-    cliente_id: UUID,
-    checklist_id: UUID,
-    item_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-):
-    _user, org_id = _auth_parts(auth)
-    svc.delete_checklist_item(client, org_id, cliente_id, checklist_id, item_id)
+_splice(
+    "list_checklists_route",
+    "create_checklist_route",
+    "update_checklist_route",
+    "delete_checklist_route",
+    "create_checklist_item_route",
+    "update_checklist_item_route",
+    "delete_checklist_item_route",
+)
 
 
 # ─── Documentos (LGPD) ──────────────────────────────────────────────────
 
 
-@router.get("/{cliente_id}/documentos")
-async def list_documentos_route(
-    cliente_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return docs_svc.list_documentos(client, org_id, cliente_id)
+_splice(
+    "list_documentos_route",
+)
 
 
+# 🔴 Local, not the factory's — see `_LOCAL_OVERRIDES` above.
 @router.post("/{cliente_id}/documentos", status_code=201)
 async def upload_documento_route(
     cliente_id: UUID,
@@ -943,38 +661,10 @@ async def reextrair_documento_route(
     return documento
 
 
-@router.get("/{cliente_id}/documentos/{documento_id}/url")
-async def get_documento_url_route(
-    cliente_id: UUID,
-    documento_id: UUID,
-    intent: str = Query("view", pattern="^(view|download)$"),
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-    storage=Depends(get_storage_backend),
-) -> dict:
-    user, org_id = _auth_parts(auth)
-    return await docs_svc.get_documento_url(
-        client, storage, org_id, cliente_id, documento_id, usuario_id=getattr(user, "id", None), intent=intent
-    )
-
-
-@router.delete("/{cliente_id}/documentos/{documento_id}", status_code=204)
-async def delete_documento_route(
-    cliente_id: UUID,
-    documento_id: UUID,
-    # Contract correction: the seed `ApiClient.delete()` has no body
-    # parameter, and a DELETE-with-body is poorly supported across the
-    # stack generally. `motivo` is a REQUIRED query param instead — an
-    # LGPD delete without a recorded reason is not an LGPD delete.
-    motivo: str = Query(..., min_length=1),
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-    storage=Depends(get_storage_backend),
-):
-    user, org_id = _auth_parts(auth)
-    await docs_svc.delete_documento(
-        client, storage, org_id, cliente_id, documento_id, motivo=motivo, usuario_id=getattr(user, "id", None)
-    )
+_splice(
+    "get_documento_url_route",
+    "delete_documento_route",
+)
 
 
 # ─── Extraction suggestions (migration 069) ─────────────────────────────
@@ -1102,28 +792,17 @@ async def decidir_conflito_route(
     )
 
 
-@router.get("/{cliente_id}/documentos/{documento_id}/acessos")
-async def list_acessos_route(
-    cliente_id: UUID,
-    documento_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return docs_svc.list_acessos(client, org_id, cliente_id, documento_id)
+_splice(
+    "list_acessos_route",
+)
 
 
 # ─── Card summary ───────────────────────────────────────────────────────
 
 
-@router.get("/{cliente_id}/card")
-async def get_card_route(
-    cliente_id: UUID,
-    auth=Depends(get_current_user_org),
-    client=Depends(get_card_hub_client),
-) -> dict:
-    _user, org_id = _auth_parts(auth)
-    return timeline_service.get_card_resumo(client, org_id, cliente_id)
+_splice(
+    "get_card_route",
+)
 
 
 # ─── Compradores / partes do atendimento (migration 073) ─────────────────────
@@ -1521,6 +1200,9 @@ async def delete_contrato_route(
         client, org_id, cliente_id, contrato_id, motivo=motivo,
         usuario_id=getattr(user, "id", None),
     )
+
+
+_assert_all_spliced()
 
 
 # ─── The org's split rule ────────────────────────────────────────────────

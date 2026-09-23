@@ -35,10 +35,15 @@ Per-surface behaviour stays with the surface: extraction queuing
 sweeps, and every "what does this document MEAN" decision.
 
 NOC-REMEDIATE[dry-documento-store]: `card_hub.documentos_service` predates
-this and is NOT yet migrated onto it. It is the LGPD-complete original and its
-retention sweep + tipos table are wired into a scheduler and a data table, so
-moving it is its own change with its own test surface — not a rider on this
-one. Named destination: the next change that touches that file. — 2026-08-25
+this and was never migrated onto it — it moved the OTHER way instead: its
+LGPD-complete engine (access log, signed URL, retention sweep, tipos catalogue)
+is now the seed's `noctusai_lib.domain.card_hub.documentos` (wave A,
+2026-09-22), with `card_hub.documentos_service` a thin shim over it. So two
+document engines remain: this `DocumentoStore` (financiamento / contratos /
+imovel_hub / matrículas) and the seed's card-hub one. Named destination:
+`project-history/roadmaps/cardhub-igig-crm-2026-09.md` (surfaced at wave-A
+close for a phase slot) — converge this store onto the seed's document
+primitives before igig grows a third. — 2026-09-22
 """
 from __future__ import annotations
 

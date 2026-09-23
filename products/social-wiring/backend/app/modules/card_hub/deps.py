@@ -210,8 +210,26 @@ def get_signature_adapter_factory() -> SignatureAdapterFactory:
     return lambda org_id: make_signature_adapter(real=True, org_id=org_id)
 
 
+def card_hub_config() -> Any:
+    """The social-wiring `CardHubConfig` (`app.modules.card_hub.config.CARD_HUB`).
+
+    The ONE deferred import of it: `config` composes this module's own
+    collaborators (the SW timeline gatherers in `timeline_service`, the
+    identity-extraction hook in `identidade_extracao_service`), and those
+    import the thin seed shims (`services`, `documentos_service`, ...) that
+    need the config back — a module-level import in either direction would
+    close that cycle. Same shape, same reason, as
+    `_build_identity_extractor`'s own lazy import above. Resolved per call
+    (a `sys.modules` lookup after the first), never cached here.
+    """
+    from app.modules.card_hub.config import CARD_HUB
+
+    return CARD_HUB
+
+
 __all__ = [
     "BUCKET",
+    "card_hub_config",
     "ExtractorFactory",
     "SignatureAdapterFactory",
     "get_card_hub_client",
