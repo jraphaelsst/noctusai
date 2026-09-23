@@ -89,6 +89,63 @@ def gather_documentos(cfg: "CardHubConfig", db: Any, org_id: Any, entity_id: Any
     ]
 
 
+def gather_audit(cfg: "CardHubConfig", db: Any, org_id: Any, entity_id: Any, entity: dict) -> list[dict]:
+    """Default `"historico"` kind — the S2 audit-trail's
+    (`noctusai_lib.api.audit`) `public.audit_logs` rows for mutating
+    requests whose path carried THIS card's id, reshaped into timeline
+    entries.
+
+    Inert unless `cfg.audit_trail_enabled` AND `cfg.get_core_client`
+    are both set (`CardHubConfig.__post_init__` only wires this into
+    the default `timeline_gatherers` when both are true) — matching
+    `settings.audit_trail_enabled`'s own default-off posture.
+
+    Scoped by `org_id` (RLS-equivalent tenant boundary) AND a JSONB
+    containment match on `details->path_params` for `cfg.id_param`
+    (`AuditMiddleware` records `scope["path_params"]` verbatim under
+    that key — see `noctusai_lib.api.audit.sink._to_row`). NOT also
+    filtered by product/`resource_type`: `entity_id` is a UUID, so a
+    cross-product collision on the SAME id is not a realistic risk,
+    and `AuditMiddleware`'s `product` is the human-readable name
+    (`create_product_app(name=...)`), which `CardHubConfig` has no
+    access to — narrowing on it would need a new config field for
+    marginal safety. Capped at the 200 most recent rows (no full
+    pager — `noctusai_lib.integrations.persistence.table_reads
+    .paged_rows` assumes flat `eq_filters`, not a JSONB containment
+    filter); a card with a longer real history is a future
+    enhancement, not a correctness gap for a default gatherer.
+    """
+    admin = cfg.get_core_client()
+    rows = (
+        admin.schema("public")
+        .table("audit_logs")
+        .select("*")
+        .eq("org_id", str(org_id))
+        .contains("details", {"path_params": {cfg.id_param: str(entity_id)}})
+        .order("created_at", desc=True)
+        .limit(200)
+        .execute()
+        .data
+    )
+    autor_ids = {r["user_id"] for r in rows if r.get("user_id")}
+    resolved = cfg.actor_resolver(autor_ids)
+    return [
+        {
+            "id": r["id"],
+            "kind": "historico",
+            "ocorrido_em": r["created_at"],
+            "ator": actor(resolved, r.get("user_id")),
+            "payload": {
+                "method": r.get("action"),
+                "route_template": (r.get("details") or {}).get("route_template"),
+                "status": (r.get("details") or {}).get("status"),
+                "actor_kind": (r.get("details") or {}).get("actor_kind"),
+            },
+        }
+        for r in rows
+    ]
+
+
 def gather_checklist_events(cfg: "CardHubConfig", db: Any, org_id: Any, entity_id: Any, entity: dict) -> list[dict]:
     """One entry per COMPLETED checklist item — derived. A never-completed item
     has no event to show; the card tracks no separate "created" audit trail
@@ -132,6 +189,7 @@ SEED_GATHERERS: Mapping[str, Gatherer] = {
 __all__ = [
     "Gatherer",
     "SEED_GATHERERS",
+    "gather_audit",
     "gather_checklist_events",
     "gather_documentos",
     "gather_notas",
