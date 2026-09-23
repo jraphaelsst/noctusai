@@ -148,6 +148,8 @@ class CertidoesService:
     mint_resultado_url: Callable
     obter_transcricao_resultado: Callable
     renderizar_transcricao_pdf: Callable
+    soft_delete_consulta: Callable
+    restaurar_consulta: Callable
 
 
 def _build_default_service() -> CertidoesService:
@@ -179,6 +181,8 @@ def _build_default_service() -> CertidoesService:
         mint_resultado_url=service.mint_resultado_url,
         obter_transcricao_resultado=service.obter_transcricao_resultado,
         renderizar_transcricao_pdf=service.renderizar_transcricao_pdf,
+        soft_delete_consulta=service.soft_delete_consulta,
+        restaurar_consulta=service.restaurar_consulta,
     )
 
 

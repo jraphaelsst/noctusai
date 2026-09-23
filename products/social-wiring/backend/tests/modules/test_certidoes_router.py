@@ -237,6 +237,20 @@ class TestListarConsultas:
         data = client.get(f"{BASE}/consultas").json()["data"]
         assert [c["id"] for c in data] == ["consulta-001"]
 
+    def test_nao_lista_consultas_excluidas(self, client, certidoes_db):
+        """Migration 161: a soft-deleted consulta is invisible to the list,
+        the same shape a hard-deleted one always was."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[
+            _consulta(),
+            _consulta(
+                id="excluida", nome="Excluída",
+                excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+            ),
+        ])
+        data = client.get(f"{BASE}/consultas").json()["data"]
+        assert [c["id"] for c in data] == ["consulta-001"]
+
     def test_conta_sucessos_e_erros_por_consulta(self, client, certidoes_db):
         db, _ = certidoes_db
         _seed(
@@ -718,6 +732,10 @@ class TestCancelarConsulta:
 
 
 class TestExcluirConsulta:
+    """Migration 161: a soft-delete, not a hard one — see the module
+    docstring's `🔴 THE arquivo_url CONTRACT` sibling on `excluir_consulta`
+    itself for the prod incident this replaces."""
+
     def test_exclui_com_sucesso(self, client, certidoes_db):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[])
@@ -725,36 +743,108 @@ class TestExcluirConsulta:
         assert resp.status_code == 200
         assert "excluída" in resp.json()["message"]
 
-    def test_apaga_os_arquivos_antes_das_linhas(self, client, certidoes_db, override_service):
-        """Blobs BEFORE rows: a row deleted first is a key nobody can find
-        again, i.e. an orphan in the bucket. (That the seam really deletes is
-        asserted at the service level — here the question is whether the route
-        hands it the stored files at all.)"""
+    def test_estampa_excluida_em_e_por_na_consulta_e_nos_resultados(
+        self, client, certidoes_db,
+    ):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[
+            _resultado(id="r1"), _resultado(id="r2", ordem=2, tipo="trf3"),
+        ])
+        resp = client.delete(f"{BASE}/consultas/consulta-001")
+        assert resp.status_code == 200
+
+        # `certidoes_db`'s auth fixture is `CALLER_ORG` — the row still
+        # exists (this is an UPDATE, not a DELETE), unlike the pre-161 shape
+        # `test_estampa...` replaces: `db.table(...).select("*")` bypasses
+        # the router's own `.is_("excluida_em", "null")` filter, so the raw
+        # row is exactly what a direct table read would see.
+        consulta = db.table("certidao_consultas").select("*").eq(
+            "id", "consulta-001"
+        ).execute().data[0]
+        assert consulta["excluida_em"] is not None
+        assert consulta["excluida_por"] is not None
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        assert len(resultados) == 2
+        assert all(r["excluida_em"] is not None for r in resultados)
+        assert all(r["excluida_por"] is not None for r in resultados)
+
+    def test_nao_apaga_os_blobs(self, client, certidoes_db, override_service):
+        """🔴 The pre-161 hard-delete apagava blobs first — a soft-delete
+        must NEVER touch storage: `restaurar_consulta` needs the files
+        intact, and only the 30-day purge job removes them."""
         db, _ = certidoes_db
         key = f"{CALLER_ORG}/certidoes/consulta-001/cnd_federal_ab.pdf"
         _seed(db, consultas=[_consulta()], resultados=[
             _resultado(id="r1", status="sucesso", arquivo_url=key),
         ])
-        rm = AsyncMock(return_value=1)
+        rm = AsyncMock()
         override_service(delete_storage_files=rm)
         resp = client.delete(f"{BASE}/consultas/consulta-001")
         assert resp.status_code == 200
-        rows = rm.await_args.args[0]
-        assert [r["arquivo_url"] for r in rows] == [key]
-        assert db.table("certidao_consultas").select("*").execute().data == []
+        rm.assert_not_awaited()
 
-    def test_nao_faz_limpeza_de_storage_no_caminho_404(self, client, certidoes_db, override_service):
+    def test_consulta_ja_excluida_e_404(self, client, certidoes_db):
+        """A second delete on an already-excluded consulta 404s — the same
+        shape a hard-deleted one always gave a repeat caller."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta(
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
+        assert client.delete(f"{BASE}/consultas/consulta-001").status_code == 404
+
+    def test_consulta_inexistente_e_404(self, client, certidoes_db):
         db, _ = certidoes_db
         _seed(db)
-        rm = AsyncMock()
-        override_service(delete_storage_files=rm)
         assert client.delete(f"{BASE}/consultas/nao-existe").status_code == 404
-        rm.assert_not_awaited()
 
     def test_consulta_de_outra_org_e_404(self, client, certidoes_db):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta(id="alheia", org_id=OTHER_ORG)])
         assert client.delete(f"{BASE}/consultas/alheia").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /consultas/{id}/restaurar
+# ---------------------------------------------------------------------------
+
+
+class TestRestaurarConsulta:
+    def test_restaura_com_sucesso(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta(
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )], resultados=[
+            _resultado(id="r1", excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1"),
+        ])
+        resp = client.post(f"{BASE}/consultas/consulta-001/restaurar")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["excluida_em"] is None
+
+        # It is visible again in the list, and its resultado is restored too.
+        assert [c["id"] for c in client.get(f"{BASE}/consultas").json()["data"]] == ["consulta-001"]
+        resultado = db.table("certidao_resultados").select("*").execute().data[0]
+        assert resultado["excluida_em"] is None
+        assert resultado["excluida_por"] is None
+
+    def test_consulta_nunca_excluida_e_404(self, client, certidoes_db):
+        """Nothing to restore — a mistaken id must 404, not silently no-op."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        assert client.post(f"{BASE}/consultas/consulta-001/restaurar").status_code == 404
+
+    def test_consulta_inexistente_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        assert client.post(f"{BASE}/consultas/nao-existe/restaurar").status_code == 404
+
+    def test_consulta_de_outra_org_e_404(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta(
+            id="alheia", org_id=OTHER_ORG,
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
+        assert client.post(f"{BASE}/consultas/alheia/restaurar").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -1595,6 +1685,7 @@ class TestAuthBoundary:
             ("post", f"{BASE}/consultas/consulta-001/reprocessar"),
             ("post", f"{BASE}/consultas/consulta-001/cancelar"),
             ("delete", f"{BASE}/consultas/consulta-001"),
+            ("post", f"{BASE}/consultas/consulta-001/restaurar"),
             ("get", f"{BASE}/download?url=x&filename=y"),
             ("get", f"{BASE}/consultas/consulta-001/download-zip"),
             ("post", f"{BASE}/resultados/r1/upload"),

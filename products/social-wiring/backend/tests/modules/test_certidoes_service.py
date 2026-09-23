@@ -2297,6 +2297,52 @@ class TestScheduler:
 
         scheduler.run_startup_recovery(clients=_explode)
 
+    def test_configure_registra_o_job_de_purge_no_scheduler_do_seed(self):
+        from noctusai_lib.api import scheduler as seed_scheduler
+
+        from app.modules.certidoes import scheduler
+
+        scheduler.configure()
+        assert any(
+            job.id == scheduler.PURGE_JOB_ID
+            for job in seed_scheduler.scheduler.get_jobs()
+        ) or scheduler.PURGE_JOB_ID in {
+            j.id for j in getattr(seed_scheduler.scheduler, "_pending_jobs", [])
+        }
+
+    @pytest.mark.asyncio
+    async def test_purge_job_nunca_levanta(self):
+        from app.modules.certidoes import scheduler
+
+        def _explode():
+            raise RuntimeError("db gone")
+
+        await scheduler.purge_excluidas(clients=_explode)
+
+    @pytest.mark.asyncio
+    async def test_purge_job_sem_admin_client_e_no_op(self):
+        from app.modules.certidoes import scheduler
+
+        db = _db(certidao_consultas=[_consulta_row(
+            excluida_em="2020-01-01T00:00:00+00:00", excluida_por="user-1",
+        )])
+        await scheduler.purge_excluidas(clients=lambda: (None, None))
+        # Old excluded row, still untouched — the job genuinely did nothing.
+        assert len(db.table("certidao_consultas").select("*").execute().data) == 1
+
+    @pytest.mark.asyncio
+    async def test_purge_job_purga_o_que_passou_da_janela(self):
+        from app.modules.certidoes import scheduler
+
+        antiga = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+        db = _db(certidao_consultas=[_consulta_row(
+            excluida_em=antiga, excluida_por="user-1",
+        )])
+        await scheduler.purge_excluidas(
+            clients=lambda: (db, FakeStorageBackend())
+        )
+        assert db.table("certidao_consultas").select("*").execute().data == []
+
 
 # ---------------------------------------------------------------------------
 # Registry — structured-field vocabulary + manual-only types (migration 107)
@@ -3061,6 +3107,20 @@ class TestCertidoesPorParte:
         )
         assert service.certidoes_por_parte(db, ORG, "parte-1") == []
 
+    def test_consulta_excluida_nao_aparece(self):
+        """Migration 161 — the contract-automation readiness read (`card_hub.
+        contrato_gerador.validacao_extracao`) runs straight through this
+        function, so a soft-deleted consulta's certidões must not count as
+        evidence a party's certidões exist."""
+        db = _db(
+            certidao_consultas=[_consulta_row(
+                atendimento_parte_id="parte-1",
+                excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+            )],
+            certidao_resultados=[_resultado(id="r1")],
+        )
+        assert service.certidoes_por_parte(db, ORG, "parte-1") == []
+
     def test_a_query_nunca_seleciona_o_texto_da_certidao(self):
         """Migration 113: this panel polls like the consulta-detail screen.
         `MockSupabaseClient` does not project columns (see
@@ -3118,6 +3178,16 @@ class TestCertidoesPorCliente:
         assert rows[0]["consulta_data_situacao"] == "2026-08-01"
         assert rows[0]["consulta_situacao_origem"] == "manual"
 
+    def test_consulta_excluida_nao_aparece(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(
+                cliente_id="cliente-1",
+                excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+            )],
+            certidao_resultados=[_resultado(id="r1")],
+        )
+        assert service.certidoes_por_cliente(db, ORG, "cliente-1") == []
+
     def test_uma_consulta_ligada_por_vincular_parte_tambem_conta(self):
         """`vincular_parte` denormalizes `cliente_id` too (migration 107) —
         `certidoes_por_cliente` deliberately does not filter those out."""
@@ -3150,6 +3220,14 @@ class TestAtualizarSituacaoCadastral:
 
     def test_consulta_de_outra_org_retorna_none(self):
         db = _db(certidao_consultas=[_consulta_row(org_id=OTHER_ORG)])
+        assert service.atualizar_situacao_cadastral(
+            db, ORG, "consulta-001", {"situacao_cadastral": "ativa"}
+        ) is None
+
+    def test_consulta_excluida_retorna_none(self):
+        db = _db(certidao_consultas=[_consulta_row(
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
         assert service.atualizar_situacao_cadastral(
             db, ORG, "consulta-001", {"situacao_cadastral": "ativa"}
         ) is None
@@ -3189,6 +3267,12 @@ class TestConfirmarResultado:
 
     def test_resultado_de_outra_org_retorna_none(self):
         db = _db(certidao_resultados=[_resultado(org_id=OTHER_ORG)])
+        assert service.confirmar_resultado(db, ORG, "resultado-001", {}, "user-9") is None
+
+    def test_resultado_excluido_retorna_none(self):
+        db = _db(certidao_resultados=[_resultado(
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
         assert service.confirmar_resultado(db, ORG, "resultado-001", {}, "user-9") is None
 
     def test_nunca_devolve_o_texto_da_certidao(self):
@@ -3261,6 +3345,171 @@ class TestMintResultadoUrl:
             db, FakeStorageBackend(), ORG, "resultado-001", usuario_id="user-1",
         )
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_resultado_excluido_retorna_none(self):
+        db = _db(certidao_resultados=[_resultado(
+            arquivo_url="https://x/a.pdf",
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
+        result = await service.mint_resultado_url(
+            db, FakeStorageBackend(), ORG, "resultado-001", usuario_id="user-1",
+        )
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Soft-delete / restore / purge — migration 161 (S3, audit-trail slice)
+# ---------------------------------------------------------------------------
+
+
+class TestSoftDeleteConsulta:
+    def test_estampa_consulta_e_resultados(self):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[
+                _resultado(id="r1"), _resultado(id="r2", ordem=2, tipo="trf3"),
+            ],
+        )
+        n = service.soft_delete_consulta(db, ORG, "consulta-001", "user-9")
+        assert n == 2
+
+        consulta = db.table("certidao_consultas").select("*").eq(
+            "id", "consulta-001"
+        ).execute().data[0]
+        assert consulta["excluida_em"] is not None
+        assert consulta["excluida_por"] == "user-9"
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        assert all(r["excluida_em"] is not None for r in resultados)
+        assert all(r["excluida_por"] == "user-9" for r in resultados)
+
+    def test_nao_toca_o_storage(self):
+        """The service function itself never imports/calls a storage seam —
+        soft-delete is DB-only by construction, not by convention."""
+        import inspect
+
+        source = inspect.getsource(service.soft_delete_consulta)
+        assert "storage" not in source
+
+    def test_consulta_inexistente_retorna_none(self):
+        db = _db(certidao_consultas=[])
+        assert service.soft_delete_consulta(db, ORG, "sumiu", "user-9") is None
+
+    def test_consulta_ja_excluida_retorna_none(self):
+        db = _db(certidao_consultas=[_consulta_row(
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
+        assert service.soft_delete_consulta(db, ORG, "consulta-001", "user-9") is None
+
+    def test_consulta_de_outra_org_retorna_none(self):
+        db = _db(certidao_consultas=[_consulta_row(org_id=OTHER_ORG)])
+        assert service.soft_delete_consulta(db, ORG, "consulta-001", "user-9") is None
+
+
+class TestRestaurarConsulta:
+    def test_limpa_consulta_e_resultados(self):
+        db = _db(
+            certidao_consultas=[_consulta_row(
+                excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+            )],
+            certidao_resultados=[_resultado(
+                id="r1",
+                excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+            )],
+        )
+        restored = service.restaurar_consulta(db, ORG, "consulta-001")
+        assert restored["excluida_em"] is None
+        assert restored["excluida_por"] is None
+
+        resultado = db.table("certidao_resultados").select("*").execute().data[0]
+        assert resultado["excluida_em"] is None
+        assert resultado["excluida_por"] is None
+
+    def test_consulta_inexistente_retorna_none(self):
+        db = _db(certidao_consultas=[])
+        assert service.restaurar_consulta(db, ORG, "sumiu") is None
+
+    def test_consulta_nunca_excluida_retorna_none(self):
+        db = _db(certidao_consultas=[_consulta_row()])
+        assert service.restaurar_consulta(db, ORG, "consulta-001") is None
+
+    def test_consulta_de_outra_org_retorna_none(self):
+        db = _db(certidao_consultas=[_consulta_row(
+            org_id=OTHER_ORG,
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
+        assert service.restaurar_consulta(db, ORG, "consulta-001") is None
+
+
+class TestPurgeExcluidas:
+    @pytest.mark.asyncio
+    async def test_purga_apenas_apos_30_dias(self):
+        """The whole point of the retention window: an excluded-yesterday
+        consulta survives, an excluded-32-days-ago one does not."""
+        ontem = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        antiga = (datetime.now(timezone.utc) - timedelta(days=32)).isoformat()
+        db = _db(
+            certidao_consultas=[
+                _consulta_row(id="recente", excluida_em=ontem, excluida_por="user-1"),
+                _consulta_row(id="antiga", excluida_em=antiga, excluida_por="user-1"),
+            ],
+            certidao_resultados=[
+                _resultado(id="r-recente", consulta_id="recente",
+                           excluida_em=ontem, excluida_por="user-1"),
+                _resultado(id="r-antiga", consulta_id="antiga",
+                           excluida_em=antiga, excluida_por="user-1"),
+            ],
+        )
+        result = await service.purge_excluidas(db, FakeStorageBackend())
+        assert result["consultas"] == 1
+        assert result["resultados"] == 1
+
+        remaining = {c["id"] for c in db.table("certidao_consultas").select("*").execute().data}
+        assert remaining == {"recente"}
+        remaining_resultados = {
+            r["id"] for r in db.table("certidao_resultados").select("*").execute().data
+        }
+        assert remaining_resultados == {"r-recente"}
+
+    @pytest.mark.asyncio
+    async def test_nao_toca_consultas_ativas(self):
+        db = _db(certidao_consultas=[_consulta_row()])
+        result = await service.purge_excluidas(db, FakeStorageBackend())
+        assert result == {"consultas": 0, "resultados": 0, "arquivos": 0}
+        assert len(db.table("certidao_consultas").select("*").execute().data) == 1
+
+    @pytest.mark.asyncio
+    async def test_apaga_os_blobs(self):
+        antiga = (datetime.now(timezone.utc) - timedelta(days=32)).isoformat()
+        key = f"{ORG}/certidoes/consulta-001/cnd_federal_ab.pdf"
+        db = _db(
+            certidao_consultas=[_consulta_row(
+                excluida_em=antiga, excluida_por="user-1",
+            )],
+            certidao_resultados=[_resultado(
+                id="r1", arquivo_url=key,
+                excluida_em=antiga, excluida_por="user-1",
+            )],
+        )
+        storage = FakeStorageBackend()
+        await storage.put(bucket=service.BUCKET, key=key, data=b"%PDF-x")
+        result = await service.purge_excluidas(db, storage)
+        assert result["arquivos"] == 1
+        assert await storage.get(bucket=service.BUCKET, key=key) is None
+
+    @pytest.mark.asyncio
+    async def test_janela_customizavel(self):
+        """`older_than_days` is a parameter, not a hardcoded 30 — the
+        scheduler wraps a constant, this function does not own one."""
+        cutoff_5d = (datetime.now(timezone.utc) - timedelta(days=6)).isoformat()
+        db = _db(certidao_consultas=[_consulta_row(
+            excluida_em=cutoff_5d, excluida_por="user-1",
+        )])
+        result = await service.purge_excluidas(
+            db, FakeStorageBackend(), older_than_days=5,
+        )
+        assert result["consultas"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -3584,6 +3833,15 @@ class TestObterTranscricaoResultado:
         db = _db(certidao_resultados=[
             _resultado(org_id=OTHER_ORG, texto_extraido="x"),
         ])
+        assert service.obter_transcricao_resultado(
+            db, ORG, "resultado-001", usuario_id="user-1"
+        ) is None
+
+    def test_resultado_excluido_retorna_none(self):
+        db = _db(certidao_resultados=[_resultado(
+            texto_extraido="x",
+            excluida_em="2026-09-01T10:00:00+00:00", excluida_por="user-1",
+        )])
         assert service.obter_transcricao_resultado(
             db, ORG, "resultado-001", usuario_id="user-1"
         ) is None

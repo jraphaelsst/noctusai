@@ -68,6 +68,11 @@ logger = logging.getLogger(__name__)
 
 JOB_ID = "certidoes_stranded_sweep"
 
+#: Migration 161's soft-delete purge — hard-deletes blobs + rows for a
+#: consulta excluded more than `PURGE_OLDER_THAN_DAYS` ago.
+PURGE_JOB_ID = "certidoes_purge_excluidas"
+PURGE_OLDER_THAN_DAYS = 30
+
 #: Every 5 minutes. Not time-sensitive — `STALE_PROCESSANDO_SECONDS` (15 min)
 #: is what decides whether a row is abandoned; the cron only decides how
 #: quickly a genuinely stranded one is noticed. A minute that no other sweep in
@@ -122,6 +127,41 @@ async def sweep_stranded(
         logger.error("certidoes sweep: run failed: %s", exc, exc_info=True)
 
 
+async def purge_excluidas(
+    *, clients: Optional[Callable[[], tuple[Any, Any]]] = None
+) -> None:
+    """Hard-delete blobs + rows for every consulta soft-deleted more than
+    `PURGE_OLDER_THAN_DAYS` ago (migration 161). Recoverable-by-default
+    (the soft-delete) plus a bounded retention window (this job) is the
+    whole point: a mistaken delete stays undo-able for a month, an LGPD
+    retention obligation does not accrue forever.
+
+    Never raises — same reasoning `sweep_stranded` states: a scheduler job
+    that throws can, in some runtimes, stop being scheduled at all, which
+    would quietly remove the retention bound this job exists to enforce.
+
+    `clients` is the same DI seam `sweep_stranded` carries — a test drives
+    this against a mock DB/storage and asserts on what it did or did not
+    purge. → KB § PATTERNS/backend/di-test-seam.md
+    """
+    resolve = clients or _clients
+    try:
+        db, storage = resolve()
+        if db is None:
+            return
+        result = await service.purge_excluidas(
+            db, storage, older_than_days=PURGE_OLDER_THAN_DAYS
+        )
+        if result["consultas"]:
+            logger.info(
+                "certidoes purge job: %d consulta(s), %d resultado(s), "
+                "%d arquivo(s)",
+                result["consultas"], result["resultados"], result["arquivos"],
+            )
+    except Exception as exc:  # noqa: BLE001 - scheduler job must not die
+        logger.error("certidoes purge job: run failed: %s", exc, exc_info=True)
+
+
 def run_startup_recovery(
     *, clients: Optional[Callable[[], tuple[Any, Any]]] = None
 ) -> None:
@@ -151,15 +191,37 @@ def run_startup_recovery(
         )
 
 
+#: Daily, off-hours — a minute/hour no other job in this product uses
+#: (`card_hub` :17, `imovel_hub` :43, `meta_ads` 06:00, this module's own
+#: `CRON` every 5 minutes). Purging is not time-sensitive; `PURGE_OLDER_
+#: THAN_DAYS` is what decides eligibility, the cron only decides how
+#: promptly an eligible row is noticed.
+PURGE_CRON = "0 3 * * *"
+
+
 def configure() -> None:
-    """Register the sweep on the seed-side scheduler. Idempotent.
+    """Register both scheduled jobs on the seed-side scheduler. Idempotent.
 
     Must be called at IMPORT time, before `start_scheduler()` fires in
-    `app/lifespan.py`, or the job is never registered and the safety net
+    `app/lifespan.py`, or a job is never registered and its safety net
     silently does not exist.
     """
     seed_scheduler.register(JOB_ID, sweep_stranded, cron=CRON)
-    logger.info("certidoes stranded sweep configured (cron %r)", CRON)
+    seed_scheduler.register(PURGE_JOB_ID, purge_excluidas, cron=PURGE_CRON)
+    logger.info(
+        "certidoes scheduler configured: stranded sweep (cron %r), "
+        "purge excluidas (cron %r)", CRON, PURGE_CRON,
+    )
 
 
-__all__ = ["CRON", "JOB_ID", "configure", "run_startup_recovery", "sweep_stranded"]
+__all__ = [
+    "CRON",
+    "JOB_ID",
+    "PURGE_CRON",
+    "PURGE_JOB_ID",
+    "PURGE_OLDER_THAN_DAYS",
+    "configure",
+    "purge_excluidas",
+    "run_startup_recovery",
+    "sweep_stranded",
+]

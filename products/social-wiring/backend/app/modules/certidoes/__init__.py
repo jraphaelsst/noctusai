@@ -45,6 +45,7 @@ Routes
     GET/DELETE             /api/certidoes/consultas/{id}
     POST                   /api/certidoes/consultas/{id}/reprocessar
     POST                   /api/certidoes/consultas/{id}/cancelar
+    POST                   /api/certidoes/consultas/{id}/restaurar
     GET                    /api/certidoes/consultas/{id}/download-zip
     GET                    /api/certidoes/download
     POST                   /api/certidoes/resultados/{id}/upload
