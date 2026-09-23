@@ -41,22 +41,23 @@ from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 LINHA = "______________________________"
 
-#: Captured from `origin/dev` @ c6c7764ff (pre-157), variants 1..6 of
+#: Captured from `origin/dev` @ 3e6cf4d52 (pre-157; re-pinned after b24c85f00's
+#: legitimate contract-text fix — verified identical on pure dev vs this slice), variants 1..6 of
 #: `contrato_gerador_fixtures`: sha256(word/document.xml),
 #: sha256(PDF text via PyMuPDF).
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
-    1: ("73be1960d42068000dfd9e983af929d273811cb016f4a7b27f6c93f024546fe9",
-        "0f3f317ba4e4d98fd64f9d988d03c8c51724c6ff9a3aca8c6b1f1c709aaab03d"),
-    2: ("53033f6862fb8d1baa7911311a72cdfe46b9ed79c9e8a1720bfd00f411252fe4",
-        "26077b46c7a692b336b5832db3b8b859c79d322439dc79b0b596617f4d2d3fee"),
-    3: ("36b28ba32dcf47655482b1814660555a3317d79391107a4d7ef91f2a7c8b350d",
-        "0caf711e574a9e37556526f798bd3d721fd4d01d25e92aa1fb6b261b2bb2b9ea"),
-    4: ("cbc5c1bd3674716aeede1b9a05df87502e8d9d7ea65544b415fec46b45ff9041",
-        "a0530c1ea8e0203387b83cb881ed95dacc7ed9b4a27a73c09791cbfcd3f46e6c"),
-    5: ("844eedafdc666a09fa1c8efbb3d6c669db394a05d4fe1e51c206489ddb660cf2",
-        "f66b97793daf50a4eaf03c1bcc1a69612d9e87979f8d60a5c27207ee2ef3de79"),
-    6: ("413076cbc95307decd47b557ad3312b31efc8fe09045596e05259063b27e8a3c",
-        "4bfd820e6da4faad0bcd061274a548a08505668322c898ff1df758176d9438c5"),
+    1: ("3c3c1be710267a11d4b61de2e0729107611127a89fe914e2569331c62c0000f2",
+        "1a64a509a2b26ec28147654c76b967a70b57af774a03dd8227724eee8422d010"),
+    2: ("d10e2e45d2522d4ae12a6dd993c596b0224a9f0df6f7a3d153e3452ce25a8fc6",
+        "d39fa90f2c944c02fafbae62e8272d21e3ec7e7e1959d2f9bf0ba88b529f844d"),
+    3: ("9a5b724d3139db0f227ec2f49e1015abd89872f104a203a95d95588a42455b91",
+        "f2354649f3cb482ad0a2a6874677ce347a789cb1fa191a8945d3c2813b88751a"),
+    4: ("453be04c577479bb48462c1c4a3fce22d97613976b4a18a49982e03c9b2422fd",
+        "666137b23ba08e0cec89dcd1437b394c87e7f9240c5d7e7e5e587d9d85eacbb0"),
+    5: ("98fb4479730bb5f3d21df6b70bdf8860a0666e9a69b5ef7ea5995c9050e03736",
+        "a180c4a46c9a344ad51cf6e5f6d4319543a9ccf84035be5e386f10a277c4bd1a"),
+    6: ("8ff2a13c55d14ff571cf5a08a5b241ec987a574db25e1393ccdef051ef0a9280",
+        "724a92e4d51894d9e10ae95bac085550e8d1ed4dbd6b12df60e2c7e8edae0c44"),
 }
 
 
