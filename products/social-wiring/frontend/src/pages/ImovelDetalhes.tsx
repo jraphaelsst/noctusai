@@ -417,6 +417,7 @@ export default function ImovelDetalhes() {
               numero: imovel.numero,
               cidade: imovel.cidade,
               uf: imovel.uf,
+              empreendimento: imovel.empreendimento,
             }}
             savingEnderecoManual={enderecoManualMutation.isPending}
             onSaveEnderecoManual={(patch) => enderecoManualMutation.mutate(patch)}

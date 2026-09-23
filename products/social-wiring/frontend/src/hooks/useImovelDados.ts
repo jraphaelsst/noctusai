@@ -109,6 +109,15 @@ export interface ImovelDados {
   endereco_manual_confirmado_por: Ator | null;
   endereco_manual_confirmado_em: string | null;
 
+  // ─── Empreendimento manual override (migration 158) ────────────────────
+  // The development/condomínio name for a manually registered imóvel
+  // (migration 149), which has no Vista mirror row and therefore no
+  // `imoveis.empreendimento` at all — without this, its contract title
+  // silently omits the development name. `null` means "use the mirror".
+  empreendimento_manual: string | null;
+  empreendimento_manual_confirmado_por: Ator | null;
+  empreendimento_manual_confirmado_em: string | null;
+
   updated_at: string | null;
 }
 
@@ -147,6 +156,7 @@ export interface ImovelDadosPatch {
   onus_observacoes?: string | null;
   onus_certidao_em?: string | null;
   onus_documento_id?: string | null;
+  empreendimento_manual?: string | null;
 }
 
 export type ExtracaoStatus =
