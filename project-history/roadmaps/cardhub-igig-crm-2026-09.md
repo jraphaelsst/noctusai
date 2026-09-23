@@ -51,6 +51,17 @@ Owner asked to smoke-test igig end-to-end, make the Esteira drag-and-drop, add a
 | A.3 | Seed pipeline: editable columns (add/remove/rename in header, reorder drag, protected roles) | seed pipeline FE/BE | now | vitest; stages CRUD live |
 | A.4 | SW swap BE + FE onto seed | `products/social-wiring/...card...` | after A.1/A.2 | local live smoke on /funil + /clientes (desktop + 390px) |
 
+## Phase 2b — Wave A follow-ups (DEFERRED — fire when wave A is prod-verified, T2)
+
+| # | Title | Files | Trigger | Verify recipe |
+|---|---|---|---|---|
+| A.5 | Seed `card_hub_routers` accepts `max_upload_bytes: Callable[[], int]` → SW drops its local upload-route override and uses `documento_upload_hook` | seed card_hub router + SW `card_hub/router.py` `_LOCAL_OVERRIDES` | T2 | SW route inventory identical; oversized-upload test green |
+| A.6 | Unify SW `DocumentoStore` with seed card-hub documentos (marker `NOC-REMEDIATE[dry-documento-store]` points here) | `products/social-wiring/backend/app/services/documento_store.py` | T2 | SW documentos suites + LGPD access-log rows unchanged |
+| A.7 | SW `app/services/table_reads.py` → shim over seed `integrations.persistence.table_reads` (only `resolve_actors` signature differs) | SW services | T2 | SW backend pytest |
+| A.8 | `.organ.yaml` for card-hub sub-organs (AnexosSection, Timeline, ChecklistExtrasSection, …) so `check_canonical_organ_consumption` sees forks | `seed/lib/frontend/src/components/card-hub/` | T2 | keeper flags a planted local fork |
+| A.9 | SW tests: drop remaining `@/components/ui/select` mocks (ContratosPanel, NegociacaoEstruturadaPanel, TermosNegocioSection) now that SW test setup has pointer-events + user-event | SW frontend tests | T2 | those suites green on real Radix |
+| A.10 | Pre-existing SW vitest flake: 13 files time out at 15s under full-suite load (17 failures on baseline bef5ab17a) | SW vitest config | T2 | full SW vitest green twice in a row |
+
 ## Phase 3 — Wave B: igig foundation (DEFERRED — T1)
 
 Bugfixes 1–8; data model: `lead`, `negocio`(funnel card), `cliente` enrichment, `marca` N per cliente, `orcamento` + `orcamento_item` (recurrence: weekdays bitmask + qty/day), `produto_servico` catalog, pipeline_stages/movimentos for `comercial` + `esteira`; mobile-first shell.
