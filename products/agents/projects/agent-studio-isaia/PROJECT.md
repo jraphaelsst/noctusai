@@ -143,6 +143,34 @@ A better route than the brief ⇒ STOP and report (no silent divergence).
 
 **Improvements:** applied — uvicorn `--loop asyncio` (uvloop rejected subprocess `user=`, every slot quarantined in the prod image); studio system prompt via `{type:file}` (neutral identity line); judge aligns by criterion number; eval-run writes retry transient transport errors; startup steps independent + retried; studio turns decoupled from Julia-only config; trigram index dropped (pg_trgm lives in another product's schema); tests can never reach the shared DB (conftest blanks the service key); pre-commit always refreshes the shared auto-improvement cache; `cli.py --validate` no longer crashes on global issues. Deferred → owner decision: prod promotion; Julia migration to studio (CONTRACT §K).
 
+### Phase 4 — IsaIA built through the UI in prod (2026-09-23) ⏳
+Source: `products/agents/projects/IsaIA/PLAYGROUND` only (gitignored), split per record by
+`isaia-private/playground/split_for_ui.py` — regenerated from PLAYGROUND and byte-identical. Target: the owner's
+real org, agent `isaia` (created empty by the owner). The bundle import was deliberately NOT used.
+
+| Content | UI surface | Verified |
+|---|---|---|
+| 7 prompt sections | Prompt → "+ Seção" (título · chave · conteúdo) → Salvar seções | md5 of all 7 = source |
+| model/effort/turns/idioma/tools + notas | Configurações | saved |
+| 12 skills (nome · descrição · corpo) | Skills → "+ Skill" (bodies pasted from the .md, as a person would) | md5 of 12 desc + 12 corpo = source |
+| 5 collections (slug · nome · tag · descrição · ordem) | Conhecimento → Nova coleção | compiled catalog lines = source |
+| 32 eval cases (entrada · contexto · deve[] · não deve[] · rubrica · tags) | Avaliações → Novo caso | one md5 over all 32 = `authoring/evals.json` (PLAYGROUND carries no evals; the publish gate needs them) |
+| 382 knowledge documents · 21 skill reference files | Conhecimento / Skills → "Enviar arquivos" | ⏳ waits for the uploader fix to reach prod |
+
+**Master-prompt validity.** PLAYGROUND's `01_MASTER_PROMPT_RUNTIME.md` IS the compiler's output (manifest hash
+`sha256:3e51b0b5…`), so the UI-built draft is checked by hash, not by eye. With sections + skills + collections in
+and 0 documents, the inspector shows `sha256:4de28ad0…` / 22 474 chars — exactly the PLAYGROUND text with the five
+`(N documentos)` counts set to 0 (−6 chars). Referential integrity of the prompt + skill bodies: every backticked
+tool (8), skill (88), reference path (53) and document slug (390) resolves; `carrossel` reads `roteiro-reels`'
+references through `ler_arquivo_skill("roteiro-reels", …)`, which the tool allows.
+
+**Improvements** (found only by driving the real UI — the QA "pre-flight" called the API with its own parser):
+- fixed `2d9cbf8bf` — KnowledgeUploadDialog dropped the nested `proveniencia:` block (all 382 docs carry one);
+  SkillFilesUploadDialog stored a picked file as `arquivos.md` while skill bodies cite `references/arquivos.md`
+  (`ler_arquivo_skill` matches exactly).
+- open → next Studio FE slice: no file/bulk path for **skill bodies** (12 × ~14 KB pasted by hand) nor for **eval
+  cases** (32 forms, 198 criteria typed one by one); the upload preview does not show parsed provenance.
+
 ## 7. Open questions
 - Rights to use the third-party course material in a commercial agent — owner's call; content stays DB-only regardless.
 - Missing sources (per-format script doc of `[CA]`; provenance of the 15-sequence Stories bank of `[KE]`) — recorded as gaps in the knowledge library.
