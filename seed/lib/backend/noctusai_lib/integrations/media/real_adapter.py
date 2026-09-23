@@ -135,6 +135,14 @@ class RealMediaResolver:
             vendors (see `OCR_MODELS`'s own docstring).
         analyze: Test seam — bound default `analyze_image_with_refusal_retry`
             (`KB § PATTERNS/backend/di-test-seam.md` Class-B).
+        render_dpi_policy: `None` (the default) leaves the PDF-transcription
+            rung's own default render DPI unchanged — every existing
+            consumer of this resolver (media generation, matrícula,
+            certidão-estrutura) is unaffected. Forwarded verbatim to
+            `documents.make_document_transcriber` when set — see
+            `documents.transcription.RenderDpiPolicy`. Typed `Any` here (not
+            `RenderDpiPolicy`) so importing this module never drags in
+            `documents.transcription`.
     """
 
     def __init__(
@@ -147,6 +155,7 @@ class RealMediaResolver:
         provider: Optional[str] = None,
         analyze: Optional[AnalyzeFn] = None,
         document_transcriber: Optional[Any] = None,
+        render_dpi_policy: Optional[Any] = None,
     ) -> None:
         self._doc_prompt = document_prompt or _DEFAULT_DOCUMENT_PROMPT
         self._scene_prompt = scene_prompt or _DEFAULT_SCENE_PROMPT
@@ -173,6 +182,9 @@ class RealMediaResolver:
         # `_get_document_transcriber`) so importing this module never drags
         # in `documents.transcription`'s own dependency graph.
         self._document_transcriber = document_transcriber
+        # `None` = the transcriber's own default render DPI, unchanged —
+        # see the constructor docstring's `render_dpi_policy` entry.
+        self._render_dpi_policy = render_dpi_policy
 
     async def resolve(self, media: InboundMedia) -> ResolvedMedia:
         kind = classify_media_kind(media.mimetype, media.filename)
@@ -499,6 +511,10 @@ class RealMediaResolver:
                 kwargs["max_vision_pages"] = self._max_pages
             else:
                 kwargs["max_vision_pages"] = MAX_VISION_PAGES
+            # `None` is `make_document_transcriber`'s own default — passing
+            # it verbatim keeps every consumer that never set this
+            # unaffected (`render_dpi` stays in sole charge there).
+            kwargs["render_dpi_policy"] = self._render_dpi_policy
             self._document_transcriber = make_document_transcriber(**kwargs)
         return self._document_transcriber
 

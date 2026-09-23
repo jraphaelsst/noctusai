@@ -53,7 +53,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional, Protocol, runtime_checkable
+from typing import Callable, Optional, Protocol, runtime_checkable
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.documents.providers import (
@@ -113,6 +113,77 @@ OCR_PROMPT = (
 #: is an ERROR rather than a quiet empty string, because "this document was
 #: not transcribed" must never look like "this document was blank".
 MAX_VISION_PAGES = 40
+
+
+@dataclass(frozen=True)
+class RenderDpiPolicy:
+    """Page-count-aware, byte-budget-capped render-DPI selection.
+
+    `RENDER_DPI` (200, a flat int) is right for what this module was built
+    for — dense registry print, where every page is worth the same care.
+    It is measurably wrong for a document whose fields live in a SMALL
+    region of one page (`identity_document_render_dpi_policy`'s docstring)
+    — a document that would benefit from a sharper render exists alongside
+    one for which a naive global bump 413s the provider. A policy replaces
+    the single int with two rules instead of a bigger constant:
+
+    - `dpi_for_page_count`: the document's page count -> a STARTING dpi. A
+      ceiling, not a guarantee — see the next rule.
+    - Each rendered page is checked against `max_encoded_bytes` (the
+      base64-encoded size, matching what the vision call actually sends —
+      `documents.transcription._encoded_size`) and stepped DOWN through
+      `step_down_dpis` (only the candidates below the starting dpi are
+      tried, in descending order) until it fits, or the floor is reached.
+      NEVER silently sent oversized — see `_pdf_to_images_within_budget`.
+    """
+
+    dpi_for_page_count: Callable[[int], int]
+    max_encoded_bytes: int
+    step_down_dpis: tuple[int, ...] = (300, 200, 150, 100)
+
+
+def identity_document_render_dpi_policy() -> RenderDpiPolicy:
+    """The `NOC-REMEDIATE[identity-vision-render-dpi]` fix.
+
+    Measured 2026-09-23 against a real "CNH Digital" (Detran/Serpro) PDF:
+    the card's every field lives in a small embedded image on a page whose
+    SELECTABLE text is a legal/signature disclaimer (see
+    `pdf_text._PROVENANCE_STAMP_PATTERNS`'s Serpro/SENATRAN block, added
+    2026-09-07 for the same document family) — at the seed-wide canonical
+    `RENDER_DPI` (200, tuned for dense registry print, not a thumbnail-
+    sized card graphic), the rasterized page is too coarse for the vision
+    model to read the card. A single-page document can afford a much
+    sharper render; a longer one cannot (bandwidth, and the identity fields
+    do not live past page 1 anyway) — hence the step-down by page count,
+    floored at the seed-wide default rather than going lower still.
+
+    `max_encoded_bytes` is Anthropic's own documented per-image ceiling
+    (`llm.providers.anthropic_provider.MAX_IMAGE_BYTES`) — imported lazily
+    so `documents.transcription` never drags the `anthropic` SDK into a
+    caller that only ever reads a text layer. A naive GLOBAL DPI=400 (no
+    per-page step-down, no budget check) is exactly what 413'd a 2-page
+    certidão in the same measurement; `step_down_dpis` is what this policy
+    uses instead of repeating that mistake.
+    """
+    from noctusai_lib.integrations.llm.providers.anthropic_provider import (
+        MAX_IMAGE_BYTES,
+    )
+
+    def _dpi_for_page_count(num_pages: int) -> int:
+        if num_pages <= 1:
+            return 400
+        if num_pages <= 3:
+            return 300
+        # Longer documents keep the unchanged canonical default: the
+        # identity fields this rung exists for do not live past page 1,
+        # and a longer document is more likely to be dense print anyway.
+        return RENDER_DPI
+
+    return RenderDpiPolicy(
+        dpi_for_page_count=_dpi_for_page_count,
+        max_encoded_bytes=MAX_IMAGE_BYTES,
+        step_down_dpis=(300, 200, 150, 100),
+    )
 
 
 def _classify_failure(exc: Exception) -> str:
@@ -308,6 +379,7 @@ class LadderDocumentTranscriber:
         ocr_model: Optional[str] = None,
         ocr_prompt: str = OCR_PROMPT,
         render_dpi: int = RENDER_DPI,
+        render_dpi_policy: Optional[RenderDpiPolicy] = None,
         max_vision_pages: int = MAX_VISION_PAGES,
         analyze=None,
     ) -> None:
@@ -321,6 +393,15 @@ class LadderDocumentTranscriber:
         )
         self._ocr_prompt = ocr_prompt
         self._render_dpi = render_dpi
+        # `None` (the default) keeps EVERY existing consumer's behaviour
+        # byte-for-byte: a flat `self._render_dpi` int, no per-page budget
+        # check — see `_pdf_to_images` below. Set only by
+        # `identity_document_render_dpi_policy()` today (via
+        # `LadderIdentityExtractor`); a caller that supplies one opts INTO
+        # the page-count + byte-budget-aware rasterization in
+        # `_pdf_to_images_within_budget`, which then takes over from
+        # `render_dpi` entirely for the vision rung.
+        self._render_dpi_policy = render_dpi_policy
         self._max_vision_pages = max_vision_pages
         # Injected in tests; resolved lazily otherwise so importing this
         # module never drags in the LLM stack.
@@ -434,7 +515,12 @@ class LadderDocumentTranscriber:
                 ),
             )
 
-        images = _pdf_to_images(content, paginas_para_visao, self._render_dpi)
+        if self._render_dpi_policy is not None:
+            images = _pdf_to_images_within_budget(
+                content, paginas_para_visao, self._render_dpi_policy, num_paginas, camada
+            )
+        else:
+            images = _pdf_to_images(content, paginas_para_visao, self._render_dpi)
         formatacao_visao: dict[int, tuple[FormatRange, ...]] = {}
         for numero in paginas_para_visao:
             img = images.get(numero)
@@ -563,6 +649,171 @@ def _pdf_to_images(
             images[numero] = doc[index].get_pixmap(matrix=matrix).tobytes("png")
     finally:
         doc.close()
+    return images
+
+
+def _encoded_size(raw: bytes) -> int:
+    """Base64-encoded byte length, without doing the encoding.
+
+    This is the size that actually crosses the wire in a vision content
+    block (`source.data` in `AnthropicProvider.analyze_image`) — ~4/3 the
+    raw size — and the number `RenderDpiPolicy.max_encoded_bytes` is
+    compared against. Computed rather than encoded: a policy may try
+    several DPI candidates per page, and `base64.b64encode` on a
+    multi-megabyte PNG per candidate is wasted work the arithmetic avoids.
+    """
+    return 4 * ((len(raw) + 2) // 3)
+
+
+#: A page's largest embedded image must be at least this many times the
+#: area of the next-largest to count as "the document" rather than one of
+#: several images of comparable importance (a card graphic next to an
+#: issuer logo of similar size, say — ambiguous, so the ordinary
+#: page-raster rung answers instead).
+_DOMINANT_IMAGE_AREA_RATIO = 3.0
+
+
+def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
+    """The ONE embedded raster image on this page, at ITS OWN resolution.
+
+    The `identity-vision-render-dpi` shape measured 2026-09-23: a card's
+    every field lives in a small embedded image; the page's SELECTABLE
+    text is a disclaimer that swamps it. Sending the issuer's own pixels,
+    uncropped and unscaled, beats rasterizing the WHOLE page at any DPI —
+    sharper on the part that matters and smaller in bytes (a thumbnail-
+    sized card graphic vs. a full A4 raster), so the DPI/budget trade-off
+    in `_pdf_to_images_within_budget` does not even arise for this page.
+
+    Never raises, and returns `None` — the ordinary page-raster rung then
+    answers instead — when: the page cannot be opened; it has no embedded
+    image; or it has more than one and none is unambiguously dominant
+    (`_DOMINANT_IMAGE_AREA_RATIO`). Deliberately does NOT try to pick "the
+    best" image among several comparable ones — a wrong guess there would
+    silently send the wrong picture, which is worse than falling back to
+    the page raster this function's caller already has to support anyway.
+    """
+    try:
+        import fitz  # type: ignore  # PyMuPDF
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        logger.debug("dominant-image: could not open PDF", exc_info=True)
+        return None
+    try:
+        if numero < 1 or numero > doc.page_count:
+            return None
+        page = doc[numero - 1]
+        try:
+            imagens = page.get_images(full=True)
+        except Exception:
+            logger.debug("dominant-image: get_images failed on page %d", numero, exc_info=True)
+            return None
+        if not imagens:
+            return None
+
+        areas: list[tuple[float, int]] = []
+        for img in imagens:
+            xref = img[0]
+            try:
+                maior = max(
+                    (abs(r.width * r.height) for r in page.get_image_rects(xref)),
+                    default=0.0,
+                )
+            except Exception:
+                maior = 0.0
+            areas.append((maior, xref))
+        areas.sort(key=lambda par: par[0], reverse=True)
+
+        if len(areas) > 1 and areas[0][0] < areas[1][0] * _DOMINANT_IMAGE_AREA_RATIO:
+            return None  # no single image clearly IS the document
+
+        xref = areas[0][1]
+        try:
+            extraido = doc.extract_image(xref)
+        except Exception:
+            logger.debug("dominant-image: extract_image failed on page %d", numero, exc_info=True)
+            return None
+        dados = (extraido or {}).get("image")
+        return dados or None
+    finally:
+        doc.close()
+
+
+def _pdf_to_images_within_budget(
+    pdf_bytes: bytes,
+    paginas: list[int],
+    policy: RenderDpiPolicy,
+    num_paginas: int,
+    camada,
+) -> dict[int, bytes]:
+    """Rasterize each page for vision, honouring `policy` — the
+    `identity-vision-render-dpi` fix. Per page, independently:
+
+    1. If the page's text layer classified as pure provenance boilerplate
+       (`reason == "provenance stamp only"` — see `pdf_text._classify_page`)
+       and it carries one dominant embedded image, send that image at its
+       own resolution (`_dominant_embedded_image`) — cheaper AND sharper
+       than any page raster, so the DPI/budget question below is skipped
+       entirely for this page.
+    2. Otherwise, rasterize the whole page starting at
+       `policy.dpi_for_page_count(num_paginas)`, stepping DOWN through
+       `policy.step_down_dpis` (only the candidates below the starting DPI,
+       descending) whenever the base64-encoded image would exceed
+       `policy.max_encoded_bytes` — the fix for the naive-global-DPI 413.
+       Independent per page on purpose: a document whose card sits on page
+       1 and whose page 2 is a dense full-page scan should not have its
+       sharp page-1 render dragged down by page 2's size, nor vice versa.
+
+    Never sends a page silently over budget: if even the floor DPI does
+    not fit, the floor render is still used (a document must not lose a
+    page because it is dense) but logged at `error` so the near-413 is
+    visible rather than discovered downstream as a vendor failure.
+    """
+    razoes = {p.number: p.reason for p in camada.pages} if camada is not None else {}
+    starting_dpi = policy.dpi_for_page_count(num_paginas)
+    candidatos = [starting_dpi] + sorted(
+        {d for d in policy.step_down_dpis if d < starting_dpi}, reverse=True
+    )
+
+    images: dict[int, bytes] = {}
+    for numero in paginas:
+        if razoes.get(numero) == "provenance stamp only":
+            nativo = _dominant_embedded_image(pdf_bytes, numero)
+            if nativo is not None and _encoded_size(nativo) <= policy.max_encoded_bytes:
+                images[numero] = nativo
+                continue
+
+        escolhido: Optional[bytes] = None
+        dpi_usado: Optional[int] = None
+        for dpi in candidatos:
+            pagina_imgs = _pdf_to_images(pdf_bytes, [numero], dpi)
+            img = pagina_imgs.get(numero)
+            if img is None:
+                continue
+            escolhido = img
+            dpi_usado = dpi
+            if _encoded_size(img) <= policy.max_encoded_bytes:
+                break
+
+        if escolhido is None:
+            # Rasterize failed at every candidate DPI — the caller's
+            # existing `rasterize_failed` handling covers a missing page.
+            continue
+
+        if dpi_usado < candidatos[0]:
+            logger.warning(
+                "transcription: page %d rendered at %d DPI (policy asked "
+                "for %d) to stay under the %d-byte vision request budget",
+                numero, dpi_usado, candidatos[0], policy.max_encoded_bytes,
+            )
+        if _encoded_size(escolhido) > policy.max_encoded_bytes:
+            logger.error(
+                "transcription: page %d still exceeds the %d-byte vision "
+                "request budget even at the floor DPI (%d) — sending it "
+                "anyway; the provider call may reject it as too large",
+                numero, policy.max_encoded_bytes, dpi_usado,
+            )
+        images[numero] = escolhido
     return images
 
 
@@ -1034,6 +1285,7 @@ def make_document_transcriber(
     ocr_model: Optional[str] = None,
     ocr_prompt: str = OCR_PROMPT,
     render_dpi: int = RENDER_DPI,
+    render_dpi_policy: Optional[RenderDpiPolicy] = None,
     max_vision_pages: int = MAX_VISION_PAGES,
 ) -> DocumentTranscriber:
     """Return a document transcriber.
@@ -1059,6 +1311,13 @@ def make_document_transcriber(
             not one consumer's preference. Leave `ocr_model` as `None` unless
             you are pinning a model deliberately — it then follows `provider`
             through `OCR_MODELS`, which is what keeps the two in step.
+        render_dpi_policy: `None` (the default) leaves `render_dpi` in sole
+            charge, unchanged, for every existing consumer (media
+            generation, matrícula, certidão-estrutura). Pass a
+            `RenderDpiPolicy` (see `identity_document_render_dpi_policy`)
+            to opt a caller INTO page-count + byte-budget-aware
+            rasterization instead — it then takes over from `render_dpi`
+            entirely for the vision rung.
         max_vision_pages: Cap on vision calls for a single document.
     """
     if not real:
@@ -1070,6 +1329,7 @@ def make_document_transcriber(
         ocr_model=ocr_model,
         ocr_prompt=ocr_prompt,
         render_dpi=render_dpi,
+        render_dpi_policy=render_dpi_policy,
         max_vision_pages=max_vision_pages,
     )
 
@@ -1084,8 +1344,10 @@ __all__ = [
     "OCR_MODELS",
     "OCR_PROMPT",
     "RENDER_DPI",
+    "RenderDpiPolicy",
     "TranscribedPage",
     "Transcription",
+    "identity_document_render_dpi_policy",
     "make_document_transcriber",
     "has_raw_markup",
     "parse_markup",

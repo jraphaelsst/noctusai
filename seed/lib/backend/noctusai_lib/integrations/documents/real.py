@@ -56,6 +56,9 @@ from noctusai_lib.integrations.documents.cpf import (
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
+from noctusai_lib.integrations.documents.transcription import (
+    identity_document_render_dpi_policy,
+)
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
 from noctusai_lib.integrations.documents.name import (
     chave_nome,
@@ -105,14 +108,20 @@ logger = logging.getLogger(__name__)
 #: `nome`/`cpf` under this prompt at the resolver's default render DPI (the
 #: card's data sits in a small embedded image on a page dominated by a
 #: legal disclaimer). A higher render DPI recovered it in the same
-#: measurement, but `DocumentTextLadder`/`RealMediaResolver` have no
-#: render-DPI passthrough today.
-#: NOC-REMEDIATE[identity-vision-render-dpi]: thread a render-DPI override
+#: measurement, and a NAIVE global DPI bump 413'd a 2-page document against
+#: the Anthropic vision endpoint in the same pass.
+#:
+#: RESOLVED 2026-09-23 (was NOC-REMEDIATE[identity-vision-render-dpi]): the
+#: `_ladder` below now threads `identity_document_render_dpi_policy()`
 #: through `DocumentTextLadder` -> `get_media_resolver` ->
-#: `RealMediaResolver` -> its `LadderDocumentTranscriber`, capped by page
-#: count (a naive global DPI bump 413'd a 2-page document against the
-#: Anthropic vision endpoint in the same measurement) — see the delivery
-#: note for the numbers. — 2026-09-23
+#: `RealMediaResolver` -> its `LadderDocumentTranscriber` — page-count-aware
+#: (a 1-page document affords 400 DPI, a longer one steps back down to the
+#: seed-wide canonical 200) AND byte-budget-aware (stepped down further,
+#: per page, whenever the base64-encoded render would exceed Anthropic's
+#: documented per-image ceiling — see
+#: `transcription.identity_document_render_dpi_policy` for the full
+#: reasoning and `llm.providers.anthropic_provider.MAX_IMAGE_BYTES` for the
+#: measured limit).
 _IDENTITY_DOCUMENT_PROMPT = (
     "Transcreva o texto deste documento de identidade (RG, CNH, CIN, "
     "certidão, comprovante) exatamente como aparece, sem corrigir, "
@@ -145,12 +154,21 @@ class LadderIdentityExtractor:
         # `ladder` is a DI seam for tests that must drive BOTH rungs (the
         # text-layer-then-vision fallthrough) without a real PDF or model.
         # Every real caller omits it.
+        #
+        # `render_dpi_policy=identity_document_render_dpi_policy()` is the
+        # fix this class needed (was
+        # NOC-REMEDIATE[identity-vision-render-dpi] — see the prompt's own
+        # comment above): the identity rung opts INTO the page-count +
+        # byte-budget-aware render DPI by construction, no caller-side
+        # change required. A test supplying its own `ladder=` bypasses this
+        # entirely, same as every other identity-rung default.
         self._ladder = ladder or DocumentTextLadder(
             org_id=org_id,
             document_prompt=document_prompt or _IDENTITY_DOCUMENT_PROMPT,
             resolver=resolver,
             max_pages=max_pages,
             provider=provider,
+            render_dpi_policy=identity_document_render_dpi_policy(),
         )
 
     async def extract(

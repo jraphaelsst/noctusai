@@ -33,6 +33,20 @@ logger = logging.getLogger(__name__)
 # OpenAI which defaults). Pick a reasonable upper bound per the chat context.
 _DEFAULT_MAX_TOKENS = 4096
 
+#: Anthropic's documented per-image size ceiling for a vision content block
+#: (base64-encoded bytes, i.e. what `analyze_image`'s `source.data` above
+#: actually sends) — see the Vision guide's "Image requirements": an image
+#: over this size is REJECTED (`request_too_large`, HTTP 413), not
+#: downscaled server-side. A caller that rasterizes a page before sending it
+#: (`documents.transcription.LadderDocumentTranscriber`) must stay under
+#: this itself; the SDK gives no client-side pre-check.
+#:
+#: 🔴 MEASURED, NOT GUESSED: a naive global render-DPI bump to 400 on the
+#: `identity-vision-render-dpi` finding (2026-09-23) 413'd a 2-page
+#: certidão at this exact boundary — see
+#: `documents.transcription.identity_document_render_dpi_policy`.
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
 
 def _split_system_and_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     """Anthropic expects `system` as a top-level parameter, not a role.

@@ -157,9 +157,11 @@ from noctusai_lib.integrations.documents.providers import (
 from noctusai_lib.integrations.documents.transcription import (
     DocumentTranscriber,
     FakeDocumentTranscriber,
+    RenderDpiPolicy,
     TranscribedPage,
     Transcription,
     has_raw_markup,
+    identity_document_render_dpi_policy,
     make_document_transcriber,
 )
 from noctusai_lib.integrations.documents.text import (
@@ -257,6 +259,7 @@ __all__ = [
     "Qualificacao",
     "QualificacaoConsolidada",
     "REGIME_BENS_VALORES",
+    "RenderDpiPolicy",
     "RuidoKind",
     "RuidoSpan",
     "Run",
@@ -283,6 +286,7 @@ __all__ = [
     "find_regime_bens",
     "find_rg",
     "find_rg_orgao",
+    "identity_document_render_dpi_policy",
     "is_same_as_cpf",
     "looks_like_a_name",
     "looks_like_pdf",

@@ -64,6 +64,7 @@ def get_media_resolver(
     org_id: str | None = None,
     max_pages: int | None = -1,
     provider: str | None = None,
+    render_dpi_policy: object | None = None,
 ) -> MediaResolver:
     """Return a media resolver.
 
@@ -90,6 +91,13 @@ def get_media_resolver(
             DOCUMENT provider (`DEFAULT_DOCUMENT_PROVIDER`, Anthropic since
             2026-09-22) for the vision paths; audio still goes to Whisper.
             Real only.
+        render_dpi_policy: `None` (the default) leaves every scanned-PDF
+            consumer's render DPI unchanged. Forwarded verbatim to
+            `RealMediaResolver` → `documents.make_document_transcriber` —
+            see `documents.transcription.RenderDpiPolicy` /
+            `identity_document_render_dpi_policy`. Typed loosely (`object`)
+            so this module never imports `documents.transcription` just to
+            type-hint a passthrough. Real only.
     """
     if not real:
         return FakeMediaResolver()
@@ -103,6 +111,7 @@ def get_media_resolver(
         "scene_prompt": scene_prompt,
         "org_id": org_id,
         "provider": provider,
+        "render_dpi_policy": render_dpi_policy,
     }
     if max_pages != -1:
         kwargs["max_pages"] = max_pages
