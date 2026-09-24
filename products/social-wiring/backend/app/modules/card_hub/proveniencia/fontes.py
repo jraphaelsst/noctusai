@@ -264,13 +264,20 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
             ".make_crednet_extractor"
         ),
         origens=frozenset({"serasa_crednet"}),
-        # Crednet also reads `nome_mae` — a field no OTHER cliente Fonte
-        # claims (§A.6/§A.7). `participacoes`/`ocorrencias` are not
-        # `clientes` columns at all (they land on `empresas` and on the
-        # certidão 9 resultado respectively, via `crednet_service.
-        # aplicar_leitura`) — the field-provenance map only walks `clientes`
-        # columns, so they are deliberately absent here.
-        campos=_CAMPOS_IDENTIDADE_BASE | {"nome_mae"},
+        # 🔴 Narrower than `_CAMPOS_IDENTIDADE_BASE` on purpose — a Crednet
+        # consulta is not an identity document and never reads `genero`/
+        # `rg`/`rg_orgao`/`estado_civil`/`regime_bens`/`data_casamento`/
+        # `nacionalidade`/`profissao` (seed `CrednetFields`, contract §B).
+        # It DOES read `nome_mae` — a field no OTHER cliente Fonte claims
+        # (§A.6/§A.7). `participacoes`/`ocorrencias` are not `clientes`
+        # columns at all (they land on `empresas` and on the certidão 9
+        # resultado respectively, via `crednet_service.aplicar_leitura`) —
+        # the field-provenance map only walks `clientes` columns, so they
+        # are deliberately absent here. Guard 4
+        # (`test_proveniencia_fontes.TestCapacidades`) is what caught this
+        # Fonte over-claiming `_CAMPOS_IDENTIDADE_BASE` wholesale once the
+        # `_PENDING_CROSS_SLICE_TIPOS` skip allowlist was removed.
+        campos=frozenset({"nome", "cpf", "data_nascimento", "nome_mae"}),
         # The vision rung must read every page — participações routinely
         # sit on page 2 (§B: "max_pages=None reads every page").
         leitura_integral=True,

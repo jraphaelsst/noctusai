@@ -42,7 +42,13 @@ from noctusai_lib.integrations.documents import ESTADO_CIVIL_VALORES, looks_like
 
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
-from app.modules.card_hub.services import _now, _paged_rows, _t, ensure_cliente
+from app.modules.card_hub.services import (
+    _now,
+    _paged_rows,
+    _t,
+    ensure_cliente,
+    tem_permuta_ativa,
+)
 
 TABLE = "cliente_documento_checklist"
 CLIENTES_TABLE = "clientes"
@@ -547,26 +553,6 @@ def cliente_para_derivacao(
 _ITEM_KEY_SERASA_CREDNET = "serasa_crednet"
 
 
-def _tem_permuta(client: Any, org_id: UUID, atendimento_id: str) -> bool:
-    """A direct, lightweight read of `atendimento_negociacao_parcelas`
-    (`card_hub.negociacao_estruturada_service`'s own table) rather than
-    `contrato_gerador.dados.parcela_permuta`, which needs the WHOLE
-    `DadosContrato` graph loaded — too heavy for a checklist read. Same
-    reasoning/duplication note as `card_hub.empresas_service._tem_permuta`
-    (this dispatch's own `scoped-improvement:` footer names both as a
-    follow-up to lift onto one shared helper)."""
-    rows = (
-        _t(client, "atendimento_negociacao_parcelas")
-        .select("id")
-        .eq("org_id", str(org_id))
-        .eq("atendimento_id", atendimento_id)
-        .eq("tipo", "permuta")
-        .limit(1)
-        .execute()
-    ).data or []
-    return bool(rows)
-
-
 def _e_certificando(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
     """Is this cliente CURRENTLY a certificando on their resolvable
     atendimento? No/ambiguous atendimento -> False (hidden) — the same
@@ -591,7 +577,7 @@ def _e_certificando(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
     atendimento = rows[0]
     if str(atendimento["cliente_id"]) == str(cliente_id):
         # The titular — always a comprador (migration 073's header).
-        return _tem_permuta(client, org_id, atendimento_id)
+        return tem_permuta_ativa(client, org_id, atendimento_id)
 
     partes = (
         _t(client, "atendimento_partes")
@@ -605,7 +591,7 @@ def _e_certificando(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
         lado = partes[0].get("lado") or "comprador"
         if lado == "vendedor":
             return True
-        return _tem_permuta(client, org_id, atendimento_id)
+        return tem_permuta_ativa(client, org_id, atendimento_id)
 
     # Not the titular, not a direct parte — a vendedor's registered spouse
     # counts too, even without their own `atendimento_partes` row.

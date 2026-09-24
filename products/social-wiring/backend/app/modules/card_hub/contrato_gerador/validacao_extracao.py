@@ -330,6 +330,23 @@ CAMPO_EMPRESA_DADOS = _quinteto(
     prefixo="dados",
 )
 
+#: `empresa_campo_conflitos.campo` (P0c contract §H6/§H12 — the group fills
+#: together, a DISAGREEMENT still opens its own row per field, via
+#: `app.modules.empresas.dados_service.CAMPOS_CADASTRAIS`/`aplicar_cartao`)
+#: -> a display rotulo, for `listar_conflitos` below. Not the same registry
+#: as `CAMPO_EMPRESA_DADOS.valores` (the group-pending check's own list,
+#: which also carries `uf` — never written to `empresas.cnpj`, per the
+#: module's own scope-cut, so never a conflict campo either).
+ROTULOS_EMPRESA_CAMPO: dict[str, str] = {
+    "razao_social": "Razão social",
+    "nome_fantasia": "Nome fantasia",
+    "natureza_juridica": "Natureza jurídica",
+    "data_abertura": "Data de abertura",
+    "situacao_cadastral": "Situação cadastral",
+    "data_situacao_cadastral": "Data da situação cadastral",
+    "motivo_situacao": "Motivo da situação",
+}
+
 #: The última transferência act's typed reading (115).
 CAMPO_ATO_DETALHE = CampoValidavel(
     entidade=ENTIDADE_ATO_DETALHE, campo="ultima_transferencia",
@@ -720,7 +737,10 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
     - `cliente_campo_conflitos` (138) on every parte, for a contract field;
     - `imovel_campo_conflitos` (154, imóvel slice) on the imóvel + permuta
       imóveis — every field that table carries is an `imovel_dados` field the
-      contract reads.
+      contract reads;
+    - `empresa_campo_conflitos` (167, P0c contract §H6/item 4) on every
+      required empresa (`dados.empresas`) — the shared writer S2a opens
+      (`app.services.campo_conflitos.EMPRESA`).
     """
     pessoas = {p.cliente_id: p for p in [*dados.compradores, *dados.vendedores]}
     saida: list[dict] = []
@@ -781,6 +801,32 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
                     "rota": f"/imoveis/{codigo}?conflito={r['id']}",
                     "rotulo": f"Imóvel {codigo}",
                 },
+            })
+
+    if dados.empresas:
+        empresa_por_id = {e.id: e for e in dados.empresas}
+        rows = table_reads.in_batched_rows(
+            client, "empresa_campo_conflitos", org_id, "empresa_id", sorted(empresa_por_id)
+        )
+        for r in rows:
+            if r.get("status") != "pendente":
+                continue
+            e = empresa_por_id.get(str(r["empresa_id"]))
+            if e is None:
+                continue
+            campo = r.get("campo") or ""
+            nome_pj = e.razao_social or e.cnpj
+            saida.append({
+                "id": str(r["id"]),
+                "entidade": ENTIDADE_EMPRESA,
+                "entidade_id": e.id,
+                "campo": campo,
+                "grupo": f"Empresa {nome_pj}",
+                "rotulo": ROTULOS_EMPRESA_CAMPO.get(campo, campo),
+                "valor_atual": _texto(r.get("valor_anterior")),
+                "valor_proposto": _texto(r.get("valor_proposto")),
+                "origem_proposto": r.get("origem_proposto"),
+                "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
             })
     return saida
 

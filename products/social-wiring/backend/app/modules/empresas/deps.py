@@ -64,10 +64,9 @@ def get_cartao_extractor_factory():
     would only be a duplicate of that same routing decision, one more seam
     to keep in step with it.
 
-    Tests MUST override this (`ScriptedCartaoCnpjExtractor` /
-    `FakeCartaoCnpjExtractor` — `tests/support/fake_documents_p0c.py`) —
-    the real one resolves an org's vision credentials and can reach a
-    provider.
+    Tests MUST override this (`FakeCartaoCnpjExtractor(result=...)` —
+    `tests/support/document_fakes.py`) — the real one resolves an org's
+    vision credentials and can reach a provider.
     """
     from app.modules.card_hub.deps import get_identity_extractor_factory
 

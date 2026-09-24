@@ -96,13 +96,17 @@ ROTULO_QUALIFICACAO = {
 _CHAVES_DO_DOCUMENTO_DE_IDENTIDADE = frozenset({"rg", "cpf"})
 SUFIXO_DOCUMENTO_DE_IDENTIDADE = " (Documento de identidade: CIN ou CNH)"
 
-#: [E1] `classificar_empresa` outcomes.
+#: [E1] `classificar_situacao_pj`/`classificar_empresa` outcomes.
 PJ_EXIGIDO = "exigido"
 PJ_EXIGIDO_BAIXADA = "exigido_baixada"
 PJ_OMITIDO = "omitido"
 PJ_SEM_SITUACAO = "sem_situacao"
 PJ_SEM_DATA_SITUACAO = "sem_data_situacao"
 PJ_SITUACAO_DESCONHECIDA = "situacao_desconhecida"
+
+#: The two "required" outcomes — the exact filter `empresas_exigidas` and
+#: `motivo_publico` both apply.
+PJ_CODIGOS_EXIGIDOS = frozenset({PJ_EXIGIDO, PJ_EXIGIDO_BAIXADA})
 
 #: [Q9] The title suffix of a recently-closed company's certidão group.
 SUFIXO_PJ_BAIXADA = "Baixada"
@@ -716,29 +720,85 @@ def _conjuges_sem_pessoa(d: DadosContrato, sw: dict[str, bool]) -> list[Pessoa]:
     ]
 
 
-def classificar_empresa(e: Empresa, referencia: date, politica: Politica) -> str:
-    """[E1] Whether an empresa's certidão group is required, from its OWN
-    Cartão-CNPJ-sourced `situacao_cadastral`/`data_situacao_cadastral`
-    (never a certidão-consulta row, which may not exist yet): `ativa`/
-    `inapta` always; `baixada` only when closed less than `pj_baixada_
-    janela_anos` before `referencia` (TODAY — `_hoje_padrao`/`service.
-    hoje()`, NEVER the assinatura: E2/H2); `suspensa`/`nula`/older baixadas
-    are omitted. NULL `situacao_cadastral` (no Cartão uploaded yet)
-    -> `PJ_SEM_SITUACAO`, the caller's `faltando: cartao_cnpj` (E1, H4)."""
-    situacao = e.situacao_cadastral
-    if situacao is None:
+def classificar_situacao_pj(
+    situacao_cadastral: Optional[str],
+    data_situacao_cadastral: Optional[date],
+    referencia: date,
+    janela_anos: int,
+) -> str:
+    """[E1] The pure decision, on primitives alone — the SINGLE SOURCE for
+    every empresa/PJ classification in this product. Whether an empresa's
+    certidão group is required, from its OWN Cartão-CNPJ-sourced
+    `situacao_cadastral`/`data_situacao_cadastral` (never a certidão-
+    consulta row, which may not exist yet): `ativa`/`inapta` always;
+    `baixada` only when closed less than `janela_anos` before `referencia`
+    (TODAY — `_hoje_padrao`/`service.hoje()`, NEVER the assinatura: E2/H2);
+    `suspensa`/`nula`/older baixadas are omitted. NULL `situacao_cadastral`
+    (no Cartão uploaded yet) -> `PJ_SEM_SITUACAO`, the caller's `faltando:
+    cartao_cnpj` (E1, H4).
+
+    `classificar_empresa` (this module, the contract-generation gate) and
+    `card_hub.empresas_service._motivo_e_exigencia` (the `GET /api/
+    clientes/{id}/empresas` display-only badge, via `motivo_publico` below)
+    both call this — an N=2 recurrence the recurrence rule flags at first
+    sight, formalized here rather than shipped a third time."""
+    if situacao_cadastral is None:
         return PJ_SEM_SITUACAO
-    if situacao not in SITUACOES_CADASTRAIS:
+    if situacao_cadastral not in SITUACOES_CADASTRAIS:
         return PJ_SITUACAO_DESCONHECIDA
-    if situacao in SITUACOES_PJ_EXIGIDAS:
+    if situacao_cadastral in SITUACOES_PJ_EXIGIDAS:
         return PJ_EXIGIDO
-    if situacao != SITUACAO_PJ_BAIXADA:
+    if situacao_cadastral != SITUACAO_PJ_BAIXADA:
         return PJ_OMITIDO
-    if e.data_situacao_cadastral is None:
+    if data_situacao_cadastral is None:
         return PJ_SEM_DATA_SITUACAO
-    if ha_menos_de_anos(e.data_situacao_cadastral, referencia, politica.pj_baixada_janela_anos):
+    if ha_menos_de_anos(data_situacao_cadastral, referencia, janela_anos):
         return PJ_EXIGIDO_BAIXADA
     return PJ_OMITIDO
+
+
+def classificar_empresa(e: Empresa, referencia: date, politica: Politica) -> str:
+    """`classificar_situacao_pj`, unwrapping an `Empresa`/`Politica` — see
+    that function for the actual decision."""
+    return classificar_situacao_pj(
+        e.situacao_cadastral, e.data_situacao_cadastral, referencia,
+        politica.pj_baixada_janela_anos,
+    )
+
+
+#: `classificar_situacao_pj`'s codes that have exactly one fixed public
+#: label, independent of `situacao_cadastral` — `PJ_EXIGIDO` (the label IS
+#: the empresa's own situação string) and `PJ_OMITIDO` (means EITHER "never
+#: a baixada" or "baixada, past the window" — disambiguated in
+#: `motivo_publico` below) are handled separately.
+_MOTIVO_PUBLICO_FIXO: dict[str, str] = {
+    PJ_SEM_SITUACAO: "sem_cartao_cnpj",
+    PJ_SEM_DATA_SITUACAO: "sem_cartao_cnpj",
+    PJ_SITUACAO_DESCONHECIDA: "outra_situacao",
+    PJ_EXIGIDO_BAIXADA: "baixada_menos_5_anos",
+}
+
+
+def motivo_publico(codigo: str, situacao_cadastral: Optional[str]) -> tuple[bool, str]:
+    """`(exigido, motivo)` in `GET /api/clientes/{id}/empresas`'s own public
+    vocabulary (contract §D1: `ativa|baixada_menos_5_anos|baixada_5_anos_
+    ou_mais|sem_cartao_cnpj|outra_situacao|sem_socio_certificando` — the
+    last is decided by the caller, off `owners`, not by this function) —
+    the SAME decision `classificar_situacao_pj` made for the contract-
+    generation gate, translated for `card_hub.empresas_service.listar`'s
+    display-only badge. `exigido` mirrors `empresas_exigidas`' own
+    `PJ_CODIGOS_EXIGIDOS` filter — never re-derived independently, so the
+    badge and the gate can never disagree for the same empresa row."""
+    exigido = codigo in PJ_CODIGOS_EXIGIDOS
+    if codigo == PJ_EXIGIDO:
+        return exigido, situacao_cadastral or ""
+    if codigo == PJ_OMITIDO:
+        motivo = (
+            "baixada_5_anos_ou_mais" if situacao_cadastral == SITUACAO_PJ_BAIXADA
+            else "outra_situacao"
+        )
+        return exigido, motivo
+    return exigido, _MOTIVO_PUBLICO_FIXO.get(codigo, "outra_situacao")
 
 
 def empresas_exigidas(
@@ -1735,6 +1795,7 @@ __all__ = [
     "avaliar",
     "certidoes_imovel",
     "classificar_empresa",
+    "classificar_situacao_pj",
     "comarca_de_texto",
     "corretagem_marcos",
     "derivar_switches",
@@ -1743,6 +1804,7 @@ __all__ = [
     "ha_menos_de_anos",
     "indice_certidoes",
     "modelo_derivado",
+    "motivo_publico",
     "numero_da_parcela",
     "parcelas_antes_de",
     "parcelas_ordenadas",

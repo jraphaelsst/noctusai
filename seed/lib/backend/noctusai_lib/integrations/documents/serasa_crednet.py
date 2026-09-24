@@ -486,7 +486,14 @@ class FakeCrednetExtractor:
     does (`412.954.238-98` / `11.222.333/0001-81`) — a Fake that returned an
     arithmetically invalid identifier would let a consumer's tests pass
     against a code path the Real adapter never exhibits (`cpf_valido=False`
-    is its OWN, separately-tested branch, not the happy path)."""
+    is its OWN, separately-tested branch, not the happy path).
+
+    Pass `result=` to script a specific outcome (a rejected participação, an
+    unreadable ocorrência, a failure) — same convention as `fake.
+    FakeIdentityExtractor`."""
+
+    def __init__(self, result: Optional[CrednetFields] = None) -> None:
+        self._result = result
 
     async def extract(
         self,
@@ -495,6 +502,8 @@ class FakeCrednetExtractor:
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
     ) -> CrednetFields:
+        if self._result is not None:
+            return self._result
         if not content:
             return CrednetFields(error="empty_document", error_message="no bytes to read")
         return CrednetFields(

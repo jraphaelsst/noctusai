@@ -15,9 +15,9 @@ WHAT THESE PIN
 - a SECOND read for the same CNPJ never touches an existing empresa;
 - (d) `certidoes.service.registrar_serasa_de_crednet` runs off the same doc.
 
-Never imports the seed's `serasa_crednet` module (S1, not yet merged into
-this worktree) — the extractor is injected via `ScriptedCrednetExtractor`
-(`tests/support/fake_documents_p0c.py`), per DI, never a monkeypatch.
+Imports the seed's real `serasa_crednet` dataclasses (S1, merged) — the
+extractor is injected via `FakeCrednetExtractor(result=...)`
+(`tests/support/document_fakes.py`), per DI, never a monkeypatch.
 """
 from __future__ import annotations
 
@@ -29,17 +29,17 @@ from noctusai_lib.testing.mocks import MockSupabaseClient
 
 from app.dependencies import coerce_org_uuid
 from app.modules.card_hub import crednet_service
-from tests.support.fake_documents_p0c import (
+from tests.support.document_fakes import (
     ALTA,
     CNPJ_INVALIDO,
     CNPJ_VALIDO,
     CNPJ_VALIDO_OUTRO,
     CPF_VALIDO,
     CrednetFields,
+    FakeCrednetExtractor,
     NENHUMA,
     OcorrenciaCrednet,
     ParticipacaoCrednet,
-    ScriptedCrednetExtractor,
 )
 
 ORG_ID = coerce_org_uuid("test-org-crednet")
@@ -109,7 +109,7 @@ async def _aplicar(client, cid, did, fields) -> dict:
     doc = client.table("cliente_documentos").select("*").eq("id", did).execute().data[0]
     return await crednet_service.aplicar_leitura(
         client, ORG_ID, cid, did, doc, b"%PDF-1.4 fake bytes",
-        extractor=ScriptedCrednetExtractor(fields=fields),
+        extractor=FakeCrednetExtractor(result=fields),
         notification_service=None,
     )
 

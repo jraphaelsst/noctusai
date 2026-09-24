@@ -600,7 +600,14 @@ class FakeCartaoCnpjExtractor:
 
     Uses the same real, checksum-valid CNPJ `serasa_crednet.FakeCrednetExtractor`
     does (`11.222.333/0001-81`) — see that module's Fake docstring for why an
-    arithmetically invalid identifier would be the wrong default."""
+    arithmetically invalid identifier would be the wrong default.
+
+    Pass `result=` to script a specific outcome (`cnpj_divergente`, a masked
+    address, a failure) — same convention as `fake.FakeIdentityExtractor` /
+    `serasa_crednet.FakeCrednetExtractor`."""
+
+    def __init__(self, result: Optional[CartaoCnpjFields] = None) -> None:
+        self._result = result
 
     async def extract(
         self,
@@ -609,6 +616,8 @@ class FakeCartaoCnpjExtractor:
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
     ) -> CartaoCnpjFields:
+        if self._result is not None:
+            return self._result
         if not content:
             return CartaoCnpjFields(error="empty_document", error_message="no bytes to read")
         campos = (

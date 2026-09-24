@@ -64,6 +64,19 @@ def _vazio(valor: Any) -> bool:
     return valor is None or valor == ""
 
 
+def _serializar(valor: Any) -> Any:
+    """A `date`/`datetime` off `CartaoCnpjFields` (`data_abertura`,
+    `data_situacao_cadastral`) -> its ISO string, JSON-safe for both a
+    PATCH onto `empresas` and a `valor_proposto` on `empresa_campo_
+    conflitos` — never a bare `date` object, which the REAL PostgREST
+    client (httpx's stdlib JSON encoder) cannot serialise (the mock's own
+    `MockSupabaseClient` write-shape assertion catches this too). Anything
+    else (a `str`, `None`) passes through unchanged."""
+    if hasattr(valor, "isoformat"):
+        return valor.isoformat()
+    return valor
+
+
 def _mesmo_valor(atual: Any, proposto: Any) -> bool:
     if _vazio(atual) or _vazio(proposto):
         return _vazio(atual) and _vazio(proposto)
@@ -209,7 +222,7 @@ def aplicar_cartao(
     patch: dict[str, Any] = {}
     conflitos: list[dict] = []
     for campo in CAMPOS_CADASTRAIS:
-        proposto = getattr(leitura, campo, None)
+        proposto = _serializar(getattr(leitura, campo, None))
         if _vazio(proposto):
             continue
         atual = empresa.get(campo)

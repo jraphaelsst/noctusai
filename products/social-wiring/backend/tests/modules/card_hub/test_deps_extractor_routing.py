@@ -36,35 +36,34 @@ class TestUnaffectedTipos:
 
 class TestFactoryShapedRouting:
     """`serasa_crednet` / `cartao_cnpj` route through `fontes.resolver_
-    extrator` instead — proven here by the fact that routing was ATTEMPTED
-    (an `ImportError` naming the seed module S1 has not yet merged into
-    this worktree — see `test_proveniencia_fontes.py`'s
-    `_PENDING_CROSS_SLICE_TIPOS`), not by the identity extractor being
-    silently built instead."""
+    extrator` instead of `make_identity_extractor` — S1's seed module is
+    merged into this worktree, so routing resolves to a REAL instance of
+    the tipo's own factory-built extractor, never the identity extractor."""
 
     @pytest.mark.parametrize(
-        "tipo,modulo",
+        "tipo,klass_path",
         [
-            ("serasa_crednet", "noctusai_lib.integrations.documents.serasa_crednet"),
-            ("cartao_cnpj", "noctusai_lib.integrations.documents.cartao_cnpj"),
+            (
+                "serasa_crednet",
+                "noctusai_lib.integrations.documents.serasa_crednet.LadderCrednetExtractor",
+            ),
+            (
+                "cartao_cnpj",
+                "noctusai_lib.integrations.documents.cartao_cnpj.LadderCartaoCnpjExtractor",
+            ),
         ],
     )
-    def test_routes_to_its_own_fonte_extrator(self, tipo, modulo):
-        try:
-            extractor = deps._build_identity_extractor(
-                "org-1", tipo, resolve_provider=_fake_provider
-            )
-        except ImportError as exc:
-            assert modulo in str(exc)
-        else:
-            # Once S1 has landed the module, this branches to a real
-            # instance instead — the important assertion becomes "not the
-            # identity extractor".
-            from noctusai_lib.integrations.documents.real import (
-                LadderIdentityExtractor,
-            )
+    def test_routes_to_its_own_fonte_extrator(self, tipo, klass_path):
+        from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 
-            assert not isinstance(extractor, LadderIdentityExtractor)
+        extractor = deps._build_identity_extractor(
+            "org-1", tipo, resolve_provider=_fake_provider
+        )
+
+        assert not isinstance(extractor, LadderIdentityExtractor)
+        modulo, _, klass_nome = klass_path.rpartition(".")
+        assert type(extractor).__module__ == modulo
+        assert type(extractor).__name__ == klass_nome
 
     def test_fonte_extrator_is_registered_as_factory_shaped(self):
         for tipo in ("serasa_crednet", "cartao_cnpj"):

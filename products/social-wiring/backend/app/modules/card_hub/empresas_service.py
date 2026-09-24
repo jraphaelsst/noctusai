@@ -13,29 +13,25 @@ spouse always counts; a comprador (the titular included) or their spouse
 counts ONLY when the deal `tem_permuta` — the permuta comprador stands in a
 seller-like position for THAT parcela (contract §E1/§H11).
 
-🔴 THIS MODULE DOES **NOT** IMPORT `contrato_gerador` (S2b's territory)
--------------------------------------------------------------------------
-`exige_certidoes`/`motivo` below is a DELIBERATE, MINIMAL re-statement of
-the SAME E1 classification `contrato_gerador.derivacao.classificar_empresa`
-implements for the contract-GENERATION gate — not a shared import, because
-that module is a sibling slice's (S2b) in-flight file. Both read the SAME
-`politica.SITUACOES_PJ_EXIGIDAS` / `politica.PoliticaCertidoes.
-pj_baixada_janela_anos` constants (a neutral, already-shipped file neither
-slice owns), so a policy change moves both at once even though the
-CLASSIFICATION CODE itself is duplicated. This is a KNOWN, ACCEPTED
-recurrence (N=2, not yet the N=3 MUST-formalize threshold) — surfaced in
-this dispatch's own `scoped-improvement:` footer as a follow-up: lift both
-call sites onto one shared `classificar_empresa` once S2b's rewrite lands
-and the two can be reconciled without editing each other's file mid-flight.
-`exige_certidoes` here is DISPLAY-ONLY (an informational badge) and is
-NEVER the gate that blocks contract generation — that gate stays entirely
-in `contrato_gerador.validacao_extracao`/`derivacao`.
+`exige_certidoes`/`motivo` below call `contrato_gerador.derivacao.
+classificar_situacao_pj` + `derivacao.motivo_publico` — the SAME E1
+classification the contract-GENERATION gate uses (`derivacao.
+empresas_exigidas`), translated into this endpoint's own public `motivo`
+vocabulary. Both used to keep independent restatements of the same decision
+(an N=2 recurrence); a real divergence (this Fonte's over-broad `campos`,
+caught the moment `_PENDING_CROSS_SLICE_TIPOS` came off) is exactly the
+failure mode a shared source closes. `exige_certidoes` here is DISPLAY-ONLY
+(an informational badge) and is NEVER the gate that blocks contract
+generation — that gate stays entirely in `contrato_gerador.validacao_
+extracao`/`derivacao`; see `test_empresas_motivo_parity.py` for the test
+that pins the two never disagreeing on the same data.
 
-`tem_permuta` is resolved via a direct, lightweight read of `atendimento_
-negociacao_parcelas` (owned by `card_hub.negociacao_estruturada_service`,
-not `contrato_gerador`) rather than through `contrato_gerador.dados.
-parcela_permuta`, which needs the WHOLE `DadosContrato` graph loaded — too
-heavy (and too coupled to S2b's carregador) for a card listing read.
+`tem_permuta` is resolved via `card_hub.services.tem_permuta_ativa` — a
+direct, lightweight read of `atendimento_negociacao_parcelas` (owned by
+`card_hub.negociacao_estruturada_service`) rather than through `contrato_
+gerador.dados.parcela_permuta`, which needs the WHOLE `DadosContrato` graph
+loaded — too heavy for a card listing read. Same shared helper `card_hub.
+documento_checklist_service` uses for its own Serasa-slot visibility check.
 """
 from __future__ import annotations
 
@@ -46,10 +42,15 @@ from uuid import UUID
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.contrato_gerador import politica
+from app.modules.card_hub.contrato_gerador.derivacao import (
+    classificar_situacao_pj,
+    motivo_publico,
+)
 from app.modules.card_hub.services import (
     AmbiguousAtendimento,
     ensure_cliente,
     resolve_atendimento_id,
+    tem_permuta_ativa,
 )
 from app.modules.empresas import dados_service
 from app.services import table_reads
@@ -57,7 +58,6 @@ from app.services import table_reads
 CLIENTES_TABLE = "clientes"
 ATENDIMENTOS_TABLE = "atendimentos"
 PARTES_TABLE = "atendimento_partes"
-PARCELAS_TABLE = "atendimento_negociacao_parcelas"
 PARTICIPACOES_TABLE = "cliente_empresa_participacoes"
 EMPRESAS_TABLE = "empresas"
 
@@ -74,19 +74,6 @@ def _t(client: Any, table: str):
     return table_reads.table(client, table)
 
 
-def _tem_permuta(client: Any, org_id: UUID, atendimento_id: str) -> bool:
-    rows = (
-        _t(client, PARCELAS_TABLE)
-        .select("id")
-        .eq("org_id", str(org_id))
-        .eq("atendimento_id", atendimento_id)
-        .eq("tipo", "permuta")
-        .limit(1)
-        .execute()
-    ).data or []
-    return bool(rows)
-
-
 def _pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]:
     """Every "who might own a PJ" person on this atendimento — see the
     module docstring's "WHO COUNTS" section. Returns
@@ -94,7 +81,7 @@ def _pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]
     `cliente_id` (first occurrence wins — the titular, listed first, is
     never shadowed by a `conjuge`-lado-comprador row that happens to name
     the same person)."""
-    tem_permuta = _tem_permuta(client, org_id, str(atendimento["id"]))
+    tem_permuta = tem_permuta_ativa(client, org_id, str(atendimento["id"]))
 
     pessoas: list[dict] = [
         {
@@ -157,32 +144,35 @@ def _pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]
     return pessoas
 
 
+def _parse_data(valor: Any) -> Optional[date]:
+    """A DB row's date column (ISO string, or already a `date`), or `None`
+    when absent/malformed — a malformed value is treated the SAME as
+    missing, matching `classificar_situacao_pj`'s own "no date" branch."""
+    if not valor:
+        return None
+    try:
+        return date.fromisoformat(str(valor)[:10])
+    except ValueError:
+        return None
+
+
 def _motivo_e_exigencia(empresa: dict, *, referencia: date) -> tuple[bool, str]:
-    """E1's classification — see the module docstring for why this is a
-    deliberate, minimal restatement rather than a `contrato_gerador` import.
-    """
+    """E1's classification, delegated to `contrato_gerador.derivacao.
+    classificar_situacao_pj` + `motivo_publico` — see the module docstring
+    for why this is no longer a restatement.
+
+    🔴 Fixed in this pass: the old restatement here read `politica.
+    PoliticaCertidoes().pj_baixada_janela_anos` — `PoliticaCertidoes` does
+    not exist in `politica.py` (`Politica` is the only policy dataclass);
+    the `baixada` branch would have raised `AttributeError` on its very
+    first real call. Never caught because no test exercised a `baixada`
+    empresa through `listar()`/`_motivo_e_exigencia` directly — see the new
+    `TestBaixadaJanela` case in `test_empresas_motivo_parity.py`."""
     situacao = empresa.get("situacao_cadastral")
-    if situacao is None:
-        return False, "sem_cartao_cnpj"
-    if situacao in politica.SITUACOES_PJ_EXIGIDAS:
-        return True, situacao
-    if situacao == "baixada":
-        data_situacao = empresa.get("data_situacao_cadastral")
-        if not data_situacao:
-            return False, "sem_cartao_cnpj"
-        try:
-            ano, mes, dia = (int(p) for p in str(data_situacao)[:10].split("-"))
-            situacao_date = date(ano, mes, dia)
-        except (ValueError, TypeError):
-            return False, "sem_cartao_cnpj"
-        janela = politica.PoliticaCertidoes().pj_baixada_janela_anos
-        anos = referencia.year - situacao_date.year - (
-            (referencia.month, referencia.day) < (situacao_date.month, situacao_date.day)
-        )
-        if anos < janela:
-            return True, "baixada_menos_5_anos"
-        return False, "baixada_5_anos_ou_mais"
-    return False, "outra_situacao"
+    data_situacao = _parse_data(empresa.get("data_situacao_cadastral"))
+    janela = politica.POLITICA_PADRAO.pj_baixada_janela_anos
+    codigo = classificar_situacao_pj(situacao, data_situacao, referencia, janela)
+    return motivo_publico(codigo, situacao)
 
 
 def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:

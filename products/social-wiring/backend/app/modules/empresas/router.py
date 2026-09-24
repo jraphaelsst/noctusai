@@ -4,9 +4,14 @@ listing routes live in `card_hub/router.py` instead (they read across
 `atendimento_partes`, card_hub's own territory) — this router owns only the
 `empresas`/`empresa_documentos` surface itself.
 
-Errors: `NotFoundError` → 404, `ValidationError_` → 422 (both handled by the
+Errors: `NotFoundError` → 404, `ValidationError_` → 400 (both handled by the
 seed's global exception mapping — no local try/except here, same posture
-every other card_hub-family router takes).
+every other card_hub-family router takes; `imovel_hub`'s identical upload
+route is the precedent — `noctusai_lib.primitives.exceptions.
+ValidationError_.__init__` stamps `status_code=400`, never 422, which is
+reserved for a malformed request BODY FastAPI/Pydantic itself rejects
+before this module's code ever runs — e.g. the `DELETE .../{documento_id}`
+route's required `motivo` query param).
 """
 from __future__ import annotations
 

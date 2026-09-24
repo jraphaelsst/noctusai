@@ -133,13 +133,13 @@ def _certidao(r: dict) -> Certidao:
 def _certidoes_da_empresa(client: Any, org_id: UUID, empresa_id: str) -> list[dict]:
     """Isolates the call into S2a's `certidoes.service.certidoes_por_empresa`
     (contract §E, migration 167) — mirrors `certidoes_por_cliente`'s per-
-    entity shape (`app/modules/certidoes/service.py:2651-2676`). 🔴 S2b
-    does NOT own `certidoes/service.py`: this ONE wrapper is the seam S2a
-    integration wires — when `certidoes_por_empresa` is not yet defined
-    there (a worktree that has not merged S2a), calling it raises
-    `AttributeError`, which only happens when a deal actually HAS
-    `cliente_empresa_participacoes` rows (never on the sparse/synthetic
-    fixtures this suite exercises today)."""
+    entity shape (`app/modules/certidoes/service.py:2651-2676`). 🔴 S2b does
+    NOT own `certidoes/service.py`: this ONE wrapper is the seam S2a
+    integration wires. S1/S2a are merged into this worktree, so the call is
+    real — `certidoes_por_empresa`'s row shape (`tipo`, `resultado`,
+    `numero`, `emitida_em`, `validade_ate`, `consulta_tipo_documento`,
+    `consulta_nome`, `consulta_documento`, `consulta_situacao_cadastral`,
+    `consulta_data_situacao`) lines up exactly with `_certidao()` below."""
     return certidoes_svc.certidoes_por_empresa(client, org_id, empresa_id)
 
 

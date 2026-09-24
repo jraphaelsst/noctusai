@@ -142,6 +142,32 @@ def resolve_atendimento_id(
         raise AmbiguousAtendimento([])
     raise AmbiguousAtendimento([str(r["id"]) for r in abertos])
 
+
+def tem_permuta_ativa(client: Any, org_id: UUID, atendimento_id: str) -> bool:
+    """Does this atendimento have a `permuta`-type parcela? (P0c contract
+    §E1/§H11 — a permuta comprador stands in a seller-like position for
+    THAT parcela, so their side counts as `certificando` too.)
+
+    A direct, lightweight read of `atendimento_negociacao_parcelas`
+    (`card_hub.negociacao_estruturada_service`'s own table) rather than
+    `contrato_gerador.dados.parcela_permuta`, which needs the WHOLE
+    `DadosContrato` graph loaded — too heavy for a card-listing/checklist
+    read. Single source for what used to be `empresas_service._tem_permuta`
+    and `documento_checklist_service._tem_permuta`, an N=2 recurrence the
+    recurrence rule flags at first sight — both call sites now import this
+    one."""
+    rows = (
+        _t(client, "atendimento_negociacao_parcelas")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", str(atendimento_id))
+        .eq("tipo", "permuta")
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows)
+
+
 # ─── Notas / tags / membros / checklists — shims over the seed ──────────
 #
 # Bodies: `noctusai_lib.domain.card_hub.services`. Two names differ there
@@ -293,6 +319,7 @@ __all__ = [
     "resolve_atendimento_id",
     "set_cliente_tags",
     "set_membros",
+    "tem_permuta_ativa",
     "update_checklist",
     "update_checklist_item",
     "update_nota",

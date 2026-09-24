@@ -367,7 +367,13 @@ class TestGate:
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[sem_nome]))
         item = next(f for f in av.faltando if f["campo"] == "qualificacao.nome_oficial")
         tipos = {s["tipo_documento"] for s in item["sugestoes"]}
-        assert tipos == {"rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento"}
+        # P0c: the Serasa Crednet consulta also carries `nome` (contract
+        # §B/§C — `Fonte('serasa_crednet').campos` includes it) — so it now
+        # joins the identity documents this suggestion list names.
+        assert tipos == {
+            "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
+            "serasa_crednet",
+        }
         assert all(s["destino"] == item["destino"] for s in item["sugestoes"])
         assert all(set(s) == {"tipo_documento", "rotulo", "destino"} for s in item["sugestoes"])
 

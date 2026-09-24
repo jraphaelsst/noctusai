@@ -345,3 +345,68 @@ Card routes use `auth=Depends(get_current_user_org)`, `user, org_id = _auth_part
 13. **LGPD:** S2a files `noctus.dev.lgpd_flag` for `clientes.nome_mae` and the Crednet (1825 d); Cartão CNPJ
     retention is 1825 d.
 14. Fix the pre-existing Serasa placeholder on CNPJ consultas (in S2a).
+
+## I. Integration amendments (2026-09-24)
+
+The P0c integration pass (S1 + S2a + S2b + S3, merged onto `feat/sw-p0c-integration`) found the following
+places where what shipped differs from — or narrows — §B's spec. These supersede the prose above wherever
+they conflict; the code is the source of truth going forward.
+
+1. **The final `CartaoCnpjFields`.** The seed parser (`seed/lib/backend/noctusai_lib/integrations/
+   documents/cartao_cnpj.py`) DOES extract the seven address-block fields (`logradouro`, `numero`,
+   `complemento`, `cep`, `bairro`, `municipio`, `uf`) plus `endereco_mascarado: bool` — §B's dataclass
+   sketch omitted them, but the real document carries them. **They are NOT persisted**: `empresas` has no
+   address/`uf` columns at all (owner decision, 2026-09-24, twice-confirmed — see `app.modules.empresas.
+   dados_service`'s module docstring), and `dados_service.CAMPOS_CADASTRAIS` never reads them. On a
+   `baixada` situação the parser itself forces every address field to `None`, sets `endereco_mascarado=True`,
+   and appends the aviso `endereco_descartado_baixada` to `CartaoCnpjFields.aviso` — Receita masks the
+   address on a baixada Cartão in every real sample this module was built from, and vision reliably
+   fabricated a plausible-looking one when asked to transcribe the masked block. `FakeCartaoCnpjExtractor` /
+   `FakeCrednetExtractor` (both seed Fakes) now also accept `result=` to script a specific outcome — the
+   same convention `fake.FakeIdentityExtractor` already used, mirrored here so S2a's local
+   `ScriptedCrednetExtractor`/`ScriptedCartaoCnpjExtractor` test doubles could be deleted rather than kept
+   as a second, drifting copy.
+2. **The Crednet participação's "UF" column is NOT the empresa's UF.** It is printed beside the
+   participação (Serasa's own cache of where the OWNER'S relationship to the company was registered), not
+   the company's registered address — confirmed against the real corpus, not just the module docstring's
+   claim. `ParticipacaoCrednet.uf` is parsed and kept (it still travels inside `cliente_documentos.
+   extracao_crednet` JSONB, verbatim), but **there is no `uf` column on `empresas` and no code path writes
+   one** — see amendment 1's scope-cut, which applies for the same underlying reason (no trustworthy
+   source, no process that consumes it).
+3. **Empresa certidão emission needs only CNPJ + razão social.** Nothing else `CAMPOS_CADASTRAIS` carries
+   (`nome_fantasia`, `natureza_juridica`, `data_abertura`, `situacao_cadastral`, `data_situacao_cadastral`,
+   `motivo_situacao`) is a precondition for `certidoes.service.certidoes_por_empresa`/the CND-emission fan-
+   out — the empresa row's identity (CNPJ) and its display label (razão social) are all either needs.
+4. **`DELETE /api/empresas/{empresa_id}/documentos/{documento_id}`** takes `motivo` as a QUERY PARAM
+   (`Query(..., min_length=1)`), matching `cliente_documentos`/`imovel_documentos`'s existing removal
+   transport — never a JSON body. **`GET .../{documento_id}/url`** has no `intent` query param at all: view
+   and download reuse the SAME short-TTL signed URL (§D's original sketch implied a Vary-by-intent shape;
+   the shipped one doesn't need it).
+5. **`ValidationError_` maps to HTTP `400`, never `422`** (`noctusai_lib.primitives.exceptions.
+   ValidationError_.__init__` stamps `status_code=400`) — §D's route table said 422 for an invalid CNPJ /
+   upload type/mime/size; the code (and `imovel_hub`'s identical precedent) has always used 400. 422 is
+   reserved for a malformed request BODY FastAPI/Pydantic itself rejects before this module's code runs
+   (e.g. `DELETE`'s missing `motivo`). The contract text above is corrected by this note, not edited in
+   place, per the doc-sync instruction.
+6. **The DRY consolidation (item 3 of the integration dispatch).** The E1 classification
+   (`situacao_cadastral`/`data_situacao_cadastral` → required-or-not) existed 3 times
+   (`contrato_gerador.derivacao.classificar_empresa`, `card_hub.empresas_service._motivo_e_exigencia`,
+   and implicitly re-derived by `documento_checklist_service`'s certificando check). It is now ONE pure
+   function, `derivacao.classificar_situacao_pj(situacao_cadastral, data_situacao_cadastral, referencia,
+   janela_anos) -> <PJ_* code>`, plus `derivacao.motivo_publico(codigo, situacao_cadastral) -> (exigido,
+   motivo)` translating that code into the API's own vocabulary. `classificar_empresa` and
+   `empresas_service._motivo_e_exigencia` both call it; `test_empresas_motivo_parity.py` pins the two
+   never disagreeing on the same data. `tem_permuta` (whether the deal has an `atendimento_negociacao_
+   parcelas` row with `tipo='permuta'`) existed twice (`empresas_service._tem_permuta`,
+   `documento_checklist_service._tem_permuta`) and is now `card_hub.services.tem_permuta_ativa`, imported
+   by both. Fixed in the same pass: `empresas_service._motivo_e_exigencia`'s `baixada` branch read
+   `politica.PoliticaCertidoes()` — a class that does not exist in `politica.py` (`Politica` is the only
+   one) — so it would have raised `AttributeError` on its first real call; no test had ever exercised a
+   `baixada` empresa through `listar()` before this pass. Now reads `politica.POLITICA_PADRAO`.
+7. **`empresas.dados_service.aplicar_cartao` now serialises `date` fields before writing them.**
+   `CartaoCnpjFields.data_abertura`/`data_situacao_cadastral` are real `date` objects; the group-level D1
+   loop used to pass them straight into a PATCH `dict` / a `campo_conflitos.registrar_conflito(...,
+   valor_proposto=...)` call — a bare `date` is not JSON-encodable by the real PostgREST client (httpx's
+   stdlib encoder), and (independently) comparing a `date` against the DB's own `str` column value via
+   `_mesmo_valor` could never match, so a same-value re-read would have opened a spurious conflict every
+   time. `dados_service._serializar` (`.isoformat()` when the value has one) now runs before either use.

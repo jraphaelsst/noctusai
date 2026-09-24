@@ -25,7 +25,7 @@ from noctusai_lib.testing.mocks import MockSupabaseClient
 from app.dependencies import coerce_org_uuid
 from app.modules.empresas import dados_service
 from app.services import campo_conflitos
-from tests.support.fake_documents_p0c import CNPJ_VALIDO, CNPJ_VALIDO_OUTRO
+from tests.support.document_fakes import CNPJ_VALIDO, CNPJ_VALIDO_OUTRO
 
 ORG_ID = coerce_org_uuid("test-org-empresas")
 

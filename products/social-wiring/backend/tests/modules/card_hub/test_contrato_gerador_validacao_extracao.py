@@ -497,3 +497,69 @@ class TestConflitosAbertos:
         [conflito] = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"]
         assert conflito["entidade"] == "imovel" and conflito["rotulo"] == "Número da matrícula"
         assert conflito["link"]["rota"] == f"/imoveis/EX001?conflito={cid}"
+
+    def _empresa_com_conflito(self, scoped, ids, campo="situacao_cadastral") -> tuple[str, str]:
+        """P0c contract §H6/item 4 — `empresa_campo_conflitos` (migration
+        167), the SAME shared-writer table `app.services.campo_conflitos.
+        EMPRESA` opens onto. The vendedor holds the participação (E1's
+        `_empresas_de_certificandos`), so this empresa reaches
+        `dados.empresas`/`listar_conflitos` the same way `_conflito_cliente`
+        reaches `clientes` — through the real loader, not an injected
+        fixture."""
+        empresa_id = str(uuid4())
+        scoped.set_table_data("empresas", [{
+            "id": empresa_id, "org_id": ORG_ID, "cnpj": "11222333000181",
+            "razao_social": "Empresa Conflito LTDA", "nome_fantasia": None,
+            "natureza_juridica": None, "data_abertura": None,
+            "situacao_cadastral": "ativa", "data_situacao_cadastral": None,
+            "motivo_situacao": None, "dados_origem": "cartao_cnpj",
+            "dados_documento_id": None, "dados_em": _T0,
+            # Group provenance already CONFIRMED — isolates this test to
+            # the per-field CONFLICT alone, never the group's own
+            # machine-pending state (a separate, already-covered case:
+            # `TestListagem`/`CAMPO_EMPRESA_DADOS`).
+            "dados_confirmado_por": str(uuid4()), "dados_confirmado_em": _T0,
+            "created_at": _T0, "updated_at": None,
+        }])
+        scoped.set_table_data("cliente_empresa_participacoes", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": ids["vendedor"],
+            "empresa_id": empresa_id, "participacao_pct": "100.00", "desde": None,
+            "fonte_documento_id": None, "origem": "manual",
+            "confirmado_por": None, "confirmado_em": None, "created_at": _T0,
+        }])
+        conflito_id = str(uuid4())
+        scoped.set_table_data("empresa_campo_conflitos", [{
+            "id": conflito_id, "org_id": ORG_ID, "empresa_id": empresa_id, "campo": campo,
+            "valor_anterior": "ativa", "origem_anterior": "cartao_cnpj",
+            "valor_proposto": "baixada", "origem_proposto": "cartao_cnpj",
+            "confianca_proposta": "alta", "fonte_tabela": "empresa_documentos", "fonte_id": None,
+            "status": "pendente", "notificado_em": None, "decidido_por": None,
+            "decidido_em": None, "created_at": _T0,
+        }])
+        return empresa_id, conflito_id
+
+    def test_an_open_empresa_conflict_is_listed_and_blocks_generation(
+        self, client, scoped, fake_storage
+    ):
+        ids = _seed_completo(scoped)
+        empresa_id, conflito_id = self._empresa_com_conflito(scoped, ids)
+        corpo = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()
+        assert corpo["pendentes"] == []
+        [conflito] = corpo["conflitos"]
+        assert conflito["id"] == conflito_id
+        assert conflito["entidade"] == "empresa" and conflito["entidade_id"] == empresa_id
+        assert conflito["campo"] == "situacao_cadastral"
+        assert conflito["rotulo"] == "Situação cadastral"
+        assert conflito["grupo"] == "Empresa Empresa Conflito LTDA"
+        assert (conflito["valor_atual"], conflito["valor_proposto"]) == ("ativa", "baixada")
+        assert conflito["link"]["rota"] == "/configuracoes"
+        r = _gerar(client, ids)
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["details"]["conflitos"] == corpo["conflitos"]
+
+    def test_a_decided_empresa_conflict_does_not_block(self, client, scoped):
+        ids = _seed_completo(scoped)
+        self._empresa_com_conflito(scoped, ids)
+        linhas = [{**r, "status": "aceito"} for r in _rows(scoped, "empresa_campo_conflitos")]
+        scoped.set_table_data("empresa_campo_conflitos", linhas)
+        assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
