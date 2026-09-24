@@ -74,3 +74,33 @@ All values are machine-pending (`origem=ia`, `confirmado_em` null) until D2 conf
   documents card must poll until the extraction is terminal (the spinner stuck on "Lendo…").
 - Owner questions: (Q1) antigos proprietários certidões (transfer <5y: the page says mandatory, the 883 contract has none);
   (Q2) inscrição municipal source priority (IPTU > matrícula?).
+
+### Step b0 · Test card setup
+- Lead `[TESTE P1] 883 Euroville` created via Funil → "Novo lead" (owner-authorized typing: name, fake example.com
+  e-mail, código ONE7515). The trigger spawned atendimento 7b9d07df (titular cliente 0e60427a).
+- GAP (G3, product): "Adicionar vendedor/comprador" only CREATES a person (nome + celular). There is no pick-existing
+  option, although the backend `compradores_service.adicionar` accepts `parte_cliente_id`. Owner decision: synthetic parties
+  (`[TESTE] Vendedora 883`, …) receive the real documents, so no real record is duplicated or merged.
+- UI finding: after adding a parte by name, its checklist shows "Nome Completo —" (the typed name isn't shown there).
+
+### Step b1 · Vendedora · CNH (image-only, TurboScan) → vision, 1 attempt, `ok`
+| field | result | note |
+|---|---|---|
+| nome_oficial | ok | written (origem cnh), confiança baixa |
+| cpf | ok | exact; confiança ALTA although read by vision (check-digit valid). The P0c rule caps vision identifiers at baixa for new extractors; the identity extractor predates it (triage) |
+| rg | errado | `13032360`: the DV "-3" is dropped (contract: 13.032.360-3) |
+| rg_orgao_expedidor | ok | SSP/SP |
+| nacionalidade | difere | "brasileiro" for a woman (contract: "brasileira"). OK if the generator inflects by gênero, else wrong |
+| data_nascimento | **vazio** | GAP: the CNH prints DATA NASCIMENTO; not read (the Crednet supplies it next) |
+| genero | n/a | a CNH has no sex field |
+- UI finding: after the CNH read reached `ok` in the DB, the card still showed "Lendo…", "Falta: RG e CPF" and the
+  qualificação list as missing (the same stale-UI class as the imóvel page, G2).
+
+### 🔴 BLOCKER found live (G4): the Serasa Crednet slot is hidden for EVERY vendedor
+- GET /documento-checklist for the vendedora returns 7 items and no `serasa_crednet`.
+- Root cause: `documento_checklist_service._e_certificando` resolves the deal via `resolve_atendimento_id`, which only
+  finds atendimentos where the cliente is the TITULAR. A vendedor is always an `atendimento_partes` row, so the lookup
+  gets `AmbiguousAtendimento([])` → False, and the parte/cônjuge branches are dead code. Unit tests missed it, since no
+  fixture had the real titular-comprador + vendedor-parte shape.
+- Dispatched: feat/sw-p1-fixes-1 (G4 + G1 matrícula nº + inscrição precedence + CNH DN/RG DV + G2 polling). Step c
+  (Serasa) waits for its deploy.
