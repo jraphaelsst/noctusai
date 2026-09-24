@@ -154,8 +154,12 @@ def _empresas(
     integrates. `pessoas_por_id` resolves each participação's owner to the
     already-loaded vendedor/comprador `Pessoa` — a cônjuge holding a
     participação who is not otherwise a card party has no `Pessoa` here and
-    is silently excluded from `owners` (S2a's `/empresas` endpoint, which
-    loads every parte including bare cônjuges, is the fuller picture)."""
+    is excluded from `owners`, but NEVER silently: `derivacao._conjuges_
+    sem_pessoa`/`conferir_conjuges_ausentes` (E3) name it as a `faltando`
+    off `d.vendedores`/`d.compradores` alone, independent of whether this
+    loader ever reaches their empresa at all (S2a's `/empresas` endpoint,
+    which loads every parte including bare cônjuges, is the fuller
+    picture)."""
     ids = sorted({str(i) for i in certificando_ids if i})
     if not ids:
         return []

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 import fitz
@@ -54,10 +54,13 @@ def _avaliar(n: int, d=None, hoje=None):
     return d, pol, sw, derivacao.avaliar(d, sw, pol, fx.ASSINATURA, hoje)
 
 
-def _render(n: int, d=None):
-    d, pol, sw, av = _avaliar(n, d)
+def _render(n: int, d=None, hoje=None):
+    """Resolves `hoje` ONCE (never re-defaulted per call) so `_avaliar`'s
+    gate and `documento.renderizar`'s empresa classification agree."""
+    hoje = hoje or derivacao._hoje_padrao()
+    d, pol, sw, av = _avaliar(n, d, hoje)
     assert av.pronto, (av.faltando, av.bloqueios)
-    return documento.renderizar(get_docx_render_adapter(real=True), d, sw, pol, fx.ASSINATURA)
+    return documento.renderizar(get_docx_render_adapter(real=True), d, sw, pol, fx.ASSINATURA, hoje)
 
 
 def _clausulas(paragrafos):
@@ -548,8 +551,8 @@ def _campos(av):
     return [(f["campo"], f["parte_id"]) for f in av.faltando]
 
 
-def _texto(n: int, d=None) -> str:
-    return "\n".join(_render(n, d).paragrafos)
+def _texto(n: int, d=None, hoje=None) -> str:
+    return "\n".join(_render(n, d, hoje).paragrafos)
 
 
 class TestQ2Lei6515:
@@ -652,7 +655,7 @@ class TestQ9CertidoesDeEmpresa:
         assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
 
     def test_an_active_company_renders_without_the_baixada_suffix(self):
-        texto = _texto(1, self._com_empresa("ativa"))
+        texto = _texto(1, self._com_empresa("ativa"), hoje=fx.REFERENCIA)
         assert "- Em nome de EMPRESA AMOSTRA LTDA\n" in texto + "\n"
         assert "Baixada" not in texto
 
@@ -661,13 +664,13 @@ class TestQ9CertidoesDeEmpresa:
         d = self._com_empresa(situacao, sem_tipo="cnd_federal")
         _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
         assert av.pronto, (av.faltando, av.bloqueios)
-        assert "EMPRESA AMOSTRA" not in _texto(1, d)
+        assert "EMPRESA AMOSTRA" not in _texto(1, d, hoje=fx.REFERENCIA)
 
     def test_baixada_exactly_five_years_before_referencia_is_not_required(self):
         d = self._com_empresa("baixada", date(2021, 9, 14), sem_tipo="cnd_federal")
         _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
         assert av.pronto, (av.faltando, av.bloqueios)
-        assert "EMPRESA AMOSTRA" not in _texto(1, d)
+        assert "EMPRESA AMOSTRA" not in _texto(1, d, hoje=fx.REFERENCIA)
 
     def test_baixada_less_than_five_years_before_referencia_blocks_on_a_missing_type(self):
         d = self._com_empresa("baixada", date(2021, 9, 15), sem_tipo="cnd_federal")
@@ -675,14 +678,10 @@ class TestQ9CertidoesDeEmpresa:
         assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
 
     def test_a_recently_closed_company_renders_with_the_baixada_suffix(self):
-        """Dated relative to REAL today (not the fixed `fx.REFERENCIA`):
-        `_texto`/`_render` cannot inject `hoje` into `documento.renderizar`
-        (owned outside this slice), so `montar_contexto` classifies against
-        `derivacao._hoje_padrao()`'s actual today — 30 days ago is
-        comfortably inside the 5-year window regardless of which day this
-        suite runs."""
-        recente = date.today() - timedelta(days=30)
-        texto = _texto(1, self._com_empresa("baixada", recente))
+        """Deterministic: `hoje=fx.REFERENCIA` now threads all the way
+        into `documento.renderizar` -> `montar_contexto`."""
+        d = self._com_empresa("baixada", date(2021, 9, 15))
+        texto = _texto(1, d, hoje=fx.REFERENCIA)
         assert "- Em nome de EMPRESA AMOSTRA LTDA - Baixada" in texto
 
     def test_no_cartao_uploaded_yet_is_missing(self):
@@ -719,6 +718,33 @@ class TestQ9CertidoesDeEmpresa:
         exigidas = derivacao.empresas_exigidas(d, sw, fx.REFERENCIA, pol)
         assert len(exigidas) == 1
         assert exigidas[0].empresa.id == "emp-2"
+
+    def test_a_married_vendedor_spouse_on_the_card_makes_their_own_company_required(self):
+        """[E3] The spouse's OWN company (not jointly held) is required too
+        — a married vendedor's cônjuge who IS a card party is treated
+        exactly like any other certificando."""
+        d = fx.variante(1)
+        titular = replace(d.vendedores[0], conjuge_cliente_id="v2")
+        conjuge = replace(
+            fx.pessoa("v2", "vendedor", "conjuge", "Cônjuge Exemplo", "Feminino",
+                      "444555666", "55.555.555-5"),
+            conjuge_cliente_id="v1",
+        )
+        e = fx.empresa("emp-6", CNPJ, "Empresa da Cônjuge Ltda", "ativa",
+                        owners=[conjuge], sem_tipo="cnd_federal")
+        d = replace(d, vendedores=[titular, conjuge], empresas=[e])
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert ("certidao.cnd_federal", conjuge.parte_id) in _campos(av)
+
+    def test_a_spouse_missing_from_the_card_is_named_as_faltando(self):
+        """[E3, tech-lead review] `conjuge_cliente_id` points at a cliente
+        who is NOT a `Pessoa` anywhere on this card — their empresas are
+        unreachable, so this is a named gap, never a silent drop."""
+        d = fx.variante(1)
+        titular = replace(d.vendedores[0], conjuge_cliente_id="v2")
+        d = replace(d, vendedores=[titular])
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert ("parte.v1.conjuge", titular.parte_id) in _campos(av)
 
     def test_a_permuta_comprador_company_is_required(self):
         """[E6] A comprador giving an imóvel in a permuta gets exactly the

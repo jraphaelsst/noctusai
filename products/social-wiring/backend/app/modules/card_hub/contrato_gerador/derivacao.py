@@ -698,6 +698,24 @@ def _empresas_de_certificandos(d: DadosContrato, sw: dict[str, bool]) -> list[tu
     return pares
 
 
+def _conjuges_sem_pessoa(d: DadosContrato, sw: dict[str, bool]) -> list[Pessoa]:
+    """[E3] Certificando vendedores (and, in a permuta, certificando
+    compradores: E6) whose `conjuge_cliente_id` points at a cliente NOT
+    loaded as a `Pessoa` anywhere on this card. E3 says the cônjuge of a
+    married vendedor IS a vendedor, so a card that never added them is a
+    genuine data gap — their empresas are unreachable, and the honest
+    answer is a named `faltando` (the office must add them as a card
+    party), never a silent exclusion from `owners`."""
+    certificandos = signatarios(d.vendedores) + (
+        signatarios(d.compradores) if sw["tem_permuta"] else []
+    )
+    ids_no_card = {p.cliente_id for p in d.vendedores + d.compradores}
+    return [
+        p for p in certificandos
+        if p.conjuge_cliente_id and p.conjuge_cliente_id not in ids_no_card
+    ]
+
+
 def classificar_empresa(e: Empresa, referencia: date, politica: Politica) -> str:
     """[E1] Whether an empresa's certidão group is required, from its OWN
     Cartão-CNPJ-sourced `situacao_cadastral`/`data_situacao_cadastral`
@@ -1372,7 +1390,22 @@ def _certidoes(
             elif motivo in (PJ_EXIGIDO, PJ_EXIGIDO_BAIXADA):
                 conferir(dono, e.certidoes, "cnpj", nome_pj)
 
+    def conferir_conjuges_ausentes() -> None:
+        """[E3] A married certificando's cônjuge who is not a `Pessoa` on
+        this card at all — their empresas are unreachable, so this is a
+        named `faltando`, never a silent drop from `_empresas_de_
+        certificandos`'s owner-matching (tech-lead review, S2b)."""
+        for p in _conjuges_sem_pessoa(d, sw):
+            av.falta(
+                f"parte.{p.cliente_id}.conjuge",
+                f"Cônjuge de {_nome(p)} não está no card",
+                "partes",
+                p.parte_id,
+                ancora=_ancora(p),
+            )
+
     conferir_empresas()
+    conferir_conjuges_ausentes()
     for p in signatarios_certificados:
         conferir_pessoa(p)
         # [Q11] the estado-civil certidão is less than 90 days old.
