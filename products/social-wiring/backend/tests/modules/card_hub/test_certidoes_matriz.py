@@ -316,6 +316,85 @@ class TestCelulas:
         assert resultado["totais"][pessoa["id"]]["constam"] == 0
         assert resultado["totais"][pessoa["id"]]["pendente"] == 14
 
+    def test_serasa_e_na_para_empresa_e_normal_para_pessoa(self, scoped):
+        """Owner rule 2026-09-24 §1: PJ = PF-12 minus SERASA."""
+        cid, aid = str(uuid4()), str(uuid4())
+        vendedor_id = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular"), cliente_row(vendedor_id, nome="Vendedor"),
+        ])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        scoped.set_table_data("atendimento_partes", [_parte(aid, vendedor_id)])
+        empresa = _empresa(situacao_cadastral="ativa")
+        scoped.set_table_data("empresas", [empresa])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(vendedor_id, empresa["id"]),
+        ])
+        scoped.set_table_data("certidao_consultas", [
+            _consulta("c1", cliente_id=vendedor_id, tipo_documento="cpf"),
+        ])
+        scoped.set_table_data("certidao_resultados", [
+            _resultado("r1", "c1", "serasa", status="sucesso", resultado="negativa"),
+        ])
+
+        resultado = svc.montar_matriz(scoped, ORG_ID, cid)
+
+        [pessoa] = [c for c in resultado["colunas"] if c["kind"] == "pessoa"]
+        [empresa_col] = [c for c in resultado["colunas"] if c["kind"] == "empresa"]
+        assert resultado["celulas"]["serasa"][pessoa["id"]]["status"] == "nao_constam"
+        assert resultado["celulas"]["serasa"][empresa_col["id"]] == {
+            "status": "na", "texto": "N/A", "resultado_id": None, "consulta_id": None,
+            "numero": None, "emitida_em": None, "validade_ate": None,
+            "analise_ia": None, "erro_mensagem": None,
+        }
+        assert resultado["totais"][empresa_col["id"]]["nao_constam"] == 0
+
+
+class TestPermuta:
+    def test_permuta_inclui_comprador_e_empresa_do_comprador_como_colunas(self, scoped):
+        """Owner rule 2026-09-24 §4: with a permuta, the comprador (+ their
+        empresas) counts too — `pessoas_do_card`'s own `certificando` flag,
+        never a second permuta check."""
+        cid, aid = str(uuid4()), str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Comprador Permuta")])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        scoped.set_table_data("atendimento_negociacao_parcelas", [{
+            "id": "p-permuta", "org_id": ORG_ID, "atendimento_id": aid, "tipo": "permuta",
+        }])
+        empresa = _empresa(situacao_cadastral="ativa")
+        scoped.set_table_data("empresas", [empresa])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(cid, empresa["id"]),
+        ])
+
+        resultado = svc.montar_matriz(scoped, ORG_ID, cid)
+
+        pessoas = [c for c in resultado["colunas"] if c["kind"] == "pessoa"]
+        empresas = [c for c in resultado["colunas"] if c["kind"] == "empresa"]
+        assert [p["id"] for p in pessoas] == [cid]
+        assert [e["id"] for e in empresas] == [empresa["id"]]
+
+    def test_sem_permuta_empresa_do_comprador_fica_de_fora(self, scoped):
+        """The mirror: no permuta parcela -> the titular's own empresa is
+        never a column, EVEN `ativa` (`sem_socio_certificando` demotes
+        `exige_certidoes`, same gate `empresas_service.listar` already
+        applies — this module makes no decision of its own here)."""
+        cid, aid = str(uuid4()), str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Comprador Simples")])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        empresa = _empresa(situacao_cadastral="ativa")
+        scoped.set_table_data("empresas", [empresa])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(cid, empresa["id"]),
+        ])
+
+        resultado = svc.montar_matriz(scoped, ORG_ID, cid)
+
+        assert resultado["colunas"] == []
+
 
 class TestRotaHttp:
     def test_get_retorna_a_matriz_montada(self, client, scoped):

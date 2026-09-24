@@ -1,39 +1,63 @@
 """`GET /api/clientes/{cliente_id}/certidoes/matriz` — the "Certidões" card
 tab's MATRIX: every certidão TYPE (rows, `registry.MATRIZ_LINHAS`) crossed
-with every VENDEDOR party + every one of their empresas that requires
-certidões (columns), aggregated server-side into one response — no N-call
-client pivot (Levantamento de Certidões.xlsx, first tab).
+with every party the tech-lead's binding matrix rules name (columns),
+aggregated server-side into one response — no N-call client pivot
+(Levantamento de Certidões.xlsx, first tab).
 
-WHO COUNTS ("columns")
------------------------
-Vendedor parties: `empresas_service.pessoas_do_card` filtered to
-`lado == "vendedor"` — the EXACT same resolution `empresas_service.listar`
-uses for its own owners list (vendedor `atendimento_partes` rows PLUS every
-vendedor's registered spouse via `clientes.conjuge_cliente_id`, even one
-never added as its own `atendimento_partes` row — migration 153's D1 link).
-Reused rather than restated: two independent "who is a vendedor on this
-card" answers is exactly the N=2 recurrence `empresas_service`'s own
-docstring already warns about for the E1 classification.
+WHO COUNTS ("columns") — tech-lead binding rules, 2026-09-24
+--------------------------------------------------------------
+Every vendedor party AND their permuta-comprador counterpart (+ cônjuges)
+count the SAME way: `empresas_service.pessoas_do_card`'s own
+`certificando` flag ALREADY encodes exactly this (True for every
+vendedor-lado pessoa unconditionally; True for a comprador-lado pessoa —
+the titular included — only when `tem_permuta_ativa`, per that function's
+own "WHO COUNTS" docblock). Filtering on `certificando` here, rather than
+hand-rolling a second permuta check, is the SAME reuse-not-restate
+reasoning `empresas_service.listar` already applies to E1 — and is why a
+permuta-comprador's own empresas show up "for free" below: `listar`'s
+`exige_certidoes` verdict already demotes a comprador-only-owned empresa to
+`sem_socio_certificando` when `tem_permuta` is false, and promotes it when
+true (`empresas_service.py::test_permuta_comprador_is_certificando`). This
+module makes ZERO derivação/permuta decisions of its own — read-only
+consumer of `pessoas_do_card`/`listar`'s verdicts, never a restatement
+(owner rule 2026-09-24 §7: a peer session is validating E1-E6 live).
 
 Empresa columns: `empresas_service.listar`'s own `items`, filtered to
-`exige_certidoes=True` (E1's classification — an empresa the deal does NOT
-need certidões for, e.g. baixada outside the window or every owner
-non-certificando, is excluded from the matriz entirely) AND at least one
-`owners` entry with `lado == "vendedor"` (a comprador-side-only empresa, the
-permuta case, is out of THIS matrix's scope — it mirrors the Excel source's
-own "VEND n / EMP n" column set).
+`exige_certidoes=True` alone — that flag already folds in the permuta
+verdict AND dedupes by empresa (one `cliente_empresa_participacoes` row
+group per `empresas.id`/CNPJ, owners merged — `test_owners_merge_across_a_
+shared_empresa`), so a couple-shared empresa surfaces as exactly one EMP
+column, never twice.
 
-CELLS
------
+CELLS — the FIXED PF-12 / PJ-11 sets (owner rule, 2026-09-24 §1-3)
+--------------------------------------------------------------------
+`registry.MATRIZ_LINHAS` rows 5.1-5.12 are the fixed checklist: all twelve
+apply to a PESSOA (PF) column; PJ drops row 5.9 (SERASA — a personal credit
+report, CENPROT already covers a company) to eleven, grey N/A on every
+EMPRESA column. Row 5.13 (`fgts_regularidade`) is grey N/A on every PESSOA
+column (a CNPJ-only obligation, `registry.aplicavel_a_tipo_documento`) and
+recordable on an EMPRESA column — but it and "Outras" (5.14/5.15) are
+DISPLAY/RECORD-ONLY, never folded into the PF-12/PJ-11 fixed set nor into
+any readiness/required-documents gate (owner rule §2 — would contradict the
+fixed PJ-11 count). TJSP is ALWAYS the two split rows (`tjsp_esaj`/
+`tjsp_eproc`, 5.7/5.8); the generic automated `tjsp` type from `certidoes.
+registry.CERTIDOES_CONFIG` is deliberately absent from `MATRIZ_LINHAS` and
+this module never reads it — a legacy `tipo='tjsp'` resultado (if any exist
+from before this tab) surfaces in NEITHER split row's cell/tooltip (owner
+rule §3: no invented mapping). `scoped-improvement:` a fleet query for any
+live `tipo='tjsp'` resultado would confirm whether that legacy-data case is
+purely hypothetical or needs its own follow-up.
+
 Every column resolves its certidão results through the SAME per-person/
 per-empresa readers the rest of the certidões module already exposes —
 `certidoes.service.certidoes_por_cliente`/`certidoes_por_empresa` — so a
 consulta linked via `vincular_parte`/`vincular_cliente`/`vincular_empresa`
 denormalizes onto this matrix for free, without a new linking mechanism.
-`registry.MATRIZ_LINHAS`'s `fgts_regularidade` row (5.13) is grey N/A on
-every PESSOA (PF) column, by construction — it is a CNPJ-only obligation
-(`registry.aplicavel_a_tipo_documento`), so no resultado can ever exist
-there.
+This module performs NO writes of its own (`montar_matriz` is read-only,
+GET-only) — every write a caller can trigger from this tab's dialog
+(`CertidoesPartePanel`, reused unmodified) goes through the SAME audited
+paths (`process_manual_upload`, `confirmar_resultado`, etc.) the rest of
+the certidões module already uses (owner rule §6).
 
 A column may carry MULTIPLE consultas of the relevant `tipo_documento`
 (a re-run, a corrected re-link); the most recently `created_at` resultado
@@ -155,7 +179,7 @@ def montar_matriz(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         return _empty()
     atendimento = rows[0]
 
-    pessoas = [p for p in pessoas_do_card(client, org_id, atendimento) if p["lado"] == "vendedor"]
+    pessoas = [p for p in pessoas_do_card(client, org_id, atendimento) if p["certificando"]]
     nomes = {
         str(r["id"]): (r.get("nome_oficial") or r.get("nome") or "")
         for r in (
@@ -172,7 +196,6 @@ def montar_matriz(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         item["empresa"]
         for item in empresas_resp.get("items", [])
         if item.get("exige_certidoes")
-        and any(o.get("lado") == "vendedor" for o in item.get("owners", []))
     ]
 
     colunas: list[dict] = []
@@ -207,7 +230,15 @@ def montar_matriz(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         tipo = linha["tipo"]
         celulas[tipo] = {}
         for coluna in colunas:
+            # Owner rule 2026-09-24 §1: PJ = PF-12 minus SERASA (a personal
+            # credit report; CENPROT already covers a company) — grey N/A on
+            # every EMPRESA column. §2: FGTS (5.13) is a CNPJ-only
+            # obligation — grey N/A on every PESSOA column, and outside the
+            # fixed PF-12/PJ-11 set either way (never gates readiness).
             if tipo == "fgts_regularidade" and coluna["kind"] == "pessoa":
+                celulas[tipo][coluna["id"]] = _celula("na", "N/A", None)
+                continue
+            if tipo == "serasa" and coluna["kind"] == "empresa":
                 celulas[tipo][coluna["id"]] = _celula("na", "N/A", None)
                 continue
             resultado_row = resultados_por_coluna[coluna["id"]].get(tipo)
