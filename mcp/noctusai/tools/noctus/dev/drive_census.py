@@ -397,14 +397,17 @@ def paragraphs_from_text(text: str, *, source: str) -> list[str]:
 _STRUCTURAL_START = re.compile(
     r"^\s*(?:CL[ÁA]USULA\b|\d+\.\d+\s*[–\-—]|\d+\s*[–\-—]\s*Em\s|\d+\)\s|Parcela\s*\d+|Par[áa]grafo\b|"
     r"[a-z]\s*-?\)\s|E de outro lado|Pelo presente|Com fundamento|IM[ÓO]VEL\s*:|TESTEMUNHAS|"
-    r"(?:VENDEDORA?S?|COMPRADORA?S?)\s*$|RG\s)")
+    r"(?:VENDEDORA?S?|COMPRADORA?S?)\s*$)")
 
 _D4SIGN_FURNITURE = (
     re.compile(r"^\s*\d+\s*/\s*\d+\s*$"),                                  # page counter "1/7"
     re.compile(r"^\s*D4Sign\s+[0-9a-f]{8}-[0-9a-f\-]{27}", re.I),           # per-page signature notice
     re.compile(r"^\s*Documento assinado eletronicamente", re.I),
 )
-_D4SIGN_CERT_START = re.compile(r"^\s*Documento\s+[0-9a-f]{8}-[0-9a-f\-]{27}\s+criado por", re.I)
+# The signature-certificate pages D4Sign appends; three header variants seen across deal folders.
+_D4SIGN_CERT_START = re.compile(
+    r"^\s*(?:Documento\s+[0-9a-f]{8}-[0-9a-f\-]{27}\s+criado por|\d+\s+p[áa]ginas\s+-\s+Datas e hor[áa]rios|"
+    r".*C[óo]digo do documento\s+[0-9a-f]{8}-)", re.I)
 
 
 def _strip_pdf_furniture(text: str) -> str:
@@ -467,26 +470,28 @@ def _until_signing_date(paras: list[str]) -> list[str]:
 
 
 def diff_paragraphs(a: list[str], b: list[str], *, limit: int = 40) -> list[dict[str, Any]]:
-    """Paragraph-level divergences between the .docx (a) and the signed D4Sign text (b).
+    """WORD-level divergences between the .docx (a) and the signed D4Sign text (b).
 
-    D4Sign adds signature/certificate pages, so only paragraphs that REPLACE one another count, and
-    both sides stop at the signing-date line: the signature block below it is layout, not content."""
-    a, b = _until_signing_date(a), _until_signing_date(b)
-    # A .docx auto-numbered list renders "1) " only in the PDF: a formatting artefact, not an edit.
-    na = [_fold(re.sub(r"\s+", " ", re.sub(r"^\d+\)\s*", "", p))) for p in a]
-    nb = [_fold(re.sub(r"\s+", " ", re.sub(r"^\d+\)\s*", "", p))) for p in b]
+    Paragraph boundaries are not content: a .docx may put "Parcela 01 —" and its value in two
+    paragraphs, and a PDF page break splits one. So both sides are flattened to words and diffed,
+    and each divergence is reported with a few words of context. Both sides stop at the signing-date
+    line (the signature block is layout), and .docx auto-numbering ("1) ", PDF only) is dropped."""
+    def words(paras: list[str]) -> tuple[list[str], list[str]]:
+        raw = [w for w in " ".join(re.sub(r"^\d+\)\s*", "", p) for p in _until_signing_date(paras)).split()
+               if not re.fullmatch(r"[a-z0-9]{1,2}\)", w)]  # auto-list markers "a)" "1)" (PDF-only)
+        return raw, [_fold(w).strip(".,;:–—-\"“”'") for w in raw]
+
+    ra, na = words(a)
+    rb, nb = words(b)
     out: list[dict[str, Any]] = []
+    ctx = 6
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(a=na, b=nb, autojunk=False).get_opcodes():
-        if tag != "replace":
+        if tag == "equal" or (not "".join(na[i1:i2]) and not "".join(nb[j1:j2])):
             continue
-        for k in range(max(i2 - i1, j2 - j1)):
-            pa = a[i1 + k] if i1 + k < i2 else None
-            pb = b[j1 + k] if j1 + k < j2 else None
-            if pa and pb and difflib.SequenceMatcher(a=na[i1 + k], b=nb[j1 + k]).ratio() > 0.995:
-                continue
-            out.append({"paragrafo": i1 + k, "docx": pa, "d4sign": pb})
-            if len(out) >= limit:
-                return out
+        out.append({"docx": " ".join(ra[i1:i2]) or None, "d4sign": " ".join(rb[j1:j2]) or None,
+                    "contexto": " ".join(ra[max(0, i1 - ctx):i1]) + " … " + " ".join(ra[i2:i2 + ctx])})
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -547,13 +552,14 @@ def _clause(clauses: list[dict[str, Any]], *keywords: str) -> Optional[dict[str,
 
 
 # Persons: an upper-case name followed by ", <nacionalidade>," — the qualification opener.
-_PERSON_RE = re.compile(r"([A-ZÀ-Ý][A-ZÀ-Ý'´`.\- ]{3,}[A-ZÀ-Ý]),\s+(brasileir[oa]s?|[a-zà-ÿ]+(?:ian[oa]|[eê]s[a]?|n[oa]))\s*,")
-_ESTADO_RE = re.compile(r"\b(solteir[oa]|casad[oa]|divorciad[oa]|vi[úu]v[oa]|separad[oa] judicialmente|"
-                        r"convivente em uni[ãa]o est[áa]vel|em uni[ãa]o est[áa]vel)\b", re.I)
+_PERSON_RE = re.compile(r"([A-ZÀ-Ý][A-ZÀ-Ý'’´`.\- ]{3,}[A-ZÀ-Ý]),\s+(brasileir[oa]s?|[a-zà-ÿ]+(?:ian[oa]|[eê]s[a]?|n[oa]))\s*,")
+_ESTADO_RE = re.compile(r"\b(solteir[oa]s?|casad[oa]s?|divorciad[oa]s?|vi[úu]v[oa]s?|separad[oa]s? judicialmente|"
+                        r"conviventes? em uni[ãa]o est[áa]vel|em uni[ãa]o est[áa]vel)\b", re.I)
 _REGIME_RE = re.compile(r"regime d[ae]\s+(comunh[ãa]o parcial|comunh[ãa]o universal|separa[çc][ãa]o total|"
                         r"separa[çc][ãa]o obrigat[óo]ria|separa[çc][ãa]o (?:convencional )?de bens|participa[çc][ãa]o final)", re.I)
-_RG_RE = re.compile(r"\bRG\s*(?:n[º°o.]?\s*)?([0-9Xx](?:[0-9Xx.]|-\s?(?=[0-9Xx]))*[0-9Xx])\s*(?:[\-–/ ]+\s*([A-Z]{2,}(?:[\-/ ]?[A-Z]{2})?))?(?=[\s,;.]|$)")
-_CPF_RE = re.compile(r"CPF(?:/MF)?\s*(?:sob o\s*)?(?:n[º°o.]?\s*)?[:\s]*(\d{3}\.?\d{3}\.?\d{3}\s*-?\s*\d{2})")
+_RG_RE = re.compile(r"\bRG\s*:?\s*(?:n[º°o.]?\s*)?:?\s*([0-9Xx](?:[0-9Xx.]|-\s?(?=[0-9Xx]))*[0-9Xx])\s*"
+                    r"(?:[\-–/ ]+\s*([A-Z]{2,}(?:\s?[\-/]\s?[A-Z]{2})?))?(?=[\s,;.]|$)")
+_CPF_RE = re.compile(r"CPF(?:/MF)?\s*(?:sob\s+(?:o\s+)?)?(?:n[º°o.]?\s*)?[:\s]*(\d{3}\.?\d{3}\.?\d{3}\s*-?\s*\d{2})")
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _CEP_RE = re.compile(r"CEP[:\s]*(?:n[º°o.]?\s*)?(\d{2}\.?\d{3}\s*-?\s*\d{3})", re.I)
 _ENDERECO_RE = re.compile(r"residentes?\s+e\s+domiciliad[oa]s?\s+(?:na|no|à|a|em)\s+(.+?)(?:;|$)", re.I)
@@ -678,12 +684,40 @@ def parse_partes(preamble: list[str]) -> list[dict[str, Any]]:
             for i in range(first_idx, len(partes)):
                 for k, v in shared.items():
                     partes[i]["clientes"].setdefault(k, v)
-        casados = [i for i in range(first_idx, len(partes)) if partes[i]["clientes"]["estado_civil"] == "casado"]
-        if len(casados) >= 2 and re.search(r"casados entre si|seu c[ôo]njuge|sua c[ôo]njuge|s(?:ua|eu) (?:esposa|marido)", p, re.I):
-            for a, b in zip(casados[::2], casados[1::2]):
-                partes[b]["conjuge_de"] = a
-                partes[a]["conjuge_de"] = b
+        _link_couples(partes, first_idx)
     return partes
+
+
+# How a contract joins two spouses: "X …, casado … com Y …" or "X …, e sua esposa Y …, casados …".
+_COUPLE_JOIN_RE = re.compile(r"(?:\bcom|\be\s+(?:sua|seu)\s+(?:esposa|marido|mulher|esposo|c[ôo]njuge)|\be)\s*$", re.I)
+
+
+def _link_couples(partes: list[dict[str, Any]], first_idx: int) -> None:
+    """Spouses are qualified as a PAIR, and the marital status and regime are printed once for both:
+    after the first ("casado … com Y") or after the second ("X …, e Y …, casados no regime …").
+
+    Consecutive persons a, b on one side are a couple when a's chunk ends with a join ("com",
+    "e sua esposa", a bare "e") AND one of the two reads casado/união estável. Both then get that
+    estado civil + regime and are linked through ``conjuge_de``. A pair where neither says casado
+    stays unlinked (two co-buyers are not assumed to be married)."""
+    i = first_idx
+    while i + 1 < len(partes):
+        a, b = partes[i], partes[i + 1]
+        ca, cb = a["clientes"], b["clientes"]
+        estados = {ca["estado_civil"], cb["estado_civil"]} & {"casado", "uniao_estavel"}
+        joined = _COUPLE_JOIN_RE.search(a["texto_qualificacao"]) is not None
+        if joined and estados and not ({ca["estado_civil"], cb["estado_civil"]} - estados - {None}):
+            estado = estados.pop()
+            regime = ca["regime_bens"] or cb["regime_bens"]
+            casamento = ca["data_casamento"] or cb["data_casamento"]
+            for c in (ca, cb):
+                c["estado_civil"] = c["estado_civil"] or estado
+                c["regime_bens"] = c["regime_bens"] or regime
+                c["data_casamento"] = c["data_casamento"] or casamento
+            a["conjuge_de"], b["conjuge_de"] = i + 1, i
+            i += 2
+        else:
+            i += 1
 
 
 def parse_imovel(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
@@ -716,7 +750,7 @@ def parse_imovel(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-_PARCELA_RE = re.compile(r"^Parcela\s*(\d+)\s*[:\-–]\s*(.+)$", re.I)
+_PARCELA_RE = re.compile(r"^(?:[a-z]\)\s*)?Parcela\s*(\d+)\s*[:\-–—]\s*(.+)$", re.I)
 _BRL_RE = re.compile(r"R\$\s*([\d.]+,\d{2})")
 
 
@@ -892,7 +926,7 @@ def parse_intermediacao(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
     elif re.search(r"\bCOMPRADOR", first):
         out["corretagem_contratantes"] = "compradores"
     for p in clause["paras"]:
-        m = re.search(r"R\$\s*([\d.]+,\d{2}).*?em favor de\s+([A-ZÀ-Ý][A-ZÀ-Ý0-9 .&'\-]{3,}?)\s*,\s*"
+        m = re.search(r"R\$\s*([\d.]+,\d{2}).*?em favor de\s+([A-ZÀ-Ýa-z][^,]{2,}?)\s*,\s*"
                       r"(?:inscrit[oa] no\s+)?(CPF|CNPJ)[^\d]{0,20}([\d./\-]{11,})", p)
         if m:
             parcela = _money(m.group(1))
@@ -931,14 +965,14 @@ def parse_testemunhas(paras: list[str]) -> list[dict[str, Any]]:
         start = next(i for i, p in enumerate(paras) if _fold(p).startswith("TESTEMUNHAS"))
     except StopIteration:
         return out
-    for p in paras[start + 1:start + 12]:
-        rg = re.match(r"^RG[:\s]*(?:n[º°o.]?\s*)?([\dXx.\- ]+)", p)
-        if rg and out:
-            out[-1]["rg"] = re.sub(r"\s", "", rg.group(1))
-            continue
-        name = re.match(r"^([A-ZÀ-Ý][A-ZÀ-Ý .'\-]{5,}?)(?:\s{2,}|\s+[\w.+\-]+@|$)", p)
-        if name and not _fold(p).startswith(("CPF", "D4SIGN")):
-            out.append({"nome": name.group(1).strip(), "rg": None})
+    # A .docx has one line per name / RG; a PDF text layer joins them ("NOME e-mail RG 1.2 NOME2 …").
+    blob = " ".join(p for p in paras[start + 1:start + 12] if not _fold(p).startswith(("CPF", "D4SIGN")))
+    word = r"(?!(?:RG|CPF)\b)[A-ZÀ-Ý][A-ZÀ-Ý.'’\-]+"
+    for m in re.finditer(rf"({word}(?:\s+{word}){{1,8}})(?:\s+[\w.+\-]+@[\w.\-]+)?"
+                         r"(?:\s+RG[:\s]*(?:n[º°o.]?\s*)?([\dXx][\dXx.\-]*[\dXx]))?", blob):
+        nome = m.group(1).strip()
+        if len(nome) >= 6 and not re.fullmatch(r"(?:RG|CPF|TESTEMUNHAS?)", nome):
+            out.append({"nome": nome, "rg": m.group(2)})
     return out
 
 
@@ -1010,13 +1044,22 @@ def _check_empresas_vs_contract(key: dict[str, Any]) -> None:
 
 def answer_key_folder(folder_id: str) -> dict[str, Any]:
     census = census_folder(folder_id)
-    chosen, fonte, others = select_contract(census["files"])
+    # An ADITIVO (amendment) is signed like the contract, but it is not the contract: set it aside
+    # and choose again. Its presence is itself a fact the scorer must know (the terms it changes).
+    pool, aditivos = list(census["files"]), []
+    while True:
+        chosen, fonte, others = select_contract(pool)
+        head = _fold(((_text_for(chosen) or {}).get("text") or "")[:400]) if chosen else ""
+        if chosen is None or "ADITIVO" not in head:
+            break
+        aditivos.append(chosen["rel_path"])
+        pool = [f for f in pool if f is not chosen]
     numero = census["folder"]["numero"] or folder_id
     key: dict[str, Any] = {
         "folder": census["folder"],
         "fonte": {"tipo": fonte, "arquivo": chosen["rel_path"] if chosen else None,
                   "confianca": {"d4sign": "alta", "rev_final": "alta", "revisao": "media", "none": "baixa"}[fonte],
-                  "divergencias_docx": []},
+                  "divergencias_docx": [], "aditivos": aditivos},
         "tool_version": TOOL_VERSION, "parser_version": PARSER_VERSION,
         "gerado_em": datetime.now(timezone.utc).isoformat(),
     }
@@ -1052,7 +1095,7 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
         _check_empresas_vs_contract(key)
     _write_private(_dir("answer-keys") / f"{numero}.json", key)
     return {"numero": numero, "status": key["status"], "fonte": fonte,
-            "divergencias_docx": len(key["fonte"]["divergencias_docx"]),
+            "divergencias_docx": len(key["fonte"]["divergencias_docx"]), "aditivos": len(aditivos),
             "cobertura": _coverage(key) if key["status"] == "ok" else None}
 
 

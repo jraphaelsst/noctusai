@@ -175,11 +175,28 @@ def test_parse_partes() -> None:
     assert (v["estado_civil"], v["genero"], v["email"]) == ("divorciado", "Feminino", "ana@example.com")
     assert (v["endereco_cidade"], v["endereco_uf"], v["endereco_cep"]) == ("Vila Modelo", "SP", "01234567")
     b, c = partes[1], partes[2]
-    assert (b["clientes"]["profissao"], b["clientes"]["regime_bens"]) == ("engenheiro", None)
+    # the couple's regime is printed once, after the second spouse, and applies to both
+    assert (b["clientes"]["profissao"], b["clientes"]["regime_bens"]) == ("engenheiro", "comunhao_parcial")
     assert c["clientes"]["regime_bens"] == "comunhao_parcial"
     assert (b["conjuge_de"], c["conjuge_de"]) == (2, 1)
     # the side's shared address reaches both buyers
     assert b["clientes"]["endereco_cep"] == c["clientes"]["endereco_cep"] == "07654321"
+
+
+def test_couple_status_printed_once_is_shared_and_coworkers_are_not_married() -> None:
+    txt = ("Pelo presente, de um lado, JOAO TESTE PRIMEIRO, brasileiro, engenheiro, portador da cédula de identidade "
+           "RG: 12.345.678 - SSP- SP, inscrito no CPF/MF sob nº 123.456.789-01, casado sob regime da comunhão universal "
+           "de bens com MARIA TESTE PRIMEIRA, brasileira, médica, inscrita no CPF/MF 987.654.321-09, residentes e "
+           "domiciliados na Rua X, nº 1 - Centro - Cidade/SP - CEP: 01000-000;\n"
+           "E de outro lado, PEDRO SOCIO UM, brasileiro, solteiro, inscrito no CPF/MF 111.111.111-11, e "
+           "PAULO SOCIO DOIS, brasileiro, divorciado, inscrito no CPF/MF 222.222.222-22;")
+    partes = C.parse_partes(C.paragraphs_from_text(txt, source="docx"))
+    joao, maria, pedro, paulo = (p["clientes"] for p in partes)
+    assert (joao["rg"], joao["rg_orgao_expedidor"], joao["cpf"]) == ("12.345.678", "SSP- SP", "12345678901")
+    assert (maria["estado_civil"], maria["regime_bens"]) == ("casado", "comunhao_universal")
+    assert (partes[0]["conjuge_de"], partes[1]["conjuge_de"]) == (1, 0)
+    assert (pedro["estado_civil"], paulo["estado_civil"]) == ("solteiro", "divorciado")
+    assert (partes[2]["conjuge_de"], partes[3]["conjuge_de"]) == (None, None)
 
 
 def test_parse_imovel_and_negociacao() -> None:
@@ -300,6 +317,26 @@ def test_answer_key_end_to_end_is_private_and_redacted(private, tmp_path) -> Non
     assert census["certidao_sets"] == 2 and census["entities_pj"] == 1
     assert census["root_gaps"] == ["matricula", "iptu_espelho", "cnd_iptu"]
     assert (private / "census" / "901.json").is_file()
+
+
+def test_an_aditivo_is_never_the_ground_truth_contract(private, tmp_path) -> None:
+    aditivo = "PRIMEIRO ADITIVO AO INSTRUMENTO PARTICULAR DE PROMESSA DE VENDA E COMPRA\nCláusula única."
+    _mirror(private, "F3", {
+        "ADITIVO - REV FINAL_CONTRATO DE COMPRA E VENDA - X.docx": _docx_bytes(aditivo, tmp_path),
+        "CONTRATO DE COMPRA E VENDA - X - rev. 14-08-26.docx": _docx_bytes(CONTRATO, tmp_path),
+    })
+    summary = C.drive_census("answer_key", "F3")["results"][0]
+    assert (summary["status"], summary["fonte"], summary["aditivos"]) == ("ok", "revisao", 1)
+    key = json.loads((private / "answer-keys" / "901.json").read_text())
+    assert key["fonte"]["aditivos"] == ["ADITIVO - REV FINAL_CONTRATO DE COMPRA E VENDA - X.docx"]
+
+
+def test_word_diff_reports_only_real_edits() -> None:
+    a = ["Parcela 01 —", "R$ 1,00 no ato.", "a) item", "Vila Modelo, 10 de agosto de 2026."]
+    b = ["Parcela 01 — R$ 1,00 no ato.", "item", "Vila Modelo, 10 de agosto de 2026.", "ASSINATURAS"]
+    assert C.diff_paragraphs(a, b) == []
+    d = C.diff_paragraphs(["com e-mail: x@example.com, residente"], ["com e-mail: x@example.com e y@example.com, residente"])
+    assert [(x["docx"], x["d4sign"]) for x in d] == [(None, "e y@example.com,")]
 
 
 def test_unknown_action_is_refused() -> None:
