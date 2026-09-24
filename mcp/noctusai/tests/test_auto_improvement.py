@@ -479,3 +479,48 @@ class TestQueryAutoReconcileFilter:
                      status="s2-memory", resolve_when="keeper:check_done")
         ai.refresh(force=True)
         assert len(ai.query(target="landed")) == 1
+
+
+class TestLedgerStoreRealMode:
+    """S3 #1 (2026-09-24): the writer publishes to origin/ledgers via the
+    Real store, never to the dev copy; reads + rewrites dual-read."""
+
+    @pytest.fixture
+    def real(self, ledger_repo, tmp_path, monkeypatch):
+        bare, clone, show = ledger_repo
+        dev_copy = clone / "project-history" / "auto-improvement.ndjson"
+        monkeypatch.setattr(ai, "CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setattr(ai, "CACHE_PATH", tmp_path / "cache" / "auto-improvement.sqlite")
+        monkeypatch.setattr(ai, "LEDGER_PATH", dev_copy)
+        return dev_copy, show
+
+    def test_log_publishes_to_ledgers_branch_not_dev(self, real):
+        dev_copy, show = real
+        r = ai.log_entry(scope="broad", kind="drift", target="t/real", description="d1")
+        assert r["ok"] and r["publish"]["status"] == "pushed", r
+        assert not dev_copy.exists()                      # the dev copy is never written
+        row = json.loads(show("auto-improvement.ndjson").strip())
+        assert row["target"] == "t/real"
+        assert [x["target"] for x in ai.query()] == ["t/real"]
+
+    def test_dual_read_sees_stale_peer_dev_rows(self, real):
+        dev_copy, show = real
+        dev_copy.write_text(json.dumps({"ts": "2026-09-01T00:00:00Z", "scope": "broad",
+                                        "kind": "drift", "target": "t/dev-only",
+                                        "description": "old writer", "status": "s1-emergent"}) + "\n")
+        ai.log_entry(scope="broad", kind="drift", target="t/new", description="d2")
+        assert {x["target"] for x in ai.query()} == {"t/dev-only", "t/new"}
+        # the keeper and refresh agree on the merged sha
+        assert ai.source_sha_for_root(dev_copy.parents[1]) == ai._source_sha()
+
+    def test_promote_rewrites_branch_and_absorbs_dev_only_rows(self, real):
+        dev_copy, show = real
+        stale = {"ts": "2026-09-01T00:00:00Z", "scope": "broad", "kind": "drift",
+                 "target": "t/dev-only", "description": "old writer", "status": "s1-emergent"}
+        dev_copy.write_text(json.dumps(stale) + "\n")
+        r = cr.promote(matches=[stale], target_status="s2-memory")
+        assert r["ok"] and r["updated"] == 1, r
+        branch = [json.loads(x) for x in show("auto-improvement.ndjson").splitlines()]
+        assert branch[0]["status"] == "s2-memory"
+        # the stale dev row does NOT undo the promotion on read (branch wins by key)
+        assert [x["status"] for x in ai.query()] == ["s2-memory"]

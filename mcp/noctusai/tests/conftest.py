@@ -132,3 +132,51 @@ def resolve_domain_product() -> str:
 @pytest.fixture(scope="session")
 def domain_product() -> str:
     return resolve_domain_product()
+
+
+@pytest.fixture
+def ledger_repo(tmp_path, monkeypatch):
+    """A REAL ledger store on a temp bare repo — never the network.
+
+    Builds ``origin.git`` (bare, `dev` = HEAD) + a clone whose
+    ``project-history/`` holds the legacy dev copies, bootstraps
+    ``origin/ledgers`` from them, then switches THIS test to the Real store
+    (``NOCTUS_LEDGER_STORE=git``) with ``settings.LEDGER_ROOT`` pointed at the
+    clone. Yields ``(bare, clone, show)`` where ``show(name)`` returns the
+    ledger's content on the bare remote's ``ledgers`` branch ("" if absent).
+    """
+    import subprocess as _sp
+
+    import settings as _settings
+    from tools.noctus.dev import _ledger_store as _ls
+
+    def g(cwd, *a):
+        r = _sp.run(["git", *a], cwd=str(cwd), capture_output=True, text=True)
+        assert r.returncode == 0, f"git {a}: {r.stderr}"
+        return r.stdout
+
+    bare = tmp_path / "origin.git"
+    _sp.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    clone = tmp_path / "primary"
+    _sp.run(["git", "clone", "-q", str(bare), str(clone)], check=True, capture_output=True)
+    g(clone, "config", "user.email", "t@example.com")
+    g(clone, "config", "user.name", "t")
+    (clone / "project-history").mkdir()
+    (clone / "project-history" / "README.md").write_text("ledgers\n")
+    g(clone, "add", "project-history")
+    g(clone, "commit", "-qm", "init")
+    g(clone, "push", "-q", "origin", "HEAD:refs/heads/dev")
+    g(bare, "symbolic-ref", "HEAD", "refs/heads/dev")
+    g(clone, "fetch", "-q", "origin")
+    boot = _ls.GitLedgerStore(repo_root=clone, backoff_s=0).bootstrap(
+        {"README.md": "test ledgers\n"}, message="seed")
+    assert boot["ok"], boot
+    monkeypatch.setenv(_ls.ENV_MODE, _ls.MODE_GIT)
+    monkeypatch.setattr(_settings, "LEDGER_ROOT", clone)
+
+    def show(name: str) -> str:
+        r = _sp.run(["git", "show", f"refs/heads/ledgers:{name}"], cwd=str(bare),
+                    capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else ""
+
+    yield bare, clone, show

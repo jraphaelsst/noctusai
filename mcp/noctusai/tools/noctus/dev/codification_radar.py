@@ -191,9 +191,11 @@ def promote(matches: list[dict], target_status: str) -> dict:
             "ok": False,
             "error": f"status must be one of {sorted(ai.STATUSES)}; got {target_status!r}",
         }
-    ledger = ai.LEDGER_PATH
-    if not ledger.exists():
-        return {"ok": False, "error": f"ledger not found: {ledger}"}
+    # Dual-read (origin/ledgers ∪ the dev copy) — the rewrite itself goes
+    # through the ledger store (`ai._rewrite_ledger`).
+    text, _store_err = ai.merged_text()
+    if not text:
+        return {"ok": False, "error": f"ledger not found: {ai.LEDGER_PATH} (and empty on origin/ledgers)"}
 
     # Build a match-set keyed by (ts, target, description) for O(1) lookup.
     match_keys: set[tuple[str, str, str]] = {ai._entry_key(m) for m in matches}

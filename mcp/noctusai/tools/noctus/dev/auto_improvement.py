@@ -12,8 +12,14 @@ Why this exists
     cached for consultation in cached memory not the actual file for
     patterns before editing docs/agents."*
 
-Source of truth (durable, committed)
-    `project-history/auto-improvement.ndjson` — one JSON object per
+Source of truth (durable, append-only)
+    `auto-improvement.ndjson` on the orphan `origin/ledgers` branch, written
+    through `_ledger_store` (git plumbing — never a commit on dev; owner
+    decision 2026-09-24). Until S4 of
+    `project-history/roadmaps/ledgers-off-dev-2026-09.md` every read is a
+    DUAL-READ: the legacy `project-history/auto-improvement.ndjson` dev copy
+    merged with the branch by entry key, the branch's version winning (so a
+    status promotion is never undone by a stale dev row). One JSON object per
     line. Schema:
       ts          ISO-8601 UTC timestamp
       agent       who surfaced (engineer name | 'tech-lead' | 'architect' …)
@@ -58,6 +64,7 @@ from .cache_backend import (
     cache_dir as _cache_dir,
     cache_path as _cache_path,
 )
+from ._ledger_store import Ledger, merge_ndjson_text, open_ledger, read_dual
 
 CACHE_DIR = _cache_dir()
 CACHE_PATH = _cache_path("auto-improvement")
@@ -65,6 +72,7 @@ CACHE_PATH = _cache_path("auto-improvement")
 # in the PRIMARY checkout even when the MCP server booted with cwd inside
 # a worktree. See workspace.get_ledger_root() docstring.
 LEDGER_PATH = LEDGER_ROOT / "project-history" / "auto-improvement.ndjson"
+LEDGER_NAME = "auto-improvement.ndjson"
 
 # Allowed enums (defensive; loud-fail on unknown values so typos don't grow stalely).
 SCOPES = frozenset({"scoped", "broad"})
@@ -81,11 +89,41 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _source_sha(ledger_path: Path | None = None) -> str:
+def _ledger() -> Ledger:
+    """The auto-improvement ledger on the store (origin/ledgers; the Fake is
+    the legacy local file at ``LEDGER_PATH``). Resolved per call so a patched
+    ``LEDGER_PATH`` is honoured."""
+    return open_ledger(LEDGER_NAME, LEDGER_PATH)
+
+
+def _merge_key(e: dict):
+    """Dual-read identity: the rewrite key, but only for rows that carry one —
+    a row without ts+target merges by exact line instead of collapsing."""
+    k = _entry_key(e)
+    return k if (k[0] and k[1]) else None
+
+
+def merged_text(ledger_path: Path | None = None) -> tuple[str, str | None]:
+    """S2 dual-read: the dev copy at ``ledger_path`` (default the primary's)
+    merged with origin/ledgers by entry key, the branch winning. Returns
+    ``(text, store_error)`` — a store read failure is surfaced, never hidden."""
     p = ledger_path if ledger_path is not None else LEDGER_PATH
-    if not p.exists():
+    dev = p.read_text(encoding="utf-8") if p.exists() else ""
+    return read_dual(_ledger(), dev, key=_merge_key)
+
+
+def _source_sha(ledger_path: Path | None = None) -> str:
+    text, _err = merged_text(ledger_path)
+    if not text:
         return ""
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def source_sha_for_root(root: Path) -> str:
+    """The freshness sha the cache for ``root``'s tree must carry — shared with
+    ``check_auto_improvement_cache_freshness`` so the keeper and ``refresh``
+    can never disagree about what "fresh" means."""
+    return _source_sha(Path(root) / "project-history" / "auto-improvement.ndjson")
 
 
 def _ledger_path_for(worktree_path: str | None) -> Path:
@@ -219,9 +257,16 @@ def log_entry(
         entry["resolve_when"] = resolve_when
     if resolve_to is not None:
         entry["resolve_to"] = resolve_to
-    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LEDGER_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    publish = _ledger().append(
+        [json.dumps(entry, ensure_ascii=False)],
+        message=f"auto-improvement {scope}/{kind} {status} — {target}"[:160],
+    )
+    if not publish.get("ok"):
+        # The row is durably SPOOLED (read-your-writes holds; the next append
+        # or `noctus.dev.ledger_store action='flush'` publishes it) — say so.
+        logging.getLogger(__name__).warning(
+            "auto_improvement.log_entry: row spooled, not yet on origin/ledgers: %s",
+            publish.get("error"))
     # 3-leg keeper-mirror contract: EAGER-refresh the mirror cache at the
     # mutation point (zero-OpenAI, source_sha-guarded) so the cache stays
     # COMPLIANT by construction — the freshness check is then a true no-op,
@@ -246,7 +291,7 @@ def log_entry(
         ledger_path = str(LEDGER_PATH.relative_to(LEDGER_ROOT))
     except ValueError:
         ledger_path = str(LEDGER_PATH)
-    return {"ok": True, "entry": entry, "ledger_path": ledger_path}
+    return {"ok": True, "entry": entry, "ledger_path": ledger_path, "publish": publish}
 
 
 def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
@@ -277,9 +322,10 @@ def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
             }
     conn.execute("DELETE FROM auto_improvement")
     rows: list[tuple] = []
-    if ledger_path.exists():
+    text, store_error = merged_text(ledger_path)
+    if text:
         now = _now_iso()
-        for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -320,6 +366,7 @@ def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
         "source_sha": sha_now,
         "rows_written": len(rows),
         "resolved_ledger_path": str(ledger_path),
+        "store_error": store_error,
     }
 
 
@@ -457,11 +504,10 @@ def _entry_key(e: dict) -> tuple[str, str, str]:
 
 
 def _load_entries() -> list[dict]:
-    """Parse the ndjson into valid entry dicts (malformed lines skipped)."""
+    """Parse the (dual-read) ledger into valid entry dicts (malformed lines skipped)."""
     out: list[dict] = []
-    if not LEDGER_PATH.exists():
-        return out
-    for line in LEDGER_PATH.read_text(encoding="utf-8").splitlines():
+    text, _err = merged_text()
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -473,40 +519,52 @@ def _load_entries() -> list[dict]:
 
 
 def _rewrite_ledger(mutate) -> int:
-    """Atomic by-entry rewrite of the ndjson (tmp + rename). `mutate(entry)`
-    returns the (possibly modified) entry dict; an entry is counted changed when
-    its dict differs. Malformed lines are preserved verbatim — never lost.
+    """By-entry rewrite of the ledger. `mutate(entry)` returns the (possibly
+    modified) entry dict; an entry is counted changed when its dict differs.
+    Malformed lines are preserved verbatim — never lost.
 
     Single source of truth for every status-mutating rewrite (reconcile +
     `codification_radar.promote` both route through this — DRY on the
-    atomic-rewrite + malformed-preservation invariants).
+    rewrite + malformed-preservation invariants).
+
+    Since 2026-09-24 the rewrite is a `_ledger_store` ``update``: the transform
+    runs against the fresh origin/ledgers tip (re-run on every race retry),
+    merged with the dev copy first, so a row a stale peer appended to dev is
+    promoted too and the branch ends up the superset.
     """
-    if not LEDGER_PATH.exists():
-        return 0
-    new_lines: list[str] = []
-    changed = 0
-    for raw in LEDGER_PATH.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            new_lines.append(raw)
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            new_lines.append(raw)  # preserve malformed verbatim
-            continue
-        before = json.dumps(entry, ensure_ascii=False, sort_keys=True)
-        updated = mutate(dict(entry))
-        after = json.dumps(updated, ensure_ascii=False, sort_keys=True)
-        if after != before:
-            changed += 1
-            new_lines.append(json.dumps(updated, ensure_ascii=False))
-        else:
-            new_lines.append(raw)  # unchanged → preserve verbatim (no cosmetic churn)
-    tmp = LEDGER_PATH.with_suffix(".ndjson.tmp")
-    tmp.write_text("\n".join(new_lines) + ("\n" if new_lines else ""), encoding="utf-8")
-    tmp.replace(LEDGER_PATH)
-    return changed
+    dev = LEDGER_PATH.read_text(encoding="utf-8") if LEDGER_PATH.exists() else ""
+    counter = {"changed": 0}
+
+    def _transform(branch_text: str) -> str:
+        base = merge_ndjson_text(dev, branch_text, key=_merge_key)
+        new_lines: list[str] = []
+        changed = 0
+        for raw in base.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                new_lines.append(raw)  # preserve malformed verbatim
+                continue
+            before = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+            updated = mutate(dict(entry))
+            after = json.dumps(updated, ensure_ascii=False, sort_keys=True)
+            if after != before:
+                changed += 1
+                new_lines.append(json.dumps(updated, ensure_ascii=False))
+            else:
+                new_lines.append(raw)  # unchanged → preserve verbatim (no cosmetic churn)
+        counter["changed"] = changed
+        if not changed:
+            return branch_text
+        return "\n".join(new_lines) + ("\n" if new_lines else "")
+
+    result = _ledger().update(_transform, message="auto-improvement status rewrite")
+    if not result.get("ok"):
+        raise RuntimeError(f"auto-improvement rewrite not published: {result.get('error')}")
+    return counter["changed"]
 
 
 def _grep_file_count(term: str, root: Path) -> int:

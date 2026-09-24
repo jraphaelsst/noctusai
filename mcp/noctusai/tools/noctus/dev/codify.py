@@ -58,11 +58,21 @@ VALID_STAGES = frozenset({S1_EMERGENT, S2_MEMORY, S3_CODIFIED, S4_KEEPER})
 def _ledger_entries_for_target(
     target: str, ledger_path: Path = LEDGER_PATH,
 ) -> list[dict]:
-    """Read every ledger entry for ``target`` (in chronological order)."""
-    if not ledger_path.exists():
+    """Read every ledger entry for ``target`` (in chronological order).
+
+    The default path is the DUAL-READ (the dev copy ∪ origin/ledgers,
+    `auto_improvement.merged_text`) — since 2026-09-24 new rows land only on
+    the ledgers branch, so a file-only read would miss the s1/s2 prerequisite
+    a peer just logged. An explicit test override reads that file alone."""
+    if ledger_path == LEDGER_PATH:
+        from . import auto_improvement as _ai  # noqa: PLC0415 — late: tests patch the module
+        text, _err = _ai.merged_text()
+    elif ledger_path.exists():
+        text = ledger_path.read_text(encoding="utf-8")
+    else:
         return []
     entries: list[dict] = []
-    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue

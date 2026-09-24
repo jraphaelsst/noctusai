@@ -505,7 +505,28 @@ def read_dual(ledger: Ledger, dev_text: str, *, fetch: bool = False,
     return merge_ndjson_text(dev_text, store_text, key=key), None
 
 
+def read_ledger_text(name: str, dev_path: Path, *, fetch: bool = False,
+                     key: Callable[[dict], Any] | None = None) -> tuple[str, str | None]:
+    """Dual-read one ledger: the dev copy at ``dev_path`` ∪ the store.
+
+    The one-call form every simple reader uses (vector-costs, dispatch-budget,
+    vector-calibration, absorptions, …) — ``(merged_text, store_error)``."""
+    dev_path = Path(dev_path)
+    dev = dev_path.read_text(encoding="utf-8") if dev_path.exists() else ""
+    return read_dual(open_ledger(name, dev_path), dev, fetch=fetch, key=key)
+
+
+def append_rows(name: str, dev_path: Path, rows: Iterable[dict | str], *, message: str,
+                publish: bool = True) -> dict:
+    """Append rows (dicts are JSON-encoded, compact, key order kept) to one
+    ledger through the factory. Returns the store result; a result with
+    ``status='pending'`` means the rows are durably spooled, not lost."""
+    lines = [r if isinstance(r, str) else json.dumps(r, ensure_ascii=False) for r in rows]
+    return open_ledger(name, Path(dev_path)).append(lines, message=message, publish=publish)
+
+
 __all__ = [
+    "read_ledger_text", "append_rows",
     "Ledger", "FileLedger", "GitLedger", "GitLedgerStore", "LedgerStoreError",
     "open_ledger", "default_store", "read_dual", "merge_ndjson_text", "store_mode",
     "MOVED_LEDGERS", "LEDGERS_BRANCH", "ENV_MODE", "MODE_GIT", "MODE_FAKE",

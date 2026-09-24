@@ -60,6 +60,10 @@ def _run_cli(*args: str, env_extra: dict | None = None) -> subprocess.CompletedP
         # PYTHONPATH so `noctusai_lib` resolves (seed/lib/backend) PLUS the
         # MCP package dir so `from settings import ...` works.
         "PYTHONPATH": f"{SEED_LIB_BACKEND}:{CLI_PATH.parent}",
+        # This env is built from scratch (conftest's pin does not reach it), and
+        # the ledger store's default is the REAL store — git plumbing that
+        # pushes to origin/ledgers. A test subprocess must never publish.
+        "NOCTUS_LEDGER_STORE": "fake",
     }
     if env_extra:
         env.update(env_extra)
@@ -268,9 +272,22 @@ def test_refresh_auto_improvement_cache_reads_the_worktree_not_the_primary():
         combined = proc.stdout + proc.stderr
         assert proc.returncode == 0, combined
         assert "worktree override:" in combined, combined
-        # Real content, not zero rows — proves it read A ndjson, not an
-        # empty/missing one.
-        assert "rebuilt — 1 rows" in combined or "rebuilt — 1 row" in combined, combined
+        # Since 2026-09-24 a refresh is the DUAL-READ (this tree's dev copy ∪
+        # the ledger store), so the absolute count also carries the store's
+        # rows. What proves THIS worktree's file was read is the DELTA: one
+        # more distinct row in the worktree ⇒ exactly one more cached row.
+        n1 = _rebuilt_rows(combined)
+        wt2 = _make_auto_improvement_worktree(Path(tmpdir) / "second", _TWO_LINES)
+        proc2 = _run_cli("--refresh-auto-improvement-cache", "--worktree-path", str(wt2))
+        n2 = _rebuilt_rows(proc2.stdout + proc2.stderr)
+        assert n1 >= 1 and n2 == n1 + 1, (n1, n2, combined)
+
+
+def _rebuilt_rows(out: str) -> int:
+    import re
+    m = re.search(r"rebuilt — (\d+) rows?", out)
+    assert m, out
+    return int(m.group(1))
 
 
 def test_refresh_then_check_agree_on_the_same_worktree():

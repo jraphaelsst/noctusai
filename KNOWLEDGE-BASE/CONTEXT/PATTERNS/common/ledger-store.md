@@ -27,7 +27,7 @@ does not need a place on the integration branch.
 
 | Ledger | Writer | Writer flipped to the store |
 |---|---|---|
-| `auto-improvement.ndjson` | `noctus.dev.auto_improvement_log` · `_promote` · `_reconcile` | pending (S3 #1) |
+| `auto-improvement.ndjson` | `noctus.dev.auto_improvement_log` · `_promote` · `_reconcile` · `codify_log` | **flipped** (S3 #1). Rewrites are `update(transform)`; the cache and its keeper hash the dual-read |
 | `vector-costs.ndjson` · `vector-signals.ndjson` · `vector-calibration.ndjson` · `dispatch-budget.ndjson` · `absorptions.ndjson` | the pre-commit spool drain · their `noctus.dev.*` loggers | pending (S3 #2) |
 | `worktree-salvage.ndjson` | `task_branch` cleanup · `salvage_before_delete` · `session_end_sweep` · `_worktree_salvage` | pending (S3 #3) |
 | `branch-tree.ndjson` | `noctus.dev.branch_pointer` | pending (S3 #4) |
