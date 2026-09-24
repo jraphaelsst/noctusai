@@ -34,15 +34,26 @@ export interface CertidaoMatrizColuna {
   cnpj?: string | null;
 }
 
+/** A matrix row — one of the FIXED 13 (5.1-5.13, `tipo` set, `custom`
+ *  false, `id` null) or a per-card CUSTOM row (migration 170; `tipo` null,
+ *  `custom` true, `id` the row's own uuid, `rotulo` "Outras: <nome>").
+ *  `chave` is the STABLE key into `celulas`/cell lookups either way — a
+ *  fixed row's `chave` equals its `tipo`; a custom row's `chave` equals its
+ *  `id` (never overload `tipo`, which stays the DB sentinel
+ *  `"outras_custom"` for every custom-row resultado). */
 export interface CertidaoMatrizLinha {
-  tipo: string;
-  linha: string; // "5.1".."5.15"
+  tipo: string | null;
+  chave: string;
+  id: string | null;
+  linha: string; // "5.1".."5.13", then "5.14", "5.15", ... for custom rows
   rotulo: string;
+  custom: boolean;
 }
 
-/** `totais[coluna_id]` — per-column counts across the 15 rows (never per
- *  row across columns), mirroring the Excel source's "Totais" footer. An
- *  N/A cell (FGTS on a PF column) never counts toward any bucket. */
+/** `totais[coluna_id]` — per-column counts across every row (never per row
+ *  across columns), mirroring the Excel source's "Totais" footer. An N/A
+ *  cell (FGTS on a PF column, SERASA on a PJ column) never counts toward
+ *  any bucket. */
 export interface CertidaoMatrizTotais {
   nao_constam: number;
   constam: number;
@@ -57,7 +68,17 @@ export interface CertidoesMatrizResponse {
   data_levantamento: string; // YYYY-MM-DD
   linhas: CertidaoMatrizLinha[];
   colunas: CertidaoMatrizColuna[];
-  /** `celulas[tipo][coluna_id]`. */
+  /** `celulas[linha.chave][coluna_id]`. */
   celulas: Record<string, Record<string, CertidaoMatrizCelula>>;
   totais: Record<string, CertidaoMatrizTotais>;
+}
+
+/** One per-card custom row (`POST/PATCH .../certidoes/matriz/linhas`) —
+ *  the raw registry row, distinct from `CertidaoMatrizLinha` (the matrix's
+ *  own display shape, which wraps this). */
+export interface CertidaoMatrizLinhaCustomizada {
+  id: string;
+  nome: string;
+  ordem: number;
+  created_at: string;
 }

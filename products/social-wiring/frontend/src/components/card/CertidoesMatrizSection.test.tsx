@@ -1,7 +1,8 @@
 /**
  * `CertidoesMatrizSection` — the "Certidões" card tab's matrix render:
- * loading signals, color mapping per cell status, per-column totals, and
- * the FGTS row's N/A on every PF column.
+ * loading signals, color mapping per cell status, per-column totals, the
+ * FGTS/SERASA N/A rows, and the "+ Adicionar certidão" custom-row CRUD
+ * (create / rename / remove-with-confirmation).
  */
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,13 +11,19 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type {
   CertidaoMatrizCelula,
+  CertidaoMatrizLinha,
   CertidoesMatrizResponse,
 } from "@/types/certidoesMatriz";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
+const { mockGet, mockPost, mockPatch, mockDelete } = vi.hoisted(() => ({
+  mockGet: vi.fn(),
+  mockPost: vi.fn(),
+  mockPatch: vi.fn(),
+  mockDelete: vi.fn(),
+}));
 
 vi.mock("@noctusai/seed/infra", () => ({
-  api: { get: mockGet, post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
+  api: { get: mockGet, post: mockPost, patch: mockPatch, put: vi.fn(), delete: mockDelete },
   supabase: {
     auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
   },
@@ -25,7 +32,7 @@ vi.mock("@noctusai/seed/infra", () => ({
 // `CertidoesPartePanel` (opened in the click-through dialog) has its own,
 // much larger `@/hooks/useCertidoes` surface — covered by its own test
 // file. Stubbed here so this file's mocking stays scoped to the matriz's
-// own GET.
+// own GET/POST/PATCH/DELETE.
 vi.mock("@/components/CertidoesPartePanel", () => ({
   CertidoesPartePanel: ({ nomeParte }: { nomeParte?: string }) => (
     <div data-testid="certidoes-parte-panel-stub">{nomeParte}</div>
@@ -49,11 +56,22 @@ function celula(over: Partial<CertidaoMatrizCelula> = {}): CertidaoMatrizCelula 
   };
 }
 
+function linhaFixa(over: Partial<CertidaoMatrizLinha> = {}): CertidaoMatrizLinha {
+  return {
+    tipo: "cnd_federal", chave: "cnd_federal", id: null,
+    linha: "5.1", rotulo: "Receita Federal", custom: false,
+    ...over,
+  };
+}
+
 function matrizResponse(over: Partial<CertidoesMatrizResponse> = {}): CertidoesMatrizResponse {
-  const linhas = [
-    { tipo: "cnd_federal", linha: "5.1", rotulo: "Receita Federal" },
-    { tipo: "trf3_sp", linha: "5.2", rotulo: "Justiça Federal – 1ª instância" },
-    { tipo: "fgts_regularidade", linha: "5.13", rotulo: "Regularidade do FGTS (empresas)" },
+  const linhas: CertidaoMatrizLinha[] = [
+    linhaFixa(),
+    linhaFixa({ tipo: "trf3_sp", chave: "trf3_sp", linha: "5.2", rotulo: "Justiça Federal – 1ª instância" }),
+    linhaFixa({
+      tipo: "fgts_regularidade", chave: "fgts_regularidade", linha: "5.13",
+      rotulo: "Regularidade do FGTS (empresas)",
+    }),
   ];
   const colunas = [
     { kind: "pessoa" as const, id: "vend-1", rotulo: "VEND 1", nome: "Ronaldo" },
@@ -98,6 +116,9 @@ describe("CertidoesMatrizSection", () => {
   beforeEach(() => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockGet.mockReset();
+    mockPost.mockReset();
+    mockPatch.mockReset();
+    mockDelete.mockReset();
   });
 
   afterEach(() => {
@@ -184,5 +205,96 @@ describe("CertidoesMatrizSection", () => {
 
     fireEvent.click(screen.getByTestId("certidoes-matriz-celula-fgts_regularidade-vend-1"));
     expect(screen.queryByTestId("certidoes-parte-panel-stub")).toBeNull();
+  });
+
+  describe("+ Adicionar certidão (custom rows, migration 170)", () => {
+    it("posts the new row's name and refetches the matriz", async () => {
+      mockGet.mockResolvedValue(matrizResponse());
+      mockPost.mockResolvedValue({ id: "linha-x", nome: "Consulta Extra", ordem: 14 });
+      render(<CertidoesMatrizSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+      await waitFor(() => expect(screen.getByTestId("certidoes-matriz")).toBeTruthy());
+
+      fireEvent.click(screen.getByTestId("certidoes-matriz-adicionar-btn"));
+      fireEvent.change(screen.getByTestId("certidoes-matriz-novo-nome-input"), {
+        target: { value: "Consulta Extra" },
+      });
+      fireEvent.click(screen.getByTestId("certidoes-matriz-adicionar-confirmar"));
+
+      await waitFor(() =>
+        expect(mockPost).toHaveBeenCalledWith(
+          "/api/clientes/cli-1/certidoes/matriz/linhas",
+          { nome: "Consulta Extra" },
+        ),
+      );
+    });
+
+    it("a custom row shows rename/remove icons; a fixed row does not", async () => {
+      const resposta = matrizResponse();
+      resposta.linhas.push({
+        tipo: null, chave: "linha-x", id: "linha-x", linha: "5.14",
+        rotulo: "Outras: Consulta Extra", custom: true,
+      });
+      resposta.celulas["linha-x"] = {
+        "vend-1": celula(), "emp-1": celula(),
+      };
+      mockGet.mockResolvedValue(resposta);
+      render(<CertidoesMatrizSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+      await waitFor(() => expect(screen.getByTestId("certidoes-matriz")).toBeTruthy());
+
+      expect(screen.getByTestId("certidoes-matriz-linha-renomear-linha-x")).toBeTruthy();
+      expect(screen.getByTestId("certidoes-matriz-linha-remover-linha-x")).toBeTruthy();
+      expect(screen.queryByTestId("certidoes-matriz-linha-renomear-cnd_federal")).toBeNull();
+    });
+
+    it("renaming a custom row PATCHes its new name", async () => {
+      const resposta = matrizResponse();
+      resposta.linhas.push({
+        tipo: null, chave: "linha-x", id: "linha-x", linha: "5.14",
+        rotulo: "Outras: Nome Antigo", custom: true,
+      });
+      resposta.celulas["linha-x"] = { "vend-1": celula(), "emp-1": celula() };
+      mockGet.mockResolvedValue(resposta);
+      mockPatch.mockResolvedValue({ id: "linha-x", nome: "Nome Novo", ordem: 14 });
+      render(<CertidoesMatrizSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+      await waitFor(() => expect(screen.getByTestId("certidoes-matriz")).toBeTruthy());
+
+      fireEvent.click(screen.getByTestId("certidoes-matriz-linha-renomear-linha-x"));
+      const input = screen.getByTestId("certidoes-matriz-renomear-nome-input") as HTMLInputElement;
+      expect(input.value).toBe("Nome Antigo");
+      fireEvent.change(input, { target: { value: "Nome Novo" } });
+      fireEvent.click(screen.getByTestId("certidoes-matriz-renomear-confirmar"));
+
+      await waitFor(() =>
+        expect(mockPatch).toHaveBeenCalledWith(
+          "/api/clientes/cli-1/certidoes/matriz/linhas/linha-x",
+          { nome: "Nome Novo" },
+        ),
+      );
+    });
+
+    it("removing a custom row asks for pt-BR confirmation before DELETEing", async () => {
+      const resposta = matrizResponse();
+      resposta.linhas.push({
+        tipo: null, chave: "linha-x", id: "linha-x", linha: "5.14",
+        rotulo: "Outras: Apagar Esta", custom: true,
+      });
+      resposta.celulas["linha-x"] = { "vend-1": celula(), "emp-1": celula() };
+      mockGet.mockResolvedValue(resposta);
+      mockDelete.mockResolvedValue({});
+      render(<CertidoesMatrizSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+      await waitFor(() => expect(screen.getByTestId("certidoes-matriz")).toBeTruthy());
+
+      fireEvent.click(screen.getByTestId("certidoes-matriz-linha-remover-linha-x"));
+      expect(screen.getByText(/Tem certeza que deseja remover/)).toBeTruthy();
+      expect(mockDelete).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTestId("certidoes-matriz-remover-confirmar"));
+
+      await waitFor(() =>
+        expect(mockDelete).toHaveBeenCalledWith(
+          "/api/clientes/cli-1/certidoes/matriz/linhas/linha-x",
+        ),
+      );
+    });
   });
 });
