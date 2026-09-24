@@ -41,8 +41,11 @@ export function RemoverEmpresaConfirmDialog({
           <AlertDialogDescription>
             O vínculo com <strong>{nome || "esta empresa"}</strong> será removido
             deste atendimento. Se nenhum outro cliente estiver vinculado a ela, o
-            cadastro da empresa e seus documentos (Cartão CNPJ) serão excluídos
-            permanentemente. Esta ação não pode ser desfeita.
+            cadastro da empresa, seus documentos (Cartão CNPJ), seus dados e suas
+            certidões serão excluídos permanentemente. Esta ação não pode ser
+            desfeita. Se outro atendimento ainda usar esta empresa, apenas o
+            vínculo com este cliente é removido — a empresa e suas certidões
+            continuam disponíveis para o outro atendimento.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

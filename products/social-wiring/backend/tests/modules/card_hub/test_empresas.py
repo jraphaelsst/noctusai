@@ -440,6 +440,21 @@ class TestHttpDelete:
             "storage_path": f"{ORG_ID}/empresas/{empresa['id']}/cartao.pdf",
         }
         scoped.set_table_data("empresa_documentos", [doc])
+        # Owner decision (this dispatch): a full delete also soft-deletes
+        # this empresa's certidões through the audited mechanism.
+        consulta = {
+            "id": str(uuid4()), "org_id": ORG_ID, "tipo_documento": "cnpj",
+            "documento": empresa["cnpj"], "nome": empresa["razao_social"],
+            "cliente_id": None, "atendimento_parte_id": None,
+            "empresa_id": empresa["id"], "created_by": None,
+            "status": "concluida", "origem": "manual",
+            "total_certidoes": 1, "concluidas": 1,
+            "situacao_cadastral": None, "data_situacao": None,
+            "situacao_origem": None, "excluida_em": None, "excluida_por": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+        scoped.set_table_data("certidao_consultas", [consulta])
         _make_admin(client)
 
         fake_storage = FakeStorageBackend()
@@ -455,10 +470,57 @@ class TestHttpDelete:
         body = r.json()
         assert body["empresa_removida"] is True
         assert body["documentos_removidos"] == 1
+        assert body["certidoes_removidas"] == 1
         assert body["storage_falhas"] == []
         assert scoped.table("empresas").select("*").eq(
             "id", empresa["id"]
         ).execute().data == []
+        consulta_row = (
+            scoped.table("certidao_consultas").select("*")
+            .eq("id", consulta["id"]).execute().data[0]
+        )
+        assert consulta_row["excluida_em"] is not None
+
+    def test_admin_unlink_keeping_the_empresa_removes_no_certidoes(self, client, scoped):
+        """Shared-empresa delete (another cliente still participates) —
+        the empresa row AND its certidões must survive untouched."""
+        cid, aid = str(uuid4()), str(uuid4())
+        outro_cliente = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Titular")])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        empresa = _empresa()
+        scoped.set_table_data("empresas", [empresa])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(cid, empresa["id"]),
+            _participacao(outro_cliente, empresa["id"]),
+        ])
+        consulta = {
+            "id": str(uuid4()), "org_id": ORG_ID, "tipo_documento": "cnpj",
+            "documento": empresa["cnpj"], "nome": empresa["razao_social"],
+            "cliente_id": None, "atendimento_parte_id": None,
+            "empresa_id": empresa["id"], "created_by": None,
+            "status": "concluida", "origem": "manual",
+            "total_certidoes": 1, "concluidas": 1,
+            "situacao_cadastral": None, "data_situacao": None,
+            "situacao_origem": None, "excluida_em": None, "excluida_por": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+        scoped.set_table_data("certidao_consultas", [consulta])
+        _make_admin(client)
+
+        r = client.delete(f"/api/clientes/{cid}/empresas/{empresa['id']}", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["empresa_removida"] is False
+        assert body["certidoes_removidas"] == 0
+        consulta_row = (
+            scoped.table("certidao_consultas").select("*")
+            .eq("id", consulta["id"]).execute().data[0]
+        )
+        assert consulta_row["excluida_em"] is None
 
     def test_unknown_participacao_is_404(self, client, scoped):
         cid, aid = str(uuid4()), str(uuid4())

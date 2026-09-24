@@ -970,8 +970,9 @@ async def delete_empresa_route(
     storage=Depends(get_empresas_storage_backend),
 ) -> dict:
     """Unlinks `empresa_id` from `cliente_id`; the `empresas` row (and its
-    CASCADE-linked `empresa_documentos`) is hard-deleted only when this was
-    the last participação — see `dados_service.remover_participacao`'s
+    CASCADE-linked `empresa_documentos`) is hard-deleted, and its certidões
+    soft-deleted through the audited certidões mechanism, only when this
+    was the last participação — see `dados_service.remover_participacao`'s
     docstring. ADMIN/OWNER ONLY (same trusted-DB gate `excluir_cliente_
     route` uses, same reasoning: this can delete real rows + storage
     files, irreversibly, the moment the last link goes).
@@ -980,13 +981,20 @@ async def delete_empresa_route(
     `excluir_cliente_route` takes and for the same reason (a storage
     delete that ran first could leave a file gone with its row still
     pointing at it, if the DB call then failed). A failure here is
-    reported in `storage_falhas`, never swallowed."""
+    reported in `storage_falhas`, never swallowed. Certidão FILES are
+    NEVER touched here — the soft-delete this cascades into never removes
+    a blob (owner rule: every deletion is recoverable + attributable); the
+    already-existing 30-day `certidoes.service.purge_excluidas` scheduled
+    job is the only thing that ever hard-deletes them."""
     user, org_id = _auth_parts(auth)
     require_org_admin_role(
         get_core_client(), getattr(user, "id", None), "Excluir empresa"
     )
 
-    resultado = empresas_svc.remover(client, org_id, cliente_id, empresa_id)
+    resultado = empresas_svc.remover(
+        client, org_id, cliente_id, empresa_id,
+        acting_user_id=getattr(user, "id", None),
+    )
 
     storage_falhas: list[str] = []
     for documento in resultado["documentos"]:
@@ -1006,6 +1014,7 @@ async def delete_empresa_route(
         "participacao_removida": resultado["participacao_removida"],
         "empresa_removida": resultado["empresa_removida"],
         "documentos_removidos": len(resultado["documentos"]),
+        "certidoes_removidas": resultado["certidoes_removidas"],
         "storage_falhas": storage_falhas,
     }
 

@@ -183,6 +183,10 @@ export interface RemoverEmpresaResponse {
   participacao_removida: boolean;
   empresa_removida: boolean;
   documentos_removidos: number;
+  /** How many of this empresa's `certidao_consultas` were soft-deleted
+   *  through the audited certidões mechanism — `0` unless `empresa_removida`
+   *  is `true` (owner decision: a full delete takes its certidões with it). */
+  certidoes_removidas: number;
   storage_falhas: string[];
 }
 

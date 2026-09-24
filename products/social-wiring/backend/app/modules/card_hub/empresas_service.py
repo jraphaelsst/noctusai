@@ -368,17 +368,29 @@ def adicionar_manual(
     )
 
 
-def remover(client: Any, org_id: UUID, cliente_id: UUID, empresa_id: UUID) -> dict:
+def remover(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    empresa_id: UUID,
+    *,
+    acting_user_id: Optional[Any] = None,
+) -> dict:
     """`DELETE /{cliente_id}/empresas/{empresa_id}` (slice D) — unlinks this
     cliente from the empresa; deletes the empresa row (and everything that
-    CASCADEs off it) only when no other cliente still participates in it.
-    `ensure_cliente` first, same 404-before-anything-else posture
+    CASCADEs off it) — AND soft-deletes its certidões through the audited
+    certidões mechanism — only when no other cliente still participates in
+    it. `ensure_cliente` first, same 404-before-anything-else posture
     `adicionar_manual` already takes. Delegates the actual write to
     `dados_service.remover_participacao` — see its own docstring for the
-    ordering/CASCADE reasoning and the `documentos` list the caller (the
-    route) needs to clean up storage."""
+    ordering/CASCADE reasoning, the certidões soft-delete, and the
+    `documentos` list the caller (the route) needs to clean up storage.
+    `acting_user_id` is the `excluida_por` on every certidão consulta this
+    unlink cascades into deleting."""
     ensure_cliente(client, org_id, cliente_id)
-    return dados_service.remover_participacao(client, org_id, cliente_id, empresa_id)
+    return dados_service.remover_participacao(
+        client, org_id, cliente_id, empresa_id, acting_user_id=acting_user_id
+    )
 
 
 __all__ = ["adicionar_manual", "listar", "remover"]

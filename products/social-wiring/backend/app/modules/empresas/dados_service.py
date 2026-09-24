@@ -493,7 +493,12 @@ def atualizar_manual(
 
 
 def remover_participacao(
-    client: Any, org_id: UUID, cliente_id: UUID, empresa_id: UUID
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    empresa_id: UUID,
+    *,
+    acting_user_id: Optional[Any] = None,
 ) -> dict:
     """The DELETE surface (slice D) — removes THIS cliente's link
     (`cliente_empresa_participacoes`) to `empresa_id`; the `empresas` row
@@ -501,15 +506,41 @@ def remover_participacao(
     `empresa_campo_conflitos`, migration 167) is deleted too, but ONLY when
     no other cliente still participates in it.
 
+    🔴 Owner decision, this dispatch: "if we delete that company, no point
+    keeping anything related to it" — a full delete ALSO soft-deletes every
+    non-excluded `certidao_consultas` row scoped to THIS empresa (and,
+    through it, every one of that consulta's resultados). This calls the
+    SAME audited mechanism `DELETE /api/certidoes/consultas/{id}` already
+    uses — `certidoes.service.soft_delete_consulta` — never a second
+    hand-rolled delete path (owner rule: every action is audited; a prior
+    unattributed hard-delete of a consulta was a prod incident, migration
+    161's header). It is a SOFT delete, same as that route: `excluida_em`/
+    `excluida_por` are stamped, blobs are left alone (the scheduled 30-day
+    `certidoes.service.purge_excluidas` job is the only thing that ever
+    hard-deletes a certidão file, and it already carries the `_is_
+    certidoes_storage_key` prefix safety check — P0c contract §C5 — so a
+    stray key can never reach into another entity's storage). Never touches
+    a consulta linked to a PERSON: the query below filters strictly by
+    `empresa_id = this empresa`, the exact column a person-scoped (`cliente_
+    id`-only) consulta never has set.
+
+    MUST run BEFORE the `empresas` row is deleted: `certidao_consultas.
+    empresa_id` is `ON DELETE SET NULL` (migration 167:372) — deleting the
+    empresa first would silently orphan every one of its consultas (empresa_
+    id wiped to NULL) before this function ever got a chance to find them,
+    the exact "certidões become invisible, not gone" gap the owner is
+    closing here.
+
     Returns `{"participacao_removida": bool, "empresa_removida": bool,
-    "documentos": [{"id","storage_path"}, ...]}` — `documentos` is collected
-    BEFORE any delete runs (mirrors `clientes_service.excluir_cliente`'s own
-    ordering note: `empresa_documentos` CASCADEs off `empresas`, so its rows
-    — and their `storage_path`s — would already be gone by the time a
-    caller tried to read them AFTER the empresa delete). Storage is
-    deliberately NOT touched here — this module is DB I/O only; the ROUTE
-    deletes each path from the bucket, same split `excluir_cliente_route`
-    already takes."""
+    "documentos": [{"id","storage_path"}, ...], "certidoes_removidas": int}`
+    — `documentos` is collected BEFORE any delete runs (mirrors `clientes_
+    service.excluir_cliente`'s own ordering note: `empresa_documentos`
+    CASCADEs off `empresas`, so its rows — and their `storage_path`s —
+    would already be gone by the time a caller tried to read them AFTER the
+    empresa delete). Storage is deliberately NOT touched here for `empresa_
+    documentos` either — this module is DB I/O only; the ROUTE deletes each
+    path from the bucket, same split `excluir_cliente_route` already
+    takes."""
     ensure_empresa(client, org_id, empresa_id)
 
     participacoes_table = "cliente_empresa_participacoes"
@@ -540,6 +571,7 @@ def remover_participacao(
             "participacao_removida": True,
             "empresa_removida": False,
             "documentos": [],
+            "certidoes_removidas": 0,
         }
 
     documentos = (
@@ -550,6 +582,24 @@ def remover_participacao(
         .execute()
     ).data or []
 
+    from app.modules.certidoes import service as certidoes_svc
+
+    consultas_empresa = (
+        _t(client, "certidao_consultas")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("empresa_id", str(empresa_id))
+        .is_("excluida_em", "null")
+        .execute()
+    ).data or []
+    certidoes_removidas = 0
+    for consulta in consultas_empresa:
+        n = certidoes_svc.soft_delete_consulta(
+            client, org_id, consulta["id"], acting_user_id
+        )
+        if n is not None:
+            certidoes_removidas += 1
+
     _t(client, TABLE).delete().eq("id", str(empresa_id)).eq(
         "org_id", str(org_id)
     ).execute()
@@ -558,6 +608,7 @@ def remover_participacao(
         "participacao_removida": True,
         "empresa_removida": True,
         "documentos": documentos,
+        "certidoes_removidas": certidoes_removidas,
     }
 
 

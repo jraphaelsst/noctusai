@@ -41,6 +41,7 @@ def client():
     for table in (
         "empresas", "empresa_campo_conflitos",
         "cliente_empresa_participacoes", "empresa_documentos",
+        "certidao_consultas", "certidao_resultados",
     ):
         scoped.set_table_data(table, [])
     return scoped
@@ -353,3 +354,153 @@ class TestRemoverParticipacao:
             dados_service.remover_participacao(
                 client, ORG_ID, str(uuid4()), empresa["id"],
             )
+
+    # ─── Owner decision (this dispatch): a full empresa delete ALSO soft-
+    # deletes its certidões through the audited certidões mechanism ───────
+
+    @staticmethod
+    def _consulta(*, empresa_id=None, cliente_id=None, **extra) -> dict:
+        row = {
+            "id": str(uuid4()), "org_id": str(ORG_ID),
+            "tipo_documento": "cnpj" if empresa_id else "cpf",
+            "documento": "11222333000181" if empresa_id else "41295423898",
+            "nome": "Empresa Teste" if empresa_id else "Fulana de Teste",
+            "cliente_id": cliente_id, "atendimento_parte_id": None,
+            "empresa_id": empresa_id,
+            "created_by": "user-1", "status": "pendente", "origem": "manual",
+            "total_certidoes": 13, "concluidas": 0,
+            "situacao_cadastral": None, "data_situacao": None,
+            "situacao_origem": None,
+            "excluida_em": None, "excluida_por": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+        row.update(extra)
+        return row
+
+    @staticmethod
+    def _resultado(*, consulta_id, **extra) -> dict:
+        row = {
+            "id": str(uuid4()), "consulta_id": consulta_id, "org_id": str(ORG_ID),
+            "tipo": "serasa", "nome_display": "Serasa", "ordem": 11,
+            "status": "pendente", "excluida_em": None, "excluida_por": None,
+        }
+        row.update(extra)
+        return row
+
+    def test_full_delete_soft_deletes_the_empresa_scoped_certidoes(self, client):
+        empresa = _empresa(client)
+        cliente_id = str(uuid4())
+        admin_id = str(uuid4())
+        self._participacao(client, cliente_id=cliente_id, empresa_id=empresa["id"])
+        consulta = self._consulta(empresa_id=empresa["id"])
+        client.table("certidao_consultas").insert(consulta).execute()
+        resultado_row = self._resultado(consulta_id=consulta["id"])
+        client.table("certidao_resultados").insert(resultado_row).execute()
+
+        resultado = dados_service.remover_participacao(
+            client, ORG_ID, cliente_id, empresa["id"], acting_user_id=admin_id,
+        )
+
+        assert resultado["empresa_removida"] is True
+        assert resultado["certidoes_removidas"] == 1
+
+        consulta_row = (
+            client.table("certidao_consultas").select("*")
+            .eq("id", consulta["id"]).execute().data[0]
+        )
+        assert consulta_row["excluida_em"] is not None
+        assert consulta_row["excluida_por"] == admin_id
+        # Soft-delete NEVER touches storage/blobs — see soft_delete_consulta's
+        # own docstring; nothing here asserts a file was removed, on purpose.
+
+        resultado_row_after = (
+            client.table("certidao_resultados").select("*")
+            .eq("id", resultado_row["id"]).execute().data[0]
+        )
+        assert resultado_row_after["excluida_em"] is not None
+        assert resultado_row_after["excluida_por"] == admin_id
+
+    def test_shared_empresa_delete_removes_no_certidoes(self, client):
+        """The empresa stays linked to another cliente -> the empresa row
+        (and, per this same rule, its certidões) must NOT be touched."""
+        empresa = _empresa(client)
+        cliente_a, cliente_b = str(uuid4()), str(uuid4())
+        self._participacao(client, cliente_id=cliente_a, empresa_id=empresa["id"])
+        self._participacao(client, cliente_id=cliente_b, empresa_id=empresa["id"])
+        consulta = self._consulta(empresa_id=empresa["id"])
+        client.table("certidao_consultas").insert(consulta).execute()
+
+        resultado = dados_service.remover_participacao(
+            client, ORG_ID, cliente_a, empresa["id"],
+        )
+
+        assert resultado["empresa_removida"] is False
+        assert resultado["certidoes_removidas"] == 0
+        consulta_row = (
+            client.table("certidao_consultas").select("*")
+            .eq("id", consulta["id"]).execute().data[0]
+        )
+        assert consulta_row["excluida_em"] is None
+
+    def test_full_delete_never_touches_a_person_linked_consulta(self, client):
+        empresa = _empresa(client)
+        cliente_id = str(uuid4())
+        self._participacao(client, cliente_id=cliente_id, empresa_id=empresa["id"])
+        # A CPF consulta for the SAME cliente — no `empresa_id` at all.
+        pessoa_consulta = self._consulta(cliente_id=cliente_id)
+        client.table("certidao_consultas").insert(pessoa_consulta).execute()
+
+        resultado = dados_service.remover_participacao(
+            client, ORG_ID, cliente_id, empresa["id"],
+        )
+
+        assert resultado["empresa_removida"] is True
+        assert resultado["certidoes_removidas"] == 0
+        consulta_row = (
+            client.table("certidao_consultas").select("*")
+            .eq("id", pessoa_consulta["id"]).execute().data[0]
+        )
+        assert consulta_row["excluida_em"] is None
+
+    def test_full_delete_never_touches_another_empresas_consulta(self, client):
+        empresa = _empresa(client)
+        outra_empresa = _empresa(client, cnpj=CNPJ_VALIDO_OUTRO)
+        cliente_id = str(uuid4())
+        self._participacao(client, cliente_id=cliente_id, empresa_id=empresa["id"])
+        outra_consulta = self._consulta(empresa_id=outra_empresa["id"])
+        client.table("certidao_consultas").insert(outra_consulta).execute()
+
+        resultado = dados_service.remover_participacao(
+            client, ORG_ID, cliente_id, empresa["id"],
+        )
+
+        assert resultado["empresa_removida"] is True
+        assert resultado["certidoes_removidas"] == 0
+        consulta_row = (
+            client.table("certidao_consultas").select("*")
+            .eq("id", outra_consulta["id"]).execute().data[0]
+        )
+        assert consulta_row["excluida_em"] is None
+
+    def test_full_delete_skips_an_already_excluded_consulta(self, client):
+        empresa = _empresa(client)
+        cliente_id = str(uuid4())
+        self._participacao(client, cliente_id=cliente_id, empresa_id=empresa["id"])
+        ja_excluida = self._consulta(
+            empresa_id=empresa["id"],
+            excluida_em="2026-01-01T00:00:00+00:00", excluida_por="someone-else",
+        )
+        client.table("certidao_consultas").insert(ja_excluida).execute()
+
+        resultado = dados_service.remover_participacao(
+            client, ORG_ID, cliente_id, empresa["id"],
+        )
+
+        assert resultado["certidoes_removidas"] == 0
+        consulta_row = (
+            client.table("certidao_consultas").select("*")
+            .eq("id", ja_excluida["id"]).execute().data[0]
+        )
+        # untouched — the earlier exclusion's attribution survives.
+        assert consulta_row["excluida_por"] == "someone-else"
