@@ -36,6 +36,7 @@ import { leadsFiltersQueryKey, useLeadsFilters } from "@/hooks/useLeadsFilters";
 import { useLeadMutations, useLeadsList, type LeadsOrder, type LeadsSort } from "@/hooks/useLeads";
 import type { Lead } from "@/pages/leads/types";
 import { LeadFormDialog, type LeadFormValues } from "./components/LeadFormDialog";
+import { NovoLeadClienteDialog } from "./components/NovoLeadClienteDialog";
 import { LeadDetailModal } from "@/components/LeadDetailModal";
 import { contatoValue } from "./leadDetailSections";
 import { ClearFiltersButton } from "./components/ClearFiltersButton";
@@ -85,6 +86,12 @@ export default function BaseDeLeads() {
   const [order, setOrder] = useState<LeadsOrder>("desc");
   const [formOpen, setFormOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  // Distinct from `formOpen`/`editingLead`: CREATE now goes through
+  // `NovoLeadClienteDialog` (leads-novo-lead — attaches to an
+  // already-registered cliente via live search instead of free-texting
+  // `cliente_nome`). `LeadFormDialog` stays wired for EDIT only — this page
+  // never opens it with `editingLead === null` any more.
+  const [novoLeadOpen, setNovoLeadOpen] = useState(false);
   const [detailLead, setDetailLead] = useState<Lead | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
 
@@ -104,7 +111,7 @@ export default function BaseDeLeads() {
     sort,
     order,
   });
-  const { create, update, remove } = useLeadMutations();
+  const { update, remove } = useLeadMutations();
 
   const leads = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
@@ -121,8 +128,7 @@ export default function BaseDeLeads() {
   }
 
   function openCreate() {
-    setEditingLead(null);
-    setFormOpen(true);
+    setNovoLeadOpen(true);
   }
 
   function openEditFromDrawer(lead: Lead) {
@@ -131,27 +137,18 @@ export default function BaseDeLeads() {
     setFormOpen(true);
   }
 
-  function handleSubmit(values: LeadFormValues) {
-    if (editingLead) {
-      update.mutate(
-        { id: editingLead.id, body: values },
-        {
-          onSuccess: () => {
-            toast.success("Lead atualizado.");
-            setFormOpen(false);
-          },
-          onError: (err) => toast.error(describeError(err, "Erro ao atualizar lead.")),
-        },
-      );
-    } else {
-      create.mutate(values, {
+  function handleUpdate(values: LeadFormValues) {
+    if (!editingLead) return;
+    update.mutate(
+      { id: editingLead.id, body: values },
+      {
         onSuccess: () => {
-          toast.success("Lead criado.");
+          toast.success("Lead atualizado.");
           setFormOpen(false);
         },
-        onError: (err) => toast.error(describeError(err, "Erro ao criar lead.")),
-      });
-    }
+        onError: (err) => toast.error(describeError(err, "Erro ao atualizar lead.")),
+      },
+    );
   }
 
   function handleDelete() {
@@ -333,13 +330,19 @@ export default function BaseDeLeads() {
         onDelete={(lead) => setDeleteTarget(lead)}
       />
 
+      {/* EDIT only now — see `novoLeadOpen`'s comment. Always opened with a
+          real `editingLead` (`openEditFromDrawer`), never `null`. */}
       <LeadFormDialog
         open={formOpen}
         onOpenChange={setFormOpen}
         lead={editingLead}
-        onSubmit={handleSubmit}
-        isPending={create.isPending || update.isPending}
+        onSubmit={handleUpdate}
+        isPending={update.isPending}
       />
+
+      {/* CREATE — attaches to an already-registered cliente via live
+          search (leads-novo-lead), instead of free-texting `cliente_nome`. */}
+      <NovoLeadClienteDialog open={novoLeadOpen} onOpenChange={setNovoLeadOpen} />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

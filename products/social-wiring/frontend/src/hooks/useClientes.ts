@@ -34,6 +34,17 @@ export interface Cliente {
   arquivado_em: string | null;
   primeiro_contato_em: string | null;
   ultimo_contato_em: string | null;
+  /**
+   * Real `clientes` columns (`clientes_service._contato_dos_membros`) — every
+   * `select("*")` response has always carried them, this type just never
+   * named them (same gap the "qualificação civil" block below documents for
+   * `nome_oficial`/`cpf`/etc.). Surfaced now for the "Novo lead" cliente
+   * picker (leads-novo-lead), which shows a candidate's phone/e-mail next to
+   * their name so "Fernando" and "Fernando" (two different people who share
+   * a first name) are tellable apart in the dropdown.
+   */
+  celular?: string | null;
+  email?: string | null;
   /** ASSUMPTION — see file header. `undefined`/`null` renders "—", never "0". */
   touch_count?: number | null;
   atendimentos_abertos?: number | null;
@@ -137,8 +148,13 @@ export interface ClientePatchBody {
 
 const FAMILY_KEY = ["sw", "clientes"] as const;
 const BOARD_KEY = (f: ClientesFiltros) => [...FAMILY_KEY, "board", f] as const;
+const BUSCA_KEY = (termo: string) => [...FAMILY_KEY, "busca", termo] as const;
 
 const BASE = "/api/clientes";
+
+/** Typeahead result cap — a picker, not a browsing surface (mirrors
+ *  `useImoveisBusca`'s `limit=10`). */
+const BUSCA_PAGE_SIZE = 8;
 
 function buildQuery(f: ClientesFiltros): string {
   const params = new URLSearchParams();
@@ -163,6 +179,36 @@ export function useClientesBoard(filtros: ClientesFiltros = {}) {
     // Keeps the previous page on screen while the next one loads — same
     // rationale as useImoveis: paginating shouldn't flash an empty grid.
     placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * Live cliente search — `GET /api/clientes?q=&ativo=true&page_size=8`,
+ * matching `nome` OR `celular` OR `email` server-side
+ * (`clientes_service._ids_matching_termo`). Built for the "Novo lead"
+ * cliente picker (leads-novo-lead) but generic enough for any other
+ * single-value cliente typeahead.
+ *
+ * Same shape as `useCardHub.useImoveisBusca`: `enabled` gates on a 2-char
+ * minimum (the caller still owns debouncing — pass the DEBOUNCED term, not
+ * the raw keystroke value, exactly like `ImovelCodigoPicker` does with
+ * `useDebouncedValue`), `placeholderData: keepPreviousData` avoids a flash
+ * back to "digite ao menos 2 caracteres" while backspacing to a shorter
+ * term that already has an answer cached.
+ */
+export function useClientesBusca(termoDebounced: string) {
+  const termo = termoDebounced.trim();
+  return useQuery({
+    queryKey: BUSCA_KEY(termo),
+    queryFn: async () => {
+      const res = await api.get<ClientesPage>(
+        `${BASE}?ativo=true&page_size=${BUSCA_PAGE_SIZE}&q=${encodeURIComponent(termo)}`,
+      );
+      return res ?? { items: [], total: 0, page: 1, pages: 1 };
+    },
+    enabled: termo.length >= 2,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
   });
 }
 

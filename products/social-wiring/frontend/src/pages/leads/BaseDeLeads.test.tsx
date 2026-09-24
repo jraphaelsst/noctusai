@@ -60,6 +60,9 @@ vi.mock("@noctusai/lib/design-system", () => ({
 vi.mock("./components/LeadFormDialog", () => ({
   LeadFormDialog: () => null,
 }));
+vi.mock("./components/NovoLeadClienteDialog", () => ({
+  NovoLeadClienteDialog: () => null,
+}));
 vi.mock("@/components/LeadDetailModal", () => ({
   LeadDetailModal: () => null,
 }));
