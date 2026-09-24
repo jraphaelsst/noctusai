@@ -652,3 +652,19 @@ class EmpresaManualCreateBody(StrictHttpModel):
     participante_cliente_id: UUID
     razao_social: Optional[str] = None
     participacao_pct: Optional[Decimal] = None
+
+
+class LinhaMatrizCreateBody(StrictHttpModel):
+    """`POST /{cliente_id}/certidoes/matriz/linhas` — "+ Adicionar
+    certidão" on the Certidões matriz tab (migration 170). Blank/whitespace-
+    only rejected server-side (`certidoes_matriz_linhas_service._validar_
+    nome`), never merely by this field's own validator, so the same rule
+    covers PATCH too."""
+
+    nome: str = Field(..., min_length=1, max_length=200)
+
+
+class LinhaMatrizPatchBody(StrictHttpModel):
+    """`PATCH /{cliente_id}/certidoes/matriz/linhas/{linha_id}` — rename."""
+
+    nome: str = Field(..., min_length=1, max_length=200)

@@ -162,15 +162,21 @@ CERTIDOES_CONFIG = [
 # `_fan_out_tipos_manuais`, which generalizes the old serasa-only special
 # case into this per-type table.
 #
-# `fgts_regularidade`/`outras_1`/`outras_2` back the matriz's rows 5.13-5.15
-# (`MATRIZ_LINHAS` below) — added for the "Certidões" card tab (Levantamento
-# de Certidões.xlsx, first tab). `outras_1`/`outras_2` are two generic
-# "Outras: <nome>" slots the source spreadsheet leaves for a certidão type
-# not in the fixed 12; this pass ships them with a fixed PT-BR display name
-# (row-level, shared by every column, matching how every other matriz row
-# works) rather than a per-card custom-name editor — see this file's
-# `scoped-improvement:` footer in the delivery note for the deferred rename
-# UI.
+# `fgts_regularidade` backs the matriz's row 5.13 (`MATRIZ_LINHAS` below) —
+# added for the "Certidões" card tab (Levantamento de Certidões.xlsx, first
+# tab).
+#
+# 🔴 `outras_1`/`outras_2` (this module's two-fixed-slot first pass at the
+# spreadsheet's "Outras: <nome>" rows) are GONE, replaced by owner directive
+# (2026-09-24 follow-up) with per-card CUSTOM rows an operator adds/renames/
+# removes from the matriz UI itself (migration 170,
+# `card_hub.certidoes_matriz_linhas_service`) — "Outras" is not a fixed
+# catalogue entry, it is a fact about ONE card. Those two entries and their
+# `certidao_resultados` rows never reached `dev`/prod (this whole feature
+# shipped on this same still-unmerged branch), so removing them here
+# orphans nothing; a resultado for a custom row instead carries
+# `tipo='outras_custom'` + `certidao_resultados.linha_customizada_id`
+# (migration 170's pairing CHECK), never a registry-catalogue `tipo`.
 MANUAL_TIPOS_CONFIG = [
     {"tipo": "serasa", "nome": "Serasa", "ordem": 11, "aplicavel_a": ("cpf",)},
     {"tipo": "tjsp_esaj", "nome": "TJSP e-SAJ", "ordem": 12},
@@ -181,11 +187,16 @@ MANUAL_TIPOS_CONFIG = [
         "ordem": 14,
         "aplicavel_a": ("cnpj",),
     },
-    {"tipo": "outras_1", "nome": "Outras 1", "ordem": 15},
-    {"tipo": "outras_2", "nome": "Outras 2", "ordem": 16},
 ]
 
 MANUAL_CONFIG_BY_TIPO: dict[str, dict] = {c["tipo"]: c for c in MANUAL_TIPOS_CONFIG}
+
+#: The sentinel `certidao_resultados.tipo` value for a resultado recording a
+#: matriz CUSTOM row's cell — `tipo` stays NOT NULL (migration 091), so a
+#: real `NULL` was never an option; `linha_customizada_id` (migration 170)
+#: is what actually names WHICH custom row. Never appears in `CERTIDOES_
+#: CONFIG`/`MANUAL_TIPOS_CONFIG` — there is no fixed catalogue entry for it.
+CUSTOM_ROW_TIPO = "outras_custom"
 
 INFOSIMPLES_BASE_URL = "https://api.infosimples.com/api/v2/consultas"
 
@@ -472,16 +483,21 @@ def get_manual_tipos() -> list[dict]:
     ]
 
 
-#: The "Levantamento de Certidões" card tab's MATRIX row order — the Excel
-#: source's Nº 5.1-5.15, its own PT-BR labels (some abbreviated compared to
+#: The "Levantamento de Certidões" card tab's MATRIX row order — the FIXED
+#: 13 (owner rule, 2026-09-24: "Rows 5.1-5.13 stay fixed"), the Excel
+#: source's Nº 5.1-5.13, its own PT-BR labels (some abbreviated compared to
 #: `CERTIDOES_CONFIG`'s/`MANUAL_TIPOS_CONFIG`'s emission-checklist `nome`,
 #: on purpose: a due-diligence spreadsheet reader and an emission operator
 #: read different registers of the same fact). This is a DISPLAY/ORDERING
 #: concern separate from `ordem` (the emission checklist's own order,
-#: `CERTIDOES_CONFIG`'s 1-10 / `MANUAL_TIPOS_CONFIG`'s 11-16) — the matriz's
+#: `CERTIDOES_CONFIG`'s 1-10 / `MANUAL_TIPOS_CONFIG`'s 11-14) — the matriz's
 #: row 5.7/5.8 (TJSP e-SAJ/e-PROC) sit right after 5.6, while their `ordem`
 #: is 12/13; two registries reading the SAME `tipo` key in a different
 #: sequence for a different screen, never re-deriving each other.
+#:
+#: Rows 5.14, 5.15, ... are CUSTOM per-card rows (migration 170,
+#: `card_hub.certidoes_matriz_linhas_service`) — NOT in this fixed list;
+#: `card_hub.certidoes_matriz_service.montar_matriz` appends them live.
 MATRIZ_LINHAS = [
     {"tipo": "cnd_federal", "linha": "5.1", "rotulo": "Receita Federal"},
     {"tipo": "trf3_sp", "linha": "5.2", "rotulo": "Justiça Federal – 1ª instância"},
@@ -496,8 +512,6 @@ MATRIZ_LINHAS = [
     {"tipo": "cnd_fazenda_sp", "linha": "5.11", "rotulo": "Débitos não inscritos"},
     {"tipo": "divida_ativa_sp", "linha": "5.12", "rotulo": "Dívida ativa"},
     {"tipo": "fgts_regularidade", "linha": "5.13", "rotulo": "Regularidade do FGTS (empresas)"},
-    {"tipo": "outras_1", "linha": "5.14", "rotulo": "Outras 1"},
-    {"tipo": "outras_2", "linha": "5.15", "rotulo": "Outras 2"},
 ]
 
 
@@ -538,6 +552,7 @@ def manual_config_for(tipo: str) -> Optional[dict]:
 __all__ = [
     "CERTIDOES_CONFIG",
     "CONFIG_BY_TIPO",
+    "CUSTOM_ROW_TIPO",
     "INFOSIMPLES_BASE_URL",
     "MANUAL_CONFIG_BY_TIPO",
     "MANUAL_TIPOS_CONFIG",

@@ -112,9 +112,12 @@ class TestMatrizVazia:
         assert resultado["atendimento_id"] is None
         assert resultado["colunas"] == []
         assert resultado["celulas"] == {}
-        assert len(resultado["linhas"]) == 15
+        assert len(resultado["linhas"]) == 13
 
-    def test_linhas_seguem_a_ordem_5_1_a_5_15_do_levantamento(self, scoped):
+    def test_linhas_seguem_a_ordem_5_1_a_5_13_do_levantamento(self, scoped):
+        """Rows 5.1-5.13 are the FIXED set (owner rule 2026-09-24) — no
+        `outras_1`/`outras_2` (those became per-card custom rows,
+        migration 170) when the card has none of its own."""
         cid = str(uuid4())
         _seed_tables(scoped)
         scoped.set_table_data("clientes", [cliente_row(cid, nome="Solo")])
@@ -122,8 +125,9 @@ class TestMatrizVazia:
         resultado = svc.montar_matriz(scoped, ORG_ID, cid)
 
         assert [linha["linha"] for linha in resultado["linhas"]] == [
-            f"5.{i}" for i in range(1, 16)
+            f"5.{i}" for i in range(1, 14)
         ]
+        assert all(not linha["custom"] for linha in resultado["linhas"])
         assert resultado["linhas"][0]["tipo"] == "cnd_federal"
         assert resultado["linhas"][12]["tipo"] == "fgts_regularidade"
 
@@ -224,9 +228,9 @@ class TestCelulas:
         totais = resultado["totais"][coluna["id"]]
         assert totais["nao_constam"] == 1
         assert totais["constam"] == 1
-        # Every one of the other 13 rows (minus the FGTS N/A, excluded from
-        # any total bucket) is Pendente by absence.
-        assert totais["pendente"] == 12
+        # 13 fixed rows minus the FGTS N/A (excluded from any total bucket)
+        # = 12 countable rows; the other 10 are Pendente by absence.
+        assert totais["pendente"] == 10
 
     def test_status_diferente_de_sucesso_e_pendente_mesmo_com_resultado_setado(self, scoped):
         """A `status != 'sucesso'` resultado (still processing/erro/na_fila)
@@ -314,7 +318,7 @@ class TestCelulas:
         # N/A cells never count toward any total bucket.
         assert resultado["totais"][pessoa["id"]]["nao_constam"] == 0
         assert resultado["totais"][pessoa["id"]]["constam"] == 0
-        assert resultado["totais"][pessoa["id"]]["pendente"] == 14
+        assert resultado["totais"][pessoa["id"]]["pendente"] == 12
 
     def test_serasa_e_na_para_empresa_e_normal_para_pessoa(self, scoped):
         """Owner rule 2026-09-24 §1: PJ = PF-12 minus SERASA."""
@@ -411,6 +415,6 @@ class TestRotaHttp:
 
         assert r.status_code == 200
         body = r.json()
-        assert len(body["linhas"]) == 15
+        assert len(body["linhas"]) == 13
         assert len(body["colunas"]) == 1
         assert body["colunas"][0]["nome"] == "Vendedor"

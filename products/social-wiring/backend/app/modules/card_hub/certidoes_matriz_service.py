@@ -1,8 +1,9 @@
 """`GET /api/clientes/{cliente_id}/certidoes/matriz` — the "Certidões" card
-tab's MATRIX: every certidão TYPE (rows, `registry.MATRIZ_LINHAS`) crossed
-with every party the tech-lead's binding matrix rules name (columns),
-aggregated server-side into one response — no N-call client pivot
-(Levantamento de Certidões.xlsx, first tab).
+tab's MATRIX: every certidão TYPE (rows — `registry.MATRIZ_LINHAS`'s fixed
+13 PLUS this card's own active custom rows, migration 170) crossed with
+every party the tech-lead's binding matrix rules name (columns), aggregated
+server-side into one response — no N-call client pivot (Levantamento de
+Certidões.xlsx, first tab).
 
 WHO COUNTS ("columns") — tech-lead binding rules, 2026-09-24
 --------------------------------------------------------------
@@ -22,6 +23,11 @@ module makes ZERO derivação/permuta decisions of its own — read-only
 consumer of `pessoas_do_card`/`listar`'s verdicts, never a restatement
 (owner rule 2026-09-24 §7: a peer session is validating E1-E6 live).
 
+`resolver_colunas` is the shared column-resolution step — `montar_matriz`
+below AND `certidoes_matriz_linhas_service.criar` (the "+ Adicionar
+certidão" fan-out) both call it, so "which parties/empresas does THIS card
+show" is answered in exactly one place.
+
 Empresa columns: `empresas_service.listar`'s own `items`, filtered to
 `exige_certidoes=True` alone — that flag already folds in the permuta
 verdict AND dedupes by empresa (one `cliente_empresa_participacoes` row
@@ -36,32 +42,40 @@ apply to a PESSOA (PF) column; PJ drops row 5.9 (SERASA — a personal credit
 report, CENPROT already covers a company) to eleven, grey N/A on every
 EMPRESA column. Row 5.13 (`fgts_regularidade`) is grey N/A on every PESSOA
 column (a CNPJ-only obligation, `registry.aplicavel_a_tipo_documento`) and
-recordable on an EMPRESA column — but it and "Outras" (5.14/5.15) are
-DISPLAY/RECORD-ONLY, never folded into the PF-12/PJ-11 fixed set nor into
-any readiness/required-documents gate (owner rule §2 — would contradict the
-fixed PJ-11 count). TJSP is ALWAYS the two split rows (`tjsp_esaj`/
-`tjsp_eproc`, 5.7/5.8); the generic automated `tjsp` type from `certidoes.
-registry.CERTIDOES_CONFIG` is deliberately absent from `MATRIZ_LINHAS` and
-this module never reads it — a legacy `tipo='tjsp'` resultado (if any exist
-from before this tab) surfaces in NEITHER split row's cell/tooltip (owner
-rule §3: no invented mapping). `scoped-improvement:` a fleet query for any
-live `tipo='tjsp'` resultado would confirm whether that legacy-data case is
-purely hypothetical or needs its own follow-up.
+recordable on an EMPRESA column. Rows 5.14, 5.15, ... are this CARD's own
+active custom rows (`certidao_matriz_linhas_customizadas`, migration 170,
+`nome`-labelled "Outras: <nome>") — applicable to BOTH PF and PJ columns,
+never N/A. Every custom row, like FGTS, is DISPLAY/RECORD-ONLY: never
+folded into the PF-12/PJ-11 fixed set nor into any readiness/required-
+documents gate (owner rule §2). TJSP is ALWAYS the two split rows
+(`tjsp_esaj`/`tjsp_eproc`, 5.7/5.8); the generic automated `tjsp` type from
+`certidoes.registry.CERTIDOES_CONFIG` is deliberately absent from
+`MATRIZ_LINHAS` and this module never reads it — a legacy `tipo='tjsp'`
+resultado (if any exist from before this tab) surfaces in NEITHER split
+row's cell/tooltip (owner rule §3: no invented mapping). `scoped-
+improvement:` a fleet query for any live `tipo='tjsp'` resultado would
+confirm whether that legacy-data case is purely hypothetical or needs its
+own follow-up.
 
 Every column resolves its certidão results through the SAME per-person/
 per-empresa readers the rest of the certidões module already exposes —
 `certidoes.service.certidoes_por_cliente`/`certidoes_por_empresa` — so a
 consulta linked via `vincular_parte`/`vincular_cliente`/`vincular_empresa`
-denormalizes onto this matrix for free, without a new linking mechanism.
-This module performs NO writes of its own (`montar_matriz` is read-only,
-GET-only) — every write a caller can trigger from this tab's dialog
-(`CertidoesPartePanel`, reused unmodified) goes through the SAME audited
-paths (`process_manual_upload`, `confirmar_resultado`, etc.) the rest of
-the certidões module already uses (owner rule §6).
+denormalizes onto this matrix for free, without a new linking mechanism. A
+fixed-row cell is matched by `tipo`; a custom-row cell is matched by
+`linha_customizada_id` (migration 170's FK — never an id encoded into
+`tipo`, which stays the fixed sentinel `registry.CUSTOM_ROW_TIPO` for every
+custom-row resultado). This module performs NO writes of its own
+(`montar_matriz` is read-only, GET-only) — every write a caller can trigger
+from this tab's dialog (`CertidoesPartePanel`, reused unmodified) goes
+through the SAME audited paths (`process_manual_upload`,
+`confirmar_resultado`, etc.) the rest of the certidões module already uses
+(owner rule §6); the ONE new write path, adding/renaming/removing a custom
+ROW DEFINITION, lives in `certidoes_matriz_linhas_service` instead.
 
 A column may carry MULTIPLE consultas of the relevant `tipo_documento`
 (a re-run, a corrected re-link); the most recently `created_at` resultado
-per `tipo` wins — an older attempt's stale status must never shadow a newer
+per row wins — an older attempt's stale status must never shadow a newer
 one on this summary read.
 """
 from __future__ import annotations
@@ -83,11 +97,14 @@ from app.modules.card_hub.services import (
 )
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.certidoes.registry import MATRIZ_LINHAS
+
 from app.services import table_reads
+
+LINHAS_CUSTOMIZADAS_TABLE = "certidao_matriz_linhas_customizadas"
 
 #: The three total buckets a non-N/A cell falls into — mirrors the Excel
 #: source's "Totais" footer rows (Não constam / Constam / Pendente), one
-#: count PER COLUMN across all 15 rows (never per row across columns).
+#: count PER COLUMN across every row (never per row across columns).
 _TOTAL_CHAVES = ("nao_constam", "constam", "pendente")
 
 #: `resultado` values the matriz reads as GREEN "Não constam" — a negativa,
@@ -108,64 +125,34 @@ def _t(client: Any, table: str):
     return table_reads.table(client, table)
 
 
-def _empty(atendimento_id: Optional[str] = None) -> dict:
-    return {
-        "atendimento_id": atendimento_id,
-        "data_levantamento": date.today().isoformat(),
-        "linhas": [dict(linha) for linha in MATRIZ_LINHAS],
-        "colunas": [],
-        "celulas": {},
-        "totais": {},
-    }
+def linhas_customizadas_ativas(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+    """Every ACTIVE (`excluida_em IS NULL`) custom row for this card, oldest
+    first — the matriz's 5.14, 5.15, ... in creation order. Shared by
+    `montar_matriz` (read) and `certidoes_matriz_linhas_service` (the CRUD's
+    own listing + duplicate-name-not-enforced-but-ordem-computation)."""
+    return (
+        _t(client, LINHAS_CUSTOMIZADAS_TABLE)
+        .select("id, nome, ordem, created_at")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .is_("excluida_em", "null")
+        .order("ordem")
+        .execute()
+    ).data or []
 
 
-def _status_da_celula(resultado_row: Optional[dict]) -> tuple[str, str]:
-    """`(status, texto)` for one cell — the three colors plus the accessible
-    label kept alongside them (never color alone)."""
-    if resultado_row is None or resultado_row.get("status") != "sucesso":
-        return "pendente", "Pendente"
-    resultado = resultado_row.get("resultado")
-    if resultado in _NAO_CONSTAM:
-        return "nao_constam", "Não constam"
-    if resultado in _CONSTAM:
-        return "constam", "Constam"
-    return "pendente", "Pendente"
-
-
-def _celula(status: str, texto: str, resultado_row: Optional[dict]) -> dict:
-    resultado_row = resultado_row or {}
-    return {
-        "status": status,
-        "texto": texto,
-        "resultado_id": resultado_row.get("id"),
-        "consulta_id": resultado_row.get("consulta_id"),
-        "numero": resultado_row.get("numero"),
-        "emitida_em": resultado_row.get("emitida_em"),
-        "validade_ate": resultado_row.get("validade_ate"),
-        "analise_ia": resultado_row.get("analise_ia"),
-        "erro_mensagem": resultado_row.get("erro_mensagem"),
-    }
-
-
-def _resultado_mais_recente_por_tipo(resultados: list[dict]) -> dict[str, dict]:
-    por_tipo: dict[str, dict] = {}
-    for resultado in resultados:
-        tipo = resultado.get("tipo")
-        if not tipo:
-            continue
-        atual = por_tipo.get(tipo)
-        if atual is None or (resultado.get("created_at") or "") > (atual.get("created_at") or ""):
-            por_tipo[tipo] = resultado
-    return por_tipo
-
-
-def montar_matriz(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
-    """`GET`'s entire response — see the module docstring."""
+def resolver_colunas(client: Any, org_id: UUID, cliente_id: UUID) -> tuple[Optional[str], list[dict]]:
+    """`(atendimento_id, colunas)` — the matriz's column set, per the tech-
+    lead's binding rules (see module docstring). `atendimento_id` is `None`
+    when there is no open/an ambiguous atendimento — `colunas` is always
+    `[]` in that case. The ONE place this resolution happens; `montar_matriz`
+    and `certidoes_matriz_linhas_service.criar`'s fan-out both call this
+    rather than each re-deriving "who is on this card"."""
     ensure_cliente(client, org_id, cliente_id)
     try:
         atendimento_id = resolve_atendimento_id(client, org_id, cliente_id)
     except AmbiguousAtendimento:
-        return _empty()
+        return None, []
 
     rows = (
         _t(client, ATENDIMENTOS_TABLE)
@@ -176,7 +163,7 @@ def montar_matriz(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         .execute()
     ).data or []
     if not rows:
-        return _empty()
+        return None, []
     atendimento = rows[0]
 
     pessoas = [p for p in pessoas_do_card(client, org_id, atendimento) if p["certificando"]]
@@ -215,45 +202,137 @@ def montar_matriz(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             "nome": empresa.get("nome_fantasia") or empresa.get("razao_social") or "",
             "cnpj": empresa.get("cnpj"),
         })
+    return atendimento_id, colunas
 
-    resultados_por_coluna: dict[str, dict[str, dict]] = {}
+
+def _empty(atendimento_id: Optional[str] = None) -> dict:
+    return {
+        "atendimento_id": atendimento_id,
+        "data_levantamento": date.today().isoformat(),
+        "linhas": [_linha_fixa(linha) for linha in MATRIZ_LINHAS],
+        "colunas": [],
+        "celulas": {},
+        "totais": {},
+    }
+
+
+def _linha_fixa(linha: dict) -> dict:
+    return {**linha, "chave": linha["tipo"], "custom": False, "id": None}
+
+
+def _linha_customizada(row: dict) -> dict:
+    return {
+        "tipo": None,
+        "chave": str(row["id"]),
+        "id": str(row["id"]),
+        "linha": f"5.{row['ordem']}",
+        "rotulo": f"Outras: {row['nome']}",
+        "custom": True,
+    }
+
+
+def _status_da_celula(resultado_row: Optional[dict]) -> tuple[str, str]:
+    """`(status, texto)` for one cell — the three colors plus the accessible
+    label kept alongside them (never color alone)."""
+    if resultado_row is None or resultado_row.get("status") != "sucesso":
+        return "pendente", "Pendente"
+    resultado = resultado_row.get("resultado")
+    if resultado in _NAO_CONSTAM:
+        return "nao_constam", "Não constam"
+    if resultado in _CONSTAM:
+        return "constam", "Constam"
+    return "pendente", "Pendente"
+
+
+def _celula(status: str, texto: str, resultado_row: Optional[dict]) -> dict:
+    resultado_row = resultado_row or {}
+    return {
+        "status": status,
+        "texto": texto,
+        "resultado_id": resultado_row.get("id"),
+        "consulta_id": resultado_row.get("consulta_id"),
+        "numero": resultado_row.get("numero"),
+        "emitida_em": resultado_row.get("emitida_em"),
+        "validade_ate": resultado_row.get("validade_ate"),
+        "analise_ia": resultado_row.get("analise_ia"),
+        "erro_mensagem": resultado_row.get("erro_mensagem"),
+    }
+
+
+def _index_resultados(resultados: list[dict]) -> tuple[dict[str, dict], dict[str, dict]]:
+    """`(por_tipo, por_linha_customizada_id)` — a fixed row is matched by
+    `tipo`; a custom row's resultado always carries the SAME sentinel `tipo`
+    (`registry.CUSTOM_ROW_TIPO`), so those are indexed separately by their
+    real discriminator, `linha_customizada_id`. Most-recent-`created_at`
+    wins within each index."""
+    por_tipo: dict[str, dict] = {}
+    por_linha: dict[str, dict] = {}
+    for resultado in resultados:
+        linha_customizada_id = resultado.get("linha_customizada_id")
+        if linha_customizada_id:
+            atual = por_linha.get(linha_customizada_id)
+            if atual is None or (resultado.get("created_at") or "") > (atual.get("created_at") or ""):
+                por_linha[linha_customizada_id] = resultado
+            continue
+        tipo = resultado.get("tipo")
+        if not tipo:
+            continue
+        atual = por_tipo.get(tipo)
+        if atual is None or (resultado.get("created_at") or "") > (atual.get("created_at") or ""):
+            por_tipo[tipo] = resultado
+    return por_tipo, por_linha
+
+
+def montar_matriz(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+    """`GET`'s entire response — see the module docstring."""
+    atendimento_id, colunas = resolver_colunas(client, org_id, cliente_id)
+    if atendimento_id is None:
+        return _empty()
+
+    linhas_custom = linhas_customizadas_ativas(client, org_id, cliente_id)
+    linhas = [_linha_fixa(linha) for linha in MATRIZ_LINHAS] + [
+        _linha_customizada(row) for row in linhas_custom
+    ]
+
+    resultados_por_coluna: dict[str, tuple[dict, dict]] = {}
     for coluna in colunas:
         if coluna["kind"] == "pessoa":
             resultados = certidoes_svc.certidoes_por_cliente(client, org_id, coluna["id"])
         else:
             resultados = certidoes_svc.certidoes_por_empresa(client, org_id, coluna["id"])
-        resultados_por_coluna[coluna["id"]] = _resultado_mais_recente_por_tipo(resultados)
+        resultados_por_coluna[coluna["id"]] = _index_resultados(resultados)
 
     celulas: dict[str, dict[str, dict]] = {}
     totais = {coluna["id"]: {chave: 0 for chave in _TOTAL_CHAVES} for coluna in colunas}
-    for linha in MATRIZ_LINHAS:
-        tipo = linha["tipo"]
-        celulas[tipo] = {}
+    for linha in linhas:
+        chave = linha["chave"]
+        celulas[chave] = {}
         for coluna in colunas:
             # Owner rule 2026-09-24 §1: PJ = PF-12 minus SERASA (a personal
             # credit report; CENPROT already covers a company) — grey N/A on
             # every EMPRESA column. §2: FGTS (5.13) is a CNPJ-only
-            # obligation — grey N/A on every PESSOA column, and outside the
-            # fixed PF-12/PJ-11 set either way (never gates readiness).
-            if tipo == "fgts_regularidade" and coluna["kind"] == "pessoa":
-                celulas[tipo][coluna["id"]] = _celula("na", "N/A", None)
+            # obligation — grey N/A on every PESSOA column. Custom rows are
+            # NEVER N/A (applicable to both PF and PJ, owner rule §1 follow-up).
+            if linha["tipo"] == "fgts_regularidade" and coluna["kind"] == "pessoa":
+                celulas[chave][coluna["id"]] = _celula("na", "N/A", None)
                 continue
-            if tipo == "serasa" and coluna["kind"] == "empresa":
-                celulas[tipo][coluna["id"]] = _celula("na", "N/A", None)
+            if linha["tipo"] == "serasa" and coluna["kind"] == "empresa":
+                celulas[chave][coluna["id"]] = _celula("na", "N/A", None)
                 continue
-            resultado_row = resultados_por_coluna[coluna["id"]].get(tipo)
+            por_tipo, por_linha = resultados_por_coluna[coluna["id"]]
+            resultado_row = por_linha.get(chave) if linha["custom"] else por_tipo.get(chave)
             status, texto = _status_da_celula(resultado_row)
             totais[coluna["id"]][status] += 1
-            celulas[tipo][coluna["id"]] = _celula(status, texto, resultado_row)
+            celulas[chave][coluna["id"]] = _celula(status, texto, resultado_row)
 
     return {
         "atendimento_id": atendimento_id,
         "data_levantamento": date.today().isoformat(),
-        "linhas": [dict(linha) for linha in MATRIZ_LINHAS],
+        "linhas": linhas,
         "colunas": colunas,
         "celulas": celulas,
         "totais": totais,
     }
 
 
-__all__ = ["montar_matriz"]
+__all__ = ["linhas_customizadas_ativas", "montar_matriz", "resolver_colunas"]

@@ -45,6 +45,7 @@ from app.dependencies import get_core_client, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
 from app.modules.card_hub import certidoes_matriz_service as certidoes_matriz_svc
+from app.modules.card_hub import certidoes_matriz_linhas_service as certidoes_matriz_linhas_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
@@ -84,6 +85,8 @@ from app.modules.card_hub.schemas import (
     ContratoPatchBody,
     EmpresaManualCreateBody,
     FinanciamentoPatchBody,
+    LinhaMatrizCreateBody,
+    LinhaMatrizPatchBody,
     NegociacaoDefaultsPatchBody,
     NegociacaoPatchBody,
     AgendamentoCreateBody,
@@ -1035,6 +1038,42 @@ async def get_certidoes_matriz_route(
 ) -> dict:
     _user, org_id = _auth_parts(auth)
     return certidoes_matriz_svc.montar_matriz(client, org_id, cliente_id)
+
+
+@router.post("/{cliente_id}/certidoes/matriz/linhas", status_code=201)
+async def criar_linha_matriz_route(
+    cliente_id: UUID,
+    body: LinhaMatrizCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return certidoes_matriz_linhas_svc.criar(
+        client, org_id, cliente_id, nome=body.nome, created_by=getattr(user, "id", None),
+    )
+
+
+@router.patch("/{cliente_id}/certidoes/matriz/linhas/{linha_id}")
+async def renomear_linha_matriz_route(
+    cliente_id: UUID,
+    linha_id: UUID,
+    body: LinhaMatrizPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return certidoes_matriz_linhas_svc.renomear(client, org_id, cliente_id, linha_id, nome=body.nome)
+
+
+@router.delete("/{cliente_id}/certidoes/matriz/linhas/{linha_id}", status_code=204)
+async def remover_linha_matriz_route(
+    cliente_id: UUID,
+    linha_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> None:
+    _user, org_id = _auth_parts(auth)
+    certidoes_matriz_linhas_svc.remover(client, org_id, cliente_id, linha_id)
 
 
 # ─── Negociação (migration 077) ─────────────────────────────────────────
