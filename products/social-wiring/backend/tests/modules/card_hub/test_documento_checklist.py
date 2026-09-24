@@ -25,6 +25,15 @@ def _auth() -> dict:
     return {"Authorization": "Bearer test-token"}
 
 
+#: P0c contract §H8: `serasa_crednet` is dropped from the response entirely
+#: for a cliente with no resolvable atendimento (`_seed` below wires none)
+#: — every fixture in this file that asserts against `svc.ITENS` directly
+#: needs this filtered view instead.
+_ITENS_SEM_ATENDIMENTO = tuple(
+    i for i in svc.ITENS if i["key"] != "serasa_crednet"
+)
+
+
 def _seed(scoped) -> str:
     cid = str(uuid4())
     scoped.set_table_data("clientes", [cliente_row(cid)])
@@ -61,7 +70,7 @@ class TestCanonicalList:
         """
         cid = _seed(scoped)
         body = client.get(f"/api/clientes/{cid}/documento-checklist", headers=_auth()).json()
-        assert body["total"] == len(svc.ITENS)
+        assert body["total"] == len(_ITENS_SEM_ATENDIMENTO)
         assert body["concluidos"] == 0
         assert all(i["concluido"] is False for i in body["items"])
         assert scoped.table("cliente_documento_checklist").select("*").execute().data == []
@@ -179,7 +188,7 @@ class TestDefinitionIsCode:
 
         body = client.get(f"/api/clientes/{cid}/documento-checklist", headers=_auth()).json()
         assert {i["key"]: i["label"] for i in body["items"]} == {
-            i["key"]: i["label"] for i in svc.ITENS
+            i["key"]: i["label"] for i in _ITENS_SEM_ATENDIMENTO
         }, "every label served is read from the definition, never from the row"
         assert next(i for i in body["items"] if i["key"] == "genero")["concluido"] is True
 

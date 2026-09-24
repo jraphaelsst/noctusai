@@ -53,18 +53,22 @@ TABLE = "documento_retencao_politicas"
 #: The surfaces that HAVE a retention clock. `imovel` joined in migration 111
 #: — 079 excluded it because 075's `imovel_documentos` had no access log, and
 #: a retention control with nothing logging its use would be a lying UI. That
-#: reason closed when 109 added `imovel_documento_acessos`. Mirrors migration
-#: 111's CHECK on `documento_retencao_politicas.superficie`; the two must move
-#: together.
-SUPERFICIES: tuple[str, ...] = ("cliente", "atendimento", "imovel")
+#: reason closed when 109 added `imovel_documento_acessos`. `empresa` joined
+#: in migration 167 (P0c contract §F) — `empresa_documentos` ships WITH an
+#: access log from the start (`empresa_documento_acessos`), so it never had
+#: `imovel`'s gap. Mirrors migration 111/167's CHECK on `documento_retencao_
+#: politicas.superficie`; these must move together.
+SUPERFICIES: tuple[str, ...] = ("cliente", "atendimento", "imovel", "empresa")
 
 #: What the countdown starts from, per surface. See the module header.
-#: `imovel` uses `envio` (upload time): unlike an `atendimento`, a property
-#: has no single `closed_at` to anchor to — it can outlive many deals.
+#: `imovel`/`empresa` use `envio` (upload time): unlike an `atendimento`,
+#: neither a property nor a company has a single `closed_at` to anchor to —
+#: either can outlive many deals.
 ANCORAS: dict[str, str] = {
     "cliente": "envio",
     "atendimento": "encerramento",
     "imovel": "envio",
+    "empresa": "envio",
 }
 
 #: Human-facing one-liners for the screen, so the anchor is never implicit.

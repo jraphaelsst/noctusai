@@ -111,6 +111,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.proveniencia import fontes
+from app.services import campo_conflitos
 from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub.services import _now, _t
 
@@ -422,6 +423,25 @@ CAMPO_POR_CHAVE: dict[str, CampoExtraido] = {c.item_key: c for c in CAMPOS}
 #: Kept as the flat `{item_key: coluna}` mapping earlier callers already read.
 CAMPO_POR_ITEM: dict[str, str] = {c.item_key: c.coluna_valor for c in CAMPOS}
 
+#: P0c contract §A.8/§C4 — Serasa Crednet's `nome_mae`, held OUTSIDE the
+#: `CAMPOS` tuple deliberately: `extrair_identidade`'s per-document `lidos`
+#: dict (`_valores_lidos`/`_lidos_vazios`) is keyed EXACTLY on `CAMPOS`, and
+#: no `IdentityFields` (RG/CPF/CNH/certidão) attribute maps to a mother's
+#: name — adding it to `CAMPOS` would `KeyError` the very next identity
+#: document upload (`_valores_lidos` never populates a `"nome_mae"` key).
+#: `CAMPO_POR_CHAVE` still needs to resolve it: `resolver_conflito` (the
+#: admin's `PUT /conflitos/{id}/decidir` route) is generic over every
+#: `cliente_campo_conflitos` row regardless of which extractor opened it, so
+#: it is registered into the SAME lookup table, just not the SAME tuple.
+CAMPO_NOME_MAE = CampoExtraido(
+    item_key="nome_mae",
+    coluna_valor="extracao_nome_mae",
+    coluna_confianca="extracao_nome_mae_confianca",
+    coluna_rotulo="extracao_nome_mae_rotulo",
+    sobrescreve=False,
+)
+CAMPO_POR_CHAVE["nome_mae"] = CAMPO_NOME_MAE
+
 
 def deve_extrair(tipo_documento: str) -> bool:
     """Is this a document we read fields from?"""
@@ -617,17 +637,9 @@ CONFLITOS_TABLE = "cliente_campo_conflitos"
 def _conflito_pendente_existente(
     client: Any, org_id: UUID, cliente_id: UUID, campo: str
 ) -> Optional[dict]:
-    rows = (
-        _t(client, CONFLITOS_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .eq("campo", campo)
-        .eq("status", "pendente")
-        .limit(1)
-        .execute()
-    ).data or []
-    return rows[0] if rows else None
+    return campo_conflitos.conflito_pendente_existente(
+        client, campo_conflitos.CLIENTE, org_id, cliente_id, campo
+    )
 
 
 def _registrar_conflito(
@@ -656,31 +668,24 @@ def _registrar_conflito(
     already existed — the partial UNIQUE index would refuse a second insert
     anyway; checking first avoids a doomed write AND a duplicate
     notification for a conflict an admin hasn't looked at yet.
+
+    The open/dedupe mechanics are `app.services.campo_conflitos`' (P0c
+    contract §H6, the N=3 formalization shared with `imovel_hub.
+    campos_extraidos_service` and `app.modules.empresas`) — this wrapper
+    keeps the historical `CampoExtraido | str` signature every caller here
+    already uses.
     """
     chave = campo if isinstance(campo, str) else campo.item_key
-    existente = _conflito_pendente_existente(client, org_id, cliente_id, chave)
-    if existente is not None:
-        return None
-    linha = {
-        "id": str(uuid4()),
-        "org_id": str(org_id),
-        "cliente_id": str(cliente_id),
-        "campo": chave,
-        "valor_anterior": valor_anterior,
-        "origem_anterior": origem_anterior,
-        "valor_proposto": valor_proposto,
-        "origem_proposto": origem_proposto,
-        "confianca_proposta": confianca_proposta,
-        "fonte_tabela": fonte_tabela,
-        "fonte_id": str(fonte_id) if fonte_id else None,
-        "status": "pendente",
-        "notificado_em": None,
-        "decidido_por": None,
-        "decidido_em": None,
-        "created_at": _now(),
-    }
-    _t(client, CONFLITOS_TABLE).insert(linha).execute()
-    return linha
+    return campo_conflitos.registrar_conflito(
+        client, campo_conflitos.CLIENTE, org_id, cliente_id, chave,
+        valor_anterior=valor_anterior,
+        origem_anterior=origem_anterior,
+        valor_proposto=valor_proposto,
+        origem_proposto=origem_proposto,
+        confianca_proposta=confianca_proposta,
+        fonte_tabela=fonte_tabela,
+        fonte_id=fonte_id,
+    )
 
 
 def aplicar_campos_ao_cliente(
@@ -1036,6 +1041,13 @@ async def notificar_conflitos(
 
     `notification_service=None` with conflicts to announce is logged as a
     WARNING naming them — never silent.
+
+    The loop/try-except/`notificado_em` stamp is `app.services.
+    campo_conflitos.notificar_conflitos`'s (P0c contract §H6) — this
+    function keeps only the parts that ARE specific to `cliente_campo_
+    conflitos`: this exact "no notifier" wording, and resolving (and
+    caching) the cliente's display name per conflict before handing it to
+    `notify_field_conflict`.
     """
     if not conflitos:
         return 0
@@ -1046,9 +1058,9 @@ async def notificar_conflitos(
             len(conflitos), [c.get("campo") for c in conflitos],
         )
         return 0
-    enviados = 0
     nomes: dict[str, str] = {}
-    for conflito in conflitos:
+
+    async def _notify_one(conflito: dict) -> None:
         nome = cliente_nome
         if nome is None:
             cid = str(conflito.get("cliente_id"))
@@ -1064,20 +1076,13 @@ async def notificar_conflitos(
                 linha = rows[0] if rows else {}
                 nomes[cid] = linha.get("nome_oficial") or linha.get("nome") or ""
             nome = nomes[cid]
-        try:
-            await notification_service.notify_field_conflict(
-                org_id=org_id, conflito=conflito, cliente_nome=nome
-            )
-            _t(client, CONFLITOS_TABLE).update({"notificado_em": _now()}).eq(
-                "id", conflito["id"]
-            ).execute()
-            enviados += 1
-        except Exception:  # noqa: BLE001 - a notify failure must not fail the caller
-            logger.exception(
-                "could not notify conflict %s on campo %r",
-                conflito.get("id"), conflito.get("campo"),
-            )
-    return enviados
+        await notification_service.notify_field_conflict(
+            org_id=org_id, conflito=conflito, cliente_nome=nome
+        )
+
+    return await campo_conflitos.notificar_conflitos(
+        client, campo_conflitos.CLIENTE, conflitos, _notify_one
+    )
 
 
 def conflitos_pendentes(
@@ -1294,6 +1299,25 @@ async def extrair_identidade(
     # the access recorded. An access log that only records successful reads is
     # not an access log.
     _log_acesso_extracao(client, org_id, documento_id)
+
+    # P0c contract §C3: Serasa Crednet's reading is not an `IdentityFields`
+    # at all (own dataclass, own D1 fields, own empresas/certidão side
+    # effects) — `crednet_service.aplicar_leitura` owns every step past the
+    # blob read + access log above; the sweep and re-run inherit this branch
+    # for free, since both call THIS function.
+    if str(doc.get("tipo_documento")) == "serasa_crednet":
+        from app.modules.card_hub import crednet_service
+
+        crednet_extractor = extractor
+        if crednet_extractor is None:
+            from app.modules.card_hub.deps import _build_identity_extractor
+
+            crednet_extractor = _build_identity_extractor(str(org_id), "serasa_crednet")
+        return await crednet_service.aplicar_leitura(
+            client, org_id, cliente_id, documento_id, doc, blob.data,
+            extractor=crednet_extractor,
+            notification_service=notification_service,
+        )
 
     # 🔴 The page cap is chosen from the document's TYPE, not from a global
     # default — see `TIPOS_LEITURA_INTEGRAL`. A certidão de casamento must be

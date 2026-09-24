@@ -143,6 +143,7 @@ class CertidoesService:
     tjsp_cooldown_status: Callable
     certidoes_por_parte: Callable
     certidoes_por_cliente: Callable
+    certidoes_por_empresa: Callable
     confirmar_resultado: Callable
     atualizar_situacao_cadastral: Callable
     mint_resultado_url: Callable
@@ -176,6 +177,7 @@ def _build_default_service() -> CertidoesService:
         tjsp_cooldown_status=service.tjsp_cooldown_status,
         certidoes_por_parte=service.certidoes_por_parte,
         certidoes_por_cliente=service.certidoes_por_cliente,
+        certidoes_por_empresa=service.certidoes_por_empresa,
         confirmar_resultado=service.confirmar_resultado,
         atualizar_situacao_cadastral=service.atualizar_situacao_cadastral,
         mint_resultado_url=service.mint_resultado_url,

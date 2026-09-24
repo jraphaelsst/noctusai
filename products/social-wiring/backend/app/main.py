@@ -256,6 +256,7 @@ from app.modules.certidoes import register as _certidoes
 from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
 from app.modules.edicao_fotos import register as _edicao_fotos
+from app.modules.empresas import register as _empresas
 
 # Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
 # / Phase 8 (youtube) / Leads-module (leads) / Meta-Ads-console (meta_ads)
@@ -322,6 +323,15 @@ MODULES = [
     # app/lifespan.py (EDICAO_FOTOS_WORKER_ENABLED = kill switch; the live
     # pause is the `processamento_ativo` platform setting).
     _edicao_fotos,
+    # P0c (`sw-drive-extraction`). `/api/empresas` is a unique literal
+    # prefix — `{empresa_id}` is not a 1-segment path at the router's own
+    # root the `clientes_router` hazard could shadow, so position is free.
+    # Declares one upload route (see `_MAX_BODY_PATH_OVERRIDES`) and
+    # registers its own Cartão CNPJ extraction recovery sweep from
+    # `register()`. `GET/POST /api/clientes/{cliente_id}/empresas` (the
+    # card's listing/manual-link routes) are spliced into `_card_hub`'s
+    # router instead — see `card_hub/empresas_service.py`.
+    _empresas,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───
@@ -396,6 +406,15 @@ _MAX_BODY_PATH_OVERRIDES = {
     # the business-policy limit and stays under this outer bound — the
     # middleware is the platform-wide safety net, not the policy.
     "/api/imoveis/*/documentos": 50 * 1024 * 1024,  # 50 MB
+    # Cartão CNPJ upload (POST /api/empresas/{empresa_id}/documentos —
+    # migration 167, P0c). Same `*` wildcard reasoning as the clientes/
+    # imoveis entries above: `{empresa_id}` is a dynamic segment before the
+    # one that needs the bigger cap. 30 MB, same as the clientes path —
+    # `empresas.documentos_service.MAX_UPLOAD_BYTES` (30 MB) is the
+    # business-policy limit and stays at (not under) this outer bound, a
+    # Cartão CNPJ being a one/two-page scan like an RG rather than a
+    # multi-page matrícula.
+    "/api/empresas/*/documentos": 30 * 1024 * 1024,  # 30 MB
     # Financiamento/escritura upload (POST
     # /api/clientes/{cliente_id}/financiamento/documentos — migration 078).
     # A SEPARATE entry from the `/api/clientes/*/documentos` one above even

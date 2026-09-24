@@ -103,6 +103,7 @@ from app.modules.certidoes.schemas import (
     ResultadoPatch,
     SituacaoCadastralPatch,
     VincularClienteRequest,
+    VincularEmpresaRequest,
     VincularParteRequest,
 )
 from app.responses import (
@@ -218,18 +219,30 @@ def _get_consulta_or_404(db, consulta_id: str, org_id: UUID, select: str = "*") 
     return rows[0]
 
 
-def _fan_out_tipos_manuais(db, consulta_id: str, org_id) -> None:
+def _fan_out_tipos_manuais(
+    db, consulta_id: str, org_id, *, tipo_documento: Optional[str] = None
+) -> None:
     """Idempotently add a `pendente` placeholder resultado for each
     manual-only type (Serasa, TJSP e-SAJ, TJSP e-PROC —
     `registry.get_manual_tipos`) this consulta does not already carry.
 
-    Shared by `vincular_parte` and `vincular_cliente` (migration 116): both
-    attach a consulta to a person and both need the same manual-upload
-    targets to exist afterwards — the ten automated types get theirs from
-    `criar_consulta`'s own fan-out; these three have no API call to make one
-    from, so the upload endpoint always needs a resultado_id to target
-    before a human can use it.
+    Shared by `vincular_parte`, `vincular_cliente` and `vincular_empresa`
+    (migration 116/167): each attaches a consulta to a person/empresa and
+    each needs the same manual-upload targets to exist afterwards — the ten
+    automated types get theirs from `criar_consulta`'s own fan-out; these
+    three have no API call to make one from, so the upload endpoint always
+    needs a resultado_id to target before a human can use it.
+
+    🔴 `serasa` IS SKIPPED FOR `tipo_documento='cnpj'` (P0c contract §E5/
+    §H14 — fixes a pre-existing bug). Serasa is a PF credit report; a CNPJ
+    consulta investigates a company, and every caller of this function now
+    HAS the consulta's `tipo_documento` in hand to say so. `tipo_documento
+    =None` (an existing caller that has not been updated) keeps the old
+    behaviour — always fan out all three — so this stays additive.
     """
+    manuais = get_manual_tipos()
+    if tipo_documento == "cnpj":
+        manuais = [tipo for tipo in manuais if tipo["tipo"] != "serasa"]
     # postgrest-unbounded-ok: at most ~13 resultados per consulta (10
     # automated + 3 manual), the same bound every other resultados read in
     # this router relies on.
@@ -250,7 +263,7 @@ def _fan_out_tipos_manuais(db, consulta_id: str, org_id) -> None:
             "ordem": tipo["ordem"],
             "status": "pendente",
         }
-        for tipo in get_manual_tipos()
+        for tipo in manuais
         if tipo["tipo"] not in tipos_existentes
     ]
     if novos:
@@ -447,8 +460,10 @@ async def criar_consulta_manual(
 ):
     """Create a consultation the SAME shape `criar_consulta` produces — one
     `pendente` placeholder resultado per type the office checklist names,
-    thirteen total (`CERTIDOES_CONFIG`'s ten PLUS `get_manual_tipos()`'s
-    three) — but NEVER calls InfoSimples and never requires its token.
+    thirteen total for a CPF (`CERTIDOES_CONFIG`'s ten PLUS `get_manual_
+    tipos()`'s three) — but NEVER calls InfoSimples and never requires its
+    token. A CNPJ consulta gets twelve: Serasa is a PF credit report and is
+    never fanned out for one (P0c contract §E5/§H14).
 
     🔴 CARD-ONLY, BY OWNER DECISION. This is reached from a party's/titular's
     own certidões panel on the card (`CertidoesPartePanel`'s "Registrar
@@ -492,6 +507,14 @@ async def criar_consulta_manual(
         _validar_cliente_id(db, org_id, str(body.cliente_id))
         resolved_cliente_id = str(body.cliente_id)
 
+    # P0c contract §E5/§H14: a CNPJ consulta never carries the Serasa
+    # placeholder (a PF credit report) — same fix `_fan_out_tipos_manuais`
+    # applies, restated here since this route builds its own fan-out
+    # inline rather than calling that helper.
+    manuais = get_manual_tipos()
+    if body.tipo_documento == "cnpj":
+        manuais = [tipo for tipo in manuais if tipo["tipo"] != "serasa"]
+
     consulta_data = {
         **body.model_dump(
             exclude_none=True,
@@ -501,7 +524,7 @@ async def criar_consulta_manual(
         "created_by": str(user.id),
         "status": "pendente",
         "origem": "manual",
-        "total_certidoes": len(CERTIDOES_CONFIG) + len(get_manual_tipos()),
+        "total_certidoes": len(CERTIDOES_CONFIG) + len(manuais),
         "concluidas": 0,
     }
     if body.atendimento_parte_id:
@@ -537,7 +560,7 @@ async def criar_consulta_manual(
             "ordem": tipo["ordem"],
             "status": "pendente",
         }
-        for tipo in get_manual_tipos()
+        for tipo in manuais
     ]
     db.table(RESULTADOS).insert(resultados_data).execute()
 
@@ -1051,7 +1074,7 @@ async def vincular_parte(
     ).data or []
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
-    _fan_out_tipos_manuais(db, consulta_id, org_id)
+    _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento=consulta.get("tipo_documento"))
 
     return success_response(consulta)
 
@@ -1106,9 +1129,92 @@ async def vincular_cliente(
     ).data or []
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
-    _fan_out_tipos_manuais(db, consulta_id, org_id)
+    _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento=consulta.get("tipo_documento"))
 
     return success_response(consulta)
+
+
+def _validar_empresa_id(db, org_id, empresa_id: str) -> dict:
+    """The `empresas` row this org owns, or a 404 — never trust a caller-
+    supplied `empresa_id` for a link. Mirrors `_validar_cliente_id`."""
+    rows = (
+        db.table("empresas")
+        .select("id, cnpj")
+        .eq("id", empresa_id)
+        .eq("org_id", str(org_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Empresa não encontrada")
+    return rows[0]
+
+
+@router.post("/consultas/{consulta_id}/vincular-empresa")
+async def vincular_empresa(
+    consulta_id: str,
+    body: VincularEmpresaRequest,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+):
+    """Attach a `tipo_documento='cnpj'` consulta to an `empresas` row (P0c
+    contract §D5) — `vincular_cliente`'s sibling for a company rather than a
+    person. 404 when the empresa does not exist in this org; 422 unless the
+    consulta is `tipo_documento='cnpj'` AND its normalized `documento`
+    equals the empresa's `cnpj` — emission needs only the CNPJ + razão
+    social, both of which already live on `empresas` (owner rule,
+    2026-09-24); this route only records the link, never re-derives them.
+
+    Also fans out the manual-only placeholder types (TJSP e-SAJ/e-PROC —
+    NOT Serasa, a CNPJ consulta's fan-out never carries it — see
+    `_fan_out_tipos_manuais`).
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    empresa = _validar_empresa_id(db, org_id, str(body.empresa_id))
+    consulta = _get_consulta_or_404(db, consulta_id, org_id)
+    if consulta.get("tipo_documento") != "cnpj":
+        raise HTTPException(
+            status_code=422,
+            detail="Apenas consultas de CNPJ podem ser vinculadas a uma empresa.",
+        )
+    from noctusai_lib.integrations.documents.cnpj import normalize as _normalize_cnpj
+
+    if _normalize_cnpj(consulta.get("documento")) != empresa["cnpj"]:
+        raise HTTPException(
+            status_code=422,
+            detail="O CNPJ da consulta não corresponde ao CNPJ da empresa.",
+        )
+
+    updated = (
+        db.table(CONSULTAS)
+        .update({"empresa_id": str(body.empresa_id)})
+        .eq("id", consulta_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
+
+    _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento="cnpj")
+    service.aplicar_crednet_pendente(db, org_id, consulta)
+
+    return success_response(consulta)
+
+
+@router.get("/empresas/{empresa_id}/resultados")
+async def listar_resultados_por_empresa(
+    empresa_id: str,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """Every certidão result across every consulta linked to an empresa —
+    the empresas panel's certidões summary (contract §D5)."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    return success_response(svc.certidoes_por_empresa(db, org_id, empresa_id))
 
 
 @router.get("/clientes/{cliente_id}/resultados")

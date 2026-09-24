@@ -11723,7 +11723,39 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: ..., true);` ahead of the probe statement, itself transaction-scoped —
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
-_GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = ()
+_GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # Migration 167 (social-wiring, P0c contract) is FILE-ONLY — the
+    # contract's own §A explicitly forbids applying it in this slice
+    # ("It is not applied by the slice"; `migrations/APPLIED.md` still
+    # excludes it). `noctus.dev.verify_db_guards`'s `SqlExecutor` runs a
+    # probe against LIVE production via the Supabase Management API — it
+    # cannot exercise a guard on a table/constraint that does not exist in
+    # prod yet. Remove these three entries and register real `GuardProbe`s
+    # in `verify_db_guards.DEFAULT_REGISTRY` in the SAME change that finally
+    # applies this migration.
+    (
+        "products/social-wiring/backend/migrations/167_empresas_crednet_cartao_cnpj.sql",
+        "uq_sw_empresa_campo_conflitos_aberto",
+        "Migration 167 unapplied (P0c contract §A) — the partial unique "
+        "index (one open empresa_campo_conflitos row per field) has no "
+        "live table to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/167_empresas_crednet_cartao_cnpj.sql",
+        "certidao_consultas_empresa_tipo_check",
+        "Migration 167 unapplied (P0c contract §A) — the CHECK "
+        "(empresa_id IS NULL OR tipo_documento='cnpj') has no live "
+        "certidao_consultas.empresa_id column to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/167_empresas_crednet_cartao_cnpj.sql",
+        "documento_retencao_politicas_superficie_check",
+        "Migration 167 unapplied (P0c contract §A) — the widened "
+        "superficie CHECK (+'empresa') has no live constraint to probe "
+        "against until this migration (and its predecessors 079/111) are "
+        "applied together.",
+    ),
+)
 
 
 def _detect_guard_objects(sql_text: str) -> list[dict]:

@@ -454,6 +454,76 @@ class NotificationService:
         )
         return {"subject": subject, "html": html, "text": "\n".join(linhas)}
 
+    async def notify_empresa_field_conflict(
+        self, *, org_id: UUID, conflito: dict[str, Any], empresa_nome: str
+    ) -> DispatchOutcome:
+        """The empresa twin of `notify_field_conflict` / `notify_imovel_
+        field_conflict` (migration 167, P0c contract §H6/§C6): a Serasa
+        Crednet / Cartão CNPJ reading disagreed with a value already on
+        `empresas`. Same recipients tier, same `_dispatch`, same
+        notification-only posture — the decision happens only through an
+        authenticated `empresa_campo_conflitos` accept/reject route, not
+        this message. Only the wording and the link differ."""
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning(
+                "notify_empresa_field_conflict: conflito %s (org=%s) opened "
+                "but NO active notification recipient is configured — "
+                "nobody was alerted.",
+                conflito.get("id"), org_id,
+            )
+            return DispatchOutcome()
+        message = self._build_empresa_conflict_message(conflito, empresa_nome=empresa_nome)
+        return await self._dispatch(
+            kind="conflito_empresa", org_id=org_id, recipients=recipients, message=message
+        )
+
+    def _build_empresa_conflict_message(
+        self, conflito: dict[str, Any], *, empresa_nome: str
+    ) -> dict[str, str]:
+        from app.config import settings
+
+        def _txt(valor: Any) -> str:
+            if valor in (None, "", [], {}):
+                return "(vazio)"
+            return str(valor)
+
+        campo = conflito.get("campo", "")
+        anterior = _txt(conflito.get("valor_anterior"))
+        proposto = _txt(conflito.get("valor_proposto"))
+        origem = conflito.get("origem_proposto") or "desconhecida"
+        empresa_id = conflito.get("empresa_id")
+        link = (
+            f"{settings.frontend_base_url.rstrip('/')}/empresas/{empresa_id}"
+            f"?conflito={conflito.get('id')}"
+            if settings.frontend_base_url else ""
+        )
+        subject = f"[Social Wiring] Divergência em {campo} — {empresa_nome}"
+        linhas = [
+            f"⚖️ Divergência de dado extraído: {empresa_nome}",
+            f"Campo: {campo}",
+            f"📝 Valor atual: {anterior}",
+            f"📄 Valor extraído (fonte: {origem}): {proposto}",
+        ]
+        if link:
+            linhas.append(f"👉 Decidir: {link}")
+        linhas.extend(["", "Enviado pelo Social Wiring."])
+        link_html = (
+            f"<p style='margin:16px 0 0'><a href='{link}'>Comparar e decidir</a></p>"
+            if link else ""
+        )
+        html = (
+            "<div style='font-family:sans-serif;max-width:560px'>"
+            "<h2 style='margin:0 0 8px'>⚖️ Divergência de dado extraído</h2>"
+            f"<h3 style='margin:0 0 12px;font-weight:500'>{empresa_nome} — {campo}</h3>"
+            f"<p style='margin:0 0 4px'>📝 Valor atual: <b>{anterior}</b></p>"
+            f"<p style='margin:0 0 4px'>📄 Valor extraído (fonte: {origem}): <b>{proposto}</b></p>"
+            f"{link_html}"
+            "<p style='color:#888;font-size:12px;margin:24px 0 0'>Enviado pelo Social Wiring.</p>"
+            "</div>"
+        )
+        return {"subject": subject, "html": html, "text": "\n".join(linhas)}
+
     # ─── Reusable fan-out core ──────────────────────────────────────────
     async def _dispatch(
         self,

@@ -91,8 +91,10 @@ loads; a test keeps the two in lockstep).
 | Guia do IPTU (`guia_iptu`) | imovel | — | `app.modules.imovel_hub.documentos_service.extrair_estrutura` | `ia`, `manual` | `imovel_page_upload` |
 | CND de IPTU (`cnd_iptu`) | imovel | — | `app.modules.imovel_hub.documentos_service.extrair_estrutura` | `ia`, `manual` | `imovel_page_upload` |
 | CND de condomínio (`cnd_condominio`) | imovel | — | `app.modules.imovel_hub.documentos_service.extrair_estrutura` | `ia`, `manual` | `imovel_page_upload` |
+| Serasa Crednet (`serasa_crednet`) | cliente | `cpf`, `data_casamento`, `data_nascimento`, `estado_civil`, `genero`, `nacionalidade`, `nome`, `nome_mae`, `profissao`, `regime_bens`, `rg`, `rg_orgao` | `noctusai_lib.integrations.documents.serasa_crednet.make_crednet_extractor` | `serasa_crednet` | `cliente_card_upload`, `parte_painel_upload` |
+| Cartão CNPJ (`cartao_cnpj`) | empresa | `cnpj`, `data_abertura`, `data_situacao_cadastral`, `motivo_situacao`, `natureza_juridica`, `nome_fantasia`, `razao_social`, `situacao_cadastral`, `uf` | `noctusai_lib.integrations.documents.cartao_cnpj.make_cartao_cnpj_extractor` | `cartao_cnpj` | `empresa_card_upload` |
 
-**Manual-only — no document carries it (by design, not a gap):** `assinatura_data`, `certidao_pj_situacao_cadastral`, `confissao`, `contrato_modelo`, `financiamento`, `intermediarios_comissao`, `intermediarios_qualificacao`, `matricula_atos_selecionados`, `negociacao_favorecidos`, `negociacao_parcelas`, `negociacao_termos`, `negociacao_valor`, `org_dados_cadastrais`, `parte_email`, `parte_papel_no_card`, `permuta_ativo_endereco`, `permuta_termos`, `politica_constantes`, `posse`, `testemunhas`.
+**Manual-only — no document carries it (by design, not a gap):** `assinatura_data`, `confissao`, `contrato_modelo`, `financiamento`, `intermediarios_comissao`, `intermediarios_qualificacao`, `matricula_atos_selecionados`, `negociacao_favorecidos`, `negociacao_parcelas`, `negociacao_termos`, `negociacao_valor`, `org_dados_cadastrais`, `parte_email`, `parte_papel_no_card`, `permuta_ativo_endereco`, `permuta_termos`, `politica_constantes`, `posse`, `testemunhas`.
 <!-- AUTOGEN:fontes-secao-0a:end -->
 
 **Proof harness.** `products/social-wiring/backend/tests/e2e_extracao/` — a fictional

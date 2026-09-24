@@ -103,6 +103,20 @@ class VincularClienteRequest(StrictHttpModel):
     cliente_id: UUID
 
 
+class VincularEmpresaRequest(StrictHttpModel):
+    """Attach a `tipo_documento='cnpj'` consulta to an `empresas` row (P0c
+    contract §D5). One linking verb for both automated and manual CNPJ
+    consultas — `criar_consulta` has no link param, every link goes through
+    `vincular-*`. Validated server-side (`routers/certidoes.py::
+    vincular_empresa`): the empresa must exist in this org, the consulta
+    must be `tipo_documento='cnpj'`, and its normalized `documento` must
+    equal the empresa's `cnpj` — a caller cannot link a CPF consulta to a
+    company, or a CNPJ consulta to the wrong one.
+    """
+
+    empresa_id: UUID
+
+
 class ResultadoPatch(StrictHttpModel):
     """A human's correction/confirmation of one resultado's structured
     fields. Every field is OPTIONAL — an empty body is a valid "I reviewed
@@ -147,5 +161,6 @@ __all__ = [
     "ResultadoPatch",
     "SituacaoCadastralPatch",
     "VincularClienteRequest",
+    "VincularEmpresaRequest",
     "VincularParteRequest",
 ]

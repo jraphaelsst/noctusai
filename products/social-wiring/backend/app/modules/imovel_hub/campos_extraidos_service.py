@@ -43,12 +43,12 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.imovel_hub import dados_service
-from app.services import table_reads
+from app.services import campo_conflitos, table_reads
 
 logger = logging.getLogger(__name__)
 
@@ -317,29 +317,26 @@ def aplicar(
     ):
         return Resultado(REJEITADO_ANTES)
 
-    linha = {
-        "id": str(uuid4()),
-        "org_id": str(org_id),
-        "codigo": codigo,
-        "campo": chave,
-        "valor_anterior": atual,
-        "origem_anterior": (row or {}).get(campo.origem),
-        "valor_proposto": valor,
-        "origem_proposto": origem,
-        "documento_id_proposto": str(documento_id) if documento_id else None,
-        "confianca_proposta": confianca,
-        "fonte_tabela": fonte_tabela,
-        "fonte_id": str(fonte_id) if fonte_id else None,
-        "status": "pendente",
-        "notificado_em": None,
-        "decidido_por": None,
-        "decidido_em": None,
-        "created_at": _now(),
-    }
-    _t(client, CONFLITOS_TABLE).insert(linha).execute()
+    # The insert shape/dedupe is `app.services.campo_conflitos`' (P0c
+    # contract §H6, the N=3 formalization shared with `identidade_extracao
+    # _service` and `app.modules.empresas`) — the `pendente` check above
+    # already proved there is nothing to dedupe against, so this always
+    # inserts.
+    origem_anterior = (row or {}).get(campo.origem)
+    linha = campo_conflitos.registrar_conflito(
+        client, campo_conflitos.IMOVEL, org_id, codigo, chave,
+        valor_anterior=atual,
+        origem_anterior=origem_anterior,
+        valor_proposto=valor,
+        origem_proposto=origem,
+        confianca_proposta=confianca,
+        fonte_tabela=fonte_tabela,
+        fonte_id=fonte_id,
+        documento_id_proposto=documento_id,
+    )
     logger.info(
         "imovel %s: conflict opened on %s (atual origem=%s, proposto origem=%s)",
-        codigo, chave, linha["origem_anterior"], origem,
+        codigo, chave, origem_anterior, origem,
     )
     return Resultado(CONFLITO, conflito=linha)
 
@@ -436,7 +433,13 @@ async def notificar(
 ) -> None:
     """Announce each newly opened conflict. Best-effort by design: a down
     WAHA session or SMTP server must not fail the extraction that found the
-    disagreement — the conflict row is already recorded and listed."""
+    disagreement — the conflict row is already recorded and listed.
+
+    The loop/try-except/`notificado_em` stamp is `app.services.
+    campo_conflitos.notificar_conflitos`'s (P0c contract §H6) — this
+    function keeps only this exact "no notifier" wording and the
+    `notify_imovel_field_conflict` call shape.
+    """
     if not conflitos:
         return
     if notificador is None:
@@ -446,18 +449,15 @@ async def notificar(
             codigo, len(conflitos), [c["campo"] for c in conflitos],
         )
         return
-    for conflito in conflitos:
-        try:
-            await notificador.notify_imovel_field_conflict(
-                org_id=org_id, conflito=conflito, codigo=codigo
-            )
-            _t(client, CONFLITOS_TABLE).update({"notificado_em": _now()}).eq(
-                "org_id", str(org_id)
-            ).eq("id", conflito["id"]).execute()
-        except Exception:  # noqa: BLE001 - a notify failure must not fail the extraction
-            logger.exception(
-                "imovel %s: could not notify conflict on campo %r", codigo, conflito.get("campo")
-            )
+
+    async def _notify_one(conflito: dict) -> None:
+        await notificador.notify_imovel_field_conflict(
+            org_id=org_id, conflito=conflito, codigo=codigo
+        )
+
+    await campo_conflitos.notificar_conflitos(
+        client, campo_conflitos.IMOVEL, conflitos, _notify_one
+    )
 
 
 __all__ = [
