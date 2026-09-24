@@ -17,6 +17,7 @@ owns_kb:
   - CONTEXT/PATTERNS/architect/branching-and-merging.md
   - CONTEXT/PATTERNS/architect/branching-dispatch.md
   - CONTEXT/PATTERNS/architect/branch-tree-tracking.md
+  - CONTEXT/PATTERNS/common/ledger-store.md
   - CONTEXT/PATTERNS/architect/dispatch-engineer-tuning.md
   - CONTEXT/PATTERNS/architect/two-session-architect-operator.md
   - CONTEXT/PATTERNS/architect/autonomous-operator-via-subagent.md
@@ -60,7 +61,7 @@ A crisp recommendation: `[F]ormalize` / `[R]efactor` / `[A]ccept-with-rationale`
 
 ## Owned KB depth (the canonical territory)
 **Seed** → `KB § PATTERNS/architect/seed-canonical-defaults.md` · `KB § PATTERNS/architect/seed-lib-layout.md` · `KB § PATTERNS/architect/seed-workspace.md` · `KB § PATTERNS/architect/seed-absorption.md` · `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md` · `KB § PATTERNS/architect/shared-library-conventions.md`.
-**Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · `KB § PATTERNS/architect/git-branch-model.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/branch-tree-tracking.md` (global live map of git×claude trees — pre-dispatch, contextualize on dev's `branch-tree.ndjson`; collision-zones before they happen) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md` · `KB § PATTERNS/architect/dev-team.md`.
+**Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · `KB § PATTERNS/architect/git-branch-model.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/branch-tree-tracking.md` (global live map of git×claude trees — pre-dispatch, contextualize on dev's `branch-tree.ndjson`; collision-zones before they happen) · `KB § PATTERNS/common/ledger-store.md` (the append-only ledgers live on the orphan `origin/ledgers` branch, plumbing-written; read them via `read_dual`, never commit them to dev) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md` · `KB § PATTERNS/architect/dev-team.md`.
 **Project execution** → `KB § PATTERNS/architect/project-execution.md`.
 
 **Product working scope** — the catalog (`ativo` + `deploy_scope`) IS the working guide: ativo+live ⇒ work in prod, ativo+dev ⇒ dev only, inativo ⇒ don't touch. Read it before scoping any product work. → `KB § PATTERNS/architect/product-working-scope.md`.

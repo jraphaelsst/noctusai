@@ -108,6 +108,58 @@ export interface DadosPessoais {
 }
 
 /**
+ * Every key of `DadosPessoais`, as a runtime value. A `Record` over
+ * `keyof DadosPessoais` rather than a hand-kept array, so adding a field to
+ * the interface without adding it here is a compile error, not a field that
+ * silently never saves.
+ */
+const CAMPOS_DADOS_PESSOAIS: Record<keyof DadosPessoais, true> = {
+  nome_completo: true,
+  celular: true,
+  email: true,
+  data_nascimento: true,
+  profissao: true,
+  genero: true,
+  nome_oficial: true,
+  cpf: true,
+  rg: true,
+  rg_orgao_expedidor: true,
+  estado_civil: true,
+  regime_bens: true,
+  nacionalidade: true,
+  data_casamento: true,
+  certidao_estado_civil_emitida_em: true,
+  endereco_cep: true,
+  endereco_logradouro: true,
+  endereco_numero: true,
+  endereco_complemento: true,
+  endereco_bairro: true,
+  endereco_cidade: true,
+  endereco_uf: true,
+};
+
+/**
+ * Narrow any object down to the `DadosPessoais` keys it actually carries.
+ *
+ * 🔴 WHY (found live in prod, 2026-09-24). TypeScript's structural typing lets
+ * a WIDER object pass as `DadosPessoais`: `ClienteDetailModal` seeds this form
+ * with the full `clientes` row merged under the checklist `valores` (so the
+ * qualificação fields prefill), the form's draft starts as that object, and
+ * Save sent all ~110 columns. `ClientePatchBody` is a `StrictHttpModel`
+ * (`extra="forbid"`), so every save from the card 422'd with "Extra inputs
+ * are not permitted" once per non-editable column. Applied at the write
+ * (`useDadosPessoaisMutation`), not at one caller, so no seeding path can
+ * reintroduce it.
+ */
+export function apenasDadosPessoais(valores: DadosPessoais): DadosPessoais {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(valores)) {
+    if (k in CAMPOS_DADOS_PESSOAIS) out[k] = v;
+  }
+  return out as DadosPessoais;
+}
+
+/**
  * Offered for `estado_civil`. Unconstrained TEXT in the database on purpose
  * (migration 097) — the taxonomy is a product decision, so it lives here
  * beside the dropdown rather than as a CHECK that makes each addition a

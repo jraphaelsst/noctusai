@@ -51,7 +51,10 @@ import type {
   VisitaPropostaBody,
 } from "@/types/cardHub";
 import type { QualificacaoCompletude } from "@/types/qualificacaoCompletude";
-import type { DadosPessoais } from "@/components/card/DadosPessoaisForm";
+import {
+  apenasDadosPessoais,
+  type DadosPessoais,
+} from "@/components/card/DadosPessoaisForm";
 
 // ─── The seed card hub — the generic slice ─────────────────────────────────
 //
@@ -917,12 +920,16 @@ export type DadosPessoaisSaveResult = DadosPessoais & {
 export function useDadosPessoaisMutation(clienteId: string) {
   const qc = useQueryClient();
   return useMutation({
-    // Typed as the form's own shape rather than a loose record: these are the
-    // exact columns `clientes_router.ClientePatchBody` accepts, and a
-    // stray key would be refused by StrictHttpModel at runtime rather than
-    // caught here.
+    // Typed as the form's own shape: these are the exact columns
+    // `clientes_router.ClientePatchBody` accepts. The type alone does NOT
+    // keep a stray key out — a wider object (the full `clientes` row) is
+    // assignable to it — so the body is narrowed at runtime too; see
+    // `apenasDadosPessoais`.
     mutationFn: (body: DadosPessoais) =>
-      api.patch<DadosPessoaisSaveResult>(`${clienteBase(clienteId)}`, body),
+      api.patch<DadosPessoaisSaveResult>(
+        `${clienteBase(clienteId)}`,
+        apenasDadosPessoais(body),
+      ),
     onSuccess: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) }),

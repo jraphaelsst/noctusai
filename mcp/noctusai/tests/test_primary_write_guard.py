@@ -1364,3 +1364,33 @@ def test_measurement_net_is_silent_off_a_shared_branch():
     it exists to guard `dev`/`main`/`prod` only."""
     ctx = GuardContext(primary_root=PRIMARY, branch="feat/x", worktrees=())
     assert measure_posttool_dirt(PRIMARY, ctx=ctx) is None
+
+
+# ── chmod/chown MODE and install -m values are not paths (2026-09-24) ────────
+#
+# `mkdir -p ~/x && chmod 700 ~/x` run from the primary was refused: the mode
+# `700` resolved to `<primary>/700` and read as a write into the checkout.
+
+def test_chmod_mode_operand_is_not_a_path():
+    assert _decide("Bash", {"command": "chmod 700 /tmp/private-dir"}, cwd=PRIMARY) is None
+
+
+def test_chmod_flag_like_mode_is_not_a_path():
+    assert _decide("Bash", {"command": "chmod -R -x /tmp/private-dir"}, cwd=PRIMARY) is None
+
+
+def test_chown_owner_operand_is_not_a_path():
+    assert _decide("Bash", {"command": "chown rapha:staff /tmp/private-dir"}, cwd=PRIMARY) is None
+
+
+def test_install_mode_value_is_not_a_path():
+    assert _decide("Bash", {"command": "install -m 600 /tmp/a /tmp/b"}, cwd=PRIMARY) is None
+
+
+def test_chmod_on_a_primary_file_is_still_refused():
+    assert _decide("Bash", {"command": f"chmod 700 {PRIMARY}/CLAUDE.md"}, cwd=WT) is not None
+    assert _decide("Bash", {"command": "chmod 644 CLAUDE.md"}, cwd=PRIMARY) is not None
+
+
+def test_chmod_reference_form_keeps_every_operand_as_a_path():
+    assert _decide("Bash", {"command": f"chmod --reference=/tmp/r {PRIMARY}/x.py"}, cwd=WT) is not None

@@ -36,5 +36,7 @@ Bless (`dev`→`main`) and promote (`main`→`prod`) answer a whole-repo-state q
 
 **2026-09-22 — bless is whole-repo-state only when every rider is approved.** The owner decided a prod deploy must never carry another agent's unapproved work: `release stage=bless` now reads a rider manifest (commit → `Noc-Branch` → project → ship-consent) and, when anything is unapproved, CUTS `release/<stamp>` of approved work instead of FF-ing the dev tip; `stage=backmerge` restores dev containing main. → `KB § PATTERNS/devops/ship-consent-riders.md`.
 
+**2026-09-24 — relaxed: the owner's ask is the permission.** The per-project approval phrase is gone from the default path. `release stage=bless` (`mode=ff`) fast-forwards main to the whole dev tip once `Tests & Build` is green on that exact sha, and refuses a diverged main until `stage=backmerge`. The manifest stays as an informational record; `mode=cut` is the opt-in for shipping only approved work. A new product's first prod exposure is still gated by `prod_consent`.
+
 ## Composes with
 [[branching]] (the unified primitive) · [[branching-and-merging]] (§0 sacred-main + §2b promote ritual) · [[fe-be-contract-first-dispatch]] + `KB § PATTERNS/devops/dev-fleet-dormant.md` (prod-only; the gate that replaced dev-validation) · [[self-branching-mode]] (never on `dev`) · `KB § PATTERNS/devops/prod-exposure-consent.md` (the per-product consent gate bless/promote never made).

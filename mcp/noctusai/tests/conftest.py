@@ -10,10 +10,18 @@ rule applied (feedback_hardcoded_product_slug_set_keeper) and closes the
 dangling-deleted-product gap (feedback_dangling_deleted_product_path) for this
 surface permanently — no future product deletion can re-redden these tests.
 """
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+# The ledger store (`tools.noctus.dev._ledger_store`) defaults to the REAL
+# store — git plumbing that pushes to origin/ledgers. The suite must never push
+# anywhere, so it is pinned to the file-backed Fake for every test (assigned,
+# not setdefault: a shell that exported `git` must not leak into the suite).
+# Tests of the Real store build a `GitLedgerStore` on a temp bare repo directly.
+os.environ["NOCTUS_LEDGER_STORE"] = "fake"
 
 # MCP root (parent of tests/)
 _MCP_ROOT = Path(__file__).resolve().parents[1]
