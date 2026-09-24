@@ -74,13 +74,20 @@ def _t(client: Any, table: str):
     return table_reads.table(client, table)
 
 
-def _pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]:
+def pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]:
     """Every "who might own a PJ" person on this atendimento — see the
     module docstring's "WHO COUNTS" section. Returns
     `[{"cliente_id","lado","papel","certificando"}]`, deduped by
     `cliente_id` (first occurrence wins — the titular, listed first, is
     never shadowed by a `conjuge`-lado-comprador row that happens to name
-    the same person)."""
+    the same person).
+
+    Public (was `_pessoas_do_card`) — the Certidões matriz tab (`card_hub.
+    certidoes_matriz_service`) reuses this EXACT resolution (vendedor
+    parties + every vendedor's registered spouse, cônjuge-without-parte
+    included) for the matriz's VEND-n columns, rather than restating a
+    second "who counts as a vendedor" query — see that module's docstring.
+    """
     tem_permuta = tem_permuta_ativa(client, org_id, str(atendimento["id"]))
 
     pessoas: list[dict] = [
@@ -198,7 +205,7 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         return {"atendimento_id": None, "referencia": date.today().isoformat(), "items": []}
     atendimento = rows[0]
 
-    pessoas = _pessoas_do_card(client, org_id, atendimento)
+    pessoas = pessoas_do_card(client, org_id, atendimento)
     pessoas_por_id = {p["cliente_id"]: p for p in pessoas}
     nomes = {
         str(r["id"]): (r.get("nome_oficial") or r.get("nome") or "")
@@ -393,4 +400,4 @@ def remover(
     )
 
 
-__all__ = ["adicionar_manual", "listar", "remover"]
+__all__ = ["adicionar_manual", "listar", "pessoas_do_card", "remover"]

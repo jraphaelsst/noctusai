@@ -2360,10 +2360,14 @@ class TestRegistryEstruturado:
             "nao_emitida", "negativa_com_homonimos",
         }
 
-    def test_manual_tipos_tem_tres_itens_sem_endpoint(self):
-        assert len(MANUAL_TIPOS_CONFIG) == 3
+    def test_manual_tipos_tem_seis_itens_sem_endpoint(self):
+        """Certidões matriz tab (Levantamento de Certidões.xlsx): rows
+        5.13-5.15 (`fgts_regularidade`/`outras_1`/`outras_2`) added to the
+        original three."""
+        assert len(MANUAL_TIPOS_CONFIG) == 6
         assert {c["tipo"] for c in MANUAL_TIPOS_CONFIG} == {
             "serasa", "tjsp_esaj", "tjsp_eproc",
+            "fgts_regularidade", "outras_1", "outras_2",
         }
         for config in MANUAL_TIPOS_CONFIG:
             assert "endpoint" not in config
@@ -2373,13 +2377,16 @@ class TestRegistryEstruturado:
         """🔴 `criar_consulta`'s fan-out iterates `CERTIDOES_CONFIG` — the ten
         automated types stay pinned at ten, unaffected by this migration."""
         tipos = {c["tipo"] for c in get_certidoes_tipos()}
-        assert tipos.isdisjoint({"serasa", "tjsp_esaj", "tjsp_eproc"})
+        assert tipos.isdisjoint({
+            "serasa", "tjsp_esaj", "tjsp_eproc",
+            "fgts_regularidade", "outras_1", "outras_2",
+        })
         assert len(get_certidoes_tipos()) == 10
 
     def test_get_manual_tipos_retorna_tipo_nome_ordem(self):
         for item in get_manual_tipos():
             assert set(item) == {"tipo", "nome", "ordem"}
-        assert [c["ordem"] for c in get_manual_tipos()] == [11, 12, 13]
+        assert [c["ordem"] for c in get_manual_tipos()] == [11, 12, 13, 14, 15, 16]
 
     def test_manual_config_for_desconhecido_retorna_none(self):
         assert manual_config_for("nao_existe") is None

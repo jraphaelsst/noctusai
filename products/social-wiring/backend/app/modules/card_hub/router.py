@@ -44,6 +44,7 @@ from noctusai_lib.domain.card_hub import CardHubContext, card_hub_routers
 from app.dependencies import get_core_client, get_current_user_org
 
 from app.modules.card_hub import agendamentos_service as agenda_svc
+from app.modules.card_hub import certidoes_matriz_service as certidoes_matriz_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
@@ -1017,6 +1018,23 @@ async def delete_empresa_route(
         "certidoes_removidas": resultado["certidoes_removidas"],
         "storage_falhas": storage_falhas,
     }
+
+
+# ─── Certidões — Levantamento matriz (Levantamento de Certidões.xlsx) ─────
+#
+# The "Certidões" card tab: every certidão type crossed with every vendedor
+# party + their PJ-requiring empresas, aggregated server-side — see
+# `certidoes_matriz_service`'s own module docstring.
+
+
+@router.get("/{cliente_id}/certidoes/matriz")
+async def get_certidoes_matriz_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return certidoes_matriz_svc.montar_matriz(client, org_id, cliente_id)
 
 
 # ─── Negociação (migration 077) ─────────────────────────────────────────

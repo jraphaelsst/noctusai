@@ -94,6 +94,7 @@ from app.modules.certidoes.deps import (
 from app.modules.certidoes.registry import (
     CERTIDOES_CONFIG,
     TJSP_TIPO,
+    aplicavel_a_tipo_documento,
     get_certidoes_tipos,
     get_manual_tipos,
 )
@@ -233,16 +234,20 @@ def _fan_out_tipos_manuais(
     three have no API call to make one from, so the upload endpoint always
     needs a resultado_id to target before a human can use it.
 
-    🔴 `serasa` IS SKIPPED FOR `tipo_documento='cnpj'` (P0c contract §E5/
-    §H14 — fixes a pre-existing bug). Serasa is a PF credit report; a CNPJ
-    consulta investigates a company, and every caller of this function now
-    HAS the consulta's `tipo_documento` in hand to say so. `tipo_documento
-    =None` (an existing caller that has not been updated) keeps the old
-    behaviour — always fan out all three — so this stays additive.
+    🔴 EACH MANUAL TYPE IS SKIPPED WHEN INAPPLICABLE TO `tipo_documento`
+    (P0c contract §E5/§H14's `serasa`-vs-cnpj fix, generalized by the
+    Certidões matriz tab: `serasa` is a PF credit report, `fgts_
+    regularidade` is a company-only obligation — see `registry.
+    aplicavel_a_tipo_documento`). `tipo_documento=None` (an existing caller
+    that has not been updated) keeps the old behaviour — always fan out
+    every manual type — so this stays additive.
     """
     manuais = get_manual_tipos()
-    if tipo_documento == "cnpj":
-        manuais = [tipo for tipo in manuais if tipo["tipo"] != "serasa"]
+    if tipo_documento is not None:
+        manuais = [
+            tipo for tipo in manuais
+            if aplicavel_a_tipo_documento(tipo["tipo"], tipo_documento)
+        ]
     # postgrest-unbounded-ok: at most ~13 resultados per consulta (10
     # automated + 3 manual), the same bound every other resultados read in
     # this router relies on.
@@ -507,13 +512,16 @@ async def criar_consulta_manual(
         _validar_cliente_id(db, org_id, str(body.cliente_id))
         resolved_cliente_id = str(body.cliente_id)
 
-    # P0c contract §E5/§H14: a CNPJ consulta never carries the Serasa
-    # placeholder (a PF credit report) — same fix `_fan_out_tipos_manuais`
-    # applies, restated here since this route builds its own fan-out
-    # inline rather than calling that helper.
-    manuais = get_manual_tipos()
-    if body.tipo_documento == "cnpj":
-        manuais = [tipo for tipo in manuais if tipo["tipo"] != "serasa"]
+    # P0c contract §E5/§H14 (generalized by the Certidões matriz tab): each
+    # manual type only fans out onto a `tipo_documento` it applies to
+    # (`serasa` is CPF-only, `fgts_regularidade` is CNPJ-only) — the SAME
+    # `registry.aplicavel_a_tipo_documento` predicate `_fan_out_tipos_
+    # manuais` uses, kept in sync rather than restated inline (this route
+    # builds its own fan-out up front instead of calling that helper).
+    manuais = [
+        tipo for tipo in get_manual_tipos()
+        if aplicavel_a_tipo_documento(tipo["tipo"], body.tipo_documento)
+    ]
 
     consulta_data = {
         **body.model_dump(

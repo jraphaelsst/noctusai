@@ -503,7 +503,9 @@ class TestCriarConsultaManual:
         data = resp.json()["data"]
         assert data["origem"] == "manual"
         assert data["status"] == "pendente"
-        assert data["total_certidoes"] == 13
+        # 10 automated + 5 CPF-applicable manual types (excludes
+        # `fgts_regularidade`, CNPJ-only — matriz row 5.13).
+        assert data["total_certidoes"] == 15
 
     def test_nao_dispara_processamento_em_background(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
@@ -513,18 +515,19 @@ class TestCriarConsultaManual:
         client.post(f"{BASE}/consultas/manual", json=self._payload())
         proc.assert_not_awaited()
 
-    def test_fan_out_grava_treze_resultados(self, client, certidoes_db):
-        """The ten automated types PLUS the three manual-only ones —
+    def test_fan_out_grava_quinze_resultados(self, client, certidoes_db):
+        """The ten automated types PLUS the five CPF-applicable manual-only
+        ones (`fgts_regularidade` excluded — CNPJ-only) —
         `vincular_parte`'s eventual shape, produced up front instead of
         lazily on link."""
         db, _ = certidoes_db
         _seed(db)
         client.post(f"{BASE}/consultas/manual", json=self._payload())
         inserted = db.table("certidao_resultados").inserted_payloads
-        assert len(inserted) == 13
+        assert len(inserted) == 15
         tipos = {r["tipo"] for r in inserted}
         assert tipos == {c["tipo"] for c in service.CERTIDOES_CONFIG} | {
-            "serasa", "tjsp_esaj", "tjsp_eproc",
+            "serasa", "tjsp_esaj", "tjsp_eproc", "outras_1", "outras_2",
         }
         assert all(r["status"] == "pendente" for r in inserted)
         assert all(r["org_id"] == CALLER_ORG for r in inserted)
@@ -592,14 +595,14 @@ class TestCriarConsultaManual:
         """Inherited from `ConsultaCreate` (extra="forbid" would otherwise
         reject the field the Nova Consulta modal's shared form state can
         still carry), but this path never gates on it — TJSP's placeholder
-        resultado is always part of the thirteen."""
+        resultado is always part of the fifteen."""
         db, _ = certidoes_db
         _seed(db)
         resp = client.post(
             f"{BASE}/consultas/manual", json=self._payload(incluir_tjsp=True)
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["total_certidoes"] == 13
+        assert resp.json()["data"]["total_certidoes"] == 15
         assert "incluir_tjsp" not in db.table("certidao_consultas").inserted_payloads[0]
 
 
@@ -1200,7 +1203,9 @@ class TestVincularParte:
         assert data["atendimento_parte_id"] == PARTE_ID
         assert data["cliente_id"] == "cliente-001"
 
-    def test_faz_fan_out_dos_tres_tipos_manuais(self, client, certidoes_db):
+    def test_faz_fan_out_dos_cinco_tipos_manuais_aplicaveis_a_cpf(self, client, certidoes_db):
+        """`fgts_regularidade` is CNPJ-only (matriz row 5.13) — a CPF consulta's
+        fan-out carries the other five manual types, not that one."""
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()])
         db.set_table_data("atendimento_partes", [_parte()])
@@ -1212,10 +1217,10 @@ class TestVincularParte:
             r["tipo"]
             for r in db.table("certidao_resultados").select("*").execute().data
         }
-        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
+        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc", "outras_1", "outras_2"}
 
     def test_fan_out_e_idempotente(self, client, certidoes_db):
-        """Linking the same parte twice must not duplicate the three manual
+        """Linking the same parte twice must not duplicate the manual
         placeholders — `vincular_parte` checks existing tipos first."""
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()])
@@ -1229,7 +1234,7 @@ class TestVincularParte:
             json={"atendimento_parte_id": PARTE_ID},
         )
         rows = db.table("certidao_resultados").select("*").execute().data
-        assert len(rows) == 3
+        assert len(rows) == 5
 
     def test_nao_duplica_tipos_ja_existentes(self, client, certidoes_db):
         """A consulta already carrying the ten automated resultados (the
@@ -1389,7 +1394,7 @@ class TestVincularCliente:
         assert resp.status_code == 200
         assert resp.json()["data"]["cliente_id"] == CLIENTE_ID
 
-    def test_faz_fan_out_dos_tres_tipos_manuais(self, client, certidoes_db):
+    def test_faz_fan_out_dos_cinco_tipos_manuais_aplicaveis_a_cpf(self, client, certidoes_db):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()])
         db.set_table_data("clientes", [_cliente()])
@@ -1401,7 +1406,7 @@ class TestVincularCliente:
             r["tipo"]
             for r in db.table("certidao_resultados").select("*").execute().data
         }
-        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
+        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc", "outras_1", "outras_2"}
 
     def test_fan_out_e_idempotente(self, client, certidoes_db):
         db, _ = certidoes_db
@@ -1416,7 +1421,7 @@ class TestVincularCliente:
             json={"cliente_id": CLIENTE_ID},
         )
         rows = db.table("certidao_resultados").select("*").execute().data
-        assert len(rows) == 3
+        assert len(rows) == 5
 
     def test_cliente_inexistente_e_404(self, client, certidoes_db):
         db, _ = certidoes_db

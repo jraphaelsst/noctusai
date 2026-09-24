@@ -144,16 +144,45 @@ CERTIDOES_CONFIG = [
 # 🔴 DELIBERATELY SEPARATE FROM `CERTIDOES_CONFIG`, NOT FOLDED IN.
 # `criar_consulta`'s fan-out iterates `CERTIDOES_CONFIG` verbatim — ten items,
 # an existing frontend-facing contract (`test_fan_out_grava_um_resultado_por_
-# tipo` pins the count) this change does not touch. These three have no
+# tipo` pins the count) this change does not touch. These have no
 # `endpoint`/`params_fn`: there is no InfoSimples call to make for a Serasa
-# report or a TJSP e-SAJ/e-PROC screenshot, only a resultado placeholder a
-# human fills by hand via `POST /resultados/{id}/upload`. `vincular_parte`
-# (routers/certidoes.py) fans these out onto a consulta once it is linked to
-# an atendimento_parte, lazily and idempotently — see that endpoint.
+# report, a TJSP e-SAJ/e-PROC screenshot or an FGTS regularity certificate,
+# only a resultado placeholder a human fills by hand via `POST /resultados/
+# {id}/upload`. `vincular_parte`/`vincular_cliente`/`vincular_empresa`
+# (routers/certidoes.py) fan these out onto a consulta once it is linked to
+# a party/titular/empresa, lazily and idempotently — see `_fan_out_tipos_
+# manuais`.
+#
+# `aplicavel_a`: which `certidao_consultas.tipo_documento` values this type
+# fans out onto. Default (absent key) is both — `serasa` is a PF credit
+# report (CPF-only), `fgts_regularidade` (the Levantamento de Certidões
+# matriz's row 5.13, "Regularidade do FGTS (empresas)") is a company-payroll
+# obligation (CNPJ-only, N/A for a person — the matriz shows grey N/A for
+# every PF column on that row without a resultado ever existing). Read by
+# `_fan_out_tipos_manuais`, which generalizes the old serasa-only special
+# case into this per-type table.
+#
+# `fgts_regularidade`/`outras_1`/`outras_2` back the matriz's rows 5.13-5.15
+# (`MATRIZ_LINHAS` below) — added for the "Certidões" card tab (Levantamento
+# de Certidões.xlsx, first tab). `outras_1`/`outras_2` are two generic
+# "Outras: <nome>" slots the source spreadsheet leaves for a certidão type
+# not in the fixed 12; this pass ships them with a fixed PT-BR display name
+# (row-level, shared by every column, matching how every other matriz row
+# works) rather than a per-card custom-name editor — see this file's
+# `scoped-improvement:` footer in the delivery note for the deferred rename
+# UI.
 MANUAL_TIPOS_CONFIG = [
-    {"tipo": "serasa", "nome": "Serasa", "ordem": 11},
+    {"tipo": "serasa", "nome": "Serasa", "ordem": 11, "aplicavel_a": ("cpf",)},
     {"tipo": "tjsp_esaj", "nome": "TJSP e-SAJ", "ordem": 12},
     {"tipo": "tjsp_eproc", "nome": "TJSP e-PROC", "ordem": 13},
+    {
+        "tipo": "fgts_regularidade",
+        "nome": "Regularidade do FGTS (empresas)",
+        "ordem": 14,
+        "aplicavel_a": ("cnpj",),
+    },
+    {"tipo": "outras_1", "nome": "Outras 1", "ordem": 15},
+    {"tipo": "outras_2", "nome": "Outras 2", "ordem": 16},
 ]
 
 MANUAL_CONFIG_BY_TIPO: dict[str, dict] = {c["tipo"]: c for c in MANUAL_TIPOS_CONFIG}
@@ -443,6 +472,49 @@ def get_manual_tipos() -> list[dict]:
     ]
 
 
+#: The "Levantamento de Certidões" card tab's MATRIX row order — the Excel
+#: source's Nº 5.1-5.15, its own PT-BR labels (some abbreviated compared to
+#: `CERTIDOES_CONFIG`'s/`MANUAL_TIPOS_CONFIG`'s emission-checklist `nome`,
+#: on purpose: a due-diligence spreadsheet reader and an emission operator
+#: read different registers of the same fact). This is a DISPLAY/ORDERING
+#: concern separate from `ordem` (the emission checklist's own order,
+#: `CERTIDOES_CONFIG`'s 1-10 / `MANUAL_TIPOS_CONFIG`'s 11-16) — the matriz's
+#: row 5.7/5.8 (TJSP e-SAJ/e-PROC) sit right after 5.6, while their `ordem`
+#: is 12/13; two registries reading the SAME `tipo` key in a different
+#: sequence for a different screen, never re-deriving each other.
+MATRIZ_LINHAS = [
+    {"tipo": "cnd_federal", "linha": "5.1", "rotulo": "Receita Federal"},
+    {"tipo": "trf3_sp", "linha": "5.2", "rotulo": "Justiça Federal – 1ª instância"},
+    {"tipo": "trf3", "linha": "5.3", "rotulo": "Justiça Federal – 2ª instância"},
+    {"tipo": "trt2_digital", "linha": "5.4", "rotulo": "Ação trabalhista digital"},
+    {"tipo": "trt2_fisico", "linha": "5.5", "rotulo": "Ação trabalhista física"},
+    {"tipo": "cnd_trabalhista_tst", "linha": "5.6", "rotulo": "Débito trabalhista (CNDT)"},
+    {"tipo": "tjsp_esaj", "linha": "5.7", "rotulo": "TJSP – e-SAJ"},
+    {"tipo": "tjsp_eproc", "linha": "5.8", "rotulo": "TJSP – e-Proc"},
+    {"tipo": "serasa", "linha": "5.9", "rotulo": "SERASA"},
+    {"tipo": "cenprot", "linha": "5.10", "rotulo": "CENPROT"},
+    {"tipo": "cnd_fazenda_sp", "linha": "5.11", "rotulo": "Débitos não inscritos"},
+    {"tipo": "divida_ativa_sp", "linha": "5.12", "rotulo": "Dívida ativa"},
+    {"tipo": "fgts_regularidade", "linha": "5.13", "rotulo": "Regularidade do FGTS (empresas)"},
+    {"tipo": "outras_1", "linha": "5.14", "rotulo": "Outras 1"},
+    {"tipo": "outras_2", "linha": "5.15", "rotulo": "Outras 2"},
+]
+
+
+def aplicavel_a_tipo_documento(tipo: str, tipo_documento: str) -> bool:
+    """Does the manual type `tipo` fan out onto a `tipo_documento`
+    ('cpf'/'cnpj') consulta? Automated `CERTIDOES_CONFIG` types have no
+    per-type restriction (every one applies to both) — only `MANUAL_TIPOS_
+    CONFIG` rows carry an `aplicavel_a`, defaulting to both when absent
+    (`serasa`→cpf-only, `fgts_regularidade`→cnpj-only; see that config's own
+    comment). Unknown `tipo` → True (never silently drop a resultado the
+    caller already knows about over a registry miss)."""
+    config = MANUAL_CONFIG_BY_TIPO.get(tipo)
+    if config is None:
+        return True
+    return tipo_documento in config.get("aplicavel_a", ("cpf", "cnpj"))
+
+
 def config_for(tipo: str) -> Optional[dict]:
     """The config row for `tipo`, or `None` when the registry has no such type.
 
@@ -469,11 +541,13 @@ __all__ = [
     "INFOSIMPLES_BASE_URL",
     "MANUAL_CONFIG_BY_TIPO",
     "MANUAL_TIPOS_CONFIG",
+    "MATRIZ_LINHAS",
     "PARAM_BUILDERS",
     "PARSE_BUILDERS",
     "RESULTADO_VALUES",
     "TJSP_COOLDOWN_SECONDS",
     "TJSP_TIPO",
+    "aplicavel_a_tipo_documento",
     "config_for",
     "get_certidoes_tipos",
     "get_manual_tipos",
