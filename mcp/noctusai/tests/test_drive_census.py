@@ -364,10 +364,12 @@ def test_criminal_items_are_ignored_and_relatorio_fiscal_takes_the_rf_slot() -> 
     assert (rel["tipo"], rel["pasta_n"], rel["emitida_em"], rel["condicao"]) == (
         "relatorio_fiscal", 1, "2026-09-13", "rf_resultado_diferente_de_negativa")
     assert (rel["rf_presente"], rel["rf_resultado"]) == (False, None)
-    assert pj["relatorio_fiscal"] == {"exigido": True, "entregue": True, "rf_resultado": None, "situacao": "entregue"}
+    assert pj["relatorio_fiscal"] == {"exigido": True, "entregue": True, "rf_resultado": None, "situacao": "entregue",
+                                      "pontuavel": False}
     # PCEN is not negativa → a relatório is due; none delivered here → a_entregar
     assert pf["relatorio_fiscal"] == {"exigido": True, "entregue": False,
-                                      "rf_resultado": "positiva_com_efeito_de_negativa", "situacao": "a_entregar"}
+                                      "rf_resultado": "positiva_com_efeito_de_negativa", "situacao": "a_entregar",
+                                      "pontuavel": False}
 
 
 def test_word_diff_reports_only_real_edits() -> None:
@@ -446,10 +448,28 @@ def test_older_template_items_and_pending_rf() -> None:
 1.11 - Certidão de Baixa do CNPJ, emitida 03/05/2023."""
     [g] = C.parse_certidoes(C.split_clauses(C.paragraphs_from_text(txt, source="docx"))[1][0])["grupos"]
     rf, tj, baixa = g["itens"]
-    assert (tj["tipo"], tj["pasta_n"]) == ("tjsp", 7)  # no E-SAJ/E-PROC suffix → the generic registry code
-    assert (baixa["tipo"], baixa["tipo_proposto"]) == (None, "baixa_cnpj")
+    # no E-SAJ/E-PROC suffix: never the generic code; ambiguous until the folder's files resolve it
+    assert (tj["tipo"], tj["ambiguo"]) == (None, "tjsp_sem_sistema")
+    assert (baixa["tipo"], baixa["ignorado"]) == (None, "baixa_cnpj_coberta_pelo_cartao")
     assert rf["resultado"] == "nao_emitida"
     assert g["relatorio_fiscal"]["situacao"] == "nao_exigido"  # a pending RF is not a result
+    assert g["relatorio_fiscal"]["pontuavel"] is False  # historically not written into the contract
+
+
+def test_generic_tjsp_is_split_from_the_folders_certidao_files(private, tmp_path) -> None:
+    generic = ("1.8 – Certidão Negativa Estadual do Distribuidor Cível do Tribunal de Justiça do Estado de "
+               "São Paulo – nº 2000002 - emitida em 02/08/2026;\n1.9 - Pesquisa")
+    contrato = CONTRATO.replace("1.9 - Pesquisa", generic, 1)
+    _mirror(private, "F9", {
+        "REV FINAL_CONTRATO DE COMPRA E VENDA - X.docx": _docx_bytes(contrato, tmp_path),
+        "CERTIDÕES/ANA/8 - TJSP e-proc_ANA.pdf": b"%PDF-1.4 not really",
+    })
+    C.drive_census("answer_key", "F9")
+    key = json.loads((private / "answer-keys" / "901.json").read_text())
+    [item] = [i for i in key["certidoes"]["grupos"][0]["itens"] if i["item"] == "1.8"]
+    assert (item["tipo"], item["pasta_n"], item["sistema"], item["tjsp_resolvido_por"]) == (
+        "tjsp_eproc", 8, "E-PROC", "outro_sistema_ja_listado")  # 1.7 E-SAJ is already listed
+    assert "ambiguo" not in item
 
 
 def test_pdf_hyphen_breaks_are_not_edits() -> None:

@@ -922,8 +922,13 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
             }
             f = _fold(texto)
             if "BAIXA DO CNPJ" in f:
-                # not in the product vocabulary yet: proposed to 3e, never invented as a code
-                row.update({"tipo": None, "pasta_n": None, "tipo_proposto": "baixa_cnpj"})
+                # Owner ruling 2026-09-24: not a product type; the Cartão CNPJ covers it.
+                row.update({"tipo": None, "pasta_n": None, "resultado": None, "ignorado": "baixa_cnpj_coberta_pelo_cartao"})
+            elif tipo == "tjsp":
+                # Owner ruling 2026-09-24: never the generic code. Resolved to tjsp_esaj / tjsp_eproc from
+                # the folder's numbered certidão files in answer_key_folder (_resolve_tjsp); until then
+                # (and when undecidable) it is ambiguous and out of scoring.
+                row.update({"tipo": None, "pasta_n": None, "sistema": None, "ambiguo": "tjsp_sem_sistema"})
             elif "CRIMINAL" in f:
                 # Owner ruling 2026-09-24: added by the client's lawyer; not ours, never scored.
                 row.update({"tipo": None, "pasta_n": None, "resultado": None, "ignorado": "criminal_advogado_cliente"})
@@ -961,6 +966,9 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
             "entregue": bool(rel),
             "rf_resultado": rf["resultado"] if rf else None,
             "situacao": "entregue" if rel else ("a_entregar" if exigido else "nao_exigido"),
+            # Owner ruling: always required when RF ≠ negativa, but by default NOT written into the
+            # contract (888's were the client's lawyer). A historical contract without it is no error.
+            "pontuavel": False,
         }
     return out
 
@@ -1060,7 +1068,7 @@ def _coverage(key: dict[str, Any]) -> dict[str, Any]:
     fields = ("nome_oficial", "cpf", "rg", "estado_civil", "email", "nacionalidade")
     filled = {f: sum(1 for p in partes if p["clientes"].get(f)) for f in fields}
     grupos = (key.get("certidoes") or {}).get("grupos") or []
-    itens = [i for g in grupos for i in g["itens"] if not i.get("ignorado")]
+    itens = [i for g in grupos for i in g["itens"] if not i.get("ignorado") and not i.get("ambiguo")]
     return {
         "partes": len(partes),
         "vendedores": sum(1 for p in partes if p["lado"] == "vendedor"),
@@ -1074,6 +1082,8 @@ def _coverage(key: dict[str, Any]) -> dict[str, Any]:
                                          and i["tipo"] != "relatorio_fiscal"),  # printed without a nº
         "certidao_itens_sem_data": sum(1 for i in itens if not i["emitida_em"] and i["resultado"] != "nao_emitida"),
         "certidao_itens_ignorados": sum(1 for g in grupos for i in g["itens"] if i.get("ignorado")),
+        "certidao_itens_ambiguos": sum(1 for g in grupos for i in g["itens"] if i.get("ambiguo")),
+        "tjsp_resolvidos": sum(1 for g in grupos for i in g["itens"] if i.get("tjsp_resolvido_por")),
         "relatorios_fiscais": sum(1 for i in itens if i["tipo"] == "relatorio_fiscal"),
         "relatorios_fiscais_a_entregar": sum(1 for g in grupos if (g.get("relatorio_fiscal") or {}).get("situacao") == "a_entregar"),
         "imovel_campos": sum(1 for v in ((key.get("imovel") or {}).get("imovel_dados") or {}).values() if v),
@@ -1249,6 +1259,53 @@ def _parse_aditivos(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
     return sorted(best.values(), key=lambda a: (a.get("numero_ordinal") or 99, a["arquivo"])), descartados
 
 
+def _tjsp_sistema_do_arquivo(f: dict[str, Any]) -> Optional[str]:
+    """E-SAJ or E-PROC from a numbered certidão file: its name ("7 - TJSP e-saj"), else its text layer,
+    else the folder convention (7 = e-SAJ, 8 = e-Proc)."""
+    for text in (_fold(f["rel_path"]), _fold(((_text_for(f) or {}).get("text") or "")[:3000])):
+        esaj, eproc = bool(re.search(r"E-?\s?SAJ", text)), bool(re.search(r"E-?\s?PROC", text))
+        if esaj != eproc:
+            return "tjsp_esaj" if esaj else "tjsp_eproc"
+    return {7: "tjsp_esaj", 8: "tjsp_eproc"}.get(f.get("certidao_n"))
+
+
+def _resolve_tjsp(key: dict[str, Any], census: dict[str, Any]) -> None:
+    """Split an old generic TJSP item into tjsp_esaj / tjsp_eproc (owner ruling 2026-09-24).
+    0. the group already lists the other system explicitly → this item is the missing one;
+    1. its nº appears in exactly one TJSP certidão file's text → that file's system;
+    2. else the group's entity folder holds files of ONE system only → that system;
+    3. else it stays ambiguo=tjsp_sem_sistema (out of scoring). Never the generic code."""
+    tj_files = [f for f in census["files"] if f["doc_type"] == "certidao" and f.get("certidao_n") in (7, 8)]
+    for g in (key.get("certidoes") or {}).get("grupos") or []:
+        nome = set(re.findall(r"[A-Z]+", _fold(g["em_nome_de"])))
+        ent = [f for f in tj_files if f.get("entity")
+               and (set(re.findall(r"[A-Z]+", _fold(f["entity"]))) - {"CNPJ"}) <= nome
+               and (f.get("entity_kind") == "pj") == (g["consulta_tipo_documento"] == "cnpj")]
+        for i in g["itens"]:
+            if i.get("ambiguo") != "tjsp_sem_sistema":
+                continue
+            tipo, por = None, None
+            # 0. the contract itself: a group that already lists one system explicitly → this is the other
+            presentes = {x["tipo"] for x in g["itens"] if x["tipo"] in ("tjsp_esaj", "tjsp_eproc")}
+            genericos = [x for x in g["itens"] if x.get("ambiguo") == "tjsp_sem_sistema"]
+            if len(presentes) == 1 and len(genericos) == 1:
+                tipo, por = ({"tjsp_esaj", "tjsp_eproc"} - presentes).pop(), "outro_sistema_ja_listado"
+            num = re.sub(r"\D", "", i.get("numero") or "")
+            if tipo is None and len(num) >= 5:
+                hits = {_tjsp_sistema_do_arquivo(f) for f in tj_files
+                        if num in re.sub(r"\D", "", (_text_for(f) or {}).get("text") or "")} - {None}
+                if len(hits) == 1:
+                    tipo, por = hits.pop(), "numero_no_arquivo"
+            if tipo is None:
+                sistemas = {_tjsp_sistema_do_arquivo(f) for f in ent} - {None}
+                if len(sistemas) == 1:
+                    tipo, por = sistemas.pop(), "unico_sistema_da_entidade"
+            if tipo:
+                i.update({"tipo": tipo, "pasta_n": CERTIDAO_TIPOS.index(tipo) + 1,
+                          "sistema": "E-SAJ" if tipo == "tjsp_esaj" else "E-PROC", "tjsp_resolvido_por": por})
+                i.pop("ambiguo", None)
+
+
 def _check_empresas_vs_contract(key: dict[str, Any]) -> None:
     """E1 cross-check: an empresa is ``exigida`` iff the signed contract carries its certidão group.
 
@@ -1306,6 +1363,7 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
             source = "docx" if cached.get("text_source") == "docx" else "pdf"
             paras = paragraphs_from_text(cached["text"], source=source)
             key.update(parse_contract(paras))
+            _resolve_tjsp(key, census)
             if fonte == "d4sign":
                 key["fonte"]["assinado_em"] = d4sign_assinado_em(cached["text"])
             key["status"] = "ok"
