@@ -553,17 +553,13 @@ def cliente_para_derivacao(
 _ITEM_KEY_SERASA_CREDNET = "serasa_crednet"
 
 
-def _e_certificando(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
-    """Is this cliente CURRENTLY a certificando on their resolvable
-    atendimento? No/ambiguous atendimento -> False (hidden) — the same
-    "nothing to show" posture `empresas_service.listar` takes for its own
-    empty case."""
-    from app.modules.card_hub.services import AmbiguousAtendimento, resolve_atendimento_id
-
-    try:
-        atendimento_id = resolve_atendimento_id(client, org_id, cliente_id)
-    except AmbiguousAtendimento:
-        return False
+def _e_certificando_no_atendimento(
+    client: Any, org_id: UUID, cliente_id: UUID, atendimento_id: str
+) -> bool:
+    """Is this cliente a certificando on THIS ONE (already-resolved,
+    already-open) atendimento? The per-atendimento half of `_e_certificando`
+    — pulled out so a cliente party to more than one open atendimento can be
+    checked on each (see `_e_certificando`'s docstring for why that matters)."""
     rows = (
         _t(client, "atendimentos")
         .select("id, cliente_id")
@@ -616,6 +612,39 @@ def _e_certificando(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
         if conjuge:
             return True
     return False
+
+
+def _e_certificando(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
+    """Is this cliente CURRENTLY a certificando on ANY of their open
+    atendimentos?
+
+    🔴 Fixed in this pass (P1, folder 883, 2026-09-24): this used to resolve
+    "the" atendimento via `services.resolve_atendimento_id`, which only ever
+    looks at `atendimentos.cliente_id` — the titular column. A vendedor (or
+    a comprador's/vendedor's spouse) is NEVER that titular, so for them the
+    lookup always found zero rows, raised `AmbiguousAtendimento([])`, and
+    this function silently returned `False` — the `serasa_crednet` slot
+    vanished for every vendedora added via "Adicionar vendedor", and the
+    parte/cônjuge branches below (now `_e_certificando_no_atendimento`) were
+    dead code: nothing ever reached them for a non-titular cliente.
+
+    THE MULTI-ATENDIMENTO RULE (`services.atendimentos_abertos_
+    certificaveis`): a cliente can be on more than one open atendimento at
+    once. Rather than picking one (or refusing, as a WRITE-scoping resolver
+    must), this checks EVERY one the cliente is currently on — as titular,
+    as a parte, or as a vendedor's registered cônjuge — and shows the item
+    the moment ANY of them says yes. No/ambiguous atendimento was already
+    "nothing to show" before this fix and stays that way: zero candidates
+    -> the loop below never runs -> `False`, same posture `empresas_service.
+    listar` takes for its own empty case.
+    """
+    from app.modules.card_hub.services import atendimentos_abertos_certificaveis
+
+    atendimento_ids = atendimentos_abertos_certificaveis(client, org_id, cliente_id)
+    return any(
+        _e_certificando_no_atendimento(client, org_id, cliente_id, atendimento_id)
+        for atendimento_id in atendimento_ids
+    )
 
 
 def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:

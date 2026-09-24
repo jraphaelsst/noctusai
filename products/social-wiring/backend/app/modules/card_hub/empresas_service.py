@@ -49,7 +49,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
 from app.modules.card_hub.services import (
     AmbiguousAtendimento,
     ensure_cliente,
-    resolve_atendimento_id,
+    resolve_atendimento_id_incluindo_partes,
     tem_permuta_ativa,
 )
 from app.modules.empresas import dados_service
@@ -189,7 +189,7 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     posture `compradores_service.listar` takes."""
     ensure_cliente(client, org_id, cliente_id)
     try:
-        atendimento_id = resolve_atendimento_id(client, org_id, cliente_id)
+        atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
     except AmbiguousAtendimento:
         return {"atendimento_id": None, "referencia": date.today().isoformat(), "items": []}
 
@@ -349,7 +349,7 @@ def adicionar_manual(
         raise ValidationError_(f"CNPJ inválido: {cnpj!r}", field="cnpj")
 
     try:
-        atendimento_id = resolve_atendimento_id(client, org_id, cliente_id)
+        atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
     except AmbiguousAtendimento:
         raise NotFoundError("atendimentos", str(cliente_id)) from None
 

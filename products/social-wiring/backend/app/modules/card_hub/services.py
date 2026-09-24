@@ -143,6 +143,135 @@ def resolve_atendimento_id(
     raise AmbiguousAtendimento([str(r["id"]) for r in abertos])
 
 
+# ─── Which atendimento(s) is this cliente ON — titular OR NOT ──────────────
+#
+# `resolve_atendimento_id` above only ever looks at `atendimentos.cliente_id`
+# (the titular column) — correct for a WRITE that assumes the person opening
+# the card IS the deal's titular. It is wrong for a vendedor, or a
+# comprador's/vendedor's spouse: neither is EVER the titular, so the titular
+# -only lookup finds nothing for them and raises `AmbiguousAtendimento([])`
+# — which every caller here already reads as "nothing to show", so their
+# card goes blind. The live bug (folder 883, P1, 2026-09-24):
+# `documento_checklist_service._e_certificando` resolved a vendedora's
+# atendimento this way, got the empty-candidates refusal, and hid her
+# `serasa_crednet` checklist slot — the exact same shape then found (and
+# fixed alongside it) in `empresas_service.listar` and
+# `certidoes_matriz_service.resolver_colunas`.
+#
+# The two functions below are the shared fix, used ONLY by the read paths
+# proven to need it — `resolve_atendimento_id` itself, and its many
+# write-scoping callers (agendamentos/financiamento/negociação/contratos/
+# assinatura/…), are UNCHANGED: those all key off a titular's own card and
+# have no live evidence of the same gap.
+
+
+def _atendimentos_ids_via_partes_e_conjuge(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> set[str]:
+    """atendimento_ids this cliente is "on" but is NOT the titular of: a
+    direct `atendimento_partes` row (either `lado`), or the registered
+    cônjuge of a vendedor parte who never got a row of their own
+    (`clientes.conjuge_cliente_id` — migration 153's D1 link;
+    `documento_checklist_service._e_certificando` and `empresas_service.
+    pessoas_do_card` already special-case this identical fact for ONE
+    already-known atendimento — this answers it across every one the
+    cliente might be on)."""
+    ids = {
+        str(r["atendimento_id"])
+        for r in (
+            _t(client, "atendimento_partes")
+            .select("atendimento_id")
+            .eq("org_id", str(org_id))
+            .eq("cliente_id", str(cliente_id))
+            .execute()
+        ).data or []
+    }
+    conjuges = (
+        _t(client, "clientes")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("conjuge_cliente_id", str(cliente_id))
+        .execute()
+    ).data or []
+    conjuge_ids = [str(r["id"]) for r in conjuges]
+    if conjuge_ids:
+        ids |= {
+            str(r["atendimento_id"])
+            for r in (
+                _t(client, "atendimento_partes")
+                .select("atendimento_id")
+                .eq("org_id", str(org_id))
+                .eq("lado", "vendedor")
+                .in_("cliente_id", conjuge_ids)
+                .execute()
+            ).data or []
+        }
+    return ids
+
+
+def atendimentos_abertos_certificaveis(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> list[str]:
+    """Every OPEN atendimento this cliente is currently party to — as
+    titular, as an `atendimento_partes` row on either side, or as the
+    registered cônjuge of a vendedor parte with no row of its own. Never
+    raises.
+
+    THE MULTI-ATENDIMENTO RULE: a cliente CAN legitimately be on more than
+    one open atendimento at once — a repeat lead, or a vendedor on one deal
+    who is simultaneously a comprador's spouse on another. This returns
+    EVERY match rather than picking one. A caller answering "is X true for
+    this person, at all" (`documento_checklist_service._e_certificando`)
+    evaluates each id and ORs the result — true on ANY open atendimento is
+    enough to show the item; it is never diluted by an unrelated second
+    deal where X happens to be false. A caller that must render ONE
+    atendimento's view uses `resolve_atendimento_id_incluindo_partes`
+    instead, which keeps the existing single-match-or-refuse contract.
+    """
+    abertos: dict[str, dict] = {
+        str(r["id"]): r
+        for r in _atendimentos_do_cliente(client, org_id, cliente_id)
+        if r.get("substituida_por") is None and not r.get("arquivado", False)
+    }
+    outros = _atendimentos_ids_via_partes_e_conjuge(client, org_id, cliente_id) - set(abertos)
+    if outros:
+        extras = (
+            _t(client, "atendimentos")
+            .select("id, substituida_por, arquivado")
+            .eq("org_id", str(org_id))
+            .in_("id", list(outros))
+            .execute()
+        ).data or []
+        for r in extras:
+            if r.get("substituida_por") is None and not r.get("arquivado", False):
+                abertos[str(r["id"])] = r
+    return list(abertos.keys())
+
+
+def resolve_atendimento_id_incluindo_partes(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> str:
+    """The single-atendimento-view sibling of `atendimentos_abertos_
+    certificaveis`, for a caller that renders exactly ONE atendimento's
+    state (`empresas_service.listar`, `certidoes_matriz_service.
+    resolver_colunas`) rather than ORing a check across several.
+
+    Same refusal shape as `resolve_atendimento_id` — zero candidates ->
+    `AmbiguousAtendimento([])`, more than one -> `AmbiguousAtendimento`
+    carrying them — except the candidate set ALSO includes the atendimentos
+    this cliente is only a parte or a vendedor's registered cônjuge on, so a
+    person who is never a titular resolves exactly like one when they are
+    on exactly one open deal, instead of always hitting the zero-candidate
+    branch. A titular's own result is byte-identical to
+    `resolve_atendimento_id`'s — the extra lookups only ever ADD ids for a
+    non-titular cliente_id, never remove one.
+    """
+    ids = atendimentos_abertos_certificaveis(client, org_id, cliente_id)
+    if len(ids) == 1:
+        return ids[0]
+    raise AmbiguousAtendimento(ids)
+
+
 def tem_permuta_ativa(client: Any, org_id: UUID, atendimento_id: str) -> bool:
     """Does this atendimento have a `permuta`-type parcela? (P0c contract
     §E1/§H11 — a permuta comprador stands in a seller-like position for
@@ -302,6 +431,7 @@ def delete_checklist_item(
 
 __all__ = [
     "AmbiguousAtendimento",
+    "atendimentos_abertos_certificaveis",
     "create_checklist",
     "create_checklist_item",
     "create_nota",
@@ -317,6 +447,7 @@ __all__ = [
     "list_checklists",
     "list_tags",
     "resolve_atendimento_id",
+    "resolve_atendimento_id_incluindo_partes",
     "set_cliente_tags",
     "set_membros",
     "tem_permuta_ativa",

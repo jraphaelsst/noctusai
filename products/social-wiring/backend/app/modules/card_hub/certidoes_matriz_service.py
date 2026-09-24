@@ -93,7 +93,7 @@ from app.modules.card_hub.empresas_service import (
 from app.modules.card_hub.services import (
     AmbiguousAtendimento,
     ensure_cliente,
-    resolve_atendimento_id,
+    resolve_atendimento_id_incluindo_partes,
 )
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.certidoes.registry import MATRIZ_LINHAS
@@ -136,7 +136,7 @@ def resolver_colunas(client: Any, org_id: UUID, cliente_id: UUID) -> tuple[Optio
     rather than each re-deriving "who is on this card"."""
     ensure_cliente(client, org_id, cliente_id)
     try:
-        atendimento_id = resolve_atendimento_id(client, org_id, cliente_id)
+        atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
     except AmbiguousAtendimento:
         return None, []
 
