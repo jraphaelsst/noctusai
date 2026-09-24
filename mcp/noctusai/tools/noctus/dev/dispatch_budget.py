@@ -56,6 +56,8 @@ from pathlib import Path
 
 from settings import LEDGER_ROOT
 
+from ._ledger_store import append_rows, read_ledger_text
+
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -63,6 +65,7 @@ logger = logging.getLogger(__name__)
 # land in the PRIMARY checkout even when the MCP server booted with cwd
 # inside a worktree. See workspace.get_ledger_root() docstring.
 LEDGER_PATH = LEDGER_ROOT / "project-history" / "dispatch-budget.ndjson"
+LEDGER_NAME = "dispatch-budget.ndjson"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -99,16 +102,18 @@ def log_dispatch(
         "model": model,
         "source_ref": source_ref,
     }
+    # Since 2026-09-24 the ledger lives on the orphan origin/ledgers branch
+    # (`_ledger_store`, KB § PATTERNS/common/ledger-store.md); reads are the
+    # S2 dual-read (origin/ledgers ∪ the legacy dev copy).
     try:
-        LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with LEDGER_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row) + "\n")
+        store = append_rows(LEDGER_NAME, LEDGER_PATH, [json.dumps(row)],
+                            message=f"dispatch-budget: {agent} on {slug}")
         logger.debug(
             "dispatch_budget: logged dispatch agent=%s slug=%s tokens=%d",
             agent, slug, row["total_tokens"],
         )
-        return {"ok": True, "path": str(LEDGER_PATH), "row": row}
-    except OSError as exc:
+        return {"ok": True, "path": str(LEDGER_PATH), "row": row, "store": store}
+    except (OSError, ValueError) as exc:
         logger.error("dispatch_budget: failed to write ledger: %s", exc)
         return {"ok": False, "error": str(exc), "row": row}
 
@@ -123,26 +128,27 @@ def _read_ledger(
     `since` is an ISO date string (YYYY-MM-DD or full ISO-8601); rows whose
     `ts` field is < `since` are excluded. Malformed lines are silently skipped.
     """
-    if not LEDGER_PATH.exists():
-        return []
+    # Since 2026-09-24 the ledger lives on the orphan origin/ledgers branch
+    # (`_ledger_store`, KB § PATTERNS/common/ledger-store.md); reads are the
+    # S2 dual-read (origin/ledgers ∪ the legacy dev copy).
+    text, _store_err = read_ledger_text(LEDGER_NAME, LEDGER_PATH)
     rows: list[dict] = []
-    with LEDGER_PATH.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                logger.debug("dispatch_budget: skipping malformed line: %.80s", line)
-                continue
-            if agent is not None and row.get("agent") != agent:
-                continue
-            if model is not None and row.get("model") != model:
-                continue
-            if since is not None and row.get("ts", "") < since:
-                continue
-            rows.append(row)
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            logger.debug("dispatch_budget: skipping malformed line: %.80s", line)
+            continue
+        if agent is not None and row.get("agent") != agent:
+            continue
+        if model is not None and row.get("model") != model:
+            continue
+        if since is not None and row.get("ts", "") < since:
+            continue
+        rows.append(row)
     return rows
 
 

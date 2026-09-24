@@ -89,19 +89,23 @@ def log_completion(
         "outcome": outcome,
         "notes": notes,
     }
+    # Since 2026-09-24 the ledger lives on the orphan origin/ledgers branch
+    # (`_ledger_store`, KB § PATTERNS/common/ledger-store.md); reads are the
+    # S2 dual-read (origin/ledgers ∪ the legacy dev copy).
     path = _ledger_path()
+    from ._ledger_store import append_rows  # noqa: PLC0415 — keep import-time light
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception as e:  # noqa: BLE001
+        store = append_rows(path.name, path, [entry], message=f"dispatch-completion: {agent} on {slug}")
+    except (OSError, ValueError) as e:
         return {"ok": False, "error": f"write failed: {str(e)[:200]}"}
     try:
         from settings import LEDGER_ROOT
         rel = str(path.relative_to(LEDGER_ROOT))
     except (ImportError, ValueError):
         rel = str(path)
-    return {"ok": True, "entry": entry, "ledger_path": rel}
+    # `store.status == 'pending'` ⇒ the row is durably spooled, not yet on
+    # origin/ledgers — surfaced, never hidden.
+    return {"ok": True, "entry": entry, "ledger_path": rel, "store": store}
 
 
 def summary(
@@ -125,7 +129,9 @@ def summary(
       }
     """
     path = _ledger_path()
-    if not path.exists():
+    from ._ledger_store import read_ledger_text  # noqa: PLC0415
+    text, _store_err = read_ledger_text(path.name, path)
+    if not text.strip():
         return {
             "ok": True, "total_dispatches": 0,
             "by_outcome": {}, "by_agent": {},
@@ -137,7 +143,7 @@ def summary(
     total_tokens = 0
     total = 0
     landed = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue

@@ -307,3 +307,23 @@ class TestFileRotationSafe:
             tmp_ledger.exists() and tmp_ledger.stat().st_size > 0
         )
         assert tmp_ledger.exists()
+
+
+class TestLedgerStoreRealMode:
+    """2026-09-24: rows publish to origin/ledgers, never the dev copy."""
+
+    def test_log_publishes_and_reads_back(self, ledger_repo, monkeypatch):
+        import tools.noctus.dev.dispatch_budget as mod
+        import tools.noctus.dev.dispatch_token_log as dtl
+        bare, clone, show = ledger_repo
+        dev_copy = clone / "project-history" / "dispatch-budget.ndjson"
+        monkeypatch.setattr(mod, "LEDGER_PATH", dev_copy)
+        monkeypatch.setattr(dtl, "_ledger_path", lambda: dev_copy)
+        r = mod.log_dispatch(agent="engineer-seed", slug="s", input_tokens=1, output_tokens=2, model="m")
+        assert r["ok"] and r["store"]["status"] == "pushed", r
+        c = dtl.log_completion(slug="s", agent="engineer-seed", duration_minutes=3.0)
+        assert c["ok"] and c["store"]["status"] == "pushed", c
+        assert not dev_copy.exists()
+        assert len(show("dispatch-budget.ndjson").splitlines()) == 2
+        assert mod._read_ledger(agent="engineer-seed")[0]["total_tokens"] == 3
+        assert dtl.summary()["total_dispatches"] >= 1
