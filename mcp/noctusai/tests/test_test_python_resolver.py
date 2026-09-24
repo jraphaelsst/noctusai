@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from settings import REPO_ROOT, resolve_test_python  # noqa: E402
+from workspace import unwrap_worktree_root  # noqa: E402
 
 
 def test_resolves_to_an_existing_interpreter():
@@ -30,10 +31,27 @@ def test_resolved_interpreter_can_import_pytest():
 
 
 def test_prefers_repo_root_venv_else_current_interpreter():
-    """Documents the resolution order: the repo-root venv (full noc stack)
-    when present, else the running interpreter — never bare 'python'."""
-    venv_py = REPO_ROOT / "venv" / "bin" / "python"
-    expected = str(venv_py) if venv_py.exists() else sys.executable
+    """Documents the FULL resolution order (KB § `resolve_test_python`'s own
+    docstring): REPO_ROOT's own venv, else the PRIMARY checkout's venv when
+    REPO_ROOT is a linked worktree (`test_worktree_without_venv_falls_back_
+    to_primary_checkout` below is the dedicated regression for that leg),
+    else the running interpreter — never bare 'python'.
+
+    NOT `REPO_ROOT / "venv"` alone: this suite genuinely runs from INSIDE a
+    worktree sometimes (an engineer/tech-lead verifying a branch's own
+    changes before integrating), where that naive check reads False and
+    wrongly expects `sys.executable` — while the real resolver correctly
+    walks up to the primary's venv (2026-09-24, found running this exact
+    suite from `.claude/worktrees/release-no-freeze`)."""
+    for root in (REPO_ROOT, unwrap_worktree_root(REPO_ROOT)):
+        if root is None:
+            continue
+        cand = root / "venv" / "bin" / "python"
+        if cand.exists():
+            expected = str(cand)
+            break
+    else:
+        expected = sys.executable
     assert resolve_test_python() == expected
 
 
