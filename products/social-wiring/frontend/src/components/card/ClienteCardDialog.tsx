@@ -254,6 +254,12 @@ export interface ClienteCardDialogProps {
    *  THIS dialog's subpage (`destino.ancora`) and lands on `destino.alvo`.
    *  The dialog owns its subpage in local state, so only it can do this. */
   renderContratos?: (nav: { irPara: (destino: GeracaoDestino) => void }) => ReactNode;
+  /** The Empresas subpage (P0c contract, `project-history/roadmaps/
+   *  sw-drive-extraction-P0c-contract.md` §F) — same render-prop reasoning
+   *  as `renderNegociacao`/`renderFinanciamento` above: `EmpresasSection`
+   *  fetches its own data keyed by the titular's `clienteId`, which this
+   *  component is never handed directly. */
+  renderEmpresas?: () => ReactNode;
 
   /** Current values behind the typed checklist items — read by the inline row
    *  editors AND by the full form on the Dados do cliente tab. */
@@ -824,6 +830,17 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
           </p>
         ) : (
           vendedores.map((parte) => renderParte(parte, "vendedor"))
+        )}
+      </div>
+    ),
+
+    // P0c contract §F — a container, same render-prop reasoning as
+    // `financiamento`/`negociacao`/`contratos` below: `EmpresasSection`
+    // fetches its own data keyed by the titular's clienteId.
+    empresas: () => (
+      <div data-testid="card-subpage-empresas">
+        {props.renderEmpresas?.() ?? (
+          <p className="text-sm text-muted-foreground">Empresas indisponível.</p>
         )}
       </div>
     ),

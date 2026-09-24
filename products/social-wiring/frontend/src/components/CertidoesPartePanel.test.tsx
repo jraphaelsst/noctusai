@@ -35,9 +35,11 @@ afterEach(async () => {
 
 const mockUseResultadosPorParte = vi.fn();
 const mockUseResultadosPorCliente = vi.fn();
+const mockUseResultadosPorEmpresa = vi.fn();
 const mockUseCertidaoConsultas = vi.fn();
 const mockVincularParte = vi.fn();
 const mockVincularCliente = vi.fn();
+const mockVincularEmpresa = vi.fn();
 const mockConfirmar = vi.fn();
 const mockUpload = vi.fn();
 const mockAtualizarSituacaoCadastral = vi.fn();
@@ -49,9 +51,14 @@ const mockCopiarTranscricao = vi.fn();
 vi.mock("@/hooks/useCertidoes", () => ({
   useResultadosPorParte: (...a: any[]) => mockUseResultadosPorParte(...a),
   useResultadosPorCliente: (...a: any[]) => mockUseResultadosPorCliente(...a),
+  // P0c contract §D.5 — the empresa-scoped sibling; unused by this file's
+  // existing parte/cliente suites (their `resultados` picks a different
+  // branch), but `CertidoesPartePanel` always calls all three hooks.
+  useResultadosPorEmpresa: (...a: any[]) => mockUseResultadosPorEmpresa(...a),
   useCertidaoConsultas: (...a: any[]) => mockUseCertidaoConsultas(...a),
   useVincularParte: () => ({ mutate: mockVincularParte, isPending: false }),
   useVincularCliente: () => ({ mutate: mockVincularCliente, isPending: false }),
+  useVincularEmpresa: () => ({ mutate: mockVincularEmpresa, isPending: false }),
   useConfirmarResultado: () => ({ mutate: mockConfirmar, isPending: false }),
   useUploadResultadoManual: () => ({ mutate: mockUpload, isPending: false }),
   useCriarConsultaManual: () => ({ mutate: mockCriarManual, isPending: false }),
@@ -133,11 +140,12 @@ const queryStub = (overrides: Record<string, any> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseCertidaoConsultas.mockReturnValue(queryStub({ data: [] }));
-  // Both hooks are ALWAYS called (rules-of-hooks — see the component's own
-  // docblock); the one not selected by `clienteId`/`atendimentoParteId`
-  // still needs a well-shaped stub so accessing it never throws.
+  // All three hooks are ALWAYS called (rules-of-hooks — see the component's
+  // own docblock); the two not selected by `clienteId`/`atendimentoParteId`/
+  // `empresaId` still need a well-shaped stub so accessing them never throws.
   mockUseResultadosPorParte.mockReturnValue(queryStub({ data: undefined }));
   mockUseResultadosPorCliente.mockReturnValue(queryStub({ data: undefined }));
+  mockUseResultadosPorEmpresa.mockReturnValue(queryStub({ data: undefined }));
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

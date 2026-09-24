@@ -79,8 +79,13 @@ async function getAuthHeader(): Promise<Record<string, string>> {
  * toasts (e.g. the upload-size refusal — a platform constant this UI does not
  * own), where the seed client prefixes `[<status>] `; the swap onto the seed
  * hooks is a zero-behaviour-change move.
+ *
+ * Exported for `hooks/useEmpresas.ts` — the empresas family reuses the SAME
+ * seam rather than hand-rolling a second copy (the recurrence rule's N=2
+ * triage: shared here rather than duplicated, since the alternative is a
+ * THIRD copy the moment another card-adjacent resource needs an upload).
  */
-async function uploadMultipart<T>(path: string, form: FormData): Promise<T> {
+export async function uploadMultipart<T>(path: string, form: FormData): Promise<T> {
   const headers = await getAuthHeader();
   const response = await fetch(apiUrl(path), { method: "POST", headers, body: form });
   if (!response.ok) {

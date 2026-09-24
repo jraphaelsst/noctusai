@@ -1780,6 +1780,29 @@ describe("a barra lateral como hover rail", () => {
       "Contratos indisponível.",
     );
   });
+
+  // P0c contract §F — the Empresas tab, same render-prop shape as
+  // Negociação/Financiamento/Contratos above.
+  it("renders renderEmpresas when the Empresas subpage is opened", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ renderEmpresas: () => <div data-testid="empresas-stub" /> })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("card-subpage-tab-empresas"));
+    expect(screen.getByTestId("card-subpage-empresas")).toBeTruthy();
+    expect(screen.getByTestId("empresas-stub")).toBeTruthy();
+  });
+
+  it("falls back to a placeholder when no renderEmpresas is given", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    fireEvent.click(screen.getByTestId("card-subpage-tab-empresas"));
+    expect(screen.getByTestId("card-subpage-empresas").textContent).toContain(
+      "Empresas indisponível.",
+    );
+  });
 });
 
 describe("legendas nos botões (ícone + tooltip)", () => {

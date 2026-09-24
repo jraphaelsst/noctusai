@@ -151,6 +151,12 @@ export interface CertidaoConsulta {
    * is a titular linkage, not a stale write. */
   cliente_id?: string | null;
   atendimento_parte_id?: string | null;
+  /** P0c contract §A.5/§D.5 — nullable linkage to an EMPRESA, set by
+   *  `POST /consultas/{id}/vincular-empresa`. Mutually exclusive in
+   *  practice with `atendimento_parte_id`/`cliente_id` — a company's own
+   *  CNPJ consulta is never also a person's. `CHECK (empresa_id IS NULL OR
+   *  tipo_documento = 'cnpj')` on the backend. */
+  empresa_id?: string | null;
   /** Migration 116's manual registration-status entry — see
    * `@/types/certidoesEstruturadas::situacaoCadastralBadge`. Present on the
    * full consulta row (`GET /consultas/{id}` selects `"*"`); absent from
@@ -464,13 +470,76 @@ export function useVincularCliente() {
   });
 }
 
+/** `POST /consultas/{id}/vincular-empresa` (P0c contract §D.5) —
+ * `useVincularParte`/`useVincularCliente`'s sibling for an EMPRESA: the
+ * consulta must be `tipo_documento === 'cnpj'` with a normalized `documento`
+ * matching the empresa's own CNPJ, or the backend 422s (§D.5) — the ONE
+ * linking verb for both the automated and the manually-registered path,
+ * same as the person-scoped siblings. */
+export function useVincularEmpresa() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      consultaId,
+      empresaId,
+    }: {
+      consultaId: string;
+      empresaId: string;
+    }) => {
+      const result = await api.post(`/api/certidoes/consultas/${consultaId}/vincular-empresa`, {
+        empresa_id: empresaId,
+      });
+      return result.data as CertidaoConsulta;
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ["certidao-resultados-empresa", variables.empresaId],
+      });
+      queryClient.invalidateQueries({ queryKey: ["certidao-consultas"] });
+      toast.success("Consulta vinculada à empresa!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao vincular consulta", { description: error.message });
+    },
+  });
+}
+
+/** `GET /api/certidoes/empresas/{empresa_id}/resultados` (P0c contract §D.5,
+ * `certidoes_por_empresa`, mirroring `service.py:2651-2676`) —
+ * `useResultadosPorParte`/`useResultadosPorCliente`'s sibling for an
+ * EMPRESA: every certidão result linked to a company's own `cnpj` consultas.
+ * Same shape, same polling contract. */
+export function useResultadosPorEmpresa(empresaId?: string) {
+  const { user } = useAuthStore();
+
+  return useQuery({
+    queryKey: ["certidao-resultados-empresa", empresaId],
+    queryFn: async () => {
+      const result = await api.get(`/api/certidoes/empresas/${empresaId}/resultados`);
+      return (result.data || []) as CertidaoResultado[];
+    },
+    enabled: !!user && !!empresaId,
+    staleTime: 5 * 1000,
+    refetchInterval: (query) => {
+      const data = query.state.data as CertidaoResultado[] | undefined;
+      if (data?.some((r) => r.status === "pendente" || r.status === "processando")) {
+        return 3000;
+      }
+      return false;
+    },
+    placeholderData: (prev) => prev,
+  });
+}
+
 /** Which cache to invalidate after a mutation that touches one resultado or
- * one consulta's shared fields — exactly one of the two is ever set, mirroring
- * `CertidoesPartePanel`'s own titular-vs-parte routing. Both are optional so
- * a caller with neither (there is none today) still compiles. */
+ * one consulta's shared fields — exactly one of the three is ever set, mirroring
+ * `CertidoesPartePanel`'s own titular-vs-parte-vs-empresa routing. All are
+ * optional so a caller with none (there is none today) still compiles. */
 export interface CertidoesInvalidationScope {
   atendimentoParteId?: string;
   clienteId?: string;
+  empresaId?: string;
 }
 
 function invalidateCertidoesScope(
@@ -485,6 +554,11 @@ function invalidateCertidoesScope(
   if (scope.clienteId) {
     queryClient.invalidateQueries({
       queryKey: ["certidao-resultados-cliente", scope.clienteId],
+    });
+  }
+  if (scope.empresaId) {
+    queryClient.invalidateQueries({
+      queryKey: ["certidao-resultados-empresa", scope.empresaId],
     });
   }
 }

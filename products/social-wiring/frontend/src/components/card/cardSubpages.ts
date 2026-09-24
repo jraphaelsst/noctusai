@@ -12,6 +12,7 @@
  */
 import type { LucideIcon } from "lucide-react";
 import {
+  Building2,
   CalendarClock,
   ClipboardList,
   FileSignature,
@@ -30,6 +31,7 @@ export type CardSubpageKey =
   | "cliente"
   | "conjuge"
   | "vendedor"
+  | "empresas"
   | "agendamentos"
   | "roteiros"
   | "financiamento"
@@ -78,6 +80,11 @@ export const CARD_SUBPAGES: readonly SubpageDef[] = [
   // rather than a step in the funnel. Reading the rail top-to-bottom now gives
   // both parties to the deal before anything about the deal itself.
   { key: "vendedor", label: "Vendedor", icon: Store },
+  // P0c contract (`project-history/roadmaps/sw-drive-extraction-P0c-
+  // contract.md` §F) — sits directly under the two parties, because a
+  // company's due diligence is a fact about WHO is on the deal, read right
+  // after "Vendedor" and before the scheduling funnel starts.
+  { key: "empresas", label: "Empresas", icon: Building2 },
   { key: "agendamentos", label: "Agendamentos", icon: CalendarClock },
   { key: "roteiros", label: "Roteiros", icon: Route },
   { key: "financiamento", label: "Financiamento/Escritura", icon: Landmark },
