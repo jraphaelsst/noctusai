@@ -101,12 +101,16 @@ def obter_geracao(
     politica: Politica,
 ) -> dict:
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
-    switches = derivar_switches(dados, politica)
+    # [E1/H2] ONE `hoje()` snapshot for both switches and the gate — never
+    # one call per function, which could disagree across a real midnight
+    # boundary between the two.
+    referencia = hoje()
+    switches = derivar_switches(dados, politica, referencia)
     # No date is "asked for" on a GET, so this is the stored one or today —
     # the same value `gerar` will use for a POST with no explicit date, which
     # is what makes this answer the POST's precondition rather than an
     # approximation of it.
-    avaliacao = avaliar(dados, switches, politica, data_assinatura(dados, None))
+    avaliacao = avaliar(dados, switches, politica, data_assinatura(dados, None), referencia)
     derivado = modelo_derivado(switches)
     return {
         "contrato_id": str(contrato_id),
@@ -174,7 +178,7 @@ def iniciar(
         )
     contrato_id = UUID(row["id"])
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
-    derivado = modelo_derivado(derivar_switches(dados, politica))
+    derivado = modelo_derivado(derivar_switches(dados, politica, hoje()))
     if derivado != row["modelo"]:
         contratos_svc.definir_modelo(client, org_id, contrato_id, derivado)
         row["modelo"] = derivado
@@ -209,12 +213,16 @@ async def gerar(
     # 409 `EXTRACAO_PENDENTE_VALIDACAO`; the modal is UI, this is the gate.
     exigir_sem_pendentes(client, org_id, dados, usuario_id=usuario_id)
     data = data_assinatura(dados, assinatura)
-    switches = derivar_switches(dados, politica)
-    avaliacao = avaliar(dados, switches, politica, data)
+    # [E1/H2] ONE `hoje()` snapshot for switches, the gate, AND the render —
+    # a generation run reads a single "today" throughout, never one call
+    # per stage that could disagree across a real midnight boundary.
+    referencia = hoje()
+    switches = derivar_switches(dados, politica, referencia)
+    avaliacao = avaliar(dados, switches, politica, data, referencia)
     if not avaliacao.pronto:
         raise ContratoIncompleto(avaliacao.faltando, avaliacao.bloqueios)
 
-    renderizado = renderizar(adapter, dados, switches, politica, data)
+    renderizado = renderizar(adapter, dados, switches, politica, data, referencia)
     achados = lint(
         renderizado.paragrafos,
         referencias=renderizado.referencias,

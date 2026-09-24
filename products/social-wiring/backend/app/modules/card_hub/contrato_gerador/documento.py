@@ -33,6 +33,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import date
 from functools import lru_cache
+from typing import Optional
 
 from docx import Document
 
@@ -42,6 +43,7 @@ from noctusai_lib.integrations.documents.formatting import FormattedDocument, Pa
 
 from app.modules.card_hub.contrato_gerador.contexto import montar_contexto
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato
+from app.modules.card_hub.contrato_gerador.derivacao import _hoje_padrao
 from app.modules.card_hub.contrato_gerador.modelo_texto import linhas_do_template
 from app.modules.card_hub.contrato_gerador.numeracao import ContadorParagrafos
 from app.modules.card_hub.contrato_gerador.politica import Politica
@@ -132,13 +134,23 @@ def renderizar(
     switches: dict[str, bool],
     politica: Politica,
     assinatura: date,
+    hoje: Optional[date] = None,
 ) -> Renderizado:
+    """`hoje` (default None -> `derivacao._hoje_padrao`) is the E1 empresa-
+    classification reference `montar_contexto` needs — `service.gerar`
+    threads ITS OWN `hoje()` snapshot through so a single generation run
+    reads one "today". Resolved ONCE here (never re-defaulted per pass) so
+    the two determinism-checked render passes below can never disagree
+    across a real midnight boundary."""
+    hoje = hoje or _hoje_padrao()
     tpl = template_bytes()
     contagem = ContadorParagrafos(None)
-    adapter.render(tpl, montar_contexto(dados, switches, politica, assinatura, contagem, adapter))
+    adapter.render(
+        tpl, montar_contexto(dados, switches, politica, assinatura, contagem, adapter, hoje)
+    )
 
     rotulos = ContadorParagrafos(contagem.chamadas)
-    contexto = montar_contexto(dados, switches, politica, assinatura, rotulos, adapter)
+    contexto = montar_contexto(dados, switches, politica, assinatura, rotulos, adapter, hoje)
     docx = adapter.render(tpl, contexto)
     if rotulos.chamadas != contagem.chamadas:
         raise RuntimeError(

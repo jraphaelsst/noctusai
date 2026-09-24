@@ -138,6 +138,32 @@ class Pessoa:
 
 
 @dataclass
+class Empresa:
+    """A vendedor's (or, in a permuta, a comprador-who-gives-an-imóvel's:
+    E6) company — `cliente_empresa_participacoes` -> `empresas` (migration
+    167). `situacao_cadastral`/`data_situacao_cadastral` are Cartão-CNPJ-
+    sourced ONLY (E2 — the Crednet "SITUACAO DO CNPJ EM" date is NOT this),
+    so `None` genuinely means "no Cartão uploaded yet", never "assumed
+    active" (E1). `owners` are the certificando `Pessoa`s holding a
+    participação — BOTH spouses when they share it (E4: the empresa itself
+    is still ONE row in `DadosContrato.empresas`, never duplicated).
+    """
+
+    id: str
+    cnpj: str
+    razao_social: Optional[str] = None
+    situacao_cadastral: Optional[str] = None
+    data_situacao_cadastral: Optional[date] = None
+    dados_origem: Optional[str] = None
+    dados_confirmado_em: Optional[date] = None
+    owners: list[Pessoa] = field(default_factory=list)
+    #: cnpj-consulta certidões (`Certidao.consulta_tipo_documento == "cnpj"`)
+    #: linked to THIS empresa (`certidao_consultas.empresa_id`), not to a
+    #: person — reachable regardless of which owner is attributed the check.
+    certidoes: list[Certidao] = field(default_factory=list)
+
+
+@dataclass
 class Parcela:
     id: str
     tipo: str
@@ -472,6 +498,12 @@ class DadosContrato:
     #: 🔴 Permuta is driven by that PARCELA (114), not by the legacy
     #: `atendimento_negociacao.permuta_ativo_id` that service marks superseded.
     permuta_imoveis: list[PermutaImovel] = field(default_factory=list)
+    #: [E1/E3/E4/E6] Every empresa a certificando (a signing vendedor, their
+    #: cônjuge, or — in a permuta — a signing comprador/cônjuge) holds a
+    #: Crednet participação in; migration 167. One row per DISTINCT empresa
+    #: (E4), `owners` names who. `carregador._empresas` loads it; unit tests
+    #: build it directly via `fx.empresa(...)`.
+    empresas: list[Empresa] = field(default_factory=list)
     #: [Q11] Per-contract pendências prazo (days), overriding the office's
     #: `Imobiliaria.prazo_pendencias_padrao_dias`; None = use that default.
     prazo_pendencias_dias: Optional[int] = None
@@ -529,6 +561,7 @@ __all__ = [
     "Certidao",
     "CertidaoImovel",
     "DadosContrato",
+    "Empresa",
     "Endereco",
     "Favorecido",
     "Financiamento",

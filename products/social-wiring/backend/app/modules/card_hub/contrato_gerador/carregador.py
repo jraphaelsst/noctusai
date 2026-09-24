@@ -53,6 +53,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Certidao,
     CertidaoImovel,
     DadosContrato,
+    Empresa,
     Endereco,
     Favorecido,
     Financiamento,
@@ -65,6 +66,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Pessoa,
     Termos,
     Testemunha,
+    signatarios,
 )
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.imovel_hub import busca_service, dados_service
@@ -126,6 +128,83 @@ def _certidao(r: dict) -> Certidao:
         consulta_situacao_cadastral=r.get("consulta_situacao_cadastral"),
         consulta_data_situacao=_data(r.get("consulta_data_situacao")),
     )
+
+
+def _certidoes_da_empresa(client: Any, org_id: UUID, empresa_id: str) -> list[dict]:
+    """Isolates the call into S2a's `certidoes.service.certidoes_por_empresa`
+    (contract §E, migration 167) — mirrors `certidoes_por_cliente`'s per-
+    entity shape (`app/modules/certidoes/service.py:2651-2676`). 🔴 S2b
+    does NOT own `certidoes/service.py`: this ONE wrapper is the seam S2a
+    integration wires — when `certidoes_por_empresa` is not yet defined
+    there (a worktree that has not merged S2a), calling it raises
+    `AttributeError`, which only happens when a deal actually HAS
+    `cliente_empresa_participacoes` rows (never on the sparse/synthetic
+    fixtures this suite exercises today)."""
+    return certidoes_svc.certidoes_por_empresa(client, org_id, empresa_id)
+
+
+def _empresas(
+    client: Any, org_id: UUID, certificando_ids: Iterable[str], pessoas_por_id: dict[str, Pessoa]
+) -> list[Empresa]:
+    """[E1/E3/E4/E6] The DISTINCT companies (migration 167) a certificando
+    holds a Crednet participação in — `cliente_empresa_participacoes` ->
+    `empresas`, read directly off the tables (contract §A) rather than
+    through S2a's `empresas_service` (not this loader's to own, and not
+    guaranteed to exist yet), so this keeps working before that slice
+    integrates. `pessoas_por_id` resolves each participação's owner to the
+    already-loaded vendedor/comprador `Pessoa` — a cônjuge holding a
+    participação who is not otherwise a card party has no `Pessoa` here and
+    is excluded from `owners`, but NEVER silently: `derivacao._conjuges_
+    sem_pessoa`/`conferir_conjuges_ausentes` (E3) name it as a `faltando`
+    off `d.vendedores`/`d.compradores` alone, independent of whether this
+    loader ever reaches their empresa at all (S2a's `/empresas` endpoint,
+    which loads every parte including bare cônjuges, is the fuller
+    picture)."""
+    ids = sorted({str(i) for i in certificando_ids if i})
+    if not ids:
+        return []
+    participacoes = table_reads.in_batched_rows(
+        client, "cliente_empresa_participacoes", org_id, "cliente_id", ids
+    )
+    if not participacoes:
+        return []
+    por_empresa: dict[str, list[dict]] = {}
+    for row in participacoes:
+        por_empresa.setdefault(str(row["empresa_id"]), []).append(row)
+    linhas_empresa = _rows_por_id_generico(client, org_id, "empresas", list(por_empresa))
+    saida: list[Empresa] = []
+    for empresa_id, participantes in por_empresa.items():
+        row = linhas_empresa.get(empresa_id)
+        if row is None:
+            continue
+        donos = [
+            pessoas_por_id[str(r["cliente_id"])]
+            for r in participantes
+            if str(r["cliente_id"]) in pessoas_por_id
+        ]
+        if not donos:
+            continue
+        saida.append(
+            Empresa(
+                id=empresa_id,
+                cnpj=row.get("cnpj") or "",
+                razao_social=row.get("razao_social"),
+                situacao_cadastral=row.get("situacao_cadastral"),
+                data_situacao_cadastral=_data(row.get("data_situacao_cadastral")),
+                dados_origem=row.get("dados_origem"),
+                dados_confirmado_em=_data(row.get("dados_confirmado_em")),
+                owners=donos,
+                certidoes=[_certidao(r) for r in _certidoes_da_empresa(client, org_id, empresa_id)],
+            )
+        )
+    return saida
+
+
+def _rows_por_id_generico(client: Any, org_id: UUID, tabela: str, ids: list[str]) -> dict[str, dict]:
+    return {
+        str(r["id"]): r
+        for r in table_reads.in_batched_rows(client, tabela, org_id, "id", ids)
+    }
 
 
 def _pessoa(
@@ -476,6 +555,19 @@ def carregar(
     permutas = [p for p in parcelas if p.tipo == "permuta"]
     ativos_permuta = [a for p in permutas for a in p.permuta_ativo_ids]
 
+    # [E1/E3/E6] Certificandos: signing vendedores + their cônjuges, plus
+    # signing compradores + cônjuges only in a permuta (a comprador giving
+    # an imóvel gets exactly the vendedor treatment).
+    certificandos = signatarios(vendedores)
+    certificando_ids = {p.cliente_id for p in certificandos}
+    certificando_ids |= {p.conjuge_cliente_id for p in certificandos if p.conjuge_cliente_id}
+    if permutas:
+        comp_certificandos = signatarios(compradores)
+        certificando_ids |= {p.cliente_id for p in comp_certificandos}
+        certificando_ids |= {p.conjuge_cliente_id for p in comp_certificandos if p.conjuge_cliente_id}
+    pessoas_por_id = {p.cliente_id: p for p in vendedores + compradores}
+    empresas = _empresas(client, org_id, certificando_ids, pessoas_por_id)
+
     dados = DadosContrato(
         contrato_id=str(contrato_id),
         cliente_id=str(cliente_id),
@@ -535,6 +627,7 @@ def carregar(
         testemunhas=testemunhas,
         termos=_termos(estruturada.get("termos") or {}),
         permuta_imoveis=_permuta_imoveis(client, org_id, ativos_permuta, selecao),
+        empresas=empresas,
         # Migration 114.
         prazo_pendencias_dias=_int(contrato.get("prazo_pendencias_dias")),
         assinatura_data=_data(contrato.get("assinatura_data")),

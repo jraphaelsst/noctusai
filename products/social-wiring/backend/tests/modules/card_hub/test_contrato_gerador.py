@@ -44,17 +44,23 @@ from app.modules.card_hub.contrato_gerador.dados import DadosContrato
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
 
-def _avaliar(n: int, d=None):
+def _avaliar(n: int, d=None, hoje=None):
+    """`hoje` (default None -> real TODAY via `derivacao._hoje_padrao`) is
+    the E1 empresa-classification reference; pass `fx.REFERENCIA` for
+    deterministic boundary math independent of the day the suite runs."""
     d = d if d is not None else fx.variante(n)
     pol = fx.politica_variante(n)
-    sw = derivacao.derivar_switches(d, pol)
-    return d, pol, sw, derivacao.avaliar(d, sw, pol, fx.ASSINATURA)
+    sw = derivacao.derivar_switches(d, pol, hoje)
+    return d, pol, sw, derivacao.avaliar(d, sw, pol, fx.ASSINATURA, hoje)
 
 
-def _render(n: int, d=None):
-    d, pol, sw, av = _avaliar(n, d)
+def _render(n: int, d=None, hoje=None):
+    """Resolves `hoje` ONCE (never re-defaulted per call) so `_avaliar`'s
+    gate and `documento.renderizar`'s empresa classification agree."""
+    hoje = hoje or derivacao._hoje_padrao()
+    d, pol, sw, av = _avaliar(n, d, hoje)
     assert av.pronto, (av.faltando, av.bloqueios)
-    return documento.renderizar(get_docx_render_adapter(real=True), d, sw, pol, fx.ASSINATURA)
+    return documento.renderizar(get_docx_render_adapter(real=True), d, sw, pol, fx.ASSINATURA, hoje)
 
 
 def _clausulas(paragrafos):
@@ -464,9 +470,9 @@ class TestGate:
         assert not av.pronto
 
     def test_a_missing_certidao_is_named_per_parte(self):
-        """Buyer-side (a permuta signatory) certidões stay fully required —
-        unlike sellers, whose set is no longer required at all (see
-        `TestSellerCertidoesNaoExigidas`)."""
+        """Buyer-side (a permuta signatory) certidões are fully required —
+        [R1 reversal] the seller side is too now, exactly the same way
+        (see `TestVendedorCertidoesExigidas`)."""
         d = fx.variante(5)
         original = d.compradores[0]
         c = replace(original, certidoes=[cc for cc in original.certidoes if cc.tipo != "serasa"])
@@ -545,8 +551,8 @@ def _campos(av):
     return [(f["campo"], f["parte_id"]) for f in av.faltando]
 
 
-def _texto(n: int, d=None) -> str:
-    return "\n".join(_render(n, d).paragrafos)
+def _texto(n: int, d=None, hoje=None) -> str:
+    return "\n".join(_render(n, d, hoje).paragrafos)
 
 
 class TestQ2Lei6515:
@@ -620,105 +626,191 @@ CNPJ = "11444777000161"
 
 
 class TestQ9CertidoesDeEmpresa:
-    def _com_empresa(self, situacao, data_situacao=None, sem_tipo=None):
+    """[E1] `d.empresas` (migration 167) replaces the old per-person
+    `Certidao.consulta_situacao_cadastral` grouping — classification runs
+    against an injected `hoje` (`fx.REFERENCIA`, never `fx.ASSINATURA`:
+    E2/H2)."""
+
+    def _com_empresa(self, situacao, data_situacao=None, sem_tipo=None, *, owner=None):
         d = fx.variante(1)
-        v = d.vendedores[0]
-        pj = [c for c in fx.certidoes_pj(CNPJ, "Empresa Amostra Ltda", situacao, data_situacao) if c.tipo != sem_tipo]
-        return replace(d, vendedores=[replace(v, certidoes=v.certidoes + pj)])
+        owner = owner or d.vendedores[0]
+        e = fx.empresa(
+            "emp-1", CNPJ, "Empresa Amostra Ltda", situacao, data_situacao,
+            owners=[owner], sem_tipo=sem_tipo,
+        )
+        return replace(d, empresas=[e])
 
     @pytest.mark.parametrize("situacao", ["ativa", "inapta"])
-    def test_an_active_or_inapta_company_is_rendered_and_not_required(self, situacao):
-        """The PJ group's own EXIGIDO classification is unaffected — only
-        the CND/TRF/.../Fazenda SP SET inside it is no longer required for
-        a seller's company (same relief `conferir()` gives the seller's
-        own CPF certidões)."""
-        _d, _pol, _sw, av = _avaliar(1, self._com_empresa(situacao, sem_tipo="cnd_federal"))
+    def test_an_active_or_inapta_company_with_full_certidoes_is_pronto(self, situacao):
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa(situacao), hoje=fx.REFERENCIA)
         assert av.pronto, (av.faltando, av.bloqueios)
-        texto = _texto(1, self._com_empresa(situacao))
+
+    @pytest.mark.parametrize("situacao", ["ativa", "inapta"])
+    def test_an_active_or_inapta_company_missing_a_type_blocks(self, situacao):
+        """[R1 reversal] A required company's missing CNPJ certidão type
+        now blocks generation — the old seller-relief (df54184ab) no
+        longer exempts a vendedor's own company."""
+        d = self._com_empresa(situacao, sem_tipo="cnd_federal")
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
+
+    def test_an_active_company_renders_without_the_baixada_suffix(self):
+        texto = _texto(1, self._com_empresa("ativa"), hoje=fx.REFERENCIA)
         assert "- Em nome de EMPRESA AMOSTRA LTDA\n" in texto + "\n"
         assert "Baixada" not in texto
 
     @pytest.mark.parametrize("situacao", ["suspensa", "nula"])
-    def test_a_suspensa_or_nula_company_is_omitted(self, situacao):
+    def test_a_suspensa_or_nula_company_is_not_required(self, situacao):
         d = self._com_empresa(situacao, sem_tipo="cnd_federal")
-        _d, _pol, _sw, av = _avaliar(1, d)
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
         assert av.pronto, (av.faltando, av.bloqueios)
-        assert "EMPRESA AMOSTRA" not in _texto(1, d)
+        assert "EMPRESA AMOSTRA" not in _texto(1, d, hoje=fx.REFERENCIA)
 
-    def test_baixada_exactly_five_years_before_signing_is_omitted(self):
+    def test_baixada_exactly_five_years_before_referencia_is_not_required(self):
         d = self._com_empresa("baixada", date(2021, 9, 14), sem_tipo="cnd_federal")
-        _d, _pol, _sw, av = _avaliar(1, d)
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
         assert av.pronto, (av.faltando, av.bloqueios)
-        assert "EMPRESA AMOSTRA" not in _texto(1, d)
+        assert "EMPRESA AMOSTRA" not in _texto(1, d, hoje=fx.REFERENCIA)
 
-    def test_baixada_less_than_five_years_before_signing_is_rendered_with_the_suffix_and_not_required(self):
-        _d, _pol, _sw, av = _avaliar(1, self._com_empresa("baixada", date(2021, 9, 15), sem_tipo="cnd_federal"))
-        assert av.pronto, (av.faltando, av.bloqueios)
-        assert "- Em nome de EMPRESA AMOSTRA LTDA - Baixada" in _texto(1, self._com_empresa("baixada", date(2021, 9, 15)))
+    def test_baixada_less_than_five_years_before_referencia_blocks_on_a_missing_type(self):
+        d = self._com_empresa("baixada", date(2021, 9, 15), sem_tipo="cnd_federal")
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert _campos(av) == [("certidao.cnd_federal", "parte-v1")]
 
-    def test_unknown_situacao_is_missing(self):
-        _d, _pol, _sw, av = _avaliar(1, self._com_empresa(None))
-        assert _campos(av) == [(f"certidoes.pj.{CNPJ}.situacao", "parte-v1")]
+    def test_a_recently_closed_company_renders_with_the_baixada_suffix(self):
+        """Deterministic: `hoje=fx.REFERENCIA` now threads all the way
+        into `documento.renderizar` -> `montar_contexto`."""
+        d = self._com_empresa("baixada", date(2021, 9, 15))
+        texto = _texto(1, d, hoje=fx.REFERENCIA)
+        assert "- Em nome de EMPRESA AMOSTRA LTDA - Baixada" in texto
+
+    def test_no_cartao_uploaded_yet_is_missing(self):
+        """[E1/H4] NULL `situacao_cadastral` (no Cartão CNPJ yet) is the
+        honest state, never assumed active — a named `faltando`."""
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa(None), hoje=fx.REFERENCIA)
+        assert _campos(av) == [("empresa.emp-1.cartao_cnpj", None)]
 
     def test_baixada_without_its_date_is_missing(self):
-        _d, _pol, _sw, av = _avaliar(1, self._com_empresa("baixada"))
-        assert _campos(av) == [(f"certidoes.pj.{CNPJ}.data_situacao", "parte-v1")]
+        _d, _pol, _sw, av = _avaliar(1, self._com_empresa("baixada"), hoje=fx.REFERENCIA)
+        assert _campos(av) == [("empresa.emp-1.data_situacao_cadastral", None)]
 
+    def test_unknown_situacao_blocks(self):
+        d = self._com_empresa("cancelada")
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert "SITUACAO_CADASTRAL_DESCONHECIDA" in _codigos(av.bloqueios)
 
-class TestSellerCertidoesNaoExigidas:
-    """[Owner directive, 2026-09-23] "Sellers don't need certidões. They
-    only need what's already there." The CPF/CNPJ certidão SET (CND
-    federal, TRF 1ª/2ª, TRT ×3, TJSP ×2, Serasa, Cenprot, Fazenda SP) is no
-    longer required for a vendedor (`derivacao.conferir`'s `p.lado`
-    guard) — a buyer-side (permuta) signatory keeps the full requirement
-    (`TestGate.test_a_missing_certidao_is_named_per_parte`)."""
+    def test_an_empresa_shared_by_spouses_appears_once(self):
+        """[E3/E4] Both a married vendedor AND their cônjuge (also a
+        vendedor, E3) hold a participação in the SAME company — it is
+        required ONCE, never once per spouse."""
+        d = fx.variante(1)
+        titular = replace(d.vendedores[0], conjuge_cliente_id="v2")
+        conjuge = replace(
+            fx.pessoa("v2", "vendedor", "conjuge", "Cônjuge Exemplo", "Feminino",
+                      "444555666", "55.555.555-5"),
+            conjuge_cliente_id="v1",
+        )
+        e = fx.empresa("emp-2", CNPJ, "Empresa Compartilhada Ltda", "ativa",
+                        owners=[titular, conjuge])
+        d = replace(d, vendedores=[titular, conjuge], empresas=[e])
+        pol = fx.politica_variante(1)
+        sw = derivacao.derivar_switches(d, pol, fx.REFERENCIA)
+        exigidas = derivacao.empresas_exigidas(d, sw, fx.REFERENCIA, pol)
+        assert len(exigidas) == 1
+        assert exigidas[0].empresa.id == "emp-2"
 
-    def test_zero_seller_certidoes_is_pronto_when_all_data_present(self):
-        v = replace(fx.vendedor(), certidoes=[])
-        _d, _pol, _sw, av = _avaliar(1, replace(fx.variante(1), vendedores=[v]))
+    def test_a_married_vendedor_spouse_on_the_card_makes_their_own_company_required(self):
+        """[E3] The spouse's OWN company (not jointly held) is required too
+        — a married vendedor's cônjuge who IS a card party is treated
+        exactly like any other certificando."""
+        d = fx.variante(1)
+        titular = replace(d.vendedores[0], conjuge_cliente_id="v2")
+        conjuge = replace(
+            fx.pessoa("v2", "vendedor", "conjuge", "Cônjuge Exemplo", "Feminino",
+                      "444555666", "55.555.555-5"),
+            conjuge_cliente_id="v1",
+        )
+        e = fx.empresa("emp-6", CNPJ, "Empresa da Cônjuge Ltda", "ativa",
+                        owners=[conjuge], sem_tipo="cnd_federal")
+        d = replace(d, vendedores=[titular, conjuge], empresas=[e])
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert ("certidao.cnd_federal", conjuge.parte_id) in _campos(av)
+
+    def test_a_spouse_missing_from_the_card_is_named_as_faltando(self):
+        """[E3, tech-lead review] `conjuge_cliente_id` points at a cliente
+        who is NOT a `Pessoa` anywhere on this card — their empresas are
+        unreachable, so this is a named gap, never a silent drop."""
+        d = fx.variante(1)
+        titular = replace(d.vendedores[0], conjuge_cliente_id="v2")
+        d = replace(d, vendedores=[titular])
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert ("parte.v1.conjuge", titular.parte_id) in _campos(av)
+
+    def test_a_permuta_comprador_company_is_required(self):
+        """[E6] A comprador giving an imóvel in a permuta gets exactly the
+        vendedor treatment — their Crednet companies need certidões too."""
+        d = fx.variante(5)
+        comp = d.compradores[0]
+        e = fx.empresa("emp-3", CNPJ, "Empresa Compradora Ltda", "ativa",
+                        owners=[comp], sem_tipo="cnd_federal")
+        d = replace(d, empresas=[e])
+        _d, _pol, sw, av = _avaliar(5, d, hoje=fx.REFERENCIA)
+        assert sw["tem_permuta"] is True
+        assert ("certidao.cnd_federal", comp.parte_id) in _campos(av)
+
+    def test_a_non_permuta_comprador_company_is_not_required(self):
+        """Outside a permuta, a comprador is not a certificando (E1) —
+        their companies never enter the gate at all."""
+        d = fx.variante(1)
+        comp = d.compradores[0]
+        e = fx.empresa("emp-4", CNPJ, "Empresa Compradora Ltda", "ativa",
+                        owners=[comp], sem_tipo="cnd_federal")
+        d = replace(d, empresas=[e])
+        _d, _pol, sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert sw["tem_permuta"] is False
         assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_zero_seller_certidoes_renders_without_the_section_and_no_keyerror(self):
-        """The live 500: `idx[t]` in `contexto.py` KeyErrors the moment a
-        seller's certidão type is missing, once missing no longer blocks."""
-        v = replace(fx.vendedor(), certidoes=[])
-        texto = _texto(1, replace(fx.variante(1), vendedores=[v]))
-        assert "Em nome de FULANO DE TAL" not in texto
 
-    def test_a_seller_certidao_that_does_exist_still_renders(self):
-        """"Certidões present on the card still render" — a seller with
-        SOME (not all) certidões on file gets exactly those printed, and
-        NOTHING else in the group — `idx.get(t)` skips every absent type
-        (`contexto.py`'s `if t in idx`), never a fabricated line for a
-        type nobody ever consulted."""
+class TestVendedorCertidoesExigidas:
+    """[R1, reverses df54184ab] Sellers — vendedores, their cônjuges (E3),
+    and previous owners — need certidões again, exactly like every other
+    certificando. `df54184ab`'s "sellers don't need certidões" relief
+    (live in prod since d1dc3f834) is revoked by owner directive
+    (roadmap `sw-drive-extraction-2026-09.md` §R1, 2026-09-24)."""
+
+    def test_zero_seller_certidoes_blocks(self):
+        v = replace(fx.vendedor(), certidoes=[])
+        _d, _pol, _sw, av = _avaliar(1, replace(fx.variante(1), vendedores=[v]))
+        assert not av.pronto
+        assert any(f["campo"].startswith("certidao.") for f in av.faltando)
+        assert all(f["parte_id"] == "parte-v1" for f in av.faltando if f["campo"].startswith("certidao."))
+
+    def test_a_full_seller_certidoes_set_is_pronto_and_renders(self):
         v = fx.vendedor()
-        so_serasa = [c for c in v.certidoes if c.tipo == "serasa"]
-        v = replace(v, certidoes=so_serasa)
         d = replace(fx.variante(1), vendedores=[v])
         _d, _pol, _sw, av = _avaliar(1, d)
         assert av.pronto, (av.faltando, av.bloqueios)
         paragrafos = _render(1, d).paragrafos
         assert "1 - Em nome de FULANO DE TAL" in paragrafos
-        assert any(p.startswith("1.1 – ") and "Serasa" in p for p in paragrafos)
-        # A single item is the loop's LAST (and only) one — no "1.2 – ...".
-        assert not any(p.startswith("1.2 – ") for p in paragrafos)
+        assert any(p.startswith("1.1 – ") for p in paragrafos)
 
     def test_a_present_seller_certidao_that_is_expired_still_blocks(self):
-        """The relief is scoped to MISSING types — a certidão a seller DOES
-        have is validated exactly as strictly as before (§Q10)."""
+        """A certidão a seller DOES have is validated exactly as strictly
+        as before (§Q10) — unaffected by the R1 reversal."""
         v = fx.vendedor()
         certs = [replace(c, validade_ate=fx.dias_antes(1)) if c.tipo == "cnd_federal" else c for c in v.certidoes]
         _d, _pol, _sw, av = _avaliar(1, replace(fx.variante(1), vendedores=[replace(v, certidoes=certs)]))
         assert "CERTIDAO_VENCIDA" in _codigos(av.bloqueios)
 
-    def test_a_seller_company_with_no_pj_certidoes_at_all_is_not_required(self):
-        """The same relief extends to CNPJ (a seller's own company) — the
-        owner's directive names "CPF/CNPJ" explicitly."""
+    def test_a_seller_company_with_no_pj_certidoes_at_all_blocks(self):
+        """[R1] The reversal extends to CNPJ (a seller's own company) too —
+        the owner's directive names certidões "again", full stop."""
         d = fx.variante(1)
         v = d.vendedores[0]
-        pj = [c for c in fx.certidoes_pj(CNPJ, "Empresa Amostra Ltda", "ativa") if c.tipo != "cnd_federal"]
-        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[replace(v, certidoes=v.certidoes + pj)]))
-        assert av.pronto, (av.faltando, av.bloqueios)
+        e = fx.empresa("emp-5", CNPJ, "Empresa Amostra Ltda", "ativa", owners=[v],
+                        sem_tipo="cnd_federal")
+        _d, _pol, _sw, av = _avaliar(1, replace(d, empresas=[e]), hoje=fx.REFERENCIA)
+        assert ("certidao.cnd_federal", "parte-v1") in _campos(av)
 
 
 class TestQ9AntigoProprietario:
@@ -767,15 +859,15 @@ class TestQ9AntigoProprietario:
         assert "ANTIGO_PROPRIETARIO_DISPENSADO" in _codigos(av.avisos)
         assert "ANTIGA DONA" not in _texto(1, d)
 
-    def test_the_previous_owner_is_not_required_to_have_certidoes_either(self):
-        """An antigo proprietário is stored on the SELLER side
-        (`lado="vendedor"`, `dados.antigos_proprietarios`) — the same
-        certidão relief `conferir()` gives every other seller applies to
-        them too."""
+    def test_the_previous_owner_is_required_to_have_certidoes_too(self):
+        """[R1 reversal, inverted] An antigo proprietário is stored on the
+        SELLER side (`lado="vendedor"`, `dados.antigos_proprietarios`) — the
+        R1-reversed certidão requirement `conferir()` applies to every
+        other seller applies to them too; a missing type now blocks."""
         antiga = fx.antiga_proprietaria()
         antiga = replace(antiga, certidoes=[c for c in antiga.certidoes if c.tipo != "serasa"])
         _d, _pol, _sw, av = _avaliar(1, self._transferido_em(date(2021, 9, 15), antiga))
-        assert av.pronto, (av.faltando, av.bloqueios)
+        assert ("certidao.serasa", antiga.parte_id) in _campos(av)
 
     def test_the_previous_owner_presents_certidoes_with_agreement(self):
         texto = _texto(1, self._transferido_em(date(2021, 9, 15), fx.antiga_proprietaria()))

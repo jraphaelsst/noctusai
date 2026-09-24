@@ -32,9 +32,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from noctusai_lib.domain.texto_ptbr import formatar_brl, parse_brl
 from noctusai_lib.integrations.documents import derivar_endereco, has_raw_markup
@@ -47,6 +48,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Certidao,
     CertidaoImovel,
     DadosContrato,
+    Empresa,
     Parcela,
     Pessoa,
     parcela_permuta,
@@ -94,7 +96,7 @@ ROTULO_QUALIFICACAO = {
 _CHAVES_DO_DOCUMENTO_DE_IDENTIDADE = frozenset({"rg", "cpf"})
 SUFIXO_DOCUMENTO_DE_IDENTIDADE = " (Documento de identidade: CIN ou CNH)"
 
-#: [Q9] `classificar_grupo_pj` outcomes.
+#: [E1] `classificar_empresa` outcomes.
 PJ_EXIGIDO = "exigido"
 PJ_EXIGIDO_BAIXADA = "exigido_baixada"
 PJ_OMITIDO = "omitido"
@@ -334,6 +336,10 @@ def _verificar_coerencia_endereco(
 _DESTINO_POR_ONDE: dict[str, tuple[str, str, Optional[str]]] = {
     "partes": ("card_partes", "/clientes", "geral"),
     "certidoes": ("certidoes", "/certidoes", None),
+    # [E1/E8] The card's Empresas tab (§F, `cardSubpages.ts`) — deal-scoped,
+    # never routed through a person's `parte_id` (a `falta` here is per
+    # EMPRESA, E4-deduped, not per owner).
+    "empresas": ("card_empresas", "/clientes", "empresas"),
     "matricula": ("matriculas", "/matriculas", None),
     "imovel": ("imovel", "/imoveis", None),
     "negociacao": ("card_negociacao", "/clientes", "negociacao"),
@@ -497,15 +503,23 @@ def ha_menos_de_anos(data: date, referencia: date, anos: int) -> bool:
     return data > anos_antes(referencia, anos)
 
 
+def _hoje_padrao() -> date:
+    """[E1/H2] The office's calendar date — the SAME computation as
+    `contrato_gerador.service.hoje()`, duplicated here (not imported:
+    `service.py` imports FROM this module, so the reverse import would
+    cycle) so every caller of `derivar_switches`/`avaliar` that does not
+    pass an explicit `hoje` still classifies empresas against TODAY, never
+    the assinatura date. `service.py`'s `gerar`/`obter_geracao` should pass
+    `hoje=hoje()` explicitly at integration — see this slice's delivery
+    note (`service.py` is outside this file's ownership)."""
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+
 # ─── switches ─────────────────────────────────────────────────────────────
 
 
 def parcelas_ordenadas(d: DadosContrato) -> list[Parcela]:
     return sorted(d.parcelas, key=lambda p: p.ordem)
-
-
-def todas_certidoes(pessoas: list[Pessoa]) -> list[Certidao]:
-    return [c for p in pessoas for c in p.certidoes]
 
 
 def numero_da_parcela(d: DadosContrato, parcela_id: Optional[str]) -> Optional[str]:
@@ -560,8 +574,13 @@ def certidoes_imovel(d: DadosContrato) -> tuple[CertidaoImovel, ...]:
     return tuple(por_tipo[tipo] for tipo in ORDEM_CERTIDOES_IMOVEL if tipo in por_tipo)
 
 
-def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
-    """Spec §1.1 — computed, never typed."""
+def derivar_switches(
+    d: DadosContrato, politica: Politica, referencia: Optional[date] = None
+) -> dict[str, bool]:
+    """Spec §1.1 — computed, never typed. `referencia` (default TODAY —
+    `_hoje_padrao`, E1/H2) is the empresa-classification date `tem_pj_
+    certidoes` needs; it is NEVER the assinatura (E2)."""
+    referencia = referencia or _hoje_padrao()
     tipos = {p.tipo for p in d.parcelas}
     tem_financiamento = "financiamento" in tipos
     tem_parcelas_diretas = "direta" in tipos
@@ -569,7 +588,6 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
     # `permuta_ativos` — not the legacy one-asset `negociacao.permuta_ativo_id`.
     tem_permuta = parcela_permuta(d) is not None
     termos = d.termos
-    partes = signatarios(d.vendedores) + signatarios(d.compradores)
     return {
         "tem_financiamento": tem_financiamento,
         # [Q6] FGTS is part of the financiamento parcela, never its own.
@@ -588,8 +606,10 @@ def derivar_switches(d: DadosContrato, politica: Politica) -> dict[str, bool]:
         "tem_intermediacao": bool(d.intermediarios),
         "tem_itens_integrantes": bool((termos.itens_integrantes or "").strip()),
         "ad_corpus": bool(termos.ad_corpus),
-        "tem_pj_certidoes": any(
-            c.consulta_tipo_documento == "cnpj" for c in todas_certidoes(partes)
+        # [E1] A REQUIRED empresa (ativa/inapta/baixada-<5y from `referencia`),
+        # not merely "some CNPJ certidão exists somewhere" (the old reading).
+        "tem_pj_certidoes": bool(
+            empresas_exigidas(d, {"tem_permuta": tem_permuta}, referencia, politica)
         ),
         "tem_declaracao_partes": politica.tem_declaracao_partes,
         # [Q12] the office's value, in every modelo (permuta included).
@@ -643,20 +663,69 @@ def indice_certidoes(certidoes: list[Certidao], tipo_documento: str) -> dict[str
     return idx
 
 
-def grupos_pj(pessoa: Pessoa) -> dict[str, list[Certidao]]:
-    """documento -> results of each CNPJ consulta linked to this person."""
-    grupos: dict[str, list[Certidao]] = {}
-    for c in pessoa.certidoes:
-        if c.consulta_tipo_documento == "cnpj":
-            grupos.setdefault(c.consulta_documento or "", []).append(c)
-    return grupos
+@dataclass(frozen=True)
+class EmpresaExigida:
+    """[E1] One company (E4-deduped: one `Empresa` row in `d.empresas` is
+    one entry here even when both spouses hold a participação) whose
+    certidão group is required — `sufixo` names it "Baixada" in the title
+    when required-because-recently-closed; `owner` is the certificando
+    `Pessoa` the check/falta is attributed to."""
+
+    empresa: Empresa
+    sufixo: Optional[str]
+    owner: Pessoa
 
 
-def classificar_grupo_pj(certs: list[Certidao], assinatura: date, politica: Politica) -> str:
-    """[Q9] Whether a company's certidão group is required: `ativa`/`inapta`
-    always; `baixada` only when closed less than `pj_baixada_janela_anos`
-    before the assinatura; `suspensa`/`nula`/older baixadas are omitted."""
-    situacao = next((c.consulta_situacao_cadastral for c in certs if c.consulta_situacao_cadastral), None)
+def _empresas_de_certificandos(d: DadosContrato, sw: dict[str, bool]) -> list[tuple[Empresa, Pessoa]]:
+    """[E1/E3/E6] Every `d.empresas` row a certificando pessoa holds a
+    participação in — signing vendedores + their cônjuges (E3: a married
+    vendedor's cônjuge is a vendedor too), plus signing compradores +
+    cônjuges when `tem_permuta` (E6: the comprador giving an imóvel gets
+    exactly the vendedor treatment). Paired with the certificando `Pessoa`
+    (from `empresa.owners`) the readiness report attributes it to — one
+    pair per `Empresa` (E4; `d.empresas` already carries one row per
+    DISTINCT company, `owners` holding every participant)."""
+    certificandos = signatarios(d.vendedores) + (
+        signatarios(d.compradores) if sw["tem_permuta"] else []
+    )
+    ids = {p.cliente_id for p in certificandos}
+    ids |= {p.conjuge_cliente_id for p in certificandos if p.conjuge_cliente_id}
+    pares: list[tuple[Empresa, Pessoa]] = []
+    for e in d.empresas:
+        dono = next((o for o in e.owners if o.cliente_id in ids), None)
+        if dono is not None:
+            pares.append((e, dono))
+    return pares
+
+
+def _conjuges_sem_pessoa(d: DadosContrato, sw: dict[str, bool]) -> list[Pessoa]:
+    """[E3] Certificando vendedores (and, in a permuta, certificando
+    compradores: E6) whose `conjuge_cliente_id` points at a cliente NOT
+    loaded as a `Pessoa` anywhere on this card. E3 says the cônjuge of a
+    married vendedor IS a vendedor, so a card that never added them is a
+    genuine data gap — their empresas are unreachable, and the honest
+    answer is a named `faltando` (the office must add them as a card
+    party), never a silent exclusion from `owners`."""
+    certificandos = signatarios(d.vendedores) + (
+        signatarios(d.compradores) if sw["tem_permuta"] else []
+    )
+    ids_no_card = {p.cliente_id for p in d.vendedores + d.compradores}
+    return [
+        p for p in certificandos
+        if p.conjuge_cliente_id and p.conjuge_cliente_id not in ids_no_card
+    ]
+
+
+def classificar_empresa(e: Empresa, referencia: date, politica: Politica) -> str:
+    """[E1] Whether an empresa's certidão group is required, from its OWN
+    Cartão-CNPJ-sourced `situacao_cadastral`/`data_situacao_cadastral`
+    (never a certidão-consulta row, which may not exist yet): `ativa`/
+    `inapta` always; `baixada` only when closed less than `pj_baixada_
+    janela_anos` before `referencia` (TODAY — `_hoje_padrao`/`service.
+    hoje()`, NEVER the assinatura: E2/H2); `suspensa`/`nula`/older baixadas
+    are omitted. NULL `situacao_cadastral` (no Cartão uploaded yet)
+    -> `PJ_SEM_SITUACAO`, the caller's `faltando: cartao_cnpj` (E1, H4)."""
+    situacao = e.situacao_cadastral
     if situacao is None:
         return PJ_SEM_SITUACAO
     if situacao not in SITUACOES_CADASTRAIS:
@@ -665,25 +734,29 @@ def classificar_grupo_pj(certs: list[Certidao], assinatura: date, politica: Poli
         return PJ_EXIGIDO
     if situacao != SITUACAO_PJ_BAIXADA:
         return PJ_OMITIDO
-    data = next((c.consulta_data_situacao for c in certs if c.consulta_data_situacao), None)
-    if data is None:
+    if e.data_situacao_cadastral is None:
         return PJ_SEM_DATA_SITUACAO
-    if ha_menos_de_anos(data, assinatura, politica.pj_baixada_janela_anos):
+    if ha_menos_de_anos(e.data_situacao_cadastral, referencia, politica.pj_baixada_janela_anos):
         return PJ_EXIGIDO_BAIXADA
     return PJ_OMITIDO
 
 
-def grupos_pj_exigidos(
-    pessoa: Pessoa, assinatura: date, politica: Politica
-) -> list[tuple[str, list[Certidao], Optional[str]]]:
-    """(documento, results, title suffix) of each REQUIRED company group."""
-    saida: list[tuple[str, list[Certidao], Optional[str]]] = []
-    for documento, certs in grupos_pj(pessoa).items():
-        situacao = classificar_grupo_pj(certs, assinatura, politica)
-        if situacao == PJ_EXIGIDO:
-            saida.append((documento, certs, None))
-        elif situacao == PJ_EXIGIDO_BAIXADA:
-            saida.append((documento, certs, SUFIXO_PJ_BAIXADA))
+def empresas_exigidas(
+    d: DadosContrato, sw: dict[str, bool], referencia: date, politica: Politica
+) -> list[EmpresaExigida]:
+    """(empresa, title suffix, attributed owner) of each REQUIRED company —
+    E1 classification against `referencia` (TODAY, never the assinatura).
+    A company with no Cartão yet, or an unresolved baixada date, is NOT
+    "required" here (it is a named `faltando`/`bloqueia` instead — see
+    `_empresas_certidoes`, which walks EVERY certificando-owned company,
+    not just this filtered set)."""
+    saida: list[EmpresaExigida] = []
+    for e, dono in _empresas_de_certificandos(d, sw):
+        motivo = classificar_empresa(e, referencia, politica)
+        if motivo == PJ_EXIGIDO:
+            saida.append(EmpresaExigida(empresa=e, sufixo=None, owner=dono))
+        elif motivo == PJ_EXIGIDO_BAIXADA:
+            saida.append(EmpresaExigida(empresa=e, sufixo=SUFIXO_PJ_BAIXADA, owner=dono))
     return saida
 
 
@@ -1216,8 +1289,14 @@ def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
 
 
 def _certidoes(
-    av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica, assinatura: date
+    av: Avaliacao,
+    d: DadosContrato,
+    sw: dict[str, bool],
+    politica: Politica,
+    assinatura: date,
+    hoje: Optional[date] = None,
 ) -> None:
+    hoje = hoje or _hoje_padrao()
     signatarios_certificados = signatarios(d.vendedores) + (
         signatarios(d.compradores) if sw["tem_permuta"] else []
     )
@@ -1247,15 +1326,15 @@ def _certidoes(
             rotulo = frases.rotulo_certidao(tipo, None)
             c = idx.get(tipo)
             if c is None or not c.resultado:
-                # [Owner directive, 2026-09-23] A vendedor (lado="vendedor" —
-                # every signing seller AND, since they are stored in
-                # `d.vendedores` too, an `antigo_proprietario`) never NEEDS
-                # this CPF/CNPJ set (CND federal, TRF, TRT, TJSP, Serasa,
-                # Cenprot, Fazenda SP): "sellers only need what's already
-                # there." A comprador (permuta) keeps the full requirement —
-                # this is a one-sided relief, not a general relaxation.
-                if p.lado != "vendedor":
-                    av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", p.parte_id)
+                # [R1, reverses df54184ab] EVERY certificando — a vendedor
+                # (lado="vendedor": every signing seller AND, since they are
+                # stored in `d.vendedores` too, an `antigo_proprietario`)
+                # included — needs the full CPF/CNPJ set (CND federal, TRF,
+                # TRT, TJSP, Serasa, Cenprot, Fazenda SP). The seller-relief
+                # this block used to grant (df54184ab, live in prod since
+                # d1dc3f834) is revoked by owner directive (roadmap
+                # `sw-drive-extraction-2026-09.md` §R1, 2026-09-24).
+                av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", p.parte_id)
                 continue
             if c.resultado == "nao_emitida":
                 continue
@@ -1286,32 +1365,47 @@ def _certidoes(
         # so an empty list is "none issued yet" and each tipo is named below —
         # it is no longer an unreachable-data refusal.
         conferir(p, p.certidoes, "cpf", _nome(p))
-        # [Q9] which of the person's companies are certified.
-        for documento, certs in grupos_pj(p).items():
-            nome_pj = certs[0].consulta_nome or documento
-            situacao = classificar_grupo_pj(certs, assinatura, politica)
-            if situacao == PJ_SEM_SITUACAO:
+
+    def conferir_empresas() -> None:
+        """[E1] Every empresa a certificando holds a participação in — the
+        NULL-situação gap (no Cartão CNPJ uploaded yet) is a named
+        `faltando`, never a silent skip (E1, H4); required companies get
+        the same 11-item CNPJ certidão check as a person (E5)."""
+        for e, dono in _empresas_de_certificandos(d, sw):
+            nome_pj = e.razao_social or e.cnpj
+            motivo = classificar_empresa(e, hoje, politica)
+            if motivo == PJ_SEM_SITUACAO:
+                av.falta(f"empresa.{e.id}.cartao_cnpj", f"Cartão CNPJ — {nome_pj}", "empresas")
+            elif motivo == PJ_SEM_DATA_SITUACAO:
                 av.falta(
-                    f"certidoes.pj.{documento}.situacao",
-                    f"Situação cadastral (Receita Federal) da empresa {nome_pj} — {_nome(p)}",
-                    "certidoes",
-                    p.parte_id,
+                    f"empresa.{e.id}.data_situacao_cadastral",
+                    f"Data da baixa da empresa {nome_pj}",
+                    "empresas",
                 )
-            elif situacao == PJ_SEM_DATA_SITUACAO:
-                av.falta(
-                    f"certidoes.pj.{documento}.data_situacao",
-                    f"Data da baixa da empresa {nome_pj} — {_nome(p)}",
-                    "certidoes",
-                    p.parte_id,
-                )
-            elif situacao == PJ_SITUACAO_DESCONHECIDA:
+            elif motivo == PJ_SITUACAO_DESCONHECIDA:
                 av.bloqueia(
                     "SITUACAO_CADASTRAL_DESCONHECIDA",
-                    f"A situação cadastral da empresa {nome_pj} ({_nome(p)}) não é reconhecida.",
+                    f"A situação cadastral da empresa {nome_pj} não é reconhecida.",
                 )
-            elif situacao in (PJ_EXIGIDO, PJ_EXIGIDO_BAIXADA):
-                conferir(p, certs, "cnpj", nome_pj)
+            elif motivo in (PJ_EXIGIDO, PJ_EXIGIDO_BAIXADA):
+                conferir(dono, e.certidoes, "cnpj", nome_pj)
 
+    def conferir_conjuges_ausentes() -> None:
+        """[E3] A married certificando's cônjuge who is not a `Pessoa` on
+        this card at all — their empresas are unreachable, so this is a
+        named `faltando`, never a silent drop from `_empresas_de_
+        certificandos`'s owner-matching (tech-lead review, S2b)."""
+        for p in _conjuges_sem_pessoa(d, sw):
+            av.falta(
+                f"parte.{p.cliente_id}.conjuge",
+                f"Cônjuge de {_nome(p)} não está no card",
+                "partes",
+                p.parte_id,
+                ancora=_ancora(p),
+            )
+
+    conferir_empresas()
+    conferir_conjuges_ausentes()
     for p in signatarios_certificados:
         conferir_pessoa(p)
         # [Q11] the estado-civil certidão is less than 90 days old.
@@ -1596,8 +1690,14 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
 
 
 def avaliar(
-    d: DadosContrato, switches: dict[str, bool], politica: Politica, assinatura: date
+    d: DadosContrato,
+    switches: dict[str, bool],
+    politica: Politica,
+    assinatura: date,
+    hoje: Optional[date] = None,
 ) -> Avaliacao:
+    """`hoje` (default TODAY — `_hoje_padrao`) is the E1 empresa-
+    classification reference date, distinct from `assinatura` (E2/H2)."""
     av = Avaliacao(
         destinos=Destinos(
             cliente_id=d.cliente_id,
@@ -1610,7 +1710,7 @@ def avaliar(
     _negociacao(av, d, switches, assinatura)
     _financiamento(av, d, switches)
     _permuta(av, d, switches)
-    _certidoes(av, d, switches, politica, assinatura)
+    _certidoes(av, d, switches, politica, assinatura, hoje)
     _imobiliaria(av, d, politica)
     _intermediacao(av, d, switches)
     _contrato(av, d, switches)
@@ -1623,6 +1723,7 @@ __all__ = [
     "ALVO_ITENS_INTEGRANTES",
     "Avaliacao",
     "Destinos",
+    "EmpresaExigida",
     "MODELO_A_VISTA",
     "MODELO_COMPRA_VENDA",
     "MODELO_PERMUTA",
@@ -1633,13 +1734,12 @@ __all__ = [
     "antigos_proprietarios",
     "avaliar",
     "certidoes_imovel",
-    "classificar_grupo_pj",
+    "classificar_empresa",
     "comarca_de_texto",
     "corretagem_marcos",
     "derivar_switches",
+    "empresas_exigidas",
     "exige_antigo_proprietario",
-    "grupos_pj",
-    "grupos_pj_exigidos",
     "ha_menos_de_anos",
     "indice_certidoes",
     "modelo_derivado",

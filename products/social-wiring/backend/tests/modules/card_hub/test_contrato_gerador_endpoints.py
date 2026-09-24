@@ -69,6 +69,10 @@ _TABELAS = (
     # Migrations 114-118.
     "atendimento_negociacao_termos", "atendimento_parcela_permuta_ativos", "permuta_ativos",
     "matricula_ato_detalhes", "imovel_documentos", "cliente_documentos",
+    # [E1, migration 167 — S2a, not yet in this worktree] `carregador._empresas`
+    # reads these directly; seeded empty here so a sparse card exercises
+    # "no empresas" rather than an unknown table.
+    "cliente_empresa_participacoes", "empresas",
 )
 
 
