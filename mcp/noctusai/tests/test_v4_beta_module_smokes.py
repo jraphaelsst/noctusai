@@ -43,9 +43,21 @@ class TestSessionEndSweepSmoke:
     def test_imports(self):
         from tools.noctus.dev import session_end_sweep  # noqa: F401
 
-    def test_sweep_runs_without_error(self):
+    def test_sweep_runs_without_error(self, tmp_path):
+        """Smoke the sweep against a THROWAWAY repo, never the real one.
+
+        This used to call `ses.sweep()` with defaults — the real primary
+        checkout, pointer auto-heal ON and ledger delivery ON — so a plain
+        suite run appended a summary row to the real salvage ledger and
+        FF-pushed it to origin/dev (observed 2026-09-24: `5ac158725
+        chore(cost-log): deliver session ledger churn [auto]`, made by a test).
+        A test must never publish anything."""
+        import subprocess
         from tools.noctus.dev import session_end_sweep as ses
-        r = ses.sweep()
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "dev", str(repo)], check=True)
+        r = ses.sweep(repo_root=repo, deliver_ledgers=False, heal_pointers=False)
         assert r["ok"] is True
         assert "worktrees" in r
         assert "orphan_branches" in r
