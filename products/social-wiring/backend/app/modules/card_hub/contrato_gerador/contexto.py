@@ -16,7 +16,7 @@ import re
 from dataclasses import asdict
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Any
+from typing import Any, Optional
 
 from noctusai_lib.domain.texto_ptbr import (
     CENTAVO,
@@ -38,11 +38,12 @@ from app.modules.card_hub.contrato_gerador.dados import (
     signatarios,
 )
 from app.modules.card_hub.contrato_gerador.derivacao import (
+    _hoje_padrao,
     antigos_proprietarios,
     certidoes_imovel,
     corretagem_marcos,
+    empresas_exigidas,
     exige_antigo_proprietario,
-    grupos_pj_exigidos,
     indice_certidoes,
     numero_da_parcela,
     parcelas_antes_de,
@@ -172,7 +173,12 @@ def montar_contexto(
     assinatura: date,
     par: ContadorParagrafos,
     adapter: DocxRenderAdapter,
+    hoje: Optional[date] = None,
 ) -> dict[str, Any]:
+    """`hoje` (default TODAY — `_hoje_padrao`) is the E1 empresa-
+    classification reference `empresas_exigidas` needs below; it is NEVER
+    `assinatura` (E2/H2)."""
+    hoje = hoje or _hoje_padrao()
     cl = numerar_clausulas(sw)
     vend, comp_pessoas = signatarios(d.vendedores), signatarios(d.compradores)
     V, C = lado(_generos(vend), "vendedor"), lado(_generos(comp_pessoas), "comprador")
@@ -290,11 +296,12 @@ def montar_contexto(
     n = 0
     for p in pessoas_cert:
         idx = indice_certidoes(p.certidoes, "cpf")
-        # [Owner directive, 2026-09-23] A vendedor's certidões are no longer
-        # `faltando`-gated (`derivacao.conferir`), so `idx` can legitimately
-        # miss a `tipo` here — present ONLY whichever certidões exist; a
-        # seller with none on file gets no group at all (never an `idx[t]`
-        # KeyError, live on prod until this fix).
+        # [R1, reverses df54184ab] EVERY certificando's certidões are
+        # `faltando`-gated again (`derivacao.conferir`), so a required
+        # `tipo` is always present in `idx` by the time this runs (`avaliar`
+        # already returned `pronto`) — the `if t in idx` guard stays only
+        # as a defensive no-op against a future relaxation, never load-
+        # bearing for a live card.
         itens = [frases.item_certidao(t, idx[t]) for t in tipos_exigidos("cpf") if t in idx]
         if not itens:
             continue
@@ -305,19 +312,21 @@ def montar_contexto(
             for t in tipos_exigidos("cpf")
             if t in idx and idx[t].resultado == "nao_emitida"
         ]
-    for p in pessoas_cert:
-        for documento, certs, sufixo in grupos_pj_exigidos(p, assinatura, politica):
-            idx = indice_certidoes(certs, "cnpj")
-            nome_pj = certs[0].consulta_nome or documento
-            tipos = tipos_exigidos("cnpj")
-            itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
-            if not itens:
-                continue
-            n += 1
-            grupos.append({"num": n, "em_nome_de": nome_pj, "sufixo": sufixo, "itens": itens})
-            pendentes_cert += [
-                frases.pendencia_certidao(t, nome_pj) for t in tipos if t in idx and idx[t].resultado == "nao_emitida"
-            ]
+    # [E1/E4] PJ groups: DISTINCT required empresas of the certificandos
+    # (never per-person — a company both spouses hold is printed ONCE).
+    for eex in empresas_exigidas(d, sw, hoje, politica):
+        e = eex.empresa
+        idx = indice_certidoes(e.certidoes, "cnpj")
+        nome_pj = e.razao_social or e.cnpj
+        tipos = tipos_exigidos("cnpj")
+        itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
+        if not itens:
+            continue
+        n += 1
+        grupos.append({"num": n, "em_nome_de": nome_pj, "sufixo": eex.sufixo, "itens": itens})
+        pendentes_cert += [
+            frases.pendencia_certidao(t, nome_pj) for t in tipos if t in idx and idx[t].resultado == "nao_emitida"
+        ]
 
     # [§6.1 #14] The imóvel's own group (migration 118): matrícula + IPTU CND +
     # condominial CND, whichever are on file.

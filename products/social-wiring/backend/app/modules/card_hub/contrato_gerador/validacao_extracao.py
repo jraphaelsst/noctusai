@@ -90,6 +90,10 @@ ENTIDADE_IMOVEL = "imovel"
 ENTIDADE_IMOVEL_DOCUMENTO = "imovel_documento"
 ENTIDADE_CERTIDAO = "certidao"
 ENTIDADE_ATO_DETALHE = "ato_detalhe"
+#: [E1/E2] An `empresas` row's group provenance (contract §A.1) — the
+#: Cartão-CNPJ-sourced cadastral fields, same `<p>_origem/_documento_id/
+#: _em/_confirmado_por/_confirmado_em` shape as a cliente/imóvel group.
+ENTIDADE_EMPRESA = "empresa"
 
 #: Entity → the table its row lives in. `imovel_dados` has no id of its own —
 #: it is keyed `(org_id, codigo)`, see `_filtro_linha`.
@@ -99,6 +103,7 @@ TABELAS: dict[str, str] = {
     ENTIDADE_IMOVEL_DOCUMENTO: "imovel_documentos",
     ENTIDADE_CERTIDAO: "certidao_resultados",
     ENTIDADE_ATO_DETALHE: "matricula_ato_detalhes",
+    ENTIDADE_EMPRESA: "empresas",
 }
 
 _ESTADOS_COM_CONJUGE = frozenset({"casado", "uniao_estavel"})
@@ -311,6 +316,20 @@ CAMPO_CERTIDAO = CampoValidavel(
     origens_maquina=frozenset({"api", "ia"}),
 )
 
+#: [E1/E2, migration 167] `empresas`' group provenance — the Cartão-CNPJ
+#: reading fills every cadastral field together (§A.1), so a machine-pending
+#: Cartão blocks generation exactly like the imóvel document group does.
+CAMPO_EMPRESA_DADOS = _quinteto(
+    ENTIDADE_EMPRESA,
+    "dados",
+    "Cartão CNPJ",
+    valores=(
+        "razao_social", "nome_fantasia", "natureza_juridica", "data_abertura",
+        "situacao_cadastral", "data_situacao_cadastral", "motivo_situacao", "uf",
+    ),
+    prefixo="dados",
+)
+
 #: The última transferência act's typed reading (115).
 CAMPO_ATO_DETALHE = CampoValidavel(
     entidade=ENTIDADE_ATO_DETALHE, campo="ultima_transferencia",
@@ -326,6 +345,7 @@ CAMPO_ATO_DETALHE = CampoValidavel(
 
 REGISTRO: tuple[CampoValidavel, ...] = (
     *CAMPOS_CLIENTE, *CAMPOS_IMOVEL, CAMPO_IMOVEL_DOCUMENTO, CAMPO_CERTIDAO, CAMPO_ATO_DETALHE,
+    CAMPO_EMPRESA_DADOS,
 )
 _POR_ENTIDADE_CAMPO: dict[tuple[str, str], CampoValidavel] = {
     (c.entidade, c.campo): c for c in REGISTRO
@@ -555,6 +575,16 @@ def coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Optiona
                     Alvo((CAMPO_ATO_DETALHE,), str(det[0]["id"]), det[0], f"Imóvel {im.codigo}")
                 )
 
+    # [E1/E2] Each empresa's Cartão-CNPJ group provenance — a machine-
+    # pending reading blocks generation exactly like an imóvel document.
+    empresas_rows = _rows_por_id(client, org_id, TABELAS[ENTIDADE_EMPRESA], [e.id for e in dados.empresas])
+    for e in dados.empresas:
+        row = empresas_rows.get(e.id)
+        if row is None:
+            continue
+        nome_pj = e.razao_social or e.cnpj
+        coleta.alvos.append(Alvo((CAMPO_EMPRESA_DADOS,), e.id, row, f"Empresa {nome_pj}"))
+
     ativo_ids = [p.permuta_ativo_id for p in dados.permuta_imoveis]
     if ativo_ids:
         ativos = table_reads.in_batched_rows(client, "permuta_ativos", org_id, "id", ativo_ids)
@@ -590,17 +620,23 @@ def documentos_de_origem(client: Any, org_id: UUID, pares: list[tuple[Alvo, Camp
     `listar_pendentes`/`decidir` call this with only-pending pairs,
     `proveniencia.linhagem` with every active one): `cliente_documentos`
     for a cliente field, `imovel_documentos` or `matricula_extracoes` for
-    an imóvel field (154's `_documento_id` may point at either). Each
-    returned row is tagged `_tabela` with the table it was actually found
-    in, so a caller can tell the three apart without re-deriving it —
-    `proveniencia.linhagem` turns that into an `Entrada` (`fontes.
-    TABELA_ENTRADA`); this module stays free of that vocabulary."""
-    ids_cliente, ids_imovel = set(), set()
+    an imóvel field (154's `_documento_id` may point at either), or
+    `empresa_documentos` (167, §A.3 — the Cartão CNPJ store, S2a) for an
+    empresa field. Each returned row is tagged `_tabela` with the table it
+    was actually found in, so a caller can tell the three apart without
+    re-deriving it — `proveniencia.linhagem` turns that into an `Entrada`
+    (`fontes.TABELA_ENTRADA`); this module stays free of that vocabulary."""
+    ids_cliente, ids_imovel, ids_empresa = set(), set(), set()
     for alvo, campo in pares:
         doc_id = alvo.row.get(campo.documento_id) if campo.documento_id else None
         if not doc_id:
             continue
-        (ids_cliente if campo.entidade == ENTIDADE_CLIENTE else ids_imovel).add(str(doc_id))
+        if campo.entidade == ENTIDADE_CLIENTE:
+            ids_cliente.add(str(doc_id))
+        elif campo.entidade == ENTIDADE_EMPRESA:
+            ids_empresa.add(str(doc_id))
+        else:
+            ids_imovel.add(str(doc_id))
     fontes: dict[str, dict] = {}
     for did, r in _rows_por_id(client, org_id, "cliente_documentos", ids_cliente).items():
         fontes[did] = r | {"_nome": r.get("nome_original"), "_tabela": "cliente_documentos"}
@@ -611,6 +647,9 @@ def documentos_de_origem(client: Any, org_id: UUID, pares: list[tuple[Alvo, Camp
     for did, r in _rows_por_id(client, org_id, "matricula_extracoes", restantes,
                                select="id,nome_arquivo").items():
         fontes[did] = r | {"_nome": r.get("nome_arquivo"), "_tabela": "matricula_extracoes"}
+    for did, r in _rows_por_id(client, org_id, "empresa_documentos", ids_empresa,
+                               select="id,nome_original,tipo_documento,extracao_dados").items():
+        fontes[did] = r | {"_nome": r.get("nome_original"), "_tabela": "empresa_documentos"}
     return fontes
 
 

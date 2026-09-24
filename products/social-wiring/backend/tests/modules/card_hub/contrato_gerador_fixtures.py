@@ -32,6 +32,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Certidao,
     CertidaoImovel,
     DadosContrato,
+    Empresa,
     Endereco,
     Favorecido,
     Financiamento,
@@ -52,6 +53,13 @@ from app.modules.card_hub.contrato_gerador.politica import (
 )
 
 ASSINATURA = date(2026, 9, 14)
+
+#: [E1/H2] The pinned "today" `avaliar`/`derivar_switches` classify empresas
+#: against — a SEPARATE concept from `ASSINATURA` (which reads gate
+#: certidão TIME rules), reusing the same numeric date only because this
+#: suite's whole calendar is authored around it. Pass explicitly as
+#: `hoje=REFERENCIA` wherever a test needs deterministic E1 boundary math.
+REFERENCIA = ASSINATURA
 
 MATRICULA_TEXTO = (
     "MATRÍCULA Nº 12.345 - IMÓVEL: O apartamento nº 11 do Edifício Exemplo, situado na Rua "
@@ -90,15 +98,24 @@ def certidoes_completas(emitida: date = date(2026, 9, 1)) -> list[Certidao]:
     ]
 
 
-def certidoes_pj(
-    documento: str,
-    nome: str,
+def empresa(
+    empresa_id: str,
+    cnpj: str,
+    razao_social: str,
     situacao: str | None,
     data_situacao: date | None = None,
+    *,
+    owners: list[Pessoa],
+    sem_tipo: str | None = None,
     emitida: date = date(2026, 9, 1),
-) -> list[Certidao]:
-    """The PJ-column certidões of ONE company (CNPJ consulta) of a parte."""
-    return [
+) -> Empresa:
+    """One `d.empresas` row (migration 167). `situacao_cadastral`/
+    `data_situacao_cadastral` live on the ROW now (Cartão CNPJ, E2) — not
+    embedded per-certidão the way the pre-P0c `certidoes_pj` fixture did.
+    `owners` are the certificando `Pessoa`s holding a participação (E4:
+    pass both spouses to exercise the dedupe); `sem_tipo` drops one of the
+    11 PJ certidão types (E5) to exercise a missing-type gap."""
+    certidoes = [
         Certidao(
             tipo=tipo,
             resultado="negativa",
@@ -106,14 +123,22 @@ def certidoes_pj(
             emitida_em=emitida,
             validade_ate=date(2026, 12, 1),
             consulta_tipo_documento="cnpj",
-            consulta_nome=nome,
-            consulta_documento=documento,
-            consulta_situacao_cadastral=situacao,
-            consulta_data_situacao=data_situacao,
+            consulta_nome=razao_social,
+            consulta_documento=cnpj,
         )
         for i, (tipo, _r, _n, _pf, pj, _s) in enumerate(CERTIDOES, start=1)
-        if pj
+        if pj and tipo != sem_tipo
     ]
+    return Empresa(
+        id=empresa_id,
+        cnpj=cnpj,
+        razao_social=razao_social,
+        situacao_cadastral=situacao,
+        data_situacao_cadastral=data_situacao,
+        dados_origem="cartao_cnpj" if situacao is not None else None,
+        owners=owners,
+        certidoes=certidoes,
+    )
 
 
 def certidoes_do_imovel(emitida: date | None = None) -> tuple[CertidaoImovel, ...]:
