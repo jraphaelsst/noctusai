@@ -43,7 +43,7 @@ from typing import Any, Iterable, Optional
 
 from . import drive_pull as _dp
 
-TOOL_VERSION = "1"
+TOOL_VERSION = "2"
 PARSER_VERSION = "1"
 
 _SEED_BACKEND = Path(_dp.REPO_ROOT) / "seed" / "lib" / "backend"
@@ -156,6 +156,19 @@ def _extract_pdf(path: Path) -> dict[str, Any]:
     }
 
 
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+MAX_TENTATIVAS = 3  # same cap as social-wiring's extraction sweep (D3)
+
+
+def _should_retry(cached: dict[str, Any], retry_errors: bool) -> bool:
+    """Extract-once: a cached entry is reused unless it FAILED. A failure retries up to
+    MAX_TENTATIVAS; an ``unsupported`` verdict from an older tool version retries once, because
+    that verdict was the tool's gap, not the file's (free rungs only, so this costs nothing)."""
+    if cached.get("error"):
+        return retry_errors and cached.get("tentativas", 1) < MAX_TENTATIVAS
+    return cached.get("text_source") == "unsupported" and cached.get("tool_version") != TOOL_VERSION
+
+
 def extract_file(entry: dict[str, Any], *, retry_errors: bool = True) -> tuple[dict[str, Any], str]:
     """Return ``(cache_entry, outcome)``; outcome ∈ cached | extracted | retried | skipped."""
     sha = entry.get("sha256")
@@ -163,24 +176,27 @@ def extract_file(entry: dict[str, Any], *, retry_errors: bool = True) -> tuple[d
     if not sha or not local:
         return ({"error": "missing sha256/local_path in manifest"}, "skipped")
     cached = _read_cache(sha)
-    if cached is not None and not (retry_errors and cached.get("error")):
+    if cached is not None and not _should_retry(cached, retry_errors):
         return (cached, "cached")
     outcome = "retried" if cached is not None else "extracted"
     path = Path(local)
     name = entry.get("name") or path.name
     lower = name.lower()
+    mime = entry.get("mime_type") or ""
     record: dict[str, Any] = {
         "sha256": sha,
         "name": name,
-        "mime_type": entry.get("mime_type"),
+        "mime_type": mime,
         "tool_version": TOOL_VERSION,
         "extracted_at": datetime.now(timezone.utc).isoformat(),
         "error": None,
+        "tentativas": (cached or {}).get("tentativas", 0) + 1,
     }
     try:
-        if lower.endswith(".docx"):
+        # Drive names often lack an extension ("CONTRATO … CASA 16"): the manifest's mime decides.
+        if lower.endswith(".docx") or mime == _DOCX_MIME:
             record.update(_extract_docx(path))
-        elif lower.endswith(".pdf") or entry.get("mime_type") == "application/pdf":
+        elif lower.endswith(".pdf") or mime == "application/pdf":
             record.update(_extract_pdf(path))
         elif (entry.get("mime_type") or "").startswith("image/"):
             record.update({"text_source": "image_only", "text": "", "pages": 1, "producer": None})
@@ -338,7 +354,7 @@ def census_folder(folder_id: str) -> dict[str, Any]:
         "cartao_cnpj_files": by_type.get("cartao_cnpj", 0),
         "has_contract_d4sign": "contrato_d4sign" in has,
         "has_contract_rev_final": any(f.get("rev_final") for f in non_draft),
-        "has_contract_docx": any(f["doc_type"] == "contrato" and f["rel_path"].lower().endswith(".docx") for f in non_draft),
+        "has_contract_docx": any(f["doc_type"] == "contrato" and _is_docx(f) for f in non_draft),
         "closed": closed,
         "permuta_signal": permuta_signal,
         "root_gaps": root_gaps,
@@ -428,13 +444,17 @@ def _strip_pdf_furniture(text: str) -> str:
     return "\n".join(kept)
 
 
+def _is_docx(f: dict[str, Any]) -> bool:
+    return f["rel_path"].lower().endswith(".docx") or f.get("text_source") == "docx"
+
+
 def select_contract(files: Iterable[dict[str, Any]]) -> tuple[Optional[dict[str, Any]], str, list[dict[str, Any]]]:
     """Ground-truth rule (agreed with noctusai-3e, 2026-09-24):
     d4sign > rev_final > latest revision .docx at root (never ANTIGOS/MINUTA) > none.
     Returns (chosen_file, fonte, other_contract_docx)."""
     cands = [f for f in files if not f["draft"] and f["doc_type"] in ("contrato", "contrato_d4sign")]
     d4 = [f for f in cands if f["doc_type"] == "contrato_d4sign" and f.get("text_source") == "text_layer"]
-    docx_files = [f for f in cands if f["doc_type"] == "contrato" and f["rel_path"].lower().endswith(".docx")
+    docx_files = [f for f in cands if f["doc_type"] == "contrato" and _is_docx(f)
                   and len(Path(f["rel_path"]).parts) == 1]
     if d4:
         return (d4[0], "d4sign", docx_files)
@@ -1063,8 +1083,19 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
         "tool_version": TOOL_VERSION, "parser_version": PARSER_VERSION,
         "gerado_em": datetime.now(timezone.utc).isoformat(),
     }
+    # An image-only signed PDF cannot be ground truth (reading it back would be OCR scored against
+    # itself). But when its NAME embeds the chosen docx's name (D4Sign's "<docx name> docx pdf-D4Sign"),
+    # the signed PDF was generated from that exact docx, so the docx is as good as the signature.
+    signed_images = [f for f in census["files"] if f["doc_type"] == "contrato_d4sign" and not f["draft"]
+                     and f.get("text_source") == "image_only"]
+    if chosen is not None and fonte in ("revisao", "rev_final"):
+        stem = re.sub(r"[^A-Z0-9]", "", _fold(Path(chosen["rel_path"]).stem.replace("_", " ")))
+        if stem and any(stem in re.sub(r"[^A-Z0-9]", "", _fold(f["rel_path"].replace("_", " "))) for f in signed_images):
+            key["fonte"]["confianca"] = "alta"
+            key["fonte"]["nota"] = "d4sign_imagem_gerado_deste_docx"
     if chosen is None:
-        key["status"] = "sem_contrato"
+        key["status"] = "contrato_so_imagem" if signed_images else "sem_contrato"
+        key["fonte"]["assinado_imagem"] = [f["rel_path"] for f in signed_images]
     else:
         cached = _text_for(chosen)
         if not cached or cached.get("error") or not cached.get("text"):

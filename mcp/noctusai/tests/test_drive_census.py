@@ -339,6 +339,39 @@ def test_word_diff_reports_only_real_edits() -> None:
     assert [(x["docx"], x["d4sign"]) for x in d] == [(None, "e y@example.com,")]
 
 
+def test_extensionless_docx_by_mime_and_image_only_signed_contract(private, tmp_path) -> None:
+    # Drive names often lack an extension; the manifest mime makes it a docx. The signed PDF is a
+    # scan whose name embeds the docx name, so the docx is as good as the signature.
+    _mirror(private, "F4", {
+        "CONTRATO DE COMPRA E VENDA - X - rev 10-08.docx": _docx_bytes(CONTRATO, tmp_path),
+        "CERTIFICADO DIGITAL - CONTRATO DE COMPRA E VENDA - X - rev 10-08 docx pdf-D4Sign.jpg": b"\xff\xd8",
+    })
+    manifest = private / "drive-mirror" / "F4" / "manifest.json"
+    m = json.loads(manifest.read_text())
+    for k in ("name", "rel_path"):  # the extension-less Drive name; only the mime says docx
+        m["entries"][0][k] = m["entries"][0][k].removesuffix(".docx")
+    manifest.write_text(json.dumps(m))
+    summary = C.drive_census("answer_key", "F4")["results"][0]
+    assert (summary["status"], summary["fonte"]) == ("ok", "revisao")
+    key = json.loads((private / "answer-keys" / "901.json").read_text())
+    assert (key["fonte"]["confianca"], key["fonte"]["nota"]) == ("alta", "d4sign_imagem_gerado_deste_docx")
+
+
+def test_only_an_image_signed_contract_is_not_ground_truth(private) -> None:
+    _mirror(private, "F5", {"CERTIFICADO DIGITAL - CCV - X-D4Sign.jpg": b"\xff\xd8"})
+    assert C.drive_census("answer_key", "F5")["results"][0]["status"] == "contrato_so_imagem"
+
+
+def test_a_failing_file_retries_at_most_three_times(private) -> None:
+    _mirror(private, "F6", {"quebrado.pdf": b"%PDF-1.4 garbage"})
+    cache = private / "extractions" / f"{0:064x}.json"
+    C.drive_census("extract", "F6")
+    rec = json.loads(cache.read_text())
+    rec.update({"error": "boom", "tentativas": 3})
+    cache.write_text(json.dumps(rec))
+    assert C.drive_census("extract", "F6")["results"][0]["outcomes"] == {"cached": 1}
+
+
 def test_unknown_action_is_refused() -> None:
     with pytest.raises(ValueError, match="extract \\| census \\| answer_key"):
         C.drive_census("nope")
