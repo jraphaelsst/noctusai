@@ -189,14 +189,18 @@ class TestHookContract:
         ]
         assert not live, "dead escape hatch left wired — it now controls nothing"
 
-    def test_pre_commit_drains_the_spool_before_staging_the_ledger(self):
-        """Order matters: draining after the `git add` would stage a stale ledger."""
+    def test_pre_commit_drains_the_spool_and_never_stages_the_ledger(self):
+        """The drain hands rows to the ledger store (origin/ledgers, 2026-09-24).
+
+        Nothing writes the dev copy any more, so a `git add` of it would only
+        ever re-introduce a ledger row into a commit — the churn this whole
+        move exists to remove."""
         text = PRE_COMMIT.read_text()
-        drain_at = text.find("--vector-costs-drain-spool")
-        stage_at = text.find("git add -- project-history/vector-costs.ndjson")
-        assert drain_at != -1, "pre-commit must drain the cost spool"
-        assert stage_at != -1, "pre-commit must stage the ledger"
-        assert drain_at < stage_at, "drain must run BEFORE the ledger is staged"
+        live = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+        assert any("--vector-costs-drain-spool" in ln for ln in live), \
+            "pre-commit must drain the cost spool"
+        assert not any("git add" in ln and "vector-costs.ndjson" in ln for ln in live), \
+            "pre-commit must not stage the dev copy of vector-costs.ndjson"
 
     def test_cli_exposes_the_drain_flag(self):
         """The hook shells out to this flag; a rename would silently no-op it."""
@@ -221,3 +225,23 @@ class TestSpoolIsGitIgnored:
             cwd=REPO, capture_output=True,
         )
         assert proc.returncode != 0, "the spool must never be committed"
+
+
+# ── Real store: rows go to origin/ledgers, never the dev copy (2026-09-24) ─────
+
+class TestLedgerStoreRealMode:
+    def test_drain_spools_into_store_then_publishes(self, ledger_repo, tmp_path, monkeypatch):
+        from tools.noctus.dev import _ledger_store as ls
+        bare, clone, show = ledger_repo
+        dev_copy = clone / "project-history" / "vector-costs.ndjson"
+        monkeypatch.setattr(vc, "LEDGER_PATH", dev_copy)
+        monkeypatch.setattr(vc, "SPOOL_PATH", tmp_path / ".vector-costs-spool.ndjson")
+        _log(tokens=7)
+        r = vc.drain_spool()
+        assert r["ok"] and r["drained"] == 1 and r["store"]["status"] == "spooled"
+        assert not dev_copy.exists(), "the dev copy is never written"
+        assert show("vector-costs.ndjson") == "", "publish=False: no network inside a commit"
+        assert vc.total()["estimated_tokens"] == 7, "read-your-writes via the store spool"
+        assert ls.default_store().flush()["status"] == "pushed"
+        assert json.loads(show("vector-costs.ndjson"))["estimated_tokens"] == 7
+        assert vc.total()["estimated_tokens"] == 7, "no double count after publish"

@@ -8,8 +8,11 @@ Why this exists
     `log_refresh_batch(...)` at the end of each refresh run.
 
 Architecture
-    - Durable source-of-truth: `project-history/vector-costs.ndjson` (committed,
-      sibling of auto-improvement.ndjson + worktree-salvage.ndjson).
+    - Durable source-of-truth: `vector-costs.ndjson` on the orphan
+      `origin/ledgers` branch (`_ledger_store`, git plumbing — never a commit
+      on dev; owner decision 2026-09-24). Until S4 of
+      `project-history/roadmaps/ledgers-off-dev-2026-09.md` reads DUAL-READ it
+      with the legacy `project-history/vector-costs.ndjson` dev copy.
     - One NDJSON line per refresh batch.
     - `report()` + `total()` aggregate on-the-fly from the ledger (no secondary
       cache needed — the ledger is small, scans are trivial).
@@ -56,6 +59,8 @@ from pathlib import Path
 
 from settings import LEDGER_ROOT
 
+from ._ledger_store import append_rows, read_ledger_text
+
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -66,6 +71,7 @@ logger = logging.getLogger(__name__)
 # land in the PRIMARY checkout even when the MCP server booted with cwd
 # inside a worktree. See workspace.get_ledger_root() docstring.
 LEDGER_PATH = LEDGER_ROOT / "project-history" / "vector-costs.ndjson"
+LEDGER_NAME = "vector-costs.ndjson"
 
 #: The UNTRACKED write-ahead spool (gitignored). Every cost row lands here first.
 #:
@@ -204,44 +210,40 @@ def log_refresh_batch(
 
 
 def drain_spool() -> dict:
-    """Fold every spooled cost row into the tracked ledger; empty the spool.
+    """Fold every spooled cost row into the ledger store; empty the spool.
 
-    The ONLY writer of `LEDGER_PATH`. Called from the pre-commit hook (which then
-    `git add`s the ledger), so spooled rows land inside a real commit instead of
-    forcing a ledger-only commit of their own. Idempotent and safe to call when the
-    spool is absent or empty — that is the common case.
+    The ONLY writer of the ledger. Called from the pre-commit hook. Since
+    2026-09-24 the rows go to `origin/ledgers` through `_ledger_store` with
+    ``publish=False``: they land in the store's own durable write-ahead spool
+    (no network inside a commit) and ride out on the next publish of ANY ledger
+    (a branch-pointer write, `session_end_sweep`, or
+    `noctus.dev.ledger_store action='flush'`). Nothing touches the dev copy, so
+    there is no ledger file left for the hook to stage — the fold-into-commit
+    dance (and every `chore(cost-log)` commit it replaced) is gone.
 
-    Ordering: rows are appended in spool order, which is write order. The ledger is
-    an append-only time series; `report()` sorts by `ts`, so a drain that interleaves
-    with an older ledger tail is still read correctly.
+    Crash-safety: the store's spool is fsync'd BEFORE this spool is removed, so
+    an interruption can at worst duplicate a row (harmless for cost telemetry)
+    and can never lose one.
 
-    Crash-safety: the ledger append is flushed BEFORE the spool is truncated, so an
-    interruption can at worst duplicate a row (harmless for cost telemetry) and can
-    never lose one.
-
-    Returns `{ok, drained, ledger, spool}`; `drained` is the row count folded in.
+    Returns `{ok, drained, ledger, spool, store}`; `drained` is the row count
+    handed to the store.
     """
+    base = {"ledger": f"origin/ledgers:{LEDGER_NAME}", "spool": str(SPOOL_PATH)}
     if not SPOOL_PATH.exists():
-        return {"ok": True, "drained": 0, "ledger": str(LEDGER_PATH), "spool": str(SPOOL_PATH)}
+        return {"ok": True, "drained": 0, **base}
     try:
         spooled = [ln for ln in SPOOL_PATH.read_text(encoding="utf-8").splitlines() if ln.strip()]
         if not spooled:
             SPOOL_PATH.unlink(missing_ok=True)
-            return {"ok": True, "drained": 0, "ledger": str(LEDGER_PATH), "spool": str(SPOOL_PATH)}
-        LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with LEDGER_PATH.open("a", encoding="utf-8") as fh:
-            fh.write("\n".join(spooled) + "\n")
-            fh.flush()
+            return {"ok": True, "drained": 0, **base}
+        store = append_rows(LEDGER_NAME, LEDGER_PATH, spooled,
+                            message=f"vector-costs: {len(spooled)} row(s)", publish=False)
         SPOOL_PATH.unlink(missing_ok=True)
-        logger.debug("vector_costs: drained %d spooled row(s) into the ledger", len(spooled))
-        return {
-            "ok": True,
-            "drained": len(spooled),
-            "ledger": str(LEDGER_PATH),
-            "spool": str(SPOOL_PATH),
-        }
-    except OSError as exc:
+        logger.debug("vector_costs: handed %d spooled row(s) to the ledger store", len(spooled))
+        return {"ok": True, "drained": len(spooled), **base, "store": store}
+    except (OSError, ValueError) as exc:
         # Never fatal: this runs inside pre-commit and must not block a commit.
+        # The rows stay in SPOOL_PATH for the next drain.
         logger.error("vector_costs: failed to drain cost spool: %s", exc)
         return {"ok": False, "error": str(exc), "drained": 0}
 
@@ -254,27 +256,30 @@ def _read_ledger(namespace: str | None = None, since: str | None = None) -> list
     this, deferring the ledger write to commit-time would silently under-report
     recent cost — trading one problem for a quieter one.
 
+    The ledger half is the S2 DUAL-READ (origin/ledgers ∪ the dev copy,
+    `_ledger_store.read_ledger_text`), so rows a stale peer still appends to
+    dev and rows only on the branch both count.
+
     `since` is an ISO date string (YYYY-MM-DD or full ISO-8601); rows whose
     `ts` field is < `since` are excluded.
     """
     rows: list[dict] = []
-    for path in (LEDGER_PATH, SPOOL_PATH):
-        if not path.exists():
-            continue
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if namespace is not None and row.get("namespace") != namespace:
-                    continue
-                if since is not None and row.get("ts", "") < since:
-                    continue
-                rows.append(row)
+    ledger_text, _store_err = read_ledger_text(LEDGER_NAME, LEDGER_PATH)
+    spool_text = SPOOL_PATH.read_text(encoding="utf-8") if SPOOL_PATH.exists() else ""
+    for text in (ledger_text, spool_text):
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if namespace is not None and row.get("namespace") != namespace:
+                continue
+            if since is not None and row.get("ts", "") < since:
+                continue
+            rows.append(row)
     return rows
 
 
