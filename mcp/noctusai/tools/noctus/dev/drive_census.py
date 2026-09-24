@@ -299,6 +299,30 @@ def classify_entry(rel_path: str) -> dict[str, Any]:
 _MANDATORY_ROOT = ("matricula", "iptu_espelho", "cnd_iptu")
 
 
+def _contract_groups(numero: Optional[str]) -> list[dict[str, Any]]:
+    """The certidão groups of this folder's answer key, when one exists and parsed ok."""
+    path = _dp.private_root() / "answer-keys" / f"{numero}.json"
+    if not numero or not path.is_file():
+        return []
+    key = json.loads(path.read_text(encoding="utf-8"))
+    return ((key.get("certidoes") or {}).get("grupos") or []) if key.get("status") == "ok" else []
+
+
+def _entity_kind(folder: str, folder_kind: Optional[str], grupos: list[dict[str, Any]]) -> tuple[Optional[str], str]:
+    """PF/PJ of a CERTIDÕES entity folder. The contract decides (agreed with 3e): the folder's name
+    tokens (minus "CNPJ") must all appear in a certidão group's name. When groups of BOTH kinds match
+    (the person and their company share the name), the folder's "CNPJ" suffix picks one. No
+    matching group → the folder-name heuristic, recorded as such so it never passes for a document."""
+    tokens = set(re.findall(r"[A-Z0-9]+", _fold(folder))) - {"CNPJ"}
+    kinds = {"pj" if g["consulta_tipo_documento"] == "cnpj" else "pf" for g in grupos
+             if tokens and tokens <= set(re.findall(r"[A-Z0-9]+", _fold(g["em_nome_de"])))}
+    if len(kinds) == 1:
+        return kinds.pop(), "contrato"
+    if kinds:
+        return folder_kind, "contrato"  # both kinds exist in the contract; the folder suffix tells which
+    return folder_kind, "pasta"
+
+
 def census_folder(folder_id: str) -> dict[str, Any]:
     manifest = _load_manifest(folder_id)
     ident = folder_identity(manifest.get("folder_name") or "")
@@ -332,10 +356,12 @@ def census_folder(folder_id: str) -> dict[str, Any]:
         files.append({"rel_path": e["rel_path"], "sha256": e.get("sha256"), "size_bytes": e.get("size_bytes"),
                       "text_source": src, "producer": (cached or {}).get("producer"),
                       "extract_error": (cached or {}).get("error"), **cls})
+    grupos = _contract_groups(folder_identity(manifest.get("folder_name") or "")["numero"])
     entity_rows = []
     for name, ent in sorted(entities.items()):
-        expected = PJ_NUMEROS if ent["kind"] == "pj" else PF_NUMEROS
-        entity_rows.append({"entity": name, "kind": ent["kind"], "presentes": sorted(ent["numeros"]),
+        kind, fonte = _entity_kind(name, ent["kind"], grupos)
+        expected = PJ_NUMEROS if kind == "pj" else PF_NUMEROS
+        entity_rows.append({"entity": name, "kind": kind, "kind_fonte": fonte, "presentes": sorted(ent["numeros"]),
                             "faltando": sorted(expected - ent["numeros"]),
                             "completo": expected <= ent["numeros"],
                             "image_only": ent["image_only"], "text_layer": ent["text_layer"]})

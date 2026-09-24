@@ -472,6 +472,20 @@ def test_generic_tjsp_is_split_from_the_folders_certidao_files(private, tmp_path
     assert "ambiguo" not in item
 
 
+def test_census_entity_kind_comes_from_the_contract_when_there_is_one() -> None:
+    grupos = [{"em_nome_de": "ANA EXEMPLO SILVA", "consulta_tipo_documento": "cpf"},
+              {"em_nome_de": "12.345.678 ANA EXEMPLO SILVA", "consulta_tipo_documento": "cnpj"},
+              {"em_nome_de": "CLINICA FICTICIA LTDA", "consulta_tipo_documento": "cnpj"}]
+    # a company folder with no "CNPJ" suffix: the contract says PJ, whatever the folder name suggests
+    assert C._entity_kind("CLINICA", "pf", grupos) == ("pj", "contrato")
+    # person and company share the name: the folder suffix picks, both confirmed by the contract
+    assert C._entity_kind("ANA", "pf", grupos) == ("pf", "contrato")
+    assert C._entity_kind("ANA CNPJ", "pj", grupos) == ("pj", "contrato")
+    # no contract group matches → the folder heuristic, labelled as such
+    assert C._entity_kind("OUTRO", "pf", grupos) == ("pf", "pasta")
+    assert C._entity_kind("OUTRO", "pf", []) == ("pf", "pasta")
+
+
 def test_pdf_hyphen_breaks_are_not_edits() -> None:
     assert C.diff_paragraphs(["CEP: 06706-165, RG 43.689.684-SSP-SP"], ["CEP: 06706- 165, RG 43.689.684- SSP-SP"]) == []
 
