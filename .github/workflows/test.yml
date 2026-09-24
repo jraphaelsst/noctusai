@@ -37,6 +37,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read  # the scope job looks up the last heavy-green run (verified diff base)
   packages: write
   security-events: write
 
@@ -69,6 +70,8 @@ jobs:
 
       - name: Classify the pushed/PR'd diff
         id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}  # read-only run lookup for the verified diff base
         run: |
           set -euo pipefail
 
@@ -113,6 +116,31 @@ jobs:
             BASE="${{ github.event.pull_request.base.sha }}"
           else
             BASE="${{ github.event.before }}"
+            # VERIFIED BASE (2026-09-24). `event.before` alone is unsafe with
+            # cancel-in-progress: a ledger-only push right after a code push
+            # CANCELS the code run, then diffs only its own ledger commit and
+            # skips every heavy job — dev reads green on untested code (hit 4x
+            # on 2026-09-23). Diff against the head of the LAST run on this ref
+            # whose heavy jobs actually ran green instead, so every commit not
+            # yet verified is in scope. Falls back to event.before when no such
+            # run exists or it is not an ancestor.
+            VERIFIED=""
+            for RID in $(gh run list --workflow "${{ github.workflow }}" --branch "${GITHUB_REF_NAME}" \
+                           --status success --limit 20 --json databaseId -q '.[].databaseId' 2>/dev/null || true); do
+              if gh run view "$RID" --json jobs \
+                   -q '[.jobs[] | select(.name | startswith("Product Backend Tests")) | .conclusion] | any(. == "success")' \
+                   2>/dev/null | grep -q true; then
+                VERIFIED="$(gh run view "$RID" --json headSha -q .headSha 2>/dev/null || true)"
+                break
+              fi
+            done
+            if [ -n "$VERIFIED" ] && git cat-file -e "${VERIFIED}^{commit}" 2>/dev/null \
+               && git merge-base --is-ancestor "$VERIFIED" "${{ github.sha }}"; then
+              echo "diff base: last heavy-green run head ${VERIFIED} (event.before was ${BASE})"
+              BASE="$VERIFIED"
+            else
+              echo "::warning::no heavy-green ancestor run found on ${GITHUB_REF_NAME}; diffing against event.before (${BASE})"
+            fi
           fi
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "run_heavy=true" >> "$GITHUB_OUTPUT"
