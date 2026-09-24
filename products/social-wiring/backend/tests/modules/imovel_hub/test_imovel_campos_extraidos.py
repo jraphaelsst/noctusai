@@ -155,6 +155,100 @@ class TestAplicar:
             campos_svc.aplicar(scoped, ORG, CODIGO, "situacao_onus", "", origem="matricula")
 
 
+class TestPrefeituraPrecedence:
+    """Owner rule (2026-09-24), `prefeitura_cadastro_imobiliario` only: a
+    guia_iptu/cnd_iptu reading outranks a matrícula-sourced, unconfirmed
+    value — the live repro (folder 883): the matrícula gave
+    `23231.42.11.0377.00.000-1`, the Guia IPTU gave
+    `23231.42.11.0377.00.000` (no DV), and a conflict opened."""
+
+    def test_a_prefeitura_document_replaces_an_unconfirmed_matricula_value(self, scoped):
+        seed(scoped, dados=[dados_row(
+            prefeitura_cadastro_imobiliario="23231.42.11.0377.00.000-9",
+            prefeitura_cadastro_imobiliario_origem="matricula",
+        )])
+        doc = str(uuid4())
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "23231.42.11.9999.00.000", origem="guia_iptu", documento_id=doc,
+        )
+        assert r.status == campos_svc.SUBSTITUIDO
+        assert r.preenchido is True
+        row = _dados(scoped)
+        assert row["prefeitura_cadastro_imobiliario"] == "23231.42.11.9999.00.000"
+        assert row["prefeitura_cadastro_imobiliario_origem"] == "guia_iptu"
+        assert row["prefeitura_cadastro_imobiliario_documento_id"] == doc
+        assert row["prefeitura_cadastro_imobiliario_confirmado_por"] is None
+        assert row["prefeitura_cadastro_imobiliario_confirmado_em"] is None
+        assert _conflitos(scoped) == []
+
+    def test_a_trailing_dv_alone_is_not_a_conflict(self, scoped):
+        """The exact live shape: the matrícula's value carries no DV, the
+        Guia IPTU's does (or vice-versa) — same cadastral number."""
+        seed(scoped, dados=[dados_row(
+            prefeitura_cadastro_imobiliario="23231.42.11.0377.00.000",
+            prefeitura_cadastro_imobiliario_origem="matricula",
+        )])
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "23231.42.11.0377.00.000-1", origem="guia_iptu",
+        )
+        assert r.status == campos_svc.IGUAL
+        assert _conflitos(scoped) == []
+        # The DV-bearing reading is offered nowhere near this — the field
+        # keeps whatever it already had, exactly like any other IGUAL.
+        assert _dados(scoped)["prefeitura_cadastro_imobiliario"] == "23231.42.11.0377.00.000"
+
+    def test_a_human_confirmed_value_still_opens_a_conflict(self, scoped):
+        seed(scoped, dados=[dados_row(
+            prefeitura_cadastro_imobiliario="23231.42.11.0377.00.000",
+            prefeitura_cadastro_imobiliario_origem="matricula",
+            prefeitura_cadastro_imobiliario_confirmado_por=TEST_USER_ID,
+            prefeitura_cadastro_imobiliario_confirmado_em="2026-09-01T00:00:00+00:00",
+        )])
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "23231.42.11.9999.00.000", origem="guia_iptu",
+        )
+        assert r.status == campos_svc.CONFLITO
+        assert _dados(scoped)["prefeitura_cadastro_imobiliario"] == "23231.42.11.0377.00.000"
+
+    def test_a_human_typed_value_still_opens_a_conflict(self, scoped):
+        seed(scoped, dados=[dados_row(
+            prefeitura_cadastro_imobiliario="23231.42.11.0377.00.000",
+            prefeitura_cadastro_imobiliario_origem="manual",
+        )])
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "23231.42.11.9999.00.000", origem="guia_iptu",
+        )
+        assert r.status == campos_svc.CONFLITO
+
+    def test_the_precedence_never_applies_to_other_fields(self, scoped):
+        """`numero_matricula`/`numero_registro_imoveis` keep the ordinary
+        D1 rule — the exception is named to ONE field."""
+        seed(scoped, dados=[dados_row(
+            numero_matricula="3917", numero_matricula_origem="matricula",
+        )])
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "numero_matricula", "4000", origem="guia_iptu",
+        )
+        assert r.status == campos_svc.CONFLITO
+
+    def test_a_matricula_reading_never_replaces_a_prefeitura_one(self, scoped):
+        """Precedence is directional — `origem` must be a prefeitura
+        source; the matrícula never wins this one back."""
+        seed(scoped, dados=[dados_row(
+            prefeitura_cadastro_imobiliario="23231.42.11.0377.00.000",
+            prefeitura_cadastro_imobiliario_origem="guia_iptu",
+        )])
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "23231.42.11.9999.00.000", origem="matricula",
+        )
+        assert r.status == campos_svc.CONFLITO
+
+
 class TestDecidir:
     def _com_conflito(self, scoped) -> dict:
         seed(scoped, dados=[dados_row(

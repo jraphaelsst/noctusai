@@ -12,6 +12,15 @@ THE POLICY, VERBATIM INTENT (owner, 2026-09-22)
   accept (the proposed value lands, confirmed by them) or reject.
 - The same value again → nothing to do.
 
+🔴 ONE NAMED EXCEPTION (owner, 2026-09-24): `prefeitura_cadastro_imobiliario`
+only. The prefeitura's own document (`guia_iptu`/`cnd_iptu`) may REPLACE a
+matrícula-sourced, still-UNCONFIRMED value with no conflict — the matrícula's
+`CADASTRO MUNICIPAL:` block is itself only a transcription of what the
+prefeitura told the cartório once; the prefeitura's own current document
+outranks it. A HUMAN-touched value (`confirmado_por` or `confirmado_em` set)
+is NEVER silently replaced — that still opens a conflict like any other
+disagreement. See `_substituivel_por_prefeitura`.
+
 This module is the ONE place that policy lives for `imovel_dados`. Every
 extraction path (the número read off an uploaded matrícula, the full
 transcription, a guia de IPTU / CND read) calls `aplicar`; none of them
@@ -57,6 +66,17 @@ CONFLITOS_TABLE = "imovel_campo_conflitos"
 #: Written into `<campo>_origem` for a pointer GROUP (109's CHECK vocabulary).
 ORIGEM_SUGERIDO = "sugerido"
 ORIGEM_MANUAL = "manual"
+
+#: `preenchimento_service.ORIGEM` — kept as a literal here (not imported)
+#: because THAT module imports this one; a reverse import would cycle.
+ORIGEM_MATRICULA = "matricula"
+
+#: Owner rule (2026-09-24), `prefeitura_cadastro_imobiliario` only: the
+#: prefeitura's own document about ITS OWN cadastral number outranks the
+#: matrícula's `CADASTRO MUNICIPAL:` block, which is a transcription of
+#: what the prefeitura told the cartório at some point in the past. See
+#: `_substituivel_por_prefeitura`.
+FONTES_PREFEITURA = frozenset({"guia_iptu", "cnd_iptu"})
 
 FONTE_EXTRACOES = "matricula_extracoes"
 FONTE_DOCUMENTOS = "imovel_documentos"
@@ -159,6 +179,12 @@ IGUAL = "igual"
 CONFLITO = "conflito"
 CONFLITO_EXISTENTE = "conflito_existente"
 REJEITADO_ANTES = "rejeitado_antes"
+#: The precedence replace (`_substituivel_por_prefeitura`) — a prefeitura
+#: document overwrote a matrícula-sourced, unconfirmed value with no
+#: conflict opened. Distinct from `PREENCHIDO` (which was empty before)
+#: because the field WAS already set; distinct from `CONFLITO` because no
+#: human review is needed for THIS disagreement.
+SUBSTITUIDO = "substituido"
 
 
 @dataclass(frozen=True)
@@ -168,7 +194,7 @@ class Resultado:
 
     @property
     def preenchido(self) -> bool:
-        return self.status == PREENCHIDO
+        return self.status in (PREENCHIDO, SUBSTITUIDO)
 
 
 def _now() -> str:
@@ -203,6 +229,17 @@ def _digitos(valor: Any) -> str:
     return "".join(c for c in str(valor) if c.isdigit())
 
 
+#: A trailing `-<digits>` DV suffix — `23231.42.11.0377.00.000-1`'s "-1".
+#: Owner rule (2026-09-24): the prefeitura's guia/CND print the inscrição
+#: WITH its dígito verificador; the matrícula's `CADASTRO MUNICIPAL:` block
+#: routinely does not — that alone is not a real disagreement.
+_DV_SUFIXO = re.compile(r"-\d+\s*$")
+
+
+def _digitos_sem_dv(valor: Any) -> str:
+    return _digitos(_DV_SUFIXO.sub("", str(valor)))
+
+
 def _vazio(valor: Any) -> bool:
     return valor is None or valor == "" or valor == [] or valor == {}
 
@@ -234,7 +271,11 @@ def iguais(campo: CampoImovel, atual: Any, proposto: Any) -> bool:
         return _vazio(atual) and _vazio(proposto)
     da, dp = _digitos(atual), _digitos(proposto)
     if campo.chave in ("numero_matricula", "prefeitura_cadastro_imobiliario") and da and dp:
-        return da == dp
+        if da == dp:
+            return True
+        if campo.chave == "prefeitura_cadastro_imobiliario":
+            return _digitos_sem_dv(atual) == _digitos_sem_dv(proposto)
+        return False
     return _norm_texto(atual) == _norm_texto(proposto)
 
 
@@ -260,6 +301,50 @@ def _patch_valor(campo: CampoImovel, valor: Any) -> dict:
     return {campo.colunas[0]: valor}
 
 
+def _patch_preenchimento(
+    campo: CampoImovel, valor: Any, *, origem: str, documento_id: Optional[Any]
+) -> dict:
+    """The write shape for a machine reading — a first fill AND a
+    precedence replace use the exact same shape (D1's own rule: a machine
+    read is attributable to a document, never to a person, so confirmation
+    always starts NULL)."""
+    patch = _patch_valor(campo, valor)
+    patch[campo.origem] = origem
+    if campo.documento_id:
+        patch[campo.documento_id] = str(documento_id) if documento_id else None
+    if campo.em:
+        patch[campo.em] = _now()
+    patch[campo.confirmado_por] = None
+    patch[campo.confirmado_em] = None
+    return patch
+
+
+def _substituivel_por_prefeitura(
+    chave: str, row: Optional[dict], campo: CampoImovel, origem_proposta: str
+) -> bool:
+    """Owner rule (2026-09-24), `prefeitura_cadastro_imobiliario` only: a
+    reading off the prefeitura's OWN document (`FONTES_PREFEITURA`) may
+    REPLACE a matrícula-sourced value with no conflict opened — the
+    matrícula's `CADASTRO MUNICIPAL:` block is a transcription of what the
+    prefeitura told the cartório at some point; the prefeitura's own
+    current document outranks it.
+
+    Never true once a HUMAN has touched the field — `confirmado_por` set
+    (a human accepted a proposed value) or `confirmado_em` set (the D2
+    confirmation timestamp) both mean a person already stands behind the
+    current value, and D1's ordinary conflict rule applies exactly as it
+    does for any other disagreement.
+    """
+    if chave != "prefeitura_cadastro_imobiliario" or origem_proposta not in FONTES_PREFEITURA:
+        return False
+    row = row or {}
+    return (
+        row.get(campo.origem) == ORIGEM_MATRICULA
+        and not row.get(campo.confirmado_por)
+        and not row.get(campo.confirmado_em)
+    )
+
+
 def aplicar(
     client: Any,
     org_id: UUID,
@@ -274,7 +359,10 @@ def aplicar(
     fonte_id: Optional[Any] = None,
 ) -> Resultado:
     """Apply ONE machine reading to ONE field, per D1. Never raises for a
-    disagreement — that is a `CONFLITO`, a normal outcome.
+    disagreement — that is a `CONFLITO`, a normal outcome. May instead
+    return `SUBSTITUIDO` for `prefeitura_cadastro_imobiliario` when the
+    prefeitura's own document outranks a matrícula-sourced, unconfirmed
+    value — see the module docstring's precedence exception.
 
     Re-reads the row immediately before deciding: extractions run detached,
     and a human may have typed the value a second ago.
@@ -291,21 +379,22 @@ def aplicar(
     atual = _valor_atual(row, campo)
 
     if _vazio(atual):
-        patch = _patch_valor(campo, valor)
-        patch[campo.origem] = origem
-        if campo.documento_id:
-            patch[campo.documento_id] = str(documento_id) if documento_id else None
-        if campo.em:
-            patch[campo.em] = _now()
-        # A machine read is attributable to a document, never to a person —
-        # the confirmation stays NULL until a human validates it (D2).
-        patch[campo.confirmado_por] = None
-        patch[campo.confirmado_em] = None
+        patch = _patch_preenchimento(campo, valor, origem=origem, documento_id=documento_id)
         dados_service.gravar_extraido(client, org_id, codigo, row, patch)
         return Resultado(PREENCHIDO)
 
     if iguais(campo, atual, valor):
         return Resultado(IGUAL)
+
+    if _substituivel_por_prefeitura(chave, row, campo, origem):
+        patch = _patch_preenchimento(campo, valor, origem=origem, documento_id=documento_id)
+        dados_service.gravar_extraido(client, org_id, codigo, row, patch)
+        logger.info(
+            "imovel %s: %s — %s replaced a matricula-sourced, unconfirmed "
+            "value (owner precedence rule, 2026-09-24), no conflict opened",
+            codigo, chave, origem,
+        )
+        return Resultado(SUBSTITUIDO)
 
     if _conflitos(client, org_id, codigo, chave, "pendente"):
         return Resultado(CONFLITO_EXISTENTE)
