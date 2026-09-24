@@ -106,6 +106,7 @@ def register_all(server) -> None:
     from . import salvage_worktree
     from . import scaffold
     from . import ship_consent
+    from . import ledger_store
     from . import scaffold_keeper
     from . import scaffold_mcp_tool
     from . import scaffold_memory
@@ -237,6 +238,7 @@ def register_all(server) -> None:
     salvage_worktree.register(server)
     scaffold.register(server)
     ship_consent.register(server)
+    ledger_store.register(server)
     scaffold_keeper.register(server)
     scaffold_mcp_tool.register(server)
     scaffold_memory.register(server)
