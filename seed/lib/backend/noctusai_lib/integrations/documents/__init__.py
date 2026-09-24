@@ -132,6 +132,22 @@ from noctusai_lib.integrations.documents.matricula_extractor import (
     MatriculaFields,
     make_matricula_extractor,
 )
+from noctusai_lib.integrations.documents.serasa_crednet import (
+    CrednetExtractor,
+    CrednetFields,
+    FakeCrednetExtractor,
+    OcorrenciaCrednet,
+    ParticipacaoCrednet,
+    make_crednet_extractor,
+    parse_crednet,
+)
+from noctusai_lib.integrations.documents.cartao_cnpj import (
+    CartaoCnpjExtractor,
+    CartaoCnpjFields,
+    FakeCartaoCnpjExtractor,
+    make_cartao_cnpj_extractor,
+    parse_cartao_cnpj,
+)
 from noctusai_lib.integrations.documents.matricula_qualificacao import (
     Qualificacao,
     QualificacaoConsolidada,
@@ -200,6 +216,12 @@ _LAZY: dict[str, str] = {
     "LadderDocumentTranscriber": (
         "noctusai_lib.integrations.documents.transcription"
     ),
+    "LadderCrednetExtractor": (
+        "noctusai_lib.integrations.documents.serasa_crednet"
+    ),
+    "LadderCartaoCnpjExtractor": (
+        "noctusai_lib.integrations.documents.cartao_cnpj"
+    ),
 }
 
 
@@ -224,6 +246,8 @@ __all__ = [
     "OCR_MODELS",
     "AtoKind",
     "BlocoAbertura",
+    "CartaoCnpjExtractor",
+    "CartaoCnpjFields",
     "ConjugeLido",
     "EnderecoLido",
     "UFS",
@@ -235,11 +259,15 @@ __all__ = [
     "find_profissao",
     "find_profissoes",
     "CampoAbertura",
+    "CrednetExtractor",
+    "CrednetFields",
     "DocumentTextLadder",
     "DocumentTranscriber",
     "ESTADO_CIVIL_VALORES",
     "EnderecoMatricula",
     "ExtractionConfidence",
+    "FakeCartaoCnpjExtractor",
+    "FakeCrednetExtractor",
     "FakeDocumentTranscriber",
     "FakeIdentityExtractor",
     "FakeMatriculaExtractor",
@@ -248,6 +276,8 @@ __all__ = [
     "IdentityDocumentKind",
     "IdentityExtractor",
     "IdentityFields",
+    "LadderCartaoCnpjExtractor",
+    "LadderCrednetExtractor",
     "LadderDocumentTranscriber",
     "LadderIdentityExtractor",
     "LadderMatriculaExtractor",
@@ -255,8 +285,10 @@ __all__ = [
     "MatriculaExtractor",
     "MatriculaFields",
     "NACIONALIDADE_VALORES",
+    "OcorrenciaCrednet",
     "Paragraph",
     "ParagraphKind",
+    "ParticipacaoCrednet",
     "Qualificacao",
     "QualificacaoConsolidada",
     "REGIME_BENS_VALORES",
@@ -292,6 +324,8 @@ __all__ = [
     "classificar_tipo_provavel",
     "looks_like_a_name",
     "looks_like_pdf",
+    "make_cartao_cnpj_extractor",
+    "make_crednet_extractor",
     "make_document_transcriber",
     "make_identity_extractor",
     "make_matricula_extractor",
@@ -300,6 +334,8 @@ __all__ = [
     "normalize_lines",
     "paragraphs_from_docx",
     "paragraphs_from_text",
+    "parse_cartao_cnpj",
+    "parse_crednet",
     "ranges_from_json",
     "ranges_to_json",
     "render_abnt_pdf",

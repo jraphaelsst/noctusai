@@ -111,4 +111,27 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # `tipo_documento`. See the module docstring's scope note for the
     # full-transcription gap this still does not cover.
     "matricula": frozenset({"numero_matricula"}) | _QUALIFICACAO_MATRICULA,
+    # `serasa_crednet.parse_crednet` — a Serasa Crednet consulta (P0c
+    # contract §B). Canonical names mirror `CrednetFields`' own scalar
+    # attributes, plus `participacoes` and `ocorrencias` for the two
+    # compound facts (`CrednetFields.participacoes` /
+    # `.ocorrencias_constam()` + the four `Ocorrencia*` rows) — neither is a
+    # single scalar column, so social-wiring's own `Fonte.campos` claims
+    # them as one name each rather than enumerating their sub-fields.
+    "serasa_crednet": frozenset(
+        {
+            "nome", "cpf", "data_nascimento", "nome_mae", "protocolo",
+            "consulta_em", "participacoes", "ocorrencias",
+        }
+    ),
+    # `cartao_cnpj.parse_cartao_cnpj` — a Receita Cartão CNPJ (P0c contract
+    # §B). Canonical names mirror `CartaoCnpjFields`' own attributes.
+    "cartao_cnpj": frozenset(
+        {
+            "cnpj", "razao_social", "nome_fantasia", "porte",
+            "natureza_juridica", "matriz_filial", "data_abertura",
+            "situacao_cadastral", "data_situacao_cadastral",
+            "motivo_situacao", "uf", "emitido_em",
+        }
+    ),
 }
