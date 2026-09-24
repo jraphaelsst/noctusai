@@ -12,19 +12,45 @@
  */
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { EmpresaCardItem, EmpresaMotivo, EmpresasDoCardResponse } from "@/types/empresas";
+import type {
+  EmpresaCardItem,
+  EmpresaDocumento,
+  EmpresaMotivo,
+  EmpresasDoCardResponse,
+} from "@/types/empresas";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
+const { mockGet, mockDelete, mockBaixarArquivo } = vi.hoisted(() => ({
+  mockGet: vi.fn(),
+  mockDelete: vi.fn(),
+  mockBaixarArquivo: vi.fn(),
+}));
 
 vi.mock("@noctusai/seed/infra", () => ({
-  api: { get: mockGet, post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
+  api: { get: mockGet, post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: mockDelete },
   supabase: {
     auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
   },
 }));
+
+// The empresa's own certidões (`CertidoesPartePanel` in `empresaId` mode)
+// are out of scope here — covered by `CertidoesPartePanel.test.tsx` — and
+// stubbed so expanding a row exercises ONLY `EmpresaCartaoSlot`'s own hooks,
+// not that panel's much larger `@/hooks/useCertidoes` surface.
+vi.mock("@/components/CertidoesPartePanel", () => ({
+  CertidoesPartePanel: () => null,
+}));
+
+// `CollapsibleSection`/`TooltipIconButton`/`formatBytes` stay REAL (they
+// already render fine in jsdom without mocking, as the rest of this file's
+// tests show); only `baixarArquivo` — the one export with a real side
+// effect (triggers a browser download) — is replaced.
+vi.mock("@noctusai/lib/components", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@noctusai/lib/components")>();
+  return { ...actual, baixarArquivo: mockBaixarArquivo };
+});
 
 import { EmpresasSection } from "./EmpresasSection";
 
@@ -78,11 +104,41 @@ function empresasResponse(items: EmpresaCardItem[]): EmpresasDoCardResponse {
   return { atendimento_id: "at-1", referencia: "2026-09-24", items };
 }
 
+function empresaDocumento(over: Partial<EmpresaDocumento> = {}): EmpresaDocumento {
+  return {
+    id: "doc-1",
+    nome_original: "cartao_cnpj.pdf",
+    mime_type: "application/pdf",
+    tamanho_bytes: 4096,
+    tipo_documento: "cartao_cnpj",
+    enviado_por: { id: "u-1", nome: "Operador" },
+    created_at: "2026-09-24T00:00:00Z",
+    extracao_status: "ok",
+    extracao_erro: null,
+    extracao_dados: null,
+    extracao_descartada_em: null,
+    ...over,
+  };
+}
+
 /** Dispatches the mocked `api.get` by path — `EmpresasSection` fires four
- *  GETs unconditionally (card resumo, compradores × 2 lados, empresas). */
-function mockRoutes(empresas: EmpresasDoCardResponse) {
+ *  GETs unconditionally (card resumo, compradores × 2 lados, empresas), plus
+ *  — once a row is expanded — `EmpresaCartaoSlot`'s own documentos/url
+ *  routes. `/documentos`/`/url` are checked BEFORE the bare `/empresas`
+ *  suffix check, since `/api/empresas/{id}/documentos` also contains the
+ *  substring "/empresas". */
+function mockRoutes(
+  empresas: EmpresasDoCardResponse,
+  opts: { documentos?: EmpresaDocumento[]; url?: string } = {},
+) {
   mockGet.mockImplementation((path: string) => {
-    if (path.includes("/empresas")) return Promise.resolve(empresas);
+    if (path.includes("/documentos/") && path.endsWith("/url")) {
+      return Promise.resolve({ url: opts.url ?? "https://signed.example/doc-1", expires_at: "2026-09-24T01:00:00Z" });
+    }
+    if (path.includes("/documentos")) {
+      return Promise.resolve({ items: opts.documentos ?? [] });
+    }
+    if (path.endsWith("/empresas")) return Promise.resolve(empresas);
     if (path.includes("/compradores")) return Promise.resolve({ items: [] });
     if (path.includes("/card")) return Promise.resolve({ cliente: { nome: "Titular" } });
     return Promise.resolve({});
@@ -101,6 +157,8 @@ describe("EmpresasSection", () => {
   beforeEach(() => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockGet.mockReset();
+    mockDelete.mockReset();
+    mockBaixarArquivo.mockReset();
   });
 
   afterEach(() => {
@@ -172,5 +230,93 @@ describe("EmpresasSection", () => {
       expect(screen.getByTestId("empresa-row-emp-1-situacao").textContent).toContain("Ativa"),
     );
     expect(screen.getByTestId("empresa-row-emp-1-nome").textContent).toBe("Padaria do Zé Ltda");
+  });
+
+  // §D.4 — the Cartão CNPJ slot's view/download/remove, wired the same way
+  // `CertidaoCasamentoSlot`'s owner wires the person-scoped slot's own three
+  // callbacks (tech-lead review, 2026-09-24).
+  describe("Cartão CNPJ — view / download / remove", () => {
+    async function expandirLinha() {
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+      await waitFor(() =>
+        expect(screen.getByTestId("empresa-cartao-emp-1-valor").textContent).toContain(
+          "cartao_cnpj.pdf",
+        ),
+      );
+    }
+
+    it("mints a signed URL and opens it in a new tab for 'visualizar'", async () => {
+      mockRoutes(empresasResponse([empresaItem()]), {
+        documentos: [empresaDocumento()],
+        url: "https://signed.example/cartao-view",
+      });
+      const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+      await expandirLinha();
+      fireEvent.click(screen.getByTestId("empresa-cartao-emp-1-visualizar"));
+
+      await waitFor(() =>
+        expect(openSpy).toHaveBeenCalledWith(
+          "https://signed.example/cartao-view",
+          "_blank",
+          "noopener,noreferrer",
+        ),
+      );
+      // ONE route for both actions — no `?intent=` on the mint call.
+      expect(mockGet).toHaveBeenCalledWith("/api/empresas/emp-1/documentos/doc-1/url");
+    });
+
+    it("mints the SAME URL route and downloads it under the original filename for 'baixar'", async () => {
+      mockRoutes(empresasResponse([empresaItem()]), {
+        documentos: [empresaDocumento()],
+        url: "https://signed.example/cartao-download",
+      });
+
+      await expandirLinha();
+      fireEvent.click(screen.getByTestId("empresa-cartao-emp-1-baixar"));
+
+      await waitFor(() =>
+        expect(mockBaixarArquivo).toHaveBeenCalledWith(
+          "https://signed.example/cartao-download",
+          "cartao_cnpj.pdf",
+        ),
+      );
+      expect(mockGet).toHaveBeenCalledWith("/api/empresas/emp-1/documentos/doc-1/url");
+    });
+
+    it("🔴 removes with the slot's own motivo, as a query param — never a JSON body, mirroring the person-scoped documentos' LGPD-access-log transport", async () => {
+      mockRoutes(empresasResponse([empresaItem()]), { documentos: [empresaDocumento()] });
+      mockDelete.mockResolvedValue(undefined);
+
+      await expandirLinha();
+      fireEvent.click(screen.getByTestId("empresa-cartao-emp-1-descartar"));
+
+      await waitFor(() => expect(mockDelete).toHaveBeenCalledTimes(1));
+      const [path] = mockDelete.mock.calls[0];
+      expect(path).toBe(
+        "/api/empresas/emp-1/documentos/doc-1?motivo=" +
+          encodeURIComponent("Descartado para reenvio: Cartão CNPJ"),
+      );
+    });
+
+    it("invalidates the empresa's documentos AND the card's empresas list after a remove", async () => {
+      mockRoutes(empresasResponse([empresaItem()]), { documentos: [empresaDocumento()] });
+      mockDelete.mockResolvedValue(undefined);
+      const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+
+      await expandirLinha();
+      fireEvent.click(screen.getByTestId("empresa-cartao-emp-1-descartar"));
+
+      await waitFor(() =>
+        expect(invalidateSpy).toHaveBeenCalledWith(
+          expect.objectContaining({ queryKey: ["sw", "empresas", "emp-1", "documentos"] }),
+        ),
+      );
+      expect(invalidateSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ queryKey: ["sw", "clientes", "cli-1", "empresas"] }),
+      );
+    });
   });
 });

@@ -11,18 +11,24 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider, type Query } from "@tanstack/react-query";
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 
-const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
+const { mockGet, mockPost, mockDelete } = vi.hoisted(() => ({
+  mockGet: vi.fn(),
+  mockPost: vi.fn(),
+  mockDelete: vi.fn(),
+}));
 
 vi.mock("@noctusai/seed/infra", () => ({
-  api: { get: mockGet, post: mockPost, patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
+  api: { get: mockGet, post: mockPost, patch: vi.fn(), put: vi.fn(), delete: mockDelete },
 }));
 
 import {
   empresaExtracaoEmAndamento,
+  useEmpresaDocumentoUrl,
   useEmpresaDocumentos,
   useEmpresasDoCard,
+  useRemoverEmpresaDocumento,
 } from "./useEmpresas";
 
 const DOCUMENTOS_KEY = (empresaId: string) => ["sw", "empresas", empresaId, "documentos"];
@@ -138,5 +144,99 @@ describe("useEmpresaDocumentos — polling", () => {
   it("does not fetch when empresaId is null", () => {
     renderHook(() => useEmpresaDocumentos(null), { wrapper: makeWrapper(qc) });
     expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+describe("useEmpresaDocumentoUrl", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockGet.mockReset();
+  });
+
+  afterEach(() => qc.clear());
+
+  it("§D.4 — mints ONE URL, no `intent` param (unlike the person-scoped documentos)", async () => {
+    mockGet.mockResolvedValue({ url: "https://signed.example/x", expires_at: "2026-09-24T01:00:00Z" });
+    const { result } = renderHook(() => useEmpresaDocumentoUrl("emp-1"), {
+      wrapper: makeWrapper(qc),
+    });
+
+    await act(async () => {
+      result.current.mutate("doc-1");
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGet).toHaveBeenCalledWith("/api/empresas/emp-1/documentos/doc-1/url");
+    expect(result.current.data).toEqual({
+      url: "https://signed.example/x",
+      expires_at: "2026-09-24T01:00:00Z",
+    });
+  });
+});
+
+describe("useRemoverEmpresaDocumento", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockDelete.mockReset();
+  });
+
+  afterEach(() => qc.clear());
+
+  it("§D.4 — sends `motivo` as a query param, never a JSON body", async () => {
+    mockDelete.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useRemoverEmpresaDocumento("emp-1", "cli-1"), {
+      wrapper: makeWrapper(qc),
+    });
+
+    await act(async () => {
+      result.current.mutate({ documentoId: "doc-1", motivo: "Documento errado" });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockDelete).toHaveBeenCalledWith(
+      "/api/empresas/emp-1/documentos/doc-1?motivo=Documento%20errado",
+    );
+  });
+
+  it("invalidates the empresa's documentos AND the card's empresas list", async () => {
+    mockDelete.mockResolvedValue(undefined);
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useRemoverEmpresaDocumento("emp-1", "cli-1"), {
+      wrapper: makeWrapper(qc),
+    });
+
+    await act(async () => {
+      result.current.mutate({ documentoId: "doc-1", motivo: "x" });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["sw", "empresas", "emp-1", "documentos"] }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["sw", "clientes", "cli-1", "empresas"] }),
+    );
+  });
+
+  it("skips the card-empresas invalidation when no clienteId was given", async () => {
+    mockDelete.mockResolvedValue(undefined);
+    const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useRemoverEmpresaDocumento("emp-1"), {
+      wrapper: makeWrapper(qc),
+    });
+
+    await act(async () => {
+      result.current.mutate({ documentoId: "doc-1", motivo: "x" });
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["sw", "empresas", "emp-1", "documentos"] }),
+    );
   });
 });

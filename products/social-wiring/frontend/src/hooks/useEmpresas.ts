@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 import { uploadMultipart } from "@/hooks/useCardHub";
+import type { DocumentoUrlResponse } from "@/types/cardHub";
 import type {
   AdicionarEmpresaBody,
   EmpresaCardItem,
@@ -122,6 +123,47 @@ export function useUploadEmpresaDocumento(empresaId: string, clienteId: string |
       form.append("tipo_documento", "cartao_cnpj");
       return uploadMultipart<EmpresaDocumento>(`${empresaBase(empresaId)}/documentos`, form);
     },
+    onSuccess: () => invalidateEmpresaFamily(qc, clienteId, empresaId),
+  });
+}
+
+/**
+ * `GET /api/empresas/{empresa_id}/documentos/{documento_id}/url` (§D.4) — a
+ * 300s signed URL. Unlike the person-scoped `cliente_documentos`/
+ * `imovel_documentos` siblings (`createCardHubHooks.useDocumentoMutations
+ * .getUrl`, which takes an `intent: 'view'|'download'` so the LGPD access
+ * log can tell the two apart), the contract names ONE route here — "view
+ * opens it, download uses the same URL" — so this mints a single URL a
+ * caller reuses for either action (`window.open` for view,
+ * `baixarArquivo` for download); no `intent` param. Action-triggered, not
+ * cached, hence a mutation.
+ */
+export function useEmpresaDocumentoUrl(empresaId: string) {
+  return useMutation({
+    mutationFn: (documentoId: string) =>
+      api.get<DocumentoUrlResponse>(
+        `${empresaBase(empresaId)}/documentos/${encodeURIComponent(documentoId)}/url`,
+      ),
+  });
+}
+
+/**
+ * `DELETE /api/empresas/{empresa_id}/documentos/{documento_id}` (§D.4).
+ * `motivo` travels as a query param, not a JSON body — the SAME LGPD-access-
+ * log transport `createCardHubHooks.useDocumentoMutations.remove` uses for
+ * `cliente_documentos`/`imovel_documentos` (its own docblock: "`motivo`
+ * travels as a REQUIRED query param … not a body"), which this empresa
+ * store mirrors (§A.3 — "mirrors `imovel_documentos`"). The file is
+ * soft-deleted (`deleted_at`), so this invalidates the same empresa-family
+ * keys every other write here does.
+ */
+export function useRemoverEmpresaDocumento(empresaId: string, clienteId: string | null = null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ documentoId, motivo }: { documentoId: string; motivo: string }) =>
+      api.delete<void>(
+        `${empresaBase(empresaId)}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
+      ),
     onSuccess: () => invalidateEmpresaFamily(qc, clienteId, empresaId),
   });
 }

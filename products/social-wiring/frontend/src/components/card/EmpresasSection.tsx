@@ -18,7 +18,7 @@
 import { useMemo, useState } from "react";
 import { Building2, Loader2, Plus } from "lucide-react";
 
-import { CollapsibleSection } from "@noctusai/lib/components";
+import { CollapsibleSection, baixarArquivo } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,9 +38,11 @@ import { DocumentoTipoSlot, documentoDoTipo } from "@/components/card/DocumentoT
 import { useCardResumo, useCompradores } from "@/hooks/useCardHub";
 import {
   useAdicionarEmpresa,
+  useEmpresaDocumentoUrl,
   useEmpresaDocumentos,
   useEmpresaExtracao,
   useEmpresasDoCard,
+  useRemoverEmpresaDocumento,
   useUploadEmpresaDocumento,
 } from "@/hooks/useEmpresas";
 import { formatDate } from "@/lib/utils";
@@ -270,6 +272,8 @@ function EmpresaCartaoSlot({ empresaId, clienteId }: { empresaId: string; client
   const documentos = useEmpresaDocumentos(empresaId);
   const upload = useUploadEmpresaDocumento(empresaId, clienteId);
   const extracao = useEmpresaExtracao(empresaId, clienteId);
+  const mintUrl = useEmpresaDocumentoUrl(empresaId);
+  const removerDoc = useRemoverEmpresaDocumento(empresaId, clienteId);
 
   const docs = documentos.data?.items ?? [];
   const cartao = documentoDoTipo(docs, "cartao_cnpj");
@@ -289,6 +293,24 @@ function EmpresaCartaoSlot({ empresaId, clienteId }: { empresaId: string; client
         label="Cartão CNPJ"
         onUpload={(file) => upload.mutate(file)}
         uploading={upload.isPending}
+        // §D.4 — ONE signed URL serves both actions (unlike the
+        // person-scoped documentos, which mint a separate `intent=view|
+        // download` URL each): "view" opens it, "download" reuses the same
+        // URL through `baixarArquivo`. Mirrors how `CertidaoCasamentoSlot`'s
+        // owner (`ClienteDetailModal`/`PessoaDocumentosPanel`) wires the
+        // person-scoped slot's own three callbacks through
+        // `documentoMutations.getUrl`/`.remove`.
+        onVisualizar={(documentoId) =>
+          mintUrl.mutate(documentoId, {
+            onSuccess: (res) => window.open(res.url, "_blank", "noopener,noreferrer"),
+          })
+        }
+        onBaixar={(documentoId, nomeArquivo) =>
+          mintUrl.mutate(documentoId, {
+            onSuccess: (res) => void baixarArquivo(res.url, nomeArquivo),
+          })
+        }
+        onRemover={(documentoId, motivo) => removerDoc.mutate({ documentoId, motivo })}
         testId={`empresa-cartao-${empresaId}`}
       />
       {emAndamento && (
@@ -334,7 +356,11 @@ function EmpresaCartaoSlot({ empresaId, clienteId }: { empresaId: string; client
             variant="outline"
             onClick={() => extracao.descartar.mutate(cartao!.id)}
             disabled={extracao.confirmar.isPending || extracao.descartar.isPending}
-            data-testid={`empresa-cartao-${empresaId}-descartar`}
+            // NOT `-descartar` — `DocumentoTipoSlot` already owns that
+            // testid for its own "discard the FILE" button; this one
+            // discards the READING only (the file and the file-remove
+            // button both stay).
+            data-testid={`empresa-cartao-${empresaId}-descartar-leitura`}
           >
             Descartar leitura
           </Button>
