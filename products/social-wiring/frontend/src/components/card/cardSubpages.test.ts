@@ -26,6 +26,16 @@ describe("CARD_SUBPAGES — registry order", () => {
     expect(empresasIdx).toBe(vendedorIdx + 1);
     expect(CARD_SUBPAGES.find((s) => s.key === "empresas")?.label).toBe("Empresas");
   });
+
+  // Levantamento de Certidões.xlsx — the matriz tab, directly below Empresas.
+  it("registers a Certidões entry directly below Empresas", () => {
+    const keys = CARD_SUBPAGES.map((s) => s.key);
+    const empresasIdx = keys.indexOf("empresas");
+    const certidoesIdx = keys.indexOf("certidoes");
+    expect(certidoesIdx).toBeGreaterThanOrEqual(0);
+    expect(certidoesIdx).toBe(empresasIdx + 1);
+    expect(CARD_SUBPAGES.find((s) => s.key === "certidoes")?.label).toBe("Certidões");
+  });
 });
 
 describe("resolverDestino", () => {

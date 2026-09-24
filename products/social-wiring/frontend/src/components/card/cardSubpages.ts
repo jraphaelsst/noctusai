@@ -21,6 +21,7 @@ import {
   Landmark,
   Megaphone,
   Route,
+  ShieldCheck,
   Store,
   User,
 } from "lucide-react";
@@ -32,6 +33,7 @@ export type CardSubpageKey =
   | "conjuge"
   | "vendedor"
   | "empresas"
+  | "certidoes"
   | "agendamentos"
   | "roteiros"
   | "financiamento"
@@ -85,6 +87,10 @@ export const CARD_SUBPAGES: readonly SubpageDef[] = [
   // company's due diligence is a fact about WHO is on the deal, read right
   // after "Vendedor" and before the scheduling funnel starts.
   { key: "empresas", label: "Empresas", icon: Building2 },
+  // Levantamento de Certidões.xlsx, first tab — sits directly under
+  // "Empresas": both are due-diligence facts about who is on the deal,
+  // read right before the scheduling funnel starts.
+  { key: "certidoes", label: "Certidões", icon: ShieldCheck },
   { key: "agendamentos", label: "Agendamentos", icon: CalendarClock },
   { key: "roteiros", label: "Roteiros", icon: Route },
   { key: "financiamento", label: "Financiamento/Escritura", icon: Landmark },

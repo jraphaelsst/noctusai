@@ -283,6 +283,10 @@ export interface ClienteCardDialogProps {
    *  fetches its own data keyed by the titular's `clienteId`, which this
    *  component is never handed directly. */
   renderEmpresas?: () => ReactNode;
+  /** The Certidões subpage (Levantamento de Certidões.xlsx) — same
+   *  render-prop reasoning as `renderEmpresas` above: `CertidoesMatrizSection`
+   *  fetches its own data keyed by the titular's `clienteId`. */
+  renderCertidoes?: () => ReactNode;
 
   /** Current values behind the typed checklist items — read by the inline row
    *  editors AND by the full form on the Dados do cliente tab. */
@@ -864,6 +868,17 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
       <div data-testid="card-subpage-empresas">
         {props.renderEmpresas?.() ?? (
           <p className="text-sm text-muted-foreground">Empresas indisponível.</p>
+        )}
+      </div>
+    ),
+
+    // Levantamento de Certidões.xlsx — a container, same render-prop
+    // reasoning as `empresas` above: `CertidoesMatrizSection` fetches its
+    // own data keyed by the titular's clienteId.
+    certidoes: () => (
+      <div data-testid="card-subpage-certidoes">
+        {props.renderCertidoes?.() ?? (
+          <p className="text-sm text-muted-foreground">Certidões indisponível.</p>
         )}
       </div>
     ),
