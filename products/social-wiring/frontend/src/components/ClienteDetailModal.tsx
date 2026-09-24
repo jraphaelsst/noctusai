@@ -29,6 +29,9 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { useAuthStore } from "@noctusai/seed/infra";
+import { resolveSSOContext } from "@noctusai/lib";
+
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import {
   flattenTimeline,
@@ -65,6 +68,8 @@ import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
 import type { CardSubpageKey } from "@/components/card/cardSubpages";
 import { baixarArquivo } from "@noctusai/lib/components";
 import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
+import { ArquivarAtendimentoConfirmDialog } from "@/components/card/ArquivarAtendimentoConfirmDialog";
+import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
 import { NovoContratoDialog } from "@/components/card/NovoContratoDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
@@ -76,6 +81,8 @@ import { EmpresasSection } from "@/components/card/EmpresasSection";
 import { QualificacaoCompletudePanel } from "@/components/QualificacaoCompletudePanel";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 import { useContratoMutations } from "@/hooks/useContratos";
+import { useArquivarAtendimento } from "@/hooks/useAtendimentos";
+import { useClienteMutations } from "@/hooks/useClientes";
 
 export interface ClienteDetailModalProps {
   clienteId: string | null;
@@ -83,6 +90,15 @@ export interface ClienteDetailModalProps {
   onClose: () => void;
   /** Board-specific actions for the card header (see `ClienteCardDialogProps.acoes`). */
   acoes?: ReactNode;
+  /**
+   * The FUNIL card's own `atendimentos.id` — present ONLY when this modal
+   * was opened from a board that carries atendimento context (today: the
+   * Funil). Its presence is what gates the "Arquivar" icon (see
+   * `ClienteCardDialogProps.onArquivarAtendimento`'s docstring): a modal
+   * opened from the Clientes board has no atendimento to archive, so
+   * nothing here is optional-but-usually-set — it is genuinely absent.
+   */
+  atendimentoId?: string | null;
 }
 
 /** The server's own message when a mutation fails — never a silently
@@ -93,13 +109,26 @@ function toastServerError(err: unknown, fallback: string) {
   toast.error(message);
 }
 
-export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteDetailModalProps) {
+export function ClienteDetailModal({
+  clienteId,
+  open,
+  onClose,
+  acoes,
+  atendimentoId,
+}: ClienteDetailModalProps) {
   // Colour-blind mode has no persistence surface in this contract (a Trello
   // account-level preference; nothing in §2/§3 models one) — kept as
   // session-local UI state rather than inventing a field.
   const [colorBlindMode, setColorBlindMode] = useState(false);
   const [compradorDialogOpen, setCompradorDialogOpen] = useState(false);
   const [vendedorDialogOpen, setVendedorDialogOpen] = useState(false);
+  // Arquivar (funil card) / Excluir (cliente) — sibling confirm dialogs,
+  // same focus-trap reasoning as every other dialog in this file. Neither
+  // opens without user confirmation: the icon's `onClick` (threaded to
+  // `ClienteCardDialog` below) only flips these booleans; the mutation
+  // itself fires from `onConfirm` on the matching dialog further down.
+  const [confirmArquivarOpen, setConfirmArquivarOpen] = useState(false);
+  const [confirmExcluirOpen, setConfirmExcluirOpen] = useState(false);
   // Cônjuge tab's own empty-state action — sibling of the two above, its own
   // boolean rather than reusing `compradorDialogOpen` so the two "add a
   // buyer-side party" flows never fight over which dialog is showing.
@@ -184,6 +213,18 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
   // `FinanciamentoContainer` owns its own document mutations.
   const contratoMutations = useContratoMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
+  const arquivarAtendimento = useArquivarAtendimento();
+  const { remove: excluirCliente } = useClienteMutations();
+
+  // UI convenience ONLY — same posture `ConflitosPendentesPanel.tsx` already
+  // takes for its own admin-gated affordance. The server's own
+  // `excluir_cliente_route` reads the TRUSTED `noctus_users` row and 403s a
+  // spoofed claim regardless of what this renders; hiding the icon here
+  // just keeps a non-admin from seeing a button that would fail.
+  const { user } = useAuthStore();
+  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const isAdmin =
+    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
   const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");
@@ -381,6 +422,15 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       open={open}
       onClose={onClose}
       acoes={acoes}
+      // Presence-gated, mirroring every other optional action prop on this
+      // component: no `atendimentoId` (e.g. opened from the Clientes board)
+      // ⇒ `undefined` ⇒ `ClienteCardDialog` hides the icon outright.
+      onArquivarAtendimento={
+        atendimentoId ? () => setConfirmArquivarOpen(true) : undefined
+      }
+      arquivandoAtendimento={arquivarAtendimento.isPending}
+      onExcluirCliente={isAdmin && id ? () => setConfirmExcluirOpen(true) : undefined}
+      excluindoCliente={excluirCliente.isPending}
       isLoading={loading}
       error={isError ? "Não foi possível carregar este cartão." : null}
       notFound={notFound}
@@ -834,6 +884,50 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       onTimelineLoadMore={() => timeline.fetchNextPage()}
       onPostComentario={handlePostComentario}
       postingComentario={notaMutations.create.isPending}
+    />
+
+    {/* Sibling of the card for the focus-trap reason every dialog below
+        repeats. Archiving CLOSES the modal on success (owner request) —
+        the card the operator was looking at just left the funil, so there
+        is nothing left here worth staying open for. */}
+    <ArquivarAtendimentoConfirmDialog
+      open={confirmArquivarOpen}
+      pending={arquivarAtendimento.isPending}
+      onOpenChange={setConfirmArquivarOpen}
+      onConfirm={() => {
+        if (!atendimentoId) return;
+        arquivarAtendimento.mutate(atendimentoId, {
+          onSuccess: () => {
+            setConfirmArquivarOpen(false);
+            onClose();
+          },
+        });
+      }}
+    />
+
+    {/* Same sibling reasoning. Deleting the cliente ALSO closes the modal on
+        success — the record it was showing no longer exists. */}
+    <ExcluirClienteConfirmDialog
+      open={confirmExcluirOpen}
+      pending={excluirCliente.isPending}
+      nome={card.data?.cliente.nome ?? ""}
+      onOpenChange={setConfirmExcluirOpen}
+      onConfirm={() => {
+        if (!id) return;
+        excluirCliente.mutate(id, {
+          onSuccess: (result) => {
+            setConfirmExcluirOpen(false);
+            if (result.storage_falhas.length > 0) {
+              toast.warning(
+                "Cliente excluído, mas alguns arquivos não puderam ser removidos do armazenamento.",
+                { description: result.storage_falhas.join(", ") },
+              );
+            }
+            onClose();
+          },
+          onError: (err) => toastServerError(err, "Não foi possível excluir o cliente."),
+        });
+      }}
     />
 
     {/* Sibling of the card rather than a child of it: nesting a Dialog inside

@@ -109,6 +109,29 @@ describe("useClienteMutations", () => {
     expect(mockPatch).toHaveBeenCalledWith("/api/clientes/cl1", { ativo: true });
     expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["sw", "clientes"] });
   });
+
+  it("DELETEs /api/clientes/{id} and invalidates BOTH the clientes family AND the funil board", async () => {
+    mockDelete.mockResolvedValue({
+      deleted: true,
+      atendimentos_removidos: 2,
+      documentos_removidos: 1,
+      storage_falhas: [],
+    });
+    const { remove } = useClienteMutations();
+    const result = await (remove as any).mutateAsync("cl1");
+    expect(mockDelete).toHaveBeenCalledWith("/api/clientes/cl1");
+    expect(result).toEqual({
+      deleted: true,
+      atendimentos_removidos: 2,
+      documentos_removidos: 1,
+      storage_falhas: [],
+    });
+    // The deleted cliente's atendimentos are gone server-side too — the
+    // funil board must refetch alongside the clientes family, or it keeps
+    // showing a ghost card.
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["sw", "clientes"] });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["sw-funil"] });
+  });
 });
 
 describe("formatCountOrDash", () => {

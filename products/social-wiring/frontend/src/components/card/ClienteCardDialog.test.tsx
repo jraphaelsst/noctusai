@@ -1013,6 +1013,72 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     expect(onAdicionar).toHaveBeenCalledTimes(1);
   });
 
+  // ─── Arquivar (funil) / Excluir (cliente) header icons — owner request
+  //     (2026-09-24). Presence-gated exactly like `onAdicionarComprador`
+  //     above: no handler wired ⇒ no icon, since `ClienteDetailModal` only
+  //     ever wires them when the context actually applies (an atendimento
+  //     in scope / the caller is an admin). ────────────────────────────────
+
+  it("hides the Arquivar icon when the card was opened without an atendimento in context", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    expect(screen.queryByTestId("arquivar-atendimento-btn")).toBeNull();
+  });
+
+  it("offers Arquivar in the header when onArquivarAtendimento is wired", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ onArquivarAtendimento: vi.fn() })} />);
+    expect(screen.getByTestId("arquivar-atendimento-btn")).toBeTruthy();
+  });
+
+  it("fires onArquivarAtendimento when clicked", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const onArquivar = vi.fn();
+    render(<ClienteCardDialog {...baseProps({ onArquivarAtendimento: onArquivar })} />);
+    fireEvent.click(screen.getByTestId("arquivar-atendimento-btn"));
+    expect(onArquivar).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the Arquivar icon while arquivandoAtendimento is true", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({ onArquivarAtendimento: vi.fn(), arquivandoAtendimento: true })}
+      />,
+    );
+    expect((screen.getByTestId("arquivar-atendimento-btn") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("hides the Excluir icon when onExcluirCliente is absent (non-admin)", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    expect(screen.queryByTestId("excluir-cliente-btn")).toBeNull();
+  });
+
+  it("offers Excluir in the header when onExcluirCliente is wired", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps({ onExcluirCliente: vi.fn() })} />);
+    expect(screen.getByTestId("excluir-cliente-btn")).toBeTruthy();
+  });
+
+  it("fires onExcluirCliente when clicked", async () => {
+    const { fireEvent, render, screen } = await import("@testing-library/react");
+    const onExcluir = vi.fn();
+    render(<ClienteCardDialog {...baseProps({ onExcluirCliente: onExcluir })} />);
+    fireEvent.click(screen.getByTestId("excluir-cliente-btn"));
+    expect(onExcluir).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the Excluir icon while excluindoCliente is true", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog {...baseProps({ onExcluirCliente: vi.fn(), excluindoCliente: true })} />,
+    );
+    expect((screen.getByTestId("excluir-cliente-btn") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("🔴 hides the Geral Compradores section entirely when nobody was added", async () => {
     const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps({ compradores: [] })} />);
@@ -1812,6 +1878,8 @@ describe("legendas nos botões (ícone + tooltip)", () => {
       <ClienteCardDialog
         {...baseProps({
           onAdicionarComprador: vi.fn(),
+          onArquivarAtendimento: vi.fn(),
+          onExcluirCliente: vi.fn(),
           descricaoCorpo: "Lead interessado",
           documentos: [],
         })}
@@ -1825,6 +1893,8 @@ describe("legendas nos botões (ícone + tooltip)", () => {
     // `AnexosSection.test.tsx` for the post-pick "Enviar anexo" assertion.
     const esperado: [string, string][] = [
       ["adicionar-comprador-btn", "Adicionar Comprador"],
+      ["arquivar-atendimento-btn", "Arquivar no funil"],
+      ["excluir-cliente-btn", "Excluir cliente"],
       ["anexo-enviar-btn", "Escolha o tipo do documento antes de enviar"],
       ["descricao-editar-btn", "Editar descrição"],
       ["etiquetas-trigger", "Etiquetas"],

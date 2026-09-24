@@ -144,6 +144,19 @@ export interface ClientePatchBody {
   ativo?: boolean;
 }
 
+/** `DELETE /api/clientes/{id}` — irreversible hard delete, admin/owner
+ *  only (the server enforces it; a non-admin request 403s before this
+ *  shape is ever built). `storage_falhas` is the bucket keys a storage
+ *  removal did NOT confirm — never dropped on the floor: the row is
+ *  already gone, but a caller that ignores this would believe every file
+ *  went with it. */
+export interface ClienteDeleteOut {
+  deleted: boolean;
+  atendimentos_removidos: number;
+  documentos_removidos: number;
+  storage_falhas: string[];
+}
+
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
 const FAMILY_KEY = ["sw", "clientes"] as const;
@@ -224,7 +237,20 @@ export function useClienteMutations() {
     onSuccess: invalidateAll,
   });
 
-  return { update };
+  const remove = useMutation<ClienteDeleteOut, unknown, string>({
+    mutationFn: (id) => api.delete<ClienteDeleteOut>(`${BASE}/${encodeURIComponent(id)}`),
+    // The deleted cliente's atendimentos are gone server-side too (the
+    // service explicitly removes them — see `clientes_service.py
+    // ::excluir_cliente`'s docstring on the funil-orphan guard), so the
+    // funil board must refetch alongside the clientes family or it keeps
+    // showing a ghost card until something else happens to refresh it.
+    onSuccess: () => {
+      invalidateAll();
+      qc.invalidateQueries({ queryKey: ["sw-funil"] });
+    },
+  });
+
+  return { update, remove };
 }
 
 // ─── Display helpers ────────────────────────────────────────────────────────

@@ -40,7 +40,7 @@
  */
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
-import { Bell, Loader2, Mail, Phone, Plus, Trash2, User as UserIcon, UserPlus } from "lucide-react";
+import { Archive, Bell, Loader2, Mail, Phone, Plus, Trash2, User as UserIcon, UserPlus } from "lucide-react";
 
 import {
   CardHubDialog,
@@ -122,6 +122,29 @@ export interface ClienteCardDialogProps {
    *  board's "arquivar". The card itself owns nothing board-specific, so the
    *  board passes what only it can mean. */
   acoes?: ReactNode;
+  /**
+   * Archive THIS FUNIL CARD (`atendimentos.arquivado=true`) — the cliente
+   * itself stays active; only the pipeline row hides. Absent ⇒ the icon
+   * hides, same convention as every other optional action below: the card
+   * was opened WITHOUT an atendimento in context (e.g. from the Clientes
+   * board), so there is nothing here to archive. The confirm dialog is a
+   * SIBLING of this one (owner: `ClienteDetailModal`) — nesting a Dialog
+   * inside this one's content fights the outer focus trap, the same
+   * reason every other confirm/create dialog on this card lives there.
+   */
+  onArquivarAtendimento?: () => void;
+  /** Disables the archive icon while the mutation is in flight. */
+  arquivandoAtendimento?: boolean;
+  /**
+   * Hard-delete the CLIENTE (irreversible) — admin/owner only. Absent ⇒
+   * the icon hides: the container only ever passes this when the caller
+   * IS an admin (a UI convenience; the route re-checks server-side
+   * regardless — see `clientes_router.excluir_cliente_route`). Same
+   * sibling-confirm-dialog reasoning as `onArquivarAtendimento` above.
+   */
+  onExcluirCliente?: () => void;
+  /** Disables the delete icon while the mutation is in flight. */
+  excluindoCliente?: boolean;
 
   // ─── Compradores / partes do atendimento (migration 073) ───────────────
   /**
@@ -966,7 +989,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
       testId="cliente-card-dialog"
       // Top-right: "Adicionar Comprador" is card-level ("this buyer is
       // married" is discovered while reading anything on the card), then
-      // whatever board opened the card (`acoes` — its own buttons).
+      // Arquivar/Excluir (both owner-request additions, both confirmed via
+      // a SIBLING alert-dialog `ClienteDetailModal` owns — see this file's
+      // own props docs), then whatever board opened the card (`acoes` —
+      // its own buttons).
       headerActions={
         <>
           {props.onAdicionarComprador && (
@@ -976,6 +1002,26 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               variant="outline"
               testId="adicionar-comprador-btn"
               onClick={props.onAdicionarComprador}
+            />
+          )}
+          {props.onArquivarAtendimento && (
+            <TooltipIconButton
+              label="Arquivar no funil"
+              icon={Archive}
+              variant="outline"
+              testId="arquivar-atendimento-btn"
+              onClick={props.onArquivarAtendimento}
+              disabled={props.arquivandoAtendimento}
+            />
+          )}
+          {props.onExcluirCliente && (
+            <TooltipIconButton
+              label="Excluir cliente"
+              icon={Trash2}
+              variant="outline"
+              testId="excluir-cliente-btn"
+              onClick={props.onExcluirCliente}
+              disabled={props.excluindoCliente}
             />
           )}
           {acoes}

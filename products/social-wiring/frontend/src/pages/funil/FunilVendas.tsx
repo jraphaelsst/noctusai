@@ -79,6 +79,13 @@ export default function FunilVendas() {
   // funil opened a read-only field list, so the card existed on one board and
   // was unreachable from the one people actually work in.
   const [clienteAberto, setClienteAberto] = useState<string | null>(null);
+  // The FUNIL CARD's own id (`atendimentos.id`), threaded alongside
+  // `clienteAberto` so `ClienteDetailModal` can offer "Arquivar" — the
+  // funil is the only board that opens the card WITH an atendimento in
+  // context (Processos closes its own card differently — it owns a
+  // distinct `arquivar processo` action — and the Clientes board has no
+  // atendimento at all). Cleared together with `clienteAberto`.
+  const [atendimentoAberto, setAtendimentoAberto] = useState<string | null>(null);
   const { mutate: aceitarProposta, isPending: aceitando, variables } =
     useAceitarProposta();
 
@@ -147,6 +154,7 @@ export default function FunilVendas() {
         onCardClick={(atendimento) => {
           if (atendimento.cliente_id) {
             setClienteAberto(atendimento.cliente_id);
+            setAtendimentoAberto(atendimento.id);
           } else {
             // No person resolved yet — the backfill runs every 6h and new
             // leads land unattached in between. Never a dead click.
@@ -165,11 +173,17 @@ export default function FunilVendas() {
         )}
       />
 
-      {/* The card — the atendimento's person. */}
+      {/* The card — the atendimento's person. `atendimentoId` is what gates
+          the card's "Arquivar" icon — this is the one board that opens the
+          card WITH an atendimento in context. */}
       <ClienteDetailModal
         clienteId={clienteAberto}
+        atendimentoId={atendimentoAberto}
         open={!!clienteAberto}
-        onClose={() => setClienteAberto(null)}
+        onClose={() => {
+          setClienteAberto(null);
+          setAtendimentoAberto(null);
+        }}
       />
 
       {/* Fallback for an atendimento with no cliente yet (see onCardClick). */}

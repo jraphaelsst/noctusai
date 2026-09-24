@@ -163,6 +163,29 @@ describe("FunilVendas — clicking a card opens the CARD", () => {
     const last = calls[calls.length - 1][0];
     expect(last.clienteId).toBe("cli-1");
     expect(last.open).toBe(true);
+    // The Funil is the one board that opens the card WITH an atendimento in
+    // context — this is what gates `ClienteCardDialog`'s "Arquivar" icon.
+    expect(last.atendimentoId).toBe("a1");
+  });
+
+  it("clears BOTH clienteId and atendimentoId on close, together", async () => {
+    ATENDIMENTOS.push({ id: "a4", titulo: "Ana", cliente_id: "cli-4", lead_id: "l4" });
+    const { act } = await import("@testing-library/react");
+    const { fireEvent, getByTestId } = await renderFunil();
+
+    fireEvent.click(getByTestId("card-a4"));
+    const beforeClose = mockClienteDetailModal.mock.calls;
+    expect(beforeClose[beforeClose.length - 1][0].atendimentoId).toBe("a4");
+
+    await act(async () => {
+      beforeClose[beforeClose.length - 1][0].onClose();
+    });
+
+    const afterClose = mockClienteDetailModal.mock.calls;
+    const last = afterClose[afterClose.length - 1][0];
+    expect(last.clienteId).toBeNull();
+    expect(last.atendimentoId).toBeNull();
+    expect(last.open).toBe(false);
   });
 
   it("falls back to the lead detail when the person layer has not resolved", async () => {

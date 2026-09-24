@@ -18,10 +18,50 @@ afterEach(async () => {
 });
 
 const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
-vi.mock("sonner", () => ({ toast: { error: toastError } }));
+vi.mock("sonner", () => ({ toast: { error: toastError, warning: vi.fn() } }));
 
 vi.mock("@/hooks/useLeadsCorretores", () => ({
   useLeadCorretores: () => ({ data: [] }),
+}));
+
+// Owner-directive card actions (Arquivar / Excluir) — sibling of the
+// `useContratoMutations`/`useImoveisBusca` mocks below: reached even though
+// `ClienteCardDialog` itself is stubbed, because `ClienteDetailModal` calls
+// these hooks directly (not just through props the stub renders).
+vi.mock("@/hooks/useAtendimentos", () => ({
+  useArquivarAtendimento: () => ({ mutate: vi.fn(), isPending: false }),
+}));
+
+vi.mock("@/hooks/useClientes", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/useClientes")>(
+    "@/hooks/useClientes",
+  );
+  return {
+    ...actual,
+    useClienteMutations: () => ({
+      update: { mutate: vi.fn(), isPending: false },
+      remove: { mutate: vi.fn(), isPending: false },
+    }),
+  };
+});
+
+// `useAuthStore`/`resolveSSOContext` — the "is this caller an admin"
+// UI-convenience gate for the Excluir icon. Mirrors
+// `ConflitosPendentesPanel.test.tsx`'s exact mock shape (the SAME two
+// modules gating the SAME kind of admin-only affordance). Non-admin by
+// default (`user_metadata: {}`).
+vi.mock("@noctusai/seed/infra", () => ({
+  useAuthStore: () => ({ user: { user_metadata: {} } }),
+}));
+
+vi.mock("@noctusai/lib", () => ({
+  resolveSSOContext: (metadata: any) => {
+    const m = metadata || {};
+    return {
+      isProductAdmin: m.org_role === "owner" || m.org_role === "admin",
+      org: { role: m.org_role ?? "member" },
+    };
+  },
 }));
 
 const { mockCreate, mockUpdate, mockCardResumo, mockDocumentoChecklist } = vi.hoisted(() => ({
