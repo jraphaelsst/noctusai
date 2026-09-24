@@ -42,6 +42,8 @@ Safe by construction — it reuses `commit_and_ff_push_ledger` (fetch → **dive
 
 This is the by-construction close of the "auto-ledger appends a strand on the primary" recurrence (the perpetual `chore(cost-log)` "ahead by 1" that read as stale work).
 
+**2026-09-24:** the ledgers moved to the orphan `origin/ledgers` branch (`KB § PATTERNS/common/ledger-store.md`). The sweep's summary row goes through `_ledger_store`, and the sweep then publishes every row this clone has spooled (`ledger_store_flush` in the result). The dev-copy delivery above stays only for rows a peer's stale-code session still leaves in the primary checkout, and goes at S4 of `project-history/roadmaps/ledgers-off-dev-2026-09.md`. The summary-row write used to end in a silent `except: pass`; its outcome is now reported as `summary_log`.
+
 ## Why never auto-delete
 
 Worktrees can carry uncommitted work even when their branch is integrated (architect made tweaks but didn't commit). Auto-delete would silently lose work. **Surface + suggest; never act.** (Ledger *delivery* above is the exception that proves the rule — it only ever FF-pushes append-only, union-merge, cache-exempt ledger rows, never task work.)

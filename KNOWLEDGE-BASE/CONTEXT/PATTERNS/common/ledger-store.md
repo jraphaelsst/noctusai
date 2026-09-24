@@ -112,8 +112,8 @@ unless `confirm=True`; refuses when the branch exists).
 
 ## Roadmap
 
-`project-history/roadmaps/ledgers-off-dev-2026-09.md`: Phase 1 (S0–S3) is
-in progress (the table above says which writers have flipped). S4 (delete the dev copies, the drains, and the ledger-drain keeper) is
+`project-history/roadmaps/ledgers-off-dev-2026-09.md`: Phase 1 (S0–S3) shipped
+2026-09-24. Every writer in the table above has flipped. S4 (delete the dev copies, the drains, and the ledger-drain keeper) is
 deferred until trigger T1: 7 consecutive days with zero ledger commits on `dev`
 and no dual-read divergence.
 

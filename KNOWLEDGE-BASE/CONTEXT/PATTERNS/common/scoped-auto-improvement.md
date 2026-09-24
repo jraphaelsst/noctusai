@@ -33,11 +33,12 @@ refresh/check source-parity.
 ## Storage layout
 
 ```
-project-history/auto-improvement.ndjson      ← source of truth (committed)
+origin/ledgers:auto-improvement.ndjson       ← source of truth (orphan branch, plumbing-written, 2026-09-24)
+project-history/auto-improvement.ndjson      ← legacy dev copy (dual-read until S4)
 .claude/cache/auto-improvement.sqlite        ← derived mirror (gitignored)
 ```
 
-The **ndjson lives under `project-history/`** alongside `worktree-salvage.ndjson` — it's a permanent ledger, observable in git history. The sqlite is a derived cache (gitignored, mole tradition).
+The ndjson is a permanent ledger, observable in git history. Since 2026-09-24 that history is the orphan `origin/ledgers` branch, not `dev` (`KB § PATTERNS/common/ledger-store.md`). `log_entry` appends through `_ledger_store`. `promote`/`reconcile` rewrite with a store `update(transform)`. Every read, including the cache refresh and its freshness keeper (one shared `source_sha_for_root`), merges the dev copy with the branch by `(ts, target, description)`, and the branch's row wins. The sqlite is a derived cache (gitignored, mole tradition).
 
 ## ndjson schema (one JSON object per line)
 

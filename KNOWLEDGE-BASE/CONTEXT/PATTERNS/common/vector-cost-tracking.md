@@ -269,6 +269,23 @@ a commit to hold it. Auto-staging is **only** safe for this file class
 (append-only, machine-generated, no line ownership); never auto-sweep
 hand-authored content.
 
+## 2026-09-24 — the ledger leaves `dev` (the drain goes to `origin/ledgers`)
+
+The fold-into-commit invariant above solved the dirty-tree and the CI-cancel
+problems. It still put a cost row into roughly every other commit on `dev`. The
+owner then moved every auto-appended ledger to the orphan `origin/ledgers`
+branch (`KB § PATTERNS/common/ledger-store.md`). The spool stays as it was. What
+changed is the **drain**:
+
+| Leg | Where | What (since 2026-09-24) |
+|---|---|---|
+| **write** | anywhere | unchanged: the untracked spool |
+| **drain** | pre-commit leg 10c | `drain_spool()` hands the rows to `_ledger_store` with `publish=False`. They go into the store's own durable spool, so there is no network call inside a commit. Leg 10c **no longer `git add`s** anything, and no commit of ours carries a cost row. |
+| **publish** | the next publish of any ledger | a branch-pointer write, `task_branch` integrate/cleanup (the drain calls `flush_pending`), `session_end_sweep`, or `noctus.dev.ledger_store action='flush'` |
+| **read** | `report()` / `total()` | dual-read: `origin/ledgers` (+ this clone's store spool) ∪ the legacy dev copy ∪ the untracked spool |
+
+The pinning test is now `test_pre_commit_drains_the_spool_and_never_stages_the_ledger`.
+
 ## Universality
 
 This is a `common/` pattern — owned by no single agent; every agent inherits

@@ -19,7 +19,7 @@ THEN delete. If everything is already on dev/KB/memory → delete without ceremo
 | **Code / diffs** | `git format-patch` → `project-history/<archive>/` (re-appliable via `git am`) | Content patch-equivalent on origin/dev (git-cherry returns zero `+` lines) |
 | **Lessons / decisions** | KB (`KNOWLEDGE-BASE/...`) or memory (`feedback_*` / `reference_*`) | Already in KB/memory verbatim |
 | **Commands / runbooks / one-off scripts** | Relevant KB doc OR `scripts/` (never a dangling temp pointer) | Command is trivial / already documented |
-| **Pointers / refs** | Recovery-pointer entry in `project-history/worktree-salvage.ndjson` | Always write — even integrated content gets a pointer |
+| **Pointers / refs** | Recovery-pointer entry in `worktree-salvage.ndjson` (on `origin/ledgers` since 2026-09-24, `KB § PATTERNS/common/ledger-store.md`) | The operator-invoked gate (`salvage_before_delete`) always writes, even for integrated content, because `delete_integrated_remote` requires the row. The automatic sweeps and `task_branch cleanup` skip a SHA already on `origin/dev`, since dev itself recovers it. |
 | **Docs** | Absorb into canonical doc tree before the source is deleted | Already merged to main tree |
 
 ## Enforcement ladder

@@ -77,9 +77,9 @@ noctus.dev.task_branch action="integrate" slug="<task-slug>" confirm=True
 #   → on a rebase CONFLICT: abort (worktree restored clean) + surface loudly — never auto-resolve
 
 noctus.dev.task_branch action="cleanup" slug="<task-slug>" confirm=True
-#   → SALVAGE-before-delete (learn-before-delete, KB § storage-hygiene § 2.3): records the branch+SHA
-#     recovery pointer to the tracked worktree-salvage ledger (MECHANICAL — before the destructive remove)
-#     + surfaces the learnings-extraction checkpoint + sequences a mole worktree-sweep, THEN
+#   → learn-before-delete (KB § storage-hygiene § 2.3): surfaces the learnings-extraction checkpoint
+#     + sequences a mole worktree-sweep (no salvage row: the branch is merged, origin/dev recovers it —
+#     2026-09-24), THEN
 #   → git worktree remove (refuses if dirty — no --force) → prune → git branch -d feat/<slug> (merged-only)
 #   → agent idle on the dev baseline; next writing task re-fetches + re-branches
 #   ⚠️ Tear down ONLY via this tool (or mole sweep / cleanup_stale_worktrees) — a bare hand-typed
@@ -107,7 +107,7 @@ This is **exactly [[branching-and-merging]] §10.2 Option A** with `dev` substit
 - Safe git allowlist; **no banned token** (`reset`/`checkout`/`switch`/`restore`/`clean`/`merge`/`--force`/`--force-with-lease`/`-f`/`-D`) ⇒ can't force, reset, rewrite history, or switch the primary checkout.
 - **Dev-only push boundary** — every push dst MUST be `dev`; main/prod refused structurally; `NOCTUS_ALLOW_MAIN_PUSH` never set (this tool can't reach the sacred lines).
 - `cleanup` refuses a **dirty** worktree (no `--force`) ∧ refuses an **unmerged** branch (`-d` not `-D`) ⇒ never silently drops unintegrated work.
-- `cleanup` **salvages before deleting** (learn-before-delete): records the branch+SHA recovery pointer to the tracked `project-history/worktree-salvage.ndjson` BEFORE `worktree remove` (mechanical — same leg the bulk sweeps carry) + surfaces the learnings checkpoint + sequences a mole worktree-sweep ⇒ a precise teardown can no longer silently lose the worktree's durable knowledge.
+- `cleanup` **learns before deleting**: surfaces the learnings checkpoint + sequences a mole worktree-sweep ⇒ a precise teardown can no longer silently lose the worktree's durable knowledge. It writes **no** salvage row since 2026-09-24 — it only ever deletes a branch already merged into `origin/dev`, which is itself the recovery pointer; those rows were 373 `chore(salvage)` dev commits of noise (`KB § PATTERNS/common/ledger-store.md`).
 - Rebase conflict ⇒ **abort + surface** (no silent auto-resolve, no half-rebase left behind).
 
 ---
@@ -248,6 +248,14 @@ The MCP toolkit commits its append-only ledgers straight to `dev` from the
 primary checkout **by design** — `branch_pointer`, worktree-salvage, cost logs.
 That is how parallel agents publish their collision zones, so blocking it would
 break coordination.
+
+> **2026-09-24 — largely historical.** Those ledgers now live on the orphan
+> `origin/ledgers` branch, written by git plumbing (`KB §
+> PATTERNS/common/ledger-store.md`): no current writer commits a ledger row to
+> `dev` any more. The exception below stays until S4 of
+> `project-history/roadmaps/ledgers-off-dev-2026-09.md`, because a peer on stale
+> code still commits its rows to the dev copy until it restarts, and the drains
+> must be able to ship them.
 
 So a commit whose **entire** staged set lives under `project-history/` passes.
 Stage one source file alongside them and it blocks, with only the source file
@@ -769,3 +777,25 @@ snapshot of the SAME derived numbers into their own history — a conflict shape
 amount of stash/restage/glob widening on the READING side can prevent, because the
 WRITING side kept happening N times (once per feature commit, per branch) instead of
 once (at the moment a tip is actually about to land).
+
+
+---
+
+## §12d · The loop's root removed — the ledgers leave `dev` (2026-09-24)
+
+§12 → §12c each hardened the SAME place: a ledger row committed on the primary
+checkout, then rebased and FF-pushed to `dev`, racing every other ledger push and
+every integrate. The owner's decision removes the place instead of hardening it
+again. The append-only ledgers (branch-tree, worktree-salvage, auto-improvement,
+vector-costs and its siblings, ship-consent) now live on the ORPHAN `origin/ledgers`
+branch, written by `_ledger_store` with plumbing only (hash-object → mktree →
+commit-tree → FF push, retried on the race). Plumbing never touches a working tree
+or an index, so it cannot dirty the primary checkout, cannot diverge it from
+`origin/dev`, cannot move the `dev` tip, and cannot cancel a CI run. 41% of `dev`'s
+commits since 2026-08-01 were those ledger chores.
+
+What stays until S4 (trigger T1: 7 consecutive days with zero ledger commits on
+`dev` and no dual-read divergence): the dev copies (read via the dual-read), the
+drains (`_drain_ledgers_from_primary`, `deliver_trailing_ledgers`, which also publish
+this clone's spooled rows now), and the ledger-drain keeper. They exist only for
+peers still running pre-move code. Full design: `KB § PATTERNS/common/ledger-store.md`.
