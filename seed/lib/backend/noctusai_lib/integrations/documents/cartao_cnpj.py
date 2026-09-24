@@ -35,6 +35,45 @@ is kept at `rotulos["situacao_cadastral"]` — the one field in this module
 where `rotulos` carries the VALUE rather than the label, because "what did
 the document actually say" is exactly what a human needs to resolve an
 unrecognised situação.
+
+🔴 THE ADDRESS BLOCK IS OFTEN MASKED IN FULL, AND EACH BOX IS READ ON ITS
+OWN — NEVER SCRAPED OUT OF A NEIGHBOUR'S VALUE
+---------------------------------------------------------------------------
+`logradouro`/`numero`/`complemento`/`cep`/`bairro`/`municipio`/`uf` are each
+their OWN labelled box, exactly like every other field here — `_campo`'s
+usual same-line/next-line matching applies unchanged, cut off at the NEXT
+known label so `municipio`'s value never bleeds into `uf`'s (or vice
+versa). `uf` additionally validates against the 27-state whitelist
+(`_UFS_BR`) — never a guess. `endereco_mascarado` is `True` when ANY of
+these seven boxes was found printing the literal `********` — measured
+against a real Cartão CNPJ (2026-09-24): the WHOLE address block is
+routinely masked together, and a consumer needs one flag to know the
+address section is unusable rather than reading seven independent `None`s
+and guessing why. 🔴 An earlier version of this module tried to recover
+`uf` by scanning a whole merged "city + code" value row for a trailing
+UF-shaped token — that measurement's premise was wrong (the real file's
+`uf=None` was masking, not a merged row) and the heuristic could, on a
+document shaped differently, have picked up text belonging to a
+neighbouring box. Removed; every field here is read from its own box only.
+
+🔴 A REAL TEXT LAYER EXISTS TOO, AND IT HAS ITS OWN SHAPE — `pdftotext
+-layout`'S COLUMN ALIGNMENT
+-------------------------------------------------------------------------
+Some Cartões are Chrome-printed PDFs (`Producer: Skia/PDF`) that carry a
+genuine text layer, so rung 1 (`ladder.DocumentTextLadder`, PDF-text-first)
+answers directly — no vision call, and `alta` is reachable (measured
+2026-09-24). That extraction preserves visual COLUMN alignment via runs of
+whitespace rather than the vision prompt's `RÓTULO: valor` convention: a
+row of several short address labels prints as one line
+(`"CEP  BAIRRO/DISTRITO  MUNICIPIO  UF"`), and the corresponding values as
+the line right below, column-for-column (masked or not). `normalize_lines`
+collapses that alignment (it exists to make LABEL matching accent/case
+-insensitive, not to preserve column gaps), so this shape is read by a
+SEPARATE pre-pass (`_valores_colunas_alinhadas`) over the text layer's own
+raw lines, splitting on runs of 2+ spaces (a real multi-word value like
+"SAO PAULO" carries only ONE space and so never splits) — tried FIRST,
+falling back to the per-box `_campo` matcher above for anything it does
+not resolve.
 """
 from __future__ import annotations
 
@@ -45,7 +84,7 @@ from typing import Literal, Mapping, Optional, Protocol, Sequence, runtime_check
 
 from noctusai_lib.integrations.documents.cnpj import format_cnpj, is_valid as _cnpj_is_valid
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
-from noctusai_lib.integrations.documents.text import normalize_lines
+from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
     TextSource,
@@ -99,6 +138,102 @@ _SITUACAO_VOCAB: dict[str, str] = {
     "NULA": "nula",
 }
 
+#: The 27 Brazilian UF codes — the closed set `uf` is validated against.
+#: Never a guess: a token that isn't in this set is not a UF, however
+#: plausible-looking.
+_UFS_BR: frozenset[str] = frozenset(
+    {
+        "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT",
+        "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO",
+        "RR", "SC", "SP", "SE", "TO",
+    }
+)
+
+
+def _uf_valida(txt: Optional[str]) -> Optional[str]:
+    """`uf`'s OWN box value, validated against `_UFS_BR` — never a guess,
+    and never scraped out of a different box's text (see the module
+    header). Tolerates stray punctuation/whitespace around the code
+    (`"SP."`, `" SP "`, `"sp"`) but does not scan across multiple words —
+    a value that isn't cleanly one of the 27 codes once trimmed is simply
+    not a UF read, and reads as `None`, not a best-effort pick."""
+    if not txt:
+        return None
+    candidato = re.sub(r"[^A-Z]", "", txt.strip().upper())
+    return candidato if candidato in _UFS_BR else None
+
+
+# ─── the `pdftotext -layout` column-aligned shape (real text layer) ───────
+
+
+def _linhas_cruas(text: str) -> list[str]:
+    """Raw lines, line-ending-normalised only — UNLIKE `normalize_lines`,
+    internal whitespace runs survive, because they are the only signal a
+    `pdftotext -layout` column boundary leaves behind. See the module
+    header."""
+    return (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
+def _colunas(linha_crua: str) -> list[str]:
+    """One raw line's column segments — split on a run of 2+ spaces (the
+    `-layout` column-gap convention), so a single-spaced multi-word value
+    ("SAO PAULO") stays one segment."""
+    return [c for c in re.split(r"\s{2,}", linha_crua.strip()) if c]
+
+
+def _linha_de_rotulos_alinhados(
+    linha_crua: str, todos_rotulos: Sequence[str]
+) -> Optional[list[str]]:
+    """This raw line's own column segments, IF EVERY ONE of them is a
+    known label (accent/case-folded) — a column-HEADER row. `None` for
+    anything else (prose, or a value row): a header row is never
+    partially recognised, because a partial match means this line is
+    something other than what it looks like."""
+    segmentos = _colunas(linha_crua)
+    if len(segmentos) < 2:
+        return None
+    normalizados = [strip_accents_upper(s).strip() for s in segmentos]
+    if all(s in todos_rotulos for s in normalizados):
+        return normalizados
+    return None
+
+
+def _valores_colunas_alinhadas(
+    text: str, todos_rotulos: Sequence[str]
+) -> dict[str, tuple[Optional[str], bool]]:
+    """`{rótulo -> (valor, mascarado)}` for every column-aligned
+    header+value row pair in `text`. The header row's OWN very next
+    NON-BLANK raw line supplies the values, split the SAME way and zipped
+    positionally; a value row whose column COUNT doesn't match its
+    header's is a positional zip across a different count, so instead of
+    guessing it every column of THAT header is recorded as `(None,
+    False)` — "the label was found, its value was not readable" — so the
+    per-box `_campo` fallback never independently re-derives a value from
+    the very same garbled next line (it would otherwise treat the whole
+    unsplit line as ONE field's value)."""
+    linhas = _linhas_cruas(text)
+    saida: dict[str, tuple[Optional[str], bool]] = {}
+    for i, linha in enumerate(linhas):
+        cabecalho = _linha_de_rotulos_alinhados(linha, todos_rotulos)
+        if cabecalho is None:
+            continue
+        for prox in linhas[i + 1 :]:
+            if not prox.strip():
+                continue
+            valores = _colunas(prox)
+            if len(valores) == len(cabecalho):
+                for rotulo, valor in zip(cabecalho, valores):
+                    valor = valor.strip()
+                    if valor == _MASCARADO:
+                        saida[rotulo] = (None, True)
+                    elif valor:
+                        saida[rotulo] = (valor, False)
+            else:
+                for rotulo in cabecalho:
+                    saida.setdefault(rotulo, (None, False))
+            break
+    return saida
+
 
 def _data_br(txt: str) -> Optional[date]:
     m = re.search(r"(\d{2})/(\d{2})/(\d{4})", txt)
@@ -113,23 +248,29 @@ def _data_br(txt: str) -> Optional[date]:
 def _embutido_em_rotulo_maior(
     linha: str, pos: int, rotulo: str, todos_rotulos: Sequence[str]
 ) -> bool:
-    """Is this match of `rotulo` actually the TAIL of a longer, different
-    label ("SITUACAO CADASTRAL" inside "DATA DA SITUACAO CADASTRAL" /
-    "MOTIVO DE SITUACAO CADASTRAL")? Checked against every OTHER known
-    label so a shorter label never steals a longer sibling's own value."""
+    """Is this match of `rotulo` actually a SUBSTRING of a longer, different
+    label — at ANY position, not just the tail ("SITUACAO CADASTRAL" inside
+    "DATA DA SITUACAO CADASTRAL" / "MOTIVO DE SITUACAO CADASTRAL"; "NUMERO"
+    (the address box) as the literal PREFIX of "NUMERO DE INSCRICAO")?
+    Checked against every OTHER known label so a shorter label never steals
+    a longer sibling's own value, regardless of where inside it sits."""
     for outro in todos_rotulos:
-        if outro != rotulo and outro.endswith(rotulo) and len(outro) > len(rotulo):
-            prefixo_extra = outro[: -len(rotulo)]
-            inicio = pos - len(prefixo_extra)
-            if inicio >= 0 and linha[inicio:pos] == prefixo_extra:
-                return True
+        if outro == rotulo or len(outro) <= len(rotulo) or rotulo not in outro:
+            continue
+        k = outro.find(rotulo)
+        inicio = pos - k
+        fim = inicio + len(outro)
+        if inicio >= 0 and fim <= len(linha) and linha[inicio:fim] == outro:
+            return True
     return False
 
 
 def _campo(
     linhas: list[str], rotulo: str, *, todos_rotulos: Sequence[str] = ()
-) -> tuple[Optional[str], Optional[str]]:
-    """`(valor, rótulo)` for the box labelled `rotulo`.
+) -> tuple[Optional[str], Optional[str], bool]:
+    """`(valor, rótulo, mascarado)` for the box labelled `rotulo`.
+    `mascarado` is `True` only when the box's own value was the literal
+    `********` (distinct from "blank"/"never found" — see `endereco_mascarado`).
 
     🔴 REAL RECEITA CARTÕES DO NOT ALWAYS PRINT THE COLON THIS MODULE'S
     PROMPT ASKS FOR. Measured against a real Cartão CNPJ (2026-09-24): the
@@ -167,9 +308,9 @@ def _campo(
         resto = resto[:corte].strip(" :")
 
         if resto == _MASCARADO:
-            return (None, rotulo)
+            return (None, rotulo, True)
         if resto:
-            return (resto, rotulo)
+            return (resto, rotulo, False)
 
         # The label's own line carried nothing usable — Receita boxes that
         # print the value on the NEXT line. Stop at the next line that
@@ -178,11 +319,11 @@ def _campo(
             if any(o != rotulo and prox.startswith(o) for o in todos_rotulos):
                 break
             if prox == _MASCARADO:
-                return (None, rotulo)
+                return (None, rotulo, True)
             if prox:
-                return (prox, rotulo)
-        return (None, rotulo)
-    return (None, None)
+                return (prox, rotulo, False)
+        return (None, rotulo, False)
+    return (None, None, False)
 
 
 _EMITIDO_RE = re.compile(
@@ -220,7 +361,20 @@ class CartaoCnpjFields:
     #: decision H4 (a Crednet-sourced date is NEVER copied here).
     data_situacao_cadastral: Optional[date] = None
     motivo_situacao: Optional[str] = None
+    #: The address block — each its own box (see the module header). `uf`
+    #: is validated against the 27 Brazilian states; the other six are
+    #: read verbatim, no closed vocabulary.
+    logradouro: Optional[str] = None
+    numero: Optional[str] = None
+    complemento: Optional[str] = None
+    cep: Optional[str] = None
+    bairro: Optional[str] = None
+    municipio: Optional[str] = None
     uf: Optional[str] = None
+    #: `True` when ANY of the seven address boxes above printed the literal
+    #: `********` — the real document masks the WHOLE block together far
+    #: more often than it masks a single field within it.
+    endereco_mascarado: bool = False
     emitido_em: Optional[datetime] = None
     confiancas: Mapping[str, ExtractionConfidence] = field(default_factory=dict)
     rotulos: Mapping[str, Optional[str]] = field(default_factory=dict)
@@ -241,11 +395,22 @@ _ROTULOS: dict[str, str] = {
     "nome_fantasia": "TITULO DO ESTABELECIMENTO (NOME DE FANTASIA)",
     "porte": "PORTE",
     "natureza_juridica": "CODIGO E DESCRICAO DA NATUREZA JURIDICA",
+    "logradouro": "LOGRADOURO",
+    "numero": "NUMERO",
+    "complemento": "COMPLEMENTO",
+    "cep": "CEP",
+    "bairro": "BAIRRO/DISTRITO",
+    "municipio": "MUNICIPIO",
     "uf": "UF",
     "situacao_cadastral": "SITUACAO CADASTRAL",
     "data_situacao_cadastral": "DATA DA SITUACAO CADASTRAL",
     "motivo_situacao": "MOTIVO DE SITUACAO CADASTRAL",
 }
+
+#: The seven address-block field names — see `endereco_mascarado`.
+_ENDERECO_CAMPOS: tuple[str, ...] = (
+    "logradouro", "numero", "complemento", "cep", "bairro", "municipio", "uf",
+)
 
 
 def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
@@ -253,18 +418,33 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
     linhas = normalize_lines(text or "")
 
     confiancas: dict[str, ExtractionConfidence] = {
-        campo: ExtractionConfidence.NENHUMA for campo in (*_ROTULOS, "emitido_em")
+        campo: ExtractionConfidence.NENHUMA
+        for campo in (*_ROTULOS, "emitido_em", "matriz_filial")
     }
     rotulos: dict[str, Optional[str]] = {campo: None for campo in confiancas}
 
     todos_rotulos = tuple(_ROTULOS.values())
+    # The text-layer's column-aligned shape, tried FIRST — see the module
+    # header. Falls through to the per-box `_campo` matcher for whichever
+    # fields it doesn't resolve (the normal vision-prompt shape, or a
+    # text-layer field this document didn't print column-aligned).
+    colunas = _valores_colunas_alinhadas(text or "", todos_rotulos)
+
     valores: dict[str, Optional[str]] = {}
+    mascarados: dict[str, bool] = {}
     for campo, rotulo in _ROTULOS.items():
-        valor, achado_rotulo = _campo(linhas, rotulo, todos_rotulos=todos_rotulos)
+        if rotulo in colunas:
+            valor, mascarado = colunas[rotulo]
+            achado_rotulo: Optional[str] = rotulo
+        else:
+            valor, achado_rotulo, mascarado = _campo(linhas, rotulo, todos_rotulos=todos_rotulos)
         valores[campo] = valor
         rotulos[campo] = achado_rotulo
+        mascarados[campo] = mascarado
         if valor is not None:
             confiancas[campo] = ExtractionConfidence.ALTA
+
+    endereco_mascarado = any(mascarados.get(campo, False) for campo in _ENDERECO_CAMPOS)
 
     cnpj_valor: Optional[str] = None
     cnpj_valido = False
@@ -282,6 +462,13 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
             matriz_filial = "MATRIZ"
         elif "FILIAL" in valores["cnpj"]:
             matriz_filial = "FILIAL"
+        if matriz_filial is not None:
+            # Read out of the SAME box as `cnpj` ("NÚMERO DE INSCRIÇÃO" —
+            # the Receita prints MATRIZ/FILIAL right beside the number, not
+            # in a box of its own), so it carries that box's own label and
+            # confidence just like every other field does.
+            confiancas["matriz_filial"] = ExtractionConfidence.ALTA
+            rotulos["matriz_filial"] = rotulos["cnpj"]
 
     data_abertura = _data_br(valores["data_abertura"]) if valores["data_abertura"] else None
     if valores["data_abertura"] and data_abertura is None:
@@ -315,9 +502,11 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
             confiancas["situacao_cadastral"] = ExtractionConfidence.NENHUMA
             rotulos["situacao_cadastral"] = bruto
 
-    uf = valores["uf"].strip().upper() if valores["uf"] else None
-    if uf is not None and (len(uf) != 2 or not uf.isalpha()):
-        uf = None
+    uf = _uf_valida(valores["uf"])
+    if valores["uf"] and uf is None:
+        # The label was found but nothing in its value validated as one of
+        # the 27 UFs — never guessed, so this reads as unreadable, not
+        # `rotulos["uf"]` losing the label that WAS matched.
         confiancas["uf"] = ExtractionConfidence.NENHUMA
 
     emitido_em: Optional[datetime] = None
@@ -345,7 +534,14 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
         situacao_cadastral=situacao_cadastral,
         data_situacao_cadastral=data_situacao_cadastral,
         motivo_situacao=valores["motivo_situacao"],
+        logradouro=valores["logradouro"],
+        numero=valores["numero"],
+        complemento=valores["complemento"],
+        cep=valores["cep"],
+        bairro=valores["bairro"],
+        municipio=valores["municipio"],
         uf=uf,
+        endereco_mascarado=endereco_mascarado,
         emitido_em=emitido_em,
         confiancas={campo: _temper(c, source) for campo, c in confiancas.items()},
         rotulos=rotulos,
@@ -393,7 +589,9 @@ class FakeCartaoCnpjExtractor:
         campos = (
             "cnpj", "matriz_filial", "data_abertura", "razao_social",
             "nome_fantasia", "porte", "natureza_juridica", "situacao_cadastral",
-            "data_situacao_cadastral", "motivo_situacao", "uf", "emitido_em",
+            "data_situacao_cadastral", "motivo_situacao", "logradouro",
+            "numero", "complemento", "cep", "bairro", "municipio", "uf",
+            "emitido_em",
         )
         return CartaoCnpjFields(
             cnpj="11.222.333/0001-81",
@@ -406,11 +604,23 @@ class FakeCartaoCnpjExtractor:
             natureza_juridica="206-2 - SOCIEDADE EMPRESARIA LIMITADA",
             situacao_cadastral="ativa",
             data_situacao_cadastral=date(2010, 3, 15),
-            motivo_situacao=None,
+            motivo_situacao="MOTIVO FAKE SINTETICO",
+            logradouro="RUA FAKE SINTETICA",
+            numero="99",
+            complemento="SALA FAKE",
+            cep="99999-999",
+            bairro="BAIRRO FAKE",
+            municipio="SAO PAULO FAKE",
             uf="SP",
+            endereco_mascarado=False,
             emitido_em=datetime(2026, 1, 1, 12, 0, 0),
             confiancas={campo: ExtractionConfidence.ALTA for campo in campos},
-            rotulos={campo: _ROTULOS.get(campo) for campo in campos},
+            # `matriz_filial` has no box of its own — it rides the "cnpj"
+            # box's label, matching `parse_cartao_cnpj`'s own behaviour.
+            rotulos={
+                campo: (_ROTULOS.get("cnpj") if campo == "matriz_filial" else _ROTULOS.get(campo))
+                for campo in campos
+            },
             source=TextSource.TEXT_LAYER,
         )
 

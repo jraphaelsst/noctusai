@@ -22,6 +22,7 @@ from noctusai_lib.integrations.documents.cartao_cnpj import LadderCartaoCnpjExtr
 
 CNPJ_VALIDO = "11.222.333/0001-81"
 CNPJ_INVALIDO = "11.222.333/0001-82"
+_MASCARADO = "********"
 
 
 def _cartao(
@@ -99,6 +100,21 @@ class TestFullParse:
         f = parse_cartao_cnpj(_cartao(matriz_filial="FILIAL"), TextSource.TEXT_LAYER)
         assert f.matriz_filial == "FILIAL"
 
+    def test_matriz_filial_carries_confianca_and_the_cnpj_boxs_own_rotulo(self):
+        """🔴 `matriz_filial` has no box of its own on the real document — it
+        prints beside the CNPJ. It must still land in `confiancas`/`rotulos`
+        like every other field, not be a silent exception to the shape."""
+        f = parse_cartao_cnpj(_cartao(), TextSource.TEXT_LAYER)
+        assert f.confiancas["matriz_filial"] is ExtractionConfidence.ALTA
+        assert f.rotulos["matriz_filial"] == f.rotulos["cnpj"] == "NUMERO DE INSCRICAO"
+
+    def test_matriz_filial_absent_when_the_cnpj_box_itself_is_never_found(self):
+        texto = _cartao().replace("NUMERO DE INSCRICAO:", "OUTRO ROTULO:")
+        f = parse_cartao_cnpj(texto, TextSource.TEXT_LAYER)
+        assert f.matriz_filial is None
+        assert f.confiancas["matriz_filial"] is ExtractionConfidence.NENHUMA
+        assert f.rotulos["matriz_filial"] is None
+
 
 class TestMaskedFields:
     """`********` → `None`, never the literal asterisks — and the label
@@ -144,6 +160,140 @@ class TestSituacaoCadastralClosedVocabulary:
         assert f.situacao_cadastral is None
         assert f.rotulos["situacao_cadastral"] == "PENDENTE DE REGULARIZACAO"
         assert f.confiancas["situacao_cadastral"] is ExtractionConfidence.NENHUMA
+
+
+class TestAddressBlock:
+    """Each of the seven address fields is its OWN box (the vision-prompt
+    `RÓTULO: valor` shape) — never scraped out of a neighbour's value. A
+    real Cartão CNPJ (2026-09-24) turned out to mask the WHOLE address
+    block far more often than not; `uf=None` on that file was correct
+    masking, not a parser gap — an earlier "scan the merged row for a
+    trailing UF code" heuristic was removed for exactly that reason (see
+    the module header)."""
+
+    def _endereco(self, *, mascarado: bool = False) -> str:
+        valores = (
+            ("LOGRADOURO", "RUA EXEMPLO"),
+            ("NUMERO", "123"),
+            ("COMPLEMENTO", "SALA 4"),
+            ("CEP", "01310-100"),
+            ("BAIRRO/DISTRITO", "PINHEIROS"),
+            ("MUNICIPIO", "SAO PAULO"),
+            ("UF", "SP"),
+        )
+        linhas = [
+            f"{rotulo}: {_MASCARADO if mascarado else valor}"
+            for rotulo, valor in valores
+        ]
+        return (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "NOME EMPRESARIAL: RAZAO SOCIAL EXEMPLO LTDA\n" + "\n".join(linhas) + "\n"
+            "SITUACAO CADASTRAL: ATIVA\n"
+        )
+
+    def test_an_unmasked_block_parses_every_field(self):
+        f = parse_cartao_cnpj(self._endereco(), TextSource.TEXT_LAYER)
+        assert f.logradouro == "RUA EXEMPLO"
+        assert f.numero == "123"
+        assert f.complemento == "SALA 4"
+        assert f.cep == "01310-100"
+        assert f.bairro == "PINHEIROS"
+        assert f.municipio == "SAO PAULO"
+        assert f.uf == "SP"
+        assert f.endereco_mascarado is False
+
+    def test_numero_is_never_confused_with_numero_de_inscricao(self):
+        """🔴 "NUMERO" (the address box) is a literal PREFIX of "NUMERO DE
+        INSCRICAO" (the CNPJ box) — the embedding guard must keep them
+        apart in both directions."""
+        f = parse_cartao_cnpj(self._endereco(), TextSource.TEXT_LAYER)
+        assert f.numero == "123"
+        assert f.cnpj == CNPJ_VALIDO
+
+    def test_a_fully_masked_block_is_every_field_none_and_the_flag_is_set(self):
+        f = parse_cartao_cnpj(self._endereco(mascarado=True), TextSource.TEXT_LAYER)
+        for campo in ("logradouro", "numero", "complemento", "cep", "bairro", "municipio", "uf"):
+            assert getattr(f, campo) is None, campo
+        assert f.endereco_mascarado is True
+
+    def test_masking_does_not_leak_into_unrelated_fields(self):
+        f = parse_cartao_cnpj(self._endereco(mascarado=True), TextSource.TEXT_LAYER)
+        assert f.endereco_mascarado is True
+        assert f.cnpj == CNPJ_VALIDO
+        assert f.razao_social == "RAZAO SOCIAL EXEMPLO LTDA"
+
+    def test_a_non_uf_token_is_never_guessed(self):
+        texto = (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "MUNICIPIO: SAO PAULO\n"
+            "UF: ZZ\n"
+        )
+        f = parse_cartao_cnpj(texto, TextSource.TEXT_LAYER)
+        assert f.uf is None
+        assert f.confiancas["uf"] is ExtractionConfidence.NENHUMA
+
+
+class TestColumnAlignedTextLayer:
+    """🔴 Some Cartões are Chrome-printed PDFs with a genuine text layer
+    (`Producer: Skia/PDF`), read by rung 1 — no vision call, `alta`
+    reachable. `pdftotext -layout` renders a short label row (address
+    fields especially) as one line, its values column-aligned on the very
+    next line, separated by 2+ spaces — a different shape from the vision
+    prompt's `RÓTULO: valor` convention, and NOT collapsed by
+    `normalize_lines` (which only case/accent-folds — see the module
+    header)."""
+
+    def _texto_colunas(self, *, mascarado: bool = False) -> str:
+        valores = "01310-100  PINHEIROS  SAO PAULO  SP"
+        if mascarado:
+            valores = "  ".join([_MASCARADO] * 4)
+        return (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "NOME EMPRESARIAL: RAZAO SOCIAL EXEMPLO LTDA\n"
+            "CEP  BAIRRO/DISTRITO  MUNICIPIO  UF\n"
+            f"{valores}\n"
+            "SITUACAO CADASTRAL: ATIVA\n"
+        )
+
+    def test_an_unmasked_column_aligned_row_parses_every_column(self):
+        f = parse_cartao_cnpj(self._texto_colunas(), TextSource.TEXT_LAYER)
+        assert f.cep == "01310-100"
+        assert f.bairro == "PINHEIROS"
+        assert f.municipio == "SAO PAULO"
+        assert f.uf == "SP"
+        assert f.endereco_mascarado is False
+
+    def test_confianca_alta_is_reachable_off_a_text_layer_column_read(self):
+        f = parse_cartao_cnpj(self._texto_colunas(), TextSource.TEXT_LAYER)
+        for campo in ("cep", "bairro", "municipio", "uf"):
+            assert f.confiancas[campo] is ExtractionConfidence.ALTA
+
+    def test_a_masked_column_aligned_row_is_every_column_none_flag_set(self):
+        f = parse_cartao_cnpj(self._texto_colunas(mascarado=True), TextSource.TEXT_LAYER)
+        assert f.cep is None
+        assert f.bairro is None
+        assert f.municipio is None
+        assert f.uf is None
+        assert f.endereco_mascarado is True
+
+    def test_a_mismatched_column_count_is_never_positionally_guessed(self):
+        """A garbled value row (wrong column count vs. its header) is
+        skipped outright rather than zipped against the wrong labels."""
+        texto = (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "CEP  BAIRRO/DISTRITO  MUNICIPIO  UF\n"
+            "01310-100  PINHEIROS\n"  # only 2 of 4 columns
+        )
+        f = parse_cartao_cnpj(texto, TextSource.TEXT_LAYER)
+        assert f.cep is None
+        assert f.municipio is None
+        assert f.uf is None
+
+    def test_a_multi_word_value_does_not_split_on_its_own_internal_space(self):
+        """"SAO PAULO" carries a single space — only a run of 2+ spaces is
+        a column boundary."""
+        f = parse_cartao_cnpj(self._texto_colunas(), TextSource.TEXT_LAYER)
+        assert f.municipio == "SAO PAULO"
 
 
 class TestCheckDigitDiscipline:

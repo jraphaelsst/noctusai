@@ -149,6 +149,69 @@ class TestMultipleParticipacoes:
         assert dois.situacao_em == date(2024, 6, 20)
 
 
+class TestParticipacaoContinuesOntoPageTwo:
+    """🔴 The real-shape case `make_crednet_extractor`'s own `max_pages=None`
+    contract exists for: the ladder reads every page (`TestFactoryAndProtocol`
+    below already asserts that wiring), but this class defends the OTHER
+    half — that `parse_crednet` itself is robust to what a real multi-page
+    transcription actually looks like once the ladder hands it over as ONE
+    concatenated string: a page-2 continuation typically re-prints the
+    document's own running header (the consulta datetime / "Confidencial
+    para" / "Crednet" lines repeat at the top of every page), and the
+    SECOND participação sits well past that repeated header, not
+    immediately after the first."""
+
+    def _consulta_com_quebra_de_pagina(self) -> str:
+        return (
+            "25 de Agosto de 2026 15:28:22\n"
+            f"PROTOCOLO DA CONSULTA : 112566\n"
+            "Resumo da consulta\n"
+            "| CPF | NOME | NOME DA MAE | DATA NASCIMENTO |\n"
+            f"| {CPF_VALIDO} | FULANO DE TAL SILVA | CICLANA DE TAL SILVA | 01/01/1980 |\n"
+            "Ocorrencias\n"
+            "| Pendencias Internas | NAO CONSTAM OCORRENCIAS |\n"
+            "| Pendencias Financeiras | NAO CONSTAM OCORRENCIAS |\n"
+            "| Protesto Estadual | NAO CONSTAM OCORRENCIAS |\n"
+            "| Cheques Sem Fundo BACEN | NAO CONSTAM OCORRENCIAS |\n"
+            "Detalhes do documento\n"
+            "Situacao do CPF/CNPJ em 01/09/2026: REGULAR\n"
+            "Participacao Societaria\n"
+            "| Empresa | CNPJ | Participacao (%) | UF |\n"
+            f"| RAZAO SOCIAL EXEMPLO UM LTDA | {CNPJ_VALIDO} | 100,0 % | RJ |\n"
+            "SITUACAO DO CNPJ EM 15/05/2025: BAIXADA | Desde: mai/2025 | "
+            "Ultima Atualizacao: dez/2025\n"
+            # The page-2 continuation: the running header re-printed, THEN
+            # the second participação — never adjacent to the first.
+            "25 de Agosto de 2026 15:28:22\n"
+            "Confidencial para: EXEMPLO CONSULTAS LTDA\n"
+            "Crednet\n"
+            "Participacao Societaria (continuacao)\n"
+            "| Empresa | CNPJ | Participacao (%) | UF |\n"
+            f"| RAZAO SOCIAL EXEMPLO DOIS LTDA | {CNPJ_VALIDO} | 50,0 % | SP |\n"
+            "SITUACAO DO CNPJ EM 20/06/2024: ATIVA | Desde: jan/2010 | "
+            "Ultima Atualizacao: jan/2026\n"
+        )
+
+    def test_both_participacoes_are_found_across_the_page_break(self):
+        f = parse_crednet(self._consulta_com_quebra_de_pagina(), TextSource.TEXT_LAYER)
+        assert len(f.participacoes) == 2
+        um, dois = f.participacoes
+        assert um.razao_social == "RAZAO SOCIAL EXEMPLO UM LTDA"
+        assert dois.razao_social == "RAZAO SOCIAL EXEMPLO DOIS LTDA"
+        assert dois.uf == "SP"
+        assert dois.cnpj_valido is True
+
+    def test_scalar_fields_from_page_one_are_unaffected_by_the_repeated_header(self):
+        """The re-printed running header on page 2 must never overwrite
+        page 1's own already-parsed scalar fields (there is only one
+        `PROTOCOLO DA CONSULTA`/`Resumo da consulta` — the regexes are
+        first-match, so a repeated header line with no protocolo/resumo of
+        its own changes nothing)."""
+        f = parse_crednet(self._consulta_com_quebra_de_pagina(), TextSource.TEXT_LAYER)
+        assert f.protocolo == "112566"
+        assert f.cpf == CPF_VALIDO
+
+
 class TestOcorrenciasTristate:
     """`NAO CONSTAM` ⇒ False · a count ⇒ True · unreadable ⇒ None."""
 
