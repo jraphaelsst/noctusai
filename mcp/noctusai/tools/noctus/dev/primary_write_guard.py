@@ -116,6 +116,51 @@ _ALWAYS_WRITE = {
 #: those would be a guess, and a guess here fails OPEN.
 _DEST_ONLY_WRITE = {"cp", "install", "rsync", "ln"}
 
+#: `chmod`/`chown` option flags that take no operand. Anything else in the
+#: leading position is the MODE/OWNER operand. A chmod mode can itself look
+#: like a flag (`chmod -x f`), which is why this is an allow-list of real
+#: options, not a "starts with -" test.
+_CHMOD_CHOWN_FLAGS = {
+    "-R", "-v", "-c", "-f", "-h", "-H", "-L", "-P",
+    "--recursive", "--verbose", "--changes", "--silent", "--quiet",
+    "--no-dereference", "--dereference", "--preserve-root", "--no-preserve-root",
+}
+#: `install` options whose NEXT token is a value, not a path.
+_INSTALL_VALUE_FLAGS = {"-m", "-o", "-g", "--mode", "--owner", "--group"}
+
+
+def _drop_non_path_operands(name: str, args: list[str]) -> list[str]:
+    """Remove operands that are never a write target, so they can't be judged
+    as a path: `chmod`'s MODE and `chown`'s OWNER[:GROUP] (the first non-option
+    operand, unless `--reference=` supplies it), and `install`'s `-m/-o/-g`
+    values. Seen 2026-09-24: `chmod 700 ~/x` was refused because `700`
+    resolved to `<primary>/700`."""
+    if name in ("chmod", "chown"):
+        if any(a.startswith("--reference") for a in args):
+            return list(args)
+        out, dropped = [], False
+        for a in args:
+            if not dropped and a not in _CHMOD_CHOWN_FLAGS:
+                dropped = True
+                continue
+            out.append(a)
+        return out
+    if name == "install":
+        out, skip = [], False
+        for a in args:
+            if skip:
+                skip = False
+                continue
+            if a in _INSTALL_VALUE_FLAGS:
+                skip = True
+                continue
+            if any(a.startswith(f + "=") for f in ("--mode", "--owner", "--group")):
+                continue
+            out.append(a)
+        return out
+    return list(args)
+
+
 #: GNU `-t DIR` / `--target-directory=DIR` inverts the argument order, so the
 #: destination is that flag's operand and NOT the last positional.
 _TARGET_DIR_FLAGS = {"-t", "--target-directory"}
@@ -1141,6 +1186,7 @@ def bash_write_targets(command: str, cwd: str) -> tuple[list[str], bool]:
             continue
 
         if name in _ALWAYS_WRITE:
+            args = _drop_non_path_operands(name, args)
             candidates = [a for a in args if _looks_like_path(a)]
             if name in _DEST_ONLY_WRITE:
                 dest = _dest_only_candidates(args)
