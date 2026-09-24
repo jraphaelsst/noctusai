@@ -200,11 +200,20 @@ class TestEmpresasUpsert:
         assert empresas[0]["razao_social"] == "EMPRESA TESTE LTDA"
         assert empresas[0]["dados_origem"] == "serasa_crednet"
         assert empresas[0].get("situacao_cadastral") is None  # NEVER written (contract §H4)
+        # P1/883 live bug (2026-09-24): `empresas.dados_documento_id`'s FK
+        # targets `empresa_documentos` (a Cartão CNPJ), never
+        # `cliente_documentos` (this Crednet PDF) — writing `did` here 500s
+        # on a real DB with a 23503, which `MockSupabaseClient` does not
+        # catch (it does not enforce FKs), so this assertion is the only
+        # thing that pins it. The Crednet provenance lives on the
+        # participação's own `fonte_documento_id` instead — asserted below.
+        assert empresas[0]["dados_documento_id"] is None
         participacoes = client.table("cliente_empresa_participacoes").select("*").execute().data
         assert len(participacoes) == 1
         assert participacoes[0]["origem"] == "serasa_crednet"
         assert participacoes[0]["cliente_id"] == cid
         assert participacoes[0]["empresa_id"] == empresas[0]["id"]
+        assert participacoes[0]["fonte_documento_id"] == did
         assert result["empresas"] == [empresas[0]["id"]]
 
     @pytest.mark.asyncio
@@ -288,3 +297,70 @@ class TestErrorPath:
         assert doc["extracao_status"] == "erro"
         cliente = client.table("clientes").select("*").eq("id", cid).execute().data[0]
         assert cliente["nome_oficial"] is None  # nothing applied
+
+
+class TestSideEffectFailuresAreVisible:
+    """P1/883 live bug (2026-09-24): a crash inside the D1 apply / empresas
+    upsert / certidão-9 fill — a real one was the FK violation §6 of this
+    same pass fixed — used to leave `extracao_status='ok'` (stamped in the
+    old step (a), before those ran) and propagate uncaught out of a
+    BackgroundTask: the UI showed success while the side effects silently
+    never landed, and the D3 sweep never re-touches an `ok` row."""
+
+    @pytest.mark.asyncio
+    async def test_a_crash_preparing_the_reading_still_ends_in_erro_never_ok(self, client):
+        """A garbled vision-read percentage — `float()` raises inside
+        `_serializar_crednet` (the raw-JSON write), before the raw fields
+        even land. Nothing was written, but the document must never be
+        left with no terminal `extracao_status` at all."""
+        cid, did = str(uuid4()), str(uuid4())
+        client.table("clientes").insert(_cliente(cid)).execute()
+        client.table("cliente_documentos").insert(_documento(did, cid)).execute()
+        participacao = ParticipacaoCrednet(
+            razao_social="EMPRESA TESTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
+            participacao_pct="cerca de 50%",
+        )
+
+        result = await _aplicar(client, cid, did, _fields(participacoes=(participacao,)))
+
+        assert result == {"status": "erro", "erro": "side_effects_failed"}
+        doc = client.table("cliente_documentos").select("*").eq("id", did).execute().data[0]
+        assert doc["extracao_status"] == "erro"
+        assert doc["extracao_erro"] and "side_effects_failed" in doc["extracao_erro"]
+
+    @pytest.mark.asyncio
+    async def test_a_crash_past_the_raw_write_keeps_the_reading_and_marks_erro(self, client):
+        """A crash strictly AFTER the raw reading lands (a malformed
+        `cliente_documentos` row missing `storage_path` — (d)'s
+        `registrar_serasa_de_crednet` reads it by key, not `.get`): the raw
+        reading survives, `extracao_status` still ends `erro`, and nothing
+        raises out of `aplicar_leitura`."""
+        cid, did, consulta_id = str(uuid4()), str(uuid4()), str(uuid4())
+        client.table("clientes").insert(_cliente(cid)).execute()
+        doc_row = _documento(did, cid)
+        # A consulta this Crednet's CPF matches — reaches `_aplicar_crednet_
+        # a_resultado`, which is where the missing key is read.
+        client.table("certidao_consultas").insert({
+            "id": consulta_id, "org_id": str(ORG_ID), "cliente_id": cid,
+            "tipo_documento": "cpf", "documento": CPF_VALIDO, "excluida_em": None,
+        }).execute()
+        client.table("certidao_resultados").insert({
+            "id": str(uuid4()), "org_id": str(ORG_ID), "consulta_id": consulta_id,
+            "tipo": "serasa", "status": "pendente", "resultado_origem": None,
+        }).execute()
+        del doc_row["storage_path"]
+        client.table("cliente_documentos").insert(doc_row).execute()
+
+        try:
+            result = await _aplicar(client, cid, did, _fields())
+        except Exception as exc:  # noqa: BLE001 - the assertion IS "this never happens"
+            pytest.fail(f"aplicar_leitura raised {exc!r} instead of recording erro")
+
+        assert result == {"status": "erro", "erro": "side_effects_failed"}
+        doc = client.table("cliente_documentos").select("*").eq("id", did).execute().data[0]
+        assert doc["extracao_status"] == "erro"
+        # The RAW reading still landed — (b)/(c) ran fine before the crash.
+        assert doc["extracao_nome"] == "FULANA DE TESTE"
+        assert doc["extracao_crednet"]["protocolo"] == "1234567"
+        cliente = client.table("clientes").select("*").eq("id", cid).execute().data[0]
+        assert cliente["nome_oficial"] == "FULANA DE TESTE"  # (b) D1 apply landed too

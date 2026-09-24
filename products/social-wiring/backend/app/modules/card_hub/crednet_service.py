@@ -159,14 +159,27 @@ def _marcar(client: Any, documento_id: UUID, **campos: Any) -> None:
     _t(client, DOCUMENTOS_TABLE).update(campos).eq("id", str(documento_id)).execute()
 
 
-def _upsert_empresa(
-    client: Any, org_id: UUID, participacao: Any, documento_id: UUID
-) -> dict:
+def _upsert_empresa(client: Any, org_id: UUID, participacao: Any) -> dict:
     """Upsert by `(org_id, cnpj)` — insert-only `razao_social`/group
     provenance, NEVER `situação` (contract §H4: the Crednet closing date is
     known-wrong on case 883; only a Cartão CNPJ earns that field). An
     EXISTING empresa is returned untouched here — always, no field-level
-    exception (`empresas` models no `uf`/address at all)."""
+    exception (`empresas` models no `uf`/address at all).
+
+    🔴 P1/883 live bug (2026-09-24): `dados_documento_id` STAYS `None` here
+    — this function takes no `documento_id` on purpose (it used to, and
+    wrote it here; that was the bug). `empresas.dados_documento_id`'s FK
+    targets `empresa_documentos` (a Cartão CNPJ upload) — writing the
+    caller's `documento_id` (a `cliente_documentos` row, the Crednet PDF)
+    into it 500s on insert (`23503`, the FK has no such row to point at).
+    Per contract §C4(c) a Crednet-created empresa gets
+    `dados_origem='serasa_crednet'` and `dados_documento_id=NULL`; the
+    Crednet provenance lives on `cliente_empresa_participacoes.
+    fonte_documento_id` (set by `_upsert_participacao` below), never here.
+    `dados_service.criar` (`empresas/dados_service.py`) is the ONLY writer
+    allowed to set `dados_documento_id`, and only when
+    `fonte_tabela='empresa_documentos'` — see that module's own D1 policy.
+    """
     cnpj_norm = normalize_cnpj(participacao.cnpj)
     existentes = (
         _t(client, EMPRESAS_TABLE)
@@ -185,7 +198,7 @@ def _upsert_empresa(
         "cnpj": cnpj_norm,
         "razao_social": participacao.razao_social,
         "dados_origem": "serasa_crednet",
-        "dados_documento_id": str(documento_id),
+        "dados_documento_id": None,
         "dados_em": now,
         "dados_confirmado_por": None,
         "dados_confirmado_em": None,
@@ -263,6 +276,24 @@ async def aplicar_leitura(
     ends in a recorded `extracao_status`, matching `extrair_identidade`'s
     own contract (this document is read by the same detached background
     task / sweep recovery).
+
+    🔴 P1/883 live bug (2026-09-24): `extracao_status` used to land `ok`/
+    `sem_dados` in step (a), BEFORE (b)/(c)/(d) ran — so a crash inside any
+    of them (a real one: `_upsert_empresa` writing a FK-violating
+    `dados_documento_id`, §6 of this same pass) propagated out of a
+    BackgroundTask uncaught, and the row was left `ok` forever: the UI
+    showed success, the D3 sweep never re-touches an `ok` row, and the
+    participações/empresas/certidão-9 side effects had silently never run.
+    (b)/(c)/(d) now run inside a try — ANY exception marks `extracao_status
+    ='erro'` with a coded `extracao_erro` and is logged, never raised
+    into the caller's `await`; `ok`/`sem_dados` is stamped only once every
+    side effect below has actually succeeded. A re-run (the D3 sweep, or
+    the `.../extrair` re-run route once status is `erro`) is safe: (b) is
+    D1 (fill-empty/conflict/equal), (c) upserts `empresas` by `(org_id,
+    cnpj)` and `cliente_empresa_participacoes` by `(cliente_id,
+    empresa_id)`, and (d) only ever supersedes an older Crednet-derived
+    resultado — every step is naturally idempotent, so nothing here needed
+    its own "already ran" guard.
     """
     fields = await extractor.extract(
         blob_data, mimetype=doc.get("mime_type"), filename=doc.get("nome_original")
@@ -278,72 +309,95 @@ async def aplicar_leitura(
         )
         return {"status": "erro", "erro": fields.error}
 
-    dados = _serializar_crednet(fields)
-    achou_algo = bool(
-        fields.nome or fields.cpf or fields.nome_mae or fields.data_nascimento
-        or fields.participacoes or fields.ocorrencias_constam() is not None
-    )
-
-    # (a) — before touching the cliente at all.
-    _marcar(
-        client, documento_id,
-        extracao_status="ok" if achou_algo else "sem_dados",
-        extracao_fonte=getattr(fields.source, "value", fields.source),
-        extracao_erro=None,
-        extracao_em=_now(),
-        extracao_nome=fields.nome,
-        extracao_nome_confianca=_confianca_de(fields, "nome_oficial"),
-        extracao_nome_rotulo=_rotulo_de(fields, "nome_oficial"),
-        extracao_cpf=fields.cpf,
-        extracao_cpf_confianca=_confianca_de(fields, "cpf"),
-        extracao_cpf_rotulo=_rotulo_de(fields, "cpf"),
-        extracao_data_nascimento=fields.data_nascimento.isoformat() if fields.data_nascimento else None,
-        extracao_confianca=_confianca_de(fields, "data_nascimento"),
-        extracao_rotulo=_rotulo_de(fields, "data_nascimento"),
-        extracao_nome_mae=fields.nome_mae,
-        extracao_nome_mae_confianca=_confianca_de(fields, "nome_mae"),
-        extracao_nome_mae_rotulo=_rotulo_de(fields, "nome_mae"),
-        extracao_crednet=dados,
-    )
-
-    # (b) — D1 apply onto `clientes`.
-    lidos = _lidos(fields)
-    aplicados, conflitos = identidade_svc.aplicar_campos_ao_cliente(
-        client, org_id, cliente_id, "serasa_crednet", lidos,
-        campos=CAMPOS_CREDNET,
-        documento_id=documento_id,
-        fonte_tabela=DOCUMENTOS_TABLE,
-        fonte_id=documento_id,
-    )
-    if conflitos:
-        await identidade_svc.notificar_conflitos(
-            client, org_id, conflitos, notification_service
+    try:
+        dados = _serializar_crednet(fields)
+        achou_algo = bool(
+            fields.nome or fields.cpf or fields.nome_mae or fields.data_nascimento
+            or fields.participacoes or fields.ocorrencias_constam() is not None
         )
 
-    # (c) — participações -> empresas.
-    empresas_vinculadas: list[str] = []
-    rejeitadas: list[dict] = []
-    for participacao in fields.participacoes:
-        if not participacao.cnpj or not participacao.cnpj_valido:
-            rejeitadas.append(_participacao_dict(participacao))
-            continue
-        empresa = _upsert_empresa(client, org_id, participacao, documento_id)
-        _upsert_participacao(
-            client, org_id, cliente_id, empresa["id"], participacao, documento_id
-        )
-        empresas_vinculadas.append(empresa["id"])
-    if rejeitadas:
+        # (a) — the raw reading, before touching the cliente at all. NOT the
+        # final `extracao_status` (2026-09-24 fix — see the docstring
+        # above): this document is `ok`/`sem_dados` only once (b)/(c)/(d)
+        # below have all actually run without raising.
         _marcar(
             client, documento_id,
-            extracao_crednet={**dados, "participacoes_rejeitadas": rejeitadas},
+            extracao_fonte=getattr(fields.source, "value", fields.source),
+            extracao_erro=None,
+            extracao_em=_now(),
+            extracao_nome=fields.nome,
+            extracao_nome_confianca=_confianca_de(fields, "nome_oficial"),
+            extracao_nome_rotulo=_rotulo_de(fields, "nome_oficial"),
+            extracao_cpf=fields.cpf,
+            extracao_cpf_confianca=_confianca_de(fields, "cpf"),
+            extracao_cpf_rotulo=_rotulo_de(fields, "cpf"),
+            extracao_data_nascimento=(
+                fields.data_nascimento.isoformat() if fields.data_nascimento else None
+            ),
+            extracao_confianca=_confianca_de(fields, "data_nascimento"),
+            extracao_rotulo=_rotulo_de(fields, "data_nascimento"),
+            extracao_nome_mae=fields.nome_mae,
+            extracao_nome_mae_confianca=_confianca_de(fields, "nome_mae"),
+            extracao_nome_mae_rotulo=_rotulo_de(fields, "nome_mae"),
+            extracao_crednet=dados,
         )
 
-    # (d) — certidão 9 (Serasa), the same stored PDF.
-    from app.modules.certidoes import service as certidoes_svc
+        # (b) — D1 apply onto `clientes`.
+        lidos = _lidos(fields)
+        aplicados, conflitos = identidade_svc.aplicar_campos_ao_cliente(
+            client, org_id, cliente_id, "serasa_crednet", lidos,
+            campos=CAMPOS_CREDNET,
+            documento_id=documento_id,
+            fonte_tabela=DOCUMENTOS_TABLE,
+            fonte_id=documento_id,
+        )
+        if conflitos:
+            await identidade_svc.notificar_conflitos(
+                client, org_id, conflitos, notification_service
+            )
 
-    certidoes_atualizadas = certidoes_svc.registrar_serasa_de_crednet(
-        client, org_id, cliente_id, doc, fields
-    )
+        # (c) — participações -> empresas.
+        empresas_vinculadas: list[str] = []
+        rejeitadas: list[dict] = []
+        for participacao in fields.participacoes:
+            if not participacao.cnpj or not participacao.cnpj_valido:
+                rejeitadas.append(_participacao_dict(participacao))
+                continue
+            empresa = _upsert_empresa(client, org_id, participacao)
+            _upsert_participacao(
+                client, org_id, cliente_id, empresa["id"], participacao, documento_id
+            )
+            empresas_vinculadas.append(empresa["id"])
+        if rejeitadas:
+            _marcar(
+                client, documento_id,
+                extracao_crednet={**dados, "participacoes_rejeitadas": rejeitadas},
+            )
+
+        # (d) — certidão 9 (Serasa), the same stored PDF.
+        from app.modules.certidoes import service as certidoes_svc
+
+        certidoes_atualizadas = certidoes_svc.registrar_serasa_de_crednet(
+            client, org_id, cliente_id, doc, fields
+        )
+    except Exception as exc:  # noqa: BLE001 - detached task; record, never raise
+        # `on any exception` (2026-09-24 fix) means literally any — this
+        # wraps the raw-reading write too, not only (b)/(c)/(d): a crash
+        # serializing an otherwise-successful read must not leave the
+        # document silently stuck with no `extracao_status` at all.
+        logger.error(
+            "crednet %s: side effects failed: %s", documento_id, exc, exc_info=True,
+        )
+        _marcar(
+            client, documento_id,
+            extracao_status="erro",
+            extracao_erro=f"side_effects_failed: {exc}",
+            extracao_em=_now(),
+        )
+        return {"status": "erro", "erro": "side_effects_failed"}
+
+    # Every side effect above succeeded — the status is terminal now.
+    _marcar(client, documento_id, extracao_status="ok" if achou_algo else "sem_dados")
 
     return {
         "status": "ok" if achou_algo else "sem_dados",
