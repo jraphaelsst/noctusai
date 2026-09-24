@@ -72,6 +72,7 @@ import { NegociacaoContainer } from "@/components/NegociacaoContainer";
 import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 import { ContratosContainer } from "@/components/ContratosContainer";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
+import { EmpresasSection } from "@/components/card/EmpresasSection";
 import { QualificacaoCompletudePanel } from "@/components/QualificacaoCompletudePanel";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 import { useContratoMutations } from "@/hooks/useContratos";
@@ -801,6 +802,7 @@ export function ClienteDetailModal({ clienteId, open, onClose, acoes }: ClienteD
       }
       renderNegociacao={() => <NegociacaoContainer clienteId={id} />}
       renderFinanciamento={() => <FinanciamentoContainer clienteId={id} />}
+      renderEmpresas={() => id && <EmpresasSection clienteId={id} />}
       renderContratos={({ irPara }) => (
         <ContratosContainer
           clienteId={id as string}

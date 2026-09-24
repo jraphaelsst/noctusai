@@ -15,6 +15,17 @@ describe("CARD_SUBPAGES — registry order", () => {
     expect(conjugeIdx).toBeGreaterThanOrEqual(0);
     expect(vendedorIdx).toBe(conjugeIdx + 1);
   });
+
+  // P0c contract (`project-history/roadmaps/sw-drive-extraction-P0c-
+  // contract.md` §F) — the new Empresas tab.
+  it("registers an Empresas entry directly below Vendedor", () => {
+    const keys = CARD_SUBPAGES.map((s) => s.key);
+    const vendedorIdx = keys.indexOf("vendedor");
+    const empresasIdx = keys.indexOf("empresas");
+    expect(empresasIdx).toBeGreaterThanOrEqual(0);
+    expect(empresasIdx).toBe(vendedorIdx + 1);
+    expect(CARD_SUBPAGES.find((s) => s.key === "empresas")?.label).toBe("Empresas");
+  });
 });
 
 describe("resolverDestino", () => {

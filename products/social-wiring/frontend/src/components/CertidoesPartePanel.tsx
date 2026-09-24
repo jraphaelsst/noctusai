@@ -83,9 +83,11 @@ import {
   useDownloadTranscricaoPdf,
   useMintResultadoUrl,
   useResultadosPorCliente,
+  useResultadosPorEmpresa,
   useResultadosPorParte,
   useUploadResultadoManual,
   useVincularCliente,
+  useVincularEmpresa,
   useVincularParte,
 } from "@/hooks/useCertidoes";
 import type { CertidaoResultado } from "@/hooks/useCertidoes";
@@ -124,42 +126,64 @@ const STATUS_LABELS: Record<string, string> = {
 
 export interface CertidoesPartePanelProps {
   /** `atendimento_partes.id` — any party OTHER than the titular. Exactly one
-   *  of this and `clienteId` must be supplied. */
+   *  of this, `clienteId` and `empresaId` must be supplied. */
   atendimentoParteId?: string;
   /** `atendimentos.cliente_id` — the card's TITULAR (migration 116), who has
    *  no `atendimento_partes` row to key off (migration 073's header).
-   *  Exactly one of this and `atendimentoParteId` must be supplied. */
+   *  Exactly one of this, `atendimentoParteId` and `empresaId` must be
+   *  supplied. */
   clienteId?: string;
+  /** `empresas.id` — a company on the card (P0c contract, `project-history/
+   *  roadmaps/sw-drive-extraction-P0c-contract.md` §D.5/§F). Exactly one of
+   *  this, `atendimentoParteId` and `clienteId` must be supplied. Unlike the
+   *  two person-scoped modes, "Registrar certidões manualmente" ALWAYS
+   *  creates a `tipo_documento: 'cnpj'` consulta in this mode — the type
+   *  selector is hidden — and links it via `vincular-empresa` right after
+   *  creation, since `POST /consultas/manual` has no empresa link param
+   *  (§D.5: "every link goes through `vincular-*`"). */
+  empresaId?: string;
   /** Optional label for the empty-state copy; the panel works without it —
    * a linked consulta's own `nome`/`documento` cover the rest once one exists. */
   nomeParte?: string;
-  /** This person's own CPF/CNPJ, when the caller already has one on file
-   * (`ClienteCardDialog`'s `parte.cliente?.cpf` for a party, `dadosPessoais?.
-   * cpf` for the titular) — prefills "Registrar certidões manualmente" so
-   * the operator does not retype it. Still fully editable; `undefined`
-   * simply leaves the field blank, exactly as before this prop existed. */
+  /** This person's/company's own CPF/CNPJ, when the caller already has one
+   * on file (`ClienteCardDialog`'s `parte.cliente?.cpf` for a party,
+   * `dadosPessoais?.cpf` for the titular, `empresa.cnpj` for a company) —
+   * prefills "Registrar certidões manualmente" so the operator does not
+   * retype it. Still fully editable; `undefined` simply leaves the field
+   * blank, exactly as before this prop existed. */
   documento?: string;
 }
 
 export function CertidoesPartePanel({
   atendimentoParteId,
   clienteId,
+  empresaId,
   documento,
   nomeParte,
 }: CertidoesPartePanelProps) {
-  // See this file's docblock: both hooks always run; only the one matching
-  // the id this instance was given is `enabled`.
+  // See this file's docblock: all three hooks always run; only the one
+  // matching the id this instance was given is `enabled`.
   const resultadosParte = useResultadosPorParte(atendimentoParteId);
   const resultadosCliente = useResultadosPorCliente(clienteId);
-  const resultados = clienteId ? resultadosCliente : resultadosParte;
+  const resultadosEmpresa = useResultadosPorEmpresa(empresaId);
+  const resultados = clienteId
+    ? resultadosCliente
+    : empresaId
+      ? resultadosEmpresa
+      : resultadosParte;
 
   const consultas = useCertidaoConsultas();
   const vincularParte = useVincularParte();
   const vincularCliente = useVincularCliente();
-  const vincular = clienteId ? vincularCliente : vincularParte;
-  const confirmar = useConfirmarResultado({ atendimentoParteId, clienteId });
-  const upload = useUploadResultadoManual({ atendimentoParteId, clienteId });
-  const situacaoCadastral = useAtualizarSituacaoCadastral({ atendimentoParteId, clienteId });
+  const vincularEmpresa = useVincularEmpresa();
+  const vincular = clienteId ? vincularCliente : empresaId ? vincularEmpresa : vincularParte;
+  const confirmar = useConfirmarResultado({ atendimentoParteId, clienteId, empresaId });
+  const upload = useUploadResultadoManual({ atendimentoParteId, clienteId, empresaId });
+  const situacaoCadastral = useAtualizarSituacaoCadastral({
+    atendimentoParteId,
+    clienteId,
+    empresaId,
+  });
   const criarManual = useCriarConsultaManual();
   const mintUrl = useMintResultadoUrl();
   // ABNT formatting project (`projects/abnt-formatting-CONTRACT.md` § 6) —
@@ -207,12 +231,13 @@ export function CertidoesPartePanel({
     return [...porConsulta.values()];
   }, [data]);
 
-  // Neither linkage set — a fully unlinked ad-hoc consulta. `vincular_parte`
-  // and `vincular_cliente` BOTH denormalize `cliente_id` onto the consulta
-  // (migration 107/116), so checking `atendimento_parte_id` alone would
-  // re-offer a consulta already claimed by a titular via `vincular_cliente`.
+  // No linkage set at all — a fully unlinked ad-hoc consulta.
+  // `vincular_parte`/`vincular_cliente`/`vincular_empresa` each denormalize
+  // their own id onto the consulta (migration 107/116/167), so checking
+  // `atendimento_parte_id` alone would re-offer a consulta already claimed
+  // by a titular or a company.
   const consultasDisponiveis = (consultas.data ?? []).filter(
-    (c) => !c.atendimento_parte_id && !c.cliente_id,
+    (c) => !c.atendimento_parte_id && !c.cliente_id && !c.empresa_id,
   );
 
   const handleVincular = () => {
@@ -223,6 +248,8 @@ export function CertidoesPartePanel({
     };
     if (clienteId) {
       vincularCliente.mutate({ consultaId: consultaEscolhida, clienteId }, { onSuccess });
+    } else if (empresaId) {
+      vincularEmpresa.mutate({ consultaId: consultaEscolhida, empresaId }, { onSuccess });
     } else if (atendimentoParteId) {
       vincularParte.mutate(
         { consultaId: consultaEscolhida, atendimentoParteId },
@@ -233,13 +260,39 @@ export function CertidoesPartePanel({
 
   const handleAbrirRegistroManual = () => {
     setManualNome(nomeParte ?? "");
-    setManualTipoDocumento("cpf");
+    // A company's manual registration is always a CNPJ — the type selector
+    // is hidden in this mode (see the dialog below), so this just keeps the
+    // state consistent with what is shown.
+    setManualTipoDocumento(empresaId ? "cnpj" : "cpf");
     setManualDocumento(documento ?? "");
     setManualAberto(true);
   };
 
   const handleRegistrarManual = () => {
     if (!manualNome.trim() || !manualDocumento.trim()) return;
+    // `POST /consultas/manual` has no `empresa_id` link param (P0c contract
+    // §D.5 — "every link goes through `vincular-*`"), unlike the
+    // person-scoped modes which link in the SAME request. So the empresa
+    // path is create-then-link, exactly like "Vincular consulta" above,
+    // just chained instead of two separate operator actions.
+    if (empresaId) {
+      criarManual.mutate(
+        {
+          tipo_documento: "cnpj",
+          documento: manualDocumento.trim(),
+          nome: manualNome.trim(),
+        },
+        {
+          onSuccess: (consulta) => {
+            vincularEmpresa.mutate(
+              { consultaId: consulta.id, empresaId },
+              { onSuccess: () => setManualAberto(false) },
+            );
+          },
+        },
+      );
+      return;
+    }
     criarManual.mutate(
       {
         tipo_documento: manualTipoDocumento,
@@ -644,24 +697,14 @@ export function CertidoesPartePanel({
                 onChange={(e) => setManualNome(e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            {/* A company only ever registers a CNPJ — the type selector is
+                meaningless here (and `POST /consultas/manual` never sees a
+                `tipo_documento` choice in this mode; `handleRegistrarManual`
+                always sends `'cnpj'`), so it is hidden rather than shown
+                disabled with an answer already picked for the operator. */}
+            {empresaId ? (
               <div>
-                <Label>Tipo de documento</Label>
-                <Select
-                  value={manualTipoDocumento}
-                  onValueChange={(v) => setManualTipoDocumento(v as "cpf" | "cnpj")}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cpf">CPF - Pessoa Física</SelectItem>
-                    <SelectItem value="cnpj">CNPJ - Pessoa Jurídica</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="certidoes-parte-manual-documento">Documento</Label>
+                <Label htmlFor="certidoes-parte-manual-documento">CNPJ</Label>
                 <Input
                   id="certidoes-parte-manual-documento"
                   value={manualDocumento}
@@ -669,7 +712,34 @@ export function CertidoesPartePanel({
                   placeholder="Apenas números"
                 />
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Tipo de documento</Label>
+                  <Select
+                    value={manualTipoDocumento}
+                    onValueChange={(v) => setManualTipoDocumento(v as "cpf" | "cnpj")}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cpf">CPF - Pessoa Física</SelectItem>
+                      <SelectItem value="cnpj">CNPJ - Pessoa Jurídica</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="certidoes-parte-manual-documento">Documento</Label>
+                  <Input
+                    id="certidoes-parte-manual-documento"
+                    value={manualDocumento}
+                    onChange={(e) => setManualDocumento(e.target.value)}
+                    placeholder="Apenas números"
+                  />
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setManualAberto(false)}>

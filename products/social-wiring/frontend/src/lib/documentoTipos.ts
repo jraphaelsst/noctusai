@@ -40,6 +40,18 @@ export const TIPO_LABEL_CLIENTE: Record<string, string> = {
   cpf: "CPF",
   certidao_casamento: "Certidão de casamento",
   certidao_nascimento: "Certidão de nascimento",
+  // P0c contract §F — the identity item's own two upload slots
+  // (`IdentidadeChecklistRow`) and the Serasa Crednet checklist item (§H8).
+  cnh: "CNH",
+  cin: "CIN — Carteira de Identidade Nacional",
+  serasa_crednet: "Serasa Crednet",
+};
+
+/** `empresa_documentos` — a company's own file (P0c contract migration
+ *  167, §A.3). Today only `cartao_cnpj`, the CHECK constraint's sole
+ *  accepted value. */
+export const TIPO_LABEL_EMPRESA: Record<string, string> = {
+  cartao_cnpj: "Cartão CNPJ",
 };
 
 /** `imovel_documentos` — the property's own file (migration 075, retention
@@ -66,6 +78,8 @@ export function rotuloTipo(superficie: string, tipo: string): string {
       ? TIPO_LABEL_CLIENTE
       : superficie === "imovel"
         ? TIPO_LABEL_IMOVEL
-        : TIPO_LABEL;
+        : superficie === "empresa"
+          ? TIPO_LABEL_EMPRESA
+          : TIPO_LABEL;
   return map[tipo] ?? tipo;
 }
