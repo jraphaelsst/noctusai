@@ -70,6 +70,8 @@ from pathlib import Path
 
 from settings import LEDGER_ROOT
 
+from ._ledger_store import append_rows, read_ledger_text
+
 from .cache_backend import (
     apply_locking_pragmas,
     cache_dir as _cache_dir,
@@ -97,11 +99,24 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _source_sha(ledger: Path | None = None) -> str:
+def _ledger_text(ledger: Path | None = None) -> str:
+    """S2 dual-read: the dev copy at ``ledger`` ∪ origin/ledgers (2026-09-24,
+    KB § PATTERNS/common/ledger-store.md)."""
     p = ledger if ledger is not None else LEDGER_PATH
-    if not p.exists():
+    text, _store_err = read_ledger_text(LEDGER_PATH.name, p)
+    return text
+
+
+def _source_sha(ledger: Path | None = None) -> str:
+    text = _ledger_text(ledger)
+    if not text:
         return ""
-    return hashlib.sha256(p.read_bytes()).hexdigest()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def source_sha_for_root(root: Path) -> str:
+    """The freshness sha shared with `check_absorptions_cache_freshness`."""
+    return _source_sha(Path(root) / "project-history" / "absorptions.ndjson")
 
 
 def _connect(cache: Path | None = None) -> sqlite3.Connection:
@@ -227,9 +242,11 @@ def log_entry(
         if pilot is not None:
             entry["pilot"] = pilot
 
-    LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with LEDGER_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    # Since 2026-09-24 the ledger lives on the orphan origin/ledgers branch
+    # (`_ledger_store`, KB § PATTERNS/common/ledger-store.md); reads are the
+    # S2 dual-read (origin/ledgers ∪ the legacy dev copy).
+    append_rows(LEDGER_PATH.name, LEDGER_PATH, [entry],
+                message=f"absorption {kind} {slug}")
 
     # 3-leg keeper-mirror contract: EAGER mirror refresh at the mutation point.
     # Zero-OpenAI, source_sha-guarded. Best-effort (a failure is LOGGED; the
@@ -273,27 +290,26 @@ def refresh(force: bool = False, ledger: Path | None = None, cache: Path | None 
     lifecycle_latest: dict[str, dict] = {}   # slug → latest lifecycle event
     capability_latest: dict[tuple, dict] = {}  # (slug, capability) → latest capability event
 
-    if lp.exists():
-        for line in lp.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            k = e.get("kind")
-            slug = e.get("slug", "")
-            if not slug:
-                continue
-            if k == "lifecycle":
-                # latest-event-wins: since ndjson is append-only the last
-                # entry with the given slug is the "current" state.
-                lifecycle_latest[slug] = e
-            elif k == "capability":
-                cap = e.get("capability", "")
-                if cap:
-                    capability_latest[(slug, cap)] = e
+    for line in _ledger_text(lp).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        k = e.get("kind")
+        slug = e.get("slug", "")
+        if not slug:
+            continue
+        if k == "lifecycle":
+            # latest-event-wins: since ndjson is append-only the last
+            # entry with the given slug is the "current" state.
+            lifecycle_latest[slug] = e
+        elif k == "capability":
+            cap = e.get("capability", "")
+            if cap:
+                capability_latest[(slug, cap)] = e
 
     now = _now_iso()
     conn.execute("DELETE FROM absorptions")

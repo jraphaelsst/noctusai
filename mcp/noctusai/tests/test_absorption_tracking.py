@@ -402,3 +402,22 @@ class TestOrbitySeeds:
             "multi-channel-notifications",
             "br-payment-fiscal",
         }
+
+
+class TestLedgerStoreRealMode:
+    """2026-09-24: absorption events publish to origin/ledgers; the cache and
+    its keeper hash the dual-read."""
+
+    def test_log_publishes_and_status_reads_it(self, ledger_repo, tmp_path, monkeypatch):
+        bare, clone, show = ledger_repo
+        dev_copy = clone / "project-history" / "absorptions.ndjson"
+        monkeypatch.setattr(ab, "LEDGER_PATH", dev_copy)
+        monkeypatch.setattr(ab, "CACHE_PATH", tmp_path / "c" / "absorptions.sqlite")
+        monkeypatch.setattr(ab, "CACHE_DIR", tmp_path / "c")
+        r = ab.log_entry(slug="demo", kind="lifecycle", stage="cloned")
+        assert r["ok"], r
+        assert not dev_copy.exists()
+        assert json.loads(show("absorptions.ndjson"))["slug"] == "demo"
+        st = ab.status(slug="demo")
+        assert st["absorptions"][0]["stage"] == "cloned"
+        assert ab.source_sha_for_root(clone) == ab._source_sha()

@@ -16174,8 +16174,11 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
-    ledger = root / "project-history" / "absorptions.ndjson"
-    if not ledger.exists():
+    # Same sha `absorption_tracking.refresh` stamps — the dual-read of the dev
+    # copy ∪ origin/ledgers (2026-09-24, KB § PATTERNS/common/ledger-store.md).
+    from tools.noctus.dev.absorption_tracking import source_sha_for_root
+    src_sha = source_sha_for_root(root)
+    if not src_sha:
         return issues  # nothing to mirror yet; fresh tree
     cache = _resolve_cache_path("absorptions", root)
     cache_file_label = _cache_label(cache, root)
@@ -16191,7 +16194,6 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
             "symbol": "absorptions-cache-missing",
         })
         return issues
-    src_sha = hashlib.sha256(ledger.read_bytes()).hexdigest()
     try:
         conn = sqlite3.connect(str(cache))
         _apply_cache_lock(conn)
