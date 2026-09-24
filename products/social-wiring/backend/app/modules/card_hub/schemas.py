@@ -638,3 +638,17 @@ class TermosNegocioPutBody(StrictHttpModel):
         Literal["vendedores", "compradores", "partes"]
     ] = None
     corretagem_num_parcelas: Optional[int] = None
+
+
+class EmpresaManualCreateBody(StrictHttpModel):
+    """`POST /{cliente_id}/empresas` (P0c contract §D2) — a manual link.
+
+    `participante_cliente_id` must be a participant on THIS card (the
+    titular or an `atendimento_partes` row) — validated server-side in
+    `empresas_service.adicionar_manual`, never trusted from the body alone.
+    """
+
+    cnpj: str = Field(..., min_length=11, max_length=18)
+    participante_cliente_id: UUID
+    razao_social: Optional[str] = None
+    participacao_pct: Optional[Decimal] = None

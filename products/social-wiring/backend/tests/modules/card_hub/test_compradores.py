@@ -319,7 +319,11 @@ class TestEachCompradorGetsTheSameChecklist:
         assert [i["key"] for i in do_titular["items"]] == [
             i["key"] for i in da_esposa["items"]
         ]
-        assert da_esposa["total"] == len(checklist_svc.ITENS)
+        # P0c contract §H8: `serasa_crednet` is scoped to certificandos —
+        # neither party here is one (no `atendimento_negociacao_parcelas`
+        # permuta row is seeded), so it is dropped from BOTH responses,
+        # consistently — hence the len() being one short of `ITENS` itself.
+        assert da_esposa["total"] == len(checklist_svc.ITENS) - 1
 
     def test_her_documents_are_hers_not_the_titulars(self, client, scoped):
         """Separate `cliente_id`, so the existing per-client scoping already

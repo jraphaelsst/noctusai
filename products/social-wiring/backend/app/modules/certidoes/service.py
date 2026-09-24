@@ -51,6 +51,7 @@ from noctusai_lib.integrations.documents.abnt import (
     render_abnt_pdf,
     render_word_html,
 )
+from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.formatting import (
     FormatRange,
     FormattedDocument,
@@ -391,6 +392,24 @@ def is_storage_key(value: Optional[str]) -> bool:
     return bool(value) and "://" not in value
 
 
+def _is_certidoes_storage_key(value: str) -> bool:
+    """🔴 REQUIRED SAFETY FIX (P0c contract §C5). `BUCKET` is shared across
+    `card_hub` (`{org_id}/clientes/...`), `imovel_hub` (`{org_id}/imoveis/
+    ...`), `empresas` (`{org_id}/empresas/...`) and this module
+    (`{org_id}/certidoes/...` — `storage_key`, `PREFIXO`). Since migration
+    167, `certidao_resultados.arquivo_url` can ALSO hold a `cliente_
+    documentos.storage_path` verbatim (the Crednet -> certidão 9 provenance
+    — `registrar_serasa_de_crednet` deliberately reuses the SAME stored
+    file rather than copying it). Without this check, purging (or soft-
+    deleting) one CPF consulta would delete the cliente's Crednet upload out
+    from under `cliente_documentos` — a document this consulta does not
+    own and did not create. Only a key whose SECOND path segment is this
+    module's own `PREFIXO` is ever eligible for deletion here.
+    """
+    parts = value.split("/", 2)
+    return len(parts) >= 2 and parts[1] == PREFIXO
+
+
 async def _persist_pdf(
     pdf_bytes: bytes,
     storage: StorageBackend,
@@ -483,7 +502,24 @@ async def delete_storage_files(
         r["arquivo_url"]
         for r in resultados
         if is_storage_key(r.get("arquivo_url"))
+        and _is_certidoes_storage_key(r["arquivo_url"])
     ]
+    estrangeiras = [
+        r["arquivo_url"]
+        for r in resultados
+        if is_storage_key(r.get("arquivo_url"))
+        and not _is_certidoes_storage_key(r["arquivo_url"])
+    ]
+    if estrangeiras:
+        # Never silently skipped — a foreign key here means a resultado
+        # points at a document this module does not own (the Crednet ->
+        # certidão 9 case). It is left alone on purpose; logged so the skip
+        # is visible, not mysterious.
+        logger.info(
+            "certidoes: skipping %d non-certidões storage key(s) — owned by "
+            "another surface (e.g. a Crednet cliente_documentos upload): %s",
+            len(estrangeiras), estrangeiras,
+        )
     if not keys:
         logger.info("certidoes: no stored files to delete for this consulta")
         return 0
@@ -2675,6 +2711,26 @@ def certidoes_por_cliente(db, org_id, cliente_id: str) -> list[dict]:
     return _resultados_das_consultas(db, org_id, consultas)
 
 
+def certidoes_por_empresa(db, org_id, empresa_id: str) -> list[dict]:
+    """Every certidão result across every CNPJ consulta linked to an
+    `empresas` row — `certidoes_por_cliente`'s sibling for an empresa
+    (P0c contract §D5, mirroring `service.py:2651-2676`). `GET /api/
+    certidoes/empresas/{empresa_id}/resultados`; `app.modules.card_hub.
+    contrato_gerador.carregador` (S2b) calls this by this exact name to
+    build `DadosContrato.empresas[].certidoes`.
+    """
+    # postgrest-unbounded-ok: a handful of consultas per empresa, not 1 000.
+    consultas = (
+        db.table(CONSULTAS)
+        .select(_CONSULTA_COLUNAS_RESUMO)
+        .eq("org_id", str(org_id))
+        .eq("empresa_id", str(empresa_id))
+        .is_("excluida_em", "null")
+        .execute()
+    ).data or []
+    return _resultados_das_consultas(db, org_id, consultas)
+
+
 def atualizar_situacao_cadastral(db, org_id, consulta_id: str, campos: dict) -> Optional[dict]:
     """A human's manual entry of the CNPJ/CPF's registration status
     (migration 116) — `situacao_cadastral` / `data_situacao` on the
@@ -2903,6 +2959,200 @@ def renderizar_transcricao_pdf(nome_display: str, texto: str, formatacao_json) -
         title=titulo,
     )
     return render_abnt_pdf(doc)
+
+
+# --------------- Serasa Crednet -> certidão 9 (P0c contract §C5/§E7) ---------------
+#
+# `registrar_serasa_de_crednet` is `card_hub.crednet_service.aplicar_leitura`'s
+# step (d) — the SAME stored Crednet PDF that filled the cliente's identity
+# fields ALSO fills the 'serasa' resultado of every matching CPF consulta,
+# per owner decision D1/H5: manual or already-confirmed rows are never
+# overwritten, and a Crednet upload with no consulta yet DEFERS rather than
+# creating one — `aplicar_crednet_pendente` is that deferred half, called
+# once a consulta links to this cliente (`vincular-parte`/`vincular-cliente`/
+# `criar_consulta_manual`'s inline fan-out).
+#
+# 🔴 `leitura` IS DUCK-TYPED, NEVER IMPORTED. `noctusai_lib.integrations.
+# documents.serasa_crednet.CrednetFields` is S1's deliverable (a sibling
+# worktree/branch at the time this was written) — this module accepts
+# anything with `.cpf` / `.protocolo` / `.consulta_em` / `.ocorrencias_
+# constam()`, so it never depends on that import existing. The full reading
+# ALSO travels stored (`cliente_documentos.extracao_crednet`, JSON) — that
+# JSON is what `aplicar_crednet_pendente` reconstructs a minimal reader from
+# (`_LeituraCrednetArmazenada`), independently of whichever dataclass wrote
+# it.
+#
+# NOC-REMEDIATE[crednet-lgpd-delete-cascade] — 2026-09-24. An LGPD delete of
+# the Crednet `cliente_documentos` row FK-nulls `certidao_resultados.
+# fonte_cliente_documento_id` (migration 167's `ON DELETE SET NULL`), but
+# `arquivo_url` — a verbatim copy of the SAME now-gone storage path (§C5:
+# "same bucket") — is left dangling, pointing at an object that no longer
+# exists. Owner decision H5: deferred, not fixed in this slice. Destination:
+# `project-history/roadmaps/sw-drive-extraction-2026-09.md` P1.
+
+
+@dataclass(frozen=True)
+class _LeituraCrednetArmazenada:
+    """The 4 facts `_aplicar_crednet_a_resultado` needs, reconstructed from
+    `cliente_documentos.extracao_crednet`'s stored JSON — never re-derived
+    from the nested ocorrências, which `crednet_service._serializar_crednet`
+    already reduced to `ocorrencias_constam` at write time."""
+
+    cpf: Optional[str]
+    protocolo: Optional[str]
+    consulta_em: Optional[datetime]
+    _constam: Optional[bool]
+
+    def ocorrencias_constam(self) -> Optional[bool]:
+        return self._constam
+
+
+def _crednet_leitura_de_jsonb(dados: dict) -> _LeituraCrednetArmazenada:
+    consulta_em_raw = dados.get("consulta_em")
+    consulta_em = datetime.fromisoformat(consulta_em_raw) if consulta_em_raw else None
+    return _LeituraCrednetArmazenada(
+        cpf=dados.get("cpf"),
+        protocolo=dados.get("protocolo"),
+        consulta_em=consulta_em,
+        _constam=dados.get("ocorrencias_constam"),
+    )
+
+
+def _aplicar_crednet_a_resultado(
+    db, org_id, consulta_id: str, doc: dict, leitura: Any
+) -> bool:
+    """Fill (or supersede) ONE consulta's `serasa` resultado from a Crednet
+    reading. Returns whether it actually wrote anything.
+
+    "Empty" (never touched): `status == 'pendente'` and `resultado_origem`
+    is still NULL — the placeholder `_fan_out_tipos_manuais`/`criar_consulta
+    _manual` created. Otherwise this only supersedes a PRIOR Crednet-derived
+    reading (`resultado_origem == 'ia'` AND a non-null `fonte_cliente_
+    documento_id`) that is OLDER than this one — never a manual row, never
+    an already-confirmed row, per §H5.
+    """
+    rows = (
+        db.table(RESULTADOS)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq("consulta_id", consulta_id)
+        .eq("tipo", "serasa")
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return False
+    resultado = rows[0]
+    novo_em = leitura.consulta_em.date().isoformat() if leitura.consulta_em else None
+
+    vazio = resultado.get("status") == "pendente" and resultado.get("resultado_origem") is None
+    if not vazio:
+        if resultado.get("confirmado_em") or resultado.get("resultado_origem") == "manual":
+            return False
+        if (
+            resultado.get("resultado_origem") != "ia"
+            or not resultado.get("fonte_cliente_documento_id")
+        ):
+            return False
+        anterior_em = resultado.get("emitida_em")
+        if not novo_em or (anterior_em and anterior_em >= novo_em):
+            return False
+
+    constam = leitura.ocorrencias_constam()
+    patch = {
+        "arquivo_url": doc["storage_path"],
+        "arquivo_nome": "serasa_crednet.pdf",
+        "status": "sucesso",
+        "numero": leitura.protocolo,
+        "emitida_em": novo_em,
+        "resultado": (
+            "negativa" if constam is False else ("positiva" if constam is True else None)
+        ),
+        "resultado_origem": "ia",
+        "fonte_cliente_documento_id": str(doc["id"]),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.table(RESULTADOS).update(patch).eq("id", resultado["id"]).execute()
+    return True
+
+
+def registrar_serasa_de_crednet(db, org_id, cliente_id: str, doc: dict, leitura: Any) -> int:
+    """§C5 step (d): fill the `serasa` resultado of every CPF consulta this
+    cliente's Crednet CPF matches. `doc` is the `cliente_documentos` row the
+    reading came off (`storage_path`/`id` are what this needs of it).
+
+    Targets: every non-excluded `tipo_documento='cpf'` consulta belonging to
+    `cliente_id` whose normalized `documento` equals the Crednet's normalized
+    CPF — the same person may be investigated under a slightly differently
+    punctuated CPF, so comparison is digit-only, not string-equal.
+
+    Returns the number of resultados this call actually filled/superseded.
+    """
+    cpf_norm = only_digits(leitura.cpf) if leitura.cpf else None
+    if not cpf_norm:
+        return 0
+    consultas = (
+        db.table(CONSULTAS)
+        .select("id, documento")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("tipo_documento", "cpf")
+        .is_("excluida_em", "null")
+        .execute()
+    ).data or []
+    alvo = [c for c in consultas if only_digits(c.get("documento") or "") == cpf_norm]
+    if not alvo:
+        return 0
+    return sum(
+        1
+        for consulta in alvo
+        if _aplicar_crednet_a_resultado(db, org_id, consulta["id"], doc, leitura)
+    )
+
+
+def aplicar_crednet_pendente(db, org_id, consulta: dict) -> bool:
+    """§C5's deferred half: a CPF consulta was just LINKED (`vincular-parte`
+    / `vincular-cliente` / `criar_consulta_manual`'s inline fan-out) and may
+    already have a Crednet reading on file for the same person — apply it
+    retroactively rather than leaving the placeholder `serasa` resultado
+    waiting for a re-upload that already happened.
+
+    `consulta` is the just-linked row (needs `id`, `tipo_documento`,
+    `cliente_id`, `documento`). Never creates a consulta — see the module
+    docstring's "no consulta yet ⇒ defer" contract; this is the OTHER side
+    of that deferral, called once one exists.
+    """
+    if consulta.get("tipo_documento") != "cpf" or not consulta.get("cliente_id"):
+        return False
+    cpf_norm = only_digits(consulta.get("documento") or "")
+    if not cpf_norm:
+        return False
+    docs = (
+        db.table("cliente_documentos")
+        .select("id, storage_path, extracao_crednet")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(consulta["cliente_id"]))
+        .eq("tipo_documento", "serasa_crednet")
+        .eq("extracao_status", "ok")
+        .is_("deleted_at", "null")
+        .execute()
+    ).data or []
+    candidatos = [
+        d for d in docs
+        if d.get("extracao_crednet")
+        and only_digits((d["extracao_crednet"] or {}).get("cpf") or "") == cpf_norm
+    ]
+    if not candidatos:
+        return False
+    # The most recent Crednet reading for this CPF — same "newer supersedes
+    # older" direction `_aplicar_crednet_a_resultado` enforces.
+    candidatos.sort(
+        key=lambda d: (d.get("extracao_crednet") or {}).get("consulta_em") or "",
+        reverse=True,
+    )
+    doc = candidatos[0]
+    leitura = _crednet_leitura_de_jsonb(doc["extracao_crednet"])
+    return _aplicar_crednet_a_resultado(db, org_id, consulta["id"], doc, leitura)
 
 
 __all__ = [

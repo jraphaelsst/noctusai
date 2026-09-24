@@ -234,7 +234,10 @@ class TestFieldsTickThemselves:
         items = _items(client, cid)
         assert [items[k]["concluido"] for k in
                 ("nome_completo", "email", "data_nascimento", "genero")] == [True] * 4
-        assert all(items[k]["origem"] == "derivado" for k in svc.ITEM_KEYS)
+        # P0c contract §H8: `serasa_crednet` is dropped from the response
+        # entirely for a cliente with no resolvable atendimento (this
+        # fixture wires none) — `items` therefore never has that key.
+        assert all(items[k]["origem"] == "derivado" for k in svc.ITEM_KEYS if k in items)
         assert scoped.table("cliente_documento_checklist").select("*").execute().data == []
 
     def test_patching_the_cliente_ticks_the_item(self, client, scoped):

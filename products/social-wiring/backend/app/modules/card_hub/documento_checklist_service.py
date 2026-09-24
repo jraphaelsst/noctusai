@@ -160,6 +160,17 @@ ITENS: tuple[dict[str, Any], ...] = (
      "documentos": ("cin", "cnh"),
      "documentos_legado": ("rg", "cpf"),
      "dica": "Basta um dos dois (CIN ou CNH), desde que dele se leiam o RG e o CPF."},
+    # P0c contract §F/§H8 — scoped to certificandos only (vendedores, their
+    # cônjuges, and compradores/cônjuges when the deal `tem_permuta`); see
+    # `_certificando` and `listar`'s own filtering. `documento`+`documentos`
+    # both name `serasa_crednet`: `documento` is `derivar`'s ordinary
+    # "a file of this type exists" satisfaction (the same mechanism every
+    # plain document-backed item already uses), `documentos` is the upload
+    # slot `_extras_do_item`/`_identidade_slots` render — a single-entry
+    # tuple, generalizing that helper past its identity-only origin (it
+    # already keys purely off `item["documentos"]`, no special-casing).
+    {"key": "serasa_crednet", "label": "Serasa Crednet",
+     "documento": "serasa_crednet", "documentos": ("serasa_crednet",)},
 )
 
 ITEM_KEYS = tuple(item["key"] for item in ITENS)
@@ -192,11 +203,15 @@ ITEM_KEYS = tuple(item["key"] for item in ITENS)
 #: orphaned by the collapse — a per-number override does not say anything
 #: about the pair, so carrying it onto `identidade` would invent a decision
 #: nobody made.
+#: Upload-slot labels — no longer identity-only (`_identidade_slots`/
+#: `_extras_do_item` are generic over any item's `documentos` tuple; P0c
+#: contract §F widened `_extras_do_item` past the identity item's origin).
 _IDENTIDADE_ROTULOS: dict[str, str] = {
     "cin": "CIN",
     "cnh": "CNH",
     "rg": "Arquivado como RG",
     "cpf": "Arquivado como CPF",
+    "serasa_crednet": "Serasa Crednet",
 }
 
 #: Label per identity column, for the "which one is missing" read-out.
@@ -374,19 +389,23 @@ def _identidade_slots(item: dict, documentos: dict[str, dict]) -> list[dict]:
 def _extras_do_item(
     item: dict, cliente: Optional[dict], documentos: dict[str, dict]
 ) -> dict:
-    """Additive keys for an ALL-of item: its slots, what is missing, the hint.
+    """Additive keys: an ALL-of item's slots/missing-fields/hint, OR (P0c
+    contract §F) a plain document item's upload slots alone.
 
-    Empty for every other item, so their line shape is unchanged.
+    Empty for every item declaring neither `campos_todos` nor `documentos`,
+    so their line shape is unchanged.
     """
-    if not item.get("campos_todos"):
-        return {}
-    faltando = campos_faltando(cliente, item["key"])
-    return {
-        "faltando": faltando,
-        "faltando_rotulos": [_IDENTIDADE_CAMPO_ROTULOS.get(c, c) for c in faltando],
-        "documentos": _identidade_slots(item, documentos),
-        "dica": item.get("dica"),
-    }
+    if item.get("campos_todos"):
+        faltando = campos_faltando(cliente, item["key"])
+        return {
+            "faltando": faltando,
+            "faltando_rotulos": [_IDENTIDADE_CAMPO_ROTULOS.get(c, c) for c in faltando],
+            "documentos": _identidade_slots(item, documentos),
+            "dica": item.get("dica"),
+        }
+    if item.get("documentos"):
+        return {"documentos": _identidade_slots(item, documentos)}
+    return {}
 
 
 def valor_de(cliente: Optional[dict], item_key: str) -> Any:
@@ -522,11 +541,106 @@ def cliente_para_derivacao(
     return _cliente_row(client, org_id, cliente_id)
 
 
+#: P0c contract §H8 — the Serasa Crednet item is scoped to certificandos
+#: only (vendedores, their cônjuges, and compradores/cônjuges when the deal
+#: `tem_permuta`), hidden for everyone else.
+_ITEM_KEY_SERASA_CREDNET = "serasa_crednet"
+
+
+def _tem_permuta(client: Any, org_id: UUID, atendimento_id: str) -> bool:
+    """A direct, lightweight read of `atendimento_negociacao_parcelas`
+    (`card_hub.negociacao_estruturada_service`'s own table) rather than
+    `contrato_gerador.dados.parcela_permuta`, which needs the WHOLE
+    `DadosContrato` graph loaded — too heavy for a checklist read. Same
+    reasoning/duplication note as `card_hub.empresas_service._tem_permuta`
+    (this dispatch's own `scoped-improvement:` footer names both as a
+    follow-up to lift onto one shared helper)."""
+    rows = (
+        _t(client, "atendimento_negociacao_parcelas")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", atendimento_id)
+        .eq("tipo", "permuta")
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows)
+
+
+def _e_certificando(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
+    """Is this cliente CURRENTLY a certificando on their resolvable
+    atendimento? No/ambiguous atendimento -> False (hidden) — the same
+    "nothing to show" posture `empresas_service.listar` takes for its own
+    empty case."""
+    from app.modules.card_hub.services import AmbiguousAtendimento, resolve_atendimento_id
+
+    try:
+        atendimento_id = resolve_atendimento_id(client, org_id, cliente_id)
+    except AmbiguousAtendimento:
+        return False
+    rows = (
+        _t(client, "atendimentos")
+        .select("id, cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("id", atendimento_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return False
+    atendimento = rows[0]
+    if str(atendimento["cliente_id"]) == str(cliente_id):
+        # The titular — always a comprador (migration 073's header).
+        return _tem_permuta(client, org_id, atendimento_id)
+
+    partes = (
+        _t(client, "atendimento_partes")
+        .select("lado")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", atendimento_id)
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []
+    if partes:
+        lado = partes[0].get("lado") or "comprador"
+        if lado == "vendedor":
+            return True
+        return _tem_permuta(client, org_id, atendimento_id)
+
+    # Not the titular, not a direct parte — a vendedor's registered spouse
+    # counts too, even without their own `atendimento_partes` row.
+    vendedores = (
+        _t(client, "atendimento_partes")
+        .select("cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", atendimento_id)
+        .eq("lado", "vendedor")
+        .execute()
+    ).data or []
+    if vendedores:
+        conjuge = (
+            _t(client, CLIENTES_TABLE)
+            .select("id")
+            .eq("org_id", str(org_id))
+            .eq("conjuge_cliente_id", str(cliente_id))
+            .in_("id", [r["cliente_id"] for r in vendedores])
+            .limit(1)
+            .execute()
+        ).data or []
+        if conjuge:
+            return True
+    return False
+
+
 def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """Every canonical item, derived, with any human override applied.
 
     Always returns every item, in `ITENS` order, whether or not an override row
     exists — the list is the contract, the rows are just opinions about it.
+    The one exception is `serasa_crednet`, scoped to certificandos (§H8) —
+    it is DROPPED from the response entirely for everyone else, not merely
+    ticked/unticked, so a non-certificando's card never asks a document it
+    does not need.
     """
     ensure_cliente(client, org_id, cliente_id)
 
@@ -543,6 +657,12 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     )
     by_key = {r["item_key"]: r for r in (res.data or [])}
 
+    itens_visiveis = ITENS
+    if not _e_certificando(client, org_id, cliente_id):
+        itens_visiveis = tuple(
+            i for i in ITENS if i["key"] != _ITEM_KEY_SERASA_CREDNET
+        )
+
     sugestoes = identidade_svc.sugestoes_pendentes(client, org_id, cliente_id)
     itens = [
         _out(
@@ -553,7 +673,7 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             docs_svc.documento_resumo(documentos.get(item.get("documento", ""))),
             _extras_do_item(item, cliente, documentos),
         )
-        for item in ITENS
+        for item in itens_visiveis
     ]
     # Extracted fields that are NOT checklist items — today just
     # `nome_oficial`. They ride on this response rather than getting an

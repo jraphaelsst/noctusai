@@ -47,6 +47,7 @@ from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as doc_checklist_svc
 from app.modules.card_hub import documentos_service as docs_svc
+from app.modules.card_hub import empresas_service as empresas_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub import negociacao_service as negociacao_svc
@@ -72,6 +73,7 @@ from app.modules.card_hub.deps import (
 from app.modules.card_hub.schemas import (
     CompradorCreateBody,
     ContratoPatchBody,
+    EmpresaManualCreateBody,
     FinanciamentoPatchBody,
     NegociacaoDefaultsPatchBody,
     NegociacaoPatchBody,
@@ -909,6 +911,43 @@ async def delete_comprador_route(
 ):
     _user, org_id = _auth_parts(auth)
     compradores_svc.remover(client, org_id, cliente_id, parte_id)
+
+
+# ─── Empresas (migration 167, P0c) ────────────────────────────────────────
+#
+# The company-graph panel: which PJs this card's people (titular + both
+# sides' partes + every vendedor's registered spouse) are tied to, and
+# whether the deal needs certidões for them. `empresa_documentos`/Cartão
+# CNPJ upload lifecycle lives under `/api/empresas/*` instead
+# (`app.modules.empresas.router`) — this pair only lists/links.
+
+
+@router.get("/{cliente_id}/empresas")
+async def list_empresas_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return empresas_svc.listar(client, org_id, cliente_id)
+
+
+@router.post("/{cliente_id}/empresas", status_code=201)
+async def create_empresa_route(
+    cliente_id: UUID,
+    body: EmpresaManualCreateBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return empresas_svc.adicionar_manual(
+        client, org_id, cliente_id,
+        cnpj=body.cnpj,
+        participante_cliente_id=body.participante_cliente_id,
+        razao_social=body.razao_social,
+        participacao_pct=body.participacao_pct,
+        confirmado_por=getattr(user, "id", None),
+    )
 
 
 # ─── Negociação (migration 077) ─────────────────────────────────────────

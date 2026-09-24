@@ -35,6 +35,8 @@ class Entrada(str, Enum):
     PARTE_PAINEL_UPLOAD = "parte_painel_upload"
     #: Uploaded by an operator on the imovel_hub `/imoveis` page.
     IMOVEL_PAGE_UPLOAD = "imovel_page_upload"
+    #: Uploaded by an operator on an empresa's card (Cartão CNPJ).
+    EMPRESA_CARD_UPLOAD = "empresa_card_upload"
     #: Uploaded through the dedicated `/matriculas` module.
     MATRICULAS = "matriculas"
     #: Mirrored from an external property-listing/"vista" source, not a
@@ -48,7 +50,7 @@ class Entrada(str, Enum):
     DERIVADO = "derivado"
 
 
-Dominio = Literal["cliente", "imovel"]
+Dominio = Literal["cliente", "imovel", "empresa"]
 
 
 @dataclass(frozen=True)
@@ -251,6 +253,43 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         origens=_ORIGENS_ESTRUTURA,
         estrutura_extraivel=True,
     ),
+    # ─── P0c: Serasa Crednet (cliente_documentos) / Cartão CNPJ (empresa_
+    # documentos) — contract `sw-drive-extraction-P0c-contract.md` §B/§C ────
+    Fonte(
+        tipo_documento="serasa_crednet",
+        dominio="cliente",
+        entradas=_ENTRADAS_CLIENTE_UPLOAD,
+        extrator=(
+            "noctusai_lib.integrations.documents.serasa_crednet"
+            ".make_crednet_extractor"
+        ),
+        origens=frozenset({"serasa_crednet"}),
+        # Crednet also reads `nome_mae` — a field no OTHER cliente Fonte
+        # claims (§A.6/§A.7). `participacoes`/`ocorrencias` are not
+        # `clientes` columns at all (they land on `empresas` and on the
+        # certidão 9 resultado respectively, via `crednet_service.
+        # aplicar_leitura`) — the field-provenance map only walks `clientes`
+        # columns, so they are deliberately absent here.
+        campos=_CAMPOS_IDENTIDADE_BASE | {"nome_mae"},
+        # The vision rung must read every page — participações routinely
+        # sit on page 2 (§B: "max_pages=None reads every page").
+        leitura_integral=True,
+    ),
+    Fonte(
+        tipo_documento="cartao_cnpj",
+        dominio="empresa",
+        entradas=frozenset({Entrada.EMPRESA_CARD_UPLOAD}),
+        extrator=(
+            "noctusai_lib.integrations.documents.cartao_cnpj"
+            ".make_cartao_cnpj_extractor"
+        ),
+        origens=frozenset({"cartao_cnpj"}),
+        campos=frozenset(
+            {"cnpj", "razao_social", "nome_fantasia", "natureza_juridica",
+             "data_abertura", "situacao_cadastral", "data_situacao_cadastral",
+             "motivo_situacao", "uf"}
+        ),
+    ),
 )
 
 #: Keyed like `contrato_gerador.validacao_extracao._POR_ENTIDADE_CAMPO` —
@@ -273,6 +312,8 @@ ROTULOS_TIPO_DOCUMENTO: dict[str, str] = {
     "guia_iptu": "Guia do IPTU",
     "cnd_iptu": "CND de IPTU",
     "cnd_condominio": "CND de condomínio",
+    "serasa_crednet": "Serasa Crednet",
+    "cartao_cnpj": "Cartão CNPJ",
 }
 
 #: The table a `<campo>_documento_id` resolved into, mapped onto the
@@ -287,6 +328,7 @@ TABELA_ENTRADA: dict[str, Entrada] = {
     "cliente_documentos": Entrada.CLIENTE_CARD_UPLOAD,
     "imovel_documentos": Entrada.IMOVEL_PAGE_UPLOAD,
     "matricula_extracoes": Entrada.MATRICULAS,
+    "empresa_documentos": Entrada.EMPRESA_CARD_UPLOAD,
 }
 
 
@@ -316,7 +358,10 @@ MANUAL_APENAS: frozenset[str] = frozenset(
         "financiamento", "intermediarios_qualificacao", "intermediarios_comissao",
         "org_dados_cadastrais", "testemunhas", "parte_email",
         "assinatura_data", "contrato_modelo", "matricula_atos_selecionados",
-        "permuta_ativo_endereco", "certidao_pj_situacao_cadastral",
+        "permuta_ativo_endereco",
+        # 🔴 `certidao_pj_situacao_cadastral` DROPPED (P0c contract §C1): a
+        # company's situação cadastral is now machine-sourced off the Cartão
+        # CNPJ (`Fonte("cartao_cnpj", ...)` above), not manual-only.
         "parte_papel_no_card", "politica_constantes",
     }
 )
@@ -345,5 +390,19 @@ FORA_DO_ESCOPO_S1: frozenset[tuple[str, str]] = frozenset(
         ("imovel", "onus_fonte"),
         ("certidao", "certidao"),
         ("ato_detalhe", "ultima_transferencia"),
+        # P0c contract §C1/§E — `("empresa", "dados")` is S2b's GROUP-level
+        # `validacao_extracao.REGISTRO` entry for the whole `empresas` D1
+        # provenance quintet (`dados_origem/_documento_id/_em/_confirmado_
+        # por/_confirmado_em`). `linhagem.CANONICOS_REGISTRO`'s auto-derived
+        # translation (`_canonicos_do_registro`) only walks `vx.CAMPOS_
+        # CLIENTE` + `vx.CAMPOS_IMOVEL`'s `numero_matricula` special case —
+        # extending it for a THIRD entity is a `linhagem.py`/`validacao_
+        # extracao.py` change (S2b's files, not this slice's), so this is
+        # named here rather than left silently uncovered. The `Fonte`
+        # ("cartao_cnpj", dominio="empresa", ...) above DOES claim the real
+        # per-field canonical names (`razao_social`, `situacao_cadastral`,
+        # ...) — only the GROUP pseudo-field `"dados"` itself has no direct
+        # translation entry.
+        ("empresa", "dados"),
     }
 )

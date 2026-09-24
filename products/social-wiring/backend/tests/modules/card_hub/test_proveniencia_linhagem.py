@@ -63,6 +63,8 @@ class TestLinhagemDoRegistro:
         )
         assert {f["tipo_documento"] for f in entrada["fontes"]} == {
             "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
+            # P0c contract §C1: Serasa Crednet also claims `nome` (`nome_oficial`).
+            "serasa_crednet",
         }
 
     def test_profissao_lists_matricula_alongside_the_identity_documents(self):
@@ -172,7 +174,11 @@ class TestLinhagemDoCard:
             "id": doc_id, "tipo": "rg", "nome": "rg-beltrana.pdf", "entrada": "cliente_card_upload",
         }
         tipos = {f["tipo_documento"] for f in item["fontes_possiveis"]}
-        assert tipos == {"rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento"}
+        assert tipos == {
+            "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
+            # P0c contract §C1: Serasa Crednet also claims `nome` (`nome_oficial`).
+            "serasa_crednet",
+        }
         assert all(f["destino"] == f"/clientes/{ids['cliente']}" for f in item["fontes_possiveis"])
 
     def test_a_confirmed_value_is_confirmado(self, client, scoped):

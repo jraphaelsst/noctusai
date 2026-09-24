@@ -83,7 +83,31 @@ def get_storage_backend() -> StorageBackend:
     return backend
 
 
-ExtractorFactory = Callable[[Optional[str], Optional[str]], IdentityExtractor]
+#: P0c contract §C2: widened from `IdentityExtractor` alone — two `Fonte`s
+#: now route THIS factory to a differently-shaped extractor (`CrednetExtractor`
+#: / `CartaoCnpjExtractor`, see `_FACTORY_SHAPED_EXTRATORES` below), which
+#: share the CALLING convention (`.extract(bytes, *, mimetype=, filename=)`)
+#: but not the return-type Protocol.
+ExtractorFactory = Callable[[Optional[str], Optional[str]], Any]
+
+#: `Fonte.extrator` dotted paths that are — like `make_identity_extractor`
+#: itself — a `make_*_extractor(*, real, org_id, provider, max_pages=None)`
+#: FACTORY, callable with exactly the same three keyword args this module
+#: already resolves for the identity extractor. `_build_identity_extractor`
+#: routes a `tipo_documento` here when its `Fonte.extrator` is one of these
+#: — NOT merely "is not the identity factory": `comprovante_endereco`'s own
+#: `Fonte.extrator` (`documents.address.find_endereco`) is a PURE text
+#: parser, `(text: str) -> EnderecoLido`, no `real=`/`org_id=`/`provider=`
+#: kwargs at all — routing it here would call it with the wrong signature
+#: and it is not what reads an address upload anyway (`extrair_identidade`
+#: reads `IdentityFields.endereco` off the SAME identity extractor;
+#: `find_endereco` is a different, unrelated consumer of this catalog).
+_FACTORY_SHAPED_EXTRATORES: frozenset[str] = frozenset(
+    {
+        "noctusai_lib.integrations.documents.serasa_crednet.make_crednet_extractor",
+        "noctusai_lib.integrations.documents.cartao_cnpj.make_cartao_cnpj_extractor",
+    }
+)
 
 
 def _build_identity_extractor(
@@ -91,8 +115,24 @@ def _build_identity_extractor(
     tipo_documento: Optional[str] = None,
     *,
     resolve_provider: Callable[[Optional[str]], str] = resolve_vision_provider,
-) -> IdentityExtractor:
-    """One org's identity extractor, with ITS manually-selected vision
+) -> Any:
+    """One org's extractor for ONE document type, with ITS manually-selected
+    vision provider AND (for the identity family) the page cap ITS DOCUMENT
+    TYPE requires.
+
+    🔴 P0c contract §C2 — WIDENED: for `serasa_crednet` / `cartao_cnpj`, this
+    resolves `fontes.FONTES[tipo_documento].extrator` (via `fontes.
+    resolver_extrator`) and calls THAT factory instead of `make_identity_
+    extractor` — see `_FACTORY_SHAPED_EXTRATORES`' docstring for exactly
+    which tipos qualify and why `comprovante_endereco` deliberately does
+    not. Both factories default `max_pages=None` (every page) on their own,
+    so this branch passes none — `serasa_crednet`'s own contract already
+    wants that (§B: "participações can sit on page 2"), and passing nothing
+    lets each factory's own default apply rather than reusing the identity
+    family's `-1`-sentinel convention (`paginas_maximas`), which is not
+    these factories' contract.
+
+    One org's identity extractor, with ITS manually-selected vision
     provider AND the page cap ITS DOCUMENT TYPE requires.
 
     🔴 THE PROVIDER IS RESOLVED PER EXTRACTION, NOT PER PROCESS.
@@ -150,6 +190,13 @@ def _build_identity_extractor(
     which lets the seed adapter apply its unchanged 3-page default —
     behaviour-preserving for every type that does not need a whole read.
     """
+    from app.modules.card_hub.proveniencia import fontes
+
+    fonte = fontes.FONTES.get(str(tipo_documento or ""))
+    if fonte is not None and fonte.extrator in _FACTORY_SHAPED_EXTRATORES:
+        fabrica = fontes.resolver_extrator(fonte)
+        return fabrica(real=True, org_id=org_id, provider=resolve_provider(org_id))
+
     from app.modules.card_hub.identidade_extracao_service import paginas_maximas
 
     return make_identity_extractor(
