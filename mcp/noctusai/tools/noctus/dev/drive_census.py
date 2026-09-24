@@ -1428,11 +1428,13 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
 
 SW_ORG_ID = "6dd73140-74a4-41c6-aeff-bc94b5312b53"  # where the owner's SW data lives (per 3e)
 SNAPSHOT_MAX_AGE_S = 24 * 3600
+SNAPSHOT_SCHEMA = 2  # bump when _SNAPSHOT_SQL gains columns: an older snapshot is re-read once
 _SNAPSHOT_SQL = """SELECT i.codigo, i.empreendimento, i.logradouro, i.numero, i.complemento, i.bairro, i.cidade, i.uf,
        i.area_total, i.area_privativa, i.area_construida, i.area_terreno, i.matricula_vista, i.inscricao_municipal,
-       i.status, i.categoria,
+       i.status, i.categoria, i.valor_venda,
        d.numero_matricula, d.numero_registro_imoveis, d.prefeitura_cadastro_imobiliario, d.empreendimento_manual,
-       d.endereco_manual_logradouro, d.endereco_manual_numero, d.endereco_manual_complemento, d.endereco_manual_cidade
+       d.endereco_manual_logradouro, d.endereco_manual_numero, d.endereco_manual_complemento, d.endereco_manual_cidade,
+       d.endereco_registro_texto
   FROM social_wiring.imoveis i
   LEFT JOIN social_wiring.imovel_dados d ON d.org_id = i.org_id AND d.codigo = i.codigo
  WHERE i.org_id = '{org}'"""
@@ -1451,7 +1453,9 @@ def ref_snapshot(*, executor=None, refresh: bool = False) -> dict[str, Any]:
     and reused for SNAPSHOT_MAX_AGE_S (extract-once: the catalog is not re-read per folder)."""
     path = _dir("ref-candidates") / "_sw_imoveis.json"
     if path.is_file() and not refresh and (datetime.now().timestamp() - path.stat().st_mtime) < SNAPSHOT_MAX_AGE_S:
-        return json.loads(path.read_text(encoding="utf-8"))
+        cached = json.loads(path.read_text(encoding="utf-8"))
+        if cached.get("schema") == SNAPSHOT_SCHEMA:
+            return cached
     sql = _SNAPSHOT_SQL.format(org=SW_ORG_ID)
     if not re.match(r"^\s*SELECT\b", sql, re.I):  # read-only by construction; never send anything else
         raise RuntimeError("ref_snapshot only runs SELECT statements")
@@ -1461,7 +1465,8 @@ def ref_snapshot(*, executor=None, refresh: bool = False) -> dict[str, Any]:
     res = executor.execute(sql)
     if not res.get("ok"):
         raise RuntimeError(f"SW snapshot query failed: {res.get('error')}")
-    snap = {"org_id": SW_ORG_ID, "lido_em": datetime.now(timezone.utc).isoformat(), "imoveis": res["rows"] or []}
+    snap = {"org_id": SW_ORG_ID, "schema": SNAPSHOT_SCHEMA, "lido_em": datetime.now(timezone.utc).isoformat(),
+            "imoveis": res["rows"] or []}
     _write_private(path, snap)
     return snap
 
@@ -1512,16 +1517,63 @@ def deal_features(key: dict[str, Any]) -> dict[str, Any]:
         "tokens": _tokens(bag),
         "unidades": unidades,
         "areas": _areas(descricao),
+        "valor": float(((key.get("negociacao") or {}).get("valor_negociado")) or 0) or None,
         "cidade": cidade,
         "texto": _fold(bag + " " + descricao),
     }
 
 
-def score_candidate(f: dict[str, Any], row: dict[str, Any]) -> tuple[int, list[str]]:
-    """Points + evidence for one SW/Vista imóvel against one deal. Documentary identifiers (matrícula,
-    inscrição) are strong; condomínio/unidade/área are medium; street/city are weak (Vista's PUBLIC
-    número can be a placeholder — the real one lives in the internal address, which is not synced)."""
+def _area_evidence(deal_areas: list[float], row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """GRADED area distance, best pair of (matrícula area, Vista area field). The KB's worked case
+    (ONE7515) is 1.050,24 m² on the matrícula vs AreaTotal 1052 — 0.17%, i.e. measurement noise."""
+    best = None
+    for campo in ("area_total", "area_terreno", "area_privativa", "area_construida"):
+        b = row.get(campo)
+        if not b:
+            continue
+        for a in deal_areas:
+            d = abs(a - float(b)) / max(a, float(b))
+            if best is None or d < best["diff_pct"] / 100:
+                best = {"negocio_m2": a, "vista_m2": float(b), "campo": campo, "diff_pct": round(d * 100, 2)}
+    if not best:
+        return None
+    d = best["diff_pct"]
+    pontos = 25 if d <= 0.5 else 18 if d <= 2 else 10 if d <= 5 else 4 if d <= 10 else 0
+    return {**best, "pontos": pontos} if pontos else None
+
+
+def _preco_evidence(contrato: Optional[float], venda: Any) -> Optional[dict[str, Any]]:
+    """GRADED price fit: the contract's valor_negociado vs the listing's asking price (ValorVenda —
+    the only price the sync carries; there is no historical price). A negotiated price usually sits
+    BELOW asking, so 85–100% of asking is the closest band; above asking is penalized (owner, via 3e)."""
+    try:
+        venda_f = float(venda or 0)
+    except (TypeError, ValueError):
+        return None
+    if not contrato or venda_f <= 0:
+        return None
+    r = contrato / venda_f
+    pontos = 20 if 0.95 <= r <= 1.0 else 15 if 0.85 <= r < 0.95 else 8 if (0.75 <= r < 0.85 or 1.0 < r <= 1.05) else 0
+    if not pontos:
+        return None
+    return {"contrato": contrato, "vista_valor_venda": venda_f, "razao": round(r, 3), "pontos": pontos}
+
+
+def _registro_confere(registro: str, deal_text: str) -> bool:
+    """The operator-confirmed registry address (street + número) appears in the deal's contract text."""
+    rua = _tokens(re.split(r",|\bn[º°o.]", registro, maxsplit=1)[0])
+    num = re.search(r"\b(\d{1,5})\b", registro)
+    words = set(re.findall(r"[A-Z0-9]+", deal_text))
+    return bool(rua) and rua <= words and (num is None or re.search(rf"\b{num.group(1)}\b", deal_text) is not None)
+
+
+def score_candidate(f: dict[str, Any], row: dict[str, Any]) -> tuple[int, list[str], dict[str, Any]]:
+    """(points, evidence, graded details) for one SW/Vista imóvel against one deal. Documentary
+    identifiers (matrícula, inscrição, the operator-confirmed registry address) are strong;
+    condomínio/unidade/área/preço are medium; street/city are weak (Vista's PUBLIC endereço is the
+    gatehouse by office policy, and this tenant's API has no internal-address field — KB vista.md)."""
     pts, ev = 0, []
+    det: dict[str, Any] = {}
     mats = {_num(row.get("matricula_vista")), _num(row.get("numero_matricula"))} - {None}
     if f["matricula"] and f["matricula"] in mats:
         pts += 60
@@ -1538,10 +1590,21 @@ def score_candidate(f: dict[str, Any], row: dict[str, Any]) -> tuple[int, list[s
         if any(re.search(rf"\b{re.escape(n)}\b", comp) for _, n in f["unidades"]):
             pts += 15
             ev.append("unidade")
-    areas = [float(row[k]) for k in ("area_total", "area_privativa", "area_construida", "area_terreno") if row.get(k)]
-    if f["areas"] and any(abs(a - b) <= 0.02 * max(a, b) for a in f["areas"] for b in areas):
-        pts += 15
+    area = _area_evidence(f["areas"], row)
+    if area:
+        pts += area["pontos"]
         ev.append("area_m2")
+        det["area_m2"] = area
+    preco = _preco_evidence(f.get("valor"), row.get("valor_venda"))
+    if preco:
+        pts += preco["pontos"]
+        ev.append("preco")
+        det["preco"] = preco
+    reg = row.get("endereco_registro_texto")
+    if reg and _registro_confere(reg, f["texto"]):
+        pts += 60
+        ev.append("endereco_registro")
+        det["endereco_registro"] = {"fonte": "imovel_dados.endereco_registro_texto (confirmado pelo operador)"}
     rua = _tokens(row.get("endereco_manual_logradouro") or row.get("logradouro"))
     if rua and rua <= set(re.findall(r"[A-Z0-9]+", f["texto"])):
         pts += 10
@@ -1554,7 +1617,11 @@ def score_candidate(f: dict[str, Any], row: dict[str, Any]) -> tuple[int, list[s
     if f["cidade"] and cid and cid == f["cidade"]:
         pts += 5
         ev.append("cidade")
-    return pts, ev
+    return pts, ev, det
+
+
+_DOCUMENTAIS = frozenset({"matricula", "inscricao_municipal", "endereco_registro"})
+_PROPRIEDADE = _DOCUMENTAIS | {"condominio", "area_m2", "logradouro"}
 
 
 def ref_candidates_folder(folder_id: str, snapshot: dict[str, Any], *, top: int = 3) -> dict[str, Any]:
@@ -1569,16 +1636,18 @@ def ref_candidates_folder(folder_id: str, snapshot: dict[str, Any], *, top: int 
     f = deal_features(key)
     scored = []
     for row in snapshot["imoveis"]:
-        pts, ev = score_candidate(f, row)
-        if pts >= 25:
-            scored.append((pts, ev, row))
-    # A documentary identifier (matrícula / inscrição) outranks any sum of soft signals.
-    scored.sort(key=lambda t: (not ({"matricula", "inscricao_municipal"} & set(t[1])), -t[0]))
+        pts, ev, det = score_candidate(f, row)
+        # price, city and the public número only CORROBORATE: a candidate needs a property signal
+        if pts >= 25 and _PROPRIEDADE & set(ev):
+            scored.append((pts, ev, row, det))
+    # A documentary identifier (matrícula / inscrição / confirmed registry address) outranks any sum of soft signals.
+    scored.sort(key=lambda t: (not (_DOCUMENTAIS & set(t[1])), -t[0]))
     cands = [{"codigo": row["codigo"], "pontos": pts, "evidencias": ev,
-              "forca": "forte" if {"matricula", "inscricao_municipal"} & set(ev) else "media" if pts >= 40 else "fraca",
+              "forca": "forte" if _DOCUMENTAIS & set(ev) else "media" if pts >= 40 else "fraca",
+              "evidencias_detalhe": det,
               "empreendimento": row.get("empreendimento"), "logradouro": row.get("logradouro"),
               "numero": row.get("numero"), "complemento": row.get("complemento"), "cidade": row.get("cidade"),
-              "status_vista": row.get("status")} for pts, ev, row in scored[:top]]
+              "status_vista": row.get("status")} for pts, ev, row, det in scored[:top]]
     out = {"folder": census["folder"], "gerado_em": datetime.now(timezone.utc).isoformat(),
            "confirmado_por": None, "confirmado_em": None,  # the OWNER fills these; never the tool
            "sinais_do_negocio": {"matricula": bool(f["matricula"]), "inscricao": bool(f["inscricao"]),

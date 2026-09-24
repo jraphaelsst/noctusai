@@ -502,6 +502,45 @@ def test_a_signed_confissao_de_divida_is_not_the_contract(private, tmp_path) -> 
     assert [o["arquivo"] for o in key["outros_documentos_assinados"]] == ["Garantia X docx pdf-D4Sign.docx"]
 
 
+def test_price_and_city_alone_never_make_a_candidate(private, tmp_path) -> None:
+    from tools.noctus.dev.migrate_product import FakeSqlExecutor
+
+    _mirror(private, "F10", {"REV FINAL_CONTRATO DE COMPRA E VENDA - X.docx": _docx_bytes(CONTRATO, tmp_path)})
+    C.drive_census("answer_key", "F10")
+    rows = [{"codigo": "ONE9", "empreendimento": "Lugar Nenhum", "valor_venda": 510000.0, "cidade": "Vila Modelo"}]
+    result = C.drive_census("ref_candidates", "F10", executor=FakeSqlExecutor(preset_rows={"FROM social_wiring.imoveis": rows}))
+    assert result["results"][0]["candidatos"] == 0
+
+
+def test_area_is_graded_by_distance() -> None:
+    row = {"area_total": 1052.0, "area_privativa": 517.0}
+    close = C._area_evidence([1050.24], row)  # the KB's worked case: measurement noise
+    assert (close["campo"], close["diff_pct"], close["pontos"]) == ("area_total", 0.17, 25)
+    assert C._area_evidence([1020.0], row)["pontos"] == 10       # ~3%
+    assert C._area_evidence([960.0], row)["pontos"] == 4         # ~8.7%
+    assert C._area_evidence([700.0], row) is None                # far: no evidence at all
+
+
+@pytest.mark.parametrize(("contrato", "venda", "pontos"), [
+    (980_000, 1_000_000, 20),   # 98% of asking: the usual negotiated band
+    (900_000, 1_000_000, 15),   # 90%
+    (800_000, 1_000_000, 8),    # 80%: deep discount, weaker
+    (1_030_000, 1_000_000, 8),  # above asking: penalized
+    (1_200_000, 1_000_000, None),
+    (500_000, 1_000_000, None),
+])
+def test_price_fit_prefers_just_below_asking(contrato, venda, pontos) -> None:
+    ev = C._preco_evidence(float(contrato), venda)
+    assert (ev["pontos"] if ev else None) == pontos
+
+
+def test_registry_address_is_a_documentary_signal() -> None:
+    text = C._fold("CONTRATO – RESIDENCIAL TESTE – RUA FICTÍCIA, Nº 10 – VILA MODELO")
+    assert C._registro_confere("Rua Fictícia, nº 10", text)
+    assert not C._registro_confere("Rua Fictícia, nº 12", text)
+    assert not C._registro_confere("Avenida Outra, nº 10", text)
+
+
 def test_unknown_action_is_refused() -> None:
     with pytest.raises(ValueError, match="extract \\| census \\| answer_key"):
         C.drive_census("nope")
