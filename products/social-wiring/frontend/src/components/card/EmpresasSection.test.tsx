@@ -22,17 +22,23 @@ import type {
   EmpresasDoCardResponse,
 } from "@/types/empresas";
 
-const { mockGet, mockDelete, mockBaixarArquivo } = vi.hoisted(() => ({
+const { mockGet, mockPatch, mockDelete, mockBaixarArquivo, mockUseAuthStore } = vi.hoisted(() => ({
   mockGet: vi.fn(),
+  mockPatch: vi.fn(),
   mockDelete: vi.fn(),
   mockBaixarArquivo: vi.fn(),
+  // Defaults to a non-admin — no `user_metadata` means `resolveSSOContext`
+  // (kept REAL, not mocked) resolves every role field to `null`. Tests
+  // that need an admin call `mockUseAuthStore.mockReturnValue(...)`.
+  mockUseAuthStore: vi.fn(() => ({ user: null })),
 }));
 
 vi.mock("@noctusai/seed/infra", () => ({
-  api: { get: mockGet, post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: mockDelete },
+  api: { get: mockGet, post: vi.fn(), patch: mockPatch, put: vi.fn(), delete: mockDelete },
   supabase: {
     auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) },
   },
+  useAuthStore: mockUseAuthStore,
 }));
 
 // The empresa's own certidões (`CertidoesPartePanel` in `empresaId` mode)
@@ -157,8 +163,10 @@ describe("EmpresasSection", () => {
   beforeEach(() => {
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     mockGet.mockReset();
+    mockPatch.mockReset();
     mockDelete.mockReset();
     mockBaixarArquivo.mockReset();
+    mockUseAuthStore.mockReturnValue({ user: null });
   });
 
   afterEach(() => {
@@ -197,17 +205,20 @@ describe("EmpresasSection", () => {
     await waitFor(() => expect(screen.getByTestId("empresas-section-empty")).toBeTruthy());
   });
 
+  // Slice D (owner decision, 2026-09-24): a dispensada empresa (`exige_
+  // certidoes=false`) shows "Dispensada — <motivo>" on the badge — the
+  // signal a collapsed row (never expanded) still carries.
   const motivoCases: Array<[EmpresaMotivo, string, boolean]> = [
     ["ativa", "Ativa", true],
     ["baixada_menos_5_anos", "Baixada há menos de 5 anos", true],
     [
       "baixada_5_anos_ou_mais",
-      "Baixada há 5 anos ou mais — certidões dispensadas",
+      "Dispensada — Baixada há 5 anos ou mais — certidões dispensadas",
       false,
     ],
-    ["sem_cartao_cnpj", "Falta Cartão CNPJ", false],
-    ["outra_situacao", "Outra situação", false],
-    ["sem_socio_certificando", "Sem sócio certificando", false],
+    ["sem_cartao_cnpj", "Dispensada — Falta Cartão CNPJ", false],
+    ["outra_situacao", "Dispensada — Outra situação", false],
+    ["sem_socio_certificando", "Dispensada — Sem sócio certificando", false],
   ];
 
   it.each(motivoCases)(
@@ -230,6 +241,96 @@ describe("EmpresasSection", () => {
       expect(screen.getByTestId("empresa-row-emp-1-situacao").textContent).toContain("Ativa"),
     );
     expect(screen.getByTestId("empresa-row-emp-1-nome").textContent).toBe("Padaria do Zé Ltda");
+  });
+
+  // Slice D (owner decision, 2026-09-24).
+  describe("edit / delete / greying", () => {
+    it("greys a dispensada row (never unlinks it)", async () => {
+      mockRoutes(empresasResponse([empresaItem({ exige_certidoes: false })]));
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      expect(screen.getByTestId("empresa-row-emp-1-wrapper").className).toContain("opacity-60");
+    });
+
+    it("does not grey a row that still requires certidões", async () => {
+      mockRoutes(empresasResponse([empresaItem({ exige_certidoes: true })]));
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      expect(screen.getByTestId("empresa-row-emp-1-wrapper").className).not.toContain(
+        "opacity-60",
+      );
+    });
+
+    it("hides the delete icon for a non-admin", async () => {
+      mockRoutes(empresasResponse([empresaItem()]));
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      expect(screen.queryByTestId("empresa-row-emp-1-remover")).toBeNull();
+      // The edit icon stays available regardless of role.
+      expect(screen.getByTestId("empresa-row-emp-1-editar")).toBeTruthy();
+    });
+
+    it("shows the delete icon for an admin and opens the pt-BR confirm dialog", async () => {
+      mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "owner" } } });
+      mockRoutes(empresasResponse([empresaItem()]));
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-remover"));
+
+      await waitFor(() =>
+        expect(screen.getByTestId("remover-empresa-confirm")).toBeTruthy(),
+      );
+      expect(screen.getByText(/Remover empresa\?/)).toBeTruthy();
+    });
+
+    it("toggles the edit form open, prefilled with the current values", async () => {
+      mockRoutes(empresasResponse([empresaItem()]));
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      // The edit FORM lives inside the collapsible's own content, only
+      // mounted once expanded — the edit ICON itself sits in the always-
+      // rendered header (`resumo`), so a collapsed row's icon is clickable
+      // without the form appearing until the row is also opened.
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-editar"));
+
+      const razaoInput = (await screen.findByTestId(
+        "empresa-editar-emp-1-razao-input",
+      )) as HTMLInputElement;
+      expect(razaoInput.value).toBe("Padaria do Zé Ltda");
+
+      fireEvent.click(screen.getByTestId("empresa-editar-emp-1-cancelar"));
+      await waitFor(() =>
+        expect(screen.queryByTestId("empresa-editar-emp-1")).toBeNull(),
+      );
+    });
+
+    it("PATCHes only the touched field on save", async () => {
+      mockRoutes(empresasResponse([empresaItem()]));
+      mockPatch.mockResolvedValue({
+        ...empresaItem().empresa,
+        nome_fantasia: "Padaria Nova",
+        pendente_confirmacao: [],
+      });
+      render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+      await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+      fireEvent.click(screen.getByTestId("empresa-row-emp-1-editar"));
+      const fantasiaInput = await screen.findByTestId("empresa-editar-emp-1-fantasia-input");
+      fireEvent.change(fantasiaInput, { target: { value: "Padaria Nova" } });
+      fireEvent.click(screen.getByTestId("empresa-editar-emp-1-salvar"));
+
+      await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+      expect(mockPatch).toHaveBeenCalledWith("/api/empresas/emp-1", {
+        nome_fantasia: "Padaria Nova",
+      });
+    });
   });
 
   // §D.4 — the Cartão CNPJ slot's view/download/remove, wired the same way

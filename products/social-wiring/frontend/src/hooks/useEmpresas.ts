@@ -18,11 +18,15 @@ import { uploadMultipart } from "@/hooks/useCardHub";
 import type { DocumentoUrlResponse } from "@/types/cardHub";
 import type {
   AdicionarEmpresaBody,
+  AtualizarEmpresaBody,
+  AtualizarEmpresaResponse,
   EmpresaCardItem,
+  EmpresaChecklistResponse,
   EmpresaDocumento,
   EmpresaDocumentoExtracaoStatus,
   EmpresaDocumentosResponse,
   EmpresasDoCardResponse,
+  RemoverEmpresaResponse,
 } from "@/types/empresas";
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
@@ -31,8 +35,12 @@ const EMPRESAS_DO_CARD_KEY = (clienteId: string) =>
   ["sw", "clientes", clienteId, "empresas"] as const;
 const EMPRESA_DOCUMENTOS_KEY = (empresaId: string) =>
   ["sw", "empresas", empresaId, "documentos"] as const;
+const EMPRESA_CHECKLIST_KEY = (empresaId: string) =>
+  ["sw", "empresas", empresaId, "checklist"] as const;
 
 const empresaBase = (empresaId: string) => `/api/empresas/${encodeURIComponent(empresaId)}`;
+const clienteEmpresaBase = (clienteId: string, empresaId: string) =>
+  `/api/clientes/${encodeURIComponent(clienteId)}/empresas/${encodeURIComponent(empresaId)}`;
 
 // ─── Reads ──────────────────────────────────────────────────────────────────
 
@@ -85,6 +93,18 @@ export function useEmpresaDocumentos(empresaId: string | null) {
   });
 }
 
+/** `GET /api/empresas/{empresa_id}/checklist` (slice D) — today, ONE item
+ *  (`cartao_cnpj`). See `EmpresaChecklistItem`'s own docstring for the
+ *  PJ-vendedor-conditional items this deliberately does NOT build yet. */
+export function useEmpresaChecklist(empresaId: string | null) {
+  return useQuery({
+    queryKey: EMPRESA_CHECKLIST_KEY(empresaId ?? "__none__"),
+    queryFn: () =>
+      api.get<EmpresaChecklistResponse>(`${empresaBase(empresaId as string)}/checklist`),
+    enabled: !!empresaId,
+  });
+}
+
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
 function invalidateEmpresaFamily(
@@ -93,7 +113,10 @@ function invalidateEmpresaFamily(
   empresaId?: string,
 ) {
   if (clienteId) void qc.invalidateQueries({ queryKey: EMPRESAS_DO_CARD_KEY(clienteId) });
-  if (empresaId) void qc.invalidateQueries({ queryKey: EMPRESA_DOCUMENTOS_KEY(empresaId) });
+  if (empresaId) {
+    void qc.invalidateQueries({ queryKey: EMPRESA_DOCUMENTOS_KEY(empresaId) });
+    void qc.invalidateQueries({ queryKey: EMPRESA_CHECKLIST_KEY(empresaId) });
+  }
 }
 
 /** `POST /api/clientes/{cliente_id}/empresas` (§D.2) — manual link: upserts
@@ -106,6 +129,33 @@ export function useAdicionarEmpresa(clienteId: string) {
         `/api/clientes/${encodeURIComponent(clienteId)}/empresas`,
         body,
       ),
+    onSuccess: () => invalidateEmpresaFamily(qc, clienteId),
+  });
+}
+
+/** `PATCH /api/empresas/{empresa_id}` (slice D) — razão social, nome
+ *  fantasia, CNPJ, situação cadastral, data da situação. The response's
+ *  `pendente_confirmacao` tells the caller whether the edit landed or was
+ *  deferred to admin adjudication (`empresa_campo_conflitos`) — the row
+ *  itself is unchanged when every touched field was deferred. */
+export function useAtualizarEmpresa(empresaId: string, clienteId: string | null = null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AtualizarEmpresaBody) =>
+      api.patch<AtualizarEmpresaResponse>(empresaBase(empresaId), body),
+    onSuccess: () => invalidateEmpresaFamily(qc, clienteId, empresaId),
+  });
+}
+
+/** `DELETE /api/clientes/{cliente_id}/empresas/{empresa_id}` (slice D) —
+ *  admin/owner only (403 for anyone else, enforced server-side). Unlinks
+ *  this cliente from the empresa; the empresa row (and its Cartão CNPJ)
+ *  is hard-deleted only when this was the last participação. */
+export function useRemoverEmpresa(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (empresaId: string) =>
+      api.delete<RemoverEmpresaResponse>(clienteEmpresaBase(clienteId, empresaId)),
     onSuccess: () => invalidateEmpresaFamily(qc, clienteId),
   });
 }

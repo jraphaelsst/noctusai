@@ -154,3 +154,48 @@ export interface EmpresaDocumento {
 }
 
 export type EmpresaDocumentosResponse = ItemsEnvelope<EmpresaDocumento>;
+
+// ─── Slice D — edit/delete/checklist ───────────────────────────────────────
+
+/** `PATCH /api/empresas/{empresa_id}` — every field optional (only touched
+ *  fields are sent). `cnpj` is never gated; the cadastral fields are gated
+ *  as ONE group when the empresa's `dados_origem` is machine-sourced (see
+ *  `dados_service.atualizar_manual`'s own docstring). */
+export interface AtualizarEmpresaBody {
+  cnpj?: string;
+  razao_social?: string;
+  nome_fantasia?: string;
+  situacao_cadastral?: SituacaoCadastral;
+  data_situacao_cadastral?: string;
+}
+
+/** The empresa row plus `pendente_confirmacao` — item keys this PATCH
+ *  deferred to admin adjudication (empty when nothing was). */
+export type AtualizarEmpresaResponse = EmpresaCard & {
+  pendente_confirmacao: string[];
+};
+
+/** `DELETE /api/clientes/{cliente_id}/empresas/{empresa_id}` — unlinks
+ *  always; `empresa_removida` only when this was the last participação.
+ *  `storage_falhas` — bucket keys a storage removal did NOT confirm, never
+ *  swallowed into a bare 200 (mirrors `ClienteDeleteOut`). */
+export interface RemoverEmpresaResponse {
+  participacao_removida: boolean;
+  empresa_removida: boolean;
+  documentos_removidos: number;
+  storage_falhas: string[];
+}
+
+/** `GET /api/empresas/{empresa_id}/checklist` — today, ONE item
+ *  (`cartao_cnpj`, always required). The PJ-vendedor-conditional items
+ *  are NOT built (no PJ-vs-PF marker exists on `clientes`/`atendimento_
+ *  partes` in this product — see `checklist_service.py`'s own docstring). */
+export interface EmpresaChecklistItem {
+  item_key: "cartao_cnpj";
+  titulo: string;
+  satisfeito: boolean;
+  documento_id: string | null;
+  obrigatorio: boolean;
+}
+
+export type EmpresaChecklistResponse = ItemsEnvelope<EmpresaChecklistItem>;

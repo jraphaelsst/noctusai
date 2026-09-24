@@ -22,6 +22,8 @@ from __future__ import annotations
 from datetime import date
 from uuid import uuid4
 
+from noctusai_lib.testing import TEST_USER_ID
+
 from app.modules.card_hub import empresas_service as svc
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
@@ -311,3 +313,162 @@ class TestListarAssembly:
         resultado = svc.listar(scoped, ORG_ID, cid)
         [item] = resultado["items"]
         return item["exige_certidoes"], item["motivo"]
+
+
+class TestOrdering:
+    """Slice D (owner decision, 2026-09-24): a dispensada empresa stays on
+    the tab (never unlinked) but sorts LAST."""
+
+    def test_dispensada_empresas_sort_last(self, scoped):
+        cid, aid = str(uuid4()), str(uuid4())
+        vendedor_a, vendedor_b = str(uuid4()), str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular"),
+            cliente_row(vendedor_a, nome="Vendedor A"),
+            cliente_row(vendedor_b, nome="Vendedor B"),
+        ])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        scoped.set_table_data("atendimento_partes", [
+            {
+                "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+                "cliente_id": vendedor_a, "lado": "vendedor", "papel": "proprietario",
+                "ordem": 0, "observacao": None, "created_at": "2026-01-01T00:00:00+00:00",
+                "created_by": None, "updated_at": None,
+            },
+            {
+                "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+                "cliente_id": vendedor_b, "lado": "vendedor", "papel": "proprietario",
+                "ordem": 1, "observacao": None, "created_at": "2026-01-01T00:00:00+00:00",
+                "created_by": None, "updated_at": None,
+            },
+        ])
+        # `empresa_dispensada` sorts alphabetically/insertion-order BEFORE
+        # `empresa_exigida` — proving the reorder is what put it last, not
+        # incidental insertion order.
+        empresa_dispensada = _empresa(
+            id_="a" + str(uuid4())[1:], cnpj="11222333000181", situacao_cadastral=None,
+        )
+        empresa_exigida = _empresa(
+            id_="z" + str(uuid4())[1:], cnpj="12345678000195", situacao_cadastral="ativa",
+        )
+        scoped.set_table_data("empresas", [empresa_dispensada, empresa_exigida])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(vendedor_a, empresa_dispensada["id"]),
+            _participacao(vendedor_b, empresa_exigida["id"]),
+        ])
+
+        resultado = svc.listar(scoped, ORG_ID, cid)
+
+        assert [i["exige_certidoes"] for i in resultado["items"]] == [True, False]
+        assert resultado["items"][-1]["empresa"]["id"] == empresa_dispensada["id"]
+
+
+def _make_admin(client) -> None:
+    """`DELETE .../empresas/{empresa_id}` is owner/admin only (the
+    TRUSTED `noctus_users` row — mirrors `test_conflitos.py::_make_admin`'s
+    identical seed)."""
+    client.mock_supabase.set_table_data(
+        "noctus_users",
+        [{"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": "owner"}],
+    )
+
+
+class TestHttpDelete:
+    def test_non_admin_is_403(self, client, scoped):
+        cid, aid = str(uuid4()), str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Titular")])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        empresa = _empresa()
+        scoped.set_table_data("empresas", [empresa])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(cid, empresa["id"]),
+        ])
+
+        r = client.delete(f"/api/clientes/{cid}/empresas/{empresa['id']}", headers=_auth())
+
+        assert r.status_code == 403
+
+    def test_admin_unlink_keeps_empresa_when_another_participacao_remains(
+        self, client, scoped
+    ):
+        cid, aid = str(uuid4()), str(uuid4())
+        outro_cliente = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Titular")])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        empresa = _empresa()
+        scoped.set_table_data("empresas", [empresa])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(cid, empresa["id"]),
+            _participacao(outro_cliente, empresa["id"]),
+        ])
+        _make_admin(client)
+
+        r = client.delete(f"/api/clientes/{cid}/empresas/{empresa['id']}", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["participacao_removida"] is True
+        assert body["empresa_removida"] is False
+        assert body["storage_falhas"] == []
+        restantes = (
+            scoped.table("cliente_empresa_participacoes").select("*")
+            .eq("empresa_id", empresa["id"]).execute().data
+        )
+        assert [p["cliente_id"] for p in restantes] == [outro_cliente]
+
+    def test_admin_unlink_last_participacao_deletes_empresa_and_storage(
+        self, client, scoped
+    ):
+        from app.modules.empresas.deps import get_storage_backend as get_empresas_storage
+        from app.main import app
+        from noctusai_lib.integrations.storage import FakeStorageBackend
+
+        cid, aid = str(uuid4()), str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Titular")])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        empresa = _empresa()
+        scoped.set_table_data("empresas", [empresa])
+        scoped.set_table_data("cliente_empresa_participacoes", [
+            _participacao(cid, empresa["id"]),
+        ])
+        doc = {
+            "id": str(uuid4()), "org_id": ORG_ID, "empresa_id": empresa["id"],
+            "storage_path": f"{ORG_ID}/empresas/{empresa['id']}/cartao.pdf",
+        }
+        scoped.set_table_data("empresa_documentos", [doc])
+        _make_admin(client)
+
+        fake_storage = FakeStorageBackend()
+        app.dependency_overrides[get_empresas_storage] = lambda: fake_storage
+        try:
+            r = client.delete(
+                f"/api/clientes/{cid}/empresas/{empresa['id']}", headers=_auth()
+            )
+        finally:
+            app.dependency_overrides.pop(get_empresas_storage, None)
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["empresa_removida"] is True
+        assert body["documentos_removidos"] == 1
+        assert body["storage_falhas"] == []
+        assert scoped.table("empresas").select("*").eq(
+            "id", empresa["id"]
+        ).execute().data == []
+
+    def test_unknown_participacao_is_404(self, client, scoped):
+        cid, aid = str(uuid4()), str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Titular")])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        empresa = _empresa()
+        scoped.set_table_data("empresas", [empresa])
+        _make_admin(client)
+
+        r = client.delete(f"/api/clientes/{cid}/empresas/{empresa['id']}", headers=_auth())
+
+        assert r.status_code == 404

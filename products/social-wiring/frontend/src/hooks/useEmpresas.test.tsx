@@ -234,9 +234,15 @@ describe("useRemoverEmpresaDocumento", () => {
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(invalidateSpy).toHaveBeenCalledTimes(1);
+    // Two invalidations, not the card-empresas list: documentos (always)
+    // AND checklist (slice D — a document add/remove can flip `cartao_cnpj`
+    // satisfied/unsatisfied, so it invalidates alongside documentos).
+    expect(invalidateSpy).toHaveBeenCalledTimes(2);
     expect(invalidateSpy).toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: ["sw", "empresas", "emp-1", "documentos"] }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["sw", "empresas", "emp-1", "checklist"] }),
     );
   });
 });

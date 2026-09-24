@@ -16,9 +16,11 @@
  * observed behaviour (same disclaimer every P0c FE file carries).
  */
 import { useMemo, useState } from "react";
-import { Building2, Loader2, Plus } from "lucide-react";
+import { Building2, CheckCircle2, Circle, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 
+import { resolveSSOContext } from "@noctusai/lib";
 import { CollapsibleSection, baixarArquivo } from "@noctusai/lib/components";
+import { useAuthStore } from "@noctusai/seed/infra";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,20 +36,28 @@ import {
 
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import { DocumentoTipoSlot, documentoDoTipo } from "@/components/card/DocumentoTipoSlot";
+import { RemoverEmpresaConfirmDialog } from "@/components/card/RemoverEmpresaConfirmDialog";
 
 import { useCardResumo, useCompradores } from "@/hooks/useCardHub";
 import {
   useAdicionarEmpresa,
+  useAtualizarEmpresa,
+  useEmpresaChecklist,
   useEmpresaDocumentoUrl,
   useEmpresaDocumentos,
   useEmpresaExtracao,
   useEmpresasDoCard,
+  useRemoverEmpresa,
   useRemoverEmpresaDocumento,
   useUploadEmpresaDocumento,
 } from "@/hooks/useEmpresas";
 import { formatDate } from "@/lib/utils";
 import { SITUACAO_CADASTRAL_LABELS } from "@/types/certidoesEstruturadas";
-import type { EmpresaCardItem, EmpresaMotivo } from "@/types/empresas";
+import type {
+  AtualizarEmpresaBody,
+  EmpresaCardItem,
+  EmpresaMotivo,
+} from "@/types/empresas";
 
 /** pt-BR copy for the E1 verdict (contract §F/§E.1) — the ONE place a
  *  `motivo` becomes words, mirroring `ClienteCardDialog.rotuloDePapel`'s own
@@ -206,6 +216,20 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
   const testId = `empresa-row-${empresa.id}`;
   const nome = empresa.razao_social || empresa.nome_fantasia || empresa.cnpj;
 
+  // UI convenience ONLY — same posture `ClienteDetailModal`'s own
+  // `isAdmin` derivation takes: the server's `delete_empresa_route` reads
+  // the TRUSTED `noctus_users` row and 403s a spoofed claim regardless of
+  // what this renders; hiding the icon here just keeps a non-admin from
+  // seeing a button that would fail.
+  const { user } = useAuthStore();
+  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const isAdmin =
+    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+
+  const [editando, setEditando] = useState(false);
+  const [confirmRemoverOpen, setConfirmRemoverOpen] = useState(false);
+  const remover = useRemoverEmpresa(clienteId);
+
   const titulo = (
     <span className="flex min-w-0 items-center gap-2">
       <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -225,44 +249,260 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
         </Badge>
       )}
       <Badge variant={motivoVariant(item)} data-testid={`${testId}-motivo`}>
-        {MOTIVO_LABEL[motivo]}
+        {exige_certidoes ? MOTIVO_LABEL[motivo] : `Dispensada — ${MOTIVO_LABEL[motivo]}`}
       </Badge>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="h-6 w-6"
+        onClick={(e) => {
+          e.stopPropagation();
+          setEditando((v) => !v);
+        }}
+        data-testid={`${testId}-editar`}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </Button>
+      {isAdmin && (
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-6 w-6 text-destructive hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmRemoverOpen(true);
+          }}
+          data-testid={`${testId}-remover`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </span>
   );
 
   return (
-    <CollapsibleSection titulo={titulo} resumo={resumo} testId={testId}>
-      {() => (
-        <div className="space-y-3">
-          {owners.length > 0 && (
-            <div className="flex flex-wrap gap-1.5" data-testid={`${testId}-owners`}>
-              {owners.map((o) => (
-                <Badge key={o.cliente_id} variant="secondary">
-                  {o.nome}
-                  {o.participacao_pct != null && ` (${o.participacao_pct}%)`}
-                  {o.certificando && " ★"}
-                </Badge>
-              ))}
+    // Slice D (owner decision, 2026-09-24): a dispensada empresa stays on
+    // the tab — never unlinked — but reads visually greyed (never unlinked
+    // ⇒ the row itself must still be legible, just deprioritized).
+    <div className={exige_certidoes ? undefined : "opacity-60"} data-testid={`${testId}-wrapper`}>
+      <CollapsibleSection titulo={titulo} resumo={resumo} testId={testId}>
+        {() => (
+          <div className="space-y-3">
+            {editando && (
+              <EmpresaEditForm
+                empresa={empresa}
+                onCancel={() => setEditando(false)}
+                onSaved={() => setEditando(false)}
+              />
+            )}
+
+            {owners.length > 0 && (
+              <div className="flex flex-wrap gap-1.5" data-testid={`${testId}-owners`}>
+                {owners.map((o) => (
+                  <Badge key={o.cliente_id} variant="secondary">
+                    {o.nome}
+                    {o.participacao_pct != null && ` (${o.participacao_pct}%)`}
+                    {o.certificando && " ★"}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            {!exige_certidoes && (
+              <p className="text-xs text-muted-foreground" data-testid={`${testId}-dispensa`}>
+                Certidões não exigidas para esta empresa: {MOTIVO_LABEL[motivo].toLowerCase()}.
+              </p>
+            )}
+
+            <EmpresaChecklist empresaId={empresa.id} />
+
+            <EmpresaCartaoSlot empresaId={empresa.id} clienteId={clienteId} />
+
+            <div>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Certidões ({certidoes.total})
+              </p>
+              <CertidoesPartePanel empresaId={empresa.id} nomeParte={nome} documento={empresa.cnpj} />
             </div>
-          )}
-
-          {!exige_certidoes && (
-            <p className="text-xs text-muted-foreground" data-testid={`${testId}-dispensa`}>
-              Certidões não exigidas para esta empresa: {MOTIVO_LABEL[motivo].toLowerCase()}.
-            </p>
-          )}
-
-          <EmpresaCartaoSlot empresaId={empresa.id} clienteId={clienteId} />
-
-          <div>
-            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Certidões ({certidoes.total})
-            </p>
-            <CertidoesPartePanel empresaId={empresa.id} nomeParte={nome} documento={empresa.cnpj} />
           </div>
+        )}
+      </CollapsibleSection>
+
+      <RemoverEmpresaConfirmDialog
+        open={confirmRemoverOpen}
+        pending={remover.isPending}
+        nome={nome}
+        onOpenChange={setConfirmRemoverOpen}
+        onConfirm={() =>
+          remover.mutate(empresa.id, { onSuccess: () => setConfirmRemoverOpen(false) })
+        }
+      />
+    </div>
+  );
+}
+
+// ─── Edit form (razão social, nome fantasia, CNPJ, situação cadastral) ────
+
+const SITUACAO_CADASTRAL_OPTIONS = Object.entries(SITUACAO_CADASTRAL_LABELS) as [
+  keyof typeof SITUACAO_CADASTRAL_LABELS,
+  string,
+][];
+
+function EmpresaEditForm({
+  empresa,
+  onCancel,
+  onSaved,
+}: {
+  empresa: EmpresaCardItem["empresa"];
+  onCancel: () => void;
+  onSaved: () => void;
+}) {
+  const atualizar = useAtualizarEmpresa(empresa.id);
+  const [form, setForm] = useState({
+    cnpj: empresa.cnpj,
+    razao_social: empresa.razao_social ?? "",
+    nome_fantasia: empresa.nome_fantasia ?? "",
+    situacao_cadastral: empresa.situacao_cadastral ?? "",
+    data_situacao_cadastral: empresa.data_situacao_cadastral ?? "",
+  });
+
+  const handleSalvar = () => {
+    const body: AtualizarEmpresaBody = {};
+    if (form.cnpj !== empresa.cnpj) body.cnpj = form.cnpj;
+    if (form.razao_social !== (empresa.razao_social ?? "")) body.razao_social = form.razao_social;
+    if (form.nome_fantasia !== (empresa.nome_fantasia ?? "")) body.nome_fantasia = form.nome_fantasia;
+    if (form.situacao_cadastral !== (empresa.situacao_cadastral ?? "")) {
+      body.situacao_cadastral = (form.situacao_cadastral ||
+        undefined) as AtualizarEmpresaBody["situacao_cadastral"];
+    }
+    if (form.data_situacao_cadastral !== (empresa.data_situacao_cadastral ?? "")) {
+      body.data_situacao_cadastral = form.data_situacao_cadastral || undefined;
+    }
+    if (Object.keys(body).length === 0) {
+      onSaved();
+      return;
+    }
+    atualizar.mutate(body, { onSuccess: () => onSaved() });
+  };
+
+  const testId = `empresa-editar-${empresa.id}`;
+  const pendenteConfirmacao = atualizar.data?.pendente_confirmacao ?? [];
+
+  return (
+    <div className="space-y-2 rounded-md border p-3" data-testid={testId}>
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <Label htmlFor={`${testId}-cnpj`}>CNPJ</Label>
+          <Input
+            id={`${testId}-cnpj`}
+            value={form.cnpj}
+            onChange={(e) => setForm((f) => ({ ...f, cnpj: e.target.value }))}
+            data-testid={`${testId}-cnpj-input`}
+          />
         </div>
+        <div>
+          <Label htmlFor={`${testId}-razao`}>Razão social</Label>
+          <Input
+            id={`${testId}-razao`}
+            value={form.razao_social}
+            onChange={(e) => setForm((f) => ({ ...f, razao_social: e.target.value }))}
+            data-testid={`${testId}-razao-input`}
+          />
+        </div>
+        <div>
+          <Label htmlFor={`${testId}-fantasia`}>Nome fantasia</Label>
+          <Input
+            id={`${testId}-fantasia`}
+            value={form.nome_fantasia}
+            onChange={(e) => setForm((f) => ({ ...f, nome_fantasia: e.target.value }))}
+            data-testid={`${testId}-fantasia-input`}
+          />
+        </div>
+        <div>
+          <Label>Situação cadastral</Label>
+          <Select
+            value={form.situacao_cadastral || undefined}
+            onValueChange={(v) => setForm((f) => ({ ...f, situacao_cadastral: v }))}
+          >
+            <SelectTrigger data-testid={`${testId}-situacao-input`}>
+              <SelectValue placeholder="Selecione" />
+            </SelectTrigger>
+            <SelectContent>
+              {SITUACAO_CADASTRAL_OPTIONS.map(([valor, rotulo]) => (
+                <SelectItem key={valor} value={valor}>
+                  {rotulo}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor={`${testId}-data-situacao`}>Data da situação</Label>
+          <Input
+            id={`${testId}-data-situacao`}
+            type="date"
+            value={form.data_situacao_cadastral}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, data_situacao_cadastral: e.target.value }))
+            }
+            data-testid={`${testId}-data-situacao-input`}
+          />
+        </div>
+      </div>
+
+      {pendenteConfirmacao.length > 0 && (
+        <p className="text-xs text-amber-600" data-testid={`${testId}-pendente`}>
+          Alteração enviada para confirmação de um administrador (o valor lido do documento
+          continua valendo até a decisão).
+        </p>
       )}
-    </CollapsibleSection>
+
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          onClick={handleSalvar}
+          disabled={atualizar.isPending}
+          data-testid={`${testId}-salvar`}
+        >
+          {atualizar.isPending ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : null}
+          Salvar
+        </Button>
+        <Button size="sm" variant="outline" onClick={onCancel} data-testid={`${testId}-cancelar`}>
+          <X className="mr-1.5 h-3.5 w-3.5" />
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Checklist (slice D — today, ONE item: Cartão CNPJ) ────────────────────
+
+function EmpresaChecklist({ empresaId }: { empresaId: string }) {
+  const checklist = useEmpresaChecklist(empresaId);
+  const items = checklist.data?.items ?? [];
+  if (items.length === 0) return null;
+
+  return (
+    <div className="space-y-1" data-testid={`empresa-checklist-${empresaId}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Checklist de documentos
+      </p>
+      {items.map((it) => (
+        <div key={it.item_key} className="flex items-center gap-1.5 text-sm">
+          {it.satisfeito ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+          ) : (
+            <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <span className={it.satisfeito ? undefined : "text-muted-foreground"}>
+            {it.titulo}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

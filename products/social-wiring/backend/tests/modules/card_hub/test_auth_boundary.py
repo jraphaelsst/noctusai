@@ -27,6 +27,8 @@ _VERSAO_ID = str(uuid4())
 _PARCELA_ID = str(uuid4())
 _FAVORECIDO_ID = str(uuid4())
 _INTERMEDIARIO_ID = str(uuid4())
+#: Migration 167 — the empresas/PJ-due-diligence link (slice D).
+_EMPRESA_ID = str(uuid4())
 
 #: Multipart-upload routes — their last path segment is a literal (no
 #: trailing id), same shape `.../financiamento/documentos` and
@@ -68,6 +70,7 @@ def test_every_card_hub_route_requires_auth(anon_client):
             .replace("{parcela_id}", _PARCELA_ID)
             .replace("{favorecido_id}", _FAVORECIDO_ID)
             .replace("{intermediario_id}", _INTERMEDIARIO_ID)
+            .replace("{empresa_id}", _EMPRESA_ID)
         )
         kwargs = {}
         # Checked on the LAST segment only (not the last two, which is what

@@ -310,6 +310,14 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
             }
         )
 
+    # Slice D (owner decision, 2026-09-24): an empresa that does NOT need
+    # certidões stays on the tab (never unlinked) but sorts LAST — a stable
+    # sort so ties (two `exige_certidoes=False` rows) keep their original
+    # `empresa_id` ordering. `sorted()`, not `.sort()`: `items` is a fresh
+    # list built above, but a stable, non-mutating call reads clearer at
+    # the call site than an in-place re-sort of the same name.
+    items = sorted(items, key=lambda item: not item["exige_certidoes"])
+
     return {"atendimento_id": atendimento_id, "referencia": referencia.isoformat(), "items": items}
 
 
@@ -360,4 +368,17 @@ def adicionar_manual(
     )
 
 
-__all__ = ["adicionar_manual", "listar"]
+def remover(client: Any, org_id: UUID, cliente_id: UUID, empresa_id: UUID) -> dict:
+    """`DELETE /{cliente_id}/empresas/{empresa_id}` (slice D) — unlinks this
+    cliente from the empresa; deletes the empresa row (and everything that
+    CASCADEs off it) only when no other cliente still participates in it.
+    `ensure_cliente` first, same 404-before-anything-else posture
+    `adicionar_manual` already takes. Delegates the actual write to
+    `dados_service.remover_participacao` — see its own docstring for the
+    ordering/CASCADE reasoning and the `documentos` list the caller (the
+    route) needs to clean up storage."""
+    ensure_cliente(client, org_id, cliente_id)
+    return dados_service.remover_participacao(client, org_id, cliente_id, empresa_id)
+
+
+__all__ = ["adicionar_manual", "listar", "remover"]

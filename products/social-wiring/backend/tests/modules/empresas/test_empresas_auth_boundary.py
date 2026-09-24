@@ -23,6 +23,11 @@ from uuid import uuid4
 _EMPRESA_ID = str(uuid4())
 _DOCUMENTO_ID = str(uuid4())
 
+#: The upload route (`POST .../documentos`) is multipart — sending it JSON
+#: would hit FastAPI's own body-shape rejection before auth even runs,
+#: which is a false-green this file exists to refuse.
+_MULTIPART_UPLOAD_LAST_SEGMENTS = {"documentos"}
+
 
 def test_every_empresas_route_requires_auth(anon_client):
     """Enumerates mounted routes rather than a hand list — guards against a
@@ -43,10 +48,16 @@ def test_every_empresas_route_requires_auth(anon_client):
             "{documento_id}", _DOCUMENTO_ID
         )
         kwargs = {}
-        # The upload route (`POST .../documentos`) is multipart — sending it
-        # JSON would hit FastAPI's own body-shape rejection before auth
-        # even runs, which is a false-green this file exists to refuse.
-        # Every OTHER POST here takes no body at all.
+        # `PATCH /{empresa_id}` (slice D) takes a JSON body
+        # (`EmpresaPatchBody`, every field optional) — an empty `{}` is a
+        # valid payload and lets the request reach the auth dependency
+        # instead of 422-ing on a missing body first.
+        last_segment = concrete.rstrip("/").split("/")[-1]
+        if (
+            method in ("post", "patch", "put")
+            and last_segment not in _MULTIPART_UPLOAD_LAST_SEGMENTS
+        ):
+            kwargs["json"] = {}
         resp = getattr(anon_client, method)(concrete, **kwargs)
         assert resp.status_code == 401, (
             f"{method.upper()} {concrete} -> {resp.status_code} "

@@ -22,6 +22,7 @@ ordering constraint applies within this file.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 from uuid import UUID
 
@@ -37,7 +38,7 @@ from fastapi import (
     UploadFile,
 )
 
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
 from noctusai_lib.domain.card_hub import CardHubContext, card_hub_routers
 
 from app.dependencies import get_core_client, get_current_user_org
@@ -73,6 +74,10 @@ from app.modules.card_hub.deps import (
     get_identity_extractor_factory,
     get_storage_backend,
 )
+from app.modules.empresas.deps import (
+    BUCKET as _EMPRESAS_BUCKET,
+    get_storage_backend as get_empresas_storage_backend,
+)
 from app.modules.card_hub.schemas import (
     CompradorCreateBody,
     ContratoPatchBody,
@@ -96,6 +101,7 @@ from app.modules.card_hub.schemas import (
 )
 
 router = APIRouter(prefix="/api/clientes", tags=["card_hub"])
+logger = logging.getLogger(__name__)
 
 # 🔴 THE ONE INCLUDE LINE — migration 108's parcelas/favorecidos/
 # intermediários routes. See `negociacao_estruturada_router.py`'s own
@@ -953,6 +959,55 @@ async def create_empresa_route(
         participacao_pct=body.participacao_pct,
         confirmado_por=getattr(user, "id", None),
     )
+
+
+@router.delete("/{cliente_id}/empresas/{empresa_id}")
+async def delete_empresa_route(
+    cliente_id: UUID,
+    empresa_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_empresas_storage_backend),
+) -> dict:
+    """Unlinks `empresa_id` from `cliente_id`; the `empresas` row (and its
+    CASCADE-linked `empresa_documentos`) is hard-deleted only when this was
+    the last participação — see `dados_service.remover_participacao`'s
+    docstring. ADMIN/OWNER ONLY (same trusted-DB gate `excluir_cliente_
+    route` uses, same reasoning: this can delete real rows + storage
+    files, irreversibly, the moment the last link goes).
+
+    Storage is deleted AFTER the DB rows are gone — same ordering
+    `excluir_cliente_route` takes and for the same reason (a storage
+    delete that ran first could leave a file gone with its row still
+    pointing at it, if the DB call then failed). A failure here is
+    reported in `storage_falhas`, never swallowed."""
+    user, org_id = _auth_parts(auth)
+    require_org_admin_role(
+        get_core_client(), getattr(user, "id", None), "Excluir empresa"
+    )
+
+    resultado = empresas_svc.remover(client, org_id, cliente_id, empresa_id)
+
+    storage_falhas: list[str] = []
+    for documento in resultado["documentos"]:
+        storage_path = documento.get("storage_path")
+        if not storage_path:
+            continue
+        try:
+            await storage.delete(bucket=_EMPRESAS_BUCKET, key=storage_path)
+        except Exception:
+            logger.exception(
+                "delete_empresa_route: falha ao remover arquivo do storage "
+                "empresa_id=%s storage_path=%s", empresa_id, storage_path,
+            )
+            storage_falhas.append(storage_path)
+
+    return {
+        "participacao_removida": resultado["participacao_removida"],
+        "empresa_removida": resultado["empresa_removida"],
+        "documentos_removidos": len(resultado["documentos"]),
+        "storage_falhas": storage_falhas,
+    }
 
 
 # ─── Negociação (migration 077) ─────────────────────────────────────────

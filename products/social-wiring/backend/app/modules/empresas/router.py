@@ -19,10 +19,18 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
+from pydantic import Field
+from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth.session import is_org_admin
 
-from app.dependencies import get_current_user_org
+from app.dependencies import get_core_client, get_current_user_org
 from app.modules.card_hub.auth import auth_parts as _auth_parts
-from app.modules.empresas import dados_service, documentos_service, extracao_service
+from app.modules.empresas import (
+    checklist_service,
+    dados_service,
+    documentos_service,
+    extracao_service,
+)
 from app.modules.empresas.deps import (
     get_cartao_extractor_factory,
     get_empresa_notification_service,
@@ -33,6 +41,19 @@ from app.modules.empresas.deps import (
 router = APIRouter(prefix="/api/empresas", tags=["empresas"])
 
 
+class EmpresaPatchBody(StrictHttpModel):
+    """`PATCH /api/empresas/{empresa_id}` (slice D) — razão social, nome
+    fantasia, CNPJ, situação cadastral, data da situação. Every field
+    optional/unset-excluded (`dados_service.atualizar_manual` only touches
+    what the caller actually sent)."""
+
+    cnpj: Optional[str] = Field(default=None, min_length=11, max_length=18)
+    razao_social: Optional[str] = None
+    nome_fantasia: Optional[str] = None
+    situacao_cadastral: Optional[str] = None
+    data_situacao_cadastral: Optional[str] = None
+
+
 @router.get("/{empresa_id}")
 async def get_empresa_route(
     empresa_id: UUID,
@@ -41,6 +62,37 @@ async def get_empresa_route(
 ) -> dict:
     _user, org_id = _auth_parts(auth)
     return dados_service.ensure_empresa(client, org_id, empresa_id)
+
+
+@router.patch("/{empresa_id}")
+async def update_empresa_route(
+    empresa_id: UUID,
+    body: EmpresaPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_empresas_client),
+) -> dict:
+    """`is_admin` gates the group-level cadastral fields exactly like
+    `clientes_router.update_cliente_route` gates `clientes`' own
+    document-sourced fields — see `dados_service.atualizar_manual`'s
+    docstring. `cnpj` is never gated."""
+    user, org_id = _auth_parts(auth)
+    updates = body.model_dump(exclude_unset=True)
+    return dados_service.atualizar_manual(
+        client, org_id, empresa_id,
+        acting_user_id=getattr(user, "id", None),
+        is_admin=is_org_admin(get_core_client(), getattr(user, "id", None)),
+        **updates,
+    )
+
+
+@router.get("/{empresa_id}/checklist")
+async def get_empresa_checklist_route(
+    empresa_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_empresas_client),
+) -> dict:
+    _user, org_id = _auth_parts(auth)
+    return checklist_service.listar(client, org_id, empresa_id)
 
 
 @router.get("/{empresa_id}/documentos")
