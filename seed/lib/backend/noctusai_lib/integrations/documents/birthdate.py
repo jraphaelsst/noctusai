@@ -61,7 +61,17 @@ _MONTHS = {
 
 #: Labels that mark the following date AS the birthdate. Longest-first so
 #: `DATA DE NASCIMENTO` wins over the bare `NASC` nested inside it.
+#:
+#: `DATA, LOCAL E UF DE NASCIMENTO` / `DATA E LOCAL DE NASCIMENTO` (P1/883,
+#: 2026-09-24) — the CNH's own combined field label (it prints the birth
+#: date, city and UF as one row). The bare `NASCIMENTO` entry already
+#: matches it as a substring via `_label_before`'s `rfind`, so this is
+#: belt-and-suspenders, not a behavioural change: an explicit entry survives
+#: a future switch to exact-token matching, and the matched label the UI
+#: shows a human is the CNH's actual printed field, not a fragment of it.
 _BIRTH_LABELS = (
+    "DATA, LOCAL E UF DE NASCIMENTO",
+    "DATA E LOCAL DE NASCIMENTO",
     "DATA DE NASCIMENTO",
     "DATA NASCIMENTO",
     "DT NASCIMENTO",

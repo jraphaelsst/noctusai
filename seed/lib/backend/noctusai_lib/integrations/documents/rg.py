@@ -116,12 +116,22 @@ _VALOR_LABELS = (
 #: unlabelled arm still runs every eleven-digit bare candidate through
 #: `_e_um_cpf` and only a LABELLED one skips that check (see `find_rg`).
 #:
+#: 🔴 P1/883 live bug (2026-09-24): the dígito verificador's separator gets
+#: `\s*` on each side, not a bare `-`. A real CNH's "DOC. IDENTIDADE" value
+#: transcribed as `13.032.360 - 3` (a space either side of the dash — a
+#: routine vision-transcription artifact, not a malformed document) missed
+#: the FIRST alternative below entirely (it required the dash immediately
+#: adjacent), fell through to the plain-digits alternative, and matched
+#: `13.032.360` — the DV silently dropped, not merely low-confidence.
+#: `normalize()` has already collapsed any run of whitespace to a single
+#: space by the time this runs, so `\s*` here never eats more than one.
+#:
 #: The lookarounds stop the pattern from biting a slice out of a longer run.
 _RG_RE = re.compile(
     r"(?<![\dXx.\-/])("
-    r"\d{1,3}(?:\.\d{3})+-[\dXx]"       # 52.179.965-X
+    r"\d{1,3}(?:\.\d{3})+\s*-\s*[\dXx]"  # 52.179.965-X / 52.179.965 - X
     r"|\d{1,3}(?:\.\d{3})+"             # 52.179.965
-    r"|\d{5,10}-[\dXx]"                 # 52179965-X
+    r"|\d{5,10}\s*-\s*[\dXx]"           # 52179965-X / 52179965 - X
     r"|\d{5,10}[Xx]"                    # 52179965X
     r"|\d{5,11}"                        # 52179965 / 44886493866
     r")(?![\dXx.\-/])"
@@ -228,7 +238,11 @@ def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
     🔴 The value is NOT reformatted, unlike `cpf.find_cpf`. There is no
     canonical RG format to normalise to — imposing São Paulo's dotted form on
     a Minas Gerais number would invent punctuation the document does not
-    have. Comparison is `only_alnum`'s job; storage keeps what was printed.
+    have. Comparison is `only_alnum`'s job; storage keeps what was printed —
+    with ONE narrow exception: a space either side of the DV's dash
+    (`13.032.360 - 3`) is collapsed to `13.032.360-3`. That whitespace is a
+    transcription artifact, never something printed on the card, and
+    leaving it in was the P1/883 live bug's proximate cause — see `_RG_RE`.
     """
     norm = normalize(text or "")
     if not norm:
@@ -238,7 +252,11 @@ def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
     pontuados: list[str] = []
 
     for m in _RG_RE.finditer(norm):
-        bruto = m.group(1)
+        # A space either side of the DV's dash is transcription noise, not
+        # something printed on the card — collapse it so the stored value
+        # is `13.032.360-3`, not `13.032.360 - 3`. The dotted thousands
+        # stay untouched (that punctuation choice IS the document's own).
+        bruto = re.sub(r"\s*-\s*", "-", m.group(1))
 
         achado = _label_before(norm, m.start())
         if achado.rejeitado:

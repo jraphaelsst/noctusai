@@ -60,6 +60,37 @@ class TestLabelAnchored:
         assert (v, c) == (date(1980, 5, 12), "alta")
 
 
+class TestCnhCombinedBirthdateLabel:
+    """P1/883 (2026-09-24): the CNH prints birth date, city and UF as ONE
+    field, "DATA, LOCAL E UF DE NASCIMENTO" — an explicit entry now, not
+    only the bare `NASCIMENTO` substring match."""
+
+    def test_the_full_cnh_label(self):
+        v, c, label = find_birthdate(
+            "DATA, LOCAL E UF DE NASCIMENTO: 16/02/1990, SAO PAULO, SP", today=TODAY
+        )
+        assert (v, c) == (date(1990, 2, 16), "alta")
+        assert label == "DATA, LOCAL E UF DE NASCIMENTO"
+
+    def test_the_shorter_cnh_variant(self):
+        v, c, _ = find_birthdate(
+            "DATA E LOCAL DE NASCIMENTO: 16/02/1990 SAO PAULO SP", today=TODAY
+        )
+        assert (v, c) == (date(1990, 2, 16), "alta")
+
+    def test_survives_a_neighbouring_habilitacao_decoy(self):
+        """The CNH's own layout: expedição/validade/primeira habilitação
+        sit in one row, the combined nascimento field in another."""
+        texto = (
+            "DATA EXPEDICAO / VALIDADE / 1A HABILITACAO: "
+            "10/01/2020 10/01/2030 20/05/2008 "
+            "DATA, LOCAL E UF DE NASCIMENTO: 16/02/1990, SAO PAULO, SP"
+        )
+        v, c, label = find_birthdate(texto, today=TODAY)
+        assert (v, c) == (date(1990, 2, 16), "alta")
+        assert label == "DATA, LOCAL E UF DE NASCIMENTO"
+
+
 class TestDecoyDatesAreRejected:
     """🔴 The core defect this module exists to prevent."""
 

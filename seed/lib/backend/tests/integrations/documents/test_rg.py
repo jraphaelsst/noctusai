@@ -58,6 +58,34 @@ class TestLabelled:
         assert (valor, conf) == (SP, "alta")
 
 
+class TestDvSeparatorWhitespaceIsNoiseNotSignal:
+    """P1/883 live bug (2026-09-24), a real image-only CNH: "DOC.
+    IDENTIDADE: 13.032.360 - 3" (a space either side of the DV's dash — a
+    routine vision-transcription artifact) missed the punctuated alternative
+    entirely, fell through to the plain-digits one, and read as
+    `13.032.360` — the DV silently dropped."""
+
+    def test_a_space_either_side_of_the_dash_is_collapsed(self):
+        valor, conf, _ = find_rg("DOC. IDENTIDADE: 13.032.360 - 3 SSP SP")
+        assert (valor, conf) == ("13.032.360-3", "alta")
+
+    def test_a_space_before_the_dash_only(self):
+        valor, _, _ = find_rg("DOC. IDENTIDADE: 13.032.360 -3 SSP SP")
+        assert valor == "13.032.360-3"
+
+    def test_a_space_after_the_dash_only(self):
+        valor, _, _ = find_rg("DOC. IDENTIDADE: 13.032.360- 3 SSP SP")
+        assert valor == "13.032.360-3"
+
+    def test_the_bare_digit_shape_gets_the_same_treatment(self):
+        valor, _, _ = find_rg("DOC. IDENTIDADE: 13032360 - 3 SSP SP")
+        assert valor == "13032360-3"
+
+    def test_no_regression_on_the_tight_form(self):
+        valor, _, _ = find_rg("DOC. IDENTIDADE: 13.032.360-3 SSP SP")
+        assert valor == "13.032.360-3"
+
+
 class TestUnlabelled:
     def test_the_fully_punctuated_shape_is_a_low_confidence_suggestion(self):
         """Dotted thousands AND a check character — the one self-evidence an
