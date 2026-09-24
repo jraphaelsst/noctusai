@@ -931,6 +931,57 @@ class TestReadSurface:
             svc.update_cliente(client, ORG, str(uuid4()), nome="X")
 
 
+class TestListClientesSearchColumns:
+    """`GET /api/clientes?q=` matches `nome` OR `celular` OR `email`
+    (leads-novo-lead, 2026-09-24) — used to match `nome` alone. The
+    Base-de-Leads "Novo lead" cliente picker is typed a phone number ("Fer"
+    finds Fernando by name; "9876" finds him by the digits an operator has
+    pasted straight out of WhatsApp) at least as often as a name."""
+
+    def _seed(self) -> MockSupabaseClient:
+        client = _scoped_client()
+        client.set_table_data(
+            "clientes",
+            [
+                {
+                    "id": "c1", "org_id": ORG, "nome": "Fernando Souza",
+                    "celular": "+5511987654321", "email": "fernando@example.com",
+                    "ativo": True, "chave_canonica": "+5511987654321",
+                    "chave_tipo": "telefone", "identidade_incerta": False,
+                    "ultimo_contato_em": "2026-09-01T00:00:00+00:00",
+                },
+                {
+                    "id": "c2", "org_id": ORG, "nome": "Mariana Costa",
+                    "celular": "+5511911112222", "email": "mariana@example.com",
+                    "ativo": True, "chave_canonica": "+5511911112222",
+                    "chave_tipo": "telefone", "identidade_incerta": False,
+                    "ultimo_contato_em": "2026-09-02T00:00:00+00:00",
+                },
+            ],
+        )
+        return client
+
+    def test_matches_by_nome(self):
+        client = self._seed()
+        result = svc.list_clientes(client, ORG, q="fernand")
+        assert [c["id"] for c in result["items"]] == ["c1"]
+
+    def test_matches_by_celular(self):
+        client = self._seed()
+        result = svc.list_clientes(client, ORG, q="87654321")
+        assert [c["id"] for c in result["items"]] == ["c1"]
+
+    def test_matches_by_email(self):
+        client = self._seed()
+        result = svc.list_clientes(client, ORG, q="mariana@")
+        assert [c["id"] for c in result["items"]] == ["c2"]
+
+    def test_no_match_returns_empty_not_error(self):
+        client = self._seed()
+        result = svc.list_clientes(client, ORG, q="zzz-nao-existe-nenhum-cliente")
+        assert result == {"items": [], "total": 0, "page": 1, "pages": 1}
+
+
 class TestRgIgualCpfEhAceito:
     """🔴 RG == CPF is NOT refused (2026-09-22). It used to be — the same
     eleven digits landing in both boxes, `noctusai_lib.integrations.

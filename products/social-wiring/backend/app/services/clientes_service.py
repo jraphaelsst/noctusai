@@ -1122,6 +1122,49 @@ def undo_merge(client: Any, org_id: UUID, merge_id: UUID) -> str:
 
 # ─── read surface (Slice B builds routers on top of these) ──────────────
 
+#: `GET /api/clientes?q=` columns — nome, celular, email (leads-novo-lead
+#: 2026-09-24). Used to be `nome` alone: the board search and the
+#: Base-de-Leads "Novo lead" cliente picker both need to find "Fernando" by
+#: typing his phone or his e-mail just as much as his name — a lead/atendimento
+#: operator routinely has a phone number typed into WhatsApp and nothing else.
+_CLIENTES_SEARCH_COLS = ("nome", "celular", "email")
+
+
+def _ids_matching_termo(client: Any, org_id: UUID, termo: str) -> set[str]:
+    """Every `clientes.id` whose `nome`, `celular` or `email` ILIKE-matches
+    `termo` — one query per column, unioned in Python.
+
+    🔴 NOT a single `.or_(...)` expression across the three columns.
+    `imovel_hub.busca_service`'s module header documents why (same mock,
+    same trap): `MockRequestBuilder.or_()` (`noctusai_lib/testing/mocks.py`)
+    records a synthetic MATCH-ALL predicate rather than actually filtering,
+    so an `.or_()`-based search would pass every test (it "finds" everything)
+    and silently return the wrong, unfiltered set in production — the first
+    honest signal would be an operator reporting the picker offers the whole
+    client base. Per-column `ilike` evaluates identically in both worlds,
+    exactly like `busca_service._ilike_rows`.
+
+    NOC-REMEDIATE[clientes-busca-accent-fold]: case-insensitive (Postgres
+    ILIKE) but not accent-insensitive — typing "fernicio" will not match a
+    stored "Fernício". `imovel_hub.busca_service` carries the identical gap
+    (`NOC-REMEDIATE[imovel-busca-accent-fold]`); this is N=2 for the same
+    class (a DB-side `unaccent()`-derived generated column), triaged per the
+    DRY N=2 rule rather than formalized here — batch both when a third
+    surface needs it. — 2026-09-24
+    """
+    ids: set[str] = set()
+    for coluna in _CLIENTES_SEARCH_COLS:
+        rows = (
+            _t(client, "clientes")
+            .select("id")
+            .eq("org_id", str(org_id))
+            .ilike(coluna, f"%{termo}%")
+            .limit(_PAGE)
+            .execute()
+        ).data or []
+        ids.update(str(r["id"]) for r in rows if r.get("id"))
+    return ids
+
 
 def list_clientes(
     client: Any,
@@ -1138,12 +1181,20 @@ def list_clientes(
     corretor by design); resolving it needs a join through
     `cliente_touches` -> `leads.corretor_id` that is a routing/query
     decision, not a resolution-engine one. Flagged for Slice B, not
-    built here (see the Slice A delivery note)."""
+    built here (see the Slice A delivery note).
+
+    `q` matches `nome` OR `celular` OR `email` (`_ids_matching_termo`) — a
+    live typeahead (the "Novo lead" cliente picker) is typed a phone number
+    at least as often as a name."""
     query = _t(client, "clientes").select("*", count="exact").eq("org_id", str(org_id))
     if ativo is not None:
         query = query.eq("ativo", ativo)
     if q:
-        query = query.ilike("nome", f"%{q}%")
+        termo = q.strip()
+        matching_ids = _ids_matching_termo(client, org_id, termo) if termo else set()
+        if not matching_ids:
+            return {"items": [], "total": 0, "page": page, "pages": 1}
+        query = query.in_("id", sorted(matching_ids))
 
     start = max(0, (page - 1) * page_size)
     result = (
