@@ -57,6 +57,13 @@ class SignatarioBody(StrictHttpModel):
         "comprador", "vendedor", "testemunha", "interveniente", "intermediario"
     ]
     ordem: int = 0
+    #: [papel='testemunha' only, migration 168] The `org_testemunhas` row
+    #: this signatário was selected from (`contrato_testemunhas`) — how
+    #: `assinatura_service._resolver_testemunhas_do_registro` re-resolves
+    #: the authoritative e-mail/cpf now, replacing the old nome-match. `None`
+    #: for every other papel, and for a testemunha submitted with no
+    #: registry match (left exactly as typed).
+    testemunha_id: Optional[UUID] = None
 
 
 class EnviarAssinaturaBody(StrictHttpModel):

@@ -260,36 +260,49 @@ def buscar_por_external_id(client: Any, provedor: str, external_id: str) -> Opti
 def _resolver_testemunhas_do_registro(
     client: Any, org_id: UUID, signatarios: Sequence[dict]
 ) -> list[dict]:
-    """[papel='testemunha' only] `org_testemunhas` (migration 108/143) is the
-    org's STANDING witness registry — reused across every contract, unlike a
+    """[papel='testemunha' only] `org_testemunhas` (migration 108/143/168) is
+    the org's STANDING witness registry — reused across contracts, unlike a
     comprador/vendedor's per-deal `nome`/`email`/`cpf` — so once the office
     has filled in a witness's e-mail there, THAT value is authoritative over
     whatever this one send happened to carry inline, never the reverse.
-    Matched by `nome` (trimmed, case-folded): `SignatarioBody` carries no
-    `testemunha_id` to key on directly. A witness with no matching registry
-    row, or no e-mail/cpf there yet, is left exactly as submitted —
-    `_validar_signatarios` below stays the one 400 authority for "this
-    e-mail/cpf doesn't work."
+
+    🔴 MATCHED BY `testemunha_id`, NOT NOME (migration 168 — supersedes the
+    old nome-match). The FE now sends the `contrato_testemunhas` selection's
+    `org_testemunhas.id` on every testemunha signatário
+    (`EnviarAssinaturaDialog.deTestemunha`), so this resolves the SAME row
+    the operator actually selected rather than a nome that could collide
+    (two "Maria Silva"s) or drift (a registry rename after the card seeded
+    its dialog). A signatário with no `testemunha_id` (an older client, or a
+    witness that was never in the registry to begin with) is left exactly
+    as submitted — `_validar_signatarios` below stays the one 400 authority
+    for "this e-mail/cpf doesn't work."
     """
-    alvos = [i for i, s in enumerate(signatarios) if s.get("papel") == "testemunha"]
+    alvos = [
+        i for i, s in enumerate(signatarios)
+        if s.get("papel") == "testemunha" and s.get("testemunha_id")
+    ]
     if not alvos:
         return list(signatarios)
 
+    ids = {str(signatarios[i]["testemunha_id"]) for i in alvos}
     linhas = (
         client.table("org_testemunhas")
-        .select("nome, email, cpf")
+        .select("id, nome, email, cpf")
         .eq("org_id", str(org_id))
+        .in_("id", list(ids))
         .execute()
     ).data or []
-    registro = {(row.get("nome") or "").strip().casefold(): row for row in linhas}
+    registro = {str(row["id"]): row for row in linhas}
 
     resolvidos = list(signatarios)
     for i in alvos:
         s = resolvidos[i]
-        row = registro.get((s.get("nome") or "").strip().casefold())
+        row = registro.get(str(s["testemunha_id"]))
         if row is None:
             continue
         atualizado = dict(s)
+        if row.get("nome"):
+            atualizado["nome"] = row["nome"]
         if row.get("email"):
             atualizado["email"] = row["email"]
         if row.get("cpf"):

@@ -140,7 +140,7 @@ document set (text-layer and scan variants) with an answer key (`esperado.json`)
 | `modalidade_assinatura` → `tem_assinatura_digital` (migration 157) | §2.13/§2.17 | none — operator choice per contract | — | `atendimento_contratos.modalidade_assinatura` (`digital` default \| `fisica`) | `PATCH /api/clientes/{cliente_id}/contratos/{contrato_id}`; going `fisica` under a live envelope is 409 `CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO` | `manual_entry_only` — `fisica` drops the §2.13 clause (numbering re-flows) and swaps the §2.17 closing/signature block |
 | `vias` (física) | §2.17 | derived | `contexto.py::montar_contexto` — one per signer (`len(vendedores)+len(compradores)`), min 2, `numero_com_extenso(…, largura=2)` | none | — | n/a (derivation) |
 | `V_assinantes_fisicos` / `C_assinantes_fisicos` (`s.nome`, `s.documento`), `linha_assinatura` (física) | §2.17 | derived from the partes rows | `frases.py::assinante_fisico` / `documento_linha` (NOME upper + "CPF …"; no e-mail); `frases.LINHA_ASSINATURA` | none (reads the partes' `nome_oficial`/`cpf`) | — | `manual_entry_only` (via the partes rows) |
-| `testemunhas_fisicas` (`t.nome`, `t.documento`) (física) | §2.17 | derived from the testemunhas rows | `frases.py::testemunha_documento_linha` ("CPF … / RG …", or just the one present) | `org_testemunhas.{nome,cpf,rg}` | same endpoints as the Testemunhas rows | `manual_entry_only` — the física block is the ONE place a witness CPF is printed (beside the RG) |
+| `testemunhas_fisicas` (`t.nome`, `t.documento`) (física) | §2.17 | derived from the SELECTED testemunhas rows | `frases.py::testemunha_documento_linha` — "CPF …" (migration 168: RG dropped, delegates to `documento_linha`) | `org_testemunhas.{nome,cpf}`, selected via `contrato_testemunhas` | same endpoints as the Testemunhas rows | `manual_entry_only` — CPF is required for selection, so a física witness always has one to print |
 | `contrato.modelo` (check only) | — | none | `derivacao.py:321 modelo_derivado` | `atendimento_contratos.modelo` | `PATCH /api/clientes/{cliente_id}/contratos/{contrato_id}`; `_contrato` only **warns** on mismatch (`MODELO_DIVERGENTE`), never blocks | `manual_entry_only` |
 
 ### Imóvel objeto (spec rows 9–18; clause §2.2)
@@ -268,10 +268,21 @@ document set (text-layer and scan variants) with an answer key (`esperado.json`)
 
 ### Testemunhas (spec rows 87–89; clause §2.17)
 
+🔴 **Migration 168 (owner decision) supersedes the row below it wholesale:**
+`org_testemunhas` is now an org-wide REGISTRY (the migration-108 2-per-org
+cap is dropped), and a contract SELECTS which registered witnesses sign it
+via the new `contrato_testemunhas` join table
+(`contrato_testemunhas_service.definir`) — `t.nome`/`t.cpf`/`t.email` the
+template reads now come from the SELECTED rows only (`carregador.
+_testemunhas_selecionadas`), never the whole registry. CPF is REQUIRED
+(mod-11) on every new registry row and the contract prints CPF INSTEAD OF
+RG; RG left the registration form and the readiness gate alike, and is kept
+on the two migration-108 legacy rows for display only, never printed.
+
 | placeholder | clause | source document type | extractor code path | confirmed storage | confirm/promote step | status |
 |---|---|---|---|---|---|---|
-| `testemunhas[].nome` / `.rg` | §2.17 | none | — | `org_testemunhas.{nome,rg}` | `POST/PATCH /api/settings/imobiliaria/testemunhas[/{testemunha_id}]` (`settings_router.py:1687`/`:1729`) | `manual_entry_only` — RG is hard-required (§5.1), never CPF |
-| `testemunhas[].email` [Q14 revisited] | §2.17 | none | — | `org_testemunhas.email` (migration 143) | same endpoints | `manual_entry_only` — optional; printed beside the name when present, and is what `assinatura_service.enviar` resolves a `papel='testemunha'` signatário's e-mail from. `org_testemunhas.cpf` stays a separate, OPTIONAL field (validated mod-11 when present, never required, never printed) — see the F5 clause template's `RG {{ t.rg }}` line; this row corrects the prior entry here, which had the code's then-current (and since-fixed) CPF-printing defect backwards from spec §2.17/§5.1's own already-written "nome + rg" answer |
+| `testemunhas[].nome` / `.cpf` | §2.17 | none | — | `org_testemunhas.{nome,cpf}`, joined through `contrato_testemunhas.{testemunha_id,ordem}` (migration 168) — the SELECTED subset for this contract only | registry: `POST/PATCH /api/settings/imobiliaria/testemunhas[/{testemunha_id}]` (`settings_router.py`); selection: `PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/testemunhas` (`contrato_testemunhas_router.py`) | `manual_entry_only` — CPF is hard-required (owner decision, migration 168), never RG; a registry row with no CPF ("CPF pendente") cannot be selected |
+| `testemunhas[].email` [Q14 revisited] | §2.17 | none | — | `org_testemunhas.email` (migration 143) | same registry endpoint | `manual_entry_only` — optional; printed beside the name when present, and is what `assinatura_service._resolver_testemunhas_do_registro` resolves a `papel='testemunha'` signatário's e-mail/cpf/nome from, keyed by `testemunha_id` (migration 168 — supersedes the prior nome match) |
 
 ### Financiamento (spec row 90; validation only, no clause text)
 
@@ -474,8 +485,8 @@ pre-composed strings are themselves covered by the `certidoes.grupos` /
 | `rescisao` | Rescisão / resolutiva |
 | `rescisao.cura_frase` | Rescisão / resolutiva |
 | `resolutiva_notificacao_email` | Rescisão / resolutiva |
+| `t.cpf` | Testemunhas |
 | `t.linha` | Testemunhas |
-| `t.rg` | Testemunhas |
 | `tem_confissao` | Contrato / assinatura (§1.1 switches) |
 | `tem_declaracao_partes` | Contrato / assinatura (§1.1 switches) |
 | `tem_fgts` | Contrato / assinatura (§1.1 switches) |
@@ -566,7 +577,7 @@ THIS contract to generate:
 7. **Qualify every signatory.** Confirm CPF/RG/gênero/estado civil (AI-suggest+confirm or direct `PATCH /clientes/{id}`) for every vendedor and comprador on the card; enter every party's endereço manually (gap (iii) #10 — no shortcut exists); enter `data_casamento` for any casado party.
 8. **Certify every signatory.** All 12 PF certidão types per vendedor (and per comprador if this deal turns out to have `tem_permuta` — card 08's real contract did not), each with a confirmed `PATCH /certidoes/resultados/{id}`.
 9. **Enter the deal terms.** `valor_negociado`, parcelas (with a single `sinal`, each with `favorecido_id`+conta/PIX), `posse_marco`/`posse_prazo_dias`, `itens_integrantes`/`ad_corpus` if applicable (08 is `V3 = V1 − itens + ad corpus` per spec §1.3 — `ad_corpus=true`, `itens_integrantes` empty is the EXPECTED shape for this exact card, not a gap).
-10. **Confirm the org is configured once**: `razao_social`/`cnpj`/`responsavel_*`/`endereco_cidade`, 2 testemunhas with nome+RG (CPF and e-mail optional — e-mail only matters for sending), signing-platform name/URL, `posse_multa_diaria` — all org-level, done once, not per-deal.
+10. **Confirm the org is configured once**: `razao_social`/`cnpj`/`responsavel_*`/`endereco_cidade` (org-level, once), signing-platform name/URL, `posse_multa_diaria`. **Testemunhas are per-contract as of migration 168**: at least one registered witness (nome+CPF required, e-mail optional — matters only for sending) must be SELECTED for THIS contract (`PUT /api/clientes/{cliente_id}/contratos/{contrato_id}/testemunhas`) — the registry itself can hold any number, done once per witness, but the selection is done per deal.
 11. Only then does `avaliar()` return `pronto=True` and `service.gerar` can render.
 
 ## 5 · Keeper — `check_contract_field_provenance_map`

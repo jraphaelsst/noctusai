@@ -419,13 +419,15 @@ class Imobiliaria:
 @dataclass
 class Testemunha:
     nome: Optional[str]
-    #: The document the contract prints and the readiness gate requires —
-    #: Contract 08's real witnesses have only this, never a CPF.
+    #: [Migration 168] UNUSED — kept only because `carregador._testemunhas_
+    #: selecionadas` still passes `None` here rather than dropping the field
+    #: outright (a smaller diff than re-shaping every caller). RG left both
+    #: the registration form and the print; nothing reads this anymore.
     rg: Optional[str]
-    #: Optional — an office MAY hold one, validated (mod-11) when present,
-    #: but never required. Never printed in a DIGITAL contract (migration
-    #: 108/143 revisited); a FÍSICA contract (migration 157) prints it beside
-    #: the RG under the witness's signature line when present.
+    #: [Migration 168, owner decision] The document the contract prints and
+    #: the readiness gate requires — CPF replaces RG. Validated mod-11 at
+    #: creation (`settings_router.TestemunhaCreateBody`) and re-checked here
+    #: at readiness (`derivacao._imobiliaria`).
     cpf: Optional[str] = None
     #: [migration 143] Optional at readiness (an aviso, not a faltando) —
     #: required only to add this witness to a D4Sign envelope.

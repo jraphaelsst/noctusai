@@ -284,18 +284,20 @@ class TestSendingSucceeds:
 
 
 class TestTestemunhaWiring:
-    """`org_testemunhas` (migration 108/143) is the org's standing witness
+    """`org_testemunhas` (migration 108/143/168) is the org's witness
     registry — `assinatura_service.enviar` resolves a papel='testemunha'
-    signatário's e-mail/cpf from it BY NOME, authoritatively over whatever
-    this one request happened to submit inline."""
+    signatário's e-mail/cpf/nome from it BY `testemunha_id` (migration 168 —
+    supersedes the old nome match), authoritatively over whatever this one
+    request happened to submit inline."""
 
     def test_the_registrys_email_wins_over_a_stale_inline_value(
         self, client, scoped, fake_storage, fake_signature_adapter
     ):
         cid, aid = _seed(scoped)
         ids = _seed_versao_gerada(scoped, fake_storage, aid)
+        testemunha_id = str(uuid4())
         scoped.set_table_data("org_testemunhas", [{
-            "id": str(uuid4()), "org_id": ORG_ID, "nome": "Maria Testemunha",
+            "id": testemunha_id, "org_id": ORG_ID, "nome": "Maria Testemunha",
             "rg": "12.345.678-9", "cpf": CPF_VALIDO,
             "email": "maria.testemunha@exemplo.test",
             "created_at": "2026-09-16T00:00:00+00:00", "updated_at": None,
@@ -307,7 +309,7 @@ class TestTestemunhaWiring:
                 _signatario(),
                 _signatario(
                     nome="Maria Testemunha", email="stale@example.com",
-                    cpf=CPF_VALIDO, papel="testemunha",
+                    cpf=CPF_VALIDO, papel="testemunha", testemunha_id=testemunha_id,
                 ),
             ],
         )
@@ -316,11 +318,38 @@ class TestTestemunhaWiring:
         assert "maria.testemunha@exemplo.test" in emails
         assert "stale@example.com" not in emails
 
+    def test_a_nome_match_no_longer_resolves_anything(
+        self, client, scoped, fake_storage, fake_signature_adapter
+    ):
+        """[Migration 168] A registry row with the SAME nome but no
+        `testemunha_id` on the signatário is NOT matched — the resolver
+        keys strictly on id now, not nome."""
+        cid, aid = _seed(scoped)
+        ids = _seed_versao_gerada(scoped, fake_storage, aid)
+        scoped.set_table_data("org_testemunhas", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "nome": "Maria Testemunha",
+            "rg": None, "cpf": CPF_VALIDO,
+            "email": "maria.testemunha@exemplo.test",
+            "created_at": "2026-09-16T00:00:00+00:00", "updated_at": None,
+        }])
+
+        r = _enviar(
+            client, cid, ids["contrato_id"], versao_id=ids["versao_id"],
+            signatarios=[
+                _signatario(
+                    nome="Maria Testemunha", email="inline@example.com",
+                    cpf=CPF_VALIDO, papel="testemunha",
+                ),
+            ],
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["signatarios"][0]["email"] == "inline@example.com"
+
     def test_an_unregistered_witness_is_left_as_submitted(
         self, client, scoped, fake_storage, fake_signature_adapter
     ):
-        """No matching `org_testemunhas` row by nome — the inline value is
-        the only one there is, and still sendable when it's valid."""
+        """No `testemunha_id` at all — the inline value is the only one
+        there is, and still sendable when it's valid."""
         cid, aid = _seed(scoped)
         ids = _seed_versao_gerada(scoped, fake_storage, aid)
         scoped.set_table_data("org_testemunhas", [])
@@ -336,6 +365,28 @@ class TestTestemunhaWiring:
         )
         assert r.status_code == 201, r.text
         assert r.json()["signatarios"][0]["email"] == "avulsa@example.com"
+
+    def test_a_testemunha_id_that_does_not_resolve_is_left_as_submitted(
+        self, client, scoped, fake_storage, fake_signature_adapter
+    ):
+        """A `testemunha_id` from another org (or a deleted row) resolves to
+        nothing — same "left as submitted" posture as no id at all, never a
+        500 or a silent cross-org read."""
+        cid, aid = _seed(scoped)
+        ids = _seed_versao_gerada(scoped, fake_storage, aid)
+        scoped.set_table_data("org_testemunhas", [])
+
+        r = _enviar(
+            client, cid, ids["contrato_id"], versao_id=ids["versao_id"],
+            signatarios=[
+                _signatario(
+                    nome="Fantasma", email="fantasma@example.com",
+                    cpf=CPF_VALIDO, papel="testemunha", testemunha_id=str(uuid4()),
+                ),
+            ],
+        )
+        assert r.status_code == 201, r.text
+        assert r.json()["signatarios"][0]["email"] == "fantasma@example.com"
 
 
 class TestGetting:

@@ -16,7 +16,8 @@
 | matrícula literal text        | `matriculas.estrutura_service.obter_selecao` (logs the text read) |
 | ônus source acts (kind/nº)    | `matriculas.estrutura_service.listar_atos` (logs the text read)   |
 | permuta ativos (114)          | `permuta_ativos` rows via `table_reads.in_batched_rows` |
-| org cadastral + testemunhas   | `settings_router.get_dados_imobiliaria` / `list_testemunhas`      |
+| org cadastral                 | `settings_router.get_dados_imobiliaria`                            |
+| testemunhas SELECIONADAS (168)| `contrato_testemunhas_service.listar` (never the whole registry)  |
 
 Services are called DIRECTLY (Python), never over HTTP — one request, one
 transaction-shaped read, and no self-call that would need a token.
@@ -456,35 +457,50 @@ def _termos(bruto: dict) -> Termos:
     )
 
 
-def _imobiliaria(client: Any, org_id: UUID) -> tuple[Imobiliaria, list[Testemunha]]:
+def _imobiliaria(client: Any, org_id: UUID) -> Imobiliaria:
     # Imported here, not at module top: `settings_router` pulls in the whole
     # settings surface and card_hub must not import it at app assembly time.
     from app.routers import settings_router
 
     auth = (None, None, str(org_id))
     org = settings_router.get_dados_imobiliaria(auth, client)
-    testemunhas = settings_router.list_testemunhas(auth, client)["items"]
-    return (
-        Imobiliaria(
-            razao_social=org.get("razao_social"),
-            nome_fantasia=org.get("nome_fantasia"),
-            cnpj=org.get("cnpj"),
-            creci_pj=org.get("creci_pj"),
-            responsavel_nome=org.get("responsavel_nome"),
-            responsavel_creci=org.get("responsavel_creci"),
-            email=org.get("email"),
-            endereco=_endereco(org),
-            # Migration 117 — the office's own operational answers.
-            posse_multa_diaria=_dec(org.get("posse_multa_diaria")),
-            plataforma_assinatura_nome=org.get("plataforma_assinatura_nome"),
-            plataforma_assinatura_url=org.get("plataforma_assinatura_url"),
-            prazo_pendencias_padrao_dias=_int(org.get("prazo_pendencias_padrao_dias")),
-        ),
-        [
-            Testemunha(nome=t.get("nome"), rg=t.get("rg"), cpf=t.get("cpf"), email=t.get("email"))
-            for t in testemunhas
-        ],
+    return Imobiliaria(
+        razao_social=org.get("razao_social"),
+        nome_fantasia=org.get("nome_fantasia"),
+        cnpj=org.get("cnpj"),
+        creci_pj=org.get("creci_pj"),
+        responsavel_nome=org.get("responsavel_nome"),
+        responsavel_creci=org.get("responsavel_creci"),
+        email=org.get("email"),
+        endereco=_endereco(org),
+        # Migration 117 — the office's own operational answers.
+        posse_multa_diaria=_dec(org.get("posse_multa_diaria")),
+        plataforma_assinatura_nome=org.get("plataforma_assinatura_nome"),
+        plataforma_assinatura_url=org.get("plataforma_assinatura_url"),
+        prazo_pendencias_padrao_dias=_int(org.get("prazo_pendencias_padrao_dias")),
     )
+
+
+def _testemunhas_selecionadas(
+    client: Any, org_id: UUID, atendimento_id: UUID, contrato_id: UUID
+) -> list[Testemunha]:
+    """[Migration 168] The witnesses the operator SELECTED for THIS contract
+    (`contrato_testemunhas`), in print order — never the whole
+    `org_testemunhas` registry (that changed with 168: the office may
+    register far more than the two a contract actually needs). Imported
+    here for the same reason `_imobiliaria` above imports lazily."""
+    from app.modules.card_hub import contrato_testemunhas_service as testemunhas_svc
+
+    selecionadas = testemunhas_svc.listar(client, org_id, atendimento_id, contrato_id)["items"]
+    return [
+        Testemunha(
+            nome=item["testemunha"].get("nome"),
+            rg=None,
+            cpf=item["testemunha"].get("cpf"),
+            email=item["testemunha"].get("email"),
+        )
+        for item in selecionadas
+    ]
 
 
 def carregar(
@@ -530,7 +546,8 @@ def carregar(
         if selecao.get("extracao_id")
         else None
     )
-    imobiliaria, testemunhas = _imobiliaria(client, org_id)
+    imobiliaria = _imobiliaria(client, org_id)
+    testemunhas = _testemunhas_selecionadas(client, org_id, atendimento_id, contrato_id)
 
     parcelas = [
         Parcela(

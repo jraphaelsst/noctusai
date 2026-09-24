@@ -214,7 +214,7 @@ E, por estarem assim justos e contratados, os contraentes assinam o presente ins
 TESTEMUNHAS:
 {%p for t in testemunhas %}
 {{ t.linha }}
-RG {{ t.rg }}
+{{ t.cpf }}
 {%p endfor %}
 {%p else %}
 {{ V.NOME }}

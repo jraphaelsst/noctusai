@@ -296,6 +296,12 @@ export interface SignatarioInput {
   cpf: string;
   papel: PapelSignatario;
   ordem?: number;
+  /** [papel="testemunha" only, migration 168] The `org_testemunhas` row this
+   *  signatário was selected from — lets the server re-resolve the
+   *  authoritative e-mail/cpf by id (`assinatura_service._resolver_
+   *  testemunhas_do_registro`) instead of a nome match. Omitted for every
+   *  other papel. */
+  testemunha_id?: string;
 }
 
 /** §3.1/§3.2 response row — one signer's progress. */

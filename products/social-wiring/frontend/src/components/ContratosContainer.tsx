@@ -20,9 +20,11 @@
  * 🔴 ASSINATURA DIGITAL (signature-integration-CONTRACT §4) — same reuse
  * discipline as `renderMatriculaAtos`: `useCompradores(clienteId)` /
  * `useCompradores(clienteId, "vendedor")` are the SAME hook the Compradores/
- * Vendedores tabs already call (`ClienteDetailModal`), and `useTestemunhas`
- * is the SAME hook the settings page uses — no second fetch path is added
- * for the "Enviar para assinatura" dialog's prefill. `useAssinaturas` is
+ * Vendedores tabs already call (`ClienteDetailModal`). [Migration 168] The
+ * dialog's testemunhas prefill is the card's PER-CONTRACT SELECTION
+ * (`useContratoTestemunhas`, scoped to `envioAlvo.contratoId`) — never the
+ * whole org registry `useTestemunhas` lists, which can carry witnesses this
+ * particular contract never chose. `useAssinaturas` is
  * scoped to only the contracts that have ever had a `gerado` version (an
  * upload-only contract can never have gone through this flow, so it never
  * fires a GET that can only 404). The dialog itself
@@ -37,6 +39,7 @@ import { useAuthStore } from "@noctusai/seed/infra";
 import { ApiError, resolveSSOContext } from "@noctusai/lib";
 
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
+import { TestemunhasSelectContainer } from "@/components/TestemunhasSelectContainer";
 import type { GeracaoDestino } from "@/components/card/GeradorContratoSection";
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
 import { ProvenienciaContainer } from "@/components/ProvenienciaContainer";
@@ -49,8 +52,8 @@ import {
   useContratoMutations,
   useContratos,
 } from "@/hooks/useContratos";
+import { useContratoTestemunhas } from "@/hooks/useContratoTestemunhas";
 import { useNegociacao } from "@/hooks/useNegociacao";
-import { useTestemunhas } from "@/hooks/useTestemunhas";
 
 function toastServerError(err: unknown, fallback: string) {
   // A typed server refusal (`{error: {code, message}}` — e.g. migration
@@ -93,7 +96,6 @@ export function ContratosContainer({
   // settings page already call (see header note), not a second fetch path.
   const compradores = useCompradores(clienteId);
   const vendedores = useCompradores(clienteId, "vendedor");
-  const testemunhas = useTestemunhas();
   const contratoIdsElegiveis = (query.data ?? [])
     .filter((c) => c.origem === "gerado" || c.versoes.some((v) => v.origem === "gerado"))
     .map((c) => c.id);
@@ -102,6 +104,9 @@ export function ContratosContainer({
     null,
   );
   const [erroEnvio, setErroEnvio] = useState<AssinaturaError | null>(null);
+  // [Migration 168] THIS contract's selected witnesses only — see the
+  // header note.
+  const testemunhasSelecionadas = useContratoTestemunhas(clienteId, envioAlvo?.contratoId ?? null);
 
   function fecharEnvioDialog(open: boolean) {
     if (!open) {
@@ -248,6 +253,9 @@ export function ContratosContainer({
         renderProveniencia={(contratoId, aberto) => (
           <ProvenienciaContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
         )}
+        renderTestemunhasSelect={(contratoId, aberto) => (
+          <TestemunhasSelectContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
+        )}
         assinaturas={assinaturas}
         onAbrirEnvioAssinatura={(contratoId, versaoId) => {
           setErroEnvio(null);
@@ -320,7 +328,7 @@ export function ContratosContainer({
         onOpenChange={fecharEnvioDialog}
         compradores={compradores.data?.items ?? []}
         vendedores={vendedores.data?.items ?? []}
-        testemunhas={testemunhas.data?.items ?? []}
+        testemunhas={(testemunhasSelecionadas.data?.items ?? []).map((item) => item.testemunha)}
         sending={mutations.enviarParaAssinatura.isPending}
         erro={erroEnvio}
         onEnviar={({ signatarios, mensagem }) => {

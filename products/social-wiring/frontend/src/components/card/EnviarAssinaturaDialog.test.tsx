@@ -20,7 +20,7 @@ vi.mock("react-router-dom", () => ({
 
 import { EnviarAssinaturaDialog, partesParaSignatarios } from "./EnviarAssinaturaDialog";
 import { AssinaturaError } from "@/hooks/useContratos";
-import type { Testemunha } from "@/hooks/useTestemunhas";
+import type { TestemunhaSelecionada } from "@/hooks/useContratoTestemunhas";
 import type { Comprador } from "@/types/cardHub";
 
 function comprador(over: Partial<Comprador> = {}): Comprador {
@@ -60,15 +60,13 @@ function comprador(over: Partial<Comprador> = {}): Comprador {
   };
 }
 
-function testemunha(over: Partial<Testemunha> = {}): Testemunha {
+function testemunha(over: Partial<TestemunhaSelecionada> = {}): TestemunhaSelecionada {
   return {
     id: "t1",
     nome: "João Testemunha",
     cpf: "987.654.321-00",
-    rg: null,
     email: null,
-    created_at: null,
-    updated_at: null,
+    celular: null,
     ...over,
   };
 }
@@ -170,6 +168,7 @@ describe("EnviarAssinaturaDialog", () => {
           email: "joao@example.com",
           cpf: "98765432100",
           papel: "testemunha",
+          testemunha_id: "t1",
         },
       ],
       mensagem: undefined,

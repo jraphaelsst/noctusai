@@ -56,6 +56,9 @@ from app.modules.card_hub.auth import auth_parts
 from app.modules.card_hub.contrato_gerador.router import (
     router as contrato_gerador_router,
 )
+from app.modules.card_hub.contrato_testemunhas_router import (
+    router as contrato_testemunhas_router,
+)
 from app.modules.card_hub.negociacao_estruturada_router import (
     router as negociacao_estruturada_router,
 )
@@ -105,6 +108,8 @@ router.include_router(contrato_gerador_router)
 # Contract signing (migration 134) — .../contratos/{id}/assinatura[/cancelar].
 # The webhook (§3.4) is NOT here — see `assinatura_router.py`'s own docstring.
 router.include_router(assinatura_router)
+# Per-contract witness selection (migration 168) — .../contratos/{id}/testemunhas.
+router.include_router(contrato_testemunhas_router)
 
 #: Shared with the included routers — see `card_hub/auth.py`.
 _auth_parts = auth_parts

@@ -11,7 +11,8 @@ WHAT THESE PIN
 - the FÍSICA instrument: no DA ASSINATURA DIGITAL clause, clause numbers
   re-flow (every later clause shifts down one, references included), the
   closing names the vias, and a signature line sits above EVERY signer
-  (name + CPF) and EVERY witness (name + CPF/RG) — no e-mail anywhere;
+  (name + CPF) and EVERY witness (name + CPF, migration 168 — no e-mail
+  anywhere);
 - the gate: a física contract never needs the signing platform configured,
   nor witness/party e-mails;
 - the API gates: PATCH read/write of the field; 409
@@ -41,26 +42,26 @@ from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 LINHA = "______________________________"
 
-#: [Owner directive, 2026-09-23] Re-pinned: the base fixture now carries
-#: witness e-mails (a witness's e-mail moved from aviso to a hard
-#: `faltando`) and a matrícula-derived `Matricula.comarca` (the DA
-#: ELEIÇÃO DO FORO clause no longer silently computes the comarca from
-#: the imóvel address) — both real, intended content changes, not drift.
+#: [Migration 168, owner decision] Re-pinned: the witness block now prints
+#: CPF instead of RG (RG left the template entirely) — a real, intended
+#: content change, not drift. Regenerated via a throwaway script that calls
+#: the same `_render` this file uses, for all 6 variants, straight after
+#: `modelo_texto.py`/`contexto.py`/`frases.py`'s RG→CPF edit landed.
 #: Variants 1..6 of `contrato_gerador_fixtures`: sha256(word/document.xml),
 #: sha256(PDF text via PyMuPDF).
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
-    1: ("a8b83886b035ad96ce221f444b65d6ef59363e506ed30b1c3c5b0aad0c18a9ea",
-        "e1a2c89cb443fdc768c313805c2d882067d5adfef9f6f531f0aea336d19c7103"),
-    2: ("0895a928325c856a8daa4acaf35fcf60b7dadc5772e4bdf196796749d3635596",
-        "79ee973a69ff4a683aef319ddac3081306dfe19c7010c939ef3dfd9b8bb55d4b"),
-    3: ("c8d351dbcda9e5ada05ac4de76dec42c1da36403044637e0d6782ab55e4bba6b",
-        "d7ed933fe5a1fa24cc38b3fb8836147bc5e3b2549669760b3fd64e66b78978e7"),
-    4: ("654d76006fe6779078a53848aa6832f56c599e7f37beb33cd8a0c3b7ff0f67f8",
-        "d2009718bb6cffe8cac0311bc040e0470d4654b78b6f24c8c5079b45e25dad26"),
-    5: ("fc06fae5f648559dc525b3eba639774e8ec9780bd094240adeba689cd16df35e",
-        "a6b1e153d6c1675fe74237a993fc32b594263242566cd73ec6f7c41bc9b9b427"),
-    6: ("1cfd315c7099754f3d7d604df03d47b8991a12397b79eb19e09125f652d38534",
-        "63146523a1ade8e3cbed8a1af76a45c23ee935a0850f434b26eef7eb11a5e136"),
+    1: ("701b7a8c68d79b70fea8a1232f1c7005cc4a20ea50c6d4adc0a7757da9844066",
+        "94f264c5669957fe29c62ee775ea3227f7bb95a73ccdaebc5655adfc3b0ebbd4"),
+    2: ("9d284938327aad30bfb1bd2d05e435454e8fa47e9b0ba3e7917224a3c16bd944",
+        "46cb10dcfee32eb1963f899f983516dd98f73e3a2d13d8ef7241042d48d870ab"),
+    3: ("02081792ca9d2fb5ada536adb51318e9acbace78edf3010d33b1c40d46dac425",
+        "c53a0f52000c7415f5ddcbfa5161b7c7b47176b6ef35e2150912dcc15aa1cfd0"),
+    4: ("c5870348ab28c2663d028f0641e78b5e8ee8c6f41568764df250c4e827b1a7cf",
+        "dd8d0dfefa0fc4cb3dec14df4ab93add0ef0721d2973bc682d4217853ca5f8c0"),
+    5: ("5b31513ba1b56315df0432a9c421a29fab08f438e06effd39339261ef9b3e193",
+        "efd3eafaaf1770f4221602ae7af7681d29813c43fc3dacf3cac5c3fdda3e1303"),
+    6: ("f089e8aab7dc10b0a836aa1a34f38cb59106932a0b8736454c0362fbff26381f",
+        "a7f91c05880b37b46d69a5d39d2c8ea6b5b1ebb0d662bfc9dac7d8eb82878719"),
 }
 
 
@@ -163,25 +164,29 @@ class TestFisicaTemplate:
             ("FULANO DE TAL", f"CPF {frases.documento(d.vendedores[0].cpf)[1]}"),
             ("BELTRANA EXEMPLO", f"CPF {frases.documento(d.compradores[0].cpf)[1]}"),
         ]
-        # One line per witness: NAME then CPF / RG.
+        # One line per witness: NAME then CPF. [Migration 168, owner
+        # decision] RG never prints anymore — CPF replaces it everywhere.
         t1, t2 = d.testemunhas
         pares_t = [(bloco_testemunhas[i + 1], bloco_testemunhas[i + 2])
                    for i, p in enumerate(bloco_testemunhas) if p == LINHA]
         assert pares_t == [
-            ("TESTEMUNHA UM", f"CPF {frases.documento(t1.cpf)[1]} / RG 33.333.333-3"),
-            ("TESTEMUNHA DOIS", f"CPF {frases.documento(t2.cpf)[1]} / RG 44.444.444-4"),
+            ("TESTEMUNHA UM", f"CPF {frases.documento(t1.cpf)[1]}"),
+            ("TESTEMUNHA DOIS", f"CPF {frases.documento(t2.cpf)[1]}"),
         ]
         # Nothing is e-mailed for a física contract — no e-mail is printed.
         assert not any(re.search(r"@\S+\.\S+", p) for p in ps[inicio:])
 
-    def test_a_witness_without_cpf_prints_only_the_rg(self):
+    def test_a_witness_without_cpf_blocks_a_fisica_contract_too(self):
+        """[Migration 168, owner decision] CPF replaced RG as the printed
+        document — a física contract is NOT exempt from it (unlike e-mail,
+        which física never needs): there is nothing left to fall back to."""
         d = fx.variante(1)
         t1, t2 = d.testemunhas
-        d = _fisica(replace(d, testemunhas=[replace(t1, cpf=None), t2]))
-        r = _render(1, d)
-        i = r.paragrafos.index("TESTEMUNHA UM")
-        assert r.paragrafos[i - 1] == LINHA
-        assert r.paragrafos[i + 1] == "RG 33.333.333-3"
+        _d, _pol, _sw, av = _avaliar(1, _fisica(replace(d, testemunhas=[replace(t1, cpf=None), t2])))
+        assert not av.pronto
+        assert ("imobiliaria.testemunha.1.cpf", None) in [
+            (f["campo"], f.get("parte_id")) for f in av.faltando
+        ]
 
     def test_the_fisica_pdf_renders(self):
         texto = _pdf_texto(_render(5, _fisica(fx.variante(5))).docx)

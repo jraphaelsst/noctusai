@@ -39,7 +39,7 @@ import {
   type PapelSignatario,
   type SignatarioInput,
 } from "@/hooks/useContratos";
-import type { Testemunha } from "@/hooks/useTestemunhas";
+import type { TestemunhaSelecionada } from "@/hooks/useContratoTestemunhas";
 import type { Comprador } from "@/types/cardHub";
 
 const MENSAGEM_MAX = 500;
@@ -63,27 +63,31 @@ function deParte(p: Comprador, papel: PapelSignatario): SignatarioInput {
   };
 }
 
-function deTestemunha(t: Testemunha): SignatarioInput {
+function deTestemunha(t: TestemunhaSelecionada): SignatarioInput {
   return {
     // `org_testemunhas` (migration 143) now carries an e-mail column —
     // prefill it when the office has set one. A witness the office hasn't
     // e-mail'd yet still prefills EMPTY on purpose; "empty e-mail blocks
     // submit" below is what makes filling it in mandatory rather than
-    // silently skippable (the server also re-resolves it authoritatively
-    // from the registry by nome, see `assinatura_service.enviar`).
+    // silently skippable. [Migration 168] `testemunha_id` is what the
+    // server now re-resolves the authoritative e-mail/cpf FROM
+    // (`assinatura_service._resolver_testemunhas_do_registro`) — a nome
+    // match no longer applies.
     nome: t.nome,
     email: t.email ?? "",
     cpf: apenasDigitos(t.cpf),
     papel: "testemunha",
+    testemunha_id: t.id,
   };
 }
 
 /** Exported for the container/tests: `partes` = compradores + vendedores,
- *  in that order, followed by the org's testemunhas. */
+ *  in that order, followed by THIS contract's selected testemunhas
+ *  (migration 168 — never the whole org registry). */
 export function partesParaSignatarios(
   compradores: Comprador[],
   vendedores: Comprador[],
-  testemunhas: Testemunha[],
+  testemunhas: TestemunhaSelecionada[],
 ): SignatarioInput[] {
   return [
     ...compradores.map((p) => deParte(p, "comprador")),
@@ -97,7 +101,7 @@ export interface EnviarAssinaturaDialogProps {
   onOpenChange: (open: boolean) => void;
   compradores: Comprador[];
   vendedores: Comprador[];
-  testemunhas: Testemunha[];
+  testemunhas: TestemunhaSelecionada[];
   onEnviar: (input: { signatarios: SignatarioInput[]; mensagem?: string }) => void;
   sending?: boolean;
   /** The last attempt's typed refusal, or `null` once cleared/succeeded. */

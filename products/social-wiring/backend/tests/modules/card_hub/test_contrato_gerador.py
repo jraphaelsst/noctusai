@@ -1123,18 +1123,25 @@ class TestQ13Permuta:
 
 
 class TestQ14Assinaturas:
-    def test_witnesses_need_an_rg_not_a_cpf(self):
-        """[Q14 revisited] Contract 08's own witnesses carry only RG — RG is
-        the hard-required identifying document (f5-template-spec.md §5.1:
-        "exactly 2 org_testemunhas with nome + rg"), CPF is optional."""
+    def test_witnesses_need_a_cpf_not_an_rg(self):
+        """[Migration 168, owner decision — supersedes Q14] The contract
+        prints CPF instead of RG; RG left the form and the readiness gate
+        alike, so CPF is the hard-required identifying document now."""
         d = fx.variante(1)
         t1, t2 = d.testemunhas
-        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, rg=None), replace(t2, cpf=None)]))
-        assert _campos(av) == [("imobiliaria.testemunha.1.rg", None)]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, cpf=None), t2]))
+        assert _campos(av) == [("imobiliaria.testemunha.1.cpf", None)]
 
-    def test_an_invalid_cpf_still_blocks_even_though_cpf_is_optional(self):
-        """Optional ≠ unchecked: a CPF that IS supplied must still pass
-        mod-11."""
+    def test_a_missing_rg_no_longer_blocks_anything(self):
+        """RG left the readiness gate along with the form — a witness with
+        no RG at all is unaffected as long as CPF is present."""
+        d = fx.variante(1)
+        t1, t2 = d.testemunhas
+        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, rg=None), t2]))
+        assert _campos(av) == []
+
+    def test_an_invalid_cpf_blocks(self):
+        """A CPF that IS supplied must still pass mod-11."""
         d = fx.variante(1)
         t1, t2 = d.testemunhas
         _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[replace(t1, cpf="111.111.111-11"), t2]))
@@ -1151,9 +1158,10 @@ class TestQ14Assinaturas:
         assert not av.pronto
         assert ("imobiliaria.testemunha.1.email", None) in _campos(av)
 
-    def test_witnesses_print_rg_and_email_beside_the_name_never_cpf(self):
-        """Contract 08's exact witness-block shape: NOME + E-MAIL (when
-        present) + RG. Signatories (compradores/vendedores) are unaffected.
+    def test_witnesses_print_cpf_and_email_beside_the_name_never_rg(self):
+        """[Migration 168, owner decision — supersedes Q14] Witness block
+        shape: NOME + E-MAIL (when present) + CPF, RG never printed at all
+        anymore. Signatories (compradores/vendedores) are unaffected.
 
         [Owner directive, 2026-09-23] e-mail now BLOCKS a digital
         contract's readiness (`derivacao._imobiliaria`) when absent — this
@@ -1168,11 +1176,11 @@ class TestQ14Assinaturas:
 
         r = documento.renderizar(get_docx_render_adapter(real=True), d, sw, fx.POLITICA_PADRAO, fx.ASSINATURA)
         assert "TESTEMUNHA UM    testemunha.um@exemplo.test" in r.paragrafos
-        assert "RG 33.333.333-3" in r.paragrafos
+        assert f"CPF {frases.documento(t1.cpf)[1]}" in r.paragrafos
         # t2 has no e-mail — bare name, no dangling blank.
         assert "TESTEMUNHA DOIS" in r.paragrafos
-        assert "RG 44.444.444-4" in r.paragrafos
-        assert not any(p.startswith("CPF ") for p in r.paragrafos)
+        assert f"CPF {frases.documento(t2.cpf)[1]}" in r.paragrafos
+        assert not any(p.startswith("RG ") for p in r.paragrafos)
         # Signatories keep printing their own e-mail exactly as before.
         assert "FULANO DE TAL    v1@exemplo.test" in r.paragrafos
 

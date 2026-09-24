@@ -1558,27 +1558,31 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     ):
         if not valor:
             av.falta(f"imobiliaria.{campo}", rotulo, "imobiliaria")
-    if len(d.testemunhas) != 2:
-        av.falta("imobiliaria.testemunhas", "Duas testemunhas cadastradas", "imobiliaria")
+    # [Migration 168, owner decision] "Duas testemunhas" was migration 108's
+    # fixed pair; the registry is now open-ended and a contract SELECTS
+    # however many it needs (`contrato_testemunhas`, ≥1) — the carregador
+    # already only ever loads the SELECTED set, so this is simply "at least
+    # one was chosen", never a fixed count.
+    if not d.testemunhas:
+        av.falta("imobiliaria.testemunhas", "Ao menos uma testemunha selecionada", "imobiliaria")
     for i, t in enumerate(d.testemunhas, start=1):
         if not t.nome:
             av.falta(f"imobiliaria.testemunha.{i}.nome", f"Nome da testemunha {i}", "imobiliaria")
-        # [Q14 revisited] The contract prints RG, not CPF (Contract 08's own
-        # witnesses only carry RG — f5-template-spec.md §5.1 lists "nome +
-        # rg" as the hard-required pair) — RG is required, not optional.
-        if not t.rg:
-            av.falta(f"imobiliaria.testemunha.{i}.rg", f"RG da testemunha {i}", "imobiliaria")
-        # CPF stays OPTIONAL — an office may or may not hold one for a given
-        # witness — but a CPF that IS supplied must still pass mod-11, same
-        # "check what's given, never require what isn't there" posture
-        # `posse_multa_diaria`/`prazo_pendencias` take below.
-        if t.cpf and not cpf_valido(t.cpf):
+        # [Migration 168, owner decision — supersedes the Q14 RG-required
+        # rule] The contract now prints CPF instead of RG; RG left the
+        # registration form entirely. CPF is required, not optional — a
+        # witness can only ever be SELECTED for a contract with one
+        # (`contrato_testemunhas_service.definir`), so this is a second,
+        # independent gate for the same rule, not a new one.
+        if not t.cpf:
+            av.falta(f"imobiliaria.testemunha.{i}.cpf", f"CPF da testemunha {i}", "imobiliaria")
+        elif not cpf_valido(t.cpf):
             av.bloqueia("CPF_INVALIDO", f"O CPF da testemunha {i} não confere (dígitos verificadores).")
         # [Owner directive, 2026-09-23] E-mail used to gate only SENDING for
         # signature (`assinatura_service.enviar` / D4Sign), never generating
         # the document — an aviso a witness the office hadn't e-mail'd yet
         # never blocked on. It now blocks readiness itself, same terms as
-        # nome/rg above, for a digital contract (a física one still never
+        # nome/cpf above, for a digital contract (a física one still never
         # needs it — no signature-platform clause at all).
         if not t.email and d.modalidade_assinatura != "fisica":
             av.falta(f"imobiliaria.testemunha.{i}.email", f"E-mail da testemunha {i}", "imobiliaria")

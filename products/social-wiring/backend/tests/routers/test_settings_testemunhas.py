@@ -1,5 +1,6 @@
-"""`/api/settings/imobiliaria/testemunhas` — the org's standing signature
-witnesses, max 2 (migration 108).
+"""`/api/settings/imobiliaria/testemunhas` — the org's REGISTRY of signature
+witnesses (migration 108, opened up by 168 — no more 2-per-org cap, CPF now
+required on create).
 
 🔴 A LOCAL FIXTURE, NOT THE SHARED `scoped` ONE — AND A REAL `Depends()` SEAM,
 NOT A PATCH OF OUR OWN CODE
@@ -30,6 +31,11 @@ from app.dependencies import coerce_org_uuid, get_social_wiring_client
 ORG_RAW = "test-org-123"
 ORG_ID = str(coerce_org_uuid(ORG_RAW))
 
+#: mod-11-valid synthetic CPFs — never a real person's.
+CPF_1 = "111.444.777-35"
+CPF_2 = "529.982.247-25"
+CPF_3 = "935.411.347-80"
+
 
 @pytest.fixture
 def testemunhas_scoped(client):
@@ -55,15 +61,17 @@ class TestListAndCreate:
         r = client.post(
             "/api/settings/imobiliaria/testemunhas",
             json={
-                "nome": "João Silva", "cpf": "123.456.789-00", "rg": "MG-1234567",
+                "nome": "João Silva", "cpf": CPF_1, "celular": "11988887777",
                 "email": "joao.silva@exemplo.test",
             },
         )
         assert r.status_code == 201, r.text
         body = r.json()
         assert body["nome"] == "João Silva"
-        assert body["cpf"] == "123.456.789-00"
+        assert body["cpf"] == CPF_1
+        assert body["celular"] == "11988887777"
         assert body["email"] == "joao.silva@exemplo.test"
+        assert body["cpf_pendente"] is False
 
         listado = client.get("/api/settings/imobiliaria/testemunhas").json()
         assert listado["total"] == 1
@@ -71,53 +79,59 @@ class TestListAndCreate:
         assert listado["items"][0]["email"] == "joao.silva@exemplo.test"
 
     def test_a_testemunha_without_an_email_is_accepted(self, client, testemunhas_scoped):
-        """[migration 143] e-mail is optional — Contract 08's real witnesses
-        only carry nome/rg; the registry must not force one."""
+        """[migration 143] e-mail is optional — the registry must not force
+        one."""
         r = client.post(
             "/api/settings/imobiliaria/testemunhas",
-            json={"nome": "Sem E-mail", "rg": "MG-0000000"},
+            json={"nome": "Sem E-mail", "cpf": CPF_1},
         )
         assert r.status_code == 201, r.text
         assert r.json()["email"] is None
 
-    def test_a_second_testemunha_is_accepted(self, client, testemunhas_scoped):
-        client.post(
-            "/api/settings/imobiliaria/testemunhas", json={"nome": "Primeira"}
-        )
+    def test_a_missing_cpf_is_refused_with_422(self, client, testemunhas_scoped):
+        """[Migration 168, owner decision] CPF is REQUIRED on create — the
+        contract prints it instead of RG."""
         r = client.post(
-            "/api/settings/imobiliaria/testemunhas", json={"nome": "Segunda"}
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "Sem CPF"}
         )
-        assert r.status_code == 201, r.text
+        assert r.status_code == 422, r.text
+
+    def test_an_invalid_cpf_is_refused_with_422(self, client, testemunhas_scoped):
+        r = client.post(
+            "/api/settings/imobiliaria/testemunhas",
+            json={"nome": "CPF Ruim", "cpf": "111.111.111-11"},
+        )
+        assert r.status_code == 422, r.text
+
+    def test_more_than_two_testemunhas_are_all_accepted(self, client, testemunhas_scoped):
+        """[Migration 168] The 2-per-org cap is GONE — this is a registry
+        now, not a fixed pair."""
+        for nome, cpf in (("Um", CPF_1), ("Dois", CPF_2), ("Três", CPF_3)):
+            r = client.post(
+                "/api/settings/imobiliaria/testemunhas", json={"nome": nome, "cpf": cpf}
+            )
+            assert r.status_code == 201, r.text
         assert client.get(
             "/api/settings/imobiliaria/testemunhas"
-        ).json()["total"] == 2
-
-    def test_a_third_testemunha_is_refused_with_409(self, client, testemunhas_scoped):
-        client.post("/api/settings/imobiliaria/testemunhas", json={"nome": "Um"})
-        client.post("/api/settings/imobiliaria/testemunhas", json={"nome": "Dois"})
-        r = client.post(
-            "/api/settings/imobiliaria/testemunhas", json={"nome": "Três"}
-        )
-        assert r.status_code == 409, r.text
-        assert "2" in r.text
+        ).json()["total"] == 3
 
 
 class TestUpdateAndDelete:
     def test_updating_a_testemunha(self, client, testemunhas_scoped):
         created = client.post(
-            "/api/settings/imobiliaria/testemunhas", json={"nome": "João"}
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "João", "cpf": CPF_1}
         ).json()
         r = client.patch(
             f"/api/settings/imobiliaria/testemunhas/{created['id']}",
-            json={"rg": "MG-9999999"},
+            json={"celular": "11999998888"},
         )
         assert r.status_code == 200, r.text
-        assert r.json()["rg"] == "MG-9999999"
+        assert r.json()["celular"] == "11999998888"
         assert r.json()["nome"] == "João"
 
     def test_updating_a_testemunhas_email(self, client, testemunhas_scoped):
         created = client.post(
-            "/api/settings/imobiliaria/testemunhas", json={"nome": "João"}
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "João", "cpf": CPF_1}
         ).json()
         assert created["email"] is None
         r = client.patch(
@@ -127,6 +141,16 @@ class TestUpdateAndDelete:
         assert r.status_code == 200, r.text
         assert r.json()["email"] == "joao@exemplo.test"
 
+    def test_an_invalid_cpf_patch_is_refused_with_422(self, client, testemunhas_scoped):
+        created = client.post(
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "João", "cpf": CPF_1}
+        ).json()
+        r = client.patch(
+            f"/api/settings/imobiliaria/testemunhas/{created['id']}",
+            json={"cpf": "111.111.111-11"},
+        )
+        assert r.status_code == 422, r.text
+
     def test_an_unknown_testemunha_patch_is_404(self, client, testemunhas_scoped):
         import uuid
         r = client.patch(
@@ -135,19 +159,57 @@ class TestUpdateAndDelete:
         )
         assert r.status_code == 404
 
-    def test_deleting_a_testemunha_frees_a_slot(self, client, testemunhas_scoped):
+    def test_deleting_a_testemunha(self, client, testemunhas_scoped):
         um = client.post(
-            "/api/settings/imobiliaria/testemunhas", json={"nome": "Um"}
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "Um", "cpf": CPF_1}
         ).json()
-        client.post("/api/settings/imobiliaria/testemunhas", json={"nome": "Dois"})
 
         removed = client.delete(
             f"/api/settings/imobiliaria/testemunhas/{um['id']}"
         )
         assert removed.status_code == 204
+        assert client.get(
+            "/api/settings/imobiliaria/testemunhas"
+        ).json()["total"] == 0
 
-        # The slot freed by the delete accepts a third testemunha now.
-        r = client.post(
-            "/api/settings/imobiliaria/testemunhas", json={"nome": "Três"}
+
+class TestCpfPendenteLegacyRows:
+    """[Migration 168] The 2 rows migration 108 shipped (RG + e-mail, no
+    CPF) are KEPT — this exercises that shape directly, without going
+    through create (which now requires a CPF)."""
+
+    def test_a_row_with_no_cpf_is_flagged_pendente(self, client, testemunhas_scoped):
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        testemunhas_scoped.table("org_testemunhas").insert(
+            {
+                "id": str(uuid4()), "org_id": ORG_ID, "nome": "Legada Sem CPF",
+                "rg": "MG-1234567", "cpf": None, "email": "legada@exemplo.test",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+
+        listado = client.get("/api/settings/imobiliaria/testemunhas").json()
+        assert listado["total"] == 1
+        assert listado["items"][0]["cpf_pendente"] is True
+        assert listado["items"][0]["nome"] == "Legada Sem CPF"
+
+    def test_patching_in_a_cpf_clears_the_pending_flag(self, client, testemunhas_scoped):
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        row_id = str(uuid4())
+        testemunhas_scoped.table("org_testemunhas").insert(
+            {
+                "id": row_id, "org_id": ORG_ID, "nome": "Legada Sem CPF",
+                "rg": "MG-1234567", "cpf": None, "email": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).execute()
+
+        r = client.patch(
+            f"/api/settings/imobiliaria/testemunhas/{row_id}", json={"cpf": CPF_1}
         )
-        assert r.status_code == 201, r.text
+        assert r.status_code == 200, r.text
+        assert r.json()["cpf_pendente"] is False

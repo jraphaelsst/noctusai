@@ -263,11 +263,16 @@ def documento_linha(cpf: Optional[str]) -> str:
     return f"{rotulo} {numero}"
 
 
-def testemunha_documento_linha(cpf: Optional[str], rg: Optional[str]) -> str:
-    """A física witness's documents: "CPF 000.000.000-00 / RG 00.000.000-0",
-    or just the one that exists (RG is gate-required; CPF optional)."""
-    partes = [p for p in (documento_linha(cpf), f"RG {rg.strip()}" if (rg or "").strip() else "") if p]
-    return " / ".join(partes)
+def testemunha_documento_linha(cpf: Optional[str]) -> str:
+    """A física witness's document line: "CPF 000.000.000-00".
+
+    [Migration 168, owner decision] The contract now prints CPF instead of
+    RG for every witness — RG left the form and the readiness gate alike, so
+    there is no second document to fall back to. Kept as its own function
+    (rather than callers using `documento_linha` directly) so a future
+    witness-specific document rule has one place to land, same reasoning
+    `assinante_fisico` keeps its own wrapper over `documento_linha`."""
+    return documento_linha(cpf)
 
 
 def assinante_fisico(p: Pessoa) -> dict[str, str]:

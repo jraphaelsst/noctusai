@@ -1,5 +1,7 @@
 /**
- * TestemunhasSection.test.tsx — the four states plus the 2-witness cap.
+ * TestemunhasSection.test.tsx — the four states, the migration-168 CPF
+ * requirement (registry no longer caps at 2), "CPF pendente" for legacy
+ * rows, and the delete confirmation.
  *
  * Follows the established mock-the-hook pattern (see `pages/Permutas.test.tsx`):
  * the hooks module is mocked directly, so no QueryClientProvider is needed.
@@ -50,7 +52,9 @@ function testemunha(over: Partial<Record<string, unknown>> = {}) {
     nome: "Maria Souza",
     cpf: "111.222.333-44",
     rg: null,
+    celular: null,
     email: null,
+    cpf_pendente: false,
     created_at: null,
     updated_at: null,
     ...over,
@@ -121,20 +125,36 @@ describe("os quatro estados", () => {
   });
 });
 
-describe("e-mail (migration 143)", () => {
-  it("envia o e-mail digitado no payload de criação", async () => {
+describe("CPF obrigatório no cadastro (migration 168)", () => {
+  it("'Salvar' fica desabilitado sem CPF", async () => {
     const { getByTestId, getByLabelText } = await render();
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("testemunha-nova"));
     fireEvent.change(getByLabelText("Nome"), { target: { value: "Nova Pessoa" } });
+
+    expect((getByTestId("testemunha-salvar") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("envia o CPF e o e-mail digitados no payload de criação", async () => {
+    const { getByTestId, getByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("testemunha-nova"));
+    fireEvent.change(getByLabelText("Nome"), { target: { value: "Nova Pessoa" } });
+    fireEvent.change(getByTestId("testemunha-cpf-input"), {
+      target: { value: "111.222.333-44" },
+    });
     fireEvent.change(getByLabelText("E-mail"), {
       target: { value: "nova@exemplo.test" },
     });
     fireEvent.click(getByTestId("testemunha-salvar"));
 
     expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ email: "nova@exemplo.test" }),
+      expect.objectContaining({ cpf: "111.222.333-44", email: "nova@exemplo.test" }),
       expect.anything(),
     );
   });
@@ -145,6 +165,9 @@ describe("e-mail (migration 143)", () => {
 
     fireEvent.click(getByTestId("testemunha-nova"));
     fireEvent.change(getByLabelText("Nome"), { target: { value: "Nova Pessoa" } });
+    fireEvent.change(getByTestId("testemunha-cpf-input"), {
+      target: { value: "111.222.333-44" },
+    });
     fireEvent.click(getByTestId("testemunha-salvar"));
 
     expect(mockCreate).toHaveBeenCalledWith(
@@ -152,49 +175,74 @@ describe("e-mail (migration 143)", () => {
       expect.anything(),
     );
   });
+
+  it("editar NÃO exige CPF preenchido (permite manter 'pendente')", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({ data: { items: [testemunha({ cpf: null, cpf_pendente: true })], total: 1 } }),
+    );
+    const { getByTestId, getByLabelText } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText("Editar Maria Souza"));
+    expect((getByTestId("testemunha-salvar") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
 });
 
-describe("o limite de 2 testemunhas por organização", () => {
-  it("desabilita 'Nova testemunha' quando já há 2", async () => {
+describe("registro sem limite (migration 168 removeu o teto de 2)", () => {
+  it("'Nova testemunha' nunca fica desabilitado, mesmo com várias já cadastradas", async () => {
     mockUseTestemunhas.mockReturnValue(
       query({
         data: {
-          items: [testemunha(), testemunha({ id: "t2", nome: "João Lima" })],
-          total: 2,
+          items: [
+            testemunha(),
+            testemunha({ id: "t2", nome: "João Lima" }),
+            testemunha({ id: "t3", nome: "Ana Paula" }),
+          ],
+          total: 3,
         },
       }),
     );
     const { getByTestId } = await render();
     expect((getByTestId("testemunha-nova") as HTMLButtonElement).disabled).toBe(
-      true,
+      false,
     );
   });
 
-  it("🔴 o 409 do backend chega ao usuário via toast", async () => {
-    mockCreate.mockImplementation(
-      (
-        _payload: unknown,
-        opts?: { onError?: (e: unknown) => void },
-      ) => {
-        opts?.onError?.({
-          message: "[409] máximo de 2 testemunhas por organização",
-        });
-      },
+  it("uma testemunha legada sem CPF mostra 'CPF pendente'", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({
+        data: { items: [testemunha({ cpf: null, cpf_pendente: true })], total: 1 },
+      }),
     );
+    const { getByTestId } = await render();
+    expect(getByTestId("testemunha-cpf-pendente-t1")).toBeTruthy();
+  });
+});
 
-    const { getByTestId, getByLabelText } = await render();
+describe("exclusão com confirmação", () => {
+  it("clicar em Remover abre um diálogo de confirmação — não exclui direto", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({ data: { items: [testemunha()], total: 1 } }),
+    );
+    const { getByLabelText, queryByTestId } = await render();
     const { fireEvent } = await import("@testing-library/react");
 
-    fireEvent.click(getByTestId("testemunha-nova"));
-    fireEvent.change(getByLabelText("Nome"), {
-      target: { value: "Nova Pessoa" },
-    });
-    fireEvent.click(getByTestId("testemunha-salvar"));
+    fireEvent.click(getByLabelText("Remover Maria Souza"));
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(queryByTestId("testemunha-confirmar-remover")).toBeTruthy();
+  });
 
-    const { toast } = await import("sonner");
-    expect(mockCreate).toHaveBeenCalled();
-    const call = (toast.error as unknown as { mock: { calls: unknown[][] } })
-      .mock.calls[0];
-    expect(String(call[0])).toContain("máximo de 2 testemunhas");
+  it("confirmar no diálogo chama a exclusão", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({ data: { items: [testemunha()], total: 1 } }),
+    );
+    const { getByLabelText, getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText("Remover Maria Souza"));
+    fireEvent.click(getByTestId("testemunha-confirmar-remover"));
+    expect(mockDelete).toHaveBeenCalledWith("t1", expect.anything());
   });
 });

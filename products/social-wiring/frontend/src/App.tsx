@@ -121,6 +121,7 @@ const Matriculas = lazyWithReload(() => import("@/pages/Matriculas"));
 const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
+const Testemunhas = lazyWithReload(() => import("@/pages/Testemunhas"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
 // W6; Regras — W7; Curadores — notify slice; Painel — W9; Modelos +
 // Processamento — W8) are all shipped.
@@ -314,6 +315,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: false,
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
+      { name: "Testemunhas", href: "/testemunhas", icon: UserRound, route: "testemunhas" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Custos", href: "/custos", icon: Wallet, route: "custos" },
     ],
@@ -445,6 +447,7 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: false,
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
+      { name: "Testemunhas", href: "/testemunhas", icon: UserRound },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Custos", href: "/custos", icon: Wallet },
     ],
@@ -475,6 +478,7 @@ export default createProductApp({
     { path: "/certidoes", component: Certidoes },
     { path: "/matriculas", component: Matriculas },
     { path: "/agentes-financeiros", component: AgentesFinanceiros },
+    { path: "/testemunhas", component: Testemunhas },
     { path: "/edicao-fotos", component: EdicaoFotosLotes },
     { path: "/edicao-fotos/novo", component: EdicaoFotosNovoLote },
     { path: "/edicao-fotos/lotes/:loteId/revisao", component: EdicaoFotosLoteRevisao },

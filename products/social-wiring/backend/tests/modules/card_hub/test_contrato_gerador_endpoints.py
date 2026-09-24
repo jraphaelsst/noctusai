@@ -66,6 +66,8 @@ _TABELAS = (
     "atendimento_documentos", "certidao_consultas", "certidao_resultados",
     "atendimento_contrato_matricula_atos", "matricula_extracoes", "matricula_atos",
     "imovel_documento_acessos", "org_dados_cadastrais", "org_testemunhas",
+    # Migration 168 — per-contract witness selection.
+    "contrato_testemunhas",
     # Migrations 114-118.
     "atendimento_negociacao_termos", "atendimento_parcela_permuta_ativos", "permuta_ativos",
     "matricula_ato_detalhes", "imovel_documentos", "cliente_documentos",
@@ -472,18 +474,31 @@ def _seed_completo(scoped, n: int = 1) -> dict:
         "posse_multa_diaria": "500.00", "prazo_pendencias_padrao_dias": 10,
         "updated_at": _T0,
     }])
+    testemunha_ids = [str(uuid4()), str(uuid4())]
     scoped.set_table_data("org_testemunhas", [
         # [Owner directive, 2026-09-23] e-mail now blocks readiness (see
         # `derivacao._imobiliaria`) for a digital contract.
-        {"id": str(uuid4()), "org_id": ORG_ID, "nome": nome, "cpf": fx.cpf_sintetico(base), "rg": rg,
+        {"id": tid, "org_id": ORG_ID, "nome": nome, "cpf": fx.cpf_sintetico(base), "rg": rg,
          "email": email, "created_at": _T0, "updated_at": None}
-        for nome, rg, base, email in (
+        for tid, (nome, rg, base, email) in zip(testemunha_ids, (
             ("Testemunha Um", "33.333.333-3", "321654987", "testemunha.um@exemplo.test"),
             ("Testemunha Dois", "44.444.444-4", "456789123", "testemunha.dois@exemplo.test"),
-        )
+        ))
     ])
+    # [Migration 168] The registry exists — `_seed_base` deliberately does
+    # NOT select any of it for `ids["contrato"]` (a sparse card has no
+    # selection yet, same as every other section). `_seed_completo` below
+    # is what selects both for the "fully seeded" generation tests.
     ids.update(fav_org=fav_org, fav_vendedor=fav_v, intermediario=int_id,
-               vendedor=vendedor_id, parte_vendedor=parte_id)
+               vendedor=vendedor_id, parte_vendedor=parte_id, testemunhas=testemunha_ids)
+    # [Migration 168] SELECTS both registered witnesses for this contract —
+    # the generator now only ever loads the SELECTED set, never the whole
+    # registry, so a "fully seeded" card needs this explicitly.
+    scoped.set_table_data("contrato_testemunhas", [
+        {"id": str(uuid4()), "org_id": ORG_ID, "contrato_id": ids["contrato"],
+         "testemunha_id": tid, "ordem": ordem, "created_at": _T0, "created_por": None}
+        for ordem, tid in enumerate(testemunha_ids, start=1)
+    ])
     return ids
 
 
@@ -789,18 +804,19 @@ class TestIniciar:
         assert geracao["pronto"] is False and geracao["faltando"]
 
     def test_on_a_complete_card_only_the_per_contract_selection_is_missing(self, client, scoped, fake_storage):
-        """The matrícula acts are chosen PER CONTRACT — a new contract has
-        none yet. [Owner directive, 2026-09-23] the comarca derivation
+        """The matrícula acts AND the testemunhas (migration 168) are both
+        chosen PER CONTRACT — a new contract has neither yet. [Owner
+        directive, 2026-09-23] the comarca derivation
         (`derivacao.comarca_de_texto`) also has nothing to read yet: this
         seed's matrícula never went through the imóvel-page upload flow
         `estrutura_service._extracao_padrao_do_imovel` resolves against, so
         a brand-new contract's `obter_selecao` finds no default extraction
-        either — the readiness report names BOTH gaps."""
+        either — the readiness report names all three gaps."""
         ids = _seed_completo(scoped)
         body = self._iniciar(client, ids).json()
         assert body["contrato"]["modelo"] == "compra_venda"
         assert {f["campo"] for f in body["geracao"]["faltando"]} == {
-            "matricula.atos", "negociacao.foro_comarca",
+            "matricula.atos", "negociacao.foro_comarca", "imobiliaria.testemunhas",
         }
 
     def test_a_card_with_no_open_atendimento_is_refused_and_writes_nothing(self, client, scoped, fake_storage):
@@ -845,10 +861,11 @@ class TestIniciar:
         ids = _seed_completo(scoped)
         primeiro = self._iniciar(client, ids).json()["contrato"]["id"]
 
-        # The matrícula-act selection is PER CONTRACT by design (`iniciar`
-        # never copies it) — mirror `_seed_completo`'s seeded selection
-        # (keyed to `ids["contrato"]`) onto the new draft so it is "pronto"
-        # and `.../gerar` below can actually succeed.
+        # The matrícula-act selection AND the testemunhas (migration 168)
+        # are both PER CONTRACT by design (`iniciar` never copies either) —
+        # mirror `_seed_completo`'s seeded selections (keyed to
+        # `ids["contrato"]`) onto the new draft so it is "pronto" and
+        # `.../gerar` below can actually succeed.
         selecao_base = _rows(scoped, "atendimento_contrato_matricula_atos")
         extra = [
             {**linha, "id": str(uuid4()), "contrato_id": primeiro}
@@ -856,6 +873,14 @@ class TestIniciar:
         ]
         scoped.set_table_data(
             "atendimento_contrato_matricula_atos", selecao_base + extra
+        )
+        testemunhas_base = _rows(scoped, "contrato_testemunhas")
+        extra_testemunhas = [
+            {**linha, "id": str(uuid4()), "contrato_id": primeiro}
+            for linha in testemunhas_base if linha["contrato_id"] == ids["contrato"]
+        ]
+        scoped.set_table_data(
+            "contrato_testemunhas", testemunhas_base + extra_testemunhas
         )
 
         r = client.post(

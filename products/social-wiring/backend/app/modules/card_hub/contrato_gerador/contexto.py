@@ -539,12 +539,12 @@ def montar_contexto(
             "plataforma_nome": d.imobiliaria.plataforma_assinatura_nome,
             "plataforma_url": d.imobiliaria.plataforma_assinatura_url,
         },
-        # [Q14 revisited] witnesses print NOME + E-MAIL (when present) + RG —
-        # Contract 08's own reference block, never CPF (f5-template-spec.md
-        # §2.17/§5.1). `linha` reuses the same NOME/e-mail shape a
+        # [Migration 168, owner decision — supersedes Q14] witnesses print
+        # NOME + E-MAIL (when present) + CPF, never RG (RG left the form and
+        # the print alike). `linha` reuses the same NOME/e-mail shape a
         # comprador/vendedor signatário line already prints.
         "testemunhas": [
-            {"linha": frases.nome_email_linha(t.nome, t.email), "rg": (t.rg or "").strip()}
+            {"linha": frases.nome_email_linha(t.nome, t.email), "cpf": frases.documento_linha(t.cpf)}
             for t in d.testemunhas
         ],
         # Migration 157 — read ONLY by the física branch of the closing /
@@ -560,7 +560,7 @@ def montar_contexto(
         "testemunhas_fisicas": [
             {
                 "nome": (t.nome or "").upper(),
-                "documento": frases.testemunha_documento_linha(t.cpf, t.rg),
+                "documento": frases.testemunha_documento_linha(t.cpf),
             }
             for t in d.testemunhas
         ],

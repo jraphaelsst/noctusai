@@ -34,6 +34,7 @@ from pydantic import Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_role
+from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
 
@@ -1628,29 +1629,51 @@ def update_dados_imobiliaria(
     return get_dados_imobiliaria(auth, supabase)
 
 
-# ─── Testemunhas (migration 108) ──────────────────────────────────────────
+# ─── Testemunhas (migration 108, opened up to a registry by 168) ─────────
 #
-# The org's standing signature witnesses — usually the same two people
-# (office staff) reused across every contract, unlike `atendimento_
-# favorecidos`/`atendimento_intermediarios` (card_hub, per-deal). Same RLS
-# shape as `_IMOBILIARIA_TABLE` just above: `authenticated` writes its own
-# org's rows directly, no service-role gate.
+# The org's REGISTRY of signature witnesses — reused across contracts, one
+# of which a contract SELECTS a subset of via `contrato_testemunhas_
+# service` (card_hub). Unlike `atendimento_favorecidos`/`atendimento_
+# intermediarios` (card_hub, per-deal), this list is settings-scoped, not
+# atendimento-scoped. Same RLS shape as `_IMOBILIARIA_TABLE` just above:
+# `authenticated` writes its own org's rows directly, no service-role gate.
 #
-# 🔴 MAX 2, CHECKED HERE FIRST. `org_testemunhas`'s `BEFORE INSERT` trigger
-# (migration 108) is the backstop; this check exists so a 3rd testemunha is a
-# named 409 ("máximo de 2") rather than a bare Postgres exception surfacing as
-# a 500 with no hint what was violated — same posture `negociacao_service.
-# _validar_split` takes for its own DB-mirrored CHECK.
+# 🔴 MIGRATION 168 DROPPED THE 2-PER-ORG CEILING — this is a registry now,
+# not a fixed pair. `org_testemunhas`'s old `BEFORE INSERT` cap trigger is
+# gone with it; nothing here re-checks a count.
+#
+# 🔴 CPF IS NOW REQUIRED (owner decision, migration 168) — the contract
+# prints CPF instead of RG, so a witness with no CPF can never be selected
+# for one (`contrato_testemunhas_service.definir` enforces that at
+# selection time). `TestemunhaCreateBody.cpf` is REQUIRED and mod-11
+# validated here so a bad CPF is a 422 at creation, never discovered later
+# at selection or send time. `rg`/`email` stay optional: `rg` is legacy
+# display-only for the 2 rows migration 108 shipped before CPF existed;
+# `email` is only needed to add a witness to a D4Sign envelope
+# (`assinatura_service.enviar`).
 
 _TESTEMUNHAS_TABLE = "org_testemunhas"
-_TESTEMUNHAS_MAX = 2
-_TESTEMUNHAS_CAMPOS: tuple[str, ...] = ("nome", "cpf", "rg", "email")
+_TESTEMUNHAS_CAMPOS: tuple[str, ...] = ("nome", "cpf", "rg", "email", "celular")
+
+
+def _validar_cpf_testemunha(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    if not cpf_valido(value):
+        raise ValueError("CPF inválido (dígitos verificadores não conferem)")
+    return value
 
 
 class TestemunhaCreateBody(StrictHttpModel):
     nome: str = Field(min_length=1, max_length=255)
-    cpf: Optional[str] = Field(default=None, max_length=32)
-    rg: Optional[str] = Field(default=None, max_length=32)
+    #: [Owner decision, migration 168] REQUIRED — validated mod-11. The
+    #: contract prints this instead of RG (which is why RG is not collected
+    #: here at all); a witness cannot be selected for a contract without one.
+    cpf: str = Field(min_length=11, max_length=32)
+    _validar_cpf = field_validator("cpf")(_validar_cpf_testemunha)
+    #: Migration 168 — the owner's requested contact field. Never printed,
+    #: never required for selection.
+    celular: Optional[str] = Field(default=None, max_length=32)
     #: [migration 143] Optional at the row level — only required to add this
     #: witness to a D4Sign envelope (`assinatura_service.enviar`); the
     #: contract print + readiness gate never need it. Loosely typed on
@@ -1660,8 +1683,12 @@ class TestemunhaCreateBody(StrictHttpModel):
 
 class TestemunhaPatchBody(StrictHttpModel):
     nome: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    #: Optional here (unlike create) so the 2 legacy CPF-less rows can be
+    #: PATCHed to add one WITHOUT being forced to resend every other field —
+    #: but a supplied value still must pass mod-11.
     cpf: Optional[str] = Field(default=None, max_length=32)
-    rg: Optional[str] = Field(default=None, max_length=32)
+    _validar_cpf = field_validator("cpf")(_validar_cpf_testemunha)
+    celular: Optional[str] = Field(default=None, max_length=32)
     email: Optional[str] = Field(default=None, max_length=255)
 
 
@@ -1670,6 +1697,11 @@ def _testemunha_out(row: dict) -> dict:
     saida["id"] = row.get("id")
     saida["created_at"] = row.get("created_at")
     saida["updated_at"] = row.get("updated_at")
+    #: [migration 168] Derived, never stored — a legacy row with no CPF
+    #: (the 2 migration-108 rows) is kept and listed, just not selectable
+    #: for a contract. The FE flags it "CPF pendente" off this bit rather
+    #: than re-deriving `cpf is None` itself in three different places.
+    saida["cpf_pendente"] = not row.get("cpf")
     return saida
 
 
@@ -1700,25 +1732,12 @@ def create_testemunha(
     user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    existentes = (
-        supabase
-        .table(_TESTEMUNHAS_TABLE)
-        .select("id")
-        .eq("org_id", str(org_id))
-        .execute()
-    ).data or []
-    if len(existentes) >= _TESTEMUNHAS_MAX:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"máximo de {_TESTEMUNHAS_MAX} testemunhas por organização",
-        )
-
     linha = {
         "id": str(uuid4()),
         "org_id": str(org_id),
         "nome": body.nome,
         "cpf": body.cpf,
-        "rg": body.rg,
+        "celular": body.celular,
         "email": body.email,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
