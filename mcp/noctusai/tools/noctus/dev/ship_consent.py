@@ -10,7 +10,7 @@ default = the branch name); this tool records that approval, and
 Actions
 -------
 challenge  Return the canonical sentence the USER must type. Writes nothing.
-author     Append an approval row to `project-history/ship-consent.ndjson` —
+author     Append an approval row to `ship-consent.ndjson` (origin/ledgers) —
            REFUSES unless that exact sentence is found in a message the human
            actually wrote, verified against the harness-written session
            transcript (the SAME evidence layer `noctus.dev.prod_consent` uses:
@@ -26,9 +26,11 @@ an approval covers the project's commits REACHABLE FROM the `origin/dev` sha
 recorded at consent time. A commit integrated after that sha needs a fresh
 approval — consent is to what the user could see, not to future work.
 
-The ledger is append-only (`merge=union`, like every project-history/*.ndjson)
-and is pushed to dev as a ledger-only commit (the shared FF-push idiom), so
-`release` — which reads dev's copy — sees it immediately.
+The ledger is append-only. Since 2026-09-24 it lives on the orphan
+`origin/ledgers` branch, written by git plumbing through `_ledger_store` (never a
+commit on dev; KB § PATTERNS/common/ledger-store.md). It was the LAST ledger to
+move. `release` dual-reads `origin/ledgers` ∪ dev's legacy copy, so an approval
+counts as soon as it is published.
 """
 from __future__ import annotations
 
@@ -41,11 +43,12 @@ from typing import Any, Callable
 
 from settings import LEDGER_ROOT, REPO_ROOT
 
-from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger
+from tools.noctus.dev._ledger_store import LedgerStoreError, merge_ndjson_text, open_ledger
 from tools.noctus.dev.compliance import _human_authored_transcript_texts
 
 LEDGER_REL = "project-history/ship-consent.ndjson"
-LEDGER_PATH: Path = LEDGER_ROOT / LEDGER_REL
+LEDGER_PATH: Path = LEDGER_ROOT / LEDGER_REL   # legacy dev copy (dual-read) + the Fake's file
+LEDGER_NAME = "ship-consent.ndjson"
 
 ACTIONS = ("challenge", "author", "list", "revoke")
 
@@ -124,14 +127,26 @@ def parse_rows(text: str) -> list[dict]:
 
 def read_rows(runner: Runner | None = None, from_dev: bool = True,
               ledger_path: Path | None = None) -> list[dict]:
-    """dev's copy by default (what `release` reads); local file fallback."""
+    """The S2 DUAL-READ: origin/ledgers (+ this clone's spooled rows) ∪ dev's
+    legacy copy (``from_dev``; the local file when origin/dev is unavailable
+    or ``from_dev=False``). Exact-duplicate rows collapse."""
     run = runner or _run
+    path = ledger_path or LEDGER_PATH
+    dev_text = None
     if from_dev:
         rc, out, _e = run(["git", "show", f"origin/dev:{LEDGER_REL}"])
         if rc == 0:
-            return parse_rows(out)
-    path = ledger_path or LEDGER_PATH
-    return parse_rows(path.read_text(encoding="utf-8")) if path.exists() else []
+            dev_text = out
+    if dev_text is None:
+        dev_text = path.read_text(encoding="utf-8") if path.exists() else ""
+    try:
+        store_text = open_ledger(LEDGER_NAME, path).read_text()
+    except LedgerStoreError as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "ship_consent: origin/ledgers unreadable (%s) — dev copy only", exc)
+        store_text = ""
+    return parse_rows(merge_ndjson_text(dev_text, store_text))
 
 
 def effective_approvals(rows: list[dict], project: str) -> list[dict]:
@@ -145,10 +160,11 @@ def effective_approvals(rows: list[dict], project: str) -> list[dict]:
             and str(r.get("ts") or "") > last_revoke]
 
 
-def _append(row: dict, ledger_path: Path) -> None:
-    ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    with ledger_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+def _append(row: dict, ledger_path: Path, *, message: str, publish: bool) -> dict:
+    """Append through `_ledger_store` (origin/ledgers). ``publish=False`` spools
+    the row locally; `release` only counts it once published."""
+    return open_ledger(LEDGER_NAME, ledger_path).append(
+        [json.dumps(row, ensure_ascii=False)], message=message, publish=publish)
 
 
 def _now() -> str:
@@ -196,17 +212,12 @@ def _author(project: str, session_id: str, dev_sha: str | None, runner: Runner,
         "session_id": session_id, "transcript_sha256": digest,
         "consented_by": email.strip() if rc == 0 else "", "recorded_by": "agent",
     }
-    _append(row, ledger_path)
-    out: dict[str, Any] = {"ok": True, "action": "author", "row": row,
-                           "ledger_path": LEDGER_REL,
-                           "covers": f"{project} commits reachable from {dev_sha[:9]}"}
-    if push_dev:
-        out["push"] = commit_and_ff_push_ledger(
-            runner=runner, rel_paths=[LEDGER_REL],
-            commit_msg=f"chore(ship-consent): approve {project} @ {dev_sha[:9]}",
-            check_exists=ledger_path, _log_prefix="ship_consent",
-        )
-    return out
+    push = _append(row, ledger_path, publish=push_dev,
+                   message=f"ship-consent approve {project} @ {dev_sha[:9]}")
+    return {"ok": True, "action": "author", "row": row,
+            "ledger_path": f"origin/ledgers:{LEDGER_NAME}",
+            "covers": f"{project} commits reachable from {dev_sha[:9]}",
+            "push": push}
 
 
 def _revoke(project: str, reason: str, runner: Runner, push_dev: bool,
@@ -215,15 +226,8 @@ def _revoke(project: str, reason: str, runner: Runner, push_dev: bool,
         return {"ok": False, "action": "revoke", "error": "reason is required"}
     row = {"ts": _now(), "action": "revoke", "project": project,
            "reason": reason.strip(), "recorded_by": "agent"}
-    _append(row, ledger_path)
-    out: dict[str, Any] = {"ok": True, "action": "revoke", "row": row}
-    if push_dev:
-        out["push"] = commit_and_ff_push_ledger(
-            runner=runner, rel_paths=[LEDGER_REL],
-            commit_msg=f"chore(ship-consent): revoke {project}",
-            check_exists=ledger_path, _log_prefix="ship_consent",
-        )
-    return out
+    push = _append(row, ledger_path, publish=push_dev, message=f"ship-consent revoke {project}")
+    return {"ok": True, "action": "revoke", "row": row, "push": push}
 
 
 def _list(rows: list[dict], project: str | None) -> dict:
@@ -282,7 +286,8 @@ def register(server) -> None:
             "a prod deploy must never carry another agent's unapproved work). "
             "action='challenge' project=<slug> returns the canonical sentence the "
             "USER must type; action='author' project=<slug> session_id=<id> appends "
-            "an approval to project-history/ship-consent.ndjson ONLY when that "
+            "an approval to ship-consent.ndjson (on the orphan origin/ledgers branch, "
+            "plumbing-written — never a dev commit, 2026-09-24) ONLY when that "
             "sentence is verified in a human-authored message of the session "
             "transcript (same evidence layer as noctus.dev.prod_consent) — else "
             "REFUSES; the approval covers the project's commits reachable from the "

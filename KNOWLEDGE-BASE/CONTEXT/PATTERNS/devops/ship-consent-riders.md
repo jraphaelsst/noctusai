@@ -11,7 +11,7 @@
 | step | call | writes |
 |---|---|---|
 | 1. who rides along? | `noctus.dev.release stage=manifest` | nothing |
-| 2. approve a project | `noctus.dev.ship_consent action=challenge project=<p>` → the USER types the sentence → `action=author project=<p> session_id=<id>` | one row in `project-history/ship-consent.ndjson` (pushed to dev) |
+| 2. approve a project | `noctus.dev.ship_consent action=challenge project=<p>` → the USER types the sentence → `action=author project=<p> session_id=<id>` | one row in `ship-consent.ndjson` on the orphan `origin/ledgers` branch (plumbing-written, never a dev commit, since 2026-09-24; `release` dual-reads it with dev's legacy copy — `KB § PATTERNS/common/ledger-store.md`) |
 | 3a. all riders approved ∧ `main` is an ancestor of `dev` | `release stage=bless confirm=true` | FF `main` to the dev tip (unchanged behaviour, CI-green gate on the dev tip) |
 | 3b. otherwise (default `mode=cut`) | `release stage=bless` (dry-run plans + test-applies) → `confirm=true` | pushes `release/<YYYYMMDD-HHMM>` only — `main` does not move |
 | 3c. finalize the cut | `release stage=bless release_branch=release/<stamp> confirm=true` | FF `main` to the cut, once `Tests & Build` is GREEN on its exact sha |

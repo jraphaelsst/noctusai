@@ -131,3 +131,31 @@ def test_list_reports_state_per_project(tmp_path):
 def test_unknown_action_and_missing_project_are_errors(tmp_path):
     assert SC.ship_consent(action="bless")["ok"] is False
     assert SC.ship_consent(action="author", project=" ")["ok"] is False
+
+
+# ── origin/ledgers (2026-09-24, moved last) ─────────────────────────────────────
+def test_author_publishes_to_ledgers_branch_and_release_counts_it(ledger_repo, tmp_path):
+    """A verified approval lands on origin/ledgers (never a dev commit) and
+    `release`'s dual-read — which reads REMOTE refs only — sees it."""
+    from tools.noctus.dev import release as R
+    bare, clone, show = ledger_repo
+    home = tmp_path / "home"
+    _transcript(home, "s1", ("typed", "I approve shipping project alpha to production."))
+    run = _runner()
+    out = SC.ship_consent(action="author", project="alpha", session_id="s1", runner=run,
+                          home=home, push_dev=True,
+                          ledger_path=clone / "project-history" / "ship-consent.ndjson")
+    assert out["ok"] and out["push"]["status"] == "pushed", out
+    assert json.loads(show("ship-consent.ndjson"))["project"] == "alpha"
+    assert not (clone / "project-history" / "ship-consent.ndjson").exists()
+    assert not [c for c in run.calls if c[1] in ("add", "commit", "push")], "no porcelain git"
+
+    import subprocess
+
+    def git(*args):
+        r = subprocess.run(["git", *args], cwd=str(clone), capture_output=True, text=True)
+        return r.returncode, r.stdout, r.stderr
+
+    rows = R._read_ledger(git, "origin", "dev", "project-history/ship-consent.ndjson")
+    assert [r["project"] for r in rows] == ["alpha"]
+    assert SC.effective_approvals(SC.read_rows(run, ledger_path=clone / "x.ndjson"), "alpha")
