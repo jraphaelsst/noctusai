@@ -357,3 +357,25 @@ def test_the_ci_probe_is_read_only_and_pinned_to_the_exact_sha():
     assert len(gh) == 1, gh
     assert gh[0][:3] == ["gh", "run", "list"], "read-only subcommand only"
     assert "--commit" in gh[0] and gh[0][gh[0].index("--commit") + 1] == "d"
+
+
+def test_read_ledger_dual_reads_origin_ledgers_and_dev():
+    """2026-09-24: consent + pointer rows live on origin/ledgers; dev's legacy
+    copy still counts (stale-code peers), exact duplicates collapse."""
+    from tools.noctus.dev import release as R
+    a, b = '{"project":"p","n":1}', '{"project":"p","n":2}'
+    shows = {"origin/dev:project-history/ship-consent.ndjson": a + "\n",
+             "origin/ledgers:ship-consent.ndjson": a + "\n" + b + "\n"}
+
+    def git(*args):
+        if args[0] == "show" and args[1] in shows:
+            return 0, shows[args[1]], ""
+        return 128, "", "fatal: not found"
+
+    rows = R._read_ledger(git, "origin", "dev", "project-history/ship-consent.ndjson")
+    assert [r["n"] for r in rows] == [1, 2]
+    del shows["origin/dev:project-history/ship-consent.ndjson"]
+    assert [r["n"] for r in R._read_ledger(git, "origin", "dev",
+                                            "project-history/ship-consent.ndjson")] == [1, 2]
+    shows.clear()
+    assert R._read_ledger(git, "origin", "dev", "project-history/ship-consent.ndjson") == []

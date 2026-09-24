@@ -82,8 +82,6 @@ def _write_ledger(root: Path, rows: list[dict]) -> Path:
     ledger.parent.mkdir(parents=True, exist_ok=True)
     body = "\n".join(json.dumps(r) for r in rows) + "\n"
     ledger.write_text(body)
-    # The mirror MUST stay byte-identical (check_branch_tree_mirror parity invariant).
-    (root / "project-history" / "branch-tree.mirror.ndjson").write_text(body)
     return ledger
 
 
@@ -111,32 +109,28 @@ def _base_row(branch: str, commit: str, **overrides) -> dict:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
-class TestBranchTreeMirrorParity:
-    """The canonical ledger and its repo-tracked mirror MUST be byte-identical."""
+class TestMirrorFileRetiredAndDualRead:
+    """2026-09-24: `branch-tree.mirror.ndjson` is deleted (one ledger, no parity
+    to keep) and pointers live on origin/ledgers — the keeper dual-reads."""
 
-    def test_mirror_drift_is_hard_blocked(self, tmp_path):
-        root, sha = _init_repo(tmp_path)
-        _write_ledger(root, [_base_row("feat/x", sha)])  # writes both identically
-        # Drift the mirror out-of-band (the "agent hand-edited one alone" case).
-        (root / "project-history" / "branch-tree.mirror.ndjson").write_text("drifted\n")
-        issues = check_branch_tree_mirror(branch="feat/x", repo_root=root)
-        assert any("DRIFTED" in i["issue"] and i["severity"] == "high" for i in issues), \
-            f"mirror drift must hard-block; got: {issues}"
-
-    def test_missing_mirror_is_flagged(self, tmp_path):
+    def test_a_leftover_mirror_file_is_ignored(self, tmp_path):
         root, sha = _init_repo(tmp_path)
         _write_ledger(root, [_base_row("feat/x", sha)])
-        (root / "project-history" / "branch-tree.mirror.ndjson").unlink()
+        # a stale-code peer may still write the old mirror — it must not block
+        (root / "project-history" / "branch-tree.mirror.ndjson").write_text("drifted\n")
         issues = check_branch_tree_mirror(branch="feat/x", repo_root=root)
-        assert any("DRIFTED" in i["issue"] for i in issues), \
-            f"missing mirror must be flagged; got: {issues}"
+        assert not any("mirror" in i["file"] for i in issues), issues
 
-    def test_in_sync_mirror_passes_parity(self, tmp_path):
-        root, sha = _init_repo(tmp_path)
-        _write_ledger(root, [_base_row("feat/x", sha)])  # both identical
-        issues = check_branch_tree_mirror(branch="feat/x", repo_root=root)
-        assert not any("DRIFTED" in i["issue"] for i in issues), \
-            f"in-sync mirror must NOT flag parity; got: {issues}"
+    def test_pointer_only_on_origin_ledgers_satisfies_the_keeper(self, ledger_repo):
+        from tools.noctus.dev import _ledger_store as ls
+        _bare, clone, _show = ledger_repo
+        sha = _git(clone, "rev-parse", "HEAD")
+        _git(clone, "branch", "feat/x")
+        ls.default_store().append("branch-tree.ndjson",
+                                  [json.dumps(_base_row("feat/x", sha))], message="m")
+        assert not (clone / "project-history" / "branch-tree.ndjson").exists()
+        issues = check_branch_tree_mirror(branch="feat/x", repo_root=clone)
+        assert not [i for i in issues if i["severity"] == "high"], issues
 
 
 class TestBranchTreeMirrorPass:

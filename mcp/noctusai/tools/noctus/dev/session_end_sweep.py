@@ -60,10 +60,11 @@ _LEDGER_PATHS = [
     "project-history/ledger.ndjson",
     "project-history/worktree-salvage.ndjson",
     "project-history/branch-tree.ndjson",
-    # The branch-tree MIRROR — kept byte-identical to the canonical ledger by
-    # construction (branch_pointer._write_row writes both). It MUST ship in the
-    # same delivery, else a pointer flip (e.g. the auto-heal) commits the
-    # canonical without its mirror → dirty tree + check_branch_tree_mirror drift.
+    # The branch-tree MIRROR was DELETED 2026-09-24 and nothing current writes
+    # it (pointers go to origin/ledgers). Listed ONLY so a stale-code peer that
+    # still recreates it in the primary checkout gets delivered, not left dirty.
+    # Goes with this whole drain at S4 of
+    # project-history/roadmaps/ledgers-off-dev-2026-09.md.
     "project-history/branch-tree.mirror.ndjson",
 ]
 

@@ -8,7 +8,9 @@ Covers:
     (should_skip_cache_refresh), non-exempt paths are not.
   - from_dev=True reads origin/dev via git-show (injected runner) rather
     than the local file; falls back to local when git-show fails.
-  - push_dev=True triggers the FF-push idiom; push_dev=False skips it.
+  - push_dev=True publishes to origin/ledgers (Real store on a temp bare
+    repo); push_dev=False spools the row for the next publish.
+  - the dual-read: origin/dev's copy ∪ origin/ledgers.
   - list_pointers excludes terminal statuses by default; includes when
     include_terminal=True.
 
@@ -36,6 +38,16 @@ def _autofill_session_env(monkeypatch):
     deterministic id so unit tests exercise the always-fill path regardless of
     whether the pytest host is inside a live Claude session (CI is not)."""
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "test-session-id")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_ledger_path(tmp_path, monkeypatch):
+    """Since 2026-09-24 every read is the dual-read (origin/dev's copy ∪ the
+    ledger store), and the suite's Fake store is backed by `LEDGER_PATH` — the
+    REAL primary ledger unless a test points it elsewhere. Default it to an
+    empty per-test path so no test reads production pointers by accident;
+    tests that need a local ledger still override it."""
+    monkeypatch.setattr(BP, "LEDGER_PATH", tmp_path / "_isolated" / "branch-tree.ndjson")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -296,26 +308,6 @@ class TestAppend:
         assert result["ok"] is False
         assert "role must be one of" in result["error"]
 
-    def test_append_push_dev_calls_ff_push(self, tmp_path, monkeypatch):
-        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
-        ledger.parent.mkdir(parents=True)
-        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
-        monkeypatch.setattr(BP, "LEDGER_REL", "project-history/branch-tree.ndjson")
-
-        runner = FakeRunner(push_rc=0)
-        result = BP.append(
-            branch="feat/push-test", base="origin/dev", commit="def5678",
-            role="engineer", agent="push-test", parent="tl",
-            paths=["mcp/foo.py"], status="on_going", brief="push test",
-            push_dev=True, runner=runner,
-        )
-        assert result["ok"] is True
-        push_cmds = [c for c, _ in runner.calls if len(c) > 1 and c[1] == "push"]
-        assert push_cmds, "push should have been called"
-        # Verify push targets dev
-        push_args = push_cmds[0]
-        assert any("refs/heads/dev" in a or a.endswith(":dev") for a in push_args)
-
 
 # ── update ────────────────────────────────────────────────────────────────────
 class TestUpdate:
@@ -455,243 +447,6 @@ class TestQueryAndList:
         assert "feat/b" in branches
 
 
-# ── Push-to-dev FF idiom ──────────────────────────────────────────────────────
-class TestPushLedger:
-    def test_push_retries_on_race(self, tmp_path, monkeypatch):
-        """First push fails (non-FF), second push succeeds after fetch."""
-        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
-        ledger.parent.mkdir(parents=True)
-        ledger.write_text("{}\n", encoding="utf-8")
-        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
-        monkeypatch.setattr(BP, "LEDGER_REL", "project-history/branch-tree.ndjson")
-
-        calls: list[list[str]] = []
-
-        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
-            calls.append(cmd)
-            sub = cmd[1] if len(cmd) > 1 else ""
-            if sub == "status":
-                return 0, "M project-history/branch-tree.ndjson\n", ""
-            if sub == "add":
-                return 0, "", ""
-            if sub == "commit":
-                return 0, "[x] chore\n", ""
-            if sub == "fetch":
-                return 0, "", ""
-            if sub == "push":
-                # First push fails; second succeeds
-                push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
-                if len(push_calls) == 1:
-                    return 1, "", "non-fast-forward"
-                return 0, "", ""
-            return 0, "", ""
-
-        result = BP._push_ledger_to_dev(
-            commit_msg="test push", runner=_runner, dev_branch="dev"
-        )
-        assert result["ok"] is True
-        push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
-        assert len(push_calls) == 2, "should have retried after first push failure"
-
-    def test_push_skips_when_ledger_clean(self, tmp_path, monkeypatch):
-        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
-        ledger.parent.mkdir(parents=True)
-        ledger.write_text("{}\n", encoding="utf-8")
-        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
-        monkeypatch.setattr(BP, "LEDGER_REL", "project-history/branch-tree.ndjson")
-
-        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
-            sub = cmd[1] if len(cmd) > 1 else ""
-            if sub == "status":
-                return 0, "", ""  # clean
-            if sub == "fetch":
-                return 0, "", ""
-            return 0, "", ""
-
-        result = BP._push_ledger_to_dev(commit_msg="x", runner=_runner)
-        assert result["ok"] is True
-        assert result["status"] == "already_clean"
-        assert result["pushed"] is False
-
-    def test_push_fails_cleanly_on_persistent_failure(self, tmp_path, monkeypatch):
-        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
-        ledger.parent.mkdir(parents=True)
-        ledger.write_text("{}\n", encoding="utf-8")
-        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
-        monkeypatch.setattr(BP, "LEDGER_REL", "project-history/branch-tree.ndjson")
-
-        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
-            sub = cmd[1] if len(cmd) > 1 else ""
-            if sub == "status":
-                return 0, "M project-history/branch-tree.ndjson\n", ""
-            if sub in ("add", "commit", "fetch"):
-                return 0, "", ""
-            if sub == "push":
-                return 1, "", "permission denied"
-            return 0, "", ""
-
-        result = BP._push_ledger_to_dev(commit_msg="x", runner=_runner)
-        assert result["ok"] is False
-        assert "FF-push" in result["error"] or "failed" in result["error"]
-        assert result.get("committed_locally") is True
-
-    # ── rebase-onto-dev: the stale-primary-dev / divergence fix ───────────────
-    @staticmethod
-    def _setup_ledger(tmp_path, monkeypatch):
-        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
-        ledger.parent.mkdir(parents=True)
-        ledger.write_text("{}\n", encoding="utf-8")
-        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
-        monkeypatch.setattr(BP, "LEDGER_REL", "project-history/branch-tree.ndjson")
-        return ledger
-
-    def test_push_stale_primary_dev_rebases_then_pushes(self, tmp_path, monkeypatch):
-        """Local dev BEHIND origin/dev: initial push is non-FF; after
-        fetch+rebase the re-push succeeds.  Asserts a `git rebase` was issued
-        (the fix for the naive re-push-same-stale-commit bug)."""
-        self._setup_ledger(tmp_path, monkeypatch)
-        calls: list[list[str]] = []
-
-        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
-            calls.append(cmd)
-            sub = cmd[1] if len(cmd) > 1 else ""
-            if sub == "status":
-                return 0, "M project-history/branch-tree.ndjson\n", ""
-            if sub in ("add", "commit", "fetch", "rebase"):
-                return 0, "", ""
-            if sub == "rev-list":
-                return 0, "deadbeef\n", ""  # one ahead commit
-            if sub == "diff-tree":
-                # ledger-only ahead commit (touches both ledger + mirror)
-                return 0, (
-                    "project-history/branch-tree.ndjson\n"
-                    "project-history/branch-tree.mirror.ndjson\n"
-                ), ""
-            if sub == "push":
-                push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
-                # First push rejected non-FF (stale base); retry succeeds.
-                if len(push_calls) == 1:
-                    return 1, "", "non-fast-forward"
-                return 0, "", ""
-            return 0, "", ""
-
-        result = BP._push_ledger_to_dev(
-            commit_msg="ptr", runner=_runner, dev_branch="dev"
-        )
-        assert result["ok"] is True
-        assert result["pushed"] is True
-        rebase_calls = [
-            c for c in calls if len(c) > 1 and c[1] == "rebase" and "--abort" not in c
-        ]
-        assert rebase_calls, "a `git rebase origin/dev` must be issued before the push"
-
-    def test_push_concurrent_race_retries_once(self, tmp_path, monkeypatch):
-        """Push rejected once (concurrent-push race), succeeds on the single
-        retry — exactly two push calls, ledger-only ahead commit."""
-        self._setup_ledger(tmp_path, monkeypatch)
-        calls: list[list[str]] = []
-
-        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
-            calls.append(cmd)
-            sub = cmd[1] if len(cmd) > 1 else ""
-            if sub == "status":
-                return 0, "M project-history/branch-tree.ndjson\n", ""
-            if sub in ("add", "commit", "fetch", "rebase"):
-                return 0, "", ""
-            if sub == "rev-list":
-                return 0, "cafe1234\n", ""
-            if sub == "diff-tree":
-                return 0, "project-history/branch-tree.ndjson\n", ""
-            if sub == "push":
-                push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
-                return (1, "", "non-fast-forward") if len(push_calls) == 1 else (0, "", "")
-            return 0, "", ""
-
-        result = BP._push_ledger_to_dev(
-            commit_msg="ptr", runner=_runner, dev_branch="dev"
-        )
-        assert result["ok"] is True
-        push_calls = [c for c in calls if len(c) > 1 and c[1] == "push"]
-        assert len(push_calls) == 2, "should retry exactly once on a concurrent-push race"
-
-    def test_push_refuses_non_ledger_ahead_commit(self, tmp_path, monkeypatch):
-        """An ahead-commit touches a NON-ledger file → guard refuses: ok=False,
-        committed_locally=True, error mentions non-ledger, and NO push to dev is
-        issued (it would leak the non-ledger commit onto dev)."""
-        self._setup_ledger(tmp_path, monkeypatch)
-        calls: list[list[str]] = []
-
-        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
-            calls.append(cmd)
-            sub = cmd[1] if len(cmd) > 1 else ""
-            if sub == "status":
-                return 0, "M project-history/branch-tree.ndjson\n", ""
-            if sub in ("add", "commit", "fetch", "rebase"):
-                return 0, "", ""
-            if sub == "rev-list":
-                return 0, "feedface\n", ""
-            if sub == "diff-tree":
-                # ahead commit touches a NON-ledger source file
-                return 0, "mcp/noctusai/tools/noctus/dev/other.py\n", ""
-            if sub == "push":
-                return 0, "", ""  # would succeed if (wrongly) reached
-            return 0, "", ""
-
-        result = BP._push_ledger_to_dev(
-            commit_msg="ptr", runner=_runner, dev_branch="dev"
-        )
-        assert result["ok"] is False
-        assert result.get("committed_locally") is True
-        assert "non-ledger" in result["error"]
-        leaking_pushes = [c for c in calls if len(c) > 1 and c[1] == "push"]
-        assert not leaking_pushes, "must NOT push when an ahead-commit is non-ledger"
-
-    def test_push_rebase_conflict_aborts_no_force(self, tmp_path, monkeypatch):
-        """Rebase reports a conflict → `git rebase --abort` is issued, ok=False,
-        committed_locally=True, and NO force/`-X` flag ever appears in any
-        issued command (never auto-resolve)."""
-        self._setup_ledger(tmp_path, monkeypatch)
-        calls: list[list[str]] = []
-
-        def _runner(cmd: list[str], cwd=None) -> tuple[int, str, str]:
-            calls.append(cmd)
-            sub = cmd[1] if len(cmd) > 1 else ""
-            if sub == "status":
-                return 0, "M project-history/branch-tree.ndjson\n", ""
-            if sub in ("add", "commit", "fetch"):
-                return 0, "", ""
-            if sub == "rev-list":
-                return 0, "abc12345\n", ""
-            if sub == "diff-tree":
-                return 0, "project-history/branch-tree.ndjson\n", ""
-            if sub == "rebase":
-                if "--abort" in cmd:
-                    return 0, "", ""
-                return 1, "", "CONFLICT (content): merge conflict in branch-tree.ndjson"
-            if sub == "push":
-                return 0, "", ""
-            return 0, "", ""
-
-        result = BP._push_ledger_to_dev(
-            commit_msg="ptr", runner=_runner, dev_branch="dev"
-        )
-        assert result["ok"] is False
-        assert result.get("committed_locally") is True
-        assert "conflict" in result["error"].lower()
-        abort_calls = [
-            c for c in calls if len(c) > 1 and c[1] == "rebase" and "--abort" in c
-        ]
-        assert abort_calls, "`git rebase --abort` must be issued on a conflict"
-        # Never force/auto-resolve.
-        for c in calls:
-            assert "-X" not in c, f"no -X (auto-resolve) flag allowed: {c}"
-            assert "-f" not in c, f"no -f (force) flag allowed: {c}"
-            assert not any("--force" in tok for tok in c), f"no --force allowed: {c}"
-        # A conflict aborts BEFORE the push leg.
-        pushes = [c for c in calls if len(c) > 1 and c[1] == "push"]
-        assert not pushes, "must NOT push when the rebase conflicts"
-
-
 # ── noc_graph_cache exclusion ─────────────────────────────────────────────────
 class TestNocGraphExclusion:
     def test_branch_tree_not_in_source_files(self, tmp_path):
@@ -796,3 +551,54 @@ class TestProjectField:
         assert [r["branch"] for r in BP.query(project="alpha", runner=runner)] == ["feat/a"]
         assert [r["branch"] for r in BP.query(project="feat/b", runner=runner)] == ["feat/b"]
         assert [r["branch"] for r in BP.list_pointers(project="alpha", runner=runner)] == ["feat/a"]
+
+
+
+# ── origin/ledgers (2026-09-24): Real store on a temp bare repo ────────────────
+class TestLedgerStoreRealMode:
+    @pytest.fixture
+    def real(self, ledger_repo, monkeypatch):
+        bare, clone, show = ledger_repo
+        monkeypatch.setattr(BP, "LEDGER_PATH", clone / "project-history" / "branch-tree.ndjson")
+        return clone, show
+
+    def test_append_publishes_to_ledgers_never_dev(self, real):
+        clone, show = real
+        runner = FakeRunner(dev_content=None)
+        r = BP.append(branch="feat/p", base="origin/dev", commit="abc", role="engineer",
+                      agent="eng", parent="tl", paths=["x.py"], status="on_going",
+                      brief="b", push_dev=True, runner=runner)
+        assert r["ok"] and r["push"]["status"] == "pushed", r
+        assert json.loads(show("branch-tree.ndjson"))["branch"] == "feat/p"
+        assert not BP.LEDGER_PATH.exists(), "the dev copy is never written"
+        # no porcelain git at all — no add/commit/push through the runner
+        assert not [c for c, _ in runner.calls if c[1] in ("add", "commit", "push", "rebase")]
+
+    def test_push_dev_false_spools_then_reads_own_write(self, real):
+        clone, show = real
+        runner = FakeRunner(dev_content=None)
+        BP.append(branch="feat/s", base="origin/dev", commit="abc", role="engineer",
+                  agent="eng", parent="tl", paths=["x.py"], status="on_going",
+                  brief="b", push_dev=False, runner=runner)
+        assert show("branch-tree.ndjson") == ""
+        assert [r["branch"] for r in BP.query(runner=runner)] == ["feat/s"]
+
+    def test_update_carries_forward_across_the_dual_read(self, real):
+        """A pointer that exists only on origin/dev (a stale-code peer) is
+        updated; the delta row lands on origin/ledgers."""
+        clone, show = real
+        runner = FakeRunner(dev_content=_ndjson([
+            {**_row("feat/old", "2026-09-01T00:00:00+00:00"), "session": "s-old"}]))
+        u = BP.update(branch="feat/old", status="shipped", runner=runner)
+        assert u["ok"] and u["push"]["status"] == "pushed", u
+        assert json.loads(show("branch-tree.ndjson"))["status"] == "shipped"
+        latest = {r["branch"]: r for r in BP.query(runner=runner)}
+        assert latest["feat/old"]["status"] == "shipped"
+
+    def test_dual_read_dedupes_seeded_rows(self, real):
+        clone, show = real
+        row = {**_row("feat/d", "2026-09-01T00:00:00+00:00"), "session": "s"}
+        from tools.noctus.dev import _ledger_store as ls
+        ls.default_store().append("branch-tree.ndjson", [json.dumps(row)], message="seed")
+        runner = FakeRunner(dev_content=_ndjson([row]))
+        assert len(BP._read_dev_ledger(runner=runner)) == 1

@@ -86,7 +86,8 @@ class TestModuleLevelFrozenConstants:
         from tools.noctus.dev import branch_pointer as m
         with _reloaded_with_ledger_root(m, tmp_path, monkeypatch):
             assert m.LEDGER_PATH == tmp_path / "project-history" / "branch-tree.ndjson"
-            assert m.MIRROR_PATH == tmp_path / "project-history" / "branch-tree.mirror.ndjson"
+            # the mirror file was deleted 2026-09-24 — no MIRROR_PATH to derive
+            assert not hasattr(m, "MIRROR_PATH")
 
     def test_vector_calibration(self, tmp_path, monkeypatch):
         from tools.noctus.dev import vector_calibration as m

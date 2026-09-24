@@ -180,3 +180,18 @@ def ledger_repo(tmp_path, monkeypatch):
         return r.stdout if r.returncode == 0 else ""
 
     yield bare, clone, show
+
+
+@pytest.fixture(autouse=True)
+def _isolate_branch_tree_dev_copy(tmp_path, monkeypatch):
+    """Point `branch_pointer.LEDGER_PATH` at an empty per-test path.
+
+    Since 2026-09-24 every branch-tree read is the dual-read (origin/dev's
+    copy ∪ the ledger store) and the suite's Fake store is backed by
+    `LEDGER_PATH` — which is the REAL primary checkout's ledger unless a test
+    points it elsewhere. Without this, any test that reaches
+    `branch_pointer.query` (the staleness guards, cleanup, the stale-pointer
+    keeper) would silently merge production pointers into its fixture.
+    Tests that need a local ledger still override it themselves."""
+    from tools.noctus.dev import branch_pointer as _bp
+    monkeypatch.setattr(_bp, "LEDGER_PATH", tmp_path / "_isolated-branch-tree" / "branch-tree.ndjson")

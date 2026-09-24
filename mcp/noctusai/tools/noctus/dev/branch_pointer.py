@@ -1,9 +1,13 @@
 """noctus.dev.branch_pointer — the global live map of git-tree × claude-tree.
 
-Append-only ndjson ledger (`project-history/branch-tree.ndjson`) tracking
-branch ownership, collision zones, and agent coordination. Agents read
-**dev's** copy to get the live cross-branch picture; pointer updates push
-ONLY that file to dev so every agent sees the latest state in real time.
+Append-only ndjson ledger (`branch-tree.ndjson`) tracking branch ownership,
+collision zones, and agent coordination. Since 2026-09-24 it lives on the
+ORPHAN `origin/ledgers` branch, written by git plumbing through `_ledger_store`
+— a pointer write is never a commit on dev (465 `chore(branch-pointer)` dev
+commits since 2026-08-01 were this ledger). Reads are the DUAL-READ
+(origin/ledgers ∪ the legacy `project-history/branch-tree.ndjson` dev copy)
+until S4 of `project-history/roadmaps/ledgers-off-dev-2026-09.md`, so a pointer
+a peer's stale-code session still pushes to dev is never invisible.
 
 KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md.
 
@@ -16,17 +20,14 @@ query   Resolve latest-per-branch from dev's copy; supports filtering by
         status, branch, agent, and collision-zone overlap.
 list    Live map: all non-terminal pointers (add terminal with include_terminal).
 
-Push idiom (rebase-onto-dev → FF-push, retry-on-race)
------------------------------------------------------
-Mirrors task_branch.cleanup + worktree_salvage FF-push-to-dev:
-  stage ONLY the ledger+mirror → commit → fetch → divergence-guard →
-  rebase onto origin/dev → FF-push HEAD:dev; single retry on a concurrent-push
-  race.  The union-merge gitattribute makes the rebase conflict-free (the
-  ledger files are append-only), so a behind/diverged local dev (e.g. a peer
-  advanced origin/dev from a worktree) no longer wedges the push on a stale
-  base.  The divergence-guard REFUSES to push when a non-ledger commit is ahead
-  of origin/dev (never leak non-ledger work onto dev); a genuine rebase conflict
-  is aborted + surfaced, never force-resolved.
+Publish idiom (origin/ledgers, plumbing only)
+---------------------------------------------
+`push_dev=True` (default; the name predates the move) publishes the row to
+origin/ledgers at once: fetch → hash-object → mktree → commit-tree → FF push,
+retried on the race (KB § PATTERNS/common/ledger-store.md). `push_dev=False`
+spools the row locally (read-your-writes holds) for the next publish. The
+`branch-tree.mirror.ndjson` copy was DELETED the same day (owner decision) —
+one ledger, no parity to keep.
 
 Cache-exemption (contract §3 "Cache-sync discipline")
 ------------------------------------------------------
@@ -48,55 +49,46 @@ from typing import Any
 
 from settings import LEDGER_ROOT, REPO_ROOT
 
-from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger
+from tools.noctus.dev._ledger_store import (
+    Ledger,
+    LedgerStoreError,
+    merge_ndjson_text,
+    open_ledger,
+)
 
 logger = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-# LEDGER_ROOT (never REPO_ROOT) for the ledger FILE path — repo-global
-# append-only ledger; must resolve to the PRIMARY checkout even when the
-# MCP server booted with cwd inside a worktree (see
-# workspace.get_ledger_root() docstring). NOTE: this is defense-in-depth
-# only — the append/update path commits + FF-pushes to origin/dev in the
-# SAME call regardless of which checkout hosts the commit, so a row is
-# durable on origin/dev before this function returns in the common case;
-# this constant only matters if that push fails.
+# The legacy dev copy — the dual-read source until S4 and the Fake store's
+# backing file. LEDGER_ROOT (never REPO_ROOT): must resolve to the PRIMARY
+# checkout even when the MCP server booted with cwd inside a worktree (see
+# workspace.get_ledger_root() docstring).
 LEDGER_REL = "project-history/branch-tree.ndjson"
 LEDGER_PATH: Path = LEDGER_ROOT / LEDGER_REL
-# Repo-tracked, human-accessible MIRROR — kept byte-identical to the canonical
-# ledger BY CONSTRUCTION (every write goes to both; the check_branch_tree_mirror
-# keeper hard-blocks any drift). Both are project-history/*.ndjson ⇒ merge=union +
-# cache-exempt. KB § PATTERNS/architect/branch-tree-tracking.md (§2 the mirror).
+LEDGER_NAME = "branch-tree.ndjson"
+# The deleted mirror's path — kept ONLY so a push of a stale-code peer that
+# still writes it stays cache-exempt until S4. Nothing here writes it any more.
 MIRROR_NAME = "branch-tree.mirror.ndjson"
 MIRROR_REL = "project-history/" + MIRROR_NAME
-MIRROR_PATH: Path = LEDGER_ROOT / MIRROR_REL
 
 # ── Cache-exemption sentinel ──────────────────────────────────────────────────
-# ONLY these paths (the ledger + its mirror) are exempt — any other staged file
-# re-enables cache refresh.
+# ONLY these paths are exempt — any other staged file re-enables cache refresh.
 _CACHE_EXEMPT_PATHS: frozenset[str] = frozenset({LEDGER_REL, MIRROR_REL})
 
 
-def _ledger_targets() -> tuple[Path, ...]:
-    """Canonical ledger + its mirror, derived from the CURRENT module-level
-    LEDGER_PATH so monkeypatching LEDGER_PATH (tests) relocates both."""
-    return (LEDGER_PATH, LEDGER_PATH.with_name(MIRROR_NAME))
+def _ledger() -> Ledger:
+    """The branch-tree ledger on the store — resolved per call so a patched
+    ``LEDGER_PATH`` (tests) relocates the Fake."""
+    return open_ledger(LEDGER_NAME, LEDGER_PATH)
 
 
-def _ledger_rels() -> tuple[str, ...]:
-    """Repo-relative paths to stage — derived from the CURRENT LEDGER_REL."""
-    from pathlib import PurePosixPath
-    return (LEDGER_REL, str(PurePosixPath(LEDGER_REL).with_name(MIRROR_NAME)))
+def _write_row(row: dict[str, Any], *, publish: bool, message: str) -> dict[str, Any]:
+    """Append one pointer row through the ledger store (origin/ledgers).
 
-
-def _write_row(row: dict[str, Any]) -> None:
-    """Append one row to BOTH the canonical ledger AND its mirror — drift-free by
-    construction. Agents never populate one without the other; the
-    check_branch_tree_mirror keeper enforces parity for any out-of-band edit."""
-    for _p in _ledger_targets():
-        _p.parent.mkdir(parents=True, exist_ok=True)
-        with _p.open("a", encoding="utf-8") as _f:
-            _f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    Returns the store result; ``status='pending'`` means the row is durably
+    spooled on this clone (readable here) and publishes with the next write."""
+    return _ledger().append([json.dumps(row, ensure_ascii=False)],
+                            message=message, publish=publish)
 
 
 def is_cache_exempt_path(rel_path: str) -> bool:
@@ -185,23 +177,7 @@ def _run(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 
 
-def _read_dev_ledger(runner=None) -> list[dict]:
-    """Read branch-tree.ndjson from dev's copy (git-show origin/dev:<path>).
-
-    Falls back to the local file if origin/dev is not available (e.g. no
-    remote, or a test with an injected runner).  Returns a list of dicts.
-    """
-    run = runner or _run
-    rc, out, _err = run(["git", "show", f"origin/dev:{LEDGER_REL}"])
-    if rc == 0:
-        text = out
-    else:
-        # Fallback: local file (test context or offline)
-        if LEDGER_PATH.exists():
-            text = LEDGER_PATH.read_text(encoding="utf-8")
-        else:
-            return []
-
+def _parse_rows(text: str) -> list[dict]:
     rows: list[dict] = []
     for line in text.splitlines():
         line = line.strip()
@@ -212,6 +188,40 @@ def _read_dev_ledger(runner=None) -> list[dict]:
         except json.JSONDecodeError:
             continue  # skip malformed; no silent-error pattern violation (parse-only)
     return rows
+
+
+def _store_text() -> str:
+    """origin/ledgers' copy (+ this clone's spooled rows). A store read failure
+    is LOGGED and the dev copy still answers — the S2 dual-read contract."""
+    try:
+        return _ledger().read_text()
+    except LedgerStoreError as exc:
+        logger.warning("branch_pointer: origin/ledgers unreadable (%s) — dev copy only", exc)
+        return ""
+
+
+def _read_dev_ledger(runner=None) -> list[dict]:
+    """The GLOBAL map: origin/ledgers ∪ origin/dev's legacy copy (dual-read).
+
+    The dev half is ``git show origin/dev:<path>`` (the local file when
+    origin/dev is unavailable, e.g. no remote or an injected test runner);
+    the store half is origin/ledgers. Exact-duplicate rows collapse (the S0
+    seed put every pre-move row in both); resolution is latest-by-ts, so the
+    merged order does not matter.
+    """
+    run = runner or _run
+    rc, out, _err = run(["git", "show", f"origin/dev:{LEDGER_REL}"])
+    if rc == 0:
+        dev_text = out
+    else:
+        dev_text = LEDGER_PATH.read_text(encoding="utf-8") if LEDGER_PATH.exists() else ""
+    return _parse_rows(merge_ndjson_text(dev_text, _store_text()))
+
+
+def _read_local_ledger() -> list[dict]:
+    """``from_dev=False``: this checkout's dev copy ∪ the store."""
+    dev_text = LEDGER_PATH.read_text(encoding="utf-8") if LEDGER_PATH.exists() else ""
+    return _parse_rows(merge_ndjson_text(dev_text, _store_text()))
 
 
 def _latest_per_branch(rows: list[dict]) -> dict[str, dict]:
@@ -277,37 +287,6 @@ def _paths_overlap(a: list[str], b: list[str]) -> bool:
     return bool(sa & sb)
 
 
-# ── FF-push-to-dev (shared idiom lifted to _ledger_push, N=3 DRY) ─────────────
-def _push_ledger_to_dev(
-    *,
-    commit_msg: str,
-    runner=None,
-    dev_branch: str = "dev",
-    remote: str = "origin",
-) -> dict[str, Any]:
-    """Stage ONLY branch-tree.ndjson+mirror → commit → rebase-onto-dev → FF-push.
-
-    Thin delegate to the shared :func:`commit_and_ff_push_ledger` helper (the
-    N=3 DRY lift). Idempotent: if neither the ledger nor its mirror is dirty
-    (nothing to commit), returns ok=True with status=already_clean. After
-    committing, the shared helper does fetch → divergence-guard → rebase onto
-    origin/dev → FF-push, retried ONCE on a concurrent-push race; a non-ledger-
-    ahead guard refusal or a rebase conflict is surfaced immediately with
-    committed_locally=True (never retried, never force-resolved).
-    """
-    return commit_and_ff_push_ledger(
-        runner=runner or _run,
-        root=None,
-        rel_paths=list(_ledger_rels()),
-        dev_branch=dev_branch,
-        remote=remote,
-        commit_msg=commit_msg,
-        already_committed=False,
-        check_exists=LEDGER_PATH,
-        _log_prefix="branch_pointer",
-    )
-
-
 # ── Core API ──────────────────────────────────────────────────────────────────
 def append(
     *,
@@ -337,8 +316,10 @@ def append(
     Called before self-branching to claim the collision zone immediately,
     and on any status transition that needs a fresh row.
 
-    push_dev=True (default): stage + commit + FF-push ONLY the ndjson to dev
-    so every agent sees the updated map in real time (the no-skip guarantee).
+    push_dev=True (default): publish the row to origin/ledgers at once so every
+    agent sees the updated map in real time (the no-skip guarantee) — never a
+    commit on dev. push_dev=False spools it for the next publish.
+    `runner` is only used for the dual-read's `git show origin/dev:…` half.
     """
     if status not in STATUSES:
         return {"ok": False, "error": f"status must be one of {sorted(STATUSES)}; got {status!r}"}
@@ -383,26 +364,15 @@ def append(
     if project and str(project).strip():
         row["project"] = str(project).strip()
 
-    _write_row(row)  # writes BOTH the canonical ledger and its mirror
-
-    result: dict[str, Any] = {"ok": True, "row": row, "ledger_path": LEDGER_REL}
-
-    if push_dev:
-        push_result = _push_ledger_to_dev(
-            commit_msg=(
-                f"chore(branch-pointer): {status} — {agent} on {branch}\n\n"
-                f"{brief}"
-            ),
-            runner=runner,
-            dev_branch=dev_branch,
-        )
-        result["push"] = push_result
-        if not push_result["ok"]:
-            logger.warning(
-                "branch_pointer.append: push to dev failed for %s — "
-                "row is on disk, dev map may lag until next push", branch
-            )
-
+    push_result = _write_row(row, publish=push_dev,
+                             message=f"branch-pointer {status} — {agent} on {branch}")
+    result: dict[str, Any] = {"ok": True, "row": row, "ledger_path": f"origin/ledgers:{LEDGER_NAME}",
+                              "push": push_result}
+    if push_dev and not push_result.get("ok"):
+        logger.warning(
+            "branch_pointer.append: publish to origin/ledgers failed for %s (%s) — "
+            "row is spooled locally and publishes with the next write",
+            branch, push_result.get("error"))
     return result
 
 
@@ -426,10 +396,7 @@ def update(
     unchanged fields, then merges in the supplied overrides.  Because the
     ledger is append-only, this writes a NEW row — not an in-place edit.
     """
-    rows = _read_dev_ledger(runner=runner) if from_dev else (
-        [json.loads(l) for l in LEDGER_PATH.read_text("utf-8").splitlines() if l.strip()]
-        if LEDGER_PATH.exists() else []
-    )
+    rows = _read_dev_ledger(runner=runner) if from_dev else _read_local_ledger()
     best = _latest_per_branch(rows)
     prev = best.get(branch)
     if prev is None:
@@ -476,26 +443,15 @@ def update(
     if carried_project and str(carried_project).strip():
         row["project"] = str(carried_project).strip()
 
-    _write_row(row)  # writes BOTH the canonical ledger and its mirror
-
-    result: dict[str, Any] = {"ok": True, "row": row, "ledger_path": LEDGER_REL}
-
-    if push_dev:
-        push_result = _push_ledger_to_dev(
-            commit_msg=(
-                f"chore(branch-pointer): {new_status} — {row['agent']} on {branch}\n\n"
-                f"{row['brief']}"
-            ),
-            runner=runner,
-            dev_branch=dev_branch,
-        )
-        result["push"] = push_result
-        if not push_result["ok"]:
-            logger.warning(
-                "branch_pointer.update: push to dev failed for %s — "
-                "row is on disk, dev map may lag until next push", branch
-            )
-
+    push_result = _write_row(row, publish=push_dev,
+                             message=f"branch-pointer {new_status} — {row['agent']} on {branch}")
+    result: dict[str, Any] = {"ok": True, "row": row, "ledger_path": f"origin/ledgers:{LEDGER_NAME}",
+                              "push": push_result}
+    if push_dev and not push_result.get("ok"):
+        logger.warning(
+            "branch_pointer.update: publish to origin/ledgers failed for %s (%s) — "
+            "row is spooled locally and publishes with the next write",
+            branch, push_result.get("error"))
     return result
 
 
@@ -518,13 +474,7 @@ def query(
     Default from_dev=True: reads origin/dev's copy so every calling agent
     sees the globally-updated map, regardless of its own branch state.
     """
-    if from_dev:
-        rows = _read_dev_ledger(runner=runner)
-    else:
-        rows = (
-            [json.loads(l) for l in LEDGER_PATH.read_text("utf-8").splitlines() if l.strip()]
-            if LEDGER_PATH.exists() else []
-        )
+    rows = _read_dev_ledger(runner=runner) if from_dev else _read_local_ledger()
     best = _latest_per_branch(rows)
     results: list[dict] = []
     for br, row in best.items():
@@ -585,10 +535,12 @@ def register(server) -> None:  # noqa: ANN001
             "            (the pre-dispatch planner — detect collisions before touch).\n"
             "  list    — live map: all non-terminal pointers (include_terminal=True for full view).\n"
             "            Optional: from_dev (default True), include_terminal (default False), project.\n\n"
-            "PUSH IDIOM  push_dev=True (default): stage ONLY project-history/branch-tree.ndjson "
-            "→ commit → FF-push to dev (retry on concurrent-push race). A pointer push must NEVER "
-            "trigger cache refresh — this is the cache-exempt path (contract §3). "
-            "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md."
+            "PUBLISH  the ledger lives on the ORPHAN origin/ledgers branch (git plumbing, never a "
+            "commit on dev — 2026-09-24). push_dev=True (default) publishes the row at once "
+            "(FF push, retried on the race); push_dev=False spools it for the next publish. "
+            "Reads merge origin/ledgers with the legacy dev copy. "
+            "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md · "
+            "KB § PATTERNS/common/ledger-store.md."
         ),
     )
     def _branch_pointer(

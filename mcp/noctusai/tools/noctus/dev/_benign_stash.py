@@ -39,9 +39,11 @@ hand-copied KB paths. The pre-commit hook's own KB-counts regenerator
 marker-block targets — ``KNOWLEDGE-BASE/AGENT-CONTEXT.md``,
 ``KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md``, AND
 ``KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md`` — and only two of the three ever made
-it into the hand-copied list. ``branch_pointer.py`` writes its ledger AND a
+it into the hand-copied list. ``branch_pointer.py`` wrote its ledger AND a
 byte-identical mirror (``branch-tree.mirror.ndjson``) atomically, every time; only
-the ledger name made it in. Both omissions are the exact anti-pattern CLAUDE.md
+the ledger name made it in. (Both ledgers left the dev checkout on 2026-09-24 —
+they live on origin/ledgers now; the glob still covers a stale-code peer's
+leftover writes until S4 of the ledgers-off-dev roadmap.) Both omissions are the exact anti-pattern CLAUDE.md
 §1 names for hand-maintained coverage lists: correct the day they're written,
 stale the day a sibling artifact is added. See the derivation helpers below —
 the KB-counts half is now read straight from ``kb_sync``'s own manifest instead

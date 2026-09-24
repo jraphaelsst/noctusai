@@ -220,13 +220,23 @@ _MODES = ("ff", "cut", "refuse")
 
 
 def _read_ledger(git, remote: str, dev_branch: str, rel: str) -> list[dict]:
-    """dev's copy of an append-only ledger (what every agent sees). Absent ⇒
-    [] (no approvals / no pointers yet is a real state, not an error)."""
-    rc, out, _e = git("show", f"{remote}/{dev_branch}:{rel}")
-    if rc != 0:
+    """An append-only ledger as every agent sees it — the S2 DUAL-READ of
+    ``<remote>/ledgers:<name>`` (where the ledgers live since 2026-09-24,
+    KB § PATTERNS/common/ledger-store.md) ∪ dev's legacy copy, exact-duplicate
+    rows collapsed. Both halves read REMOTE-TRACKING refs through the same
+    ``git`` runner — never a local spool — so a row counts only once it is
+    published. Absent in both ⇒ [] (no approvals / no pointers yet is a real
+    state, not an error)."""
+    from tools.noctus.dev._ledger_store import LEDGERS_BRANCH, merge_ndjson_text
+    texts = []
+    for ref in (f"{remote}/{dev_branch}:{rel}", f"{remote}/{LEDGERS_BRANCH}:{rel.rsplit('/', 1)[-1]}"):
+        rc, out, _e = git("show", ref)
+        if rc == 0:
+            texts.append(out)
+    if not texts:
         return []
     rows = []
-    for ln in out.splitlines():
+    for ln in merge_ndjson_text(*texts).splitlines():
         ln = ln.strip()
         if not ln:
             continue

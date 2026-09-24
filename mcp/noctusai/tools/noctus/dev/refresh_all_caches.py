@@ -339,7 +339,7 @@ def refresh_all(
 # "Cache-sync discipline".  This is a config exclusion, NOT a keeper bypass.
 _CACHE_EXEMPT_PATHS: frozenset[str] = frozenset({
     "project-history/branch-tree.ndjson",
-    "project-history/branch-tree.mirror.ndjson",  # the repo-tracked mirror (kept byte-identical)
+    "project-history/branch-tree.mirror.ndjson",  # deleted 2026-09-24; a stale-code peer may still push it (until S4)
 })
 
 

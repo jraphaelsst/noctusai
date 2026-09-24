@@ -18896,6 +18896,18 @@ def check_dangling_remote_branches(
     return issues
 
 
+def _branch_tree_text(root: Path) -> str:
+    """The branch-tree ledger as every keeper must see it since 2026-09-24:
+    ``root``'s dev copy ∪ origin/ledgers (the S2 dual-read; KB §
+    PATTERNS/common/ledger-store.md). A store read failure falls back to the
+    dev copy and is logged by ``read_dual`` — never silent."""
+    from tools.noctus.dev._ledger_store import open_ledger, read_dual
+    ledger = root / "project-history" / "branch-tree.ndjson"
+    dev = ledger.read_text(encoding="utf-8") if ledger.exists() else ""
+    text, _err = read_dual(open_ledger("branch-tree.ndjson", ledger, repo_root=root), dev)
+    return text
+
+
 def check_branch_tree_mirror(
     branch: str | None = None,
     repo_root: Path | None = None,
@@ -18907,7 +18919,8 @@ def check_branch_tree_mirror(
     1. A latest pointer EXISTS in ``project-history/branch-tree.ndjson``
        AND is non-stale (its ``commit`` resolves in git; ``ts`` not more than
        72 h behind the branch tip's author date).
-    2. Git-tree ↔ claude-tree mirror is intact:
+    2. Git-tree ↔ claude-tree mirror is intact (the git↔claude correspondence
+       — NOT the deleted ``branch-tree.mirror.ndjson`` file, removed 2026-09-24):
        - git side: ``branch``, ``base``, ``commit`` all resolve.
        - claude side: ``role``, ``agent``, ``parent`` all populated.
        - Consistency: an engineer's ``base`` fork-point corresponds to its
@@ -18918,8 +18931,9 @@ def check_branch_tree_mirror(
     4. No contradiction: not ``shipped`` while the branch tip is ahead of the
        recorded ``commit`` (un-pushed commits exist beyond the pointer).
 
-    Fast by design: reads the ndjson file + git refs only (no cache I/O,
-    no network, no OpenAI). Pre-push overhead is a few ms.
+    Fast by design: reads the ledger (dual-read: the dev copy ∪ the local
+    ``origin/ledgers`` ref — no fetch) + git refs only (no cache I/O, no
+    network, no OpenAI). Pre-push overhead is a few ms.
 
     Block messages name the exact ``branch_pointer`` call to fix the issue.
 
@@ -18937,29 +18951,10 @@ def check_branch_tree_mirror(
 
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
-    ledger = root / "project-history" / "branch-tree.ndjson"
-    mirror = root / "project-history" / "branch-tree.mirror.ndjson"
-
-    # ── Mirror parity (global invariant) ─────────────────────────────────────
-    # The ledger + its repo-tracked human-accessible mirror MUST be byte-identical.
-    # branch_pointer writes BOTH by construction; this gate catches an out-of-band
-    # hand-edit of one alone (the "agents forget" case). KB § branch-tree-tracking §2.
-    if ledger.exists() or mirror.exists():
-        _led = ledger.read_text(encoding="utf-8") if ledger.exists() else None
-        _mir = mirror.read_text(encoding="utf-8") if mirror.exists() else None
-        if _led != _mir:
-            issues.append({
-                "product": "<platform>",
-                "file": "project-history/branch-tree.mirror.ndjson",
-                "issue": (
-                    "branch-tree ledger and its mirror have DRIFTED — they MUST be "
-                    "byte-identical. Always write via `noctus.dev.branch_pointer` (it "
-                    "populates both); never hand-edit one alone. Repair: copy "
-                    "project-history/branch-tree.ndjson → branch-tree.mirror.ndjson. "
-                    "KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §2 (the mirror)."
-                ),
-                "severity": "high",
-            })
+    # Dual-read (2026-09-24): pointers are written to origin/ledgers; the dev
+    # copy only carries rows from before the move or from stale-code peers.
+    # The `branch-tree.mirror.ndjson` parity check is gone with the mirror.
+    ledger_text = _branch_tree_text(root)
 
     # ── Session-populated invariant (ALL rows, incl. terminal/historical) ────
     # Every pointer MUST carry a non-empty `session` — the owning Claude session,
@@ -18968,12 +18963,10 @@ def check_branch_tree_mirror(
     # are never null; this gate catches any null/blank that still slips in
     # (legacy rows, an out-of-band hand-edit, a context without the env var).
     # Scans EVERY row, not just latest-per-branch — a historical null is drift.
-    if ledger.exists():
+    if ledger_text:
         try:
             null_session: list[tuple[int, str]] = []
-            for line_no, raw in enumerate(
-                ledger.read_text(encoding="utf-8").splitlines(), start=1
-            ):
+            for line_no, raw in enumerate(ledger_text.splitlines(), start=1):
                 raw = raw.strip()
                 if not raw:
                     continue
@@ -19002,7 +18995,7 @@ def check_branch_tree_mirror(
         except Exception as exc:  # noqa: BLE001
             logger.warning("check_branch_tree_mirror: session scan failed (%s)", exc)
 
-    if not ledger.exists():
+    if not ledger_text:
         # No ledger yet — only flag if a specific branch was requested.
         if branch is not None:
             issues.append({
@@ -19020,7 +19013,7 @@ def check_branch_tree_mirror(
     # ── Parse ledger → latest row per branch ─────────────────────────────────
     latest_by_branch: dict[str, dict] = {}
     try:
-        for raw_line in ledger.read_text(encoding="utf-8").splitlines():
+        for raw_line in ledger_text.splitlines():
             raw_line = raw_line.strip()
             if not raw_line:
                 continue
@@ -19364,8 +19357,8 @@ def check_stale_branch_pointers(
     from tools.noctus.dev import _worktree_staleness as wts
 
     root = repo_root or REPO_ROOT
-    ledger = root / "project-history" / "branch-tree.ndjson"
-    if not ledger.exists():
+    ledger_text = _branch_tree_text(root)  # dual-read (2026-09-24)
+    if not ledger_text:
         return []
     runner = run or wts.make_subprocess_runner(root, timeout=30)
     base = wts.resolve_merged_base(runner)
@@ -19374,7 +19367,7 @@ def check_stale_branch_pointers(
     from tools.noctus.dev import branch_pointer as bp
 
     rows: list[dict] = []
-    for raw in ledger.read_text(encoding="utf-8").splitlines():
+    for raw in ledger_text.splitlines():
         raw = raw.strip()
         if not raw:
             continue
