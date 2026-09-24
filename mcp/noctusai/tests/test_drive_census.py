@@ -362,8 +362,12 @@ def test_criminal_items_are_ignored_and_relatorio_fiscal_takes_the_rf_slot() -> 
     assert pj["consulta_tipo_documento"] == "cnpj"  # LTDA in the name
     [rel] = pj["itens"]
     assert (rel["tipo"], rel["pasta_n"], rel["emitida_em"], rel["condicao"]) == (
-        "relatorio_fiscal", 1, "2026-09-13", "rf_nao_negativa")
+        "relatorio_fiscal", 1, "2026-09-13", "rf_resultado_diferente_de_negativa")
     assert (rel["rf_presente"], rel["rf_resultado"]) == (False, None)
+    assert pj["relatorio_fiscal"] == {"exigido": True, "entregue": True, "rf_resultado": None, "situacao": "entregue"}
+    # PCEN is not negativa → a relatório is due; none delivered here → a_entregar
+    assert pf["relatorio_fiscal"] == {"exigido": True, "entregue": False,
+                                      "rf_resultado": "positiva_com_efeito_de_negativa", "situacao": "a_entregar"}
 
 
 def test_word_diff_reports_only_real_edits() -> None:

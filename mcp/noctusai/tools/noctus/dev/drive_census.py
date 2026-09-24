@@ -924,7 +924,7 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
                 # Owner ruling 2026-09-24: required when the entity's RF certidão is not clean; it takes
                 # the RF slot (item/pasta 1). rf_resultado is filled per group below, to validate the rule.
                 row.update({"tipo": "relatorio_fiscal", "pasta_n": 1, "resultado": None,
-                            "condicao": "rf_nao_negativa"})
+                            "condicao": "rf_resultado_diferente_de_negativa"})
             current["itens"].append(row)
             continue
         pend = re.match(r"^([a-z])\s*-?\)\s*(.+)$", p)
@@ -938,11 +938,22 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
                 re.search(r"\b(LTDA|EIRELI|S/?A|ME|EPP|MEI)\b\.?$", _fold(grp["em_nome_de"]))
                 or (scored and "serasa" not in tipos and len(scored) == 11)):
             grp["consulta_tipo_documento"] = "cnpj"
+        # Owner ruling (2026-09-24, final): a Relatório Fiscal is due whenever the entity's RF
+        # certidão is anything but negativa (PCEN included). It is not a clause of its own: just an
+        # item delivered or still to deliver in this section. An RF slot taken by the relatório
+        # itself (no RF item printed) means the RF was not clean.
         rf = next((i for i in scored if i["tipo"] == "cnd_federal"), None)
-        for i in scored:
-            if i["tipo"] == "relatorio_fiscal":
-                i["rf_presente"] = rf is not None
-                i["rf_resultado"] = rf["resultado"] if rf else None
+        rel = [i for i in scored if i["tipo"] == "relatorio_fiscal"]
+        for i in rel:
+            i["rf_presente"] = rf is not None
+            i["rf_resultado"] = rf["resultado"] if rf else None
+        exigido = (rf is None and bool(rel)) or (rf is not None and rf["resultado"] not in ("negativa", None))
+        grp["relatorio_fiscal"] = {
+            "exigido": exigido,
+            "entregue": bool(rel),
+            "rf_resultado": rf["resultado"] if rf else None,
+            "situacao": "entregue" if rel else ("a_entregar" if exigido else "nao_exigido"),
+        }
     return out
 
 
@@ -1056,6 +1067,7 @@ def _coverage(key: dict[str, Any]) -> dict[str, Any]:
         "certidao_itens_sem_data": sum(1 for i in itens if not i["emitida_em"] and i["resultado"] != "nao_emitida"),
         "certidao_itens_ignorados": sum(1 for g in grupos for i in g["itens"] if i.get("ignorado")),
         "relatorios_fiscais": sum(1 for i in itens if i["tipo"] == "relatorio_fiscal"),
+        "relatorios_fiscais_a_entregar": sum(1 for g in grupos if (g.get("relatorio_fiscal") or {}).get("situacao") == "a_entregar"),
         "imovel_campos": sum(1 for v in ((key.get("imovel") or {}).get("imovel_dados") or {}).values() if v),
         "parcelas": len((key.get("negociacao") or {}).get("parcelas") or []),
         "valor_negociado": bool((key.get("negociacao") or {}).get("valor_negociado")),
