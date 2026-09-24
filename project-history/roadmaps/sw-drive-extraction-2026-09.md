@@ -49,6 +49,65 @@ round improves the methodology.
 - **Ground truth:** the REV FINAL contract carries every certidão nº + date, the parties' qualificação,
   the imóvel description, price and parcelas. Every extracted value is checked against it.
 
+## Owner rules — empresas (2026-09-24, verbatim intent)
+
+- **E1 Which empresas.** A vendedor's empresas (from their Serasa Crednet Participação Societária) need
+  certidões when ACTIVE or BAIXADA for less than 5 years, counted back from TODAY. Baixada ≥5 years ⇒ no
+  certidões. Case 883: an empresa baixada 05/02/2021 was correctly left out of the contract.
+- **E2 The closing date comes from the Cartão CNPJ** ("DATA DA SITUAÇÃO CADASTRAL"), a document type of
+  its own, uploaded per empresa and extracted like every other doc. 🔴 The Crednet's
+  "SITUACAO DO CNPJ EM <data>" is NOT the closing date (case 883: Crednet 10/05/2025, Cartão 05/02/2021).
+- **E3 Spouse.** A married vendedor's cônjuge is a vendedor: full certidões plus their own Crednet empresas.
+- **E4 Dedupe.** An empresa owned by both spouses is emitted ONCE and appears ONCE in the contract.
+- **E5 PJ set** is fixed at 11: the 12 PF items minus Serasa (CENPROT covers it).
+- **E6 Permuta.** The comprador giving an imóvel gets exactly the vendedor treatment (Crednet, empresas,
+  full set).
+- **E7 Archive.** Every Drive file is stored in SW (the full archive), but it gets there through the live
+  process: browser uploads, watching fields fill. Slotted docs and the archive share ONE stored copy.
+- **E8 UI.** The Serasa Crednet upload lives in the person's document checklist (it precedes certidões in
+  the human order) and also appears as certidão 9 automatically. A new **Empresas tab on the card**
+  centralizes the deal's empresas: Cartão CNPJ upload, situação + closing date, "needs certidões?" (E1),
+  and the empresa's own certidões.
+
+## P0c data model (spec — build to this)
+
+Existing (verified 2026-09-24, keep and reuse): a permuta is a parcela `tipo='permuta'` linked through
+`atendimento_parcela_permuta_ativos` (114) to `permuta_ativos`, whose `imovel_codigo` is the in-house
+imóvel link (101). `derivacao.py:717` already adds signing compradores to the certidão set when
+`tem_permuta`. A CNPJ `certidao_consultas` row is today linked to its OWNER PERSON
+(`cliente_id`/`atendimento_parte_id`); there is no empresa entity and no participação link.
+
+1. **`social_wiring.empresas`**: `id, org_id, cnpj (14 digits, UNIQUE per org), razao_social,
+   nome_fantasia, natureza_juridica, data_abertura, situacao_cadastral, data_situacao_cadastral,
+   motivo_situacao, uf`, plus group provenance `dados_origem/_documento_id/_em/_confirmado_por/_em`
+   (D1/D2 contract). Cross-deal and org-scoped. RLS like sibling tables.
+2. **`social_wiring.cliente_empresa_participacoes`**: `id, org_id, cliente_id, empresa_id,
+   participacao_pct numeric(5,2), desde (text, as printed e.g. 'mai/2006'), uf, fonte_documento_id →
+   cliente_documentos (the Crednet), origem, confirmado_por/_em`. UNIQUE (cliente_id, empresa_id).
+3. **Document types.** A `cliente_documento_tipos` row `serasa_crednet`, and a new empresa-document store
+   (`empresa_documentos`, same shape as `cliente_documentos`: storage key, extracao_*) with tipo
+   `cartao_cnpj`. Crednet extraction fills the cliente under D1 (nome_oficial, cpf, nome_mae,
+   data_nascimento; fill-empty with provenance, conflict when the value differs), upserts empresas plus
+   participações, and registers the SAME stored file as certidão 9 (`serasa`): numero = protocolo,
+   emitida_em = consulta date, resultado derived from the occurrence blocks. Cartão CNPJ extraction fills
+   the empresa's cadastral fields.
+4. **Empresa certidões.** `certidao_consultas.empresa_id` (nullable FK). A CNPJ consulta belongs to the
+   empresa and is reusable across deals. Backfill: every existing CNPJ consulta gets an empresa row (by
+   CNPJ) and `empresa_id`; nothing is deleted or re-pointed away from its person.
+5. **Derived requirement (derivacao).** empresas_exigidas(deal) = DISTINCT empresa over participações of
+   {vendedores ∪ their cônjuges ∪ (compradores ∪ cônjuges if tem_permuta)}, filtered by E1 using the
+   empresa's Cartão-sourced `situacao_cadastral`/`data_situacao_cadastral`. An empresa with no Cartão yet
+   is `faltando: cartao_cnpj` (never silently assumed active). Reverses df54184ab
+   (`derivacao.py:1245` vendedor relief; `contexto.py:288` silent-skip becomes a hard `faltando`;
+   `TestSellerCertidoesNaoExigidas` is rewritten to the new rule).
+6. **`social_wiring.acervos` / `acervo_itens`.** acervos: `id, org_id, drive_folder_id UNIQUE,
+   numero_pasta, data_pasta, titulo, imovel_codigo, atendimento_id, status`. acervo_itens: `id, org_id,
+   acervo_id, parent_id, drive_id UNIQUE, kind (folder|file), nome, rel_path, mime_type, size_bytes,
+   sha256, drive_modified_at, tipo_documento, alvo_tipo (cliente|empresa|imovel|atendimento), alvo_id,
+   documento_tabela, documento_id, classificado_por (regra|ia|humano), notas`. Registered from the
+   drive_pull manifest. `documento_*` is set when the live upload creates the slot row, and the archive
+   points at that stored copy. Files that fit no slot are stored under the acervo, flagged `sem_slot`.
+
 ## Phases
 
 - **P0 Foundations.**
