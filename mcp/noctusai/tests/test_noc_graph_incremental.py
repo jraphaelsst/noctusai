@@ -530,3 +530,30 @@ class TestWorktreePathResolution:
         bogus.mkdir()
         with pytest.raises(ValueError):
             ngc.refresh(worktree_path=str(bogus))
+
+
+def test_history_source_dual_reads_the_ledger_store(tmp_path, monkeypatch):
+    """2026-09-24: auto-improvement rows that exist only on origin/ledgers (here:
+    the Fake store's file) still reach the graph's history layer and bust the
+    source sha; with no store-only rows the dev copy is used as before."""
+    import json as _json
+    from tools.noctus.dev import auto_improvement as ai
+    from tools.noctus.dev import noc_graph_cache as ngc
+    root = tmp_path / "repo"
+    (root / "project-history").mkdir(parents=True)
+    dev = root / "project-history" / "auto-improvement.ndjson"
+    row = lambda t: _json.dumps({"ts": "2026-09-24T00:00:00Z", "target": t, "description": "d",  # noqa: E731
+                                 "scope": "broad", "kind": "drift", "status": "s1-emergent"})
+    dev.write_text(row("dev-row") + "\n")
+    store_file = tmp_path / "store" / "auto-improvement.ndjson"
+    store_file.parent.mkdir()
+    monkeypatch.setattr(ai, "LEDGER_PATH", store_file)
+    monkeypatch.setattr(ngc, "cache_path", lambda r=None: tmp_path / "cache" / "noc-graph.sqlite")
+
+    assert ngc._ai_history_source(root) == dev
+    before = ngc.compute_source_sha(root)
+    store_file.write_text(row("store-only") + "\n")
+    src = ngc._ai_history_source(root)
+    assert src != dev and "store-only" in src.read_text() and "dev-row" in src.read_text()
+    assert ngc.compute_source_sha(root) != before
+    assert ngc.compute_bucket_shas(root)["history"]

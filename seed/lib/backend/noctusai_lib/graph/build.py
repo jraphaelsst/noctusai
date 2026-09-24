@@ -54,8 +54,15 @@ def build_graph(
     memory_root: Path | None = None,
     paths: list[str] | None = None,
     mined_rows: dict[str, list[dict]] | None = None,
+    auto_improvement_path: Path | None = None,
 ) -> Graph:
-    """Run extractors and return the assembled, deduplicated, clustered graph."""
+    """Run extractors and return the assembled, deduplicated, clustered graph.
+
+    ``auto_improvement_path`` overrides the history source (default
+    ``<repo_root>/project-history/auto-improvement.ndjson``). The mcp boundary
+    passes a materialized dual-read there since the ledger moved to the
+    ``origin/ledgers`` branch (2026-09-24) — same shape as ``mined_rows``: the
+    seed stays git-agnostic, the caller injects."""
     start = time.monotonic()
     graph = Graph(meta={"scope": scope, "repo_root": str(repo_root)})
 
@@ -121,7 +128,7 @@ def build_graph(
             walk_cli(graph, cli_path, repo_root=repo_root)
 
         # Auto-improvement event aggregation (decorations + hot-aggregate nodes).
-        ai_ndjson = repo_root / "project-history" / "auto-improvement.ndjson"
+        ai_ndjson = auto_improvement_path or (repo_root / "project-history" / "auto-improvement.ndjson")
         if ai_ndjson.exists():
             walk_auto_improvement(graph, ai_ndjson)
 

@@ -183,15 +183,31 @@ def ledger_repo(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_branch_tree_dev_copy(tmp_path, monkeypatch):
-    """Point `branch_pointer.LEDGER_PATH` at an empty per-test path.
+def _isolate_ledger_dev_copies(tmp_path, monkeypatch):
+    """Point every moved ledger's `LEDGER_PATH` at an empty per-test path.
 
-    Since 2026-09-24 every branch-tree read is the dual-read (origin/dev's
-    copy ∪ the ledger store) and the suite's Fake store is backed by
-    `LEDGER_PATH` — which is the REAL primary checkout's ledger unless a test
-    points it elsewhere. Without this, any test that reaches
-    `branch_pointer.query` (the staleness guards, cleanup, the stale-pointer
-    keeper) would silently merge production pointers into its fixture.
-    Tests that need a local ledger still override it themselves."""
-    from tools.noctus.dev import branch_pointer as _bp
-    monkeypatch.setattr(_bp, "LEDGER_PATH", tmp_path / "_isolated-branch-tree" / "branch-tree.ndjson")
+    Since 2026-09-24 every ledger read is the dual-read (the dev copy ∪ the
+    ledger store) and the suite's Fake store is backed by each module's
+    `LEDGER_PATH` — the REAL primary checkout's file unless a test points it
+    elsewhere. Without this, any test that reaches a reader (the staleness
+    guards, cleanup, the cache keepers, release) would silently merge
+    production rows into its fixture, and a writer test that forgot to patch
+    would append to the real file. Tests that need a local ledger still
+    override these themselves."""
+    import importlib
+
+    iso = tmp_path / "_isolated-ledgers"
+    targets = {
+        "tools.noctus.dev.branch_pointer": ("LEDGER_PATH", "branch-tree.ndjson"),
+        "tools.noctus.dev.auto_improvement": ("LEDGER_PATH", "auto-improvement.ndjson"),
+        "tools.noctus.dev.ship_consent": ("LEDGER_PATH", "ship-consent.ndjson"),
+        "tools.noctus.dev.absorption_tracking": ("LEDGER_PATH", "absorptions.ndjson"),
+        "tools.noctus.dev.dispatch_budget": ("LEDGER_PATH", "dispatch-budget.ndjson"),
+        "tools.noctus.dev.vector_costs": ("LEDGER_PATH", "vector-costs.ndjson"),
+    }
+    for mod_name, (attr, fname) in targets.items():
+        mod = importlib.import_module(mod_name)
+        monkeypatch.setattr(mod, attr, iso / fname)
+    vcal = importlib.import_module("tools.noctus.dev.vector_calibration")
+    monkeypatch.setattr(vcal, "SIGNALS_PATH", iso / "vector-signals.ndjson")
+    monkeypatch.setattr(vcal, "DECISIONS_PATH", iso / "vector-calibration.ndjson")

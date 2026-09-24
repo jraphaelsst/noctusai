@@ -185,6 +185,36 @@ def _source_files(repo_root: Path) -> list[Path]:
     return paths
 
 
+def _ai_store_extra(repo_root: Path) -> str:
+    """Auto-improvement rows that exist ONLY in the ledger store (origin/ledgers,
+    since 2026-09-24) — i.e. the dual-read minus the dev copy. Empty when the
+    store adds nothing, so the pre-move shas (and the cache) are unchanged."""
+    from tools.noctus.dev import auto_improvement as _ai
+    dev_path = repo_root / "project-history" / "auto-improvement.ndjson"
+    try:
+        merged, _err = _ai.merged_text(dev_path)
+    except Exception as exc:  # noqa: BLE001 — advisory graph; logged, never silent
+        logger.warning("noc_graph_cache: auto-improvement dual-read failed (%s) — dev copy only", exc)
+        return ""
+    dev_lines = set((dev_path.read_text(encoding="utf-8") if dev_path.exists() else "").splitlines())
+    return "".join(ln + "\n" for ln in merged.splitlines() if ln not in dev_lines)
+
+
+def _ai_history_source(repo_root: Path) -> Path:
+    """The ndjson the history extractor walks: the dev copy, or — when the
+    store carries rows the dev copy lacks — the materialized dual-read under
+    the (gitignored, per-repo) cache dir. Never written into the tree."""
+    dev_path = repo_root / "project-history" / "auto-improvement.ndjson"
+    if not _ai_store_extra(repo_root):
+        return dev_path
+    from tools.noctus.dev import auto_improvement as _ai
+    merged, _err = _ai.merged_text(dev_path)
+    out = cache_path(repo_root).parent / "noc-graph-auto-improvement.merged.ndjson"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(merged, encoding="utf-8")
+    return out
+
+
 def compute_source_sha(repo_root: Optional[Path] = None) -> str:
     """Aggregate sha256 over (repo-relative-path, content) for all source files."""
     root = repo_root or REPO_ROOT
@@ -201,6 +231,9 @@ def compute_source_sha(repo_root: Optional[Path] = None) -> str:
             h.update(p.read_bytes())
         except OSError:
             h.update(b"<unreadable>")
+    extra = _ai_store_extra(root)
+    if extra:  # rows only on origin/ledgers still bust the cache (dual-read)
+        h.update(b"origin/ledgers:auto-improvement.ndjson\0" + extra.encode("utf-8"))
     return h.hexdigest()[:12]
 
 
@@ -308,6 +341,11 @@ def compute_bucket_shas(repo_root: Optional[Path] = None) -> dict[str, str]:
             h.update(p.read_bytes())
         except OSError:
             h.update(b"<unreadable>")
+
+    # Rows only on origin/ledgers (the auto-improvement dual-read) → history.
+    extra = _ai_store_extra(root)
+    if extra:
+        buckets["history"].update(b"origin/ledgers:auto-improvement.ndjson\0" + extra.encode("utf-8"))
 
     # Out-of-tree memory files (MEMORY.md lives under ~/.claude/...).
     mh = buckets["memory"]
@@ -523,7 +561,8 @@ def refresh(
             status = "incremental"
     if graph is None:
         # Full rebuild — canonical repo scope is the cache.
-        graph = build_graph(root, scope="repo")
+        graph = build_graph(root, scope="repo",
+                            auto_improvement_path=_ai_history_source(root))
         status = "refreshed"
 
     # Cross-bucket SEMANTIC_NEIGHBOR reuse gate. The pair set is a pure
@@ -783,7 +822,7 @@ def _assemble_incremental(repo_root: Path):
     cli_path = repo_root / "mcp" / "noctusai" / "cli.py"
     if cli_path.exists():
         walk_cli(graph, cli_path, repo_root=repo_root)
-    ai_ndjson = repo_root / "project-history" / "auto-improvement.ndjson"
+    ai_ndjson = _ai_history_source(repo_root)  # dual-read (2026-09-24)
     if ai_ndjson.exists():
         walk_auto_improvement(graph, ai_ndjson)
 
