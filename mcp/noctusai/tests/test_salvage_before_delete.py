@@ -203,3 +203,19 @@ class TestSalvageBeforeDeleteUnknownKind:
         assert result["ok"] is False
         assert len(result["warnings"]) > 0
         assert "unknown kind" in result["warnings"][0]
+
+
+class TestLedgerStoreRealMode:
+    """2026-09-24: the gate's row goes to origin/ledgers — and it is still
+    written for an integrated branch (delete_integrated_remote requires it)."""
+
+    def test_row_publishes_to_ledgers_branch(self, ledger_repo):
+        import json as _json
+        from tools.noctus.dev import salvage_before_delete as sbd
+        from tools.noctus.dev.remote_branch_hygiene import _check_salvage_log
+        bare, clone, show = ledger_repo
+        sbd._append_salvage_ledger(clone, {"kind": "salvage-before-delete:branch",
+                                           "target": "feat/gone", "branch": "feat/gone"})
+        assert not (clone / "project-history" / "worktree-salvage.ndjson").exists()
+        assert _json.loads(show("worktree-salvage.ndjson"))["target"] == "feat/gone"
+        assert _check_salvage_log(clone, "feat/gone") is True   # dual-read sees it

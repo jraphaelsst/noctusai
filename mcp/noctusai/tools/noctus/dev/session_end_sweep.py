@@ -452,10 +452,13 @@ def sweep(
         except Exception as e:  # noqa: BLE001 — never fail the survey over the heal
             pointer_heal = {"healed": [], "skipped_unproven": [], "errors": [str(e)[:200]]}
 
-    # Log sweep summary to ledger.
+    # Log sweep summary to the salvage ledger — on origin/ledgers via
+    # `_ledger_store` since 2026-09-24 (never a commit on dev; KB §
+    # PATTERNS/common/ledger-store.md).
+    summary_log: dict[str, Any] = {"status": "skipped"}
     try:
+        from ._ledger_store import append_rows, flush_pending  # noqa: PLC0415
         ledger = repo_root / "project-history" / "worktree-salvage.ndjson"
-        ledger.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "ts": _now_iso(),
             "kind": "session-end-sweep",
@@ -470,10 +473,17 @@ def sweep(
             "remote_unique_aged_count": remote_summary.get("unique_aged_count", 0),
             "pointers_healed": [h["branch"] for h in pointer_heal.get("healed", [])],
         }
-        with ledger.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:  # noqa: BLE001
-        pass
+        summary_log = append_rows(ledger.name, ledger, [entry], message="session-end-sweep summary")
+    except Exception as e:  # noqa: BLE001 — never fail the survey over the log; say why
+        summary_log = {"ok": False, "status": "error", "error": str(e)[:200]}
+
+    # Publish every row spooled on this clone (the pre-commit cost drain spools
+    # with publish=False; an offline append leaves rows spooled) so the session
+    # ends with nothing pending for origin/ledgers.
+    try:
+        ledger_store_flush = flush_pending(repo_root)
+    except Exception as e:  # noqa: BLE001
+        ledger_store_flush = {"ok": False, "status": "error", "error": str(e)[:200]}
 
     # AUTO-DELIVER trailing ledger churn (the recurring `chore(cost-log)` commit +
     # any dirty ledger row, incl. the sweep-summary row just appended above) →
@@ -495,6 +505,8 @@ def sweep(
         "remote_branches": remote_summary,
         "pointer_heal": pointer_heal,
         "ledger_delivery": ledger_delivery,
+        "summary_log": summary_log,
+        "ledger_store_flush": ledger_store_flush,
     }
 
 

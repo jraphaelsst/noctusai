@@ -182,7 +182,10 @@ class TestSweepWritesLedger:
         _git(r, "commit", "-qm", f"pointer: {branch} shipped")
         _git(r, "update-ref", "refs/remotes/origin/dev", "HEAD")
 
-    def test_force_sweep_records_recovery_pointer(self, tmp_path):
+    def test_force_sweep_of_merged_worktree_writes_no_salvage_row(self, tmp_path):
+        """2026-09-24: the sweep only removes worktrees merged into origin/dev,
+        and origin/dev already recovers a merged branch — so the row would be
+        pure noise and is not written (KB § PATTERNS/common/ledger-store.md)."""
         r, wt = self._repo_with_merged_worktree(tmp_path)
         self._publish_shipped_pointer(r, branch="wt-clean")
         # recent_mtime_minutes=0: isolates the salvage-ledger leg under test
@@ -193,15 +196,9 @@ class TestSweepWritesLedger:
         )
         assert result["status"] == "removed"
         assert not wt.exists()
-        # The extract-before-delete ledger leg fired:
-        assert result["salvaged"] >= 1
-        assert result["salvage_ledger"] == str(r / LEDGER_REL)
-        ledger = r / LEDGER_REL
-        assert ledger.exists(), "force sweep must write the tracked salvage ledger"
-        recs = [json.loads(ln) for ln in ledger.read_text().strip().splitlines()]
-        clean = [x for x in recs if x.get("branch") == "wt-clean"]
-        assert clean, "removed worktree's branch must be recorded for recovery"
-        assert clean[0]["sha"], "recovery SHA must be captured (git branch <name> <sha>)"
+        assert result["salvaged"] >= 1            # considered …
+        assert result["salvage_ledger"] is None   # … but nothing to recover
+        assert not (r / LEDGER_REL).exists()
 
     def test_dry_run_writes_nothing(self, tmp_path):
         r, wt = self._repo_with_merged_worktree(tmp_path)
@@ -210,3 +207,72 @@ class TestSweepWritesLedger:
         assert result["salvage_ledger"] is None
         assert not (r / LEDGER_REL).exists(), "dry-run must not touch the ledger"
         assert wt.exists()
+
+
+
+class TestMergedRecordsAreNotWritten:
+    """2026-09-24: only a pointer that recovers something origin/dev lacks is kept."""
+
+    def _repo(self, tmp_path: Path) -> tuple[Path, str, str]:
+        r = tmp_path / "r"
+        r.mkdir()
+        _git(r, "init", "-q", "-b", "dev")
+        _git(r, "config", "user.email", "t@t.t")
+        _git(r, "config", "user.name", "t")
+        (r / "f").write_text("a\n")
+        _git(r, "add", "f")
+        _git(r, "commit", "-qm", "base")
+        merged = _git(r, "rev-parse", "HEAD").strip()
+        _git(r, "update-ref", "refs/remotes/origin/dev", "HEAD")
+        _git(r, "checkout", "-qb", "side")
+        (r / "g").write_text("unique\n")
+        _git(r, "add", "g")
+        _git(r, "commit", "-qm", "unique work")
+        unmerged = _git(r, "rev-parse", "HEAD").strip()
+        return r, merged, unmerged
+
+    def test_is_merged_into(self, tmp_path):
+        r, merged, unmerged = self._repo(tmp_path)
+        assert wsv.is_merged_into(r, merged) is True
+        assert wsv.is_merged_into(r, unmerged) is False
+        assert wsv.is_merged_into(r, None) is None
+        assert wsv.is_merged_into(tmp_path / "nope", merged) is None   # unknown ⇒ keep
+
+    def test_patch_equivalent_counts_as_merged(self, tmp_path):
+        r, _merged, unmerged = self._repo(tmp_path)
+        _git(r, "checkout", "-q", "dev")
+        _git(r, "cherry-pick", unmerged)                 # squash/rebase-integrated shape
+        _git(r, "update-ref", "refs/remotes/origin/dev", "HEAD")
+        assert wsv.is_merged_into(r, unmerged) is True
+
+    def test_append_keeps_only_unmerged(self, tmp_path):
+        r, merged, unmerged = self._repo(tmp_path)
+        loc = wsv.append_ledger(r, [
+            {"path": "/wt/m", "branch": "m", "sha": merged},
+            {"path": "/wt/u", "branch": "side", "sha": unmerged},
+        ])
+        assert loc is not None
+        rows = [json.loads(x) for x in (r / LEDGER_REL).read_text().splitlines()]
+        assert [x["sha"] for x in rows] == [unmerged]
+
+    def test_all_merged_returns_none_and_writes_nothing(self, tmp_path):
+        r, merged, _u = self._repo(tmp_path)
+        assert wsv.append_ledger(r, [{"path": "/wt/m", "branch": "m", "sha": merged}]) is None
+        assert not (r / LEDGER_REL).exists()
+
+
+class TestLedgerStoreRealMode:
+    def test_unmerged_pointer_publishes_to_ledgers_branch(self, ledger_repo):
+        bare, clone, show = ledger_repo
+        _git(clone, "checkout", "-qb", "side")
+        (clone / "g").write_text("unique\n")
+        _git(clone, "add", "g")
+        _git(clone, "commit", "-qm", "unique")
+        sha = _git(clone, "rev-parse", "HEAD").strip()
+        loc = wsv.append_ledger(clone, [{"path": "/wt/u", "branch": "side", "sha": sha}])
+        assert loc == wsv.STORE_LOCATION
+        assert not (clone / LEDGER_REL).exists(), "the dev copy is never written"
+        assert json.loads(show("worktree-salvage.ndjson"))["sha"] == sha
+        # idempotent across the dual-read: a second append writes nothing new
+        assert wsv.append_ledger(clone, [{"path": "/wt/u", "branch": "side", "sha": sha}]) == loc
+        assert len(show("worktree-salvage.ndjson").splitlines()) == 1

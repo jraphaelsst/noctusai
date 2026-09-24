@@ -123,13 +123,23 @@ def _archive_branch_patch(
 
 
 def _append_salvage_ledger(repo_root: Path, entry: dict[str, Any]) -> None:
-    """Append entry to project-history/worktree-salvage.ndjson."""
+    """Append entry to the worktree-salvage ledger on origin/ledgers.
+
+    Through `_ledger_store` since 2026-09-24 (never a commit on dev — KB §
+    PATTERNS/common/ledger-store.md). This explicit, operator-invoked gate
+    keeps writing its row even for an integrated branch:
+    `noctus.dev.delete_integrated_remote` requires that row before it deletes.
+    Only the AUTOMATIC per-cleanup/per-sweep rows are noise-filtered
+    (`_worktree_salvage.append_ledger`)."""
+    from ._ledger_store import append_rows  # noqa: PLC0415
     ledger = repo_root / "project-history" / "worktree-salvage.ndjson"
     try:
-        ledger.parent.mkdir(parents=True, exist_ok=True)
-        with ledger.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError as e:
+        result = append_rows(ledger.name, ledger, [entry],
+                             message=f"salvage-before-delete: {entry.get('kind')} {entry.get('target')}")
+        if not result.get("ok"):
+            logger.warning("salvage_before_delete: row spooled, not yet on origin/ledgers: %s",
+                           result.get("error"))
+    except (OSError, ValueError) as e:
         logger.error("salvage_before_delete: cannot write salvage ledger: %s", e)
 
 

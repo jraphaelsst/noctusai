@@ -345,11 +345,12 @@ def delete_integrated_engineer_remote(
 def _check_salvage_log(repo_root: Path, branch: str) -> bool:
     """Return True if a salvage-log entry mentions this branch."""
     import json
+    from ._ledger_store import read_ledger_text  # noqa: PLC0415
     ledger = repo_root / "project-history" / "worktree-salvage.ndjson"
-    if not ledger.exists():
-        return False
     try:
-        for line in ledger.read_text(encoding="utf-8").splitlines():
+        # S2 dual-read: origin/ledgers ∪ the dev copy (KB § PATTERNS/common/ledger-store.md).
+        text, _store_err = read_ledger_text(ledger.name, ledger)
+        for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue

@@ -151,20 +151,6 @@ def _anc_pairs(pairs):
     return lambda a, b: a == b or (a, b) in s
 
 
-def _capture_recorder():
-    """A fake salvage_recorder: captures (root, removed) and returns a ledger
-    path WITHOUT real IO — so cleanup tests exercise the recovery-pointer leg
-    deterministically (no settings import, no file write)."""
-    captured: list[tuple] = []
-
-    def rec(root, removed):
-        captured.append((root, removed))
-        return Path(root) / "project-history/worktree-salvage.ndjson"
-
-    rec.captured = captured
-    return rec
-
-
 _PORCELAIN = (
     "worktree /repo\nHEAD m0\nbranch refs/heads/dev\n\n"
     "worktree /repo/.claude/worktrees/foo\nHEAD f0\nbranch refs/heads/feat/foo\n\n"
@@ -352,42 +338,36 @@ def test_cleanup_confirm_removes_worktree_and_deletes_branch():
         refs={"origin/dev": "d0", "feat/x": "b0"},
         anc=_anc_pairs([("b0", "d0")]),
     )
-    rec = _capture_recorder()
     res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                        primary_root="/repo", salvage_recorder=rec)
+                        primary_root="/repo")
     assert res["status"] == "cleaned" and res["exit_code"] == 0
     assert fake.ran("worktree remove .claude/worktrees/x")
     assert fake.ran("worktree prune")
     assert fake.ran("branch -d feat/x")
-    # MECHANICAL recovery-pointer leg fired (branch+SHA recorded to the ledger).
-    assert res["salvage_ledger"].endswith("worktree-salvage.ndjson")
-    assert len(rec.captured) == 1
-    _root, removed = rec.captured[0]
-    assert removed[0]["branch"] == "feat/x" and removed[0]["sha"] == "b0"
+    # 2026-09-24: a merged branch gets NO salvage row — origin/dev recovers it
+    # (these rows were 373 `chore(salvage)` dev commits of pure noise).
+    assert res["salvage_ledger"] is None
+    assert "merged into origin/dev" in res["salvage_skipped"]
 
 
-def test_cleanup_records_recovery_pointer_before_removing_the_worktree():
-    """Leg 2 is recorded BEFORE the destructive `worktree remove` — so a
-    remove failure can't lose the recovery pointer."""
-    order: list[str] = []
-
-    def rec(root, removed):
-        order.append("salvage")
-        return Path(root) / "project-history/worktree-salvage.ndjson"
-
+def test_cleanup_writes_no_salvage_row_and_makes_no_salvage_commit():
+    """The retired Leg 2 + 2b: no recorder call, no `chore(salvage)` commit,
+    no salvage push — cleanup of a merged branch touches no ledger."""
+    calls: list[str] = []
     fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
                    anc=_anc_pairs([("b0", "d0")]))
-    _orig = fake.__call__
 
-    def spy(cmd, cwd=None):
-        if len(cmd) > 1 and cmd[1] == "worktree" and cmd[2] == "remove":
-            order.append("remove")
-        return _orig(cmd, cwd)
+    def runner(cmd, cwd=None):
+        calls.append(" ".join(cmd))
+        return fake(cmd, cwd)
 
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=spy,
-                        primary_root="/repo", salvage_recorder=rec)
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
+                        primary_root="/repo")
     assert res["status"] == "cleaned"
-    assert order == ["salvage", "remove"]   # recovery pointer recorded first
+    assert not any("chore(salvage)" in c for c in calls), calls
+    assert not any("worktree-salvage.ndjson" in c and (" add " in c or " commit " in c)
+                   for c in calls), calls
+    assert "salvage_pushed" not in res and "salvage_push_reason" not in res
 
 
 def test_cleanup_resolves_actual_branch_for_reused_worktree_dir():
@@ -395,7 +375,9 @@ def test_cleanup_resolves_actual_branch_for_reused_worktree_dir():
     (`feat/salvage-before-delete`): cleanup must resolve the ACTUAL branch from the
     worktree list (keyed by dir) so the recovery-pointer leg records the real
     branch — not silently no-op on a nonexistent feat/<slug>, leaving the real
-    branch dangling. The 2026-05-25 dogfood regression."""
+    branch dangling. The 2026-05-25 dogfood regression. (Since 2026-09-24 no
+    salvage row is recorded for the merged branch; the resolution still matters
+    for the merged check and the `branch -d`.)"""
     porcelain = (
         "worktree /repo\nHEAD m0\nbranch refs/heads/dev\n\n"
         "worktree /repo/.claude/worktrees/sw-waha-youtube\n"
@@ -406,215 +388,14 @@ def test_cleanup_resolves_actual_branch_for_reused_worktree_dir():
         anc=_anc_pairs([("b0", "d0")]),
         porcelain=porcelain,
     )
-    rec = _capture_recorder()
     res = T.task_branch(action="cleanup", slug="sw-waha-youtube", confirm=True,
-                        run=fake, primary_root="/repo", salvage_recorder=rec)
+                        run=fake, primary_root="/repo")
     assert res["status"] == "cleaned"
-    # the ACTUAL branch (not feat/sw-waha-youtube) was resolved, recorded + deleted
+    # the ACTUAL branch (not feat/sw-waha-youtube) was resolved + deleted
     assert res["branch"] == "feat/salvage-before-delete"
     assert fake.ran("branch -d feat/salvage-before-delete")
-    _root, removed = rec.captured[0]
-    assert removed[0]["branch"] == "feat/salvage-before-delete"
-    assert removed[0]["sha"] == "b0"
     # the worktree dir (the stable key) is still removed by its path
     assert fake.ran("worktree remove .claude/worktrees/sw-waha-youtube")
-
-
-def test_cleanup_commits_dirty_salvage_ledger_before_remove():
-    """The N=3 cross-tree-hazard fix (2026-05-28): when the salvage record leaves
-    the ledger file dirty in the worktree, cleanup commits + pushes the entry to
-    dev BEFORE the worktree remove. Without this leg, remove refused (dirty tree)
-    and a retry was a no-op via idempotency yet STILL saw the same uncommitted
-    file ⇒ infinite loop. This test asserts the stage → commit → push sequence
-    happens between salvage record and worktree remove."""
-    order: list[str] = []
-    refs = {"origin/dev": "d0", "feat/x": "b0"}
-
-    def runner(cmd, cwd=None):
-        order.append(" ".join(cmd))
-        if cmd[:2] == ["git", "-C"]:
-            sub = cmd[3] if len(cmd) > 3 else ""
-            if sub == "status":          # dirty signal on the ledger file
-                return (0, " M project-history/worktree-salvage.ndjson\n", "")
-            if sub == "add" or sub == "commit" or sub == "fetch":
-                return (0, "", "")
-            if sub == "push":
-                return (0, "", "")       # FF push succeeds
-        # FakeGit handles the cleanup MCP tool's _git() wrapper calls.
-        return fake(cmd, cwd)
-
-    fake = FakeGit(refs=refs, anc=_anc_pairs([("b0", "d0")]))
-
-    def rec(root, removed):
-        order.append("salvage")
-        return Path(root) / "project-history/worktree-salvage.ndjson"
-
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
-                        primary_root="/repo", salvage_recorder=rec)
-    assert res["status"] == "cleaned"
-    assert res["salvage_pushed"] is True
-    flat = " | ".join(order)
-    # The commit + push happen AFTER the salvage record and BEFORE the worktree
-    # remove — the precise sequencing that breaks the N=3 loop.
-    assert "salvage" in order
-    assert any("status --porcelain -- project-history/worktree-salvage.ndjson"
-               in o for o in order)
-    assert any("add project-history/worktree-salvage.ndjson" in o for o in order)
-    assert any("commit -m" in o for o in order)
-    assert any("push origin HEAD:dev" in o for o in order)
-    # Sequence: salvage → status/add/commit/push → remove
-    salvage_idx = order.index("salvage")
-    push_idx = next(i for i, o in enumerate(order) if "push origin HEAD:dev" in o)
-    remove_idx = next(i for i, o in enumerate(order) if "worktree remove" in o)
-    assert salvage_idx < push_idx < remove_idx
-
-
-def test_cleanup_skips_commit_push_when_ledger_clean():
-    """The idempotent case: second cleanup call sees ledger already canonical
-    (append_ledger skipped the duplicate), so status reports clean and the
-    commit+push leg is a no-op. Remove proceeds directly."""
-    order: list[str] = []
-
-    def runner(cmd, cwd=None):
-        order.append(" ".join(cmd))
-        if cmd[:2] == ["git", "-C"]:
-            sub = cmd[3] if len(cmd) > 3 else ""
-            if sub == "status":          # clean — no dirty signal
-                return (0, "", "")
-        return fake(cmd, cwd)
-
-    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
-                   anc=_anc_pairs([("b0", "d0")]))
-    rec = _capture_recorder()
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
-                        primary_root="/repo", salvage_recorder=rec)
-    assert res["status"] == "cleaned"
-    assert res["salvage_pushed"] is False  # nothing to push — ledger was clean
-    assert not any("commit -m" in o for o in order)
-    assert not any("push origin HEAD:dev" in o for o in order)
-
-
-def test_cleanup_salvage_push_lands_on_dev_when_origin_dev_advanced():
-    """origin/dev advanced past the branch base (the rebase-integrated normal
-    case): the salvage push must STILL land on dev. The primary-checkout commit is
-    rebased onto the freshly-fetched origin/dev then FF-pushed (the 2026-06-30
-    lost-row fix — the old worktree-HEAD:dev push was non-FF → rejected → the row
-    was orphaned on the force-deleted branch). Asserts a rebase was issued from the
-    PRIMARY checkout + the final push targeted :dev."""
-    order: list[str] = []
-    # b0 was merged into an OLD dev; origin/dev is now d1 (advanced past the base).
-    refs = {"origin/dev": "d1", "feat/x": "b0"}
-
-    def runner(cmd, cwd=None):
-        order.append(" ".join(cmd))
-        if cmd[:2] == ["git", "-C"]:
-            sub = cmd[3] if len(cmd) > 3 else ""
-            if sub == "status":      # primary ledger dirty (this cleanup appended)
-                return (0, " M project-history/worktree-salvage.ndjson\n", "")
-            if sub == "rev-list":    # one commit ahead of origin/dev
-                return (0, "s1\n", "")
-            if sub == "diff-tree":   # it touches ONLY the ledger → guard passes
-                return (0, "project-history/worktree-salvage.ndjson\n", "")
-            if sub in ("add", "commit", "fetch", "rebase", "push"):
-                return (0, "", "")
-        return fake(cmd, cwd)
-
-    fake = FakeGit(refs=refs, anc=_anc_pairs([("b0", "d1")]))  # b0 ancestor of d1
-    rec = _capture_recorder()
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
-                        primary_root="/repo", salvage_recorder=rec)
-    assert res["status"] == "cleaned"
-    assert res["salvage_pushed"] is True
-    # a rebase onto origin/dev was issued from the PRIMARY checkout (the FF path)
-    assert any("git -C /repo rebase origin/dev" in o for o in order), order
-    # the final push targeted :dev from the PRIMARY checkout
-    assert any("git -C /repo push origin HEAD:dev" in o for o in order), order
-    # ledger root was the PRIMARY root (canonical with the bulk sweeps)
-    ledger_root, _ = rec.captured[0]
-    from pathlib import Path
-    assert Path(str(ledger_root)) == Path("/repo")
-
-
-def test_cleanup_salvage_makes_no_worktree_side_commit():
-    """The ledger write goes to the PRIMARY checkout, so NO add/commit/push/rebase
-    is ever issued against the worktree branch — `git worktree remove` needs no
-    worktree-side commit and nothing lands on the to-be-deleted branch."""
-    order: list[str] = []
-
-    def runner(cmd, cwd=None):
-        order.append(" ".join(cmd))
-        if cmd[:2] == ["git", "-C"]:
-            sub = cmd[3] if len(cmd) > 3 else ""
-            if sub == "status":
-                return (0, " M project-history/worktree-salvage.ndjson\n", "")
-            if sub == "rev-list":
-                return (0, "s1\n", "")
-            if sub == "diff-tree":
-                return (0, "project-history/worktree-salvage.ndjson\n", "")
-            if sub in ("add", "commit", "fetch", "rebase", "push"):
-                return (0, "", "")
-        return fake(cmd, cwd)
-
-    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
-                   anc=_anc_pairs([("b0", "d0")]))
-    rec = _capture_recorder()
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
-                        primary_root="/repo", salvage_recorder=rec)
-    assert res["status"] == "cleaned"
-    # NO `git -C <worktree>` command was issued at all — every write targeted /repo.
-    assert not any(o.startswith("git -C .claude/worktrees/x") for o in order), order
-    # every -C write (add/commit/push/rebase) targeted the PRIMARY root
-    for o in order:
-        if o.startswith("git -C") and any(
-                k in o for k in (" add ", " commit ", " push ", " rebase ")):
-            assert o.split()[2] == "/repo", f"worktree-side write leaked: {o}"
-    assert res["worktree_removed"] is True and res["branch_deleted"] is True
-
-
-def test_cleanup_salvage_push_failure_is_best_effort():
-    """A salvage push failure must NOT block teardown: cleanup still removes the
-    worktree + deletes the branch + returns (no raise) with salvage_pushed=False
-    surfaced. The row is on local dev (ships with the next dev push)."""
-    order: list[str] = []
-
-    def runner(cmd, cwd=None):
-        order.append(" ".join(cmd))
-        if cmd[:2] == ["git", "-C"]:
-            sub = cmd[3] if len(cmd) > 3 else ""
-            if sub == "status":
-                return (0, " M project-history/worktree-salvage.ndjson\n", "")
-            if sub == "rev-list":
-                return (0, "s1\n", "")
-            if sub == "diff-tree":
-                return (0, "project-history/worktree-salvage.ndjson\n", "")
-            if sub in ("add", "commit", "fetch", "rebase"):
-                return (0, "", "")
-            if sub == "push":
-                return (1, "", "non-fast-forward")  # push always rejected
-        return fake(cmd, cwd)
-
-    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
-                   anc=_anc_pairs([("b0", "d0")]))
-    rec = _capture_recorder()
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
-                        primary_root="/repo", salvage_recorder=rec)
-    assert res["status"] == "cleaned"                # teardown completed anyway
-    assert res["worktree_removed"] is True and res["branch_deleted"] is True
-    assert res["salvage_pushed"] is False            # surfaced, best-effort
-    # 4 = TWO legs x (push + its single non-FF retry). Leg 2b pushes the salvage
-    # row; the post-settle ledger drain then pushes whatever is still dirty. Each
-    # leg independently exercises the single-retry-on-non-FF path, which is what
-    # this assertion has always been pinning — now for both.
-    #
-    # In production the drain does NOT re-push the salvage row: Leg 2b commits it,
-    # so it is no longer dirty and `_dirty_ledger_rel_paths` cannot see it. This
-    # fake's `status --porcelain` reports it dirty unconditionally, which is why
-    # both legs fire here. The redundancy is an artifact of the fake, not of the
-    # code — and the drain failing loudly rather than silently is the point.
-    assert sum(1 for o in order if "git -C /repo push origin HEAD:dev" in o) == 4
-    # Both legs surface their failure; neither is swallowed (no-silent-errors).
-    assert res["ledger_drain"]["pushed"] is False
-    assert res["ledger_drain"]["ledgers"]
 
 
 def test_branch_for_path_keys_on_dir_not_slug():
@@ -682,7 +463,7 @@ def test_full_lifecycle_emits_no_banned_token_and_only_dev_pushes():
     T.task_branch(action="start", slug="x", confirm=True, run=fake)
     T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
     T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                  primary_root="/repo", salvage_recorder=_capture_recorder())
+                  primary_root="/repo")
     for cmd, _cwd in fake.calls:
         for tok in cmd:
             assert tok not in T._BANNED_TOKENS, f"banned token {tok!r} in {cmd}"
@@ -1191,9 +972,8 @@ def test_cleanup_succeeds_when_only_gitignored_files_are_present():
         refs={"origin/dev": "d0", "feat/x": "b0"},
         anc=_anc_pairs([("b0", "d0")]),
     )
-    rec = _capture_recorder()
     res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                        primary_root="/repo", salvage_recorder=rec)
+                        primary_root="/repo")
     assert res["status"] == "cleaned", f"expected cleaned, got {res!r}"
     assert res["exit_code"] == 0
     force_removes = [
@@ -1223,7 +1003,7 @@ def test_cleanup_still_blocks_when_real_uncommitted_changes_exist():
         anc=_anc_pairs([("b0", "d0")]),
     )
     res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                        primary_root="/repo", salvage_recorder=_capture_recorder())
+                        primary_root="/repo")
     assert res["status"] == "error", f"expected error for real dirt, got {res!r}"
     assert "real uncommitted changes" in res["error"]
     force_removes = [
@@ -1249,67 +1029,6 @@ def test_is_dirty_excluding_gitignored_returns_true_on_git_failure():
     """Unit: conservative — returns True when git status itself fails (rc != 0)."""
     runner = lambda cmd, cwd=None: (128, "", "not a git repo")
     assert T._is_dirty_excluding_gitignored(runner, "/some/worktree") is True
-
-
-# ── Salvage ledger writes to the PRIMARY root (2026-06-30 lost-row fix) ──
-# Earlier this leg recorded to the WORKTREE root + committed the row on the
-# worktree's feature-branch HEAD, then pushed HEAD:dev. When origin/dev had
-# advanced past the branch base (the normal case after later work landed), that
-# push was non-FF → rejected; the salvage commit was orphaned on the rebase-
-# integrated feature branch, which the operator force-deletes (branch -D) → the
-# recovery row was LOST for every rebase-integrated slug. The fix: record to the
-# PRIMARY ledger (canonical with the bulk mole / cleanup_stale_worktrees sweeps)
-# + commit/FF-push it from the PRIMARY dev checkout, leaving the worktree clean
-# and nothing on the deleted branch.
-
-def test_cleanup_salvage_ledger_root_is_primary_not_worktree():
-    """The recovery pointer lands in the PRIMARY tree's
-    project-history/worktree-salvage.ndjson (canonical with the bulk sweeps —
-    mole.py passes the primary `root`), NOT the worktree's — so it commits on the
-    primary dev checkout, the worktree stays clean for remove, and nothing lands
-    on the to-be-deleted branch."""
-    fake = FakeGit(
-        refs={"origin/dev": "d0", "feat/x": "b0"},
-        anc=_anc_pairs([("b0", "d0")]),
-    )
-    rec = _capture_recorder()
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                        primary_root="/repo", salvage_recorder=rec)
-    assert res["status"] == "cleaned"
-    assert len(rec.captured) == 1
-    ledger_root, removed = rec.captured[0]
-    from pathlib import Path
-    assert Path(str(ledger_root)) == Path("/repo"), (
-        f"Ledger root should be the PRIMARY root /repo (canonical with the bulk "
-        f"sweeps), not the worktree. Got: {ledger_root!r}")
-    # The recorded recovery pointer still references the worktree path + branch+SHA.
-    assert removed[0]["path"].endswith(".claude/worktrees/x")
-    assert removed[0]["branch"] == "feat/x" and removed[0]["sha"] == "b0"
-    # The ledger the caller would commit IS in the primary tree.
-    assert res["salvage_ledger"].startswith("/repo")
-
-
-def test_cleanup_salvage_ledger_root_primary_independent_of_wt_path():
-    """The ledger root tracks the PRIMARY root regardless of worktrees_dir — an
-    absolute worktrees_dir (absolute wt_path) does NOT relocate the ledger to the
-    worktree (the pre-2026-06-30 behavior); it stays on the primary tree."""
-    fake = FakeGit(
-        refs={"origin/dev": "d0", "feat/abs": "b0"},
-        anc=_anc_pairs([("b0", "d0")]),
-    )
-    rec = _capture_recorder()
-    res = T.task_branch(
-        action="cleanup", slug="abs", confirm=True, run=fake,
-        worktrees_dir="/abs/wt",  # absolute → wt_path = "/abs/wt/abs"
-        primary_root="/repo", salvage_recorder=rec,
-    )
-    assert res["status"] == "cleaned", f"unexpected: {res!r}"
-    ledger_root, removed = rec.captured[0]
-    from pathlib import Path
-    assert Path(str(ledger_root)) == Path("/repo"), (
-        f"Expected the primary root /repo, got {ledger_root!r}")
-    # The pointer still records the (absolute) worktree path it salvaged.
-    assert removed[0]["path"] == "/abs/wt/abs"
 
 
 # ── Bug C: integrate status=conflict + empty conflicted_files on clean FF rebase ──
@@ -1516,83 +1235,6 @@ def test_integrate_after_push_race_retries_once():
     assert stash_ops.count("pop") == 0, "a positional pop can take a peer worktree's entry"
 
 
-def test_cleanup_idempotent_under_concurrent_call():
-    """The d2676bed fix invariant: a second cleanup call (after the first already
-    appended + committed the ledger) sees a clean ledger → no duplicate commit/push.
-    salvage_pushed is False on the second call."""
-    call_count = [0]
-
-    def runner(cmd, cwd=None):
-        sub = cmd[1] if len(cmd) > 1 else ""
-        if sub == "-C":
-            inner_sub = cmd[3] if len(cmd) > 3 else ""
-            if inner_sub == "status":
-                # First call: ledger is dirty (new record appended)
-                # Second call: ledger is clean (already committed)
-                call_count[0] += 1
-                if call_count[0] == 1:
-                    return (0, " M project-history/worktree-salvage.ndjson\n", "")
-                return (0, "", "")
-            if inner_sub in ("add", "commit", "fetch"):
-                return (0, "", "")
-            if inner_sub == "push":
-                return (0, "", "")
-        return fake(cmd, cwd)
-
-    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
-                   anc=_anc_pairs([("b0", "d0")]))
-    rec = _capture_recorder()
-
-    # First call — ledger dirty → commit + push
-    res1 = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
-                         primary_root="/repo", salvage_recorder=rec)
-    assert res1["status"] == "cleaned"
-    assert res1["salvage_pushed"] is True
-
-    # Reset fake for second call with fresh state
-    fake2 = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
-                    anc=_anc_pairs([("b0", "d0")]))
-    rec2 = _capture_recorder()
-    call_count[0] = 99  # Force "clean" status for subsequent calls
-
-    def runner2(cmd, cwd=None):
-        sub = cmd[1] if len(cmd) > 1 else ""
-        if sub == "-C":
-            inner_sub = cmd[3] if len(cmd) > 3 else ""
-            if inner_sub == "status":
-                return (0, "", "")  # already committed — clean
-        return fake2(cmd, cwd)
-
-    res2 = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner2,
-                         primary_root="/repo", salvage_recorder=rec2)
-    assert res2["status"] == "cleaned"
-    assert res2["salvage_pushed"] is False  # idempotent — nothing to push
-
-
-def test_cleanup_skips_already_recorded_sha():
-    """The d2676bed idempotency contract: when the salvage recorder returns a path
-    but the ledger file is already clean (append_ledger skipped the duplicate),
-    the commit/push leg is a no-op. `salvage_pushed` is False."""
-    def runner(cmd, cwd=None):
-        sub = cmd[1] if len(cmd) > 1 else ""
-        if sub == "-C":
-            inner_sub = cmd[3] if len(cmd) > 3 else ""
-            if inner_sub == "status":
-                # Ledger is clean — idempotent append skipped the duplicate
-                return (0, "", "")
-        return fake(cmd, cwd)
-
-    fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"},
-                   anc=_anc_pairs([("b0", "d0")]))
-    rec = _capture_recorder()
-    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=runner,
-                        primary_root="/repo", salvage_recorder=rec)
-    assert res["status"] == "cleaned"
-    assert res["salvage_pushed"] is False
-    # Recorder was still called (the attempt to append was made), but ledger was clean
-    assert len(rec.captured) == 1
-
-
 # ── Unit: _classify_dirty_files ──
 
 def test_classify_dirty_files_separates_benign_from_real():
@@ -1657,9 +1299,7 @@ def test_cleanup_runs_settle_when_injected():
     calls = []
     res = T.task_branch(
         action="cleanup", slug="x", confirm=True, run=fake,
-        primary_root="/repo", salvage_recorder=_capture_recorder(),
-        settle=lambda: (calls.append(1) or {"ok": True}),
-    )
+        primary_root="/repo", settle=lambda: (calls.append(1) or {"ok": True}))
     assert res["status"] == "cleaned"
     assert calls == [1] and res["cache_settle"] == {"ok": True}
 
@@ -2063,8 +1703,8 @@ def test_genuinely_dirty_non_ledger_file_still_blocked():
 # ---------------------------------------------------------------------------
 # `action='integrate'` migration-number-collision gate — the SECOND backstop.
 #
-# `migration_check` is injected (mirrors the `settle=` / `salvage_recorder=`
-# test seams already used above) — no real filesystem scan here, only the
+# `migration_check` is injected (mirrors the `settle=` test seam already
+# used above) — no real filesystem scan here, only the
 # gate's OWN logic: does it fire when relevant, stay silent when not, filter
 # to the right directories, and never crash the whole integrate on an
 # unexpected exception. The REAL `check_migration_number_collision` behavior
@@ -3120,7 +2760,7 @@ def test_cleanup_closes_pointer_as_shipped():
     fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([("b0", "d0")]))
     ops = FakePointerOps(latest={"feat/x": {"status": "integrated-worktree-live"}})
     res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                        primary_root="/repo", salvage_recorder=_capture_recorder(), pointer_ops=ops)
+                        primary_root="/repo", pointer_ops=ops)
     assert res["status"] == "cleaned"
     assert res["pointer"] == {"status": "updated", "pointer_status": "shipped", "commit": None}
     assert ops.updates[0]["status"] == "shipped"
@@ -3130,7 +2770,7 @@ def test_cleanup_leaves_terminal_pointer_alone():
     fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([("b0", "d0")]))
     ops = FakePointerOps(latest={"feat/x": {"status": "shipped"}})
     res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                        primary_root="/repo", salvage_recorder=_capture_recorder(), pointer_ops=ops)
+                        primary_root="/repo", pointer_ops=ops)
     assert res["pointer"]["status"] == "already_terminal" and ops.updates == []
 
 
@@ -3138,7 +2778,7 @@ def test_pointer_failure_is_reported_never_fails_the_git_lifecycle():
     fake = FakeGit(refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([("b0", "d0")]))
     ops = FakePointerOps(raise_on="latest")
     res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
-                        primary_root="/repo", salvage_recorder=_capture_recorder(), pointer_ops=ops)
+                        primary_root="/repo", pointer_ops=ops)
     assert res["status"] == "cleaned" and res["exit_code"] == 0
     assert res["pointer"]["status"] == "error" and "ledger unreadable" in res["pointer"]["error"]
 

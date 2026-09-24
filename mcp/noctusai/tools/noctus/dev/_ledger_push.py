@@ -7,10 +7,17 @@ Two ledger writers hand-replicated this before the lift:
   * ``branch_pointer._push_ledger_to_dev`` — stage+commit ONLY the branch-tree
     pointer ledger + its mirror, then push.
   * ``task_branch._push_salvage_ledger_from_primary`` — path-scoped commits the
-    worktree-salvage ledger row THEN pushes it.
+    worktree-salvage ledger row THEN pushes it (REMOVED 2026-09-24: a cleanup
+    only ever deletes a merged branch, so that row was pure noise).
 
-Both now delegate to :func:`commit_and_ff_push_ledger` so a future 3rd ledger
-inherits the idiom instead of hand-replicating it a fourth time.
+🔴 2026-09-24 — being RETIRED. The append-only ledgers moved to the orphan
+``origin/ledgers`` branch (``_ledger_store``; KB § PATTERNS/common/ledger-store.md);
+writers flip off this helper one at a time. The remaining callers are the
+dev-copy DRAINS (``task_branch._drain_ledgers_from_primary``,
+``session_end_sweep.deliver_trailing_ledgers``) that ship rows a peer's
+stale-code writer still leaves in the primary checkout, plus any writer not yet
+flipped. The drains, this helper and the ledger-drain keeper go at S4 of
+``project-history/roadmaps/ledgers-off-dev-2026-09.md``.
 
 Why the idiom is safe (and conflict-free): the ``project-history/*.ndjson``
 ledgers carry a ``merge=union`` gitattribute + are append-only, so a

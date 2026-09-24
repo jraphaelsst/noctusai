@@ -41,12 +41,12 @@ lifecycle so it is one call, not a hand-typed ritual:
                 prune → `git branch -d feat/<slug>` (refuses if unmerged — `-d`
                 not `-D`). The salvage ritual: (1) LEARNINGS — extract durable
                 knowledge → KB/memory (surfaced as a checkpoint; discipline leg);
-                (2) RECOVERY POINTER — record branch+SHA to the tracked
-                `project-history/worktree-salvage.ndjson` (MECHANICAL here, via
-                the shared `_worktree_salvage` helper — the same leg mole-sweep /
-                cleanup_stale_worktrees already carry, so a precise teardown can
-                no longer skip it); (3) STORAGE HYGIENE — run a mole worktree-
-                sweep before the delete. A precise teardown of ONE named task
+                (2) RECOVERY POINTER — none needed: cleanup refuses unless the
+                branch is merged into origin/dev, so origin/dev itself recovers
+                it and a salvage row would be pure noise (2026-09-24, KB §
+                PATTERNS/common/ledger-store.md — this row alone was 373
+                `chore(salvage)` dev commits); (3) STORAGE HYGIENE — run a mole
+                worktree-sweep before the delete. A precise teardown of ONE named task
                 worktree; the heuristic bulk-sweep of stale agent worktrees is
                 the sibling noctus.dev.cleanup_stale_worktrees.
   • status    : read-only — list the active self-branch worktrees + each one's
@@ -296,78 +296,6 @@ def _rebase_in_progress(runner, wt_path: str) -> bool:
     )
 
 
-def _push_salvage_ledger_from_primary(
-    runner,
-    *,
-    root: str,
-    rel_ledger: str,
-    dev_branch: str,
-    remote: str = "origin",
-    verbose: bool = False,
-) -> dict[str, Any]:
-    """Commit the dirty salvage ledger from the PRIMARY ``dev`` checkout + FF-push
-    it to dev — the robust ``fetch → divergence-guard → rebase-onto-origin/dev →
-    FF-push`` idiom (mirrors ``branch_pointer._push_ledger_to_dev``).
-
-    Why primary-not-worktree (the 2026-06-30 drift fix): the previous leg
-    committed the salvage row on the WORKTREE's feature-branch HEAD and pushed
-    ``HEAD:dev``. When ``origin/dev`` had advanced past the branch's base (the
-    normal case after later work landed on dev), that push was non-FF → rejected;
-    the single fetch+retry re-pushed the SAME non-FF commit → still rejected. The
-    salvage commit was then orphaned on the (rebase-integrated) feature branch,
-    which the operator force-deletes (``branch -D``) → the recovery row was LOST
-    for every rebase-integrated slug. Recording to the PRIMARY ledger + pushing
-    from the primary ``dev`` checkout makes the push a clean rebase-onto-dev FF and
-    leaves the WORKTREE untouched (so ``git worktree remove`` needs no worktree-side
-    commit, and NOTHING lands on the to-be-deleted branch).
-
-    Stages ``add``/``commit`` to the ledger file (plus whatever a pre-commit hook
-    additionally stages mid-commit — see ``_ledger_push``'s module docstring for
-    why that is NOT actually excludable, and why it is safe: the divergence
-    guard tolerates known-benign riders and still blocks on anything else). The
-    divergence-guard REFUSES to push when any commit ahead of ``origin/<dev>``
-    touches a REAL non-ledger, non-benign path (never leak real work onto dev) —
-    in that case the row stays committed on local dev and ships with the next
-    dev push. The ``project-history/*.ndjson`` files carry a ``merge=union``
-    gitattribute + are append-only, so the rebase is conflict-free. BEST-EFFORT:
-    a failure never raises; cleanup always proceeds (the row is already on disk
-    + idempotent next time).
-
-    All git IO goes through the injected ``runner`` directly (NOT ``_git``): the
-    leg needs ``add``/``commit``/``diff-tree`` which are intentionally off the
-    safe allowlist; the push destination is hard-pinned to ``dev_branch`` so the
-    dev-only-push boundary holds by construction.
-
-    The ``commit → fetch → divergence-guard → rebase-onto-origin/dev → FF-push``
-    idiom is the shared :func:`commit_and_ff_push_ledger` helper (the N=3 DRY
-    lift); this leg just supplies the salvage commit message. Returns the FULL
-    structured result (``{"ok", "status", "pushed", "error", ...}``) rather than
-    collapsing it to a bare bool — a caller that only reads ``pushed`` still
-    gets the same True/False signal, but a caller that surfaces the result (as
-    ``task_branch`` cleanup now does) can say WHY a push failed instead of a
-    silent ``salvage_pushed: false`` (no-silent-errors).
-    """
-    from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger  # lazy import
-
-    msg = (f"chore(salvage): record {rel_ledger} recovery pointer\n\n"
-           "task_branch action=cleanup salvage-ledger entry (branch+SHA → "
-           "worktree-salvage.ndjson, the tracked recovery-pointer ledger). "
-           "Recorded + committed on the PRIMARY dev checkout (not the worktree) "
-           "+ rebase-onto-dev FF-pushed so the row lands on origin/dev even when "
-           "dev advanced past the branch base (2026-06-30 rebase-integrated-slug "
-           "lost-row fix); leaves the worktree clean for remove.")
-    return commit_and_ff_push_ledger(
-        runner=runner,
-        root=root,
-        rel_paths=[rel_ledger],
-        dev_branch=dev_branch,
-        remote=remote,
-        commit_msg=msg,
-        already_committed=False,
-        _log_prefix="task_branch.cleanup",
-    )
-
-
 def _resolve_primary_root(primary_root: str | None) -> str:
     """The PRIMARY checkout root — injected in tests, `REPO_ROOT` in production.
 
@@ -451,10 +379,22 @@ def _drain_ledgers_from_primary(
     collapsing to a silent bool (no-silent-errors).
     """
     from tools.noctus.dev._ledger_push import commit_and_ff_push_ledger  # lazy
+    from tools.noctus.dev._ledger_store import flush_pending  # lazy
+
+    # 2026-09-24: the moved ledgers live on origin/ledgers; publish whatever
+    # this clone has spooled (e.g. the pre-commit cost drain's publish=False
+    # rows). The dev-copy drain below stays until S4 of
+    # project-history/roadmaps/ledgers-off-dev-2026-09.md — it ships rows a
+    # peer's stale-code writer still leaves in the primary checkout.
+    try:
+        store_flush = flush_pending(Path(root))
+    except Exception as e:  # noqa: BLE001 — best-effort, reported
+        store_flush = {"ok": False, "status": "error", "error": str(e)[:200]}
 
     rel_paths = _dirty_ledger_rel_paths(runner, root)
     if not rel_paths:
-        return {"ok": True, "status": "already_clean", "pushed": False, "ledgers": []}
+        return {"ok": True, "status": "already_clean", "pushed": False, "ledgers": [],
+                "ledger_store_flush": store_flush}
 
     if verbose:
         logger.debug("task_branch: draining %d dirty ledger(s) from primary %s: %s",
@@ -479,6 +419,7 @@ def _drain_ledgers_from_primary(
         _log_prefix="task_branch.drain",
     )
     result["ledgers"] = rel_paths
+    result["ledger_store_flush"] = store_flush
     # 🔴 NORMALISE `pushed` — `commit_and_ff_push_ledger` sets it on the success
     # and already_clean paths but OMITS it on every failure path (see its own
     # result table), so a caller doing `result["pushed"]` KeyErrors exactly when
@@ -1504,7 +1445,6 @@ def task_branch(
     primary_root: str | None = None,
     run: Callable[..., tuple[int, str, str]] | None = None,
     fs: FsOps | None = None,
-    salvage_recorder: Callable[..., Any] | None = None,
     settle: Callable[..., dict[str, Any]] | None = None,
     migration_check: Callable[[str], list[dict]] | None = None,
     migration_applied_check: Callable[[str, str, str], str] | None = None,
@@ -2121,8 +2061,8 @@ def task_branch(
             "delete is LOSSY for anything not on dev or already in KB/memory "
             "(learnings leg — discipline; mirrors archive's learn-before-archive)."),
         "2_record_recovery_pointer": (
-            f"branch+SHA → project-history/worktree-salvage.ndjson "
-            "(MECHANICAL — recorded below; commit the ledger like ledger.ndjson)."),
+            f"none — {branch} is merged into {remote}/{dev_branch}, which recovers it; "
+            "a salvage row for a merged branch is pure noise (not written since 2026-09-24)."),
         "3_mole_sweep_before_delete": (
             "Run noctus.dev.mole(mode='sweep', scope='worktrees') for storage "
             "hygiene BEFORE confirming the delete."),
@@ -2132,75 +2072,21 @@ def task_branch(
             "learnings_checkpoint": ritual["1_extract_learnings"]}
     if not confirm:
         return {**plan, "status": "planned", "exit_code": 0,
-                "message": (f"will SALVAGE then remove worktree {wt_path}: record the recovery "
-                            f"pointer ({branch}+SHA) to the tracked salvage ledger + surface the "
-                            f"learnings checkpoint, then remove (refuses if dirty) + delete merged "
-                            f"branch {branch}. Extract learnings + run a mole worktree-sweep first. "
-                            "Pass confirm=True.")}
-    # Leg 2 — MECHANICAL recovery pointer: record branch+SHA to the TRACKED ledger
-    # BEFORE removal (best-effort; the recorder never raises ⇒ never blocks teardown).
-    # Shared `_worktree_salvage.record_sweep` — one source of truth with the bulk
-    # sweeps (no parity drift). Injectable for tests (zero real IO).
-    #
-    # Record to the PRIMARY checkout's ledger (root), NOT the worktree's: the bulk
-    # mole / cleanup_stale_worktrees sweeps already canonicalize on the primary
-    # ledger (mole.py passes `root`), and writing it here keeps the WORKTREE clean
-    # so Leg 2b needs no worktree-side commit + nothing lands on the to-be-deleted
-    # branch (the 2026-06-30 rebase-integrated-slug lost-row fix).
+                "message": (f"will remove worktree {wt_path} (refuses if dirty) + delete merged "
+                            f"branch {branch} — {remote}/{dev_branch} already recovers it, so no "
+                            "salvage row is written. Extract learnings + run a mole worktree-sweep "
+                            "first. Pass confirm=True.")}
+    # Leg 2 — recovery pointer: NOT written. Cleanup refused above unless the
+    # branch is merged into origin/<dev>, so origin/<dev> itself recovers it; a
+    # salvage row for it is pure noise (owner decision 2026-09-24 — these rows
+    # were 373 `chore(salvage)` dev commits). The old Leg 2b that committed +
+    # FF-pushed that row from the primary checkout is gone with it. A pointer
+    # that recovers something dev does NOT have is still recorded by the bulk
+    # sweeps / `salvage_before_delete`, on origin/ledgers (KB §
+    # PATTERNS/common/ledger-store.md).
     salvage_ledger = None
-    root = primary_root
-    if head:
-        recorder = salvage_recorder
-        if recorder is None:
-            from tools.noctus.dev import _worktree_salvage as _wsv  # lazy import
-            recorder = _wsv.record_sweep
-        if root is None:
-            # LEDGER_ROOT (never REPO_ROOT): the recovery-pointer ledger must
-            # land in the PRIMARY checkout. See workspace.get_ledger_root()
-            # docstring.
-            from settings import LEDGER_ROOT  # lazy: only when not injected
-            root = str(LEDGER_ROOT)
-        rec_path = recorder(Path(root), [{
-            "path": wt_path, "branch": branch, "sha": head,
-            "reason": "task_branch cleanup (learn-before-delete)"}])
-        salvage_ledger = str(rec_path) if rec_path else None
-    # Leg 2b — commit & FF-push the ledger entry FROM THE PRIMARY dev CHECKOUT
-    # BEFORE remove. The row was recorded to the PRIMARY ledger (Leg 2), so the
-    # WORKTREE stays clean (`git worktree remove` needs no worktree-side commit)
-    # and NOTHING lands on the to-be-deleted feature branch. The push uses the
-    # robust fetch → divergence-guard → rebase-onto-origin/dev → FF-push idiom
-    # (shared with branch_pointer): when origin/dev advanced past the branch base
-    # the rebase replays the ledger-only commit cleanly (union-merge), so the row
-    # reliably lands on origin/dev — the 2026-06-30 lost-row fix for rebase-
-    # integrated slugs (the old worktree-HEAD:dev push was non-FF → orphaned the
-    # commit on the force-deleted branch). Best-effort: a push failure is reported
-    # (salvage_pushed=False, salvage_push_reason=<why>) but cleanup proceeds — the
-    # row is on local dev (ships with the next dev push) + idempotent next-time,
-    # and the bulk-sweep keepers still find it. `salvage_push_reason` is the
-    # no-silent-errors fix for the 2026-08-31 divergence-loop incident: a bare
-    # `salvage_pushed: false` gave the caller no way to tell "genuinely diverged,
-    # needs a human" apart from "will self-heal next run" — see
-    # `_push_salvage_ledger_from_primary` / `_ledger_push.commit_and_ff_push_ledger`
-    # for the possible `status` values (dirty_blocked / non-ledger-ahead / rebase
-    # conflict / push-failed-after-retry).
-    salvage_pushed = False
-    salvage_push_reason: str | None = None
-    if salvage_ledger:
-        rel_ledger = "project-history/worktree-salvage.ndjson"
-        if verbose:
-            logger.debug("task_branch.cleanup: committing + FF-pushing salvage ledger "
-                         "from primary checkout %s: %s", root, rel_ledger)
-        salvage_push_result = _push_salvage_ledger_from_primary(
-            runner, root=str(root), rel_ledger=rel_ledger,
-            dev_branch=dev_branch, remote=remote, verbose=verbose)
-        salvage_pushed = bool(salvage_push_result.get("pushed"))
-        if not salvage_pushed:
-            salvage_push_reason = (
-                salvage_push_result.get("error")
-                or f"push not attempted (status={salvage_push_result.get('status')!r})"
-            )
-            logger.warning("task_branch.cleanup: salvage ledger push did not land: %s",
-                           salvage_push_reason)
+    salvage_skipped = (f"{branch} is merged into {remote}/{dev_branch} — nothing to recover"
+                       if head else "no branch resolved — nothing to recover")
     # Attempt the remove. If it fails, check whether the only "dirty" files
     # are gitignored (e.g. `.claude/cache/*.sqlite`). If so, the refusal is
     # spurious — git considers those files non-blocking. We force-remove via
@@ -2231,13 +2117,9 @@ def task_branch(
                          f"{err.strip() or out.strip()}"}
     result = {**plan, "status": "cleaned", "exit_code": 0, "worktree_removed": True,
               "branch_deleted": True, "salvage_ledger": salvage_ledger,
-              "salvage_pushed": salvage_pushed,
-              "salvage_push_reason": salvage_push_reason,
-              "message": f"removed {wt_path} + deleted {branch} (recovery pointer → "
-                         f"{salvage_ledger or 'ledger'}). Back on {dev_branch} baseline."
-                         + ("" if salvage_pushed or not salvage_ledger else
-                            f" NOTE: salvage row committed locally but NOT pushed — "
-                            f"{salvage_push_reason}")}
+              "salvage_skipped": salvage_skipped,
+              "message": f"removed {wt_path} + deleted {branch} (merged — {remote}/"
+                         f"{dev_branch} is the recovery pointer). Back on {dev_branch} baseline."}
     # Merged (checked above) + worktree removed ⇒ the lifecycle is over.
     result["pointer"] = _pointer_transition(
         pointer_fn, branch=branch, status="shipped",
@@ -2248,9 +2130,9 @@ def task_branch(
         except Exception as e:  # best-effort — never fail a completed teardown
             result["cache_settle"] = {"ok": False, "error": str(e)}
     # 🔴 AFTER the settle, deliberately — see `_drain_ledgers_from_primary`.
-    # Leg 2b above already shipped the salvage row; this ships everything ELSE
-    # that is dirty (auto-improvement rows logged during the session, and
-    # anything the settle just wrote), which is the half that had no stage.
+    # Ships any dev-copy ledger row a stale-code writer left dirty (until S4 of
+    # the ledgers-off-dev roadmap) and publishes this clone's spooled
+    # origin/ledgers rows.
     try:
         result["ledger_drain"] = _drain_ledgers_from_primary(
             runner, root=_resolve_primary_root(primary_root),
@@ -2275,13 +2157,12 @@ def register(server) -> None:
             "(retry on the concurrent-push race; a rebase conflict is aborted + "
             "surfaced, never auto-resolved; a migration file this branch "
             "introduces is re-checked for a number collision AFTER the rebase "
-            "and BLOCKS the push if found); action='cleanup' slug= SALVAGES "
-            "before deleting (learn-before-delete, KB § storage-hygiene § 2.3): "
-            "records the branch+SHA recovery pointer to the tracked worktree-"
-            "salvage ledger (MECHANICAL — same leg the bulk sweeps carry) + "
-            "surfaces the learnings-extraction checkpoint + sequences a mole "
-            "worktree-sweep, THEN removes the worktree (refuses if dirty) + "
-            "deletes the merged branch. Writes are "
+            "and BLOCKS the push if found); action='cleanup' slug= (learn-"
+            "before-delete, KB § storage-hygiene § 2.3) surfaces the learnings-"
+            "extraction checkpoint + sequences a mole worktree-sweep, THEN "
+            "removes the worktree (refuses if dirty) + deletes the MERGED branch "
+            "(refuses unmerged; no salvage row — origin/dev already recovers a "
+            "merged branch, 2026-09-24). Writes are "
             "DRY-RUN by default — pass confirm=True. Pushes ONLY to dev (main/"
             "prod move via noctus.dev.release); FF/rebase-only, never force/reset/"
             "switch. action='start' wire_env DEFAULTS TO TRUE — every fresh "

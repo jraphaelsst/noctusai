@@ -525,8 +525,21 @@ def append_rows(name: str, dev_path: Path, rows: Iterable[dict | str], *, messag
     return open_ledger(name, Path(dev_path)).append(lines, message=message, publish=publish)
 
 
+def flush_pending(repo_root: Path | None = None, *, message: str = "flush spooled rows") -> dict:
+    """Publish every spooled row (all ledgers) — the lifecycle hook the drains
+    and `session_end_sweep` call so ``publish=False`` rows (the pre-commit
+    cost drain) and any offline leftovers reach origin/ledgers. A no-op in
+    Fake mode (the Fake has no spool) — reported, not silent."""
+    if store_mode() == MODE_FAKE:
+        return {"ok": True, "status": "skipped", "reason": "fake ledger store (no spool)"}
+    try:
+        return default_store(repo_root).flush(message=message)
+    except LedgerStoreError as exc:
+        return {"ok": False, "status": "error", "error": str(exc)}
+
+
 __all__ = [
-    "read_ledger_text", "append_rows",
+    "read_ledger_text", "append_rows", "flush_pending",
     "Ledger", "FileLedger", "GitLedger", "GitLedgerStore", "LedgerStoreError",
     "open_ledger", "default_store", "read_dual", "merge_ndjson_text", "store_mode",
     "MOVED_LEDGERS", "LEDGERS_BRANCH", "ENV_MODE", "MODE_GIT", "MODE_FAKE",

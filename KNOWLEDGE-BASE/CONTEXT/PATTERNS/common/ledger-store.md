@@ -29,7 +29,7 @@ does not need a place on the integration branch.
 |---|---|---|
 | `auto-improvement.ndjson` | `noctus.dev.auto_improvement_log` · `_promote` · `_reconcile` · `codify_log` | **flipped** (S3 #1). Rewrites are `update(transform)`; the cache and its keeper hash the dual-read |
 | `vector-costs.ndjson` · `vector-signals.ndjson` · `vector-calibration.ndjson` · `dispatch-budget.ndjson` · `absorptions.ndjson` | the pre-commit spool drain (`publish=False`, so no network inside a commit) · `dispatch_budget` · `dispatch_token_log` · `vector_calibration` · `absorption_tracking` | **flipped** (S3 #2). Pre-commit no longer stages `vector-costs.ndjson` |
-| `worktree-salvage.ndjson` | `task_branch` cleanup · `salvage_before_delete` · `session_end_sweep` · `_worktree_salvage` | pending (S3 #3) |
+| `worktree-salvage.ndjson` | `salvage_before_delete` · `session_end_sweep` · `_worktree_salvage` (mole / cleanup sweeps) | **flipped** (S3 #3). A record whose SHA is already on `origin/dev` is not written; `task_branch` cleanup writes none (it only deletes merged branches) and its dev-push leg is gone |
 | `branch-tree.ndjson` | `noctus.dev.branch_pointer` | pending (S3 #4) |
 | `ship-consent.ndjson` | `noctus.dev.ship_consent` | pending (S3 #5, last) |
 | `ledger.ndjson` | `noctus.dev.history_record` | **never. It stays on `dev`** |
