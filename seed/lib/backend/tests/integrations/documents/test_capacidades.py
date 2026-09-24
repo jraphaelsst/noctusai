@@ -16,7 +16,7 @@ class TestShape:
     def test_known_document_types_are_present(self):
         for tipo in (
             "rg", "cnh", "cpf", "certidao_casamento", "certidao_nascimento",
-            "comprovante_endereco", "matricula",
+            "comprovante_endereco", "matricula", "serasa_crednet", "cartao_cnpj",
         ):
             assert tipo in CAPACIDADES
 
@@ -52,3 +52,31 @@ class TestAddressAndMatricula:
 
     def test_matricula_claims_its_own_number(self):
         assert "numero_matricula" in CAPACIDADES["matricula"]
+
+
+class TestSerasaCrednetAndCartaoCnpj:
+    """P0c contract §B's two new seed extractors."""
+
+    def test_serasa_crednet_claims_the_identity_and_compound_facts(self):
+        campos = CAPACIDADES["serasa_crednet"]
+        for campo in (
+            "nome", "cpf", "data_nascimento", "nome_mae", "protocolo",
+            "consulta_em", "participacoes", "ocorrencias",
+        ):
+            assert campo in campos
+
+    def test_serasa_crednet_does_not_claim_cartao_cnpj_fields(self):
+        assert "cnpj" not in CAPACIDADES["serasa_crednet"]
+        assert "situacao_cadastral" not in CAPACIDADES["serasa_crednet"]
+
+    def test_cartao_cnpj_claims_the_empresa_facts(self):
+        campos = CAPACIDADES["cartao_cnpj"]
+        for campo in (
+            "cnpj", "razao_social", "situacao_cadastral",
+            "data_situacao_cadastral", "uf",
+        ):
+            assert campo in campos
+
+    def test_cartao_cnpj_does_not_claim_crednet_fields(self):
+        assert "protocolo" not in CAPACIDADES["cartao_cnpj"]
+        assert "participacoes" not in CAPACIDADES["cartao_cnpj"]
