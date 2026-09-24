@@ -43,14 +43,57 @@ Design
        docstrings for the refuse-vs-warn line this repo drew.
 
 What this deliberately does NOT do
-    Hot-reload. Swapping code under a live module graph mid-call is a much
-    worse failure mode than reporting staleness — the remedy is always
-    "restart the MCP server" (``/mcp`` in Claude Code), never a live patch.
+    Hot-reload IN THIS PROCESS. Swapping code under a live module graph
+    mid-call is a much worse failure mode than reporting staleness — the
+    remedy for the SERVER's own staleness is always "restart it" (``/mcp``
+    in Claude Code), never a live patch. R4 (below) works around the
+    SYMPTOM (a blocked caller) without touching this invariant: it launches
+    an entirely NEW process rather than patching the old one.
+
+R4 — the fresh-subprocess fallback (2026-09-24, release-no-freeze)
+    The 2026-09-18 incident's fix (above) traded one failure mode for
+    another: every gated ``confirm=True`` write on a stale server now hard-
+    REFUSED, which is safe but forced a manual ``/mcp`` reconnect before the
+    caller's actual work could proceed — losing hours of otherwise-idle
+    agent time whenever a peer session's own edit made the shared server's
+    module graph stale mid-task.
+
+    ``refuse_gate`` no longer refuses a stale write outright. It re-runs the
+    SAME call as ``python mcp/noctusai/cli.py --<tool-flag> ...`` in a
+    brand-new subprocess (``_run_via_fresh_subprocess``) — a subprocess
+    re-imports ``mcp/noctusai/**`` from disk on launch, so it can never
+    itself be "the stale process." The subprocess's own JSON result is
+    returned verbatim, plus ``executed_via: "fresh_subprocess"``. Never
+    silent: the result also carries a ``warnings`` entry naming what
+    happened and still recommending a server restart (the subprocess is a
+    one-call bridge, not a substitute for fixing the underlying staleness).
+
+    Scope, by construction:
+      - Only WRITE calls (``is_write`` — the same predicate `refuse_gate`
+        already used to decide refuse-vs-warn) ever reach this path. A
+        ``confirm=False`` preview stays in-process (WARN posture,
+        unaffected) — the cheap path was never the problem.
+      - ``allow_stale_toolkit=True`` still means "I've manually verified
+        THIS process's in-memory behaviour is safe" — it takes the OLD
+        in-process path, never the subprocess. The two escape hatches are
+        for different trust levels and must never be conflated.
+      - A tool with no wired CLI mapping (``_tool_cli_argv`` returns
+        ``None``), a subprocess launch failure, or unparseable subprocess
+        output all fall back to the ORIGINAL hard refusal — never a silent
+        working-tree call on unverified code.
+      - ``_extract_trailing_json`` exists because ``cli.py`` can emit INFO
+        log lines on stdout BEFORE its final ``json.dumps(...)`` — a naive
+        whole-blob parse breaks on "Extra data" (found wiring this very
+        fallback). NOC-REMEDIATE[cli-stdout-log-noise]: the cleaner
+        platform fix is routing cli.py's logging to stderr, which would
+        obsolete this extraction entirely — out of scope here — 2026-09-24.
 """
 from __future__ import annotations
 
 import functools
 import inspect
+import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -60,6 +103,18 @@ from typing import Any, Callable
 TOOLKIT_ROOT: Path = Path(__file__).resolve().parents[3]
 
 REMEDY = "Restart the MCP server (Claude Code: run `/mcp`) so it re-imports mcp/noctusai/** from disk."
+
+# R4 (release-no-freeze, 2026-09-24): the 2026-09-18 incident's OTHER cost —
+# every confirm=True gated write on a stale primary server used to hard-
+# REFUSE, forcing a manual `/mcp` reconnect before the caller's actual work
+# could proceed. A stale VERDICT is never trustworthy, but the CODE ON DISK
+# right now is — so instead of refusing outright, `refuse_gate` re-execs the
+# SAME call as `python mcp/noctusai/cli.py --<tool-flag> ...` in a brand-new
+# subprocess (which re-imports everything fresh; it can never itself be
+# "the stale process"), and returns THAT result with `executed_via:
+# "fresh_subprocess"`. Read-only / confirm=False calls are UNAFFECTED — they
+# stay in-process (WARN posture), per `refuse_gate`'s existing contract.
+_FRESH_SUBPROCESS_TIMEOUT_S = 600.0
 
 _DEFAULT_TTL_SECONDS = 5.0
 
@@ -269,6 +324,214 @@ def warn_gate(tool_name: str, ttl_seconds: float = _DEFAULT_TTL_SECONDS) -> Call
     return decorator
 
 
+# ── R4: fresh-subprocess CLI argv mapping ───────────────────────────────────
+# One entry per `refuse_gate`-wrapped tool, mirroring that tool's MCP-facing
+# `register()` wrapper signature 1:1 (never the full inner-function surface —
+# DI-only test seams like `run=`/`git_runner=`/`executor=` are neither
+# MCP-exposed nor CLI-relevant). Adding a NEW `refuse_gate` consumer without
+# adding it here is caught, not silently guessed at — see
+# `_run_via_fresh_subprocess`'s "no CLI entry wired" hard-refusal below.
+def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
+    """CLI argv (everything after ``cli.py``) for a gated write tool's bound
+    kwargs. Returns ``None`` when `tool_name` has no wired entry."""
+    if tool_name == "release":
+        argv = ["--release", str(kwargs.get("stage") or "status")]
+        if kwargs.get("confirm"):
+            argv.append("--release-confirm")
+        if kwargs.get("sha"):
+            argv += ["--release-sha", str(kwargs["sha"])]
+        mode = kwargs.get("mode") or "ff"
+        if mode != "ff":
+            argv += ["--release-mode", str(mode)]
+        if kwargs.get("release_branch"):
+            argv += ["--release-branch", str(kwargs["release_branch"])]
+        return argv
+
+    if tool_name == "migrate_product":
+        product = kwargs.get("product")
+        if not product:
+            return None
+        argv = ["--migrate-product", str(product)]
+        if kwargs.get("confirm"):
+            argv.append("--migrate-product-confirm")
+        if kwargs.get("target"):
+            argv += ["--migrate-product-target", str(kwargs["target"])]
+        if kwargs.get("sha"):
+            argv += ["--migrate-product-sha", str(kwargs["sha"])]
+        if kwargs.get("project_ref"):
+            argv += ["--migrate-product-project-ref", str(kwargs["project_ref"])]
+        if kwargs.get("schema"):
+            argv += ["--migrate-product-schema", str(kwargs["schema"])]
+        if kwargs.get("worktree_path"):
+            argv += ["--migrate-product-worktree-path", str(kwargs["worktree_path"])]
+        if kwargs.get("allow_stale_tree"):
+            argv.append("--migrate-product-allow-stale-tree")
+        if kwargs.get("allow_inactive"):
+            argv.append("--migrate-product-allow-inactive")
+        return argv
+
+    if tool_name == "deploy_image":
+        product = kwargs.get("product")
+        if not product:
+            return None
+        argv = ["--deploy-image", str(product)]
+        if kwargs.get("confirm"):
+            argv.append("--deploy-image-confirm")
+        tag = kwargs.get("tag") or "latest"
+        if tag != "latest":
+            argv += ["--deploy-image-tag", str(tag)]
+        source = kwargs.get("source") or "pull"
+        if source != "pull":
+            argv += ["--deploy-image-source", str(source)]
+        ssh_host = kwargs.get("ssh_host") or "noctus-vps"
+        if ssh_host != "noctus-vps":
+            argv += ["--deploy-host", str(ssh_host)]
+        if kwargs.get("skip_ancestry_check"):
+            argv.append("--deploy-image-skip-ancestry-check")
+        if kwargs.get("allow_inactive"):
+            argv.append("--deploy-image-allow-inactive")
+        return argv
+
+    if tool_name == "task_branch":
+        argv = ["--task-branch", str(kwargs.get("action") or "status")]
+        if kwargs.get("slug"):
+            argv += ["--task-branch-slug", str(kwargs["slug"])]
+        if kwargs.get("confirm"):
+            argv.append("--task-branch-confirm")
+        if kwargs.get("project"):
+            argv += ["--task-branch-project", str(kwargs["project"])]
+        if kwargs.get("brief"):
+            argv += ["--task-branch-brief", str(kwargs["brief"])]
+        if kwargs.get("paths"):
+            argv += ["--task-branch-paths", ",".join(str(p) for p in kwargs["paths"])]
+        if kwargs.get("agent"):
+            argv += ["--task-branch-agent", str(kwargs["agent"])]
+        if kwargs.get("role"):
+            argv += ["--task-branch-role", str(kwargs["role"])]
+        if kwargs.get("parent"):
+            argv += ["--task-branch-parent", str(kwargs["parent"])]
+        if kwargs.get("wire_env") is False:
+            argv.append("--task-branch-no-wire-env")
+        if kwargs.get("verbose"):
+            argv.append("--task-branch-verbose")
+        return argv
+
+    return None
+
+
+def _extract_trailing_json(text: str) -> dict[str, Any] | None:
+    """``cli.py``'s dispatch blocks all end with ``print(json.dumps(r,
+    indent=2, default=str))`` as their LAST stdout write — but the same
+    process can ALSO have logged INFO lines to stdout earlier (env_bootstrap,
+    the toolkit banner) NOT captured on stderr, so a naive ``json.loads(out)``
+    on the whole blob breaks on "Extra data" (2026-09-24, found wiring this
+    very fallback). ``json.dumps(..., indent=2)`` always puts the TOP-LEVEL
+    dict's opening brace alone on its own line at COLUMN 0 (no leading
+    whitespace) — every OTHER ``{`` (a nested dict, e.g. inside a
+    list-of-dicts value like a rider manifest's ``commits``) is indented, so
+    an EXACT (non-stripped) ``"{"`` match is what distinguishes them —
+    stripping first would wrongly match the LAST nested dict's brace instead
+    of the true top-level one. Scan backward for the last column-0 ``{``
+    line and parse from there to EOF. Returns ``None`` (never raises) on no
+    match or a parse failure — the caller treats that as "unparseable"."""
+    lines = text.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i] == "{":
+            blob = "\n".join(lines[i:])
+            try:
+                parsed = json.loads(blob)
+            except json.JSONDecodeError:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _run_via_fresh_subprocess(
+    tool_name: str,
+    kwargs: dict[str, Any],
+    verdict: dict[str, Any],
+    allow_stale_toolkit: bool,
+    subprocess_run: Callable[..., tuple[int, str, str]] | None = None,
+) -> dict[str, Any]:
+    """The R4 fallback: instead of refusing a confirm=True write outright
+    because THIS process's module graph is stale, run the SAME call as
+    ``python mcp/noctusai/cli.py --<tool-flag> ...`` in a brand-new
+    subprocess — which re-imports ``mcp/noctusai/**`` from disk, so it can
+    never itself be the stale process. Returns the subprocess's own JSON
+    result with ``executed_via: "fresh_subprocess"`` added; ``toolkit_stale``
+    rides through UNCHANGED from whatever the subprocess itself reports
+    (almost always ``False`` — a process that just launched has nothing to
+    have drifted from). Falls back to a hard refusal (never a silent
+    working-tree call) when: no CLI entry is wired for `tool_name`; the
+    subprocess itself fails to launch; its output isn't parseable JSON; or
+    (defensive, expected-unreachable) the subprocess's OWN freshness check
+    also comes back stale — each names the concrete reason in ``error``,
+    never just "refused".
+    ``subprocess_run`` is a DI seam for tests (default: real
+    ``subprocess.run``)."""
+    argv = _tool_cli_argv(tool_name, kwargs)
+    if argv is None:
+        payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
+        payload["error"] += (
+            f" No fresh-subprocess CLI entry is wired for {tool_name!r} in "
+            "toolkit_freshness._tool_cli_argv — refusing rather than "
+            "guessing at a CLI shape."
+        )
+        return payload
+
+    cli_path = TOOLKIT_ROOT / "cli.py"
+    runner = subprocess_run or (
+        lambda cmd: (
+            lambda p: (p.returncode, p.stdout, p.stderr)
+        )(subprocess.run(cmd, capture_output=True, text=True, cwd=str(TOOLKIT_ROOT),
+                         timeout=_FRESH_SUBPROCESS_TIMEOUT_S))
+    )
+    cmd = [sys.executable, str(cli_path), *argv]
+    try:
+        rc, out, err = runner(cmd)
+    except Exception as exc:  # noqa: BLE001 — any launch failure is a hard refusal, named
+        payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
+        payload["error"] += f" Fresh-subprocess launch failed ({' '.join(argv)}): {exc}"
+        return payload
+
+    result = _extract_trailing_json(out) if out else None
+    if not isinstance(result, dict):
+        payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
+        payload["error"] += (
+            f" Fresh-subprocess produced unparseable output (rc={rc}): "
+            f"{(err or out or '')[:500]}"
+        )
+        return payload
+
+    if result.get("toolkit_stale") is True:
+        # Defensive, expected-unreachable in practice: a process that just
+        # launched has captured its OWN baseline moments ago, so it should
+        # never itself report stale. If it somehow does (e.g. something
+        # kept editing this toolkit's files WHILE the subprocess launched),
+        # trust that verdict over "fresh_subprocess" optimism and hard-
+        # refuse — never hand back a result that is stale-on-stale.
+        payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
+        payload["error"] += (
+            " The fresh subprocess ALSO reported its own module graph as "
+            "stale (toolkit_stale=True in its result) — refusing rather "
+            "than trusting a stale-on-stale answer."
+        )
+        payload["fresh_subprocess_result"] = result
+        return payload
+
+    result["executed_via"] = "fresh_subprocess"
+    result.setdefault("warnings", [])
+    result["warnings"].append(
+        f"{tool_name}: the primary MCP server's module graph was stale, so "
+        "this confirm=True write ran in a FRESH subprocess "
+        "(`python mcp/noctusai/cli.py`) against the current on-disk code "
+        "instead of refusing outright. The primary server should still be "
+        f"restarted ({REMEDY}) — this fallback avoids blocking the caller "
+        "on that, it does not replace it."
+    )
+    return result
+
+
 def refuse_gate(
     tool_name: str,
     confirm_kwarg: str | None = "confirm",
@@ -304,15 +567,26 @@ def refuse_gate(
     arguments dict, defaults applied) to override the confirm-kwarg
     heuristic entirely for that shape.
 
-    Either way, a refused write is refused unless the caller explicitly
-    passes ``allow_stale_toolkit=True`` (an escape hatch that is recorded
-    on the return, never silent, mirroring ``allow_stale_tree``).
+    Either way, a stale write no longer hard-refuses by default (R4,
+    2026-09-24) — see the module docstring's "R4 — the fresh-subprocess
+    fallback" section. It re-runs FRESH in a brand-new
+    ``python mcp/noctusai/cli.py`` subprocess (``_run_via_fresh_subprocess``)
+    and returns THAT result (``executed_via: "fresh_subprocess"``), falling
+    back to the original hard refusal only when the subprocess path is
+    itself impossible. ``allow_stale_toolkit=True`` still bypasses the
+    refusal/subprocess decision entirely and runs IN-PROCESS (an escape
+    hatch that is recorded on the return, never silent, mirroring
+    ``allow_stale_tree``) — it is a DIFFERENT trust level than the
+    subprocess fallback, not a superset of it.
 
-    Adds a keyword-only ``allow_stale_toolkit: bool = False`` to every
-    decorated function WITHOUT changing its underlying signature (popped
-    out of ``kwargs`` before the real call) — the MCP-facing
-    ``register()`` wrapper in each decorated module declares the param
-    explicitly so it is a real, documented tool argument.
+    Adds keyword-only ``allow_stale_toolkit: bool = False`` and
+    ``subprocess_run: Callable | None = None`` (a test-only DI seam for the
+    R4 fallback's launcher — never MCP-exposed, same convention as
+    ``run=``/``git_runner=``/``executor=``) to every decorated function
+    WITHOUT changing its underlying signature (both popped out before the
+    real call) — the MCP-facing ``register()`` wrapper in each decorated
+    module declares ``allow_stale_toolkit`` explicitly so it is a real,
+    documented tool argument.
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -322,32 +596,47 @@ def refuse_gate(
             sig = None
 
         @functools.wraps(fn)
-        def wrapper(*args: Any, allow_stale_toolkit: bool = False, **kwargs: Any) -> Any:
+        def wrapper(*args: Any, allow_stale_toolkit: bool = False,
+                   subprocess_run: Callable[..., tuple[int, str, str]] | None = None,
+                   **kwargs: Any) -> Any:
+            # Best-effort FULL bound-arguments dict (defaults applied) —
+            # needed both for `write_predicate` AND (R4) as the kwargs the
+            # fresh-subprocess fallback serializes to CLI flags. Falls back
+            # to the raw kwargs on a bind failure (e.g. a positional-only
+            # caller shape this signature can't introspect) — `is_write`
+            # then degrades to "unknown ⇒ not a write" for `write_predicate`
+            # callers (same behaviour as before this refactor), and the
+            # fresh-subprocess mapping below just sees fewer kwargs.
+            bound_args: dict[str, Any] = dict(kwargs)
+            if sig is not None:
+                try:
+                    bound = sig.bind_partial(*args, **kwargs)
+                    bound.apply_defaults()
+                    bound_args = dict(bound.arguments)
+                except TypeError:
+                    pass
+
             is_write = False
             if write_predicate is not None:
-                bound_args: dict[str, Any] = dict(kwargs)
-                if sig is not None:
-                    try:
-                        bound = sig.bind_partial(*args, **kwargs)
-                        bound.apply_defaults()
-                        bound_args = dict(bound.arguments)
-                    except TypeError:
-                        pass
                 is_write = bool(write_predicate(bound_args))
             elif confirm_kwarg is not None:
-                if confirm_kwarg in kwargs:
-                    is_write = bool(kwargs[confirm_kwarg])
-                elif sig is not None:
-                    try:
-                        bound = sig.bind_partial(*args, **kwargs)
-                        is_write = bool(bound.arguments.get(confirm_kwarg, False))
-                    except TypeError:
-                        is_write = False
+                is_write = bool(bound_args.get(confirm_kwarg, kwargs.get(confirm_kwarg, False)))
 
             if is_write:
                 verdict = check(ttl_seconds=ttl_seconds)
                 if verdict["status"] == "stale" and not allow_stale_toolkit:
-                    return refusal_payload(tool_name, verdict, allow_stale_toolkit)
+                    # R4 (2026-09-24): a stale-but-confirm=True write no
+                    # longer hard-refuses by default — it re-runs FRESH, in
+                    # a brand-new subprocess, against the current on-disk
+                    # code. `allow_stale_toolkit=True` still means "I've
+                    # manually verified this IN-PROCESS behaviour is safe" —
+                    # it takes the OLD in-process path (below), never the
+                    # subprocess one; the two escape hatches serve different
+                    # trust levels and must not be conflated.
+                    return _run_via_fresh_subprocess(
+                        tool_name, bound_args, verdict, allow_stale_toolkit,
+                        subprocess_run=subprocess_run,
+                    )
                 result = fn(*args, **kwargs)
                 if isinstance(result, dict):
                     result["toolkit_stale"] = verdict["status"] == "stale"
@@ -386,12 +675,19 @@ def register(server) -> None:
             "own return automatically (toolkit_stale + a warnings entry). "
             "Refuse-vs-warn is drawn on 'can a stale version silently "
             "produce a plausible-looking wrong result', not 'does it touch "
-            "prod': migrate_product/release/deploy_image REFUSE their "
-            "confirm=True write, and task_branch REFUSES its confirm=True "
-            "start/integrate/cleanup (the incident tool itself — a stale "
-            "start once returned status='started' exit 0 while silently "
-            "skipping provisioning); action='status' and every confirm="
-            "False preview stay warn-only. This tool always does a fresh "
+            "prod': migrate_product/release/deploy_image's confirm=True "
+            "write, and task_branch's confirm=True start/integrate/cleanup "
+            "(the incident tool itself — a stale start once returned "
+            "status='started' exit 0 while silently skipping provisioning), "
+            "all take the R4 fresh-subprocess fallback (2026-09-24) when "
+            "stale — re-running the SAME call as `python mcp/noctusai/"
+            "cli.py --<tool-flag> ...` in a brand-new process instead of "
+            "hard-refusing, result carries executed_via='fresh_subprocess' "
+            "— and only fall through to the original hard REFUSE (status="
+            "'refused_stale_toolkit') when that fallback is itself "
+            "impossible (no CLI entry wired, launch failure, unparseable "
+            "output). action='status' and every confirm=False preview stay "
+            "warn-only, never subprocessed. This tool always does a fresh "
             "stat pass (never the "
             "TTL-cached answer other tools use internally for cheapness) — "
             "calling it IS asking 'right now'. KB § PATTERNS/common/"

@@ -245,18 +245,162 @@ def test_warn_posture_fresh_call_carries_no_warning(fresh_toolkit):
 
 
 # ---------------------------------------------------------------------------
-# REFUSE posture: migrate_product, release, deploy_image (confirm=True only),
-# and task_branch's MUTATING actions (start/integrate/cleanup, confirm=True)
+# R4 (release-no-freeze, 2026-09-24): a stale-and-confirm=True write no
+# longer hard-refuses — it re-runs FRESH, in a brand-new `python
+# mcp/noctusai/cli.py` subprocess, against the current on-disk code. Every
+# test below injects a `subprocess_run` DI seam (zero real subprocesses,
+# matching every OTHER "zero real X" seam already used in this file) and
+# deliberately prefixes the canned payload with realistic log noise, so a
+# passing test proves the TRAILING-JSON extraction, not a lucky clean-stdout
+# accident.
 # ---------------------------------------------------------------------------
 
 
-def test_migrate_product_refuses_the_write_when_stale(stale_toolkit):
-    r = MP.migrate_product("definitely-not-a-real-product-xyz", confirm=True)
+def _canned_subprocess(payload: dict, rc: int = 0, prefix_noise: bool = True):
+    """A fake `subprocess_run(cmd) -> (rc, stdout, stderr)` DI seam. Spawns
+    ZERO real processes. `prefix_noise=True` (default) prepends a realistic
+    INFO log line ahead of the JSON — `cli.py`'s own env_bootstrap logging
+    lands on stdout too, not only stderr (found wiring this very
+    fallback) — so a test using this exercises `_extract_trailing_json`,
+    never a naive whole-blob `json.loads`."""
+    import json as _json
+
+    text = _json.dumps(payload, indent=2)
+    if prefix_noise:
+        text = "2026-09-24 00:00:00 | INFO | noise emitted before the final JSON\n" + text
+    calls: list[list[str]] = []
+
+    def run(cmd: list[str]):
+        calls.append(cmd)
+        return rc, text, ""
+
+    run.calls = calls  # type: ignore[attr-defined]
+    return run
+
+
+def _forbidden_subprocess():
+    """A `subprocess_run` DI seam that must NEVER be invoked — records every
+    call (never raises: `_run_via_fresh_subprocess` catches broad launcher
+    exceptions, which would otherwise swallow a raised assertion into a
+    plain refusal payload instead of failing the test loudly). Assert
+    `spy.calls == []` after the call under test."""
+    calls: list[list[str]] = []
+
+    def spy(cmd: list[str]):
+        calls.append(cmd)
+        return 0, '{"status": "should_never_be_read", "exit_code": 0}', ""
+
+    spy.calls = calls  # type: ignore[attr-defined]
+    return spy
+
+
+def test_extract_trailing_json_skips_leading_log_noise():
+    noisy = "INFO some log line\nmore noise\n{\n  \"status\": \"ok\",\n  \"n\": 1\n}\n"
+    assert TF._extract_trailing_json(noisy) == {"status": "ok", "n": 1}
+
+
+def test_extract_trailing_json_returns_none_on_garbage():
+    assert TF._extract_trailing_json("not json at all, no brace line") is None
+    assert TF._extract_trailing_json("") is None
+
+
+def test_extract_trailing_json_picks_the_top_level_brace_not_a_nested_one():
+    """A payload with a list-of-dicts value (e.g. release's rider `commits`)
+    has NESTED `{` lines too — indented, never at column 0. A naive
+    `.strip() == "{"` match would wrongly grab the LAST (nested) one and
+    fail to parse; the real top-level brace must win."""
+    import json as _json
+
+    payload = {"status": "manifest", "commits": [{"sha": "abc", "project": "p"},
+                                                  {"sha": "def", "project": "q"}]}
+    noisy = "INFO noise\n" + _json.dumps(payload, indent=2) + "\n"
+    assert TF._extract_trailing_json(noisy) == payload
+
+
+def test_tool_cli_argv_mapping_for_every_wired_tool():
+    """The exact serialization each `refuse_gate` consumer's fresh-subprocess
+    fallback would invoke — pinned so a future param rename in one of these
+    4 tools is caught here, not silently mis-mapped at 2am."""
+    assert TF._tool_cli_argv("release", {"stage": "bless", "confirm": True}) == [
+        "--release", "bless", "--release-confirm",
+    ]
+    assert TF._tool_cli_argv("release", {
+        "stage": "promote", "confirm": True, "sha": "abc123", "mode": "ff",
+    }) == ["--release", "promote", "--release-confirm", "--release-sha", "abc123"]
+    assert TF._tool_cli_argv("migrate_product", {
+        "product": "widgets", "confirm": True, "sha": "deadbeef",
+    }) == ["--migrate-product", "widgets", "--migrate-product-confirm",
+           "--migrate-product-sha", "deadbeef"]
+    assert TF._tool_cli_argv("migrate_product", {"confirm": True}) is None  # no product
+    assert TF._tool_cli_argv("deploy_image", {
+        "product": "core", "confirm": True, "tag": "v2", "source": "local",
+    }) == ["--deploy-image", "core", "--deploy-image-confirm",
+           "--deploy-image-tag", "v2", "--deploy-image-source", "local"]
+    assert TF._tool_cli_argv("task_branch", {
+        "action": "start", "slug": "feat-x", "confirm": True, "wire_env": False,
+    }) == ["--task-branch", "start", "--task-branch-slug", "feat-x",
+           "--task-branch-confirm", "--task-branch-no-wire-env"]
+    assert TF._tool_cli_argv("no_such_tool", {}) is None
+
+
+def test_fresh_subprocess_hard_refuses_when_no_cli_entry_is_wired(stale_toolkit):
+    """Fail-closed for a FUTURE `refuse_gate` consumer that forgot to add a
+    `_tool_cli_argv` entry — never guesses at a CLI shape."""
+
+    @TF.refuse_gate("no_such_tool")
+    def _toy(confirm: bool = False):
+        return {"status": "should_never_run", "exit_code": 0}
+
+    r = _toy(confirm=True)
     assert r["status"] == "refused_stale_toolkit"
-    assert r["exit_code"] == 1
-    assert r["toolkit_stale"] is True
-    assert any("toolkit_stale" in w for w in r["warnings"])
-    assert "restart" in r["error"].lower() or "/mcp" in r["error"]
+    assert "no_such_tool" in r["error"] and "No fresh-subprocess CLI entry" in r["error"]
+
+
+def test_fresh_subprocess_hard_refuses_when_the_launch_itself_fails(stale_toolkit):
+    def boom(cmd):
+        raise OSError("no such file or directory")
+
+    r = MP.migrate_product("widgets", confirm=True, subprocess_run=boom)
+    assert r["status"] == "refused_stale_toolkit"
+    assert "launch failed" in r["error"]
+
+
+def test_fresh_subprocess_hard_refuses_on_unparseable_output(stale_toolkit):
+    fake_run_broken = lambda cmd: (1, "not json, no brace line, just noise", "some stderr")  # noqa: E731
+
+    r = MP.migrate_product("widgets", confirm=True, subprocess_run=fake_run_broken)
+    assert r["status"] == "refused_stale_toolkit"
+    assert "unparseable output" in r["error"]
+    assert "some stderr" in r["error"]
+
+
+def test_fresh_subprocess_hard_refuses_when_the_subprocess_itself_reports_stale(
+    stale_toolkit,
+):
+    """Defensive, expected-unreachable in practice: a process that just
+    launched should never itself report stale — if it somehow does, trust
+    that over 'fresh_subprocess' optimism rather than handing back a
+    stale-on-stale answer."""
+    fake_run = _canned_subprocess({"status": "applied", "exit_code": 0,
+                                   "toolkit_stale": True})
+    r = MP.migrate_product("widgets", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "refused_stale_toolkit"
+    assert "stale-on-stale" in r["error"]
+    assert r["fresh_subprocess_result"]["toolkit_stale"] is True
+
+
+def test_migrate_product_falls_back_to_fresh_subprocess_when_stale(stale_toolkit):
+    fake_run = _canned_subprocess({"status": "applied", "exit_code": 0,
+                                   "applied": ["001_seed.sql"]})
+    r = MP.migrate_product("widgets", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "applied" and r["applied"] == ["001_seed.sql"]
+    assert r["executed_via"] == "fresh_subprocess"
+    assert any("FRESH subprocess" in w for w in r["warnings"])
+    assert len(fake_run.calls) == 1
+    cmd = fake_run.calls[0]
+    assert cmd[0] == sys.executable and cmd[1].endswith("cli.py")
+    assert "--migrate-product" in cmd and "widgets" in cmd
+    assert "--migrate-product-confirm" in cmd
 
 
 def test_migrate_product_dry_run_is_only_warned_not_refused_when_stale(stale_toolkit):
@@ -287,77 +431,100 @@ def test_migrate_product_allow_stale_toolkit_reaches_the_real_function(
             ("status", "--porcelain"): "",
         }
     )
+    spy = _forbidden_subprocess()
     r = MP.migrate_product(
         "widgets", confirm=True, allow_stale_toolkit=True,
         executor=fake_executor, products_dir=products_dir,
         git_runner=fake_git, live_products_fn=lambda: ["widgets"],
+        subprocess_run=spy,
     )
     assert r["status"] != "refused_stale_toolkit"
     # The real function ran for real: it actually applied the migration via
-    # the injected fake executor (proof the wrapper truly proceeded).
+    # the injected fake executor (proof the wrapper truly proceeded IN this
+    # process), and the R4 subprocess fallback was never even attempted.
     assert r["applied"] == ["001_seed.sql"]
     assert r["toolkit_stale"] is True
     assert r["allow_stale_toolkit"] is True
+    assert "executed_via" not in r
+    assert spy.calls == []
 
 
-def test_release_refuses_the_write_when_stale(stale_toolkit):
-    r = REL.release(stage="promote", confirm=True)
-    assert r["status"] == "refused_stale_toolkit"
-    assert r["exit_code"] == 1
-    assert r["toolkit_stale"] is True
-    assert any("toolkit_stale" in w for w in r["warnings"])
+def test_release_falls_back_to_fresh_subprocess_when_stale(stale_toolkit):
+    fake_run = _canned_subprocess({"status": "promoted", "exit_code": 0})
+    r = REL.release(stage="promote", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "promoted"
+    assert r["executed_via"] == "fresh_subprocess"
+    cmd = fake_run.calls[0]
+    assert "--release" in cmd and "promote" in cmd
+    assert "--release-confirm" in cmd
 
 
-def test_deploy_image_refuses_the_write_when_stale(stale_toolkit):
-    r = DI.deploy_image("erp-imobiliario", confirm=True)
-    assert r["status"] == "refused_stale_toolkit"
-    assert r["exit_code"] == 1
-    assert r["toolkit_stale"] is True
-    assert any("toolkit_stale" in w for w in r["warnings"])
+def test_deploy_image_falls_back_to_fresh_subprocess_when_stale(stale_toolkit):
+    fake_run = _canned_subprocess({"status": "deployed", "exit_code": 0})
+    r = DI.deploy_image("erp-imobiliario", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "deployed"
+    assert r["executed_via"] == "fresh_subprocess"
+    cmd = fake_run.calls[0]
+    assert "--deploy-image" in cmd and "erp-imobiliario" in cmd
+    assert "--deploy-image-confirm" in cmd
 
 
 # task_branch is the INCIDENT tool: "mutates prod" was never the real line —
 # "can a stale version silently produce a plausible-looking wrong result?"
 # is. A stale `action=start confirm=True` once returned status='started',
 # exit 0, and a worktree that looked fine, while silently skipping the
-# .env/node_modules provisioning. Zero fakes needed below — the refusal
-# short-circuits before task_branch's body (and therefore any real git
-# call) ever runs.
-def test_task_branch_refuses_start_when_stale_and_confirmed(stale_toolkit):
-    r = T.task_branch(action="start", slug="feat-x", confirm=True)
-    assert r["status"] == "refused_stale_toolkit"
-    assert r["exit_code"] == 1
-    assert r["toolkit_stale"] is True
-    assert any("toolkit_stale" in w for w in r["warnings"])
+# .env/node_modules provisioning. Every test below still runs ZERO real git
+# (and, R4, ZERO real subprocesses) — the fresh-subprocess DI seam short-
+# circuits before task_branch's body (and therefore any real git call) runs.
+def test_task_branch_falls_back_to_fresh_subprocess_for_start_when_stale(stale_toolkit):
+    fake_run = _canned_subprocess({"status": "started", "exit_code": 0})
+    r = T.task_branch(action="start", slug="feat-x", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "started"
+    assert r["executed_via"] == "fresh_subprocess"
+    cmd = fake_run.calls[0]
+    assert "--task-branch" in cmd and "start" in cmd
+    assert "--task-branch-slug" in cmd and "feat-x" in cmd
+    assert "--task-branch-confirm" in cmd
 
 
-def test_task_branch_refuses_integrate_when_stale_and_confirmed(stale_toolkit):
-    r = T.task_branch(action="integrate", slug="feat-x", confirm=True)
-    assert r["status"] == "refused_stale_toolkit"
-    assert r["exit_code"] == 1
-    assert r["toolkit_stale"] is True
+def test_task_branch_falls_back_to_fresh_subprocess_for_integrate_when_stale(stale_toolkit):
+    fake_run = _canned_subprocess({"status": "integrated", "exit_code": 0})
+    r = T.task_branch(action="integrate", slug="feat-x", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "integrated"
+    assert r["executed_via"] == "fresh_subprocess"
 
 
-def test_task_branch_refuses_cleanup_when_stale_and_confirmed(stale_toolkit):
-    r = T.task_branch(action="cleanup", slug="feat-x", confirm=True)
-    assert r["status"] == "refused_stale_toolkit"
-    assert r["exit_code"] == 1
-    assert r["toolkit_stale"] is True
+def test_task_branch_falls_back_to_fresh_subprocess_for_cleanup_when_stale(stale_toolkit):
+    fake_run = _canned_subprocess({"status": "cleaned", "exit_code": 0})
+    r = T.task_branch(action="cleanup", slug="feat-x", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "cleaned"
+    assert r["executed_via"] == "fresh_subprocess"
 
 
-def test_task_branch_allow_stale_toolkit_reaches_the_real_function(stale_toolkit):
-    """The escape hatch must actually bypass the refusal — proven here by
-    the REAL function's own `requires slug` validation firing (it can only
-    fire if task_branch's body actually ran)."""
+def test_task_branch_allow_stale_toolkit_reaches_the_real_function_not_the_subprocess(
+    stale_toolkit,
+):
+    """The escape hatch must actually bypass the refusal AND the R4
+    fresh-subprocess fallback — proven by (a) the REAL function's own
+    `requires slug` validation firing (it can only fire if task_branch's
+    body actually ran in-process) and (b) the injected `subprocess_run`
+    NEVER being called."""
+    spy = _forbidden_subprocess()
     r = T.task_branch(action="start", confirm=True, allow_stale_toolkit=True,
-                       run=_minimal_fake_git())
+                       subprocess_run=spy, run=_minimal_fake_git())
     assert r["status"] != "refused_stale_toolkit"
+    assert "executed_via" not in r
     assert r["status"] == "error" and "requires slug" in r["error"]
+    assert spy.calls == []
 
 
 def test_refuse_posture_fresh_write_is_never_refused(fresh_toolkit):
-    """Positive control: a fresh toolkit never manufactures a refusal."""
-    r = REL.release(stage="promote", confirm=True)
-    assert r["status"] != "refused_stale_toolkit"
+    """Positive control: a fresh toolkit never manufactures a refusal, and
+    never even looks at the fresh-subprocess fallback."""
+    spy = _forbidden_subprocess()
+    r = REL.release(stage="promote", confirm=True, subprocess_run=spy)
+    assert r["status"] != "refused_stale_toolkit" and "executed_via" not in r
     assert T.task_branch(action="start", slug="feat-x", confirm=True,
+                          subprocess_run=spy,
                           run=_fake_git_with_refs({"origin/dev": "d0"}))["status"] != "refused_stale_toolkit"
+    assert spy.calls == []

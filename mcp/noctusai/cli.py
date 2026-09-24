@@ -296,8 +296,40 @@ def main():
     parser.add_argument("--deploy-image", metavar="PRODUCT", help="Atomic product-image redeploy with rollback (§2a C2): snapshot :previous → compose pull → up -d → health-probe → roll back on health failure. DRY-RUN unless --deploy-image-confirm; never emits rmi/prune/down. MCP: noctus.dev.deploy_image.")
     parser.add_argument("--deploy-image-confirm", action="store_true", help="With --deploy-image: actually perform the image swap (a production action). Without it, plan/dry-run only.")
     parser.add_argument("--deploy-image-source", default="pull", choices=["pull", "local"], help="With --deploy-image: 'pull' (GHCR model, default) compose-pulls the image; 'local' (build-on-VPS model) swaps an already-built local tag.")
+    parser.add_argument("--deploy-image-tag", default="latest", help="With --deploy-image: the image tag to swap to (default 'latest').")
+    parser.add_argument("--deploy-image-skip-ancestry-check", action="store_true", help="With --deploy-image: bypass the PROD-PIN ancestry guard (tag='latest'+source='pull' must descend from origin/prod) — almost always wrong.")
+    parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
+    parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal. Set by the R4 fresh-subprocess fallback itself (a freshly-launched CLI process is never stale) — see toolkit_freshness.refuse_gate.")
     parser.add_argument("--deploy-verify", action="store_true", help="The INDEPENDENT prod revision-drift witness — read-only, ZERO dependency on --deploy-image having run. Roster is CATALOG-DRIVEN (ativo=true AND deploy_scope='live' + core, not the compose file) — or --deploy-verify-products to check named slugs (incl. inactive ones) deliberately. Per actionable product: running container revision vs the freshly-resolved prod branch tip, fed through the build-scope diff predicate (a stale-but-untouched revision is expected; only a diff touching the product's own build inputs is drift) + health + startup_hook_error. A catalog-live product with no running container is its own 'missing' finding; non-actionable products are reported (never dropped) in skipped_inactive. Exit 0 only when status='verified'. MCP: noctus.dev.deploy_verify.")
     parser.add_argument("--deploy-verify-products", default=None, help="With --deploy-verify: comma-separated product slugs to check deliberately (bypasses the catalog — every named slug is treated as actionable, including an inactive one). Default: the catalog-derived live roster.")
+    parser.add_argument("--release", metavar="STAGE", choices=["status", "manifest", "bless", "promote", "backmerge"], help="The dev→main (bless) / main→prod (promote) release gates. DRY-RUN unless --release-confirm. MCP: noctus.dev.release. Also the R4 (release-no-freeze) fresh-subprocess target: a stale primary MCP server re-execs a confirm=True release call here, against the current on-disk code.")
+    parser.add_argument("--release-confirm", action="store_true", help="With --release: actually push (a production action). Without it, plan/dry-run only.")
+    parser.add_argument("--release-sha", default=None, help="With --release stage=promote: pin to an earlier-blessed main sha instead of main's current tip. REFUSED on stage=bless (bless always picks its own target).")
+    parser.add_argument("--release-mode", default="ff", choices=["ff", "cut", "refuse"], help="With --release stage=bless: 'ff' (default) fast-forwards to the newest qualifying-green descendant; 'cut' builds a release/<stamp> of approved commits only; 'refuse' blocks on any unapproved work.")
+    parser.add_argument("--release-branch", default=None, help="With --release stage=bless mode=cut (2nd call): the release/<stamp> branch to bless once its own CI is green.")
+    parser.add_argument("--release-allow-stale-toolkit", action="store_true", help="With --release: bypass the toolkit-staleness refusal. Set by the R4 fresh-subprocess fallback itself — see toolkit_freshness.refuse_gate.")
+    parser.add_argument("--migrate-product", metavar="PRODUCT", help="Apply a product's SQL migrations to the shared Supabase project. DRY-RUN unless --migrate-product-confirm. MCP: noctus.dev.migrate_product. Also an R4 fresh-subprocess target.")
+    parser.add_argument("--migrate-product-confirm", action="store_true", help="With --migrate-product: actually apply pending migrations (a production action). Without it, dry-run only.")
+    parser.add_argument("--migrate-product-target", default=None, help="With --migrate-product: filename filter — apply/list only this one file.")
+    parser.add_argument("--migrate-product-sha", default=None, help="With --migrate-product: read migration files via `git show <sha>:<path>` instead of the working tree (R3, release-no-freeze) — the exact set that existed at that commit. Skips the stale-tree refusal (moot for a pinned historical commit).")
+    parser.add_argument("--migrate-product-project-ref", default="nyplttplcoyiiqjrvtiw", help="With --migrate-product: the Supabase project reference.")
+    parser.add_argument("--migrate-product-schema", default=None, help="With --migrate-product: override the auto-derived schema.")
+    parser.add_argument("--migrate-product-worktree-path", default=None, help="With --migrate-product: pins both which tree the stale-tree check inspects and where migrations are read from (same semantics as --predeploy-check's worktree_path).")
+    parser.add_argument("--migrate-product-allow-stale-tree", action="store_true", help="With --migrate-product: bypass the stale-tree refusal — almost always wrong.")
+    parser.add_argument("--migrate-product-allow-inactive", action="store_true", help="With --migrate-product: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
+    parser.add_argument("--migrate-product-allow-stale-toolkit", action="store_true", help="With --migrate-product: bypass the toolkit-staleness refusal. Set by the R4 fresh-subprocess fallback itself — see toolkit_freshness.refuse_gate.")
+    parser.add_argument("--task-branch", metavar="ACTION", choices=["status", "start", "integrate", "cleanup"], help="The self-branching-mode per-task git lifecycle. DRY-RUN unless --task-branch-confirm. MCP: noctus.dev.task_branch. Also an R4 fresh-subprocess target for its mutating (start/integrate/cleanup, confirm=True) actions.")
+    parser.add_argument("--task-branch-slug", default=None, help="With --task-branch: the feat/<slug> worktree/branch name.")
+    parser.add_argument("--task-branch-confirm", action="store_true", help="With --task-branch: actually perform the git lifecycle step (a write). Without it, plan/dry-run only.")
+    parser.add_argument("--task-branch-project", default=None, help="With --task-branch action=start: the branch-tree pointer's project (default: inherited from parent's pointer).")
+    parser.add_argument("--task-branch-brief", default=None, help="With --task-branch action=start: the branch-tree pointer's brief text.")
+    parser.add_argument("--task-branch-paths", default=None, help="With --task-branch action=start: comma-separated collision-zone paths for the branch-tree pointer.")
+    parser.add_argument("--task-branch-agent", default=None, help="With --task-branch action=start: the branch-tree pointer's agent.")
+    parser.add_argument("--task-branch-role", default=None, help="With --task-branch action=start: the branch-tree pointer's role.")
+    parser.add_argument("--task-branch-parent", default=None, help="With --task-branch action=start: the branch-tree pointer's parent branch.")
+    parser.add_argument("--task-branch-no-wire-env", action="store_true", help="With --task-branch action=start: skip the §5a verification-env auto-wiring (default is to wire it).")
+    parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
+    parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action. Set by the R4 fresh-subprocess fallback itself — see toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--component-bundle", metavar="NAME", help="Return the structured organ bundle for a seed-lib frontend component (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched). KB § PATTERNS/architect/component-bundle-tool.md")
     parser.add_argument("--component-list", action="store_true", help="List all seed organs (reusable components) with derived validation status. Sort with --sort (consumers_desc|name|last_touched); filter with --filter-status (validated|emerging|shelfware|unknown, comma-separated). MCP: noctus.dev.component_list. KB § PATTERNS/architect/component-list-and-validation.md.")
@@ -2706,8 +2738,12 @@ def main():
         r = deploy_image(
             args.deploy_image,
             ssh_host=args.deploy_host,
+            tag=getattr(args, "deploy_image_tag", "latest"),
             source=getattr(args, "deploy_image_source", "pull"),
             confirm=bool(getattr(args, "deploy_image_confirm", False)),
+            skip_ancestry_check=bool(getattr(args, "deploy_image_skip_ancestry_check", False)),
+            allow_inactive=bool(getattr(args, "deploy_image_allow_inactive", False)),
+            allow_stale_toolkit=bool(getattr(args, "deploy_image_allow_stale_toolkit", False)),
         )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
@@ -2717,6 +2753,63 @@ def main():
         raw = getattr(args, "deploy_verify_products", None)
         products = [p.strip() for p in raw.split(",") if p.strip()] if raw else None
         r = deploy_verify(products=products, ssh_host=args.deploy_host)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    # R4 (release-no-freeze, 2026-09-24): the fresh-subprocess re-exec target
+    # for a stale primary MCP server's confirm=True gated write — see
+    # `tools.noctus.dev.toolkit_freshness.refuse_gate`'s subprocess fallback.
+    # Each of these three flags is ALSO a real, documented standalone CLI
+    # entry point (the pattern every other flag in this file already follows)
+    # — the fresh-subprocess mechanism just happens to be their newest caller.
+    elif args.release:
+        from tools.noctus.dev.release import release
+        r = release(
+            stage=args.release,
+            confirm=bool(getattr(args, "release_confirm", False)),
+            sha=getattr(args, "release_sha", None),
+            mode=getattr(args, "release_mode", "ff") or "ff",
+            release_branch=getattr(args, "release_branch", None),
+            allow_stale_toolkit=bool(getattr(args, "release_allow_stale_toolkit", False)),
+        )
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.migrate_product:
+        from tools.noctus.dev.migrate_product import migrate_product
+        r = migrate_product(
+            args.migrate_product,
+            confirm=bool(getattr(args, "migrate_product_confirm", False)),
+            target=getattr(args, "migrate_product_target", None),
+            sha=getattr(args, "migrate_product_sha", None),
+            project_ref=getattr(args, "migrate_product_project_ref", "nyplttplcoyiiqjrvtiw"),
+            schema=getattr(args, "migrate_product_schema", None),
+            worktree_path=getattr(args, "migrate_product_worktree_path", None),
+            allow_stale_tree=bool(getattr(args, "migrate_product_allow_stale_tree", False)),
+            allow_inactive=bool(getattr(args, "migrate_product_allow_inactive", False)),
+            allow_stale_toolkit=bool(getattr(args, "migrate_product_allow_stale_toolkit", False)),
+        )
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.task_branch:
+        from tools.noctus.dev.task_branch import task_branch
+        raw_paths = getattr(args, "task_branch_paths", None)
+        paths = [p.strip() for p in raw_paths.split(",") if p.strip()] if raw_paths else None
+        r = task_branch(
+            action=args.task_branch,
+            slug=getattr(args, "task_branch_slug", None),
+            confirm=bool(getattr(args, "task_branch_confirm", False)),
+            wire_env=not bool(getattr(args, "task_branch_no_wire_env", False)),
+            verbose=bool(getattr(args, "task_branch_verbose", False)),
+            allow_stale_toolkit=bool(getattr(args, "task_branch_allow_stale_toolkit", False)),
+            project=getattr(args, "task_branch_project", None),
+            brief=getattr(args, "task_branch_brief", None),
+            paths=paths,
+            agent=getattr(args, "task_branch_agent", None),
+            role=getattr(args, "task_branch_role", None),
+            parent=getattr(args, "task_branch_parent", None),
+        )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
 
