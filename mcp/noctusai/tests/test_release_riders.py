@@ -179,7 +179,33 @@ def test_legacy_attribution_pointer_commit_subject_patch_id_else_unattributed(re
     assert any("unattributed" in r for r in out["unapproved_riders"])
 
 
-# ── bless: FF when clean, CUT otherwise ──────────────────────────────────────
+# ── bless: default mode='ff' ships the whole dev tip (owner decision 2026-09-24:
+#    the ask is the permission); mode='cut'/'refuse' are explicit opt-ins ─────
+def test_default_bless_fast_forwards_with_unapproved_riders(repo):
+    """No ship-consent at all: the default bless still ships the whole dev tip."""
+    a1, d, u, a2, pointers = _alpha_scene(repo)
+    out = repo.release(stage="bless", confirm=True, pointer_rows=pointers, consent_rows=[])
+    assert out["status"] == "blessed", out
+    assert repo.ref("main") == repo.ref("dev")
+    assert out["riders"]["all_approved"] is False and out["riders"]["unapproved"]
+
+
+def test_default_bless_still_requires_ci_green(repo):
+    repo.commit("a.py", "a = 1\n", "feat(a): one", "feat/a")
+    main0 = repo.ref("main")
+    repo.ci = []
+    out = repo.release(stage="bless", confirm=True)
+    assert out["status"] == "blocked" and out["ci"]["verdict"] == "missing", out
+    assert repo.ref("main") == main0
+
+
+def test_default_bless_refuses_a_diverged_main_until_backmerge(repo):
+    a1, d, u, a2, pointers = _alpha_scene(repo)
+    kw = dict(pointer_rows=pointers, consent_rows=[_consent("alpha", a2)])
+    repo.release(stage="bless", mode="cut", confirm=True, **kw)
+    repo.release(stage="bless", release_branch="release/20260922-1405", confirm=True, **kw)
+    out = repo.release(stage="bless", confirm=True, **kw)
+    assert out["status"] == "blocked" and "backmerge" in out["reason"], out
 def test_bless_all_approved_keeps_the_fast_forward(repo):
     a1 = repo.commit("a.py", "a = 1\n", "feat(a): one", "feat/a")
     repo.commit("KNOWLEDGE-BASE/x.md", "doc\n", "docs: x")
@@ -193,12 +219,12 @@ def test_bless_with_unapproved_rider_cuts_release_of_approved_only(repo):
     main0 = repo.ref("main")
     kw = dict(pointer_rows=pointers, consent_rows=[_consent("alpha", a2)])
 
-    plan = repo.release(stage="bless", **kw)
+    plan = repo.release(stage="bless", mode="cut", **kw)
     assert plan["status"] == "planned_cut" and plan["release_branch"] == "release/20260922-1405"
     assert [p["from"] for p in plan["picked"]] == [a1, d, a2]
     assert repo.ref("main") == main0
 
-    cut = repo.release(stage="bless", confirm=True, **kw)
+    cut = repo.release(stage="bless", mode="cut", confirm=True, **kw)
     assert cut["status"] == "cut_pushed", cut
     rel = repo.ref("release/20260922-1405")
     files = _files_at(repo, rel)
@@ -223,7 +249,7 @@ def test_bless_with_unapproved_rider_cuts_release_of_approved_only(repo):
 def test_bless_refuses_when_ci_not_green_on_release_sha(repo):
     a1, d, u, a2, pointers = _alpha_scene(repo)
     kw = dict(pointer_rows=pointers, consent_rows=[_consent("alpha", a2)])
-    repo.release(stage="bless", confirm=True, **kw)
+    repo.release(stage="bless", mode="cut", confirm=True, **kw)
     repo.ci = []
     out = repo.release(stage="bless", release_branch="release/20260922-1405", confirm=True, **kw)
     assert out["status"] == "blocked" and out["ci"]["verdict"] == "missing"
@@ -232,7 +258,7 @@ def test_bless_refuses_when_ci_not_green_on_release_sha(repo):
 def test_release_branch_with_foreign_commit_is_refused(repo):
     a1, d, u, a2, pointers = _alpha_scene(repo)
     kw = dict(pointer_rows=pointers, consent_rows=[_consent("alpha", a2)])
-    repo.release(stage="bless", confirm=True, **kw)
+    repo.release(stage="bless", mode="cut", confirm=True, **kw)
     _sh(repo.author, "fetch", "-q", "origin")
     _sh(repo.author, "checkout", "-q", "-b", "sneak", "origin/release/20260922-1405")
     (repo.author / "evil.py").write_text("1\n")
@@ -254,7 +280,7 @@ def test_mode_refuse_blocks_without_writing(repo):
 def test_cut_refuses_approved_commit_that_depends_on_unapproved_rider(repo):
     u = repo.commit("shared.py", "x = 1\n", "feat(u): change shared", "feat/u")
     a = repo.commit("shared.py", "x = 2\n", "feat(a): builds on shared", "feat/a")
-    out = repo.release(stage="bless", confirm=True, consent_rows=[_consent("feat/a", a)])
+    out = repo.release(stage="bless", mode="cut", confirm=True, consent_rows=[_consent("feat/a", a)])
     assert out["status"] == "blocked"
     assert out["dependencies"][0]["commit"] == a and out["dependencies"][0]["depends_on"] == [u]
     assert "shared.py" in out["dependencies"][0]["files"]
@@ -267,14 +293,14 @@ def test_docs_commit_depending_on_rider_is_deferred_not_refused(repo):
     repo.commit("u.py", "u\n", "feat(u): wip + its doc", "feat/u")  # u.py AND u.md
     repo.commit("KNOWLEDGE-BASE/u.md", "u doc v2\n", "docs: touch u doc")
     a = repo.commit("a.py", "a\n", "feat(a): one", "feat/a")
-    out = repo.release(stage="bless", consent_rows=[_consent("feat/a", a)])
+    out = repo.release(stage="bless", mode="cut", consent_rows=[_consent("feat/a", a)])
     assert out["status"] == "planned_cut", out
     assert len(out["deferred"]) == 1 and out["ship"][-1] == a
 
 
 def test_nothing_approved_blocks(repo):
     repo.commit("u.py", "u\n", "feat(u): wip", "feat/u")
-    out = repo.release(stage="bless", confirm=True)
+    out = repo.release(stage="bless", mode="cut", confirm=True)
     assert out["status"] == "blocked" and "nothing approved" in out["reason"]
 
 
@@ -282,14 +308,14 @@ def test_nothing_approved_blocks(repo):
 def test_after_cut_shipped_work_is_on_main_then_backmerge_restores_ff(repo):
     a1, d, u, a2, pointers = _alpha_scene(repo)
     kw = dict(pointer_rows=pointers, consent_rows=[_consent("alpha", a2)])
-    repo.release(stage="bless", confirm=True, **kw)
+    repo.release(stage="bless", mode="cut", confirm=True, **kw)
     repo.release(stage="bless", release_branch="release/20260922-1405", confirm=True, **kw)
 
     man = repo.release(stage="manifest", **kw)
     states = {c["sha"]: c["state"] for c in man["commits"]}
     assert states[a1] == states[a2] == states[d] == "on_main"
     assert states[u] == "unapproved" and man["ff"] is False
-    again = repo.release(stage="bless", **kw)
+    again = repo.release(stage="bless", mode="cut", **kw)
     assert again["status"] == "blocked" and "nothing approved" in again["reason"]
 
     plan = repo.release(stage="backmerge")
@@ -299,7 +325,7 @@ def test_after_cut_shipped_work_is_on_main_then_backmerge_restores_ff(repo):
     assert _sh(repo.origin, "merge-base", "--is-ancestor", "main", "dev") == ""
     assert repo.release(stage="backmerge")["status"] == "up_to_date"
 
-    # dev ⊇ main again: approving the rider's project restores the plain FF bless.
+    # dev ⊇ main again: the plain FF bless works (default mode='ff').
     new_dev = repo.ref("dev")
     ok = repo.release(stage="bless", confirm=True, pointer_rows=pointers,
                       consent_rows=[_consent("alpha", a2), _consent("feat/u", new_dev)])
