@@ -40,10 +40,12 @@
 --    re-save would reorder). Keyed to `atendimento_contratos.id` — a
 --    contract's witness block is a property of the CONTRACT, not the
 --    negociação (an atendimento can carry more than one contract, migration
---    106's own header). `ON DELETE CASCADE` both ways: a deleted contract
---    drops its selection with it, and deleting a registry witness (rare —
---    the settings page does not check usage before deleting) never leaves
---    a dangling FK.
+--    106's own header). A deleted CONTRACT drops its selection with it
+--    (`ON DELETE CASCADE`). A registry witness is NEVER hard-deleted
+--    (owner directive, 2026-09-24: "don't delete anything related/linked"):
+--    the settings DELETE soft-deletes it via `org_testemunhas.excluida_em`,
+--    so every contract that already selected it keeps it. The witness FK is
+--    `ON DELETE RESTRICT` to hold that by construction.
 -- 3. A `status_pagina` row for the new "Testemunhas" settings page,
 --    same pattern migration 100's own nav-gating footer uses.
 --
@@ -61,6 +63,15 @@ DROP FUNCTION IF EXISTS social_wiring.enforce_max_org_testemunhas();
 
 ALTER TABLE social_wiring.org_testemunhas
     ADD COLUMN IF NOT EXISTS celular TEXT;
+
+ALTER TABLE social_wiring.org_testemunhas
+    ADD COLUMN IF NOT EXISTS excluida_em TIMESTAMPTZ;
+
+COMMENT ON COLUMN social_wiring.org_testemunhas.excluida_em IS
+    'Migration 168 — soft delete. Set by the settings DELETE; the row leaves '
+    'the registry list and can no longer be NEWLY selected, but every '
+    'contract that already selected it keeps it (owner directive '
+    '2026-09-24: deleting a witness must not remove anything linked to it).';
 
 COMMENT ON TABLE social_wiring.org_testemunhas IS
     'Per-org REGISTRY of signature witnesses (migration 168 dropped the '
@@ -96,7 +107,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.contrato_testemunhas (
     contrato_id   UUID NOT NULL
         REFERENCES social_wiring.atendimento_contratos (id) ON DELETE CASCADE,
     testemunha_id UUID NOT NULL
-        REFERENCES social_wiring.org_testemunhas (id) ON DELETE CASCADE,
+        REFERENCES social_wiring.org_testemunhas (id) ON DELETE RESTRICT,
 
     -- Print/selection order — 1-based, deliberate, never inferred from
     -- created_at (a re-save via `definir` always rewrites the whole set).

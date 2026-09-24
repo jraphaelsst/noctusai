@@ -56,6 +56,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
 )
 from app.modules.card_hub.contrato_gerador.numeracao import num2
 from app.modules.card_hub.contrato_gerador.politica import (
+    MIN_TESTEMUNHAS,
     ONUS_COM_SALDO,
     ONUS_SUPORTADOS,
     PAPEL_ANTIGO_PROPRIETARIO,
@@ -1558,13 +1559,16 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     ):
         if not valor:
             av.falta(f"imobiliaria.{campo}", rotulo, "imobiliaria")
-    # [Migration 168, owner decision] "Duas testemunhas" was migration 108's
-    # fixed pair; the registry is now open-ended and a contract SELECTS
-    # however many it needs (`contrato_testemunhas`, ≥1) — the carregador
-    # already only ever loads the SELECTED set, so this is simply "at least
-    # one was chosen", never a fixed count.
-    if not d.testemunhas:
-        av.falta("imobiliaria.testemunhas", "Ao menos uma testemunha selecionada", "imobiliaria")
+    # [Migration 168, owner decision 2026-09-24] The registry is open-ended
+    # and a contract SELECTS 2 to 5 witnesses (`contrato_testemunhas`) — the
+    # carregador only ever loads the SELECTED set. Fewer than 2 is a gap, not
+    # a refusal: the operator may still be picking.
+    if len(d.testemunhas) < MIN_TESTEMUNHAS:
+        av.falta(
+            "imobiliaria.testemunhas",
+            f"Ao menos {MIN_TESTEMUNHAS} testemunhas selecionadas",
+            "imobiliaria",
+        )
     for i, t in enumerate(d.testemunhas, start=1):
         if not t.nome:
             av.falta(f"imobiliaria.testemunha.{i}.nome", f"Nome da testemunha {i}", "imobiliaria")

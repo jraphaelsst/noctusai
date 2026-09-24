@@ -1653,6 +1653,7 @@ def update_dados_imobiliaria(
 # (`assinatura_service.enviar`).
 
 _TESTEMUNHAS_TABLE = "org_testemunhas"
+_CONTRATO_TESTEMUNHAS_TABLE = "contrato_testemunhas"
 _TESTEMUNHAS_CAMPOS: tuple[str, ...] = ("nome", "cpf", "rg", "email", "celular")
 
 
@@ -1717,10 +1718,32 @@ def list_testemunhas(
         .table(_TESTEMUNHAS_TABLE)
         .select("*")
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .order("created_at")
         .execute()
     ).data or []
-    return {"items": [_testemunha_out(r) for r in rows], "total": len(rows)}
+    # How many contracts select each witness — surfaced as an INFORMATIVE
+    # note in the delete confirmation (owner directive, 2026-09-24). It never
+    # blocks the delete: a delete is a soft delete that leaves those
+    # contracts' selections untouched.
+    selecoes = (
+        supabase
+        .table(_CONTRATO_TESTEMUNHAS_TABLE)
+        .select("testemunha_id, contrato_id")
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    contratos_por_testemunha: dict[str, set[str]] = {}
+    for s in selecoes:
+        contratos_por_testemunha.setdefault(str(s["testemunha_id"]), set()).add(
+            str(s["contrato_id"])
+        )
+    items = []
+    for r in rows:
+        saida = _testemunha_out(r)
+        saida["contratos_em_uso"] = len(contratos_por_testemunha.get(str(r["id"]), ()))
+        items.append(saida)
+    return {"items": items, "total": len(items)}
 
 
 @router.post("/imobiliaria/testemunhas", status_code=201)
@@ -1779,6 +1802,7 @@ def update_testemunha(
         .update(patch)
         .eq("id", str(testemunha_id))
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .execute()
     )
     if not response.data:
@@ -1799,14 +1823,24 @@ def delete_testemunha(
     auth: tuple = Depends(get_current_user_org),
     supabase: Any = Depends(get_social_wiring_client),
 ) -> None:
-    _user, _token, raw_org = auth
+    """SOFT delete (owner directive, 2026-09-24: "don't delete anything
+    related/attached/linked"). The witness leaves the registry and can no
+    longer be newly selected, but every contract that already selected it
+    keeps it — `contrato_testemunhas` is never touched, and its FK to this
+    table is `ON DELETE RESTRICT` (migration 168) so a hard delete could not
+    silently cascade into them either."""
+    user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
+    marca = {"excluida_em": datetime.now(timezone.utc).isoformat()}
+    if getattr(user, "id", None):
+        marca["updated_por"] = str(user.id)
     response = (
         supabase
         .table(_TESTEMUNHAS_TABLE)
-        .delete()
+        .update(marca)
         .eq("id", str(testemunha_id))
         .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
         .execute()
     )
     if not response.data:

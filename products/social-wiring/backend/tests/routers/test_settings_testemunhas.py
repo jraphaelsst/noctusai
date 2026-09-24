@@ -173,6 +173,76 @@ class TestUpdateAndDelete:
         ).json()["total"] == 0
 
 
+class TestSoftDelete:
+    """Owner directive (2026-09-24): deleting a witness must not remove
+    anything linked to it. DELETE is a soft delete (`excluida_em`) — the row
+    survives, the registry list omits it, and every `contrato_testemunhas`
+    selection that points at it is left untouched. `contratos_em_uso` is an
+    informative count only; it never blocks the delete."""
+
+    def test_delete_keeps_the_row_and_every_contract_selection(
+        self, client, testemunhas_scoped
+    ):
+        um = client.post(
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "Um", "cpf": CPF_1}
+        ).json()
+        selecao = {
+            "id": "sel-1", "org_id": ORG_ID, "contrato_id": "contrato-1",
+            "testemunha_id": um["id"], "ordem": 1,
+        }
+        testemunhas_scoped.set_table_data("contrato_testemunhas", [selecao])
+
+        assert client.delete(
+            f"/api/settings/imobiliaria/testemunhas/{um['id']}"
+        ).status_code == 204
+
+        linhas = testemunhas_scoped.table("org_testemunhas").select("*").execute().data
+        assert [r["id"] for r in linhas] == [um["id"]]
+        assert linhas[0]["excluida_em"]
+        selecoes = (
+            testemunhas_scoped.table("contrato_testemunhas").select("*").execute().data
+        )
+        assert [r["id"] for r in selecoes] == ["sel-1"]
+
+    def test_a_deleted_witness_cannot_be_deleted_or_edited_again(
+        self, client, testemunhas_scoped
+    ):
+        um = client.post(
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "Um", "cpf": CPF_1}
+        ).json()
+        client.delete(f"/api/settings/imobiliaria/testemunhas/{um['id']}")
+
+        assert client.delete(
+            f"/api/settings/imobiliaria/testemunhas/{um['id']}"
+        ).status_code == 404
+        assert client.patch(
+            f"/api/settings/imobiliaria/testemunhas/{um['id']}", json={"nome": "X"}
+        ).status_code == 404
+
+    def test_list_reports_how_many_contracts_use_each_witness(
+        self, client, testemunhas_scoped
+    ):
+        um = client.post(
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "Um", "cpf": CPF_1}
+        ).json()
+        dois = client.post(
+            "/api/settings/imobiliaria/testemunhas", json={"nome": "Dois", "cpf": CPF_2}
+        ).json()
+        testemunhas_scoped.set_table_data(
+            "contrato_testemunhas",
+            [
+                {"id": "s1", "org_id": ORG_ID, "contrato_id": "c1", "testemunha_id": um["id"], "ordem": 1},
+                {"id": "s2", "org_id": ORG_ID, "contrato_id": "c2", "testemunha_id": um["id"], "ordem": 1},
+            ],
+        )
+
+        itens = {
+            i["nome"]: i["contratos_em_uso"]
+            for i in client.get("/api/settings/imobiliaria/testemunhas").json()["items"]
+        }
+        assert itens == {"Um": 2, "Dois": 0}
+
+
 class TestCpfPendenteLegacyRows:
     """[Migration 168] The 2 rows migration 108 shipped (RG + e-mail, no
     CPF) are KEPT — this exercises that shape directly, without going

@@ -27,6 +27,7 @@ from uuid import UUID, uuid4
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 
 from app.modules.card_hub import contratos_service as contratos_svc
+from app.modules.card_hub.contrato_gerador.politica import MAX_TESTEMUNHAS
 from app.services import table_reads
 
 TABLE = "contrato_testemunhas"
@@ -60,6 +61,7 @@ def _testemunha_saida(row: dict) -> dict:
         "cpf": row.get("cpf"),
         "email": row.get("email"),
         "celular": row.get("celular"),
+        "excluida": bool(row.get("excluida_em")),
     }
 
 
@@ -69,11 +71,12 @@ def listar(client: Any, org_id: UUID, atendimento_id: UUID, contrato_id: UUID) -
     selection is reflected here immediately, same live-join posture the
     generator's own loader takes reading `org_testemunhas`).
 
-    A selection row whose registry entry vanished (a deleted testemunha —
-    the settings page does not check usage before deleting) is silently
-    excluded rather than surfaced as a broken item: `contrato_id` FK is
-    `ON DELETE CASCADE` on THAT edge already for the common case, this only
-    guards a read racing a delete."""
+    A soft-deleted witness (`excluida_em`) is STILL listed — deleting it from
+    the registry must not remove it from contracts that already selected it
+    (owner directive, 2026-09-24) — and carries `excluida: true` so the UI can
+    say so. A registry row can no longer vanish (the FK is `ON DELETE
+    RESTRICT`, migration 168); the `None` guard below only covers a row
+    outside this org, which `exigir_contrato` already makes unreachable."""
     contratos_svc.exigir_contrato(client, org_id, atendimento_id, contrato_id)
     registro = _registro_por_id(client, org_id)
     linhas = sorted(
@@ -115,12 +118,35 @@ def definir(
     ids = [str(i) for i in testemunha_ids]
     if len(ids) != len(set(ids)):
         raise TestemunhaSelecionadaInvalida("A mesma testemunha foi selecionada mais de uma vez.")
+    if len(ids) > MAX_TESTEMUNHAS:
+        raise TestemunhaSelecionadaInvalida(
+            f"Um contrato tem no máximo {MAX_TESTEMUNHAS} testemunhas."
+        )
 
     registro = _registro_por_id(client, org_id)
+    # A soft-deleted witness (settings DELETE → `excluida_em`) stays on every
+    # contract that ALREADY selected it — re-saving that contract must keep
+    # it — but it cannot be newly added to one.
+    ja_selecionadas = {
+        str(r["testemunha_id"])
+        for r in (
+            _t(client, TABLE)
+            .select("testemunha_id")
+            .eq("org_id", str(org_id))
+            .eq("contrato_id", str(contrato_id))
+            .execute()
+        ).data
+        or []
+    }
     for tid in ids:
         testemunha = registro.get(tid)
         if testemunha is None:
             raise NotFoundError(REGISTRO_TABLE, tid)
+        if testemunha.get("excluida_em") and tid not in ja_selecionadas:
+            raise TestemunhaSelecionadaInvalida(
+                f"{testemunha.get('nome') or 'Testemunha'} foi removida do cadastro "
+                "e não pode ser adicionada a um novo contrato."
+            )
         if not testemunha.get("cpf"):
             raise TestemunhaSelecionadaInvalida(
                 f"{testemunha.get('nome') or 'Testemunha'}: CPF pendente — cadastre "

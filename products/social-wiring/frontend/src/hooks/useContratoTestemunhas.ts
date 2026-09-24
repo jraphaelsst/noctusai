@@ -17,6 +17,10 @@ export interface TestemunhaSelecionada {
   cpf: string | null;
   email: string | null;
   celular: string | null;
+  /** Soft-deleted from the registry after this contract selected it. It
+   *  stays on the contract (owner directive, 2026-09-24) but can't be newly
+   *  picked for another one. */
+  excluida: boolean;
 }
 
 export interface ContratoTestemunhaItem {

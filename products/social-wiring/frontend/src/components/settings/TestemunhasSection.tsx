@@ -312,9 +312,19 @@ export function TestemunhasSection() {
           <AlertDialogHeader>
             <AlertDialogTitle>Remover testemunha</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja remover {removendo?.nome}? Contratos que já
-              a selecionaram deixam de listá-la. Esta ação não pode ser
-              desfeita.
+              Tem certeza que deseja remover {removendo?.nome} do cadastro? Ela
+              deixa de aparecer para novos contratos.
+              {removendo && removendo.contratos_em_uso > 0 && (
+                <span
+                  className="mt-2 block font-medium text-amber-700"
+                  data-testid="testemunha-remover-em-uso"
+                >
+                  Atenção: {removendo.contratos_em_uso === 1
+                    ? "1 contrato usa esta testemunha"
+                    : `${removendo.contratos_em_uso} contratos usam esta testemunha`}
+                  . Esses contratos não são alterados e continuam com ela.
+                </span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

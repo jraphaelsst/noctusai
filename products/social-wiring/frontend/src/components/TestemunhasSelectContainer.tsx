@@ -22,7 +22,7 @@ import {
   useContratoTestemunhas,
   useDefinirContratoTestemunhas,
 } from "@/hooks/useContratoTestemunhas";
-import { useTestemunhas } from "@/hooks/useTestemunhas";
+import { useTestemunhas, type Testemunha } from "@/hooks/useTestemunhas";
 
 export interface TestemunhasSelectContainerProps {
   clienteId: string;
@@ -54,7 +54,25 @@ export function TestemunhasSelectContainer({
     }
   }, [selecaoQuery.data, seeded, contratoId]);
 
-  const registro = registroQuery.data?.items ?? [];
+  // The registry list omits soft-deleted witnesses, but one this contract
+  // ALREADY selected stays on it (owner directive, 2026-09-24) — so it is
+  // appended here, flagged, or its slot would render blank.
+  const ativos = registroQuery.data?.items ?? [];
+  const idsAtivos = new Set(ativos.map((t) => t.id));
+  const registro: Testemunha[] = [
+    ...ativos,
+    ...(selecaoQuery.data?.items ?? [])
+      .filter((item) => !idsAtivos.has(item.testemunha.id))
+      .map((item) => ({
+        ...item.testemunha,
+        rg: null,
+        cpf_pendente: !item.testemunha.cpf,
+        contratos_em_uso: 0,
+        excluida: item.testemunha.excluida,
+        created_at: null,
+        updated_at: null,
+      })),
+  ];
   const selecionados = ids ?? [];
 
   function salvar(proximos: (string | null)[]) {

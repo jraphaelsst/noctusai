@@ -55,6 +55,7 @@ function testemunha(over: Partial<Record<string, unknown>> = {}) {
     celular: null,
     email: null,
     cpf_pendente: false,
+    contratos_em_uso: 0,
     created_at: null,
     updated_at: null,
     ...over,
@@ -232,6 +233,32 @@ describe("exclusão com confirmação", () => {
     fireEvent.click(getByLabelText("Remover Maria Souza"));
     expect(mockDelete).not.toHaveBeenCalled();
     expect(queryByTestId("testemunha-confirmar-remover")).toBeTruthy();
+  });
+
+  it("avisa (sem bloquear) quantos contratos usam a testemunha", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({ data: { items: [testemunha({ contratos_em_uso: 3 })], total: 1 } }),
+    );
+    const { getByLabelText, getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText("Remover Maria Souza"));
+    expect(getByTestId("testemunha-remover-em-uso").textContent).toContain(
+      "3 contratos usam esta testemunha",
+    );
+    fireEvent.click(getByTestId("testemunha-confirmar-remover"));
+    expect(mockDelete).toHaveBeenCalledWith("t1", expect.anything());
+  });
+
+  it("sem contratos em uso, não mostra o aviso", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({ data: { items: [testemunha()], total: 1 } }),
+    );
+    const { getByLabelText, queryByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByLabelText("Remover Maria Souza"));
+    expect(queryByTestId("testemunha-remover-em-uso")).toBeNull();
   });
 
   it("confirmar no diálogo chama a exclusão", async () => {

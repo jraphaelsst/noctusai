@@ -1123,6 +1123,14 @@ class TestQ13Permuta:
 
 
 class TestQ14Assinaturas:
+    def test_a_single_witness_is_a_gap_two_are_required(self):
+        """[Owner decision 2026-09-24] A contract carries 2 to 5 witnesses —
+        one selected is still incomplete, not ready."""
+        d = fx.variante(1)
+        t1, _t2 = d.testemunhas
+        _d, _pol, _sw, av = _avaliar(1, replace(d, testemunhas=[t1]))
+        assert _campos(av) == [("imobiliaria.testemunhas", None)]
+
     def test_witnesses_need_a_cpf_not_an_rg(self):
         """[Migration 168, owner decision — supersedes Q14] The contract
         prints CPF instead of RG; RG left the form and the readiness gate

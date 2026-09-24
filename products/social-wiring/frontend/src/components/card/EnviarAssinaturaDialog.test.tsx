@@ -67,6 +67,7 @@ function testemunha(over: Partial<TestemunhaSelecionada> = {}): TestemunhaSeleci
     cpf: "987.654.321-00",
     email: null,
     celular: null,
+    excluida: false,
     ...over,
   };
 }

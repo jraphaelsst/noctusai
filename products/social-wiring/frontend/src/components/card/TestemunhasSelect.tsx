@@ -27,7 +27,9 @@ export interface TestemunhasSelectProps {
   salvando?: boolean;
 }
 
-const QUANTIDADES = [0, 1, 2, 3, 4, 5];
+/** Owner decision (2026-09-24): 2 to 5 witnesses per contract — mirrors
+ *  `politica.MIN_TESTEMUNHAS`/`MAX_TESTEMUNHAS` on the backend. */
+const QUANTIDADES = [2, 3, 4, 5];
 
 export function TestemunhasSelect({
   registro,
@@ -41,12 +43,14 @@ export function TestemunhasSelect({
       <div className="flex items-center gap-2">
         <span className="text-xs text-muted-foreground">Quantidade de testemunhas</span>
         <Select
-          value={String(selecionados.length)}
+          // No selection yet reads as an empty trigger, not a "0" the
+          // operator can't pick back (0 is not an allowed count).
+          value={selecionados.length ? String(selecionados.length) : undefined}
           onValueChange={(v) => onChangeQuantidade(Number(v))}
           disabled={salvando}
         >
           <SelectTrigger className="h-8 w-20" data-testid="testemunhas-quantidade">
-            <SelectValue />
+            <SelectValue placeholder="—" />
           </SelectTrigger>
           <SelectContent>
             {QUANTIDADES.map((q) => (
@@ -89,10 +93,17 @@ export function TestemunhasSelect({
                 <SelectItem
                   key={t.id}
                   value={t.id}
-                  disabled={t.cpf_pendente || outrosSelecionados.has(t.id)}
+                  disabled={
+                    t.cpf_pendente ||
+                    outrosSelecionados.has(t.id) ||
+                    // Kept on the slot that already holds it; not pickable
+                    // anywhere else.
+                    (!!t.excluida && t.id !== atual)
+                  }
                 >
                   {t.nome}
                   {t.cpf_pendente ? " — CPF pendente" : ""}
+                  {t.excluida ? " — removida do cadastro" : ""}
                 </SelectItem>
               ))}
             </SelectContent>

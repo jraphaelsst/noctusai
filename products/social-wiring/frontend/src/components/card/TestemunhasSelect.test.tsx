@@ -54,6 +54,7 @@ function testemunha(over: Partial<Testemunha> = {}): Testemunha {
     celular: null,
     email: null,
     cpf_pendente: false,
+    contratos_em_uso: 0,
     created_at: null,
     updated_at: null,
     ...over,
@@ -87,6 +88,13 @@ describe("quantidade", () => {
     expect(getByTestId("testemunhas-slot-0")).toBeTruthy();
     expect(getByTestId("testemunhas-slot-1")).toBeTruthy();
     expect(queryByTestId("testemunhas-slot-2")).toBeNull();
+  });
+
+  it("🔴 só oferece de 2 a 5 testemunhas (decisão do dono, 2026-09-24)", async () => {
+    const { getByTestId } = await render({ selecionados: [] });
+    const seletor = getByTestId("testemunhas-quantidade").parentElement as HTMLElement;
+    const opcoes = Array.from(seletor.querySelectorAll("button")).map((b) => b.textContent);
+    expect(opcoes).toEqual(["2", "3", "4", "5"]);
   });
 
   it("mudar a quantidade chama onChangeQuantidade com o novo número", async () => {
@@ -123,5 +131,19 @@ describe("sem duplicatas", () => {
     const opcoes = getAllByText("João Lima");
     fireEvent.click(opcoes[0]);
     expect(onChangeSlot).toHaveBeenCalledWith(0, "t2");
+  });
+});
+
+describe("testemunha removida do cadastro", () => {
+  it("continua no slot que já a tinha, mas não pode ser escolhida em outro", async () => {
+    const { getAllByText } = await render({
+      registro: [testemunha({ excluida: true }), testemunha({ id: "t2", nome: "João Lima" })],
+      selecionados: ["t1", null],
+    });
+    const opcoes = getAllByText(/Maria Souza — removida do cadastro/);
+    const noProprioSlot = opcoes[0].closest("button") as HTMLButtonElement;
+    const noOutroSlot = opcoes[1].closest("button") as HTMLButtonElement;
+    expect(noProprioSlot.disabled).toBe(false);
+    expect(noOutroSlot.disabled).toBe(true);
   });
 });

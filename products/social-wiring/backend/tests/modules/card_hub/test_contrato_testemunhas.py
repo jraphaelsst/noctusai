@@ -174,3 +174,57 @@ class TestDefinir:
             headers=_auth(),
         )
         assert r.status_code == 404
+
+
+CPF_3 = "935.411.347-80"
+CPF_4 = "390.533.447-05"
+CPF_5 = "123.456.789-09"
+CPF_6 = "987.654.321-00"
+
+
+class TestLimitesESoftDelete:
+    """Owner decisions (2026-09-24): at most 5 witnesses per contract; a
+    witness removed from the registry stays on contracts that already
+    selected it, but cannot be newly added to one."""
+
+    def test_more_than_five_witnesses_is_refused_with_400(self, client, scoped):
+        ids = _seed(scoped)
+        linhas = [
+            _testemunha_row(nome=f"T{i}", cpf=cpf)
+            for i, cpf in enumerate([CPF_1, CPF_2, CPF_3, CPF_4, CPF_5, CPF_6])
+        ]
+        scoped.set_table_data("org_testemunhas", linhas)
+        r = client.put(
+            _url(ids), json={"testemunha_ids": [t["id"] for t in linhas]}, headers=_auth()
+        )
+        assert r.status_code == 400, r.text
+
+    def test_a_deleted_witness_already_selected_is_kept_and_flagged(self, client, scoped):
+        ids = _seed(scoped)
+        t1 = _testemunha_row(nome="Ana", cpf=CPF_1)
+        t2 = _testemunha_row(nome="Beto", cpf=CPF_2)
+        scoped.set_table_data("org_testemunhas", [t1, t2])
+        client.put(_url(ids), json={"testemunha_ids": [t1["id"], t2["id"]]}, headers=_auth())
+
+        scoped.table("org_testemunhas").update(
+            {"excluida_em": "2026-09-24T00:00:00+00:00"}
+        ).eq("id", t1["id"]).execute()
+
+        listado = client.get(_url(ids), headers=_auth()).json()
+        assert [i["testemunha"]["nome"] for i in listado["items"]] == ["Ana", "Beto"]
+        assert listado["items"][0]["testemunha"]["excluida"] is True
+
+        # Re-saving the same contract keeps her.
+        r = client.put(
+            _url(ids), json={"testemunha_ids": [t1["id"], t2["id"]]}, headers=_auth()
+        )
+        assert r.status_code == 200, r.text
+
+    def test_a_deleted_witness_cannot_be_added_to_another_contract(self, client, scoped):
+        ids = _seed(scoped)
+        t1 = _testemunha_row(nome="Ana", cpf=CPF_1)
+        t1["excluida_em"] = "2026-09-24T00:00:00+00:00"
+        scoped.set_table_data("org_testemunhas", [t1])
+
+        r = client.put(_url(ids), json={"testemunha_ids": [t1["id"]]}, headers=_auth())
+        assert r.status_code == 400, r.text

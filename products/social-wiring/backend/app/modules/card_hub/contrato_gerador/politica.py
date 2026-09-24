@@ -46,6 +46,13 @@ SITUACOES_PJ_EXIGIDAS: tuple[str, ...] = ("ativa", "inapta")
 #: [Q9] A `baixada` company is certified only when it was closed recently.
 SITUACAO_PJ_BAIXADA = "baixada"
 
+#: Owner decision (2026-09-24): a contract carries 2 to 5 witnesses. The
+#: minimum is a READINESS rule (`derivacao._imobiliaria` — a contract being
+#: filled in may hold fewer while the operator picks); the maximum is refused
+#: at write time (`contrato_testemunhas_service.definir`).
+MIN_TESTEMUNHAS = 2
+MAX_TESTEMUNHAS = 5
+
 #: [Q9] The (non-signatory, lado vendedor) papel of a previous owner whose
 #: certidões the contract presents.
 PAPEL_ANTIGO_PROPRIETARIO = "antigo_proprietario"

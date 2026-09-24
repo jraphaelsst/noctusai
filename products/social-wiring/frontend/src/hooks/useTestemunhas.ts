@@ -29,6 +29,14 @@ export interface Testemunha {
    *  before CPF existed — kept and listed, just not selectable for a
    *  contract until an operator adds a CPF. */
   cpf_pendente: boolean;
+  /** How many contracts currently select this witness — shown as an
+   *  INFORMATIVE note in the delete confirmation. Deleting never touches
+   *  those contracts (it is a soft delete, migration 168). */
+  contratos_em_uso: number;
+  /** Only ever `true` on a row the card appends itself: a witness removed
+   *  from the registry that THIS contract already selected. Never returned
+   *  by the registry list (it omits soft-deleted rows). */
+  excluida?: boolean;
   created_at: string | null;
   updated_at: string | null;
 }
