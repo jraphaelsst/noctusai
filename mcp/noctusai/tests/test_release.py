@@ -26,25 +26,55 @@ _RED = [{"status": "completed", "conclusion": "failure", "url": "https://ci/red"
 
 class FakeGit:
     """Scripts git IO. `refs` maps a ref string → sha; a push updates the dst
-    ref (simulating the fast-forward). `anc` is an ancestor predicate over shas.
-    Records every (cmd, env_extra) for invariant assertions."""
+    ref (simulating the fast-forward). `anc` is an ancestor predicate over
+    shas. `rev_list` maps `"a..b"` → an explicit newest-first sha list for
+    `git rev-list a..b` (R1's bless walk); when a range is absent, defaults
+    to `[refs["origin/<dev_branch>"]]` — i.e. "dev is exactly one commit
+    ahead of main", which keeps every pre-R1 single-commit bless test
+    working unchanged. `ci_by_sha` maps an exact sha → its own `gh run list`
+    payload (falls back to the shared `ci`/`ci_rc` when absent) — needed for
+    the multi-commit qualifying-green-walk tests where different candidates
+    carry different verdicts. Records every (cmd, env_extra) for invariant
+    assertions."""
 
-    def __init__(self, refs, anc, logs=None, diffs=None, ci=_GREEN, ci_rc=0):
+    def __init__(self, refs, anc, logs=None, diffs=None, ci=_GREEN, ci_rc=0,
+                rev_list=None, ci_by_sha=None, jobs_by_run_id=None,
+                assume_since_fix=True):
         self.refs = dict(refs)
-        self.anc = anc
+        self._anc = anc
         self.logs = logs or {}
         self.diffs = diffs or {}
         # `gh run list --json` payload for the bless CI precondition. Default
         # green so the pre-existing bless cases keep testing what they test.
         self.ci = ci
         self.ci_rc = ci_rc
+        self.rev_list = rev_list or {}
+        self.ci_by_sha = ci_by_sha or {}
+        self.jobs_by_run_id = jobs_by_run_id or {}
+        self.assume_since_fix = assume_since_fix
         self.calls: list[tuple[list[str], dict | None]] = []
+
+    def anc(self, a, b):
+        # R1 test default: every candidate is treated as descending from the
+        # verified-base-fix landmark (the realistic 2026-09-24-onward case),
+        # so the qualifying-green walk needs no extra `gh run view` call
+        # unless a test sets `assume_since_fix=False` to exercise the OTHER
+        # two qualifying legs (workflow_dispatch / heavy-job-check) deliberately.
+        if self.assume_since_fix and a == R._VERIFIED_BASE_FIX_SHA:
+            return True
+        return self._anc(a, b)
 
     def __call__(self, cmd, env_extra=None):
         self.calls.append((cmd, env_extra))
         if cmd[0] == "gh":
             if self.ci_rc != 0:
                 return (self.ci_rc, "", "gh: not authenticated")
+            if cmd[1:3] == ["run", "view"]:
+                run_id = cmd[3]
+                return (0, json.dumps({"jobs": self.jobs_by_run_id.get(run_id, [])}), "")
+            if "--commit" in cmd:
+                sha = cmd[cmd.index("--commit") + 1]
+                return (0, json.dumps(self.ci_by_sha.get(sha, self.ci)), "")
             return (0, json.dumps(self.ci), "")
         sub = cmd[1] if len(cmd) > 1 else ""
         if sub == "fetch":
@@ -55,6 +85,18 @@ class FakeGit:
         if sub == "merge-base":  # git merge-base --is-ancestor a b
             a, b = cmd[3], cmd[4]
             return (0 if self.anc(a, b) else 1, "", "")
+        # `rev-list <a>..<b>` (exactly 2 args, R1's bless walk) is modeled
+        # precisely; any OTHER rev-list shape (e.g. `--no-merges <a>..<b>`
+        # from the rider manifest's `reachable_no_merges`) deliberately falls
+        # through to the generic empty-success catch-all below, unaffected —
+        # same as every subcommand this fake doesn't otherwise recognize.
+        if sub == "rev-list" and len(cmd) == 3 and ".." in cmd[2]:
+            key = cmd[2]
+            if key in self.rev_list:
+                return (0, "\n".join(self.rev_list[key]), "")
+            a, b = key.split("..")
+            dev_sha = self.refs.get("origin/dev")
+            return (0, dev_sha if dev_sha and b in ("d", dev_sha) else "", "")
         if sub == "log":         # git log --oneline a..b
             return (0, self.logs.get(cmd[3], ""), "")
         if sub == "diff":        # git diff --name-only a..b
@@ -339,8 +381,11 @@ def test_green_ci_blesses_and_records_the_evidence():
     fake = _ci_case()
     out = R.release(stage="bless", confirm=True, run=fake)
     assert out["status"] == "blessed"
-    assert out["ci"] == {"verdict": "green", "workflow": R._CI_WORKFLOW,
-                         "conclusion": "success", "url": "https://ci/green"}
+    assert out["ci"] == {"qualifies": True, "verdict": "green", "workflow": R._CI_WORKFLOW,
+                         "conclusion": "success", "url": "https://ci/green",
+                         "qualifying_reason": "since_verified_base_fix"}
+    assert out["blessed_sha"] == "d" and out["dev_tip"] == "d"
+    assert out["skipped_tail"] == {"count": 0, "commits": [], "projects": []}
 
 
 def test_status_surfaces_the_same_ci_verdict_read_only():
@@ -379,3 +424,156 @@ def test_read_ledger_dual_reads_origin_ledgers_and_dev():
                                             "project-history/ship-consent.ndjson")] == [1, 2]
     shows.clear()
     assert R._read_ledger(git, "origin", "dev", "project-history/ship-consent.ndjson") == []
+
+
+# ── R1 (2026-09-24): bless the newest QUALIFYING green descendant ──────────
+# The dev-freeze fix. A rapid bookkeeping train (branch-pointer/salvage/
+# ledger commits) sat at the dev tip with no CI run at all; the OLD bless
+# froze on that (exact-tip-only). New bless walks back to the newest commit
+# that actually IS verified and ships that, leaving the tail on dev.
+
+def _walk_case(rev_list_shas, ci_by_sha, logs=None, jobs_by_run_id=None, main_anc_all=True):
+    """`rev_list_shas`: newest-first main..dev candidates. Every candidate is
+    treated as a descendant of main (`main_anc_all`) unless the test overrides
+    `anc` itself afterwards."""
+    anc = _anc_pairs([("m", s) for s in rev_list_shas]) if main_anc_all else _anc_pairs([])
+    return FakeGit(
+        refs={"origin/dev": rev_list_shas[0], "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=anc,
+        rev_list={f"m..{rev_list_shas[0]}": rev_list_shas},
+        ci_by_sha=ci_by_sha,
+        ci=[],  # default: no run at all for any sha not in ci_by_sha
+        logs=logs or {},
+        jobs_by_run_id=jobs_by_run_id or {},
+    )
+
+
+def test_bless_walks_past_a_ledger_only_tail_with_no_ci_run_to_the_last_qualifying_green():
+    fake = _walk_case(["d2", "d1", "d0"], ci_by_sha={"d0": _GREEN},
+                      logs={"m..d0": "c0 real work"})
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed", out
+    assert out["blessed_sha"] == "d0"
+    assert out["dev_tip"] == "d2"
+    assert out["skipped_tail"]["count"] == 2
+    assert out["skipped_tail"]["commits"] == ["d2", "d1"]
+    # main → d0 (NOT the dev tip d2) is what actually got pushed.
+    push_cmd, push_env = fake.pushes()[0]
+    assert push_cmd == ["git", "push", "origin", "d0:refs/heads/main"]
+    assert push_env == {"NOCTUS_ALLOW_MAIN_PUSH": "1"}
+
+
+def test_bless_walks_past_a_pending_code_tail_to_the_last_qualifying_green():
+    """The tail commit isn't a bookkeeping ledger entry — it's real code
+    whose CI simply hasn't reported yet. The walk is agnostic to WHY a
+    candidate isn't qualifying; it just keeps looking."""
+    fake = _walk_case(
+        ["d2", "d1", "d0"],
+        ci_by_sha={"d2": [{"status": "in_progress", "conclusion": None}], "d0": _GREEN},
+        logs={"m..d0": "c0 real work"},
+    )
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed"
+    assert out["blessed_sha"] == "d0"
+    assert out["skipped_tail"]["count"] == 2
+
+
+def test_bless_refuses_when_no_descendant_of_main_has_a_qualifying_green():
+    fake = _walk_case(["d2", "d1"], ci_by_sha={}, logs={})  # nothing green anywhere
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blocked" and out["exit_code"] == 1
+    assert out["checked"] == 2
+    assert len(out["skipped_tail"]) == 2
+    assert fake.pushes() == []
+
+
+def test_bless_never_ffs_a_green_run_that_is_not_a_descendant_of_main():
+    """`d0` carries a green run but sits on the far side of a merge — it is
+    IN `main..dev` (rev-list) yet NOT itself a descendant of main, so an FF
+    straight to it would not actually work. `d1` (the dev tip, and a genuine
+    descendant of main — satisfying the top-level `ff` gate) has no run of
+    its own. Neither qualifies: the walk must never silently pick `d0`."""
+    fake = FakeGit(
+        refs={"origin/dev": "d1", "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", "d1")]),  # d1 IS a descendant of main; d0 is NOT
+        rev_list={"m..d1": ["d1", "d0"]},
+        ci_by_sha={"d0": _GREEN},  # d1 has no run at all (default ci=[])
+        ci=[],
+        logs={},
+    )
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blocked" and out["exit_code"] == 1
+    by_sha = {e["sha"]: e for e in out["skipped_tail"]}
+    assert by_sha["d0"]["verdict"] == "not_a_descendant_of_main"
+    assert by_sha["d1"]["verdict"] == "missing"
+    assert fake.pushes() == []
+
+
+def test_bless_qualifies_a_workflow_dispatch_run_even_before_the_verified_base_fix():
+    """A run whose `event` is `workflow_dispatch` qualifies on its own —
+    `test.yml` always forces `run_heavy=true` for those — even for a
+    candidate that predates `_VERIFIED_BASE_FIX_SHA` (simulated here via
+    `main_anc_all=False`, which also blocks the since-fix shortcut since
+    `_is_ancestor(FIX_SHA, sha)` uses the SAME `anc` callable)."""
+    old_sha = "d0"
+    fake = FakeGit(
+        refs={"origin/dev": old_sha, "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", old_sha)]),  # descendant of main, but NOT of the fix sha
+        rev_list={f"m..{old_sha}": [old_sha]},
+        ci_by_sha={old_sha: [{"status": "completed", "conclusion": "success",
+                              "url": "https://ci/dispatch", "event": "workflow_dispatch",
+                              "databaseId": 999}]},
+        logs={f"m..{old_sha}": "c0 x"},
+        assume_since_fix=False,
+    )
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed"
+    assert out["ci"]["qualifying_reason"] == "workflow_dispatch"
+    gh = [c for c, _e in fake.calls if c[0] == "gh"]
+    assert len(gh) == 1, "workflow_dispatch must short-circuit — no extra `gh run view` call"
+
+
+def test_bless_falls_back_to_the_heavy_job_check_for_a_pre_fix_non_dispatch_green():
+    """Neither since-fix nor workflow_dispatch — the third leg (an actual
+    `Product Backend Tests *` job succeeded on this run) decides it."""
+    old_sha = "d0"
+    fake = FakeGit(
+        refs={"origin/dev": old_sha, "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", old_sha)]),
+        rev_list={f"m..{old_sha}": [old_sha]},
+        ci_by_sha={old_sha: [{"status": "completed", "conclusion": "success",
+                              "url": "https://ci/x", "event": "push", "databaseId": 42}]},
+        jobs_by_run_id={"42": [{"name": "Product Backend Tests (pytest)", "conclusion": "success"}]},
+        logs={f"m..{old_sha}": "c0 x"},
+        assume_since_fix=False,
+    )
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed"
+    assert out["ci"]["qualifying_reason"] == "product_backend_tests_succeeded"
+    gh = [c for c, _e in fake.calls if c[0] == "gh"]
+    assert len(gh) == 2, "the third leg costs exactly one extra `gh run view` call"
+
+
+def test_bless_rejects_a_green_run_whose_heavy_jobs_all_skipped():
+    """The exact false-green this whole mechanism exists to catch: overall
+    conclusion is 'success', but every downstream job merely skipped."""
+    old_sha = "d0"
+    fake = FakeGit(
+        refs={"origin/dev": old_sha, "origin/main": "m", "origin/prod": "p",
+              "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", old_sha)]),
+        rev_list={f"m..{old_sha}": [old_sha]},
+        ci_by_sha={old_sha: [{"status": "completed", "conclusion": "success",
+                              "url": "https://ci/x", "event": "push", "databaseId": 7}]},
+        jobs_by_run_id={"7": [{"name": "Product Backend Tests (pytest)", "conclusion": "skipped"}]},
+        logs={},
+        assume_since_fix=False,
+    )
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blocked"
+    assert out["skipped_tail"][0]["qualifying_reason"] == "green_but_not_demonstrably_heavy"
+    assert fake.pushes() == []

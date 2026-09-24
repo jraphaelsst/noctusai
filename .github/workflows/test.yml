@@ -20,6 +20,22 @@ on:
     # workflow GREEN on that exact sha before main may fast-forward to it.
     # KB § PATTERNS/devops/ship-consent-riders.md.
     branches: [main, dev, 'release/**']
+    # R2 (2026-09-24, the dev-freeze fix): a push touching ONLY
+    # `project-history/**/*.ndjson` (branch-pointer / worktree-salvage /
+    # ledger bookkeeping commits — 68 of ~90 dev pushes in one 24h window)
+    # never starts a run at all, so it can never cancel-in-progress a REAL
+    # code run either. This is the SAME "ledger-only" predicate the `changes`
+    # job's own `NON_LEDGER=... grep -vE '^project-history/.*\.ndjson$'`
+    # step below applies post-checkout — kept in sync by
+    # `tests/test_ci_workflow_scope.py::test_paths_ignore_matches_the_ledger_only_scope_predicate`,
+    # which runs both against the same path battery and refuses to drift.
+    # `noctus.dev.release stage='bless'` (R1) no longer needs the exact dev
+    # tip to be green anyway — it walks back to the newest verified commit —
+    # so a ledger-only tail with NO run at all is expected steady state, not
+    # a gap: bless's own `_is_docs_only` classifier already treats
+    # `project-history/` as the sanctioned no-CI-needed exception.
+    paths-ignore:
+      - 'project-history/**/*.ndjson'
   pull_request:
     branches: [main, dev]
 

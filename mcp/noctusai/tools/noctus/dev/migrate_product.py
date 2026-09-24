@@ -377,6 +377,71 @@ def _checksum(sql: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# R3 (2026-09-24, part of the release-no-freeze fix): read migrations from a
+# BLESSED SHA via `git show`, never the working tree.
+#
+# `noctus.dev.release` R1 now blesses the newest QUALIFYING-green commit,
+# which is not necessarily the exact dev tip (and — with `deploy_pull`'s
+# usual §2a FF flow — `main`'s working tree is only updated by a later `git
+# merge --ff-only`). Deploying migrations off "whatever the working tree
+# currently holds" always risked a race against the blessed state; passing
+# `sha=` makes that pin EXACT: the applied migration set is the migrations
+# directory as it existed AT that commit, full stop, independent of
+# whatever the checkout happens to hold right now.
+# ---------------------------------------------------------------------------
+class _GitBlobFile:
+    """Duck-types the tiny surface the apply loop needs from a migration
+    file (`.name` + `.read_text()`), but resolves its CONTENT from
+    `git show <sha>:<path>` instead of the filesystem. Content is fetched
+    lazily and cached — a dry-run that never applies anything never pays a
+    `git show` cost for files it only needs to list."""
+
+    def __init__(self, name: str, git_path: str, sha: str, root: Path, git_runner: "GitRunner") -> None:
+        self.name = name
+        self._git_path = git_path
+        self._sha = sha
+        self._root = root
+        self._git_runner = git_runner
+        self._content: str | None = None
+
+    def read_text(self, encoding: str = "utf-8") -> str:  # noqa: ARG002 — Path.read_text() parity
+        if self._content is None:
+            self._content = self._git_runner.run(
+                self._root, ["show", f"{self._sha}:{self._git_path}"]
+            )
+        return self._content
+
+
+def _sorted_migrations_at_sha(
+    root: Path, sha: str, product_slug: str, git_runner: "GitRunner"
+) -> list[_GitBlobFile]:
+    """Same ordering contract as ``_sorted_migrations`` (leading ``NNN_``
+    numeric prefix, ``.sql`` only), but the file LIST comes from
+    ``git ls-tree`` and the CONTENT from ``git show`` — never the working
+    tree. Raises :class:`GitQueryError` on any git failure (fail-closed,
+    same posture as ``_check_tree_staleness`` — an unanswerable "what files
+    exist at this sha" is never silently treated as "no files")."""
+    rel_dir = f"products/{product_slug}/backend/migrations"
+    listing = git_runner.run(root, ["ls-tree", "--name-only", "-r", sha, "--", rel_dir])
+    numbered: list[tuple[int, str, str]] = []
+    for line in listing.splitlines():
+        line = line.strip()
+        if not line or not line.endswith(".sql"):
+            continue
+        name = line.rsplit("/", 1)[-1]
+        m = _NN_RE.match(name)
+        if m:
+            numbered.append((int(m.group(1)), name, line))
+        else:
+            logger.debug("migrate_product: skipping non-numbered file %s @ %s", name, sha)
+    numbered.sort(key=lambda x: x[0])
+    return [
+        _GitBlobFile(name=name, git_path=git_path, sha=sha, root=root, git_runner=git_runner)
+        for _, name, git_path in numbered
+    ]
+
+
+# ---------------------------------------------------------------------------
 # SqlExecutor Protocol + Fake + Real
 # ---------------------------------------------------------------------------
 
@@ -897,6 +962,7 @@ def migrate_product(
     *,
     confirm: bool = False,
     target: str | None = None,
+    sha: str | None = None,
     project_ref: str = "nyplttplcoyiiqjrvtiw",
     schema: str | None = None,
     executor: SqlExecutor | None = None,
@@ -915,6 +981,18 @@ def migrate_product(
         confirm:      False (default) = dry-run (list pending; no DDL run).
                       True = apply all pending files in order.
         target:       Optional filename filter — apply / list only this file.
+        sha:          R3 (release-no-freeze): when given, migration files are
+                      read via ``git show <sha>:<path>`` — the EXACT set that
+                      existed at that commit — never the working tree, and
+                      the stale-tree refusal below is skipped entirely (there
+                      is nothing "stale" about a pinned historical commit;
+                      see NOC-REMEDIATE[migrate-product-sha-schema] below for
+                      the one thing this does NOT also pin). Typical caller:
+                      ``noctus.dev.release``'s ``blessed_sha`` right after a
+                      bless, so what gets APPLIED is provably what got
+                      BLESSED, independent of whatever the checkout currently
+                      holds. Raises no exception on an unreadable sha —
+                      surfaces as ``status='error'``.
         project_ref:  Supabase project reference (default: noctusai production).
         schema:       Override the auto-derived schema. When omitted, the
                       schema is DERIVED from the product's own
@@ -970,7 +1048,7 @@ def migrate_product(
         exit_code (0 on every non-error status, 1 otherwise),
         product, schema, schema_source, project_ref, applied,
         skipped_already_applied, pending, error, stale_tree,
-        allow_stale_tree, catalog_scope, allow_inactive
+        allow_stale_tree, catalog_scope, allow_inactive, sha
     """
     resolved_products_dir: Path
     if products_dir is not None:
@@ -992,6 +1070,11 @@ def migrate_product(
         product, schema, resolved_products_dir
     )
 
+    # R3: a `sha=` pin reads migrations from that COMMIT via git, never the
+    # working tree — the stale-tree question ("is the CHECKOUT trustworthy")
+    # is moot for a pinned historical commit, so the check still computes
+    # (informational — it rides on every result either way) but never
+    # refuses when `sha` is given.
     stale_tree = _check_tree_staleness(
         git_root, git_runner=git_runner or _DEFAULT_GIT_RUNNER
     )
@@ -1014,6 +1097,7 @@ def migrate_product(
             "allow_stale_tree": allow_stale_tree,
             "catalog_scope": catalog_scope,
             "allow_inactive": allow_inactive,
+            "sha": sha,
         }
         base.update(overrides)
         return base
@@ -1039,7 +1123,7 @@ def migrate_product(
     # against a tree 26 commits behind origin/dev that didn't even contain
     # the migration being deployed. Fail-closed by construction: this check
     # runs — and can refuse — before any Supabase credential is touched.)
-    if stale_tree["stale"] and not allow_stale_tree:
+    if stale_tree["stale"] and not allow_stale_tree and not sha:
         remedy = (
             f"git merge --ff-only {stale_tree['upstream']}"
             if stale_tree["upstream"]
@@ -1078,12 +1162,38 @@ def migrate_product(
             ),
         )
 
-    # ── Resolve migrations directory ──────────────────────────────────────────
-    mig_dir = _migrations_dir(product, resolved_products_dir)
-    if not mig_dir.exists():
-        return _result("error", error=f"migrations directory not found: {mig_dir}")
+    # ── Resolve migration files — from `sha` via git, or the working tree ─────
+    if sha:
+        resolved_git_runner = git_runner or _DEFAULT_GIT_RUNNER
+        try:
+            all_files: list[Any] = _sorted_migrations_at_sha(
+                git_root, sha, product, resolved_git_runner
+            )
+        except GitQueryError as exc:
+            return _result(
+                "error",
+                error=(
+                    f"migrate_product: cannot read migrations for {product!r} "
+                    f"at sha {sha!r} from {git_root}: {exc}. The sha must be "
+                    f"reachable from this tree's object database (e.g. "
+                    f"already fetched) — `git fetch {git_root}` first if it "
+                    "was just pushed elsewhere."
+                ),
+            )
+        # NOC-REMEDIATE[migrate-product-sha-schema]: `derived_schema` above
+        # is still resolved from the WORKING TREE's `app/main.py`, even in
+        # `sha=` mode — only the migration FILES themselves are pinned to
+        # the commit. A schema-declaration change between `sha` and the
+        # working tree would apply `sha`'s migrations against the working
+        # tree's (possibly different) schema, silently. Narrow gap (the
+        # schema literal essentially never changes independent of a
+        # migration), named here rather than silently accepted — 2026-09-24.
+    else:
+        mig_dir = _migrations_dir(product, resolved_products_dir)
+        if not mig_dir.exists():
+            return _result("error", error=f"migrations directory not found: {mig_dir}")
+        all_files = _sorted_migrations(mig_dir)
 
-    all_files = _sorted_migrations(mig_dir)
     if not all_files:
         return _result("up_to_date")
 
@@ -1482,6 +1592,15 @@ def register(server) -> None:
             "always wrong — see the tool's docstring) for a human-verified "
             "deliberate override; the staleness verdict still rides on the "
             "stale_tree key even when bypassed. "
+            "R3 (2026-09-24, release-no-freeze): pass sha= to read migration "
+            "FILES via `git show <sha>:<path>` — the EXACT set that existed at "
+            "that commit — never the working tree; the stale-tree refusal is "
+            "skipped entirely in this mode (nothing is 'stale' about a pinned "
+            "historical commit). Typical caller: the sha noctus.dev.release "
+            "just blessed, so what gets APPLIED is provably what got BLESSED. "
+            "An unreadable sha (not fetched into this tree's object database) "
+            "surfaces as status='error', never a silent fall-back to the "
+            "working tree. "
             "CATALOG-SCOPE GUARD (2026-09-17, same incident): REFUSES "
             "(status='refused_catalog_scope', exit_code=1) before touching any "
             "credential or migration file unless the product is ativo=true AND "
@@ -1503,7 +1622,7 @@ def register(server) -> None:
             "noctus.dev.toolkit_freshness. "
             "Returns {status, exit_code, product, schema, schema_source, "
             "project_ref, applied, skipped_already_applied, pending, error, "
-            "stale_tree, allow_stale_tree, catalog_scope, allow_inactive, "
+            "stale_tree, allow_stale_tree, catalog_scope, allow_inactive, sha, "
             "toolkit_stale}. "
             "KB § PATTERNS/backend/migrate-product-mcp-tool.md · "
             "KB § PATTERNS/architect/product-working-scope.md."
@@ -1513,6 +1632,7 @@ def register(server) -> None:
         product: str,
         confirm: bool = False,
         target: str | None = None,
+        sha: str | None = None,
         project_ref: str = "nyplttplcoyiiqjrvtiw",
         schema: str | None = None,
         worktree_path: str | None = None,
@@ -1524,6 +1644,7 @@ def register(server) -> None:
             product=product,
             confirm=confirm,
             target=target,
+            sha=sha,
             project_ref=project_ref,
             schema=schema,
             worktree_path=worktree_path,

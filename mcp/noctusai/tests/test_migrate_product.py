@@ -89,6 +89,20 @@ def _clean_git_runner() -> FakeGitRunner:
     )
 
 
+def _sha_git_runner(extra: dict[tuple, str] | None = None, fail_on=None) -> FakeGitRunner:
+    """R3: `_clean_git_runner()` plus whatever `ls-tree`/`show` responses a
+    sha-mode test needs — same "clean, up-to-date" staleness answers by
+    default (most sha tests don't care), merged with the caller's overrides."""
+    responses = {
+        ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+        ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+        ("rev-list", "--count", "HEAD..origin/dev"): "0",
+        ("status", "--porcelain"): "",
+    }
+    responses.update(extra or {})
+    return FakeGitRunner(responses=responses, fail_on=fail_on or set())
+
+
 def _live_catalog_fn(*slugs: str):
     """An in-scope catalog stub — same DI-seam role as ``_clean_git_runner()``,
     but for the 2026-09-17 catalog-scope guard. Every test below that is NOT
@@ -469,6 +483,140 @@ class TestTargetFilter:
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
+
+
+class TestMigrateProductShaSource:
+    """R3 (release-no-freeze): sha= reads migration FILES via `git show`,
+    never the working tree — and skips the stale-tree refusal entirely
+    (there is nothing "stale" about a pinned historical commit)."""
+
+    def test_dry_run_lists_pending_from_the_sha_not_the_working_tree(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        # The WORKING TREE has NOTHING — proves the sha path, not this, is used.
+        _make_migration_files(products, "orbity", [])
+        sha = "deadbeef" * 5
+        runner = _sha_git_runner({
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
+                "products/orbity/backend/migrations/001_seed.sql\n"
+                "products/orbity/backend/migrations/002_more.sql\n",
+            ("show", f"{sha}:products/orbity/backend/migrations/001_seed.sql"):
+                "CREATE SCHEMA IF NOT EXISTS orbity;",
+            ("show", f"{sha}:products/orbity/backend/migrations/002_more.sql"):
+                "CREATE TABLE orbity.x (id int);",
+        })
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=False, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "dry_run", result
+        assert result["pending"] == ["001_seed.sql", "002_more.sql"]
+        assert result["sha"] == sha
+
+    def test_confirmed_apply_reads_content_via_git_show(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "orbity", [])
+        sha = "cafebabe" * 5
+        runner = _sha_git_runner({
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
+                "products/orbity/backend/migrations/001_seed.sql\n",
+            ("show", f"{sha}:products/orbity/backend/migrations/001_seed.sql"):
+                "CREATE SCHEMA IF NOT EXISTS orbity;",
+        })
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=True, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "applied", result
+        assert result["applied"] == ["001_seed.sql"]
+        assert any("CREATE SCHEMA IF NOT EXISTS orbity" in s for s in fake.executed)
+
+    def test_unreadable_sha_is_an_error_not_a_silent_working_tree_fallback(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(
+            products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")]
+        )
+        sha = "0000000" * 5
+        runner = _sha_git_runner(fail_on={
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"),
+        })
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=False, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "error"
+        assert sha in result["error"]
+        assert result["pending"] == []  # never silently fell back to the working tree
+
+    def test_sha_bypasses_the_stale_tree_refusal(self, tmp_path):
+        """A tree behind its upstream would normally refuse — sha= pins a
+        historical commit, so staleness of the CHECKOUT is moot."""
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "orbity", [])
+        sha = "abc12340" * 5
+        runner = FakeGitRunner(responses={
+            ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+            ("rev-list", "--count", "HEAD..origin/dev"): "3",  # BEHIND upstream
+            ("status", "--porcelain"): "",
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
+                "products/orbity/backend/migrations/001_seed.sql\n",
+            ("show", f"{sha}:products/orbity/backend/migrations/001_seed.sql"):
+                "CREATE SCHEMA IF NOT EXISTS orbity;",
+        })
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=False, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "dry_run", result  # NOT refused_stale_tree
+        assert result["stale_tree"]["stale"] is True  # still computed, still visible
+        assert result["pending"] == ["001_seed.sql"]
+
+    def test_no_sha_behind_upstream_still_refuses_unchanged(self, tmp_path):
+        """Regression guard: the pre-R3 (no sha) behaviour is untouched."""
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "orbity", [("001_seed.sql", "x;")])
+        runner = FakeGitRunner(responses={
+            ("rev-parse", "--abbrev-ref", "HEAD"): "dev",
+            ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"): "origin/dev",
+            ("rev-list", "--count", "HEAD..origin/dev"): "3",
+            ("status", "--porcelain"): "",
+        })
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=False, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "refused_stale_tree"
+
+    def test_sha_with_no_migrations_at_that_commit_is_up_to_date(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "orbity", [])
+        sha = "1111111" * 5
+        runner = _sha_git_runner({
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"): "",
+        })
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=True, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "up_to_date"
 
 
 class TestEdgeCases:

@@ -23,7 +23,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev import release as R  # noqa: E402
 from tools.noctus.dev import _release_riders as RR  # noqa: E402
 
-_GREEN = [{"status": "completed", "conclusion": "success", "url": "https://ci/green"}]
+#: R1 (2026-09-24): a green run in these tests always qualifies via the
+# `workflow_dispatch` leg (the object shas these throwaway repos mint can
+# never be a real descendant of `_VERIFIED_BASE_FIX_SHA` — that commit does
+# not exist in a tmp bare repo — so the since-fix leg is structurally
+# unavailable here; a dedicated qualifying-green-walk test below exercises
+# the OTHER two legs explicitly instead of relying on this default).
+_GREEN = [{"status": "completed", "conclusion": "success", "url": "https://ci/green",
+          "event": "workflow_dispatch", "databaseId": 1}]
 _NOW = dt.datetime(2026, 9, 22, 14, 5, tzinfo=dt.timezone.utc)
 _ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
         "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_NOSYSTEM": "1"}
@@ -55,6 +62,11 @@ class Repo:
         self.work = tmp / "work"
         _sh(tmp, "clone", "-q", str(self.origin), str(self.work))
         self.ci = _GREEN
+        # R1: per-sha `gh run list` override + per-run-id `gh run view --json
+        # jobs` payload — the qualifying-green-walk tests need different
+        # commits to carry different CI verdicts.
+        self.ci_by_sha: dict[str, list] = {}
+        self.jobs_by_run_id: dict[str, list] = {}
         self.calls: list[tuple[list[str], dict | None]] = []
 
     def commit(self, path: str, content: str, subject: str, branch: str | None = None) -> str:
@@ -73,6 +85,11 @@ class Repo:
     def run(self, cmd, env_extra=None, stdin=None):
         self.calls.append((cmd, env_extra))
         if cmd[0] == "gh":
+            if cmd[1:3] == ["run", "view"]:
+                return 0, json.dumps({"jobs": self.jobs_by_run_id.get(cmd[3], [])}), ""
+            if "--commit" in cmd:
+                sha = cmd[cmd.index("--commit") + 1]
+                return 0, json.dumps(self.ci_by_sha.get(sha, self.ci)), ""
             return 0, json.dumps(self.ci), ""
         env = {**os.environ, **_ENV, **(env_extra or {})}
         r = subprocess.run(cmd, cwd=str(self.work), capture_output=True, text=True,
@@ -197,6 +214,30 @@ def test_default_bless_still_requires_ci_green(repo):
     out = repo.release(stage="bless", confirm=True)
     assert out["status"] == "blocked" and out["ci"]["verdict"] == "missing", out
     assert repo.ref("main") == main0
+
+
+# R1 (2026-09-24): bless the newest QUALIFYING green descendant, not
+# necessarily the exact dev tip — the dev-freeze fix (a bookkeeping train at
+# the tip no longer requires a fresh CI run before ANY bless can land).
+def test_default_bless_walks_past_an_unverified_tail_to_a_qualifying_green_ancestor(repo):
+    a1, d, u, a2, pointers = _alpha_scene(repo)
+    # Only `d` (2nd-oldest — a docs commit) carries a qualifying green CI
+    # run; everything newer (`u`, `a2`) has NO run at all yet.
+    repo.ci = []  # nothing qualifies by default
+    repo.ci_by_sha = {d: _GREEN}
+    out = repo.release(stage="bless", confirm=True, pointer_rows=pointers, consent_rows=[])
+    assert out["status"] == "blessed", out
+    assert out["blessed_sha"] == d
+    assert out["dev_tip"] == a2 and out["dev_tip"] != d
+    assert out["skipped_tail"]["count"] == 2
+    assert set(out["skipped_tail"]["commits"]) == {a2[:9], u[:9]}
+    # project attribution on the skipped tail, reusing the SAME rider
+    # manifest already built for the bless call (no second read):
+    # a2 -> "alpha" (Noc-Branch: feat/a-eng, mapped via `pointers`), u ->
+    # "feat/u" (unmapped Noc-Branch ⇒ branch name, per the manifest tests).
+    assert out["skipped_tail"]["projects"] == ["alpha", "feat/u"]
+    # main really did stop AT `d`, never reaching the dev tip.
+    assert repo.ref("main") == d
 
 
 def test_default_bless_refuses_a_diverged_main_until_backmerge(repo):

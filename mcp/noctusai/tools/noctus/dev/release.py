@@ -3,25 +3,30 @@
 `main` is sacred (KB § PATTERNS/branching-and-merging.md § 0). Two deliberate,
 consent-gated hops sit between everyday `dev` work and the live VPS:
 
-  • Gate 1 — BLESS  : fast-forward `main` to the `dev` tip (a reviewed release).
-                      `sha=` is NOT accepted here — bless always means "the
-                      WHOLE dev-validated state", never a partial slice
+  • Gate 1 — BLESS  : fast-forward `main` to the NEWEST QUALIFYING-GREEN
+                      commit `main..dev` (2026-09-24, R1 — not necessarily the
+                      exact dev tip: see `_newest_qualifying_green_descendant`).
+                      `sha=` is NOT accepted here — bless always picks its own
+                      target from the dev-validated state, never a
+                      caller-pinned partial slice
                       (KB § PATTERNS/architect/git-branch-model.md); passing it
                       is REFUSED loudly (2026-07-20 — it used to be a SILENT
                       no-op that still blessed the dev tip while the caller
                       believed their pin had taken effect). It also REFUSES
-                      unless `Tests & Build` is GREEN on the exact dev tip
-                      (2026-08-22 — see below).
+                      when NO commit in range carries a qualifying green
+                      `Tests & Build` (2026-08-22 — see below; 2026-09-24 —
+                      walks back through unverified bookkeeping-only tail
+                      commits instead of freezing on them).
   • RIDERS (2026-09-22; relaxed 2026-09-24) — `stage=manifest` attributes
                       every commit main..dev (Noc-Branch trailer → branch-tree
                       project) to a ship-consent state. Since 2026-09-24 that
                       state is INFORMATIONAL for the default mode='ff': the
                       owner's request to ship is the permission, so bless FFs
-                      the whole CI-green dev tip. mode='cut' (opt-in) still
-                      builds a `release/<stamp>` of approved work only
-                      (merge-tree + commit-tree, no checkout), and
-                      `stage=backmerge` restores dev ⊇ main after a cut.
-                      KB § PATTERNS/devops/ship-consent-riders.md.
+                      to the newest CI-qualifying-green commit (see Gate 1).
+                      mode='cut' (opt-in) still builds a `release/<stamp>` of
+                      approved work only (merge-tree + commit-tree, no
+                      checkout), and `stage=backmerge` restores dev ⊇ main
+                      after a cut. KB § PATTERNS/devops/ship-consent-riders.md.
   • Gate 2 — PROMOTE: fast-forward `prod` to a blessed `main` sha — and FIRST
                       snapshot the *current* prod onto `prod-backup` (instant
                       rollback pointer). The VPS pulls `origin/prod` afterwards
@@ -205,6 +210,132 @@ def _ci_verdict(runner, sha: str, workflow: str = _CI_WORKFLOW) -> dict[str, Any
                 "workflow": workflow, "conclusion": concl, "url": run.get("url")}
     return {"verdict": "missing", "workflow": workflow,
             "detail": f"every '{workflow}' run on {sha[:9]} was cancelled/skipped"}
+
+
+# ── R1 (2026-09-24): bless the newest QUALIFYING green descendant ──────────
+# A rapid bookkeeping-commit train (branch-pointer / salvage / ledger) can put
+# several unverified commits at the exact dev tip; requiring the TIP itself
+# to be green meant every such train froze `release stage='bless'` until a
+# fresh CI run finished — 5+ frozen sessions across one 24h window, 68 of ~90
+# dev pushes pure bookkeeping. Bless now walks dev's history back from the
+# tip for the newest commit that is BOTH a descendant of main (so a plain FF
+# still applies) and carries a QUALIFYING green run, and ships that — leaving
+# any newer, not-yet-verified tail commits on dev for next time. KB §
+# PATTERNS/devops/dev-main-ci-gates.md.
+#
+# The scope-job "verified-base" fix (`.github/workflows/test.yml`, commit
+# below) closed the race where a ledger-only push right after a code push
+# cancelled the code run and then diffed only its own ledger commit — after
+# that fix, `test.yml`'s own diff-base search already guarantees a green
+# run's coverage extends back to the true last-heavy-green, so a bare green
+# conclusion on/after this sha needs no further proof.
+_VERIFIED_BASE_FIX_SHA = "dc28726bc8d0adfb08244970aaac5f901a2bd2bf"
+
+
+def _run_ran_heavy(runner, run: dict[str, Any]) -> bool:
+    """True iff `run`'s heavy jobs demonstrably ran — a `Product Backend
+    Tests *` job actually SUCCEEDED (not skipped-green). Mirrors, byte for
+    byte in intent, the predicate `test.yml`'s own `changes` job uses to find
+    its last-heavy-green diff base (the "VERIFIED BASE" step) — reused here
+    rather than reinvented, so the two definitions of "actually ran" can
+    never drift apart."""
+    run_id = run.get("databaseId")
+    if not run_id:
+        return False
+    rc, out, _err = runner(["gh", "run", "view", str(run_id), "--json", "jobs"])
+    if rc != 0:
+        return False
+    try:
+        parsed = json.loads(out or "{}")
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(parsed, dict):
+        return False  # unexpected shape — fail closed, never crash
+    jobs = parsed.get("jobs") or []
+    return any(
+        isinstance(j, dict) and str(j.get("name", "")).startswith("Product Backend Tests")
+        and j.get("conclusion") == "success"
+        for j in jobs
+    )
+
+
+def _qualifying_ci_verdict(git, runner, sha: str, workflow: str = _CI_WORKFLOW) -> dict[str, Any]:
+    """Is `sha`'s `workflow` run not just green, but a QUALIFYING green — one
+    whose heavy jobs demonstrably ran, never a run that reads "success" only
+    because every downstream job was gated off (`run_heavy=false`). A
+    non-green verdict (red/pending/missing/unavailable) never qualifies —
+    this only discriminates AMONG greens. Three ways to qualify, evaluated
+    cheapest-first (each short-circuits the next, so the common case costs
+    exactly one `gh run list` call — see `_run_ran_heavy`'s docstring for
+    why the third check exists at all):
+      (a) `sha` descends from `_VERIFIED_BASE_FIX_SHA` — the modern,
+          overwhelmingly common case (every commit from 2026-09-24 onward).
+      (b) the run's `event` was `workflow_dispatch` — `test.yml` always
+          forces `run_heavy=true` for those, so a bare green is trustworthy.
+      (c) otherwise, ask whether a `Product Backend Tests *` job on this
+          exact run actually succeeded (one extra `gh run view` call).
+    """
+    rc, out, err = runner([
+        "gh", "run", "list", "--workflow", workflow, "--commit", sha,
+        "--limit", "20", "--json", "status,conclusion,url,event,databaseId",
+    ])
+    if rc != 0:
+        return {"qualifies": False, "verdict": "unavailable", "workflow": workflow,
+                "detail": (err.strip() or out.strip())[:300]}
+    try:
+        runs = json.loads(out or "[]")
+    except json.JSONDecodeError as exc:
+        return {"qualifies": False, "verdict": "unavailable", "workflow": workflow,
+                "detail": f"unparseable `gh run list` output: {exc}"}
+    if not runs:
+        return {"qualifies": False, "verdict": "missing", "workflow": workflow,
+                "detail": f"no '{workflow}' run exists for {sha[:9]}"}
+    for run in runs:
+        if run.get("status") != "completed":
+            return {"qualifies": False, "verdict": "pending", "workflow": workflow,
+                    "url": run.get("url"), "detail": f"run is {run.get('status')} — wait for it"}
+        concl = run.get("conclusion")
+        if concl in (None, "cancelled", "skipped"):
+            continue
+        if concl != "success":
+            return {"qualifies": False, "verdict": "red", "workflow": workflow,
+                    "conclusion": concl, "url": run.get("url")}
+        since_fix = _is_ancestor(git, _VERIFIED_BASE_FIX_SHA, sha)
+        is_dispatch = run.get("event") == "workflow_dispatch"
+        if since_fix or is_dispatch:
+            reason = "since_verified_base_fix" if since_fix else "workflow_dispatch"
+            qualifies = True
+        else:
+            qualifies = _run_ran_heavy(runner, run)
+            reason = "product_backend_tests_succeeded" if qualifies else "green_but_not_demonstrably_heavy"
+        return {"qualifies": qualifies, "verdict": "green", "workflow": workflow,
+                "conclusion": concl, "url": run.get("url"), "qualifying_reason": reason}
+    return {"qualifies": False, "verdict": "missing", "workflow": workflow,
+            "detail": f"every '{workflow}' run on {sha[:9]} was cancelled/skipped"}
+
+
+def _newest_qualifying_green_descendant(git, runner, main: str, dev: str,
+                                        workflow: str = _CI_WORKFLOW) -> dict[str, Any]:
+    """Walk `main..dev`, newest-first, for the newest commit that is BOTH a
+    descendant of `main` (a plain FF still lands it) and carries a
+    QUALIFYING green `workflow` run. Returns `{"found": True, "sha": ...,
+    "ci": ..., "skipped_tail": [...]}` or `{"found": False, "checked": N,
+    "skipped_tail": [...]}` — never raises; an unreachable `gh`/git query on
+    one candidate is one more non-qualifying candidate, not a crash. Each
+    `skipped_tail` entry is `{"sha": ..., **verdict}` in walked (newest-
+    first) order."""
+    rc, out, _e = git("rev-list", f"{main}..{dev}")
+    candidates = [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else []
+    skipped: list[dict[str, Any]] = []
+    for c in candidates:
+        if not _is_ancestor(git, main, c):
+            skipped.append({"sha": c, "qualifies": False, "verdict": "not_a_descendant_of_main"})
+            continue
+        v = _qualifying_ci_verdict(git, runner, c, workflow)
+        if v["qualifies"]:
+            return {"found": True, "sha": c, "ci": v, "skipped_tail": skipped}
+        skipped.append({"sha": c, **v})
+    return {"found": False, "checked": len(candidates), "skipped_tail": skipped}
 
 
 # ── ship-consent riders (2026-09-22) ─────────────────────────────────────────
@@ -547,51 +678,82 @@ def release(
         elif not (man["all_approved"] and ff):
             return _bless_cut(git, base, man, mode, confirm, remote, main,
                               main_branch, dev_branch, ff, now)
-        incoming = _commits(git, main, dev)
-        # 🔴 CI-GREEN PRECONDITION (2026-08-22). noc-ship step 0b has always
-        # called this MANDATORY, but nothing enforced it — so `1c83232f` was
-        # blessed AND promoted to prod carrying a red `Tests & Build`, and dev
-        # then stayed red for 12 commits with the gate reading as satisfied.
-        # A doctrine-only gate is not a gate (CLAUDE.md §1, gate↔methodology
-        # sync): the mechanism now ships with the rule.
-        ci = _ci_verdict(runner, dev)
+        # R1 (2026-09-24): bless the newest QUALIFYING green descendant of
+        # main, not necessarily the exact dev tip — see
+        # `_newest_qualifying_green_descendant`'s docstring for why.
+        search = _newest_qualifying_green_descendant(git, runner, main, dev)
         docs_only = _is_docs_only(_changed_paths(git, main, dev))
-        if ci["verdict"] != "green" and not docs_only:
-            return {**base, "status": "blocked", "exit_code": 1, "ci": ci,
-                    "incoming_commits": incoming,
+        if search["found"]:
+            target_sha = search["sha"]
+            ci = search["ci"]
+            ci_exception = None
+        elif docs_only:
+            # The ONE sanctioned CI exception (noc-ship step 0b): the WHOLE
+            # main..dev diff ships no executable change, so there is nothing
+            # a heavy job could have verified — bless the tip directly.
+            target_sha = dev
+            ci = {"verdict": "docs_exception"}
+            ci_exception = ("docs-only diff (no executable path changed) — "
+                            "noc-ship step 0b's sole sanctioned CI exception")
+        else:
+            # `ci`: the NEWEST checked candidate's own verdict (mirrors the
+            # pre-R1 exact-tip shape closely — `out["ci"]["verdict"]` still
+            # answers "what's wrong with the tip" in the common single-
+            # unqualifying-commit case), full detail lives in `skipped_tail`.
+            newest_checked = search["skipped_tail"][0] if search["skipped_tail"] else None
+            return {**base, "status": "blocked", "exit_code": 1, "ci": newest_checked,
+                    "checked": search["checked"], "skipped_tail": search["skipped_tail"],
                     "reason": (
-                        f"CI is not green on the exact {dev_branch} tip {dev[:9]} "
-                        f"(verdict={ci['verdict']}"
-                        + (f", conclusion={ci['conclusion']}" if ci.get("conclusion") else "")
-                        + f"): {ci.get('detail') or ci.get('url') or ''}. "
-                        f"Bless requires a GREEN '{ci['workflow']}' "
-                        f"on that sha — with the dev fleet dormant, CI is the only "
-                        f"pre-prod functional evidence there is. Fix {dev_branch} and "
-                        "re-run; the sole exception is a diff that is entirely docs/"
-                        "project-history, which this diff is not."
+                        f"no commit {main_branch}..{dev_branch} carries a QUALIFYING "
+                        f"green '{_CI_WORKFLOW}' run (checked {search['checked']} "
+                        f"descendant(s) of {main_branch} — see skipped_tail for why each "
+                        "one was rejected). Bless refuses rather than shipping unverified "
+                        f"code; with the dev fleet dormant, CI is the only pre-prod "
+                        "functional evidence there is. You may want a fresh run: "
+                        f"`gh workflow run {_CI_WORKFLOW!r} --ref {dev_branch}` — this "
+                        "tool never triggers that itself, only suggests it."
                     )}
-        plan = {**base, "would_advance": f"{main_branch} → {dev[:9]}", "incoming_commits": incoming,
-                "ci": ci, "riders": {"all_approved": man["all_approved"], "commits": len(man["commits"]),
-                                      "unapproved": man["unapproved_riders"]}}
-        if docs_only and ci["verdict"] != "green":
-            plan["ci_exception"] = ("docs-only diff (no executable path changed) — "
-                                    "noc-ship step 0b's sole sanctioned CI exception")
+        # skipped_tail: the newer, not-(yet)-verified commits left behind on
+        # dev by this bless — with their project attribution, reusing the
+        # SAME rider manifest already built above (never a second read).
+        skipped_entries = search.get("skipped_tail", [])
+        proj_by_sha = {r["sha"]: r.get("project") for r in (man.get("commits") or [])}
+        skipped_tail = {
+            "count": len(skipped_entries),
+            "commits": [e["sha"][:9] for e in skipped_entries],
+            "projects": sorted({p for e in skipped_entries
+                               if (p := proj_by_sha.get(e["sha"]))}),
+        }
+        incoming = _commits(git, main, target_sha)
+        plan = {**base, "would_advance": f"{main_branch} → {target_sha[:9]}",
+                "blessed_sha": target_sha, "dev_tip": dev, "skipped_tail": skipped_tail,
+                "incoming_commits": incoming, "ci": ci,
+                "riders": {"all_approved": man["all_approved"], "commits": len(man["commits"]),
+                          "unapproved": man["unapproved_riders"]}}
+        if ci_exception:
+            plan["ci_exception"] = ci_exception
         if not confirm:
             return {**plan, "status": "planned", "exit_code": 0,
                     "message": f"clean FF available: bless {len(incoming)} commit(s) "
-                               f"{main_branch} → {dev_branch}. Pass confirm=True to push."}
+                               f"{main_branch} → {target_sha[:9]}"
+                               + (f" (leaving {skipped_tail['count']} newer commit(s) "
+                                  "unverified on dev)" if skipped_tail["count"] else "")
+                               + ". Pass confirm=True to push."}
         # ACT — the sanctioned override push (FF; hook still blocks force/delete)
-        rc, out, err = git("push", remote, f"{dev}:refs/heads/{main_branch}",
+        rc, out, err = git("push", remote, f"{target_sha}:refs/heads/{main_branch}",
                            env_extra={"NOCTUS_ALLOW_MAIN_PUSH": "1"})
         if rc != 0:
             return {**plan, "status": "error", "exit_code": 1,
                     "error": f"push to {main_branch} failed: {err.strip() or out.strip()}"}
         new_main = _resolve(git, f"{remote}/{main_branch}")
         return {**plan, "status": "blessed", "exit_code": 0, "new_main_sha": new_main,
-                "verified": new_main == dev,
-                "message": f"blessed {len(incoming)} commit(s) to {main_branch}. "
-                           f"To deploy: noctus.dev.release stage='promote' (ships ALL of "
-                           f"{prod_branch}..{main_branch} — review first)."}
+                "verified": new_main == target_sha,
+                "message": f"blessed {len(incoming)} commit(s) to {main_branch} "
+                           f"(sha {target_sha[:9]}"
+                           + (f"; {skipped_tail['count']} newer commit(s) left "
+                              f"unverified on {dev_branch}" if skipped_tail["count"] else "")
+                           + "). To deploy: noctus.dev.release stage='promote' "
+                           f"(ships ALL of {prod_branch}..{main_branch} — review first)."}
 
     # ── PROMOTE (main → prod, snapshot prod → prod-backup first) ──
     target = None
@@ -673,15 +835,22 @@ def register(server) -> None:
             "model (KB § PATTERNS/branching-and-merging.md § 0.2). stage='status' "
             "(default) shows the feat→dev→main→prod chain (SHAs, FF-ability, the "
             "commits each hop would ship) read-only; stage='bless' fast-forwards "
-            "main to the dev tip (sha= is NOT accepted here — REFUSED loudly, not "
-            "silently ignored: bless is a whole-repo-state concept, no partial slice); "
+            "main to the NEWEST commit main..dev that carries a QUALIFYING green "
+            "'Tests & Build' run (R1, 2026-09-24 — not necessarily the exact dev "
+            "tip: a qualifying green is a run whose heavy jobs demonstrably ran, "
+            "not one that merely skipped everything and read 'success'; see "
+            "skipped_tail in the result for any newer, not-yet-verified commits "
+            "left on dev). sha= is NOT accepted here — REFUSED loudly, not "
+            "silently ignored: bless is a whole-repo-state concept, no "
+            "caller-pinned partial slice; "
             "stage='promote' snapshots the current prod onto prod-backup then "
             "fast-forwards prod to a blessed main sha (pass sha= to pin; default = "
             "main tip — which ships ALL of prod..main, flagged large_promote). "
             "OWNER DECISION 2026-09-24: the owner's request to ship IS the "
-            "permission — default mode='ff' fast-forwards main to the WHOLE dev tip "
-            "with no per-project ship-consent check (CI green on that exact sha is "
-            "still required; a diverged main is refused until stage='backmerge'). "
+            "permission — default mode='ff' fast-forwards main with no "
+            "per-project ship-consent check (CI-qualifying-green is still "
+            "required somewhere in range; a diverged main is refused until "
+            "stage='backmerge'). "
             "stage='manifest' (read-only) lists every commit main..dev grouped by "
             "project with its (now informational) ship-consent state. Opt-in "
             "mode='cut' builds release/<YYYYMMDD-HHMM> = main + approved commits "
