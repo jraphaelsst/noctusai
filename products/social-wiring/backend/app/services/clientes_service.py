@@ -97,6 +97,7 @@ __all__ = [
     "ClienteNotFound",
     "MergeNotFound",
     "MergeAlreadyUndone",
+    "ClienteEhSobreviventeDeMerge",
     "BackfillReport",
     "run_backfill",
     "attach_lead_now",
@@ -104,6 +105,7 @@ __all__ = [
     "get_cliente",
     "get_touches",
     "update_cliente",
+    "excluir_cliente",
     "list_review_groups",
     "merge_clientes",
     "undo_merge",
@@ -129,6 +131,15 @@ class MergeNotFound(Exception):
 
 class MergeAlreadyUndone(Exception):
     """`undo_merge` called on a merge whose `desfeito_em` is already set."""
+
+
+class ClienteEhSobreviventeDeMerge(Exception):
+    """`excluir_cliente` blocked: `cliente_merges.cliente_id_sobrevivente`
+    carries NO `ON DELETE` (migration 048's header — undo must keep
+    resolving to a live row), so this cliente cannot be hard-deleted while
+    it is still the surviving side of a merge. Raised BEFORE any mutation
+    (a proactive read, not a caught Postgres FK-violation) so the router
+    can answer with a clear pt-BR 409 instead of a raw constraint error."""
 
 
 # ─── report ──────────────────────────────────────────────────────────────
@@ -1694,6 +1705,84 @@ def update_cliente(
         )
 
     return {**resultado, "pendente_confirmacao": pendentes}
+
+
+def excluir_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+    """Hard delete (`DELETE /api/clientes/{id}`, owner directive
+    2026-09-24) — admin/owner-only, enforced by the ROUTE (this function
+    trusts its caller and does not re-check the role).
+
+    Storage is deliberately NOT touched here: this module is the DB I/O
+    layer only (see the module docstring), and a storage delete that ran
+    before the DB delete could leave a file gone but its row still
+    pointing at it if the DB call then failed. The caller (the route,
+    which already holds `Depends(get_storage_backend)`) deletes each
+    `cliente_documentos` row's `storage_path` from the bucket AFTER this
+    call returns, using the `documentos` list below — collected BEFORE the
+    cliente row is deleted, because `cliente_documentos` CASCADEs
+    (migration 057) and its rows would otherwise be gone by the time the
+    caller tried to read their paths.
+
+    Ordering, and why:
+      1. `cliente_merges.cliente_id_sobrevivente` has NO `ON DELETE`
+         (migration 048) — checked FIRST, as a plain read, before any
+         mutation runs. Raises `ClienteEhSobreviventeDeMerge` rather than
+         letting a real delete attempt hit Postgres' bare FK-violation.
+      2. `atendimentos.cliente_id` is `ON DELETE SET NULL` (048) — SET
+         NULL alone would leave a person-less ghost card sitting on the
+         funil board, so this deletes the cliente's atendimentos
+         explicitly, BEFORE the cliente row (never after: after the
+         cliente row is gone there is no `cliente_id` left to filter by).
+      3. The `clientes` row itself. Every other child either CASCADEs
+         (`cliente_documentos` 057, `cliente_notas`/`cliente_tag_links`/
+         `cliente_membros`/`cliente_lembretes`/`cliente_checklists` 056,
+         `documento_checklist_itens` 067, `atendimento_partes` 073,
+         `cliente_checklist_extras` 083, `cliente_campo_conflitos` 138) or
+         SETs NULL on its own (`negociacoes_venda` 048,
+         `cliente_vinculo` 074, the qualificação-civil FKs 097, the
+         certidões FKs 107, the matrícula-qualificações FKs 137) — no
+         further app-level cleanup needed for any of those.
+    """
+    _require_cliente(client, org_id, cliente_id)
+
+    sobrevivente = (
+        _t(client, "cliente_merges")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id_sobrevivente", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if sobrevivente:
+        raise ClienteEhSobreviventeDeMerge(
+            f"cliente {cliente_id} is the surviving side of a merge and cannot be deleted"
+        )
+
+    documentos = _select_all_where(
+        client, "cliente_documentos", org_id, {"cliente_id": str(cliente_id)},
+        columns="id,storage_path",
+    )
+
+    atendimentos_removidos = (
+        _t(client, "atendimentos")
+        .delete()
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []
+
+    (
+        _t(client, "clientes")
+        .delete()
+        .eq("id", str(cliente_id))
+        .eq("org_id", str(org_id))
+        .execute()
+    )
+
+    return {
+        "atendimentos_removidos": len(atendimentos_removidos),
+        "documentos": documentos,
+    }
 
 
 def list_review_groups(client: Any, org_id: UUID) -> list[dict]:

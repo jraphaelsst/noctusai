@@ -31,9 +31,11 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.testing import TEST_USER_ID
 
 from app.dependencies import coerce_org_uuid
+from app.modules.card_hub.deps import get_storage_backend
 from app.routers.clientes_router import get_clientes_client
 from tests.conftest import (  # type: ignore[attr-defined]
     MockSupabaseClient,
@@ -129,6 +131,38 @@ def _atendimento(id_, cliente_id, *, valor=1000.0) -> dict:
     }
 
 
+def _documento(id_, cliente_id, *, storage_path=None) -> dict:
+    return {
+        "id": id_,
+        "org_id": ORG_ID,
+        "cliente_id": cliente_id,
+        "storage_path": storage_path or f"{ORG_ID}/cliente/{cliente_id}/{id_}.pdf",
+        "nome_original": "arquivo.pdf",
+        "mime_type": "application/pdf",
+        "tamanho_bytes": 10,
+        "tipo_documento": "outro",
+        "categoria_lgpd": "nao_classificado",
+        "deleted_at": None,
+    }
+
+
+def _merge_row(id_, cliente_id_sobrevivente) -> dict:
+    return {
+        "id": id_,
+        "org_id": ORG_ID,
+        "cliente_id_sobrevivente": cliente_id_sobrevivente,
+        "cliente_id_absorvido": str(uuid4()),
+        "motivo": "C1",
+        "automatico": True,
+        "nome_absorvido": "Fulano",
+        "chave_canonica_absorvido": None,
+        "chave_tipo_absorvido": None,
+        "identidade_incerta_absorvido": False,
+        "touches_movidos": [],
+        "desfeito_em": None,
+    }
+
+
 # ─── fixtures ────────────────────────────────────────────────────────────
 
 
@@ -174,6 +208,7 @@ UNAUTHENTICATED_ROUTES = [
     ("get", f"/api/clientes/{_CLIENTE_ID}"),
     ("get", f"/api/clientes/{_CLIENTE_ID}/touches"),
     ("patch", f"/api/clientes/{_CLIENTE_ID}"),
+    ("delete", f"/api/clientes/{_CLIENTE_ID}"),
     ("get", "/api/clientes/revisao"),
     ("post", f"/api/clientes/revisao/{_GRUPO}/merge"),
     ("post", f"/api/clientes/revisao/{_GRUPO}/manter-separados"),
@@ -988,6 +1023,172 @@ def _seed_n_review_groups(scoped, n: int) -> list[str]:
     scoped.set_table_data("cliente_merges", [])
     scoped.set_table_data("cliente_revisao_rejeitadas", [])
     return keys
+
+
+# ─── DELETE — hard delete (owner directive, 2026-09-24) ──────────────────
+
+
+@pytest.fixture
+def fake_storage():
+    """Installs a `FakeStorageBackend` via the DI seam
+    (`app.modules.card_hub.deps.get_storage_backend`) — the SAME seam
+    `clientes_router.excluir_cliente_route` resolves, never
+    `MockSupabaseClient.storage` (a bare `MagicMock()` that would silently
+    "succeed" instead of failing loudly). Deliberately takes NO auth-role
+    fixture as a dependency: `admin_client`/`member_client` each open their
+    OWN `with patch(DatabaseModule...)` context, and the LAST one entered
+    wins for the duration of the test — requesting `admin_client` here
+    would silently override a test's own `member_client` auth patch with
+    the admin one. `app` is a session-wide singleton, so overriding its
+    `dependency_overrides` needs no client-specific setup at all."""
+    from app.main import app
+
+    backend = FakeStorageBackend()
+    prev = app.dependency_overrides.get(get_storage_backend)
+    app.dependency_overrides[get_storage_backend] = lambda: backend
+    yield backend
+    if prev is None:
+        app.dependency_overrides.pop(get_storage_backend, None)
+    else:
+        app.dependency_overrides[get_storage_backend] = prev
+
+
+class _RaisingStorage(FakeStorageBackend):
+    """A storage backend whose `delete` always raises — proves a storage
+    failure is REPORTED (`storage_falhas`), never silently swallowed."""
+
+    async def delete(self, *, bucket: str, key: str) -> bool:  # noqa: ARG002
+        raise RuntimeError("simulated storage outage")
+
+
+@pytest.fixture
+def raising_storage():
+    """Same no-auth-dependency reasoning as `fake_storage` above."""
+    from app.main import app
+
+    backend = _RaisingStorage()
+    prev = app.dependency_overrides.get(get_storage_backend)
+    app.dependency_overrides[get_storage_backend] = lambda: backend
+    yield backend
+    if prev is None:
+        app.dependency_overrides.pop(get_storage_backend, None)
+    else:
+        app.dependency_overrides[get_storage_backend] = prev
+
+
+class TestExcluirCliente:
+    """`DELETE /api/clientes/{id}` — hard delete, admin/owner only."""
+
+    def test_member_gets_strict_403(self, member_client, fake_storage):
+        """Strict `== 403`, mirroring the file header's `== 401` rule for
+        the SAME false-green reason — a permissive assertion would pass on
+        a route that silently no-ops instead of actually gating."""
+        a1 = str(uuid4())
+        get_clientes_client().set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = member_client.delete(f"/api/clientes/{a1}", headers=_auth())
+        assert resp.status_code == 403, resp.text
+        # Untouched — the gate fired before any mutation.
+        assert get_clientes_client().table("clientes").select("*").execute().data
+
+    def test_a_jwt_claiming_admin_does_not_bypass_the_gate(self):
+        """Mirrors `TestPatchAdminConfirmation`'s identical spoof case:
+        the TRUSTED `noctus_users` row says `member`; a caller-rewritten
+        `user_metadata.org_role=admin` must still 403."""
+        mock_sb = _role_client(org_role="member", jwt_claim="admin")
+        with (
+            patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+            patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
+            patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+        ):
+            from app.main import app
+
+            bind_consent_module_to_mock(mock_sb)
+            spoofed_client = TestClient(app, raise_server_exceptions=True)
+            a1 = str(uuid4())
+            get_clientes_client().set_table_data("clientes", [_cliente(a1, "Ana")])
+            resp = spoofed_client.delete(f"/api/clientes/{a1}", headers=_auth())
+            assert resp.status_code == 403, resp.text
+            app.dependency_overrides.clear()
+
+    def test_admin_deleting_an_unknown_cliente_is_strictly_404(
+        self, admin_client, fake_storage
+    ):
+        resp = admin_client.delete(f"/api/clientes/{uuid4()}", headers=_auth())
+        assert resp.status_code == 404, resp.text
+
+    def test_admin_deleting_the_survivor_of_a_merge_is_409(
+        self, admin_client, fake_storage
+    ):
+        """`cliente_merges.cliente_id_sobrevivente` has NO `ON DELETE`
+        (migration 048) — this must surface as a clear pt-BR 409, and the
+        cliente row must survive the attempt untouched."""
+        a1 = str(uuid4())
+        get_clientes_client().set_table_data("clientes", [_cliente(a1, "Ana")])
+        get_clientes_client().set_table_data(
+            "cliente_merges", [_merge_row(str(uuid4()), a1)]
+        )
+        resp = admin_client.delete(f"/api/clientes/{a1}", headers=_auth())
+        assert resp.status_code == 409, resp.text
+        assert "fusão" in resp.json()["error"]["message"]
+        assert get_clientes_client().table("clientes").select("*").execute().data
+
+    def test_admin_deletes_cliente_and_its_atendimentos_and_documents(
+        self, admin_client, fake_storage
+    ):
+        """The happy path — the funil-orphan guard (atendimentos explicitly
+        removed, never left `cliente_id=NULL`) AND the storage cleanup
+        (each `cliente_documentos.storage_path` actually deleted from the
+        bucket), in one call."""
+        a1 = str(uuid4())
+        d1, d2 = str(uuid4()), str(uuid4())
+        at1, at2 = str(uuid4()), str(uuid4())
+        get_clientes_client().set_table_data("clientes", [_cliente(a1, "Ana")])
+        get_clientes_client().set_table_data(
+            "cliente_documentos",
+            [_documento(d1, a1, storage_path="p1.pdf"), _documento(d2, a1, storage_path="p2.pdf")],
+        )
+        get_clientes_client().set_table_data(
+            "atendimentos", [_atendimento(at1, a1), _atendimento(at2, a1)]
+        )
+        get_clientes_client().set_table_data("cliente_merges", [])
+
+        resp = admin_client.delete(f"/api/clientes/{a1}", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["deleted"] is True
+        assert body["atendimentos_removidos"] == 2
+        assert body["documentos_removidos"] == 2
+        # `FakeStorageBackend.delete` on a never-`put` key returns `False`
+        # (no matching object), never raises — that is NOT a failure (the
+        # goal state, "no file at this path", already holds), so it must
+        # not appear here.
+        assert body["storage_falhas"] == []
+
+        assert get_clientes_client().table("clientes").select("*").execute().data == []
+        assert get_clientes_client().table("atendimentos").select("*").execute().data == []
+
+    def test_a_storage_delete_failure_is_reported_not_swallowed(
+        self, admin_client, raising_storage
+    ):
+        """The cliente row is ALREADY gone by the time storage is touched
+        (see `clientes_service.excluir_cliente`'s ordering) — a storage
+        outage must still surface, never a silently-clean 200."""
+        a1 = str(uuid4())
+        d1 = str(uuid4())
+        get_clientes_client().set_table_data("clientes", [_cliente(a1, "Ana")])
+        get_clientes_client().set_table_data(
+            "cliente_documentos", [_documento(d1, a1, storage_path="boom.pdf")]
+        )
+        get_clientes_client().set_table_data("atendimentos", [])
+        get_clientes_client().set_table_data("cliente_merges", [])
+
+        resp = admin_client.delete(f"/api/clientes/{a1}", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["deleted"] is True
+        assert body["storage_falhas"] == ["boom.pdf"]
+        # The DB side still fully completed despite the storage failure.
+        assert get_clientes_client().table("clientes").select("*").execute().data == []
 
 
 class TestMergeSeguros:

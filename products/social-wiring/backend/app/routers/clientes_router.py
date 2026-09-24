@@ -36,6 +36,7 @@ FastAPI would try to parse the literal "revisao" as a UUID `cliente_id` and
 """
 from __future__ import annotations
 
+import logging
 import weakref
 from datetime import date, datetime, timezone
 from typing import Any, Optional
@@ -45,7 +46,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
 from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError
 
 from app.dependencies import (
@@ -54,9 +55,12 @@ from app.dependencies import (
     get_core_client,
     get_current_user_org,
 )
+from app.modules.card_hub.deps import BUCKET, get_storage_backend
 from app.services import clientes_backfill_job
 from app.services import clientes_service as svc
 from app.services import identidade_service as ident
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/clientes", tags=["clientes"])
 
@@ -376,6 +380,20 @@ class MergeSegurosOut(BaseModel):
 
 class DesfazerOut(BaseModel):
     cliente_id: UUID
+
+
+class ClienteDeleteOut(BaseModel):
+    """`DELETE /api/clientes/{id}` — irreversible, admin/owner only.
+
+    `storage_falhas` is the bucket keys a storage removal did NOT confirm —
+    never swallowed into a bare 200: the row is already gone (the DB delete
+    is what actually removes the person), but a caller that ignores this
+    field would believe every file went with it."""
+
+    deleted: bool = True
+    atendimentos_removidos: int
+    documentos_removidos: int
+    storage_falhas: list[str] = Field(default_factory=list)
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────
@@ -809,6 +827,63 @@ async def update_cliente_route(
         )
     except svc.ClienteNotFound as exc:
         raise NotFoundError("clientes", str(cliente_id)) from exc
+
+
+@router.delete("/{cliente_id}", response_model=ClienteDeleteOut)
+async def excluir_cliente_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+    storage=Depends(get_storage_backend),
+) -> ClienteDeleteOut:
+    """Hard delete (owner directive, 2026-09-24) — irreversible, unlike the
+    PATCH `ativo=false` archive path this product already has. ADMIN/OWNER
+    ONLY, enforced HERE via the TRUSTED `noctus_users.org_role` row
+    (`require_org_admin_role` — the same N=3 predicate
+    `update_cliente_route`'s own `_is_org_admin` and `settings_router
+    ._require_admin` delegate to), never the spoofable JWT
+    `user_metadata`. The frontend hides the icon for a non-admin too, but
+    that is a UI convenience only — this 403 is what actually enforces it.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    require_org_admin_role(get_core_client(), getattr(_user, "id", None), "Excluir cliente")
+
+    try:
+        resultado = svc.excluir_cliente(client, org_id, cliente_id)
+    except svc.ClienteNotFound as exc:
+        raise NotFoundError("clientes", str(cliente_id)) from exc
+    except svc.ClienteEhSobreviventeDeMerge as exc:
+        raise ConflictError(
+            "Este cliente é o sobrevivente de uma fusão de cadastros e não "
+            "pode ser excluído. Desfaça a fusão antes de tentar novamente."
+        ) from exc
+
+    # Storage is deleted AFTER the DB row is gone — see
+    # `clientes_service.excluir_cliente`'s docstring for why the ordering
+    # runs that direction. A failure here is reported, never swallowed: the
+    # person record is already gone either way, so silently dropping a
+    # failed removal would leave an orphaned file with no row left to name
+    # it as the reason it still exists.
+    storage_falhas: list[str] = []
+    for documento in resultado["documentos"]:
+        storage_path = documento.get("storage_path")
+        if not storage_path:
+            continue
+        try:
+            await storage.delete(bucket=BUCKET, key=storage_path)
+        except Exception:
+            logger.exception(
+                "excluir_cliente_route: falha ao remover arquivo do storage "
+                "cliente_id=%s storage_path=%s", cliente_id, storage_path,
+            )
+            storage_falhas.append(storage_path)
+
+    return ClienteDeleteOut(
+        atendimentos_removidos=resultado["atendimentos_removidos"],
+        documentos_removidos=len(resultado["documentos"]),
+        storage_falhas=storage_falhas,
+    )
 
 
 __all__ = ["router"]
