@@ -110,3 +110,47 @@ def test_pull_without_a_token_names_the_auth_steps(private) -> None:
 def test_unknown_action_is_refused() -> None:
     with pytest.raises(ValueError, match="auth_start \\| auth_finish \\| pull"):
         D.drive_pull(action="download")
+
+
+class _Resp:
+    def __init__(self, status):
+        self.status = status
+
+
+class _HttpLike(Exception):
+    def __init__(self, status):
+        super().__init__(f"http {status}")
+        self.resp = _Resp(status)
+
+
+def test_a_transient_timeout_is_retried_then_succeeds() -> None:
+    calls, sleeps = [], []
+
+    def fetch():
+        calls.append(1)
+        if len(calls) < 3:
+            raise TimeoutError("The read operation timed out")
+
+    assert D._fetch_with_retry(fetch, sleep=sleeps.append) == 3
+    assert sleeps == [2.0, 5.0]
+
+
+def test_retries_are_bounded_and_the_last_error_surfaces() -> None:
+    def fetch():
+        raise _HttpLike(503)
+
+    with pytest.raises(_HttpLike):
+        D._fetch_with_retry(fetch, sleep=lambda _s: None)
+
+
+@pytest.mark.parametrize("status", [403, 404])
+def test_a_permanent_error_is_never_retried(status: int) -> None:
+    calls = []
+
+    def fetch():
+        calls.append(1)
+        raise _HttpLike(status)
+
+    with pytest.raises(_HttpLike):
+        D._fetch_with_retry(fetch, sleep=lambda _s: None)
+    assert len(calls) == 1
