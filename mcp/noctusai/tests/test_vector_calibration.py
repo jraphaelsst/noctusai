@@ -209,3 +209,20 @@ class TestReasoningOutputs:
         # The recommended_next_step must explicitly NOT auto-apply.
         next_step = result["analyses"][0]["recommended_next_step"]
         assert "advisory" in next_step.lower() or "review" in next_step.lower()
+
+
+class TestLedgerStoreRealMode:
+    """2026-09-24: signals + decisions publish to origin/ledgers."""
+
+    def test_signal_and_decision_publish(self, ledger_repo, monkeypatch):
+        bare, clone, show = ledger_repo
+        sig = clone / "project-history" / "vector-signals.ndjson"
+        dec = clone / "project-history" / "vector-calibration.ndjson"
+        monkeypatch.setattr(vc, "SIGNALS_PATH", sig)
+        monkeypatch.setattr(vc, "DECISIONS_PATH", dec)
+        assert vc.log_signal("kb_search", {"top_k": 5}, {"scores": [0.9]})["ok"]
+        assert vc.log_decision("kb_search", "top_k", 5, 6, "more recall")["ok"]
+        assert not sig.exists() and not dec.exists()
+        assert json.loads(show("vector-signals.ndjson"))["signal_type"] == "kb_search"
+        assert vc.decisions_log()[0]["new_value"] == 6
+        assert len(vc._load_signals()) == 1

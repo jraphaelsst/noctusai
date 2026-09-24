@@ -46,6 +46,8 @@ from typing import Any
 
 from settings import LEDGER_ROOT
 
+from ._ledger_store import append_rows, read_ledger_text
+
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 # LEDGER_ROOT (never REPO_ROOT): repo-global append-only ledgers — must
@@ -110,9 +112,10 @@ def log_signal(
         "result": result,
         "context": context or {},
     }
-    SIGNALS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with SIGNALS_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    # Since 2026-09-24 the ledger lives on the orphan origin/ledgers branch
+    # (`_ledger_store`, KB § PATTERNS/common/ledger-store.md); reads are the
+    # S2 dual-read (origin/ledgers ∪ the legacy dev copy).
+    append_rows(SIGNALS_PATH.name, SIGNALS_PATH, [entry], message=f"vector-signal {signal_type}")
     try:
         rel = str(SIGNALS_PATH.relative_to(LEDGER_ROOT))
     except ValueError:
@@ -155,9 +158,11 @@ def log_decision(
         "reasoning": reasoning,
         "evidence": evidence or {},
     }
-    DECISIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with DECISIONS_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    # Since 2026-09-24 the ledger lives on the orphan origin/ledgers branch
+    # (`_ledger_store`, KB § PATTERNS/common/ledger-store.md); reads are the
+    # S2 dual-read (origin/ledgers ∪ the legacy dev copy).
+    append_rows(DECISIONS_PATH.name, DECISIONS_PATH, [entry],
+                message=f"vector-calibration {signal_type}.{parameter}")
     try:
         rel = str(DECISIONS_PATH.relative_to(LEDGER_ROOT))
     except ValueError:
@@ -167,10 +172,9 @@ def log_decision(
 
 def decisions_log(signal_type: str | None = None) -> list[dict]:
     """Read the calibration-decisions log. `signal_type` filter optional."""
-    if not DECISIONS_PATH.exists():
-        return []
+    text, _store_err = read_ledger_text(DECISIONS_PATH.name, DECISIONS_PATH)
     out: list[dict] = []
-    for line in DECISIONS_PATH.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
@@ -187,10 +191,9 @@ def decisions_log(signal_type: str | None = None) -> list[dict]:
 # ── Reasoner: cross-reference signals vs canonical truth ─────────────────────
 def _load_signals(signal_type: str | None = None, since: str | None = None) -> list[dict]:
     """Load + filter signals from the ndjson."""
-    if not SIGNALS_PATH.exists():
-        return []
+    text, _store_err = read_ledger_text(SIGNALS_PATH.name, SIGNALS_PATH)
     out: list[dict] = []
-    for line in SIGNALS_PATH.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue
