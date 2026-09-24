@@ -68,9 +68,15 @@ permissions:
   contents: read
   packages: write
 
+# Keyed on the COMMIT, not the ref (2026-09-24). A promote pushes the same sha
+# to main and prod back to back; with a per-ref group both builds ran
+# concurrently, pushed the same layers to GHCR, and the main build failed with
+# "unknown blob" (840e7809a). One group per sha serializes those two builds:
+# the second finds every layer already present. Queued, never cancelled, since
+# both refs need their build to finish.
 concurrency:
-  group: build-push-${{ github.ref }}
-  cancel-in-progress: true
+  group: build-push-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   build-push:
