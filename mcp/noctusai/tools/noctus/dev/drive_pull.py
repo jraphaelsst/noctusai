@@ -58,6 +58,8 @@ _NATIVE_EXPORT_SUFFIX = {
 _PENDING_TTL_S = 600
 _LIST_PAGE_SIZE = 1000
 _NATIVE_MAX_BYTES = 20_000_000
+_DOWNLOAD_ATTEMPTS = 3  # 1 try + 2 retries (roadmap D3); only transient errors retry
+_RETRY_BACKOFF_S = (2.0, 5.0)
 _STATE_RE = re.compile(r"[A-Za-z0-9_-]{16,64}")
 
 
@@ -301,6 +303,48 @@ def _dedupe_rel_paths(entries: list[dict[str, Any]]) -> None:
             e["rel_path"] = str(p.with_name(f"{p.stem} [{e['drive_id']}]{p.suffix}"))
 
 
+def _is_transient(exc: BaseException) -> bool:
+    """Timeouts, connection resets and Drive 429/5xx retry. Anything else (404, 403, a truncated
+    native export) fails at once; retrying a permanent error only hides it longer."""
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    try:
+        return int(status) == 429 or int(status) >= 500
+    except (TypeError, ValueError):
+        return False
+
+
+def _fetch_with_retry(fetch, attempts: int = _DOWNLOAD_ATTEMPTS, sleep=time.sleep) -> int:
+    """Run ``fetch`` up to ``attempts`` times on transient errors; return the attempt that succeeded."""
+    for attempt in range(1, attempts + 1):
+        try:
+            fetch()
+            return attempt
+        except Exception as exc:
+            if attempt == attempts or not _is_transient(exc):
+                raise
+            sleep(_RETRY_BACKOFF_S[min(attempt - 1, len(_RETRY_BACKOFF_S) - 1)])
+    raise AssertionError("unreachable")
+
+
+def _fetch_one(reader, downloader, e: dict[str, Any], local: Path, is_native: bool, counts: dict[str, int]) -> None:
+    if is_native:
+        content = asyncio.run(reader.read_file(e["drive_id"], max_bytes=_NATIVE_MAX_BYTES))
+        if content is None:
+            raise FileNotFoundError("export returned nothing")
+        if content.truncated:
+            raise RuntimeError(f"export exceeds {_NATIVE_MAX_BYTES} bytes")
+        local.write_bytes(content.data)
+        e["status"] = "exported"
+        counts["exported"] += 1
+    else:
+        meta = asyncio.run(downloader.download(e["drive_id"], local))
+        e["md5"] = meta.md5_checksum or e.get("md5")
+        e["status"] = "downloaded"
+        counts["downloaded"] += 1
+
+
 def pull(folder_id: str, account_email: str, dry_run: bool = False) -> dict[str, Any]:
     from noctusai_lib.integrations.google_drive.real import RealDriveDownloader
     from noctusai_lib.integrations.google_drive.real_reader import RealDriveReader
@@ -357,20 +401,9 @@ def pull(folder_id: str, account_email: str, dry_run: bool = False) -> dict[str,
             continue
         try:
             local.parent.mkdir(parents=True, exist_ok=True)
-            if is_native:
-                content = asyncio.run(reader.read_file(e["drive_id"], max_bytes=_NATIVE_MAX_BYTES))
-                if content is None:
-                    raise FileNotFoundError("export returned nothing")
-                if content.truncated:
-                    raise RuntimeError(f"export exceeds {_NATIVE_MAX_BYTES} bytes")
-                local.write_bytes(content.data)
-                e["status"] = "exported"
-                counts["exported"] += 1
-            else:
-                meta = asyncio.run(downloader.download(e["drive_id"], local))
-                e["md5"] = meta.md5_checksum or e.get("md5")
-                e["status"] = "downloaded"
-                counts["downloaded"] += 1
+            e["attempts"] = _fetch_with_retry(
+                lambda: _fetch_one(reader, downloader, e, local, is_native, counts)
+            )
             os.chmod(local, 0o600)
             e["sha256"] = _sha256(local)
             e["local_bytes"] = local.stat().st_size
