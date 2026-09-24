@@ -438,6 +438,36 @@ def test_ref_candidates_rank_documentary_matches_first_and_never_link(private, t
     assert len(fake.executed) == 1
 
 
+def test_older_template_items_and_pending_rf() -> None:
+    txt = """CLÁUSULA TERCEIRA – DAS CERTIDÕES E DOCUMENTOS
+1 - Em nome de EMPRESA ANTIGA LTDA
+1.1 – Certidão de Débitos Relativos aos Tributos Federais e Dívida Ativa União – PENDENTE;
+1.7 – Certidão Negativa Estadual do Distribuidor Cível do Tribunal de Justiça do Estado de São Paulo – nº 99 - emitida em 01/01/2020;
+1.11 - Certidão de Baixa do CNPJ, emitida 03/05/2023."""
+    [g] = C.parse_certidoes(C.split_clauses(C.paragraphs_from_text(txt, source="docx"))[1][0])["grupos"]
+    rf, tj, baixa = g["itens"]
+    assert (tj["tipo"], tj["pasta_n"]) == ("tjsp", 7)  # no E-SAJ/E-PROC suffix → the generic registry code
+    assert (baixa["tipo"], baixa["tipo_proposto"]) == (None, "baixa_cnpj")
+    assert rf["resultado"] == "nao_emitida"
+    assert g["relatorio_fiscal"]["situacao"] == "nao_exigido"  # a pending RF is not a result
+
+
+def test_pdf_hyphen_breaks_are_not_edits() -> None:
+    assert C.diff_paragraphs(["CEP: 06706-165, RG 43.689.684-SSP-SP"], ["CEP: 06706- 165, RG 43.689.684- SSP-SP"]) == []
+
+
+def test_a_signed_confissao_de_divida_is_not_the_contract(private, tmp_path) -> None:
+    confissao = "INSTRUMENTO PARTICULAR DE CONFISSÃO E RECONHECIMENTO DE DÍVIDA\nCláusula única."
+    _mirror(private, "F8", {
+        "Garantia X docx pdf-D4Sign.docx": _docx_bytes(confissao, tmp_path),
+        "CONTRATO DE COMPRA E VENDA - X - rev. 14-08-26.docx": _docx_bytes(CONTRATO, tmp_path),
+    })
+    summary = C.drive_census("answer_key", "F8")["results"][0]
+    assert (summary["status"], summary["fonte"]) == ("ok", "revisao")
+    key = json.loads((private / "answer-keys" / "901.json").read_text())
+    assert [o["arquivo"] for o in key["outros_documentos_assinados"]] == ["Garantia X docx pdf-D4Sign.docx"]
+
+
 def test_unknown_action_is_refused() -> None:
     with pytest.raises(ValueError, match="extract \\| census \\| answer_key"):
         C.drive_census("nope")

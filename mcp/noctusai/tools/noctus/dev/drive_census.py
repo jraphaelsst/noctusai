@@ -500,7 +500,9 @@ def diff_paragraphs(a: list[str], b: list[str], *, limit: int = 40) -> list[dict
     and each divergence is reported with a few words of context. Both sides stop at the signing-date
     line (the signature block is layout), and .docx auto-numbering ("1) ", PDF only) is dropped."""
     def words(paras: list[str]) -> tuple[list[str], list[str]]:
-        raw = [w for w in " ".join(re.sub(r"^\d+\)\s*", "", p) for p in _until_signing_date(paras)).split()
+        joined = " ".join(re.sub(r"^\d+\)\s*", "", p) for p in _until_signing_date(paras))
+        joined = re.sub(r"(\w)-\s+(\w)", r"\1-\2", joined)  # a PDF line break inside "06706-165"
+        raw = [w for w in joined.split()
                if not re.fullmatch(r"[a-z0-9]{1,2}\)", w)]  # auto-list markers "a)" "1)" (PDF-only)
         return raw, [_fold(w).strip(".,;:–—-\"“”'") for w in raw]
 
@@ -828,6 +830,8 @@ _ITEM_TIPO_RULES: tuple[tuple[str, str], ...] = (
     ("PROCESSOS DIGITAIS", "trt2_digital"), ("PROCESSOS FISICOS", "trt2_fisico"),
     ("DEBITOS TRABALHISTAS", "cnd_trabalhista_tst"), ("SERASA", "serasa"), ("CENPROT", "cenprot"),
     ("NAO INSCRITOS", "cnd_fazenda_sp"), ("DIVIDA ATIVA DO ESTADO", "divida_ativa_sp"),
+    # older template: the TJSP distribuidor without E-SAJ/E-PROC is the registry's generic `tjsp`
+    ("DISTRIBUIDOR CIVEL", "tjsp"),
 )
 
 
@@ -908,7 +912,7 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
             sistema = "E-SAJ" if tipo == "tjsp_esaj" else "E-PROC" if tipo == "tjsp_eproc" else None
             row: dict[str, Any] = {
                 "item": f"{item.group(1)}.{item.group(2)}",
-                "pasta_n": CERTIDAO_TIPOS.index(tipo) + 1 if tipo else None,
+                "pasta_n": CERTIDAO_TIPOS.index(tipo) + 1 if tipo in CERTIDAO_TIPOS else 7 if tipo == "tjsp" else None,
                 "tipo": tipo,
                 "resultado": _item_resultado(texto),
                 "numero": numero.group(1).strip(" –-") if numero else None,
@@ -917,7 +921,10 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
                 "texto": p,
             }
             f = _fold(texto)
-            if "CRIMINAL" in f:
+            if "BAIXA DO CNPJ" in f:
+                # not in the product vocabulary yet: proposed to 3e, never invented as a code
+                row.update({"tipo": None, "pasta_n": None, "tipo_proposto": "baixa_cnpj"})
+            elif "CRIMINAL" in f:
                 # Owner ruling 2026-09-24: added by the client's lawyer; not ours, never scored.
                 row.update({"tipo": None, "pasta_n": None, "resultado": None, "ignorado": "criminal_advogado_cliente"})
             elif "RELATORIO FISCAL" in f:
@@ -947,7 +954,8 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
         for i in rel:
             i["rf_presente"] = rf is not None
             i["rf_resultado"] = rf["resultado"] if rf else None
-        exigido = (rf is None and bool(rel)) or (rf is not None and rf["resultado"] not in ("negativa", None))
+        exigido = (rf is None and bool(rel)) or (rf is not None and rf["resultado"] in (
+            "positiva", "positiva_com_efeito_de_negativa", "negativa_com_homonimos"))
         grp["relatorio_fiscal"] = {
             "exigido": exigido,
             "entregue": bool(rel),
@@ -1183,6 +1191,13 @@ def _is_aditivo_text(rec: Optional[dict[str, Any]]) -> bool:
     return bool(rec) and bool(re.search(r"ADITIVO|ADITAMENTO", _fold((rec.get("text") or "")[:400])))
 
 
+def _is_sale_contract(rec: Optional[dict[str, Any]]) -> bool:
+    """True unless the file's opening text shows another instrument (a confissão de dívida, a
+    services contract…). A file with no text (image-only) cannot be judged and is kept."""
+    head = _fold(((rec or {}).get("text") or "")[:600])
+    return not head.strip() or bool(re.search(r"VENDA E COMPRA|COMPRA E VENDA|COMPROMISSO DE COMPRA", head))
+
+
 def _collect_aditivos(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Split contract-shaped files into (aditivos, the rest). An aditivo is known by its NAME
     (classified ``aditivo``) or by its opening text, whatever the file is called."""
@@ -1253,6 +1268,8 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
     # An ADITIVO (amendment) is signed like the contract, but it is not the contract: it never
     # competes for ground truth, and it is parsed into its own structured list (owner, 2026-09-24).
     aditivo_files, pool = _collect_aditivos(census["files"])
+    outros = [f for f in pool if f["doc_type"] in ("contrato", "contrato_d4sign") and not _is_sale_contract(_text_for(f))]
+    pool = [f for f in pool if f not in outros]
     chosen, fonte, others = select_contract(pool)
     aditivos, aditivos_descartados = _parse_aditivos(aditivo_files)
     numero = census["folder"]["numero"] or folder_id
@@ -1263,6 +1280,8 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
                   "divergencias_docx": [], "assinado_em": None},
         "aditivos": aditivos,
         "aditivos_descartados": aditivos_descartados,
+        "outros_documentos_assinados": [{"arquivo": f["rel_path"], "titulo": ((_text_for(f) or {}).get("text") or "")[:120].strip()}
+                                        for f in outros],
         "tool_version": TOOL_VERSION, "parser_version": PARSER_VERSION,
         "gerado_em": datetime.now(timezone.utc).isoformat(),
     }
