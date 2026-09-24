@@ -48,9 +48,9 @@ def _t(client: Any, name: str):
 
 
 def _registro_por_id(client: Any, org_id: UUID) -> dict[str, dict]:
-    rows = (
-        _t(client, REGISTRO_TABLE).select("*").eq("org_id", str(org_id)).execute()
-    ).data or []
+    # The registry is open-ended since migration 168 (and soft-deleted rows
+    # stay in it), so it is paged past PostgREST's silent 1 000-row cap.
+    rows = table_reads.paged_rows(client, REGISTRO_TABLE, org_id)
     return {str(r["id"]): r for r in rows}
 
 
@@ -81,6 +81,8 @@ def listar(client: Any, org_id: UUID, atendimento_id: UUID, contrato_id: UUID) -
     registro = _registro_por_id(client, org_id)
     linhas = sorted(
         (
+            # postgrest-unbounded-ok: ONE contract's selection — at most
+            # MAX_TESTEMUNHAS (5) rows, refused above that at write time.
             _t(client, TABLE)
             .select("*")
             .eq("org_id", str(org_id))
@@ -130,6 +132,8 @@ def definir(
     ja_selecionadas = {
         str(r["testemunha_id"])
         for r in (
+            # postgrest-unbounded-ok: ONE contract's selection — at most
+            # MAX_TESTEMUNHAS (5) rows.
             _t(client, TABLE)
             .select("testemunha_id")
             .eq("org_id", str(org_id))

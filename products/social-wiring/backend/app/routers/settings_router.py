@@ -88,7 +88,7 @@ from app.services.app_config_store import (
     resolve_instagram_app_creds,
     resolve_meta_app_creds,
 )
-from app.services import clientes_inactivity_service, documento_retencao
+from app.services import clientes_inactivity_service, documento_retencao, table_reads
 from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
@@ -1713,26 +1713,27 @@ def list_testemunhas(
 ) -> dict:
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    rows = (
-        supabase
-        .table(_TESTEMUNHAS_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .is_("excluida_em", "null")
-        .order("created_at")
-        .execute()
-    ).data or []
+    rows = sorted(
+        table_reads.paged_rows(
+            supabase,
+            _TESTEMUNHAS_TABLE,
+            org_id,
+            refine=lambda q: q.is_("excluida_em", "null"),
+        ),
+        key=lambda r: r.get("created_at") or "",
+    )
     # How many contracts select each witness — surfaced as an INFORMATIVE
     # note in the delete confirmation (owner directive, 2026-09-24). It never
     # blocks the delete: a delete is a soft delete that leaves those
     # contracts' selections untouched.
-    selecoes = (
-        supabase
-        .table(_CONTRATO_TESTEMUNHAS_TABLE)
-        .select("testemunha_id, contrato_id")
-        .eq("org_id", str(org_id))
-        .execute()
-    ).data or []
+    # Grows with every contract the org ever makes — paged, or the count
+    # would silently under-report past PostgREST's 1 000-row cap.
+    selecoes = table_reads.paged_rows(
+        supabase,
+        _CONTRATO_TESTEMUNHAS_TABLE,
+        org_id,
+        select="id, testemunha_id, contrato_id",
+    )
     contratos_por_testemunha: dict[str, set[str]] = {}
     for s in selecoes:
         contratos_por_testemunha.setdefault(str(s["testemunha_id"]), set()).add(
