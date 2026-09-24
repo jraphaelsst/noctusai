@@ -1,6 +1,8 @@
 # Ship-consent riders — a prod deploy never carries unapproved work
 
-> **Owner mandate (2026-09-22):** an agent deploying to prod must NOT carry other agents' in-flight / unapproved work. Root cause it closes: `noctus.dev.release stage=bless` fast-forwarded `main` to the WHOLE `dev` tip, so every commit any agent had integrated shipped with whoever pressed bless. Approval unit = the **PROJECT/ROADMAP**; on unapproved riders the default is to **CUT a release of approved work only**.
+> **🔴 RELAXED 2026-09-24 (owner decision):** "no approval needed when I ask — the ask is the permission itself." The default `release stage=bless` (`mode=ff`) now fast-forwards `main` to the WHOLE CI-green `dev` tip with **no per-project ship-consent check**; a diverged `main` is refused until `stage=backmerge`. Consent rows and the manifest remain as an informational record of whose work ships. `mode=cut` / `mode=refuse` below are **explicit opt-ins** for shipping only approved work. Unchanged: CI green on the exact sha, `NOCTUS_ALLOW_MAIN_PUSH` discipline, and a NEW product's first prod exposure (`noctus.dev.prod_consent`, `KB § PATTERNS/devops/prod-exposure-consent.md`). The rest of this page describes the opt-in cut.
+>
+> **Original owner mandate (2026-09-22):** an agent deploying to prod must NOT carry other agents' in-flight / unapproved work. Root cause it closes: `noctus.dev.release stage=bless` fast-forwarded `main` to the WHOLE `dev` tip, so every commit any agent had integrated shipped with whoever pressed bless. Approval unit = the **PROJECT/ROADMAP**; on unapproved riders the default is to **CUT a release of approved work only**.
 
 ## The chain
 

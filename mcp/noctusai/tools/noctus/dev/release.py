@@ -12,13 +12,15 @@ consent-gated hops sit between everyday `dev` work and the live VPS:
                       believed their pin had taken effect). It also REFUSES
                       unless `Tests & Build` is GREEN on the exact dev tip
                       (2026-08-22 — see below).
-  • RIDERS (2026-09-22) — bless no longer carries the WHOLE dev tip blindly:
-                      `stage=manifest` attributes every commit main..dev
-                      (Noc-Branch trailer → branch-tree project) to a
-                      ship-consent state; unapproved riders ⇒ bless CUTS a
-                      `release/<stamp>` of approved work (merge-tree +
-                      commit-tree, no checkout) instead of FF-ing dev, and
-                      `stage=backmerge` restores dev ⊇ main afterwards.
+  • RIDERS (2026-09-22; relaxed 2026-09-24) — `stage=manifest` attributes
+                      every commit main..dev (Noc-Branch trailer → branch-tree
+                      project) to a ship-consent state. Since 2026-09-24 that
+                      state is INFORMATIONAL for the default mode='ff': the
+                      owner's request to ship is the permission, so bless FFs
+                      the whole CI-green dev tip. mode='cut' (opt-in) still
+                      builds a `release/<stamp>` of approved work only
+                      (merge-tree + commit-tree, no checkout), and
+                      `stage=backmerge` restores dev ⊇ main after a cut.
                       KB § PATTERNS/devops/ship-consent-riders.md.
   • Gate 2 — PROMOTE: fast-forward `prod` to a blessed `main` sha — and FIRST
                       snapshot the *current* prod onto `prod-backup` (instant
@@ -214,7 +216,7 @@ def _ci_verdict(runner, sha: str, workflow: str = _CI_WORKFLOW) -> dict[str, Any
 # KB § PATTERNS/devops/ship-consent-riders.md.
 _CONSENT_LEDGER_REL = "project-history/ship-consent.ndjson"
 _POINTER_LEDGER_REL = "project-history/branch-tree.ndjson"
-_MODES = ("cut", "refuse")
+_MODES = ("ff", "cut", "refuse")
 
 
 def _read_ledger(git, remote: str, dev_branch: str, rel: str) -> list[dict]:
@@ -378,7 +380,7 @@ def release(
     prod_branch: str = "prod",
     backup_branch: str = "prod-backup",
     sha: str | None = None,
-    mode: str = "cut",
+    mode: str = "ff",
     release_branch: str | None = None,
     run: Callable[..., tuple[int, str, str]] | None = None,
     now=None,  # datetime | () -> datetime — stamps release/<YYYYMMDD-HHMM>
@@ -454,14 +456,13 @@ def release(
         if not man.get("ok"):
             return {**base, "status": "error", "exit_code": 1, "error": man.get("error")}
         ff = _is_ancestor(git, main, dev)
-        verdict = ("fast-forward bless: every rider approved or exempt"
-                   if man["all_approved"] and ff else
-                   "bless would CUT a release of approved work only (mode='cut')")
+        verdict = ("bless (default mode='ff') fast-forwards the whole dev tip; consent is "
+                   "informational" if ff else
+                   f"{main_branch} is not an ancestor of {dev_branch} — backmerge first")
         return {**base, **man, "status": "manifest", "exit_code": 0, "ff": ff,
                 "message": f"{len(man['commits'])} rider(s) {main_branch}..{dev_branch}; "
                            f"{len(man['unapproved_riders'])} unapproved/unattributed; "
-                           f"{len(man['dependencies'])} dependency conflict(s). {verdict}. "
-                           "Approve a project: noctus.dev.ship_consent action='challenge'."}
+                           f"{len(man['dependencies'])} dependency conflict(s). {verdict}."}
 
     # ── BACKMERGE ── restore dev ⊇ main after a cut (merge commit, no checkout)
     if stage == "backmerge":
@@ -520,7 +521,20 @@ def release(
             return {**base, "status": "blocked", "exit_code": 1,
                     "reason": f"cannot build the rider manifest: {man.get('error')} — "
                               "an unreadable manifest never buys a bless."}
-        if not (man["all_approved"] and ff):
+        # Owner decision 2026-09-24: the owner's request to ship IS the
+        # permission ("no approval needed when I ask — the ask is the
+        # permission itself"). In the default mode='ff', per-project
+        # ship-consent no longer gates bless; the manifest is an informational
+        # record of whose work ships. mode='cut'/'refuse' remain as explicit
+        # opt-ins for shipping only approved work. A first-ever prod exposure
+        # of a NEW product is still gated separately (noctus.dev.prod_consent),
+        # and CI-green still gates below.
+        if mode == "ff":
+            if not ff:
+                return {**base, "status": "blocked", "exit_code": 1, "ff": False,
+                        "reason": (f"{main_branch} is not an ancestor of {dev_branch} — "
+                                   "run stage='backmerge' confirm=True first, then bless.")}
+        elif not (man["all_approved"] and ff):
             return _bless_cut(git, base, man, mode, confirm, remote, main,
                               main_branch, dev_branch, ff, now)
         incoming = _commits(git, main, dev)
@@ -547,7 +561,8 @@ def release(
                         "project-history, which this diff is not."
                     )}
         plan = {**base, "would_advance": f"{main_branch} → {dev[:9]}", "incoming_commits": incoming,
-                "ci": ci, "riders": {"all_approved": True, "commits": len(man["commits"])}}
+                "ci": ci, "riders": {"all_approved": man["all_approved"], "commits": len(man["commits"]),
+                                      "unapproved": man["unapproved_riders"]}}
         if docs_only and ci["verdict"] != "green":
             plan["ci_exception"] = ("docs-only diff (no executable path changed) — "
                                     "noc-ship step 0b's sole sanctioned CI exception")
@@ -644,7 +659,7 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.release",
         description=(
-            "Run the consent-gated release/deploy gates for the sacred-main branch "
+            "Run the release/deploy gates for the sacred-main branch "
             "model (KB § PATTERNS/branching-and-merging.md § 0.2). stage='status' "
             "(default) shows the feat→dev→main→prod chain (SHAs, FF-ability, the "
             "commits each hop would ship) read-only; stage='bless' fast-forwards "
@@ -653,16 +668,16 @@ def register(server) -> None:
             "stage='promote' snapshots the current prod onto prod-backup then "
             "fast-forwards prod to a blessed main sha (pass sha= to pin; default = "
             "main tip — which ships ALL of prod..main, flagged large_promote). "
-            "SHIP-CONSENT RIDERS (2026-09-22): stage='manifest' (read-only) lists "
-            "every commit main..dev grouped Noc-Branch trailer → branch-tree project "
-            "→ noctus.dev.ship_consent state (docs/project-history-only = exempt; "
-            "no trailer + no pointer evidence = unattributed = unapproved). bless "
-            "FFs only when every rider is approved/exempt; otherwise mode='cut' "
-            "(default) builds release/<YYYYMMDD-HHMM> = main + approved commits in "
-            "dev order (patch-id-equal skipped; REFUSES on a conflict or an approved "
-            "commit depending on an unapproved rider), confirm=True pushes THAT "
-            "branch; then bless release_branch=<name> confirm=True FFs main to it "
-            "once CI is green on its exact sha. mode='refuse' just blocks. "
+            "OWNER DECISION 2026-09-24: the owner's request to ship IS the "
+            "permission — default mode='ff' fast-forwards main to the WHOLE dev tip "
+            "with no per-project ship-consent check (CI green on that exact sha is "
+            "still required; a diverged main is refused until stage='backmerge'). "
+            "stage='manifest' (read-only) lists every commit main..dev grouped by "
+            "project with its (now informational) ship-consent state. Opt-in "
+            "mode='cut' builds release/<YYYYMMDD-HHMM> = main + approved commits "
+            "only, then bless release_branch=<name> confirm=True FFs main to it once "
+            "CI is green on its exact sha; mode='refuse' blocks on unapproved work. "
+            "A NEW product's first prod exposure stays gated by noctus.dev.prod_consent. "
             "stage='backmerge' merges main into dev (merge commit) so dev ⊇ main. "
             "DRY-RUN by default — pass confirm=True to push. FF-only "
             "by construction (never force/reset/checkout). It is the ONLY sanctioned "
@@ -683,7 +698,7 @@ def register(server) -> None:
         stage: str = "status",
         confirm: bool = False,
         sha: str | None = None,
-        mode: str = "cut",
+        mode: str = "ff",
         release_branch: str | None = None,
         allow_stale_toolkit: bool = False,
     ) -> dict:

@@ -49,6 +49,7 @@ def register_all(server) -> None:
     from . import diff
     from . import ci_matrix_sync
     from . import d4sign_contract_verify
+    from . import drive_pull
     from . import dependabot_sync
     from . import deploy_image
     from . import deploy_pull
@@ -174,6 +175,7 @@ def register_all(server) -> None:
     diff.register(server)
     ci_matrix_sync.register(server)
     d4sign_contract_verify.register(server)
+    drive_pull.register(server)
     dependabot_sync.register(server)
     deploy_image.register(server)
     deploy_pull.register(server)
