@@ -354,6 +354,33 @@ describe("useDadosPessoaisMutation — Bug F: a save must not leave Qualificaç�
   });
 });
 
+describe("useDadosPessoaisMutation — body carries ONLY ClientePatchBody's columns", () => {
+  it("🔴 strips non-editable cliente columns a wider seed object carries (the prod 422)", async () => {
+    mockPatch.mockResolvedValue({ celular: "11999999999" });
+    const mutation = useDadosPessoaisMutation("cl1") as any;
+    // What `ClienteDetailModal` actually hands the form: the full `clientes`
+    // row merged under the checklist `valores`. Every one of these extra keys
+    // made `StrictHttpModel` answer "Extra inputs are not permitted".
+    await mutation.mutateAsync({
+      id: "cl1",
+      org_id: "org1",
+      ativo: true,
+      created_at: "2026-09-24T17:47:06Z",
+      chave_canonica: null,
+      cpf_origem: null,
+      identidade_incerta: true,
+      nome: "KLEBER",
+      celular: "11999999999",
+      estado_civil: null,
+    });
+
+    expect(mockPatch).toHaveBeenCalledWith("/api/clientes/cl1", {
+      celular: "11999999999",
+      estado_civil: null,
+    });
+  });
+});
+
 describe("useDecidirConflitoMutation — Bug F, reverse direction (admin decision)", () => {
   it("🔴 invalidates the qualificação-completude key when a conflict is decided", async () => {
     mockPut.mockResolvedValue({ id: "cf1", cliente_id: "cl1" });
