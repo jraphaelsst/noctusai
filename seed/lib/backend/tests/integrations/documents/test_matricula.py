@@ -65,6 +65,24 @@ class TestTheDecoysOnTheSamePage:
         assert valor is None
         assert conf == "nenhuma"
 
+    def test_abbreviated_protocolo_does_not_masquerade_as_a_second_matricula(self):
+        """P1/883 live bug (2026-09-24): "Mat. 3917 - Página 1/3 - Prot.
+        123456" is the exact running-header shape a real scanned matrícula
+        printed. "Prot." (the abbreviation) is not the string "PROTOCOLO",
+        so the protocol number fell through to the nearest REAL label
+        ("MAT.") in its 40-char window and read as a second, disagreeing
+        matrícula number — zeroing the whole result via
+        `TestDisagreementIsAbsence`'s rule, for a document that in fact
+        named its matrícula cleanly, once."""
+        texto = "Mat. 3917 - Página 1/3 - Prot. 123456"
+        valor, conf, rotulo = find_matricula(texto)
+        assert (valor, conf) == ("3917", "alta")
+        assert rotulo and "MAT" in rotulo
+
+    def test_the_full_protocolo_word_is_still_a_decoy_too(self):
+        valor, _, _ = find_matricula("MATRICULA 12.345 PROTOCOLO 987654")
+        assert valor == "12345"
+
 
 class TestWhichMatricula:
     def test_a_matricula_cited_in_the_body_does_not_win(self):

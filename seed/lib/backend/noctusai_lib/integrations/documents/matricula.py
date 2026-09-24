@@ -61,6 +61,15 @@ _DECOY_LABELS = (
     "FLS",
     "FICHA",
     "PROTOCOLO",
+    # 🔴 P1/883 live bug (2026-09-24): the running header print style
+    # "Mat. 3917 - Página 1/3 - Prot. 123456" abbreviates it, and the
+    # abbreviation is a DIFFERENT string than "PROTOCOLO" — rfind never
+    # matches it, so the protocol number fell through to the nearest REAL
+    # label ("MAT.") within its 40-char window and was misread as a SECOND
+    # matrícula number. `TestDisagreementIsAbsence` then did its job
+    # exactly as designed and reported "nenhuma" — correct given a false
+    # disagreement, but the disagreement itself was the bug.
+    "PROT.",
     "CNM",
     "CNS",
     "INSCRICAO",
