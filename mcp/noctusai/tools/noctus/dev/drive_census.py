@@ -1305,6 +1305,179 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
             "cobertura": _coverage(key) if key["status"] == "ok" else None}
 
 
+# ─── folder → imóvel ref candidates ───────────────────────────────────────
+#
+# Owner rule (2026-09-24, via noctusai-3e): match each deal to its in-house / Vista imóvel by address
+# + condomínio + m² + endereço interno. CANDIDATES ONLY — the owner confirms every match; nothing
+# here writes to any database or links anything.
+
+SW_ORG_ID = "6dd73140-74a4-41c6-aeff-bc94b5312b53"  # where the owner's SW data lives (per 3e)
+SNAPSHOT_MAX_AGE_S = 24 * 3600
+_SNAPSHOT_SQL = """SELECT i.codigo, i.empreendimento, i.logradouro, i.numero, i.complemento, i.bairro, i.cidade, i.uf,
+       i.area_total, i.area_privativa, i.area_construida, i.area_terreno, i.matricula_vista, i.inscricao_municipal,
+       i.status, i.categoria,
+       d.numero_matricula, d.numero_registro_imoveis, d.prefeitura_cadastro_imobiliario, d.empreendimento_manual,
+       d.endereco_manual_logradouro, d.endereco_manual_numero, d.endereco_manual_complemento, d.endereco_manual_cidade
+  FROM social_wiring.imoveis i
+  LEFT JOIN social_wiring.imovel_dados d ON d.org_id = i.org_id AND d.codigo = i.codigo
+ WHERE i.org_id = '{org}'"""
+
+
+def _sql_executor():
+    """The Management-API SQL seam migrate_product already ships (same endpoint and auth as the
+    supabase MCP's db.query). Only SELECTs are ever sent through it from here."""
+    from .migrate_product import make_sql_executor
+
+    return make_sql_executor()
+
+
+def ref_snapshot(*, executor=None, refresh: bool = False) -> dict[str, Any]:
+    """SW's imóveis (the Vista-synced catalog) + imovel_dados, read ONCE into a private 0600 snapshot
+    and reused for SNAPSHOT_MAX_AGE_S (extract-once: the catalog is not re-read per folder)."""
+    path = _dir("ref-candidates") / "_sw_imoveis.json"
+    if path.is_file() and not refresh and (datetime.now().timestamp() - path.stat().st_mtime) < SNAPSHOT_MAX_AGE_S:
+        return json.loads(path.read_text(encoding="utf-8"))
+    sql = _SNAPSHOT_SQL.format(org=SW_ORG_ID)
+    if not re.match(r"^\s*SELECT\b", sql, re.I):  # read-only by construction; never send anything else
+        raise RuntimeError("ref_snapshot only runs SELECT statements")
+    executor = executor or _sql_executor()
+    if executor is None:
+        raise RuntimeError("no Supabase Management-API token (SUPABASE_ACCESS_TOKEN) — cannot read SW imóveis")
+    res = executor.execute(sql)
+    if not res.get("ok"):
+        raise RuntimeError(f"SW snapshot query failed: {res.get('error')}")
+    snap = {"org_id": SW_ORG_ID, "lido_em": datetime.now(timezone.utc).isoformat(), "imoveis": res["rows"] or []}
+    _write_private(path, snap)
+    return snap
+
+
+_CONDO_STOP = frozenset({"RESIDENCIAL", "CONDOMINIO", "COND", "LOTEAMENTO", "EDIFICIO", "ED", "DA", "DE", "DO",
+                         "DAS", "DOS", "E", "O", "A", "I", "II", "III", "IV", "CASA", "APTO", "APARTAMENTO",
+                         "LOTE", "RUA", "AL", "ALAMEDA", "AV", "AVENIDA", "ESTRADA", "VIA", "TRAVESSA", "SP"})
+_AREA_RE = re.compile(r"([\d.]+,\d{1,2}|\d+)\s*m(?:²|2|ts)", re.I)
+_UNIDADE_RE = re.compile(r"\b(CASA|APTO|APARTAMENTO|UNIDADE|LOTE)\s*(?:N[ºO°.]?\s*)?(\d+[A-Z]?)\b")
+
+
+def _tokens(s: Optional[str]) -> set[str]:
+    return {t for t in re.findall(r"[A-Z0-9]+", _fold(s or "")) if t not in _CONDO_STOP and not t.isdigit() and len(t) > 1}
+
+
+def _num(s: Any) -> Optional[str]:
+    d = re.sub(r"\D", "", str(s or "")).lstrip("0")
+    return d or None
+
+
+def _areas(text: str) -> list[float]:
+    out = []
+    for m in _AREA_RE.finditer(text or ""):
+        try:
+            out.append(float(m.group(1).replace(".", "").replace(",", ".")))
+        except ValueError:
+            continue
+    return [a for a in out if a >= 15]  # below that it is a frente/fundos measure, not an area
+
+
+def deal_features(key: dict[str, Any]) -> dict[str, Any]:
+    """What a deal's answer key says about its imóvel, normalized for matching."""
+    folder = key.get("folder") or {}
+    imovel = key.get("imovel") or {}
+    dados = imovel.get("imovel_dados") or {}
+    titulo_contrato = (key.get("contrato") or {}).get("titulo") or ""
+    descricao = imovel.get("descricao_matricula_texto") or ""
+    bag = " ".join([folder.get("titulo") or "", titulo_contrato])
+    unidades = {(m.group(1)[:4], m.group(2)) for m in _UNIDADE_RE.finditer(_fold(bag + " " + descricao[:300]))}
+    cidade = None
+    m = re.search(r"[–\-]\s*([A-ZÀ-Ý][A-ZÀ-Ý ]+?)\s*[/\-–]\s*SP\.?\s*$", titulo_contrato.strip())
+    if m:
+        cidade = _fold(m.group(1)).strip()
+    return {
+        "matricula": _num(dados.get("numero_matricula")),
+        "inscricao": _num(dados.get("prefeitura_cadastro_imobiliario")),
+        "cartorio": _fold(dados.get("numero_registro_imoveis") or ""),
+        "tokens": _tokens(bag),
+        "unidades": unidades,
+        "areas": _areas(descricao),
+        "cidade": cidade,
+        "texto": _fold(bag + " " + descricao),
+    }
+
+
+def score_candidate(f: dict[str, Any], row: dict[str, Any]) -> tuple[int, list[str]]:
+    """Points + evidence for one SW/Vista imóvel against one deal. Documentary identifiers (matrícula,
+    inscrição) are strong; condomínio/unidade/área are medium; street/city are weak (Vista's PUBLIC
+    número can be a placeholder — the real one lives in the internal address, which is not synced)."""
+    pts, ev = 0, []
+    mats = {_num(row.get("matricula_vista")), _num(row.get("numero_matricula"))} - {None}
+    if f["matricula"] and f["matricula"] in mats:
+        pts += 60
+        ev.append("matricula")
+    inscs = {_num(row.get("inscricao_municipal")), _num(row.get("prefeitura_cadastro_imobiliario"))} - {None}
+    if f["inscricao"] and f["inscricao"] in inscs:
+        pts += 60
+        ev.append("inscricao_municipal")
+    condo = _tokens(row.get("empreendimento_manual") or row.get("empreendimento"))
+    if condo and len(condo & f["tokens"]) / len(condo) >= 0.6:
+        pts += 25
+        ev.append("condominio")
+        comp = _fold(" ".join(str(row.get(k) or "") for k in ("complemento", "endereco_manual_complemento", "numero")))
+        if any(re.search(rf"\b{re.escape(n)}\b", comp) for _, n in f["unidades"]):
+            pts += 15
+            ev.append("unidade")
+    areas = [float(row[k]) for k in ("area_total", "area_privativa", "area_construida", "area_terreno") if row.get(k)]
+    if f["areas"] and any(abs(a - b) <= 0.02 * max(a, b) for a in f["areas"] for b in areas):
+        pts += 15
+        ev.append("area_m2")
+    rua = _tokens(row.get("endereco_manual_logradouro") or row.get("logradouro"))
+    if rua and rua <= set(re.findall(r"[A-Z0-9]+", f["texto"])):
+        pts += 10
+        ev.append("logradouro")
+        num = _num(row.get("endereco_manual_numero") or row.get("numero"))
+        if num and re.search(rf"\b{num}\b", f["texto"]):
+            pts += 5
+            ev.append("numero_publico")
+    cid = _fold(row.get("endereco_manual_cidade") or row.get("cidade") or "")
+    if f["cidade"] and cid and cid == f["cidade"]:
+        pts += 5
+        ev.append("cidade")
+    return pts, ev
+
+
+def ref_candidates_folder(folder_id: str, snapshot: dict[str, Any], *, top: int = 3) -> dict[str, Any]:
+    census = census_folder(folder_id)
+    numero = census["folder"]["numero"] or folder_id
+    key_path = _dp.private_root() / "answer-keys" / f"{numero}.json"
+    if not key_path.is_file():
+        return {"numero": numero, "status": "sem_answer_key"}
+    key = json.loads(key_path.read_text(encoding="utf-8"))
+    if key.get("status") != "ok":
+        return {"numero": numero, "status": f"answer_key_{key.get('status')}"}
+    f = deal_features(key)
+    scored = []
+    for row in snapshot["imoveis"]:
+        pts, ev = score_candidate(f, row)
+        if pts >= 25:
+            scored.append((pts, ev, row))
+    # A documentary identifier (matrícula / inscrição) outranks any sum of soft signals.
+    scored.sort(key=lambda t: (not ({"matricula", "inscricao_municipal"} & set(t[1])), -t[0]))
+    cands = [{"codigo": row["codigo"], "pontos": pts, "evidencias": ev,
+              "forca": "forte" if {"matricula", "inscricao_municipal"} & set(ev) else "media" if pts >= 40 else "fraca",
+              "empreendimento": row.get("empreendimento"), "logradouro": row.get("logradouro"),
+              "numero": row.get("numero"), "complemento": row.get("complemento"), "cidade": row.get("cidade"),
+              "status_vista": row.get("status")} for pts, ev, row in scored[:top]]
+    out = {"folder": census["folder"], "gerado_em": datetime.now(timezone.utc).isoformat(),
+           "confirmado_por": None, "confirmado_em": None,  # the OWNER fills these; never the tool
+           "sinais_do_negocio": {"matricula": bool(f["matricula"]), "inscricao": bool(f["inscricao"]),
+                                 "unidades": sorted("".join(u) for u in f["unidades"]), "areas": f["areas"],
+                                 "cidade": f["cidade"]},
+           "candidatos": cands}
+    _write_private(_dir("ref-candidates") / f"{numero}.json", out)
+    top1 = cands[0] if cands else None
+    empate = len(cands) > 1 and cands[0]["pontos"] == cands[1]["pontos"]
+    return {"numero": numero, "status": "ok", "candidatos": len(cands),
+            "melhor_forca": top1["forca"] if top1 else None, "melhor_evidencias": top1["evidencias"] if top1 else [],
+            "empate_no_topo": empate}
+
+
 # ─── tool entry ───────────────────────────────────────────────────────────
 
 
@@ -1314,12 +1487,17 @@ def _resolve_folders(folder_id: Optional[str]) -> list[str]:
     return [p.name for p in _mirror_dirs()]
 
 
-def drive_census(action: str, folder_id: Optional[str] = None) -> dict[str, Any]:
-    """``extract`` | ``census`` | ``answer_key`` over one mirrored folder, or ``all`` of them."""
-    if action not in ("extract", "census", "answer_key"):
-        raise ValueError(f"action must be extract | census | answer_key, got {action!r}")
+_ACTIONS = ("extract", "census", "answer_key", "ref_candidates")
+
+
+def drive_census(action: str, folder_id: Optional[str] = None, *, refresh: bool = False,
+                 executor=None) -> dict[str, Any]:
+    """``extract`` | ``census`` | ``answer_key`` | ``ref_candidates`` over one mirrored folder, or ``all``."""
+    if action not in _ACTIONS:
+        raise ValueError(f"action must be {' | '.join(_ACTIONS)}, got {action!r}")
     folders = _resolve_folders(folder_id)
     results: list[dict[str, Any]] = []
+    snapshot = ref_snapshot(executor=executor, refresh=refresh) if action == "ref_candidates" else None
     for fid in folders:
         try:
             if action == "extract":
@@ -1330,9 +1508,11 @@ def drive_census(action: str, folder_id: Optional[str] = None) -> dict[str, Any]
                 numero = c["folder"]["numero"] or fid
                 _write_private(_dir("census") / f"{numero}.json", c)
                 results.append(_redacted_census(c))
-            else:
+            elif action == "answer_key":
                 extract_folder(fid)
                 results.append(answer_key_folder(fid))
+            else:
+                results.append(ref_candidates_folder(fid, snapshot))
         except Exception as exc:  # noqa: BLE001 — one bad folder never hides the rest; surfaced per folder
             results.append({"folder_id": fid, "error": f"{type(exc).__name__}: {exc}"})
     if action == "census" and results:
@@ -1354,11 +1534,14 @@ def register(server) -> None:
             "image-only vs text-layer, permuta/empresa signals. action='answer_key' → ground-truth "
             "contract (D4Sign > REV FINAL > latest revision; drafts excluded), parsed into social_wiring "
             "vocabulary; empresas only from a human-verified file. Outputs are 0600 under the private "
-            "dir; the result carries counts and flags only, never personal data."
+            "dir; the result carries counts and flags only, never personal data. "
+            "action='ref_candidates' [refresh] → per deal, the top-3 SW/Vista imóvel candidates "
+            "(matrícula / inscrição exact = forte; condomínio + unidade + m² = media) from a cached "
+            "read-only SW snapshot. Candidates only: the owner confirms every match; nothing is linked."
         ),
     )
-    def _drive_census(action: str, folder_id: str | None = None) -> dict:
-        return drive_census(action=action, folder_id=folder_id)
+    def _drive_census(action: str, folder_id: str | None = None, refresh: bool = False) -> dict:
+        return drive_census(action=action, folder_id=folder_id, refresh=refresh)
 
 
 __all__ = ["drive_census", "classify_entry", "parse_contract", "paragraphs_from_text", "select_contract",

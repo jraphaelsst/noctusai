@@ -407,6 +407,33 @@ def test_a_failing_file_retries_at_most_three_times(private) -> None:
     assert C.drive_census("extract", "F6")["results"][0]["outcomes"] == {"cached": 1}
 
 
+def test_ref_candidates_rank_documentary_matches_first_and_never_link(private, tmp_path) -> None:
+    from tools.noctus.dev.migrate_product import FakeSqlExecutor
+
+    contrato = CONTRATO.replace("Terreno com casa,", "Terreno com casa com área construída de 210,50m²,") \
+        .replace("RESIDENCIAL TESTE – RUA", "RESIDENCIAL TESTE – CASA 10 – RUA", 1)
+    _mirror(private, "F7", {"REV FINAL_CONTRATO DE COMPRA E VENDA - X.docx": _docx_bytes(contrato, tmp_path)})
+    C.drive_census("answer_key", "F7")
+    rows = [
+        {"codigo": "ONE1", "empreendimento": "Residencial Teste", "complemento": "Casa 10", "area_construida": 211.0,
+         "logradouro": "Fictícia", "numero": "10", "cidade": "Vila Modelo"},             # condo + unidade + área
+        {"codigo": "ONE2", "matricula_vista": "4.321", "empreendimento": "Outro Lugar"},   # the matrícula
+        {"codigo": "ONE3", "empreendimento": "Jardim Distante", "area_total": 900.0},      # decoy
+    ]
+    fake = FakeSqlExecutor(preset_rows={"FROM social_wiring.imoveis": rows})
+    result = C.drive_census("ref_candidates", "F7", executor=fake)
+    summary = result["results"][0]
+    assert (summary["status"], summary["candidatos"], summary["melhor_forca"]) == ("ok", 2, "forte")
+    assert all(sql.lstrip().upper().startswith("SELECT") for sql in fake.executed)  # read-only
+    out = json.loads((private / "ref-candidates" / "901.json").read_text())
+    assert [(c["codigo"], c["forca"]) for c in out["candidatos"]] == [("ONE2", "forte"), ("ONE1", "media")]
+    assert set(out["candidatos"][1]["evidencias"]) >= {"condominio", "unidade", "area_m2"}
+    assert (out["confirmado_por"], out["confirmado_em"]) == (None, None)  # only the owner confirms
+    # the snapshot is read once and reused
+    C.drive_census("ref_candidates", "F7", executor=fake)
+    assert len(fake.executed) == 1
+
+
 def test_unknown_action_is_refused() -> None:
     with pytest.raises(ValueError, match="extract \\| census \\| answer_key"):
         C.drive_census("nope")
