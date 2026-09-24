@@ -91,6 +91,7 @@ from app.modules.certidoes.deps import (
     get_certidoes_service,
     get_storage_backend,
 )
+from app.modules.certidoes import matriz_custom_rows
 from app.modules.certidoes.registry import (
     CERTIDOES_CONFIG,
     TJSP_TIPO,
@@ -291,6 +292,59 @@ def _resolve_parte_cliente_id(db, org_id, atendimento_parte_id: str) -> Optional
     if not parte_rows:
         raise HTTPException(status_code=404, detail="Parte não encontrada")
     return parte_rows[0]["cliente_id"]
+
+
+def _atendimento_id_da_parte(db, org_id, atendimento_parte_id: str) -> Optional[str]:
+    """The `atendimento_id` behind one `atendimento_partes` row of THIS
+    org — `vincular_parte`'s own extra lookup for the Certidões matriz
+    custom-row fan-out (§ below), kept separate from `_resolve_parte_
+    cliente_id` so that function's existing contract (used by `criar_
+    consulta_manual` too) never changes."""
+    rows = (
+        db.table("atendimento_partes")
+        .select("atendimento_id")
+        .eq("id", atendimento_parte_id)
+        .eq("org_id", str(org_id))
+        .execute()
+    ).data or []
+    return rows[0]["atendimento_id"] if rows else None
+
+
+def _fan_out_linhas_customizadas_do_card(
+    db, org_id, consulta_id: str, *,
+    atendimento_id: Optional[str] = None,
+    cliente_id: Optional[str] = None,
+    empresa_id: Optional[str] = None,
+) -> None:
+    """The Certidões matriz's per-card CUSTOM rows (migration 170) get the
+    SAME idempotent placeholder fan-out the fixed manual types already get
+    from `_fan_out_tipos_manuais` — closing the "row added first, consulta
+    linked later" gap (owner directive, 2026-09-24 follow-up round 2).
+    Best-effort: `matriz_custom_rows.resolver_card_titular_*` never raises,
+    so an unresolvable card silently fans out nothing rather than failing
+    the vincular_* write this rides along with. Exactly one of
+    `atendimento_id`/`cliente_id`/`empresa_id` should be set — `vincular_
+    parte` already knows its `atendimento_id` directly (no resolution
+    needed); `vincular_cliente`/`vincular_empresa` resolve theirs via
+    `matriz_custom_rows`."""
+    titular: Optional[str] = None
+    if atendimento_id:
+        rows = (
+            db.table("atendimentos")
+            .select("id, cliente_id")
+            .eq("org_id", str(org_id))
+            .eq("id", atendimento_id)
+            .limit(1)
+            .execute()
+        ).data or []
+        titular = str(rows[0]["cliente_id"]) if rows else None
+    elif empresa_id:
+        titular = matriz_custom_rows.resolver_card_titular_por_empresa(db, org_id, empresa_id)
+    elif cliente_id:
+        titular = matriz_custom_rows.resolver_card_titular_por_cliente(db, org_id, cliente_id)
+
+    if titular:
+        matriz_custom_rows.fan_out_linhas_customizadas(db, org_id, consulta_id, titular)
 
 
 def _validar_cliente_id(db, org_id, cliente_id: str) -> None:
@@ -1060,6 +1114,11 @@ async def vincular_parte(
     get theirs from `criar_consulta`'s own fan-out; these three have no API
     call to make one from, so the upload endpoint always needs a resultado_id
     to target before a human can use it.
+
+    AND fans out a placeholder for every ACTIVE custom row of the Certidões
+    matriz card this party is on (migration 170) — see `_fan_out_linhas_
+    customizadas_do_card`; closes the "custom row added before this consulta
+    was linked" gap.
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -1083,6 +1142,10 @@ async def vincular_parte(
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
     _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento=consulta.get("tipo_documento"))
+    _fan_out_linhas_customizadas_do_card(
+        db, org_id, consulta_id,
+        atendimento_id=_atendimento_id_da_parte(db, org_id, str(body.atendimento_parte_id)),
+    )
 
     return success_response(consulta)
 
@@ -1119,7 +1182,11 @@ async def vincular_cliente(
     `clientes` before it is written.
 
     Also fans out the three manual-only placeholder types, exactly like
-    `vincular_parte` — see `_fan_out_tipos_manuais`.
+    `vincular_parte` — see `_fan_out_tipos_manuais`. AND the card's custom
+    matriz rows (migration 170) — `_fan_out_linhas_customizadas_do_card`
+    resolves the card from `cliente_id` alone, since this route also links
+    a non-titular party's own consulta (`CertidoesMatrizSection`'s uniform
+    click-through scope).
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -1138,6 +1205,7 @@ async def vincular_cliente(
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
     _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento=consulta.get("tipo_documento"))
+    _fan_out_linhas_customizadas_do_card(db, org_id, consulta_id, cliente_id=str(body.cliente_id))
 
     return success_response(consulta)
 
@@ -1175,7 +1243,10 @@ async def vincular_empresa(
 
     Also fans out the manual-only placeholder types (TJSP e-SAJ/e-PROC —
     NOT Serasa, a CNPJ consulta's fan-out never carries it — see
-    `_fan_out_tipos_manuais`).
+    `_fan_out_tipos_manuais`). AND the card's custom matriz rows (migration
+    170) — `_fan_out_linhas_customizadas_do_card` resolves the card via any
+    of this empresa's owners (`matriz_custom_rows.resolver_card_titular_
+    por_empresa`).
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -1205,6 +1276,7 @@ async def vincular_empresa(
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
     _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento="cnpj")
+    _fan_out_linhas_customizadas_do_card(db, org_id, consulta_id, empresa_id=str(body.empresa_id))
     service.aplicar_crednet_pendente(db, org_id, consulta)
 
     return success_response(consulta)

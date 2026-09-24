@@ -98,9 +98,11 @@ from app.modules.card_hub.services import (
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.certidoes.registry import MATRIZ_LINHAS
 
+from app.modules.certidoes.matriz_custom_rows import (
+    LINHAS_CUSTOMIZADAS_TABLE,
+    linhas_customizadas_ativas,
+)
 from app.services import table_reads
-
-LINHAS_CUSTOMIZADAS_TABLE = "certidao_matriz_linhas_customizadas"
 
 #: The three total buckets a non-N/A cell falls into — mirrors the Excel
 #: source's "Totais" footer rows (Não constam / Constam / Pendente), one
@@ -123,22 +125,6 @@ _CONSTAM = frozenset({"positiva", "nao_emitida"})
 
 def _t(client: Any, table: str):
     return table_reads.table(client, table)
-
-
-def linhas_customizadas_ativas(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
-    """Every ACTIVE (`excluida_em IS NULL`) custom row for this card, oldest
-    first — the matriz's 5.14, 5.15, ... in creation order. Shared by
-    `montar_matriz` (read) and `certidoes_matriz_linhas_service` (the CRUD's
-    own listing + duplicate-name-not-enforced-but-ordem-computation)."""
-    return (
-        _t(client, LINHAS_CUSTOMIZADAS_TABLE)
-        .select("id, nome, ordem, created_at")
-        .eq("org_id", str(org_id))
-        .eq("cliente_id", str(cliente_id))
-        .is_("excluida_em", "null")
-        .order("ordem")
-        .execute()
-    ).data or []
 
 
 def resolver_colunas(client: Any, org_id: UUID, cliente_id: UUID) -> tuple[Optional[str], list[dict]]:

@@ -1702,3 +1702,147 @@ class TestAuthBoundary:
     def test_sem_token_e_401(self, anon_client, method, path):
         resp = getattr(anon_client, method)(path)
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Certidões matriz — CUSTOM row fan-out on vincular_parte/vincular_cliente/
+# vincular_empresa (migration 170, owner directive 2026-09-24 follow-up
+# round 2: "row added first, consulta linked later" must not lose the
+# placeholder).
+# ---------------------------------------------------------------------------
+
+TITULAR_ID = "55555555-5555-4555-8555-555555555555"
+VENDEDOR_ID = "66666666-6666-4666-8666-666666666666"
+LINHA_CUSTOM_ID = "77777777-7777-4777-8777-777777777777"
+
+
+def _atendimento_row(**overrides) -> dict:
+    row = {
+        "id": "atendimento-001", "org_id": CALLER_ORG, "cliente_id": TITULAR_ID,
+        "substituida_por": None, "arquivado": False,
+    }
+    row.update(overrides)
+    return row
+
+
+def _linha_customizada(**overrides) -> dict:
+    row = {
+        "id": LINHA_CUSTOM_ID, "org_id": CALLER_ORG, "cliente_id": TITULAR_ID,
+        "nome": "Consulta Municipal", "ordem": 14, "excluida_em": None,
+        "created_at": "2026-01-01T00:00:00+00:00", "created_by": None,
+        "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+class TestFanOutLinhasCustomizadasNoVincular:
+    """`_fan_out_linhas_customizadas_do_card` — wired into all three
+    vincular_* endpoints."""
+
+    def test_vincular_parte_cria_placeholder_para_linha_ja_existente(self, client, certidoes_db):
+        """Row-then-link: the custom row exists BEFORE the consulta is
+        linked — the fan-out must still create its placeholder."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimentos", [_atendimento_row()])
+        db.set_table_data("atendimento_partes", [_parte(cliente_id=VENDEDOR_ID)])
+        db.set_table_data("certidao_matriz_linhas_customizadas", [_linha_customizada()])
+
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        assert resp.status_code == 200
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        custom = [r for r in resultados if r.get("linha_customizada_id") == LINHA_CUSTOM_ID]
+        assert len(custom) == 1
+        assert custom[0]["tipo"] == "outras_custom"
+        assert custom[0]["status"] == "pendente"
+
+    def test_vincular_parte_e_idempotente_sem_duplicar_no_re_link(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimentos", [_atendimento_row()])
+        db.set_table_data("atendimento_partes", [_parte(cliente_id=VENDEDOR_ID)])
+        db.set_table_data("certidao_matriz_linhas_customizadas", [_linha_customizada()])
+
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        custom = [r for r in resultados if r.get("linha_customizada_id") == LINHA_CUSTOM_ID]
+        assert len(custom) == 1
+
+    def test_vincular_parte_linha_soft_deletada_nao_recebe_placeholder(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimentos", [_atendimento_row()])
+        db.set_table_data("atendimento_partes", [_parte(cliente_id=VENDEDOR_ID)])
+        db.set_table_data(
+            "certidao_matriz_linhas_customizadas",
+            [_linha_customizada(excluida_em="2026-02-01T00:00:00+00:00")],
+        )
+
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        assert resp.status_code == 200
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        custom = [r for r in resultados if r.get("linha_customizada_id") == LINHA_CUSTOM_ID]
+        assert custom == []
+
+    def test_vincular_cliente_titular_cria_placeholder_para_linha_ja_existente(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimentos", [_atendimento_row(cliente_id=CLIENTE_ID)])
+        db.set_table_data("clientes", [_cliente()])
+        db.set_table_data(
+            "certidao_matriz_linhas_customizadas",
+            [_linha_customizada(cliente_id=CLIENTE_ID)],
+        )
+
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+        assert resp.status_code == 200
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        custom = [r for r in resultados if r.get("linha_customizada_id") == LINHA_CUSTOM_ID]
+        assert len(custom) == 1
+
+    def test_vincular_empresa_cria_placeholder_via_dono_da_empresa(self, client, certidoes_db):
+        db, _ = certidoes_db
+        empresa_id = "88888888-8888-4888-8888-888888888888"
+        _seed(db, consultas=[
+            _consulta(tipo_documento="cnpj", documento="11222333000181"),
+        ])
+        db.set_table_data("atendimentos", [_atendimento_row()])
+        db.set_table_data("atendimento_partes", [_parte(cliente_id=VENDEDOR_ID)])
+        db.set_table_data("empresas", [
+            {"id": empresa_id, "org_id": CALLER_ORG, "cnpj": "11222333000181"},
+        ])
+        db.set_table_data("cliente_empresa_participacoes", [
+            {"id": "part-1", "org_id": CALLER_ORG, "cliente_id": VENDEDOR_ID, "empresa_id": empresa_id},
+        ])
+        db.set_table_data("certidao_matriz_linhas_customizadas", [_linha_customizada()])
+
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-empresa",
+            json={"empresa_id": empresa_id},
+        )
+        assert resp.status_code == 200
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        custom = [r for r in resultados if r.get("linha_customizada_id") == LINHA_CUSTOM_ID]
+        assert len(custom) == 1
