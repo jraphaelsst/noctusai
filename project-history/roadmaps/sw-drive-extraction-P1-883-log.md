@@ -104,3 +104,31 @@ All values are machine-pending (`origem=ia`, `confirmado_em` null) until D2 conf
   fixture had the real titular-comprador + vendedor-parte shape.
 - Dispatched: feat/sw-p1-fixes-1 (G4 + G1 matrícula nº + inscrição precedence + CNH DN/RG DV + G2 polling). Step c
   (Serasa) waits for its deploy.
+
+### Step b2 · Vendedora · Comprovante de endereço (image-only) → vision, `ok`, via Anexos type
+| field | result | note |
+|---|---|---|
+| endereco_cep | ok | |
+| endereco_logradouro | ok | "AL ALEMANHA" (abbreviated) |
+| endereco_numero | difere | "00535": leading zeros not normalized (contract "535") |
+| endereco_bairro | **errado** | vision misread "RESIDENCIAL EDINUELE" (the real one is "Residencial Euroville"). Needs a CEP→bairro cross-check or the D2 gate with a crop |
+| endereco_cidade | difere | "CARAPICUIBA": accents lost (contract "Carapicuíba") |
+| endereco_uf | ok | |
+Written to clientes.endereco_* (origem comprovante_endereco), machine-pending.
+
+### Step b3 · Vendedora · Certidão de casamento c/ averbação de divórcio (image-only) → vision, `ok`
+- estado_civil `divorciado` ok (contract "divorciada"), regime `separacao_total` (the former marriage), data_casamento read,
+  nome ok. Written with origem certidao_casamento.
+- Note: the comprovante/casamento have no checklist slots; uploaded via the Anexos type picker, which works because
+  extraction dispatches by tipo.
+
+### Step c · Vendedora · Serasa Crednet (image-only) → vision, via the Anexos type (the checklist slot is hidden, G4)
+Reading (`cliente_documentos.extracao_crednet`): protocolo `112566` **ok** (= contract 1.9 and the verified key);
+participações **2/2 read, both CNPJs check-digit valid**; nome_mae written (origem serasa_crednet) ok; data_nascimento
+1964-04-20 ok (already filled by the certidão de casamento; value correct).
+🔴 **G5 (live P0c bug): no empresas / participações / certidão 9 created.** Prod log: `crednet_service._upsert_empresa:194`
+→ FK 23503: it wrote the Crednet's `cliente_documentos.id` into `empresas.dados_documento_id`, whose FK targets
+`empresa_documentos`. The contract said NULL for Crednet-created empresas.
+🔴 **G6 (silent failure):** the crash hit a BackgroundTask AFTER `extracao_status='ok'`. The UI reports success while
+the side effects never ran. The unit mock doesn't enforce FKs, so tests were green.
+Both added to feat/sw-p1-fixes-1. After deploy: re-run extraction on this document and re-score.
