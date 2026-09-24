@@ -502,6 +502,26 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
             confiancas["situacao_cadastral"] = ExtractionConfidence.NENHUMA
             rotulos["situacao_cadastral"] = bruto
 
+    # 🔴 THE RECEITA MASKS THE ADDRESS BLOCK OF EVERY BAIXADA COMPANY
+    # (verified 5/5 real Cartões, 2026-09-24). A transcription that reports
+    # address VALUES here anyway is not a parser gap — it is the vision
+    # model FABRICATING a plausible-looking address instead of reading the
+    # mask (measured live: 6/7 fields "found" on a REALIZA Cartão whose
+    # address boxes are ALL `********`). So this is a policy override, not
+    # a best-effort read: every address field is forced `None` here
+    # regardless of what the transcription said, the block is always
+    # treated as masked, and — when the transcription DID carry values —
+    # the fabrication stays VISIBLE via `aviso` rather than silently
+    # discarded.
+    endereco_descartado_por_baixada = False
+    if situacao_cadastral == "baixada":
+        if any(valores[campo] is not None for campo in _ENDERECO_CAMPOS):
+            endereco_descartado_por_baixada = True
+        for campo in _ENDERECO_CAMPOS:
+            valores[campo] = None
+            confiancas[campo] = ExtractionConfidence.NENHUMA
+        endereco_mascarado = True
+
     uf = _uf_valida(valores["uf"])
     if valores["uf"] and uf is None:
         # The label was found but nothing in its value validated as one of
@@ -520,7 +540,12 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
         except ValueError:
             emitido_em = None
 
-    aviso = "cnpj_digito_invalido" if (cnpj_valor is not None and not cnpj_valido) else None
+    avisos: list[str] = []
+    if cnpj_valor is not None and not cnpj_valido:
+        avisos.append("cnpj_digito_invalido")
+    if endereco_descartado_por_baixada:
+        avisos.append("endereco_descartado_baixada")
+    aviso = ",".join(avisos) if avisos else None
 
     return CartaoCnpjFields(
         cnpj=cnpj_valor,

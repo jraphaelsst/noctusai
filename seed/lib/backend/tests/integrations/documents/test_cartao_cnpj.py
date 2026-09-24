@@ -77,21 +77,28 @@ class TestFullParse:
         assert f.razao_social == "RAZAO SOCIAL EXEMPLO LTDA"
         assert f.porte == "DEMAIS"
         assert f.natureza_juridica == "206-2 - SOCIEDADE EMPRESARIA LIMITADA"
-        assert f.uf == "SP"
         assert f.situacao_cadastral == "baixada"
         assert f.data_situacao_cadastral == date(2021, 6, 10)
         assert f.motivo_situacao == "EXTINCAO POR ENCERRAMENTO LIQUIDACAO VOLUNTARIA"
         assert f.emitido_em == datetime(2026, 9, 20, 14, 33, 10)
         assert f.error is None
+        # This fixture's default is `baixada` — its `UF: SP` line is
+        # POLICY-DISCARDED, not read. See `TestBaixadaAddressDiscard` for
+        # the dedicated coverage; `TestAddressBlock` covers a full address
+        # parse against an `ativa`-shaped (non-discarding) document.
+        assert f.uf is None
+        assert f.endereco_mascarado is True
 
     def test_confiancas_and_rotulos(self):
         f = parse_cartao_cnpj(_cartao(), TextSource.TEXT_LAYER)
         for campo in (
             "cnpj", "data_abertura", "razao_social", "porte",
-            "natureza_juridica", "uf", "situacao_cadastral",
+            "natureza_juridica", "situacao_cadastral",
             "data_situacao_cadastral", "motivo_situacao", "emitido_em",
         ):
             assert f.confiancas[campo] is ExtractionConfidence.ALTA
+        # `uf` is policy-discarded on this `baixada` fixture — see above.
+        assert f.confiancas["uf"] is ExtractionConfidence.NENHUMA
         assert f.rotulos["cnpj"] == "NUMERO DE INSCRICAO"
         assert f.rotulos["situacao_cadastral"] == "SITUACAO CADASTRAL"
         assert f.rotulos["emitido_em"] == "EMITIDO NO DIA"
@@ -233,6 +240,92 @@ class TestAddressBlock:
         assert f.confiancas["uf"] is ExtractionConfidence.NENHUMA
 
 
+class TestBaixadaAddressDiscard:
+    """🔴 The Receita masks the address block of EVERY `baixada` company
+    (verified 5/5 real Cartões, 2026-09-24). A vision transcription that
+    reports address VALUES on a `baixada` document anyway is the model
+    FABRICATING a plausible address, not a legitimate read — measured
+    live: 6/7 address fields came back "found" on a real REALIZA Cartão
+    whose boxes are ALL `********`. `parse_cartao_cnpj` enforces this as a
+    POLICY, independent of what any single transcription claims."""
+
+    def _cartao_com_endereco(self, *, situacao: str) -> str:
+        return (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "NOME EMPRESARIAL: RAZAO SOCIAL EXEMPLO LTDA\n"
+            "LOGRADOURO: RUA EXEMPLO\n"
+            "NUMERO: 123\n"
+            "COMPLEMENTO: SALA 4\n"
+            "CEP: 01310-100\n"
+            "BAIRRO/DISTRITO: PINHEIROS\n"
+            "MUNICIPIO: SAO PAULO\n"
+            "UF: SP\n"
+            f"SITUACAO CADASTRAL: {situacao}\n"
+        )
+
+    def test_baixada_with_transcribed_address_values_forces_every_field_none(self):
+        f = parse_cartao_cnpj(
+            self._cartao_com_endereco(situacao="BAIXADA"), TextSource.OCR
+        )
+        assert f.situacao_cadastral == "baixada"
+        for campo in ("logradouro", "numero", "complemento", "cep", "bairro", "municipio", "uf"):
+            assert getattr(f, campo) is None, campo
+            assert f.confiancas[campo] is ExtractionConfidence.NENHUMA
+
+    def test_baixada_with_transcribed_address_values_sets_endereco_mascarado(self):
+        f = parse_cartao_cnpj(
+            self._cartao_com_endereco(situacao="BAIXADA"), TextSource.OCR
+        )
+        assert f.endereco_mascarado is True
+
+    def test_baixada_with_fabricated_values_carries_the_aviso(self):
+        f = parse_cartao_cnpj(
+            self._cartao_com_endereco(situacao="BAIXADA"), TextSource.OCR
+        )
+        assert f.aviso is not None
+        assert "endereco_descartado_baixada" in f.aviso
+
+    def test_baixada_with_already_masked_address_carries_no_fabrication_aviso(self):
+        """The discard fires either way (policy, not a fabrication
+        detector) — but there is nothing to FLAG as fabricated when the
+        transcription was already honest about the mask."""
+        texto = (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "LOGRADOURO: ********\n"
+            "UF: ********\n"
+            "SITUACAO CADASTRAL: BAIXADA\n"
+        )
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.uf is None
+        assert f.endereco_mascarado is True
+        assert f.aviso is None
+
+    def test_ativa_with_the_same_address_values_keeps_them_capped_at_baixa(self):
+        """The discard is `baixada`-specific — an `ativa` company's
+        (unmasked, per the module's own real-corpus evidence) address is
+        NOT policy-discarded, only tempered like every other vision-read
+        field."""
+        f = parse_cartao_cnpj(
+            self._cartao_com_endereco(situacao="ATIVA"), TextSource.OCR
+        )
+        assert f.situacao_cadastral == "ativa"
+        assert f.logradouro == "RUA EXEMPLO"
+        assert f.municipio == "SAO PAULO"
+        assert f.uf == "SP"
+        assert f.endereco_mascarado is False
+        assert f.aviso is None
+        for campo in ("logradouro", "numero", "complemento", "cep", "bairro", "municipio", "uf"):
+            assert f.confiancas[campo] is ExtractionConfidence.BAIXA, campo
+
+    def test_ativa_with_the_same_address_values_off_a_text_layer_reaches_alta(self):
+        """Tempering, not discarding — a TEXT_LAYER source is untouched."""
+        f = parse_cartao_cnpj(
+            self._cartao_com_endereco(situacao="ATIVA"), TextSource.TEXT_LAYER
+        )
+        for campo in ("logradouro", "numero", "complemento", "cep", "bairro", "municipio", "uf"):
+            assert f.confiancas[campo] is ExtractionConfidence.ALTA, campo
+
+
 class TestColumnAlignedTextLayer:
     """🔴 Some Cartões are Chrome-printed PDFs with a genuine text layer
     (`Producer: Skia/PDF`), read by rung 1 — no vision call, `alta`
@@ -298,14 +391,22 @@ class TestColumnAlignedTextLayer:
 
 class TestCheckDigitDiscipline:
     def test_an_invalid_cnpj_is_flagged_never_corrected(self):
-        f = parse_cartao_cnpj(_cartao(cnpj=CNPJ_INVALIDO), TextSource.TEXT_LAYER)
+        # `situacao_cadastral="ATIVA"` — isolates the CNPJ check-digit
+        # aviso from the `baixada` address-discard aviso (see
+        # `TestBaixadaAddressDiscard` for that one's own coverage).
+        f = parse_cartao_cnpj(
+            _cartao(cnpj=CNPJ_INVALIDO, situacao_cadastral="ATIVA"),
+            TextSource.TEXT_LAYER,
+        )
         assert f.cnpj == CNPJ_INVALIDO
         assert f.cnpj_valido is False
         assert f.confiancas["cnpj"] is ExtractionConfidence.BAIXA
         assert f.aviso == "cnpj_digito_invalido"
 
     def test_a_valid_cnpj_never_carries_an_aviso(self):
-        f = parse_cartao_cnpj(_cartao(), TextSource.TEXT_LAYER)
+        f = parse_cartao_cnpj(
+            _cartao(situacao_cadastral="ATIVA"), TextSource.TEXT_LAYER
+        )
         assert f.aviso is None
 
 
