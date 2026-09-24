@@ -319,16 +319,51 @@ def test_answer_key_end_to_end_is_private_and_redacted(private, tmp_path) -> Non
     assert (private / "census" / "901.json").is_file()
 
 
-def test_an_aditivo_is_never_the_ground_truth_contract(private, tmp_path) -> None:
-    aditivo = "PRIMEIRO ADITIVO AO INSTRUMENTO PARTICULAR DE PROMESSA DE VENDA E COMPRA\nCláusula única."
+ADITIVO = """PRIMEIRO ADITIVO AO INSTRUMENTO PARTICULAR DE PROMESSA DE VENDA E COMPRA DE BEM IMÓVEL – RESIDENCIAL TESTE
+Pelo presente instrumento particular, de um lado, ANA EXEMPLO SILVA, brasileira, divorciada, inscrita no CPF/MF 111.222.333-44;
+1. DA ALTERAÇÃO DA PARCELA 02 DA CLÁUSULA SEGUNDA As partes resolvem alterar a forma de pagamento da Parcela 02.
+Parcela 02: R$ 450.000,00 (quatrocentos e cinquenta mil reais), sendo:
+2. DA ALTERAÇÃO DA CLÁUSULA QUINTA – POSSE DO IMÓVEL A posse será outorgada após o registro.
+3. DA RATIFICAÇÃO Permanecem válidas as demais cláusulas do Instrumento Particular firmado em 28 de julho de 2026 que ora se adita.
+VENDEDORA: ANA EXEMPLO SILVA
+Documento 12345678-aaaa-bbbb-cccc-1234567890ab criado por ALGUEM 2026-09-01T10:00:00-03:00 2026-09-02T11:30:00-03:00"""
+
+
+def test_aditivo_is_structured_and_never_the_ground_truth_contract(private, tmp_path) -> None:
     _mirror(private, "F3", {
-        "ADITIVO - REV FINAL_CONTRATO DE COMPRA E VENDA - X.docx": _docx_bytes(aditivo, tmp_path),
+        # named like a contract: only its opening text says it is an aditivo
+        "REV FINAL_CONTRATO DE COMPRA E VENDA - X (2).docx": _docx_bytes(ADITIVO, tmp_path),
         "CONTRATO DE COMPRA E VENDA - X - rev. 14-08-26.docx": _docx_bytes(CONTRATO, tmp_path),
     })
     summary = C.drive_census("answer_key", "F3")["results"][0]
     assert (summary["status"], summary["fonte"], summary["aditivos"]) == ("ok", "revisao", 1)
+    assert summary["aditivos_categorias"] == ["parcelas", "prazo"]
     key = json.loads((private / "answer-keys" / "901.json").read_text())
-    assert key["fonte"]["aditivos"] == ["ADITIVO - REV FINAL_CONTRATO DE COMPRA E VENDA - X.docx"]
+    [ad] = key["aditivos"]
+    assert (ad["numero_ordinal"], ad["contrato_original_data"], ad["fonte"], ad["status"]) == (1, "2026-07-28", "docx", "ok")
+    assert [(s["secao"], s["categorias"], s["clausula_original"]) for s in ad["alteracoes"]] == [
+        (1, ["parcelas"], "Segunda"), (2, ["prazo"], "Quinta")]
+    assert "Parcela 02: R$ 450.000,00" in ad["alteracoes"][0]["texto"]  # the section keeps its body
+    # a D4Sign certificate's last ISO stamp is the signing date
+    assert C.d4sign_assinado_em(ADITIVO) == "2026-09-02"
+
+
+def test_criminal_items_are_ignored_and_relatorio_fiscal_takes_the_rf_slot() -> None:
+    txt = """CLÁUSULA TERCEIRA – DAS CERTIDÕES E DOCUMENTOS
+1 - Em nome de ANA EXEMPLO SILVA
+1.1 – Certidão Positiva com Efeito de Negativa de Débitos Relativos aos Tributos Federais e Dívida Ativa União – nº AAAA.BBBB - emitida em 01/08/2026;
+1.13 – Certidões de Distribuição Criminal emitidas pela Justiça Estadual e Justiça Federal.
+2 - Em nome de EMPRESA FICTICIA LTDA
+2.1 – Relatório Fiscal emitido em 13/09/2026;"""
+    cert = C.parse_certidoes(C.split_clauses(C.paragraphs_from_text(txt, source="docx"))[1][0])
+    pf, pj = cert["grupos"]
+    crim = pf["itens"][1]
+    assert (crim["tipo"], crim["ignorado"]) == (None, "criminal_advogado_cliente")
+    assert pj["consulta_tipo_documento"] == "cnpj"  # LTDA in the name
+    [rel] = pj["itens"]
+    assert (rel["tipo"], rel["pasta_n"], rel["emitida_em"], rel["condicao"]) == (
+        "relatorio_fiscal", 1, "2026-09-13", "rf_nao_negativa")
+    assert (rel["rf_presente"], rel["rf_resultado"]) == (False, None)
 
 
 def test_word_diff_reports_only_real_edits() -> None:

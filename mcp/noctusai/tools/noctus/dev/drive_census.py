@@ -241,6 +241,7 @@ _CERT_FILE_RE = re.compile(r"^\s*(\d{1,2})\s*-\s*")
 
 # (doc_type, regex over the folded file name). First match wins, so specific before generic.
 _DOC_RULES: tuple[tuple[str, str], ...] = (
+    ("aditivo", r"ADITIV|ADITAMENTO"),
     ("contrato_d4sign", r"D4SIGN|CERTIFICADO DIGITAL"),
     ("autorizacao_reforma", r"AUTORIZA\w* DE REFORMA"),
     ("contrato", r"CONTRATO DE (PROMESSA DE )?(COMPRA|VENDA)|\bCCV\b|INSTRUMENTO PARTICULAR"),
@@ -352,6 +353,7 @@ def census_folder(folder_id: str) -> dict[str, Any]:
         "entities_pf": sum(1 for r in entity_rows if r["kind"] == "pf"),
         "entities_pj": sum(1 for r in entity_rows if r["kind"] == "pj"),
         "cartao_cnpj_files": by_type.get("cartao_cnpj", 0),
+        "aditivo_files": by_type.get("aditivo", 0),
         "has_contract_d4sign": "contrato_d4sign" in has,
         "has_contract_rev_final": any(f.get("rev_final") for f in non_draft),
         "has_contract_docx": any(f["doc_type"] == "contrato" and _is_docx(f) for f in non_draft),
@@ -373,6 +375,7 @@ def _redacted_census(c: dict[str, Any]) -> dict[str, Any]:
         "certidao_sets_complete": sum(1 for r in c["entities"] if r["completo"]),
         "certidao_sets": len(c["entities"]),
         "cartao_cnpj_files": c["cartao_cnpj_files"],
+        "aditivo_files": c["aditivo_files"],
         "image_only_files": c["image_only_files"],
         "text_layer_files": c["text_layer_files"],
         "closed_d4sign": c["closed"],
@@ -855,8 +858,8 @@ def _item_resultado(texto: str) -> Optional[str]:
 _GROUP_RE = re.compile(r"^(\d+)\s*[–\-—]\s*Em nome d[eao]\s+(.+)$", re.I)
 _IMOVEL_GROUP_RE = re.compile(r"^(\d+)\s*[–\-—]\s*Em rela[çc][ãa]o ao im[óo]vel", re.I)
 _ITEM_RE = re.compile(r"^(\d+)\.(\d+)\s*[–\-—]?\s*(.+)$")
-_NUMERO_RE = re.compile(r"(?:protocolo\s+)?n[º°o]\.?\s*[:.]?\s*(.+?)\s*[–\-—,]*\s*(?:emitida|expedida)", re.I)
-_EMITIDA_RE = re.compile(r"(?:emitida|expedida)\s+em\s+(\d{1,2}/\d{1,2}/\d{4})", re.I)
+_NUMERO_RE = re.compile(r"(?:protocolo\s+)?n[º°o]\.?\s*[:.]?\s*(.+?)\s*[–\-—,]*\s*(?:emitid[ao]|expedid[ao])", re.I)
+_EMITIDA_RE = re.compile(r"(?:emitid[ao]|expedid[ao])\s+em\s+(\d{1,2}/\d{1,2}/\d{4})", re.I)
 _CNPJ_DIGITS_RE = re.compile(r"\b(\d{2}\.\d{3}\.\d{3}(?:/\d{4}-\d{2})?)\b")
 
 
@@ -903,7 +906,7 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
                 continue
             tipo = _item_tipo(texto)
             sistema = "E-SAJ" if tipo == "tjsp_esaj" else "E-PROC" if tipo == "tjsp_eproc" else None
-            current["itens"].append({
+            row: dict[str, Any] = {
                 "item": f"{item.group(1)}.{item.group(2)}",
                 "pasta_n": CERTIDAO_TIPOS.index(tipo) + 1 if tipo else None,
                 "tipo": tipo,
@@ -912,16 +915,34 @@ def parse_certidoes(clause: Optional[dict[str, Any]]) -> dict[str, Any]:
                 "emitida_em": _br_date(emitida.group(1)) if emitida else None,
                 "sistema": sistema,
                 "texto": p,
-            })
+            }
+            f = _fold(texto)
+            if "CRIMINAL" in f:
+                # Owner ruling 2026-09-24: added by the client's lawyer; not ours, never scored.
+                row.update({"tipo": None, "pasta_n": None, "resultado": None, "ignorado": "criminal_advogado_cliente"})
+            elif "RELATORIO FISCAL" in f:
+                # Owner ruling 2026-09-24: required when the entity's RF certidão is not clean; it takes
+                # the RF slot (item/pasta 1). rf_resultado is filled per group below, to validate the rule.
+                row.update({"tipo": "relatorio_fiscal", "pasta_n": 1, "resultado": None,
+                            "condicao": "rf_nao_negativa"})
+            current["itens"].append(row)
             continue
         pend = re.match(r"^([a-z])\s*-?\)\s*(.+)$", p)
         if pend:
             out["pendencias"].append(pend.group(2).strip())
     for grp in out["grupos"]:
-        # A PJ set never carries Serasa (E5); 11 items with no serasa is the PJ signature.
-        tipos = {i["tipo"] for i in grp["itens"]}
-        if grp["consulta_tipo_documento"] == "cpf" and grp["itens"] and "serasa" not in tipos and len(grp["itens"]) == 11:
+        scored = [i for i in grp["itens"] if not i.get("ignorado")]
+        tipos = {i["tipo"] for i in scored}
+        # A PJ set never carries Serasa (E5): 11 scored items and no serasa is the PJ signature.
+        if grp["consulta_tipo_documento"] == "cpf" and (
+                re.search(r"\b(LTDA|EIRELI|S/?A|ME|EPP|MEI)\b\.?$", _fold(grp["em_nome_de"]))
+                or (scored and "serasa" not in tipos and len(scored) == 11)):
             grp["consulta_tipo_documento"] = "cnpj"
+        rf = next((i for i in scored if i["tipo"] == "cnd_federal"), None)
+        for i in scored:
+            if i["tipo"] == "relatorio_fiscal":
+                i["rf_presente"] = rf is not None
+                i["rf_resultado"] = rf["resultado"] if rf else None
     return out
 
 
@@ -1020,7 +1041,7 @@ def _coverage(key: dict[str, Any]) -> dict[str, Any]:
     fields = ("nome_oficial", "cpf", "rg", "estado_civil", "email", "nacionalidade")
     filled = {f: sum(1 for p in partes if p["clientes"].get(f)) for f in fields}
     grupos = (key.get("certidoes") or {}).get("grupos") or []
-    itens = [i for g in grupos for i in g["itens"]]
+    itens = [i for g in grupos for i in g["itens"] if not i.get("ignorado")]
     return {
         "partes": len(partes),
         "vendedores": sum(1 for p in partes if p["lado"] == "vendedor"),
@@ -1030,8 +1051,11 @@ def _coverage(key: dict[str, Any]) -> dict[str, Any]:
         "certidao_grupos_pj": sum(1 for g in grupos if g["consulta_tipo_documento"] == "cnpj"),
         "certidao_itens": len(itens),
         "certidao_itens_sem_tipo": sum(1 for i in itens if not i["tipo"]),
-        "certidao_itens_sem_numero": sum(1 for i in itens if not i["numero"] and i["resultado"] != "nao_emitida"),
+        "certidao_itens_sem_numero": sum(1 for i in itens if not i["numero"] and i["resultado"] != "nao_emitida"
+                                         and i["tipo"] != "relatorio_fiscal"),  # printed without a nº
         "certidao_itens_sem_data": sum(1 for i in itens if not i["emitida_em"] and i["resultado"] != "nao_emitida"),
+        "certidao_itens_ignorados": sum(1 for g in grupos for i in g["itens"] if i.get("ignorado")),
+        "relatorios_fiscais": sum(1 for i in itens if i["tipo"] == "relatorio_fiscal"),
         "imovel_campos": sum(1 for v in ((key.get("imovel") or {}).get("imovel_dados") or {}).values() if v),
         "parcelas": len((key.get("negociacao") or {}).get("parcelas") or []),
         "valor_negociado": bool((key.get("negociacao") or {}).get("valor_negociado")),
@@ -1046,6 +1070,156 @@ def _coverage(key: dict[str, Any]) -> dict[str, Any]:
 
 def _text_for(file_row: dict[str, Any]) -> Optional[dict[str, Any]]:
     return _read_cache(file_row["sha256"]) if file_row.get("sha256") else None
+
+
+_ORDINAIS = {"PRIMEIRO": 1, "SEGUNDO": 2, "TERCEIRO": 3, "QUARTO": 4, "QUINTO": 5, "SEXTO": 6,
+             "SETIMO": 7, "OITAVO": 8, "NONO": 9, "DECIMO": 10}
+_ISO_TS_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}")
+
+
+def d4sign_assinado_em(raw_text: str) -> Optional[str]:
+    """The last signature timestamp on D4Sign's certificate pages (ISO ``…T…`` stamps): the date
+    the document was fully signed. None for anything that is not a D4Sign certificate."""
+    stamps = _ISO_TS_RE.findall(raw_text or "")
+    return max(stamps) if stamps else None
+
+
+# What an aditivo section changes, from its title + body (first match per category; a section may hit several).
+_ALTERACAO_CATEGORIAS: tuple[tuple[str, str], ...] = (
+    ("parcelas", r"PARCELA"),
+    ("preco", r"\bPRECO\b|VALOR TOTAL DA (COMPRA|VENDA)"),
+    ("partes", r"QUALIFICA|CESSAO|INCLUSAO D[OA]S? (COMPRADOR|VENDEDOR)|EXCLUSAO D[OA]S?|SUBSTITUICAO D[OA]S? PARTE"),
+    ("prazo", r"PRAZO|POSSE|PRORROGA|\bDATA\b"),
+    ("certidoes", r"CERTID|DOCUMENTA"),
+    ("intermediacao", r"INTERMEDIA|CORRETAGEM|COMISSAO"),
+)
+_SECAO_RE = re.compile(r"^(\d+)\.\s+((?:[A-ZÀ-Ý0-9ºª°–\-,/]+\s+){1,20}?[A-ZÀ-Ý0-9ºª°]+)(?=\s+[A-ZÀ-Ý]?[a-zà-ÿ]|\s*$)")
+
+
+_NAO_ALTERACAO_RE = re.compile(r"RATIFICA|DEMAIS|DISPOSI|OBJETO|FORO|ASSINATURA")
+_CLAUSULA_REF_RE = re.compile(r"CLAUSULA\s+((?:DECIMA\s+)?(?:PRIMEIRA|SEGUNDA|TERCEIRA|QUARTA|QUINTA|SEXTA|SETIMA|OITAVA|NONA|DECIMA)|\d+\s*[AO]?)")
+
+
+def _aditivo_secoes(paras: list[str]) -> list[dict[str, Any]]:
+    """Both aditivo shapes seen in deal folders: CLÁUSULA-headed sections (the aditivo's own
+    clauses) and numbered sections ("1. DA ALTERAÇÃO DA PARCELA 02 DA CLÁUSULA SEGUNDA …")."""
+    _, clauses = split_clauses(paras)
+    if clauses:
+        return [{"secao": i + 1, "titulo": c["titulo"], "texto": "\n".join(c["paras"]), "estilo": "clausula"}
+                for i, c in enumerate(clauses)]
+    secoes: list[dict[str, Any]] = []
+    for p in paras[1:]:
+        m = _SECAO_RE.match(p)
+        if m:
+            secoes.append({"secao": int(m.group(1)), "titulo": m.group(2).strip(), "texto": p, "estilo": "numerada"})
+        elif secoes and not re.match(r"^(VENDEDORA?S?|COMPRADORA?S?|ANUENTE|TESTEMUNHAS)\b", _fold(p)):
+            secoes[-1]["texto"] += "\n" + p
+    return secoes
+
+
+def _date_extenso(m: Optional[re.Match]) -> Optional[str]:
+    if not m or _fold(m.group(2)).lower() not in _MESES:
+        return None
+    try:
+        return date(int(m.group(3)), _MESES[_fold(m.group(2)).lower()], int(m.group(1))).isoformat()
+    except ValueError:
+        return None
+
+
+def is_contract_aditivo(titulo: str) -> bool:
+    """Only an aditivo to the deal's promessa de compra e venda belongs in the key; deal folders
+    also hold aditivos to unrelated instruments (a debt settlement, a services contract)."""
+    return bool(re.search(r"(PROMESSA DE )?(VENDA E COMPRA|COMPRA E VENDA)", _fold(titulo)))
+
+
+def parse_aditivo(paras: list[str], *, raw_text: str, arquivo: str, fonte: str) -> dict[str, Any]:
+    """An aditivo: ordinal, the contract it amends (date), when it was signed, and per section what
+    it changes: categories (from the section TITLE; the body only when the title says nothing),
+    the ORIGINAL contract clause it names, and the section's own text."""
+    titulo = next((p for p in paras if re.search(r"ADITIVO|ADITAMENTO", _fold(p))), paras[0] if paras else "")
+    ordm = re.match(r"^\s*(\w+)\s+(?:TERMO\s+)?(?:ADITIVO|ADITAMENTO)", _fold(titulo))
+    text = " ".join(paras)
+    original = re.search(r"(?:firmad[oa]|assinad[oa](?:\s+entre\s+as\s+Partes)?|celebrad[oa])\s+em\s+"
+                         r"(\d{1,2})\s+de\s+([A-Za-zçÇ]+)\s+de\s+(\d{4})", text, re.I)
+    alteracoes = []
+    for s in _aditivo_secoes(paras):
+        ft = _fold(s["titulo"])
+        if _NAO_ALTERACAO_RE.search(ft):
+            continue  # "the rest stays as is", the aditivo's own object/foro: not a change
+        body = _fold(s["texto"][:600])
+        cats = [c for c, rx in _ALTERACAO_CATEGORIAS if re.search(rx, ft)] \
+            or [c for c, rx in _ALTERACAO_CATEGORIAS if re.search(rx, body)] or ["outro"]
+        # numbered style names the original clause in its title; clause style in its body
+        ref = _CLAUSULA_REF_RE.search(ft if s["estilo"] == "numerada" else body)
+        alteracoes.append({**s, "categorias": cats, "clausula_original": ref.group(1).title() if ref else None})
+    return {
+        "numero_ordinal": _ORDINAIS.get(ordm.group(1)) if ordm else None,
+        "titulo": titulo,
+        "contrato_original_data": _date_extenso(original),
+        "data": parse_assinatura(paras)["assinatura_data"],
+        "assinado_em": d4sign_assinado_em(raw_text) if fonte == "d4sign" else None,
+        "arquivo": arquivo,
+        "fonte": fonte,
+        "confianca": "alta" if fonte == "d4sign" else "media",
+        "alteracoes": alteracoes,
+        "verificado": True,
+        "verificado_por": "contrato",
+    }
+
+
+def _is_aditivo_text(rec: Optional[dict[str, Any]]) -> bool:
+    return bool(rec) and bool(re.search(r"ADITIVO|ADITAMENTO", _fold((rec.get("text") or "")[:400])))
+
+
+def _collect_aditivos(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split contract-shaped files into (aditivos, the rest). An aditivo is known by its NAME
+    (classified ``aditivo``) or by its opening text, whatever the file is called."""
+    aditivos, rest = [], []
+    for f in files:
+        if f["draft"] or f["doc_type"] not in ("aditivo", "contrato", "contrato_d4sign"):
+            rest.append(f)
+            continue
+        rec = _text_for(f)
+        is_aditivo = _is_aditivo_text(rec) or (f["doc_type"] == "aditivo" and not (rec or {}).get("text"))
+        (aditivos if is_aditivo else rest).append(f)
+    return aditivos, rest
+
+
+def _parse_aditivos(files: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return ``(aditivos, descartados)``: aditivos to the deal's contract, deduped, and the
+    aditivo-shaped files that amend something else (listed with the reason, never silently dropped)."""
+    out: list[dict[str, Any]] = []
+    descartados: list[dict[str, Any]] = []
+    for f in files:
+        rec = _text_for(f) or {}
+        signed = f["doc_type"] == "contrato_d4sign" or re.search(r"D4SIGN|CERTIFICADO DIGITAL", _fold(f["rel_path"]))
+        fonte = "d4sign" if signed else "docx" if rec.get("text_source") == "docx" else "pdf"
+        if not rec.get("text"):
+            out.append({"arquivo": f["rel_path"], "fonte": fonte, "status": "so_imagem", "alteracoes": [],
+                        "verificado": False, "verificado_por": None})
+            continue
+        paras = paragraphs_from_text(rec["text"], source="docx" if rec.get("text_source") == "docx" else "pdf")
+        ad = parse_aditivo(paras, raw_text=rec["text"], arquivo=f["rel_path"], fonte=fonte)
+        if not is_contract_aditivo(ad["titulo"]):
+            descartados.append({"arquivo": f["rel_path"], "titulo": ad["titulo"],
+                                "motivo": "nao_e_aditivo_do_contrato_de_compra_e_venda"})
+            continue
+        out.append({**ad, "status": "ok"})
+    # One aditivo, several files (docx revisions, the signed PDF): keep the signed one, else the
+    # latest revision. Key = ordinal, or the normalized title when the aditivo is not numbered.
+    def rank(a: dict[str, Any]) -> tuple:
+        return (a["fonte"] == "d4sign", _revision_date(a["arquivo"]) or date.min, a["arquivo"])
+
+    best: dict[Any, dict[str, Any]] = {}
+    for a in out:
+        k = a.get("numero_ordinal") or re.sub(r"[^A-Z0-9]", "", _fold(a.get("titulo") or a["arquivo"]))
+        if k not in best or rank(a) > rank(best[k]):
+            if k in best:
+                a.setdefault("versoes_descartadas", []).append(best[k]["arquivo"])
+            best[k] = a
+        else:
+            best[k].setdefault("versoes_descartadas", []).append(a["arquivo"])
+    return sorted(best.values(), key=lambda a: (a.get("numero_ordinal") or 99, a["arquivo"])), descartados
 
 
 def _check_empresas_vs_contract(key: dict[str, Any]) -> None:
@@ -1064,22 +1238,19 @@ def _check_empresas_vs_contract(key: dict[str, Any]) -> None:
 
 def answer_key_folder(folder_id: str) -> dict[str, Any]:
     census = census_folder(folder_id)
-    # An ADITIVO (amendment) is signed like the contract, but it is not the contract: set it aside
-    # and choose again. Its presence is itself a fact the scorer must know (the terms it changes).
-    pool, aditivos = list(census["files"]), []
-    while True:
-        chosen, fonte, others = select_contract(pool)
-        head = _fold(((_text_for(chosen) or {}).get("text") or "")[:400]) if chosen else ""
-        if chosen is None or "ADITIVO" not in head:
-            break
-        aditivos.append(chosen["rel_path"])
-        pool = [f for f in pool if f is not chosen]
+    # An ADITIVO (amendment) is signed like the contract, but it is not the contract: it never
+    # competes for ground truth, and it is parsed into its own structured list (owner, 2026-09-24).
+    aditivo_files, pool = _collect_aditivos(census["files"])
+    chosen, fonte, others = select_contract(pool)
+    aditivos, aditivos_descartados = _parse_aditivos(aditivo_files)
     numero = census["folder"]["numero"] or folder_id
     key: dict[str, Any] = {
         "folder": census["folder"],
         "fonte": {"tipo": fonte, "arquivo": chosen["rel_path"] if chosen else None,
                   "confianca": {"d4sign": "alta", "rev_final": "alta", "revisao": "media", "none": "baixa"}[fonte],
-                  "divergencias_docx": [], "aditivos": aditivos},
+                  "divergencias_docx": [], "assinado_em": None},
+        "aditivos": aditivos,
+        "aditivos_descartados": aditivos_descartados,
         "tool_version": TOOL_VERSION, "parser_version": PARSER_VERSION,
         "gerado_em": datetime.now(timezone.utc).isoformat(),
     }
@@ -1104,6 +1275,8 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
             source = "docx" if cached.get("text_source") == "docx" else "pdf"
             paras = paragraphs_from_text(cached["text"], source=source)
             key.update(parse_contract(paras))
+            if fonte == "d4sign":
+                key["fonte"]["assinado_em"] = d4sign_assinado_em(cached["text"])
             key["status"] = "ok"
             if fonte == "d4sign":
                 docx_rows = [f for f in others if f.get("rev_final")] or others
@@ -1127,6 +1300,8 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
     _write_private(_dir("answer-keys") / f"{numero}.json", key)
     return {"numero": numero, "status": key["status"], "fonte": fonte,
             "divergencias_docx": len(key["fonte"]["divergencias_docx"]), "aditivos": len(aditivos),
+            "aditivos_categorias": sorted({c for a in aditivos for s in a["alteracoes"] for c in s["categorias"]}),
+            "aditivos_descartados": len(aditivos_descartados),
             "cobertura": _coverage(key) if key["status"] == "ok" else None}
 
 
