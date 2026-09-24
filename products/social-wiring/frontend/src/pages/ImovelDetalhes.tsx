@@ -73,6 +73,7 @@ import {
   useImovelDadosMutation,
   useImovelDocumentoMutations,
   useImovelDocumentos,
+  useImovelExtracaoPollingInvalidation,
 } from "@/hooks/useImovelDados";
 import { useTeamMembers } from "@/hooks/useTeam";
 import { useRolarAteHash } from "@/hooks/useRolarAteAlvo";
@@ -95,6 +96,11 @@ export default function ImovelDetalhes() {
   // conditionally would break the rules-of-hooks ordering.
   const dadosQuery = useImovelDados(codigo ?? null);
   const documentosQuery = useImovelDocumentos(codigo ?? null);
+  // Polls while any document's extraction is pending/processando (shares
+  // `documentosQuery`'s own cache/fetch) and invalidates `dadosQuery` +
+  // the imovel-contrato family the moment one reaches a terminal state —
+  // see the hook's own docstring for the P1/883 bug this closes.
+  useImovelExtracaoPollingInvalidation(codigo ?? null);
   const dadosMutation = useImovelDadosMutation(codigo ?? "");
   const enderecoManualMutation = useEnderecoManualMutation(codigo ?? "");
   const documentoMutations = useImovelDocumentoMutations(codigo ?? "");

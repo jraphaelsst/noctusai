@@ -7,6 +7,7 @@
  * hook file invites a single query key, and invalidating "imoveis" after a
  * cartório edit would re-fetch the whole 1919-imóvel catalog.
  */
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
 
@@ -254,6 +255,10 @@ export function useImovelDados(codigo: string | null) {
   });
 }
 
+function extracaoEmAndamento(status: string | null | undefined): boolean {
+  return status === "pendente" || status === "processando";
+}
+
 export function useImovelDocumentos(codigo: string | null) {
   return useQuery({
     queryKey: DOCUMENTOS_KEY(codigo ?? "__none__"),
@@ -278,12 +283,60 @@ export function useImovelDocumentos(codigo: string | null) {
     refetchInterval: (query) => {
       const docs = query.state.data;
       if (!docs) return false;
-      const trabalhando = docs.some(
-        (d) => d.extracao_status === "pendente" || d.extracao_status === "processando",
-      );
+      const trabalhando = docs.some((d) => extracaoEmAndamento(d.extracao_status));
       return trabalhando ? 3000 : false;
     },
   });
+}
+
+/**
+ * P1/883 live bug (2026-09-24): `useImovelDocumentos` above already polled
+ * a document's OWN `extracao_status`/`extracao_matricula` (so
+ * `ImovelDocumentosCard`'s "Lendo…" spinner did update) — but nothing ever
+ * invalidated `useImovelDados` (`DADOS_KEY`), the SEPARATE query that holds
+ * `numero_matricula`/`prefeitura_cadastro_imobiliario`/título/ônus, which the
+ * full transcription's D1 apply (`preenchimento_service.preencher_imovel`,
+ * a DIFFERENT detached background task than the document's own vision-only
+ * number read) fills on its own schedule. So "Dados do Imóvel" kept showing
+ * the pre-extraction snapshot until a hard reload, same shape
+ * `useCardHub.useExtracaoPollingInvalidation` already fixed for a cliente's
+ * checklist/qualificação (b9ff02e15) — this is that pattern's imóvel sibling.
+ *
+ * Mount once per imóvel page (`ImovelDetalhes`) alongside
+ * `useImovelDocumentos(codigo)` — same query key, so this shares that
+ * hook's cache/fetch rather than doubling the request. The FIRST refetch
+ * that flips any document from pending to terminal invalidates the whole
+ * `imovel-dados` family (`dados`/`documentos`/`endereco-manual-historico`)
+ * and the `imovel-contrato` family (título/onus/endereco-registro/certidões
+ * — fed by the SAME `preencher_imovel` call). Returns nothing: callers keep
+ * using `useImovelDocumentos`'s own result for render data; this hook is
+ * mounted purely for the polling + invalidation side effect.
+ */
+export function useImovelExtracaoPollingInvalidation(codigo: string | null): void {
+  const qc = useQueryClient();
+  const prevStatusRef = useRef<Map<string, string | null | undefined>>(new Map());
+  const query = useImovelDocumentos(codigo);
+
+  useEffect(() => {
+    if (!codigo || !query.data) return;
+    const prev = prevStatusRef.current;
+    const proximo = new Map(query.data.map((d) => [d.id, d.extracao_status] as const));
+    const transicionou = query.data.some((d) => {
+      const antes = prev.get(d.id);
+      // `undefined` = this document's first appearance in the map (the
+      // panel just mounted, or it was just uploaded) — never itself a
+      // transition; only a PREVIOUSLY-seen pending status turning terminal
+      // counts, same rule `useCardHub`'s sibling hook applies.
+      return antes !== undefined && extracaoEmAndamento(antes) && !extracaoEmAndamento(d.extracao_status);
+    });
+    prevStatusRef.current = proximo;
+    if (transicionou) {
+      void Promise.all([
+        qc.invalidateQueries({ queryKey: FAMILY_KEY(codigo) }),
+        qc.invalidateQueries({ queryKey: ["sw", "imovel-contrato", codigo] }),
+      ]);
+    }
+  }, [codigo, query.data, qc]);
 }
 
 // ─── Mutations ──────────────────────────────────────────────────────────────

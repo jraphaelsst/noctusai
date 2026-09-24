@@ -40,6 +40,11 @@ const mockUseEnderecoManualMutation = vi.fn(() => ({
 }));
 const mockUseImovelDocumentoMutations = vi.fn();
 const mockUseImovelDocumentos = vi.fn();
+// `useImovelExtracaoPollingInvalidation` is real `useQueryClient()`, and
+// this harness renders without a `QueryClientProvider` (same reason
+// `useImovelContrato`'s mock below is inert) — a no-op stand-in here; its
+// own behaviour is covered by `useImovelDados.extracaoPolling.test.tsx`.
+const mockUseImovelExtracaoPollingInvalidation = vi.fn();
 vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useImovelDados")>();
   return {
@@ -49,6 +54,7 @@ vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
     useEnderecoManualMutation: mockUseEnderecoManualMutation,
     useImovelDocumentoMutations: mockUseImovelDocumentoMutations,
     useImovelDocumentos: mockUseImovelDocumentos,
+    useImovelExtracaoPollingInvalidation: mockUseImovelExtracaoPollingInvalidation,
   };
 });
 
