@@ -15,7 +15,12 @@
  * label nobody has written yet, which is exactly what it is.
  */
 
-/** `atendimento_documentos` — the deal's closing paperwork (migration 078). */
+/** `atendimento_documentos` — the deal's closing paperwork (migration 078,
+ *  extended by migration 171 with the negociação/financiamento extraction
+ *  set — `sw-negociacao-extracao-contract.md` §A). `guia_itbi` and
+ *  `comprovante_itbi` join the EXISTING "Escritura" group (the server adds
+ *  them to `tipos_escritura`); `proposta_financiamento` and
+ *  `contrato_financiamento` are the new "Financiamento" group's two types. */
 export const TIPO_LABEL: Record<string, string> = {
   certidao_casamento: "Certidão de casamento",
   escritura_pacto: "Escritura do pacto",
@@ -25,6 +30,10 @@ export const TIPO_LABEL: Record<string, string> = {
   carteira_trabalho: "Carteira de trabalho",
   extratos_fgts: "Extratos do FGTS",
   comprovante_residencia_1ano: "Comprovante de residência (há 1 ano)",
+  guia_itbi: "Guia de ITBI",
+  comprovante_itbi: "Comprovante de pagamento do ITBI",
+  proposta_financiamento: "Proposta de financiamento",
+  contrato_financiamento: "Contrato de financiamento",
 };
 
 /** `cliente_documentos` — the client's own file (migration 057). */

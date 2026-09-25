@@ -20,12 +20,15 @@ import { toast } from "sonner";
 import {
   AlertCircle,
   AlertTriangle,
+  Check,
   Handshake,
   Loader2,
   Pencil,
   Plus,
   Scissors,
+  Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +68,12 @@ import { usePermutaAtivos } from "@/hooks/usePermutas";
 import type { PermutaAtivo } from "@/hooks/usePermutas";
 import { formatarDocumento, limparDocumento } from "@/lib/utils";
 import {
+  useNegociacaoConflitos,
+  useResolverNegociacaoConflito,
+  rotuloConflitoCampo,
+  type NegociacaoConflito,
+} from "@/hooks/useNegociacao";
+import {
   useCreateFavorecido,
   useCreateIntermediario,
   useCreateParcela,
@@ -97,6 +106,7 @@ import {
   type ParcelaTipo,
   type PessoaTipo,
   rotuloNegociacaoFaltando,
+  rotuloNegociacaoOrigem,
 } from "@/types/negociacaoEstruturada";
 import TermosNegocioSection from "@/components/card/TermosNegocioSection";
 
@@ -186,6 +196,68 @@ function isZeroDecimal(v: string | null | undefined): boolean {
   return /^-?0+(\.0+)?$/.test(v.trim());
 }
 
+/** A parcela's Valor cell — migration 171 lets `valor` be `null` (a D2
+ *  rejection empties it rather than deleting the row, contract §C.4). A
+ *  bare "—" reads as "nothing to say"; a null parcela is missing something
+ *  it is EXPECTED to have, so it says so. */
+function exibirValorParcela(v: string | null | undefined): string {
+  if (v == null) return "—, falta";
+  return exibirMoeda(v);
+}
+
+/** The provenance pill on `valor_negociado` and every parcela/favorecido
+ *  row (contract §F). `pendente` = a machine reading nobody has acted on
+ *  yet (`origem === "extraido"` and no `confirmado_em`); an already
+ *  confirmed reading, a derived suggestion once accepted, and a manual
+ *  entry all read as their own label with no "pendente" qualifier. */
+function OrigemBadge({
+  origem,
+  confirmadoEm,
+  testId,
+}: {
+  origem: string | null | undefined;
+  confirmadoEm?: string | null;
+  testId?: string;
+}) {
+  if (!origem) return null;
+  const pendente = origem === "extraido" && !confirmadoEm;
+  return (
+    <Badge
+      variant={pendente ? "outline" : "secondary"}
+      className="text-[10px]"
+      data-testid={testId}
+    >
+      {rotuloNegociacaoOrigem(origem)}
+      {pendente ? " — pendente" : ""}
+    </Badge>
+  );
+}
+
+/** H4 pure computation — `valor_negociado − Σsinal − Σ(financiamento+fgts)`,
+ *  clamped to never-negative and never offered once an intermediária
+ *  already exists (there is nothing left to suggest a REPLACEMENT for; the
+ *  operator edits the existing row instead). `null` when there isn't
+ *  enough to compute yet, mirroring `NegociacaoCalculo.calculavel`'s own
+ *  "not yet, not an error" posture. Returned as a decimal STRING — see the
+ *  file header's money rule. */
+function calcularSugestaoIntermediaria(data: NegociacaoEstruturada): string | null {
+  if (data.valor_negociado == null) return null;
+  const total = Number(data.valor_negociado);
+  if (!Number.isFinite(total)) return null;
+  if (data.parcelas.some((p) => p.tipo === "intermediaria")) return null;
+
+  const somaTipos = (tipos: ParcelaTipo[]) =>
+    data.parcelas
+      .filter((p) => tipos.includes(p.tipo) && p.valor != null)
+      .reduce((acc, p) => acc + Number(p.valor), 0);
+
+  const sinal = somaTipos(["sinal"]);
+  const financiamento = somaTipos(["financiamento", "fgts"]);
+  const restante = total - sinal - financiamento;
+  if (!Number.isFinite(restante) || restante <= 0) return null;
+  return restante.toFixed(2);
+}
+
 function exibirData(v: string | null | undefined): string | null {
   if (!v) return null;
   const [ano, mes, dia] = v.split("-");
@@ -252,7 +324,9 @@ export default function NegociacaoEstruturadaPanel({ clienteId }: Props) {
           Atualizando…
         </p>
       )}
+      <ConflitosNegociacaoBanner clienteId={clienteId} />
       <CompletudeCard completude={data.completude} />
+      <ValorNegociadoCard data={data} />
       <ParcelasSection clienteId={clienteId} data={data} />
       <FavorecidosSection clienteId={clienteId} favorecidos={data.favorecidos} />
       <IntermediariosSection
@@ -298,6 +372,119 @@ function CompletudeCard({ completude }: { completude: NegociacaoCompletude }) {
   );
 }
 
+// ─── Valor negociado (read-only here — edited on the Negociação tab,
+//     `NegociacaoPanel.tsx`) — provenance badge + the H4 "a distribuir"
+//     read-only line (contract §B/§F) ─────────────────────────────────────
+
+function ValorNegociadoCard({ data }: { data: NegociacaoEstruturada }) {
+  return (
+    <Card data-testid="negest-valor-negociado">
+      <CardContent className="flex flex-wrap items-center justify-between gap-2 py-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">Valor negociado</span>
+          <span className="text-sm font-semibold" data-testid="negest-valor-negociado-valor">
+            {exibirMoeda(data.valor_negociado)}
+          </span>
+          <OrigemBadge
+            origem={data.valor_negociado_origem}
+            confirmadoEm={data.valor_negociado_confirmado_em}
+            testId="negest-valor-negociado-origem"
+          />
+        </div>
+        {data.a_distribuir != null && (
+          <span className="text-xs text-muted-foreground" data-testid="negest-a-distribuir">
+            Recursos próprios a distribuir: {exibirMoeda(data.a_distribuir)}
+          </span>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Conflitos (migration 171 `atendimento_campo_conflitos`, contract
+//     §C.6/§E.5) — H2: no document is authoritative, so ANY disagreement
+//     opens a conflict here rather than silently overwriting. ────────────
+
+function ConflitosNegociacaoBanner({ clienteId }: { clienteId: string }) {
+  const query = useNegociacaoConflitos(clienteId);
+  const resolver = useResolverNegociacaoConflito(clienteId);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  const pendentes = (query.data ?? []).filter((c) => c.status === "pendente");
+  if (pendentes.length === 0) return null;
+
+  function handleResolver(c: NegociacaoConflito, decisao: "aceitar" | "rejeitar") {
+    setResolvingId(c.id);
+    resolver.mutate(
+      { conflitoId: c.id, decisao },
+      {
+        onSettled: () => setResolvingId(null),
+        onError: (err: unknown) =>
+          toast.error(errorMessage(err, "Não foi possível resolver o conflito.")),
+      },
+    );
+  }
+
+  return (
+    <Card data-testid="negest-conflitos">
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <CardTitle className="text-sm">
+            Conflitos aguardando decisão ({pendentes.length})
+          </CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {pendentes.map((c) => {
+          const resolving = resolvingId === c.id;
+          return (
+            <div
+              key={c.id}
+              className="rounded-md border p-3 text-sm"
+              data-testid={`negest-conflito-${c.id}`}
+            >
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="font-medium">{rotuloConflitoCampo(c.campo)}</span>
+                <Badge variant="outline" className="text-[11px]">
+                  {c.origem_proposto}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Atual: <span className="font-mono">{c.valor_anterior ?? "—"}</span>
+                {" → "}
+                proposto: <span className="font-mono">{c.valor_proposto}</span>
+              </p>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  size="sm"
+                  variant="default"
+                  disabled={resolving}
+                  onClick={() => handleResolver(c, "aceitar")}
+                  data-testid={`negest-conflito-${c.id}-aceitar`}
+                >
+                  <Check className="mr-1 h-3.5 w-3.5" />
+                  Aceitar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={resolving}
+                  onClick={() => handleResolver(c, "rejeitar")}
+                  data-testid={`negest-conflito-${c.id}-rejeitar`}
+                >
+                  <X className="mr-1 h-3.5 w-3.5" />
+                  Rejeitar
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Parcelas ───────────────────────────────────────────────────────────────
 
 function ParcelasSection({
@@ -329,6 +516,14 @@ function ParcelasSection({
 
   const parcelasOrdenadas = [...data.parcelas].sort((a, b) => a.ordem - b.ordem);
   const saldoZerado = isZeroDecimal(data.saldo_nao_alocado);
+
+  // H4 (owner, 2026-09-25) — "intermediária = valor − sinal − financiamento"
+  // offered as a SUGGESTION to confirm, never applied silently: nothing is
+  // written until this deal's own person clicks "Usar sugestão", which is
+  // the confirmation itself (a real D2-pending parcela is created,
+  // `origem: "derivado"`). Computed purely client-side off the parcelas
+  // already on screen — no new server field required.
+  const sugestaoIntermediaria = calcularSugestaoIntermediaria(data);
 
   function abrirNova() {
     setEditando(null);
@@ -383,6 +578,36 @@ function ParcelasSection({
         </div>
       </CardHeader>
       <CardContent>
+        {sugestaoIntermediaria && (
+          <div
+            className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-primary/40 bg-primary/5 p-2.5 text-sm"
+            data-testid="negest-sugestao-intermediaria"
+          >
+            <span className="flex items-center gap-1.5">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Sugestão: parcela intermediária de {exibirMoeda(sugestaoIntermediaria)}
+              {" "}(valor negociado − sinal − financiamento).
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={criar.isPending}
+              onClick={() =>
+                criar.mutate(
+                  { tipo: "intermediaria", valor: sugestaoIntermediaria },
+                  {
+                    onSuccess: () => toast.success("Parcela intermediária criada."),
+                    onError: (err: unknown) =>
+                      toast.error(errorMessage(err, "Não foi possível criar a parcela.")),
+                  },
+                )
+              }
+              data-testid="negest-sugestao-intermediaria-usar"
+            >
+              Usar sugestão
+            </Button>
+          </div>
+        )}
         {parcelasOrdenadas.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Nenhuma parcela cadastrada.
@@ -416,7 +641,21 @@ function ParcelasSection({
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>{exibirMoeda(p.valor)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={p.valor == null ? "text-destructive" : undefined}
+                        data-testid={`parcela-valor-${p.id}`}
+                      >
+                        {exibirValorParcela(p.valor)}
+                      </span>
+                      <OrigemBadge
+                        origem={p.origem}
+                        confirmadoEm={p.confirmado_em}
+                        testId={`parcela-origem-${p.id}`}
+                      />
+                    </div>
+                  </TableCell>
                   <TableCell>{exibirData(p.vencimento) ?? p.evento ?? "—"}</TableCell>
                   <TableCell>{favorecidoNome(p.favorecido_id)}</TableCell>
                   <TableCell>
@@ -521,7 +760,10 @@ interface ParcelaDraft {
 function toParcelaDraft(p: NegociacaoParcela | null): ParcelaDraft {
   return {
     tipo: p?.tipo ?? "direta",
-    valorTexto: p ? formatarValorEditavel(p.valor) : "",
+    // `p.valor` is `null` for an extracted parcela awaiting confirmation
+    // (migration 171) — editing it is exactly how a person FILLS it, so the
+    // form opens with an empty field rather than throwing on `.trim()`.
+    valorTexto: p && p.valor != null ? formatarValorEditavel(p.valor) : "",
     vencimento: p?.vencimento ?? "",
     evento: p?.evento ?? "",
     forma_pagamento: p?.forma_pagamento ?? "",
@@ -1003,7 +1245,16 @@ function FavorecidosSection({
                 data-testid={`favorecido-${f.id}`}
               >
                 <div className="space-y-0.5">
-                  <p className="text-sm font-medium">{f.nome}</p>
+                  <p className="flex items-center gap-1.5 text-sm font-medium">
+                    {f.nome}
+                    {/* H5 (owner, 2026-09-25) — filled from the Quadro
+                        Resumo's seller-credit account, matched by CPF. */}
+                    <OrigemBadge
+                      origem={f.origem}
+                      confirmadoEm={f.confirmado_em}
+                      testId={`favorecido-origem-${f.id}`}
+                    />
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     {f.cpf_cnpj ? (revelado ? f.cpf_cnpj : mascarar(f.cpf_cnpj)) : "—"}
                     {" · "}

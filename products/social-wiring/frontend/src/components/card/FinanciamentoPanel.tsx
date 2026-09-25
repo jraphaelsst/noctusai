@@ -18,15 +18,13 @@
  * made only on an explicit click — never on render, never on a timer — because
  * each one appends to the server-side access log naming the viewer.
  */
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
-  AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Clock,
   FileText,
   Loader2,
-  Trash2,
-  Upload,
   XCircle,
 } from "lucide-react";
 
@@ -45,6 +43,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
+import { DocumentoTipoSlot, documentoDoTipo } from "@/components/card/DocumentoTipoSlot";
+
 import type { AgenteFinanceiro } from "@/hooks/useAgentesFinanceiros";
 
 import type {
@@ -53,7 +53,12 @@ import type {
   FinanciamentoPatch,
   SituacaoFinanciamento,
 } from "@/hooks/useFinanciamento";
-import { SITUACAO_LABEL, TIPO_LABEL, formatBytes } from "@/hooks/useFinanciamento";
+import {
+  SITUACAO_LABEL,
+  TIPO_LABEL,
+  financiamentoExtracaoEmAndamento,
+  rotuloAviso,
+} from "@/hooks/useFinanciamento";
 
 /** Radix treats `value=""` as uncontrolled, so "no agent" needs a real
  *  token, mapped back to null on save. */
@@ -72,6 +77,18 @@ interface Props {
   onUpload: (file: File, tipoDocumento: string) => void;
   onRemove: (documentoId: string, motivo: string) => void;
   onOpen: (documentoId: string) => void;
+  /** Migration 171 extraction actions (contract §E.5/§F) — re-run a
+   *  stuck/errored read, confirm a machine reading, or discard it (the file
+   *  and reading both stay; only the "awaiting decision" state clears).
+   *  Optional so every EXISTING test/caller of this presentational
+   *  component keeps compiling; a caller that omits them simply never shows
+   *  extraction chrome for a document with `extracao_status != null`. */
+  onExtrair?: (documentoId: string) => void;
+  onConfirmarExtracao?: (documentoId: string) => void;
+  onDescartarExtracao?: (documentoId: string) => void;
+  extraindo?: boolean;
+  confirmandoExtracao?: boolean;
+  descartandoExtracao?: boolean;
 }
 
 const SITUACOES: SituacaoFinanciamento[] = ["pendente", "aprovado", "recusado"];
@@ -92,6 +109,12 @@ export default function FinanciamentoPanel({
   onUpload,
   onRemove,
   onOpen,
+  onExtrair,
+  onConfirmarExtracao,
+  onDescartarExtracao,
+  extraindo,
+  confirmandoExtracao,
+  descartandoExtracao,
   agentes = [],
   agentesLoading,
 }: Props) {
@@ -120,9 +143,20 @@ export default function FinanciamentoPanel({
     if (!docsPorTipo.has(d.tipo_documento)) docsPorTipo.set(d.tipo_documento, d);
   });
 
+  // The new "Financiamento" doc group (contract §A) shows only once the
+  // deal is actually in play there — a financiamento parcela exists, or the
+  // financiamento row has been touched at all (`existe`, which `situacao`
+  // going non-default, `fgts`, an agente or a proposta all set). Otherwise
+  // this section would demand a guia ITBI/proposta on every deal, including
+  // an all-cash one.
+  const mostrarSecaoFinanciamentoDocs = Boolean(
+    f?.tem_parcela_financiamento || f?.existe,
+  );
+
   const faltando = [
     ...(f?.tipos_escritura ?? []),
     ...(f?.fgts ? f?.tipos_fgts ?? [] : []),
+    ...(mostrarSecaoFinanciamentoDocs ? f?.tipos_financiamento_docs ?? [] : []),
   ].filter((t) => !docsPorTipo.has(t)).length;
 
   return (
@@ -155,9 +189,21 @@ export default function FinanciamentoPanel({
           </div>
 
           {f?.situacao_em && situacao !== "pendente" && (
-            <p className="text-xs text-muted-foreground">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               {SITUACAO_LABEL[situacao]} em{" "}
               {new Date(f.situacao_em).toLocaleString("pt-BR")}
+              {/* H6 (owner, 2026-09-25) — a signed contrato de financiamento
+                  auto-sets "aprovado". The badge says so; it never hides
+                  that a person may still change it. */}
+              {f.situacao_origem === "extraido" && (
+                <Badge
+                  variant="secondary"
+                  className="text-[10px]"
+                  data-testid="financiamento-situacao-origem-extraido"
+                >
+                  Detectado no contrato assinado
+                </Badge>
+              )}
             </p>
           )}
 
@@ -200,6 +246,19 @@ export default function FinanciamentoPanel({
                 ))}
               </SelectContent>
             </Select>
+            {/* H7 (owner, 2026-09-25) — the registry row was created BY an
+                extraction landing (bank read off a document, no matching
+                agente cadastrado), not typed by a person. Shown so nobody
+                mistakes an auto-created bank for a hand-vetted one. */}
+            {f?.agente_financeiro?.origem === "auto_criado" && (
+              <p
+                className="flex items-center gap-1.5 text-xs text-amber-600"
+                data-testid="financiamento-agente-auto-criado"
+              >
+                <AlertTriangle className="h-3 w-3" />
+                Cadastrado automaticamente a partir do documento lido.
+              </p>
+            )}
             {agentes.length === 0 && !agentesLoading && (
               <p className="text-xs text-muted-foreground">
                 Nenhum agente cadastrado. Cadastre em Emissões → Agentes
@@ -268,6 +327,12 @@ export default function FinanciamentoPanel({
         onUpload={onUpload}
         onRemove={onRemove}
         onOpen={onOpen}
+        onExtrair={onExtrair}
+        onConfirmarExtracao={onConfirmarExtracao}
+        onDescartarExtracao={onDescartarExtracao}
+        extraindo={extraindo}
+        confirmandoExtracao={confirmandoExtracao}
+        descartandoExtracao={descartandoExtracao}
       />
 
       {f?.fgts && (
@@ -280,6 +345,34 @@ export default function FinanciamentoPanel({
           onUpload={onUpload}
           onRemove={onRemove}
           onOpen={onOpen}
+          onExtrair={onExtrair}
+          onConfirmarExtracao={onConfirmarExtracao}
+          onDescartarExtracao={onDescartarExtracao}
+          extraindo={extraindo}
+          confirmandoExtracao={confirmandoExtracao}
+          descartandoExtracao={descartandoExtracao}
+        />
+      )}
+
+      {/* New "Financiamento" doc group (contract §A/§F) — guia ITBI's
+          sibling documents that only make sense once financing is actually
+          in play. `proposta_financiamento`/`contrato_financiamento`. */}
+      {mostrarSecaoFinanciamentoDocs && (
+        <Secao
+          titulo="Financiamento"
+          tipos={f?.tipos_financiamento_docs ?? []}
+          docsPorTipo={docsPorTipo}
+          loading={loading}
+          uploading={uploading}
+          onUpload={onUpload}
+          onRemove={onRemove}
+          onOpen={onOpen}
+          onExtrair={onExtrair}
+          onConfirmarExtracao={onConfirmarExtracao}
+          onDescartarExtracao={onDescartarExtracao}
+          extraindo={extraindo}
+          confirmandoExtracao={confirmandoExtracao}
+          descartandoExtracao={descartandoExtracao}
         />
       )}
 
@@ -302,6 +395,12 @@ function Secao({
   onUpload,
   onRemove,
   onOpen,
+  onExtrair,
+  onConfirmarExtracao,
+  onDescartarExtracao,
+  extraindo,
+  confirmandoExtracao,
+  descartandoExtracao,
 }: {
   titulo: string;
   tipos: string[];
@@ -311,7 +410,18 @@ function Secao({
   onUpload: (file: File, tipo: string) => void;
   onRemove: (documentoId: string, motivo: string) => void;
   onOpen: (documentoId: string) => void;
+  onExtrair?: (documentoId: string) => void;
+  onConfirmarExtracao?: (documentoId: string) => void;
+  onDescartarExtracao?: (documentoId: string) => void;
+  extraindo?: boolean;
+  confirmandoExtracao?: boolean;
+  descartandoExtracao?: boolean;
 }) {
+  // Every documento currently on the deal, so `DocumentoTipoSlot` (which
+  // reads the ONE row of its own `tipoDocumento` out of the full list) sees
+  // documents from every section, not just this one's `tipos`.
+  const todosDocumentos = Array.from(docsPorTipo.values());
+
   return (
     <Card>
       <CardHeader>
@@ -322,15 +432,21 @@ function Secao({
       </CardHeader>
       <CardContent className="space-y-2">
         {tipos.map((tipo) => (
-          <Slot
+          <FinanciamentoDocSlot
             key={tipo}
             tipo={tipo}
-            documento={docsPorTipo.get(tipo)}
+            documentos={todosDocumentos}
             loading={loading}
             uploading={uploading}
             onUpload={onUpload}
             onRemove={onRemove}
             onOpen={onOpen}
+            onExtrair={onExtrair}
+            onConfirmarExtracao={onConfirmarExtracao}
+            onDescartarExtracao={onDescartarExtracao}
+            extraindo={extraindo}
+            confirmandoExtracao={confirmandoExtracao}
+            descartandoExtracao={descartandoExtracao}
           />
         ))}
       </CardContent>
@@ -338,105 +454,139 @@ function Secao({
   );
 }
 
-/** One required document type — filled or not. */
-function Slot({
+/**
+ * One required document type — filled or not — built on the shared
+ * `DocumentoTipoSlot` (contract §F: "replace the local Slot … that makes it
+ * the third consumer", after `CertidaoCasamentoSlot` and
+ * `EmpresaCartaoSlot`). Extraction chrome (status / aviso / confirmar /
+ * descartar / reler) renders only for a document whose `extracao_status` is
+ * non-null — most `atendimento_documentos` types (certidão de casamento,
+ * comprovante de residência, …) have no registered extractor and show the
+ * bare slot, exactly as before this contract. Mirrors
+ * `EmpresasSection.EmpresaCartaoSlot`'s own three-action layout.
+ */
+function FinanciamentoDocSlot({
   tipo,
-  documento,
+  documentos,
   loading,
   uploading,
   onUpload,
   onRemove,
   onOpen,
+  onExtrair,
+  onConfirmarExtracao,
+  onDescartarExtracao,
+  extraindo,
+  confirmandoExtracao,
+  descartandoExtracao,
 }: {
   tipo: string;
-  documento: FinanciamentoDocumento | undefined;
+  documentos: FinanciamentoDocumento[];
   loading: boolean;
   uploading: boolean;
   onUpload: (file: File, tipo: string) => void;
   onRemove: (documentoId: string, motivo: string) => void;
   onOpen: (documentoId: string) => void;
+  onExtrair?: (documentoId: string) => void;
+  onConfirmarExtracao?: (documentoId: string) => void;
+  onDescartarExtracao?: (documentoId: string) => void;
+  extraindo?: boolean;
+  confirmandoExtracao?: boolean;
+  descartandoExtracao?: boolean;
 }) {
-  // 🔴 Its OWN input, per slot, held by a ref — never a shared
-  // `getElementById`. That is the bug that would file every slot's upload
-  // onto whichever one rendered the shared node.
-  const inputRef = useRef<HTMLInputElement>(null);
+  const documento = documentoDoTipo(documentos, tipo);
   const label = TIPO_LABEL[tipo] ?? tipo;
+  const testId = `financiamento-slot-${tipo}`;
+
+  const emAndamento = financiamentoExtracaoEmAndamento(documento?.extracao_status ?? null);
+  // The confirm/discard pair is offered only once a read has landed AND
+  // nobody has decided on it yet — an already-discarded reading stays
+  // visible (the file is kept) but no longer asks anything.
+  const aguardaDecisao = documento?.extracao_status === "ok" && !documento.extracao_descartada_em;
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md border p-3">
-      <div className="min-w-0 space-y-0.5">
-        <p className="text-sm font-medium">{label}</p>
-        {documento ? (
-          <button
-            type="button"
-            onClick={() => onOpen(documento.id)}
-            className="truncate text-xs text-muted-foreground hover:underline"
-            title="Abrir (registra um acesso)"
-          >
-            {documento.nome_original} · {formatBytes(documento.tamanho_bytes)}
-          </button>
-        ) : (
-          <p className="flex items-center gap-1 text-xs text-muted-foreground">
-            <AlertCircle className="h-3 w-3" />
-            Não enviado
-          </p>
-        )}
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1">
-        {documento && (
-          <Badge variant="secondary" className="text-[10px]">
-            enviado
-          </Badge>
-        )}
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          aria-label={`Enviar ${label}`}
-          title={documento ? "Substituir" : "Enviar"}
-          disabled={loading || uploading}
-          onClick={() => inputRef.current?.click()}
+    <div className="space-y-1.5">
+      <DocumentoTipoSlot
+        documentos={documentos}
+        tipoDocumento={tipo}
+        label={label}
+        onUpload={(file) => onUpload(file, tipo)}
+        uploading={uploading}
+        onVisualizar={(documentoId) => onOpen(documentoId)}
+        onRemover={(documentoId, motivo) => onRemove(documentoId, motivo)}
+        testId={testId}
+      />
+      {emAndamento && (
+        <p
+          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+          data-testid={`${testId}-processando`}
         >
-          {uploading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Upload className="h-4 w-4" />
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Lendo o documento…
+        </p>
+      )}
+      {documento?.extracao_status === "erro" && (
+        <div
+          className="flex items-center justify-between gap-2 text-xs text-destructive"
+          data-testid={`${testId}-erro`}
+        >
+          <span>{documento.extracao_erro || "Não foi possível ler o documento."}</span>
+          {onExtrair && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onExtrair(documento.id)}
+              disabled={loading || extraindo}
+              data-testid={`${testId}-reler`}
+            >
+              Reenviar para leitura
+            </Button>
           )}
-        </Button>
-        {documento && (
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            aria-label={`Remover ${label}`}
-            title="Remover"
-            onClick={() => {
-              const motivo = window.prompt(
-                "Por que este documento está sendo removido?",
-              );
-              // Cancelled or blank is a CANCEL, not a delete with no reason —
-              // an LGPD delete without a recorded reason is not one.
-              if (motivo && motivo.trim()) onRemove(documento.id, motivo.trim());
-            }}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          className="hidden"
-          accept="application/pdf,image/jpeg,image/png,image/webp"
-          data-testid={`financiamento-input-${tipo}`}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) onUpload(file, tipo);
-            // Reset so choosing the SAME file twice still fires a change.
-            e.target.value = "";
-          }}
-        />
-      </div>
+        </div>
+      )}
+      {documento?.extracao_status === "sem_dados" && (
+        <p className="text-xs text-muted-foreground" data-testid={`${testId}-sem-dados`}>
+          Nenhum dado foi identificado neste documento.
+        </p>
+      )}
+      {documento?.extracao_aviso && (
+        <p
+          className="flex items-center gap-1.5 text-xs text-amber-600"
+          data-testid={`${testId}-aviso`}
+        >
+          <AlertTriangle className="h-3 w-3" />
+          {rotuloAviso(documento.extracao_aviso)}
+        </p>
+      )}
+      {aguardaDecisao && (onConfirmarExtracao || onDescartarExtracao) && (
+        <div className="flex items-center gap-2" data-testid={`${testId}-decisao`}>
+          {onConfirmarExtracao && (
+            <Button
+              size="sm"
+              onClick={() => onConfirmarExtracao(documento.id)}
+              disabled={loading || confirmandoExtracao || descartandoExtracao}
+              data-testid={`${testId}-confirmar`}
+            >
+              Confirmar dados extraídos
+            </Button>
+          )}
+          {onDescartarExtracao && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onDescartarExtracao(documento.id)}
+              disabled={loading || confirmandoExtracao || descartandoExtracao}
+              // NOT `-descartar` — `DocumentoTipoSlot` already owns that
+              // testid for its own "discard the FILE" button; this one
+              // discards the READING only (the file and its remove button
+              // both stay).
+              data-testid={`${testId}-descartar-leitura`}
+            >
+              Descartar leitura
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

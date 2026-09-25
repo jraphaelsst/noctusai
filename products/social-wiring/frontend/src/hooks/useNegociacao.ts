@@ -103,10 +103,55 @@ export interface NegociacaoDefaults {
   pct_captador: string;
 }
 
+// ─── Negociação/financiamento extraction conflicts (migration 171,
+//     `sw-negociacao-extracao-contract.md` §C.6/§E.5) ──────────────────────
+//
+// The fourth `campo_conflitos` descriptor (`atendimento_campo_conflitos`,
+// keyed by `atendimento_id`) — the deal-scoped sibling of `useCardHub
+// .ConflitoCampo` (cliente-scoped). Opened whenever a document disagrees
+// with the current value, or with an EARLIER document (H2: no source is
+// authoritative), never resolved by overwriting.
+
+export type NegociacaoConflitoStatus = "pendente" | "aceito" | "rejeitado";
+
+/** `campo` vocabulary per the contract: `"valor_negociado"` ·
+ *  `"parcela.<id>.valor"` · `"financiamento.fgts"` ·
+ *  `"financiamento.numero_proposta"` · `"financiamento.agente_financeiro_id"`.
+ *  Kept as a plain string (not a union) — a new campo the FE doesn't
+ *  recognise yet must still render, not vanish. */
+export interface NegociacaoConflito {
+  id: string;
+  atendimento_id: string;
+  campo: string;
+  valor_anterior: string | null;
+  origem_anterior: string | null;
+  valor_proposto: string;
+  origem_proposto: string;
+  documento_id_proposto: string | null;
+  status: NegociacaoConflitoStatus;
+  created_at: string;
+}
+
+/** pt-BR for a `campo` value — falls back to the raw key, same
+ *  never-blank posture `rotuloNegociacaoFaltando` uses. */
+const CONFLITO_CAMPO_LABEL: Record<string, string> = {
+  valor_negociado: "Valor negociado",
+  "financiamento.fgts": "Uso de FGTS",
+  "financiamento.numero_proposta": "Número da proposta",
+  "financiamento.agente_financeiro_id": "Agente financeiro",
+};
+
+export function rotuloConflitoCampo(campo: string): string {
+  if (campo.startsWith("parcela.")) return "Valor da parcela";
+  return CONFLITO_CAMPO_LABEL[campo] ?? campo;
+}
+
 // ─── Keys ───────────────────────────────────────────────────────────────────
 
 const NEGOCIACAO_KEY = (clienteId: string) =>
   ["sw", "clientes", clienteId, "negociacao"] as const;
+const CONFLITOS_KEY = (clienteId: string) =>
+  [...NEGOCIACAO_KEY(clienteId), "conflitos"] as const;
 const DEFAULTS_KEY = ["sw", "negociacao", "defaults"] as const;
 
 const base = (clienteId: string) =>
@@ -130,6 +175,23 @@ export function useNegociacaoDefaults() {
   });
 }
 
+/** `GET /api/clientes/{cliente_id}/negociacao/conflitos` (contract §E.5) —
+ *  every pending-or-decided conflict for THIS deal. The panel filters to
+ *  `status === "pendente"` for the banner; the full history stays fetchable
+ *  for anyone who needs to see what a past decision was. */
+export function useNegociacaoConflitos(clienteId: string | null) {
+  return useQuery({
+    queryKey: CONFLITOS_KEY(clienteId ?? "__none__"),
+    queryFn: async () => {
+      const res = await api.get<{ items: NegociacaoConflito[] }>(
+        `${base(clienteId as string)}/conflitos`,
+      );
+      return res?.items ?? [];
+    },
+    enabled: !!clienteId,
+  });
+}
+
 // ─── Mutations ──────────────────────────────────────────────────────────────
 
 export function useNegociacaoMutation(clienteId: string) {
@@ -147,6 +209,41 @@ export function useNegociacaoMutation(clienteId: string) {
       // alongside negociação itself; without this they kept the
       // pre-Salvar snapshot until reload, same class as the extraction
       // staleness `useExtracaoPollingInvalidation` (`useCardHub.ts`) fixes.
+      void invalidateExtracaoDependentes(qc, clienteId);
+    },
+  });
+}
+
+/** `POST /api/clientes/{cliente_id}/negociacao/conflitos/{id}/resolver
+ *  {decisao}` (contract §E.5). Field name (`decisao`) is pinned by the
+ *  contract; the value vocabulary is NOT — `"aceitar"`/`"rejeitar"` picked
+ *  as the obvious binary, mirroring this product's existing
+ *  Aprovar/Rejeitar wording (`ConflitosPendentesCard`). Flag for
+ *  reconciliation with S2 if the backend lands a different pair. */
+export type NegociacaoConflitoDecisao = "aceitar" | "rejeitar";
+
+export function useResolverNegociacaoConflito(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      conflitoId,
+      decisao,
+    }: {
+      conflitoId: string;
+      decisao: NegociacaoConflitoDecisao;
+    }) =>
+      api.post<NegociacaoConflito>(
+        `${base(clienteId)}/conflitos/${encodeURIComponent(conflitoId)}/resolver`,
+        { decisao },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: CONFLITOS_KEY(clienteId) });
+      // Accepting a conflict writes the real field — the same surfaces a
+      // normal negociação/parcela save touches.
+      void qc.invalidateQueries({ queryKey: NEGOCIACAO_KEY(clienteId) });
+      void qc.invalidateQueries({
+        queryKey: ["sw", "clientes", clienteId, "negociacao", "estruturada"],
+      });
       void invalidateExtracaoDependentes(qc, clienteId);
     },
   });

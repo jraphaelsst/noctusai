@@ -10,7 +10,9 @@ import FinanciamentoPanel from "@/components/card/FinanciamentoPanel";
 import { useAgentesFinanceiros } from "@/hooks/useAgentesFinanceiros";
 import {
   useFinanciamento,
+  useFinanciamentoDocumentoExtracao,
   useFinanciamentoDocumentoMutations,
+  useFinanciamentoExtracaoPollingInvalidation,
   useFinanciamentoMutation,
 } from "@/hooks/useFinanciamento";
 
@@ -18,6 +20,10 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
   const query = useFinanciamento(clienteId);
   const mutation = useFinanciamentoMutation(clienteId);
   const docs = useFinanciamentoDocumentoMutations(clienteId);
+  const extracao = useFinanciamentoDocumentoExtracao(clienteId);
+  // Invalidates negociação/favorecidos/agentes financeiros the instant a
+  // document's extraction lands — see the hook's own docstring (H2/H4/H5/H7).
+  useFinanciamentoExtracaoPollingInvalidation(clienteId);
   // ACTIVE agents only — the dropdown must not offer a bank the agency has
   // retired. The deal's own agent is resolved separately by the server and
   // appended by the panel when it is not in this list, so a retired one still
@@ -58,6 +64,33 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
           );
         }
       }}
+      onExtrair={(documentoId) =>
+        extracao.reextrair.mutate(documentoId, {
+          onError: (err: unknown) =>
+            toast.error(
+              err instanceof Error ? err.message : "Não foi possível reler o documento.",
+            ),
+        })
+      }
+      onConfirmarExtracao={(documentoId) =>
+        extracao.confirmar.mutate(documentoId, {
+          onError: (err: unknown) =>
+            toast.error(
+              err instanceof Error ? err.message : "Não foi possível confirmar a leitura.",
+            ),
+        })
+      }
+      onDescartarExtracao={(documentoId) =>
+        extracao.descartar.mutate(documentoId, {
+          onError: (err: unknown) =>
+            toast.error(
+              err instanceof Error ? err.message : "Não foi possível descartar a leitura.",
+            ),
+        })
+      }
+      extraindo={extracao.reextrair.isPending}
+      confirmandoExtracao={extracao.confirmar.isPending}
+      descartandoExtracao={extracao.descartar.isPending}
     />
   );
 }

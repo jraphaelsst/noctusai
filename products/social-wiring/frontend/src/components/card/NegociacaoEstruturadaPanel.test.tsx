@@ -119,6 +119,26 @@ vi.mock("@/hooks/usePermutas", async () => {
   };
 });
 
+// Migration 171 (`sw-negociacao-extracao-contract.md` §F) — the conflict
+// banner's own hooks, mocked the same way the panel's other queries are:
+// no QueryClientProvider anywhere in this file.
+const mockUseNegociacaoConflitos = vi.fn();
+const mockResolverConflito = vi.fn();
+vi.mock("@/hooks/useNegociacao", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/hooks/useNegociacao")>(
+      "@/hooks/useNegociacao",
+    );
+  return {
+    ...actual,
+    useNegociacaoConflitos: mockUseNegociacaoConflitos,
+    useResolverNegociacaoConflito: () => ({
+      mutate: mockResolverConflito,
+      isPending: false,
+    }),
+  };
+});
+
 function query(over: Record<string, unknown> = {}) {
   return {
     data: undefined,
@@ -157,6 +177,12 @@ function aggregate(over: Record<string, unknown> = {}) {
   return {
     atendimento_id: "at-1",
     valor_negociado: "850000.00",
+    valor_negociado_origem: null,
+    valor_negociado_documento_id: null,
+    valor_negociado_em: null,
+    valor_negociado_confirmado_por: null,
+    valor_negociado_confirmado_em: null,
+    a_distribuir: null,
     saldo_nao_alocado: "0.00",
     posse_data: null,
     posse_condicoes: null,
@@ -182,6 +208,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUseNegociacaoEstruturada.mockReturnValue(query({ data: aggregate() }));
   mockUsePermutaAtivos.mockReturnValue(query({ data: [] }));
+  mockUseNegociacaoConflitos.mockReturnValue(query({ data: [] }));
 });
 
 describe("os quatro estados", () => {
@@ -832,5 +859,247 @@ describe("diálogo de parcela — reset ao trocar de alvo", () => {
     fireEvent.click(getByTestId("negest-parcela-nova"));
     expect((getByTestId("parc-evento") as HTMLInputElement).value).toBe("");
     expect((getByTestId("parc-valor") as HTMLInputElement).value).toBe("");
+  });
+});
+
+// ─── Migration 171 (`sw-negociacao-extracao-contract.md` §F) — valor
+// negociado provenance, "a distribuir", conflitos, parcela valor=null and
+// the H4 intermediária suggestion. ──────────────────────────────────────
+
+function parcelaBase(over: Record<string, unknown> = {}) {
+  return {
+    id: "p1",
+    tipo: "sinal",
+    valor: "50000.00",
+    vencimento: null,
+    evento: null,
+    forma_pagamento: null,
+    favorecido_id: null,
+    confissao_divida: false,
+    dispara_corretagem: false,
+    permuta_ativo_ids: [],
+    ordem: 1,
+    origem: null,
+    documento_id: null,
+    extraido_em: null,
+    confirmado_por: null,
+    confirmado_em: null,
+    created_at: null,
+    updated_at: null,
+    ...over,
+  };
+}
+
+describe("valor negociado — provenance e a distribuir", () => {
+  it("mostra o valor negociado sem selo quando não há proveniência", async () => {
+    const { queryByTestId, getByTestId } = await render();
+    expect(getByTestId("negest-valor-negociado-valor").textContent).toContain("850.000,00");
+    expect(queryByTestId("negest-valor-negociado-origem")).toBeNull();
+  });
+
+  it("🔴 marca como pendente um valor extraído ainda não confirmado", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ valor_negociado_origem: "extraido" }) }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("negest-valor-negociado-origem").textContent).toMatch(/pendente/);
+  });
+
+  it("não marca pendente um valor extraído já confirmado", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          valor_negociado_origem: "extraido",
+          valor_negociado_confirmado_em: "2026-09-25T00:00:00+00:00",
+        }),
+      }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("negest-valor-negociado-origem").textContent).not.toMatch(/pendente/);
+  });
+
+  it("🔴 a linha 'a distribuir' só aparece quando o servidor a calcula", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ a_distribuir: "120000.00" }) }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("negest-a-distribuir").textContent).toContain("120.000,00");
+  });
+
+  it("nenhuma linha 'a distribuir' quando o valor ainda não existe", async () => {
+    const { queryByTestId } = await render();
+    expect(queryByTestId("negest-a-distribuir")).toBeNull();
+  });
+});
+
+describe("parcela — valor null (migration 171) e proveniência", () => {
+  it("🔴 uma parcela extraída pendente de confirmação renderiza 'falta', não '—'", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          parcelas: [parcelaBase({ valor: null, origem: "extraido" })],
+        }),
+      }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("parcela-valor-p1").textContent).toMatch(/falta/);
+  });
+
+  it("badge de proveniência na parcela extraída", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          parcelas: [parcelaBase({ origem: "extraido" })],
+        }),
+      }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("parcela-origem-p1")).toBeTruthy();
+  });
+
+  it("sem badge numa parcela sem proveniência (legada)", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ parcelas: [parcelaBase({ origem: null })] }) }),
+    );
+    const { queryByTestId } = await render();
+    expect(queryByTestId("parcela-origem-p1")).toBeNull();
+  });
+});
+
+describe("favorecido — proveniência (H5)", () => {
+  it("badge de proveniência num favorecido preenchido pela leitura do Quadro Resumo", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          favorecidos: [
+            {
+              id: "f1",
+              nome: "Vendedor Ltda",
+              cpf_cnpj: null,
+              banco: "Itaú",
+              agencia: "1234",
+              conta: "56789-0",
+              pix: null,
+              origem: "extraido",
+              documento_id: "doc-1",
+              confirmado_em: null,
+              created_at: null,
+              updated_at: null,
+            },
+          ],
+        }),
+      }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("favorecido-origem-f1")).toBeTruthy();
+  });
+});
+
+describe("sugestão de parcela intermediária (H4)", () => {
+  it("🔴 sugere a intermediária como valor − sinal − financiamento, nunca aplica sozinha", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          valor_negociado: "850000.00",
+          parcelas: [
+            parcelaBase({ id: "p-sinal", tipo: "sinal", valor: "50000.00" }),
+            parcelaBase({ id: "p-fin", tipo: "financiamento", valor: "600000.00" }),
+          ],
+        }),
+      }),
+    );
+    const { getByTestId } = await render();
+    // Never applied without a click — no parcela intermediária exists yet.
+    expect(mockCreateParcela).not.toHaveBeenCalled();
+    expect(getByTestId("negest-sugestao-intermediaria").textContent).toContain("200.000,00");
+
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(getByTestId("negest-sugestao-intermediaria-usar"));
+    expect(mockCreateParcela).toHaveBeenCalledWith(
+      { tipo: "intermediaria", valor: "200000.00" },
+      expect.anything(),
+    );
+  });
+
+  it("nenhuma sugestão quando já existe uma parcela intermediária", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          valor_negociado: "850000.00",
+          parcelas: [parcelaBase({ id: "p-int", tipo: "intermediaria", valor: "200000.00" })],
+        }),
+      }),
+    );
+    const { queryByTestId } = await render();
+    expect(queryByTestId("negest-sugestao-intermediaria")).toBeNull();
+  });
+
+  it("nenhuma sugestão sem valor negociado", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ valor_negociado: null, parcelas: [] }) }),
+    );
+    const { queryByTestId } = await render();
+    expect(queryByTestId("negest-sugestao-intermediaria")).toBeNull();
+  });
+});
+
+describe("conflitos (migration 171 atendimento_campo_conflitos)", () => {
+  it("nenhum banner quando não há conflitos pendentes", async () => {
+    mockUseNegociacaoConflitos.mockReturnValue(query({ data: [] }));
+    const { queryByTestId } = await render();
+    expect(queryByTestId("negest-conflitos")).toBeNull();
+  });
+
+  it("🔴 lista um conflito pendente e resolve via aceitar/rejeitar", async () => {
+    mockUseNegociacaoConflitos.mockReturnValue(
+      query({
+        data: [
+          {
+            id: "c1",
+            atendimento_id: "at-1",
+            campo: "valor_negociado",
+            valor_anterior: "800000.00",
+            origem_anterior: "manual",
+            valor_proposto: "850000.00",
+            origem_proposto: "extraido",
+            documento_id_proposto: "doc-1",
+            status: "pendente",
+            created_at: "2026-09-25T00:00:00+00:00",
+          },
+        ],
+      }),
+    );
+    const { getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    expect(getByTestId("negest-conflitos")).toBeTruthy();
+    fireEvent.click(getByTestId("negest-conflito-c1-aceitar"));
+    expect(mockResolverConflito).toHaveBeenCalledWith(
+      { conflitoId: "c1", decisao: "aceitar" },
+      expect.anything(),
+    );
+  });
+
+  it("um conflito já decidido não aparece no banner", async () => {
+    mockUseNegociacaoConflitos.mockReturnValue(
+      query({
+        data: [
+          {
+            id: "c1",
+            atendimento_id: "at-1",
+            campo: "valor_negociado",
+            valor_anterior: "800000.00",
+            origem_anterior: "manual",
+            valor_proposto: "850000.00",
+            origem_proposto: "extraido",
+            documento_id_proposto: "doc-1",
+            status: "aceito",
+            created_at: "2026-09-25T00:00:00+00:00",
+          },
+        ],
+      }),
+    );
+    const { queryByTestId } = await render();
+    expect(queryByTestId("negest-conflitos")).toBeNull();
   });
 });

@@ -40,11 +40,44 @@ export const PARCELA_TIPOS_CRIAVEIS: ParcelaTipo[] = [
   "permuta",
 ];
 
+/**
+ * Where a provenance-tracked negociação value came from —
+ * `sw-negociacao-extracao-contract.md` §C.4/§C.6. `"extraido"` is a machine
+ * reading awaiting confirmation (`confirmado_em == null`) or already
+ * confirmed (`confirmado_em` set); `"derivado"` is the H4 intermediária
+ * suggestion, accepted by an explicit click, never applied silently;
+ * `"manual"` is a human typing it in — every manual writer stamps this on
+ * write (contract §C, "Manual writers must stamp provenance"). `null` means
+ * the row predates migration 171 and has no provenance recorded.
+ */
+export type NegociacaoOrigem = "manual" | "extraido" | "derivado";
+
+export const NEGOCIACAO_ORIGEM_LABEL: Record<NegociacaoOrigem, string> = {
+  manual: "Digitado manualmente",
+  extraido: "Extraído de documento",
+  derivado: "Sugestão calculada",
+};
+
+export function rotuloNegociacaoOrigem(origem: string | null | undefined): string {
+  if (!origem) return "—";
+  return NEGOCIACAO_ORIGEM_LABEL[origem as NegociacaoOrigem] ?? origem;
+}
+
+/** Who confirmed a machine-read value — the same `{id, nome}` shape the rest
+ *  of this product uses for an actor reference (`AtorRef`). */
+export interface NegociacaoAtorRef {
+  id: string;
+  nome: string | null;
+}
+
 export interface NegociacaoParcela {
   id: string;
   tipo: ParcelaTipo;
-  /** BRL as a decimal string, e.g. "6750.00". Never parsed to float. */
-  valor: string;
+  /** BRL as a decimal string, e.g. "6750.00". `null` since migration 171 —
+   *  a D2 rejection empties an extracted parcela's valor rather than
+   *  deleting the row (contract §C.4); the manual create API still requires
+   *  a value. Render `null` as "—, falta", never as "—" alone. */
+  valor: string | null;
   vencimento: string | null;
   evento: string | null;
   forma_pagamento: string | null;
@@ -56,6 +89,12 @@ export interface NegociacaoParcela {
    *  (natureza `permuta_imovel`) this parcela is paid with. */
   permuta_ativo_ids: string[];
   ordem: number;
+  /** Migration 171 provenance (contract §C.4) — `null` on a legacy row. */
+  origem: NegociacaoOrigem | null;
+  documento_id: string | null;
+  extraido_em: string | null;
+  confirmado_por: NegociacaoAtorRef | null;
+  confirmado_em: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -68,6 +107,12 @@ export interface NegociacaoFavorecido {
   agencia: string | null;
   conta: string | null;
   pix: string | null;
+  /** H5 (owner, 2026-09-25) — filled from the Quadro Resumo's seller-credit
+   *  account, matched to a vendedor by CPF. `null` on a hand-typed row (the
+   *  ordinary case today — favorecidos otherwise stay `MANUAL_APENAS`). */
+  origem: NegociacaoOrigem | null;
+  documento_id: string | null;
+  confirmado_em: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -243,6 +288,21 @@ export const CORRETAGEM_CONTRATANTES_LABELS: Record<CorretagemContratantes, stri
 export interface NegociacaoEstruturada {
   atendimento_id: string;
   valor_negociado: string | null;
+  /** Migration 171 quintet on `atendimento_negociacao.valor_negociado`
+   *  (contract §C.3). H2 (owner): no document is authoritative — ANY
+   *  disagreement between a document and the current value, or between two
+   *  documents, opens a conflict for a human (`NegociacaoConflito`) rather
+   *  than overwriting silently. `origem` is `null` until a document or a
+   *  person has ever written this field. */
+  valor_negociado_origem: NegociacaoOrigem | null;
+  valor_negociado_documento_id: string | null;
+  valor_negociado_em: string | null;
+  valor_negociado_confirmado_por: NegociacaoAtorRef | null;
+  valor_negociado_confirmado_em: string | null;
+  /** `valor_negociado − Σ(parcelas financiamento+fgts)`, computed
+   *  server-side, never stored (contract §B "Recursos próprios"). `null`
+   *  while `valor_negociado` is unset. Shown read-only as "a distribuir". */
+  a_distribuir: string | null;
   saldo_nao_alocado: string | null;
   posse_data: string | null;
   posse_condicoes: string | null;
