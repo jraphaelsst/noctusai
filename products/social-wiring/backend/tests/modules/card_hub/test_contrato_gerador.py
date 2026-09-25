@@ -374,6 +374,17 @@ class TestGate:
             "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
             "serasa_crednet",
         }
+        # 🔴 Contract pin (2026-09-25 prod crash): `Avaliacao.falta` injects
+        # the SAME `destino` object into every `sugestoes[]` entry as the
+        # faltando's own `destino` (never a narrower re-derived shape). The
+        # FE side of this contract once declared `sugestoes[].destino` as a
+        # plain string and resolved it through the string-only
+        # `cardSubpages.resolverDestino`, which crashed the whole app
+        # (`destino.startsWith is not a function`) the first time a
+        # suggestion carried this rich object — see
+        # `GeradorContratoSection.tsx`'s `GeracaoSugestao` docstring for the
+        # FE-side fix. If this assertion ever breaks, the FE's
+        # `resolverDestinoRico` split needs the SAME shape re-verified.
         assert all(s["destino"] == item["destino"] for s in item["sugestoes"])
         assert all(set(s) == {"tipo_documento", "rotulo", "destino"} for s in item["sugestoes"])
 

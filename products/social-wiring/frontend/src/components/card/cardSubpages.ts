@@ -118,6 +118,18 @@ export function resolverDestino(destino: string | null | undefined): {
   subpageLabel: string | null;
 } {
   if (!destino) return { rota: null, subpageLabel: null };
+  // 🔴 The declared type is `string`, but a mismatched contract has shipped
+  // the RICHER `GeracaoDestino` object here before (`GeradorContratoSection
+  // .tsx`'s `sugestoes[].destino`, 2026-09-25 prod crash —
+  // `destino.startsWith is not a function` unmounted the whole app). A
+  // caller passing the wrong shape is a contract bug to surface loudly, not
+  // to crash on: this stays honest (never a silent swallow) without
+  // bringing down the app a TypeScript signature alone cannot guarantee at
+  // runtime.
+  if (typeof destino !== "string") {
+    console.error("resolverDestino: expected a string destino, received", destino);
+    return { rota: null, subpageLabel: null };
+  }
   if (destino.startsWith("/")) return { rota: destino, subpageLabel: null };
   const subpage = CARD_SUBPAGES.find((s) => s.key === destino);
   return { rota: null, subpageLabel: subpage?.label ?? null };

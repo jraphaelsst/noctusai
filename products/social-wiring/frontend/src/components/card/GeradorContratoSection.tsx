@@ -32,7 +32,7 @@ import {
   type GeracaoOnde,
 } from "@/hooks/useContratos";
 
-import { CARD_SUBPAGES, resolverDestino, type CardSubpageKey } from "./cardSubpages";
+import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
 
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
  *  by WHERE to go fill the field, not just what field it is. */
@@ -74,16 +74,26 @@ export interface GeracaoDestino {
  * `faltando[].sugestoes` — `sw-extraction-contract` (proveniência slice):
  * which document could fill this missing field and where to go send it.
  * Same "not yet declared on `GeracaoFaltando` itself" carve-out as
- * `destino` above — `sugestoes[].destino` is a PLAIN STRING (a route or a
- * `CardSubpageKey`), unlike `GeracaoFaltando.destino`'s richer object, the
- * same shape `ProvenienciaFontePossivel.destino` uses
- * (`hooks/useProveniencia.ts`) — both resolved through
- * `cardSubpages.resolverDestino`.
+ * `destino` above.
+ *
+ * 🔴 `sugestoes[].destino` is the SAME `GeracaoDestino` OBJECT as the
+ * faltando's own `destino` — `derivacao.py`'s `Avaliacao.falta` builds ONE
+ * `destino` and injects it into every suggestion verbatim
+ * (`"sugestoes": [{**s, "destino": destino} ...]`), it never re-derives a
+ * narrower plain-string shape. A prior version of this file declared it as
+ * `string | null` (the `ProvenienciaFontePossivel.destino` shape instead —
+ * a different endpoint, genuinely a plain string, see
+ * `hooks/useProveniencia.ts`) and resolved it through
+ * `cardSubpages.resolverDestino`; that mismatch crashed prod on 2026-09-25
+ * (`destino.startsWith is not a function`) the first time a suggestion's
+ * destino reached the card's own subpage rail. Resolve THIS shape through
+ * `resolverDestinoRico` below — the same routable-vs-card-scoped split
+ * `FaltandoLinha` uses for its own `destino`.
  */
 export interface GeracaoSugestao {
   tipo_documento: string | null;
   rotulo: string;
-  destino: string | null;
+  destino: GeracaoDestino | null;
 }
 
 export type FaltandoComDestino = GeracaoFaltando & {
@@ -114,20 +124,74 @@ function agruparPorOnde(faltando: GeracaoFaltando[]): [GeracaoOnde, GeracaoFalta
   return Array.from(grupos.entries());
 }
 
+/** The route a routable destino links to — with `#alvo` when it names a
+ *  control, which the target page scrolls to (`useRolarAteHash`). */
+export function rotaDoDestino(destino: GeracaoDestino): string {
+  return destino.alvo ? `${destino.rota}#${destino.alvo}` : destino.rota;
+}
+
+/**
+ * The routable-vs-card-scoped classification a `GeracaoDestino` renders
+ * through — ONE decision, shared by `FaltandoLinha`'s own line AND
+ * `SugestoesLista`'s `sugestoes[].destino` (same rich object, see
+ * `GeracaoSugestao`'s docstring for why they must never diverge). Each call
+ * site keeps its own JSX shape (a standalone action row vs. an inline
+ * "em X" phrase) — only the classification itself is shared, so it can
+ * never drift between the two.
+ */
+interface DestinoResolvido {
+  kind: "card" | "routable";
+  /** `kind: "card"` only — the subpage's pt-BR label, `null` when
+   *  `destino.ancora` names none `SUBPAGE_LABEL` knows. */
+  subpageLabel: string | null;
+  /** `kind: "card"` only — `onIrPara` is wired AND `destino.ancora` names a
+   *  control, so the caller can jump the dialog there directly instead of
+   *  only naming the subpage in guidance text. */
+  podeIrDireto: boolean;
+  /** `kind: "routable"` only — `rotaDoDestino(destino)`. */
+  href: string | null;
+}
+
+function resolverDestinoRico(
+  destino: GeracaoDestino,
+  onIrPara?: (destino: GeracaoDestino) => void,
+): DestinoResolvido {
+  if (destino.tela.startsWith("card_")) {
+    const subpageLabel = destino.ancora
+      ? SUBPAGE_LABEL[destino.ancora as CardSubpageKey] ?? destino.ancora
+      : null;
+    return {
+      kind: "card",
+      subpageLabel,
+      podeIrDireto: Boolean(onIrPara && destino.ancora),
+      href: null,
+    };
+  }
+  return {
+    kind: "routable",
+    subpageLabel: null,
+    podeIrDireto: false,
+    href: rotaDoDestino(destino),
+  };
+}
+
 /**
  * `faltando[].sugestoes` — actionable hints below the missing-field line:
- * "envie X em Y". Same routable-vs-card-scoped split `FaltandoLinha` already
- * runs for `destino`, generalized through `resolverDestino` since
- * `GeracaoSugestao.destino` is the narrower plain-string shape.
+ * "envie X em Y". Resolved through the SAME `resolverDestinoRico` split
+ * `FaltandoLinha` uses for its own `destino` — `sugestao.destino` is that
+ * identical rich object (`GeracaoSugestao`'s docstring), never a narrower
+ * plain-string shape.
  */
 function SugestoesLista({
   sugestoes,
   campo,
   parteId,
+  onIrPara,
 }: {
   sugestoes?: GeracaoSugestao[];
   campo: string;
   parteId: string | null;
+  onIrPara?: (destino: GeracaoDestino) => void;
 }) {
   if (!sugestoes || sugestoes.length === 0) return null;
   return (
@@ -136,17 +200,19 @@ function SugestoesLista({
       data-testid={`gerador-contrato-faltando-sugestoes-${campo}-${parteId ?? ""}`}
     >
       {sugestoes.map((sugestao, i) => {
-        const { rota, subpageLabel } = resolverDestino(sugestao.destino);
         const documentoRotulo = sugestao.tipo_documento ?? sugestao.rotulo;
+        const resolved = sugestao.destino
+          ? resolverDestinoRico(sugestao.destino, onIrPara)
+          : null;
         return (
           <li key={`${documentoRotulo}-${i}`}>
             Envie {documentoRotulo}
-            {rota && (
+            {resolved?.kind === "routable" && resolved.href && (
               <>
                 {" "}
                 em{" "}
                 <Link
-                  to={rota}
+                  to={resolved.href}
                   className="text-primary hover:underline"
                   data-testid={`gerador-contrato-faltando-sugestao-link-${campo}-${parteId ?? ""}-${i}`}
                 >
@@ -154,18 +220,30 @@ function SugestoesLista({
                 </Link>
               </>
             )}
-            {!rota && subpageLabel && ` em ${subpageLabel} (abra a aba do card).`}
+            {resolved?.kind === "card" && resolved.podeIrDireto && sugestao.destino && (
+              <>
+                {" "}
+                <Button
+                  type="button"
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs font-normal"
+                  data-testid={`gerador-contrato-faltando-sugestao-ir-${campo}-${parteId ?? ""}-${i}`}
+                  onClick={() => onIrPara?.(sugestao.destino!)}
+                >
+                  Resolver
+                </Button>
+              </>
+            )}
+            {resolved?.kind === "card" &&
+              !resolved.podeIrDireto &&
+              resolved.subpageLabel &&
+              ` em ${resolved.subpageLabel} (abra a aba do card).`}
           </li>
         );
       })}
     </ul>
   );
-}
-
-/** The route a routable destino links to — with `#alvo` when it names a
- *  control, which the target page scrolls to (`useRolarAteHash`). */
-export function rotaDoDestino(destino: GeracaoDestino): string {
-  return destino.alvo ? `${destino.rota}#${destino.alvo}` : destino.rota;
 }
 
 /**
@@ -193,23 +271,27 @@ function FaltandoLinha({
     return (
       <li>
         {item.rotulo}
-        <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
+        <SugestoesLista
+          sugestoes={item.sugestoes}
+          campo={item.campo}
+          parteId={item.parte_id}
+          onIrPara={onIrPara}
+        />
       </li>
     );
   }
 
-  if (destino.tela.startsWith("card_")) {
-    const subpageLabel = destino.ancora
-      ? SUBPAGE_LABEL[destino.ancora as CardSubpageKey] ?? destino.ancora
-      : null;
-    if (onIrPara && destino.ancora) {
+  const resolved = resolverDestinoRico(destino, onIrPara);
+
+  if (resolved.kind === "card") {
+    if (resolved.podeIrDireto) {
       return (
         <li>
           <div className="flex items-center justify-between gap-2">
             <span>
               {item.rotulo}
-              {subpageLabel && (
-                <span className="text-muted-foreground/70"> (aba {subpageLabel})</span>
+              {resolved.subpageLabel && (
+                <span className="text-muted-foreground/70"> (aba {resolved.subpageLabel})</span>
               )}
             </span>
             <Button
@@ -218,25 +300,35 @@ function FaltandoLinha({
               size="sm"
               className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
               data-testid={`gerador-contrato-faltando-ir-${item.campo}-${item.parte_id ?? ""}`}
-              onClick={() => onIrPara(destino)}
+              onClick={() => onIrPara?.(destino)}
             >
               Resolver
               <ArrowRight className="h-3 w-3" />
             </Button>
           </div>
-          <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
+          <SugestoesLista
+            sugestoes={item.sugestoes}
+            campo={item.campo}
+            parteId={item.parte_id}
+            onIrPara={onIrPara}
+          />
         </li>
       );
     }
     return (
       <li data-testid={`gerador-contrato-faltando-guidance-${item.campo}-${item.parte_id ?? ""}`}>
         {item.rotulo}
-        {subpageLabel && (
+        {resolved.subpageLabel && (
           <span className="block text-muted-foreground/70">
-            Abra o card do cliente, aba &ldquo;{subpageLabel}&rdquo;.
+            Abra o card do cliente, aba &ldquo;{resolved.subpageLabel}&rdquo;.
           </span>
         )}
-        <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
+        <SugestoesLista
+          sugestoes={item.sugestoes}
+          campo={item.campo}
+          parteId={item.parte_id}
+          onIrPara={onIrPara}
+        />
       </li>
     );
   }
@@ -257,13 +349,18 @@ function FaltandoLinha({
           className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
           data-testid={`gerador-contrato-faltando-link-${item.campo}-${item.parte_id ?? ""}`}
         >
-          <Link to={rotaDoDestino(destino)}>
+          <Link to={resolved.href ?? rotaDoDestino(destino)}>
             Resolver
             <ArrowRight className="h-3 w-3" />
           </Link>
         </Button>
       </div>
-      <SugestoesLista sugestoes={item.sugestoes} campo={item.campo} parteId={item.parte_id} />
+      <SugestoesLista
+        sugestoes={item.sugestoes}
+        campo={item.campo}
+        parteId={item.parte_id}
+        onIrPara={onIrPara}
+      />
     </li>
   );
 }

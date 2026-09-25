@@ -319,7 +319,11 @@ describe("GeradorContratoSection", () => {
             onde: "matricula",
             parte_id: null,
             sugestoes: [
-              { tipo_documento: "Matrícula", rotulo: "Extrator de matrículas", destino: "/matriculas" },
+              {
+                tipo_documento: "Matrícula",
+                rotulo: "Extrator de matrículas",
+                destino: destino({ tela: "matriculas", rota: "/matriculas" }),
+              },
             ],
           },
         ],
@@ -333,7 +337,14 @@ describe("GeradorContratoSection", () => {
     expect(link.getAttribute("href")).toBe("/matriculas");
   });
 
-  it("🔴 a sugestão with a card-scoped destino renders guidance, never a fabricated link", async () => {
+  // 🔴 Prod crash (2026-09-25): `sugestoes[].destino` is `derivacao.py`'s
+  // rich `Destinos.para` OBJECT (`Avaliacao.falta` injects the faltando's
+  // own `destino` into every suggestion verbatim), never the narrower
+  // plain-string shape `ProvenienciaFontePossivel.destino` uses. Rendering
+  // it through `cardSubpages.resolverDestino` (which assumed a string and
+  // called `.startsWith` on it) unmounted the whole app the first time a
+  // suggestion carried one. These tests pin the fix.
+  it("🔴 a sugestão with a card-scoped RICH destino object renders guidance, never a fabricated link, and never crashes (2026-09-25)", async () => {
     const { screen } = await render({
       status: status({
         pronto: false,
@@ -344,7 +355,11 @@ describe("GeradorContratoSection", () => {
             onde: "certidoes",
             parte_id: "p1",
             sugestoes: [
-              { tipo_documento: "Certidão de casamento", rotulo: "Certidão", destino: "contratos" },
+              {
+                tipo_documento: "Certidão de casamento",
+                rotulo: "Certidão",
+                destino: destino({ tela: "card_contratos", rota: "/clientes", ancora: "contratos" }),
+              },
             ],
           },
         ],
@@ -353,6 +368,59 @@ describe("GeradorContratoSection", () => {
     const sugestoes = screen.getByTestId("gerador-contrato-faltando-sugestoes-certidao-p1");
     expect(sugestoes.querySelector("a")).toBeNull();
     expect(sugestoes.textContent).toContain("Contratos");
+  });
+
+  it("🔴 a sugestão with a routable RICH destino object renders and links correctly (2026-09-25 crash)", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "matricula",
+            rotulo: "Matrícula transcrita",
+            onde: "matricula",
+            parte_id: null,
+            sugestoes: [
+              {
+                tipo_documento: "Matrícula",
+                rotulo: "Extrator de matrículas",
+                destino: destino({ tela: "matriculas", rota: "/matriculas", ancora: null }),
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const link = screen.getByTestId(
+      "gerador-contrato-faltando-sugestao-link-matricula--0",
+    ) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/matriculas");
+  });
+
+  it("🔴 inside the card, a card-scoped sugestão's 'Resolver' jumps the subpage via onIrPara (2026-09-25)", async () => {
+    const onIrPara = vi.fn();
+    const alvoSugestao = destino({ tela: "card_contratos", rota: "/clientes", ancora: "contratos" });
+    const { screen, fireEvent } = await render({
+      onIrPara,
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "certidao",
+            rotulo: "Certidão de casamento",
+            onde: "certidoes",
+            parte_id: "p1",
+            sugestoes: [
+              { tipo_documento: "Certidão de casamento", rotulo: "Certidão", destino: alvoSugestao },
+            ],
+          },
+        ],
+      }),
+    });
+    const botao = screen.getByTestId("gerador-contrato-faltando-sugestao-ir-certidao-p1-0");
+    expect(botao.tagName).toBe("BUTTON");
+    fireEvent.click(botao);
+    expect(onIrPara).toHaveBeenCalledWith(alvoSugestao);
   });
 
   it("omits the sugestões block entirely when the item carries none", async () => {
