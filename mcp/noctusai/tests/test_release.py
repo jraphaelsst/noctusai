@@ -649,3 +649,29 @@ def test_bless_rejects_a_green_run_whose_heavy_jobs_all_skipped():
     assert out["status"] == "blocked"
     assert out["skipped_tail"][0]["qualifying_reason"] == "green_but_not_demonstrably_heavy"
     assert fake.pushes() == []
+
+
+# ─── 2026-09-25: release pushes skip the pre-push cache re-embed legs ──────────
+def test_release_pushes_skip_the_hook_cache_refresh_only():
+    """A release push only moves a ref to already-pushed commits; the hook's
+    re-embed legs froze two releases (provider out of credits)."""
+    from tools.noctus.dev.release import _run_env
+    env = _run_env(["git", "push", "origin", "abc:refs/heads/prod"], {"PATH": "/bin"},
+                   {"NOCTUS_ALLOW_MAIN_PUSH": "1"})
+    assert env["NOCTUS_SKIP_EMBED_REFRESH"] == "1"
+    assert env["NOCTUS_ALLOW_MAIN_PUSH"] == "1"
+    assert env["PATH"] == "/bin"
+
+
+def test_non_push_commands_keep_the_plain_env():
+    from tools.noctus.dev.release import _run_env
+    env = _run_env(["git", "rev-parse", "HEAD"], {"PATH": "/bin"})
+    assert "NOCTUS_SKIP_EMBED_REFRESH" not in env
+
+
+def test_an_explicit_force_refresh_is_not_overridden():
+    """An operator who exported the knob keeps their own value."""
+    from tools.noctus.dev.release import _run_env
+    env = _run_env(["git", "push", "origin", "x:refs/heads/main"],
+                   {"NOCTUS_SKIP_EMBED_REFRESH": ""})
+    assert env["NOCTUS_SKIP_EMBED_REFRESH"] == ""

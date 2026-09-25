@@ -110,6 +110,27 @@ from tools.noctus.dev.deploy_pull import _rebuild_decision  # noqa: E402
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness  # noqa: E402
 
 
+def _run_env(cmd: list[str], base: dict[str, str],
+             env_extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The subprocess env for one release command.
+
+    Every release `git push` only MOVES A REF to commits that already reached
+    `dev` through a normal push, whose pre-push hook already refreshed the
+    caches for exactly that content. Re-running the hook's cache re-embed legs
+    on a bless/promote/backmerge push is pure waste, and it froze releases on
+    2026-09-25: with the embedding provider out of credits each leg burned its
+    full timeout and the MCP call went silent past the client idle limit
+    (twice, ~42 and ~31 min). So pushes carry the hook's documented
+    `NOCTUS_SKIP_EMBED_REFRESH=1` (cache refresh ONLY — every gate, incl.
+    branch protection and the migration-ledger keeper, still runs)."""
+    env = dict(base)
+    if cmd[:2] == ["git", "push"]:
+        env.setdefault("NOCTUS_SKIP_EMBED_REFRESH", "1")
+    if env_extra:
+        env.update(env_extra)
+    return env
+
+
 def _default_run_local(
     cmd: list[str], env_extra: dict[str, str] | None = None, stdin: str | None = None
 ) -> tuple[int, str, str]:
@@ -121,9 +142,7 @@ def _default_run_local(
 
     from settings import REPO_ROOT  # lazy: avoids import-time noctusai_lib cost
 
-    env = os.environ.copy()
-    if env_extra:
-        env.update(env_extra)
+    env = _run_env(cmd, os.environ.copy(), env_extra)
     # surrogateescape: `git log -p` carries arbitrary bytes (binary diffs, Latin-1
     # sources). Strict utf-8 crashed stage=manifest on 2026-09-23; surrogateescape
     # round-trips every byte exactly, so the text handed back to `git patch-id`
