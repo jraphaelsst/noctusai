@@ -217,6 +217,54 @@ class TestEmpresasUpsert:
         assert result["empresas"] == [empresas[0]["id"]]
 
     @pytest.mark.asyncio
+    async def test_a_garbled_pct_on_one_participacao_never_takes_down_the_others(self, client):
+        """P1/883 follow-up (2026-09-24): a single unparseable
+        `participacao_pct` used to raise uncaught inside `_serializar_
+        crednet`, poisoning the WHOLE raw-reading write before it even
+        landed — every other field on the same document (nome/cpf/data_
+        nascimento), the OTHER participação, and both empresa/participação
+        upserts silently never happened either. The garbled field alone
+        must degrade to `None`; nothing else may be collateral damage."""
+        cid, did = str(uuid4()), str(uuid4())
+        client.table("clientes").insert(_cliente(cid)).execute()
+        client.table("cliente_documentos").insert(_documento(did, cid)).execute()
+        garbled = ParticipacaoCrednet(
+            razao_social="EMPRESA GARBLED LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
+            participacao_pct="cerca de 50%",
+        )
+        boa = ParticipacaoCrednet(
+            razao_social="EMPRESA BOA LTDA", cnpj=CNPJ_VALIDO_OUTRO, cnpj_valido=True,
+            participacao_pct=30,
+        )
+
+        result = await _aplicar(client, cid, did, _fields(participacoes=(garbled, boa)))
+
+        # Never crashed, never ended in `erro` — this is not a failure.
+        assert result["status"] == "ok"
+        doc = client.table("cliente_documentos").select("*").eq("id", did).execute().data[0]
+        assert doc["extracao_status"] == "ok"
+        # The OTHER fields on the same document still landed.
+        assert doc["extracao_nome"] == "FULANA DE TESTE"
+        cliente = client.table("clientes").select("*").eq("id", cid).execute().data[0]
+        assert cliente["nome_oficial"] == "FULANA DE TESTE"
+        # Both empresas + both participações upserted.
+        empresas = {e["cnpj"]: e for e in client.table("empresas").select("*").execute().data}
+        assert set(empresas) == {CNPJ_VALIDO, CNPJ_VALIDO_OUTRO}
+        participacoes = {
+            p["empresa_id"]: p
+            for p in client.table("cliente_empresa_participacoes").select("*").execute().data
+        }
+        garbled_participacao = participacoes[empresas[CNPJ_VALIDO]["id"]]
+        boa_participacao = participacoes[empresas[CNPJ_VALIDO_OUTRO]["id"]]
+        assert garbled_participacao["participacao_pct"] is None  # degraded, not crashed
+        assert boa_participacao["participacao_pct"] == 30.0
+        # The raw JSON reading carries the same degradation, not an omission.
+        raw_participacoes = doc["extracao_crednet"]["participacoes"]
+        raw_por_cnpj = {p["cnpj"]: p for p in raw_participacoes}
+        assert raw_por_cnpj[CNPJ_VALIDO]["participacao_pct"] is None
+        assert raw_por_cnpj[CNPJ_VALIDO_OUTRO]["participacao_pct"] == 30.0
+
+    @pytest.mark.asyncio
     async def test_invalid_cnpj_participacao_is_rejected_not_linked(self, client):
         cid, did = str(uuid4()), str(uuid4())
         client.table("clientes").insert(_cliente(cid)).execute()
@@ -306,27 +354,6 @@ class TestSideEffectFailuresAreVisible:
     old step (a), before those ran) and propagate uncaught out of a
     BackgroundTask: the UI showed success while the side effects silently
     never landed, and the D3 sweep never re-touches an `ok` row."""
-
-    @pytest.mark.asyncio
-    async def test_a_crash_preparing_the_reading_still_ends_in_erro_never_ok(self, client):
-        """A garbled vision-read percentage — `float()` raises inside
-        `_serializar_crednet` (the raw-JSON write), before the raw fields
-        even land. Nothing was written, but the document must never be
-        left with no terminal `extracao_status` at all."""
-        cid, did = str(uuid4()), str(uuid4())
-        client.table("clientes").insert(_cliente(cid)).execute()
-        client.table("cliente_documentos").insert(_documento(did, cid)).execute()
-        participacao = ParticipacaoCrednet(
-            razao_social="EMPRESA TESTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
-            participacao_pct="cerca de 50%",
-        )
-
-        result = await _aplicar(client, cid, did, _fields(participacoes=(participacao,)))
-
-        assert result == {"status": "erro", "erro": "side_effects_failed"}
-        doc = client.table("cliente_documentos").select("*").eq("id", did).execute().data[0]
-        assert doc["extracao_status"] == "erro"
-        assert doc["extracao_erro"] and "side_effects_failed" in doc["extracao_erro"]
 
     @pytest.mark.asyncio
     async def test_a_crash_past_the_raw_write_keeps_the_reading_and_marks_erro(self, client):

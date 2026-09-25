@@ -104,6 +104,35 @@ def _lidos(fields: Any) -> dict[str, tuple[Any, str, Optional[str], bool]]:
     }
 
 
+def _float_ou_none(valor: Any, *, campo: str) -> Optional[float]:
+    """A Crednet-read numeric field is a suggestion, never a fact the
+    parser is sure of — a garbled OCR/vision value ('cerca de 50%' instead
+    of a bare number) must degrade to "not read", not crash the reading it
+    rides alongside. P1/883 follow-up (2026-09-24): `float(x)` used to
+    raise uncaught, and one bad `participacao_pct` poisoned the ENTIRE raw
+    reading (`_serializar_crednet`'s write never landed at all), taking
+    down every OTHER perfectly-good field on the same document with it."""
+    if valor is None:
+        return None
+    try:
+        return float(valor)
+    except (TypeError, ValueError) as exc:
+        logger.warning("crednet: %s unparseable as a number (%r): %s", campo, valor, exc)
+        return None
+
+
+def _isoformat_ou_none(valor: Any, *, campo: str) -> Optional[str]:
+    """Same reasoning as `_float_ou_none`, for a date-shaped field: a
+    non-date value here must degrade to "not read", never raise."""
+    if valor is None:
+        return None
+    try:
+        return valor.isoformat()
+    except AttributeError as exc:
+        logger.warning("crednet: %s not a date (%r): %s", campo, valor, exc)
+        return None
+
+
 def _ocorrencia_dict(oc: Any) -> dict:
     return {
         "constam": oc.constam,
@@ -118,10 +147,10 @@ def _participacao_dict(p: Any) -> dict:
         "razao_social": p.razao_social,
         "cnpj": p.cnpj,
         "cnpj_valido": p.cnpj_valido,
-        "participacao_pct": float(p.participacao_pct) if p.participacao_pct is not None else None,
+        "participacao_pct": _float_ou_none(p.participacao_pct, campo="participacao_pct"),
         "uf": p.uf,
         "situacao_texto": p.situacao_texto,
-        "situacao_em": p.situacao_em.isoformat() if p.situacao_em else None,
+        "situacao_em": _isoformat_ou_none(p.situacao_em, campo="situacao_em"),
         "desde": p.desde,
         "confianca": getattr(p.confianca, "value", p.confianca),
     }
@@ -230,7 +259,7 @@ def _upsert_participacao(
         .limit(1)
         .execute()
     ).data or []
-    pct = float(participacao.participacao_pct) if participacao.participacao_pct is not None else None
+    pct = _float_ou_none(participacao.participacao_pct, campo="participacao_pct")
     if not existentes:
         row = {
             "id": str(uuid4()),

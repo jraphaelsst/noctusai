@@ -372,6 +372,14 @@ def registrar_transcricao_manual(db, extracao_id: str, org_id: str, texto: str) 
             extracao_id, falha_atos, exc_info=True,
         )
 
+    # NOC-REMEDIATE[matricula-manual-transcricao-sem-preenchimento]: unlike
+    # `processar_extracao`, this never calls `preenchimento_service.
+    # preencher_imovel` — a manually-typed/pasted matrícula transcription
+    # lands its text/acts but never promotes numero_matricula/titulo/onus/
+    # etc. onto `imovel_dados` at all. Found auditing the P1/883 fix for
+    # the automatic pipeline's own promotion gap. Named destination:
+    # roadmap sw-drive-extraction P1 round 2 — 2026-09-24
+
 
 def _registrar_erro(
     db, extracao_id: str, org_id: str, mensagem: str, causa, *, codigo: str = "erro_inesperado"
