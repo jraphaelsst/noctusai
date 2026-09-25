@@ -14,7 +14,10 @@ This module attributes the per-PERSON facts to each spouse separately:
 - **data de nascimento, nacionalidade, profissão, gênero** — read from that
   spouse's OWN qualification paragraph ("ALMIR ..., nascido no dia ...,
   de nacionalidade brasileira, filho de ..."), never from the whole document,
-  where the other spouse's readings would collide with them.
+  where the other spouse's readings would collide with them. See the
+  comment beside `find_birthdate(seg_orig)`, below, for a P1/883
+  (2026-09-25) real bug this segment-scoping does NOT by itself fully
+  cover, and what does (a cross-document plausibility check in `real.py`).
 
 Couple-level facts (estado civil, regime de bens, data do casamento) are NOT
 here: they belong to both spouses equally and stay on `IdentityFields`.
@@ -154,6 +157,34 @@ def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
                 seg_orig = text[origem[a] : origem[fim - 1] + 1]
                 seg_norm = norm[a:fim]
                 d, d_conf, _ = find_birthdate(seg_orig)
+                # 🔴 P1/883 (2026-09-25) — NOT restricted to a labelled read
+                # here, and that took a real test failure to confirm rather
+                # than assumed. The MAINLINE certidão phrasing spells the
+                # date in words first, echoing it numerically in parens
+                # immediately after — "nascido no dia quatro de outubro de
+                # mil novecentos e sessenta e um (04/10/1961)" — and
+                # `birthdate.py` cannot parse the fully-spelled-out form (its
+                # `_TEXTUAL_DATE` needs a DIGIT day; only the numeric echo
+                # matches). The extenso words between "nascido" and "(" are
+                # long enough that `birthdate._LABEL_WINDOW` (48 chars) never
+                # reaches back to the label from the ONE date `birthdate.py`
+                # can actually see, so that date is scored `baixa`
+                # (unlabelled) even on a clean, correctly-transcribed
+                # document — trying a labelled-only gate here demonstrably
+                # broke `test_each_spouse_gets_their_own_facts`'s own real
+                # certidão fixture. The defence this segment already had —
+                # bounding the read to THIS spouse's own qualification
+                # clause, so the couple's celebration date or the other
+                # spouse's birthdate cannot bleed in — plus the NEW
+                # data_nascimento-vs-data_casamento plausibility cross-check
+                # below in `real.py` (which catches exactly the implausible
+                # value P1/883 measured, regardless of which confidence tier
+                # produced it) are the two defences this module ships.
+                # Widening `birthdate.py`'s own label reach, or teaching it
+                # `civil_status.py`'s extenso-date parsing, would close the
+                # remaining gap more precisely — flagged as a follow-up, not
+                # done here (see the delivery report: `civil_status.py` is
+                # outside this branch's edit scope).
                 nac, nac_conf, _ = find_nacionalidade(seg_orig)
                 prof, prof_conf, _ = find_profissao(seg_orig)
                 gen, gen_conf = _genero(seg_norm)

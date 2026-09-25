@@ -227,10 +227,14 @@ class TestEndereco:
         assert e.confianca == "baixa"
 
     def test_labelled_water_bill_reads_high_with_accents_kept(self):
+        # G18 (P1/883, 2026-09-25): the leading street-type abbreviation
+        # ("R") expands to its full DNE form ("Rua") — everything else in
+        # `logradouro` stays a literal slice of the source text, accents
+        # included, exactly as this test's own name promises.
         e = find_endereco(CONTA_AGUA_SABESP)
         assert e.partes() == {
             "cep": "01454-011",
-            "logradouro": "R PROF ARTUR RAMOS",
+            "logradouro": "Rua PROF ARTUR RAMOS",
             "numero": "123",
             "complemento": "APTO 12",
             "bairro": "JARDIM PAULISTANO",

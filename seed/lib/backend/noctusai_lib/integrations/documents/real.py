@@ -37,10 +37,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
+from datetime import date
 from typing import Optional
 
 from noctusai_lib.integrations.documents.address import find_endereco
-from noctusai_lib.integrations.documents.birthdate import find_birthdate
+from noctusai_lib.integrations.documents.birthdate import MIN_AGE, find_birthdate
 from noctusai_lib.integrations.documents.civil_status import (
     find_data_casamento,
     find_data_emissao,
@@ -403,15 +404,62 @@ class LadderIdentityExtractor:
                         m for m in multiplos_titulares if not m.startswith("cpf ")
                     ]
 
-        aviso: Optional[str] = None
-        aviso_mensagem: Optional[str] = None
+        # 🔴 P1/883 (2026-09-25) — data_nascimento vs data_casamento
+        # plausibility guard. Even a LABELLED read (see `conjuges.py`'s own
+        # `find_birthdate` filter, above) is a transcription by a model over
+        # a photographed/scanned document, and `birthdate.find_birthdate`'s
+        # own sanity gate only checks a date against TODAY — it has no way
+        # to know THIS document's other date. Real, measured: an image-only
+        # phone-scan certidão's vision read put a birth year on the spouse
+        # that would make them younger than 16 (CC art. 1.517's absolute
+        # marriageable-age floor — mirrors `birthdate.MIN_AGE`) AT THE
+        # MARRIAGE DATE PRINTED ON THE SAME DOCUMENT — a confusion between
+        # two structurally plausible years neither `birthdate`'s own gate
+        # nor a bare label match can catch alone, because both checks look
+        # at only one of the two dates at a time. Comparing them against
+        # EACH OTHER is the check that catches it.
+        #
+        # Rejected, not silently dropped: the reading is reported as an
+        # `aviso`, same shape `titulares_multiplos` already uses, so a human
+        # sees WHAT was withheld and why instead of a quietly empty column.
+        #
+        # 🔴 NOT IMPLEMENTED HERE, FLAGGED FOR THE OWNER (per the P1/883
+        # brief): (a) the broader "<18 on any adult-only document" rule —
+        # this extractor is type-agnostic and has no notion of which
+        # document TYPES are adult-only, so generalising past the
+        # marriage-specific CC art. 1.517 floor would be a guess, not a
+        # measured fix; (b) source PRECEDENCE (a CNH/CIN's own
+        # `data_nascimento` should outrank a certidão's when a consumer
+        # holds both) — that is a cross-document decision the D1 merge path
+        # in `products/social-wiring/.../identidade_extracao_service.py`
+        # makes, not a single extraction result this function returns.
+        data_nascimento_rejeitada: Optional[date] = None
+        if data is not None and data_casamento is not None:
+            idade_no_casamento = data_casamento.year - data.year - (
+                (data_casamento.month, data_casamento.day) < (data.month, data.day)
+            )
+            if idade_no_casamento < MIN_AGE:
+                data_nascimento_rejeitada = data
+                data, data_conf, data_label = None, "nenhuma", None
+
+        avisos: list[tuple[str, str]] = []
         if multiplos_titulares:
-            aviso = "titulares_multiplos"
-            aviso_mensagem = (
+            avisos.append((
+                "titulares_multiplos",
                 "documento nomeia mais de um titular com igual proeminencia "
                 "para: " + ", ".join(multiplos_titulares) + " — esses campos "
-                "nao foram gravados; os demais (estado civil, regime, datas) sim"
-            )
+                "nao foram gravados; os demais (estado civil, regime, datas) sim",
+            ))
+        if data_nascimento_rejeitada is not None:
+            avisos.append((
+                "data_nascimento_implausivel",
+                "data de nascimento lida "
+                f"({data_nascimento_rejeitada.isoformat()}) tornaria o "
+                "titular menor de 16 anos na data do casamento — leitura "
+                "descartada, nao gravada",
+            ))
+        aviso: Optional[str] = "+".join(codigo for codigo, _ in avisos) or None
+        aviso_mensagem: Optional[str] = " | ".join(msg for _, msg in avisos) or None
 
         return IdentityFields(
             kind=kind,

@@ -33,6 +33,7 @@ cidade/uf from a CEP line's own tail (labelled or not), and
 from __future__ import annotations
 
 from noctusai_lib.integrations.documents import find_endereco
+from noctusai_lib.integrations.documents.address import normalizar_tipo_logradouro
 
 
 class TestCepInlineCidadeUfNoSeparateLabel:
@@ -163,3 +164,48 @@ class TestIssuerCepTwoLinesFromItsOwnCnpjMarker:
         r = find_endereco(texto)
         assert r.presente
         assert r.cep == "09876-543"
+
+
+class TestLogradouroTypeAbbreviationExpansion:
+    """G18: bills print `AL`, `R`, `AV`, `ESTR`, etc.; the contract wants the
+    full DNE type ("Alameda ..."). Only the LEADING type token is touched —
+    the rest of the string, whatever case a bill printed it in, survives
+    untouched, and an unrecognised leading token is left exactly as-is."""
+
+    def test_al_expands_to_alameda(self):
+        r = find_endereco("AL DAS ACACIAS 45\nCEP: 09876-543 - CAMPINAS/SP\n")
+        assert r.logradouro == "Alameda DAS ACACIAS"
+
+    def test_av_expands_to_avenida(self):
+        r = find_endereco(
+            "AV BRIGADEIRO FARIA LIMA 900\nCEP: 09876-543 - GUARULHOS/SP\n"
+        )
+        assert r.logradouro == "Avenida BRIGADEIRO FARIA LIMA"
+
+    def test_bare_r_expands_to_rua(self):
+        r = find_endereco("R PROF ARTUR RAMOS 123\nCEP: 01454-011 - SAO PAULO/SP\n")
+        assert r.logradouro == "Rua PROF ARTUR RAMOS"
+
+    def test_a_leading_full_word_is_never_double_expanded(self):
+        r = find_endereco("RUA DAS FLORES 123\nCEP: 01234-567 - SAO PAULO/SP\n")
+        assert r.logradouro == "RUA DAS FLORES"
+
+    def test_a_trailing_period_on_the_abbreviation_is_consumed(self):
+        r = find_endereco("AV. ENGENHEIRO BERRINI 1500\nCEP: 04571-010 - SAO PAULO/SP\n")
+        assert r.logradouro == "Avenida ENGENHEIRO BERRINI"
+
+    def test_an_unknown_leading_token_is_left_exactly_as_printed(self):
+        # `normalizar_tipo_logradouro` is pure and total — call it directly
+        # so an unrecognised type can be checked without needing a whole
+        # comprovante shaped around it.
+        assert normalizar_tipo_logradouro("XYZ DAS ACACIAS 45") == "XYZ DAS ACACIAS 45"
+
+    def test_none_and_empty_pass_through(self):
+        assert normalizar_tipo_logradouro(None) is None
+        assert normalizar_tipo_logradouro("") == ""
+
+    def test_a_brasilia_quadra_code_is_not_touched(self):
+        """SQN/SQS/SHIS/SHIN are Brasília's OWN addressing scheme, not an
+        abbreviation of anything — deliberately absent from the expansion
+        table (see its own comment)."""
+        assert normalizar_tipo_logradouro("SQN 408 BLOCO A") == "SQN 408 BLOCO A"

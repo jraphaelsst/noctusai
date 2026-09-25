@@ -42,7 +42,7 @@ canonicalised to `NNNNN-NNN`.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
@@ -64,6 +64,62 @@ _TIPOS_LOGRADOURO = (
 _TIPO_RE = re.compile(
     r"^(?:" + "|".join(sorted(set(_TIPOS_LOGRADOURO), key=len, reverse=True)) + r")\.?\s+\S"
 )
+
+#: G18 — Correios' own street-type abbreviations, expanded to the DNE
+#: (Diretório Nacional de Endereços) full type name a contract prints
+#: ("Alameda ..." never "AL ..."). Deliberately CLOSED and narrow: only the
+#: genuinely ABBREVIATED forms of `_TIPOS_LOGRADOURO` above are keys here —
+#: an entry already spelled out ("RUA", "AVENIDA", "CONDOMINIO", ...) or a
+#: Brasília quadra code (`SQN`/`SQS`/`SHIS`/`SHIN`, themselves the canonical
+#: addressing scheme, not an abbreviation OF anything) is deliberately
+#: absent, so looking it up is a no-op rather than a guessed expansion.
+_TIPO_LOGRADOURO_EXTENSO: dict[str, str] = {
+    "R": "Rua",
+    "AV": "Avenida",
+    "AVDA": "Avenida",
+    "AL": "Alameda",
+    "TV": "Travessa",
+    "TRAV": "Travessa",
+    "EST": "Estrada",
+    "ESTR": "Estrada",
+    "ROD": "Rodovia",
+    "PC": "Praça",
+    "PCA": "Praça",
+    "LGO": "Largo",
+    "VLA": "Viela",
+    "PSG": "Passagem",
+    "PQ": "Parque",
+    "COND": "Condomínio",
+    "LD": "Ladeira",
+    "VL": "Vila",
+}
+
+#: The leading type token only — an optional trailing period (a bill prints
+#: both "AL" and "AL."), then whatever separates it from the rest.
+_TIPO_LOGRADOURO_LIDER_RE = re.compile(r"^([A-Za-zÀ-ÖØ-öø-ÿ]+)\.?(\s+)")
+
+
+def normalizar_tipo_logradouro(logradouro: Optional[str]) -> Optional[str]:
+    """Expand ONLY the leading street-type abbreviation to its full DNE
+    form — `AL DAS ACACIAS` -> `Alameda DAS ACACIAS`.
+
+    Applied to a leading token alone: nothing else in the string is
+    touched, so the rest of a bill's own capitalisation (`DAS ACACIAS`)
+    survives untouched. A leading token this closed table does not carry —
+    an already-spelled-out type, a genuinely different abbreviation, or a
+    logradouro this parser could not type-anchor at all — is returned
+    exactly as printed; this function only ever EXPANDS a known token, it
+    never guesses at one it does not recognise.
+    """
+    if not logradouro:
+        return logradouro
+    m = _TIPO_LOGRADOURO_LIDER_RE.match(logradouro)
+    if not m:
+        return logradouro
+    extenso = _TIPO_LOGRADOURO_EXTENSO.get(m.group(1).upper())
+    if extenso is None:
+        return logradouro
+    return extenso + " " + logradouro[m.end():]
 
 #: Tokens that open a complemento.
 _COMPLEMENTO_RE = re.compile(
@@ -477,7 +533,10 @@ def find_endereco(text: str) -> EnderecoLido:
 
     Labelled layout first (exact labels, `alta` when a CEP is present);
     otherwise the CEP-anchored envelope block (`baixa` — positional).
-    Never raises.
+    `logradouro`'s leading street-type token is expanded to its full DNE
+    form (G18 — `normalizar_tipo_logradouro`); every other part stays a
+    literal slice of the caller's text, per the module docstring. Never
+    raises.
     """
     if not text or not text.strip():
         return _NADA
@@ -487,8 +546,8 @@ def find_endereco(text: str) -> EnderecoLido:
         lido = _envelope(t)
     if not lido.presente:
         return _NADA
-    return lido
+    return replace(lido, logradouro=normalizar_tipo_logradouro(lido.logradouro))
 
 
-__all__ = ["EnderecoLido", "UFS", "find_endereco"]
+__all__ = ["EnderecoLido", "UFS", "find_endereco", "normalizar_tipo_logradouro"]
 
