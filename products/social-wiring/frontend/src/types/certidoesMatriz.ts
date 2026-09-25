@@ -32,6 +32,12 @@ export interface CertidaoMatrizColuna {
   nome: string;
   papel?: string;
   cnpj?: string | null;
+  /** `kind: "pessoa"` only — the cliente's own CPF, mirroring `cnpj` on the
+   *  `"empresa"` branch (P1/883, 2026-09-25). Feeds `CertidoesPartePanel`'s
+   *  `documento` prop so "Registrar certidões manualmente" opened from this
+   *  matriz's column starts pre-filled, same as the empresa column already
+   *  does. */
+  cpf?: string | null;
 }
 
 /** A matrix row — one of the FIXED 13 (5.1-5.13, `tipo` set, `custom`

@@ -158,16 +158,26 @@ def resolver_colunas(client: Any, org_id: UUID, cliente_id: UUID) -> tuple[Optio
     atendimento = rows[0]
 
     pessoas = [p for p in pessoas_do_card(client, org_id, atendimento) if p["certificando"]]
-    nomes = {
-        str(r["id"]): (r.get("nome_oficial") or r.get("nome") or "")
+    # `cpf` travels alongside the name so `resolver_colunas`' PESSOA columns
+    # can hand `CertidoesPartePanel` (via `certidoesMatrizColunaProps`) the
+    # SAME `documento` prop the "empresa" branch already gets from `cnpj` —
+    # P1/883 (2026-09-25): "Registrar certidões manualmente" opened from
+    # this matriz left the CPF field empty even though the cliente has one
+    # on file, because this dict never carried it.
+    clientes_por_id = {
+        str(r["id"]): r
         for r in (
             _t(client, CLIENTES_TABLE)
-            .select("id, nome, nome_oficial")
+            .select("id, nome, nome_oficial, cpf")
             .eq("org_id", str(org_id))
             .in_("id", [p["cliente_id"] for p in pessoas])
             .execute()
         ).data or []
     } if pessoas else {}
+    nomes = {
+        cid: (row.get("nome_oficial") or row.get("nome") or "")
+        for cid, row in clientes_por_id.items()
+    }
 
     empresas_resp = listar_empresas(client, org_id, cliente_id)
     empresas_colunas = [
@@ -184,6 +194,7 @@ def resolver_colunas(client: Any, org_id: UUID, cliente_id: UUID) -> tuple[Optio
             "rotulo": f"VEND {idx}",
             "nome": nomes.get(pessoa["cliente_id"], ""),
             "papel": pessoa.get("papel") or "",
+            "cpf": clientes_por_id.get(pessoa["cliente_id"], {}).get("cpf"),
         })
     for idx, empresa in enumerate(empresas_colunas, start=1):
         colunas.append({

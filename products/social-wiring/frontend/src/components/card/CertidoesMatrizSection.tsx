@@ -329,7 +329,11 @@ export function CertidoesMatrizSection({ clienteId }: CertidoesMatrizSectionProp
                 documento={colunaAberta.cnpj ?? undefined}
               />
             ) : (
-              <CertidoesPartePanel clienteId={colunaAberta.id} nomeParte={colunaAberta.nome} />
+              <CertidoesPartePanel
+                clienteId={colunaAberta.id}
+                nomeParte={colunaAberta.nome}
+                documento={colunaAberta.cpf ?? undefined}
+              />
             ))}
         </DialogContent>
       </Dialog>

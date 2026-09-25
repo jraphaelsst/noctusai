@@ -171,6 +171,42 @@ class TestColunas:
         pessoas_ids = {c["id"] for c in resultado["colunas"] if c["kind"] == "pessoa"}
         assert pessoas_ids == {vendedor_id}
 
+    def test_coluna_pessoa_carrega_o_cpf_do_cliente(self, scoped):
+        """🔴 P1/883 (2026-09-25): a coluna "empresa" já levava `cnpj` —
+        `CertidoesPartePanel`'s `documento` prop for "Registrar certidões
+        manualmente" needs the SAME on a "pessoa" column, or the manual
+        form opens with the CPF field empty even though it's on file."""
+        cid, aid = str(uuid4()), str(uuid4())
+        vendedor_id = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular"),
+            cliente_row(vendedor_id, nome="Vendedor", cpf="12345678901"),
+        ])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        scoped.set_table_data("atendimento_partes", [_parte(aid, vendedor_id)])
+
+        resultado = svc.montar_matriz(scoped, ORG_ID, cid)
+
+        pessoas = [c for c in resultado["colunas"] if c["kind"] == "pessoa"]
+        assert pessoas[0]["id"] == vendedor_id
+        assert pessoas[0]["cpf"] == "12345678901"
+
+    def test_coluna_pessoa_sem_cpf_cadastrado_retorna_none_nunca_erra(self, scoped):
+        cid, aid = str(uuid4()), str(uuid4())
+        vendedor_id = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular"), cliente_row(vendedor_id, nome="Vendedor"),
+        ])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        scoped.set_table_data("atendimento_partes", [_parte(aid, vendedor_id)])
+
+        resultado = svc.montar_matriz(scoped, ORG_ID, cid)
+
+        pessoas = [c for c in resultado["colunas"] if c["kind"] == "pessoa"]
+        assert pessoas[0]["cpf"] is None
+
     def test_empresa_exigida_entra_nao_exigida_fica_de_fora(self, scoped):
         cid, aid = str(uuid4()), str(uuid4())
         vendedor_id = str(uuid4())

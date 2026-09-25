@@ -34,8 +34,11 @@ vi.mock("@noctusai/seed/infra", () => ({
 // file. Stubbed here so this file's mocking stays scoped to the matriz's
 // own GET/POST/PATCH/DELETE.
 vi.mock("@/components/CertidoesPartePanel", () => ({
-  CertidoesPartePanel: ({ nomeParte }: { nomeParte?: string }) => (
-    <div data-testid="certidoes-parte-panel-stub">{nomeParte}</div>
+  CertidoesPartePanel: ({ nomeParte, documento }: { nomeParte?: string; documento?: string }) => (
+    <div data-testid="certidoes-parte-panel-stub">
+      {nomeParte}
+      <span data-testid="certidoes-parte-panel-stub-documento">{documento ?? ""}</span>
+    </div>
   ),
 }));
 
@@ -74,7 +77,7 @@ function matrizResponse(over: Partial<CertidoesMatrizResponse> = {}): CertidoesM
     }),
   ];
   const colunas = [
-    { kind: "pessoa" as const, id: "vend-1", rotulo: "VEND 1", nome: "Ronaldo" },
+    { kind: "pessoa" as const, id: "vend-1", rotulo: "VEND 1", nome: "Ronaldo", cpf: "12345678901" },
     { kind: "empresa" as const, id: "emp-1", rotulo: "EMP 1", nome: "Rokas", cnpj: "11222333000181" },
   ];
   return {
@@ -194,7 +197,35 @@ describe("CertidoesMatrizSection", () => {
     fireEvent.click(screen.getByTestId("certidoes-matriz-celula-cnd_federal-vend-1"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("certidoes-parte-panel-stub").textContent).toBe("Ronaldo"),
+      expect(screen.getByTestId("certidoes-parte-panel-stub").textContent).toContain("Ronaldo"),
+    );
+  });
+
+  it("🔴 P1/883 (2026-09-25): a pessoa column passes its CPF as the panel's documento prop", async () => {
+    mockGet.mockResolvedValue(matrizResponse());
+    render(<CertidoesMatrizSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+    await waitFor(() => expect(screen.getByTestId("certidoes-matriz")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("certidoes-matriz-celula-cnd_federal-vend-1"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("certidoes-parte-panel-stub-documento").textContent).toBe(
+        "12345678901",
+      ),
+    );
+  });
+
+  it("an empresa column still passes its CNPJ as the panel's documento prop", async () => {
+    mockGet.mockResolvedValue(matrizResponse());
+    render(<CertidoesMatrizSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+    await waitFor(() => expect(screen.getByTestId("certidoes-matriz")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("certidoes-matriz-celula-cnd_federal-emp-1"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("certidoes-parte-panel-stub-documento").textContent).toBe(
+        "11222333000181",
+      ),
     );
   });
 
