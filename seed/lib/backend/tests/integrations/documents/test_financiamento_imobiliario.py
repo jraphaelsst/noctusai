@@ -172,7 +172,10 @@ class TestQuadroEncontrado:
 
 class TestDpsTripwire:
     def test_dps_marker_short_circuits_with_no_fields(self):
-        texto = "DECLARACAO PESSOAL DE SAUDE\nO proponente declara que..."
+        texto = (
+            "DECLARACAO PESSOAL DE SAUDE\nO proponente declara que...\n"
+            "PESO: ... ALTURA: ...\nJa teve alguma DOENCA? SIM ( ) NAO ( )"
+        )
         f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
         assert f.error == "documento_sensivel_dps"
         assert f.valor_compra_venda is None
@@ -180,11 +183,26 @@ class TestDpsTripwire:
         assert f.confiancas == {}
         assert f.rotulos == {}
 
-    def test_dps_marker_wins_even_inside_a_full_quadro(self):
-        texto = "DECLARACAO PESSOAL DE SAUDE\n" + _quadro()
+    def test_dps_questionnaire_wins_even_inside_a_full_quadro(self):
+        texto = (
+            "DECLARACAO PESSOAL DE SAUDE\nPESO: ... ALTURA: ...\n"
+            "Esta em TRATAMENTO medico? SIM ( ) NAO ( )\n" + _quadro()
+        )
         f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
         assert f.error == "documento_sensivel_dps"
         assert f.quadro_encontrado is False
+
+    def test_a_bare_dps_mention_in_an_insurance_clause_is_not_a_dps(self):
+        """P1/883 (Itaú, 2026-09-25): a real financing contract NAMES the DPS
+        in its MIP insurance clause. That mention carries no health data and
+        must not refuse the whole contract."""
+        texto = (
+            _quadro() + "\nCLAUSULA DO SEGURO MIP: o DEVEDOR preencheu a "
+            "Declaracao Pessoal de Saude exigida pela seguradora.\n"
+        )
+        f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
+        assert f.error is None
+        assert f.quadro_encontrado is True
 
     def test_dps_variant_questionario_de_saude(self):
         texto = "QUESTIONARIO DE SAUDE\nPergunta 1: ..."
@@ -397,7 +415,10 @@ class TestContratoTwoPassPageWindow:
                     pages=(
                         TranscribedPage(
                             number=1,
-                            text="DECLARACAO PESSOAL DE SAUDE\n...",
+                            text=(
+                                "DECLARACAO PESSOAL DE SAUDE\nPESO: ... ALTURA: ...\n"
+                                "CIRURGIA? SIM ( ) NAO ( )"
+                            ),
                             source=TextSource.OCR,
                         ),
                     ),

@@ -104,15 +104,37 @@ _ILEGIVEL = "[ILEGÍVEL]"
 _EM_BRANCO = "[EM BRANCO]"
 
 #: A Declaração Pessoal de Saúde reaching this module's text is refused
-#: outright — see the module header. Matched loosely (a substring of the
-#: normalised text is enough): this is a REFUSAL gate, not a field read, so
-#: a false positive costs one re-upload while a false negative costs LGPD
-#: art. 11 sensitive health data landing in a financing record.
-_DPS_MARCADORES: tuple[str, ...] = (
-    "DECLARACAO PESSOAL DE SAUDE",
+#: outright — see the module header. Two tiers, both a REFUSAL gate (never a
+#: field read):
+#: - a FORM TITLE (`_DPS_TITULOS_FORMULARIO`) is enough on its own;
+#: - the phrase "DECLARAÇÃO PESSOAL DE SAÚDE" needs QUESTIONNAIRE STRUCTURE
+#:   beside it (≥ `_DPS_MIN_SINAIS` of `_DPS_SINAIS_QUESTIONARIO`). A real
+#:   bank financing contract NAMES the DPS in its insurance (MIP) clauses —
+#:   measured live on deal 883 (Itaú, 2026-09-25): a bare-mention tripwire
+#:   refused the whole contract, forever (a re-upload can't help), so no
+#:   financing fact could ever be read. A mention carries no health data; the
+#:   questionnaire (weight/height, illness, treatment, surgery, SIM/NÃO boxes)
+#:   is what LGPD art. 11 protects.
+_DPS_TITULOS_FORMULARIO: tuple[str, ...] = (
     "DECLARACAO DE SAUDE DO PROPONENTE",
     "QUESTIONARIO DE SAUDE",
 )
+_DPS_MENCAO = "DECLARACAO PESSOAL DE SAUDE"
+_DPS_SINAIS_QUESTIONARIO: tuple[str, ...] = (
+    "PESO", "ALTURA", "DOENCA", "TRATAMENTO", "CIRURGIA", "INTERNA",
+    "MEDICAMENTO", "SIM ( )", "NAO ( )", "( ) SIM", "( ) NAO",
+)
+_DPS_MIN_SINAIS = 2
+
+
+def _e_dps(normalizado: str) -> bool:
+    """The tripwire predicate — see `_DPS_TITULOS_FORMULARIO`."""
+    if any(t in normalizado for t in _DPS_TITULOS_FORMULARIO):
+        return True
+    if _DPS_MENCAO not in normalizado:
+        return False
+    sinais = sum(1 for s in _DPS_SINAIS_QUESTIONARIO if s in normalizado)
+    return sinais >= _DPS_MIN_SINAIS
 
 
 def _temper(confidence: ExtractionConfidence, source: TextSource) -> ExtractionConfidence:
@@ -482,7 +504,7 @@ def parse_financiamento_imobiliario(
     Pure, never raises. Shared by both readers — see the module header.
     """
     normalizado = strip_accents_upper(text or "")
-    if any(marcador in normalizado for marcador in _DPS_MARCADORES):
+    if _e_dps(normalizado):
         # The DPS tripwire — no other field, no text, whichever reader
         # called this. See the module header.
         return FinanciamentoImobiliarioFields(
