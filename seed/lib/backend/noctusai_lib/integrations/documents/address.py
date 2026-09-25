@@ -77,7 +77,20 @@ _CEP_ROTULO_RE = re.compile(r"\bCEP\b\s*[:.\-]?\s*(\d{2})\.?(\d{3})\s?-?\s?(\d{3
 
 #: Markers that a CEP belongs to the ISSUER, not to the holder.
 _EMISSOR_RE = re.compile(r"\bCNPJ\b|INSCRICAO\s+ESTADUAL|\bI\.?\s?E\.?\s*[:.]|RAZAO\s+SOCIAL")
-_EMISSOR_JANELA_LINHAS = 1
+#: 🔴 P1/883 (2026-09-25), real, measured: a Vivo bill prints its own
+#: mailing-window address ("AV. ENGENHEIRO LUIS CARLOS BERRINI, 1.376 - CEP:
+#: NNNNN-NNN - SAO PAULO - SP") on one line and its "Inscrição Estadual: ..."
+#: / "CNPJ Emissor: ..." block TWO lines below it, not one — with
+#: `_EMISSOR_JANELA_LINHAS=1`, `_emissor_proximo` missed the marker entirely,
+#: the issuer's own CEP survived as an unrejected candidate, `_envelope`
+#: then found it disagreeing with the holder's genuine envelope-block CEP a
+#: few lines above, and — two DISTINCT (cep, logradouro) pairs, neither
+#: provably the right one — returned nothing at all, for a document whose
+#: real address was sitting in the text the whole time. Widened by one line;
+#: still narrow enough that an unrelated CNPJ mention several lines away
+#: (an unrelated attachment, a different section) does not reach back and
+#: reject a genuine holder CEP.
+_EMISSOR_JANELA_LINHAS = 2
 
 #: Labelled-mode field labels (normalised). Each must start the value's line
 #: or follow at least two spaces / a separator, so "RUA" inside a street name
@@ -231,6 +244,52 @@ def _emissor_proximo(t: _Texto, idx: int) -> bool:
     return any(_EMISSOR_RE.search(t.linhas[i][1]) for i in range(ini, fim))
 
 
+#: A `CIDADE`/`MUNICIPIO`/`LOCALIDADE` label sitting on a CEP's OWN line —
+#: `CEP: NNNNN-NNN - Município: SAO PAULO`. Scoped to the tail of that one
+#: line, so the relaxed single-space-or-dash boundary below (unlike
+#: `_ROTULOS`'s own 2-space/pipe/line-start rule, built to stop "RUA" INSIDE
+#: a street name from re-opening a field) cannot mis-fire anywhere else in a
+#: long document.
+_CIDADE_ROTULO_NA_LINHA_DO_CEP_RE = re.compile(
+    r"\b(?:CIDADE|MUNICIPIO|LOCALIDADE)\s*[:\-]\s*(?P<v>.+?)\s*$"
+)
+
+
+def _completar_cidade_uf_da_linha_do_cep(
+    t: _Texto, base: int, linha: str, fim_cep: int, achados: dict[str, Optional[str]]
+) -> None:
+    """Backfill `cidade`/`uf` from the TAIL of a CEP's own line, when the
+    main per-line label scan (`_rotulado`'s own loop) found neither.
+
+    🔴 P1/883 (2026-09-25), real, measured: an Enel bill prints
+    `CEP: NNNNN-NNN - SAO PAULO/SP` with no separate `CIDADE:`/`MUNICIPIO:`
+    label at all — an unlabelled tail on the SAME line as the CEP, which
+    `_ROTULOS`'s per-field scan never looks at (it only opens a field on ITS
+    OWN label). The same bill's second, more fully labelled address block
+    prints `CEP: NNNNN-NNN  - Município: SAO PAULO` — a real label, but
+    separated from the CEP by exactly ONE space, one character short of
+    `_ROTULOS`'s 2-space-or-pipe field-opening boundary, so it never
+    matched either. Both shapes read off the SAME line the CEP itself
+    matched on, so completing them right here — rather than loosening
+    `_ROTULOS`'s boundary document-wide, which risks a label mid-sentence
+    elsewhere re-opening a field — is the narrow fix.
+    """
+    if achados.get("cidade") and achados.get("uf"):
+        return
+    resto = linha[fim_cep:]
+    cid, uf = _cidade_uf(t, base + fim_cep, resto)
+    if uf and not achados.get("uf"):
+        achados["uf"] = uf
+        if cid and not achados.get("cidade"):
+            achados["cidade"] = cid
+        return
+    m = _CIDADE_ROTULO_NA_LINHA_DO_CEP_RE.search(resto)
+    if m and not achados.get("cidade"):
+        cidade = t.literal(base + fim_cep + m.start("v"), base + fim_cep + m.end("v"))
+        if cidade:
+            achados["cidade"] = cidade
+
+
 def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
     """Labelled-mode read, or None when there is no labelled street."""
     achados: dict[str, Optional[str]] = {}
@@ -242,8 +301,10 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
             if mt and looks_like_a_name(mt.group(1)):
                 titular = t.literal(base + mt.start(1), base + mt.end(1))
         mc = _CEP_ROTULO_RE.search(linha)
-        if mc and cep is None and not _emissor_proximo(t, idx):
-            cep = _cep(*mc.groups())
+        if mc and not _emissor_proximo(t, idx):
+            if cep is None:
+                cep = _cep(*mc.groups())
+            _completar_cidade_uf_da_linha_do_cep(t, base, linha, mc.end(), achados)
         for campo, rotulo in _ROTULOS.items():
             if achados.get(campo):
                 continue

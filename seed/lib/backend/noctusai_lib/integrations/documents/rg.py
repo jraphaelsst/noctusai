@@ -137,6 +137,14 @@ _RG_RE = re.compile(
     r")(?![\dXx.\-/])"
 )
 
+#: The 27 Brazilian state abbreviations. Shared by every UF-shaped match
+#: below — `_ORGAO_RE` (issuer adjacent to a UF), `_UF_ROTULO_RE` (a
+#: standalone "UF:" sub-field) and `_orgao_rotulado`'s own inline check.
+_UFS = frozenset(
+    "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split()
+)
+_UFS_ALTERNATIVA = "|".join(sorted(_UFS))
+
 #: `SSP/SP`, `SSP-SP`, `SSP SP`, `DETRAN/RJ`, `PC/MG`, `SDS/PE`, `IFP/RJ`.
 #: The issuer is 2–8 letters, the UF exactly two.
 #: 🔴 THE SEPARATOR IS MANDATORY, and that is not cosmetic. With it optional,
@@ -144,8 +152,7 @@ _RG_RE = re.compile(
 #: `AL` (Alagoas), yielding a confident `NATUR/AL` issuer out of an address
 #: line. Requiring a real separator makes the acronym and the UF two tokens.
 _ORGAO_RE = re.compile(
-    r"\b([A-Z]{2,8})\s*(?:[/\-]\s*|\s+)"
-    r"(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b"
+    r"\b([A-Z]{2,8})\s*(?:[/\-]\s*|\s+)(" + _UFS_ALTERNATIVA + r")\b"
 )
 
 #: Words that precede a state abbreviation without being an issuing body —
@@ -322,6 +329,62 @@ def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
 _ADJACENTE_WINDOW = 24
 
 
+#: How far AFTER an explicit "ÓRG. EMISSOR" label its own value, and a
+#: separately-labelled "UF", may sit — wide enough to span a CNH-e's own
+#: `DOC. IDENTIDADE / ÓRG. EMISSOR / UF` box once `normalize()` collapses its
+#: three column labels onto one line.
+_ORGAO_ROTULO_WINDOW = 40
+
+#: The CNH-e's own field label. Matches "ÓRG. EMISSOR"/"ÓRGÃO EMISSOR"
+#: (accent already stripped by `normalize()` -> "ORG"/"ORGAO"), "ORG.
+#: EMISSOR" and the bare "ORG EMISSOR".
+_ORGAO_ROTULO_RE = re.compile(r"\bORG(?:AO)?\.?\s*EMISSOR\b\s*[:.\-]?\s*")
+
+#: A standalone "UF: SP" sub-field — the third column of the same box.
+_UF_ROTULO_RE = re.compile(r"\bUF\s*[:.\-]?\s*(" + _UFS_ALTERNATIVA + r")\b")
+
+
+def _orgao_rotulado(norm: str) -> Optional[str]:
+    """`ÓRG. EMISSOR: SSP` (plus a separately-labelled `UF: SP`, or the UF
+    printed right after the acronym), or `None`.
+
+    🔴 THE SHAPE SCAN CANNOT SEE THIS BOX. `_ORGAO_RE`/`_orgao_adjacente`
+    read the issuer off its PRINTED SHAPE — an acronym immediately touching
+    a UF, `SSP/SP`. A CNH-e's own `DOC. IDENTIDADE / ÓRG. EMISSOR / UF` field
+    prints the acronym and the UF as TWO SEPARATE labelled sub-fields, one
+    per column — real, measured, P1/883 2026-09-25: once
+    `_IDENTITY_DOCUMENT_PROMPT` actually reaches the vision call for a PDF
+    (see `media.real_adapter.RealMediaResolver._doc_prompt_override`), the
+    transcription preserves each column as its own `RÓTULO: valor` line, and
+    a shape scan sees no two tokens touching. An explicit label is stronger
+    evidence than the shape guess anyway — the same reason every other
+    labelled reading in this package outranks an unlabelled one.
+    """
+    m = _ORGAO_ROTULO_RE.search(norm)
+    if not m:
+        return None
+    janela = norm[m.end() : m.end() + _ORGAO_ROTULO_WINDOW]
+    mv = re.match(r"([A-Z]{2,8})\b", janela)
+    if not mv:
+        return None
+    orgao = mv.group(1)
+    if orgao in _ORGAO_NAO:
+        return None
+    # The UF printed right after the acronym on the SAME line — the
+    # ordinary adjacent shape, just reached through the label this time
+    # ("ÓRG. EMISSOR: SSP/SP", "ÓRG. EMISSOR: SSP SP").
+    resto = janela[mv.end():]
+    minline = re.match(r"\s*(?:[/\-]\s*|\s+)([A-Z]{2})\b", resto)
+    if minline and minline.group(1) in _UFS:
+        return f"{orgao}/{minline.group(1)}"
+    # The UF as its OWN labelled sub-field, a few tokens later — the box's
+    # third column.
+    muf = _UF_ROTULO_RE.search(janela)
+    if muf:
+        return f"{orgao}/{muf.group(1)}"
+    return None
+
+
 def _orgao_valido(norm: str, m: "re.Match[str]") -> Optional[str]:
     """`ORGAO/UF` for an issuer-shaped match, or None when it is a
     place name / jurisdiction rather than an issuing body."""
@@ -369,19 +432,23 @@ def find_rg_orgao(text: str, rg: Optional[str] = None) -> tuple[Optional[str], s
     When `rg` is given (the number `find_rg` read off the same text), the
     issuer printed right after that number wins at `alta` — see
     `_orgao_adjacente`. Only when there is no adjacent issuer does the
-    shape-scan below run.
+    shape-scan below run; only when THAT finds nothing either does the
+    explicit `ÓRG. EMISSOR` label (`_orgao_rotulado`) get a turn.
 
-    Returns `(value, confidence)`. No matched label: the issuer is identified
-    by its own SHAPE (an acronym bound to a state abbreviation), not by a
-    label preceding it, so there is nothing to report.
+    Returns `(value, confidence)`. A shape-scan match carries no matched
+    label to report (the issuer is identified by its own SHAPE, not by a
+    label preceding it); a `_orgao_rotulado` match DOES have one but is
+    reported the same shape as every sibling here for a uniform contract.
 
-    - **alta** — exactly one issuer-shaped token in the text.
-    - **baixa** — several, and they disagree. The FIRST is returned rather
-      than nothing, because on these layouts the issuer is printed adjacent to
-      the RG and the later matches are almost always an address line; a human
-      confirms. This is the one place in the family where a disagreement is
-      not reported as absence, and the reason is that the alternative — an RG
-      number stored with no issuer — is itself an incomplete qualification.
+    - **alta** — exactly one issuer-shaped token in the text, OR an explicit
+      `ÓRG. EMISSOR` label with its own value.
+    - **baixa** — several shape-scan matches that disagree. The FIRST is
+      returned rather than nothing, because on these layouts the issuer is
+      printed adjacent to the RG and the later matches are almost always an
+      address line; a human confirms. This is the one place in the family
+      where a disagreement is not reported as absence, and the reason is
+      that the alternative — an RG number stored with no issuer — is itself
+      an incomplete qualification.
     - **nenhuma** — none.
 
     Normalised to `ORGAO/UF` regardless of the separator printed.
@@ -401,11 +468,22 @@ def find_rg_orgao(text: str, rg: Optional[str] = None) -> tuple[Optional[str], s
         if valido is not None:
             achados.append(valido)
 
-    if not achados:
-        return (None, "nenhuma")
-    if len(set(achados)) == 1:
-        return (achados[0], "alta")
-    return (achados[0], "baixa")
+    if achados:
+        if len(set(achados)) == 1:
+            return (achados[0], "alta")
+        return (achados[0], "baixa")
+
+    # 🔴 P1/883 (2026-09-25): a CNH-e's own `DOC. IDENTIDADE / ÓRG. EMISSOR /
+    # UF` box prints the acronym and the UF as two SEPARATE labelled
+    # sub-fields — see `_orgao_rotulado`'s own docstring for the full
+    # reasoning. Tried last, after both shape-based routes, because an
+    # explicit label here is narrower evidence (one specific field name)
+    # than the general acronym/UF shape every other Brazilian layout uses.
+    rotulado = _orgao_rotulado(norm)
+    if rotulado is not None:
+        return (rotulado, "alta")
+
+    return (None, "nenhuma")
 
 
 def is_same_as_cpf(rg: Optional[str], cpf: Optional[str]) -> bool:

@@ -317,3 +317,50 @@ class TestMaxPagesMapsToMaxVisionPages:
         assert isinstance(transcriber, LadderDocumentTranscriber)
         assert transcriber._provider == "anthropic"
         assert transcriber._ocr_model == "claude-haiku-4-5"
+
+
+class TestDocumentPromptReachesTheDelegatedTranscriber:
+    """🔴 P1/883 (2026-09-25): `_resolve_image` always honoured
+    `self._doc_prompt`; `_resolve_pdf`'s vision rung — the ONLY rung a
+    scanned/image-only PDF, or a mixed PDF's scanned pages, ever reaches —
+    silently did not, always building its transcriber with
+    `documents.transcription.OCR_PROMPT` regardless of what the caller
+    named. An identity document that happens to arrive as a PDF (a CNH-e
+    upload, not a raw photo) inherited the matrícula-tuned prompt instead of
+    `LadderIdentityExtractor`'s own `_IDENTITY_DOCUMENT_PROMPT` — real,
+    measured: a CNH-e's `DOC. IDENTIDADE / ÓRG. EMISSOR / UF` box and `DATA
+    NASCIMENTO` field went unread even though every parser in this package
+    is label-anchored and that prompt exists exactly to keep a label next to
+    its value. See `RealMediaResolver._doc_prompt_override`'s own comment."""
+
+    def test_an_explicit_document_prompt_becomes_the_transcribers_ocr_prompt(
+        self,
+    ) -> None:
+        resolver = RealMediaResolver(
+            org_id="org-1", document_prompt="RÓTULO: valor, um campo por linha"
+        )
+        transcriber = resolver._get_document_transcriber()
+        assert transcriber._ocr_prompt == "RÓTULO: valor, um campo por linha"
+
+    def test_no_document_prompt_keeps_ocr_prompt_untouched(self) -> None:
+        """Matrícula/certidão-estrutura pass `document_prompt=None` and rely
+        on `OCR_PROMPT`'s `**bold**`/`<u>underline</u>` markup preservation
+        for `parse_markup` — this fix must not touch that default."""
+        from noctusai_lib.integrations.documents.transcription import OCR_PROMPT
+
+        resolver = RealMediaResolver(org_id="org-1")
+        transcriber = resolver._get_document_transcriber()
+        assert transcriber._ocr_prompt == OCR_PROMPT
+
+    def test_the_identity_extractors_own_prompt_reaches_it_end_to_end(self) -> None:
+        """The full seam: `make_identity_extractor` -> `DocumentTextLadder`
+        -> `RealMediaResolver` -> the delegated PDF transcriber."""
+        from noctusai_lib.integrations.documents import make_identity_extractor
+        from noctusai_lib.integrations.documents.real import (
+            _IDENTITY_DOCUMENT_PROMPT,
+        )
+
+        extractor = make_identity_extractor(real=True)
+        resolver = extractor._ladder._get_resolver()
+        transcriber = resolver._get_document_transcriber()
+        assert transcriber._ocr_prompt == _IDENTITY_DOCUMENT_PROMPT

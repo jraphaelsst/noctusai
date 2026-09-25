@@ -341,3 +341,49 @@ class TestOrgaoAnchoredToTheNumber:
         from noctusai_lib.integrations.documents.rg import normalize, _orgao_adjacente
 
         assert _orgao_adjacente(normalize(texto), "13032360") is None
+
+
+class TestOrgaoLabelledColumnBox:
+    """P1/883 (2026-09-25), real: a CNH-e's own `DOC. IDENTIDADE / ÓRG.
+    EMISSOR / UF` box transcribes as THREE separate labelled lines — not the
+    single `13032360 SSP/SP` line `TestOrgaoAnchoredToTheNumber` covers —
+    once the vision call actually receives `_IDENTITY_DOCUMENT_PROMPT`'s
+    "one RÓTULO: valor per line" instruction (see
+    `media.real_adapter.RealMediaResolver._doc_prompt_override`). Neither
+    `_orgao_adjacente` (nothing touches the RG number) nor the bare shape
+    scan (the acronym and the UF are two separate labelled tokens, never
+    adjacent) can see this; `_orgao_rotulado` is the fix."""
+
+    CNH_E = (
+        "DOC. IDENTIDADE: 13032360\n"
+        "ÓRG. EMISSOR: SSP\n"
+        "UF: SP\n"
+    )
+
+    def test_acronym_and_uf_as_two_separate_labelled_sub_fields(self):
+        assert find_rg_orgao(self.CNH_E) == ("SSP/SP", "alta")
+
+    def test_also_resolves_when_find_rg_s_own_reading_is_passed_in(self):
+        rg, _, _ = find_rg(self.CNH_E)
+        assert rg == "13032360"
+        assert find_rg_orgao(self.CNH_E, rg) == ("SSP/SP", "alta")
+
+    def test_uf_printed_inline_after_the_acronym_still_works(self):
+        texto = "ORG EMISSOR: SSP/SP"
+        assert find_rg_orgao(texto) == ("SSP/SP", "alta")
+
+    def test_orgao_abbreviation_without_the_accent_or_period(self):
+        texto = "ORGAO EMISSOR: DETRAN\nUF: RJ"
+        assert find_rg_orgao(texto) == ("DETRAN/RJ", "alta")
+
+    def test_no_label_at_all_still_reports_nothing(self):
+        assert find_rg_orgao("um texto qualquer sem nenhum rotulo") == (
+            None,
+            "nenhuma",
+        )
+
+    def test_a_decoy_word_right_after_the_label_is_rejected(self):
+        # "EM" is in `_ORGAO_NAO` — a real acronym never legitimately reads
+        # as one of the address/jurisdiction decoy words.
+        texto = "ORG EMISSOR: EM ALGUM LUGAR"
+        assert find_rg_orgao(texto) == (None, "nenhuma")

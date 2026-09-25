@@ -122,7 +122,11 @@ class RealMediaResolver:
     Args:
         document_prompt: Override the generic document/vision prompt with a
             product-specific framing (the only product-specific seam — kept
-            type-first to avoid the pathological-obedience trap).
+            type-first to avoid the pathological-obedience trap). Reaches
+            BOTH the direct-image rung (`_resolve_image`) AND, when a PDF
+            needs vision, `_get_document_transcriber`'s `ocr_prompt` — see
+            `self._doc_prompt_override`'s own comment for the P1/883 fix
+            that closed the gap between those two.
         scene_prompt: Override the video scene-description prompt.
         org_id: Forwarded to the seed LLM entry points for per-org key
             resolution + budget accounting.
@@ -158,6 +162,32 @@ class RealMediaResolver:
         render_dpi_policy: Optional[Any] = None,
     ) -> None:
         self._doc_prompt = document_prompt or _DEFAULT_DOCUMENT_PROMPT
+        # 🔴 P1/883 (2026-09-25): kept SEPARATE from `self._doc_prompt` above
+        # on purpose. `_resolve_pdf`'s vision rung (a scanned/image-only PDF,
+        # or a mixed PDF's scanned pages) used to ALWAYS build its
+        # transcriber with `documents.transcription.OCR_PROMPT` — the dense
+        # registry-print prompt (`**bold**`/`<u>underline</u>` markup) — even
+        # when the CALLER explicitly passed a `document_prompt=` naming a
+        # different document family (e.g.
+        # `LadderIdentityExtractor`'s own `_IDENTITY_DOCUMENT_PROMPT`,
+        # "one RÓTULO: valor per line"). `_resolve_image` already honoured
+        # `self._doc_prompt`; `_resolve_pdf` silently did not, so an identity
+        # document that happens to be a PDF (a CNH-e / certidão upload,
+        # rather than a raw photo) inherited the matrícula-tuned prompt
+        # instead — measured, real: an image-only "CNH Digital" (Senatran)
+        # PDF's `DOC. IDENTIDADE / ÓRG. EMISSOR / UF` box and `DATA
+        # NASCIMENTO` field went unread even though every parser here is
+        # label-anchored and `_IDENTITY_DOCUMENT_PROMPT` was built exactly to
+        # keep a label next to its value — see that constant's own docstring
+        # for the identical failure class already fixed for `_resolve_image`.
+        #
+        # `None` when the caller passed nothing (matrícula/certidão-estrutura,
+        # which explicitly forward `document_prompt=None` and rely on
+        # `OCR_PROMPT`'s markup preservation for `parse_markup` — unaffected
+        # by this fix) — `_get_document_transcriber` below only overrides
+        # `ocr_prompt` when this is not `None`, so a caller that names no
+        # prompt of its own keeps today's `OCR_PROMPT` default byte-for-byte.
+        self._doc_prompt_override = document_prompt
         self._scene_prompt = scene_prompt or _DEFAULT_SCENE_PROMPT
         self._org_id = org_id
         # `None` = every page. Explicitly distinct from the default, so a
@@ -524,6 +554,13 @@ class RealMediaResolver:
             # it verbatim keeps every consumer that never set this
             # unaffected (`render_dpi` stays in sole charge there).
             kwargs["render_dpi_policy"] = self._render_dpi_policy
+            # Only override `ocr_prompt` when THIS caller explicitly named a
+            # `document_prompt` — see `self._doc_prompt_override`'s own
+            # comment in `__init__` for the P1/883 defect this closes and
+            # why matrícula/certidão-estrutura (which pass `None`) are
+            # unaffected.
+            if self._doc_prompt_override:
+                kwargs["ocr_prompt"] = self._doc_prompt_override
             self._document_transcriber = make_document_transcriber(**kwargs)
         return self._document_transcriber
 
