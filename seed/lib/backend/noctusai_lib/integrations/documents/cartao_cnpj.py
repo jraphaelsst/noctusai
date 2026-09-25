@@ -74,6 +74,36 @@ raw lines, splitting on runs of 2+ spaces (a real multi-word value like
 "SAO PAULO" carries only ONE space and so never splits) — tried FIRST,
 falling back to the per-box `_campo` matcher above for anything it does
 not resolve.
+
+🔴 A REAL VISION TRANSCRIPTION HAS ITS OWN THIRD SHAPE TOO -- A MARKDOWN
+PIPE TABLE, NOT ONE BOX PER LINE
+-------------------------------------------------------------------------
+Measured against a real Cartao CNPJ (2026-09-25, a BAIXADA company): the
+model does not always honour "one box per line" -- several side-by-side
+boxes routinely come back as ONE markdown table row, pipe-delimited, with
+each box's `ROTULO valor` FUSED into its own cell (no colon: `"NUMERO DE
+INSCRICAO 12.345.678/0001-90 MATRIZ | ... | DATA DE ABERTURA 15/03/2010"`),
+and a `| --- | --- | --- |` header-separator row appears too. Read naively
+as plain lines, this shape is actively harmful, not just unparsed: (1) the
+next raw line's leading/trailing `|` leaks into whatever value `_campo`'s
+"cut at the next known label" logic returns, which is exactly the `"ME |"`
+/ `"... | | |"` residue measured live; (2) the document's OWN TITLE
+("COMPROVANTE DE INSCRICAO E DE SITUACAO CADASTRAL") can land in a
+"column" purely as a table-flattening artifact of the vision model, and it
+contains the literal `situacao_cadastral` label text as a SUBSTRING -- a
+naive scan finds THAT false match, with nothing after it, before ever
+reaching the real "SITUACAO CADASTRAL BAIXADA" box further down --
+measured live as `rotulos.situacao_cadastral = "|"`; (3) a masked box
+comes back transcribed as a single literal `*`, not the prompt's
+`********` -- `_MASCARADO` alone misses it. `_expandir_celulas_pipe_com_rotulo`
+(the inline `ROTULO valor`-per-cell shape) and `_valores_tabela_pipes` (a
+separate header-row-of-labels + value-row, or an alternating `LABEL |
+valor |` row -- the two OTHER pipe shapes a model could plausibly choose)
+both run BEFORE `_campo`, same ladder-of-fallbacks convention as the
+column-aligned path above; every value, whichever path produced it, is
+then defensively stripped of leftover pipe-boundary residue and
+re-checked for an asterisks-only mask (`_SOMENTE_ASTERISCOS_RE`) -- never
+just the literal 8-character `********`.
 """
 from __future__ import annotations
 
@@ -233,6 +263,179 @@ def _valores_colunas_alinhadas(
                     saida.setdefault(rotulo, (None, False))
             break
     return saida
+
+
+# ─── the vision-transcribed markdown PIPE TABLE shape ──────────────────────
+
+#: A markdown table's own header-separator row (`| --- | --- | --- |`, or
+#: the `:---:`/`:--` alignment variants) — never field content.
+_CELULA_SEPARADORA_RE = re.compile(r"^:?-{1,}:?$")
+
+#: A value made ONLY of asterisks, one or more — a masked box, whatever the
+#: exact run length the model transcribed (measured: a single `*`, not
+#: always the prompt's literal `********`). See the module header.
+_SOMENTE_ASTERISCOS_RE = re.compile(r"^\*+$")
+
+#: A trailing run of `|`-cell-boundary residue (with whatever whitespace
+#: sits around it) that leaked into a value — see the module header.
+_RESIDUO_PIPE_RE = re.compile(r"(\s*\|\s*)+$")
+
+
+def _celulas_de_linha_pipe(linha: str) -> Optional[list[str]]:
+    """This raw line's own pipe-delimited cells, IF it looks like a
+    markdown-table row (contains `|`) — `None` for anything else. The
+    row's own bounding `|`s produce an empty leading/trailing cell, which
+    is dropped; a genuinely empty CENTER cell survives as `""` so a
+    header row and its value row still zip position-for-position."""
+    if "|" not in linha:
+        return None
+    celulas = [c.strip() for c in linha.split("|")]
+    if celulas and celulas[0] == "":
+        celulas = celulas[1:]
+    if celulas and celulas[-1] == "":
+        celulas = celulas[:-1]
+    return celulas
+
+
+def _expandir_celulas_pipe_com_rotulo(text: str, todos_rotulos: Sequence[str]) -> str:
+    """Every pipe-table row this document's vision transcription sometimes
+    emits (see the module header) fuses several boxes' `RÓTULO valor`
+    pairs into pipe-delimited CELLS of ONE raw line, rather than the
+    prompt's one-box-per-line shape. Splitting each such row onto one
+    line PER CELL lets `_campo` read it exactly like the normal shape, no
+    separate matcher — but ONLY for a cell that itself STARTS WITH a
+    known label: a cell that does not (measured: the document's own
+    TITLE, table-flattened into what looks like a third "column") is
+    dropped here rather than handed to `_campo`, where a known label
+    buried mid-string in unrelated prose could match — not hypothetical:
+    this document's title contains "...E DE SITUAÇÃO CADASTRAL", the
+    literal `situacao_cadastral` label, as a SUBSTRING (measured
+    2026-09-25). A markdown separator cell (`---`) never starts with a
+    label either, so it is dropped by the same rule with no special case.
+    A line with no `|` at all passes through unchanged."""
+    linhas_saida: list[str] = []
+    for linha in (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        celulas = _celulas_de_linha_pipe(linha)
+        if celulas is None:
+            linhas_saida.append(linha)
+            continue
+        for celula in celulas:
+            if not celula:
+                continue
+            if any(strip_accents_upper(celula).startswith(r) for r in todos_rotulos):
+                linhas_saida.append(celula)
+    return "\n".join(linhas_saida)
+
+
+def _linha_pipe_de_rotulos(
+    celulas: list[str], todos_rotulos: Sequence[str]
+) -> Optional[list[str]]:
+    """`celulas`'s own normalised text, IF EVERY cell is EXACTLY a known
+    label — the pipe-table analogue of `_linha_de_rotulos_alinhados` for
+    the `pdftotext -layout` shape: a true header row of pure labels,
+    values on a SEPARATE following row. `None` for a partial match (a
+    value row, or a row whose cells already fuse `RÓTULO valor` — see
+    `_expandir_celulas_pipe_com_rotulo`)."""
+    if len(celulas) < 2:
+        return None
+    normalizados = [strip_accents_upper(c).strip() for c in celulas]
+    if all(n in todos_rotulos for n in normalizados):
+        return normalizados
+    return None
+
+
+def _linha_pipe_alternada(
+    celulas: list[str], todos_rotulos: Sequence[str]
+) -> Optional[list[tuple[str, str]]]:
+    """`celulas` as `[(rótulo, valor), ...]` pairs, IF every EVEN-
+    positioned cell is EXACTLY a known label and the ODD-positioned ones
+    are not ALL labels too (that shape is a pure header row — see
+    `_linha_pipe_de_rotulos`, tried first, and given priority so a
+    2-label row is never mistaken for one label + one value) — the `LABEL
+    | valor |` row shape, one or more fields on a SINGLE row. `None` for
+    an odd cell count or an even cell that isn't a label."""
+    if len(celulas) < 2 or len(celulas) % 2 != 0:
+        return None
+    normalizados = [strip_accents_upper(c).strip() for c in celulas]
+    if all(n in todos_rotulos for n in normalizados):
+        return None  # a pure header row, not label|value pairs
+    pares: list[tuple[str, str]] = []
+    for i in range(0, len(celulas), 2):
+        rotulo_cel = normalizados[i]
+        if rotulo_cel not in todos_rotulos:
+            return None
+        pares.append((rotulo_cel, celulas[i + 1]))
+    return pares
+
+
+def _valores_tabela_pipes(
+    text: str, todos_rotulos: Sequence[str]
+) -> dict[str, tuple[Optional[str], bool]]:
+    """`{rótulo -> (valor, mascarado)}` for every pipe-table row that
+    carries a label↔value pairing OUTSIDE the fused-cell shape
+    `_expandir_celulas_pipe_com_rotulo` already handles — a separate
+    header-row-of-labels + its own following value row (zipped
+    positionally, same count-mismatch-⇒-`(None, False)` contract as
+    `_valores_colunas_alinhadas`), or a single alternating `LABEL | valor
+    |` row. Both are shapes a real vision model could plausibly choose
+    instead of the fused-cell one actually measured (2026-09-25) — see
+    the module header."""
+    linhas = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    saida: dict[str, tuple[Optional[str], bool]] = {}
+    for i, linha in enumerate(linhas):
+        celulas = _celulas_de_linha_pipe(linha)
+        if celulas is None:
+            continue
+
+        cabecalho = _linha_pipe_de_rotulos(celulas, todos_rotulos)
+        if cabecalho is not None:
+            for prox in linhas[i + 1 :]:
+                prox_celulas = _celulas_de_linha_pipe(prox)
+                if prox_celulas is None:
+                    if not prox.strip():
+                        continue
+                    break
+                if all(
+                    _CELULA_SEPARADORA_RE.fullmatch(c) for c in prox_celulas if c
+                ):
+                    continue  # the "| --- | --- |" separator row
+                if len(prox_celulas) == len(cabecalho):
+                    for rotulo, valor in zip(cabecalho, prox_celulas):
+                        valor = valor.strip()
+                        if _SOMENTE_ASTERISCOS_RE.fullmatch(valor):
+                            saida[rotulo] = (None, True)
+                        elif valor:
+                            saida[rotulo] = (valor, False)
+                else:
+                    for rotulo in cabecalho:
+                        saida.setdefault(rotulo, (None, False))
+                break
+            continue
+
+        alternada = _linha_pipe_alternada(celulas, todos_rotulos)
+        if alternada is not None:
+            for rotulo, valor in alternada:
+                valor = valor.strip()
+                if not valor:
+                    continue
+                if _SOMENTE_ASTERISCOS_RE.fullmatch(valor):
+                    saida.setdefault(rotulo, (None, True))
+                else:
+                    saida.setdefault(rotulo, (valor, False))
+    return saida
+
+
+def _sem_residuo_de_pipe(valor: Optional[str]) -> Optional[str]:
+    """Strip trailing `|`-cell-boundary residue that leaked into a value —
+    see the module header. Defensive: applied to EVERY value regardless
+    of which path produced it, not just the pipe-shaped paths above,
+    because `_campo`'s "cut at the next known label" cutoff does not know
+    about table syntax and can carry a stray boundary pipe through
+    unchanged."""
+    if valor is None:
+        return None
+    sem_residuo = _RESIDUO_PIPE_RE.sub("", valor).strip()
+    return sem_residuo or None
 
 
 def _data_br(txt: str) -> Optional[date]:
@@ -415,8 +618,6 @@ _ENDERECO_CAMPOS: tuple[str, ...] = (
 
 def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
     """Text (already ladder-read) → `CartaoCnpjFields`. Pure, never raises."""
-    linhas = normalize_lines(text or "")
-
     confiancas: dict[str, ExtractionConfidence] = {
         campo: ExtractionConfidence.NENHUMA
         for campo in (*_ROTULOS, "emitido_em", "matriz_filial")
@@ -425,10 +626,15 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
 
     todos_rotulos = tuple(_ROTULOS.values())
     # The text-layer's column-aligned shape, tried FIRST — see the module
-    # header. Falls through to the per-box `_campo` matcher for whichever
-    # fields it doesn't resolve (the normal vision-prompt shape, or a
-    # text-layer field this document didn't print column-aligned).
+    # header. `pipes` is the vision transcription's OWN markdown-table
+    # shape — a header-row-of-labels + value row, or an alternating
+    # `LABEL | valor |` row (also tried here, ahead of `_campo`).
     colunas = _valores_colunas_alinhadas(text or "", todos_rotulos)
+    pipes = _valores_tabela_pipes(text or "", todos_rotulos)
+    # `_campo`'s own `linhas` are read off text with every pipe-table row's
+    # FUSED `RÓTULO valor` cells already expanded onto their own line —
+    # see `_expandir_celulas_pipe_com_rotulo` and the module header.
+    linhas = normalize_lines(_expandir_celulas_pipe_com_rotulo(text or "", todos_rotulos))
 
     valores: dict[str, Optional[str]] = {}
     mascarados: dict[str, bool] = {}
@@ -436,8 +642,17 @@ def parse_cartao_cnpj(text: str, source: TextSource) -> CartaoCnpjFields:
         if rotulo in colunas:
             valor, mascarado = colunas[rotulo]
             achado_rotulo: Optional[str] = rotulo
+        elif rotulo in pipes:
+            valor, mascarado = pipes[rotulo]
+            achado_rotulo = rotulo
         else:
             valor, achado_rotulo, mascarado = _campo(linhas, rotulo, todos_rotulos=todos_rotulos)
+        # Defensive, whichever path produced `valor` — see
+        # `_sem_residuo_de_pipe` and the module header.
+        valor = _sem_residuo_de_pipe(valor)
+        if valor is not None and _SOMENTE_ASTERISCOS_RE.fullmatch(valor):
+            valor = None
+            mascarado = True
         valores[campo] = valor
         rotulos[campo] = achado_rotulo
         mascarados[campo] = mascarado

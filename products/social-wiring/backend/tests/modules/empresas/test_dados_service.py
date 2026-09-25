@@ -150,6 +150,127 @@ class TestAplicarCartao:
             )
 
 
+class TestCrednetPrefixUpgrade:
+    """🔴 The Serasa Crednet prints `razão social` truncated to 40 columns
+    (live case, 2026-09-25): the empresa row Crednet CREATES carries that
+    truncated string, `dados_origem='serasa_crednet'`. A later Cartão CNPJ
+    read of the FULL name is not a disagreement — it is the SAME name,
+    completed by the authoritative Receita document."""
+
+    NOME_TRUNCADO_40 = "COMERCIO E SERVICOS DE ALIMENTOS EXEMPLO"[:40]
+
+    def test_a_strict_prefix_upgrades_not_conflicts(self, client):
+        empresa = _empresa(
+            client, razao_social=self.NOME_TRUNCADO_40, dados_origem="serasa_crednet",
+        )
+        nome_completo = self.NOME_TRUNCADO_40 + " LTDA"
+        doc_id = str(uuid4())
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(razao_social=nome_completo),
+            documento_id=doc_id,
+        )
+
+        assert resultado["status"] == dados_service.APLICADO
+        assert resultado["conflitos"] == []
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["razao_social"] == nome_completo
+        assert row["dados_origem"] == "cartao_cnpj"  # provenance upgraded too
+        assert row["dados_documento_id"] == doc_id
+        assert client.table("empresa_campo_conflitos").select("*").execute().data == []
+
+    def test_whitespace_and_case_normalised_prefix_still_upgrades(self, client):
+        empresa = _empresa(
+            client, razao_social=f"  {self.NOME_TRUNCADO_40.lower()}  ",
+            dados_origem="serasa_crednet",
+        )
+        nome_completo = self.NOME_TRUNCADO_40 + " LTDA"
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(razao_social=nome_completo),
+            documento_id=str(uuid4()),
+        )
+
+        assert resultado["status"] == dados_service.APLICADO
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["razao_social"] == nome_completo
+
+    def test_a_non_prefix_disagreement_still_conflicts(self, client):
+        """`dados_origem='serasa_crednet'`, but the incoming name is NOT a
+        completion of the stored one — a genuinely different name, and
+        must open a conflict exactly like the non-Crednet case."""
+        empresa = _empresa(
+            client, razao_social=self.NOME_TRUNCADO_40, dados_origem="serasa_crednet",
+        )
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(razao_social="RAZAO SOCIAL COMPLETAMENTE DIFERENTE LTDA"),
+            documento_id=str(uuid4()),
+        )
+
+        assert resultado["status"] == dados_service.SEM_MUDANCA
+        assert len(resultado["conflitos"]) == 1
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["razao_social"] == self.NOME_TRUNCADO_40  # untouched
+
+    def test_a_shorter_incoming_value_is_not_treated_as_an_upgrade(self):
+        assert (
+            dados_service._e_upgrade_de_crednet_truncado(
+                "NOME COMPLETO JA CADASTRADO LTDA", "NOME COMPLETO"
+            )
+            is False
+        )
+
+    def test_an_already_open_pendente_conflict_is_closed_by_the_upgrade(self, client):
+        """A PRIOR extraction attempt already opened a `pendente`
+        `razao_social` conflict (e.g. before this upgrade rule existed, or
+        from an unrelated earlier disagreement). A re-extraction that now
+        qualifies as an upgrade must close it out — `rejeitado`, never
+        silently deleted — rather than leaving a stale row an admin would
+        otherwise have to adjudicate for no reason."""
+        empresa = _empresa(
+            client, razao_social=self.NOME_TRUNCADO_40, dados_origem="serasa_crednet",
+        )
+        pendente_id = str(uuid4())
+        client.table("empresa_campo_conflitos").insert(
+            {
+                "id": pendente_id,
+                "org_id": str(ORG_ID),
+                "empresa_id": empresa["id"],
+                "campo": "razao_social",
+                "valor_anterior": self.NOME_TRUNCADO_40,
+                "origem_anterior": "serasa_crednet",
+                "valor_proposto": "ALGUMA LEITURA ANTERIOR LTDA",
+                "origem_proposto": "cartao_cnpj",
+                "confianca_proposta": None,
+                "fonte_tabela": "empresa_documentos",
+                "fonte_id": str(uuid4()),
+                "status": "pendente",
+                "notificado_em": None,
+                "decidido_por": None,
+                "decidido_em": None,
+                "created_at": "2026-09-20T00:00:00+00:00",
+            }
+        ).execute()
+        nome_completo = self.NOME_TRUNCADO_40 + " LTDA"
+
+        dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(razao_social=nome_completo),
+            documento_id=str(uuid4()),
+        )
+
+        conflitos = client.table("empresa_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 1
+        assert conflitos[0]["id"] == pendente_id
+        assert conflitos[0]["status"] == "rejeitado"
+        assert conflitos[0]["decidido_por"] is None
+        assert conflitos[0]["decidido_em"] is not None
+
+
 class TestManualLink:
     def test_creates_a_new_empresa_with_manual_origem(self, client):
         empresa = dados_service.criar_ou_vincular_manual(

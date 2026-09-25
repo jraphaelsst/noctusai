@@ -389,6 +389,150 @@ class TestColumnAlignedTextLayer:
         assert f.municipio == "SAO PAULO"
 
 
+class TestPipeTableTranscription:
+    """🔴 A real vision transcription sometimes emits a markdown PIPE TABLE
+    instead of one box per line (measured against a real Cartão CNPJ,
+    2026-09-25, a BAIXADA company) — several boxes' `RÓTULO valor` pairs
+    fused into pipe-delimited cells of ONE row, a `| --- | --- | --- |`
+    separator row, and the document's own TITLE landing in a "column" as
+    a table-flattening artifact. See the module header."""
+
+    def _tabela_fundida(
+        self,
+        *,
+        situacao: str = "BAIXADA",
+        nome_fantasia_valor: str = "*",
+    ) -> str:
+        """The FUSED-CELL shape actually measured: `RÓTULO valor` glued
+        together inside each pipe cell, no colon. The document title
+        ("COMPROVANTE DE INSCRICAO E DE SITUACAO CADASTRAL") is placed as
+        the MIDDLE cell of the first row — it contains the literal
+        `situacao_cadastral` label as a substring, and must NOT be read as
+        that field's box."""
+        return (
+            f"| NUMERO DE INSCRICAO {CNPJ_VALIDO} MATRIZ "
+            "| COMPROVANTE DE INSCRICAO E DE SITUACAO CADASTRAL "
+            "| DATA DE ABERTURA 15/03/2010 |\n"
+            "| --- | --- | --- |\n"
+            "| NOME EMPRESARIAL RAZAO SOCIAL EXEMPLO LTDA |\n"
+            f"| TITULO DO ESTABELECIMENTO (NOME DE FANTASIA) {nome_fantasia_valor} "
+            "| PORTE ME |\n"
+            "| CODIGO E DESCRICAO DA NATUREZA JURIDICA 206-2 - SOCIEDADE "
+            "EMPRESARIA LIMITADA |\n"
+            "| CEP * | BAIRRO/DISTRITO * | MUNICIPIO * | UF * |\n"
+            f"| SITUACAO CADASTRAL {situacao} "
+            "| DATA DA SITUACAO CADASTRAL 10/06/2021 |\n"
+            "| MOTIVO DE SITUACAO CADASTRAL EXTINCAO POR ENCERRAMENTO "
+            "LIQUIDACAO VOLUNTARIA |\n"
+            "Emitido no dia 20/09/2026 as 14:33:10 (data e hora de Brasilia)\n"
+        )
+
+    def test_situacao_resolves_despite_the_titles_embedded_label_substring(self):
+        """🔴 Regression: the document title cell contains "...E DE
+        SITUACAO CADASTRAL" as a literal substring of `situacao_cadastral`'s
+        own label, sitting BEFORE the real box in the transcription. A
+        naive scan finds that false match first, with nothing after it —
+        measured live as `rotulos.situacao_cadastral == "|"`."""
+        f = parse_cartao_cnpj(self._tabela_fundida(), TextSource.OCR)
+        assert f.situacao_cadastral == "baixada"
+        assert f.rotulos["situacao_cadastral"] == "SITUACAO CADASTRAL"
+
+    def test_baixada_guard_fires_end_to_end_off_the_pipe_table_shape(self):
+        f = parse_cartao_cnpj(self._tabela_fundida(), TextSource.OCR)
+        assert f.endereco_mascarado is True
+        for campo in ("logradouro", "numero", "complemento", "cep", "bairro", "municipio", "uf"):
+            assert getattr(f, campo) is None
+
+    def test_no_trailing_pipe_residue_survives_in_any_value(self):
+        """🔴 Regression: measured live as `porte == "ME |"`,
+        `razao_social == "<NAME> LTDA | | |"`."""
+        f = parse_cartao_cnpj(self._tabela_fundida(), TextSource.OCR)
+        for campo in ("razao_social", "natureza_juridica", "motivo_situacao", "porte"):
+            valor = getattr(f, campo)
+            assert valor is not None
+            assert "|" not in valor
+            assert not valor.endswith(" ")
+
+    def test_a_single_asterisk_value_is_masked_not_a_literal_value(self):
+        """🔴 Regression: measured live as `nome_fantasia == "* |"` — the
+        model transcribed the mask as ONE `*`, not the prompt's literal
+        `********`."""
+        f = parse_cartao_cnpj(self._tabela_fundida(), TextSource.OCR)
+        assert f.nome_fantasia is None
+        assert f.confiancas["nome_fantasia"] is ExtractionConfidence.NENHUMA
+
+    def test_an_unmasked_eight_asterisk_value_is_still_masked(self):
+        f = parse_cartao_cnpj(self._tabela_fundida(nome_fantasia_valor=_MASCARADO), TextSource.OCR)
+        assert f.nome_fantasia is None
+
+    def test_a_non_baixada_situacao_leaves_the_address_untouched(self):
+        f = parse_cartao_cnpj(self._tabela_fundida(situacao="ATIVA"), TextSource.OCR)
+        assert f.situacao_cadastral == "ativa"
+        # The address boxes are still ALL "*" in this fixture — masked, but
+        # NOT discarded-by-baixada (situação is ATIVA here).
+        assert f.endereco_mascarado is True
+
+    def test_the_cnpj_and_matriz_filial_box_reads_through_the_fused_cell(self):
+        f = parse_cartao_cnpj(self._tabela_fundida(), TextSource.OCR)
+        assert f.cnpj == CNPJ_VALIDO
+        assert f.cnpj_valido is True
+        assert f.matriz_filial == "MATRIZ"
+        assert f.data_abertura == date(2010, 3, 15)
+
+    def test_header_row_of_labels_then_a_separate_value_row(self):
+        """A SEPARATE header-row-of-pure-labels shape, values on the very
+        next row — the pipe-table analogue of `TestColumnAlignedTextLayer`,
+        for a model that chooses this layout instead of fusing label+value
+        into one cell."""
+        texto = (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "| CEP | BAIRRO/DISTRITO | MUNICIPIO | UF |\n"
+            "| --- | --- | --- | --- |\n"
+            "| 01310-100 | PINHEIROS | SAO PAULO | SP |\n"
+        )
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.cep == "01310-100"
+        assert f.bairro == "PINHEIROS"
+        assert f.municipio == "SAO PAULO"
+        assert f.uf == "SP"
+
+    def test_header_row_value_row_count_mismatch_is_never_guessed(self):
+        texto = (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "| CEP | BAIRRO/DISTRITO | MUNICIPIO | UF |\n"
+            "| 01310-100 | PINHEIROS |\n"  # only 2 of 4 columns
+        )
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.cep is None
+        assert f.municipio is None
+        assert f.uf is None
+
+    def test_alternating_label_pipe_value_pipe_row(self):
+        """`LABEL | valor |` — one or more fields fused onto a SINGLE row,
+        label and value each their OWN cell (distinct from the fused
+        `LABEL valor` single-cell shape above)."""
+        texto = (
+            f"| NUMERO DE INSCRICAO | {CNPJ_VALIDO} MATRIZ |\n"
+            "| SITUACAO CADASTRAL | BAIXADA |\n"
+        )
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.cnpj == CNPJ_VALIDO
+        assert f.situacao_cadastral == "baixada"
+
+    def test_a_two_label_row_is_a_header_row_not_label_value(self):
+        """`| LABEL1 | LABEL2 |` (both cells ARE labels) must be treated as
+        a pure header row awaiting its OWN value row — never mistaken for
+        `LABEL1 | valor=LABEL2`."""
+        texto = (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "| CEP | UF |\n"
+            "| 01310-100 | SP |\n"
+        )
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.cep == "01310-100"
+        assert f.uf == "SP"
+
+
 class TestCheckDigitDiscipline:
     def test_an_invalid_cnpj_is_flagged_never_corrected(self):
         # `situacao_cadastral="ATIVA"` — isolates the CNPJ check-digit

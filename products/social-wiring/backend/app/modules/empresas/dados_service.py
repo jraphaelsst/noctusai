@@ -85,6 +85,79 @@ def _mesmo_valor(atual: Any, proposto: Any) -> bool:
     return atual == proposto
 
 
+def _normalizado_para_comparacao(texto: str) -> str:
+    """Whitespace-collapsed, case-folded — same comparison basis
+    `_mesmo_valor` uses for strings, plus internal-whitespace collapse so a
+    truncation that split mid-run-of-spaces still compares cleanly."""
+    import re
+
+    return re.sub(r"\s+", " ", texto.strip()).casefold()
+
+
+def _e_upgrade_de_crednet_truncado(atual: Any, proposto: Any) -> bool:
+    """Is `proposto` the Cartão CNPJ's UNtruncated `razão social`, where
+    `atual` is exactly what the Serasa Crednet's OWN 40-column print width
+    left behind? Serasa's Crednet report prints `razão social` truncated
+    to 40 columns (contract note, 2026-09-25 live case): the empresa row
+    it CREATES (`crednet_service._upsert_empresa`) carries that truncated
+    string with `dados_origem='serasa_crednet'`. A later Cartão CNPJ read
+    of the FULL name then disagrees byte-for-byte with the stored value —
+    not because the two documents disagree about the company's name, but
+    because one of them is missing its tail. Detected generically as "the
+    stored value, normalised, is a strict PREFIX of the proposed value,
+    normalised" — not hardcoded to exactly 40 characters, so it still
+    catches a shorter accidental truncation too. Any OTHER kind of
+    disagreement (a genuinely different name, or the proposed value being
+    SHORTER/unrelated) is not an upgrade and stays a conflict."""
+    if not isinstance(atual, str) or not isinstance(proposto, str):
+        return False
+    atual_norm = _normalizado_para_comparacao(atual)
+    proposto_norm = _normalizado_para_comparacao(proposto)
+    if not atual_norm or atual_norm == proposto_norm:
+        return False
+    return proposto_norm.startswith(atual_norm)
+
+
+def _fechar_conflitos_pendentes(
+    client: Any,
+    org_id: UUID,
+    empresa_id: UUID,
+    campo: str,
+    *,
+    decidido_por: Optional[Any],
+) -> None:
+    """Close out any stale `pendente` row on this SAME (empresa, campo) as
+    `rejeitado` — never silently deleted, the record that a conflict was
+    once open here stays auditable (mirrors `clientes_service.
+    _superseder_conflitos_pendentes`; `empresa_campo_conflitos`' own
+    migration comment reads "never auto-resolved", and that precedent —
+    same table SHAPE, same comment, on `cliente_campo_conflitos` — is
+    exactly this: not a background sweep, but a side-effect of a
+    DIFFERENT legitimate write superseding what the pending row was
+    proposing). `decidido_por=None` marks a SYSTEM resolution (no admin
+    account involved), same convention `crednet_service._upsert_empresa`
+    already uses for its own `dados_confirmado_por`."""
+    table = campo_conflitos.EMPRESA
+    pendentes = (
+        _t(client, table.table)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq(table.owner_col, str(empresa_id))
+        .eq("campo", campo)
+        .eq("status", "pendente")
+        .execute()
+    ).data or []
+    now = _now()
+    for row in pendentes:
+        _t(client, table.table).update(
+            {
+                "status": "rejeitado",
+                "decidido_por": str(decidido_por) if decidido_por else None,
+                "decidido_em": now,
+            }
+        ).eq("id", row["id"]).execute()
+
+
 def get_empresa(client: Any, org_id: UUID, empresa_id: UUID) -> Optional[dict]:
     rows = (
         _t(client, TABLE)
@@ -231,6 +304,17 @@ def aplicar_cartao(
             continue
         if _mesmo_valor(atual, proposto):
             continue
+        if (
+            campo == "razao_social"
+            and empresa.get("dados_origem") == "serasa_crednet"
+            and _e_upgrade_de_crednet_truncado(atual, proposto)
+        ):
+            # Not a disagreement — Crednet's OWN 40-column truncation of
+            # this SAME name, now completed by the authoritative Receita
+            # document. See `_e_upgrade_de_crednet_truncado`.
+            patch[campo] = proposto
+            _fechar_conflitos_pendentes(client, org_id, empresa_id, campo, decidido_por=None)
+            continue
         confianca = (getattr(leitura, "confiancas", None) or {}).get(campo)
         novo = campo_conflitos.registrar_conflito(
             client, campo_conflitos.EMPRESA, org_id, empresa_id, campo,
@@ -315,31 +399,13 @@ def _registrar_edicao_manual_confirmada(
     `campo_conflitos.registrar_conflito` because that helper only ever
     opens a `pendente` row (see its own docstring's "open" contract) — an
     admin's edit is pre-decided, not pending."""
-    from datetime import datetime, timezone
-
     table = campo_conflitos.EMPRESA
     # Close out any stale pendente row on the SAME (empresa, campo) — the
-    # admin's own edit is what happened instead (mirrors
-    # `clientes_service._superseder_conflitos_pendentes`).
-    pendentes = (
-        _t(client, table.table)
-        .select("id")
-        .eq("org_id", str(org_id))
-        .eq(table.owner_col, str(empresa_id))
-        .eq("campo", campo)
-        .eq("status", "pendente")
-        .execute()
-    ).data or []
-    now = datetime.now(timezone.utc).isoformat()
-    for row in pendentes:
-        _t(client, table.table).update(
-            {
-                "status": "rejeitado",
-                "decidido_por": str(decidido_por) if decidido_por else None,
-                "decidido_em": now,
-            }
-        ).eq("id", row["id"]).execute()
-
+    # admin's own edit is what happened instead. See `_fechar_conflitos_
+    # pendentes`'s own docstring (also used by `aplicar_cartao`'s Crednet-
+    # prefix upgrade path).
+    _fechar_conflitos_pendentes(client, org_id, empresa_id, campo, decidido_por=decidido_por)
+    now = _now()
     _t(client, table.table).insert(
         {
             "id": str(uuid4()),
