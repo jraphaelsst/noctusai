@@ -45,6 +45,19 @@ class ExtractionConfidence(str, Enum):
 
     ALTA — the value sat next to its own label (`DATA DE NASCIMENTO: …`)
         and passed every plausibility gate. Safe to persist unattended.
+    MEDIA — 🔴 a narrow, money-field-only tier (added for
+        `documents.money.ler_valor` / `documents.guia_itbi` /
+        `documents.financiamento_imobiliario`, per the negociação/
+        financiamento extraction contract §D.5). A money value is never
+        `alta` off a vision read — a model's self-reported confidence is
+        exactly what this whole extractor family refuses to trust for
+        currency — but a value corroborated by a DETERMINISTIC check (its
+        own printed "valor por extenso" agreeing, or a Quadro Resumo's
+        arithmetic summing correctly) is more trustworthy than an
+        uncorroborated `baixa` read, without being the "safe to persist
+        unattended" claim `alta` makes. Every OTHER extractor in this
+        package still uses only `alta`/`baixa`/`nenhuma` — a `media`
+        appearing outside a money field is a bug, not a new convention.
     BAIXA — a plausible value was found, but not label-anchored (or the
         text came off a rasterize→vision pass, where digit confusion is
         real). Surface it for a human to confirm; do NOT persist silently.
@@ -53,6 +66,7 @@ class ExtractionConfidence(str, Enum):
     """
 
     ALTA = "alta"
+    MEDIA = "media"
     BAIXA = "baixa"
     NENHUMA = "nenhuma"
 
