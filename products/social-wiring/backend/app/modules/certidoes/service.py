@@ -40,6 +40,7 @@ import html
 import io
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -903,6 +904,61 @@ def _parse_json_resultado(raw: Optional[str], nome_display: str) -> Optional[dic
     return out or None
 
 
+#: The Receita/PGFN CND's own printed "Código de controle da certidão:
+#: XXXX.XXXX.XXXX.XXXX" — dotted groups of 4 alphanumerics (measured:
+#: `9999.9999.99XX.9XX9`-shaped, case varies). Accent-tolerant (`[oó]`,
+#: `[aã]`) since a manual-upload text extraction is not guaranteed to
+#: preserve accents.
+_CODIGO_CONTROLE_RE = re.compile(
+    r"C[oó]digo\s+de\s+controle\s+da\s+certid[aã]o[:\s]+"
+    r"([A-Z0-9]{4}(?:[.\-][A-Z0-9]{4}){2,4})",
+    re.IGNORECASE,
+)
+
+#: A bare digit-run — the shape an AI structured read hands back when it
+#: found the RIGHT number but dropped a trailing "/ano" it also printed.
+_NUMERO_SEM_ANO_RE = re.compile(r"^\d{4,8}$")
+
+
+def _numero_via_codigo_controle(texto: Optional[str]) -> Optional[str]:
+    """G14 (P1/883, 2026-09-25): the Receita/PGFN CND prints its own
+    "Código de controle da certidão" as the document's number — a
+    deterministic label match, tried as an OVERRIDE for whatever the AI
+    structured read returned (or didn't). Measured: the AI read finds this
+    reliably on a plain NEGATIVA CND but MISSES it on the "CERTIDÃO
+    POSITIVA COM EFEITOS DE NEGATIVA DE DÉBITOS…" (PCEN) layout — same
+    label, different surrounding document shape, an LLM inconsistency this
+    label match makes irrelevant either way (the label IS the source of
+    truth, same posture every other document reader in this codebase
+    takes over a model's own guess)."""
+    if not texto:
+        return None
+    m = _CODIGO_CONTROLE_RE.search(texto)
+    return m.group(1) if m else None
+
+
+def _completar_numero_com_ano(numero: Optional[str], texto: Optional[str]) -> Optional[str]:
+    """G15 (P1/883, 2026-09-25): a TRT2 físico certidão prints its número
+    as "NNNNNN / AAAA" (number / year), and the contract prints it whole —
+    but the AI structured read sometimes hands back just the bare number,
+    dropping the "/ano" it also read. Looks for THIS EXACT digit run,
+    immediately followed by a slash and a 4-digit year, back in the source
+    text — never invents a year from anywhere else in the document, so a
+    número with no such trailing year (every OTHER certidão type) is
+    returned untouched. Canonical form chosen: "NNNNNN/AAAA", no spaces
+    around the slash — the source prints "NNNNNN / AAAA" with spaces, but
+    a `numero` column reads as one continuous identifier elsewhere in this
+    product (`cartao_cnpj`'s CNPJ, `identidade`'s RG), so this normalises
+    to match rather than preserving the source's own spacing."""
+    if not numero or not texto:
+        return numero
+    m = _NUMERO_SEM_ANO_RE.match(numero.strip())
+    if not m:
+        return numero
+    achado = re.search(rf"\b{re.escape(m.group())}\s*/\s*(\d{{4}})\b", texto)
+    return f"{m.group()}/{achado.group(1)}" if achado else numero
+
+
 async def _analyze_estrutura_with_ai(
     text: str,
     nome_display: str,
@@ -984,7 +1040,20 @@ async def _analyze_estrutura_with_ai(
         logger.error("Structured AI extraction failed for %s: %s", nome_display, e)
         return None
 
-    return _parse_json_resultado(raw, nome_display)
+    resultado = _parse_json_resultado(raw, nome_display)
+
+    # G14/G15 (P1/883, 2026-09-25) — a deterministic label/shape match on
+    # the ORIGINAL text, applied over whatever the AI structured read
+    # returned for `numero`. See each helper's own docstring.
+    codigo_controle = _numero_via_codigo_controle(text)
+    if codigo_controle:
+        resultado = {**(resultado or {}), "numero": codigo_controle}
+    elif resultado and resultado.get("numero"):
+        completado = _completar_numero_com_ano(resultado["numero"], text)
+        if completado != resultado["numero"]:
+            resultado = {**resultado, "numero": completado}
+
+    return resultado
 
 
 async def _derive_estrutura(

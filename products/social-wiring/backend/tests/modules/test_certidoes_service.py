@@ -2661,6 +2661,117 @@ class TestAnalyzeEstruturaWithAi:
             )
         assert out is None
 
+    # G14/G15 (P1/883, 2026-09-25) — the deterministic label/shape match
+    # applied over the AI structured read's own `numero`. All fixture text
+    # is synthetic (invented codes/numbers, mirroring the measured shapes).
+    @pytest.mark.asyncio
+    async def test_g14_codigo_de_controle_preenche_numero_quando_ia_nao_achou(self):
+        """The PCEN ("CERTIDÃO POSITIVA COM EFEITOS DE NEGATIVA…") layout —
+        measured: the AI structured read misses the código de controle
+        here even though it finds it reliably on a plain NEGATIVA CND."""
+        texto = (
+            "CERTIDÃO POSITIVA COM EFEITOS DE NEGATIVA DE DÉBITOS RELATIVOS "
+            "AOS TRIBUTOS FEDERAIS E À DÍVIDA ATIVA DA UNIÃO\n"
+            "Nome: FULANO DE TESTE SINTETICO\n"
+            "Código de controle da certidão: 1A2B.3C4D.5E6F.7G8H\n"
+        )
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": null, "resultado": "positiva_com_efeito_de_negativa"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                texto, "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out["numero"] == "1A2B.3C4D.5E6F.7G8H"
+        assert out["resultado"] == "positiva_com_efeito_de_negativa"
+
+    @pytest.mark.asyncio
+    async def test_g14_codigo_de_controle_sobrescreve_um_numero_da_ia_diferente(self):
+        """The label IS the source of truth — an AI-guessed `numero` that
+        disagrees with the document's own printed código de controle is
+        overridden, not merged alongside."""
+        texto = "Código de controle da certidão: 9Z8Y.7X6W.5V4U.3T2S\n"
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": "algo-diferente"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                texto, "CND Federal", ORG, resolve_provider=_provider("openai")
+            )
+        assert out["numero"] == "9Z8Y.7X6W.5V4U.3T2S"
+
+    @pytest.mark.asyncio
+    async def test_g14_sem_o_rotulo_o_numero_da_ia_sobrevive_intacto(self):
+        """No "Código de controle da certidão" label in the text at all —
+        every OTHER certidão type — the AI's own `numero` passes through
+        untouched."""
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": "protocolo-123"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "um texto qualquer sem rótulo nenhum", "CENPROT", ORG,
+                resolve_provider=_provider("openai"),
+            )
+        assert out["numero"] == "protocolo-123"
+
+    @pytest.mark.asyncio
+    async def test_g15_completa_o_numero_com_o_ano_impresso_ao_lado(self):
+        """TRT2 físico — measured: the document prints "999999 / 9999"
+        (number / year) as ONE número, but the AI structured read hands
+        back just the bare number, dropping the year."""
+        texto = "Certidão nº 654321 / 2019 — Tribunal Regional do Trabalho\n"
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": "654321"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                texto, "TRT2 (físico)", ORG, resolve_provider=_provider("openai"),
+            )
+        assert out["numero"] == "654321/2019"
+
+    @pytest.mark.asyncio
+    async def test_g15_ja_no_formato_completo_nao_e_alterado(self):
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": "654321/2019"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "texto sem o par numero/ano isolado", "TRT2 (físico)", ORG,
+                resolve_provider=_provider("openai"),
+            )
+        assert out["numero"] == "654321/2019"
+
+    @pytest.mark.asyncio
+    async def test_g15_sem_ano_correspondente_no_texto_fica_como_a_ia_devolveu(self):
+        """The bare-digit shape alone is not enough — the SAME digits must
+        also appear followed by "/<ano>" in the source text, or nothing
+        changes (never invents a year from elsewhere in the document)."""
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": "654321"}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "nenhum ano ao lado deste número em lugar nenhum", "TRT2 (físico)",
+                ORG, resolve_provider=_provider("openai"),
+            )
+        assert out["numero"] == "654321"
+
+    @pytest.mark.asyncio
+    async def test_g14_e_g15_nunca_disparam_em_cima_de_um_none(self):
+        """The AI returned nothing usable at all AND the text carries
+        neither label/shape — the function still returns `None`, not a
+        stray `{"numero": ...}` conjured out of nothing."""
+        with patch(_CRED, return_value="sk-x"), patch(
+            "app.modules.certidoes.service.chat_completion",
+            new=AsyncMock(return_value='{"numero": null, "resultado": null}'),
+        ):
+            out = await service._analyze_estrutura_with_ai(
+                "um texto qualquer", "CND Federal", ORG,
+                resolve_provider=_provider("openai"),
+            )
+        assert out is None
+
 
 # ---------------------------------------------------------------------------
 # _derive_estrutura — the orchestration: API first, AI fallback, human lock
