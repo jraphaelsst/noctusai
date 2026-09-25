@@ -236,7 +236,12 @@ def auto_configure_for_cli(
         use_stderr: route logs to stderr instead of stdout. **Required for
             MCP servers** — they use stdout for JSON-RPC protocol and any
             non-JSON byte corrupts the channel. Pass `True` from
-            `mcp/noctusai/server.py`; leave `False` for `cli.py`.
+            `mcp/noctusai/server.py`. Also `True` from `cli.py` (since
+            2026-09-24, compliance review of the fresh-subprocess `--json`
+            fallback, F2) — a caller parsing a CLI `--json` invocation's
+            stdout needs it log/banner-free too, for the exact same
+            "no non-JSON byte on the payload channel" reason as the MCP
+            server's stdout.
 
     Idempotent: safe to call multiple times.
     """

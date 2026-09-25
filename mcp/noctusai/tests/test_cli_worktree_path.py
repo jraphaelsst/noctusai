@@ -186,10 +186,11 @@ def test_scan_wiring_json_runs_against_worktree():
         )
         combined = proc.stdout + proc.stderr
         assert "worktree override:" in combined, combined
-        # F2 (compliance review, 2026-09-24): cli.py now logs + banners to
-        # stderr exclusively, so stdout carries ONLY the "worktree override:"
-        # line (no `{`) followed by the JSON dump — the first `{` IS the
-        # JSON's start, no banner-skipping offset needed anymore.
+        # F2 + also-item (compliance review, 2026-09-24): cli.py now logs,
+        # banners, AND the "worktree override:" line to stderr exclusively
+        # — stdout carries ONLY the JSON dump, so the first `{` IS the
+        # JSON's start (in practice, position 0), no banner/log-skipping
+        # offset needed anymore.
         start = proc.stdout.index("{")
         payload = json.loads(proc.stdout[start:])
         assert payload["ok"] is True, payload

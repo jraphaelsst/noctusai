@@ -529,6 +529,13 @@ class TestMigrateProductShaSource:
                 "products/orbity/backend/migrations/001_seed.sql\n",
             ("show", f"{sha}:products/orbity/backend/migrations/001_seed.sql"):
                 "CREATE SCHEMA IF NOT EXISTS orbity;",
+            # N3 (compliance review, 2026-09-24): configure a real,
+            # readable main.py so schema_source != 'slug_fallback' — this
+            # test is about the confirm=True apply path, not schema
+            # derivation, and N3 refuses confirm=True on an unverified
+            # (slug_fallback) schema.
+            ("show", f"{sha}:products/orbity/backend/app/main.py"):
+                'app = create_product_app(name="Orbity", schema="orbity")\n',
         })
         fake = FakeSqlExecutor()
 
@@ -619,6 +626,10 @@ class TestMigrateProductShaSource:
         sha = "1111111" * 5
         runner = _sha_git_runner(sha, {
             ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"): "",
+            # N3: real, readable main.py — this test is about F8(a)'s
+            # missing-dir refusal, not schema derivation.
+            ("show", f"{sha}:products/orbity/backend/app/main.py"):
+                'app = create_product_app(name="Orbity", schema="orbity")\n',
         })
         fake = FakeSqlExecutor()
 
@@ -641,6 +652,11 @@ class TestMigrateProductShaSource:
         runner = _sha_git_runner(sha, {
             ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
                 "products/orbity/backend/migrations/README.md\n",
+            # N3: real, readable main.py — this test is about the
+            # dir-exists-but-no-.sql-files up_to_date case, not schema
+            # derivation.
+            ("show", f"{sha}:products/orbity/backend/app/main.py"):
+                'app = create_product_app(name="Orbity", schema="orbity")\n',
         })
         fake = FakeSqlExecutor()
 
@@ -725,6 +741,10 @@ class TestMigrateProductShaSource:
             ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
                 "products/orbity/backend/migrations/001_seed.sql\n",
             ("show", f"{sha}:products/orbity/backend/migrations/001_seed.sql"): raw_sql,
+            # N3: real, readable main.py — this test is about checksum
+            # byte-fidelity, not schema derivation.
+            ("show", f"{sha}:products/orbity/backend/app/main.py"):
+                'app = create_product_app(name="Orbity", schema="orbity")\n',
         })
         fake = FakeSqlExecutor()
 
@@ -774,6 +794,62 @@ class TestMigrateProductShaSource:
         assert result["schema"] == "sha_schema"
         assert result["schema_source"] == "main_py_declaration_at_sha"
 
+    def test_confirm_true_refuses_when_schema_source_is_slug_fallback(self, tmp_path):
+        """N3 (compliance review, 2026-09-24): in sha= mode, a GUESSED
+        schema (`app/main.py` unreadable/undeclared at that sha, so
+        `_resolve_schema` fell all the way back to the naive slug-transform)
+        must refuse a confirm=True write — applying DDL against an
+        unverified target is exactly the silent-wrong-schema class F8(e)
+        exists to close for the readable case. Proven by `show` on
+        `main.py` failing (`fail_on`), driving `schema_source` to
+        `'slug_fallback'`."""
+        products = _make_products_dir(tmp_path)
+        mig_dir = products / "orbity" / "backend" / "migrations"
+        mig_dir.mkdir(parents=True)
+        sha = "5ca1ab1e" * 5
+        runner = _sha_git_runner(sha, {
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
+                "products/orbity/backend/migrations/001_seed.sql\n",
+            ("show", f"{sha}:products/orbity/backend/migrations/001_seed.sql"):
+                "CREATE TABLE x (id int);",
+        }, fail_on={("show", f"{sha}:products/orbity/backend/app/main.py")})
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=True, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "error"
+        assert result["schema_source"] == "slug_fallback"
+        assert "slug_fallback" in result["error"]
+        assert "GUESS" in result["error"]
+        # Nothing was ever sent to the executor — refused before touching DB.
+        assert fake.executed == []
+
+    def test_confirm_false_still_dry_runs_when_schema_source_is_slug_fallback(self, tmp_path):
+        """N3's refusal is confirm=True-only — a dry-run against a GUESSED
+        schema is still useful (shows what WOULD be pending) and carries no
+        write risk, so it must NOT be refused."""
+        products = _make_products_dir(tmp_path)
+        mig_dir = products / "orbity" / "backend" / "migrations"
+        mig_dir.mkdir(parents=True)
+        sha = "5ca1ab1e" * 5
+        runner = _sha_git_runner(sha, {
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
+                "products/orbity/backend/migrations/001_seed.sql\n",
+        }, fail_on={("show", f"{sha}:products/orbity/backend/app/main.py")})
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=False, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "dry_run"
+        assert result["schema_source"] == "slug_fallback"
+        assert result["pending"] == ["001_seed.sql"]
+
     def test_all_pending_content_is_read_before_any_ddl_runs(self, tmp_path):
         """F8(c) (compliance review, 2026-09-24): if a LATER pending file's
         content can't be read, NOTHING must have been applied yet — not even
@@ -790,6 +866,12 @@ class TestMigrateProductShaSource:
                 "products/orbity/backend/migrations/002_second.sql\n",
             ("show", f"{sha}:products/orbity/backend/migrations/001_first.sql"):
                 "CREATE TABLE orbity.first (id int);",
+            # N3 (compliance review, 2026-09-24): real, readable main.py —
+            # this test is about F8(c)'s read-before-DDL ordering, not
+            # schema derivation; without this, N3's slug_fallback refusal
+            # would fire first and mask what this test actually exercises.
+            ("show", f"{sha}:products/orbity/backend/app/main.py"):
+                'app = create_product_app(name="Orbity", schema="orbity")\n',
             # 002_second.sql's `show` is deliberately UNCONFIGURED — falls
             # through FakeGitRunner's default empty-string return, which is
             # fine for `ls-tree` but here simulates "unreadable content" via
@@ -807,6 +889,34 @@ class TestMigrateProductShaSource:
         # the FIRST migration's DDL was never sent to the executor at all —
         # proof the read-everything-first pass ran BEFORE any apply loop.
         assert not any("CREATE TABLE orbity.first" in s for s in fake.executed)
+        assert result["applied"] == []
+
+    def test_pending_read_refuses_on_undecodable_bytes(self, tmp_path):
+        """N5 (compliance review, 2026-09-24): a pending migration file with
+        invalid-UTF-8 bytes on disk must be caught by the SAME pre-read
+        guard as an unreadable (`OSError`/`GitQueryError`) file — a
+        `UnicodeDecodeError` is just as much a "could not verify this
+        file's content before running any DDL" case as either of those, and
+        the working-tree path (real `Path.read_text()`, not the git-blob
+        seam) is exactly where real-world invalid bytes would show up."""
+        products = _make_products_dir(tmp_path)
+        mig_dir = products / "orbity" / "backend" / "migrations"
+        mig_dir.mkdir(parents=True)
+        (mig_dir / "001_bad_bytes.sql").write_bytes(b"CREATE TABLE x (\xff\xfe id int);")
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "orbity", confirm=True, executor=fake, products_dir=products,
+            git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"),
+        )
+
+        assert result["status"] == "error"
+        assert "before applying any DDL" in result["error"]
+        # The migration's own DDL was never sent to the executor — only the
+        # tracking-table-ensure/fetch-applied bookkeeping SQL that legitimately
+        # runs before the pending-content pre-read (same shape as
+        # `test_all_pending_content_is_read_before_any_ddl_runs` above).
+        assert not any("001_bad_bytes" in s or "id int" in s for s in fake.executed)
         assert result["applied"] == []
 
 

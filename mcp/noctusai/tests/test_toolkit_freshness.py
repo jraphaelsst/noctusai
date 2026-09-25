@@ -285,10 +285,14 @@ def test_warn_posture_fresh_call_carries_no_warning(fresh_toolkit):
 def _canned_subprocess(payload: dict, rc: int = 0, prefix_noise: bool = True):
     """A fake `subprocess_run(cmd) -> (rc, stdout, stderr)` DI seam. Spawns
     ZERO real processes. `prefix_noise=True` (default) prepends a realistic
-    INFO log line ahead of the JSON — `cli.py`'s own env_bootstrap logging
-    lands on stdout too, not only stderr (found wiring this very
-    fallback) — so a test using this exercises `_extract_trailing_json`,
-    never a naive whole-blob `json.loads`."""
+    INFO log line ahead of the JSON — before F2/the also-item fix
+    (compliance review, 2026-09-24) `cli.py`'s own env_bootstrap logging +
+    the worktree-override line landed on stdout too, not only stderr
+    (found wiring this very fallback); both now route to stderr
+    exclusively, but a test using this DI seam still exercises
+    `_extract_trailing_json` defensively rather than a naive whole-blob
+    `json.loads` — a NON-cli.py runner (or a future regression) is not
+    guaranteed to keep stdout this clean."""
     import json as _json
 
     text = _json.dumps(payload, indent=2)
@@ -509,6 +513,28 @@ def test_fresh_subprocess_hard_refuses_when_the_launch_itself_fails(stale_toolki
     assert "before the child could start" in r["error"]
 
 
+def test_fresh_subprocess_outcome_unknown_when_runner_raises_after_launch(stale_toolkit):
+    """N1 (compliance review, 2026-09-24): only `OSError` (the launch itself
+    failing — `os.execve`/`posix_spawn` never happened) is a genuine
+    PRE-LAUNCH failure. Anything else a runner can raise — e.g. a
+    `UnicodeDecodeError` decoding the child's captured output once it has
+    already run — must NOT be reported as a refusal, since the child may
+    have started (or finished) a real write before the runner blew up
+    trying to read its answer."""
+    def raises_after_running(cmd):
+        # Simulates a runner that DID launch + wait for the child (unlike
+        # `OSError`, which fires before any process exists), then failed
+        # decoding its captured output.
+        raise UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte")
+
+    r = MP.migrate_product("widgets", confirm=True, subprocess_run=raises_after_running)
+    assert r["status"] == "fresh_subprocess_outcome_unknown"
+    assert r["exit_code"] == 1
+    assert r["executed_via"] == "fresh_subprocess"
+    assert "UnicodeDecodeError" in r["error"]
+    assert "migrate_product confirm=False" in r["verification_step"]
+
+
 # ── F2 (compliance review, 2026-09-24): POST-LAUNCH failures ───────────────
 # Once the child process has actually STARTED, it may have begun (or even
 # completed) a real write before we lost the ability to read its answer.
@@ -583,6 +609,33 @@ def test_fresh_subprocess_returns_the_childs_own_result_when_stale_on_stale(
     assert r["executed_via"] == "fresh_subprocess"
     assert r["nested_toolkit_stale"] is True
     assert any("CHILD's own" in w for w in r["warnings"])
+
+
+def test_stale_on_stale_warning_says_refused_only_when_child_status_matches(
+    stale_toolkit,
+):
+    """N2 (compliance review, 2026-09-24): `toolkit_stale=True` on the
+    child's result is NOT, by itself, proof the child "refused before
+    writing" — that specific claim is only accurate when the child's own
+    `status` is literally `refused_stale_toolkit`. A child that carries
+    `toolkit_stale=True` under some OTHER status (e.g. its own nested
+    outcome-unknown branch, hypothetically) must get the honest generic
+    wording instead, never the more specific (and here, false) claim."""
+    fake_run = _canned_subprocess({
+        "status": "fresh_subprocess_outcome_unknown", "exit_code": 1,
+        "toolkit_stale": True, "error": "child's own outcome-unknown text",
+    })
+    r = MP.migrate_product("widgets", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "fresh_subprocess_outcome_unknown"  # child's own status, passed through
+    assert r["nested_toolkit_stale"] is True
+    # The specific "refused before writing" claim must NOT appear — the
+    # child's status was not `refused_stale_toolkit`.
+    assert not any("refused before writing" in w for w in r["warnings"])
+    # The honest, status-naming generic wording must appear instead.
+    assert any(
+        "fresh_subprocess_outcome_unknown" in w and "depends on the CHILD's own status" in w
+        for w in r["warnings"]
+    ), r["warnings"]
 
 
 def test_fresh_subprocess_never_leaks_pythonpath_into_the_child_env(stale_toolkit, monkeypatch):

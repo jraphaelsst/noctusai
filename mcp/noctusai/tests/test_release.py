@@ -501,6 +501,28 @@ def test_bless_skipped_tail_lists_migrations_left_unverified_and_names_the_sha_h
     assert "unverified migration" in out["message"]
 
 
+def test_bless_migrate_hint_carries_the_full_sha_not_a_short_form():
+    """N4 (compliance review, 2026-09-24): `migrate_hint`'s actionable
+    `migrate_product sha=...` value must be the FULL sha `migrate_product`
+    itself will re-pin via `git rev-parse --verify` — never `[:9]`, which
+    is fine for the human-readable `blessed_sha`/`would_advance` display
+    fields elsewhere in the payload but is unnecessary imprecision in a
+    copy-pasteable command. Proven with a realistic 40-char sha, where a
+    `[:9]` truncation would be visibly different from the full value (the
+    single-char fake shas used elsewhere in this file, e.g. 'd0', don't
+    exercise this — `'d0'[:9] == 'd0'`)."""
+    full_sha = "d0ab12cd34" * 4  # 40 chars, starts with 'd0'
+    fake = _walk_case(["d2", "d1", full_sha], ci_by_sha={full_sha: _GREEN},
+                      logs={f"m..{full_sha}": "c0 real work"})
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed", out
+    assert out["blessed_sha"] == full_sha
+    assert f"migrate_product sha={full_sha!r}" in out["message"]
+    # The truncated form must NOT appear anywhere the full sha doesn't
+    # already contain it as a prefix-match artifact of the full string.
+    assert f"sha={full_sha[:9]!r} " not in out["message"]
+
+
 def test_bless_docs_only_path_has_empty_skipped_tail_even_after_a_failed_walk():
     """F6: the docs-only exception blesses the dev TIP directly — nothing is
     actually left behind, so `skipped_tail` must be fully empty (never the

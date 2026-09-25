@@ -474,7 +474,11 @@ def main():
         _settings_mod.PRODUCTS_DIR = wt / "products"
         # Surface the override loudly — every later command reports against the
         # worktree, not noc; the operator should see exactly what was rebound.
-        print(f"  {YELLOW}worktree override:{RESET} REPO_ROOT={wt}")
+        # Also-item (compliance review, 2026-09-24): stderr, not stdout — the
+        # same reasoning as F2's banner/logging move: a `--json` caller's
+        # stdout parse must be exact (only the JSON payload), and this line
+        # is diagnostic, not data.
+        print(f"  {YELLOW}worktree override:{RESET} REPO_ROOT={wt}", file=sys.stderr)
 
     # Load the repo's `.env` into THIS process — the CLI/hooks leg of the
     # shared server+CLI credential bootstrap (`env_bootstrap.py`). The MCP

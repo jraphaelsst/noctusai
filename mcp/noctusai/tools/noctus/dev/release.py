@@ -802,13 +802,20 @@ def release(
             "migrations": skipped_migrations,
         }
         incoming = _commits(git, main, target_sha)
+        # N4 (compliance review, 2026-09-24): the ACTIONABLE `sha=` value in
+        # this hint must be the FULL sha, not the `[:9]` short form used
+        # elsewhere purely for human-readable display — an abbreviated sha
+        # is unnecessary imprecision in a copy-pasteable command, and it is
+        # the exact same full value `migrate_product` itself re-pins via
+        # `git rev-parse --verify` (F8(b)), so there is no reason to hand
+        # the caller a shorter, theoretically-ambiguous string here.
         migrate_hint = (
             f"To deploy exactly what got blessed: noctus.dev.migrate_product "
-            f"sha={target_sha[:9]!r} (R3) — never a bare migrate_product against "
+            f"sha={target_sha!r} (R3) — never a bare migrate_product against "
             f"the working tree, which would also pick up the "
             f"{len(skipped_tail['migrations'])} unverified migration(s) still "
             "in skipped_tail." if skipped_tail["migrations"] else
-            f"To deploy: noctus.dev.migrate_product sha={target_sha[:9]!r} (R3) "
+            f"To deploy: noctus.dev.migrate_product sha={target_sha!r} (R3) "
             "applies exactly the migrations that were part of this bless."
         )
         plan = {**base, "would_advance": f"{main_branch} → {target_sha[:9]}",

@@ -660,7 +660,8 @@ def _run_via_fresh_subprocess(
         lambda cmd: (
             lambda p: (p.returncode, p.stdout, p.stderr)
         )(subprocess.run(cmd, capture_output=True, text=True, cwd=str(TOOLKIT_ROOT),
-                         env=child_env, timeout=_FRESH_SUBPROCESS_TIMEOUT_S))
+                         env=child_env, timeout=_FRESH_SUBPROCESS_TIMEOUT_S,
+                         encoding="utf-8", errors="replace"))
     )
     cmd = [sys.executable, str(cli_path), *argv]
     try:
@@ -674,13 +675,37 @@ def _run_via_fresh_subprocess(
             err=exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace"),
             reason=f"timed out after {_FRESH_SUBPROCESS_TIMEOUT_S:.0f}s",
         )
-    except Exception as exc:  # noqa: BLE001 — a genuine pre-launch failure (exec never happened)
+    except OSError as exc:
+        # PRE-LAUNCH ONLY (N1, compliance review, 2026-09-24): `OSError` —
+        # `FileNotFoundError` (no such interpreter/cli.py),
+        # `PermissionError`, `NotADirectoryError`, etc. — is the ONLY
+        # exception family `subprocess.run`/`Popen` can raise BEFORE the
+        # child process actually starts (the `os.execve`/`posix_spawn`
+        # syscall itself failing). Every other exception a runner can raise
+        # — `UnicodeDecodeError` from a bad `errors=`/`encoding=` on
+        # captured output, a `ValueError` from a malformed `cmd`, an
+        # injected test double's own bug — can ALSO occur after the child
+        # has already run (e.g. decoding its stdout once it exited), so it
+        # is UNSAFE to assume "nothing was launched" for those. Only THIS
+        # branch is a genuine, accurate pre-launch refusal.
         payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
         payload["error"] += (
             f" Fresh-subprocess launch failed before the child could start "
             f"({' '.join(argv)}): {exc}. Nothing was launched; untouched."
         )
         return payload
+    except Exception as exc:  # noqa: BLE001 — see N1 docstring note above
+        # POST-LAUNCH (N1): anything OTHER than `OSError`/`TimeoutExpired`
+        # raised by the runner (e.g. `UnicodeDecodeError` decoding the
+        # child's captured output) does NOT prove the child never started —
+        # it may have run to completion (or partway) before the failure.
+        # Never a refusal; route through the same unknown-outcome contract
+        # as an unparseable-output result, so the caller gets a
+        # verification_step instead of a falsely reassuring "untouched".
+        return _outcome_unknown_payload(
+            tool_name, cmd, rc=None, out="", err=str(exc),
+            reason=f"runner raised {type(exc).__name__} after launch: {exc}",
+        )
 
     result = _extract_trailing_json(out) if out else None
     if not isinstance(result, dict):
@@ -703,12 +728,29 @@ def _run_via_fresh_subprocess(
         result["primary_toolkit_stale"] = True
         result["primary_toolkit_freshness"] = verdict
         result.setdefault("warnings", [])
-        result["warnings"].append(
-            f"{tool_name}: the fresh subprocess ALSO reported its own "
-            "module graph as stale and refused before writing — this is "
-            "the CHILD's own (verified, nothing-touched) refusal, "
-            "returned as-is, not a fabricated wrapper-level one."
-        )
+        # N2 (compliance review, 2026-09-24): "refused before writing" is
+        # only an accurate claim when the child's OWN status is literally
+        # `refused_stale_toolkit` (the pre-launch refuse_gate branch) —
+        # `toolkit_stale=True` alone does not guarantee that; a future
+        # child code path could set the flag on a POST-launch
+        # outcome-unknown result too. Say the specific, verified thing when
+        # we can; say the honest generic thing when we can't.
+        if result.get("status") == "refused_stale_toolkit":
+            result["warnings"].append(
+                f"{tool_name}: the fresh subprocess ALSO reported its own "
+                "module graph as stale and refused before writing — this "
+                "is the CHILD's own (verified, nothing-touched) refusal, "
+                "returned as-is, not a fabricated wrapper-level one."
+            )
+        else:
+            result["warnings"].append(
+                f"{tool_name}: the fresh subprocess ALSO reported its own "
+                "module graph as stale (status="
+                f"{result.get('status')!r}) — returned as-is, not a "
+                "fabricated wrapper-level refusal. Whether anything was "
+                "written depends on the CHILD's own status, not on this "
+                "flag alone."
+            )
         return result
 
     result["executed_via"] = "fresh_subprocess"

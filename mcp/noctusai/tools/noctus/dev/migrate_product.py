@@ -1283,6 +1283,35 @@ def migrate_product(
             ),
         )
 
+    # ── Refuse an unverifiable schema in sha= + confirm=True mode ─────────────
+    # (N3, compliance review, 2026-09-24): `schema_source == 'slug_fallback'`
+    # in `sha=` mode means `app/main.py` was UNREADABLE at that commit (no
+    # such file, or the AST parse found no `schema="..."` literal) — F8(e)'s
+    # `_schema_from_main_py_at_sha` fell all the way back to the naive
+    # slug-transform, not because that's confirmed correct, but because
+    # nothing better could be read. Applying `sha`'s migrations against a
+    # GUESSED schema is exactly the silent-wrong-schema risk F8(e) exists to
+    # close — safe to keep DRY-RUNNING against the guess (so a caller can
+    # still see what WOULD be pending), but a `confirm=True` write must
+    # refuse rather than run DDL against an unverified target.
+    if sha and confirm and schema_source == "slug_fallback":
+        return _result(
+            "error",
+            error=(
+                f"migrate_product: refusing confirm=True — schema_source="
+                f"'slug_fallback' in sha= mode means products/{product}/"
+                f"backend/app/main.py could not be read (or had no "
+                f"schema=\"...\" literal) at sha={sha!r}, so the schema "
+                f"{derived_schema!r} is a GUESS (naive slug-transform), "
+                "not a verified declaration. Applying DDL against an "
+                "unverified schema risks the silent-wrong-schema class "
+                "F8(e) closes for the readable case. Pass a sha where "
+                "app/main.py exists and declares schema=..., or pass "
+                "schema= explicitly if you have independently verified "
+                "the correct target."
+            ),
+        )
+
     # ── Resolve executor ──────────────────────────────────────────────────────
     if executor is None:
         executor = make_sql_executor(project_ref=project_ref)
@@ -1412,7 +1441,17 @@ def migrate_product(
             (f, (content := f.read_text(encoding="utf-8")), _checksum(content))
             for f in pending
         ]
-    except (OSError, GitQueryError) as exc:
+    except (OSError, GitQueryError, UnicodeDecodeError) as exc:
+        # N5 (compliance review, 2026-09-24): `UnicodeDecodeError` — a
+        # migration file (or a `sha=`-mode git-blob read) whose bytes
+        # aren't valid UTF-8 — is caught HERE too, not just OSError/
+        # GitQueryError. Unlike toolkit_freshness's subprocess-fallback
+        # (N1), this read happens entirely BEFORE the DDL-applying loop
+        # below even starts (it's a plain Python list comprehension, no
+        # subprocess in flight to have "already launched"), so treating it
+        # as a clean pre-write refusal is accurate here — nothing has
+        # touched the database yet regardless of which of these three
+        # exception types fired.
         return _result(
             "error",
             skipped_already_applied=skipped,
