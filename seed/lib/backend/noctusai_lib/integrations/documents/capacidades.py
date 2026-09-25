@@ -162,6 +162,10 @@ CAPACIDADES: dict[str, frozenset[str]] = {
             "prazo_meses", "taxa_nominal_aa", "taxa_efetiva_aa",
             "sistema_amortizacao", "compradores", "vendedores",
             "conta_credito_vendedor",
+            # A signed contract whose Quadro Resumo was found is what makes
+            # `financiamento.situacao='aprovado'` a document fact (owner H6);
+            # the SW Fonte cites it, so the reader must declare it.
+            "quadro_encontrado",
         }
     ),
     "proposta_financiamento": frozenset(
