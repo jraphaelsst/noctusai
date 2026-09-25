@@ -97,7 +97,11 @@ def register() -> Any:
     `ModuleRegistration` here is not circular (same pattern as
     `app.modules.n8n.register`)."""
     from app.main import ModuleRegistration
-    from app.modules.card_hub import documentos_service, financiamento_service
+    from app.modules.card_hub import (
+        documentos_service,
+        financiamento_service,
+        negociacao_extracao_service,
+    )
     from app.modules.card_hub.router import defaults_router, proveniencia_router, router
 
     # Configured at import time — before `start_scheduler()` fires in
@@ -108,6 +112,10 @@ def register() -> Any:
     # needs collecting, while the atendimento clock is DERIVED from the deal's
     # `closed_at` and has to be re-derived each run (migration 079).
     financiamento_service.configure()
+    # S2 contract §E3.3 — the negociação/financiamento extraction D3
+    # recovery sweep (guia_itbi / proposta_financiamento / contrato_
+    # financiamento), built on the shared `app.services.extracao_varredura`.
+    negociacao_extracao_service.configure()
 
     return ModuleRegistration(
         routers=[router, defaults_router, proveniencia_router], standard_routers=()

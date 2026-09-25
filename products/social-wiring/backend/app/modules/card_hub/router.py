@@ -53,6 +53,8 @@ from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import empresas_service as empresas_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
+from app.modules.card_hub import negociacao_estruturada_service as neg_estruturada_svc
+from app.modules.card_hub import negociacao_extracao_service as negociacao_extracao_svc
 from app.modules.card_hub import negociacao_service as negociacao_svc
 from app.modules.card_hub.assinatura_router import router as assinatura_router
 from app.modules.card_hub.auth import auth_parts
@@ -96,6 +98,7 @@ from app.modules.card_hub.schemas import (
     ExtracaoSugestaoBody,
     PartePapelPatchBody,
     ProcessoLegadoBody,
+    ResolverConflitoNegociacaoBody,
     RoteiroCreateBody,
     RoteiroOrdemBody,
     RoteiroPatchBody,
@@ -1101,10 +1104,64 @@ async def patch_negociacao_route(
     # (clearing a valor entered by mistake), so absence is the only thing
     # that can mean "leave alone".
     valores = {k: getattr(body, k) for k in body.model_fields_set}
-    return negociacao_svc.atualizar(
+    resultado = negociacao_svc.atualizar(
         client, org_id, cliente_id, valores=valores,
         usuario_id=getattr(user, "id", None),
     )
+    # H4 — a `valor_negociado` PATCH is one of the derived intermediária
+    # suggestion's inputs; recompute it here rather than inside
+    # `negociacao_service`/`negociacao_estruturada_service` themselves,
+    # which would need a cross-module import cycle (the ROUTER already
+    # imports both services, so it is the natural orchestration point).
+    if "valor_negociado" in valores:
+        neg_estruturada_svc.sincronizar_parcela_intermediaria_derivada(
+            client, org_id, cliente_id,
+        )
+    return resultado
+
+
+# ─── Negociação — D2 conflitos (S2 contract §E5.4) ──────────────────────
+
+
+@router.get("/{cliente_id}/negociacao/conflitos")
+async def list_negociacao_conflitos_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Every pending `atendimento_campo_conflitos` row for this deal — the
+    admin's queue (house envelope: `{"items": [...]}`)."""
+    _user, org_id = _auth_parts(auth)
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    items = negociacao_extracao_svc.listar_conflitos(client, org_id, atendimento_id)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/{cliente_id}/negociacao/conflitos/{conflito_id}/resolver")
+async def resolver_negociacao_conflito_route(
+    cliente_id: UUID,
+    conflito_id: UUID,
+    body: ResolverConflitoNegociacaoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Accept or reject a pending conflict — owner/admin only, same
+    restriction `decidir_conflito_route` takes for migration 138: deciding a
+    conflict IS the "admin confirmation" the D1/D2 contract names."""
+    user, org_id = _auth_parts(auth)
+    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="Decidir um conflito de dados é restrito a administradores.",
+        )
+    resultado = negociacao_extracao_svc.resolver_conflito(
+        client, org_id, conflito_id,
+        aceitar=body.decisao == "aceitar",
+        decidido_por=getattr(user, "id", None),
+    )
+    # An accepted valor_negociado/parcela conflict is also an H4 input.
+    neg_estruturada_svc.sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
+    return resultado
 
 
 # ─── Financiamento / Escritura (migration 078) ──────────────────────────
@@ -1138,15 +1195,17 @@ async def patch_financiamento_route(
 @router.post("/{cliente_id}/financiamento/documentos")
 async def upload_financiamento_documento_route(
     cliente_id: UUID,
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     tipo_documento: str = Form(...),
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
     storage=Depends(get_storage_backend),
+    extractor_factory=Depends(get_identity_extractor_factory),
 ) -> dict:
     user, org_id = _auth_parts(auth)
     data = await file.read()
-    return await financiamento_svc.upload(
+    documento = await financiamento_svc.upload(
         client,
         storage,
         org_id,
@@ -1156,6 +1215,91 @@ async def upload_financiamento_documento_route(
         data=data,
         tipo_documento=tipo_documento,
         enviado_por=getattr(user, "id", None),
+    )
+    # S2 contract §E1 — the extractor factory routes on `fontes.FONTES[tipo]
+    # .extrator`, the same seam `deps._build_identity_extractor` already
+    # uses for `serasa_crednet`/`cartao_cnpj` (widened here for `guia_itbi`/
+    # `proposta_financiamento`/`contrato_financiamento`).
+    if financiamento_svc.deve_extrair(tipo_documento):
+        atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+        background.add_task(
+            negociacao_extracao_svc.extrair,
+            client, storage, org_id, atendimento_id, UUID(documento["id"]),
+            extractor=extractor_factory(str(org_id), tipo_documento),
+            # NOC-REMEDIATE[atendimento-conflito-notificacao] — no atendimento-
+            # scoped notifier exists yet (`app/services/notification_service.py`
+            # is outside this slice's file scope); `campo_conflitos.
+            # notificar_conflitos` degrades to a WARNING log naming every
+            # unannounced conflict, never a silent drop.
+            notification_service=None,
+        )
+    return documento
+
+
+@router.post("/{cliente_id}/financiamento/documentos/{documento_id}/extrair")
+async def reextrair_financiamento_documento_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    background: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+    extractor_factory=Depends(get_identity_extractor_factory),
+) -> dict:
+    """Re-run extraction. Refused (422) while the document is already
+    `pendente`/`processando` — same posture `empresas.router.
+    reextrair_documento_route` takes (S2 contract §E5.1)."""
+    from noctusai_lib.primitives.exceptions import ValidationError_
+
+    _user, org_id = _auth_parts(auth)
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    documento = financiamento_svc.STORE.exigir(client, org_id, atendimento_id, documento_id)
+    if documento.get("extracao_status") in ("pendente", "processando"):
+        raise ValidationError_(
+            "Este documento já está em processamento.", field="extracao_status"
+        )
+    from app.services import table_reads as _table_reads
+
+    _table_reads.table(client, financiamento_svc.DOCUMENTOS_TABLE).update(
+        {"extracao_status": "pendente"}
+    ).eq("id", str(documento_id)).execute()
+    background.add_task(
+        negociacao_extracao_svc.extrair,
+        client, storage, org_id, atendimento_id, documento_id,
+        extractor=extractor_factory(str(org_id), documento["tipo_documento"]),
+        notification_service=None,
+    )
+    return {**documento, "extracao_status": "pendente"}
+
+
+@router.post("/{cliente_id}/financiamento/documentos/{documento_id}/extracao/confirmar")
+async def confirmar_financiamento_extracao_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """D2 — stamps `confirmado_por`/`confirmado_em` on every still-pending
+    value whose `*_documento_id == documento_id` (S2 contract §E5.2)."""
+    user, org_id = _auth_parts(auth)
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    financiamento_svc.STORE.exigir(client, org_id, atendimento_id, documento_id)
+    return negociacao_extracao_svc.confirmar_leitura(
+        client, org_id, atendimento_id, documento_id,
+        confirmado_por=getattr(user, "id", None),
+    )
+
+
+@router.post("/{cliente_id}/financiamento/documentos/{documento_id}/extracao/descartar")
+async def descartar_financiamento_extracao_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    user, org_id = _auth_parts(auth)
+    return financiamento_svc.descartar_extracao(
+        client, org_id, cliente_id, documento_id, usuario_id=getattr(user, "id", None),
     )
 
 

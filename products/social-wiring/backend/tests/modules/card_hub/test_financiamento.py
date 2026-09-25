@@ -162,6 +162,44 @@ class TestDocuments:
         assert r.status_code == 400
         assert "passaporte" in r.text
 
+    def test_a_negociacao_document_uploads_into_its_own_group(
+        self, client, scoped, fake_storage, fake_identity_extractor
+    ):
+        """S2 contract §A — `guia_itbi`/`proposta_financiamento`/
+        `contrato_financiamento` render under a THIRD section, distinct
+        from `escritura`/`fgts`. `fake_identity_extractor` overrides the
+        extractor-factory DI seam so the scheduled background extraction
+        never reaches a real (S1) factory."""
+        cid, aid = _seed(scoped)
+        scoped.set_table_data("atendimento_partes", [])
+        scoped.set_table_data("atendimento_negociacao", [])
+        scoped.set_table_data("atendimento_negociacao_parcelas", [])
+        scoped.set_table_data("atendimento_campo_conflitos", [])
+        scoped.set_table_data("agentes_financeiros", [])
+        r = _upload(client, cid, tipo="guia_itbi")
+        assert r.status_code == 200
+        assert r.json()["grupo"] == "financiamento_negociacao"
+        assert r.json()["extracao_status"] == "pendente"
+
+    def test_comprovante_itbi_uploads_but_is_never_marked_for_extraction(
+        self, client, scoped, fake_storage
+    ):
+        """§H10 — archive only, no extraction lifecycle."""
+        cid, aid = _seed(scoped)
+        r = _upload(client, cid, tipo="comprovante_itbi")
+        assert r.status_code == 200
+        assert r.json()["extracao_status"] is None
+
+    def test_dps_is_refused_by_construction(self, client, scoped, fake_storage):
+        """§H8 (owner, binding) — DPS is never stored; it is not a member
+        of any `TIPOS_*` tuple, so the upload is refused the same way an
+        unknown type is (never a runtime special case)."""
+        cid, aid = _seed(scoped)
+        r = _upload(client, cid, tipo="dps")
+        assert r.status_code == 400
+        rows = scoped.table("atendimento_documentos").select("*").execute().data
+        assert rows == []
+
     def test_the_storage_key_starts_with_the_org_id(
         self, client, scoped, fake_storage
     ):

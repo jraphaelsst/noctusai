@@ -228,6 +228,16 @@ class DecidirConflitoBody(StrictHttpModel):
     aceitar: bool
 
 
+class ResolverConflitoNegociacaoBody(StrictHttpModel):
+    """An admin's decision on an `atendimento_campo_conflitos` row (S2
+    contract §E5.4). `decisao='aceitar'` applies `valor_proposto` onto the
+    target column/row; `decisao='rejeitar'` leaves it untouched — same
+    posture `DecidirConflitoBody` takes, string-keyed (not `aceitar: bool`)
+    to match the FE's `{decisao: "aceitar"|"rejeitar"}` body exactly."""
+
+    decisao: Literal["aceitar", "rejeitar"]
+
+
 class DocumentoChecklistPatchBody(StrictHttpModel):
     """Set or clear the human override on one canonical item.
 

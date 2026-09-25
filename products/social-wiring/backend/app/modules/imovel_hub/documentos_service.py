@@ -804,6 +804,9 @@ async def extrair_estrutura(
 ESTRUTURA_STALE_APOS = timedelta(minutes=20)
 
 
+#: NOC-REMEDIATE[dry-extracao-varredura]: same shape as `matricula_
+#: extracao_service.varrer_pendentes` — see that function's own marker
+#: (S2 contract §E3.3) — 2026-09-25.
 async def varrer_estrutura_pendentes(
     client: Any,
     storage: StorageBackend,

@@ -215,6 +215,11 @@ def _favorecido_out(row: dict) -> dict:
         "agencia": row.get("agencia"),
         "conta": row.get("conta"),
         "pix": row.get("pix"),
+        # S2 contract §C.6/§H5 — NULL for every favorecido typed by hand
+        # (unchanged behaviour); set when the Quadro Resumo's seller credit
+        # account filled this row.
+        "origem": row.get("origem"),
+        "documento_id": row.get("documento_id"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -724,10 +729,16 @@ def _apagar_links(client: Any, org_id: UUID, parcela_id: Any) -> None:
 
 
 def _parcela_out(row: dict, links: dict[str, list[str]]) -> dict:
+    valor = _dec(row.get("valor"))
     return {
         "id": row["id"],
         "tipo": row["tipo"],
-        "valor": str(_dec(row.get("valor")) or Decimal("0")),
+        # 🔴 `None`, not `"0"` — migration 171 made `valor` nullable so a D2
+        # reject on a machine-sourced parcela can empty it without deleting
+        # the row (`derivacao.py` already treats `valor is None` as falta).
+        # Coercing to `"0"` here would silently hide a real falta as a
+        # deal worth nothing.
+        "valor": None if valor is None else str(valor),
         "vencimento": row.get("vencimento"),
         "evento": row.get("evento"),
         "forma_pagamento": row.get("forma_pagamento"),
@@ -736,6 +747,13 @@ def _parcela_out(row: dict, links: dict[str, list[str]]) -> dict:
         "dispara_corretagem": bool(row.get("dispara_corretagem", False)),
         "permuta_ativo_ids": list(links.get(str(row["id"]), [])),
         "ordem": row.get("ordem", 0),
+        # S2 contract §E5.5 — `None` for every parcela created before
+        # migration 171 or typed by hand; `derivado` for the H4 suggestion.
+        "origem": row.get("origem"),
+        "documento_id": row.get("documento_id"),
+        "extraido_em": row.get("extraido_em"),
+        "confirmado_por": row.get("confirmado_por"),
+        "confirmado_em": row.get("confirmado_em"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
     }
@@ -812,12 +830,21 @@ def criar_parcela(
         "confissao_divida": bool(valores.get("confissao_divida", False)),
         "dispara_corretagem": bool(valores.get("dispara_corretagem", False)),
         "ordem": ordem,
+        # S2 contract §C.7 — a human-created parcela is 'manual',
+        # confirmed-by-construction (same convention every other D1 writer
+        # in this product uses).
+        "origem": "manual",
+        "documento_id": None,
+        "extraido_em": None,
+        "confirmado_por": str(usuario_id) if usuario_id else None,
+        "confirmado_em": _now(),
         "created_at": _now(),
         "created_por": str(usuario_id) if usuario_id else None,
     }
     _t(client, TABLE_PARCELAS).insert(row).execute()
     # After the parcela exists: migration 114's link trigger reads its tipo.
     _gravar_links(client, org_id, row["id"], ativos, usuario_id=usuario_id)
+    sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
     return obter_estruturada(client, org_id, cliente_id)
 
 
@@ -855,6 +882,15 @@ def atualizar_parcela(
             continue
         if campo == "valor":
             patch[campo] = str(_dec(valores[campo]))
+            # S2 contract §C.7 — a human PATCH of `valor` is ALWAYS 'manual',
+            # confirmed-by-construction. Without this, a human edit over a
+            # machine-pending/derived parcela would keep reading as pending.
+            now_prov = _now()
+            patch["origem"] = "manual"
+            patch["documento_id"] = None
+            patch["extraido_em"] = None
+            patch["confirmado_por"] = str(usuario_id) if usuario_id else None
+            patch["confirmado_em"] = now_prov
         elif campo == "favorecido_id":
             if valores[campo]:
                 _exigir_favorecido(client, org_id, atendimento_id, UUID(str(valores[campo])))
@@ -877,6 +913,7 @@ def atualizar_parcela(
     ).execute()
     if substituir_links:
         _gravar_links(client, org_id, str(parcela_id), links_finais, usuario_id=usuario_id)
+    sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
     return obter_estruturada(client, org_id, cliente_id)
 
 
@@ -884,7 +921,7 @@ def remover_parcela(
     client: Any, org_id: UUID, cliente_id: UUID, parcela_id: UUID,
 ) -> None:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    _exigir_parcela(client, org_id, atendimento_id, parcela_id)
+    atual = _exigir_parcela(client, org_id, atendimento_id, parcela_id)
 
     # A parcela named as a posse marco cannot vanish from under the clause
     # that cites it — migration 114's FK is NO ACTION on purpose; this is the
@@ -907,6 +944,15 @@ def remover_parcela(
     _t(client, TABLE_PARCELAS).delete().eq("org_id", str(org_id)).eq(
         "id", str(parcela_id)
     ).execute()
+
+    # H4: a user explicitly dismissing the DERIVED suggestion must not see
+    # it instantly reappear — only resync when the deleted row was one of
+    # the suggestion's OWN inputs (a sinal/financiamento parcela).
+    era_sugestao_derivada = (
+        atual["tipo"] == TIPO_INTERMEDIARIA and atual.get("origem") == "derivado"
+    )
+    if not era_sugestao_derivada:
+        sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
 
 
 def dividir_saldo_em_parcelas(
@@ -961,7 +1007,124 @@ def dividir_saldo_em_parcelas(
             "created_por": str(usuario_id) if usuario_id else None,
         })
     _t(client, TABLE_PARCELAS).insert(rows).execute()
+    sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
     return obter_estruturada(client, org_id, cliente_id)
+
+
+# ─── H4: derived "intermediária" suggestion ────────────────────────────────
+#
+# S2 contract `sw-negociacao-extracao-contract.md` §H4 (owner, binding):
+# "YES, offer intermediária = valor − sinal − Σ financiamento as a derived
+# suggestion (origem 'derivado', D2-pending)."
+#
+# 🔴 MATERIALISED AS A REAL `atendimento_negociacao_parcelas` ROW, not a
+# read-time-only computed field. A D2 confirm/reject action needs an `id` to
+# target, and `contrato_gerador` prints whatever parcelas exist — a
+# suggestion that never becomes a row could never be accepted OR blocked by
+# the validation gate the way every other machine-pending value is. The row
+# is `origem='derivado'`, `confirmado_em=None` — machine-pending, exactly
+# like an extracted value, until a human confirms or types over it.
+#
+# 🔴 NEVER CALLED FROM `obter_estruturada` — that function stays read-only
+# (this module's own header: "saldo_nao_alocado and completude NEVER
+# BLOCK A SAVE" / no writes on read). Every caller of THIS function is
+# itself a write: this module's own parcela mutators, `card_hub.router.
+# patch_negociacao_route` (when `valor_negociado` moves), and
+# `negociacao_extracao_service.aplicar_leitura`.
+
+TIPO_INTERMEDIARIA = "intermediaria"
+
+
+def sincronizar_parcela_intermediaria_derivada(
+    client: Any, org_id: UUID, cliente_id: UUID,
+) -> Optional[dict]:
+    """Recompute (or create) the derived intermediária suggestion for this
+    atendimento, from its CURRENT `valor_negociado` and parcelas.
+
+    A human-typed (or extraction-confirmed) intermediária — `origem` NOT
+    `'derivado'` — is NEVER touched: H4's "never overwrite a typed value"
+    applies to the WHOLE row, not just its `valor`. With no `valor_
+    negociado` yet, there is nothing to suggest (`None`).
+
+    🔴 ONLY OFFERED ONCE THE DEAL ACTUALLY HAS A FINANCIAMENTO PARCELA.
+    H4's formula ("valor − sinal − Σ financiamento") is a bank-financing
+    suggestion — with no financiamento parcela at all, "valor − sinal − 0"
+    is not distinguishing anything a `saldo_nao_alocado` line does not
+    already say, and creating that row on the FIRST unrelated parcela write
+    (a `saldo` split, a manual `sinal`/`direta` entry — see the caller list
+    below) would silently inject an extra, unrequested parcela into every
+    cash deal's schedule. This is also why the callers are deliberately
+    NARROW: `negociacao_extracao_service.aplicar_leitura` (a financiamento
+    parcela just landed or moved) and `card_hub.router.patch_negociacao_
+    route` (`valor_negociado` moved) — NOT this module's own manual parcela
+    CRUD, which would fire the sync on every `sinal`/`saldo`/`direta` write
+    regardless of whether financing is even part of the deal.
+
+    Idempotent: recomputing to the SAME value is a no-op (no spurious
+    `updated_at` churn).
+    """
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    negociacao = negociacao_service.obter(client, org_id, cliente_id)
+    valor_negociado = _dec(negociacao.get("valor_negociado"))
+    if valor_negociado is None:
+        return None
+
+    parcelas = _listar_parcelas_rows(client, org_id, atendimento_id)
+    intermediarias = [p for p in parcelas if p["tipo"] == TIPO_INTERMEDIARIA]
+    if any((p.get("origem") or "manual") != "derivado" for p in intermediarias):
+        return None
+    if not any(p["tipo"] == "financiamento" for p in parcelas):
+        return None
+
+    soma_sinal = sum(
+        (_dec(p.get("valor")) or Decimal("0")) for p in parcelas if p["tipo"] == "sinal"
+    )
+    soma_financiamento = sum(
+        (_dec(p.get("valor")) or Decimal("0"))
+        for p in parcelas if p["tipo"] == "financiamento"
+    )
+    sugerido = valor_negociado - soma_sinal - soma_financiamento
+    if sugerido < 0:
+        # A negative suggestion is not a payable installment — floor at
+        # zero rather than violate the `valor >= 0` CHECK (071 shape).
+        sugerido = Decimal("0.00")
+
+    if intermediarias:
+        atual = intermediarias[0]
+        if _dec(atual.get("valor")) == sugerido:
+            return _parcela_out(atual, {})
+        patch = {
+            "valor": str(sugerido),
+            "extraido_em": _now(),
+            "updated_at": _now(),
+        }
+        _t(client, TABLE_PARCELAS).update(patch).eq("id", atual["id"]).execute()
+        return _parcela_out({**atual, **patch}, {})
+
+    ordem = max((p.get("ordem", 0) for p in parcelas), default=-1) + 1
+    row = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        "atendimento_id": str(atendimento_id),
+        "tipo": TIPO_INTERMEDIARIA,
+        "valor": str(sugerido),
+        "vencimento": None,
+        "evento": None,
+        "forma_pagamento": None,
+        "favorecido_id": None,
+        "confissao_divida": False,
+        "dispara_corretagem": False,
+        "ordem": ordem,
+        "origem": "derivado",
+        "documento_id": None,
+        "extraido_em": _now(),
+        "confirmado_por": None,
+        "confirmado_em": None,
+        "created_at": _now(),
+        "created_por": None,
+    }
+    _t(client, TABLE_PARCELAS).insert(row).execute()
+    return _parcela_out(row, {})
 
 
 # ─── termos do negócio (114) ──────────────────────────────────────────────
@@ -1176,14 +1339,36 @@ def obter_estruturada(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
 
     valor_negociado = _dec(negociacao.get("valor_negociado"))
     saldo_nao_alocado: Optional[str] = None
+    # S2 contract §B/§E5.5 — "recursos próprios", the arithmetic guard
+    # against the Quadro Resumo's printed value: `valor_negociado − Σ
+    # financiamento parcelas`. Distinct from `saldo_nao_alocado` (which
+    # nets against EVERY parcela) — `a_distribuir` only nets financing out,
+    # so it reads as "how much of the price is NOT bank money" even before
+    # sinal/intermediária/saldo have been scheduled.
+    a_distribuir: Optional[str] = None
     if valor_negociado is not None:
         alocado = sum((_dec(p.get("valor")) or Decimal("0")) for p in parcelas_rows)
         saldo_nao_alocado = str(valor_negociado - alocado)
+        financiado = sum(
+            (_dec(p.get("valor")) or Decimal("0"))
+            for p in parcelas_rows if p["tipo"] == "financiamento"
+        )
+        a_distribuir = str(valor_negociado - financiado)
+
+    # S2 contract §E5.5 (FE consumer note, 2026-09-25) — the flat
+    # `valor_negociado_*` quintet, passed through verbatim from
+    # `negociacao_service.obter()`'s own flat keys.
+    valor_negociado_quintet = {
+        f"valor_negociado_{campo}": negociacao.get(f"valor_negociado_{campo}")
+        for campo in ("origem", "documento_id", "em", "confirmado_por", "confirmado_em")
+    }
 
     return {
         "atendimento_id": str(atendimento_id),
         "valor_negociado": negociacao.get("valor_negociado"),
+        **valor_negociado_quintet,
         "saldo_nao_alocado": saldo_nao_alocado,
+        "a_distribuir": a_distribuir,
         # LEGACY (114): superseded by `termos.posse_*` / permuta parcelas —
         # still returned for the existing panel.
         "posse_data": negociacao.get("posse_data"),
@@ -1212,6 +1397,7 @@ __all__ = [
     "TERMOS_CAMPOS",
     "TIPOS_INTERMEDIARIO",
     "TIPOS_PARCELA",
+    "TIPO_INTERMEDIARIA",
     "atualizar_favorecido",
     "atualizar_intermediario",
     "atualizar_parcela",
@@ -1220,6 +1406,7 @@ __all__ = [
     "criar_intermediario",
     "criar_parcela",
     "dividir_saldo_em_parcelas",
+    "sincronizar_parcela_intermediaria_derivada",
     "obter_estruturada",
     "remover_favorecido",
     "remover_intermediario",

@@ -61,12 +61,43 @@ def _canonicos_do_registro() -> dict[tuple[str, str], frozenset[str]]:
     return out
 
 
+#: The S2 negociação/financiamento extraction contract's own translation —
+#: S2b's `ENTIDADE_NEGOCIACAO`/`ENTIDADE_PARCELA`/`ENTIDADE_FAVORECIDO`/
+#: `ENTIDADE_FINANCIAMENTO` REGISTRO entries (`contrato_gerador.
+#: validacao_extracao.py`, that slice's own file — not touched here) name
+#: their fields identically to S2b's OWN entidade strings (`"negociacao"`,
+#: `"parcela"`, `"favorecido"`, `"financiamento"`), so this dict is added
+#: statically rather than derived from a `vx.CAMPOS_*` constant the way
+#: `_canonicos_do_registro()` does for CLIENTE/IMOVEL — those constants
+#: are S2b's, not on this branch (parallel dispatch; the two slices merge
+#: separately). Several source field names differ per document type for
+#: the SAME target (`valor_negociado` reads `valor_transacao` off a
+#: `guia_itbi` and `valor_compra_venda` off a contrato/proposta) — the
+#: canonical SET carries every one of them, same "many-to-one" shape
+#: `fontes.RENOMEADOS_CAMPO` solves for the cliente side.
+_CANONICOS_REGISTRO_NEGOCIACAO: dict[tuple[str, str], frozenset[str]] = {
+    ("negociacao", "valor_negociado"): frozenset({"valor_transacao", "valor_compra_venda"}),
+    ("parcela", "valor"): frozenset({"valor_financiado", "valor_fgts"}),
+    ("favorecido", "dados"): frozenset({"conta_credito_vendedor"}),
+    ("financiamento", "fgts"): frozenset({"valor_fgts"}),
+    ("financiamento", "numero_proposta"): frozenset({"numero_proposta"}),
+    ("financiamento", "agente_financeiro"): frozenset({"banco_codigo"}),
+    # H6 — `situacao` has no printed label of its own; it is INFERRED from
+    # `quadro_encontrado` (a real `FinanciamentoFields` field, claimed on
+    # `contrato_financiamento`'s own `Fonte` for exactly this mapping).
+    ("financiamento", "situacao"): frozenset({"quadro_encontrado"}),
+}
+
 #: `(entidade, campo) -> canonical field name(s)` for every `REGISTRO`
 #: field `fontes.FONTES` can claim via its `campos` set (CAMPOS_CLIENTE +
-#: `imovel.numero_matricula`). Every other `REGISTRO` field is either
-#: `CAMPO_IMOVEL_DOCUMENTO` (matched below via `estrutura_extraivel`,
-#: not `campos`) or in `fontes.FORA_DO_ESCOPO_S1`.
-CANONICOS_REGISTRO: dict[tuple[str, str], frozenset[str]] = _canonicos_do_registro()
+#: `imovel.numero_matricula`, plus the S2 negociação/financiamento overlay
+#: above). Every other `REGISTRO` field is either `CAMPO_IMOVEL_DOCUMENTO`
+#: (matched below via `estrutura_extraivel`, not `campos`) or in
+#: `fontes.FORA_DO_ESCOPO_S1`.
+CANONICOS_REGISTRO: dict[tuple[str, str], frozenset[str]] = {
+    **_canonicos_do_registro(),
+    **_CANONICOS_REGISTRO_NEGOCIACAO,
+}
 
 #: `REGISTRO` fields this slice walks — every `CampoValidavel` EXCEPT the
 #: two whose "document" is not one of the three joined tables. See the

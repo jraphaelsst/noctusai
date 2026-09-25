@@ -1716,6 +1716,9 @@ def _candidatos_varredura(client: Any, limite: int) -> list[dict]:
     return linhas[:limite]
 
 
+#: NOC-REMEDIATE[dry-extracao-varredura]: same shape as `imovel_hub.
+#: matricula_extracao_service.varrer_pendentes` — see that function's own
+#: marker (S2 contract §E3.3) — 2026-09-25.
 async def varrer_extracoes_pendentes(
     client: Any,
     storage: StorageBackend,

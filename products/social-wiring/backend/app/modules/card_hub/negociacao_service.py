@@ -364,6 +364,12 @@ def _saida(
             "existe",
         )
     }
+    # S2 contract §C.3/§E5.5 — `valor_negociado`'s D1 quintet, FLAT (FE
+    # consumer note, 2026-09-25 — S3 reads these keys directly, not a
+    # nested `_proveniencia` dict). `None` on every quintet field for a
+    # manually-typed or not-yet-set value — no provenance to show.
+    for campo in ("origem", "documento_id", "em", "confirmado_por", "confirmado_em"):
+        out[f"valor_negociado_{campo}"] = row.get(f"valor_negociado_{campo}")
 
     # 🔴 EVERY NUMERIC LEAVES AS A STRING, INCLUDING THE STORED INPUTS.
     #
@@ -498,6 +504,20 @@ def atualizar(
     for campo in ("valor_negociado", "pct_comissao", "pct_parceria", *_PERCENTUAIS_INTERNOS):
         if campo in patch and patch[campo] is not None:
             patch[campo] = str(_dec(patch[campo]))
+
+    # 🔴 A human PATCH of `valor_negociado` is ALWAYS 'manual',
+    # confirmed-by-construction (S2 contract §C.7 — "manual writers must
+    # stamp provenance", same convention `clientes_service.update_cliente`
+    # uses). Without this, a human edit over a machine-pending value would
+    # leave it reading as still-pending and keep blocking `gerar` (409) on a
+    # value a person just typed.
+    if "valor_negociado" in patch:
+        now_prov = _now()
+        patch["valor_negociado_origem"] = "manual"
+        patch["valor_negociado_documento_id"] = None
+        patch["valor_negociado_em"] = now_prov
+        patch["valor_negociado_confirmado_por"] = str(usuario_id) if usuario_id else None
+        patch["valor_negociado_confirmado_em"] = now_prov
 
     if "imovel_codigo" in patch:
         patch["imovel_codigo"] = _canonizar_imovel(client, org_id, patch["imovel_codigo"])

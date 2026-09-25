@@ -236,6 +236,13 @@ def _stale_cutoff() -> str:
     return (datetime.now(timezone.utc) - STALE_APOS).isoformat()
 
 
+#: NOC-REMEDIATE[dry-extracao-varredura]: this sweep's candidate-selection
+#: shape (stale non-terminal / never-started / retryable-error) is now
+#: shared in `app.services.extracao_varredura` (S2 contract `sw-negociacao-
+#: extracao-contract.md` §E3.3 — `empresas.sweep_service` and
+#: `card_hub.negociacao_extracao_service` already migrated). Porting this
+#: one needs its own review (its candidate query is keyed differently —
+#: matrícula-extraction-specific columns) — 2026-09-25.
 async def varrer_pendentes(
     client: Any,
     storage: StorageBackend,

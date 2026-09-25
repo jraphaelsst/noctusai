@@ -44,13 +44,18 @@ class Entrada(str, Enum):
     VISTA_MIRROR = "vista_mirror"
     #: Pulled automatically by an API consulta bot (no human upload).
     CERTIDAO_ROBO = "certidao_robo"
+    #: Uploaded by an operator on the card_hub `/clientes` card's
+    #: Financiamento/Escritura tab (S2 contract §A) — a DEAL document
+    #: (guia_itbi / proposta_financiamento / contrato_financiamento), not a
+    #: person's or a property's.
+    ATENDIMENTO_CARD_UPLOAD = "atendimento_card_upload"
     #: Typed directly by a human — no document at all.
     MANUAL = "manual"
     #: Computed from other already-stored data — no document, no human typing.
     DERIVADO = "derivado"
 
 
-Dominio = Literal["cliente", "imovel", "empresa"]
+Dominio = Literal["cliente", "imovel", "empresa", "atendimento"]
 
 
 @dataclass(frozen=True)
@@ -297,6 +302,62 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
              "motivo_situacao", "uf"}
         ),
     ),
+    # ─── atendimento_documentos (card_hub/negociacao_extracao_service) —
+    # S2 contract `sw-negociacao-extracao-contract.md` §A/§D ─────────────────
+    Fonte(
+        tipo_documento="guia_itbi",
+        dominio="atendimento",
+        entradas=frozenset({Entrada.ATENDIMENTO_CARD_UPLOAD}),
+        extrator="noctusai_lib.integrations.documents.guia_itbi.make_guia_itbi_extractor",
+        origens=frozenset({"guia_itbi"}),
+        # `valor_venal`/`base_calculo`/`aliquota_pct`/`valor_itbi`/
+        # `vencimento`/`compradores`/`vendedores`/`inscricao_imobiliaria`/
+        # `numero_matricula` stay reading-only — cross-check inputs only
+        # (contract §B), never promoted to a column.
+        campos=frozenset({"valor_transacao"}),
+    ),
+    Fonte(
+        tipo_documento="proposta_financiamento",
+        dominio="atendimento",
+        entradas=frozenset({Entrada.ATENDIMENTO_CARD_UPLOAD}),
+        extrator=(
+            "noctusai_lib.integrations.documents.financiamento_imobiliario"
+            ".make_proposta_financiamento_extractor"
+        ),
+        origens=frozenset({"proposta_financiamento"}),
+        campos=frozenset(
+            {"valor_compra_venda", "valor_financiado", "valor_fgts",
+             "numero_proposta", "banco_nome", "banco_codigo"}
+        ),
+    ),
+    Fonte(
+        tipo_documento="contrato_financiamento",
+        dominio="atendimento",
+        entradas=frozenset({Entrada.ATENDIMENTO_CARD_UPLOAD}),
+        extrator=(
+            "noctusai_lib.integrations.documents.financiamento_imobiliario"
+            ".make_contrato_financiamento_extractor"
+        ),
+        origens=frozenset({"contrato_financiamento"}),
+        campos=frozenset(
+            {"valor_compra_venda", "valor_financiado", "valor_fgts",
+             "banco_nome", "banco_codigo", "conta_credito_vendedor",
+             # H6: the Quadro Resumo anchor itself — a real `FinanciamentoFields`
+             # field (§D.3), claimed here so `proveniencia.linhagem.
+             # CANONICOS_REGISTRO[("financiamento","situacao")]` resolves to a
+             # real FONTES-covered candidate rather than needing a
+             # MANUAL_APENAS placeholder for a fact that is NOT manual.
+             "quadro_encontrado"}
+        ),
+        # 🔴 `leitura_integral` NOT set here, deliberately: that flag drives
+        # `identidade_extracao_service.TIPOS_LEITURA_INTEGRAL` ->
+        # `paginas_maximas()` -> `make_identity_extractor`'s own page cap —
+        # a mechanism this Fonte never reaches (`_FACTORY_SHAPED_EXTRATORES`
+        # routes it to `make_contrato_financiamento_extractor` instead). The
+        # deterministic pass-1 (1..4) / pass-2 (5..8) Quadro Resumo targeting
+        # (contract §D.4) is the seed factory's OWN `janela_paginas`/
+        # `max_paginas_visao` parameters, never this flag.
+    ),
 )
 
 #: Keyed like `contrato_gerador.validacao_extracao._POR_ENTIDADE_CAMPO` —
@@ -321,6 +382,9 @@ ROTULOS_TIPO_DOCUMENTO: dict[str, str] = {
     "cnd_condominio": "CND de condomínio",
     "serasa_crednet": "Serasa Crednet",
     "cartao_cnpj": "Cartão CNPJ",
+    "guia_itbi": "Guia do ITBI",
+    "proposta_financiamento": "Proposta de financiamento",
+    "contrato_financiamento": "Contrato de financiamento imobiliário",
 }
 
 #: The table a `<campo>_documento_id` resolved into, mapped onto the
@@ -336,6 +400,7 @@ TABELA_ENTRADA: dict[str, Entrada] = {
     "imovel_documentos": Entrada.IMOVEL_PAGE_UPLOAD,
     "matricula_extracoes": Entrada.MATRICULAS,
     "empresa_documentos": Entrada.EMPRESA_CARD_UPLOAD,
+    "atendimento_documentos": Entrada.ATENDIMENTO_CARD_UPLOAD,
 }
 
 
@@ -360,9 +425,26 @@ def resolver_extrator(fonte: Fonte) -> Any:
 #: here, or named in `FORA_DO_ESCOPO_S1` below — never silently neither.
 MANUAL_APENAS: frozenset[str] = frozenset(
     {
-        "negociacao_valor", "negociacao_parcelas", "negociacao_favorecidos",
+        # 🔴 `negociacao_valor` DROPPED (S2 contract §B/§F): `valor_negociado`
+        # is now machine-sourced off `guia_itbi` / `proposta_financiamento` /
+        # `contrato_financiamento` (the three new `atendimento`-domain
+        # `Fonte`s above) — H2: no source is authoritative, so a disagreement
+        # is a conflict, never a silent overwrite, but the field IS
+        # FONTES-covered now. `financiamento` is DROPPED wholesale too:
+        # `fgts` / `numero_proposta` / `agente_financeiro` / `situacao` are
+        # ALL machine-sourced now (S2b's `ENTIDADE_FINANCIAMENTO` REGISTRO
+        # entries resolve via `proveniencia.linhagem.CANONICOS_REGISTRO` ∩
+        # `Fonte.campos` — `situacao` via the `quadro_encontrado` field on
+        # `contrato_financiamento`'s own `Fonte`, never a bare-string
+        # placeholder here). `negociacao_parcelas`/`negociacao_favorecidos`
+        # below are legacy documentation labels that never matched a real
+        # `REGISTRO` field name (S2b's actual field names are `parcela:valor`
+        # / `favorecido:dados`, both FONTES-covered — see the same
+        # `CANONICOS_REGISTRO` overlay); kept here as inert historical
+        # markers rather than removed mid-slice.
+        "negociacao_parcelas", "negociacao_favorecidos",
         "negociacao_termos", "confissao", "permuta_termos", "posse",
-        "financiamento", "intermediarios_qualificacao", "intermediarios_comissao",
+        "intermediarios_qualificacao", "intermediarios_comissao",
         "org_dados_cadastrais", "testemunhas", "parte_email",
         "assinatura_data", "contrato_modelo", "matricula_atos_selecionados",
         "permuta_ativo_endereco",

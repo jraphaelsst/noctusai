@@ -39,6 +39,9 @@ from app.services.documento_store import DocumentoStore, documento_base, now_iso
 logger = logging.getLogger(__name__)
 
 TABLE = "atendimento_financiamento"
+#: `STORE.table`, exposed so a sibling module (`negociacao_extracao_service`)
+#: can address the same rows without re-typing the literal.
+DOCUMENTOS_TABLE = "atendimento_documentos"
 
 SITUACOES: tuple[str, ...] = ("pendente", "aprovado", "recusado")
 
@@ -60,12 +63,52 @@ TIPOS_FGTS: tuple[str, ...] = (
     "comprovante_residencia_1ano",
 )
 
-TIPOS_DOCUMENTO: tuple[str, ...] = TIPOS_ESCRITURA + TIPOS_FGTS
+#: S2 contract §A — the ITBI/financiamento deal facts, shown under a NEW
+#: "Financiamento" section (as opposed to `TIPOS_ESCRITURA`'s always-shown
+#: section). `comprovante_itbi` is uploaded but never extracted (§H10,
+#: archive-only — see `deve_extrair`); `dps` is DELIBERATELY not a member of
+#: this tuple — see the module docstring below.
+TIPOS_NEGOCIACAO: tuple[str, ...] = (
+    "guia_itbi",
+    "comprovante_itbi",
+    "proposta_financiamento",
+    "contrato_financiamento",
+)
 
-#: 25 MB — an imposto de renda PDF with its recibo, or a photographed carteira
-#: de trabalho. Between the client-document ceiling and the imóvel's, and free
-#: to move independently of both.
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+#: 🔴 DPS (Declaração Pessoal de Saúde) IS NEVER STORED (owner H8, contract
+#: §A/§H8). It is not a member of `TIPOS_NEGOCIACAO`, `TIPOS_ESCRITURA` or
+#: `TIPOS_FGTS` — `STORE.validar` rejects `tipo_documento='dps'` by
+#: construction (`tipo_documento not in self.tipos` — refused-by-construction,
+#: not a runtime special case that could silently drift). Do not add it.
+
+#: Extractable subset of `TIPOS_NEGOCIACAO` — `comprovante_itbi` is stored for
+#: the archive only (§H10: the contract prints only who pays ITBI, never a
+#: read value off the receipt itself).
+TIPOS_NEGOCIACAO_EXTRAIVEIS: tuple[str, ...] = (
+    "guia_itbi",
+    "proposta_financiamento",
+    "contrato_financiamento",
+)
+
+#: The bank-financing document subset of `TIPOS_NEGOCIACAO` — distinct from
+#: `guia_itbi`/`comprovante_itbi` (a tax formality, not a bank document).
+#: Returned on `obter()` (FE consumer note, 2026-09-25) so the panel never
+#: hardcodes these two tipos to decide when to show the "Financiamento"
+#: document slots.
+TIPOS_FINANCIAMENTO_DOCS: tuple[str, ...] = (
+    "proposta_financiamento",
+    "contrato_financiamento",
+)
+
+TIPOS_DOCUMENTO: tuple[str, ...] = TIPOS_ESCRITURA + TIPOS_FGTS + TIPOS_NEGOCIACAO
+
+#: 30 MB — raised from 25 MB (S2 contract §A) to cover `contrato_
+#: financiamento`: a 25-page image-only bank contract, same reasoning
+#: `empresas` gave for its own 25MB->30MB bump. `app/main.py`'s
+#: `_MAX_BODY_PATH_OVERRIDES["/api/clientes/*/financiamento/documentos"]`
+#: already sits at 30MB — this keeps `STORE.validar`'s own ceiling from
+#: being the tighter (and therefore silently wrong) one.
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 ALLOWED_MIME_TYPES = frozenset(
     {"application/pdf", "image/jpeg", "image/png", "image/webp"}
 )
@@ -112,12 +155,42 @@ def _linha(client: Any, org_id: UUID, atendimento_id: UUID) -> Optional[dict]:
     return rows[0] if rows else None
 
 
+def deve_extrair(tipo_documento: str) -> bool:
+    """Does this tipo get a background extraction (S2 contract §A/§E1)?
+
+    `comprovante_itbi` is a `TIPOS_NEGOCIACAO` member (uploaded on the same
+    section, retained the same way) but is NOT extracted — §H10: the
+    contract prints only WHO pays ITBI, never a value read off the receipt.
+    """
+    return tipo_documento in TIPOS_NEGOCIACAO_EXTRAIVEIS
+
+
+def _grupo(tipo_documento: str) -> str:
+    """The section this document renders under — derived from tuple
+    membership (contract §A: "never from name patterns")."""
+    if tipo_documento in TIPOS_FGTS:
+        return "fgts"
+    if tipo_documento in TIPOS_NEGOCIACAO:
+        return "financiamento_negociacao"
+    return "escritura"
+
+
 def _documento_out(row: dict, resolved: dict) -> dict:
     return {
         **documento_base(row, resolved),
-        "grupo": "fgts" if row["tipo_documento"] in TIPOS_FGTS else "escritura",
+        "grupo": _grupo(row["tipo_documento"]),
         "categoria_lgpd": row.get("categoria_lgpd"),
         "retencao_ate": row.get("retencao_ate"),
+        # S2 contract §E5.5 — `obter()`'s per-document extraction block.
+        "extracao_status": row.get("extracao_status"),
+        "extracao_fonte": row.get("extracao_fonte"),
+        "extracao_erro": row.get("extracao_erro"),
+        "extracao_aviso": row.get("extracao_aviso"),
+        "extracao_dados": row.get("extracao_dados"),
+        "extracao_descartada_em": row.get("extracao_descartada_em"),
+        "extracao_descartada_por": table_reads.actor(
+            resolved, row.get("extracao_descartada_por")
+        ),
     }
 
 
@@ -126,6 +199,8 @@ def _saida(
     atendimento_id: UUID,
     documentos: list[dict],
     agente: Optional[dict] = None,
+    *,
+    tem_parcela_financiamento: bool = False,
 ) -> dict:
     """An atendimento with no financiamento row reads as `pendente`, empty.
 
@@ -144,14 +219,31 @@ def _saida(
         "created_at": None,
         "updated_at": None,
     }
+    # S2 contract §C.7/§E5.5 — the provenance quintet per column, so the FE
+    # can render a machine-pending badge without a second request.
+    prov: dict[str, Any] = {}
+    for campo in _CAMPOS_PROVENIENCIA:
+        prefixo = _PREFIXO_PROVENIENCIA[campo]
+        prov[f"{campo}_proveniencia"] = {
+            "origem": base.get(f"{prefixo}_origem"),
+            "documento_id": base.get(f"{prefixo}_documento_id"),
+            "em": base.get(f"{prefixo}_em"),
+            "confirmado_por": base.get(f"{prefixo}_confirmado_por"),
+            "confirmado_em": base.get(f"{prefixo}_confirmado_em"),
+        }
     return {
         "atendimento_id": str(atendimento_id),
         "situacao": base.get("situacao", "pendente"),
         "situacao_em": base.get("situacao_em"),
         "situacao_motivo": base.get("situacao_motivo"),
+        # S2 contract §C.5/H6 — flat, NOT nested under a `_proveniencia`
+        # dict (unlike `fgts`/`numero_proposta`/`agente_financeiro_id` above
+        # — FE consumer note, 2026-09-25: S3 reads this key directly).
+        "situacao_origem": base.get("situacao_origem"),
         "fgts": bool(base.get("fgts")),
         "observacoes": base.get("observacoes"),
         "agente_financeiro_id": base.get("agente_financeiro_id"),
+        **prov,
         # 🔴 The RESOLVED agent rides along, and is resolved WITHOUT the
         # `ativo` filter the dropdown uses. A bank retired after it financed
         # this deal must keep rendering here — otherwise the panel would blank
@@ -168,14 +260,22 @@ def _saida(
         # showing the other's documents.
         "tipos_escritura": list(TIPOS_ESCRITURA),
         "tipos_fgts": list(TIPOS_FGTS),
+        # S2 contract §A/§E5.5 — FE consumer note, 2026-09-25: the panel
+        # never hardcodes which tipos are "the financiamento docs" section,
+        # nor re-derives "is there a financiamento parcela yet" from the
+        # negociação estruturada payload (a second request it would rather
+        # not make just to decide whether to show that section at all).
+        "tipos_financiamento_docs": list(TIPOS_FINANCIAMENTO_DOCS),
+        "tem_parcela_financiamento": tem_parcela_financiamento,
         "documentos": documentos,
     }
 
 
 #: Columns of the financing agent the panel renders beside the dropdown. A
 #: subset of the registry's own `FIELDS` — the card shows who the bank is, not
-#: its full contact sheet, which lives on the management page.
-_AGENTE_RESUMO = ("id", "nome", "codigo_banco", "agencia", "ativo")
+#: its full contact sheet, which lives on the management page. `origem`
+#: (migration 171, H7) lets the panel mark "criado automaticamente".
+_AGENTE_RESUMO = ("id", "nome", "codigo_banco", "agencia", "ativo", "origem")
 
 
 def _agente(client: Any, org_id: UUID, row: Optional[dict]) -> Optional[dict]:
@@ -206,15 +306,46 @@ def _agente(client: Any, org_id: UUID, row: Optional[dict]) -> Optional[dict]:
     return {k: rows[0].get(k) for k in _AGENTE_RESUMO} if rows else None
 
 
+def _tem_parcela_financiamento(client: Any, org_id: UUID, atendimento_id: UUID) -> bool:
+    rows = (
+        _t(client, "atendimento_negociacao_parcelas")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", str(atendimento_id))
+        .eq("tipo", "financiamento")
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows)
+
+
 def obter(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     row = _linha(client, org_id, atendimento_id)
     linhas = STORE.listar_linhas(client, org_id, atendimento_id)
     resolved = table_reads.resolve_actors(
         {r["enviado_por"] for r in linhas if r.get("enviado_por")}
+        | {r["extracao_descartada_por"] for r in linhas if r.get("extracao_descartada_por")}
     )
     documentos = [_documento_out(r, resolved) for r in linhas]
-    return _saida(row, atendimento_id, documentos, _agente(client, org_id, row))
+    return _saida(
+        row, atendimento_id, documentos, _agente(client, org_id, row),
+        tem_parcela_financiamento=_tem_parcela_financiamento(client, org_id, atendimento_id),
+    )
+
+
+#: The provenance-tracked columns `atualizar` may stamp `origem='manual'` on
+#: (S2 contract §C.7 — "manual writers must stamp provenance"). `situacao`
+#: is handled SEPARATELY, just below (its `_em` stamp is on-CHANGE, unlike
+#: these four's on-PRESENCE stamp — see the `atualizar` comment).
+_CAMPOS_PROVENIENCIA: tuple[str, ...] = ("fgts", "numero_proposta", "agente_financeiro_id")
+#: `<campo>_origem` prefix per editable column — `agente_financeiro_id`'s
+#: quintet is prefixed `agente_financeiro`, not `agente_financeiro_id`.
+_PREFIXO_PROVENIENCIA: dict[str, str] = {
+    "fgts": "fgts",
+    "numero_proposta": "numero_proposta",
+    "agente_financeiro_id": "agente_financeiro",
+}
 
 
 def atualizar(
@@ -244,9 +375,33 @@ def atualizar(
 
     # A decision is stamped when it CHANGES, not on every save — otherwise
     # "when was this approved" silently becomes "when was this last edited".
+    # A human PATCH of `situacao` is ALWAYS 'manual', confirmed-by-
+    # construction (H6/§C.7) — so a LATER `contrato_financiamento` read
+    # opens a conflict instead of silently reopening a human's decision.
     if "situacao" in patch and patch["situacao"] != (atual or {}).get("situacao"):
         patch["situacao_em"] = now_iso()
         patch["situacao_por"] = str(usuario_id) if usuario_id else None
+        patch["situacao_origem"] = "manual"
+        patch["situacao_documento_id"] = None
+        patch["situacao_confirmado_por"] = str(usuario_id) if usuario_id else None
+        patch["situacao_confirmado_em"] = patch["situacao_em"]
+
+    # 🔴 A human edit of a provenance-tracked value is ALWAYS 'manual',
+    # confirmed-by-construction (the person editing it right now confirmed
+    # it) — same convention `clientes_service.update_cliente` uses. Without
+    # this, a human PATCH over a machine-pending value would leave it
+    # reading as still-pending and block `gerar` (409) on a value a person
+    # just typed.
+    now_prov = now_iso()
+    for campo in _CAMPOS_PROVENIENCIA:
+        if campo not in patch:
+            continue
+        prefixo = _PREFIXO_PROVENIENCIA[campo]
+        patch[f"{prefixo}_origem"] = "manual"
+        patch[f"{prefixo}_documento_id"] = None
+        patch[f"{prefixo}_em"] = now_prov
+        patch[f"{prefixo}_confirmado_por"] = str(usuario_id) if usuario_id else None
+        patch[f"{prefixo}_confirmado_em"] = now_prov
 
     if atual is None:
         _t(client, TABLE).insert(
@@ -307,12 +462,43 @@ async def upload(
             # below stamps the date once the deal closes, and re-stamps it if
             # the policy or the close date moves.
             "retencao_ate": None,
+            # `pendente` at upload — the sweep's claim path, same reasoning
+            # every sibling extraction lifecycle gives: a job that never
+            # starts must be visibly waiting, not invisibly lost. `None` for
+            # `comprovante_itbi` (archive-only, §H10) and for every escritura/
+            # FGTS tipo — this column stays a real "not applicable" rather
+            # than a fake `pendente` a sweep would spin on forever.
+            "extracao_status": "pendente" if deve_extrair(tipo_documento) else None,
+            "extracao_tentativas": 0,
         },
     )
     resolved = table_reads.resolve_actors(
         {row["enviado_por"]} if row["enviado_por"] else set()
     )
     return _documento_out(row, resolved)
+
+
+def descartar_extracao(
+    client: Any, org_id: UUID, cliente_id: UUID, documento_id: UUID, *,
+    usuario_id: Optional[UUID],
+) -> dict:
+    """Turn the reading down — kept on the document (`extracao_dados`
+    survives), just stops being offered as machine-pending. Mirrors
+    `empresas.documentos_service.descartar_extracao` / `identidade_
+    extracao_service.descartar_sugestao`'s posture (S2 contract §E5.3)."""
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    documento = STORE.exigir(client, org_id, atendimento_id, documento_id)
+    patch = {
+        "extracao_descartada_em": now_iso(),
+        "extracao_descartada_por": str(usuario_id) if usuario_id else None,
+    }
+    _t(client, DOCUMENTOS_TABLE).update(patch).eq(
+        "id", str(documento_id)
+    ).execute()
+    resolved = table_reads.resolve_actors(
+        {usuario_id} if usuario_id else set()
+    )
+    return _documento_out({**documento, **patch}, resolved)
 
 
 async def url_do_documento(
@@ -528,8 +714,12 @@ __all__ = [
     "TIPOS_DOCUMENTO",
     "TIPOS_ESCRITURA",
     "TIPOS_FGTS",
+    "TIPOS_NEGOCIACAO",
+    "TIPOS_NEGOCIACAO_EXTRAIVEIS",
     "atualizar",
     "configure",
+    "descartar_extracao",
+    "deve_extrair",
     "listar_acessos",
     "obter",
     "remover",

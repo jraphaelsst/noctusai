@@ -44,6 +44,11 @@ FIELDS = (
     "contato_telefone",
     "observacoes",
     "ativo",
+    # Migration 171 (H7, negociação/financiamento extraction contract) —
+    # 'manual' (this Settings page) | 'auto' (an extraction auto-created it
+    # for an unmatched bank code). Not in `EDITAVEIS`: a caller states it
+    # at create via `criar`'s own `origem` kwarg, never via a PATCH.
+    "origem",
     "created_at",
     "updated_at",
 )
@@ -112,6 +117,7 @@ def criar(
     *,
     dados: dict,
     user_id: Optional[UUID] = None,
+    origem: str = "manual",
 ) -> dict:
     """Register an agent.
 
@@ -119,11 +125,17 @@ def criar(
     violation: `uq_sw_agentes_financeiros_org_nome` is case- and
     whitespace-insensitive, so "Caixa" colliding with "CAIXA " is correct and
     needs to read as "this one already exists", not as a server error.
+
+    `origem` is a caller-stated kwarg, not an `EDITAVEIS`/`dados` key — the
+    Settings page never sends it (every real call there keeps the default
+    `'manual'`); `negociacao_extracao_service` (H7) is the one caller that
+    passes `origem='auto'`.
     """
     row = {k: dados.get(k) for k in EDITAVEIS if k in dados}
     row["id"] = str(uuid4())
     row["org_id"] = str(org_id)
     row.setdefault("ativo", True)
+    row["origem"] = origem
     if user_id:
         row["created_por"] = str(user_id)
 

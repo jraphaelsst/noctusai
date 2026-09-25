@@ -41,6 +41,13 @@ ERROS_PERMANENTES: frozenset[str] = frozenset(
         "tipo_nao_extraivel",
         "documento_removido",
         "documento_nao_encontrado",
+        # S2 contract §D.5/H8 — a DPS misfiled under another tipo. A retry
+        # reads the exact same sensitive document; the refusal cannot move.
+        "documento_sensivel_dps",
+        # S2 contract §D.4 — the Quadro Resumo genuinely isn't in the
+        # deterministic pass-1(1..4)/pass-2(5..8) window. A retry re-reads
+        # the same pages and finds the same nothing.
+        "quadro_resumo_nao_encontrado",
     }
 )
 

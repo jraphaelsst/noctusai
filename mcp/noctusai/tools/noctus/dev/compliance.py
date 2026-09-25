@@ -11755,6 +11755,41 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "against until this migration (and its predecessors 079/111) are "
         "applied together.",
     ),
+    # Migration 171 (social-wiring, S2 negociação/financiamento extraction
+    # contract) is FILE-ONLY — "applied only by the tech-lead, via
+    # migrate_product" (the migration's own header). Same reasoning as 167
+    # above: `verify_db_guards`'s `SqlExecutor` cannot probe a constraint
+    # on a column/table that does not exist in prod yet. Remove these four
+    # entries and register real `GuardProbe`s in `verify_db_guards.
+    # DEFAULT_REGISTRY` in the SAME change that finally applies this
+    # migration.
+    (
+        "products/social-wiring/backend/migrations/171_negociacao_extracao_documentos.sql",
+        "atendimento_documentos_extracao_status_check",
+        "Migration 171 unapplied — the extracao_status CHECK (pendente/"
+        "processando/ok/sem_dados/erro/NULL) has no live column to probe "
+        "against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/171_negociacao_extracao_documentos.sql",
+        "atendimento_documento_acessos_acao_check",
+        "Migration 171 unapplied — the widened acao CHECK (+'extract') "
+        "has no live constraint to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/171_negociacao_extracao_documentos.sql",
+        "atendimento_negociacao_parcelas_valor_check",
+        "Migration 171 unapplied — the relaxed valor CHECK (IS NULL OR "
+        ">= 0, replacing the NOT NULL + >= 0 pair) has no live column to "
+        "probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/171_negociacao_extracao_documentos.sql",
+        "uq_sw_atendimento_campo_conflitos_aberto",
+        "Migration 171 unapplied — the partial unique index (one open "
+        "atendimento_campo_conflitos row per field) has no live table to "
+        "probe against yet.",
+    ),
 )
 
 
