@@ -143,20 +143,16 @@ export default function FinanciamentoPanel({
     if (!docsPorTipo.has(d.tipo_documento)) docsPorTipo.set(d.tipo_documento, d);
   });
 
-  // The new "Financiamento" doc group (contract §A) shows only once the
-  // deal is actually in play there — a financiamento parcela exists, or the
-  // financiamento row has been touched at all (`existe`, which `situacao`
-  // going non-default, `fgts`, an agente or a proposta all set). Otherwise
-  // this section would demand a guia ITBI/proposta on every deal, including
-  // an all-cash one.
-  const mostrarSecaoFinanciamentoDocs = Boolean(
-    f?.tem_parcela_financiamento || f?.existe,
-  );
-
+  // ITBI + bank-financing documents are OPTIONAL SOURCES, not requirements
+  // (owner H1, 2026-09-25: a missing bank/ITBI document never blocks the CCV;
+  // the first one to arrive fills the negociação, later ones reconcile). So
+  // their slots are ALWAYS shown — gating them on an existing financiamento
+  // parcela hid them exactly when a document-first deal needs them (the
+  // bank contract is what CREATES that parcela; P1/883 G28) — and they are
+  // never counted as outstanding.
   const faltando = [
     ...(f?.tipos_escritura ?? []),
-    ...(f?.fgts ? f?.tipos_fgts ?? [] : []),
-    ...(mostrarSecaoFinanciamentoDocs ? f?.tipos_financiamento_docs ?? [] : []),
+    ...(f?.fgts ? f?.tipos_fgts ?? [] : [])
   ].filter((t) => !docsPorTipo.has(t)).length;
 
   return (
@@ -354,12 +350,27 @@ export default function FinanciamentoPanel({
         />
       )}
 
-      {/* New "Financiamento" doc group (contract §A/§F) — guia ITBI's
-          sibling documents that only make sense once financing is actually
-          in play. `proposta_financiamento`/`contrato_financiamento`. */}
-      {mostrarSecaoFinanciamentoDocs && (
-        <Secao
-          titulo="Financiamento"
+      {/* ITBI + bank-financing documents (contract §A/§F): optional
+          sources, always shown, never counted as faltando (owner H1). */}
+      <Secao
+          titulo="ITBI (opcional — preenche a negociação)"
+          tipos={f?.tipos_itbi ?? []}
+          docsPorTipo={docsPorTipo}
+          loading={loading}
+          uploading={uploading}
+          onUpload={onUpload}
+          onRemove={onRemove}
+          onOpen={onOpen}
+          onExtrair={onExtrair}
+          onConfirmarExtracao={onConfirmarExtracao}
+          onDescartarExtracao={onDescartarExtracao}
+          extraindo={extraindo}
+          confirmandoExtracao={confirmandoExtracao}
+          descartandoExtracao={descartandoExtracao}
+        />
+
+      <Secao
+          titulo="Financiamento bancário (opcional — preenche a negociação)"
           tipos={f?.tipos_financiamento_docs ?? []}
           docsPorTipo={docsPorTipo}
           loading={loading}
@@ -374,7 +385,6 @@ export default function FinanciamentoPanel({
           confirmandoExtracao={confirmandoExtracao}
           descartandoExtracao={descartandoExtracao}
         />
-      )}
 
       {faltando > 0 && (
         <p className="text-xs text-muted-foreground" data-testid="financiamento-faltando">

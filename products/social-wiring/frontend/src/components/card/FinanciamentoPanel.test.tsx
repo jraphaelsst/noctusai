@@ -22,10 +22,9 @@ const TIPOS_ESCRITURA = [
   "escritura_pacto",
   "registro_pacto",
   "comprovante_residencia",
-  // Migration 171 (contract §A) — guia_itbi/comprovante_itbi join the
-  // EXISTING "Escritura" group server-side.
-  "guia_itbi",
-  "comprovante_itbi",
+  // guia_itbi/comprovante_itbi are NOT escritura: the API serves them as
+  // their own `tipos_itbi` group (P1/883 G27 — this fixture once assumed they
+  // joined escritura, which the server never did, so prod had no ITBI slot).
 ];
 const TIPOS_FGTS = [
   "imposto_renda_com_recibo",
@@ -34,6 +33,7 @@ const TIPOS_FGTS = [
   "comprovante_residencia_1ano",
 ];
 const TIPOS_FINANCIAMENTO_DOCS = ["proposta_financiamento", "contrato_financiamento"];
+const TIPOS_ITBI = ["guia_itbi", "comprovante_itbi"];
 
 function doc(tipo: string, over: Partial<FinanciamentoDocumento> = {}): FinanciamentoDocumento {
   return {
@@ -80,6 +80,7 @@ function financiamento(over: Partial<Financiamento> = {}): Financiamento {
     tipos_escritura: TIPOS_ESCRITURA,
     tipos_fgts: TIPOS_FGTS,
     tipos_financiamento_docs: TIPOS_FINANCIAMENTO_DOCS,
+    tipos_itbi: TIPOS_ITBI,
     tem_parcela_financiamento: false,
     documentos: [],
     ...over,
@@ -146,24 +147,19 @@ describe("FinanciamentoPanel", () => {
     expect(screen.getByTestId("financiamento-slot-extratos_fgts-arquivo-input")).toBeTruthy();
   });
 
-  it("hides the Financiamento doc section until the deal has a financiamento parcela or the financiamento row exists", async () => {
-    const { queryByTestId } = await render({
-      tem_parcela_financiamento: false,
-      existe: false,
-    });
-    expect(
-      queryByTestId("financiamento-slot-contrato_financiamento-arquivo-input"),
-    ).toBeNull();
-  });
-
-  it("shows the Financiamento doc section once the deal has a financiamento parcela", async () => {
-    const { screen } = await render({ tem_parcela_financiamento: true });
-    expect(screen.getByTestId("financiamento-slot-contrato_financiamento-arquivo-input")).toBeTruthy();
-    expect(screen.getByTestId("financiamento-slot-proposta_financiamento-arquivo-input")).toBeTruthy();
+  it("🔴 shows the ITBI and bank-financing slots even with no financiamento parcela yet (document-first, P1/883 G28)", async () => {
+    // The bank contract is what CREATES the financiamento parcela, so gating
+    // its slot on that parcela hid it exactly when a document-first deal
+    // needs it.
+    const { screen } = await render({ tem_parcela_financiamento: false, existe: false });
+    for (const t of [...TIPOS_ITBI, ...TIPOS_FINANCIAMENTO_DOCS]) {
+      expect(screen.getByTestId(`financiamento-slot-${t}-arquivo-input`)).toBeTruthy();
+    }
   });
 
   it("counts only the documents that are actually required right now", async () => {
-    // FGTS off, no financiamento parcela → neither set is outstanding.
+    // FGTS off → only escritura counts. ITBI/bank docs are optional sources
+    // (owner H1): never outstanding, even though their slots are shown.
     const { screen } = await render({
       fgts: false,
       tem_parcela_financiamento: false,
@@ -190,7 +186,7 @@ describe("FinanciamentoPanel", () => {
     const { container } = await render({ fgts: true, tem_parcela_financiamento: true });
     const inputs = container.querySelectorAll('input[type="file"]');
     expect(inputs.length).toBe(
-      TIPOS_ESCRITURA.length + TIPOS_FGTS.length + TIPOS_FINANCIAMENTO_DOCS.length,
+      TIPOS_ESCRITURA.length + TIPOS_FGTS.length + TIPOS_ITBI.length + TIPOS_FINANCIAMENTO_DOCS.length,
     );
   });
 

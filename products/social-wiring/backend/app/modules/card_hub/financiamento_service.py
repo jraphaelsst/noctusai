@@ -100,6 +100,13 @@ TIPOS_FINANCIAMENTO_DOCS: tuple[str, ...] = (
     "contrato_financiamento",
 )
 
+#: The ITBI subset of `TIPOS_NEGOCIACAO` — returned on `obter()` so the panel
+#: renders its slots without hardcoding them (P1/883 G27: they were uploadable
+#: but no list the panel reads carried them, so no slot existed).
+TIPOS_ITBI: tuple[str, ...] = tuple(
+    t for t in TIPOS_NEGOCIACAO if t not in TIPOS_FINANCIAMENTO_DOCS
+)
+
 TIPOS_DOCUMENTO: tuple[str, ...] = TIPOS_ESCRITURA + TIPOS_FGTS + TIPOS_NEGOCIACAO
 
 #: 30 MB — raised from 25 MB (S2 contract §A) to cover `contrato_
@@ -266,6 +273,7 @@ def _saida(
         # negociação estruturada payload (a second request it would rather
         # not make just to decide whether to show that section at all).
         "tipos_financiamento_docs": list(TIPOS_FINANCIAMENTO_DOCS),
+        "tipos_itbi": list(TIPOS_ITBI),
         "tem_parcela_financiamento": tem_parcela_financiamento,
         "documentos": documentos,
     }
@@ -714,6 +722,7 @@ __all__ = [
     "TIPOS_DOCUMENTO",
     "TIPOS_ESCRITURA",
     "TIPOS_FGTS",
+    "TIPOS_ITBI",
     "TIPOS_NEGOCIACAO",
     "TIPOS_NEGOCIACAO_EXTRAIVEIS",
     "atualizar",

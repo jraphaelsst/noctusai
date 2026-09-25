@@ -143,6 +143,8 @@ export interface Financiamento {
    *  `["proposta_financiamento", "contrato_financiamento"]` today. Field
    *  name picked (not pinned by §E5); flag for reconciliation with S2. */
   tipos_financiamento_docs: string[];
+  /** ITBI doc group (`guia_itbi`, `comprovante_itbi`), server-provided. */
+  tipos_itbi: string[];
   /** Gates the new "Financiamento" section's visibility (contract §A: "shown
    *  when the deal has a financiamento parcela or `financiamento.situacao`
    *  is set"). Server-computed — this panel has no access to parcela data
