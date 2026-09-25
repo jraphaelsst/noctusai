@@ -134,4 +134,44 @@ CAPACIDADES: dict[str, frozenset[str]] = {
             "motivo_situacao", "uf", "emitido_em",
         }
     ),
+    # `guia_itbi.parse_guia_itbi` — a municipal Guia de ITBI (negociação/
+    # financiamento extraction contract §D). Canonical names mirror
+    # `GuiaItbiFields`' own attributes. `valor_venal`/`base_calculo`/
+    # `valor_financiado_sfh` are claimable READS — that module's own header
+    # documents why none of them may be mapped onto a negociação's
+    # `valor_negociado`.
+    "guia_itbi": frozenset(
+        {
+            "valor_transacao", "valor_venal", "base_calculo",
+            "valor_financiado_sfh", "aliquota_pct", "valor_itbi",
+            "vencimento", "inscricao_imobiliaria", "numero_matricula",
+            "compradores", "vendedores", "municipio",
+        }
+    ),
+    # `financiamento_imobiliario.parse_financiamento_imobiliario` — ONE
+    # parser, TWO `tipo_documento` keys, because the contract (25 pages) and
+    # the bank proposta (one photo) print the SAME Quadro Resumo vocabulary
+    # (see that module's header). Canonical names mirror
+    # `FinanciamentoImobiliarioFields`' own attributes; `conta_credito_
+    # vendedor` is the owner-approved (H5) seller-account read.
+    "contrato_financiamento": frozenset(
+        {
+            "banco_nome", "banco_codigo", "numero_contrato", "numero_proposta",
+            "data_documento", "valor_compra_venda", "valor_avaliacao",
+            "valor_financiado", "valor_fgts", "valor_recursos_proprios",
+            "prazo_meses", "taxa_nominal_aa", "taxa_efetiva_aa",
+            "sistema_amortizacao", "compradores", "vendedores",
+            "conta_credito_vendedor",
+        }
+    ),
+    "proposta_financiamento": frozenset(
+        {
+            "banco_nome", "banco_codigo", "numero_contrato", "numero_proposta",
+            "data_documento", "valor_compra_venda", "valor_avaliacao",
+            "valor_financiado", "valor_fgts", "valor_recursos_proprios",
+            "prazo_meses", "taxa_nominal_aa", "taxa_efetiva_aa",
+            "sistema_amortizacao", "compradores", "vendedores",
+            "conta_credito_vendedor",
+        }
+    ),
 }
