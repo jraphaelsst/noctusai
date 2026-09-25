@@ -347,6 +347,34 @@ def _fan_out_linhas_customizadas_do_card(
         matriz_custom_rows.fan_out_linhas_customizadas(db, org_id, consulta_id, titular)
 
 
+def _pos_vinculo(
+    db, org_id, consulta_id: str, consulta: dict, *,
+    atendimento_id: Optional[str] = None,
+    cliente_id: Optional[str] = None,
+    empresa_id: Optional[str] = None,
+) -> None:
+    """The two steps every consulta-linking site now runs immediately AFTER
+    a consulta gets its `cliente_id`/`empresa_id` — `criar_consulta_manual`'s
+    inline link, `vincular_parte`, `vincular_cliente`, `vincular_empresa`
+    (G13, P1/883, 2026-09-25; extracted once all four sites' own "after
+    link" sequence converged — DRY N=3): the card's custom matriz rows
+    (migration 170) get their placeholder FIRST — see `_fan_out_linhas_
+    customizadas_do_card` — then any already-landed Serasa Crednet reading
+    for this SAME cliente is applied retroactively onto a still-`pendente`
+    `serasa` resultado — see `service.aplicar_crednet_pendente`, which is a
+    safe no-op for a CNPJ consulta or one with no `cliente_id`, so calling
+    it unconditionally here (including from `vincular_empresa`) is
+    harmless. Exactly one of `atendimento_id`/`cliente_id`/`empresa_id`
+    should be set, forwarded verbatim to `_fan_out_linhas_customizadas_do_
+    card`. `consulta` is the just-linked row (post-UPDATE, carrying its own
+    `cliente_id`/`documento`/`tipo_documento`) — never re-fetched here."""
+    _fan_out_linhas_customizadas_do_card(
+        db, org_id, consulta_id,
+        atendimento_id=atendimento_id, cliente_id=cliente_id, empresa_id=empresa_id,
+    )
+    service.aplicar_crednet_pendente(db, org_id, consulta)
+
+
 def _validar_cliente_id(db, org_id, cliente_id: str) -> None:
     """404 unless `cliente_id` names a `clientes` row of THIS org. Shared by
     `vincular_cliente` and `criar_consulta_manual`."""
@@ -643,34 +671,28 @@ async def criar_consulta_manual(
     ]
     db.table(RESULTADOS).insert(resultados_data).execute()
 
-    # 🔴 G13 (P1/883, 2026-09-25): a CPF consulta linked to a cliente who
-    # already has an `ok` Serasa Crednet reading on file must not leave its
-    # `serasa` resultado sitting `pendente` forever waiting for a re-upload
-    # that already happened — same deferred-apply `vincular_empresa` already
-    # runs (there a no-op, since it is always `tipo_documento='cnpj'`; here
-    # the one path that actually matters, since this route links `cliente_
-    # id` at CREATE time rather than via a later vincular-* call).
-    # `aplicar_crednet_pendente` is a no-op for a CNPJ consulta or one with
-    # no `cliente_id` — see its own docstring.
-    service.aplicar_crednet_pendente(db, org_id, consulta)
-
-    # G13's follow-up: the Certidões matriz's per-card CUSTOM rows (migration
-    # 170) get the SAME idempotent placeholder fan-out `vincular_parte`/
-    # `vincular_cliente` already give a consulta linked AFTER creation — this
-    # route links at CREATE time instead, so without this a card whose
-    # custom rows already exist would show this manual consulta as if those
-    # rows did not apply to it. Exactly one of `atendimento_id`/`cliente_id`
+    # G13 (P1/883, 2026-09-25) — `_pos_vinculo` runs the SAME "after link"
+    # sequence `vincular_parte`/`vincular_cliente`/`vincular_empresa` run:
+    # the custom matriz rows' placeholder fan-out, then a deferred Crednet
+    # apply onto a still-`pendente` `serasa` resultado. This route links at
+    # CREATE time instead of via a later vincular-* call, so without this a
+    # card whose custom rows already exist would show this manual consulta
+    # as if those rows did not apply to it, and a CPF consulta linked to a
+    # cliente with an `ok` Serasa Crednet reading on file would leave
+    # `serasa` sitting `pendente` forever waiting for a re-upload that
+    # already happened. Exactly one of `atendimento_id`/`cliente_id`
     # resolves (mirrors `vincular_parte`/`vincular_cliente`'s own split);
-    # neither does when the consulta was created with no link at all.
+    # neither does when the consulta was created with no link at all —
+    # `_pos_vinculo` is simply not called then (its Crednet leg would be a
+    # no-op anyway with no `cliente_id`, but the fan-out needs a card to
+    # resolve, and there is none).
     if body.atendimento_parte_id:
-        _fan_out_linhas_customizadas_do_card(
-            db, org_id, consulta["id"],
+        _pos_vinculo(
+            db, org_id, consulta["id"], consulta,
             atendimento_id=_atendimento_id_da_parte(db, org_id, str(body.atendimento_parte_id)),
         )
     elif resolved_cliente_id:
-        _fan_out_linhas_customizadas_do_card(
-            db, org_id, consulta["id"], cliente_id=resolved_cliente_id,
-        )
+        _pos_vinculo(db, org_id, consulta["id"], consulta, cliente_id=resolved_cliente_id)
 
     # postgrest-unbounded-ok: bounded at 12 rows (+ any custom matriz rows,
     # still a small per-card fan-out) by the fan-out above.
@@ -1163,9 +1185,11 @@ async def vincular_parte(
     to target before a human can use it.
 
     AND fans out a placeholder for every ACTIVE custom row of the Certidões
-    matriz card this party is on (migration 170) — see `_fan_out_linhas_
-    customizadas_do_card`; closes the "custom row added before this consulta
-    was linked" gap.
+    matriz card this party is on (migration 170), AND (G13, P1/883,
+    2026-09-25) applies any already-landed Serasa Crednet reading for this
+    SAME cliente onto a still-`pendente` `serasa` resultado — both via
+    `_pos_vinculo`, shared with `vincular_cliente`/`vincular_empresa`/
+    `criar_consulta_manual`'s own inline link (DRY N=3).
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -1189,8 +1213,8 @@ async def vincular_parte(
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
     _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento=consulta.get("tipo_documento"))
-    _fan_out_linhas_customizadas_do_card(
-        db, org_id, consulta_id,
+    _pos_vinculo(
+        db, org_id, consulta_id, consulta,
         atendimento_id=_atendimento_id_da_parte(db, org_id, str(body.atendimento_parte_id)),
     )
 
@@ -1229,11 +1253,14 @@ async def vincular_cliente(
     `clientes` before it is written.
 
     Also fans out the three manual-only placeholder types, exactly like
-    `vincular_parte` — see `_fan_out_tipos_manuais`. AND the card's custom
-    matriz rows (migration 170) — `_fan_out_linhas_customizadas_do_card`
-    resolves the card from `cliente_id` alone, since this route also links
-    a non-titular party's own consulta (`CertidoesMatrizSection`'s uniform
-    click-through scope).
+    `vincular_parte` — see `_fan_out_tipos_manuais`. AND (via `_pos_vinculo`,
+    shared with `vincular_parte`/`vincular_empresa`/`criar_consulta_
+    manual`'s own inline link — DRY N=3, G13, P1/883 2026-09-25) the card's
+    custom matriz rows (migration 170) — `_fan_out_linhas_customizadas_do_
+    card` resolves the card from `cliente_id` alone, since this route also
+    links a non-titular party's own consulta (`CertidoesMatrizSection`'s
+    uniform click-through scope) — AND a deferred Serasa Crednet apply onto
+    a still-`pendente` `serasa` resultado.
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -1252,7 +1279,7 @@ async def vincular_cliente(
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
     _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento=consulta.get("tipo_documento"))
-    _fan_out_linhas_customizadas_do_card(db, org_id, consulta_id, cliente_id=str(body.cliente_id))
+    _pos_vinculo(db, org_id, consulta_id, consulta, cliente_id=str(body.cliente_id))
 
     return success_response(consulta)
 
@@ -1290,10 +1317,13 @@ async def vincular_empresa(
 
     Also fans out the manual-only placeholder types (TJSP e-SAJ/e-PROC —
     NOT Serasa, a CNPJ consulta's fan-out never carries it — see
-    `_fan_out_tipos_manuais`). AND the card's custom matriz rows (migration
-    170) — `_fan_out_linhas_customizadas_do_card` resolves the card via any
-    of this empresa's owners (`matriz_custom_rows.resolver_card_titular_
-    por_empresa`).
+    `_fan_out_tipos_manuais`). AND (via `_pos_vinculo`, shared with
+    `vincular_parte`/`vincular_cliente`/`criar_consulta_manual`'s own inline
+    link — DRY N=3) the card's custom matriz rows (migration 170) —
+    `_fan_out_linhas_customizadas_do_card` resolves the card via any of this
+    empresa's owners (`matriz_custom_rows.resolver_card_titular_por_
+    empresa`) — AND a Crednet apply call that is always a no-op here (a CNPJ
+    consulta never matches `aplicar_crednet_pendente`'s CPF-only guard).
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -1323,8 +1353,7 @@ async def vincular_empresa(
     consulta = updated[0] if updated else _get_consulta_or_404(db, consulta_id, org_id)
 
     _fan_out_tipos_manuais(db, consulta_id, org_id, tipo_documento="cnpj")
-    _fan_out_linhas_customizadas_do_card(db, org_id, consulta_id, empresa_id=str(body.empresa_id))
-    service.aplicar_crednet_pendente(db, org_id, consulta)
+    _pos_vinculo(db, org_id, consulta_id, consulta, empresa_id=str(body.empresa_id))
 
     return success_response(consulta)
 

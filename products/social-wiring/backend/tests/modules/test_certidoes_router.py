@@ -1226,6 +1226,26 @@ class TestVincularParte:
         }
         assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
 
+    def test_g13_aplica_crednet_pendente_apos_vincular(self, client, certidoes_db):
+        """P1/883 (2026-09-25): `vincular_parte` must apply an already-
+        landed Serasa Crednet reading onto the newly-fanned-out `serasa`
+        resultado, same as `criar_consulta_manual`'s own inline link
+        already does (G13)."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [_parte()])
+        db.set_table_data("cliente_documentos", [_crednet_doc("cliente-001")])
+
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        serasa = next(r for r in resultados if r["tipo"] == "serasa")
+        assert serasa["status"] == "sucesso"
+        assert serasa["numero"] == "9999999"
+
     def test_fan_out_e_idempotente(self, client, certidoes_db):
         """Linking the same parte twice must not duplicate the manual
         placeholders — `vincular_parte` checks existing tipos first."""
@@ -1414,6 +1434,24 @@ class TestVincularCliente:
             for r in db.table("certidao_resultados").select("*").execute().data
         }
         assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
+
+    def test_g13_aplica_crednet_pendente_apos_vincular(self, client, certidoes_db):
+        """P1/883 (2026-09-25): `vincular_cliente`'s sibling of the
+        `vincular_parte` test above."""
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("clientes", [_cliente()])
+        db.set_table_data("cliente_documentos", [_crednet_doc(CLIENTE_ID)])
+
+        client.post(
+            f"{BASE}/consultas/consulta-001/vincular-cliente",
+            json={"cliente_id": CLIENTE_ID},
+        )
+
+        resultados = db.table("certidao_resultados").select("*").execute().data
+        serasa = next(r for r in resultados if r["tipo"] == "serasa")
+        assert serasa["status"] == "sucesso"
+        assert serasa["numero"] == "9999999"
 
     def test_fan_out_e_idempotente(self, client, certidoes_db):
         db, _ = certidoes_db
