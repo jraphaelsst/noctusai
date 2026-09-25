@@ -1415,9 +1415,11 @@ def _certidoes(
                 )
             if c.validade_ate is not None and c.validade_ate < assinatura:
                 tempo("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
-            # [§6.1 #15] A positiva AND a negativa-com-homônimos both need the
-            # esclarecimentos paragraph — the homônimo apontamentos are exactly
-            # what has to be explained away (migration 116).
+            # A genuine positiva needs the esclarecimentos paragraph.
+            # [Owner directive, 2026-09-25] `negativa_com_homonimos` no
+            # longer does — reversed §6.1 #15's original read; see
+            # `frases.RESULTADOS_COM_APONTAMENTO`'s docstring, the ONE
+            # classifier this and `_certidoes_do_imovel` both defer to.
             if c.resultado in frases.RESULTADOS_COM_APONTAMENTO:
                 com_apontamento.append(f"{rotulo} ({nome_grupo})")
 

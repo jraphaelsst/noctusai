@@ -393,9 +393,24 @@ RESULTADO_ROTULO = {
     "negativa_com_homonimos": "Negativa com apontamentos de Homônimos",
 }
 
-#: Results the esclarecimentos paragraph is about: a positiva, and a negativa
-#: whose homônimo apontamentos are precisely what has to be explained away.
-RESULTADOS_COM_APONTAMENTO: tuple[str, ...] = ("positiva", "negativa_com_homonimos")
+#: Results the esclarecimentos paragraph is about — a genuine positiva. THE
+#: gerador's ONE classifier for "does this resultado count as an
+#: apontamento": both `_certidoes_do_imovel` and `_certidoes` (`derivacao.py`)
+#: read `c.resultado in RESULTADOS_COM_APONTAMENTO` and nowhere else in this
+#: module re-derives the split — fix membership here, never at a call site.
+#:
+#: 🔴 [Owner directive, 2026-09-25] `negativa_com_homonimos` COUNTS AS
+#: NEGATIVA — no esclarecimentos paragraph, no `CERTIDOES_POSITIVAS`/
+#: `CERTIDAO_IMOVEL_COM_APONTAMENTO` aviso. It used to sit alongside
+#: `"positiva"` here (migration 116's own §6.1 #15 read: "a negativa whose
+#: homônimo apontamentos are precisely what has to be explained away") —
+#: reversed by this directive. The certidões matriz's own classifier
+#: (`certidoes_matriz_service._NAO_CONSTAM`) already read it as a clean
+#: "Não constam" and needed no change; the contract's own listing keeps the
+#: document's wording verbatim (`RESULTADO_ROTULO["negativa_com_homonimos"]`
+#: above, untouched by this directive — the caveat is due-diligence
+#: information, not an unresolved apontamento).
+RESULTADOS_COM_APONTAMENTO: tuple[str, ...] = ("positiva",)
 
 
 def rotulo_certidao(tipo: str, resultado: Optional[str]) -> str:

@@ -572,6 +572,68 @@ def _texto(n: int, d=None, hoje=None) -> str:
     return "\n".join(_render(n, d, hoje).paragrafos)
 
 
+class TestCertidaoNegativaComHomonimos:
+    """[Owner directive, 2026-09-25] A certidão whose `resultado` is
+    `negativa_com_homonimos` ("Negativa com apontamentos de Homônimos", e.g.
+    TJSP e-SAJ) COUNTS AS NEGATIVA — no `CERTIDOES_POSITIVAS`/
+    `CERTIDAO_IMOVEL_COM_APONTAMENTO` aviso. Reverses migration 116's
+    original §6.1 #15 read (a negativa-com-homônimos used to need the SAME
+    esclarecimentos paragraph a `positiva` does); see `frases.
+    RESULTADOS_COM_APONTAMENTO`'s docstring — the ONE classifier this
+    behaviour is driven by, fixed there rather than at either call site.
+    """
+
+    def test_negativa_com_homonimos_raises_no_aviso(self):
+        d = fx.variante(1)
+        original = d.vendedores[0]
+        certidoes = [
+            replace(c, resultado="negativa_com_homonimos") if c.tipo == "tjsp_esaj" else c
+            for c in original.certidoes
+        ]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[replace(original, certidoes=certidoes)]))
+        assert "CERTIDOES_POSITIVAS" not in _codigos(av.avisos)
+
+    def test_a_real_positiva_still_warns(self):
+        d = fx.variante(1)
+        original = d.vendedores[0]
+        certidoes = [
+            replace(c, resultado="positiva") if c.tipo == "tjsp_esaj" else c
+            for c in original.certidoes
+        ]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[replace(original, certidoes=certidoes)]))
+        assert "CERTIDOES_POSITIVAS" in _codigos(av.avisos)
+
+    def test_negativa_com_homonimos_on_the_imovel_side_raises_no_aviso(self):
+        """`_certidoes_do_imovel` reads the SAME `frases.
+        RESULTADOS_COM_APONTAMENTO` classifier as the party path above —
+        proves the two `derivacao.py` call sites never diverge."""
+        d = fx.variante(1)
+        certidoes = [
+            replace(c, resultado="negativa_com_homonimos") if c.tipo == "cnd_iptu" else c
+            for c in fx.certidoes_do_imovel()
+        ]
+        d = replace(d, imovel=replace(d.imovel, certidoes=certidoes))
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert "CERTIDAO_IMOVEL_COM_APONTAMENTO" not in _codigos(av.avisos)
+
+    def test_a_real_positiva_on_the_imovel_side_still_warns(self):
+        d = fx.variante(1)
+        certidoes = [
+            replace(c, resultado="positiva") if c.tipo == "cnd_iptu" else c
+            for c in fx.certidoes_do_imovel()
+        ]
+        d = replace(d, imovel=replace(d.imovel, certidoes=certidoes))
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert "CERTIDAO_IMOVEL_COM_APONTAMENTO" in _codigos(av.avisos)
+
+    def test_the_contract_listing_keeps_the_documents_own_wording(self):
+        """[Owner directive, 2026-09-25] The aviso goes away; the contract's
+        own printed listing (`frases.rotulo_certidao`) still names the real
+        result — never collapsed into a plain "Negativa"."""
+        rotulo = frases.rotulo_certidao("tjsp_esaj", "negativa_com_homonimos")
+        assert "Negativa com apontamentos de Homônimos" in rotulo
+
+
 class TestQ2Lei6515:
     def _casal(self, data_v1, data_v2="igual", estado_civil="casado"):
         d = fx.variante(1)

@@ -232,6 +232,33 @@ class TestCelulas:
         # = 12 countable rows; the other 10 are Pendente by absence.
         assert totais["pendente"] == 10
 
+    def test_negativa_com_homonimos_conta_como_nao_constam(self, scoped):
+        """[Owner directive, 2026-09-25] `negativa_com_homonimos` reads as
+        the same GREEN "Não constam" `_NAO_CONSTAM` already gave a plain
+        `negativa` — the due-diligence rollup color was never wrong here;
+        this pins it stays that way after `contrato_gerador.frases.
+        RESULTADOS_COM_APONTAMENTO` (a different classifier, same
+        question's answer) was fixed to agree."""
+        cid, aid = str(uuid4()), str(uuid4())
+        vendedor_id = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular"), cliente_row(vendedor_id, nome="Vendedor"),
+        ])
+        scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+        scoped.set_table_data("atendimento_partes", [_parte(aid, vendedor_id)])
+        scoped.set_table_data("certidao_consultas", [
+            _consulta("c1", cliente_id=vendedor_id, tipo_documento="cpf"),
+        ])
+        scoped.set_table_data("certidao_resultados", [
+            _resultado("r1", "c1", "tjsp_esaj", status="sucesso", resultado="negativa_com_homonimos"),
+        ])
+
+        resultado = svc.montar_matriz(scoped, ORG_ID, cid)
+
+        [coluna] = [c for c in resultado["colunas"] if c["kind"] == "pessoa"]
+        assert resultado["celulas"]["tjsp_esaj"][coluna["id"]]["status"] == "nao_constam"
+
     def test_status_diferente_de_sucesso_e_pendente_mesmo_com_resultado_setado(self, scoped):
         """A `status != 'sucesso'` resultado (still processing/erro/na_fila)
         must read as Pendente — `resultado` alone is not enough."""

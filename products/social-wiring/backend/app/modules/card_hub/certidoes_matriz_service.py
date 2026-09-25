@@ -113,7 +113,12 @@ _TOTAL_CHAVES = ("nao_constam", "constam", "pendente")
 #: or a positiva whose own effect is a negativa (migration 116's caveat
 #: values included: `negativa_com_homonimos` is still a clean read for a
 #: due-diligence rollup, the homônimo caveat itself belongs to the detail
-#: view, not this summary color).
+#: view, not this summary color). [Owner directive, 2026-09-25] Same read
+#: `contrato_gerador.frases.RESULTADOS_COM_APONTAMENTO` now takes — the two
+#: classifiers answer different questions (this one a checklist color, that
+#: one "does the contract need an esclarecimentos paragraph") and are not
+#: merged into one shared symbol, but they must never disagree on this
+#: value again; a future change to either needs the same audit this one got.
 _NAO_CONSTAM = frozenset({
     "negativa", "positiva_com_efeito_de_negativa", "negativa_com_homonimos",
 })
