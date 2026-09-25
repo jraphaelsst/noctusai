@@ -57,7 +57,11 @@ _BROWSER_UA = (
 #: error page, or a truncated upload — all of which would otherwise pass as 200.
 _MIN_BUNDLE_BYTES = 10_000
 
-_ASSET_RE = re.compile(r'src="(/assets/[^"]+\.js)"')
+#: A same-origin bundle path whose LAST directory is `assets/`, under an optional
+#: Vite `base` prefix: `/assets/index-x.js`, and core's public site entry
+#: `/_site/assets/index-site-x.js` (4cc4cf301). Anchored to a leading `/`, so an
+#: absolute CDN URL never counts as "this product ships its own bundle".
+_ASSET_RE = re.compile(r'src="(/(?:[^"/]+/)*assets/[^"]+\.js)"')
 _ROOT_DIV_RE = re.compile(r'<div\s+id="root"\s*>')
 
 #: Routes every seed-built SPA serves through its client router. `/` is checked
@@ -168,7 +172,7 @@ def smoke_product(
            "<div id=\"root\"> present" if _ROOT_DIV_RE.search(html) else "no mount point in the shell")
 
     m = _ASSET_RE.search(html)
-    record("shell_bundle_tag", bool(m), m.group(1) if m else "no /assets/*.js <script> in the shell")
+    record("shell_bundle_tag", bool(m), m.group(1) if m else "no same-origin …/assets/*.js <script> in the shell")
     if not m:
         return {"ok": False, "slug": slug, "url": base, "checks": checks, "failures": failures}
 

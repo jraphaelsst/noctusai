@@ -110,6 +110,30 @@ class TestCatchesRealFailureModes:
         assert r["ok"] is False
         assert any("shell_bundle_tag" in f for f in r["failures"])
 
+    def test_base_prefixed_bundle_is_accepted(self, fetch):
+        """Core's public site ships under a Vite `base` (`/_site/assets/…`,
+        4cc4cf301). A real, served bundle there must pass, not read as missing
+        (false red on the 2026-09-25 core redeploy)."""
+        m = _ok_map()
+        m["/"] = (200, b'<html><div id="root"></div><script type="module" crossorigin '
+                       b'src="/_site/assets/index-site-abc.js"></script></html>', "text/html")
+        m["/_site/assets/index-site-abc.js"] = (200, BUNDLE, "application/javascript")
+        fetch(m)
+        r = ss.smoke_product("core")
+        assert r["ok"] is True, r["failures"]
+        tag = next(c for c in r["checks"] if c["check"] == "shell_bundle_tag")
+        assert tag["detail"] == "/_site/assets/index-site-abc.js"
+
+    def test_cross_origin_bundle_does_not_count(self, fetch):
+        """Only a same-origin bundle proves the product ships its own JS."""
+        m = _ok_map()
+        m["/"] = (200, b'<html><div id="root"></div><script '
+                       b'src="https://cdn.example.com/assets/x.js"></script></html>', "text/html")
+        fetch(m)
+        r = ss.smoke_product("seed")
+        assert r["ok"] is False
+        assert any("shell_bundle_tag" in f for f in r["failures"])
+
     def test_missing_mount_point_is_caught(self, fetch):
         m = _ok_map()
         m["/"] = (200, b'<html><script src="/assets/index-abc.js"></script></html>', "text/html")
