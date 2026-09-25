@@ -266,40 +266,30 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _schema_from_main_py(
-    product_slug: str, products_dir: Path | None = None
-) -> str | None:
-    """AST-derive the product's declared schema from its own ``app/main.py``.
-
-    Every product declares its schema exactly once, as the ``schema="..."``
-    keyword literal on its ``create_product_app(...)`` call (the same call
-    that wires routers, auth, and — transitively, via
-    ``create_database_module`` — every RLS-scoped query). That single
-    declaration is the authoritative source this function reads; nothing
-    here is a hand-maintained slug→schema map (`CLAUDE.md` §1 "derive, don't
-    sync by hand").
+def _parse_schema_from_source(source: str, label: str) -> str | None:
+    """AST-derive the ``schema="..."`` keyword literal off a
+    ``create_product_app(...)`` call — the pure parser shared by BOTH the
+    working-tree (``_schema_from_main_py``) and the sha-pinned
+    (``_schema_from_main_py_at_sha``) resolution paths, so "how we read the
+    schema" is never duplicated across the two (F8, compliance review
+    2026-09-24 — this is what closes the sha-mode schema-derivation gap
+    filed against migrate_product).
 
     AST-parsed per `KB § PATTERNS/common/ast.md` — not regexed, so a
     multi-line ``create_product_app(\\n    name=...,\\n    schema="erp",``
     call (every real product's shape) is found regardless of formatting.
+    ``label`` is only used in the debug log line on a parse failure.
 
-    Returns ``None`` when ``main.py`` is missing, fails to parse, has no
+    Returns ``None`` when the source fails to parse, has no
     ``create_product_app`` call, or that call's ``schema`` keyword isn't a
     literal string (e.g. computed) — callers fall back to
     ``_slug_to_schema`` in that case and must say so via ``schema_source``.
     """
-    base = products_dir or PRODUCTS_DIR
-    main_py = base / product_slug / "backend" / "app" / "main.py"
-    if not main_py.exists():
-        return None
     try:
-        source = main_py.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(main_py))
-    except (SyntaxError, OSError, UnicodeDecodeError) as exc:
+        tree = ast.parse(source, filename=label)
+    except SyntaxError as exc:
         logger.debug(
-            "migrate_product: could not parse %s for schema derivation: %s",
-            main_py,
-            exc,
+            "migrate_product: could not parse %s for schema derivation: %s", label, exc,
         )
         return None
     for node in ast.walk(tree):
@@ -321,23 +311,92 @@ def _schema_from_main_py(
     return None
 
 
+def _schema_from_main_py(
+    product_slug: str, products_dir: Path | None = None
+) -> str | None:
+    """AST-derive the product's declared schema from its own WORKING-TREE
+    ``app/main.py``.
+
+    Every product declares its schema exactly once, as the ``schema="..."``
+    keyword literal on its ``create_product_app(...)`` call (the same call
+    that wires routers, auth, and — transitively, via
+    ``create_database_module`` — every RLS-scoped query). That single
+    declaration is the authoritative source this function reads; nothing
+    here is a hand-maintained slug→schema map (`CLAUDE.md` §1 "derive, don't
+    sync by hand").
+
+    Returns ``None`` when ``main.py`` is missing, fails to read/parse, or
+    the AST parse (``_parse_schema_from_source``) can't find a literal
+    ``schema=`` — callers fall back to ``_slug_to_schema`` in that case."""
+    base = products_dir or PRODUCTS_DIR
+    main_py = base / product_slug / "backend" / "app" / "main.py"
+    if not main_py.exists():
+        return None
+    try:
+        source = main_py.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug(
+            "migrate_product: could not read %s for schema derivation: %s", main_py, exc,
+        )
+        return None
+    return _parse_schema_from_source(source, str(main_py))
+
+
+def _schema_from_main_py_at_sha(
+    root: Path, sha: str, product_slug: str, git_runner: "GitRunner",
+) -> str | None:
+    """F8 (compliance review, 2026-09-24): AST-derive the schema from
+    ``app/main.py`` AS IT EXISTED AT ``sha`` (via ``git show``), never the
+    working tree — closes the sha-mode schema-derivation gap filed
+    against migrate_product: a
+    schema-declaration change between ``sha`` and the working tree could
+    otherwise apply ``sha``'s migrations against the WRONG schema, silently.
+    Returns ``None`` when the file doesn't exist at that sha (``git show``
+    fails) or the AST parse finds no literal ``schema=`` — same fallback
+    contract as ``_schema_from_main_py``."""
+    rel = f"products/{product_slug}/backend/app/main.py"
+    try:
+        source = git_runner.run(root, ["show", f"{sha}:{rel}"])
+    except GitQueryError as exc:
+        logger.debug(
+            "migrate_product: could not read %s:%s for schema derivation: %s",
+            sha, rel, exc,
+        )
+        return None
+    return _parse_schema_from_source(source, f"{sha}:{rel}")
+
+
 def _resolve_schema(
     product_slug: str,
     schema_override: str | None,
     products_dir: Path | None = None,
+    *,
+    sha: str | None = None,
+    git_root: Path | None = None,
+    git_runner: "GitRunner | None" = None,
 ) -> tuple[str, str]:
     """Resolve the real DB schema for ``product_slug`` + say HOW it was resolved.
 
-    Precedence: explicit override → declared in the product's own main.py →
+    Precedence: explicit override → declared in the product's own main.py
+    (AT ``sha`` when given — F8, never the working tree in sha= mode) →
     naive slug-transform fallback (see module docstring "SCHEMA DERIVATION").
 
     Returns ``(schema, schema_source)`` where ``schema_source`` is one of
-    ``'explicit_override' | 'main_py_declaration' | 'slug_fallback'`` — every
-    caller threads this into the result payload so a fallback is never
-    silently indistinguishable from a verified derivation (no-silent-errors).
+    ``'explicit_override' | 'main_py_declaration' | 'main_py_declaration_at_sha'
+    | 'slug_fallback'`` — every caller threads this into the result payload
+    so a fallback is never silently indistinguishable from a verified
+    derivation (no-silent-errors).
     """
     if schema_override:
         return schema_override, "explicit_override"
+    if sha:
+        declared_at_sha = _schema_from_main_py_at_sha(
+            git_root or PRODUCTS_DIR.parent, sha, product_slug,
+            git_runner or _DEFAULT_GIT_RUNNER,
+        )
+        if declared_at_sha:
+            return declared_at_sha, "main_py_declaration_at_sha"
+        return _slug_to_schema(product_slug), "slug_fallback"
     declared = _schema_from_main_py(product_slug, products_dir)
     if declared:
         return declared, "main_py_declaration"
@@ -406,7 +465,12 @@ class _GitBlobFile:
 
     def read_text(self, encoding: str = "utf-8") -> str:  # noqa: ARG002 — Path.read_text() parity
         if self._content is None:
-            self._content = self._git_runner.run(
+            # F8 (compliance review, 2026-09-24): `run_raw`, NEVER `run` —
+            # `run` rstrips, which would silently drop this file's trailing
+            # newline/whitespace and make `_checksum` hash something other
+            # than the byte-identical working-tree read would. See the
+            # `GitRunner.run_raw` Protocol docstring for the full reasoning.
+            self._content = self._git_runner.run_raw(
                 self._root, ["show", f"{self._sha}:{self._git_path}"]
             )
         return self._content
@@ -420,9 +484,25 @@ def _sorted_migrations_at_sha(
     ``git ls-tree`` and the CONTENT from ``git show`` — never the working
     tree. Raises :class:`GitQueryError` on any git failure (fail-closed,
     same posture as ``_check_tree_staleness`` — an unanswerable "what files
-    exist at this sha" is never silently treated as "no files")."""
+    exist at this sha" is never silently treated as "no files").
+
+    F8(a) (compliance review, 2026-09-24): ALSO raises ``GitQueryError``
+    when ``git ls-tree`` returns completely EMPTY output — git has no
+    concept of an empty directory, so zero tree entries at ``rel_dir``
+    means the path does not exist at this sha at all (wrong product slug,
+    or the product didn't exist yet at this historical commit), never a
+    legitimate "migrations dir exists but is empty". The caller (`migrate_
+    product`) must surface this as ``status='error'``, never a misleadingly
+    clean ``'up_to_date'``."""
     rel_dir = f"products/{product_slug}/backend/migrations"
     listing = git_runner.run(root, ["ls-tree", "--name-only", "-r", sha, "--", rel_dir])
+    if not listing.strip():
+        raise GitQueryError(
+            f"migrations directory {rel_dir!r} does not exist at {sha} — git "
+            "has no concept of an empty directory, so an empty `ls-tree` "
+            "means the path itself is missing at this commit (wrong product "
+            "slug, or the product did not exist yet at this sha)."
+        )
     numbered: list[tuple[int, str, str]] = []
     for line in listing.splitlines():
         line = line.strip()
@@ -626,6 +706,21 @@ class GitRunner(Protocol):
     def run(self, root: Path, args: list[str]) -> str:
         ...  # pragma: no cover
 
+    def run_raw(self, root: Path, args: list[str]) -> str:
+        """F8 (compliance review, 2026-09-24): like ``run``, but returns
+        stdout byte-for-byte UNSTRIPPED. ``run`` deliberately ``.rstrip()``s
+        (see ``SubprocessGitRunner.run``'s comment) — correct for the
+        porcelain/plumbing queries every OTHER caller in this module makes,
+        WRONG for fetching a migration FILE's content: rstripping a `git
+        show <sha>:<path>` blob silently drops the file's trailing
+        newline/whitespace, so ``_checksum`` would hash something OTHER
+        than what the working-tree path (``Path.read_text()``, never
+        stripped) hashes for the byte-identical file — a checksum that
+        differs depending on which CODE PATH read it defeats the whole
+        point of a content-integrity checksum. Used ONLY by
+        ``_GitBlobFile.read_text`` for exactly this reason."""
+        ...  # pragma: no cover
+
 
 class FakeGitRunner:
     """In-memory git runner for unit tests — spawns zero real git processes.
@@ -636,9 +731,10 @@ class FakeGitRunner:
     instead (simulates "not a git repo" / any git failure). An args-tuple
     with neither a response nor a fail_on entry returns ``""`` — tests
     should configure every call the staleness check will actually make.
-    ``calls`` accumulates every args-tuple passed to ``run`` (assertions on
-    call order/count).
-    """
+    ``calls`` accumulates every args-tuple passed to ``run``/``run_raw``
+    (assertions on call order/count). ``run_raw`` delegates to the SAME
+    ``responses``/``fail_on`` — the Fake never strips anything in the first
+    place, so there is no separate "raw" behavior to fake."""
 
     def __init__(
         self,
@@ -657,6 +753,9 @@ class FakeGitRunner:
             raise GitQueryError(f"fake failure for: git {' '.join(args)}")
         return self.responses.get(key, "")
 
+    def run_raw(self, root: Path, args: list[str]) -> str:
+        return self.run(root, args)
+
 
 class SubprocessGitRunner:
     """Real runner: shells out to the system ``git`` binary.
@@ -669,7 +768,7 @@ class SubprocessGitRunner:
 
     _TIMEOUT_S = 15
 
-    def run(self, root: Path, args: list[str]) -> str:
+    def _run_proc(self, root: Path, args: list[str]) -> subprocess.CompletedProcess:
         try:
             proc = subprocess.run(
                 ["git", *args],
@@ -687,6 +786,10 @@ class SubprocessGitRunner:
             raise GitQueryError(
                 f"git {' '.join(args)} exited {proc.returncode} in {root}: {detail}"
             )
+        return proc
+
+    def run(self, root: Path, args: list[str]) -> str:
+        proc = self._run_proc(root, args)
         # `.rstrip()`, NEVER `.strip()` — a multi-line porcelain output's
         # FIRST line can legitimately start with a leading space (the git
         # status-code column, e.g. ` M path` for "modified, not staged").
@@ -698,6 +801,10 @@ class SubprocessGitRunner:
         # `git status --porcelain` path — a corner `FakeGitRunner`-only
         # tests can never exercise, since the Fake returns exact strings.
         return proc.stdout.rstrip()
+
+    def run_raw(self, root: Path, args: list[str]) -> str:
+        # F8: byte-for-byte, no `.rstrip()` — see the Protocol docstring.
+        return self._run_proc(root, args).stdout
 
 
 _DEFAULT_GIT_RUNNER = SubprocessGitRunner()
@@ -981,17 +1088,18 @@ def migrate_product(
         confirm:      False (default) = dry-run (list pending; no DDL run).
                       True = apply all pending files in order.
         target:       Optional filename filter — apply / list only this file.
-        sha:          R3 (release-no-freeze): when given, migration files are
-                      read via ``git show <sha>:<path>`` — the EXACT set that
-                      existed at that commit — never the working tree, and
-                      the stale-tree refusal below is skipped entirely (there
-                      is nothing "stale" about a pinned historical commit;
-                      see NOC-REMEDIATE[migrate-product-sha-schema] below for
-                      the one thing this does NOT also pin). Typical caller:
-                      ``noctus.dev.release``'s ``blessed_sha`` right after a
-                      bless, so what gets APPLIED is provably what got
-                      BLESSED, independent of whatever the checkout currently
-                      holds. Raises no exception on an unreadable sha —
+        sha:          R3 (release-no-freeze): when given, migration files —
+                      AND the schema they're applied to (F8, closes NOC-
+                      REMEDIATE[migrate-product-sha-schema]) — are read via
+                      ``git show <sha>:<path>``, the EXACT state that existed
+                      at that commit, never the working tree; the stale-tree
+                      refusal below is skipped entirely (there is nothing
+                      "stale" about a pinned historical commit). Typical
+                      caller: ``noctus.dev.release``'s ``blessed_sha`` right
+                      after a bless, so what gets APPLIED is provably what
+                      got BLESSED, independent of whatever the checkout
+                      currently holds. Raises no exception on an unreadable
+                      sha —
                       surfaces as ``status='error'``.
         project_ref:  Supabase project reference (default: noctusai production).
         schema:       Override the auto-derived schema. When omitted, the
@@ -1066,8 +1174,39 @@ def migrate_product(
     else:
         git_root = Path(REPO_ROOT)
 
+    # F8(b) (compliance review, 2026-09-24): resolve `sha` to a FULL,
+    # VERIFIED commit sha exactly ONCE, before it is used anywhere —
+    # schema derivation, migration listing, and the result payload all then
+    # see the SAME pinned value. `--verify ...^{commit}` both confirms the
+    # ref actually names a commit (not a tree/blob/tag mismatch) up front,
+    # with one clear error, instead of a confusing failure from whichever
+    # of the several later `git` calls happens to hit it first.
+    if sha:
+        resolver = git_runner or _DEFAULT_GIT_RUNNER
+        try:
+            sha = resolver.run(git_root, ["rev-parse", "--verify", f"{sha}^{{commit}}"])
+        except GitQueryError as exc:
+            return {
+                "status": "error",
+                "exit_code": 1,
+                "product": product,
+                "schema": None,
+                "schema_source": None,
+                "project_ref": project_ref,
+                "applied": [],
+                "skipped_already_applied": [],
+                "pending": [],
+                "sha": sha,
+                "error": (
+                    f"migrate_product: sha={sha!r} does not resolve to a real "
+                    f"commit in {git_root}: {exc}. It must be reachable from "
+                    "this tree's object database (e.g. already fetched)."
+                ),
+            }
+
     derived_schema, schema_source = _resolve_schema(
-        product, schema, resolved_products_dir
+        product, schema, resolved_products_dir,
+        sha=sha, git_root=git_root, git_runner=git_runner,
     )
 
     # R3: a `sha=` pin reads migrations from that COMMIT via git, never the
@@ -1180,14 +1319,9 @@ def migrate_product(
                     "was just pushed elsewhere."
                 ),
             )
-        # NOC-REMEDIATE[migrate-product-sha-schema]: `derived_schema` above
-        # is still resolved from the WORKING TREE's `app/main.py`, even in
-        # `sha=` mode — only the migration FILES themselves are pinned to
-        # the commit. A schema-declaration change between `sha` and the
-        # working tree would apply `sha`'s migrations against the working
-        # tree's (possibly different) schema, silently. Narrow gap (the
-        # schema literal essentially never changes independent of a
-        # migration), named here rather than silently accepted — 2026-09-24.
+        # `derived_schema` above is ALSO resolved from `app/main.py` AT
+        # THIS SHA (F8(e)), not the working tree — see `_resolve_schema`'s
+        # `sha=` branch, which calls `_schema_from_main_py_at_sha`.
     else:
         mig_dir = _migrations_dir(product, resolved_products_dir)
         if not mig_dir.exists():
@@ -1265,11 +1399,32 @@ def migrate_product(
     if not pending:
         return _result("up_to_date", skipped_already_applied=skipped)
 
-    newly_applied: list[str] = []
-    for mig_file in pending:
-        sql = mig_file.read_text(encoding="utf-8")
-        csum = _checksum(sql)
+    # F8(c) (compliance review, 2026-09-24): read EVERY pending file's
+    # content BEFORE running any DDL. In sha= mode each read is its own
+    # `git show` call — if a LATER file's read failed mid-loop (a transient
+    # git/network hiccup, or the sha becoming unreachable), the OLDER
+    # migrations would already have been applied with no way to know
+    # whether the remaining ones were even valid, leaving the DB in a
+    # partially-applied state for no good reason. Fail BEFORE touching the
+    # database if any pending file can't be read.
+    try:
+        pending_sql: list[tuple[Any, str, str]] = [
+            (f, (content := f.read_text(encoding="utf-8")), _checksum(content))
+            for f in pending
+        ]
+    except (OSError, GitQueryError) as exc:
+        return _result(
+            "error",
+            skipped_already_applied=skipped,
+            pending=pending_names,
+            error=(
+                f"migrate_product: could not read a pending migration's content "
+                f"before applying any DDL — refusing to apply a partial set: {exc}"
+            ),
+        )
 
+    newly_applied: list[str] = []
+    for mig_file, sql, csum in pending_sql:
         logger.info("migrate_product: applying %s …", mig_file.name)
         result = executor.execute(sql)
         if not result.get("ok"):

@@ -196,10 +196,15 @@ def test_legacy_attribution_pointer_commit_subject_patch_id_else_unattributed(re
     assert any("unattributed" in r for r in out["unapproved_riders"])
 
 
-# ── bless: default mode='ff' ships the whole dev tip (owner decision 2026-09-24:
-#    the ask is the permission); mode='cut'/'refuse' are explicit opt-ins ─────
+# ── bless: default mode='ff' ships to the newest CI-qualifying-green commit
+#    main..dev (owner decision 2026-09-24: the ask is the permission; R1,
+#    2026-09-24: not necessarily the exact tip — see git-branch-model.md);
+#    mode='cut'/'refuse' are explicit opt-ins ─────────────────────────────
 def test_default_bless_fast_forwards_with_unapproved_riders(repo):
-    """No ship-consent at all: the default bless still ships the whole dev tip."""
+    """No ship-consent at all: the default bless still ships. `repo`'s default
+    CI fixture (`_GREEN`, a `workflow_dispatch`-shaped run) qualifies the dev
+    tip itself here, so blessed_sha == dev tip in THIS scenario — R1's walk
+    is exercised separately in the qualifying-green-specific tests below."""
     a1, d, u, a2, pointers = _alpha_scene(repo)
     out = repo.release(stage="bless", confirm=True, pointer_rows=pointers, consent_rows=[])
     assert out["status"] == "blessed", out

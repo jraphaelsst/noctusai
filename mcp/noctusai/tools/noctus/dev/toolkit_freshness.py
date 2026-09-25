@@ -78,21 +78,30 @@ R4 — the fresh-subprocess fallback (2026-09-24, release-no-freeze)
         in-process path, never the subprocess. The two escape hatches are
         for different trust levels and must never be conflated.
       - A tool with no wired CLI mapping (``_tool_cli_argv`` returns
-        ``None``), a subprocess launch failure, or unparseable subprocess
-        output all fall back to the ORIGINAL hard refusal — never a silent
-        working-tree call on unverified code.
-      - ``_extract_trailing_json`` exists because ``cli.py`` can emit INFO
+        ``None``) or a genuine PRE-LAUNCH failure (the child process never
+        started — e.g. the interpreter itself could not be exec'd) falls
+        back to the ORIGINAL hard refusal (nothing was touched, so "refused"
+        is still accurate). A POST-LAUNCH failure (timeout, unparseable
+        output) is NEVER reported as a refusal — the child may have started
+        a real write before dying; see ``status='fresh_subprocess_outcome_
+        unknown'`` below.
+      - ``_extract_trailing_json`` exists because ``cli.py`` could emit INFO
         log lines on stdout BEFORE its final ``json.dumps(...)`` — a naive
-        whole-blob parse breaks on "Extra data" (found wiring this very
-        fallback). NOC-REMEDIATE[cli-stdout-log-noise]: the cleaner
-        platform fix is routing cli.py's logging to stderr, which would
-        obsolete this extraction entirely — out of scope here — 2026-09-24.
+        whole-blob parse broke on "Extra data" (found wiring this very
+        fallback, 2026-09-24). FIXED AT THE ROOT the same day: ``cli.py``
+        now configures its logging via ``auto_configure_for_cli(...,
+        use_stderr=True)`` and its startup banner prints to ``sys.stderr``
+        — stdout is pure JSON on every dispatch path. The scan is kept as a
+        defense-in-depth belt (a future flag could still print something
+        stray) even though it is no longer load-bearing for this toolkit's
+        own dispatch paths.
 """
 from __future__ import annotations
 
 import functools
 import inspect
 import json
+import os
 import subprocess
 import sys
 import time
@@ -114,7 +123,25 @@ REMEDY = "Restart the MCP server (Claude Code: run `/mcp`) so it re-imports mcp/
 # "the stale process"), and returns THAT result with `executed_via:
 # "fresh_subprocess"`. Read-only / confirm=False calls are UNAFFECTED — they
 # stay in-process (WARN posture), per `refuse_gate`'s existing contract.
-_FRESH_SUBPROCESS_TIMEOUT_S = 600.0
+# F2 (compliance review, 2026-09-24): 600s was too tight for a genuinely
+# slow write (e.g. `task_branch action='start'` symlinking ~18,840 entries,
+# or a large migration set) — and killing the child on timeout is the worst
+# possible outcome if it was mid-write. Raised substantially so a timeout is
+# a rare, real "something is actually stuck" signal, not a routine hazard;
+# `_run_via_fresh_subprocess` additionally NEVER treats a timeout as
+# evidence nothing happened (see `status='fresh_subprocess_outcome_unknown'`).
+_FRESH_SUBPROCESS_TIMEOUT_S = 1800.0
+
+# F2: the read-only/dry-run verification step named in an "outcome unknown"
+# result — the caller's next move to find out what actually happened.
+_VERIFICATION_STEP: dict[str, str] = {
+    "release": "noctus.dev.release stage='status' (read-only) to see the current chain state",
+    "migrate_product": "noctus.dev.migrate_product confirm=False (dry-run) to see what's actually pending vs. applied",
+    "deploy_image": "noctus.dev.deploy_verify — the INDEPENDENT witness, zero dependency on deploy_image having run",
+    "task_branch": "noctus.dev.task_branch action='status' (read-only) to see the current worktree/branch state",
+}
+
+_TAIL_CHARS = 4000
 
 _DEFAULT_TTL_SECONDS = 5.0
 
@@ -331,39 +358,46 @@ def warn_gate(tool_name: str, ttl_seconds: float = _DEFAULT_TTL_SECONDS) -> Call
 # MCP-exposed nor CLI-relevant). Adding a NEW `refuse_gate` consumer without
 # adding it here is caught, not silently guessed at — see
 # `_run_via_fresh_subprocess`'s "no CLI entry wired" hard-refusal below.
+#
+# `--flag=value` (F3, compliance review 2026-09-24), never a bare `value` as
+# its own argv element: a value that itself starts with `-` (a sha, a slug,
+# a free-text brief) passed as TWO argv elements — `["--release-sha", "-abc"]`
+# — would have argparse read `-abc` as an unrecognized FLAG, not `--release-
+# sha`'s value. `--flag=value` is unambiguous regardless of the value's
+# content.
 def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
     """CLI argv (everything after ``cli.py``) for a gated write tool's bound
     kwargs. Returns ``None`` when `tool_name` has no wired entry."""
     if tool_name == "release":
-        argv = ["--release", str(kwargs.get("stage") or "status")]
+        argv = [f"--release={kwargs.get('stage') or 'status'}"]
         if kwargs.get("confirm"):
             argv.append("--release-confirm")
         if kwargs.get("sha"):
-            argv += ["--release-sha", str(kwargs["sha"])]
+            argv.append(f"--release-sha={kwargs['sha']}")
         mode = kwargs.get("mode") or "ff"
         if mode != "ff":
-            argv += ["--release-mode", str(mode)]
+            argv.append(f"--release-mode={mode}")
         if kwargs.get("release_branch"):
-            argv += ["--release-branch", str(kwargs["release_branch"])]
+            argv.append(f"--release-branch={kwargs['release_branch']}")
         return argv
 
     if tool_name == "migrate_product":
         product = kwargs.get("product")
         if not product:
             return None
-        argv = ["--migrate-product", str(product)]
+        argv = [f"--migrate-product={product}"]
         if kwargs.get("confirm"):
             argv.append("--migrate-product-confirm")
         if kwargs.get("target"):
-            argv += ["--migrate-product-target", str(kwargs["target"])]
+            argv.append(f"--migrate-product-target={kwargs['target']}")
         if kwargs.get("sha"):
-            argv += ["--migrate-product-sha", str(kwargs["sha"])]
+            argv.append(f"--migrate-product-sha={kwargs['sha']}")
         if kwargs.get("project_ref"):
-            argv += ["--migrate-product-project-ref", str(kwargs["project_ref"])]
+            argv.append(f"--migrate-product-project-ref={kwargs['project_ref']}")
         if kwargs.get("schema"):
-            argv += ["--migrate-product-schema", str(kwargs["schema"])]
+            argv.append(f"--migrate-product-schema={kwargs['schema']}")
         if kwargs.get("worktree_path"):
-            argv += ["--migrate-product-worktree-path", str(kwargs["worktree_path"])]
+            argv.append(f"--migrate-product-worktree-path={kwargs['worktree_path']}")
         if kwargs.get("allow_stale_tree"):
             argv.append("--migrate-product-allow-stale-tree")
         if kwargs.get("allow_inactive"):
@@ -374,18 +408,18 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
         product = kwargs.get("product")
         if not product:
             return None
-        argv = ["--deploy-image", str(product)]
+        argv = [f"--deploy-image={product}"]
         if kwargs.get("confirm"):
             argv.append("--deploy-image-confirm")
         tag = kwargs.get("tag") or "latest"
         if tag != "latest":
-            argv += ["--deploy-image-tag", str(tag)]
+            argv.append(f"--deploy-image-tag={tag}")
         source = kwargs.get("source") or "pull"
         if source != "pull":
-            argv += ["--deploy-image-source", str(source)]
+            argv.append(f"--deploy-image-source={source}")
         ssh_host = kwargs.get("ssh_host") or "noctus-vps"
         if ssh_host != "noctus-vps":
-            argv += ["--deploy-host", str(ssh_host)]
+            argv.append(f"--deploy-host={ssh_host}")
         if kwargs.get("skip_ancestry_check"):
             argv.append("--deploy-image-skip-ancestry-check")
         if kwargs.get("allow_inactive"):
@@ -393,23 +427,23 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
         return argv
 
     if tool_name == "task_branch":
-        argv = ["--task-branch", str(kwargs.get("action") or "status")]
+        argv = [f"--task-branch={kwargs.get('action') or 'status'}"]
         if kwargs.get("slug"):
-            argv += ["--task-branch-slug", str(kwargs["slug"])]
+            argv.append(f"--task-branch-slug={kwargs['slug']}")
         if kwargs.get("confirm"):
             argv.append("--task-branch-confirm")
         if kwargs.get("project"):
-            argv += ["--task-branch-project", str(kwargs["project"])]
+            argv.append(f"--task-branch-project={kwargs['project']}")
         if kwargs.get("brief"):
-            argv += ["--task-branch-brief", str(kwargs["brief"])]
+            argv.append(f"--task-branch-brief={kwargs['brief']}")
         if kwargs.get("paths"):
-            argv += ["--task-branch-paths", ",".join(str(p) for p in kwargs["paths"])]
+            argv.append(f"--task-branch-paths={','.join(str(p) for p in kwargs['paths'])}")
         if kwargs.get("agent"):
-            argv += ["--task-branch-agent", str(kwargs["agent"])]
+            argv.append(f"--task-branch-agent={kwargs['agent']}")
         if kwargs.get("role"):
-            argv += ["--task-branch-role", str(kwargs["role"])]
+            argv.append(f"--task-branch-role={kwargs['role']}")
         if kwargs.get("parent"):
-            argv += ["--task-branch-parent", str(kwargs["parent"])]
+            argv.append(f"--task-branch-parent={kwargs['parent']}")
         if kwargs.get("wire_env") is False:
             argv.append("--task-branch-no-wire-env")
         if kwargs.get("verbose"):
@@ -417,6 +451,59 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
         return argv
 
     return None
+
+
+# F3: the EXACT bound-argument names `_tool_cli_argv` reads for each tool —
+# MUST mirror the `.get(...)`/membership checks above 1:1. Anything OUTSIDE
+# this set (`remote`/`main_branch`/`prod_branch`/`run`/`executor`/
+# `git_runner`/`consent_rows`/... — DI-only test seams, or a real knob that
+# simply has no CLI flag yet) has NO way to reach the child process. Passing
+# a NON-DEFAULT value for one of those and silently proceeding to subprocess
+# anyway would run the child against the WRONG target (wrong remote, wrong
+# executor, ...) with no signal at all — `_unmapped_param_diffs` catches
+# that BEFORE any subprocess is launched.
+_MAPPED_PARAMS: dict[str, frozenset[str]] = {
+    "release": frozenset({"stage", "confirm", "sha", "mode", "release_branch"}),
+    "migrate_product": frozenset({
+        "product", "confirm", "target", "sha", "project_ref", "schema",
+        "worktree_path", "allow_stale_tree", "allow_inactive",
+    }),
+    "deploy_image": frozenset({
+        "product", "confirm", "tag", "source", "ssh_host",
+        "skip_ancestry_check", "allow_inactive",
+    }),
+    "task_branch": frozenset({
+        "action", "slug", "confirm", "project", "brief", "paths", "agent",
+        "role", "parent", "wire_env", "verbose",
+    }),
+}
+
+
+def _unmapped_param_diffs(
+    tool_name: str, fn_sig: "inspect.Signature | None", bound_args: dict[str, Any],
+) -> list[str]:
+    """Names of bound args NOT in ``_MAPPED_PARAMS[tool_name]`` whose value
+    differs from that parameter's OWN default — each one is a value the
+    fresh-subprocess hop would SILENTLY DROP. A parameter with no default
+    at all (should never happen for anything outside the mapped set, given
+    today's signatures — defensive) is conservatively treated as always a
+    diff rather than risk a false negative."""
+    if fn_sig is None:
+        return []
+    mapped = _MAPPED_PARAMS.get(tool_name, frozenset())
+    diffs: list[str] = []
+    for name, value in bound_args.items():
+        if name in mapped:
+            continue
+        param = fn_sig.parameters.get(name)
+        if param is None:
+            continue  # not a real parameter of this signature — ignore
+        if param.default is inspect.Parameter.empty:
+            diffs.append(name)
+            continue
+        if value != param.default:
+            diffs.append(name)
+    return diffs
 
 
 def _extract_trailing_json(text: str) -> dict[str, Any] | None:
@@ -446,12 +533,52 @@ def _extract_trailing_json(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _tail(text: str | None, n: int = _TAIL_CHARS) -> str:
+    text = text or ""
+    return text[-n:] if len(text) > n else text
+
+
+def _outcome_unknown_payload(
+    tool_name: str, cmd: list[str], *, rc: int | None, out: str, err: str, reason: str,
+) -> dict[str, Any]:
+    """F2 (compliance review, 2026-09-24): the ONLY honest shape for a
+    POST-LAUNCH failure. The child process was actually started — for a
+    write tool that means it may have already begun (or finished) a real
+    mutation before we lost the ability to read its answer. Calling this
+    'refused' would be a LIE (a refusal by definition means nothing was
+    touched); `refused_stale_toolkit`/`refusal_payload` must never be
+    reused here. `verification_step` is the caller's next move — a
+    read-only probe that tells them what actually happened."""
+    verify = _VERIFICATION_STEP.get(
+        tool_name, "re-run the read-only status/dry-run form of this tool"
+    )
+    return {
+        "ok": False,
+        "status": "fresh_subprocess_outcome_unknown",
+        "exit_code": 1,
+        "executed_via": "fresh_subprocess",
+        "tool": tool_name,
+        "cmd": cmd,
+        "rc": rc,
+        "stdout_tail": _tail(out),
+        "stderr_tail": _tail(err),
+        "verification_step": verify,
+        "error": (
+            f"{tool_name}: the fresh subprocess was LAUNCHED — it may have "
+            f"started (or completed) a real action — but its outcome could "
+            f"not be determined ({reason}). This is NOT a refusal: do not "
+            f"treat it as 'nothing happened'. Verify with: {verify}."
+        ),
+    }
+
+
 def _run_via_fresh_subprocess(
     tool_name: str,
     kwargs: dict[str, Any],
     verdict: dict[str, Any],
     allow_stale_toolkit: bool,
     subprocess_run: Callable[..., tuple[int, str, str]] | None = None,
+    fn_sig: "inspect.Signature | None" = None,
 ) -> dict[str, Any]:
     """The R4 fallback: instead of refusing a confirm=True write outright
     because THIS process's module graph is stale, run the SAME call as
@@ -461,12 +588,35 @@ def _run_via_fresh_subprocess(
     result with ``executed_via: "fresh_subprocess"`` added; ``toolkit_stale``
     rides through UNCHANGED from whatever the subprocess itself reports
     (almost always ``False`` — a process that just launched has nothing to
-    have drifted from). Falls back to a hard refusal (never a silent
-    working-tree call) when: no CLI entry is wired for `tool_name`; the
-    subprocess itself fails to launch; its output isn't parseable JSON; or
-    (defensive, expected-unreachable) the subprocess's OWN freshness check
-    also comes back stale — each names the concrete reason in ``error``,
-    never just "refused".
+    have drifted from).
+
+    F2 (compliance review, 2026-09-24) drew a hard line: PRE-LAUNCH vs.
+    POST-LAUNCH failure are NOT the same thing and must never share a
+    status.
+      - PRE-LAUNCH (nothing could have run): no CLI entry wired for
+        `tool_name`, an unmapped-but-overridden argument (F3, below), or
+        the child process never actually started (e.g. the interpreter
+        itself could not be exec'd). ``refused_stale_toolkit`` is still an
+        ACCURATE description — refuse, as before.
+      - POST-LAUNCH (the child started — it may have begun or finished a
+        real write): a timeout, or output that fails to parse as JSON.
+        Returns ``status='fresh_subprocess_outcome_unknown'`` instead —
+        never a refusal, since "refused" implies nothing happened and we
+        no longer know that.
+      - STALE-ON-STALE: the child ran to completion and its OWN
+        ``refuse_gate`` ALSO saw a stale module graph and refused before
+        writing — this IS a fully known, verified outcome (refused,
+        nothing touched). Returns the CHILD's own result verbatim (flagged
+        ``nested_toolkit_stale``), never a second, fabricated refusal.
+
+    F3 (compliance review, 2026-09-24): ``_tool_cli_argv`` only knows the
+    tool's MCP-exposed params. A caller (almost always a test, or an
+    internal composing tool) that also passes a NON-DEFAULT value for a
+    param OUTSIDE that mapped set — `remote=`, `main_branch=`, `executor=`,
+    `git_runner=`, `consent_rows=`, ... — would have that value SILENTLY
+    DROPPED on the subprocess hop, running the child against a different
+    target than the caller asked for. Checked BEFORE any subprocess is
+    launched (still pre-launch, still a safe/accurate refusal).
     ``subprocess_run`` is a DI seam for tests (default: real
     ``subprocess.run``)."""
     argv = _tool_cli_argv(tool_name, kwargs)
@@ -475,51 +625,95 @@ def _run_via_fresh_subprocess(
         payload["error"] += (
             f" No fresh-subprocess CLI entry is wired for {tool_name!r} in "
             "toolkit_freshness._tool_cli_argv — refusing rather than "
-            "guessing at a CLI shape."
+            "guessing at a CLI shape. Nothing was launched; untouched."
         )
         return payload
 
+    # F3: only meaningful for a tool that IS wired (`_MAPPED_PARAMS` above
+    # is the assumed-safe subset for THAT tool's argv) — checked after the
+    # "no CLI entry" branch so an entirely-unwired tool_name reports THAT
+    # reason, not a misleading "every param is unmapped".
+    unmapped_diffs = _unmapped_param_diffs(tool_name, fn_sig, kwargs)
+    if unmapped_diffs:
+        payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
+        payload["error"] += (
+            f" Cannot fresh-subprocess {tool_name!r}: caller passed a "
+            f"non-default value for {unmapped_diffs} — none of these have "
+            "a CLI flag (see toolkit_freshness._MAPPED_PARAMS), so silently "
+            "dropping them on the subprocess hop would run the child "
+            "against a DIFFERENT target than requested. Nothing was "
+            "launched; untouched."
+        )
+        payload["unmapped_param_diffs"] = unmapped_diffs
+        return payload
+
     cli_path = TOOLKIT_ROOT / "cli.py"
+    # Explicit child env (F2): never inherit a stray PYTHONPATH the caller's
+    # own process picked up (e.g. a worktree's product PYTHONPATH override
+    # from an enclosing test/dispatch harness) — the fresh subprocess must
+    # resolve `mcp/noctusai/**` and its deps the SAME way a bare `python
+    # mcp/noctusai/cli.py` invocation would from a clean shell.
+    child_env = {
+        k: v for k, v in os.environ.items() if k != "PYTHONPATH"
+    }
     runner = subprocess_run or (
         lambda cmd: (
             lambda p: (p.returncode, p.stdout, p.stderr)
         )(subprocess.run(cmd, capture_output=True, text=True, cwd=str(TOOLKIT_ROOT),
-                         timeout=_FRESH_SUBPROCESS_TIMEOUT_S))
+                         env=child_env, timeout=_FRESH_SUBPROCESS_TIMEOUT_S))
     )
     cmd = [sys.executable, str(cli_path), *argv]
     try:
         rc, out, err = runner(cmd)
-    except Exception as exc:  # noqa: BLE001 — any launch failure is a hard refusal, named
+    except subprocess.TimeoutExpired as exc:
+        # POST-LAUNCH: the child DID start (and subprocess.run's timeout
+        # path kills it) — it may have been mid-write. Never a refusal.
+        return _outcome_unknown_payload(
+            tool_name, cmd, rc=None,
+            out=exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace"),
+            err=exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace"),
+            reason=f"timed out after {_FRESH_SUBPROCESS_TIMEOUT_S:.0f}s",
+        )
+    except Exception as exc:  # noqa: BLE001 — a genuine pre-launch failure (exec never happened)
         payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
-        payload["error"] += f" Fresh-subprocess launch failed ({' '.join(argv)}): {exc}"
+        payload["error"] += (
+            f" Fresh-subprocess launch failed before the child could start "
+            f"({' '.join(argv)}): {exc}. Nothing was launched; untouched."
+        )
         return payload
 
     result = _extract_trailing_json(out) if out else None
     if not isinstance(result, dict):
-        payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
-        payload["error"] += (
-            f" Fresh-subprocess produced unparseable output (rc={rc}): "
-            f"{(err or out or '')[:500]}"
+        # POST-LAUNCH: the child ran (we have an rc) but produced no
+        # parseable JSON — it may have crashed mid-write. Never a refusal.
+        return _outcome_unknown_payload(
+            tool_name, cmd, rc=rc, out=out, err=err, reason="unparseable output",
         )
-        return payload
 
     if result.get("toolkit_stale") is True:
-        # Defensive, expected-unreachable in practice: a process that just
-        # launched has captured its OWN baseline moments ago, so it should
-        # never itself report stale. If it somehow does (e.g. something
-        # kept editing this toolkit's files WHILE the subprocess launched),
-        # trust that verdict over "fresh_subprocess" optimism and hard-
-        # refuse — never hand back a result that is stale-on-stale.
-        payload = refusal_payload(tool_name, verdict, allow_stale_toolkit)
-        payload["error"] += (
-            " The fresh subprocess ALSO reported its own module graph as "
-            "stale (toolkit_stale=True in its result) — refusing rather "
-            "than trusting a stale-on-stale answer."
+        # The CHILD's own refuse_gate also saw stale and refused BEFORE
+        # writing — a fully known, verified outcome. Return exactly what it
+        # reported; never fabricate a second refusal on top of it.
+        result["executed_via"] = "fresh_subprocess"
+        result["nested_toolkit_stale"] = True
+        # The PRIMARY process's own verdict (why we subprocessed at all) —
+        # distinct from the CHILD's own `toolkit_stale`/`nested_toolkit_
+        # stale` above, both carried so a caller can tell WHICH process was
+        # stale without guessing from prose.
+        result["primary_toolkit_stale"] = True
+        result["primary_toolkit_freshness"] = verdict
+        result.setdefault("warnings", [])
+        result["warnings"].append(
+            f"{tool_name}: the fresh subprocess ALSO reported its own "
+            "module graph as stale and refused before writing — this is "
+            "the CHILD's own (verified, nothing-touched) refusal, "
+            "returned as-is, not a fabricated wrapper-level one."
         )
-        payload["fresh_subprocess_result"] = result
-        return payload
+        return result
 
     result["executed_via"] = "fresh_subprocess"
+    result["primary_toolkit_stale"] = True
+    result["primary_toolkit_freshness"] = verdict
     result.setdefault("warnings", [])
     result["warnings"].append(
         f"{tool_name}: the primary MCP server's module graph was stale, so "
@@ -635,7 +829,7 @@ def refuse_gate(
                     # trust levels and must not be conflated.
                     return _run_via_fresh_subprocess(
                         tool_name, bound_args, verdict, allow_stale_toolkit,
-                        subprocess_run=subprocess_run,
+                        subprocess_run=subprocess_run, fn_sig=sig,
                     )
                 result = fn(*args, **kwargs)
                 if isinstance(result, dict):

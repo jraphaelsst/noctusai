@@ -79,6 +79,14 @@ jobs:
       shared_changed: ${{ steps.classify.outputs.shared_changed }}
       changed_products: ${{ steps.classify.outputs.changed_products }}
       active_products: ${{ steps.classify.outputs.active_products }}
+      # F5 (compliance review, 2026-09-24): visibility only — whether the
+      # push-event scope decision was diffed against a VERIFIED heavy-green
+      # base (true) or the diff-base search failed and this run went full
+      # (false / unset — see the "fail toward coverage" branch above). Not
+      # consumed by any job in THIS workflow; GitHub's API does not expose a
+      # job's own outputs to a reader outside the run, so this can never be
+      # machine-queried after the fact either — its value is in the run log.
+      diff_base_verified: ${{ steps.classify.outputs.diff_base_verified }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -138,8 +146,22 @@ jobs:
             # skips every heavy job — dev reads green on untested code (hit 4x
             # on 2026-09-23). Diff against the head of the LAST run on this ref
             # whose heavy jobs actually ran green instead, so every commit not
-            # yet verified is in scope. Falls back to event.before when no such
-            # run exists or it is not an ancestor.
+            # yet verified is in scope.
+            #
+            # F5 (compliance review, 2026-09-24): when NO such verified run
+            # exists, FAIL TOWARD COVERAGE — run the full suite — rather than
+            # silently falling back to the unsafe `event.before`. That
+            # fallback was the ORIGINAL bug this whole mechanism exists to
+            # close: `event.before` can BE the head of a cancelled code run.
+            # `diff_base_verified` is exposed as a job output for visibility
+            # (GitHub's API does not expose a job's own `$GITHUB_OUTPUT`
+            # values to an external reader after the fact, so this is
+            # informational for anyone reading the run, not machine-
+            # queryable by `noctus.dev.release`'s `_qualifying_ci_verdict`
+            # from outside the workflow — the fail-toward-coverage behavior
+            # below is what actually keeps `_qualifying_ci_verdict` safe:
+            # a scoped-down, less-than-full run can never happen without a
+            # verified base in the first place).
             VERIFIED=""
             for RID in $(gh run list --workflow "${{ github.workflow }}" --branch "${GITHUB_REF_NAME}" \
                            --status success --limit 20 --json databaseId -q '.[].databaseId' 2>/dev/null || true); do
@@ -153,9 +175,15 @@ jobs:
             if [ -n "$VERIFIED" ] && git cat-file -e "${VERIFIED}^{commit}" 2>/dev/null \
                && git merge-base --is-ancestor "$VERIFIED" "${{ github.sha }}"; then
               echo "diff base: last heavy-green run head ${VERIFIED} (event.before was ${BASE})"
+              echo "diff_base_verified=true" >> "$GITHUB_OUTPUT"
               BASE="$VERIFIED"
             else
-              echo "::warning::no heavy-green ancestor run found on ${GITHUB_REF_NAME}; diffing against event.before (${BASE})"
+              echo "diff_base_verified=false" >> "$GITHUB_OUTPUT"
+              echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+              echo "shared_changed=true" >> "$GITHUB_OUTPUT"
+              echo "changed_products=," >> "$GITHUB_OUTPUT"
+              echo "::warning::no heavy-green ancestor run found on ${GITHUB_REF_NAME} — failing toward coverage (full suite) instead of diffing against the unverified event.before (${BASE})"
+              exit 0
             fi
           fi
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then

@@ -56,12 +56,15 @@ Safety model (mirrors deploy_pull / the §2a stack):
     `noc-ship` step 0b called it MANDATORY for months while NOTHING checked it,
     so `1c83232f` was blessed AND promoted to prod carrying a red
     `Tests & Build`, and `dev` then stayed red for 12 commits with the gate
-    reading as satisfied. Bless now probes the exact dev tip and refuses on
-    red / pending / missing / unreachable alike — REFUSE-NOT-NULL, because "I
-    could not find out" is not "it passed". The sole exception is the one the
-    skill already names: a diff that touches nothing executable (docs +
-    project-history only). There is deliberately NO override flag; a red dev
-    is fixed on dev. → KB § PATTERNS/devops/dev-main-ci-gates.md.
+    reading as satisfied. Bless now walks `main..dev` for a QUALIFYING green
+    (2026-09-24, R1 — not necessarily the exact tip; see
+    `_newest_qualifying_green_descendant`) and refuses outright only when NO
+    commit in range qualifies — red / pending / missing / unreachable
+    candidates are walked past, never silently trusted — REFUSE-NOT-NULL,
+    because "I could not find out" is not "it passed". The sole exception is
+    the one the skill already names: a diff that touches nothing executable
+    (docs + project-history only). There is deliberately NO override flag; a
+    red dev is fixed on dev. → KB § PATTERNS/devops/dev-main-ci-gates.md.
 
 IO is injectable (`run`, `now`) so the colocated test drives every path with
 zero real git and asserts both the allowlist and the NOCTUS_ALLOW_MAIN_PUSH
@@ -70,6 +73,7 @@ discipline (set on main/prod pushes, NEVER on the prod-backup snapshot push).
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from typing import Any, Callable
@@ -93,6 +97,12 @@ _BANNED_TOKENS = (
     "reset", "checkout", "restore", "clean", "--hard", "--force",
     "--force-with-lease", "-D", "branch",
 )
+
+# F4 (compliance review, 2026-09-24): matches a migration file under
+# `products/<slug>/backend/migrations/` — the same path shape
+# `migrate_product._MIGRATION_PATH_RE` uses, kept separate (this module
+# never imports migrate_product's internals) but intentionally identical.
+_MIGRATION_PATH_RE = re.compile(r"^products/[^/]+/backend/migrations/")
 
 # Reuse the deploy_pull rebuild oracle so a promote tells you whether the VPS
 # pull will need a container rebuild — DRY, one source of truth.
@@ -319,11 +329,28 @@ def _newest_qualifying_green_descendant(git, runner, main: str, dev: str,
     """Walk `main..dev`, newest-first, for the newest commit that is BOTH a
     descendant of `main` (a plain FF still lands it) and carries a
     QUALIFYING green `workflow` run. Returns `{"found": True, "sha": ...,
-    "ci": ..., "skipped_tail": [...]}` or `{"found": False, "checked": N,
-    "skipped_tail": [...]}` — never raises; an unreachable `gh`/git query on
-    one candidate is one more non-qualifying candidate, not a crash. Each
-    `skipped_tail` entry is `{"sha": ..., **verdict}` in walked (newest-
-    first) order."""
+    "ci": ..., "checked": N, "skipped_tail": [...]}` or `{"found": False,
+    "checked": N, "skipped_tail": [...]}` — `checked` is ALWAYS present
+    (the number of candidates walked before stopping, found or not) so a
+    caller never has to special-case which branch it's reading. Never
+    raises; an unreachable `gh`/git query on one candidate is one more
+    non-qualifying candidate, not a crash. Each `skipped_tail` entry is
+    `{"sha": ..., **verdict}` in walked (newest-first) order.
+
+    NOC-REMEDIATE[release-topo-batched-ci-probe] (F9/F10, compliance
+    review 2026-09-24, explicitly optional): `rev-list` here defaults to
+    reverse-chronological (date) order, not strict topological — the two
+    coincide for the near-linear history bless normally walks, but a
+    `--topo-order` pin would be the more precise guarantee. Each
+    candidate's `_qualifying_ci_verdict` is also its OWN `gh run list`
+    call; one batched `gh run list --workflow ... --limit N` covering the
+    whole candidate set (then matched client-side) would cut N round-trips
+    to 1 for a long bookkeeping tail. Deferred — the current per-commit
+    walk already short-circuits at the first qualifying candidate (the
+    common case costs exactly one `gh` call, per `_qualifying_ci_verdict`'s
+    own docstring), so this is a latency optimization for the UNCOMMON
+    long-unverified-tail case, not a correctness gap — never silently
+    dropped, named here for whoever picks it up."""
     rc, out, _e = git("rev-list", f"{main}..{dev}")
     candidates = [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else []
     skipped: list[dict[str, Any]] = []
@@ -333,7 +360,8 @@ def _newest_qualifying_green_descendant(git, runner, main: str, dev: str,
             continue
         v = _qualifying_ci_verdict(git, runner, c, workflow)
         if v["qualifies"]:
-            return {"found": True, "sha": c, "ci": v, "skipped_tail": skipped}
+            return {"found": True, "sha": c, "ci": v, "checked": len(skipped),
+                    "skipped_tail": skipped}
         skipped.append({"sha": c, **v})
     return {"found": False, "checked": len(candidates), "skipped_tail": skipped}
 
@@ -406,7 +434,20 @@ def _bless_cut(git, base, man, mode, confirm, remote, main, main_branch,
                dev_branch, ff, now) -> dict[str, Any]:
     """Unapproved riders (or a diverged main after an earlier cut): never FF
     the whole dev tip. mode='refuse' → blocked; mode='cut' (default) → build
-    `release/<stamp>` = main + approved/exempt commits in dev order."""
+    `release/<stamp>` = main + approved/exempt commits in dev order.
+
+    NOC-REMEDIATE[release-cut-qualifying-green]: `_bless_release_branch`
+    (the 2nd call, blessing a pushed cut) still requires CI green on the
+    cut's EXACT sha via the plain `_ci_verdict`, never the R1 qualifying-
+    green walk — correct today (a release/<stamp> cut is fresh, single-
+    purpose, and `test.yml` always forces `run_heavy=true` for a
+    `release/**` ref, so there is no bookkeeping-tail-freeze risk to fix
+    here), but it is a second, narrower CI-trust code path living
+    alongside `_qualifying_ci_verdict`. F9/F10 (compliance review,
+    2026-09-24, explicitly optional): unify onto `_qualifying_ci_verdict`
+    if a THIRD CI-trust shape ever appears (N=3 → formalize) — deferred,
+    not silently dropped.
+    """
     from tools.noctus.dev._release_riders import cherry_pick_chain
 
     info = {"unapproved_riders": man["unapproved_riders"], "projects": man["projects"],
@@ -567,14 +608,32 @@ def release(
     if stage == "status":
         bless_ff = _is_ancestor(git, main, dev)
         dev_ci = _ci_verdict(runner, dev)
+        # F7 (compliance review, 2026-09-24): `dev_ci` above is the EXACT-TIP
+        # verdict only — since R1, that is NOT what a `stage='bless'` call
+        # actually targets. A red/pending tip here no longer means bless is
+        # blocked if a qualifying-green ANCESTOR exists; surface the real
+        # walk result so `status` never misleads a caller into thinking
+        # bless is stuck when it isn't (or vice versa).
+        qualifying = (
+            _newest_qualifying_green_descendant(git, runner, main, dev)
+            if bless_ff else {"found": False, "checked": 0, "skipped_tail": []}
+        )
         promote_ff = bool(prod) and _is_ancestor(git, prod, main)
         return {
             **base, "status": "status", "exit_code": 0,
             "bless": {  # dev → main
                 "ff": bless_ff, "ahead": len(_commits(git, main, dev)),
                 "commits": _commits(git, main, dev)[:20],
-                # not-green here BLOCKS bless (unless the diff is docs-only)
+                # `ci`: the EXACT-TIP verdict only — reference/legacy shape,
+                # never the actual bless decision (see qualifying_* below).
                 "ci": dev_ci,
+                # The REAL bless target (R1): the newest commit main..dev
+                # that carries a qualifying green, or null if bless would
+                # currently refuse outright (checked=0 when !bless_ff, since
+                # the walk never runs without a clean FF to begin with).
+                "qualifying_target": qualifying["sha"][:9] if qualifying.get("found") else None,
+                "qualifying_found": qualifying.get("found", False),
+                "qualifying_checked": qualifying.get("checked", 0),
             },
             "promote": {  # main → prod (ships EVERYTHING main is ahead of prod)
                 "ff": promote_ff,
@@ -597,7 +656,8 @@ def release(
         if not man.get("ok"):
             return {**base, "status": "error", "exit_code": 1, "error": man.get("error")}
         ff = _is_ancestor(git, main, dev)
-        verdict = ("bless (default mode='ff') fast-forwards the whole dev tip; consent is "
+        verdict = ("bless (default mode='ff') fast-forwards to the newest CI-qualifying-green "
+                   "commit main..dev (R1 — not necessarily the tip); consent is "
                    "informational" if ff else
                    f"{main_branch} is not an ancestor of {dev_branch} — backmerge first")
         return {**base, **man, "status": "manifest", "exit_code": 0, "ff": ff,
@@ -641,9 +701,10 @@ def release(
             return {**base, "status": "error", "exit_code": 1,
                     "error": (
                         f"release: stage='bless' does not accept sha= (got {sha!r}). "
-                        f"Bless always fast-forwards {main_branch} to the CURRENT "
-                        f"{dev_branch} tip — there is no partial-bless concept "
-                        "(KB § PATTERNS/architect/git-branch-model.md). If you meant to "
+                        f"Bless always picks its OWN target — the newest CI-qualifying-"
+                        f"green commit {main_branch}..{dev_branch} (R1, not necessarily "
+                        f"the {dev_branch} tip) — there is no caller-pinned partial-bless "
+                        "concept (KB § PATTERNS/architect/git-branch-model.md). If you meant to "
                         "pin a specific already-blessed commit for deployment, that is "
                         "promote's job: stage='promote' sha=<main-sha>. This refusal "
                         "replaces a prior SILENT no-op where sha= was accepted by the "
@@ -716,15 +777,40 @@ def release(
         # skipped_tail: the newer, not-(yet)-verified commits left behind on
         # dev by this bless — with their project attribution, reusing the
         # SAME rider manifest already built above (never a second read).
-        skipped_entries = search.get("skipped_tail", [])
+        # F6 (compliance review, 2026-09-24): EMPTY when target_sha == dev
+        # (the docs-only exception path blesses the tip directly — nothing
+        # is actually left behind, so `search["skipped_tail"]` here is
+        # leftover from the FAILED qualifying-green walk, not a real tail).
+        skipped_entries = [] if target_sha == dev else search.get("skipped_tail", [])
         proj_by_sha = {r["sha"]: r.get("project") for r in (man.get("commits") or [])}
+        # F4 (compliance review, 2026-09-24): migration files touched in the
+        # SKIPPED range (target_sha..dev) — these are NOT part of what this
+        # bless verified. A naive `migrate_product` (no sha=) against the
+        # working tree would pick these up too; `migrate_product sha=<
+        # blessed_sha>` (R3) is the way to apply EXACTLY what got blessed.
+        skipped_migrations: list[str] = []
+        if skipped_entries:
+            skipped_migrations = sorted({
+                p for p in _changed_paths(git, target_sha, dev)
+                if _MIGRATION_PATH_RE.match(p)
+            })
         skipped_tail = {
             "count": len(skipped_entries),
             "commits": [e["sha"][:9] for e in skipped_entries],
             "projects": sorted({p for e in skipped_entries
                                if (p := proj_by_sha.get(e["sha"]))}),
+            "migrations": skipped_migrations,
         }
         incoming = _commits(git, main, target_sha)
+        migrate_hint = (
+            f"To deploy exactly what got blessed: noctus.dev.migrate_product "
+            f"sha={target_sha[:9]!r} (R3) — never a bare migrate_product against "
+            f"the working tree, which would also pick up the "
+            f"{len(skipped_tail['migrations'])} unverified migration(s) still "
+            "in skipped_tail." if skipped_tail["migrations"] else
+            f"To deploy: noctus.dev.migrate_product sha={target_sha[:9]!r} (R3) "
+            "applies exactly the migrations that were part of this bless."
+        )
         plan = {**base, "would_advance": f"{main_branch} → {target_sha[:9]}",
                 "blessed_sha": target_sha, "dev_tip": dev, "skipped_tail": skipped_tail,
                 "incoming_commits": incoming, "ci": ci,
@@ -738,7 +824,7 @@ def release(
                                f"{main_branch} → {target_sha[:9]}"
                                + (f" (leaving {skipped_tail['count']} newer commit(s) "
                                   "unverified on dev)" if skipped_tail["count"] else "")
-                               + ". Pass confirm=True to push."}
+                               + f". Pass confirm=True to push. {migrate_hint}"}
         # ACT — the sanctioned override push (FF; hook still blocks force/delete)
         rc, out, err = git("push", remote, f"{target_sha}:refs/heads/{main_branch}",
                            env_extra={"NOCTUS_ALLOW_MAIN_PUSH": "1"})
@@ -753,7 +839,8 @@ def release(
                            + (f"; {skipped_tail['count']} newer commit(s) left "
                               f"unverified on {dev_branch}" if skipped_tail["count"] else "")
                            + "). To deploy: noctus.dev.release stage='promote' "
-                           f"(ships ALL of {prod_branch}..{main_branch} — review first)."}
+                           f"(ships ALL of {prod_branch}..{main_branch} — review first); "
+                           f"then {migrate_hint}"}
 
     # ── PROMOTE (main → prod, snapshot prod → prod-backup first) ──
     target = None

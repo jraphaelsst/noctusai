@@ -63,9 +63,21 @@ _reexec_under_venv()
 # imports may attach loggers; the formatter must be in place when they fire.
 # Falls back to `logging.basicConfig` if `noctusai_lib` is not installed in
 # this venv (e.g. fresh clone before `pip install -r requirements.txt`).
+#
+# use_stderr=True (2026-09-24, NOC-REMEDIATE[cli-stdout-log-noise] fix,
+# compliance review of release-no-freeze): every dispatch branch below ends
+# `print(json.dumps(r, indent=2, default=str))` as its FINAL stdout write —
+# a caller that machine-parses that output (this file's own §R4
+# fresh-subprocess fallback in `toolkit_freshness.py`, or anyone piping
+# `cli.py` into `jq`) got INFO log lines interleaved BEFORE the JSON,
+# breaking a naive `json.loads(stdout)` with "Extra data". Was `False`
+# ("humans read --validate output directly" — logs+prose interleaved on one
+# stream is fine for a human terminal); machine consumption needs the two
+# streams kept separate. A human running the CLI interactively still sees
+# every log line — just on stderr, not stdout — so nothing is silenced.
 try:
     from noctusai_lib.logging_config import auto_configure_for_cli
-    auto_configure_for_cli("noctusai-mcp-cli")
+    auto_configure_for_cli("noctusai-mcp-cli", use_stderr=True)
 except ImportError as exc:
     import logging
     logging.basicConfig(
@@ -115,7 +127,13 @@ def _ensure_llm_configured() -> bool:
         return False
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """Construct the full `argparse.ArgumentParser` — split out from `main()`
+    (2026-09-24, F3 compliance review of release-no-freeze) so the R4
+    fresh-subprocess fallback's generated argv can be round-tripped through
+    the REAL parser in a test, without triggering `main()`'s dispatch (which
+    would actually RUN the tool). `main()` itself calls this too — one
+    parser, never two definitions to keep in sync."""
     parser = argparse.ArgumentParser(description="NoctusAI — platform dev toolkit")
     parser.add_argument("--validate", action="store_true", help="Check seed compliance")
     parser.add_argument("--check-phase-state", action="store_true", help="Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by the pre-commit hook to block commits that ship mismatch.")
@@ -299,7 +317,7 @@ def main():
     parser.add_argument("--deploy-image-tag", default="latest", help="With --deploy-image: the image tag to swap to (default 'latest').")
     parser.add_argument("--deploy-image-skip-ancestry-check", action="store_true", help="With --deploy-image: bypass the PROD-PIN ancestry guard (tag='latest'+source='pull' must descend from origin/prod) — almost always wrong.")
     parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
-    parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal. Set by the R4 fresh-subprocess fallback itself (a freshly-launched CLI process is never stale) — see toolkit_freshness.refuse_gate.")
+    parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; this mirrors the MCP tool's own allow_stale_toolkit escape hatch for a human invoking the CLI directly against a long-lived local checkout). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--deploy-verify", action="store_true", help="The INDEPENDENT prod revision-drift witness — read-only, ZERO dependency on --deploy-image having run. Roster is CATALOG-DRIVEN (ativo=true AND deploy_scope='live' + core, not the compose file) — or --deploy-verify-products to check named slugs (incl. inactive ones) deliberately. Per actionable product: running container revision vs the freshly-resolved prod branch tip, fed through the build-scope diff predicate (a stale-but-untouched revision is expected; only a diff touching the product's own build inputs is drift) + health + startup_hook_error. A catalog-live product with no running container is its own 'missing' finding; non-actionable products are reported (never dropped) in skipped_inactive. Exit 0 only when status='verified'. MCP: noctus.dev.deploy_verify.")
     parser.add_argument("--deploy-verify-products", default=None, help="With --deploy-verify: comma-separated product slugs to check deliberately (bypasses the catalog — every named slug is treated as actionable, including an inactive one). Default: the catalog-derived live roster.")
     parser.add_argument("--release", metavar="STAGE", choices=["status", "manifest", "bless", "promote", "backmerge"], help="The dev→main (bless) / main→prod (promote) release gates. DRY-RUN unless --release-confirm. MCP: noctus.dev.release. Also the R4 (release-no-freeze) fresh-subprocess target: a stale primary MCP server re-execs a confirm=True release call here, against the current on-disk code.")
@@ -307,7 +325,7 @@ def main():
     parser.add_argument("--release-sha", default=None, help="With --release stage=promote: pin to an earlier-blessed main sha instead of main's current tip. REFUSED on stage=bless (bless always picks its own target).")
     parser.add_argument("--release-mode", default="ff", choices=["ff", "cut", "refuse"], help="With --release stage=bless: 'ff' (default) fast-forwards to the newest qualifying-green descendant; 'cut' builds a release/<stamp> of approved commits only; 'refuse' blocks on any unapproved work.")
     parser.add_argument("--release-branch", default=None, help="With --release stage=bless mode=cut (2nd call): the release/<stamp> branch to bless once its own CI is green.")
-    parser.add_argument("--release-allow-stale-toolkit", action="store_true", help="With --release: bypass the toolkit-staleness refusal. Set by the R4 fresh-subprocess fallback itself — see toolkit_freshness.refuse_gate.")
+    parser.add_argument("--release-allow-stale-toolkit", action="store_true", help="With --release: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--migrate-product", metavar="PRODUCT", help="Apply a product's SQL migrations to the shared Supabase project. DRY-RUN unless --migrate-product-confirm. MCP: noctus.dev.migrate_product. Also an R4 fresh-subprocess target.")
     parser.add_argument("--migrate-product-confirm", action="store_true", help="With --migrate-product: actually apply pending migrations (a production action). Without it, dry-run only.")
     parser.add_argument("--migrate-product-target", default=None, help="With --migrate-product: filename filter — apply/list only this one file.")
@@ -317,7 +335,7 @@ def main():
     parser.add_argument("--migrate-product-worktree-path", default=None, help="With --migrate-product: pins both which tree the stale-tree check inspects and where migrations are read from (same semantics as --predeploy-check's worktree_path).")
     parser.add_argument("--migrate-product-allow-stale-tree", action="store_true", help="With --migrate-product: bypass the stale-tree refusal — almost always wrong.")
     parser.add_argument("--migrate-product-allow-inactive", action="store_true", help="With --migrate-product: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
-    parser.add_argument("--migrate-product-allow-stale-toolkit", action="store_true", help="With --migrate-product: bypass the toolkit-staleness refusal. Set by the R4 fresh-subprocess fallback itself — see toolkit_freshness.refuse_gate.")
+    parser.add_argument("--migrate-product-allow-stale-toolkit", action="store_true", help="With --migrate-product: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--task-branch", metavar="ACTION", choices=["status", "start", "integrate", "cleanup"], help="The self-branching-mode per-task git lifecycle. DRY-RUN unless --task-branch-confirm. MCP: noctus.dev.task_branch. Also an R4 fresh-subprocess target for its mutating (start/integrate/cleanup, confirm=True) actions.")
     parser.add_argument("--task-branch-slug", default=None, help="With --task-branch: the feat/<slug> worktree/branch name.")
     parser.add_argument("--task-branch-confirm", action="store_true", help="With --task-branch: actually perform the git lifecycle step (a write). Without it, plan/dry-run only.")
@@ -329,7 +347,7 @@ def main():
     parser.add_argument("--task-branch-parent", default=None, help="With --task-branch action=start: the branch-tree pointer's parent branch.")
     parser.add_argument("--task-branch-no-wire-env", action="store_true", help="With --task-branch action=start: skip the §5a verification-env auto-wiring (default is to wire it).")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
-    parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action. Set by the R4 fresh-subprocess fallback itself — see toolkit_freshness.refuse_gate.")
+    parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--component-bundle", metavar="NAME", help="Return the structured organ bundle for a seed-lib frontend component (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched). KB § PATTERNS/architect/component-bundle-tool.md")
     parser.add_argument("--component-list", action="store_true", help="List all seed organs (reusable components) with derived validation status. Sort with --sort (consumers_desc|name|last_touched); filter with --filter-status (validated|emerging|shelfware|unknown, comma-separated). MCP: noctus.dev.component_list. KB § PATTERNS/architect/component-list-and-validation.md.")
@@ -428,6 +446,11 @@ def main():
     parser.add_argument("--bp-no-push", action="store_true", dest="bp_no_push", help="With --branch-pointer-append/update: skip the FF-push to dev (local-only write).")
     parser.add_argument("--bp-local", action="store_true", dest="bp_local", help="With --branch-pointer-update/query/list: read from local file, not dev's copy.")
     parser.add_argument("--bp-terminal", action="store_true", dest="bp_terminal", help="With --branch-pointer-list: include terminal statuses (shipped/canceled/stale).")
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     # If the caller passed an explicit worktree path, override the module-level
@@ -468,9 +491,14 @@ def main():
     from env_bootstrap import load_repo_env
     load_repo_env(_env_repo_root)
 
-    print(f"\n{BOLD}╔══════════════════════════════════════════════════════════╗{RESET}")
-    print(f"{BOLD}║                NoctusAI Dev Toolkit                      ║{RESET}")
-    print(f"{BOLD}╚══════════════════════════════════════════════════════════╝{RESET}\n")
+    # stderr (2026-09-24, NOC-REMEDIATE[cli-stdout-log-noise] fix, paired with
+    # the auto_configure_for_cli(use_stderr=True) change above): this banner
+    # printed unconditionally on EVERY dispatch, ahead of whatever
+    # `print(json.dumps(...))` a flag below emits — the other half of the
+    # stdout noise a machine parser had to work around.
+    print(f"\n{BOLD}╔══════════════════════════════════════════════════════════╗{RESET}", file=sys.stderr)
+    print(f"{BOLD}║                NoctusAI Dev Toolkit                      ║{RESET}", file=sys.stderr)
+    print(f"{BOLD}╚══════════════════════════════════════════════════════════╝{RESET}\n", file=sys.stderr)
 
     if args.validate:
         from tools.noctus.dev.compliance import check_all_products

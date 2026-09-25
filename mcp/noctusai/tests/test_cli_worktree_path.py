@@ -186,8 +186,11 @@ def test_scan_wiring_json_runs_against_worktree():
         )
         combined = proc.stdout + proc.stderr
         assert "worktree override:" in combined, combined
-        # The JSON dump is the last `{...}` block in stdout (after the banner).
-        start = proc.stdout.index("{", proc.stdout.index('"ok"') - 200)
+        # F2 (compliance review, 2026-09-24): cli.py now logs + banners to
+        # stderr exclusively, so stdout carries ONLY the "worktree override:"
+        # line (no `{`) followed by the JSON dump — the first `{` IS the
+        # JSON's start, no banner-skipping offset needed anymore.
+        start = proc.stdout.index("{")
         payload = json.loads(proc.stdout[start:])
         assert payload["ok"] is True, payload
         assert payload["product"] == "fake_product"
@@ -206,7 +209,9 @@ def test_scan_wiring_unknown_product_typed_error():
             "--worktree-path", str(wt),
             "--json",
         )
-        payload = json.loads(proc.stdout[proc.stdout.index("{", proc.stdout.index('"ok"') - 200):])
+        # See F2 note above test_scan_wiring_json_runs_against_worktree —
+        # stdout is log/banner-free now, so the first `{` is the JSON start.
+        payload = json.loads(proc.stdout[proc.stdout.index("{"):])
         assert payload["ok"] is False
         assert "does not exist" in payload["error"]
         assert proc.returncode == 2, proc.returncode

@@ -98,6 +98,32 @@ def _fake_git_with_refs(refs: dict[str, str]):
     return run
 
 
+def _fake_release_git_all_up_to_date():
+    """`release()`-shaped fake (F1, compliance review 2026-09-24): resolves
+    EVERY ref (`origin/dev`, `origin/main`, `origin/prod`, `origin/prod-
+    backup`) to the SAME sha, so `stage='promote'` reads `prod == target`
+    and returns `up_to_date` before any push is even considered — the
+    safest possible fixture for "does the wrapper refuse to push", never
+    the real repo. Any `push` call is a hard test failure via
+    `AssertionError`, doubling the sitewide conftest guard for this one
+    call site specifically."""
+    def run(cmd, env_extra=None, stdin=None):
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "push":
+            raise AssertionError(f"fake release git must never push: {cmd!r}")
+        if sub == "fetch":
+            return (0, "", "")
+        if sub == "rev-parse":
+            return (0, "same-sha\n", "")
+        if sub == "merge-base":
+            return (0, "", "")  # --is-ancestor: rc=0 -> "is an ancestor"
+        if sub in ("log", "diff"):
+            return (0, "", "")
+        return (0, "", "")
+
+    return run
+
+
 SHELL = '<html><body><div id="root"></div><script src="/assets/index-abc.js"></script></body></html>'
 BUNDLE = ("// app\n" + "x" * 20_000).encode()
 
@@ -320,27 +346,141 @@ def test_extract_trailing_json_picks_the_top_level_brace_not_a_nested_one():
 def test_tool_cli_argv_mapping_for_every_wired_tool():
     """The exact serialization each `refuse_gate` consumer's fresh-subprocess
     fallback would invoke — pinned so a future param rename in one of these
-    4 tools is caught here, not silently mis-mapped at 2am."""
+    4 tools is caught here, not silently mis-mapped at 2am. `--flag=value`
+    (F3, compliance review 2026-09-24), never a bare value as its own argv
+    element — see `_tool_cli_argv`'s module comment for why."""
     assert TF._tool_cli_argv("release", {"stage": "bless", "confirm": True}) == [
-        "--release", "bless", "--release-confirm",
+        "--release=bless", "--release-confirm",
     ]
     assert TF._tool_cli_argv("release", {
         "stage": "promote", "confirm": True, "sha": "abc123", "mode": "ff",
-    }) == ["--release", "promote", "--release-confirm", "--release-sha", "abc123"]
+    }) == ["--release=promote", "--release-confirm", "--release-sha=abc123"]
     assert TF._tool_cli_argv("migrate_product", {
         "product": "widgets", "confirm": True, "sha": "deadbeef",
-    }) == ["--migrate-product", "widgets", "--migrate-product-confirm",
-           "--migrate-product-sha", "deadbeef"]
+    }) == ["--migrate-product=widgets", "--migrate-product-confirm",
+           "--migrate-product-sha=deadbeef"]
     assert TF._tool_cli_argv("migrate_product", {"confirm": True}) is None  # no product
     assert TF._tool_cli_argv("deploy_image", {
         "product": "core", "confirm": True, "tag": "v2", "source": "local",
-    }) == ["--deploy-image", "core", "--deploy-image-confirm",
-           "--deploy-image-tag", "v2", "--deploy-image-source", "local"]
+    }) == ["--deploy-image=core", "--deploy-image-confirm",
+           "--deploy-image-tag=v2", "--deploy-image-source=local"]
     assert TF._tool_cli_argv("task_branch", {
         "action": "start", "slug": "feat-x", "confirm": True, "wire_env": False,
-    }) == ["--task-branch", "start", "--task-branch-slug", "feat-x",
+    }) == ["--task-branch=start", "--task-branch-slug=feat-x",
            "--task-branch-confirm", "--task-branch-no-wire-env"]
     assert TF._tool_cli_argv("no_such_tool", {}) is None
+
+
+def test_tool_cli_argv_value_starting_with_dash_is_unambiguous():
+    """F3: a value that itself starts with `-` must not be misread by
+    argparse as a second flag — `--flag=value` (a single argv element) is
+    immune to this regardless of what `value` contains; two SEPARATE
+    elements (`["--flag", "-value"]`) would not be."""
+    import cli as _cli  # local: importing cli.py has module-level side effects
+                        # (logging reconfiguration) — scope them to this test.
+
+    argv = TF._tool_cli_argv("release", {"stage": "promote", "confirm": True, "sha": "-abc123"})
+    assert argv == ["--release=promote", "--release-confirm", "--release-sha=-abc123"]
+    parser = _cli.build_parser()
+    args = parser.parse_args(argv)
+    assert args.release_sha == "-abc123"
+
+
+class _FakeMcpServer:
+    """F3 (compliance review, 2026-09-24): captures each `@server.tool(...)`-
+    decorated function by its MCP name, unchanged — the SAME `.tool(name=...,
+    description=...)` shape this suite already fakes elsewhere (e.g.
+    `test_deploy_image.py::test_tool_registers_with_dotted_name`), just
+    keeping every registration instead of only the last one (`migrate_
+    product.py` registers TWO tools)."""
+
+    def __init__(self):
+        self.captured: dict[str, Callable] = {}
+
+    def tool(self, *, name, description=""):
+        def deco(fn):
+            self.captured[name] = fn
+            return fn
+        return deco
+
+
+def _register_all_gated_tools() -> dict[str, Callable]:
+    from tools.noctus.dev import deploy_image as _di_mod
+    from tools.noctus.dev import migrate_product as _mp_mod
+    from tools.noctus.dev import release as _rel_mod
+    from tools.noctus.dev import task_branch as _tb_mod
+
+    srv = _FakeMcpServer()
+    _rel_mod.register(srv)
+    _mp_mod.register(srv)
+    _di_mod.register(srv)
+    _tb_mod.register(srv)
+    return srv.captured
+
+
+def test_every_register_wrapper_param_is_in_mapped_params():
+    """F3: `_MAPPED_PARAMS[tool]` must cover EVERY parameter an MCP caller
+    can actually pass (the `register()` wrapper's own signature — the real
+    ceiling on what a caller can ask for) — not just whatever `_tool_cli_
+    argv` happens to read today. A wrapper param missing from the mapped
+    set would be silently unreachable by the fresh-subprocess fallback
+    even though a real MCP caller (not just a test) could pass it."""
+    import inspect as _inspect
+
+    captured = _register_all_gated_tools()
+    checks = {
+        "release": captured["noctus.dev.release"],
+        "migrate_product": captured["noctus.dev.migrate_product"],
+        "deploy_image": captured["noctus.dev.deploy_image"],
+        "task_branch": captured["noctus.dev.task_branch"],
+    }
+    for tool_name, wrapper_fn in checks.items():
+        wrapper_params = set(_inspect.signature(wrapper_fn).parameters) - {"allow_stale_toolkit"}
+        mapped = TF._MAPPED_PARAMS[tool_name]
+        missing = wrapper_params - mapped
+        assert not missing, (
+            f"{tool_name}: register()'s MCP-exposed param(s) {missing} are "
+            f"NOT in _MAPPED_PARAMS[{tool_name!r}] — an MCP caller could "
+            "pass one of these and have it silently dropped on the "
+            "fresh-subprocess hop."
+        )
+
+
+def test_every_wired_tools_argv_parses_cleanly_through_cli_argparse():
+    """F3: every `_tool_cli_argv` output for every wired tool must actually
+    parse through the REAL `cli.py` parser (built once, `build_parser()`,
+    never a second hand-maintained copy) into the exact values the fake
+    kwargs specified — not just 'well-formed enough to eyeball'."""
+    import cli as _cli  # local: scope the module-level side effect to this test
+
+    parser = _cli.build_parser()
+
+    cases = [
+        ("release", {"stage": "bless", "confirm": True, "mode": "cut",
+                     "release_branch": "release/20260924-0000"},
+         {"release": "bless", "release_confirm": True, "release_mode": "cut",
+          "release_branch": "release/20260924-0000"}),
+        ("migrate_product", {"product": "widgets", "confirm": True, "sha": "deadbeef",
+                             "allow_stale_tree": True},
+         {"migrate_product": "widgets", "migrate_product_confirm": True,
+          "migrate_product_sha": "deadbeef", "migrate_product_allow_stale_tree": True}),
+        ("deploy_image", {"product": "core", "confirm": True, "tag": "v2",
+                          "skip_ancestry_check": True},
+         {"deploy_image": "core", "deploy_image_confirm": True,
+          "deploy_image_tag": "v2", "deploy_image_skip_ancestry_check": True}),
+        ("task_branch", {"action": "cleanup", "slug": "feat-x", "confirm": True,
+                         "verbose": True},
+         {"task_branch": "cleanup", "task_branch_slug": "feat-x",
+          "task_branch_confirm": True, "task_branch_verbose": True}),
+    ]
+    for tool_name, kwargs, expect_attrs in cases:
+        argv = TF._tool_cli_argv(tool_name, kwargs)
+        args = parser.parse_args(argv)
+        for attr, expected in expect_attrs.items():
+            assert getattr(args, attr) == expected, (
+                f"{tool_name}: argv {argv} -> args.{attr} = "
+                f"{getattr(args, attr)!r}, expected {expected!r}"
+            )
 
 
 def test_fresh_subprocess_hard_refuses_when_no_cli_entry_is_wired(stale_toolkit):
@@ -357,36 +497,119 @@ def test_fresh_subprocess_hard_refuses_when_no_cli_entry_is_wired(stale_toolkit)
 
 
 def test_fresh_subprocess_hard_refuses_when_the_launch_itself_fails(stale_toolkit):
+    """PRE-LAUNCH failure — the child process never actually started (e.g.
+    the interpreter itself could not be exec'd) — so 'refused, nothing
+    touched' is still an accurate status. Distinct from a POST-LAUNCH
+    failure (below), which must NEVER claim a refusal."""
     def boom(cmd):
         raise OSError("no such file or directory")
 
     r = MP.migrate_product("widgets", confirm=True, subprocess_run=boom)
     assert r["status"] == "refused_stale_toolkit"
-    assert "launch failed" in r["error"]
+    assert "before the child could start" in r["error"]
 
 
-def test_fresh_subprocess_hard_refuses_on_unparseable_output(stale_toolkit):
+# ── F2 (compliance review, 2026-09-24): POST-LAUNCH failures ───────────────
+# Once the child process has actually STARTED, it may have begun (or even
+# completed) a real write before we lost the ability to read its answer.
+# Reporting `refused_stale_toolkit` here would be a LIE — a refusal means
+# nothing was touched, and we no longer know that. Every case below must
+# land on `status='fresh_subprocess_outcome_unknown'`, never a refusal.
+
+
+def test_fresh_subprocess_outcome_unknown_on_unparseable_output(stale_toolkit):
     fake_run_broken = lambda cmd: (1, "not json, no brace line, just noise", "some stderr")  # noqa: E731
 
     r = MP.migrate_product("widgets", confirm=True, subprocess_run=fake_run_broken)
-    assert r["status"] == "refused_stale_toolkit"
+    assert r["status"] == "fresh_subprocess_outcome_unknown"
+    assert r["exit_code"] == 1
+    assert r["executed_via"] == "fresh_subprocess"
+    assert r["rc"] == 1
+    assert "some stderr" in r["stderr_tail"]
     assert "unparseable output" in r["error"]
-    assert "some stderr" in r["error"]
+    assert "not a refusal" in r["error"].lower() or "NOT a refusal" in r["error"]
+    assert "migrate_product confirm=False" in r["verification_step"]
 
 
-def test_fresh_subprocess_hard_refuses_when_the_subprocess_itself_reports_stale(
+def test_fresh_subprocess_outcome_unknown_on_timeout(stale_toolkit):
+    """A timeout means the child was KILLED — it may have been mid-write.
+    `subprocess.TimeoutExpired` carries whatever stdout/stderr the child
+    produced before it died; that partial output must ride on the result,
+    not be swallowed."""
+    import subprocess as _sp
+
+    def times_out(cmd):
+        raise _sp.TimeoutExpired(cmd=cmd, timeout=1800, output="partial stdout",
+                                 stderr="partial stderr")
+
+    r = REL.release(stage="promote", confirm=True, subprocess_run=times_out)
+    assert r["status"] == "fresh_subprocess_outcome_unknown"
+    assert r["exit_code"] == 1
+    assert r["rc"] is None
+    assert "partial stdout" in r["stdout_tail"]
+    assert "partial stderr" in r["stderr_tail"]
+    assert "timed out" in r["error"]
+    assert "release stage='status'" in r["verification_step"]
+
+
+def test_fresh_subprocess_outcome_unknown_verification_step_per_tool(stale_toolkit):
+    """Every wired tool names ITS OWN verification step — never a generic
+    one another tool's caller could misread as applicable to them."""
+    fake_run_broken = lambda cmd: (1, "no brace here", "")  # noqa: E731
+
+    r_deploy = DI.deploy_image("erp-imobiliario", confirm=True, subprocess_run=fake_run_broken)
+    assert r_deploy["status"] == "fresh_subprocess_outcome_unknown"
+    assert "deploy_verify" in r_deploy["verification_step"]
+
+    r_task = T.task_branch(action="start", slug="feat-x", confirm=True,
+                           subprocess_run=fake_run_broken)
+    assert r_task["status"] == "fresh_subprocess_outcome_unknown"
+    assert "task_branch action='status'" in r_task["verification_step"]
+
+
+def test_fresh_subprocess_returns_the_childs_own_result_when_stale_on_stale(
     stale_toolkit,
 ):
-    """Defensive, expected-unreachable in practice: a process that just
-    launched should never itself report stale — if it somehow does, trust
-    that over 'fresh_subprocess' optimism rather than handing back a
-    stale-on-stale answer."""
-    fake_run = _canned_subprocess({"status": "applied", "exit_code": 0,
-                                   "toolkit_stale": True})
+    """The child ran to completion and its OWN refuse_gate ALSO saw a stale
+    module graph and refused before writing — a fully KNOWN, verified
+    outcome (refused, nothing touched). Must return the CHILD's own result
+    (whatever status it legitimately carries) flagged, never a second,
+    fabricated wrapper-level refusal."""
+    fake_run = _canned_subprocess({"status": "refused_stale_toolkit", "exit_code": 1,
+                                   "toolkit_stale": True, "error": "child's own refusal text"})
     r = MP.migrate_product("widgets", confirm=True, subprocess_run=fake_run)
-    assert r["status"] == "refused_stale_toolkit"
-    assert "stale-on-stale" in r["error"]
-    assert r["fresh_subprocess_result"]["toolkit_stale"] is True
+    assert r["status"] == "refused_stale_toolkit"  # the CHILD's own status, passed through
+    assert r["error"] == "child's own refusal text"  # untouched — not rewritten by the wrapper
+    assert r["executed_via"] == "fresh_subprocess"
+    assert r["nested_toolkit_stale"] is True
+    assert any("CHILD's own" in w for w in r["warnings"])
+
+
+def test_fresh_subprocess_never_leaks_pythonpath_into_the_child_env(stale_toolkit, monkeypatch):
+    """F2: the child must resolve mcp/noctusai/** the SAME way a bare
+    `python mcp/noctusai/cli.py` invocation from a clean shell would —
+    never inherit a stray PYTHONPATH some enclosing harness set. The
+    cmd-only `subprocess_run=` DI seam can't see the real default runner's
+    `env=` kwarg, so this patches `subprocess.run` itself (the one seam
+    that CAN observe it) — a spy on the boundary call, not on our own
+    decision logic."""
+    monkeypatch.setenv("PYTHONPATH", "/some/worktree/products/x/backend")
+    calls: list[dict] = []
+
+    def spy(cmd, **kw):
+        calls.append(kw)
+
+        class _P:
+            returncode = 0
+            stdout = '{"status": "ok", "exit_code": 0}'
+            stderr = ""
+
+        return _P()
+
+    monkeypatch.setattr(TF.subprocess, "run", spy)
+    MP.migrate_product("widgets", confirm=True)
+    assert calls, "subprocess.run was never invoked"
+    assert "PYTHONPATH" not in calls[0]["env"]
 
 
 def test_migrate_product_falls_back_to_fresh_subprocess_when_stale(stale_toolkit):
@@ -395,11 +618,16 @@ def test_migrate_product_falls_back_to_fresh_subprocess_when_stale(stale_toolkit
     r = MP.migrate_product("widgets", confirm=True, subprocess_run=fake_run)
     assert r["status"] == "applied" and r["applied"] == ["001_seed.sql"]
     assert r["executed_via"] == "fresh_subprocess"
+    # The PRIMARY process's own (stale) verdict rides on the result too —
+    # distinguishable from the CHILD's own toolkit_stale (False here, since
+    # the canned child result never set it).
+    assert r["primary_toolkit_stale"] is True
+    assert r["primary_toolkit_freshness"]["status"] == "stale"
     assert any("FRESH subprocess" in w for w in r["warnings"])
     assert len(fake_run.calls) == 1
     cmd = fake_run.calls[0]
     assert cmd[0] == sys.executable and cmd[1].endswith("cli.py")
-    assert "--migrate-product" in cmd and "widgets" in cmd
+    assert "--migrate-product=widgets" in cmd
     assert "--migrate-product-confirm" in cmd
 
 
@@ -455,7 +683,7 @@ def test_release_falls_back_to_fresh_subprocess_when_stale(stale_toolkit):
     assert r["status"] == "promoted"
     assert r["executed_via"] == "fresh_subprocess"
     cmd = fake_run.calls[0]
-    assert "--release" in cmd and "promote" in cmd
+    assert "--release=promote" in cmd
     assert "--release-confirm" in cmd
 
 
@@ -465,7 +693,7 @@ def test_deploy_image_falls_back_to_fresh_subprocess_when_stale(stale_toolkit):
     assert r["status"] == "deployed"
     assert r["executed_via"] == "fresh_subprocess"
     cmd = fake_run.calls[0]
-    assert "--deploy-image" in cmd and "erp-imobiliario" in cmd
+    assert "--deploy-image=erp-imobiliario" in cmd
     assert "--deploy-image-confirm" in cmd
 
 
@@ -482,8 +710,8 @@ def test_task_branch_falls_back_to_fresh_subprocess_for_start_when_stale(stale_t
     assert r["status"] == "started"
     assert r["executed_via"] == "fresh_subprocess"
     cmd = fake_run.calls[0]
-    assert "--task-branch" in cmd and "start" in cmd
-    assert "--task-branch-slug" in cmd and "feat-x" in cmd
+    assert "--task-branch=start" in cmd
+    assert "--task-branch-slug=feat-x" in cmd
     assert "--task-branch-confirm" in cmd
 
 
@@ -520,9 +748,19 @@ def test_task_branch_allow_stale_toolkit_reaches_the_real_function_not_the_subpr
 
 def test_refuse_posture_fresh_write_is_never_refused(fresh_toolkit):
     """Positive control: a fresh toolkit never manufactures a refusal, and
-    never even looks at the fresh-subprocess fallback."""
+    never even looks at the fresh-subprocess fallback.
+
+    F1 (compliance review, 2026-09-24): this MUST inject `run=` — without
+    it, `release()` falls through to `_default_run_local`, which shells out
+    to the REAL repo. `stage='promote' confirm=True` against a genuinely
+    fast-forwardable real prod could have pushed for real. The sitewide
+    conftest guard (`_guard_release_default_runner_never_pushes`) is a
+    backstop for exactly this mistake, never a substitute for injecting the
+    fake here."""
     spy = _forbidden_subprocess()
-    r = REL.release(stage="promote", confirm=True, subprocess_run=spy)
+    r = REL.release(stage="promote", confirm=True, subprocess_run=spy,
+                    run=_fake_release_git_all_up_to_date())
+    assert r["status"] == "up_to_date"
     assert r["status"] != "refused_stale_toolkit" and "executed_via" not in r
     assert T.task_branch(action="start", slug="feat-x", confirm=True,
                           subprocess_run=spy,

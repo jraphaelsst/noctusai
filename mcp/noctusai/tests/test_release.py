@@ -385,14 +385,28 @@ def test_green_ci_blesses_and_records_the_evidence():
                          "conclusion": "success", "url": "https://ci/green",
                          "qualifying_reason": "since_verified_base_fix"}
     assert out["blessed_sha"] == "d" and out["dev_tip"] == "d"
-    assert out["skipped_tail"] == {"count": 0, "commits": [], "projects": []}
+    assert out["skipped_tail"] == {"count": 0, "commits": [], "projects": [], "migrations": []}
 
 
 def test_status_surfaces_the_same_ci_verdict_read_only():
     fake = _ci_case(ci=_RED)
     out = R.release(stage="status", run=fake)
     assert out["bless"]["ci"]["verdict"] == "red"
+    assert out["bless"]["qualifying_found"] is False
     assert fake.pushes() == []
+
+
+def test_status_surfaces_the_qualifying_target_not_just_the_exact_tip_verdict():
+    """F7 (compliance review, 2026-09-24): the tip's OWN verdict can be red
+    while bless would still succeed against an older qualifying-green
+    ancestor — `status` must show the REAL target, never just the
+    exact-tip verdict a caller could mistake for the whole answer."""
+    fake = _walk_case(["d2", "d1", "d0"], ci_by_sha={"d0": _GREEN})
+    out = R.release(stage="status", run=fake)
+    assert out["bless"]["ff"] is True
+    assert out["bless"]["qualifying_found"] is True
+    assert out["bless"]["qualifying_target"] == "d0"
+    assert out["bless"]["qualifying_checked"] == 2  # d2, d1 walked past
 
 
 def test_the_ci_probe_is_read_only_and_pinned_to_the_exact_sha():
@@ -458,10 +472,46 @@ def test_bless_walks_past_a_ledger_only_tail_with_no_ci_run_to_the_last_qualifyi
     assert out["dev_tip"] == "d2"
     assert out["skipped_tail"]["count"] == 2
     assert out["skipped_tail"]["commits"] == ["d2", "d1"]
+    assert out["skipped_tail"]["migrations"] == []
     # main → d0 (NOT the dev tip d2) is what actually got pushed.
     push_cmd, push_env = fake.pushes()[0]
     assert push_cmd == ["git", "push", "origin", "d0:refs/heads/main"]
     assert push_env == {"NOCTUS_ALLOW_MAIN_PUSH": "1"}
+
+
+# ── F4/F6 (compliance review, 2026-09-24) ───────────────────────────────────
+def test_bless_skipped_tail_lists_migrations_left_unverified_and_names_the_sha_hint():
+    """F4: migration files touched in the SKIPPED range (blessed_sha..dev)
+    surface in `skipped_tail.migrations`, and the bless message points the
+    caller at `migrate_product sha=<blessed_sha>` (R3) to apply exactly what
+    got blessed — never a bare migrate_product against the working tree,
+    which would also pick up these unverified migrations."""
+    fake = _walk_case(["d2", "d1", "d0"], ci_by_sha={"d0": _GREEN},
+                      logs={"m..d0": "c0 real work"})
+    fake.diffs["d0..d2"] = (
+        "products/social-wiring/backend/migrations/099_x.sql\n"
+        "products/core/frontend/src/App.tsx\n"
+    )
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed", out
+    assert out["skipped_tail"]["migrations"] == [
+        "products/social-wiring/backend/migrations/099_x.sql",
+    ]
+    assert "migrate_product sha='d0'" in out["message"]
+    assert "unverified migration" in out["message"]
+
+
+def test_bless_docs_only_path_has_empty_skipped_tail_even_after_a_failed_walk():
+    """F6: the docs-only exception blesses the dev TIP directly — nothing is
+    actually left behind, so `skipped_tail` must be fully empty (never the
+    non-qualifying candidates the FAILED qualifying-green walk collected on
+    its way to concluding 'nothing qualifies, but the diff is docs-only')."""
+    fake = _walk_case(["d2", "d1"], ci_by_sha={}, logs={"m..d2": "a1 x\na2 y"})
+    fake.diffs["m..d2"] = "KNOWLEDGE-BASE/x.md\nproject-history/y.ndjson"
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed", out
+    assert out["blessed_sha"] == "d2" == out["dev_tip"]
+    assert out["skipped_tail"] == {"count": 0, "commits": [], "projects": [], "migrations": []}
 
 
 def test_bless_walks_past_a_pending_code_tail_to_the_last_qualifying_green():

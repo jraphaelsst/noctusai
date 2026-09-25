@@ -211,3 +211,38 @@ def _isolate_ledger_dev_copies(tmp_path, monkeypatch):
     vcal = importlib.import_module("tools.noctus.dev.vector_calibration")
     monkeypatch.setattr(vcal, "SIGNALS_PATH", iso / "vector-signals.ndjson")
     monkeypatch.setattr(vcal, "DECISIONS_PATH", iso / "vector-calibration.ndjson")
+
+
+@pytest.fixture(autouse=True)
+def _guard_release_default_runner_never_pushes(monkeypatch):
+    """Sitewide safety net (F1, compliance review of release-no-freeze,
+    2026-09-24): `release()` falls back to `release._default_run_local` —
+    the REAL git runner against the REAL repo — whenever a test calls it
+    (directly, or via `noctus.dev.release`) without injecting its own
+    `run=`. A test that forgets to inject `run=` on a `stage='promote'`/
+    `'bless'` `confirm=True` call could push to the real `main`/`prod` for
+    real (the exact bug this guard was added to close:
+    `test_refuse_posture_fresh_write_is_never_refused` did precisely this).
+
+    WRAPS rather than replaces `_default_run_local` — every OTHER git
+    subcommand still runs for real, because
+    `test_default_runner_roundtrips_non_utf8_bytes` (test_release_riders.py)
+    legitimately calls `_default_run_local` directly for read-only
+    `log -p`/`patch-id` against a disposable tmp repo. Only `git push`
+    reaching this function, from ANY test in this suite, is ALWAYS a bug —
+    fix the test (inject `run=`), never widen this guard."""
+    import tools.noctus.dev.release as _release_mod
+
+    real = _release_mod._default_run_local
+
+    def _guarded(cmd, env_extra=None, stdin=None):
+        if "push" in cmd:
+            raise AssertionError(
+                "release._default_run_local reached a real `git push` "
+                f"({cmd!r}) — a test forgot to inject run=. This would push "
+                "to the REAL origin (possibly main/prod after the next "
+                "bless). Fix the test; never widen this guard."
+            )
+        return real(cmd, env_extra=env_extra, stdin=stdin)
+
+    monkeypatch.setattr(_release_mod, "_default_run_local", _guarded)
