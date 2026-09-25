@@ -185,6 +185,13 @@ REJEITADO_ANTES = "rejeitado_antes"
 #: because the field WAS already set; distinct from `CONFLITO` because no
 #: human review is needed for THIS disagreement.
 SUBSTITUIDO = "substituido"
+#: The D1 same-document-re-read refinement (`campo_conflitos.
+#: mesmo_documento_pendente`, 2026-09-25): the reading is a RE-READ of the
+#: SAME document that produced the currently-stored, still-machine-pending
+#: value — a refresh, not a disagreement. Distinct from `SUBSTITUIDO` (a
+#: DIFFERENT, higher-precedence document overriding a DIFFERENT source)
+#: and from `PREENCHIDO` (the field was empty before).
+RELEITURA = "releitura"
 
 
 @dataclass(frozen=True)
@@ -194,7 +201,7 @@ class Resultado:
 
     @property
     def preenchido(self) -> bool:
-        return self.status in (PREENCHIDO, SUBSTITUIDO)
+        return self.status in (PREENCHIDO, SUBSTITUIDO, RELEITURA)
 
 
 def _now() -> str:
@@ -362,7 +369,12 @@ def aplicar(
     disagreement — that is a `CONFLITO`, a normal outcome. May instead
     return `SUBSTITUIDO` for `prefeitura_cadastro_imobiliario` when the
     prefeitura's own document outranks a matrícula-sourced, unconfirmed
-    value — see the module docstring's precedence exception.
+    value — see the module docstring's precedence exception. May also
+    return `RELEITURA` when the disagreeing reading is a RE-READ of the
+    SAME document that produced the current, still-machine-pending value
+    (`campo_conflitos.mesmo_documento_pendente`, D1 same-document-re-read
+    refinement, 2026-09-25) — a refresh, never silently applied to a
+    confirmed or manually-typed field.
 
     Re-reads the row immediately before deciding: extractions run detached,
     and a human may have typed the value a second ago.
@@ -395,6 +407,31 @@ def aplicar(
             codigo, chave, origem,
         )
         return Resultado(SUBSTITUIDO)
+
+    if campo_conflitos.mesmo_documento_pendente(
+        origem_atual=(row or {}).get(campo.origem),
+        confirmado_em_atual=(row or {}).get(campo.confirmado_em),
+        documento_id_atual=(row or {}).get(campo.documento_id) if campo.documento_id else None,
+        documento_id_proposto=documento_id,
+    ):
+        # Not a disagreement — a RE-READ of the SAME document whose
+        # earlier pass is still machine-pending (D1 same-document-re-read
+        # refinement, see `campo_conflitos.mesmo_documento_pendente`'s own
+        # docstring). The fresh reading replaces the stale one instead of
+        # opening a conflict with itself; any stale pending conflict on
+        # this field is closed. Fields with no `documento_id` column
+        # (`campo.documento_id is None`) never qualify — the predicate's
+        # own None-guard falls through to the ordinary conflict path.
+        patch = _patch_preenchimento(campo, valor, origem=origem, documento_id=documento_id)
+        dados_service.gravar_extraido(client, org_id, codigo, row, patch)
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, campo_conflitos.IMOVEL, org_id, codigo, chave, decidido_por=None,
+        )
+        logger.info(
+            "imovel %s: %s — same-document re-read replaced a still-pending "
+            "value, no conflict opened", codigo, chave,
+        )
+        return Resultado(RELEITURA)
 
     if _conflitos(client, org_id, codigo, chave, "pendente"):
         return Resultado(CONFLITO_EXISTENTE)

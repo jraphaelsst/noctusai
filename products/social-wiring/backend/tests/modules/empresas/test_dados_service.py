@@ -224,6 +224,34 @@ class TestCrednetPrefixUpgrade:
             is False
         )
 
+    def test_upgrade_still_fires_when_group_origem_already_flipped_to_cartao_cnpj(
+        self, client
+    ):
+        """🔴 Regression (live deal, 2026-09-25): the group shares ONE
+        `dados_*` quintet, so an EARLIER Cartão CNPJ read that filled some
+        OTHER field already re-stamped `dados_origem='cartao_cnpj'` — the
+        stored `razao_social` is still Crednet's own 40-column truncation,
+        never actually replaced. Gating the upgrade on
+        `dados_origem == 'serasa_crednet'` then silently stopped firing
+        forever; the prefix match alone must be enough."""
+        empresa = _empresa(
+            client, razao_social=self.NOME_TRUNCADO_40, dados_origem="cartao_cnpj",
+            situacao_cadastral="ativa",
+        )
+        nome_completo = self.NOME_TRUNCADO_40 + " LTDA"
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(razao_social=nome_completo, situacao_cadastral="ativa"),
+            documento_id=str(uuid4()),
+        )
+
+        assert resultado["status"] == dados_service.APLICADO
+        assert resultado["conflitos"] == []
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["razao_social"] == nome_completo
+        assert client.table("empresa_campo_conflitos").select("*").execute().data == []
+
     def test_an_already_open_pendente_conflict_is_closed_by_the_upgrade(self, client):
         """A PRIOR extraction attempt already opened a `pendente`
         `razao_social` conflict (e.g. before this upgrade rule existed, or
@@ -261,6 +289,138 @@ class TestCrednetPrefixUpgrade:
             client, ORG_ID, empresa["id"],
             _CartaoLeitura(razao_social=nome_completo),
             documento_id=str(uuid4()),
+        )
+
+        conflitos = client.table("empresa_campo_conflitos").select("*").execute().data
+        assert len(conflitos) == 1
+        assert conflitos[0]["id"] == pendente_id
+        assert conflitos[0]["status"] == "rejeitado"
+        assert conflitos[0]["decidido_por"] is None
+        assert conflitos[0]["decidido_em"] is not None
+
+
+class TestSameDocumentReReadReplaces:
+    """🔴 Regression (live deal, 2026-09-25): re-extracting a document
+    whose earlier reading is STILL machine-pending must REFRESH the
+    group instead of opening a conflict with itself — see
+    `campo_conflitos.mesmo_documento_pendente`'s own docstring."""
+
+    def test_same_document_still_pending_replaces_not_conflicts(self, client):
+        doc_id = str(uuid4())
+        empresa = _empresa(
+            client,
+            motivo_situacao="EXTINCAO POR ENCERRAMENTO | | |",  # garbled first read
+            dados_origem="cartao_cnpj",
+            dados_documento_id=doc_id,
+            dados_confirmado_em=None,
+        )
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(motivo_situacao="EXTINCAO POR ENCERRAMENTO LIQUIDACAO VOLUNTARIA"),
+            documento_id=doc_id,
+        )
+
+        assert resultado["status"] == dados_service.APLICADO
+        assert resultado["conflitos"] == []
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["motivo_situacao"] == "EXTINCAO POR ENCERRAMENTO LIQUIDACAO VOLUNTARIA"
+        assert client.table("empresa_campo_conflitos").select("*").execute().data == []
+
+    def test_a_confirmed_value_still_conflicts_even_off_the_same_document(self, client):
+        doc_id = str(uuid4())
+        empresa = _empresa(
+            client,
+            motivo_situacao="MOTIVO ANTIGO",
+            dados_origem="cartao_cnpj",
+            dados_documento_id=doc_id,
+            dados_confirmado_em="2026-09-20T00:00:00+00:00",
+        )
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(motivo_situacao="MOTIVO NOVO"),
+            documento_id=doc_id,
+        )
+
+        assert len(resultado["conflitos"]) == 1
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["motivo_situacao"] == "MOTIVO ANTIGO"  # untouched
+
+    def test_a_manual_value_still_conflicts_even_off_the_same_document(self, client):
+        doc_id = str(uuid4())
+        empresa = _empresa(
+            client,
+            motivo_situacao="MOTIVO DIGITADO",
+            dados_origem="manual",
+            dados_documento_id=doc_id,
+            dados_confirmado_em=None,
+        )
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(motivo_situacao="MOTIVO NOVO"),
+            documento_id=doc_id,
+        )
+
+        assert len(resultado["conflitos"]) == 1
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["motivo_situacao"] == "MOTIVO DIGITADO"  # untouched
+
+    def test_a_different_document_still_conflicts(self, client):
+        empresa = _empresa(
+            client,
+            motivo_situacao="MOTIVO ANTIGO",
+            dados_origem="cartao_cnpj",
+            dados_documento_id=str(uuid4()),
+            dados_confirmado_em=None,
+        )
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(motivo_situacao="MOTIVO NOVO"),
+            documento_id=str(uuid4()),  # a DIFFERENT document
+        )
+
+        assert len(resultado["conflitos"]) == 1
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["motivo_situacao"] == "MOTIVO ANTIGO"  # untouched
+
+    def test_a_stale_pending_conflict_on_the_same_field_is_closed(self, client):
+        doc_id = str(uuid4())
+        empresa = _empresa(
+            client,
+            natureza_juridica="206-2 - SOCIEDADE | | |",
+            dados_origem="cartao_cnpj",
+            dados_documento_id=doc_id,
+            dados_confirmado_em=None,
+        )
+        pendente_id = str(uuid4())
+        client.table("empresa_campo_conflitos").insert(
+            {
+                "id": pendente_id,
+                "org_id": str(ORG_ID),
+                "empresa_id": empresa["id"],
+                "campo": "natureza_juridica",
+                "valor_anterior": "206-2 - SOCIEDADE | | |",
+                "origem_anterior": "cartao_cnpj",
+                "valor_proposto": "ALGUMA LEITURA ANTERIOR",
+                "origem_proposto": "cartao_cnpj",
+                "confianca_proposta": None,
+                "fonte_tabela": "empresa_documentos",
+                "fonte_id": str(uuid4()),
+                "status": "pendente",
+                "notificado_em": None,
+                "decidido_por": None,
+                "decidido_em": None,
+                "created_at": "2026-09-20T00:00:00+00:00",
+            }
+        ).execute()
+
+        dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(natureza_juridica="206-2 - SOCIEDADE EMPRESARIA LIMITADA"),
+            documento_id=doc_id,
         )
 
         conflitos = client.table("empresa_campo_conflitos").select("*").execute().data

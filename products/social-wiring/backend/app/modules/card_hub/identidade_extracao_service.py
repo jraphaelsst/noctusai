@@ -722,6 +722,15 @@ def aplicar_campos_ao_cliente(
       earlier extraction, a `cliente_campo_conflitos` row opens (returned, so
       the caller notifies an admin). `nome_oficial` included — the old
       `sobrescreve=True` "newest document wins" is gone.
+    - **Field already SET, the reading DIFFERS, but it's a RE-READ of the
+      SAME still machine-pending document -> replaces, no conflict**
+      (`campo_conflitos.mesmo_documento_pendente`, 2026-09-25): the stored
+      value's own `<campo>_documento_id` equals THIS apply's `documento_id`
+      and nothing confirmed/manual has touched it since — the earlier
+      pass's own imperfection, not a second opinion. Any stale `pendente`
+      conflict on this field is closed. A human-confirmed or manually-typed
+      value is NEVER replaced this way — that still conflicts like any
+      other disagreement.
     - **Same fact, still machine-pending, and a human now vouches for it
       (`confirmado_por` given) -> promoted to confirmed**, `updates`-only on
       `_confirmado_por/_em`: a matrícula qualification auto-applied
@@ -752,7 +761,9 @@ def aplicar_campos_ao_cliente(
     """
     colunas: list[str] = ["id"]
     for campo in campos:
-        colunas += [campo.item_key, campo.origem, campo.confirmado_em]
+        colunas += [
+            campo.item_key, campo.origem, campo.documento_id, campo.confirmado_em,
+        ]
     rows = (
         _t(client, CLIENTES_TABLE)
         .select(",".join(dict.fromkeys(colunas)))
@@ -797,18 +808,45 @@ def aplicar_campos_ao_cliente(
         presente = atual.get(campo.item_key)
         if not _vazio(presente):
             if not _mesmo_valor(campo.item_key, presente, valor):
-                novo = _registrar_conflito(
-                    client, org_id, cliente_id, campo,
-                    valor_anterior=presente,
-                    origem_anterior=atual.get(campo.origem),
-                    valor_proposto=valor,
-                    origem_proposto=origem,
-                    confianca_proposta=confianca,
-                    fonte_tabela=fonte_tabela,
-                    fonte_id=fonte_id,
-                )
-                if novo is not None:
-                    conflitos.append(novo)
+                if campo_conflitos.mesmo_documento_pendente(
+                    origem_atual=atual.get(campo.origem),
+                    confirmado_em_atual=atual.get(campo.confirmado_em),
+                    documento_id_atual=atual.get(campo.documento_id),
+                    documento_id_proposto=documento_id,
+                ):
+                    # Not a disagreement — a RE-READ of the SAME document
+                    # whose earlier pass is still machine-pending (D1
+                    # same-document-re-read refinement, see
+                    # `campo_conflitos.mesmo_documento_pendente`'s own
+                    # docstring). The fresh reading replaces the stale
+                    # one instead of opening a conflict with itself, and
+                    # any stale pending conflict on this field is closed.
+                    updates[campo.item_key] = valor
+                    updates[campo.origem] = origem
+                    updates[campo.documento_id] = (
+                        str(documento_id) if documento_id else None
+                    )
+                    updates[campo.em] = now
+                    updates[campo.confirmado_por] = None
+                    updates[campo.confirmado_em] = None
+                    aplicados[campo.item_key] = True
+                    campo_conflitos.fechar_conflitos_pendentes(
+                        client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                        campo.item_key, decidido_por=None,
+                    )
+                else:
+                    novo = _registrar_conflito(
+                        client, org_id, cliente_id, campo,
+                        valor_anterior=presente,
+                        origem_anterior=atual.get(campo.origem),
+                        valor_proposto=valor,
+                        origem_proposto=origem,
+                        confianca_proposta=confianca,
+                        fonte_tabela=fonte_tabela,
+                        fonte_id=fonte_id,
+                    )
+                    if novo is not None:
+                        conflitos.append(novo)
             elif confirmado_por and _vazio(atual.get(campo.confirmado_em)):
                 # Same fact, still machine-pending, a human now vouches for
                 # it — promote to confirmed. See the docstring's D1 bullet.
@@ -884,6 +922,12 @@ def aplicar_endereco_ao_cliente(
     - Group EMPTY -> all seven parts written, `endereco_*` provenance,
       machine-pending.
     - Group SET and the reading differs -> conflict; same -> nothing.
+    - Group SET, the reading differs, but it's a RE-READ of the SAME still
+      machine-pending document (`campo_conflitos.mesmo_documento_pendente`,
+      D1 same-document-re-read refinement, 2026-09-25) -> replaces, no
+      conflict — the earlier pass's own incompleteness, not a second
+      opinion. A human-confirmed or manually-typed address is NEVER
+      replaced this way.
     - Human-cleared group (`endereco_origem='manual'`, all parts empty) ->
       respected, like any other field.
 
@@ -893,8 +937,10 @@ def aplicar_endereco_ao_cliente(
         return False, None
     rows = (
         _t(client, CLIENTES_TABLE)
-        .select(",".join(["id", "nome", "nome_completo", "nome_oficial",
-                          "endereco_origem", *ENDERECO_COLUNAS]))
+        .select(",".join([
+            "id", "nome", "nome_completo", "nome_oficial", "endereco_origem",
+            "endereco_documento_id", "endereco_confirmado_em", *ENDERECO_COLUNAS,
+        ]))
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
         .limit(1)
@@ -918,6 +964,23 @@ def aplicar_endereco_ao_cliente(
             fonte_id=documento_id,
         )
 
+    def escrever(agora: str) -> None:
+        updates: dict[str, Any] = {
+            f"endereco_{p}": (None if _vazio(partes.get(p)) else partes.get(p))
+            for p in ENDERECO_PARTES
+        }
+        updates.update(
+            {
+                "endereco_origem": origem,
+                "endereco_documento_id": str(documento_id) if documento_id else None,
+                "endereco_em": agora,
+                "endereco_confirmado_por": None,
+                "endereco_confirmado_em": None,
+                "updated_at": agora,
+            }
+        )
+        _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
+
     if titular_documento:
         nomes = [atual.get("nome_oficial"), atual.get("nome_completo"), atual.get("nome")]
         if not any(nomes_compativeis(titular_documento, n) for n in nomes if n):
@@ -926,26 +989,23 @@ def aplicar_endereco_ao_cliente(
     if tem_endereco:
         if _mesmo_endereco(atual, partes):
             return False, None
+        if campo_conflitos.mesmo_documento_pendente(
+            origem_atual=atual.get("endereco_origem"),
+            confirmado_em_atual=atual.get("endereco_confirmado_em"),
+            documento_id_atual=atual.get("endereco_documento_id"),
+            documento_id_proposto=documento_id,
+        ):
+            escrever(_now())
+            campo_conflitos.fechar_conflitos_pendentes(
+                client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                CAMPO_ENDERECO, decidido_por=None,
+            )
+            return True, None
         return False, conflito()
     if atual.get("endereco_origem") == "manual":
         return False, None
 
-    now = _now()
-    updates: dict[str, Any] = {
-        f"endereco_{p}": (None if _vazio(partes.get(p)) else partes.get(p))
-        for p in ENDERECO_PARTES
-    }
-    updates.update(
-        {
-            "endereco_origem": origem,
-            "endereco_documento_id": str(documento_id) if documento_id else None,
-            "endereco_em": now,
-            "endereco_confirmado_por": None,
-            "endereco_confirmado_em": None,
-            "updated_at": now,
-        }
-    )
-    _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
+    escrever(_now())
     return True, None
 
 

@@ -200,6 +200,76 @@ class TestD1NeverOverwrite:
         assert "sem notification_service" in caplog.text
 
 
+class TestSameDocumentReReadReplaces:
+    """🔴 Regression (live deal, 2026-09-25): re-extracting a document
+    whose earlier reading is STILL machine-pending must REFRESH the
+    field instead of opening a conflict with itself — see
+    `campo_conflitos.mesmo_documento_pendente`'s own docstring."""
+
+    @pytest.mark.asyncio
+    async def test_a_second_read_of_the_same_document_replaces_not_conflicts(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped)
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            profissao="engenheiro civi", profissao_confianca=B,  # garbled first read
+            source=TextSource.OCR,
+        ))
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            profissao="engenheiro civil", profissao_confianca=A,
+            source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row["profissao"] == "engenheiro civil"
+        assert row["profissao_documento_id"] == did
+        assert _conflitos(scoped) == []
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_field_is_never_silently_replaced_off_the_same_document(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(scoped)
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            profissao="engenheiro", profissao_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        scoped.table("clientes").update({
+            "profissao_confirmado_por": str(uuid4()), "profissao_confirmado_em": _old(0),
+        }).eq("id", cid).execute()
+
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            profissao="advogado", profissao_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row["profissao"] == "engenheiro"  # untouched
+        assert [c["campo"] for c in _conflitos(scoped)] == ["profissao"]
+
+    @pytest.mark.asyncio
+    async def test_a_different_document_still_conflicts(self, client, scoped):
+        cid, did, storage = await _setup(scoped)
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            profissao="engenheiro", profissao_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        # A SECOND, DIFFERENT document disagreeing — must still conflict.
+        did_outro = str(uuid4())
+        path_outro = f"{ORG_ID}/clientes/{cid}/{did_outro}"
+        scoped.table("cliente_documentos").insert({
+            "id": did_outro, "org_id": ORG_ID, "cliente_id": cid,
+            "storage_path": path_outro, "nome_original": "rg2.pdf",
+            "mime_type": "application/pdf", "tipo_documento": "rg",
+            "deleted_at": None, "extracao_status": "pendente",
+            "extracao_tentativas": 0, "created_at": _old(1),
+        }).execute()
+        await storage.put(
+            bucket=BUCKET, key=path_outro, data=b"%PDF-1.4", content_type="application/pdf",
+        )
+        await _extrair(scoped, storage, cid, did_outro, IdentityFields(
+            profissao="advogado", profissao_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row["profissao"] == "engenheiro"  # untouched
+        assert [c["campo"] for c in _conflitos(scoped)] == ["profissao"]
+
+
 class TestRgOrgao:
     @pytest.mark.asyncio
     async def test_the_issuer_is_never_written_beside_a_different_rg(self, client, scoped):
@@ -373,6 +443,68 @@ class TestEndereco:
         cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
         await _extrair(scoped, storage, cid, did, _comprovante())
         assert _cliente(scoped, cid).get("endereco_cep") is None
+
+    @pytest.mark.asyncio
+    async def test_a_second_read_of_the_same_comprovante_replaces_not_conflicts(
+        self, client, scoped
+    ):
+        """🔴 Regression (live deal, 2026-09-25): the FIRST read of a
+        comprovante is incomplete (no cidade/UF), the SAME document
+        re-read later comes back complete — must REFRESH the group, not
+        open a conflict with itself."""
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        incompleto = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero=None,
+            complemento=None, bairro=None, cidade=None, uf=None,
+            titular="ANA PAULA SOUZA", confianca="baixa", rotulo="ENDERECO",
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante(incompleto))
+        assert _cliente(scoped, cid).get("endereco_cidade") is None
+
+        await _extrair(scoped, storage, cid, did, _comprovante(ENDERECO))  # SAME did, complete
+
+        row = _cliente(scoped, cid)
+        assert row["endereco_numero"] == "123"
+        assert row["endereco_bairro"] == "JARDIM PAULISTANO"
+        assert row["endereco_cidade"] == "SÃO PAULO"
+        assert row["endereco_uf"] == "SP"
+        assert row["endereco_documento_id"] == did
+        assert _conflitos(scoped) == []
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_address_is_never_silently_replaced(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        scoped.table("clientes").update({
+            "endereco_cep": "04000-000", "endereco_logradouro": "RUA B",
+            "endereco_origem": "comprovante_endereco", "endereco_documento_id": did,
+            "endereco_confirmado_em": _old(0), "endereco_confirmado_por": str(uuid4()),
+        }).eq("id", cid).execute()
+
+        await _extrair(scoped, storage, cid, did, _comprovante())
+
+        row = _cliente(scoped, cid)
+        assert row["endereco_cep"] == "04000-000"  # untouched
+        assert [c["campo"] for c in _conflitos(scoped)] == ["endereco"]
+
+    @pytest.mark.asyncio
+    async def test_a_manually_typed_address_is_never_silently_replaced(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        scoped.table("clientes").update({
+            "endereco_cep": "04000-000", "endereco_logradouro": "RUA B",
+            "endereco_origem": "manual", "endereco_documento_id": did,
+        }).eq("id", cid).execute()
+
+        await _extrair(scoped, storage, cid, did, _comprovante())
+
+        row = _cliente(scoped, cid)
+        assert row["endereco_cep"] == "04000-000"  # untouched
+        assert [c["campo"] for c in _conflitos(scoped)] == ["endereco"]
 
 
 # ─── both spouses ──────────────────────────────────────────────────────────

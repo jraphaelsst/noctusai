@@ -144,6 +144,113 @@ class TestDocumentoIdProposto:
         assert "documento_id_proposto" not in empresa_row
 
 
+class TestMesmoDocumentoPendente:
+    """The D1 same-document-re-read refinement's shared predicate (see the
+    module docstring)."""
+
+    def test_same_document_still_pending_is_a_replace(self):
+        assert campo_conflitos.mesmo_documento_pendente(
+            origem_atual="cartao_cnpj",
+            confirmado_em_atual=None,
+            documento_id_atual="doc-1",
+            documento_id_proposto="doc-1",
+        ) is True
+
+    def test_a_different_document_still_conflicts(self):
+        assert campo_conflitos.mesmo_documento_pendente(
+            origem_atual="cartao_cnpj",
+            confirmado_em_atual=None,
+            documento_id_atual="doc-1",
+            documento_id_proposto="doc-2",
+        ) is False
+
+    def test_a_confirmed_value_is_never_replaced(self):
+        assert campo_conflitos.mesmo_documento_pendente(
+            origem_atual="cartao_cnpj",
+            confirmado_em_atual="2026-09-20T00:00:00+00:00",
+            documento_id_atual="doc-1",
+            documento_id_proposto="doc-1",
+        ) is False
+
+    def test_a_manual_value_is_never_replaced(self):
+        assert campo_conflitos.mesmo_documento_pendente(
+            origem_atual="manual",
+            confirmado_em_atual=None,
+            documento_id_atual="doc-1",
+            documento_id_proposto="doc-1",
+        ) is False
+
+    def test_nothing_stored_is_never_a_replace(self):
+        assert campo_conflitos.mesmo_documento_pendente(
+            origem_atual=None,
+            confirmado_em_atual=None,
+            documento_id_atual=None,
+            documento_id_proposto="doc-1",
+        ) is False
+
+    def test_a_missing_proposed_document_id_is_never_a_replace(self):
+        assert campo_conflitos.mesmo_documento_pendente(
+            origem_atual="cartao_cnpj",
+            confirmado_em_atual=None,
+            documento_id_atual="doc-1",
+            documento_id_proposto=None,
+        ) is False
+
+    def test_ids_are_compared_as_strings(self):
+        """Callers pass a mix of `UUID`/`str` across the three apply
+        paths — the SAME id in different types must still match."""
+        from uuid import UUID
+
+        doc = UUID("11111111-1111-1111-1111-111111111111")
+        assert campo_conflitos.mesmo_documento_pendente(
+            origem_atual="cartao_cnpj",
+            confirmado_em_atual=None,
+            documento_id_atual=str(doc),
+            documento_id_proposto=doc,
+        ) is True
+
+
+class TestFecharConflitosPendentes:
+    def test_closes_every_pending_row_on_the_owner_and_campo(self, client):
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.EMPRESA, ORG, "empresa-1", "razao_social",
+            valor_anterior="A", origem_anterior="cartao_cnpj",
+            valor_proposto="B", origem_proposto="cartao_cnpj",
+        )
+        fechados = campo_conflitos.fechar_conflitos_pendentes(
+            client, campo_conflitos.EMPRESA, ORG, "empresa-1", "razao_social",
+        )
+        assert fechados == 1
+        row = client.table(campo_conflitos.EMPRESA.table).select("*").execute().data[0]
+        assert row["status"] == "rejeitado"
+        assert row["decidido_por"] is None
+        assert row["decidido_em"] is not None
+
+    def test_a_different_campo_is_left_alone(self, client):
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.EMPRESA, ORG, "empresa-1", "razao_social",
+            valor_anterior="A", origem_anterior="cartao_cnpj",
+            valor_proposto="B", origem_proposto="cartao_cnpj",
+        )
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.EMPRESA, ORG, "empresa-1", "uf",
+            valor_anterior="SP", origem_anterior="cartao_cnpj",
+            valor_proposto="RJ", origem_proposto="cartao_cnpj",
+        )
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, campo_conflitos.EMPRESA, ORG, "empresa-1", "razao_social",
+        )
+        rows = client.table(campo_conflitos.EMPRESA.table).select("*").execute().data
+        by_campo = {r["campo"]: r["status"] for r in rows}
+        assert by_campo["razao_social"] == "rejeitado"
+        assert by_campo["uf"] == "pendente"
+
+    def test_nothing_pending_is_a_noop(self, client):
+        assert campo_conflitos.fechar_conflitos_pendentes(
+            client, campo_conflitos.EMPRESA, ORG, "empresa-1", "razao_social",
+        ) == 0
+
+
 class TestNotify:
     @pytest.mark.asyncio
     async def test_no_conflicts_is_a_noop(self, client):

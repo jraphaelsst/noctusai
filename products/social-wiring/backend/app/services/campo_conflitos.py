@@ -31,6 +31,26 @@ WHAT THIS OWNS
   _em` stamped only on success, a missing notifier logged as a WARNING
   naming every conflict it could not announce — never silently dropped.
 
+THE D1 SAME-DOCUMENT-RE-READ REFINEMENT (2026-09-25 live case)
+------------------------------------------------------------------
+Every D1 apply path opens a conflict when the incoming reading disagrees
+with what's stored — correct when the two readings come from DIFFERENT
+documents (a genuine second opinion). Measured live: re-extracting a
+document whose earlier reading is STILL machine-pending (unconfirmed) now
+opens a conflict with ITSELF — `empresa_campo_conflitos` on
+`motivo_situacao`/`natureza_juridica` (old piped-residue text vs. the SAME
+Cartão CNPJ's clean re-read) and `cliente_campo_conflitos` on `endereco`
+(the SAME `cliente_documentos` comprovante, first read incomplete, second
+read complete). `mesmo_documento_pendente` is the shared PREDICATE every
+apply path consults before opening a conflict: when the stored value's own
+`*_documento_id` equals the incoming document's id AND the stored value is
+still machine-pending (`origem` set, not `'manual'`, `*_confirmado_em`
+NULL), the incoming reading REPLACES it — a refresh of the same source,
+not a second opinion — instead of opening a conflict. A human-confirmed or
+manually-typed value is NEVER touched this way (`confirmado_em` truthy or
+`origem == 'manual'` both refuse). A reading from a DIFFERENT document
+still conflicts exactly as before.
+
 WHAT THIS DOES **NOT** OWN
 ---------------------------
 The decision of what "same value" means per table (`imovel_hub`'s `iguais`,
@@ -165,6 +185,84 @@ def registrar_conflito(
     return linha
 
 
+def mesmo_documento_pendente(
+    *,
+    origem_atual: Optional[str],
+    confirmado_em_atual: Any,
+    documento_id_atual: Optional[Any],
+    documento_id_proposto: Optional[Any],
+    origem_manual: str = "manual",
+) -> bool:
+    """Is the incoming (disagreeing) reading a RE-READ of the SAME
+    document that produced the value currently stored — and is that
+    stored value still machine-pending? See the module docstring's D1
+    same-document-re-read refinement.
+
+    `False` (never a replace, always a conflict) whenever ANY of:
+    - `origem_atual` is empty/`None` (nothing stored to refresh) or equals
+      `origem_manual` (a human typed it — never silently replaced);
+    - `confirmado_em_atual` is truthy (a human already vouched for it —
+      same rule, different column);
+    - either document id is missing (nothing to compare);
+    - the two document ids differ (a genuinely different source — the
+      ordinary conflict case).
+
+    Both ids are stringified before comparing — callers pass a mix of
+    `UUID`/`str` across the three apply paths (`empresas`/`clientes`/
+    `imovel_dados`), same convention every conflict row already uses."""
+    if not origem_atual or origem_atual == origem_manual:
+        return False
+    if confirmado_em_atual:
+        return False
+    if documento_id_atual is None or documento_id_proposto is None:
+        return False
+    return str(documento_id_atual) == str(documento_id_proposto)
+
+
+def fechar_conflitos_pendentes(
+    client: Any,
+    table: ConflictTable,
+    org_id: Any,
+    owner: Any,
+    campo: str,
+    *,
+    decidido_por: Optional[Any] = None,
+) -> int:
+    """Close every OPEN (`status='pendente'`) conflict on (owner, campo) as
+    `rejeitado` — never silently deleted, the record that a conflict was
+    once open here stays auditable. A side-effect of a DIFFERENT
+    legitimate write superseding what the pending row was proposing (a
+    Crednet-truncation upgrade, or `mesmo_documento_pendente`'s same
+    -document re-read replace) — not a background sweep. `decidido_por=
+    None` marks a SYSTEM resolution (no admin account involved). Returns
+    the number of rows closed.
+
+    The N=3 formalization of what `empresas.dados_service.
+    _fechar_conflitos_pendentes` and `imovel_hub.campos_extraidos_service`
+    each independently grew for this SAME mechanic (this module's own
+    recurrence rule, P0c contract §H6) — every D1 apply path calls this
+    one instead of hand-rolling its own close-pending loop."""
+    pendentes = (
+        _t(client, table.table)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq(table.owner_col, str(owner))
+        .eq("campo", campo)
+        .eq("status", "pendente")
+        .execute()
+    ).data or []
+    now = _now()
+    for row in pendentes:
+        _t(client, table.table).update(
+            {
+                "status": "rejeitado",
+                "decidido_por": str(decidido_por) if decidido_por else None,
+                "decidido_em": now,
+            }
+        ).eq("id", row["id"]).execute()
+    return len(pendentes)
+
+
 async def notificar_conflitos(
     client: Any,
     table: ConflictTable,
@@ -217,6 +315,8 @@ __all__ = [
     "IMOVEL",
     "ConflictTable",
     "conflito_pendente_existente",
+    "fechar_conflitos_pendentes",
+    "mesmo_documento_pendente",
     "notificar_conflitos",
     "registrar_conflito",
 ]

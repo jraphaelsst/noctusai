@@ -18,7 +18,10 @@ from noctusai_lib.integrations.documents import (
     make_cartao_cnpj_extractor,
     parse_cartao_cnpj,
 )
-from noctusai_lib.integrations.documents.cartao_cnpj import LadderCartaoCnpjExtractor
+from noctusai_lib.integrations.documents.cartao_cnpj import (
+    _TITULO_DOCUMENTO,
+    LadderCartaoCnpjExtractor,
+)
 
 CNPJ_VALIDO = "11.222.333/0001-81"
 CNPJ_INVALIDO = "11.222.333/0001-82"
@@ -167,6 +170,69 @@ class TestSituacaoCadastralClosedVocabulary:
         assert f.situacao_cadastral is None
         assert f.rotulos["situacao_cadastral"] == "PENDENTE DE REGULARIZACAO"
         assert f.confiancas["situacao_cadastral"] is ExtractionConfidence.NENHUMA
+
+
+class TestSituacaoCadastralTitleHazard:
+    """🔴 "SITUACAO CADASTRAL" is also a literal substring of the
+    document's own printed title ("COMPROVANTE DE INSCRICAO E DE
+    SITUACAO CADASTRAL") — `TestPipeTableTranscription` covers the fused
+    -pipe-cell shape that surfaced this first; these cover the OTHER
+    shapes a real re-read of the same document measured live
+    (2026-09-25): the title echoed as its OWN standalone line ahead of
+    the real box, and the title fused as a same-line PREFIX onto the
+    real box, in an otherwise clean `RÓTULO: valor` transcription (no
+    pipe table at all)."""
+
+    def test_title_on_its_own_line_does_not_starve_a_later_real_box(self):
+        """The model echoes the title as its own line, ahead of the real
+        "SITUACAO CADASTRAL: BAIXADA" box — a first-occurrence-wins scan
+        commits to the title's own embedded match and never reaches the
+        real box below it (measured live as `rotulos.situacao_cadastral`
+        carrying the title text)."""
+        texto = (
+            f"{_TITULO_DOCUMENTO}\n"
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "NOME EMPRESARIAL: RAZAO SOCIAL EXEMPLO LTDA\n"
+            "LOGRADOURO: RUA EXEMPLO\n"
+            "NUMERO: 123\n"
+            "COMPLEMENTO: SALA 4\n"
+            "CEP: 01310-100\n"
+            "BAIRRO/DISTRITO: PINHEIROS\n"
+            "MUNICIPIO: SAO PAULO\n"
+            "UF: SP\n"
+            "SITUACAO CADASTRAL: BAIXADA\n"
+        )
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.situacao_cadastral == "baixada"
+        assert f.rotulos["situacao_cadastral"] == "SITUACAO CADASTRAL"
+        assert f.endereco_mascarado is True
+        for campo in ("logradouro", "numero", "complemento", "cep", "bairro", "municipio", "uf"):
+            assert getattr(f, campo) is None, campo
+
+    def test_title_fused_as_a_same_line_prefix_onto_the_real_box(self):
+        """The prompt's own `RÓTULO: valor` shape, but the model prefixed
+        the document's title onto the SAME line as the real box instead
+        of giving it its own line — the "prefix" shape, distinct from
+        "own line" above and the fused pipe-cell shape."""
+        texto = (
+            f"NUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+            "LOGRADOURO: ********\n"
+            "UF: ********\n"
+            f"{_TITULO_DOCUMENTO} SITUACAO CADASTRAL: BAIXADA\n"
+        )
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.situacao_cadastral == "baixada"
+        assert f.endereco_mascarado is True
+        assert f.uf is None
+
+    def test_a_title_only_document_with_no_real_box_is_never_guessed(self):
+        """Every occurrence of the label anywhere in the document sits
+        inside the title — there is no real box at all.
+        `situacao_cadastral` stays `None`, never the title's own text."""
+        texto = f"{_TITULO_DOCUMENTO}\nNUMERO DE INSCRICAO: {CNPJ_VALIDO} MATRIZ\n"
+        f = parse_cartao_cnpj(texto, TextSource.OCR)
+        assert f.situacao_cadastral is None
+        assert f.rotulos["situacao_cadastral"] is None
 
 
 class TestAddressBlock:

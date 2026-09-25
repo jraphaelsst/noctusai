@@ -155,6 +155,98 @@ class TestAplicar:
             campos_svc.aplicar(scoped, ORG, CODIGO, "situacao_onus", "", origem="matricula")
 
 
+class TestSameDocumentReReadReplaces:
+    """🔴 Regression (live deal, 2026-09-25): re-extracting a document
+    whose earlier reading is STILL machine-pending must REFRESH the
+    field instead of opening a conflict with itself — see
+    `campo_conflitos.mesmo_documento_pendente`'s own docstring."""
+
+    def test_same_document_still_pending_replaces_not_conflicts(self, scoped):
+        doc = str(uuid4())
+        seed(scoped, dados=[dados_row(
+            numero_registro_imoveis="1º RI de Barue",  # garbled first read
+            numero_registro_imoveis_origem="matricula",
+            numero_registro_imoveis_documento_id=doc,
+            numero_registro_imoveis_confirmado_em=None,
+        )])
+
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "numero_registro_imoveis", "1º RI de Barueri",
+            origem="matricula", documento_id=doc,
+        )
+
+        assert r.status == campos_svc.RELEITURA
+        assert _dados(scoped)["numero_registro_imoveis"] == "1º RI de Barueri"
+        assert _conflitos(scoped) == []
+
+    def test_a_confirmed_value_still_conflicts_off_the_same_document(self, scoped):
+        doc = str(uuid4())
+        seed(scoped, dados=[dados_row(
+            numero_registro_imoveis="2º RI de Barueri",
+            numero_registro_imoveis_origem="matricula",
+            numero_registro_imoveis_documento_id=doc,
+            numero_registro_imoveis_confirmado_em="2026-09-20T00:00:00+00:00",
+            numero_registro_imoveis_confirmado_por=str(uuid4()),
+        )])
+
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "numero_registro_imoveis", "1º RI de Barueri",
+            origem="matricula", documento_id=doc,
+        )
+
+        assert r.status == campos_svc.CONFLITO
+        assert _dados(scoped)["numero_registro_imoveis"] == "2º RI de Barueri"
+
+    def test_a_manual_value_still_conflicts_off_the_same_document(self, scoped):
+        doc = str(uuid4())
+        seed(scoped, dados=[dados_row(
+            numero_registro_imoveis="2º RI de Barueri",
+            numero_registro_imoveis_origem="manual",
+            numero_registro_imoveis_documento_id=doc,
+        )])
+
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "numero_registro_imoveis", "1º RI de Barueri",
+            origem="matricula", documento_id=doc,
+        )
+
+        assert r.status == campos_svc.CONFLITO
+        assert _dados(scoped)["numero_registro_imoveis"] == "2º RI de Barueri"
+
+    def test_a_stale_pending_conflict_on_the_same_field_is_closed(self, scoped):
+        doc = str(uuid4())
+        pendente_id = str(uuid4())
+        seed(
+            scoped,
+            dados=[dados_row(
+                numero_registro_imoveis="1º RI de Barue",
+                numero_registro_imoveis_origem="matricula",
+                numero_registro_imoveis_documento_id=doc,
+                numero_registro_imoveis_confirmado_em=None,
+            )],
+            conflitos=[{
+                "id": pendente_id, "org_id": ORG_ID, "codigo": CODIGO,
+                "campo": "numero_registro_imoveis",
+                "valor_anterior": "1º RI de Barue",
+                "origem_anterior": "matricula",
+                "valor_proposto": "ALGUMA LEITURA ANTERIOR",
+                "origem_proposto": "matricula",
+                "status": "pendente",
+                "created_at": "2026-09-20T00:00:00+00:00",
+            }],
+        )
+
+        campos_svc.aplicar(
+            scoped, ORG, CODIGO, "numero_registro_imoveis", "1º RI de Barueri",
+            origem="matricula", documento_id=doc,
+        )
+
+        conflitos = _conflitos(scoped)
+        assert len(conflitos) == 1
+        assert conflitos[0]["id"] == pendente_id
+        assert conflitos[0]["status"] == "rejeitado"
+
+
 class TestPrefeituraPrecedence:
     """Owner rule (2026-09-24), `prefeitura_cadastro_imobiliario` only: a
     guia_iptu/cnd_iptu reading outranks a matrícula-sourced, unconfirmed
