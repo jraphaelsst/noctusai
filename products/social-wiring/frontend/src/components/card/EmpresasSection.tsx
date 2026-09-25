@@ -46,6 +46,7 @@ import {
   useEmpresaDocumentoUrl,
   useEmpresaDocumentos,
   useEmpresaExtracao,
+  useEmpresaExtracaoPollingInvalidation,
   useEmpresasDoCard,
   useRemoverEmpresa,
   useRemoverEmpresaDocumento,
@@ -80,6 +81,22 @@ function motivoVariant(item: EmpresaCardItem): "default" | "secondary" | "outlin
   if (item.exige_certidoes) return "default";
   if (item.motivo === "sem_cartao_cnpj") return "secondary";
   return "outline";
+}
+
+/** `sem_cartao_cnpj` means the E1 verdict is UNDECIDED — the backend
+ *  returns `exige_certidoes=false` only because it CANNOT decide without a
+ *  Cartão CNPJ uploaded (`classificar_situacao_pj`'s `PJ_SEM_SITUACAO`),
+ *  never because certidões were determined unnecessary. Every OTHER
+ *  non-exigida motivo (`baixada_5_anos_ou_mais`, `outra_situacao`,
+ *  `sem_socio_certificando`) IS a settled dispensing — the Cartão WAS read
+ *  (or ownership alone already answers it) and the reason is final.
+ *  `outra_situacao` in particular still means "read, just not a standard
+ *  bucket" (`PJ_SITUACAO_DESCONHECIDA`/an unrecognised `situacao_cadastral`,
+ *  or `PJ_OMITIDO`'s suspensa/nula fallback — see `derivacao.motivo_
+ *  publico`), so it keeps the "Dispensada" wording. "Dispensada" for
+ *  `sem_cartao_cnpj` read as a decision nobody actually made. */
+function motivoIndecidido(motivo: EmpresaMotivo): boolean {
+  return motivo === "sem_cartao_cnpj";
 }
 
 export interface EmpresasSectionProps {
@@ -249,7 +266,11 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
         </Badge>
       )}
       <Badge variant={motivoVariant(item)} data-testid={`${testId}-motivo`}>
-        {exige_certidoes ? MOTIVO_LABEL[motivo] : `Dispensada — ${MOTIVO_LABEL[motivo]}`}
+        {exige_certidoes
+          ? MOTIVO_LABEL[motivo]
+          : motivoIndecidido(motivo)
+            ? `${MOTIVO_LABEL[motivo]} — situação a definir`
+            : `Dispensada — ${MOTIVO_LABEL[motivo]}`}
       </Badge>
       <Button
         size="icon"
@@ -310,7 +331,9 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
 
             {!exige_certidoes && (
               <p className="text-xs text-muted-foreground" data-testid={`${testId}-dispensa`}>
-                Certidões não exigidas para esta empresa: {MOTIVO_LABEL[motivo].toLowerCase()}.
+                {motivoIndecidido(motivo)
+                  ? "Situação cadastral ainda não definida — envie o Cartão CNPJ para determinar se certidões são exigidas."
+                  : `Certidões não exigidas para esta empresa: ${MOTIVO_LABEL[motivo].toLowerCase()}.`}
               </p>
             )}
 
@@ -510,6 +533,9 @@ function EmpresaChecklist({ empresaId }: { empresaId: string }) {
 
 function EmpresaCartaoSlot({ empresaId, clienteId }: { empresaId: string; clienteId: string }) {
   const documentos = useEmpresaDocumentos(empresaId);
+  // Invalidates the card's empresas list (the E1 verdict badge) the instant
+  // THIS document's extraction lands — see the hook's own docstring.
+  useEmpresaExtracaoPollingInvalidation(empresaId, clienteId);
   const upload = useUploadEmpresaDocumento(empresaId, clienteId);
   const extracao = useEmpresaExtracao(empresaId, clienteId);
   const mintUrl = useEmpresaDocumentoUrl(empresaId);

@@ -49,6 +49,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import { formatarDocumento } from "@/lib/utils";
 import {
   useCreateTestemunha,
   useDeleteTestemunha,
@@ -209,7 +210,9 @@ export function TestemunhasSection() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {[t.cpf, t.celular, t.email].filter(Boolean).join(" · ") || "—"}
+                    {[t.cpf ? formatarDocumento(t.cpf) : null, t.celular, t.email]
+                      .filter(Boolean)
+                      .join(" · ") || "—"}
                   </p>
                 </div>
                 <div className="flex gap-1">

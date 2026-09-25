@@ -11,6 +11,7 @@
  * on this branch — every shape traces to the contract, never to observed
  * behaviour (same disclaimer `useCardHub.ts`'s own docblock carries).
  */
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
@@ -281,12 +282,49 @@ export function useEmpresaExtracaoEmAndamento(empresaId: string | null): boolean
   return items.some((d) => extracaoEmAndamento(d.extracao_status));
 }
 
-// NOC-REMEDIATE[empresas-extracao-dependent-invalidation] — 2026-09-24
-// `useCardHub.ts::useExtracaoPollingInvalidation` invalidates the whole
-// qualificação/compradores/clientes family the INSTANT a cliente-scoped
-// extraction transitions to terminal, because that read can silently fill
-// fields several OTHER surfaces already have cached. A Cartão CNPJ read
-// writes only `empresas`/`empresa_campo_conflitos` (group-level, §C.6) — no
-// analogous cross-surface fan-out is wired here yet. Destination: this
-// roadmap's P1, once a real consumer needs the E1 verdict to react to a
-// landing mid-session rather than on the panel's own next open.
+/**
+ * P1/883 (2026-09-25) — the empresas-list sibling of `useImovelDados.
+ * useImovelExtracaoPollingInvalidation`. `useEmpresaDocumentos` above
+ * already polls THIS document's own `extracao_status` (so
+ * `EmpresaCartaoSlot`'s "Lendo…" state updates), but nothing invalidated
+ * `EMPRESAS_DO_CARD_KEY` — the SEPARATE query carrying the E1 verdict
+ * (`situacao_cadastral`/`motivo`/`exige_certidoes`) `dados_service.
+ * aplicar_cartao`'s group-level D1 apply fills on landing. Left unwired,
+ * `EmpresasSection`'s badge kept showing the pre-extraction verdict until
+ * a hard reload — the same shape the imóvel G2 bug had. Closes
+ * NOC-REMEDIATE[empresas-extracao-dependent-invalidation] (2026-09-24):
+ * the badge IS the real consumer that marker deferred to.
+ *
+ * Mount alongside `useEmpresaDocumentos(empresaId)` — same query key, so
+ * this shares that hook's cache/fetch rather than doubling the request.
+ * Returns nothing: callers keep using `useEmpresaDocumentos`'s own result
+ * for render data; this hook is mounted purely for the polling +
+ * invalidation side effect.
+ */
+export function useEmpresaExtracaoPollingInvalidation(
+  empresaId: string | null,
+  clienteId: string | null,
+): void {
+  const qc = useQueryClient();
+  const prevStatusRef = useRef<Map<string, EmpresaDocumentoExtracaoStatus | null>>(new Map());
+  const query = useEmpresaDocumentos(empresaId);
+
+  useEffect(() => {
+    if (!empresaId || !query.data) return;
+    const prev = prevStatusRef.current;
+    const items = query.data.items;
+    const proximo = new Map(items.map((d) => [d.id, d.extracao_status] as const));
+    const transicionou = items.some((d) => {
+      const antes = prev.get(d.id);
+      // `undefined` = this document's first appearance in the map (the
+      // panel just mounted, or it was just uploaded) — never itself a
+      // transition; only a PREVIOUSLY-seen pending status turning terminal
+      // counts, same rule `useImovelDados`'s sibling hook applies.
+      return antes !== undefined && extracaoEmAndamento(antes) && !extracaoEmAndamento(d.extracao_status);
+    });
+    prevStatusRef.current = proximo;
+    if (transicionou) {
+      invalidateEmpresaFamily(qc, clienteId, empresaId);
+    }
+  }, [empresaId, clienteId, query.data, qc]);
+}

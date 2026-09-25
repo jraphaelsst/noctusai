@@ -115,6 +115,15 @@ describe("os quatro estados", () => {
     expect(getByText(/maria@exemplo\.test/)).toBeTruthy();
   });
 
+  it("🔴 P1/883 (2026-09-25): formata o CPF com máscara, nunca dígitos crus", async () => {
+    mockUseTestemunhas.mockReturnValue(
+      query({ data: { items: [testemunha({ cpf: "81259815862" })], total: 1 } }),
+    );
+    const { getByText, queryByText } = await render();
+    expect(getByText(/812\.598\.158-62/)).toBeTruthy();
+    expect(queryByText(/81259815862/)).toBeNull();
+  });
+
   it("🔴 um refetch não desmonta a lista existente", async () => {
     // isFetching true WITH data present — the lying-loading-state trap.
     mockUseTestemunhas.mockReturnValue(

@@ -41,3 +41,43 @@ export function dataOnlyFromPossibleUtcMidnight(value: string): string {
   const match = UTC_MIDNIGHT_RE.exec(value);
   return match ? match[1] : value;
 }
+
+/**
+ * Strips CPF/CNPJ mask separators — the CLEANED value is what a form
+ * submits; the backend normalises/validates it further (check digits,
+ * 400 not 422). Lifted from `NegociacaoEstruturadaPanel.tsx` (P1/883,
+ * 2026-09-25, recurrence rule N=2) — `TestemunhasSection.tsx` needed the
+ * SAME CPF display formatting and this was the only one anywhere in
+ * `seed/lib/frontend`/this product, just not shared yet.
+ */
+export function limparDocumento(v: string): string {
+  return v.replace(/[.\-/\s]/g, "").toUpperCase();
+}
+
+/**
+ * Progressive CPF/CNPJ mask — position-based, not digit-only, since a CNPJ
+ * may be alphanumeric (since July 2026). Doubles as a DISPLAY formatter
+ * for an already-complete document (11 or 14 chars in): fed a full raw
+ * CPF it renders the standard `999.999.999-99` grouping in one pass, the
+ * same as it does progressively while a form field is still being typed.
+ */
+export function formatarDocumento(bruto: string): string {
+  const s = limparDocumento(bruto).slice(0, 14);
+  if (s.length <= 11) {
+    const partes = [s.slice(0, 3), s.slice(3, 6), s.slice(6, 9), s.slice(9, 11)].filter(
+      Boolean,
+    );
+    let out = partes[0] ?? "";
+    if (partes[1]) out += `.${partes[1]}`;
+    if (partes[2]) out += `.${partes[2]}`;
+    if (partes[3]) out += `-${partes[3]}`;
+    return out;
+  }
+  const partes = [s.slice(0, 2), s.slice(2, 5), s.slice(5, 8), s.slice(8, 12), s.slice(12, 14)];
+  let out = partes[0] ?? "";
+  if (partes[1]) out += `.${partes[1]}`;
+  if (partes[2]) out += `.${partes[2]}`;
+  if (partes[3]) out += `/${partes[3]}`;
+  if (partes[4]) out += `-${partes[4]}`;
+  return out;
+}

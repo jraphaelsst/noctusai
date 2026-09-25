@@ -207,7 +207,10 @@ describe("EmpresasSection", () => {
 
   // Slice D (owner decision, 2026-09-24): a dispensada empresa (`exige_
   // certidoes=false`) shows "Dispensada — <motivo>" on the badge — the
-  // signal a collapsed row (never expanded) still carries.
+  // signal a collapsed row (never expanded) still carries. P1/883
+  // (2026-09-25): `sem_cartao_cnpj` is the ONE exception — it means the E1
+  // verdict is UNDECIDED, not dispensed, so it drops the "Dispensada"
+  // prefix in favour of "… — situação a definir" (see `motivoIndecidido`).
   const motivoCases: Array<[EmpresaMotivo, string, boolean]> = [
     ["ativa", "Ativa", true],
     ["baixada_menos_5_anos", "Baixada há menos de 5 anos", true],
@@ -216,7 +219,7 @@ describe("EmpresasSection", () => {
       "Dispensada — Baixada há 5 anos ou mais — certidões dispensadas",
       false,
     ],
-    ["sem_cartao_cnpj", "Dispensada — Falta Cartão CNPJ", false],
+    ["sem_cartao_cnpj", "Falta Cartão CNPJ — situação a definir", false],
     ["outra_situacao", "Dispensada — Outra situação", false],
     ["sem_socio_certificando", "Dispensada — Sem sócio certificando", false],
   ];
@@ -232,6 +235,41 @@ describe("EmpresasSection", () => {
       );
     },
   );
+
+  it("🔴 the undecided sem_cartao_cnpj dispensa paragraph never says 'não exigidas'", async () => {
+    mockRoutes(
+      empresasResponse([empresaItem({ motivo: "sem_cartao_cnpj", exige_certidoes: false })]),
+    );
+    render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+    await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("empresa-row-emp-1-dispensa").textContent).toContain(
+        "Situação cadastral ainda não definida",
+      ),
+    );
+    expect(screen.getByTestId("empresa-row-emp-1-dispensa").textContent).not.toContain(
+      "não exigidas",
+    );
+  });
+
+  it("a settled dispensing (outra_situacao) still uses the 'não exigidas' paragraph", async () => {
+    mockRoutes(
+      empresasResponse([empresaItem({ motivo: "outra_situacao", exige_certidoes: false })]),
+    );
+    render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+
+    await waitFor(() => expect(screen.getByTestId("empresa-row-emp-1")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("empresa-row-emp-1-toggle"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("empresa-row-emp-1-dispensa").textContent).toContain(
+        "Certidões não exigidas para esta empresa: outra situação.",
+      ),
+    );
+  });
 
   it("renders the owner and the situação cadastral badge", async () => {
     mockRoutes(empresasResponse([empresaItem()]));

@@ -63,6 +63,7 @@ import {
 
 import { usePermutaAtivos } from "@/hooks/usePermutas";
 import type { PermutaAtivo } from "@/hooks/usePermutas";
+import { formatarDocumento, limparDocumento } from "@/lib/utils";
 import {
   useCreateFavorecido,
   useCreateIntermediario,
@@ -1426,35 +1427,6 @@ function toIntermediarioDraft(
     representante_nome: i?.representante_nome ?? "",
     representante_cpf: i?.representante_cpf ?? "",
   };
-}
-
-/** Strips mask separators — the CLEANED value is what gets sent; the backend
- *  normalises/validates it further (CPF/CNPJ check digits, 400 not 422). */
-function limparDocumento(v: string): string {
-  return v.replace(/[.\-/\s]/g, "").toUpperCase();
-}
-
-/** Progressive CPF/CNPJ mask — position-based, not digit-only, since a CNPJ
- *  may be alphanumeric (since July 2026). */
-function formatarDocumento(bruto: string): string {
-  const s = limparDocumento(bruto).slice(0, 14);
-  if (s.length <= 11) {
-    const partes = [s.slice(0, 3), s.slice(3, 6), s.slice(6, 9), s.slice(9, 11)].filter(
-      Boolean,
-    );
-    let out = partes[0] ?? "";
-    if (partes[1]) out += `.${partes[1]}`;
-    if (partes[2]) out += `.${partes[2]}`;
-    if (partes[3]) out += `-${partes[3]}`;
-    return out;
-  }
-  const partes = [s.slice(0, 2), s.slice(2, 5), s.slice(5, 8), s.slice(8, 12), s.slice(12, 14)];
-  let out = partes[0] ?? "";
-  if (partes[1]) out += `.${partes[1]}`;
-  if (partes[2]) out += `.${partes[2]}`;
-  if (partes[3]) out += `/${partes[3]}`;
-  if (partes[4]) out += `-${partes[4]}`;
-  return out;
 }
 
 const SEM_FAVORECIDO = "__none__";
