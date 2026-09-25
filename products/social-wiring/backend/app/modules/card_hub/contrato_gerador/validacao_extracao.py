@@ -94,9 +94,27 @@ ENTIDADE_ATO_DETALHE = "ato_detalhe"
 #: Cartão-CNPJ-sourced cadastral fields, same `<p>_origem/_documento_id/
 #: _em/_confirmado_por/_confirmado_em` shape as a cliente/imóvel group.
 ENTIDADE_EMPRESA = "empresa"
+#: [S2b, negociação/financiamento extraction contract §E4/§C, migration
+#: 171] `atendimento_negociacao.valor_negociado`'s house quintet — keyed by
+#: `atendimento_id`, not `id` (see `_filtro_linha`).
+ENTIDADE_NEGOCIACAO = "negociacao"
+#: One `atendimento_negociacao_parcelas` row's `valor` — FLAT row
+#: provenance (`origem, documento_id, extraido_em, confirmado_por,
+#: confirmado_em`, §C item 4), keyed by the parcela's own `id`. The [H4]
+#: derived intermediária suggestion is not a separate entry: it is the
+#: same field with `origem='derivado'`.
+ENTIDADE_PARCELA = "parcela"
+#: [H5] One `atendimento_favorecidos` row's bank data, filled from the
+#: Quadro Resumo's seller-credit account — same flat row-provenance shape
+#: as the parcela, keyed by the favorecido's own `id`.
+ENTIDADE_FAVORECIDO = "favorecido"
+#: `atendimento_financiamento`'s house quintets (fgts, numero_proposta,
+#: agente_financeiro, and [H6] situacao) — keyed by `atendimento_id`.
+ENTIDADE_FINANCIAMENTO = "financiamento"
 
 #: Entity → the table its row lives in. `imovel_dados` has no id of its own —
-#: it is keyed `(org_id, codigo)`, see `_filtro_linha`.
+#: it is keyed `(org_id, codigo)`, see `_filtro_linha`. `negociacao` and
+#: `financiamento` are keyed by `atendimento_id` the same way.
 TABELAS: dict[str, str] = {
     ENTIDADE_CLIENTE: "clientes",
     ENTIDADE_IMOVEL: "imovel_dados",
@@ -104,6 +122,10 @@ TABELAS: dict[str, str] = {
     ENTIDADE_CERTIDAO: "certidao_resultados",
     ENTIDADE_ATO_DETALHE: "matricula_ato_detalhes",
     ENTIDADE_EMPRESA: "empresas",
+    ENTIDADE_NEGOCIACAO: "atendimento_negociacao",
+    ENTIDADE_PARCELA: "atendimento_negociacao_parcelas",
+    ENTIDADE_FAVORECIDO: "atendimento_favorecidos",
+    ENTIDADE_FINANCIAMENTO: "atendimento_financiamento",
 }
 
 _ESTADOS_COM_CONJUGE = frozenset({"casado", "uniao_estavel"})
@@ -180,9 +202,13 @@ def _quinteto(
     obrigatorio: bool = True,
     edicao: Optional[Edicao] = None,
     documento: bool = True,
+    vazio: tuple[tuple[str, Any], ...] = (),
 ) -> CampoValidavel:
     """The house provenance quintet: `<p>_origem/_documento_id/_em/
-    _confirmado_por/_confirmado_em` (068 → 153)."""
+    _confirmado_por/_confirmado_em` (068 → 153). `vazio` overrides the
+    default NULL a reject writes to a `valores` column that is NOT NULL
+    (e.g. `atendimento_financiamento.fgts` — [S2b §E4 item 4] resets to
+    `False`, never NULL)."""
     p = prefixo or campo
     return CampoValidavel(
         entidade=entidade,
@@ -196,6 +222,7 @@ def _quinteto(
         em=f"{p}_em",
         obrigatorio=obrigatorio,
         edicao=edicao,
+        vazio=vazio,
     )
 
 
@@ -360,9 +387,52 @@ CAMPO_ATO_DETALHE = CampoValidavel(
     vazio=(("transmitentes", []),),
 )
 
+#: [S2b, negociação/financiamento extraction contract §E4/§C, migration
+#: 171] `atendimento_negociacao.valor_negociado` — house quintet (§H2: no
+#: authoritative document; any disagreement is a conflict for a human).
+CAMPO_NEGOCIACAO_VALOR = _quinteto(ENTIDADE_NEGOCIACAO, "valor_negociado", "Valor negociado")
+
+#: One `atendimento_negociacao_parcelas` row's `valor` — flat row
+#: provenance (`origem, documento_id, extraido_em, confirmado_por,
+#: confirmado_em`), NOT the `<p>_origem` quintet shape: `valor` is the
+#: table's pre-existing (now nullable, §C item 4) column, not a new
+#: `<campo>_*` group. `entidade_id` is the parcela's own `id`.
+CAMPO_PARCELA_VALOR = CampoValidavel(
+    entidade=ENTIDADE_PARCELA, campo="valor", rotulo="Valor da parcela",
+    valores=("valor",), origem="origem", confirmado_por="confirmado_por",
+    confirmado_em="confirmado_em", documento_id="documento_id", em="extraido_em",
+)
+
+#: [H5] One `atendimento_favorecidos` row's bank data (banco/agência/
+#: conta/pix), read off the Quadro Resumo's seller-credit account and
+#: matched to a vendedor by CPF — same flat row-provenance shape as the
+#: parcela above ("row provenance like parcelas", H5).
+CAMPO_FAVORECIDO_DADOS = CampoValidavel(
+    entidade=ENTIDADE_FAVORECIDO, campo="dados", rotulo="Dados bancários do favorecido",
+    valores=("banco", "agencia", "conta", "pix"),
+    origem="origem", confirmado_por="confirmado_por", confirmado_em="confirmado_em",
+    documento_id="documento_id", em="extraido_em",
+)
+
+#: `atendimento_financiamento`'s house quintets — fgts/numero_proposta/
+#: agente_financeiro (§C item 5) plus [H6, owner 2026-09-25] situacao: a
+#: signed contrato de financiamento sets `situacao='aprovado'`, with
+#: provenance like every other machine value.
+CAMPOS_FINANCIAMENTO: tuple[CampoValidavel, ...] = (
+    # A NOT NULL boolean's `false` is indistinguishable from "unset" — fill-
+    # empty is judged by `fgts_origem IS NULL` (§B), and reject must reset
+    # to `False`, never leave a NULL the column disallows.
+    _quinteto(ENTIDADE_FINANCIAMENTO, "fgts", "Uso de FGTS", vazio=(("fgts", False),)),
+    _quinteto(ENTIDADE_FINANCIAMENTO, "numero_proposta", "Número da proposta"),
+    _quinteto(ENTIDADE_FINANCIAMENTO, "agente_financeiro", "Agente financeiro",
+              valores=("agente_financeiro_id",), prefixo="agente_financeiro"),
+    _quinteto(ENTIDADE_FINANCIAMENTO, "situacao", "Situação do financiamento"),
+)
+
 REGISTRO: tuple[CampoValidavel, ...] = (
     *CAMPOS_CLIENTE, *CAMPOS_IMOVEL, CAMPO_IMOVEL_DOCUMENTO, CAMPO_CERTIDAO, CAMPO_ATO_DETALHE,
-    CAMPO_EMPRESA_DADOS,
+    CAMPO_EMPRESA_DADOS, CAMPO_NEGOCIACAO_VALOR, CAMPO_PARCELA_VALOR, CAMPO_FAVORECIDO_DADOS,
+    *CAMPOS_FINANCIAMENTO,
 )
 _POR_ENTIDADE_CAMPO: dict[tuple[str, str], CampoValidavel] = {
     (c.entidade, c.campo): c for c in REGISTRO
@@ -602,6 +672,53 @@ def coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Optiona
         nome_pj = e.razao_social or e.cnpj
         coleta.alvos.append(Alvo((CAMPO_EMPRESA_DADOS,), e.id, row, f"Empresa {nome_pj}"))
 
+    # [S2b §E4] The deal's own provenance-tracked rows — negociação
+    # (valor_negociado) and financiamento (fgts/numero_proposta/
+    # agente_financeiro/situacao) are ONE row per atendimento; `None`
+    # (never fetched) for a synthetic fixture with no `atendimento_id`
+    # (`dados.py`'s own docstring on the field).
+    if dados.atendimento_id:
+        neg_rows = (
+            table_reads.table(client, TABELAS[ENTIDADE_NEGOCIACAO])
+            .select("*").eq("org_id", str(org_id)).eq("atendimento_id", dados.atendimento_id)
+            .limit(1).execute()
+        ).data or []
+        if neg_rows:
+            coleta.alvos.append(
+                Alvo((CAMPO_NEGOCIACAO_VALOR,), dados.atendimento_id, neg_rows[0], "Negociação")
+            )
+
+        fin_rows = (
+            table_reads.table(client, TABELAS[ENTIDADE_FINANCIAMENTO])
+            .select("*").eq("org_id", str(org_id)).eq("atendimento_id", dados.atendimento_id)
+            .limit(1).execute()
+        ).data or []
+        if fin_rows:
+            coleta.alvos.append(
+                Alvo(CAMPOS_FINANCIAMENTO, dados.atendimento_id, fin_rows[0], "Financiamento")
+            )
+
+    # Each parcela's own `valor` ([H4]'s derived intermediária suggestion is
+    # just another `origem='derivado'` reading of this same field — no
+    # special-casing here) and each favorecido's bank data ([H5]).
+    parcelas_rows = _rows_por_id(client, org_id, TABELAS[ENTIDADE_PARCELA], [p.id for p in dados.parcelas])
+    for p in dados.parcelas:
+        row = parcelas_rows.get(p.id)
+        if row is None:
+            continue
+        coleta.alvos.append(Alvo((CAMPO_PARCELA_VALOR,), p.id, row, "Parcelas", rotulo_sufixo=p.tipo))
+
+    favorecidos_rows = _rows_por_id(
+        client, org_id, TABELAS[ENTIDADE_FAVORECIDO], [f.id for f in dados.favorecidos]
+    )
+    for f in dados.favorecidos:
+        row = favorecidos_rows.get(f.id)
+        if row is None:
+            continue
+        coleta.alvos.append(
+            Alvo((CAMPO_FAVORECIDO_DADOS,), f.id, row, "Favorecidos", rotulo_sufixo=f.nome)
+        )
+
     ativo_ids = [p.permuta_ativo_id for p in dados.permuta_imoveis]
     if ativo_ids:
         ativos = table_reads.in_batched_rows(client, "permuta_ativos", org_id, "id", ativo_ids)
@@ -637,13 +754,15 @@ def documentos_de_origem(client: Any, org_id: UUID, pares: list[tuple[Alvo, Camp
     `listar_pendentes`/`decidir` call this with only-pending pairs,
     `proveniencia.linhagem` with every active one): `cliente_documentos`
     for a cliente field, `imovel_documentos` or `matricula_extracoes` for
-    an imóvel field (154's `_documento_id` may point at either), or
+    an imóvel field (154's `_documento_id` may point at either),
     `empresa_documentos` (167, §A.3 — the Cartão CNPJ store, S2a) for an
-    empresa field. Each returned row is tagged `_tabela` with the table it
-    was actually found in, so a caller can tell the three apart without
-    re-deriving it — `proveniencia.linhagem` turns that into an `Entrada`
-    (`fontes.TABELA_ENTRADA`); this module stays free of that vocabulary."""
-    ids_cliente, ids_imovel, ids_empresa = set(), set(), set()
+    empresa field, or `atendimento_documentos` (171, S2b §E4) for a
+    negociação/parcela/financiamento/favorecido field. Each returned row is
+    tagged `_tabela` with the table it was actually found in, so a caller
+    can tell them apart without re-deriving it — `proveniencia.linhagem`
+    turns that into an `Entrada` (`fontes.TABELA_ENTRADA`); this module
+    stays free of that vocabulary."""
+    ids_cliente, ids_imovel, ids_empresa, ids_atendimento = set(), set(), set(), set()
     for alvo, campo in pares:
         doc_id = alvo.row.get(campo.documento_id) if campo.documento_id else None
         if not doc_id:
@@ -652,6 +771,8 @@ def documentos_de_origem(client: Any, org_id: UUID, pares: list[tuple[Alvo, Camp
             ids_cliente.add(str(doc_id))
         elif campo.entidade == ENTIDADE_EMPRESA:
             ids_empresa.add(str(doc_id))
+        elif campo.entidade in (ENTIDADE_NEGOCIACAO, ENTIDADE_PARCELA, ENTIDADE_FINANCIAMENTO, ENTIDADE_FAVORECIDO):
+            ids_atendimento.add(str(doc_id))
         else:
             ids_imovel.add(str(doc_id))
     fontes: dict[str, dict] = {}
@@ -667,6 +788,14 @@ def documentos_de_origem(client: Any, org_id: UUID, pares: list[tuple[Alvo, Camp
     for did, r in _rows_por_id(client, org_id, "empresa_documentos", ids_empresa,
                                select="id,nome_original,tipo_documento,extracao_dados").items():
         fontes[did] = r | {"_nome": r.get("nome_original"), "_tabela": "empresa_documentos"}
+    # 🔴 [S2b] `extracao_dados` is a 171 column (S2's parallel migration, not
+    # yet in this schema) — selecting it would fail the mock's real-schema
+    # validation. Nothing downstream reads it for THIS table either (unlike
+    # `empresa_documentos`' select list, kept for parity with its own
+    # consumers), so the projection stays to what already exists.
+    for did, r in _rows_por_id(client, org_id, "atendimento_documentos", ids_atendimento,
+                               select="id,nome_original,tipo_documento").items():
+        fontes[did] = r | {"_nome": r.get("nome_original"), "_tabela": "atendimento_documentos"}
     return fontes
 
 
@@ -727,6 +856,39 @@ _CONFLITO_CAMPO_CLIENTE: dict[str, str] = {
 }
 
 
+#: [S2b §E4 item 4, migration 171] `atendimento_campo_conflitos.campo` (§C
+#: item 6's DOTTED vocabulary — disambiguating negociação/financiamento on
+#: the SAME atendimento-keyed table) -> `(REGISTRO entidade, REGISTRO
+#: campo)`. `parcela.<id>.valor` is dynamic (the id names its own row) and
+#: is parsed in `_conflito_atendimento` instead of listed here.
+_CONFLITO_CAMPO_ATENDIMENTO: dict[str, tuple[str, str]] = {
+    "valor_negociado": (ENTIDADE_NEGOCIACAO, "valor_negociado"),
+    "financiamento.fgts": (ENTIDADE_FINANCIAMENTO, "fgts"),
+    "financiamento.numero_proposta": (ENTIDADE_FINANCIAMENTO, "numero_proposta"),
+    "financiamento.agente_financeiro_id": (ENTIDADE_FINANCIAMENTO, "agente_financeiro"),
+    # [H6, owner 2026-09-25] Not in the contract's original §C item 6 list
+    # (written before H6) — added the same way as the other three.
+    "financiamento.situacao": (ENTIDADE_FINANCIAMENTO, "situacao"),
+}
+
+
+def _conflito_atendimento(campo_bruto: str, atendimento_id: str) -> Optional[tuple[str, str, str]]:
+    """`(entidade, entidade_id, REGISTRO campo)` for one stored
+    `atendimento_campo_conflitos.campo`, or `None` for an unrecognized one
+    (the same honest-skip `listar_conflitos`'s cliente branch takes for a
+    campo outside `_CONFLITO_CAMPO_CLIENTE`)."""
+    if campo_bruto.startswith("parcela.") and campo_bruto.endswith(".valor"):
+        partes = campo_bruto.split(".")
+        if len(partes) == 3:
+            return ENTIDADE_PARCELA, partes[1], "valor"
+        return None
+    par = _CONFLITO_CAMPO_ATENDIMENTO.get(campo_bruto)
+    if par is None:
+        return None
+    entidade, registro_campo = par
+    return entidade, atendimento_id, registro_campo
+
+
 def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[dict]:
     """Open extraction CONFLICTS on this contract's data — a later reading
     disagreed with a value already set (D1: never a silent overwrite), and an
@@ -740,7 +902,9 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
       contract reads;
     - `empresa_campo_conflitos` (167, P0c contract §H6/item 4) on every
       required empresa (`dados.empresas`) — the shared writer S2a opens
-      (`app.services.campo_conflitos.EMPRESA`).
+      (`app.services.campo_conflitos.EMPRESA`);
+    - `atendimento_campo_conflitos` (171, S2b §E4 item 4) on the deal itself
+      — negociação, financiamento, and every parcela.
     """
     pessoas = {p.cliente_id: p for p in [*dados.compradores, *dados.vendedores]}
     saida: list[dict] = []
@@ -828,6 +992,36 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
                 "origem_proposto": r.get("origem_proposto"),
                 "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
             })
+
+    if dados.atendimento_id:
+        rows = (
+            table_reads.table(client, "atendimento_campo_conflitos")
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("atendimento_id", dados.atendimento_id)
+            .eq("status", "pendente")
+            .execute()
+        ).data or []
+        for r in rows:
+            resolvido = _conflito_atendimento(r.get("campo") or "", dados.atendimento_id)
+            if resolvido is None:
+                continue
+            entidade, entidade_id, registro_campo = resolvido
+            campo_obj = _POR_ENTIDADE_CAMPO.get((entidade, registro_campo))
+            rotulo = campo_obj.rotulo if campo_obj else registro_campo
+            grupo = f"Parcela {entidade_id}" if entidade == ENTIDADE_PARCELA else "Negociação"
+            saida.append({
+                "id": str(r["id"]),
+                "entidade": entidade,
+                "entidade_id": entidade_id,
+                "campo": registro_campo,
+                "grupo": grupo,
+                "rotulo": rotulo,
+                "valor_atual": _texto(r.get("valor_anterior")),
+                "valor_proposto": _texto(r.get("valor_proposto")),
+                "origem_proposto": r.get("origem_proposto"),
+                "link": {"rota": "/configuracoes", "rotulo": "Configurações → Pendências"},
+            })
     return saida
 
 
@@ -868,6 +1062,11 @@ def _filtro_linha(query: Any, org_id: UUID, entidade: str, entidade_id: str) -> 
     query = query.eq("org_id", str(org_id))
     if entidade == ENTIDADE_IMOVEL:
         return query.eq("codigo", entidade_id)
+    # [S2b §E4 item 1] `atendimento_negociacao`/`atendimento_financiamento`
+    # have no `id` of their own — one row per atendimento (`_seed_completo`'s
+    # own shape, migration 171).
+    if entidade in (ENTIDADE_NEGOCIACAO, ENTIDADE_FINANCIAMENTO):
+        return query.eq("atendimento_id", entidade_id)
     return query.eq("id", entidade_id)
 
 

@@ -532,6 +532,16 @@ class DadosContrato:
     #: DIGITAL clause) or 'fisica' (printed, signed by hand: no digital
     #: clause, signature lines, "em NN vias"). Exactly the stored column.
     modalidade_assinatura: str = "digital"
+    #: [S2b, negociação/financiamento extraction contract §E4] The deal's
+    #: `atendimentos.id` — `carregador.carregar` already resolves it (it
+    #: returns it as its own second value); this is that SAME id, kept on
+    #: the dataclass so `validacao_extracao.coletar` can key its
+    #: `atendimento_negociacao`/`atendimento_negociacao_parcelas`/
+    #: `atendimento_financiamento`/`atendimento_favorecidos` reads without a
+    #: second lookup. `None` only for a synthetic fixture that never went
+    #: through the loader (`contrato_gerador_fixtures` — the D2 gate reads
+    #: nothing atendimento-scoped for those, by construction: §H1/D1).
+    atendimento_id: Optional[str] = None
 
 
 #: Papéis that sign the instrument. `fiador`/`outro` are parties to the deal

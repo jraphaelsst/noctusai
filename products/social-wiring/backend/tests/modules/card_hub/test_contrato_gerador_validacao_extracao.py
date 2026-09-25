@@ -563,3 +563,270 @@ class TestConflitosAbertos:
         linhas = [{**r, "status": "aceito"} for r in _rows(scoped, "empresa_campo_conflitos")]
         scoped.set_table_data("empresa_campo_conflitos", linhas)
         assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
+
+
+# ─── S2b: negociação/financiamento extraction contract §E4/§G ──────────────
+
+
+def _patch_row(scoped, tabela: str, chave_coluna: str, chave_valor, patch: dict) -> None:
+    linhas = [
+        {**r, **patch} if r.get(chave_coluna) == chave_valor else r
+        for r in _rows(scoped, tabela)
+    ]
+    scoped.set_table_data(tabela, linhas)
+
+
+class TestNegociacaoFinanciamentoD2:
+    """[S2b contract §E4 item 4/§G] The D2 gate extended over migration
+    171's four new provenance-tracked surfaces — `atendimento_negociacao.
+    valor_negociado` (a house quintet), each `atendimento_negociacao_
+    parcelas` row's `valor` (flat row provenance, [H4]'s derived
+    intermediária suggestion is the same field with `origem='derivado'`),
+    `atendimento_financiamento`'s fgts/numero_proposta/agente_financeiro/
+    situacao ([H6]) quintets, and each `atendimento_favorecidos` row's bank
+    data ([H5], flat row provenance) — plus `atendimento_campo_conflitos`.
+    The migration itself is S2's (built in parallel); these columns are
+    seeded directly onto the in-memory mock rows, which needs no schema."""
+
+    def _doc(self, scoped, ids, tipo: str = "contrato_financiamento") -> str:
+        """A row on the EXISTING `atendimento_documentos` store (0. — the
+        deal document store `financiamento_service.obter` also reads
+        unfiltered by tipo), so it needs that store's full 7-field shape
+        (`documento_base`), not just the columns the D2 gate itself reads."""
+        doc_id = str(uuid4())
+        scoped.set_table_data("atendimento_documentos", _rows(scoped, "atendimento_documentos") + [{
+            "id": doc_id, "org_id": ORG_ID, "atendimento_id": ids["atendimento"],
+            "tipo_documento": tipo, "nome_original": f"{tipo}.pdf",
+            "mime_type": "application/pdf", "tamanho_bytes": 1024, "enviado_por": None,
+            "extracao_dados": None, "deleted_at": None, "created_at": _T0,
+        }])
+        return doc_id
+
+    def _negociacao_extraida(self, scoped, ids, doc_id, *, origem="contrato_financiamento"):
+        _patch_row(scoped, "atendimento_negociacao", "atendimento_id", ids["atendimento"], {
+            "valor_negociado_origem": origem, "valor_negociado_documento_id": doc_id,
+            "valor_negociado_em": _T0, "valor_negociado_confirmado_por": None,
+            "valor_negociado_confirmado_em": None,
+        })
+
+    def _financiamento_patch(self, scoped, ids, patch: dict) -> None:
+        _patch_row(scoped, "atendimento_financiamento", "atendimento_id", ids["atendimento"], patch)
+
+    def _parcela_extraida(self, scoped, pid, doc_id, *, origem="contrato_financiamento"):
+        _patch_row(scoped, "atendimento_negociacao_parcelas", "id", pid, {
+            "origem": origem, "documento_id": doc_id, "extraido_em": _T0,
+            "confirmado_por": None, "confirmado_em": None,
+        })
+
+    def _favorecido_extraido(self, scoped, fid, doc_id, *, origem="contrato_financiamento"):
+        _patch_row(scoped, "atendimento_favorecidos", "id", fid, {
+            "origem": origem, "documento_id": doc_id, "extraido_em": _T0,
+            "confirmado_por": None, "confirmado_em": None,
+        })
+
+    # ── valor_negociado (§C item 3, §H2) ──
+
+    def test_a_pending_valor_negociado_is_listed_and_blocks_generation(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        doc_id = self._doc(scoped, ids, "guia_itbi")
+        self._negociacao_extraida(scoped, ids, doc_id, origem="guia_itbi")
+        [item] = _pendentes(client, ids)
+        assert item["chave"] == f"negociacao:{ids['atendimento']}:valor_negociado"
+        assert item["entidade"] == "negociacao" and item["entidade_id"] == ids["atendimento"]
+        assert item["grupo"] == "Negociação"
+        assert item["origem"] == "guia_itbi" and item["fonte_documento_id"] == doc_id
+        assert item["fonte_nome"] == "guia_itbi.pdf"
+        r = _gerar(client, ids)
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["details"]["pendentes"] == [item]
+
+    # 🔴 Accept/reject over the LIVE mock DB (`_decidir` -> `_gravar` ->
+    # `.update(patch)`) is schema-VALIDATED against the migrations that are
+    # actually in this worktree — `atendimento_negociacao`/`atendimento_
+    # negociacao_parcelas`/`atendimento_financiamento` predate 171 (S2's
+    # parallel PR), so a live write naming a quintet column 409s the mock
+    # with `MockSchemaError`, not a finding about this code. Same posture
+    # `TestColunaAindaInexistente` already takes for 153/154's columns:
+    # exercise `_patch_aceite`/`_patch_rejeite`/`.pendente()` directly.
+    def test_accepting_valor_negociado_stamps_confirmation(self):
+        row = {
+            "valor_negociado": "500000.00", "valor_negociado_origem": "contrato_financiamento",
+            "valor_negociado_documento_id": str(uuid4()), "valor_negociado_em": _T0,
+            "valor_negociado_confirmado_por": None, "valor_negociado_confirmado_em": None,
+        }
+        assert vx.CAMPO_NEGOCIACAO_VALOR.pendente(row)
+        patch = vx._patch_aceite(vx.CAMPO_NEGOCIACAO_VALOR, row, uuid4(), _T0)
+        assert patch["valor_negociado_confirmado_em"] == _T0
+        assert not vx.CAMPO_NEGOCIACAO_VALOR.pendente({**row, **patch})
+
+    # ── parcela valor (§C item 4, migration 171 nullable) ──
+
+    def test_a_pending_parcela_valor_blocks_generation(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        doc_id = self._doc(scoped, ids)
+        self._parcela_extraida(scoped, "p3", doc_id)
+        [item] = _pendentes(client, ids)
+        assert item["chave"] == "parcela:p3:valor"
+        assert item["entidade"] == "parcela" and item["entidade_id"] == "p3"
+        assert item["grupo"] == "Parcelas" and item["rotulo"] == "Valor da parcela — financiamento"
+        r = _gerar(client, ids)
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["details"]["pendentes"] == [item]
+
+    def test_rejecting_a_parcela_valor_nulls_it_into_the_existing_falta(self):
+        """[§C item 4] `valor` is nullable (171) precisely so reject can NULL
+        it without deleting the row — `derivacao` already treats a NULL
+        parcela `valor` as `negociacao.parcela.<id>.valor` falta (§0)."""
+        row = {
+            "valor": "400000.00", "origem": "contrato_financiamento",
+            "documento_id": str(uuid4()), "extraido_em": _T0,
+            "confirmado_por": None, "confirmado_em": None,
+        }
+        patch = vx._patch_rejeite(vx.CAMPO_PARCELA_VALOR, row)
+        assert set(patch) == set(row)
+        assert all(v is None for v in patch.values())
+        assert not vx.CAMPO_PARCELA_VALOR.pendente({**row, **patch})
+
+    # ── financiamento quintets (§C item 5, §H6) ──
+
+    def test_pending_fgts_is_listed_and_blocks(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped, n=2)  # n=2 seeds the base row with fgts=True
+        doc_id = self._doc(scoped, ids)
+        self._financiamento_patch(scoped, ids, {
+            "fgts_origem": "contrato_financiamento", "fgts_documento_id": doc_id,
+            "fgts_em": _T0, "fgts_confirmado_por": None, "fgts_confirmado_em": None,
+        })
+        [item] = _pendentes(client, ids)
+        assert item["chave"] == f"financiamento:{ids['atendimento']}:fgts"
+        assert item["grupo"] == "Financiamento"
+        assert _gerar(client, ids).status_code == 409
+
+    def test_fgts_reject_resets_to_false_never_null(self):
+        """[§E4 item 4] A NOT NULL boolean's `False` is indistinguishable
+        from "unset" — reject must reset it, never leave a disallowed NULL."""
+        campo_fgts = next(c for c in vx.CAMPOS_FINANCIAMENTO if c.campo == "fgts")
+        row = {
+            "fgts": True, "fgts_origem": "contrato_financiamento",
+            "fgts_documento_id": str(uuid4()), "fgts_em": _T0,
+            "fgts_confirmado_por": None, "fgts_confirmado_em": None,
+        }
+        patch = vx._patch_rejeite(campo_fgts, row)
+        assert patch["fgts"] is False
+        assert patch["fgts_origem"] is None
+        assert not campo_fgts.pendente({**row, **patch})
+
+    def test_numero_proposta_and_agente_financeiro_and_situacao_are_pending(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        doc_id = self._doc(scoped, ids, "proposta_financiamento")
+        self._financiamento_patch(scoped, ids, {
+            "numero_proposta": "12345", "numero_proposta_origem": "proposta_financiamento",
+            "numero_proposta_documento_id": doc_id, "numero_proposta_em": _T0,
+            "numero_proposta_confirmado_por": None, "numero_proposta_confirmado_em": None,
+            "agente_financeiro_id": str(uuid4()), "agente_financeiro_origem": "proposta_financiamento",
+            "agente_financeiro_documento_id": doc_id, "agente_financeiro_em": _T0,
+            "agente_financeiro_confirmado_por": None, "agente_financeiro_confirmado_em": None,
+            # [H6] A signed contrato de financiamento sets `situacao='aprovado'`.
+            "situacao_origem": "contrato_financiamento", "situacao_documento_id": doc_id,
+            "situacao_em": _T0, "situacao_confirmado_por": None, "situacao_confirmado_em": None,
+        })
+        chaves = {p["chave"] for p in _pendentes(client, ids)}
+        assert chaves == {
+            f"financiamento:{ids['atendimento']}:numero_proposta",
+            f"financiamento:{ids['atendimento']}:agente_financeiro",
+            f"financiamento:{ids['atendimento']}:situacao",
+        }
+        r = _gerar(client, ids)
+        assert r.status_code == 409, r.text
+
+    # ── favorecido bank data (§H5) ──
+
+    def test_favorecido_bank_data_is_pending_and_blocks(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        doc_id = self._doc(scoped, ids)
+        self._favorecido_extraido(scoped, ids["fav_vendedor"], doc_id)
+        [item] = _pendentes(client, ids)
+        assert item["chave"] == f"favorecido:{ids['fav_vendedor']}:dados"
+        assert item["entidade"] == "favorecido" and item["entidade_id"] == ids["fav_vendedor"]
+        assert item["grupo"] == "Favorecidos" and item["rotulo"].startswith("Dados bancários do favorecido")
+        assert _gerar(client, ids).status_code == 409
+
+    # ── atendimento_campo_conflitos (§E4 item 4) ──
+
+    def test_an_open_valor_negociado_conflict_blocks_generation(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        cid = str(uuid4())
+        scoped.set_table_data("atendimento_campo_conflitos", [{
+            "id": cid, "org_id": ORG_ID, "atendimento_id": ids["atendimento"],
+            "campo": "valor_negociado", "valor_anterior": "500000.00", "origem_anterior": "manual",
+            "valor_proposto": "510000.00", "origem_proposto": "guia_itbi",
+            "confianca_proposta": "media", "fonte_tabela": "atendimento_documentos",
+            "fonte_id": None, "documento_id_proposto": None, "status": "pendente",
+            "notificado_em": None, "decidido_por": None, "decidido_em": None, "created_at": _T0,
+        }])
+        corpo = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()
+        assert corpo["pendentes"] == []
+        [conflito] = corpo["conflitos"]
+        assert conflito["id"] == cid and conflito["entidade"] == "negociacao"
+        assert conflito["entidade_id"] == ids["atendimento"] and conflito["campo"] == "valor_negociado"
+        assert (conflito["valor_atual"], conflito["valor_proposto"]) == ("500000.00", "510000.00")
+        r = _gerar(client, ids)
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["details"]["conflitos"] == corpo["conflitos"]
+
+    def test_a_parcela_conflict_resolves_to_its_own_parcela_row(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        cid = str(uuid4())
+        scoped.set_table_data("atendimento_campo_conflitos", [{
+            "id": cid, "org_id": ORG_ID, "atendimento_id": ids["atendimento"],
+            "campo": "parcela.p3.valor", "valor_anterior": "400000.00", "origem_anterior": "manual",
+            "valor_proposto": "410000.00", "origem_proposto": "contrato_financiamento",
+            "confianca_proposta": "baixa", "fonte_tabela": "atendimento_documentos",
+            "fonte_id": None, "documento_id_proposto": None, "status": "pendente",
+            "notificado_em": None, "decidido_por": None, "decidido_em": None, "created_at": _T0,
+        }])
+        [conflito] = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"]
+        assert conflito["entidade"] == "parcela" and conflito["entidade_id"] == "p3"
+        assert conflito["campo"] == "valor" and conflito["rotulo"] == "Valor da parcela"
+
+    def test_a_financiamento_conflict_resolves_by_the_dotted_vocabulary(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        scoped.set_table_data("atendimento_campo_conflitos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": ids["atendimento"],
+            "campo": "financiamento.agente_financeiro_id", "valor_anterior": None,
+            "origem_anterior": None, "valor_proposto": str(uuid4()),
+            "origem_proposto": "proposta_financiamento", "confianca_proposta": "baixa",
+            "fonte_tabela": "atendimento_documentos", "fonte_id": None,
+            "documento_id_proposto": None, "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None, "created_at": _T0,
+        }])
+        [conflito] = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"]
+        assert conflito["entidade"] == "financiamento" and conflito["entidade_id"] == ids["atendimento"]
+        assert conflito["campo"] == "agente_financeiro" and conflito["rotulo"] == "Agente financeiro"
+
+    def test_an_unrecognized_atendimento_conflito_campo_is_skipped_not_crashed(
+        self, client, scoped, fake_storage
+    ):
+        ids = _seed_completo(scoped)
+        scoped.set_table_data("atendimento_campo_conflitos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": ids["atendimento"],
+            "campo": "algo_desconhecido", "valor_anterior": None, "origem_anterior": None,
+            "valor_proposto": None, "origem_proposto": None, "confianca_proposta": None,
+            "fonte_tabela": None, "fonte_id": None, "documento_id_proposto": None,
+            "status": "pendente", "notificado_em": None, "decidido_por": None,
+            "decidido_em": None, "created_at": _T0,
+        }])
+        assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
+        assert _gerar(client, ids).status_code == 201
+
+    def test_a_decided_atendimento_conflict_does_not_block(self, client, scoped, fake_storage):
+        ids = _seed_completo(scoped)
+        scoped.set_table_data("atendimento_campo_conflitos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": ids["atendimento"],
+            "campo": "valor_negociado", "valor_anterior": "500000.00", "origem_anterior": "manual",
+            "valor_proposto": "510000.00", "origem_proposto": "guia_itbi",
+            "confianca_proposta": "media", "fonte_tabela": "atendimento_documentos",
+            "fonte_id": None, "documento_id_proposto": None, "status": "aceito",
+            "notificado_em": None, "decidido_por": str(uuid4()), "decidido_em": _T0, "created_at": _T0,
+        }])
+        assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
+        assert _gerar(client, ids).status_code == 201

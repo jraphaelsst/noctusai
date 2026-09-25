@@ -588,6 +588,10 @@ def carregar(
     dados = DadosContrato(
         contrato_id=str(contrato_id),
         cliente_id=str(cliente_id),
+        # [S2b] Fills `DadosContrato.atendimento_id` — `validacao_extracao
+        # .coletar`'s key for the deal-scoped D2 reads (negociação,
+        # financiamento, parcelas, favorecidos).
+        atendimento_id=str(atendimento_id),
         modelo=contrato["modelo"],
         vendedores=vendedores,
         compradores=compradores,
