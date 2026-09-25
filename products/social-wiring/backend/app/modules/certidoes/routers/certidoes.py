@@ -519,10 +519,18 @@ async def criar_consulta_manual(
 ):
     """Create a consultation the SAME shape `criar_consulta` produces — one
     `pendente` placeholder resultado per type the office checklist names,
-    thirteen total for a CPF (`CERTIDOES_CONFIG`'s ten PLUS `get_manual_
-    tipos()`'s three) — but NEVER calls InfoSimples and never requires its
-    token. A CNPJ consulta gets twelve: Serasa is a PF credit report and is
-    never fanned out for one (P0c contract §E5/§H14).
+    twelve total for a CPF (`CERTIDOES_CONFIG`'s nine — the generic `TJSP_
+    TIPO` excluded, G12: the office splits it into e-SAJ/e-Proc instead,
+    below — PLUS `get_manual_tipos()`'s three) — but NEVER calls InfoSimples
+    and never requires its token. A CNPJ consulta gets eleven: Serasa is a
+    PF credit report and is never fanned out for one (P0c contract
+    §E5/§H14).
+
+    Also (G13, 2026-09-25) applies any already-landed Serasa Crednet reading
+    to the new `serasa` resultado when the consulta links to a cliente at
+    creation, and fans out the card's custom matriz rows (migration 170) —
+    see the calls below for the reasoning; both mirror what `vincular_
+    parte`/`vincular_cliente` already do for a link made AFTER creation.
 
     🔴 CARD-ONLY, BY OWNER DECISION. This is reached from a party's/titular's
     own certidões panel on the card (`CertidoesPartePanel`'s "Registrar
@@ -577,6 +585,16 @@ async def criar_consulta_manual(
         if aplicavel_a_tipo_documento(tipo["tipo"], body.tipo_documento)
     ]
 
+    # 🔴 G12 (P1/883, 2026-09-25): the office rule "TJSP is always split
+    # into e-SAJ and e-Proc" applies here too — this route already fans out
+    # the manual `tjsp_esaj`/`tjsp_eproc` pair (`manuais` above), so the
+    # generic `CERTIDOES_CONFIG["tjsp"]` entry would be a REDUNDANT third
+    # row with no InfoSimples call to ever resolve it (unlike `criar_
+    # consulta`'s `incluir_tjsp` switch, which gates a REAL API call this
+    # route never makes). Excluded unconditionally, never gated by a
+    # request flag.
+    configs = [config for config in CERTIDOES_CONFIG if config["tipo"] != TJSP_TIPO]
+
     consulta_data = {
         **body.model_dump(
             exclude_none=True,
@@ -586,7 +604,7 @@ async def criar_consulta_manual(
         "created_by": str(user.id),
         "status": "pendente",
         "origem": "manual",
-        "total_certidoes": len(CERTIDOES_CONFIG) + len(manuais),
+        "total_certidoes": len(configs) + len(manuais),
         "concluidas": 0,
     }
     if body.atendimento_parte_id:
@@ -599,10 +617,9 @@ async def criar_consulta_manual(
         raise HTTPException(status_code=500, detail="Erro ao criar consulta")
     consulta = consulta_result.data[0]
 
-    # Same thirteen types `criar_consulta`'s ten plus a `vincular_parte`/
-    # `vincular_cliente`-linked consulta's three end up carrying — see this
-    # function's own docstring. Unlike `criar_consulta`, TJSP is always
-    # included: there is no InfoSimples call to gate here either way.
+    # Same twelve types `criar_consulta`'s nine (the generic TJSP excluded,
+    # G12 above) plus a `vincular_parte`/`vincular_cliente`-linked consulta's
+    # three end up carrying — see this function's own docstring.
     resultados_data = [
         {
             "consulta_id": consulta["id"],
@@ -612,7 +629,7 @@ async def criar_consulta_manual(
             "ordem": config["ordem"],
             "status": "pendente",
         }
-        for config in CERTIDOES_CONFIG
+        for config in configs
     ] + [
         {
             "consulta_id": consulta["id"],
@@ -626,7 +643,37 @@ async def criar_consulta_manual(
     ]
     db.table(RESULTADOS).insert(resultados_data).execute()
 
-    # postgrest-unbounded-ok: bounded at 13 rows by the fan-out above.
+    # 🔴 G13 (P1/883, 2026-09-25): a CPF consulta linked to a cliente who
+    # already has an `ok` Serasa Crednet reading on file must not leave its
+    # `serasa` resultado sitting `pendente` forever waiting for a re-upload
+    # that already happened — same deferred-apply `vincular_empresa` already
+    # runs (there a no-op, since it is always `tipo_documento='cnpj'`; here
+    # the one path that actually matters, since this route links `cliente_
+    # id` at CREATE time rather than via a later vincular-* call).
+    # `aplicar_crednet_pendente` is a no-op for a CNPJ consulta or one with
+    # no `cliente_id` — see its own docstring.
+    service.aplicar_crednet_pendente(db, org_id, consulta)
+
+    # G13's follow-up: the Certidões matriz's per-card CUSTOM rows (migration
+    # 170) get the SAME idempotent placeholder fan-out `vincular_parte`/
+    # `vincular_cliente` already give a consulta linked AFTER creation — this
+    # route links at CREATE time instead, so without this a card whose
+    # custom rows already exist would show this manual consulta as if those
+    # rows did not apply to it. Exactly one of `atendimento_id`/`cliente_id`
+    # resolves (mirrors `vincular_parte`/`vincular_cliente`'s own split);
+    # neither does when the consulta was created with no link at all.
+    if body.atendimento_parte_id:
+        _fan_out_linhas_customizadas_do_card(
+            db, org_id, consulta["id"],
+            atendimento_id=_atendimento_id_da_parte(db, org_id, str(body.atendimento_parte_id)),
+        )
+    elif resolved_cliente_id:
+        _fan_out_linhas_customizadas_do_card(
+            db, org_id, consulta["id"], cliente_id=resolved_cliente_id,
+        )
+
+    # postgrest-unbounded-ok: bounded at 12 rows (+ any custom matriz rows,
+    # still a small per-card fan-out) by the fan-out above.
     resultados = (
         db.table(RESULTADOS)
         .select(service.RESULTADO_COLUNAS_SEM_TEXTO)

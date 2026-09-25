@@ -503,9 +503,11 @@ class TestCriarConsultaManual:
         data = resp.json()["data"]
         assert data["origem"] == "manual"
         assert data["status"] == "pendente"
-        # 10 automated + 3 CPF-applicable manual types (excludes
-        # `fgts_regularidade`, CNPJ-only — matriz row 5.13).
-        assert data["total_certidoes"] == 13
+        # 9 automated (the generic `tjsp` excluded — G12, 2026-09-25: the
+        # office splits it into e-SAJ/e-Proc instead) + 3 CPF-applicable
+        # manual types (excludes `fgts_regularidade`, CNPJ-only — matriz
+        # row 5.13).
+        assert data["total_certidoes"] == 12
 
     def test_nao_dispara_processamento_em_background(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
@@ -515,20 +517,21 @@ class TestCriarConsultaManual:
         client.post(f"{BASE}/consultas/manual", json=self._payload())
         proc.assert_not_awaited()
 
-    def test_fan_out_grava_treze_resultados(self, client, certidoes_db):
-        """The ten automated types PLUS the three CPF-applicable manual-only
-        ones (`fgts_regularidade` excluded — CNPJ-only) —
-        `vincular_parte`'s eventual shape, produced up front instead of
-        lazily on link."""
+    def test_fan_out_grava_doze_resultados(self, client, certidoes_db):
+        """The nine automated types (generic `tjsp` excluded, G12) PLUS the
+        three CPF-applicable manual-only ones (`fgts_regularidade` excluded
+        — CNPJ-only) — `vincular_parte`'s eventual shape, produced up front
+        instead of lazily on link."""
         db, _ = certidoes_db
         _seed(db)
         client.post(f"{BASE}/consultas/manual", json=self._payload())
         inserted = db.table("certidao_resultados").inserted_payloads
-        assert len(inserted) == 13
+        assert len(inserted) == 12
         tipos = {r["tipo"] for r in inserted}
-        assert tipos == {c["tipo"] for c in service.CERTIDOES_CONFIG} | {
+        assert tipos == {c["tipo"] for c in service.CERTIDOES_CONFIG if c["tipo"] != "tjsp"} | {
             "serasa", "tjsp_esaj", "tjsp_eproc",
         }
+        assert "tjsp" not in tipos
         assert all(r["status"] == "pendente" for r in inserted)
         assert all(r["org_id"] == CALLER_ORG for r in inserted)
 
@@ -594,16 +597,20 @@ class TestCriarConsultaManual:
     def test_incluir_tjsp_e_aceito_mas_ignorado(self, client, certidoes_db):
         """Inherited from `ConsultaCreate` (extra="forbid" would otherwise
         reject the field the Nova Consulta modal's shared form state can
-        still carry), but this path never gates on it — TJSP's placeholder
-        resultado is always part of the thirteen."""
+        still carry), but this path never gates on it EITHER WAY — the
+        generic TJSP placeholder is never part of the twelve here regardless
+        of `incluir_tjsp` (G12: this route always fans out the manual
+        `tjsp_esaj`/`tjsp_eproc` pair instead, never the generic type)."""
         db, _ = certidoes_db
         _seed(db)
         resp = client.post(
             f"{BASE}/consultas/manual", json=self._payload(incluir_tjsp=True)
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["total_certidoes"] == 13
+        assert resp.json()["data"]["total_certidoes"] == 12
         assert "incluir_tjsp" not in db.table("certidao_consultas").inserted_payloads[0]
+        tipos = {r["tipo"] for r in db.table("certidao_resultados").inserted_payloads}
+        assert "tjsp" not in tipos
 
 
 # ---------------------------------------------------------------------------
@@ -1846,3 +1853,159 @@ class TestFanOutLinhasCustomizadasNoVincular:
         resultados = db.table("certidao_resultados").select("*").execute().data
         custom = [r for r in resultados if r.get("linha_customizada_id") == LINHA_CUSTOM_ID]
         assert len(custom) == 1
+
+
+# ---------------------------------------------------------------------------
+# G13 (P1/883, 2026-09-25): `criar_consulta_manual` links at CREATE time
+# (unlike `vincular_parte`/`vincular_cliente`, which link an EXISTING
+# consulta), so it needs its OWN calls to `aplicar_crednet_pendente` and
+# `_fan_out_linhas_customizadas_do_card` rather than inheriting theirs.
+# ---------------------------------------------------------------------------
+
+
+def _crednet_doc(cliente_id: str, **overrides) -> dict:
+    row = {
+        "id": "crednet-doc-1", "org_id": CALLER_ORG, "cliente_id": cliente_id,
+        "storage_path": f"{CALLER_ORG}/clientes/{cliente_id}/crednet-doc",
+        "tipo_documento": "serasa_crednet", "extracao_status": "ok",
+        "deleted_at": None,
+        "extracao_crednet": {
+            "cpf": "123.456.789-01", "protocolo": "9999999",
+            "consulta_em": "2026-09-01T10:00:00", "ocorrencias_constam": False,
+        },
+    }
+    row.update(overrides)
+    return row
+
+
+class TestCriarConsultaManualAplicaCrednetPendente:
+    def test_um_cpf_com_crednet_ja_lido_preenche_o_serasa_na_criacao(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("clientes", [_cliente()])
+        db.set_table_data("cliente_documentos", [_crednet_doc(CLIENTE_ID)])
+
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json={
+                "tipo_documento": "cpf", "documento": "12345678901",
+                "nome": "Pessoa Fictícia de Teste", "cliente_id": CLIENTE_ID,
+            },
+        )
+
+        assert resp.status_code == 200
+        resultados = resp.json()["data"]["resultados"]
+        serasa = next(r for r in resultados if r["tipo"] == "serasa")
+        assert serasa["status"] == "sucesso"
+        assert serasa["numero"] == "9999999"
+
+    def test_sem_crednet_no_arquivo_o_serasa_fica_pendente_como_antes(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("clientes", [_cliente()])
+        db.set_table_data("cliente_documentos", [])
+
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json={
+                "tipo_documento": "cpf", "documento": "12345678901",
+                "nome": "Pessoa Fictícia de Teste", "cliente_id": CLIENTE_ID,
+            },
+        )
+
+        assert resp.status_code == 200
+        resultados = resp.json()["data"]["resultados"]
+        serasa = next(r for r in resultados if r["tipo"] == "serasa")
+        assert serasa["status"] == "pendente"
+
+    def test_um_cnpj_nunca_aplica_crednet_mesmo_com_leitura_no_arquivo(self, client, certidoes_db):
+        """`aplicar_crednet_pendente`'s own CPF-only guard — asserted here at
+        the ROUTE level so a future change to this call site's argument
+        order can't silently defeat it."""
+        db, _ = certidoes_db
+        empresa_id = "88888888-8888-4888-8888-888888888888"
+        _seed(db)
+        db.set_table_data("empresas", [
+            {"id": empresa_id, "org_id": CALLER_ORG, "cnpj": "11222333000181"},
+        ])
+        db.set_table_data("cliente_documentos", [_crednet_doc(CLIENTE_ID)])
+
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json={
+                "tipo_documento": "cnpj", "documento": "11222333000181",
+                "nome": "Empresa Fictícia LTDA",
+            },
+        )
+
+        assert resp.status_code == 200
+        tipos = {r["tipo"] for r in resp.json()["data"]["resultados"]}
+        assert "serasa" not in tipos  # CNPJ fan-out never carries it at all
+
+
+class TestCriarConsultaManualFanOutLinhasCustomizadas:
+    def test_vinculo_por_parte_cria_placeholder_para_linha_ja_existente(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("atendimentos", [_atendimento_row()])
+        db.set_table_data("atendimento_partes", [_parte(cliente_id=VENDEDOR_ID)])
+        db.set_table_data("certidao_matriz_linhas_customizadas", [_linha_customizada()])
+
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json={
+                "tipo_documento": "cpf", "documento": "12345678901",
+                "nome": "Pessoa Fictícia de Teste",
+                "atendimento_parte_id": PARTE_ID,
+            },
+        )
+        assert resp.status_code == 200
+
+        custom = [
+            r for r in db.table("certidao_resultados").select("*").execute().data
+            if r.get("linha_customizada_id") == LINHA_CUSTOM_ID
+        ]
+        assert len(custom) == 1
+        assert custom[0]["tipo"] == "outras_custom"
+        assert custom[0]["status"] == "pendente"
+
+    def test_vinculo_por_cliente_cria_placeholder_para_linha_ja_existente(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("atendimentos", [_atendimento_row(cliente_id=CLIENTE_ID)])
+        db.set_table_data("clientes", [_cliente()])
+        db.set_table_data(
+            "certidao_matriz_linhas_customizadas",
+            [_linha_customizada(cliente_id=CLIENTE_ID)],
+        )
+
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json={
+                "tipo_documento": "cpf", "documento": "12345678901",
+                "nome": "Pessoa Fictícia de Teste", "cliente_id": CLIENTE_ID,
+            },
+        )
+        assert resp.status_code == 200
+
+        custom = [
+            r for r in db.table("certidao_resultados").select("*").execute().data
+            if r.get("linha_customizada_id") == LINHA_CUSTOM_ID
+        ]
+        assert len(custom) == 1
+
+    def test_sem_nenhum_vinculo_nao_fana_out_nada_e_nao_erra(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+
+        resp = client.post(f"{BASE}/consultas/manual", json={
+            "tipo_documento": "cpf", "documento": "12345678901",
+            "nome": "Pessoa Fictícia de Teste",
+        })
+
+        assert resp.status_code == 200
+        custom = [
+            r for r in db.table("certidao_resultados").select("*").execute().data
+            if r.get("linha_customizada_id") is not None
+        ]
+        assert custom == []
