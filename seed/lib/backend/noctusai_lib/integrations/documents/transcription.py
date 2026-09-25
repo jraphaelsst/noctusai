@@ -53,7 +53,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Callable, Optional, Protocol, runtime_checkable
+from typing import Callable, Optional, Protocol, Sequence, runtime_checkable
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.documents.providers import (
@@ -320,7 +320,14 @@ class Transcription:
 
 @runtime_checkable
 class DocumentTranscriber(Protocol):
-    """Bytes → the document's full text. Never raises."""
+    """Bytes → the document's full text. Never raises.
+
+    `paginas=None` (every implementation's default) is every page — the
+    prior, page-agnostic behaviour, byte-for-byte. A concrete sequence
+    narrows the ELIGIBLE page set: see `LadderDocumentTranscriber._transcribe`
+    for what "eligible" means and why `too_many_vision_pages` is judged
+    against it, not the whole document.
+    """
 
     async def transcribe(
         self,
@@ -329,6 +336,7 @@ class DocumentTranscriber(Protocol):
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
         force_vision: bool = False,
+        paginas: Optional[Sequence[int]] = None,
     ) -> Transcription:
         ...
 
@@ -352,11 +360,21 @@ class FakeDocumentTranscriber:
         # ignored: the Fake has no page-trust concept to override, and
         # every fixture consumer stays byte-for-byte unaffected either way.
         force_vision: bool = False,
+        # Honoured (unlike `force_vision`): a scripted contract-extractor
+        # test needs to see an EMPTY window when it asks for pages this
+        # fixture doesn't have, the same "nothing in range" outcome the
+        # real ladder produces — see `LadderDocumentTranscriber._transcribe`.
+        paginas: Optional[Sequence[int]] = None,
     ) -> Transcription:
         if not content:
             return Transcription(
                 error="empty_document", error_message="no bytes to transcribe"
             )
+        numeros = (
+            sorted({n for n in paginas if 1 <= n <= self.PAGINAS})
+            if paginas is not None
+            else list(range(1, self.PAGINAS + 1))
+        )
         return Transcription(
             pages=tuple(
                 TranscribedPage(
@@ -364,7 +382,7 @@ class FakeDocumentTranscriber:
                     text=f"[TRANSCRICAO FALSA] pagina {n} de {self.PAGINAS}",
                     source=TextSource.TEXT_LAYER,
                 )
-                for n in range(1, self.PAGINAS + 1)
+                for n in numeros
             ),
             num_paginas=self.PAGINAS,
         )
@@ -419,16 +437,38 @@ class LadderDocumentTranscriber:
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
         force_vision: bool = False,
+        paginas: Optional[Sequence[int]] = None,
     ) -> Transcription:
         try:
-            return await self._transcribe(content, force_vision=force_vision)
+            return await self._transcribe(
+                content, force_vision=force_vision, paginas=paginas
+            )
         except Exception as exc:  # noqa: BLE001 - background job must not die
             logger.warning("transcription failed: %s", exc)
             return Transcription(
                 error=_classify_failure(exc), error_message=str(exc)
             )
 
-    async def _transcribe(self, content: bytes, *, force_vision: bool = False) -> Transcription:
+    async def _transcribe(
+        self,
+        content: bytes,
+        *,
+        force_vision: bool = False,
+        paginas: Optional[Sequence[int]] = None,
+    ) -> Transcription:
+        """`paginas=None` reads every page — unchanged from before this
+        parameter existed. A concrete sequence narrows the ELIGIBLE page
+        set to exactly those numbers (out-of-range numbers are dropped,
+        never an error): pages outside it are read from neither rung —
+        not the free text layer, not vision — and `too_many_vision_pages`
+        below is judged against `paginas_para_visao`, which is already
+        bounded to this narrowed set. Built for a document whose answer
+        lives in a known page WINDOW (a 25-page financing contract's
+        "Quadro Resumo", read 4 pages at a time by its own caller — see
+        `documents.financiamento_imobiliario`), never a truncation of the
+        document as a whole: `num_paginas` still reports the PDF's real
+        page count regardless of `paginas`.
+        """
         if not content:
             return Transcription(
                 error="empty_document", error_message="no bytes to transcribe"
@@ -440,6 +480,13 @@ class LadderDocumentTranscriber:
                 error="no_pages",
                 error_message="PDF has no readable pages (corrupt, or not a PDF)",
             )
+
+        alvo = (
+            sorted({n for n in paginas if 1 <= n <= num_paginas})
+            if paginas is not None
+            else list(range(1, num_paginas + 1))
+        )
+        alvo_set = set(alvo)
 
         # ── Rung 1: the PDF's own text layer ─────────────────────────
         #
@@ -456,9 +503,9 @@ class LadderDocumentTranscriber:
             # found none of the fields it needs. Honouring
             # `_texto_confiavel_por_pagina`'s "trusted" verdict here would
             # hand back the SAME text the caller is retrying to escape —
-            # every page goes to vision instead, no exceptions.
+            # every ELIGIBLE page goes to vision instead, no exceptions.
             textos: dict[int, str] = {}
-            paginas_para_visao = list(range(1, num_paginas + 1))
+            paginas_para_visao = list(alvo)
         else:
             textos = _texto_confiavel_por_pagina(camada, num_paginas)
             # Registry provenance stamps (`Valide aqui`, `Solicitado por`,
@@ -467,8 +514,16 @@ class LadderDocumentTranscriber:
             # from this text. `classify_pdf_text_layer` keeps `page.text`
             # verbatim on purpose (it answers "can this page be trusted",
             # not "what should the caller keep") — this is that rewrite.
-            textos = {n: clean_extraction_output(t) for n, t in textos.items()}
-            paginas_para_visao = [n for n in range(1, num_paginas + 1) if n not in textos]
+            #
+            # Restricted to `alvo_set` here, not after: a page outside the
+            # eligible set must never appear in the output, whether or not
+            # it happened to carry free text.
+            textos = {
+                n: clean_extraction_output(t)
+                for n, t in textos.items()
+                if n in alvo_set
+            }
+            paginas_para_visao = [n for n in alvo if n not in textos]
 
         # Bold/underline for the free pages, from the PDF's own spans and
         # drawings, ALIGNED onto `textos` by substring search

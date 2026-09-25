@@ -33,7 +33,7 @@ wrong), while a vision-read *gênero* is either right or absent.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, Sequence
 
 from noctusai_lib.integrations.documents.types import TextSource
 
@@ -74,6 +74,7 @@ class DocumentTextLadder:
         max_pages: int | None = -1,
         provider: Optional[str] = None,
         render_dpi_policy: Optional[object] = None,
+        document_transcriber=None,
     ) -> None:
         self._org_id = org_id
         self._document_prompt = document_prompt
@@ -96,6 +97,11 @@ class DocumentTextLadder:
         # Injected in tests; built lazily otherwise so importing this module
         # never drags in PyMuPDF / the LLM stack.
         self._resolver = resolver
+        # Separate lazy dependency for the `paginas=` rung 2 (see `to_text`
+        # and `_get_document_transcriber`) — it bypasses `_resolver`
+        # entirely, so injecting one for the whole-document path does not
+        # accidentally satisfy this one, or vice versa.
+        self._document_transcriber = document_transcriber
 
     def _get_resolver(self):
         if self._resolver is None:
@@ -111,6 +117,42 @@ class DocumentTextLadder:
             )
         return self._resolver
 
+    def _get_document_transcriber(self):
+        """The page-complete transcriber the `paginas=` rung 2 delegates to.
+
+        `RealMediaResolver._resolve_pdf` (the whole-document rung 2 below)
+        already delegates its own scanned-PDF branch to
+        `documents.transcription.make_document_transcriber` — this is that
+        SAME machinery, called directly instead of through `InboundMedia`,
+        because `InboundMedia` has no page-selection hook and adding one
+        there is a change to a file outside this seam. Built lazily (or
+        injected in tests via `document_transcriber=`) so importing this
+        module never drags in `documents.transcription` for a caller who
+        never passes `paginas=`.
+        """
+        if self._document_transcriber is None:
+            from noctusai_lib.integrations.documents.transcription import (
+                make_document_transcriber,
+            )
+
+            kwargs: dict = {
+                "real": True,
+                "org_id": self._org_id,
+                "provider": self._provider,
+            }
+            # The field extractor's OWN "RÓTULO: valor"-shaped prompt, when
+            # it named one — the same override `RealMediaResolver.
+            # _get_document_transcriber` forwards for the whole-document
+            # path (`document_prompt` reaching the PDF vision rung, see
+            # that method's docstring). Left at the transcriber's own
+            # generic `OCR_PROMPT` otherwise.
+            if self._document_prompt:
+                kwargs["ocr_prompt"] = self._document_prompt
+            if self._render_dpi_policy is not None:
+                kwargs["render_dpi_policy"] = self._render_dpi_policy
+            self._document_transcriber = make_document_transcriber(**kwargs)
+        return self._document_transcriber
+
     async def to_text(
         self,
         content: bytes,
@@ -118,6 +160,7 @@ class DocumentTextLadder:
         filename: Optional[str] = None,
         *,
         pular_camada_texto: bool = False,
+        paginas: Optional[Sequence[int]] = None,
     ) -> tuple[str, TextSource, Optional[tuple[str, str]]]:
         """Return `(text, source, error)`. NEVER raises.
 
@@ -134,6 +177,16 @@ class DocumentTextLadder:
         the fields the extractor reads. That is "readable, wrong content", and
         only a vision pass over the rendered page can answer it. The ladder
         itself stays field-agnostic; the caller decides when to ask again.
+
+        `paginas=None` (the default) is every page — byte-for-byte the prior,
+        page-agnostic behaviour. A concrete sequence narrows the ELIGIBLE
+        page set for a PDF: pages outside it are never read, neither for
+        free off the text layer nor by vision. Meant for a document whose
+        answer lives in a known page WINDOW (a 25-page financing contract's
+        "Quadro Resumo", read a few pages at a time — see
+        `documents.financiamento_imobiliario`), not the common 1-page case,
+        where it is simply a no-op. Ignored for non-PDF media (an image has
+        no page concept to restrict).
         """
         if looks_like_pdf(mimetype, filename) and not pular_camada_texto:
             # `classify_pdf_text_layer`, NOT `extract_pdf_text`: a cartório
@@ -153,7 +206,19 @@ class DocumentTextLadder:
                 from noctusai_lib.integrations.media import classify_pdf_text_layer
 
                 camada = classify_pdf_text_layer(content)
-                if camada.is_substantive:
+                if paginas is not None:
+                    alvo = set(paginas)
+                    elegiveis = [p for p in camada.pages if p.number in alvo]
+                    # Sound only when EVERY eligible page the classifier
+                    # actually saw is substantive — joining just the
+                    # substantive ones would silently drop a scanned page
+                    # from "the window's text" while still labelling the
+                    # result TEXT_LAYER (exact/complete). `elegiveis and`
+                    # also guards the vacuous `all([])` when the window is
+                    # entirely out of range for this document.
+                    if elegiveis and all(p.is_substantive for p in elegiveis):
+                        text = "\n\n".join(p.text for p in elegiveis if p.text)
+                elif camada.is_substantive:
                     text = camada.text
             except ImportError:
                 # Slim environment: fall through to the resolver, which
@@ -165,8 +230,45 @@ class DocumentTextLadder:
             if text.strip():
                 return (text, TextSource.TEXT_LAYER, None)
 
+        if paginas is not None and looks_like_pdf(mimetype, filename):
+            # Page-targeted vision bypasses the whole-document media
+            # resolver entirely (`InboundMedia` has no page-selection hook
+            # — see `_get_document_transcriber`) and goes straight through
+            # the seed's own page-complete transcriber, restricted to the
+            # eligible window.
+            transcricao = await self._get_document_transcriber().transcribe(
+                content,
+                mimetype=mimetype,
+                filename=filename,
+                force_vision=pular_camada_texto,
+                paginas=paginas,
+            )
+            if not transcricao.ok:
+                return (
+                    "",
+                    TextSource.NENHUMA,
+                    (transcricao.error, transcricao.error_message or ""),
+                )
+            texto = transcricao.text
+            if transcricao.paginas_por_visao:
+                # At least one eligible page cost a vision call — the
+                # blend is only as trustworthy as its least certain page,
+                # same convention every `_temper` in this package family
+                # applies to a non-text-layer source.
+                fonte = TextSource.OCR
+            elif texto.strip():
+                fonte = TextSource.TEXT_LAYER
+            else:
+                # An empty eligible window (e.g. a pass-2 page range past
+                # the document's real page count) — nothing was read, and
+                # that is not an error: the caller's own two-pass logic
+                # decides what an empty window means.
+                fonte = TextSource.NENHUMA
+            return (texto, fonte, None)
+
         # Rung 2 — images always land here; PDFs land here when the text
-        # layer was empty (scanned/photographed).
+        # layer was empty (scanned/photographed) and no `paginas` window
+        # was requested.
         try:
             from noctusai_lib.integrations.media import InboundMedia
 
