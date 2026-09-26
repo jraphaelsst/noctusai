@@ -180,3 +180,37 @@ class TestEmptyAndErrors:
         assert f.valor_transacao is None
         assert all(c is ExtractionConfidence.NENHUMA for c in f.confiancas.values())
         assert f.error is None
+
+
+class TestLayoutMedido883:
+    """Label variants measured on a real guide (deal 883, 2026-09-25). Values
+    here are invented; only the label SHAPES come from the real document."""
+
+    TEXTO = (
+        "Imposto sobre Transmissao de Bens Imoveis: ITBI\n"
+        "Valor do Instrumento (a vista): 100.000,00\n"
+        "Valor Financiado: 400.000,00\n"
+        "Base Calculo: 500.000,00\n"
+        "(=)Vr. Imposto R$: 10.000,00\n"
+        "(=)Total R$: 10.000,00\n"
+    )
+
+    def test_base_calculo_without_de(self):
+        from decimal import Decimal
+        f = parse_guia_itbi(self.TEXTO, TextSource.OCR)
+        assert f.base_calculo == Decimal("500000.00")
+
+    def test_bare_valor_financiado(self):
+        from decimal import Decimal
+        f = parse_guia_itbi(self.TEXTO, TextSource.OCR)
+        assert f.valor_financiado_sfh == Decimal("400000.00")
+
+    def test_vr_imposto_abbreviation(self):
+        from decimal import Decimal
+        f = parse_guia_itbi(self.TEXTO, TextSource.OCR)
+        assert f.valor_itbi == Decimal("10000.00")
+
+    def test_valor_do_instrumento_a_vista_is_not_the_transaction_value(self):
+        """It is only the up-front portion (à vista + financiado = total)."""
+        f = parse_guia_itbi(self.TEXTO, TextSource.OCR)
+        assert f.valor_transacao is None

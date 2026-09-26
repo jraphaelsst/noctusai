@@ -125,14 +125,20 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
         "VALOR DO NEGOCIO",
     ),
     "valor_venal": ("VALOR VENAL", "VALOR VENAL DE REFERENCIA"),
-    "base_calculo": ("BASE DE CALCULO", "BASE DE CALCULO DO ITBI"),
+    # "BASE CALCULO" (no "DE"): measured on a real guide, deal 883 (2026-09-25).
+    "base_calculo": ("BASE DE CALCULO", "BASE DE CALCULO DO ITBI", "BASE CALCULO"),
     "valor_financiado_sfh": (
         "VALOR FINANCIADO SFH",
         "VALOR FINANCIADO PELO SFH",
         "PARCELA FINANCIADA SFH",
+        # Bare "Valor Financiado" (883 guide): equals the contract's
+        # financiamento parcela exactly — measured, not assumed.
+        "VALOR FINANCIADO",
     ),
     "aliquota_pct": ("ALIQUOTA", "ALIQUOTA APLICADA"),
-    "valor_itbi": ("VALOR DO ITBI", "VALOR DO IMPOSTO", "TOTAL A PAGAR"),
+    # "(=)Vr. Imposto R$" on the 883 guide; "VL." is the other common abbrev.
+    "valor_itbi": ("VALOR DO ITBI", "VALOR DO IMPOSTO", "TOTAL A PAGAR",
+                   "VR. IMPOSTO", "VL. IMPOSTO"),
     "vencimento": ("DATA DE VENCIMENTO", "VENCIMENTO"),
     "inscricao_imobiliaria": (
         "INSCRICAO IMOBILIARIA",
