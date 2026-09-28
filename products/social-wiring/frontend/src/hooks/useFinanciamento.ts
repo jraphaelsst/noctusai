@@ -86,11 +86,36 @@ export const AVISO_LABEL: Record<string, string> = {
     "Há mais de uma parcela de financiamento — nenhuma foi preenchida automaticamente.",
   quadro_resumo_nao_encontrado:
     "O Quadro Resumo não foi encontrado nas páginas lidas.",
+  valor_financiado_maior_que_compra_venda:
+    "O valor financiado lido é maior que o de compra e venda — não foi preenchido.",
+  valor_financiado_maior_que_avaliacao:
+    "O valor financiado lido é maior que o de avaliação — não foi preenchido.",
+  compradores_cpf_digito_invalido:
+    "Um CPF de comprador lido no documento tem dígito inválido — confira.",
+  vendedores_cpf_digito_invalido:
+    "Um CPF de vendedor lido no documento tem dígito inválido — confira.",
+  conta_credito_vendedor_cpf_digito_invalido:
+    "O CPF do titular da conta do vendedor tem dígito inválido — o favorecido não foi preenchido.",
+  conta_credito_vendedor_banco_nao_reconhecido:
+    "O código do banco da conta do vendedor não foi reconhecido — informe o banco do favorecido.",
+  itbi_soma_divergente: "Os valores da guia de ITBI não fecham — confira a guia.",
+  itbi_transacao_diverge_contrato:
+    "O valor da transação na guia de ITBI difere do valor negociado — confira.",
+  aliquota_fora_da_faixa: "A alíquota de ITBI lida está fora da faixa esperada — confira.",
 };
 
+/** An `extracao_aviso` can carry SEVERAL codes — the seed parser joins its
+ *  own with "," and the backend joins the list with "; " (e.g.
+ *  `"quadro_resumo_soma_divergente,vendedores_cpf_digito_invalido; agente_financeiro_nao_cadastrado"`).
+ *  Each code is labelled on its own; an unknown one still shows raw. */
 export function rotuloAviso(aviso: string | null | undefined): string {
   if (!aviso) return "";
-  return AVISO_LABEL[aviso] ?? aviso;
+  return aviso
+    .split(/[;,]/)
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .map((c) => AVISO_LABEL[c] ?? c)
+    .join(" ");
 }
 
 /** The agent as the card renders it — a subset of the registry's own row.

@@ -97,7 +97,9 @@ DOCUMENT_PROMPT_FINANCIAMENTO = (
     "ponto e vírgula (;), na mesma linha do rótulo. Se o campo estiver "
     "ilegível, escreva [ILEGÍVEL]; se estiver em branco, escreva [EM "
     "BRANCO]. Transcreva também qualquer valor por extenso impresso entre "
-    "parênteses logo após um valor monetário."
+    "parênteses logo após um valor monetário. Em tabelas, as linhas "
+    "verticais das bordas NÃO são texto: nunca as transcreva como o dígito 1 "
+    "nem como a letra I (um código de banco '| 033' é '033')."
 )
 
 _ILEGIVEL = "[ILEGÍVEL]"
@@ -251,6 +253,7 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
         "VALOR FINANCIADO",
         "VALOR DO FINANCIAMENTO",
         "RECURSOS DO FINANCIAMENTO",
+        "VALOR DO CREDITO",  # Itaú proposta, app message (883, measured)
         "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO IMOVEL",
     ),
     "valor_fgts": ("RECURSOS DO FGTS", "VALOR DO FGTS", "RECURSOS FGTS"),
@@ -378,6 +381,27 @@ _INTEIRO_RE = re.compile(r"(\d+)")
 _PERCENTUAL_RE = re.compile(r"(\d+(?:,\d+)?)\s*%")
 
 
+_MESES_RE = re.compile(r"(\d+)\s*(?:MESES|MES|PRESTACOES|PARCELAS)\b")
+_ANOS_RE = re.compile(r"(\d+)\s*ANOS?\b")
+
+
+def _prazo_meses(txt: Optional[str]) -> Optional[int]:
+    """The term in MONTHS. Itaú's proposta prints "30 anos (360 meses)" —
+    the first integer is the years (883, measured). An explicit month count
+    wins; a bare year count converts; a bare number is taken as months (the
+    Quadro's "Prazo de amortização: 400 meses" / "360")."""
+    if not txt:
+        return None
+    norm = strip_accents_upper(txt)
+    m = _MESES_RE.search(norm)
+    if m:
+        return int(m.group(1))
+    a = _ANOS_RE.search(norm)
+    if a:
+        return int(a.group(1)) * 12
+    return _inteiro(txt)
+
+
 def _inteiro(txt: Optional[str]) -> Optional[int]:
     if not txt:
         return None
@@ -502,6 +526,9 @@ class ContaCreditoVendedor:
     conta: Optional[str] = None
     titular_cpf: Optional[str] = None
     titular_cpf_valido: bool = False
+    #: The bank text/code exactly as printed, kept when it maps to no known
+    #: bank so the reviewer sees WHAT was read (never a guessed bank).
+    banco_impresso: Optional[str] = None
 
 
 def _conta_credito(valor: Optional[str]) -> Optional[ContaCreditoVendedor]:
@@ -547,6 +574,7 @@ def _conta_credito(valor: Optional[str]) -> Optional[ContaCreditoVendedor]:
         conta=achados.get("conta"),
         titular_cpf=titular_cpf,
         titular_cpf_valido=titular_cpf_valido,
+        banco_impresso=achados.get("banco") if banco_codigo is None else None,
     )
 
 
@@ -712,7 +740,7 @@ def parse_financiamento_imobiliario(
         if not soma_confere:
             avisos.append("quadro_resumo_soma_divergente")
 
-    prazo_meses = _inteiro(brutos["prazo_meses"])
+    prazo_meses = _prazo_meses(brutos["prazo_meses"])
     if brutos["prazo_meses"] and prazo_meses is None:
         confiancas["prazo_meses"] = ExtractionConfidence.NENHUMA
     elif prazo_meses is not None:
@@ -770,6 +798,10 @@ def parse_financiamento_imobiliario(
         avisos.append("conta_credito_vendedor_cpf_digito_invalido")
     else:
         confiancas["conta_credito_vendedor"] = _temper(ExtractionConfidence.ALTA, source)
+    if conta_credito_vendedor is not None and conta_credito_vendedor.banco_impresso:
+        # A bank WAS printed but maps to no known one (883: Haiku read the
+        # table border before "033" as a digit) — surfaced, never guessed.
+        avisos.append("conta_credito_vendedor_banco_nao_reconhecido")
 
     valores_finais = {
         "valor_compra_venda": valor_compra_venda,

@@ -302,6 +302,17 @@ class TestItauContaVendedor:
         assert c.banco_nome is None
         assert c.conta == "01000123-4"
 
+    def test_an_unknown_bank_code_is_surfaced_not_silent(self):
+        texto = _ITAU_QUADRO + self._ITEM_8.replace("Cód. Banco: 0033", "Cód. Banco: 1033")
+        f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
+        assert f.conta_credito_vendedor.banco_impresso == "1033"
+        assert "conta_credito_vendedor_banco_nao_reconhecido" in (f.aviso or "")
+
+    def test_a_known_bank_carries_no_banco_impresso(self):
+        f = parse_financiamento_imobiliario(_ITAU_QUADRO + self._ITEM_8, TextSource.OCR, "contrato")
+        assert f.conta_credito_vendedor.banco_impresso is None
+        assert "banco_nao_reconhecido" not in (f.aviso or "")
+
     def test_amount_line_alone_yields_an_empty_account_not_a_crash(self):
         texto = _ITAU_QUADRO + "8 - VALOR A SER LIBERADO AO VENDEDOR: R$ 400.000,00\n"
         c = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato").conta_credito_vendedor
@@ -313,6 +324,37 @@ class TestItauContaVendedor:
         assert c.banco_codigo == "341"
         assert c.agencia == "0001"
         assert c.conta == "99999-9"
+
+
+
+class TestItauProposta:
+    """P1/883 (2026-09-28): the Itaú approval message (a phone screenshot)."""
+
+    _MSG = (
+        "Oi, FULANA! Seu Crédito Imobiliário foi aprovado! Proposta: 12345678.\n"
+        "Válido até: 2026-10-30\n"
+        "Valor do imóvel: R$ 500.000,00\n"
+        "Valor do crédito: R$ 400.000,00\n"
+        "Prazo: 30 anos (360 meses)\n"
+        "Primeira parcela: R$ 4.321,00\n"
+    )
+
+    def test_valor_do_credito_is_the_financed_amount(self):
+        f = parse_financiamento_imobiliario(self._MSG, TextSource.OCR, "proposta")
+        assert f.valor_compra_venda == Decimal("500000.00")
+        assert f.valor_financiado == Decimal("400000.00")
+
+    def test_prazo_in_years_and_months_is_months(self):
+        f = parse_financiamento_imobiliario(self._MSG, TextSource.OCR, "proposta")
+        assert f.prazo_meses == 360
+
+    def test_prazo_in_years_only_converts(self):
+        texto = self._MSG.replace("Prazo: 30 anos (360 meses)", "Prazo: 30 anos")
+        assert parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta").prazo_meses == 360
+
+    def test_bare_prazo_number_is_months(self):
+        texto = self._MSG.replace("Prazo: 30 anos (360 meses)", "Prazo: 360")
+        assert parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta").prazo_meses == 360
 
 
 class TestDpsTripwire:
