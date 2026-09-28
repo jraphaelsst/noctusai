@@ -176,6 +176,23 @@ class TestStalledExtractionSweep:
         assert (await sweep_service.varrer_extracoes_pendentes(scoped, storage))["encontrados"] == 0
 
     @pytest.mark.asyncio
+    async def test_a_permanent_error_is_never_re_swept(self, client, scoped):
+        """`NOC-REMEDIATE[extracao-varredura-colunas-erro]` (2026-09-28):
+        `_COLUNAS_VARREDURA` was missing `extracao_erro` — the retryable-
+        error leg's own filter (`extracao_retentativa.retentavel`) could
+        not see it, so a PERMANENT error (below its attempt cap) was
+        retried unconditionally instead of being left for a human."""
+        _empresa_id, _doc_id, storage = await _setup(
+            scoped,
+            doc_extra={
+                "extracao_status": "erro", "extracao_em": _old(600),
+                "extracao_tentativas": 0,
+                "extracao_erro": "transcricao_truncada: pagina 3 excedeu o limite",
+            },
+        )
+        assert (await sweep_service.varrer_extracoes_pendentes(scoped, storage))["encontrados"] == 0
+
+    @pytest.mark.asyncio
     async def test_the_attempt_counter_advances_on_each_read(self, client, scoped):
         empresa_id, doc_id, storage = await _setup(scoped)
         await extracao_service.extrair_cartao(

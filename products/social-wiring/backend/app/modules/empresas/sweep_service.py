@@ -23,7 +23,16 @@ logger = logging.getLogger(__name__)
 
 STALE_APOS = extracao_varredura.STALE_APOS
 
-_COLUNAS_VARREDURA = "id, org_id, empresa_id, tipo_documento, extracao_status, extracao_tentativas, extracao_em, created_at"
+#: `NOC-REMEDIATE[extracao-varredura-colunas-erro]` (2026-09-28) —
+#: `extracao_erro` was missing: `extracao_varredura.candidatos`'s
+#: retryable-error leg reads it to decide whether a failed row is worth
+#: another attempt (`extracao_retentativa.retentavel`); without it, every
+#: row read as "unknown code" and was retried unconditionally, including a
+#: PERMANENT error (`ERROS_PERMANENTES`) that a retry can never fix.
+_COLUNAS_VARREDURA = (
+    "id, org_id, empresa_id, tipo_documento, extracao_status, "
+    "extracao_tentativas, extracao_em, created_at, extracao_erro"
+)
 
 
 def _config(extractor_factory: Optional[Any]) -> extracao_varredura.SweepConfig:

@@ -38,10 +38,10 @@ WHAT THIS OWNS
   `colunas` omits it silently gets `codigo_de_erro(None) -> None ->
   retentavel(None) -> True` (permits retry unconditionally), the SAME
   behaviour as before this fix. `card_hub.negociacao_extracao_service.
-  _COLUNAS_VARREDURA` and `empresas.sweep_service._COLUNAS_VARREDURA`
-  both currently omit it — `NOC-REMEDIATE[extracao-varredura-colunas-
-  erro]` (2026-09-28), one-line fix in each, both files owned by other
-  slices.
+  _COLUNAS_VARREDURA` and `empresas.sweep_service._COLUNAS_VARREDURA` both
+  omitted it (`NOC-REMEDIATE[extracao-varredura-colunas-erro]`,
+  2026-09-28) — both now include it; see each module's own test for a
+  PERMANENT error (`ERROS_PERMANENTES`) proven never re-swept.
 - `varrer` — the recovery loop: exhausted rows are marked `erro` and left
   for a human; everything else is re-run through the CALLER's own
   `extrair_fn`, one bad row logged and skipped rather than stopping the

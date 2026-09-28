@@ -1548,9 +1548,15 @@ JOB_ID = "negociacao_extracao_sweep"
 #: no two extraction sweeps land on the same minute.
 CRON = "31 * * * *"
 
+#: `NOC-REMEDIATE[extracao-varredura-colunas-erro]` (2026-09-28) —
+#: `extracao_erro` was missing: `extracao_varredura.candidatos`'s
+#: retryable-error leg reads it to decide whether a failed row is worth
+#: another attempt (`extracao_retentativa.retentavel`); without it, every
+#: row read as "unknown code" and was retried unconditionally, including a
+#: PERMANENT error (`ERROS_PERMANENTES`) that a retry can never fix.
 _COLUNAS_VARREDURA = (
     "id, org_id, atendimento_id, tipo_documento, extracao_status, "
-    "extracao_tentativas, extracao_em, created_at"
+    "extracao_tentativas, extracao_em, created_at, extracao_erro"
 )
 
 

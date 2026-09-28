@@ -910,6 +910,33 @@ class TestErrosPermanentes:
         assert extracao_retentativa.retentavel("documento_sensivel_dps") is False
         assert extracao_retentativa.retentavel("quadro_resumo_nao_encontrado") is False
 
+    def test_a_permanent_error_is_never_re_swept(self, scoped):
+        """`NOC-REMEDIATE[extracao-varredura-colunas-erro]` (2026-09-28):
+        `nx._COLUNAS_VARREDURA` was missing `extracao_erro` — the
+        retryable-error leg's own filter (`extracao_retentativa.
+        retentavel`) could not see it, so a PERMANENT error (below its
+        attempt cap) was retried unconditionally instead of being left for
+        a human."""
+        from datetime import datetime, timedelta, timezone
+
+        from app.services import extracao_varredura
+
+        _cid, aid = _seed(scoped, com_negociacao=True)
+        doc_id = str(uuid4())
+        old = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+        scoped.set_table_data(
+            "atendimento_documentos",
+            [_documento(
+                doc_id, aid, "guia_itbi",
+                extracao_status="erro", extracao_em=old, extracao_tentativas=0,
+                extracao_erro="transcricao_truncada: pagina 2 excedeu o limite",
+            )],
+        )
+        candidatos = extracao_varredura.candidatos(
+            scoped, nx._sweep_config(None), limite=50,
+        )
+        assert candidatos == []
+
 
 # ─── lesson G6 — never a false 'ok' ───────────────────────────────────────
 
