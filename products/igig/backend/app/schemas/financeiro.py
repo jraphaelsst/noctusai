@@ -1,6 +1,7 @@
 """Contracts for Módulo 6 — financeiro, excedentes e DRE."""
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,7 +22,10 @@ class FaturaCreate(StrictHttpModel):
     contrato_id: str | None = None
     #: 'YYYY-MM' — the month being billed, not the due date.
     competencia: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    vencimento: str | None = None
+    #: A real date — validated here so a malformed value 422s instead of
+    #: falling through to the persistence layer's broad `PersistenceError`
+    #: catch, which would misreport it as a duplicate invoice (finding #7).
+    vencimento: date | None = None
 
 
 class FaturaItemCreate(StrictHttpModel):

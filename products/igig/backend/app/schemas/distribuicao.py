@@ -1,6 +1,7 @@
 """Pydantic contracts for Módulo 5 — distribuição e métricas."""
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,7 +24,11 @@ Canal = Literal["instagram", "facebook", "tiktok", "linkedin"]
 class AgendarPublicacao(StrictHttpModel):
     pauta_id: str
     canal: Canal
-    agendada_para: str
+    #: A real datetime — validated here (422 on malformed input) so a bad
+    #: value never falls through to the persistence layer's broad
+    #: `PersistenceError` catch, which would misreport it as "pauta já tem
+    #: publicação ativa" (finding #7, 2026-09 audit).
+    agendada_para: datetime
 
 
 class PublicacaoOut(BaseModel):

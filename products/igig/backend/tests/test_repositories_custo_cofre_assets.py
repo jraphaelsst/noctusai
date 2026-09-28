@@ -71,6 +71,24 @@ class TestCustoHora:
         with pytest.raises(ValueError, match="custo_hora indefinido"):
             repos.profissional.custo_hora_efetivo(ORG, prof["id"], funcoes=repos.funcao)
 
+    def test_null_role_default_raises_rather_than_silently_costing_zero(self, repos):
+        """`custo_hora_padrao` is `NOT NULL DEFAULT 0` today, so this cannot
+        happen through the repository/store layer — but the `or 0` idiom this
+        replaces would have collapsed a future NULL into a free rate exactly
+        like the missing-função case above (finding #19, 2026-09 audit). A
+        tiny duck-typed fake stands in for a função row that DOES carry NULL,
+        since the schema currently refuses to store one for real."""
+        class _FuncaoComPadraoNulo:
+            def buscar(self, _org_id, _funcao_id):
+                return {"custo_hora_padrao": None}
+
+        funcao = repos.funcao.criar(ORG, {"nome": "designer", "custo_hora_padrao": 80.0})
+        prof = repos.profissional.criar(ORG, {"nome": "Ana", "funcao_id": funcao["id"]})
+        with pytest.raises(ValueError, match="custo_hora indefinido"):
+            repos.profissional.custo_hora_efetivo(
+                ORG, prof["id"], funcoes=_FuncaoComPadraoNulo()
+            )
+
     def test_role_names_are_unique_per_org(self, repos):
         from noctusai_lib.integrations.persistence import PersistenceError
 

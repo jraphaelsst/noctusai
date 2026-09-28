@@ -55,8 +55,9 @@ class IgIgSettings(ProductSettings):
     # Env-level FALLBACK only. The real path is a per-org credential stored
     # encrypted in `igig.integracao` and set through the Integrações screen —
     # an agency serves many clients' accounts, so one global token per channel
-    # cannot be the primary model. Empty ⇒ the publisher stays the Fake and
-    # nothing is ever reported as published.
+    # cannot be the primary model. Empty ⇒ publishing REFUSES (409
+    # `canal_nao_configurado`) — never a Fake, never a fabricated `publicada`
+    # (`app/services/publicacao_publisher.py`, revised 2026-09-28).
     igig_meta_token: str = ""
     igig_tiktok_token: str = ""
     igig_linkedin_token: str = ""
@@ -106,6 +107,16 @@ class IgIgSettings(ProductSettings):
     # its own (encrypted) in Integrações › Meta Lead Ads. Neither set ⇒ every
     # delivery is refused (401) — a forged POST would write lead PII.
     igig_meta_app_secret: str = ""
+
+    # ── Régua de cobrança — Módulo 4 portal block (Módulo 6) ───────────
+    # OFF by default (0). When > 0, a cliente with a fatura `vencida` for
+    # more than this many days is refused the approval portal — see
+    # `app.services.financeiro_service.cliente_bloqueado_no_portal`, a pure
+    # predicate the portal router (owned by another slice, NOT edited here)
+    # calls before rendering. Deliberately opt-in: blocking a client's
+    # ability to approve work is a business decision an agency must turn on,
+    # not a default side effect of running the daily inadimplência sweep.
+    igig_portal_bloqueio_dias: int = 0
 
 
 settings = IgIgSettings()

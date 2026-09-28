@@ -370,7 +370,18 @@ class ProfissionalRepository(BaseRepository):
                 f"profissional {profissional_id} tem custo_hora indefinido "
                 "(sem override e sem função)"
             )
-        return float(funcoes.buscar(org_id, str(funcao_id)).get("custo_hora_padrao") or 0)
+        padrao = funcoes.buscar(org_id, str(funcao_id)).get("custo_hora_padrao")
+        if padrao is None:
+            # Same reasoning as the missing-função branch above: a NULL rate
+            # is not a free rate, and `or 0` would have collapsed the two.
+            # The column is `NOT NULL DEFAULT 0` today, so this is
+            # defense-in-depth against a future relaxation — never a silent
+            # zero if it ever fires.
+            raise ValueError(
+                f"profissional {profissional_id} tem custo_hora indefinido "
+                "(função sem custo_hora_padrao definido)"
+            )
+        return float(padrao)
 
 
 class AcessoRepository(BaseRepository):
@@ -631,6 +642,11 @@ class FaturaRepository(BaseRepository):
             fatura_id,
             {"status": "paga", "pago_em": datetime.now(timezone.utc).isoformat()},
         )
+
+    def cancelar(self, org_id: str, fatura_id: str) -> Record:
+        """Void an invoice without deleting it — the history (and any lines
+        already lançados) stays, only the status changes."""
+        return self.atualizar(org_id, fatura_id, {"status": "cancelada"})
 
     def recalcular_total(self, org_id: str, fatura_id: str, itens: list[Record]) -> Record:
         """Sum the lines onto the invoice.

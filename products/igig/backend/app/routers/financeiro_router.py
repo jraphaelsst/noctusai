@@ -1,11 +1,15 @@
 """Financeiro e Gestão de Contratos — Módulo 6.
 
-  FATURAS      /api/financeiro/faturas …              CRUD + lines + mark paid
+  FATURAS      /api/financeiro/faturas …              CRUD + lines + mark paid/cancelled
   FECHAMENTO   /api/financeiro/faturas/gerar-competencia   monthly close, idempotent
   RESUMO       /api/financeiro/resumo                 a receber/recebido/inadimplente/MRR
   EXCEDENTES   /api/financeiro/excedentes/{comp}      delivered vs contracted
   DRE          /api/financeiro/dre                    revenue vs real hour-cost
   COBRANÇA     /api/financeiro/inadimplentes          overdue, with days late
+
+`pagar`/`cancelar`/`gerar-competencia` are ADMIN-ONLY (`exigir_admin_da_org`):
+each moves money or bills the whole active book — a different trust level
+than reading a report or opening a one-off invoice.
 
 **What is real vs pending.** Invoicing, line items, totals, excedente
 computation, the DRE and the overdue report are all real and tested. The
@@ -27,6 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.pipelines import exigir_admin_da_org
 from app.repositories import Repositorios
 from app.schemas.financeiro import (
     DREOut,
@@ -82,17 +87,30 @@ async def criar_fatura(
 ) -> FaturaOut:
     """Open an invoice for a contract's month.
 
-    A second invoice for the same contract+competência is a 409, enforced by a
-    unique index: re-running the monthly close must be idempotent, not a way
-    to double-bill a client.
+    `contrato_id` is OPTIONAL — an avulsa (one-off) charge has no contract to
+    point at — but when the caller DOES pick one, a second invoice for the
+    same contract+competência is a 409, enforced by the same unique index
+    `gerar_competencia` relies on: manual and generated invoices share ONE
+    idempotency guarantee, not two (finding #4, 2026-09 audit).
     """
     org_id = _org(auth)
     try:
         repos.cliente.buscar(org_id, payload.cliente_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    if payload.contrato_id:
+        try:
+            repos.contrato.buscar(org_id, payload.contrato_id)
+        except RecordNotFound:
+            # Validated BEFORE the insert so a bad id 404s cleanly instead of
+            # surfacing as a foreign-key `PersistenceError` mislabelled below
+            # as "duplicate invoice" (finding #7).
+            raise HTTPException(status_code=404, detail="Contrato não encontrado")
+    valores = payload.model_dump(exclude_none=True)
+    if payload.vencimento is not None:
+        valores["vencimento"] = payload.vencimento.isoformat()
     try:
-        registro = repos.fatura.criar(org_id, payload.model_dump(exclude_none=True))
+        registro = repos.fatura.criar(org_id, valores)
     except PersistenceError:
         raise HTTPException(
             status_code=409,
@@ -145,33 +163,85 @@ async def adicionar_item(
     return FaturaOut(**repos.fatura.recalcular_total(org_id, fatura_id, itens))
 
 
-@router.post("/faturas/{fatura_id}/pagar", response_model=FaturaOut)
+@router.post(
+    "/faturas/{fatura_id}/pagar", response_model=FaturaOut,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
 async def marcar_paga(
     fatura_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> FaturaOut:
-    """Mark an invoice paid.
+    """Mark an invoice paid. Admin-only — a money movement, not a status label.
 
     Manual today: the gateway webhook that will do this automatically needs
     credentials that do not exist yet. An explicit endpoint beats a fake
     integration that silently marks things paid.
+
+    Idempotent on an already-`paga` invoice (returns it unchanged — `pago_em`
+    is never overwritten by a second click); refuses a `cancelada` one
+    outright, since "paying" a voided invoice would contradict the voiding
+    (finding #9, 2026-09 audit).
     """
     org_id = _org(auth)
     try:
-        return FaturaOut(**repos.fatura.marcar_paga(org_id, fatura_id))
+        fatura = repos.fatura.buscar(org_id, fatura_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Fatura não encontrada")
+    if fatura.get("status") == "cancelada":
+        raise HTTPException(
+            status_code=409,
+            detail={"detail": "Fatura cancelada não pode ser paga.", "code": "fatura_cancelada"},
+        )
+    if fatura.get("status") == "paga":
+        return FaturaOut(**fatura)
+    return FaturaOut(**repos.fatura.marcar_paga(org_id, fatura_id))
 
 
-@router.post("/faturas/gerar-competencia", response_model=GerarCompetenciaOut,
-             status_code=status.HTTP_200_OK)
+@router.post(
+    "/faturas/{fatura_id}/cancelar", response_model=FaturaOut,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
+async def cancelar_fatura(
+    fatura_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> FaturaOut:
+    """Void an invoice. Admin-only.
+
+    Voiding frees the contract+competência slot the unique index guards (the
+    SAME index `gerar_competencia` reads), so a mistaken close can be undone
+    with a real re-close rather than a manual edit. A `paga` invoice refuses —
+    voiding money already received is a refund, a different (unbuilt)
+    process, not a status flip; cancelling an already-`cancelada` invoice is a
+    no-op (returns it unchanged), not an error.
+    """
+    org_id = _org(auth)
+    try:
+        fatura = repos.fatura.buscar(org_id, fatura_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Fatura não encontrada")
+    if fatura.get("status") == "paga":
+        raise HTTPException(
+            status_code=409,
+            detail={"detail": "Fatura paga não pode ser cancelada.", "code": "fatura_paga"},
+        )
+    if fatura.get("status") == "cancelada":
+        return FaturaOut(**fatura)
+    return FaturaOut(**repos.fatura.cancelar(org_id, fatura_id))
+
+
+@router.post(
+    "/faturas/gerar-competencia", response_model=GerarCompetenciaOut,
+    status_code=status.HTTP_200_OK, dependencies=[Depends(exigir_admin_da_org)],
+)
 async def gerar_competencia(
     payload: GerarCompetenciaIn,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> GerarCompetenciaOut:
     """Close the month: open an invoice for every active contract at once.
+    Admin-only — it bills the whole active book at once.
 
     Safe to re-run — a contract that already has an invoice for this
     competência comes back under `existentes`, never billed twice. See
@@ -263,6 +333,13 @@ async def inadimplentes(
     Feeds the WhatsApp/e-mail dunning sequence and the Módulo 4 portal block.
     Read-only by design — see the module docstring.
     """
-    referencia = date.fromisoformat(hoje) if hoje else None
+    referencia: date | None = None
+    if hoje:
+        try:
+            referencia = date.fromisoformat(hoje)
+        except ValueError:
+            # A malformed query param is the caller's error, not a server
+            # fault (finding #8, 2026-09 audit — this used to 500).
+            raise HTTPException(status_code=422, detail=f"data inválida: {hoje!r}; esperado AAAA-MM-DD")
     linhas = FinanceiroService(repos).inadimplentes(_org(auth), hoje=referencia)
     return [InadimplenteOut(**f) for f in linhas]

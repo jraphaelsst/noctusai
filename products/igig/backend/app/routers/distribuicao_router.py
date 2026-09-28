@@ -6,12 +6,14 @@
 
 **What is real today.** Scheduling, the queue, status transitions, retry
 accounting, metric snapshots and the entire BI rollup are real and tested. The
-outbound network calls are not: no channel credentials exist, so
-`get_publisher` returns the Fake in development and the real adapters raise
-`PublisherNotConfigured`. A publish therefore either genuinely succeeds or
-fails LOUDLY — nothing is ever marked `publicada` without a platform-confirmed
-id, because a post the client never saw showing as published is the one
-outcome that destroys trust in this module.
+outbound network calls are not: no channel has a homologated vendor
+integration yet. A publish without a usable channel token REFUSES outright
+(409 `canal_nao_configurado`/`credencial_ilegivel`) before any attempt — it is
+never simulated. A publish WITH a token reaches the real adapter, which raises
+`CanalNaoHomologado` (`NOC-REMEDIATE[igig-publishing]`). Either way, nothing is
+ever marked `publicada` without a platform-confirmed id, because a post the
+client never saw showing as published is the one outcome that destroys trust
+in this module.
 
 Metrics ingest is a POST rather than a scheduled pull for the same reason:
 until the platform APIs are homologated there is nothing to pull from, and an
@@ -21,11 +23,12 @@ endpoint that accepts a snapshot lets the dashboard be built and verified now.
 # IgIg routers; see esteira_router.py for the slowapi/PEP 563 interaction.
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound
 
-from app.config import settings
+from app.config import get_settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.repositories import Repositorios
 from app.schemas.distribuicao import (
@@ -36,7 +39,13 @@ from app.schemas.distribuicao import (
     PublicacaoOut,
 )
 from app.services.bi_service import BIService
-from app.services.publicacao_publisher import PublisherNotConfigured, get_publisher
+from app.services.publicacao_publisher import (
+    CanalNaoHomologado,
+    CredencialIlegivel,
+    PublisherNotConfigured,
+    get_publisher,
+    resolver_token,
+)
 from app.store import get_repositorios
 
 logger = logging.getLogger(__name__)
@@ -47,31 +56,6 @@ router = APIRouter(prefix="/api/distribuicao", tags=["distribuicao"])
 def _org(auth: tuple) -> str:
     _user, _token, raw_org = auth
     return str(coerce_org_uuid(raw_org))
-
-
-def _token_do_canal(repos: Repositorios, org_id: str, canal: str) -> str | None:
-    """Resolve the channel token: per-org credential first, env fallback second.
-
-    Mirrors the platform's own credential precedence (`org_settings` →
-    `platform_settings` → env). Returning ``None`` is a normal outcome — the
-    factory then yields the Fake, and nothing is ever reported as published.
-    """
-    if settings.igig_cofre_key:
-        try:
-            token = repos.integracao.token_de(
-                org_id, canal, settings.igig_cofre_key.encode("utf-8")
-            )
-        except Exception:  # noqa: BLE001 — a bad stored token must not 500 the
-            # publish path; it degrades to "not configured" and is recorded.
-            logger.warning("token de %s ilegível para org=%s", canal, org_id)
-            token = None
-        if token:
-            return token
-    if canal in ("instagram", "facebook"):
-        return settings.igig_meta_token or None
-    if canal == "tiktok":
-        return settings.igig_tiktok_token or None
-    return settings.igig_linkedin_token or None
 
 
 # ── Publicações ─────────────────────────────────────────────────────
@@ -105,13 +89,14 @@ async def agendar_publicacao(
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Pauta não encontrada")
 
-    from noctusai_lib.integrations.persistence import PersistenceError
-
     try:
         registro = repos.publicacao.agendar(
-            org_id, payload.pauta_id, payload.canal, payload.agendada_para
+            org_id, payload.pauta_id, payload.canal, payload.agendada_para.isoformat()
         )
     except PersistenceError:
+        # `agendada_para` is now schema-validated (a real datetime, 422 on
+        # anything else), so the only PersistenceError a valid request can
+        # still hit here is the partial unique index this message describes.
         raise HTTPException(
             status_code=409,
             detail=f"Esta pauta já tem publicação ativa em {payload.canal}",
@@ -124,45 +109,96 @@ async def executar_publicacao(
     publicacao_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    cfg: Any = Depends(get_settings),
 ) -> PublicacaoOut:
     """Publish now.
 
-    Success requires a platform-confirmed `external_id`. Any failure — missing
-    credentials included — marks the row `falhou` with the reason and bumps
-    the attempt count; it NEVER reports success.
+    Success requires a platform-confirmed `external_id`. A missing/unusable
+    credential REFUSES with a 409 before any attempt is made — never a Fake,
+    never a `falhou` row (see `publicacao_publisher`'s module docstring for
+    why the earlier "fall back to a simulated publish" behaviour was wrong).
+    Any OTHER failure — including the real vendor call not being homologated
+    yet — marks the row `falhou` with the reason and bumps the attempt count;
+    it NEVER reports success.
     """
     org_id = _org(auth)
     try:
         publicacao = repos.publicacao.buscar(org_id, publicacao_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Publicação não encontrada")
-    if publicacao.get("status") == "publicada":
+    status_atual = publicacao.get("status")
+    if status_atual == "publicada":
         raise HTTPException(status_code=409, detail="Publicação já enviada")
+    if status_atual == "cancelada":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "Publicação cancelada não pode ser executada.",
+                "code": "publicacao_cancelada",
+            },
+        )
 
     canal = str(publicacao["canal"])
+    try:
+        token = resolver_token(repos, org_id, canal, cfg)
+    except CredencialIlegivel as exc:
+        repos.integracao.registrar_erro(org_id, canal, str(exc))
+        raise HTTPException(
+            status_code=409,
+            detail={"detail": str(exc), "code": "credencial_ilegivel"},
+        ) from exc
+    if not token:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": (
+                    f"Canal {canal} não está configurado. Conecte um token em "
+                    "Integrações antes de publicar."
+                ),
+                "code": "canal_nao_configurado",
+            },
+        )
+
     pauta = repos.pauta.buscar(org_id, str(publicacao["pauta_id"]))
     pecas = repos.peca.da_pauta(org_id, str(pauta["id"]))
-    publisher = get_publisher(canal, token=_token_do_canal(repos, org_id, canal))
 
     try:
-        resultado = publisher.publicar(
+        resultado = get_publisher(canal, token=token).publicar(
             texto=str(pauta.get("copy_texto") or ""),
             midia_urls=[str(p["storage_key"]) for p in pecas],
         )
-    except Exception as exc:  # noqa: BLE001 — every failure path is the same:
-        # record it and NEVER report success. Distinguishing exception types
-        # here would only change the log line, not the outcome.
+    except CanalNaoHomologado as exc:
+        # A pending vendor homologation is NOT a credential problem — never
+        # stamp `ultimo_erro`, or the setup screen tells the operator to
+        # reconnect something that reconnecting cannot fix.
         atualizado = repos.publicacao.marcar_falha(org_id, publicacao_id, str(exc))
-        if isinstance(exc, PublisherNotConfigured):
-            # Surface it on the integration too, so the setup screen can say
-            # "reconectar" rather than leaving the operator to correlate.
-            repos.integracao.registrar_erro(org_id, canal, str(exc))
+        logger.warning(
+            "publicação não homologada org=%s id=%s: %s", org_id, publicacao_id, exc
+        )
+        return PublicacaoOut(**atualizado)
+    except PublisherNotConfigured as exc:
+        atualizado = repos.publicacao.marcar_falha(org_id, publicacao_id, str(exc))
+        # Surface it on the integration too, so the setup screen can say
+        # "reconectar" rather than leaving the operator to correlate.
+        repos.integracao.registrar_erro(org_id, canal, str(exc))
+        logger.warning(
+            "publicação falhou (credencial) org=%s id=%s: %s", org_id, publicacao_id, exc
+        )
+        return PublicacaoOut(**atualizado)
+    except Exception as exc:  # noqa: BLE001 — every other failure path is the
+        # same: record it and NEVER report success.
+        atualizado = repos.publicacao.marcar_falha(org_id, publicacao_id, str(exc))
         logger.warning("publicação falhou org=%s id=%s: %s", org_id, publicacao_id, exc)
         return PublicacaoOut(**atualizado)
 
     atualizado = repos.publicacao.marcar_publicada(
         org_id, publicacao_id,
         external_id=resultado.external_id, permalink=resultado.permalink,
+    )
+    # The pauta's own publish date — documented as existing, never written
+    # (finding #10, 2026-09 audit).
+    repos.pauta.atualizar(
+        org_id, str(pauta["id"]), {"publicado_em": datetime.now(timezone.utc).isoformat()}
     )
     logger.info("publicada org=%s id=%s external=%s", org_id, publicacao_id, resultado.external_id)
     return PublicacaoOut(**atualizado)
@@ -184,8 +220,11 @@ async def cancelar_publicacao(
         atual = repos.publicacao.buscar(org_id, publicacao_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Publicação não encontrada")
-    if atual.get("status") == "publicada":
+    status_atual = atual.get("status")
+    if status_atual == "publicada":
         raise HTTPException(status_code=409, detail="Publicação já enviada não pode ser cancelada")
+    if status_atual == "cancelada":
+        return PublicacaoOut(**atual)
     return PublicacaoOut(**repos.publicacao.atualizar(org_id, publicacao_id, {"status": "cancelada"}))
 
 

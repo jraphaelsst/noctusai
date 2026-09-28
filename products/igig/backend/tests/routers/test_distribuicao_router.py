@@ -118,7 +118,20 @@ class TestExecucao:
             "agendada_para": "2026-09-01T09:00:00",
         }).json()
 
-    def test_publish_records_a_platform_id(self, api, pauta):
+    def _com_publisher_fake(self, monkeypatch):
+        """Reach a WORKING publisher for a test that wants an actual
+        `publicada` outcome. Production never resolves a Fake — see
+        `publicacao_publisher`'s module docstring — so a test that needs one
+        wires it in explicitly, the DI-override seam this module's tests use
+        throughout (`monkeypatch.setattr(dr, ...)`)."""
+        import app.routers.distribuicao_router as dr
+        from app.services.publicacao_publisher import FakePublisher
+
+        monkeypatch.setattr(dr, "resolver_token", lambda *_a, **_k: "token-de-teste")
+        monkeypatch.setattr(dr, "get_publisher", lambda canal, **_k: FakePublisher(canal))
+
+    def test_publish_records_a_platform_id(self, api, pauta, monkeypatch):
+        self._com_publisher_fake(monkeypatch)
         pub = self._agendar(api, pauta)
         resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
         assert resp.status_code == 200
@@ -127,12 +140,34 @@ class TestExecucao:
         assert body["external_id"], "a published post MUST carry the platform's id"
         assert body["publicada_em"]
 
-    def test_republishing_returns_409(self, api, pauta):
+    def test_publishing_stamps_the_pautas_own_publish_date(self, api, repos, pauta, monkeypatch):
+        """`pauta.publicado_em` existed and nothing ever wrote it (finding #10,
+        2026-09 audit)."""
+        self._com_publisher_fake(monkeypatch)
         pub = self._agendar(api, pauta)
         api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
-        assert api.post(
-            f"/api/distribuicao/publicacoes/{pub['id']}/executar"
-        ).status_code == 409
+        atualizada = repos.pauta.buscar(ORG, pauta["id"])
+        assert atualizada["publicado_em"]
+
+    def test_republishing_returns_409(self, api, pauta, monkeypatch):
+        self._com_publisher_fake(monkeypatch)
+        pub = self._agendar(api, pauta)
+        api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
+        resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
+        assert resp.status_code == 409
+        assert "já enviada" in resp.json()["error"]["message"]
+
+    def test_without_a_token_it_refuses_with_409_instead_of_simulating(self, api, pauta):
+        """The property finding #1 (2026-09 audit) exists to close: a channel
+        with no credential used to fall back to a Fake and report
+        `publicada`. Now it refuses outright, and the row is untouched."""
+        pub = self._agendar(api, pauta)
+        resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "canal_nao_configurado"
+        ainda = api.get(f"/api/distribuicao/publicacoes?pauta_id={pauta['id']}").json()[0]
+        assert ainda["status"] == "agendada"
+        assert ainda["tentativas"] == 0
 
     def test_a_failing_channel_is_never_marked_published(self, api, pauta, monkeypatch):
         """The property this module lives or dies on."""
@@ -145,6 +180,7 @@ class TestExecucao:
             def publicar(self, **_kwargs):
                 raise PublisherNotConfigured("sem credenciais")
 
+        monkeypatch.setattr(dr, "resolver_token", lambda *_a, **_k: "token-de-teste")
         monkeypatch.setattr(dr, "get_publisher", lambda *_a, **_k: Quebrado())
         pub = self._agendar(api, pauta)
         body = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar").json()
@@ -152,6 +188,28 @@ class TestExecucao:
         assert body["external_id"] is None
         assert "sem credenciais" in body["erro"]
         assert body["tentativas"] == 1
+
+    def test_pending_homologation_fails_without_stamping_a_reconnect_error(
+        self, api, repos, pauta, monkeypatch
+    ):
+        """`CanalNaoHomologado` is NOT a credential problem — reconnecting the
+        channel cannot fix it, so the integration's `ultimo_erro` must stay
+        untouched (unlike `PublisherNotConfigured`)."""
+        import app.routers.distribuicao_router as dr
+        from app.services.publicacao_publisher import CanalNaoHomologado
+
+        class Pendente:
+            canal = "instagram"
+
+            def publicar(self, **_kwargs):
+                raise CanalNaoHomologado("ainda não homologada")
+
+        monkeypatch.setattr(dr, "resolver_token", lambda *_a, **_k: "token-de-teste")
+        monkeypatch.setattr(dr, "get_publisher", lambda *_a, **_k: Pendente())
+        pub = self._agendar(api, pauta)
+        body = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar").json()
+        assert body["status"] == "falhou"
+        assert repos.integracao.por_canal(ORG, "instagram") is None
 
     def test_retries_accumulate(self, api, pauta, monkeypatch):
         import app.routers.distribuicao_router as dr
@@ -162,22 +220,45 @@ class TestExecucao:
             def publicar(self, **_kwargs):
                 raise RuntimeError("timeout")
 
+        monkeypatch.setattr(dr, "resolver_token", lambda *_a, **_k: "token-de-teste")
         monkeypatch.setattr(dr, "get_publisher", lambda *_a, **_k: Quebrado())
         pub = self._agendar(api, pauta)
         for _ in range(2):
             body = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar").json()
         assert body["tentativas"] == 2
 
-    def test_cannot_cancel_a_published_post(self, api, pauta):
+    def test_cannot_cancel_a_published_post(self, api, pauta, monkeypatch):
+        self._com_publisher_fake(monkeypatch)
         pub = self._agendar(api, pauta)
         api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
         assert api.post(
             f"/api/distribuicao/publicacoes/{pub['id']}/cancelar"
         ).status_code == 409
 
+    def test_cannot_execute_a_cancelled_publication(self, api, pauta):
+        """Closes the unique-index race finding #6: executing a cancelled row
+        must never reach `marcar_publicada`."""
+        pub = self._agendar(api, pauta)
+        api.post(f"/api/distribuicao/publicacoes/{pub['id']}/cancelar")
+        resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "publicacao_cancelada"
+
+    def test_cancelling_twice_is_idempotent(self, api, pauta):
+        pub = self._agendar(api, pauta)
+        api.post(f"/api/distribuicao/publicacoes/{pub['id']}/cancelar")
+        resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/cancelar")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancelada"
+
 
 class TestMetricas:
-    def _publicada(self, api, pauta):
+    def _publicada(self, api, pauta, monkeypatch):
+        import app.routers.distribuicao_router as dr
+        from app.services.publicacao_publisher import FakePublisher
+
+        monkeypatch.setattr(dr, "resolver_token", lambda *_a, **_k: "token-de-teste")
+        monkeypatch.setattr(dr, "get_publisher", lambda canal, **_k: FakePublisher(canal))
         pub = api.post("/api/distribuicao/publicacoes", json={
             "pauta_id": pauta["id"], "canal": "instagram",
             "agendada_para": "2026-09-01T09:00:00",
@@ -185,16 +266,16 @@ class TestMetricas:
         api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
         return pub
 
-    def test_snapshot_is_appended(self, api, pauta):
-        pub = self._publicada(api, pauta)
+    def test_snapshot_is_appended(self, api, pauta, monkeypatch):
+        pub = self._publicada(api, pauta, monkeypatch)
         resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/metricas",
                         json={"curtidas": 10, "alcance": 500})
         assert resp.status_code == 201
         assert resp.json()["curtidas"] == 10
 
-    def test_history_is_preserved_not_overwritten(self, api, pauta):
+    def test_history_is_preserved_not_overwritten(self, api, pauta, monkeypatch):
         """Metrics move; overwriting destroys the only record of a post's week."""
-        pub = self._publicada(api, pauta)
+        pub = self._publicada(api, pauta, monkeypatch)
         for curtidas in (10, 25):
             api.post(f"/api/distribuicao/publicacoes/{pub['id']}/metricas",
                      json={"curtidas": curtidas})
@@ -202,8 +283,8 @@ class TestMetricas:
         assert len(historico) == 2
         assert {m["curtidas"] for m in historico} == {10, 25}
 
-    def test_negative_counters_are_rejected(self, api, pauta):
-        pub = self._publicada(api, pauta)
+    def test_negative_counters_are_rejected(self, api, pauta, monkeypatch):
+        pub = self._publicada(api, pauta, monkeypatch)
         resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/metricas",
                         json={"curtidas": -5})
         assert resp.status_code == 422

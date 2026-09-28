@@ -17,12 +17,18 @@ quietly disagree about the same client.
 from __future__ import annotations
 
 import calendar
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Any
+
+from noctusai_lib.integrations.persistence import PersistenceError, SupabaseRecordStore
 
 from app.repositories import Repositorios
 from app.services.bi_service import BIService
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Excedente",
@@ -32,6 +38,8 @@ __all__ = [
     "proxima_competencia",
     "competencia_anterior",
     "limites_da_competencia",
+    "cliente_bloqueado_no_portal",
+    "atualizar_inadimplencia",
 ]
 
 _COMPETENCIA = re.compile(r"^(\d{4})-(\d{2})$")
@@ -149,6 +157,18 @@ class FinanceiroService:
         "Delivered" means a pauta whose `data_publicacao` falls in the month.
         Counting tarefas instead would double-count a piece that took several
         steps, and counting publicacoes would miss anything published manually.
+
+        Counted PER CONTRATO, never blindly per cliente: `igig.pauta` has no
+        `contrato_id` column today, so when a cliente has exactly ONE active
+        packaged contract (the shape every worked example in the product
+        guide assumes) attributing its delivered pautas to that contract is
+        unambiguous. When a cliente has MORE THAN ONE, which contract a given
+        piece counts against cannot be determined from the schema — the
+        previous behaviour counted the SAME delivered total against EACH of
+        the client's contracts (finding #10, 2026-09 audit), which is a
+        double-bill waiting to happen. Rather than guess, that case is
+        SKIPPED (logged, never silently charged) until `pauta` carries a real
+        `contrato_id` — a Calendário Editorial change outside this slice.
         """
         inicio, fim = limites_da_competencia(competencia)
         entregues: dict[str, int] = {}
@@ -157,12 +177,26 @@ class FinanceiroService:
             entregues[cid] = entregues.get(cid, 0) + 1
 
         clientes = {str(c["id"]): c for c in self._repos.cliente.listar(org_id)}
-        saida: list[Excedente] = []
+        contratos_com_pacote_por_cliente: dict[str, list[dict]] = {}
         for contrato in self._repos.contrato.ativos(org_id):
-            cliente_id = str(contrato.get("cliente_id") or "")
-            pacote = int(contrato.get("posts_por_mes") or 0)
-            if not pacote:
+            if not int(contrato.get("posts_por_mes") or 0):
                 continue  # no package ⇒ nothing to exceed
+            cid = str(contrato.get("cliente_id") or "")
+            contratos_com_pacote_por_cliente.setdefault(cid, []).append(contrato)
+
+        saida: list[Excedente] = []
+        for cliente_id, contratos in contratos_com_pacote_por_cliente.items():
+            if len(contratos) > 1:
+                logger.warning(
+                    "excedentes: org=%s cliente=%s tem %d contratos ativos com "
+                    "pacote — sem `pauta.contrato_id` não é possível atribuir "
+                    "peças entregues a um único contrato; nenhum excedente "
+                    "calculado para este cliente nesta competência.",
+                    org_id, cliente_id, len(contratos),
+                )
+                continue
+            contrato = contratos[0]
+            pacote = int(contrato.get("posts_por_mes") or 0)
             feitos = entregues.get(cliente_id, 0)
             extras = max(0, feitos - pacote)
             unitario = float(contrato.get("valor_excedente") or 0)
@@ -237,6 +271,19 @@ class FinanceiroService:
         line (`contrato.valor_mensal`) plus any excedentes DELIVERED the
         month before and billed onto this one (see the module docstring —
         the charge always lands on the month after the work).
+
+        An invoice that ALREADY EXISTED for this competência (e.g. the close
+        ran once before the excedentes were finished being computed) also
+        gets its excedente line added here if it is missing one — idempotent
+        by description (`descricao == "Excedentes de {mes_entrega}"`), so
+        re-running never duplicates the line (finding #11, 2026-09 audit: this
+        used to be silently skipped for every already-existing invoice).
+
+        A concurrent close racing this one on the SAME contract+competência
+        is caught at the unique index rather than surfacing as a 500 — the
+        just-created row (by the other request) is looked up and reported
+        under `existentes`, exactly like a genuinely pre-existing one
+        (finding #9, 2026-09 audit).
         """
         limites_da_competencia(competencia)  # raises ValueError on malformed
         mes_entrega = competencia_anterior(competencia)
@@ -252,22 +299,46 @@ class FinanceiroService:
             # unique index (`idx_igig_fatura_competencia`) excludes it too.
             if f.get("contrato_id") and f.get("status") != "cancelada"
         }
+        descricao_excedente = f"Excedentes de {mes_entrega}"
 
         criadas: list[dict] = []
         existentes: list[dict] = []
         for contrato in self._repos.contrato.ativos(org_id):
             contrato_id = str(contrato["id"])
+            excedente = excedentes_por_contrato.get(contrato_id)
+
             ja_existente = existentes_por_contrato.get(contrato_id)
             if ja_existente is not None:
+                self._garantir_linha_excedente(
+                    org_id, ja_existente, excedente, descricao_excedente
+                )
                 existentes.append(ja_existente)
                 continue
 
-            fatura = self._repos.fatura.criar(org_id, {
-                "cliente_id": contrato["cliente_id"],
-                "contrato_id": contrato_id,
-                "competencia": competencia,
-                "vencimento": _vencimento(competencia, contrato.get("dia_vencimento")),
-            })
+            try:
+                fatura = self._repos.fatura.criar(org_id, {
+                    "cliente_id": contrato["cliente_id"],
+                    "contrato_id": contrato_id,
+                    "competencia": competencia,
+                    "vencimento": _vencimento(competencia, contrato.get("dia_vencimento")),
+                })
+            except PersistenceError:
+                # Another request closed this exact contrato+competência
+                # first — the unique index caught the race. Not a 500: the
+                # slot is filled either way, so this is "already existed".
+                logger.info(
+                    "gerar_competencia: corrida no índice único org=%s contrato=%s "
+                    "competencia=%s — tratando como já existente", org_id, contrato_id, competencia,
+                )
+                ja_criada = next(
+                    (f for f in self._repos.fatura.da_competencia(org_id, competencia)
+                     if str(f.get("contrato_id")) == contrato_id and f.get("status") != "cancelada"),
+                    None,
+                )
+                if ja_criada is not None:
+                    existentes.append(ja_criada)
+                continue
+
             self._repos.fatura_item.criar(org_id, {
                 "fatura_id": fatura["id"],
                 "descricao": "Retainer mensal",
@@ -275,11 +346,10 @@ class FinanceiroService:
                 "quantidade": 1,
                 "valor_unit": float(contrato.get("valor_mensal") or 0),
             })
-            excedente = excedentes_por_contrato.get(contrato_id)
             if excedente is not None and excedente.excedentes > 0:
                 self._repos.fatura_item.criar(org_id, {
                     "fatura_id": fatura["id"],
-                    "descricao": f"Excedentes de {mes_entrega}",
+                    "descricao": descricao_excedente,
                     "tipo": "excedente",
                     "quantidade": excedente.excedentes,
                     "valor_unit": excedente.valor_unitario,
@@ -288,6 +358,31 @@ class FinanceiroService:
             criadas.append(self._repos.fatura.recalcular_total(org_id, fatura["id"], itens))
 
         return {"criadas": criadas, "existentes": existentes}
+
+    def _garantir_linha_excedente(
+        self, org_id: str, fatura: dict, excedente: Excedente | None, descricao: str
+    ) -> None:
+        """Add the "Excedentes de {mês}" line to an ALREADY-EXISTING invoice
+        if it should have one and does not yet — the idempotency check is the
+        line's own description, so calling this twice never duplicates it. A
+        closed invoice (`paga`/`cancelada`) is left alone: it cannot accept
+        new lines (see `financeiro_router.adicionar_item`'s own guard)."""
+        if excedente is None or excedente.excedentes <= 0:
+            return
+        if fatura.get("status") in ("paga", "cancelada"):
+            return
+        itens = self._repos.fatura_item.da_fatura(org_id, str(fatura["id"]))
+        if any(i.get("descricao") == descricao for i in itens):
+            return
+        self._repos.fatura_item.criar(org_id, {
+            "fatura_id": fatura["id"],
+            "descricao": descricao,
+            "tipo": "excedente",
+            "quantidade": excedente.excedentes,
+            "valor_unit": excedente.valor_unitario,
+        })
+        itens = self._repos.fatura_item.da_fatura(org_id, str(fatura["id"]))
+        fatura.update(self._repos.fatura.recalcular_total(org_id, str(fatura["id"]), itens))
 
     # ── Resumo ───────────────────────────────────────────────────────
     def resumo(self, org_id: str, competencia: str | None = None) -> ResumoFinanceiro:
@@ -361,3 +456,98 @@ class FinanceiroService:
                 "dias_atraso": (referencia - venc).days,
             })
         return sorted(atrasadas, key=lambda f: -f["dias_atraso"])
+
+
+def cliente_bloqueado_no_portal(
+    repos: Repositorios, org_id: str, cliente_id: str, *,
+    dias_bloqueio: int, hoje: date | None = None,
+) -> bool:
+    """Should the Módulo 4 approval portal refuse this cliente right now?
+
+    Pure and side-effect-free — this only ANSWERS, it never writes anything
+    and never renders a response. The portal router (owned by another
+    slice — this module does NOT touch `esteira_router.py`) calls it once
+    the aprovação token has resolved the org+cliente, and on `True` answers
+    with a pt-BR "Portal temporariamente indisponível, contate a agência."
+    instead of the normal approval UI.
+
+    OFF by default: `dias_bloqueio <= 0` (the `IGIG_PORTAL_BLOQUEIO_DIAS`
+    env setting, 0/absent) always returns `False` — blocking a client's
+    ability to approve work is a decision an agency opts into, never a side
+    effect of the daily inadimplência sweep landing.
+
+    Reads live overdue state via `FinanceiroService.inadimplentes` (the SAME
+    query the Financeiro page's red banner uses) rather than the cliente's
+    `status` column — the portal block must not wait for the daily job to
+    have run today.
+    """
+    if dias_bloqueio <= 0:
+        return False
+    referencia = hoje or date.today()
+    for fatura in FinanceiroService(repos).inadimplentes(org_id, hoje=referencia):
+        if fatura["cliente_id"] == cliente_id and fatura["dias_atraso"] > dias_bloqueio:
+            return True
+    return False
+
+
+async def atualizar_inadimplencia(db: Any, *, hoje: date | None = None) -> dict:
+    """Daily cross-org sweep — the writer `ClienteRepository.marcar_inadimplente`
+    never had (finding #12, 2026-09 audit).
+
+      1. Every `aberta`/`enviada` fatura past its `vencimento` → `vencida`.
+      2. Every cliente with at least one `vencida` fatura (from today's sweep
+         OR an earlier one) → `inadimplente`.
+      3. Every `inadimplente` cliente with NONE → back to `ativo` — the "back
+         to ativo when cleared" half nothing else in the product does.
+
+    `db` is the igig SERVICE-ROLE client — the sweep crosses every org, the
+    same shape `automacoes.varrer_sla`/`job_automacoes_sla` uses, and for the
+    same reason: `Repositorios`/`RecordStore` require an `org_id` on every
+    call by construction (the SQLite dev adapter cannot even express a
+    cross-org query), so the cross-org DISCOVERY step reads the raw client
+    directly; every row-level write below still goes through `Repositorios`
+    (built over the SAME client), scoped to that row's own `org_id`.
+    """
+    referencia = hoje or date.today()
+    repos = Repositorios(SupabaseRecordStore(db))
+    resumo = {"faturas_vencidas": 0, "clientes_inadimplentes": 0, "clientes_normalizados": 0}
+
+    vencidas_por_org: dict[str, set[str]] = {}
+
+    abertas = (
+        db.table("fatura").select("*").not_.in_("status", ["paga", "cancelada", "vencida"])
+        .execute().data or []
+    )
+    for fatura in abertas:
+        vencimento = fatura.get("vencimento")
+        if not vencimento:
+            continue
+        if date.fromisoformat(str(vencimento)[:10]) >= referencia:
+            continue
+        org_id = str(fatura["org_id"])
+        repos.fatura.atualizar(org_id, str(fatura["id"]), {"status": "vencida"})
+        resumo["faturas_vencidas"] += 1
+        vencidas_por_org.setdefault(org_id, set()).add(str(fatura["cliente_id"]))
+
+    # Every fatura ALREADY `vencida` (from an earlier day's sweep) also keeps
+    # its cliente inadimplente — the status must not clear itself just
+    # because no NEW invoice crossed the line today.
+    ja_vencidas = db.table("fatura").select("org_id,cliente_id").eq("status", "vencida").execute().data or []
+    for linha in ja_vencidas:
+        vencidas_por_org.setdefault(str(linha["org_id"]), set()).add(str(linha["cliente_id"]))
+
+    clientes = db.table("cliente").select("*").in_("status", ["ativo", "inadimplente"]).execute().data or []
+    for cliente in clientes:
+        org_id = str(cliente["org_id"])
+        cliente_id = str(cliente["id"])
+        tem_vencida = cliente_id in vencidas_por_org.get(org_id, set())
+        status_atual = cliente.get("status")
+        if tem_vencida and status_atual != "inadimplente":
+            repos.cliente.marcar_inadimplente(org_id, cliente_id)
+            resumo["clientes_inadimplentes"] += 1
+        elif not tem_vencida and status_atual == "inadimplente":
+            repos.cliente.ativar(org_id, cliente_id)
+            resumo["clientes_normalizados"] += 1
+
+    logger.info("atualizar_inadimplencia: %s", resumo)
+    return resumo

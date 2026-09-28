@@ -38,16 +38,22 @@ def cfg():
 
 @pytest.fixture
 def api(client, repos, cfg):
+    """Connect/disconnect are admin-only (finding #20) — every test EXCEPT
+    the permission tests below exercises the actual behaviour under an admin
+    bypass, matching `test_automacao_router.py`'s `admin` fixture."""
     from app.config import get_settings
     from app.main import app
+    from app.pipelines import exigir_admin_da_org
 
     app.dependency_overrides[get_settings] = lambda: cfg
     app.dependency_overrides[get_repositorios] = lambda: repos
     app.dependency_overrides[get_repositorios_admin] = lambda: repos
+    app.dependency_overrides[exigir_admin_da_org] = lambda: None
     yield client
     app.dependency_overrides.pop(get_settings, None)
     app.dependency_overrides.pop(get_repositorios, None)
     app.dependency_overrides.pop(get_repositorios_admin, None)
+    app.dependency_overrides.pop(exigir_admin_da_org, None)
 
 
 class TestStatus:
@@ -182,3 +188,34 @@ class TestPublicacaoUsaOToken:
 
         estado = {i["canal"]: i for i in api.get("/api/integracoes").json()}["instagram"]
         assert estado["ultimo_erro"] and "expirado" in estado["ultimo_erro"]
+
+
+class TestPermissoes:
+    """Connect/disconnect are admin-only (finding #20) — a plain member is
+    refused with 403, not silently allowed to replace/delete a publishing
+    credential."""
+
+    @pytest.fixture
+    def sem_admin(self, client, repos, cfg):
+        from app.config import get_settings
+        from app.main import app
+
+        app.dependency_overrides[get_settings] = lambda: cfg
+        app.dependency_overrides[get_repositorios] = lambda: repos
+        app.dependency_overrides[get_repositorios_admin] = lambda: repos
+        yield client
+        app.dependency_overrides.pop(get_settings, None)
+        app.dependency_overrides.pop(get_repositorios, None)
+        app.dependency_overrides.pop(get_repositorios_admin, None)
+
+    def test_connect_requires_admin(self, sem_admin):
+        resp = sem_admin.post("/api/integracoes/instagram", json={"token": TOKEN})
+        assert resp.status_code == 403
+
+    def test_disconnect_requires_admin(self, sem_admin, repos):
+        repos.integracao.conectar(ORG, "instagram", token=TOKEN, chave=CHAVE.encode("utf-8"))
+        assert sem_admin.delete("/api/integracoes/instagram").status_code == 403
+
+    def test_status_does_not_require_admin(self, sem_admin):
+        """Reads stay open to every member — only writes are gated."""
+        assert sem_admin.get("/api/integracoes").status_code == 200

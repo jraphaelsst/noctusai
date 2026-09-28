@@ -6,7 +6,7 @@ treated as a credit, a re-run double-billing, a total that disagrees with its
 own lines — are each asserted.
 """
 import pytest
-from noctusai_lib.integrations.persistence import SqliteRecordStore
+from noctusai_lib.integrations.persistence import PersistenceError, SqliteRecordStore
 
 from app.dependencies import coerce_org_uuid
 from app.repositories import Repositorios
@@ -25,13 +25,20 @@ def repos() -> Repositorios:
 
 @pytest.fixture
 def api(client, repos):
+    """`marcar_paga`/`cancelar`/`gerar-competencia` are admin-only
+    (`exigir_admin_da_org`); every test EXCEPT the permission tests below
+    exercises the actual business logic under an admin bypass, matching the
+    same pattern `test_automacao_router.py`'s `admin` fixture uses."""
     from app.main import app
+    from app.pipelines import exigir_admin_da_org
 
     app.dependency_overrides[get_repositorios] = lambda: repos
     app.dependency_overrides[get_repositorios_admin] = lambda: repos
+    app.dependency_overrides[exigir_admin_da_org] = lambda: None
     yield client
     app.dependency_overrides.pop(get_repositorios, None)
     app.dependency_overrides.pop(get_repositorios_admin, None)
+    app.dependency_overrides.pop(exigir_admin_da_org, None)
 
 
 @pytest.fixture
@@ -110,6 +117,40 @@ class TestFaturas:
         }
         assert api.post("/api/financeiro/faturas", json=corpo).status_code == 201
         assert api.post("/api/financeiro/faturas", json=corpo).status_code == 409
+
+    def test_unknown_contrato_returns_404(self, api, cliente):
+        """The UI now lets the manual form pick a contrato (finding #4) — a
+        bad id must 404 cleanly, not surface as a FK `PersistenceError`
+        mislabelled as "duplicate invoice" (finding #7)."""
+        resp = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "contrato_id": "nao-existe",
+            "competencia": "2026-08",
+        })
+        assert resp.status_code == 404
+
+    def test_malformed_vencimento_returns_422(self, api, cliente):
+        resp = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+            "vencimento": "31/08/2026",
+        })
+        assert resp.status_code == 422
+
+    def test_manual_invoice_with_contrato_id_shares_the_generated_idempotency_guard(
+        self, api, repos, cliente
+    ):
+        """Finding #4: the UI now lets the manual form pick a contrato, and
+        picking one means the same unique index `gerar_competencia` relies on
+        applies — a manual + a generated invoice for the same contract+month
+        can no longer coexist."""
+        contrato = _contrato(repos, cliente)
+        corpo = {
+            "cliente_id": cliente["id"], "contrato_id": contrato["id"],
+            "competencia": "2026-08",
+        }
+        assert api.post("/api/financeiro/faturas", json=corpo).status_code == 201
+        resp = api.post("/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"})
+        assert resp.json()["criadas"] == []
+        assert len(resp.json()["existentes"]) == 1
 
     def test_total_is_derived_from_the_lines(self, api, cliente):
         """A header that disagrees with its own lines is what a client spots first."""
@@ -212,6 +253,15 @@ class TestExcedentes:
             "cliente_id": cliente["id"], "status": "encerrado", "posts_por_mes": 5,
         })
         _pautas(repos, cliente, 10)
+        assert api.get("/api/financeiro/excedentes/2026-08").json() == []
+
+    def test_multiple_active_contracts_are_skipped_not_double_counted(self, api, repos, cliente):
+        """`igig.pauta` has no `contrato_id` — attributing the SAME delivered
+        total to EACH of a client's active packaged contracts would
+        double-bill (finding #10, 2026-09 audit). Skipped, not guessed."""
+        _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _contrato(repos, cliente, pacote=5, excedente=50.0)
+        _pautas(repos, cliente, 15)
         assert api.get("/api/financeiro/excedentes/2026-08").json() == []
 
 
@@ -373,6 +423,74 @@ class TestGerarCompetencia:
                          json={"competencia": "2026-08"})
         assert len(resp.json()["criadas"]) == 1
 
+    def test_excedente_line_is_added_to_an_already_existing_invoice(self, api, repos, cliente):
+        """Finding #11: an invoice opened before the close ran (or by a
+        previous close before excedentes were computed) must still receive
+        the excedente line — idempotently, never duplicated on a re-run."""
+        contrato = _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _pautas(repos, cliente, 15, mes="2026-07")
+        fatura = repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "contrato_id": contrato["id"], "competencia": "2026-08",
+        })
+        repos.fatura_item.criar(ORG, {
+            "fatura_id": fatura["id"], "descricao": "Retainer mensal",
+            "tipo": "mensalidade", "quantidade": 1, "valor_unit": 5000.0,
+        })
+        repos.fatura.recalcular_total(ORG, fatura["id"], repos.fatura_item.da_fatura(ORG, fatura["id"]))
+
+        resp = api.post("/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"})
+        corpo = resp.json()
+        assert corpo["criadas"] == []
+        existente = corpo["existentes"][0]
+        assert existente["id"] == fatura["id"]
+        assert existente["valor_total"] == 5450.0  # 5000 retainer + 3×150 excedente
+
+        itens = repos.fatura_item.da_fatura(ORG, fatura["id"])
+        assert sum(1 for i in itens if i["tipo"] == "excedente") == 1
+
+        # Re-running must not duplicate the line.
+        api.post("/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"})
+        itens_depois = repos.fatura_item.da_fatura(ORG, fatura["id"])
+        assert sum(1 for i in itens_depois if i["tipo"] == "excedente") == 1
+
+    def test_excedente_not_added_to_a_paid_invoice(self, api, repos, cliente):
+        """A closed invoice cannot accept new lines — same guard as
+        `POST /faturas/{id}/itens`."""
+        contrato = _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _pautas(repos, cliente, 15, mes="2026-07")
+        fatura = repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "contrato_id": contrato["id"],
+            "competencia": "2026-08", "status": "paga", "valor_total": 5000.0,
+        })
+        api.post("/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"})
+        itens = repos.fatura_item.da_fatura(ORG, fatura["id"])
+        assert all(i["tipo"] != "excedente" for i in itens)
+
+    def test_a_race_on_the_unique_index_is_reported_as_existente_not_500(
+        self, api, repos, cliente, monkeypatch
+    ):
+        """Two concurrent closes hitting the SAME contrato+competência must
+        not 500 — the unique index enforces the guarantee; this call just
+        has to report it honestly (finding #9, 2026-09 audit)."""
+        contrato = _contrato(repos, cliente)
+        original_criar = repos.fatura.criar
+        estado = {"corrida_simulada": False}
+
+        def _criar_com_corrida(org_id, valores):
+            if not estado["corrida_simulada"]:
+                estado["corrida_simulada"] = True
+                original_criar(org_id, valores)  # a "concurrent" request wins first
+                raise PersistenceError("unique violation (simulado)")
+            return original_criar(org_id, valores)
+
+        monkeypatch.setattr(repos.fatura, "criar", _criar_com_corrida)
+        resp = api.post("/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"})
+        assert resp.status_code == 200
+        corpo = resp.json()
+        assert corpo["criadas"] == []
+        assert len(corpo["existentes"]) == 1
+        assert corpo["existentes"][0]["contrato_id"] == contrato["id"]
+
 
 class TestResumo:
     def test_requires_auth(self, api):
@@ -460,3 +578,97 @@ class TestInadimplentes:
         atrasos = [f["dias_atraso"] for f in
                    api.get("/api/financeiro/inadimplentes?hoje=2026-07-25").json()]
         assert atrasos == sorted(atrasos, reverse=True)
+
+    def test_malformed_hoje_returns_422_not_500(self, api):
+        """`date.fromisoformat` was unguarded (finding #8, 2026-09 audit)."""
+        assert api.get("/api/financeiro/inadimplentes?hoje=hoje-mesmo").status_code == 422
+
+
+class TestMarcarPagaGuards:
+    def test_paying_twice_does_not_overwrite_pago_em(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        primeiro = api.post(f"/api/financeiro/faturas/{fatura['id']}/pagar").json()
+        segundo = api.post(f"/api/financeiro/faturas/{fatura['id']}/pagar").json()
+        assert segundo["status"] == "paga"
+        assert segundo["pago_em"] == primeiro["pago_em"]
+
+    def test_cannot_pay_a_cancelled_invoice(self, api, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08", "status": "cancelada",
+        })
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/pagar")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "fatura_cancelada"
+
+    def test_unknown_invoice_returns_404(self, api):
+        assert api.post("/api/financeiro/faturas/nao-existe/pagar").status_code == 404
+
+
+class TestCancelarFatura:
+    def test_requires_auth(self, api):
+        assert api.raw().post("/api/financeiro/faturas/x/cancelar").status_code == 401
+
+    def test_cancels_an_open_invoice(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/cancelar")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "cancelada"
+
+    def test_cancelling_a_cancelled_invoice_is_idempotent(self, api, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08", "status": "cancelada",
+        })
+        assert api.post(f"/api/financeiro/faturas/{fatura['id']}/cancelar").status_code == 200
+
+    def test_cannot_cancel_a_paid_invoice(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        api.post(f"/api/financeiro/faturas/{fatura['id']}/pagar")
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/cancelar")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "fatura_paga"
+
+    def test_cancelling_frees_the_contract_competencia_slot(self, api, repos, cliente):
+        contrato = _contrato(repos, cliente)
+        corpo = {"cliente_id": cliente["id"], "contrato_id": contrato["id"], "competencia": "2026-08"}
+        primeira = api.post("/api/financeiro/faturas", json=corpo).json()
+        api.post(f"/api/financeiro/faturas/{primeira['id']}/cancelar")
+        assert api.post("/api/financeiro/faturas", json=corpo).status_code == 201
+
+    def test_unknown_invoice_returns_404(self, api):
+        assert api.post("/api/financeiro/faturas/nao-existe/cancelar").status_code == 404
+
+
+class TestPermissoes:
+    """`pagar`/`cancelar`/`gerar-competencia` are admin-only. Uses the bare
+    `client` fixture (no `exigir_admin_da_org` bypass) — the `api` fixture in
+    this file bakes the bypass in for every other test."""
+
+    @pytest.fixture
+    def sem_admin(self, client, repos):
+        from app.main import app
+
+        app.dependency_overrides[get_repositorios] = lambda: repos
+        app.dependency_overrides[get_repositorios_admin] = lambda: repos
+        yield client
+        app.dependency_overrides.pop(get_repositorios, None)
+        app.dependency_overrides.pop(get_repositorios_admin, None)
+
+    def test_marcar_paga_requires_admin(self, sem_admin, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+        assert sem_admin.post(f"/api/financeiro/faturas/{fatura['id']}/pagar").status_code == 403
+
+    def test_cancelar_requires_admin(self, sem_admin, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+        assert sem_admin.post(f"/api/financeiro/faturas/{fatura['id']}/cancelar").status_code == 403
+
+    def test_gerar_competencia_requires_admin(self, sem_admin):
+        resp = sem_admin.post(
+            "/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"}
+        )
+        assert resp.status_code == 403

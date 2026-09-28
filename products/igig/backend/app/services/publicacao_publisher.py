@@ -14,18 +14,35 @@ is the N=2 trigger, and this note is the reminder.
 
 **What is and is not real today.** The scheduling machinery, the queue, the
 retry accounting and the status transitions are real and exercised. The
-network calls are NOT: no channel credentials exist yet, so the real adapters
-raise :class:`PublisherNotConfigured` rather than pretending to succeed. That
-refusal is the honest behaviour — a publisher that silently no-ops would mark
-a post "publicada" that no client ever saw.
+network calls are NOT: no channel has a homologated vendor integration yet
+(`NOC-REMEDIATE[igig-publishing]`), so the real adapters raise
+`CanalNaoHomologado` rather than pretending to succeed.
+
+**No production path reaches `FakePublisher`.** `get_publisher` never
+constructs it: a channel with no usable token refuses with
+`CanalNaoConfigurado` BEFORE any publisher is built. This is a change from the
+module's earlier shape — `get_publisher` used to fall back to the Fake on a
+missing token, which meant a mis-configured deployment (or a rotated vault key
+degrading a real token to "absent") silently reported `publicada` for a post
+nobody sent. `FakePublisher` still exists for tests, wired in explicitly via
+`monkeypatch.setattr(<router module>, "get_publisher", ...)` — the DI-override
+seam this codebase already uses for external-boundary clients (see
+`KB § PATTERNS/backend/di-test-seam.md`).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from datetime import datetime, timezone
+from typing import Any, Protocol, runtime_checkable
+
+from app.repositories import Repositorios
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CANAIS",
+    "CANAIS_HOMOLOGADOS",
     "PublishResult",
     "ChannelPublisher",
     "FakePublisher",
@@ -33,20 +50,56 @@ __all__ = [
     "TikTokPublisher",
     "LinkedInPublisher",
     "PublisherNotConfigured",
+    "CanalNaoConfigurado",
+    "CredencialIlegivel",
+    "CanalNaoHomologado",
     "get_publisher",
+    "resolver_token",
+    "processar_fila_publicacao",
 ]
 
 #: Mirrors the DB CHECK on `publicacao.canal`.
 CANAIS: tuple[str, ...] = ("instagram", "facebook", "tiktok", "linkedin")
 
+#: Channels with a REAL, homologated vendor integration behind them. Empty
+#: until `NOC-REMEDIATE[igig-publishing]` ships a first real adapter — the
+#: queue worker (`processar_fila_publicacao`) only attempts channels in this
+#: set; every other channel would fail every single tick with the same
+#: "ainda não homologada" message, which is pure log noise, not a finding.
+CANAIS_HOMOLOGADOS: frozenset[str] = frozenset()
+
 
 class PublisherNotConfigured(RuntimeError):
-    """The channel has no usable credentials.
+    """Base: the channel cannot be published to as requested right now.
 
-    Raised instead of returning a failure result so a caller cannot mistake
-    "we never tried" for "the platform rejected it" — they need different
-    operator responses.
+    Distinguishing subclasses exist because the operator's correct next
+    action differs by cause — "connect a token" is not "reconnect a broken
+    one" is not "wait for us to finish the integration". Callers should catch
+    the SPECIFIC subclass they know how to react to before falling back to
+    this base.
     """
+
+
+class CanalNaoConfigurado(PublisherNotConfigured):
+    """No usable token anywhere — neither an org credential nor the env
+    fallback. `get_publisher` raises this BEFORE constructing any publisher;
+    it is never silently swapped for a Fake in production."""
+
+
+class CredencialIlegivel(PublisherNotConfigured):
+    """A token IS stored, but it could not be decrypted (the vault key
+    rotated, or the ciphertext is corrupted). Distinct from
+    `CanalNaoConfigurado`: reconnecting the channel genuinely fixes this one,
+    so callers should record it on the integration (`ultimo_erro`) — unlike
+    `CanalNaoHomologado`, below."""
+
+
+class CanalNaoHomologado(PublisherNotConfigured):
+    """A token exists and the real adapter exists, but the vendor's API
+    review/homologation is still pending (`NOC-REMEDIATE[igig-publishing]`).
+    Reconnecting the channel does NOT help — callers must NOT record this as
+    a credential failure (`ultimo_erro`), or the setup screen tells the
+    operator to do something that cannot fix it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,11 +132,12 @@ class ChannelPublisher(Protocol):
 
 
 class FakePublisher:
-    """Deterministic in-memory publisher.
+    """Deterministic in-memory publisher — TEST-ONLY.
 
-    Records every call on `enviados` so a test can assert what WOULD have gone
-    out, and mints a stable external id from the call index — assertable
-    without capturing it first.
+    `get_publisher` never constructs this class; nothing in the production
+    call graph can reach it. Tests wire it in explicitly (monkeypatch the
+    caller's `get_publisher` reference), and record every call on `enviados`
+    so an assertion can check what WOULD have gone out.
     """
 
     def __init__(self, canal: str = "instagram") -> None:
@@ -108,16 +162,11 @@ class FakePublisher:
 
 
 class _RealPublisherBase:
-    """Shared shape for the credentialed publishers.
-
-    Each subclass names its own credential requirement so the error tells an
-    operator exactly which secret is missing, rather than a generic failure.
-    """
+    """Shared shape for the credentialed publishers."""
 
     canal: str = ""
-    env_hint: str = ""
 
-    def __init__(self, token: str | None = None) -> None:
+    def __init__(self, token: str) -> None:
         self._token = token
 
     def publicar(
@@ -127,53 +176,167 @@ class _RealPublisherBase:
         midia_urls: list[str],
         legenda_extra: str | None = None,
     ) -> PublishResult:
-        if not self._token:
-            raise PublisherNotConfigured(
-                f"Canal {self.canal} sem credenciais: defina {self.env_hint}. "
-                "Nenhuma publicação é marcada como enviada sem confirmação da plataforma."
-            )
-        # NOC-REMEDIATE[igig-publishing]: real API call pending channel
-        # credentials + app review. Deliberately raises rather than returning
-        # a fabricated external_id — marking a post 'publicada' that no client
-        # ever saw is worse than failing loudly. — 2026-08-09
-        raise PublisherNotConfigured(
-            f"Integração {self.canal} ainda não homologada (token presente, chamada pendente)."
+        # NOC-REMEDIATE[igig-publishing]: real API call pending app review /
+        # homologation on the vendor's side. `get_publisher` never constructs
+        # this class without a token (see below), so reaching this line means
+        # the VENDOR CALL, not the credential, is the pending piece — hence
+        # `CanalNaoHomologado`, not a credential exception. Deliberately
+        # raises rather than returning a fabricated external_id: marking a
+        # post 'publicada' that no client ever saw is worse than failing
+        # loudly. — 2026-08-09, revised 2026-09-28.
+        raise CanalNaoHomologado(
+            f"A integração com {self.canal} ainda não está disponível "
+            "(homologação da API pendente)."
         )
 
 
 class MetaPublisher(_RealPublisherBase):
     """Instagram / Facebook via the Meta Graph API."""
 
-    def __init__(self, canal: str = "instagram", token: str | None = None) -> None:
+    def __init__(self, canal: str = "instagram", token: str = "") -> None:
         super().__init__(token)
         self.canal = canal
-        self.env_hint = "IGIG_META_TOKEN"
 
 
 class TikTokPublisher(_RealPublisherBase):
     canal = "tiktok"
-    env_hint = "IGIG_TIKTOK_TOKEN"
 
 
 class LinkedInPublisher(_RealPublisherBase):
     canal = "linkedin"
-    env_hint = "IGIG_LINKEDIN_TOKEN"
 
 
 def get_publisher(canal: str, *, token: str | None = None) -> ChannelPublisher:
-    """Return the publisher for a channel.
+    """Return the REAL publisher for a channel. Never the Fake.
 
-    No token → :class:`FakePublisher`, mirroring every other factory on this
-    platform (`get_calendar_adapter`, `get_whatsapp_client`, …): the product
-    runs end-to-end in development, and only a configured environment reaches
-    a real network.
+    Raises `CanalNaoConfigurado` when there is nothing to try with, so a
+    caller can never reach a network client with an empty token. Both
+    production callers (`executar_publicacao`, `processar_fila_publicacao`)
+    already refuse before calling this when `token` is falsy — the check here
+    is defense-in-depth, not the primary gate.
     """
     if canal not in CANAIS:
         raise ValueError(f"canal inválido: {canal!r}; esperado um de {CANAIS}")
     if not token:
-        return FakePublisher(canal)
+        raise CanalNaoConfigurado(f"Canal {canal} não está configurado.")
     if canal in ("instagram", "facebook"):
         return MetaPublisher(canal, token)
     if canal == "tiktok":
         return TikTokPublisher(token)
     return LinkedInPublisher(token)
+
+
+def resolver_token(repos: Repositorios, org_id: str, canal: str, cfg: Any) -> str | None:
+    """The token to publish with: per-org credential first, env fallback
+    second. ``None`` is a normal, expected outcome — the caller turns it into
+    `CanalNaoConfigurado` (never a Fake).
+
+    `cfg` is the settings instance resolved through FastAPI's `get_settings`
+    dependency, not the module-level singleton — the same Class-A DI seam
+    `integracoes_router` already uses (`app/config.py`'s own docstring: tests
+    override `get_settings`, they do not patch the singleton). Reading the
+    singleton directly here — as this function used to — meant a per-request
+    settings override in a test never reached this call, and the module-level
+    default silently won instead.
+
+    A token that IS stored but cannot be decrypted raises
+    `CredencialIlegivel` instead of silently degrading to "not configured":
+    with a rotated `IGIG_COFRE_KEY`, every publish used to fall back to the
+    Fake and report success — an operator needs to reconnect, not think the
+    channel was never set up.
+    """
+    if cfg.igig_cofre_key:
+        try:
+            token = repos.integracao.token_de(org_id, canal, cfg.igig_cofre_key.encode("utf-8"))
+        except ValueError as exc:
+            logger.warning("token de %s ilegível para org=%s", canal, org_id)
+            raise CredencialIlegivel(
+                f"O token salvo para {canal} não pôde ser lido. Reconecte o canal."
+            ) from exc
+        if token:
+            return token
+    if canal in ("instagram", "facebook"):
+        return cfg.igig_meta_token or None
+    if canal == "tiktok":
+        return cfg.igig_tiktok_token or None
+    return cfg.igig_linkedin_token or None
+
+
+async def processar_fila_publicacao(
+    repos: Repositorios, org_id: str, cfg: Any, *, agora: datetime | None = None
+) -> dict:
+    """Drain the due-publication queue for ONE org.
+
+    `cfg` is the same settings instance `executar_publicacao` resolves via
+    `get_settings` — pass `app.config.settings` (the real singleton) from the
+    scheduler wiring; a test passes whatever `cfg` fixture it built.
+
+    This is the worker `GET /api/distribuicao/fila`'s docstring always
+    described and nothing ran: nothing auto-publishes when a scheduled time
+    arrives (finding #8 / #13, 2026-09 audit). Per-org by design — every
+    other repository call in this product is org-scoped, and a cross-org
+    sweep needs the raw service-role client (see the module-level note in
+    `app/scheduler.py` and `automacoes.varrer_sla` for that shape); the
+    caller loops over every org and calls this once each.
+
+    Only attempts a channel in `CANAIS_HOMOLOGADOS`; everything else is
+    SKIPPED (never stamped as a failure — a channel nobody has tried yet is a
+    different state from one whose credential broke).
+
+    `publicando` is the in-flight claim: set BEFORE the publish attempt, so a
+    slow publish overlapping the next tick sees the row already claimed
+    (its `status` is no longer `agendada`, so it drops out of `pendentes`)
+    instead of being picked up twice.
+
+    On success: marks the row `publicada` AND writes `pauta.publicado_em` —
+    the field the guide always documented as existing and nothing ever wrote
+    (finding #10).
+    """
+    momento = agora or datetime.now(timezone.utc)
+    resumo = {"processadas": 0, "publicadas": 0, "falharam": 0, "ignoradas": 0}
+
+    for publicacao in repos.publicacao.pendentes(org_id, momento.isoformat()):
+        canal = str(publicacao["canal"])
+        publicacao_id = str(publicacao["id"])
+        if canal not in CANAIS_HOMOLOGADOS:
+            resumo["ignoradas"] += 1
+            continue
+
+        # Claim the row before doing any network work — see docstring.
+        repos.publicacao.atualizar(org_id, publicacao_id, {"status": "publicando"})
+        resumo["processadas"] += 1
+
+        pauta = repos.pauta.buscar(org_id, str(publicacao["pauta_id"]))
+        pecas = repos.peca.da_pauta(org_id, str(pauta["id"]))
+
+        try:
+            token = resolver_token(repos, org_id, canal, cfg)
+            if not token:
+                raise CanalNaoConfigurado(f"Canal {canal} não está configurado.")
+            resultado = get_publisher(canal, token=token).publicar(
+                texto=str(pauta.get("copy_texto") or ""),
+                midia_urls=[str(p["storage_key"]) for p in pecas],
+            )
+        except Exception as exc:  # noqa: BLE001 — every failure path is the
+            # same: record it and never report success (see
+            # `distribuicao_router.executar_publicacao`'s identical contract).
+            repos.publicacao.marcar_falha(org_id, publicacao_id, str(exc))
+            if isinstance(exc, PublisherNotConfigured) and not isinstance(exc, CanalNaoHomologado):
+                repos.integracao.registrar_erro(org_id, canal, str(exc))
+            logger.warning(
+                "fila: publicação falhou org=%s id=%s: %s", org_id, publicacao_id, exc
+            )
+            resumo["falharam"] += 1
+            continue
+
+        repos.publicacao.marcar_publicada(
+            org_id, publicacao_id,
+            external_id=resultado.external_id, permalink=resultado.permalink,
+        )
+        repos.pauta.atualizar(org_id, str(pauta["id"]), {"publicado_em": momento.isoformat()})
+        logger.info(
+            "fila: publicada org=%s id=%s external=%s", org_id, publicacao_id, resultado.external_id
+        )
+        resumo["publicadas"] += 1
+
+    return resumo

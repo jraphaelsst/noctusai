@@ -13,6 +13,11 @@ Per-ORG credentials rather than one global token per channel: an agency
 publishes to many different clients' accounts, so a single platform-wide token
 is the wrong model. `settings.igig_*_token` remains as an env-level fallback
 for a single-tenant deployment.
+
+**Connect/disconnect are admin-only** (`exigir_admin_da_org`) — replacing or
+deleting a publishing credential is the same trust level as the lead-source
+cards (WAHA/Meta) already require, not the "any member" surface it used to be
+(finding #20, 2026-09 audit). Reads (`GET`) stay open to every member.
 """
 # NOTE: no `from __future__ import annotations` — consistent with the other
 # IgIg routers; see esteira_router.py.
@@ -24,6 +29,7 @@ from noctusai_lib.integrations.persistence import RecordNotFound
 
 from app.config import get_settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.pipelines import exigir_admin_da_org
 from app.repositories import Repositorios
 from app.schemas.integracoes import ConectarCanal, IntegracaoStatus
 from app.services.publicacao_publisher import CANAIS
@@ -98,7 +104,10 @@ async def listar_integracoes(
     return saida
 
 
-@router.post("/{canal}", response_model=IntegracaoStatus, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{canal}", response_model=IntegracaoStatus, status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
 async def conectar_canal(
     canal: str,
     payload: ConectarCanal,
@@ -126,7 +135,10 @@ async def conectar_canal(
     )
 
 
-@router.delete("/{canal}", status_code=status.HTTP_200_OK)
+@router.delete(
+    "/{canal}", status_code=status.HTTP_200_OK,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
 async def desconectar_canal(
     canal: str,
     auth: tuple = Depends(get_current_user_org),
