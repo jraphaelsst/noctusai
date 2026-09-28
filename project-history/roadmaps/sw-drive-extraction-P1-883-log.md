@@ -132,3 +132,31 @@ participações **2/2 read, both CNPJs check-digit valid**; nome_mae written (or
 🔴 **G6 (silent failure):** the crash hit a BackgroundTask AFTER `extracao_status='ok'`. The UI reports success while
 the side effects never ran. The unit mock doesn't enforce FKs, so tests were green.
 Both added to feat/sw-p1-fixes-1. After deploy: re-run extraction on this document and re-score.
+
+---
+
+## CHECKPOINT 2026-09-28 — handoff (session 018BxYjwcVbyKtpF4e9a1PqU)
+
+**Prod state:** social-wiring = `ef4682de1` (healthy, swap-verified); core = `95863d114`. main = prod = `ef4682de1`; prod-backup = `95863d114`. All work below is LIVE.
+
+### Shipped this session (all on prod)
+- DPS tripwire judged **per page** (Itaú p7 mention + p8 insurance words no longer refuse the contract).
+- Itaú Quadro vocabulary (no "QUADRO RESUMO" title; anchor `CONDICOES DO FINANCIAMENTO`), CREDOR→bank, prazo specific-first, `valor_financiado` = "Recursos do financiamento"/"Valor destinado…" (NOT "saldo devedor").
+- Seller account from Itaú item 8 (`VALOR A SER LIBERADO AO VENDEDOR` + following `Rótulo: valor` lines) → favorecido via existing `_aplicar_favorecido_vendedor`. Prompt hint "table borders are not text" fixed Haiku's `|033`→`1033` misread (2/2 fresh reads correct). Unknown code → `banco_impresso` + aviso `conta_credito_vendedor_banco_nao_reconhecido`.
+- Proposta: "Valor do crédito" = financiado; prazo parsed in months.
+- ITBI label synonyms (f3ccfcc0d); shared seed box-matcher `documents/caixa_rotulada.py` (N=3 `_campo` formalized: longest-first, word-boundary, other-field guard); FGTS synonyms + aviso `quadro_resumo_fgts_ausente`.
+- Certidão de casamento: `NUMERO DO CPF` row broke 2-nubente collector; tabular DN; no cross-spouse DN fallback.
+- Transcription truncation: stop-reason normalized across providers, 1 retry at 8192, else `transcricao_truncada` (permanent error in SW).
+- CORS: `X-Noctus-Client` added to seed default allow_headers (fixed fleet-wide "Servidor indisponivel (/api/me/consents | /api/admin/llm-spend)" toasts; verified 200 live).
+- Audit hardening (SW): shared `services/extracao_job.py` runner (never `ok` before apply) for identidade/empresas/matrícula; sweep skips non-retentável; FGTS-missing ≠ 0 (`fgts_nao_lido`); conflict dedupe supersedes on new value; favorecido machine-write resets confirmation / manual edit = confirmed; unverifiable membership → conflicts (`pertencimento_nao_verificado`); situação de ônus → indeterminado when any act unclassified; foro comarca scoped to abertura.
+- Tooling: gate_sweep runs test subprocesses without `.env` secrets + redacts summaries (MCP server must be reloaded — `/mcp` — for the toolkit to use it).
+
+### Model decision (owner): **Haiku 4.5 stays.** Measured on real 883 scans (providers.py docstring): Sonnet won only the bank code, failed ITBI (4096 cap), ~4.5× cost.
+
+### NEXT (pick up here)
+1. **Re-read 883 negociação docs on prod** (not done — Chrome extension disconnected; in-container exec was refused by the auto-mode classifier). Route: owner's logged-in tab → `POST /api/clientes/0e60427a-cb54-44dc-bdfe-311f7f26115a/financiamento/documentos/<id>/extrair` for contrato `6f1f48f3…`, guia ITBI `4483ceab…`, proposta `9963a0d8…`; then score vs `~/.noctusai/private/answer-keys/883.json` (values never printed).
+2. **Manual fields** (profissões, sinal/intermediária, corretagem/intermediários, ad corpus, 2 testemunhas): owner-authorized but blocked twice by the classifier (PII/sensitive-source) — owner enters in UI or adds a permission rule.
+3. Owner decisions still open: MEI Cartão CNPJ; comprador 1 DN (confirm CNH value in review).
+4. **Rotate the Resend API key** (was echoed by the old gate_sweep).
+5. Follow-ups logged in code: `conjuges.py` tabular per-spouse scoping; extend `pertencimento_nao_verificado` to fgts/proposta/agente/situação; `NOC-REMEDIATE[extracao-varredura-colunas-erro]` (add `extracao_erro` to 2 sweep column lists); `NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]`; `NOC-REMEDIATE[extracao-job-runner-adopt]` (crednet + negociação onto the runner).
+6. Hygiene: clean up merged worktrees (`noctus.dev.task_branch action=cleanup`) — sw-itau-conta-vendedor, cors-noctus-client-header, gate-sweep-env-hygiene, doc-transcricao-truncada, sw-transcricao-truncada-msgs, sw-matricula-foro-onus, seed-box-matcher, doc-casamento-883, sw-extracao-job-runner, sw-negociacao-hardening, sw-extracao-job-tests-schema, docs-p1-883-checkpoint.
