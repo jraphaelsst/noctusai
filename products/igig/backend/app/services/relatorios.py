@@ -22,8 +22,17 @@ per cliente. Revenue is scoped to `[inicio, fim]` by the invoice's
 `competencia`; COST is not — it comes from `BIService`, the same source
 `FinanceiroService.dre` uses, and that service's cost is measured over the
 FULL apontamento history (there is no per-period cost breakdown yet). Stated
-here, and carried into `alertas`, so nobody reads a period DRE as more precise
-than it is.
+here, and carried into `alertas` (via `financeiro_service.alertas_de_margem`,
+the SAME wording `dre()` uses — finding #15, 2026-09 audit), so nobody reads a
+period DRE as more precise than it is.
+
+**PDF currency.** Every value in `para_pdf` renders through
+`documentos_pdf.brl` (pt-BR, "R$ 4.450,00") — the American "R$ 4,450.00" this
+used to emit (finding #16, 2026-09 audit) read as a foreign price list to a
+pt-BR agency. The RENDERER itself is still reportlab, not the owner's later
+"xhtml2pdf on all PDFs" requirement (`documentos_pdf.py`'s own docstring): that
+is a cross-cutting engine swap touching `contrato_documento.py` too, out of
+this slice's scope — recorded as a route not taken, not silently skipped.
 """
 from __future__ import annotations
 
@@ -36,7 +45,11 @@ from typing import Literal
 
 from app.repositories import Repositorios
 from app.services.bi_service import BIService
-from app.services.financeiro_service import FinanceiroService, limites_da_competencia
+from app.services.financeiro_service import (
+    FinanceiroService,
+    alertas_de_margem,
+    limites_da_competencia,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +237,13 @@ def _relatorio_comercial(
 
     return RelatorioComercial(
         periodo=PeriodoRelatorio(inicio=inicio, fim=fim),
-        funil=sorted(funil.values(), key=lambda e: e.etapa_label),
+        # Insertion order, NOT re-sorted: `stages`/`funil` were built from
+        # `repos.etapa.listar(org_id)`, whose `default_order = (Order
+        # ("posicao"),)` already returns the board's real stage order. Explicitly
+        # re-sorting alphabetically here (the previous behaviour) discarded that
+        # and showed the funnel in name order instead of the pipeline's actual
+        # sequence (finding #17, 2026-09 audit).
+        funil=list(funil.values()),
         negocios_ganhos=negocios_ganhos,
         negocios_ganhos_valor=round(negocios_ganhos_valor, 2),
         negocios_perdidos=negocios_perdidos,
@@ -305,6 +324,13 @@ def _relatorio_financeiro(
         alvo = clientes.get(eficiencia.cliente_id)
         if alvo is not None:
             alvo.custo = eficiencia.custo_reais
+        # The BI/DRE "horas sem custo" warning used to be dropped here
+        # entirely (finding #15, 2026-09 audit) — the same understated-cost
+        # (⇒ overstated-margin) fact that makes DRE's alert important applies
+        # identically to this report's "por cliente" table.
+        nome = alvo.cliente_nome if alvo is not None else eficiencia.cliente_nome
+        for alerta in alertas_de_margem(eficiencia.alertas):
+            alertas.append(f"{nome}: {alerta}")
     if any(c.custo for c in clientes.values()):
         alertas.append(
             "O custo por cliente é medido sobre TODO o histórico de apontamentos, "
@@ -430,6 +456,8 @@ def para_pdf(relatorio: Relatorio) -> bytes:
     from reportlab.lib import colors
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+    from app.services.documentos_pdf import brl
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
@@ -466,8 +494,8 @@ def para_pdf(relatorio: Relatorio) -> bytes:
         ))
         corpo.append(Spacer(1, 0.4 * cm))
         corpo.append(Paragraph(
-            f"Ganhos: {c.negocios_ganhos} (R$ {c.negocios_ganhos_valor:,.2f})   ·  "
-            f"Perdidos: {c.negocios_perdidos} (R$ {c.negocios_perdidos_valor:,.2f})   ·  "
+            f"Ganhos: {c.negocios_ganhos} ({brl(c.negocios_ganhos_valor)})   ·  "
+            f"Perdidos: {c.negocios_perdidos} ({brl(c.negocios_perdidos_valor)})   ·  "
             f"Dwell time médio: {c.dwell_time_medio_dias} dia(s)",
             estilos["Normal"],
         ))
@@ -475,23 +503,23 @@ def para_pdf(relatorio: Relatorio) -> bytes:
         corpo.append(Paragraph("Motivos de perda", estilos["Heading2"]))
         corpo.append(_tabela(
             ["Motivo", "Etapa", "Qtd", "Valor"],
-            [[m.motivo, m.etapa_label, m.quantidade, m.valor_total] for m in c.motivos_perda],
+            [[m.motivo, m.etapa_label, m.quantidade, brl(m.valor_total)] for m in c.motivos_perda],
         ))
         corpo.append(Spacer(1, 0.4 * cm))
         corpo.append(Paragraph(
             f"Orçamentos — enviados: {c.orcamentos_enviados} · "
             f"aceitos: {c.orcamentos_aceitos} · recusados: {c.orcamentos_recusados} · "
-            f"ticket médio: R$ {c.ticket_medio:,.2f}",
+            f"ticket médio: {brl(c.ticket_medio)}",
             estilos["Normal"],
         ))
 
     if relatorio.financeiro is not None:
         f = relatorio.financeiro
         corpo.append(Paragraph(
-            f"Faturamento: R$ {f.faturamento:,.2f}   ·  "
-            f"Recebido: R$ {f.recebido:,.2f}   ·  "
-            f"A receber: R$ {f.a_receber:,.2f}   ·  "
-            f"Inadimplência: R$ {f.inadimplencia_valor:,.2f} ({f.inadimplencia_qtd})",
+            f"Faturamento: {brl(f.faturamento)}   ·  "
+            f"Recebido: {brl(f.recebido)}   ·  "
+            f"A receber: {brl(f.a_receber)}   ·  "
+            f"Inadimplência: {brl(f.inadimplencia_valor)} ({f.inadimplencia_qtd})",
             estilos["Normal"],
         ))
         corpo.append(Spacer(1, 0.4 * cm))
@@ -499,8 +527,8 @@ def para_pdf(relatorio: Relatorio) -> bytes:
         corpo.append(_tabela(
             ["Cliente", "Faturamento", "Recebido", "A receber", "Custo", "Margem", "Margem %"],
             [
-                [cl.cliente_nome, cl.faturamento, cl.recebido, cl.a_receber,
-                 cl.custo, cl.margem, cl.margem_percentual]
+                [cl.cliente_nome, brl(cl.faturamento), brl(cl.recebido), brl(cl.a_receber),
+                 brl(cl.custo), brl(cl.margem), f"{cl.margem_percentual}%"]
                 for cl in f.clientes
             ],
         ))

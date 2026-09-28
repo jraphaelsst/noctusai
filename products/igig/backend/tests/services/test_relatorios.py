@@ -106,6 +106,14 @@ class TestRelatorioComercial:
         assert por_id[proposta["id"]].saidas == 0
         assert por_id[proposta["id"]].taxa_conversao == 0.0
 
+    def test_funnel_is_ordered_by_stage_position_not_alphabetically(self, repos):
+        """finding #17, 2026-09 audit: labels chosen so alphabetical order
+        ("Fechado" < "Início") would disagree with the real pipeline order."""
+        inicio_etapa = _etapa(repos, slug="inicio", label="Início", posicao=0)
+        fechado_etapa = _etapa(repos, slug="fechado2", label="Fechado", posicao=1)
+        relatorio = gerar_relatorio(repos, ORG, "comercial", INICIO, FIM).comercial
+        assert [e.etapa_id for e in relatorio.funil] == [inicio_etapa["id"], fechado_etapa["id"]]
+
     def test_negocio_ganho_uses_accepted_orcamento_value_over_estimate(self, repos):
         fechado = _etapa(repos, slug="fechado", label="Fechado", papel="fechado")
         lead = _lead(repos)
@@ -246,6 +254,22 @@ class TestRelatorioFinanceiro:
         cliente_dre = next(c for c in relatorio.clientes if c.cliente_id == cliente["id"])
         assert cliente_dre.custo == 100.0
         assert relatorio.alertas
+
+    def test_uncosted_hours_alert_is_carried_into_the_report(self, repos):
+        """finding #15, 2026-09 audit: the BI/DRE "horas sem custo" warning
+        used to be dropped here entirely — only the "todo o histórico" note
+        survived. Worded as a margin warning, matching DRE's own convention."""
+        cliente = repos.cliente.criar(ORG, {"nome": "Cliente E"})
+        pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Post"})
+        tarefa = repos.tarefa.criar(ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "e1"})
+        repos.apontamento.criar(ORG, {
+            "tarefa_id": tarefa["id"], "usuario_id": "sem-rate",
+            "iniciado_em": "2026-08-01T09:00:00", "minutos": 60,
+        })
+        repos.profissional.criar(ORG, {"nome": "Bia", "usuario_id": "sem-rate"})
+
+        relatorio = gerar_relatorio(repos, ORG, "financeiro", INICIO, FIM).financeiro
+        assert any("SUPERESTIMADA" in a for a in relatorio.alertas)
 
 
 class TestRenderers:
