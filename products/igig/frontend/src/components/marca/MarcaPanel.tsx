@@ -59,7 +59,16 @@ export function MarcaPanel({ marca, onRemover }: { marca: Marca; onRemover?: () 
             aria-label="Nome da marca"
             onBlur={(e) => {
               const nome = e.target.value.trim();
-              if (nome && nome !== marca.nome) patch({ nome });
+              if (nome && nome !== marca.nome) {
+                patch({ nome });
+              } else {
+                // Clearing the field (or leaving it unchanged) saves
+                // nothing — but the `key` above only remounts the input
+                // when `marca.nome` itself changes, so an emptied field
+                // stayed visually blank forever otherwise (achado 19).
+                // The name never actually changed, so put it back on screen.
+                e.target.value = marca.nome;
+              }
             }}
           />
         </label>
