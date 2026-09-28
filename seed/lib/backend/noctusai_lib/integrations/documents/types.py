@@ -45,19 +45,35 @@ class ExtractionConfidence(str, Enum):
 
     ALTA — the value sat next to its own label (`DATA DE NASCIMENTO: …`)
         and passed every plausibility gate. Safe to persist unattended.
-    MEDIA — 🔴 a narrow, money-field-only tier (added for
-        `documents.money.ler_valor` / `documents.guia_itbi` /
-        `documents.financiamento_imobiliario`, per the negociação/
-        financiamento extraction contract §D.5). A money value is never
-        `alta` off a vision read — a model's self-reported confidence is
-        exactly what this whole extractor family refuses to trust for
-        currency — but a value corroborated by a DETERMINISTIC check (its
-        own printed "valor por extenso" agreeing, or a Quadro Resumo's
-        arithmetic summing correctly) is more trustworthy than an
-        uncorroborated `baixa` read, without being the "safe to persist
-        unattended" claim `alta` makes. Every OTHER extractor in this
-        package still uses only `alta`/`baixa`/`nenhuma` — a `media`
-        appearing outside a money field is a bug, not a new convention.
+    MEDIA — a narrow tier for a value that is NOT label-anchored but has
+        SOME evidence stronger than a bare guess, so it earns more trust
+        than an uncorroborated `baixa` read without earning the "safe to
+        persist unattended" claim `alta` makes. Three measured shapes so
+        far:
+          - Money fields (`documents.money.ler_valor` /
+            `documents.guia_itbi` / `documents.financiamento_imobiliario`,
+            negociação/financiamento contract §D.5): a value whose own
+            printed "valor por extenso" agrees, or whose Quadro Resumo sums
+            correctly. A money value is never `alta` off a vision read — a
+            model's self-reported confidence is exactly what this whole
+            extractor family refuses to trust for currency.
+          - `documents.name.find_name`'s MRZ corroboration (P1/883,
+            2026-09-28): a value sitting under the WRONG printed label,
+            whose words nonetheless start with a check-digit-anchored TD1
+            MRZ's own name tokens in order. The MRZ is structural evidence
+            (like a CPF's check digits), but a mislabelled transcription is
+            not the same claim as a value sitting next to its own correct
+            label — hence `media`, never `alta`.
+          - `documents.conjuges._no_maximo_media` (P1/883, 2026-09-28): a
+            tabular certidão's per-spouse fact (`data_nascimento` /
+            `nacionalidade` / `profissao`) attributed by ROW POSITION
+            within that spouse's segment, not by a label sitting next to
+            it. Positional attribution is an inference, capped below
+            `alta` the same way a coincidental whole-document match would
+            be — see that module for the misattribution it replaces.
+        Every OTHER extractor in this package still uses only
+        `alta`/`baixa`/`nenhuma` — a `media` appearing outside one of the
+        three shapes above is a bug, not a new convention.
     BAIXA — a plausible value was found, but not label-anchored (or the
         text came off a rasterize→vision pass, where digit confusion is
         real). Surface it for a human to confirm; do NOT persist silently.
@@ -408,10 +424,19 @@ class IdentityFields:
         )
 
     def sugestao(self, campo: str) -> bool:
-        """Found, but not trusted enough to write without a human."""
-        return (
-            self.presente(campo)
-            and self._confianca(campo) is ExtractionConfidence.BAIXA
+        """Found, but not trusted enough to write without a human.
+
+        `BAIXA` and `MEDIA` both qualify — see `ExtractionConfidence`'s own
+        docstring: `MEDIA` is a deterministically-corroborated reading,
+        better evidenced than an uncorroborated `BAIXA`, but neither one
+        clears the `ALTA` bar `persistable` enforces. Without this, a
+        `MEDIA` field would be `presente` yet answer `False` to BOTH
+        `persistable` and `sugestao` — found, yet invisible to every
+        downstream surface a caller checks.
+        """
+        return self.presente(campo) and self._confianca(campo) in (
+            ExtractionConfidence.BAIXA,
+            ExtractionConfidence.MEDIA,
         )
 
     # ─── Named aliases ────────────────────────────────────────────────

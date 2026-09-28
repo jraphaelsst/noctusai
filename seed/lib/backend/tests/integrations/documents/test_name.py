@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from noctusai_lib.integrations.documents.mrz import _mrz_check
 from noctusai_lib.integrations.documents.name import (
     find_name,
     find_name_conflitos,
@@ -555,3 +556,115 @@ class TestTabularLabelRowIsNotANubente:
 
         assert looks_like_a_name("MARIA DO NASCIMENTO")
         assert not looks_like_a_name("DATA DE NASCIMENTO")
+
+
+# ─── MRZ corroboration (real, measured, P1/883, 2026-09-28) ────────────────
+#
+# A CNH-e's vision transcription wrote the holder's name under the WRONG
+# label: the card prints "1 NOME" right beside "1ª HABILITAÇÃO", and the
+# model attributed the name to the latter. `find_name` found nothing under
+# that mislabelling — the same shape this whole module's docstring already
+# describes for FILIAÇÃO — except the document also carries an ICAO TD1 MRZ,
+# whose line 3 is the name field. Every name below is invented.
+
+
+def _linha_mrz_2(nascimento: str = "990101", validade: str = "300101") -> str:
+    """A check-digit-verified TD1 MRZ line 2 (dates + sex + expiry +
+    nationality) — the anchor `mrz.line2_indices` looks for. Same
+    construction `test_identity_new_fields.py` already uses for
+    `gender.py`'s own MRZ test."""
+    return (
+        f"{nascimento}{_mrz_check(nascimento)}F"
+        f"{validade}{_mrz_check(validade)}BRA<<<<<<<<<<<0"
+    )
+
+
+class TestMrzCorroboratesAMislabelledName:
+    """The exact production shape: a name sitting under a WRONG label, with
+    a genuine MRZ elsewhere on the same card."""
+
+    def test_mislabelled_name_corroborated_by_mrz_is_found_at_media(self) -> None:
+        texto = f"""CARTEIRA NACIONAL DE HABILITACAO
+1a HABILITACAO: ENZO DE OLIVEIRA SANTOS
+CATEGORIA B
+{_linha_mrz_2()}
+ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<
+"""
+        assert find_name(texto) == (
+            "ENZO DE OLIVEIRA SANTOS",
+            "media",
+            "MRZ (corroborado)",
+        )
+
+    def test_digit_for_letter_ocr_slip_in_the_mrz_itself_does_not_block_it(
+        self,
+    ) -> None:
+        # The `0` standing in for an `O` in `ENZ0` is the OCR slip measured
+        # in production — the fix's own digit->letter table must still find
+        # the corroborating value even though the MRZ line itself is wrong.
+        texto = f"""CARTEIRA NACIONAL DE HABILITACAO
+1a HABILITACAO: ENZO DE OLIVEIRA SANTOS
+{_linha_mrz_2()}
+ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<
+"""
+        assert find_name(texto)[0] == "ENZO DE OLIVEIRA SANTOS"
+        assert find_name(texto)[1] == "media"
+
+
+class TestMrzTruncatedWithNoCorroboration:
+    """A truncated MRZ name field is too risky to trust alone (ICAO's own
+    30-character field width may have cut the last name off mid-word)."""
+
+    def test_truncated_mrz_alone_with_no_corroborating_line_is_none(self) -> None:
+        # No trailing `<` padding: the field fills its full width, so it
+        # may be cut off mid-word.
+        linha3_truncada = "ENZ0<<DE<<OLIVEIRA<<SANTOSISSIMOOOOOOOOOOOOOO"
+        texto = f"""CARTEIRA NACIONAL DE HABILITACAO
+CATEGORIA B
+{_linha_mrz_2()}
+{linha3_truncada}
+"""
+        assert find_name(texto) == (None, "nenhuma", None)
+
+    def test_untruncated_mrz_alone_with_no_corroboration_is_a_baixa_guess(
+        self,
+    ) -> None:
+        # Trailing `<` padding: the field did NOT run out of room, so the
+        # MRZ's own reading is worth a low-confidence guess on its own.
+        texto = f"""DOCUMENTO
+{_linha_mrz_2()}
+ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<
+"""
+        assert find_name(texto) == ("ENZO DE OLIVEIRA SANTOS", "baixa", "MRZ")
+
+
+class TestMrzAgreementAndDisagreementWithALabelledName:
+    def test_labelled_nome_agreeing_with_mrz_keeps_its_normal_confidence(
+        self,
+    ) -> None:
+        texto = f"""CARTEIRA NACIONAL DE HABILITACAO
+NOME: ENZO DE OLIVEIRA SANTOS
+{_linha_mrz_2()}
+ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<
+"""
+        assert find_name(texto) == ("ENZO DE OLIVEIRA SANTOS", "alta", "NOME")
+
+    def test_labelled_nome_disagreeing_with_mrz_is_not_guessed(self) -> None:
+        texto = f"""CARTEIRA NACIONAL DE HABILITACAO
+NOME: MARIA DA SILVA PEREIRA
+{_linha_mrz_2()}
+ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<
+"""
+        assert find_name(texto) == (None, "nenhuma", None)
+
+
+class TestCertidaoWithNoMrzIsUnaffected:
+    """A certidão de casamento carries no MRZ at all — every branch added
+    for MRZ corroboration must be a complete no-op on it."""
+
+    def test_certidao_multi_holder_behaviour_is_unchanged(self) -> None:
+        assert find_name(CERTIDAO_NOMES_LAYOUT) == (None, "nenhuma", None)
+        assert sorted(find_name_conflitos(CERTIDAO_NOMES_LAYOUT)) == [
+            "ALMIR TEIXEIRA DA COSTA",
+            "MARIANA PELLEGRINI RANGEL",
+        ]

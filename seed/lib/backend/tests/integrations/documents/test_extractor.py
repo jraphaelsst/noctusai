@@ -166,6 +166,19 @@ class TestPersistableIsTheOnlyWriteGate:
     def test_alta_without_a_value_is_not_persistable(self):
         assert not IdentityFields(data_nascimento_confianca=ExtractionConfidence.ALTA).persistable_data_nascimento
 
+    def test_media_is_never_persistable_but_is_a_sugestao(self):
+        """`MEDIA` (a corroborated-but-not-label-anchored reading, e.g.
+        `name.find_name`'s MRZ corroboration) must clear neither
+        `persistable` NOR fall through both gates unseen — see
+        `IdentityFields.sugestao`'s own docstring on why this would
+        otherwise be a found-yet-invisible field."""
+        out = IdentityFields(
+            nome="ENZO DE OLIVEIRA SANTOS",
+            nome_confianca=ExtractionConfidence.MEDIA,
+        )
+        assert out.persistable_nome is False
+        assert out.sugestao_nome is True
+
 
 class TestKindClassification:
     @pytest.mark.asyncio

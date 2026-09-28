@@ -403,6 +403,38 @@ class TestExtractorFallthrough:
         assert out.error == "insufficient_quota"
 
 
+class TestMrzCorroboratedNameSurvivesTheFullPipeline:
+    """The exact production shape (P1/883, 2026-09-28): a CNH-e's vision
+    transcription wrote the holder's name under the WRONG label ("1
+    HABILITAÇÃO" instead of "1 NOME"), but the same card's MRZ corroborates
+    it. `find_name`'s own tests cover the parser in isolation — this proves
+    `_temper_name_confidence` (which demotes `alta` off a vision source)
+    leaves the corroborated `media` reading untouched, so it actually
+    reaches the caller instead of being silently downgraded again."""
+
+    @pytest.mark.asyncio
+    async def test_media_confidence_is_not_tempered_by_vision_source(self):
+        linha2 = "9901018F3001019BRA<<<<<<<<<<<0"
+        texto = (
+            "CARTEIRA NACIONAL DE HABILITACAO\n"
+            "1a HABILITACAO: ENZO DE OLIVEIRA SANTOS\n"
+            f"{linha2}\n"
+            "ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<\n"
+        )
+        ladder = _Ladder(
+            "SECRETARIA DA SEGURANÇA PÚBLICA\nASSINADO DIGITALMENTE",
+            visao=(texto, TextSource.OCR, None),
+        )
+        out = await LadderIdentityExtractor(ladder=ladder).extract(
+            b"\x89PNG", mimetype="image/png"
+        )
+        assert out.nome == "ENZO DE OLIVEIRA SANTOS"
+        assert out.nome_confianca == ExtractionConfidence.MEDIA
+        assert out.nome_rotulo == "MRZ (corroborado)"
+        assert out.persistable_nome is False
+        assert out.sugestao_nome is True
+
+
 class _FakeResolverCapturingMedia:
     """Stands in for `get_media_resolver(real=True, ...)` — records every
     `InboundMedia` it was asked to resolve, so a test can assert what the

@@ -42,6 +42,26 @@ ONE DELIBERATE OMISSION
 at `baixa` when nothing is labelled. The equivalent here would be "the
 longest name-shaped line", which on an RG is frequently a parent. Absence
 is reported instead.
+
+THE EXCEPTION TO THAT OMISSION: A CHECK-DIGIT-ANCHORED MRZ
+------------------------------------------------------------
+Real, measured (P1/883, 2026-09-28): a CNH-e's vision transcription wrote
+the holder's name under the WRONG label — the card prints "1 NOME" right
+beside "1ª HABILITAÇÃO", and the model attributed the name to the latter.
+`_candidatos` correctly found nothing (no recognised label carried a valid
+name), which is the collapse this module's docstring already describes —
+except the document also carries an ICAO TD1 MRZ, and its line 3 is the
+name field, structurally anchored the same way `gender.py`'s MRZ reading
+is (see `mrz.py`): line 2's two dates both verify their own check digit,
+so an OCR misread of a surrounding character fails the anchor instead of
+producing a wrong one. That is evidence this module did not have when the
+"no unlabelled fallback" rule above was written — a value under a WRONG
+label, corroborated by a structural anchor elsewhere on the page, is not
+the same risk as "the longest name-shaped line": it is closer to the CPF's
+own check-digit self-evidence. So it is accepted, but capped at `media`
+(never `alta` — corroborated is not the same claim as label-anchored), and
+a labelled candidate that DISAGREES with the same anchor is reported as
+absence rather than guessed — see `find_name`.
 """
 from __future__ import annotations
 
@@ -49,6 +69,7 @@ import re
 import unicodedata
 from typing import Optional
 
+from noctusai_lib.integrations.documents.mrz import line2_indices as _mrz_line2_indices
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
 
 #: Bounds on a stored name. The floor rejects label noise (`RG`, `ID`);
@@ -464,19 +485,145 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
     return candidates
 
 
+# ─── MRZ corroboration (see the module docstring's "THE EXCEPTION..." section) ──
+#
+# A TD1 MRZ's line 3 is the name field: up to 30 characters, words separated
+# by one or more `<`, right-padded with `<` to fill the field. `mrz.py` owns
+# the check-digit anchor that tells a genuine MRZ block apart from unrelated
+# caret-heavy text (line 2, immediately before this one); everything below
+# is specific to READING the name once that anchor has located it.
+
+#: A candidate MRZ name line, once whitespace an OCR pass may have inserted
+#: is stripped: only the characters an MRZ can ever print.
+_MRZ_NAME_LINE_RE = re.compile(r"^[A-Z0-9<]+$")
+
+#: MRZ text is printed in a machine font prone to the SAME digit/letter
+#: confusion every other rung of this pipeline already tempers for — applied
+#: ONLY to a line already identified as the MRZ name field, never to a value
+#: read off the rest of the page, where a digit is far more likely to be a
+#: genuine document number.
+_MRZ_NAME_DIGIT_FIX = str.maketrans({"0": "O", "1": "I", "5": "S", "8": "B", "2": "Z", "6": "G"})
+
+
+def _linha_nome_mrz(text: str) -> Optional[str]:
+    """The raw MRZ line 3 (name field), found immediately after a
+    check-digit-verified line 2 — see `mrz.line2_indices`. RAW text in:
+    line breaks are the MRZ's own structure. `None` when no MRZ is present
+    at all, or the line after it does not have the MRZ's own shape."""
+    linhas = (text or "").splitlines()
+    for i in _mrz_line2_indices(text):
+        for j in range(i + 1, min(i + 3, len(linhas))):
+            candidata = re.sub(r"\s+", "", linhas[j]).upper()
+            if not candidata:
+                continue
+            if "<<" in candidata and _MRZ_NAME_LINE_RE.match(candidata):
+                return candidata
+            break
+    return None
+
+
+def _mrz_name_tokens(text: str) -> tuple[Optional[list[str]], bool]:
+    """`(tokens, truncado)` for the MRZ's own name field, in the order the
+    field prints them.
+
+    `truncado` is True when the field fills its full width with no
+    trailing `<` padding — the field is exactly as long as ICAO's 30-char
+    limit allows, so the last name MAY have been cut off mid-word. `(None,
+    False)` when no MRZ name line is found at all.
+    """
+    linha = _linha_nome_mrz(text)
+    if linha is None:
+        return (None, False)
+    truncado = not linha.endswith("<")
+    corrigida = linha.translate(_MRZ_NAME_DIGIT_FIX)
+    tokens = [t for t in re.split(r"<+", corrigida) if t]
+    if not tokens:
+        return (None, False)
+    return (tokens, truncado)
+
+
+def _valor_da_linha(linha: str) -> str:
+    """The VALUE half of a `RÓTULO: valor` transcription line (the format
+    `real.py`'s vision prompt asks the model to preserve), or the whole
+    line when it carries no such separator.
+
+    Deliberately label-agnostic, unlike every other reader in this module:
+    MRZ corroboration exists PRECISELY for the case where the printed
+    label was wrong, so this never checks which label — or whether there
+    is one at all.
+    """
+    _, sep, tail = linha.partition(":")
+    return tail.strip() if sep else linha
+
+
+def _valor_bate_com_mrz(valor: str, mrz_tokens: list[str], truncado: bool) -> bool:
+    """Do `valor`'s own words start with `mrz_tokens`, in the SAME order?
+
+    The LAST MRZ token may be a PREFIX of its corresponding word when the
+    field is truncated — ICAO right-pads a short field, so truncation can
+    only ever cut the last token short, never an earlier one.
+    """
+    palavras = valor.split()
+    if len(palavras) < len(mrz_tokens):
+        return False
+    for i, tok in enumerate(mrz_tokens):
+        if i == len(mrz_tokens) - 1 and truncado:
+            if not palavras[i].startswith(tok):
+                return False
+        elif palavras[i] != tok:
+            return False
+    return True
+
+
+def _nome_corroborado_por_mrz(
+    text: str, mrz_tokens: list[str], truncado: bool
+) -> Optional[str]:
+    """A value ANYWHERE on the transcription whose words start with the
+    MRZ's own name tokens, in order — even sitting under a WRONG label.
+    `None` when no line on the document corroborates."""
+    for linha in normalize_lines(text):
+        valor = _strip_trailing_citation(_valor_da_linha(linha))
+        valor = valor.strip(_SEPARATORS).strip()
+        if not looks_like_a_name(valor):
+            continue
+        if _valor_bate_com_mrz(valor, mrz_tokens, truncado):
+            return valor
+    return None
+
+
 def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract the document holder's full name.
 
     Returns `(value, confidence, matched_label)` where confidence is
-    `"alta"` / `"nenhuma"` — the string values of
+    `"alta"` / `"media"` / `"nenhuma"` — the string values of
     `types.ExtractionConfidence`, kept as plain strings so this module
-    stays import-free of the rest of the package.
+    stays import-free of the rest of the FIELD-PARSER package (it still
+    composes `mrz.py`, a leaf-level primitive with no such dependency —
+    see this module's own docstring on the `_CPF_SHAPE_RE` precedent for
+    why that boundary is drawn at sibling PARSERS, not at every import).
 
     `"baixa"` is never returned from here. A name is either label-anchored
-    (in which case the evidence is as good as this parser can get) or it
-    is not found. Downgrading to `baixa` on account of the TEXT SOURCE is
-    the adapter's job, because only the adapter knows whether the text
-    came off a PDF text layer or a vision pass.
+    (in which case the evidence is as good as this parser can get), MRZ-
+    corroborated (see below), or it is not found. Downgrading to `baixa`
+    on account of the TEXT SOURCE is the adapter's job, because only the
+    adapter knows whether the text came off a PDF text layer or a vision
+    pass.
+
+    🔴 MRZ CORROBORATION — see the module docstring's "THE EXCEPTION..."
+    ----------------------------------------------------------------------
+    When `_candidatos` found nothing labelled, a check-digit-anchored MRZ
+    name is tried: a value elsewhere on the page whose words start with
+    the MRZ's own tokens, in order, is returned at `"media"` (corroborated,
+    never label-anchored, so never `"alta"`) with `matched_label="MRZ
+    (corroborado)"`. Failing that, an UNTRUNCATED MRZ reading alone is
+    still worth a `"baixa"` guess; a TRUNCATED one alone is not (too much
+    of the name could be missing) and reports absence instead.
+
+    When `_candidatos` found exactly ONE labelled candidate, a check-digit-
+    anchored MRZ reading that DISAGREES with it is not a tie-break in
+    either direction — it means the label was wrong, same as the "document
+    names two people" case below, so it is reported as absence rather than
+    guessed.
 
     🔴 `nenhuma` HAS TWO DIFFERENT CAUSES, INDISTINGUISHABLE HERE
     ----------------------------------------------------------------
@@ -489,7 +636,15 @@ def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
     doing nothing) should call `find_name_conflitos` instead.
     """
     candidates = _candidatos(text)
+    mrz_tokens, mrz_truncado = _mrz_name_tokens(text)
+
     if not candidates:
+        if mrz_tokens:
+            corroborado = _nome_corroborado_por_mrz(text, mrz_tokens, mrz_truncado)
+            if corroborado is not None:
+                return (corroborado, "media", "MRZ (corroborado)")
+            if not mrz_truncado:
+                return (" ".join(mrz_tokens), "baixa", "MRZ")
         return (None, "nenhuma", None)
 
     distinct = {v for v, _ in candidates}
@@ -501,6 +656,12 @@ def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
         return (None, "nenhuma", None)
 
     value, label = candidates[0]
+    if mrz_tokens and not _valor_bate_com_mrz(value, mrz_tokens, mrz_truncado):
+        # A single labelled candidate that DISAGREES with a check-digit-
+        # anchored MRZ reading is a layout misread, exactly like the two-
+        # distinct-candidates case above — reported as absence, never a
+        # guess in either direction. See the docstring's MRZ section.
+        return (None, "nenhuma", None)
     return (value, "alta", label)
 
 
