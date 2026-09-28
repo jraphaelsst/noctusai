@@ -273,11 +273,28 @@ def atualizar_favorecido(
     client: Any, org_id: UUID, cliente_id: UUID, favorecido_id: UUID, *,
     valores: dict, usuario_id: Optional[UUID],
 ) -> dict:
+    """🔴 Reverse of `negociacao_extracao_service._aplicar_favorecido_
+    vendedor`'s machine-write reset (audit finding, 2026-09-28): a HUMAN
+    editing a favorecido through this route owns the result — `origem=
+    'manual'`, confirmed-by-construction (the editor IS the confirming
+    party), the same posture every other D1 surface's human PATCH takes in
+    this product. Before this fix a human edit left `origem`/`confirmado_*`
+    exactly as the machine last set them, so a vision-read row a person had
+    just corrected by hand kept reading as unconfirmed/machine-sourced.
+    Only stamped when the PATCH actually touches an editable field — a
+    body with none of `_FAVORECIDO_CAMPOS_EDITAVEIS` is a no-op on
+    provenance too.
+    """
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     _exigir_favorecido(client, org_id, atendimento_id, favorecido_id)
     patch = {k: v for k, v in valores.items() if k in _FAVORECIDO_CAMPOS_EDITAVEIS}
-    patch["updated_at"] = _now()
+    now = _now()
+    patch["updated_at"] = now
     patch["updated_por"] = str(usuario_id) if usuario_id else None
+    if patch.keys() - {"updated_at", "updated_por"}:
+        patch["origem"] = "manual"
+        patch["confirmado_por"] = str(usuario_id) if usuario_id else None
+        patch["confirmado_em"] = now
     _t(client, TABLE_FAVORECIDOS).update(patch).eq("org_id", str(org_id)).eq(
         "id", str(favorecido_id)
     ).execute()

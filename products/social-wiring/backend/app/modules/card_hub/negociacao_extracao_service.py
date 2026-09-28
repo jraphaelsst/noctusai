@@ -99,6 +99,28 @@ ERRO = "erro"
 #: text); this module never persists that reading. Owner H8.
 ERRO_DPS = "documento_sensivel_dps"
 
+#: Finding [MED-HIGH] (audit, 2026-09-28): the Quadro Resumo's FGTS label
+#: wasn't one the seed parser recognized — `valor_fgts` reads `None` with
+#: NO way to tell "genuinely no FGTS" from "misread". Composing the
+#: financiamento parcela from `valor_financiado` alone here would silently
+#: UNDERCOUNT a real FGTS portion, so this module refuses to compose at all
+#: — see `_aplicar_financiamento_parcela`.
+AVISO_FGTS_NAO_LIDO = "fgts_nao_lido"
+
+#: Finding [MEDIUM] (audit, 2026-09-28): `_pertence_ao_negocio` found no
+#: verifiable evidence that this document belongs to THIS atendimento (no
+#: validated CPF matched a deal party) — distinct from the
+#: `documento_de_outro_negocio` case, where a validated CPF was read and it
+#: matched SOMEONE ELSE'S deal. An empty field is routed as a pending
+#: conflict rather than filled directly — see `aplicar_leitura`.
+AVISO_PERTENCIMENTO_NAO_VERIFICADO = "pertencimento_nao_verificado"
+
+#: A human already rejected EXACTLY this proposed value on this field —
+#: re-running the same extraction (or a sibling document proposing the
+#: identical value) must not re-open (and re-notify) the same question.
+#: See `_ja_rejeitado_pelo_usuario`.
+AVISO_CONFLITO_JA_REJEITADO = "conflito_ja_rejeitado"
+
 
 def _t(client: Any, name: str):
     return table_reads.table(client, name)
@@ -148,6 +170,51 @@ def _json_seguro(valor: Any) -> Any:
 def _confianca(leitura: Any, campo: str) -> Optional[str]:
     confianca = (getattr(leitura, "confiancas", None) or {}).get(campo)
     return getattr(confianca, "value", confianca)
+
+
+def _rotulo_lido(leitura: Any, campo: str) -> bool:
+    """Was `campo`'s raw label actually FOUND on the document — as opposed
+    to `getattr(leitura, campo)` reading `None` because the seed parser
+    doesn't recognize this bank's own spelling of it? `rotulos` is the
+    seed's per-field found-labels map (duck-typed, forward-compat — same
+    posture this module's docstring takes on every `leitura` attribute: an
+    older/sibling reading shape with no `rotulos` attribute at all is read
+    as "unknown", never as a false confirmation). A key IN the dict counts
+    as found even when its parsed value ended up empty (a labelled-but-
+    illegible FGTS line is still "the Quadro had one")."""
+    rotulos = getattr(leitura, "rotulos", None)
+    if not rotulos:
+        return False
+    return rotulos.get(campo) is not None
+
+
+def _ja_rejeitado_pelo_usuario(
+    client: Any, org_id: UUID, atendimento_id: UUID, campo: str, valor_proposto: Any,
+) -> bool:
+    """Finding [MEDIUM] (audit, 2026-09-28), ported from `imovel_hub.
+    campos_extraidos_service.aplicar`'s own REJEITADO_ANTES check: a human
+    already said no to EXACTLY this value on this field — re-running the
+    same extraction must not re-open (and re-notify) the same question.
+
+    🔴 TIGHTENED vs. the imóvel version: only counts a row with
+    `decidido_por` SET — a genuine human decision. `campo_conflitos.
+    registrar_conflito`'s own supersede-by-newer-proposal (`decidido_por=
+    None`, a SYSTEM resolution) also lands in `status='rejeitado'`; without
+    this filter, a value a machine merely SUPERSEDED (not a human refused)
+    would wrongly block its own later, legitimate re-proposal.
+    `NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]` — the imóvel
+    version's own check does not filter this and shares the same, smaller
+    gap — 2026-09-28.
+    """
+    rows = (
+        _t(client, ATENDIMENTO.table).select("valor_proposto,decidido_por")
+        .eq("org_id", str(org_id)).eq("atendimento_id", str(atendimento_id))
+        .eq("campo", campo).eq("status", "rejeitado").execute()
+    ).data or []
+    alvo = str(valor_proposto)
+    return any(
+        r.get("decidido_por") and str(r.get("valor_proposto")) == alvo for r in rows
+    )
 
 
 # ─── (a) fetch / mark ───────────────────────────────────────────────────
@@ -234,20 +301,47 @@ def _cpfs_lidos(leitura: Any) -> list[tuple[str, Any]]:
     return achados
 
 
-def _pertence_ao_negocio(leitura: Any, cpfs_negocio: dict[str, dict]) -> bool:
-    """(b) — at least one document CPF read must match a deal party.
+#: `_pertence_ao_negocio`'s three outcomes (finding [MEDIUM], audit,
+#: 2026-09-28 — the old boolean conflated "no evidence" with "verified").
+PERTENCE = "pertence"
+NAO_VERIFICADO = "nao_verificado"
+OUTRO_NEGOCIO = "outro_negocio"
 
-    🔴 Only refuses when the document actually carries at least one
-    VALIDATED CPF (mirrors `empresas.dados_service.aplicar_cartao`'s own
-    `if leitura.cnpj and normalize(...) != empresa.cnpj` conditional — the
-    check fires on a PRESENT-AND-WRONG value, never on an absent one). A
-    guia_itbi/contrato that read no CPF at all is inconclusive, not
-    "another deal's" — the field-level D1 apply below still runs.
+
+def _pertence_ao_negocio(leitura: Any, cpfs_negocio: dict[str, dict]) -> str:
+    """(b) — does at least one CPF this document read match a deal party?
+
+    Returns one of the three module-level constants above:
+    - `OUTRO_NEGOCIO` — the document read at least one VALIDATED CPF and
+      NONE of them match this deal (mirrors `empresas.dados_service.
+      aplicar_cartao`'s own `if leitura.cnpj and normalize(...) != empresa
+      .cnpj` conditional — a PRESENT-AND-WRONG value). `aplicar_leitura`
+      applies NOTHING for this outcome (unchanged since before this fix).
+    - `NAO_VERIFICADO` — no validated CPF was read at all (vision CPFs
+      often fail their check digit; ITBI guides often carry none). 🔴
+      Before finding [MEDIUM] (2026-09-28) this outcome was folded into
+      "trust it" (`True`) — another deal's ITBI guide could silently seed
+      THIS atendimento's `valor_negociado`/parcela. `aplicar_leitura` now
+      routes an otherwise-empty field as a PENDING conflict instead of a
+      direct fill for this outcome — see `AVISO_PERTENCIMENTO_NAO_
+      VERIFICADO`.
+    - `PERTENCE` — at least one validated CPF matched. Counts the Quadro
+      Resumo's `conta_credito_vendedor.titular_cpf` (when `titular_cpf_
+      valido`) as evidence TOO, not just `compradores`/`vendedores` — the
+      live case this closes (deal 883): party-header CPFs all misread by
+      vision, but the account-box CPF is valid and matches the vendedora.
     """
     lidos = _cpfs_lidos(leitura)
+    conta = getattr(leitura, "conta_credito_vendedor", None)
+    if conta is not None and getattr(conta, "titular_cpf_valido", False):
+        cpf_conta = getattr(conta, "titular_cpf", None)
+        if cpf_conta:
+            lidos = [*lidos, (cpf_docs.only_digits(str(cpf_conta)), conta)]
     if not lidos:
-        return True
-    return any(cpf_norm in cpfs_negocio for cpf_norm, _ in lidos)
+        return NAO_VERIFICADO
+    if any(cpf_norm in cpfs_negocio for cpf_norm, _ in lidos):
+        return PERTENCE
+    return OUTRO_NEGOCIO
 
 
 # ─── (d) the D1 field map ────────────────────────────────────────────────
@@ -255,9 +349,17 @@ def _pertence_ao_negocio(leitura: Any, cpfs_negocio: dict[str, dict]) -> bool:
 
 def _aplicar_valor_negociado(
     client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str,
-    documento_id: UUID, leitura: Any,
+    documento_id: UUID, leitura: Any, *, verificado: bool,
 ) -> tuple[Optional[str], Optional[dict]]:
     """H2 — no authoritative source; ANY disagreement is a conflict.
+
+    `verificado` (finding [MEDIUM], audit, 2026-09-28) — `False` means
+    `_pertence_ao_negocio` could not confirm this document belongs to THIS
+    atendimento (no validated CPF matched). An EMPTY field is then routed
+    as a pending conflict instead of filled directly, so another deal's
+    document cannot silently seed this one — see `AVISO_PERTENCIMENTO_NAO_
+    VERIFICADO`. A DISAGREEING field already conflicts regardless of
+    `verificado` (H2 is unconditional either way).
 
     Returns `(aviso, conflito_or_None)`.
     """
@@ -277,7 +379,41 @@ def _aplicar_valor_negociado(
     atual_row = negociacao[0] if negociacao else None
     atual = _dec((atual_row or {}).get("valor_negociado"))
 
+    if atual_row is None:
+        # The row must exist (even unfilled) BEFORE a conflict can be
+        # opened against it — `_aplicar_conflito_aceito`'s accept path
+        # UPDATEs this table by (org_id, atendimento_id), which is a silent
+        # no-op against a row that was never inserted.
+        _t(client, NEGOCIACAO_TABLE).insert(
+            {
+                "atendimento_id": str(atendimento_id),
+                "org_id": str(org_id),
+                "tem_parceria": False,
+                "financiamento": False,
+                "fgts": False,
+                "valor_negociado": None,
+                "valor_negociado_origem": None,
+                "valor_negociado_documento_id": None,
+                "valor_negociado_confirmado_por": None,
+                "valor_negociado_confirmado_em": None,
+                "created_at": _now(),
+            }
+        ).execute()
+
     if atual is None:
+        if not verificado:
+            novo = campo_conflitos.registrar_conflito(
+                client, ATENDIMENTO, org_id, atendimento_id, "valor_negociado",
+                valor_anterior=None,
+                origem_anterior=(atual_row or {}).get("valor_negociado_origem"),
+                valor_proposto=str(proposto),
+                origem_proposto=tipo_documento,
+                confianca_proposta=_confianca(leitura, campo),
+                fonte_tabela=DOCUMENTOS_TABLE,
+                fonte_id=documento_id,
+                documento_id_proposto=documento_id,
+            )
+            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
         now = _now()
         patch = {
             "valor_negociado": str(proposto),
@@ -287,26 +423,38 @@ def _aplicar_valor_negociado(
             "valor_negociado_confirmado_por": None,
             "valor_negociado_confirmado_em": None,
         }
-        if atual_row is None:
-            _t(client, NEGOCIACAO_TABLE).insert(
-                {
-                    "atendimento_id": str(atendimento_id),
-                    "org_id": str(org_id),
-                    "tem_parceria": False,
-                    "financiamento": False,
-                    "fgts": False,
-                    "created_at": now,
-                    **patch,
-                }
-            ).execute()
-        else:
-            _t(client, NEGOCIACAO_TABLE).update(patch).eq(
-                "org_id", str(org_id)
-            ).eq("atendimento_id", str(atendimento_id)).execute()
+        _t(client, NEGOCIACAO_TABLE).update(patch).eq(
+            "org_id", str(org_id)
+        ).eq("atendimento_id", str(atendimento_id)).execute()
         return None, None
 
     if atual == proposto:
         return None, None
+
+    if campo_conflitos.mesmo_documento_pendente(
+        origem_atual=(atual_row or {}).get("valor_negociado_origem"),
+        confirmado_em_atual=(atual_row or {}).get("valor_negociado_confirmado_em"),
+        documento_id_atual=(atual_row or {}).get("valor_negociado_documento_id"),
+        documento_id_proposto=documento_id,
+    ):
+        now = _now()
+        _t(client, NEGOCIACAO_TABLE).update(
+            {
+                "valor_negociado": str(proposto),
+                "valor_negociado_origem": tipo_documento,
+                "valor_negociado_documento_id": str(documento_id),
+                "valor_negociado_em": now,
+                "valor_negociado_confirmado_por": None,
+                "valor_negociado_confirmado_em": None,
+            }
+        ).eq("org_id", str(org_id)).eq("atendimento_id", str(atendimento_id)).execute()
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, ATENDIMENTO, org_id, atendimento_id, "valor_negociado", decidido_por=None,
+        )
+        return None, None
+
+    if _ja_rejeitado_pelo_usuario(client, org_id, atendimento_id, "valor_negociado", str(proposto)):
+        return AVISO_CONFLITO_JA_REJEITADO, None
 
     novo = campo_conflitos.registrar_conflito(
         client, ATENDIMENTO, org_id, atendimento_id, "valor_negociado",
@@ -324,15 +472,30 @@ def _aplicar_valor_negociado(
 
 def _aplicar_financiamento_parcela(
     client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str,
-    documento_id: UUID, leitura: Any,
+    documento_id: UUID, leitura: Any, *, verificado: bool,
 ) -> tuple[Optional[str], Optional[dict]]:
     """[Q6] financiamento parcela = valor financiado + FGTS. `guia_itbi`
-    never proposes this (it has no `valor_financiado`)."""
+    never proposes this (it has no `valor_financiado`).
+
+    Finding [MED-HIGH] (audit, 2026-09-28): only the Quadro Resumo
+    (`contrato_financiamento`) prints an FGTS line at all — a `proposta_
+    financiamento` letter never has one, so the `_rotulo_lido` gate below
+    is scoped to `contrato_financiamento` only. `verificado` — see
+    `_aplicar_valor_negociado`'s own docstring; same fill-vs-pending-
+    conflict gate on an EMPTY parcela.
+    """
     if tipo_documento == "guia_itbi":
         return None, None
     financiado = _dec(getattr(leitura, "valor_financiado", None))
     if financiado is None:
         return None, None
+    if tipo_documento == "contrato_financiamento" and not _rotulo_lido(leitura, "valor_fgts"):
+        # The Quadro Resumo's FGTS label wasn't recognized — composing the
+        # parcela from `financiado` alone would silently UNDERCOUNT a real
+        # FGTS portion (the original bug: `_dec(...) or Decimal("0")`
+        # turned "unread" into "zero" with no signal for a human). Refuse
+        # to compose at all rather than write a partial number.
+        return AVISO_FGTS_NAO_LIDO, None
     fgts = _dec(getattr(leitura, "valor_fgts", None)) or Decimal("0")
     proposto = financiado + fgts
 
@@ -358,29 +521,55 @@ def _aplicar_financiamento_parcela(
             .execute()
         ).data or []
         ordem = max((r.get("ordem", 0) for r in ordem_atual), default=-1) + 1
-        _t(client, PARCELAS_TABLE).insert(
-            {
-                "id": str(uuid4()),
-                "org_id": str(org_id),
-                "atendimento_id": str(atendimento_id),
-                "tipo": "financiamento",
-                "valor": str(proposto),
-                "confissao_divida": False,
-                "dispara_corretagem": False,
-                "ordem": ordem,
-                "origem": tipo_documento,
-                "documento_id": str(documento_id),
-                "extraido_em": now,
-                "confirmado_por": None,
-                "confirmado_em": None,
-                "created_at": now,
-            }
-        ).execute()
-        return None, None
+        parcela_id = str(uuid4())
+        row = {
+            "id": parcela_id,
+            "org_id": str(org_id),
+            "atendimento_id": str(atendimento_id),
+            "tipo": "financiamento",
+            "valor": str(proposto) if verificado else None,
+            "confissao_divida": False,
+            "dispara_corretagem": False,
+            "ordem": ordem,
+            "origem": tipo_documento if verificado else None,
+            "documento_id": str(documento_id) if verificado else None,
+            "extraido_em": now if verificado else None,
+            "confirmado_por": None,
+            "confirmado_em": None,
+            "created_at": now,
+        }
+        _t(client, PARCELAS_TABLE).insert(row).execute()
+        if verificado:
+            return None, None
+        novo = campo_conflitos.registrar_conflito(
+            client, ATENDIMENTO, org_id, atendimento_id, f"parcela.{parcela_id}.valor",
+            valor_anterior=None,
+            origem_anterior=None,
+            valor_proposto=str(proposto),
+            origem_proposto=tipo_documento,
+            confianca_proposta=_confianca(leitura, "valor_financiado"),
+            fonte_tabela=DOCUMENTOS_TABLE,
+            fonte_id=documento_id,
+            documento_id_proposto=documento_id,
+        )
+        return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
 
     parcela = parcelas[0]
     atual = _dec(parcela.get("valor"))
     if atual is None:
+        if not verificado:
+            novo = campo_conflitos.registrar_conflito(
+                client, ATENDIMENTO, org_id, atendimento_id, f"parcela.{parcela['id']}.valor",
+                valor_anterior=None,
+                origem_anterior=parcela.get("origem"),
+                valor_proposto=str(proposto),
+                origem_proposto=tipo_documento,
+                confianca_proposta=_confianca(leitura, "valor_financiado"),
+                fonte_tabela=DOCUMENTOS_TABLE,
+                fonte_id=documento_id,
+                documento_id_proposto=documento_id,
+            )
+            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
         _t(client, PARCELAS_TABLE).update(
             {
                 "valor": str(proposto),
@@ -397,8 +586,34 @@ def _aplicar_financiamento_parcela(
     if atual == proposto:
         return None, None
 
+    campo_conflito = f"parcela.{parcela['id']}.valor"
+    if campo_conflitos.mesmo_documento_pendente(
+        origem_atual=parcela.get("origem"),
+        confirmado_em_atual=parcela.get("confirmado_em"),
+        documento_id_atual=parcela.get("documento_id"),
+        documento_id_proposto=documento_id,
+    ):
+        _t(client, PARCELAS_TABLE).update(
+            {
+                "valor": str(proposto),
+                "origem": tipo_documento,
+                "documento_id": str(documento_id),
+                "extraido_em": now,
+                "confirmado_por": None,
+                "confirmado_em": None,
+                "updated_at": now,
+            }
+        ).eq("id", parcela["id"]).execute()
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, ATENDIMENTO, org_id, atendimento_id, campo_conflito, decidido_por=None,
+        )
+        return None, None
+
+    if _ja_rejeitado_pelo_usuario(client, org_id, atendimento_id, campo_conflito, str(proposto)):
+        return AVISO_CONFLITO_JA_REJEITADO, None
+
     novo = campo_conflitos.registrar_conflito(
-        client, ATENDIMENTO, org_id, atendimento_id, f"parcela.{parcela['id']}.valor",
+        client, ATENDIMENTO, org_id, atendimento_id, campo_conflito,
         valor_anterior=str(atual),
         origem_anterior=parcela.get("origem"),
         valor_proposto=str(proposto),
@@ -475,6 +690,28 @@ def _aplicar_fgts(
     if bool(atual.get("fgts")) == True:  # noqa: E712 - explicit boolean compare, matches proposto
         return None, None
 
+    if campo_conflitos.mesmo_documento_pendente(
+        origem_atual=atual.get("fgts_origem"),
+        confirmado_em_atual=atual.get("fgts_confirmado_em"),
+        documento_id_atual=atual.get("fgts_documento_id"),
+        documento_id_proposto=documento_id,
+    ):
+        _gravar_financiamento(
+            client, org_id, atendimento_id, atual,
+            {
+                "fgts": True, "fgts_origem": tipo_documento,
+                "fgts_documento_id": str(documento_id), "fgts_em": _now(),
+                "fgts_confirmado_por": None, "fgts_confirmado_em": None,
+            },
+        )
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, ATENDIMENTO, org_id, atendimento_id, "financiamento.fgts", decidido_por=None,
+        )
+        return None, None
+
+    if _ja_rejeitado_pelo_usuario(client, org_id, atendimento_id, "financiamento.fgts", True):
+        return AVISO_CONFLITO_JA_REJEITADO, None
+
     novo = campo_conflitos.registrar_conflito(
         client, ATENDIMENTO, org_id, atendimento_id, "financiamento.fgts",
         valor_anterior=bool(atual.get("fgts")),
@@ -516,6 +753,33 @@ def _aplicar_numero_proposta(
 
     if str(atual.get("numero_proposta")) == str(proposto):
         return None, None
+
+    if campo_conflitos.mesmo_documento_pendente(
+        origem_atual=atual.get("numero_proposta_origem"),
+        confirmado_em_atual=atual.get("numero_proposta_confirmado_em"),
+        documento_id_atual=atual.get("numero_proposta_documento_id"),
+        documento_id_proposto=documento_id,
+    ):
+        _gravar_financiamento(
+            client, org_id, atendimento_id, atual,
+            {
+                "numero_proposta": proposto, "numero_proposta_origem": tipo_documento,
+                "numero_proposta_documento_id": str(documento_id),
+                "numero_proposta_em": _now(),
+                "numero_proposta_confirmado_por": None,
+                "numero_proposta_confirmado_em": None,
+            },
+        )
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, ATENDIMENTO, org_id, atendimento_id,
+            "financiamento.numero_proposta", decidido_por=None,
+        )
+        return None, None
+
+    if _ja_rejeitado_pelo_usuario(
+        client, org_id, atendimento_id, "financiamento.numero_proposta", proposto,
+    ):
+        return AVISO_CONFLITO_JA_REJEITADO, None
 
     novo = campo_conflitos.registrar_conflito(
         client, ATENDIMENTO, org_id, atendimento_id, "financiamento.numero_proposta",
@@ -592,6 +856,34 @@ def _aplicar_agente_financeiro(
     if str(atual.get("agente_financeiro_id")) == str(agente_id):
         return None, None
 
+    if campo_conflitos.mesmo_documento_pendente(
+        origem_atual=atual.get("agente_financeiro_origem"),
+        confirmado_em_atual=atual.get("agente_financeiro_confirmado_em"),
+        documento_id_atual=atual.get("agente_financeiro_documento_id"),
+        documento_id_proposto=documento_id,
+    ):
+        _gravar_financiamento(
+            client, org_id, atendimento_id, atual,
+            {
+                "agente_financeiro_id": str(agente_id),
+                "agente_financeiro_origem": tipo_documento,
+                "agente_financeiro_documento_id": str(documento_id),
+                "agente_financeiro_em": _now(),
+                "agente_financeiro_confirmado_por": None,
+                "agente_financeiro_confirmado_em": None,
+            },
+        )
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, ATENDIMENTO, org_id, atendimento_id,
+            "financiamento.agente_financeiro", decidido_por=None,
+        )
+        return None, None
+
+    if _ja_rejeitado_pelo_usuario(
+        client, org_id, atendimento_id, "financiamento.agente_financeiro", str(agente_id),
+    ):
+        return AVISO_CONFLITO_JA_REJEITADO, None
+
     novo = campo_conflitos.registrar_conflito(
         # 🔴 `financiamento.agente_financeiro` — bare, no `_id` suffix. The
         # DB COLUMN is `agente_financeiro_id`; the CONFLICT campo string
@@ -665,6 +957,30 @@ def _aplicar_situacao(
 
     if situacao_atual == "aprovado":
         return None, None
+
+    if campo_conflitos.mesmo_documento_pendente(
+        origem_atual=origem_atual,
+        confirmado_em_atual=(atual or {}).get("situacao_confirmado_em"),
+        documento_id_atual=(atual or {}).get("situacao_documento_id"),
+        documento_id_proposto=documento_id,
+    ):
+        _gravar_financiamento(
+            client, org_id, atendimento_id, atual,
+            {
+                "situacao": "aprovado", "situacao_em": _now(), "situacao_por": None,
+                "situacao_origem": tipo_documento, "situacao_documento_id": str(documento_id),
+            },
+        )
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, ATENDIMENTO, org_id, atendimento_id,
+            "financiamento.situacao", decidido_por=None,
+        )
+        return None, None
+
+    if _ja_rejeitado_pelo_usuario(
+        client, org_id, atendimento_id, "financiamento.situacao", "aprovado",
+    ):
+        return AVISO_CONFLITO_JA_REJEITADO, None
 
     novo = campo_conflitos.registrar_conflito(
         client, ATENDIMENTO, org_id, atendimento_id, "financiamento.situacao",
@@ -743,6 +1059,15 @@ def _aplicar_favorecido_vendedor(
             patch["origem"] = tipo_documento
             patch["documento_id"] = str(documento_id)
             patch["extraido_em"] = now
+        # 🔴 Finding [MEDIUM] (audit, 2026-09-28): ANY machine write to a
+        # favorecido field re-opens confirmation — before this fix, a
+        # partial fill only stamped `origem`/`documento_id` when they were
+        # still NULL and never touched `confirmado_*`, so a vision-read
+        # value landing on an already human-confirmed row kept reading as
+        # confirmed. See `atualizar_favorecido`'s own reverse fix (a human
+        # edit re-confirms) for the other half of this pair.
+        patch["confirmado_por"] = None
+        patch["confirmado_em"] = None
         _t(client, FAVORECIDOS_TABLE).update(patch).eq("id", atual["id"]).execute()
         return
 
@@ -831,8 +1156,17 @@ def aplicar_leitura(
     Returns `{"status": OK|SEM_DADOS, "aviso": str|None, "conflitos": [...]}`.
     """
     cpfs_negocio = _cpfs_do_negocio(client, org_id, atendimento_id)
-    if not _pertence_ao_negocio(leitura, cpfs_negocio):
+    pertence = _pertence_ao_negocio(leitura, cpfs_negocio)
+    if pertence == OUTRO_NEGOCIO:
         return {"status": SEM_DADOS, "aviso": "documento_de_outro_negocio", "conflitos": []}
+    # Finding [MEDIUM] (audit, 2026-09-28) — `NAO_VERIFICADO` (no validated
+    # CPF read at all) is no longer trusted the way `PERTENCE` is: the two
+    # membership-gated appliers below route an empty field as a pending
+    # conflict instead of filling it, each signalling `AVISO_PERTENCIMENTO_
+    # NAO_VERIFICADO` on its own when that actually happens (never appended
+    # unconditionally here — an unverified document with nothing empty to
+    # fill has nothing to warn about).
+    verificado = pertence == PERTENCE
 
     # The SEED PARSER's own aviso (e.g. `quadro_resumo_soma_divergente` —
     # §D.5) rides on `leitura.aviso`; this module's own avisos (below) are
@@ -846,16 +1180,16 @@ def aplicar_leitura(
     ))
     conflitos: list[dict] = []
 
-    for aplicar in (
-        _aplicar_valor_negociado,
-        _aplicar_financiamento_parcela,
-        _aplicar_fgts,
-        _aplicar_numero_proposta,
-        _aplicar_agente_financeiro,
-        _aplicar_situacao,
+    for aplicar, kwargs in (
+        (_aplicar_valor_negociado, {"verificado": verificado}),
+        (_aplicar_financiamento_parcela, {"verificado": verificado}),
+        (_aplicar_fgts, {}),
+        (_aplicar_numero_proposta, {}),
+        (_aplicar_agente_financeiro, {}),
+        (_aplicar_situacao, {}),
     ):
         aviso, conflito = aplicar(
-            client, org_id, atendimento_id, tipo_documento, documento_id, leitura,
+            client, org_id, atendimento_id, tipo_documento, documento_id, leitura, **kwargs,
         )
         if aviso:
             avisos.append(aviso)
@@ -878,9 +1212,12 @@ def aplicar_leitura(
         not _vazio(getattr(leitura, campo, None))
         for campo in fontes.FONTES[tipo_documento].campos
     )
+    # A code fired by more than one applier (e.g. `AVISO_PERTENCIMENTO_NAO_
+    # VERIFICADO` from BOTH gated appliers) is surfaced once, order-preserved.
+    avisos_unicos = list(dict.fromkeys(avisos))
     return {
         "status": OK if achou_algo else SEM_DADOS,
-        "aviso": "; ".join(avisos) if avisos else None,
+        "aviso": "; ".join(avisos_unicos) if avisos_unicos else None,
         "conflitos": conflitos,
     }
 
@@ -956,9 +1293,26 @@ async def extrair(
     # background task, not a request-scoped read.
     financiamento_service.STORE.log_acesso(client, org_id, documento_id, None, "extract")
 
-    leitura = await extractor.extract(
-        blob.data, mimetype=documento.get("mime_type"), filename=documento.get("nome_original"),
-    )
+    # 🔴 Finding [LOW] (audit, 2026-09-28): `extractor.extract` used to run
+    # OUTSIDE any try — an exception here left the document stuck in
+    # `processando` until the D3 sweep's stale timeout, and a manual
+    # re-extraction was refused meanwhile (`deve_extrair`/the router's own
+    # in-flight guard). Named `erro` code, same posture as the `storage`
+    # read failure just above.
+    try:
+        leitura = await extractor.extract(
+            blob.data, mimetype=documento.get("mime_type"), filename=documento.get("nome_original"),
+        )
+    except Exception as exc:  # noqa: BLE001 - detached job; record, never raise (lesson G6)
+        logger.exception(
+            "negociacao_extracao %s: extractor.extract raised for tipo=%s",
+            documento_id, tipo_documento,
+        )
+        _marcar_documento(
+            client, documento_id, extracao_status="erro",
+            extracao_erro=f"extrator: {exc}", extracao_em=_now(),
+        )
+        return {"status": ERRO, "erro": "extrator"}
 
     erro = getattr(leitura, "error", None)
     if erro:
@@ -1025,17 +1379,24 @@ async def extrair(
 
 
 #: `(tabela, owner_col_alvo)` and the prefix→campo map per D1 surface, so
-#: `confirmar_leitura` walks all three tables from one place rather than
-#: three near-identical loops.
+#: `confirmar_leitura` walks all FOUR tables from one place rather than
+#: near-identical loops per surface.
 _QUINTETOS_NEGOCIACAO: tuple[str, ...] = ("valor_negociado",)
-_QUINTETOS_FINANCIAMENTO: tuple[str, ...] = ("fgts", "numero_proposta", "agente_financeiro")
+#: 🔴 Finding [LOW] (audit, 2026-09-28): `situacao` was missing here — a
+#: user clicking "confirmar" on a `contrato_financiamento` still got the
+#: contract generator's 409 (H6's `situacao` stays machine-pending even
+#: after the document it came from was confirmed).
+_QUINTETOS_FINANCIAMENTO: tuple[str, ...] = (
+    "situacao", "fgts", "numero_proposta", "agente_financeiro",
+)
 
 
 def confirmar_leitura(client: Any, org_id: UUID, atendimento_id: UUID, documento_id: UUID, *, confirmado_por: Optional[UUID]) -> dict:
     """`POST .../extracao/confirmar` (§E5.2) — stamps `confirmado_*` on
     every STILL-PENDING value whose `*_documento_id == documento_id`,
-    across all three surfaces. Idempotent: a value already confirmed (or
-    proposed by a DIFFERENT document) is left untouched."""
+    across all FOUR surfaces (negociação / parcelas / financiamento /
+    favorecidos). Idempotent: a value already confirmed (or proposed by a
+    DIFFERENT document) is left untouched."""
     now = _now()
     confirmados = 0
 
@@ -1091,6 +1452,24 @@ def confirmar_leitura(client: Any, org_id: UUID, atendimento_id: UUID, documento
                 "atendimento_id", str(atendimento_id)
             ).execute()
             confirmados += len(patch) // 2
+
+    # 🔴 Finding [LOW] (audit, 2026-09-28): favorecidos were never covered
+    # here — H5's Quadro-Resumo-sourced bank data stayed machine-pending
+    # even after a user confirmed the document it came from.
+    favorecidos = (
+        _t(client, FAVORECIDOS_TABLE).select("id,documento_id,confirmado_em")
+        .eq("org_id", str(org_id)).eq("atendimento_id", str(atendimento_id))
+        .eq("documento_id", str(documento_id)).is_("confirmado_em", "null")
+        .execute()
+    ).data or []
+    for favorecido in favorecidos:
+        _t(client, FAVORECIDOS_TABLE).update(
+            {
+                "confirmado_por": str(confirmado_por) if confirmado_por else None,
+                "confirmado_em": now,
+            }
+        ).eq("id", favorecido["id"]).execute()
+        confirmados += 1
 
     return {"confirmados": confirmados}
 

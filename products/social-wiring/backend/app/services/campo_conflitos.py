@@ -31,6 +31,24 @@ WHAT THIS OWNS
   _em` stamped only on success, a missing notifier logged as a WARNING
   naming every conflict it could not announce — never silently dropped.
 
+THE SUPERSEDE-ON-DISAGREEING-DEDUPE FIX (audit finding, 2026-09-28)
+------------------------------------------------------------------
+The original dedupe (`conflito_pendente_existente`) skipped `registrar_
+conflito` whenever ANY conflict was already `pendente` on (owner, campo) —
+regardless of what that pending row's OWN `valor_proposto` said. A real
+sequence this silently mishandled: document A proposes X (conflict opens,
+`pendente`), document B (a CORRECTION) later proposes Y — the second
+`registrar_conflito` call saw a pending row already there and skipped,
+leaving the STALE X pending while Y — the value a human actually needs to
+see — was dropped with no trace. `registrar_conflito` now re-reads the
+pending row and compares `valor_proposto`: the SAME value again is still a
+true no-op (nothing new to tell a human); a DIFFERENT value supersedes the
+stale row — closed the same way `fechar_conflitos_pendentes` closes one
+(`status='rejeitado'`, `decidido_por=None` — a SYSTEM resolution, never a
+human "no"; see that function's own docstring) — before opening the fresh
+one. The per-(owner, campo) partial UNIQUE index (`pendente` only) is why
+the close must land before the insert, not after.
+
 THE D1 SAME-DOCUMENT-RE-READ REFINEMENT (2026-09-25 live case)
 ------------------------------------------------------------------
 Every D1 apply path opens a conflict when the incoming reading disagrees
@@ -146,19 +164,32 @@ def registrar_conflito(
     fonte_id: Optional[Any] = None,
     documento_id_proposto: Optional[Any] = None,
 ) -> Optional[dict]:
-    """Open a conflict, or skip when one is already pending for (owner,
-    campo) — see the module docstring's "dedupe-pending". Returns the NEW
+    """Open a conflict, skip when one ALREADY PENDING proposes the exact
+    same `valor_proposto` (a true duplicate — nothing new to tell a human),
+    or SUPERSEDE a pending row proposing a DIFFERENT value (see the module
+    docstring's "the supersede-on-disagreeing-dedupe fix"). Returns the NEW
     row when one was actually inserted (so the caller can notify), or
-    `None` when nothing was — the caller should treat both as "handled",
-    never as an error.
+    `None` when the incoming proposal was a duplicate of what's already
+    pending — the caller should treat both as "handled", never as an error.
 
     `documento_id_proposto` is written only when `table.has_documento_id_
     proposto` — passing it for `CLIENTE`/`EMPRESA` is silently ignored
     rather than refused, so a generic caller (a future field shared across
     surfaces) does not need to branch on which table it is writing.
     """
-    if conflito_pendente_existente(client, table, org_id, owner, campo) is not None:
-        return None
+    existente = conflito_pendente_existente(client, table, org_id, owner, campo)
+    if existente is not None:
+        if str(existente.get("valor_proposto")) == str(valor_proposto):
+            return None
+        _t(client, table.table).update(
+            {"status": "rejeitado", "decidido_por": None, "decidido_em": _now()}
+        ).eq("id", existente["id"]).execute()
+        logger.info(
+            "%s: pending conflict %s on %r superseded by a newer, "
+            "different proposal (%r -> %r)",
+            table.table, existente["id"], campo,
+            existente.get("valor_proposto"), valor_proposto,
+        )
     linha: dict[str, Any] = {
         "id": str(uuid4()),
         "org_id": str(org_id),

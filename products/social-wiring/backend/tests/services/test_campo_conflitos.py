@@ -66,7 +66,7 @@ class TestOpenAndDedupe:
         assert len(stored) == 1
         assert stored[0]["id"] == row["id"]
 
-    def test_a_second_call_on_the_same_owner_and_campo_is_a_noop(self, client):
+    def test_a_second_call_with_the_same_proposed_value_is_a_noop(self, client):
         first = campo_conflitos.registrar_conflito(
             client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
             valor_anterior="a", origem_anterior="manual",
@@ -75,7 +75,7 @@ class TestOpenAndDedupe:
         second = campo_conflitos.registrar_conflito(
             client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
             valor_anterior="a", origem_anterior="manual",
-            valor_proposto="c", origem_proposto="rg",
+            valor_proposto="b", origem_proposto="rg",
         )
         assert first is not None
         assert second is None
@@ -83,6 +83,7 @@ class TestOpenAndDedupe:
             client.table(campo_conflitos.CLIENTE.table).select("*").execute()
         ).data
         assert len(stored) == 1
+        assert stored[0]["status"] == "pendente"
 
     def test_a_different_campo_on_the_same_owner_opens_its_own_row(self, client):
         campo_conflitos.registrar_conflito(
@@ -100,6 +101,34 @@ class TestOpenAndDedupe:
             client.table(campo_conflitos.CLIENTE.table).select("*").execute()
         ).data
         assert len(stored) == 2
+
+    def test_a_second_call_with_a_different_value_supersedes_the_stale_row(
+        self, client
+    ):
+        """The fix (audit finding, 2026-09-28): a CORRECTED proposal must
+        not be silently dropped just because a stale one is still
+        pending."""
+        primeiro = campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
+            valor_anterior="a", origem_anterior="manual",
+            valor_proposto="b", origem_proposto="rg",
+        )
+        segundo = campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
+            valor_anterior="a", origem_anterior="manual",
+            valor_proposto="c", origem_proposto="rg",
+        )
+        assert segundo is not None
+        assert segundo["valor_proposto"] == "c"
+        stored = (
+            client.table(campo_conflitos.CLIENTE.table).select("*").execute()
+        ).data
+        assert len(stored) == 2
+        by_id = {r["id"]: r for r in stored}
+        assert by_id[primeiro["id"]]["status"] == "rejeitado"
+        assert by_id[primeiro["id"]]["decidido_por"] is None
+        assert by_id[primeiro["id"]]["decidido_em"] is not None
+        assert by_id[segundo["id"]]["status"] == "pendente"
 
     def test_conflito_pendente_existente_reads_the_open_row(self, client):
         assert campo_conflitos.conflito_pendente_existente(

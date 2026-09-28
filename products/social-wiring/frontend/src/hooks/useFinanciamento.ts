@@ -102,6 +102,12 @@ export const AVISO_LABEL: Record<string, string> = {
   itbi_transacao_diverge_contrato:
     "O valor da transação na guia de ITBI difere do valor negociado — confira.",
   aliquota_fora_da_faixa: "A alíquota de ITBI lida está fora da faixa esperada — confira.",
+  fgts_nao_lido:
+    "O FGTS não foi identificado no Quadro Resumo — a parcela de financiamento não foi preenchida automaticamente.",
+  pertencimento_nao_verificado:
+    "Não foi possível confirmar que este documento pertence a este negócio — o valor foi enviado para revisão.",
+  conflito_ja_rejeitado:
+    "Este valor já havia sido recusado anteriormente — nada foi reaberto.",
 };
 
 /** An `extracao_aviso` can carry SEVERAL codes — the seed parser joins its

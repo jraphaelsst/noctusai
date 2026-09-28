@@ -351,6 +351,45 @@ class TestFavorecidoScoping:
         )
         assert removed.status_code == 204
 
+    def test_a_human_edit_stamps_manual_and_confirmed(self, client, scoped):
+        """🔴 Reverse of the machine-write reset (audit finding, 2026-09-28):
+        a human PATCH through this route owns the row from then on — it
+        must not keep reading as an unconfirmed vision read just because
+        `negociacao_extracao_service` filled it first."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        favorecido_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_favorecidos",
+            [
+                {
+                    "id": favorecido_id, "org_id": ORG_ID, "atendimento_id": aid,
+                    "nome": "Maria Vendedora", "cpf_cnpj": "11144477735",
+                    "banco": "Bradesco", "agencia": "1234", "conta": "56789-0",
+                    "pix": None, "origem": "contrato_financiamento",
+                    "documento_id": str(uuid4()),
+                    "confirmado_por": None, "confirmado_em": None,
+                    "created_at": "2026-01-01T00:00:00+00:00", "created_por": None,
+                    "updated_at": None, "updated_por": None,
+                }
+            ],
+        )
+
+        patched = client.patch(
+            f"/api/clientes/{cid}/negociacao/favorecidos/{favorecido_id}",
+            json={"agencia": "4321"},
+            headers=_auth(),
+        )
+        assert patched.status_code == 200, patched.text
+
+        row = (
+            scoped.table("atendimento_favorecidos").select("*")
+            .eq("id", favorecido_id).execute().data[0]
+        )
+        assert row["agencia"] == "4321"
+        assert row["origem"] == "manual"
+        assert row["confirmado_por"] is not None
+        assert row["confirmado_em"] is not None
+
 
 class TestIntermediarios:
     def test_a_percentual_intermediario_round_trips(self, client, scoped):

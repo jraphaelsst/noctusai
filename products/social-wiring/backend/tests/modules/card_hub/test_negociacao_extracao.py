@@ -96,6 +96,11 @@ class _FinanciamentoLeitura:
     compradores: Sequence[_Pessoa] = field(default_factory=tuple)
     vendedores: Sequence[_Pessoa] = field(default_factory=tuple)
     confiancas: Mapping[str, str] = field(default_factory=dict)
+    # `rotulos` — per-field found-labels map (finding [MED-HIGH], audit,
+    # 2026-09-28): a key present (even with an unparseable value) means the
+    # Quadro Resumo carried a labelled line for that field; absent means the
+    # parser found none at all. See `nx._rotulo_lido`.
+    rotulos: Mapping[str, str] = field(default_factory=dict)
     aviso: Optional[str] = None
     error: Optional[str] = None
     error_message: Optional[str] = None
@@ -246,9 +251,20 @@ class TestBelongsToThisDeal:
         negociacao = _t(scoped, "atendimento_negociacao").select("*").execute().data
         assert negociacao == []
 
-    def test_no_cpf_read_at_all_is_inconclusive_not_blocked(self, scoped):
-        """No valid CPF on the document -> the apply still runs (mirrors
-        `aplicar_cartao`'s own `if leitura.cnpj and ...` conditional)."""
+    def test_no_cpf_read_at_all_routes_to_pending_conflict_not_a_direct_fill(
+        self, scoped
+    ):
+        """🔴 Finding [MEDIUM] (audit, 2026-09-28): the OLD behaviour here
+        trusted an unverifiable document exactly as much as a verified one
+        — `_pertence_ao_negocio` returned `PERTENCE`-equivalent (`True`)
+        whenever NO CPF was read at all (vision CPFs often fail their check
+        digit; ITBI guides often carry none), so another deal's ITBI guide
+        could silently seed THIS atendimento's `valor_negociado`. The fix:
+        this is now `NAO_VERIFICADO`, not `PERTENCE` — the D1 apply opens a
+        PENDING conflict (never a direct fill), aviso `pertencimento_nao_
+        verificado`, so a human decides whether it even belongs here.
+        Preserves `test_no_matching_cpf_applies_nothing`'s "present-and-
+        WRONG" behaviour untouched — this is the OTHER branch, "absent"."""
         cid, aid = _seed(scoped, com_negociacao=False)
         doc_id = str(uuid4())
         scoped.set_table_data("atendimento_documentos", [_documento(doc_id, aid, "guia_itbi")])
@@ -257,8 +273,39 @@ class TestBelongsToThisDeal:
         resultado = nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "guia_itbi", leitura)
 
         assert resultado["status"] == nx.OK
+        assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
+        assert len(resultado["conflitos"]) == 1
+        conflito = resultado["conflitos"][0]
+        assert conflito["campo"] == "valor_negociado"
+        assert conflito["valor_anterior"] is None
+        assert conflito["valor_proposto"] == "500000.00"
         negociacao = _t(scoped, "atendimento_negociacao").select("*").execute().data
-        assert negociacao[0]["valor_negociado"] == "500000.00"
+        assert negociacao[0]["valor_negociado"] is None  # NOT filled directly
+
+    def test_a_valid_conta_credito_cpf_counts_as_membership_evidence(self, scoped):
+        """Finding [MEDIUM] (a), audit 2026-09-28 (live case, deal 883):
+        the party-header CPFs are all misread by vision, but the Quadro
+        Resumo's own account-box CPF is valid and matches the vendedora —
+        that alone must verify membership and fill the empty field
+        directly, not route it as `pertencimento_nao_verificado`."""
+        cid, aid = _seed(scoped, com_negociacao=False, com_vendedor=True)
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+        conta = _ContaCreditoVendedor(
+            banco_nome="Bradesco", titular_cpf=CPF_VENDEDOR, titular_cpf_valido=True,
+        )
+        leitura = _FinanciamentoLeitura(
+            valor_compra_venda=Decimal("500000.00"), conta_credito_vendedor=conta,
+        )
+        resultado = nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura,
+        )
+
+        assert "pertencimento_nao_verificado" not in (resultado["aviso"] or "")
+        row = _t(scoped, "atendimento_negociacao").select("*").execute().data[0]
+        assert row["valor_negociado"] == "500000.00"
 
 
 # ─── H2: valor_negociado — fill-empty, else conflict ────────────────────
@@ -270,7 +317,13 @@ class TestValorNegociado:
         doc_id = str(uuid4())
         scoped.set_table_data("atendimento_documentos", [_documento(doc_id, aid, "guia_itbi")])
 
-        leitura = _GuiaItbiLeitura(valor_transacao=Decimal("500000.00"))
+        # A validated, matching CPF — this document's membership IS
+        # verified, so its empty `valor_negociado` fills directly (contrast
+        # `TestBelongsToThisDeal`'s NAO_VERIFICADO case, which does not).
+        leitura = _GuiaItbiLeitura(
+            valor_transacao=Decimal("500000.00"),
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        )
         resultado = nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "guia_itbi", leitura)
 
         assert resultado["status"] == nx.OK
@@ -308,6 +361,100 @@ class TestValorNegociado:
         )
         assert len(pendentes) == 1
 
+    def test_a_previously_rejected_value_is_not_reopened(self, scoped):
+        """Finding [MEDIUM] (audit, 2026-09-28), ported from `imovel_hub.
+        campos_extraidos_service.aplicar`'s REJEITADO_ANTES check: a human
+        already said no to `480000.00` — a re-run proposing the SAME value
+        again must not re-open (and re-notify) the same question."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        scoped.set_table_data(
+            "atendimento_campo_conflitos",
+            [
+                {
+                    "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+                    "campo": "valor_negociado", "valor_anterior": "500000.00",
+                    "origem_anterior": "manual", "valor_proposto": "480000.00",
+                    "origem_proposto": "contrato_financiamento",
+                    "documento_id_proposto": None, "confianca_proposta": None,
+                    "fonte_tabela": None, "fonte_id": None,
+                    "status": "rejeitado", "notificado_em": None,
+                    "decidido_por": str(uuid4()),
+                    "decidido_em": "2026-01-02T00:00:00+00:00",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+        )
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+
+        leitura = _FinanciamentoLeitura(valor_compra_venda=Decimal("480000.00"))
+        resultado = nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura,
+        )
+
+        assert "conflito_ja_rejeitado" in (resultado["aviso"] or "")
+        assert resultado["conflitos"] == []
+        row = _t(scoped, "atendimento_negociacao").select("*").execute().data[0]
+        assert row["valor_negociado"] == "500000.00"  # untouched
+        pendentes = (
+            _t(scoped, "atendimento_campo_conflitos").select("*")
+            .eq("status", "pendente").execute().data
+        )
+        assert pendentes == []
+
+    def test_a_re_read_of_the_same_pending_document_replaces_not_conflicts(
+        self, scoped
+    ):
+        """Finding [MEDIUM] (audit, 2026-09-28), ported from `campo_
+        conflitos.mesmo_documento_pendente`'s D1 same-document-re-read
+        refinement: a re-extraction of the SAME document whose earlier
+        pass is still machine-pending is a REFRESH, not a second opinion —
+        it replaces the stale value and closes any conflict it had opened,
+        rather than conflicting with itself."""
+        aid = str(uuid4())
+        doc_id = str(uuid4())
+        cid, aid = _seed(
+            scoped, aid=aid, com_negociacao=True,
+            negociacao_over={
+                "valor_negociado": "480000.00",
+                "valor_negociado_origem": "contrato_financiamento",
+                "valor_negociado_documento_id": doc_id,
+                "valor_negociado_confirmado_em": None,
+            },
+        )
+        scoped.set_table_data(
+            "atendimento_campo_conflitos",
+            [
+                {
+                    "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+                    "campo": "valor_negociado", "valor_anterior": "500000.00",
+                    "origem_anterior": "manual", "valor_proposto": "480000.00",
+                    "origem_proposto": "contrato_financiamento",
+                    "documento_id_proposto": doc_id, "confianca_proposta": None,
+                    "fonte_tabela": None, "fonte_id": None,
+                    "status": "pendente", "notificado_em": None,
+                    "decidido_por": None, "decidido_em": None,
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+        )
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+
+        leitura = _FinanciamentoLeitura(valor_compra_venda=Decimal("490000.00"))
+        resultado = nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura,
+        )
+
+        assert resultado["conflitos"] == []
+        row = _t(scoped, "atendimento_negociacao").select("*").execute().data[0]
+        assert row["valor_negociado"] == "490000.00"  # replaced, not conflicted
+        conflitos = _t(scoped, "atendimento_campo_conflitos").select("*").execute().data
+        assert all(c["status"] != "pendente" for c in conflitos)
+
     def test_same_value_is_a_no_op(self, scoped):
         cid, aid = _seed(scoped, com_negociacao=True)
         doc_id = str(uuid4())
@@ -334,6 +481,8 @@ class TestFinanciamentoParcela:
 
         leitura = _FinanciamentoLeitura(
             valor_financiado=Decimal("400000.00"), valor_fgts=Decimal("20000.00"),
+            rotulos={"valor_fgts": "FGTS"},
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
         )
         nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura)
 
@@ -346,6 +495,62 @@ class TestFinanciamentoParcela:
         assert parcelas[0]["origem"] == "contrato_financiamento"
         assert parcelas[0]["documento_id"] == doc_id
 
+    def test_unverified_membership_routes_the_parcela_to_a_pending_conflict(
+        self, scoped
+    ):
+        """Finding [MEDIUM] (b) (audit, 2026-09-28): no CPF at all was read
+        — the financiamento parcela must not fill directly; the ROW still
+        gets created (so a later accept has something to UPDATE) but
+        `valor`/`origem`/`documento_id` stay empty until a human decides."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+        leitura = _FinanciamentoLeitura(
+            valor_financiado=Decimal("400000.00"), rotulos={"valor_fgts": "FGTS"},
+        )
+        resultado = nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura,
+        )
+
+        assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
+        assert len(resultado["conflitos"]) == 1
+        assert resultado["conflitos"][0]["valor_anterior"] is None
+        assert resultado["conflitos"][0]["valor_proposto"] == "400000.00"
+        parcelas = (
+            _t(scoped, "atendimento_negociacao_parcelas")
+            .select("*").eq("tipo", "financiamento").execute().data
+        )
+        assert len(parcelas) == 1
+        assert parcelas[0]["valor"] is None
+        assert parcelas[0]["origem"] is None
+
+    def test_fgts_label_not_found_on_contrato_refuses_the_whole_compose(self, scoped):
+        """Finding [MED-HIGH] (audit, 2026-09-28): a Quadro Resumo whose
+        FGTS label the seed doesn't recognize must not silently compose the
+        parcela from `valor_financiado` alone (the original bug: `or
+        Decimal("0")` turned "unread" into "zero" with no human signal)."""
+        cid, aid = _seed(scoped, com_negociacao=True)
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+        leitura = _FinanciamentoLeitura(
+            valor_financiado=Decimal("400000.00"),
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        )
+        resultado = nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura,
+        )
+
+        assert "fgts_nao_lido" in (resultado["aviso"] or "")
+        parcelas = (
+            _t(scoped, "atendimento_negociacao_parcelas")
+            .select("*").eq("tipo", "financiamento").execute().data
+        )
+        assert parcelas == []
+
     def test_a_null_valor_parcela_fills(self, scoped):
         aid = str(uuid4())
         cid, aid = _seed(
@@ -356,7 +561,13 @@ class TestFinanciamentoParcela:
         scoped.set_table_data(
             "atendimento_documentos", [_documento(doc_id, aid, "proposta_financiamento")],
         )
-        leitura = _FinanciamentoLeitura(valor_financiado=Decimal("400000.00"))
+        # `proposta_financiamento` never carries a Quadro Resumo — the FGTS
+        # gate is scoped to `contrato_financiamento` only, so no `rotulos`
+        # is needed here.
+        leitura = _FinanciamentoLeitura(
+            valor_financiado=Decimal("400000.00"),
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        )
         nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "proposta_financiamento", leitura)
 
         parcela = (
@@ -375,7 +586,9 @@ class TestFinanciamentoParcela:
         scoped.set_table_data(
             "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
         )
-        leitura = _FinanciamentoLeitura(valor_financiado=Decimal("390000.00"))
+        leitura = _FinanciamentoLeitura(
+            valor_financiado=Decimal("390000.00"), rotulos={"valor_fgts": "FGTS"},
+        )
         resultado = nx.aplicar_leitura(
             scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura,
         )
@@ -401,7 +614,9 @@ class TestFinanciamentoParcela:
         scoped.set_table_data(
             "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
         )
-        leitura = _FinanciamentoLeitura(valor_financiado=Decimal("400000.00"))
+        leitura = _FinanciamentoLeitura(
+            valor_financiado=Decimal("400000.00"), rotulos={"valor_fgts": "FGTS"},
+        )
         resultado = nx.aplicar_leitura(
             scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura,
         )
@@ -587,6 +802,45 @@ class TestFavorecidoVendedor:
         assert favorecidos[0]["cpf_cnpj"] == CPF_VENDEDOR
         assert favorecidos[0]["origem"] == "contrato_financiamento"
 
+    def test_a_partial_fill_on_a_confirmed_row_reopens_confirmation(self, scoped):
+        """🔴 Finding [MEDIUM] (audit, 2026-09-28): a vision-read value
+        landing on an already-confirmed favorecido must not keep counting
+        as confirmed. `banco`/`conta` were already human-confirmed;
+        `agencia` was left empty and this reading fills it."""
+        cid, aid = _seed(scoped, com_negociacao=True, com_vendedor=True)
+        favorecido_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_favorecidos",
+            [
+                {
+                    "id": favorecido_id, "org_id": ORG_ID, "atendimento_id": aid,
+                    "nome": "Vendedor", "cpf_cnpj": CPF_VENDEDOR,
+                    "banco": "Bradesco", "agencia": None, "conta": "56789-0",
+                    "pix": None, "origem": "manual", "documento_id": None,
+                    "confirmado_por": str(uuid4()), "confirmado_em": "2026-01-01T00:00:00+00:00",
+                    "created_at": "2026-01-01T00:00:00+00:00", "created_por": None,
+                    "updated_at": None, "updated_por": None,
+                }
+            ],
+        )
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+        conta = _ContaCreditoVendedor(
+            agencia="1234", titular_cpf=CPF_VENDEDOR, titular_cpf_valido=True,
+        )
+        leitura = _FinanciamentoLeitura(conta_credito_vendedor=conta)
+        nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura)
+
+        row = (
+            _t(scoped, "atendimento_favorecidos").select("*")
+            .eq("id", favorecido_id).execute().data[0]
+        )
+        assert row["agencia"] == "1234"
+        assert row["confirmado_por"] is None
+        assert row["confirmado_em"] is None
+
     def test_an_invalid_cpf_never_matches(self, scoped):
         cid, aid = _seed(scoped, com_negociacao=True, com_vendedor=True)
         doc_id = str(uuid4())
@@ -612,7 +866,10 @@ class TestIntermediariaDerivada:
         scoped.set_table_data(
             "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
         )
-        leitura = _FinanciamentoLeitura(valor_financiado=Decimal("400000.00"))
+        leitura = _FinanciamentoLeitura(
+            valor_financiado=Decimal("400000.00"), rotulos={"valor_fgts": "FGTS"},
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        )
         nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura)
 
         intermediarias = (
@@ -714,7 +971,10 @@ class TestConfirmarLeitura:
         cid, aid = _seed(scoped, com_negociacao=False)
         doc_id = str(uuid4())
         scoped.set_table_data("atendimento_documentos", [_documento(doc_id, aid, "guia_itbi")])
-        leitura = _GuiaItbiLeitura(valor_transacao=Decimal("500000.00"))
+        leitura = _GuiaItbiLeitura(
+            valor_transacao=Decimal("500000.00"),
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        )
         nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "guia_itbi", leitura)
 
         usuario_id = uuid4()
@@ -725,6 +985,36 @@ class TestConfirmarLeitura:
         row = _t(scoped, "atendimento_negociacao").select("*").execute().data[0]
         assert row["valor_negociado_confirmado_em"] is not None
         assert row["valor_negociado_confirmado_por"] == str(usuario_id)
+
+    def test_covers_situacao_and_favorecidos_too(self, scoped):
+        """🔴 Finding [LOW] (audit, 2026-09-28): `situacao` and favorecidos
+        were missing here — a user clicking "confirmar" on a `contrato_
+        financiamento` still got the contract generator's 409 because H6's
+        `situacao` (and H5's favorecido bank data) stayed machine-pending
+        even after the document they came from was confirmed."""
+        cid, aid = _seed(scoped, com_negociacao=True, com_vendedor=True)
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+        conta = _ContaCreditoVendedor(
+            banco_nome="Bradesco", titular_cpf=CPF_VENDEDOR, titular_cpf_valido=True,
+        )
+        leitura = _FinanciamentoLeitura(quadro_encontrado=True, conta_credito_vendedor=conta)
+        nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "contrato_financiamento", leitura)
+
+        usuario_id = uuid4()
+        resultado = nx.confirmar_leitura(
+            scoped, ORG_UUID, aid, doc_id, confirmado_por=usuario_id,
+        )
+        assert resultado["confirmados"] == 2  # situacao + favorecido
+        financiamento = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
+        assert financiamento["situacao"] == "aprovado"
+        assert financiamento["situacao_confirmado_em"] is not None
+        assert financiamento["situacao_confirmado_por"] == str(usuario_id)
+        favorecido = _t(scoped, "atendimento_favorecidos").select("*").execute().data[0]
+        assert favorecido["confirmado_em"] is not None
+        assert favorecido["confirmado_por"] == str(usuario_id)
 
 
 class TestResolverConflito:
