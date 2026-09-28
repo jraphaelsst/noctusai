@@ -40,7 +40,7 @@ import {
   type TarefaCard,
 } from "@/hooks/useEsteira";
 import { usePautas } from "@/hooks/usePautas";
-import { describeError } from "@/lib/errors";
+import { describeError, errorCode } from "@/lib/errors";
 import { SHEET_MOBILE } from "@/lib/mobileSheet";
 import { formatarMinutos, formatarPrazo, prazoVencido, rotuloPauta } from "./formatos";
 
@@ -80,6 +80,11 @@ export function TarefaDetalhe({
   const [modo, setModo] = useState<Modo>("ver");
   const [repertorioAberto, setRepertorioAberto] = useState(false);
   const [campos, setCampos] = useState({ titulo: "", responsavelId: "", prazo: "", pautaId: "" });
+  // Set from the SERVER's own 409 `horas_serao_perdidas` message — never
+  // computed from `minutosTotais > 0` client-side, which undercounts (or
+  // reads zero for) a sub-minute or still-running apontamento while the
+  // backend refuses on ANY apontamento regardless of its minutes.
+  const [avisoHoras, setAvisoHoras] = useState<string | null>(null);
   // "Rodando desde" used to be a static timestamp that never moved (achado
   // 22) — this ticks the elapsed time forward every 30s while a timer runs.
   const [agora, setAgora] = useState(() => Date.now());
@@ -90,6 +95,7 @@ export function TarefaDetalhe({
     setLinkUrl(null);
     setModo("ver");
     setRepertorioAberto(false);
+    setAvisoHoras(null);
   }, [tarefaId]);
 
   useEffect(() => {
@@ -176,19 +182,41 @@ export function TarefaDetalhe({
     );
   }
 
-  function confirmarExclusao() {
+  async function confirmarExclusao() {
     if (!tarefa) return;
-    // The hours are already loaded (`useApontamentos`) — the confirm step
-    // below shows them, so reaching this handler IS the user's informed
-    // confirmation; the server re-validates the figure regardless.
+    // A running timer never has a `minutos`/`duracao_segundos` yet (only
+    // `encerrar` finalizes it), so a still-ticking apontamento is counted as
+    // ZERO by both `useApontamentos` and the server's own perda message —
+    // encerrar it first so whatever number the user is shown (and whatever
+    // the server logs as lost) is the REAL elapsed time, not zero.
+    if (emAndamento) {
+      try {
+        await encerrar.mutateAsync(tarefa.id);
+      } catch (e) {
+        toast.error(describeError(e, "Não foi possível encerrar o cronômetro em andamento."));
+        return;
+      }
+    }
+    // First attempt never forces it — reaching a SECOND click (after the
+    // server's own 409 message is shown below) is the user's informed
+    // confirmation, not a client-side guess from `minutosTotais > 0`: that
+    // guess reads 0 (and so never asks) for sub-minute or still-running
+    // apontamentos, while the server refuses on ANY apontamento regardless
+    // of its minutes.
     excluir.mutate(
-      { id: tarefa.id, confirmarPerdaHoras: minutosTotais > 0 },
+      { id: tarefa.id, confirmarPerdaHoras: avisoHoras !== null },
       {
         onSuccess: () => {
           toast.success("Tarefa excluída");
           onClose();
         },
-        onError: (e) => toast.error(describeError(e, "Não foi possível excluir a tarefa.")),
+        onError: (e) => {
+          if (errorCode(e) === "horas_serao_perdidas") {
+            setAvisoHoras(describeError(e, "Excluir perde os registros de horas apontadas."));
+            return;
+          }
+          toast.error(describeError(e, "Não foi possível excluir a tarefa."));
+        },
       },
     );
   }
@@ -279,14 +307,22 @@ export function TarefaDetalhe({
     modo === "excluir"
       ? [
           {
-            label: excluir.isPending ? "Excluindo…" : "Confirmar exclusão",
+            label: excluir.isPending || encerrar.isPending
+              ? "Excluindo…"
+              : avisoHoras !== null
+                ? "Excluir mesmo assim"
+                : "Confirmar exclusão",
             variant: "destructive" as const,
             align: "start" as const,
-            disabled: excluir.isPending,
+            disabled: excluir.isPending || encerrar.isPending,
             onClick: confirmarExclusao,
             testId: "tarefa-confirmar-exclusao",
           },
-          { label: "Cancelar", variant: "ghost" as const, onClick: () => setModo("ver") },
+          {
+            label: "Cancelar",
+            variant: "ghost" as const,
+            onClick: () => { setModo("ver"); setAvisoHoras(null); },
+          },
         ]
       : modo === "editar"
         ? [
@@ -338,12 +374,8 @@ export function TarefaDetalhe({
           : []),
       ]}
       note={
-        modo === "excluir" && minutosTotais > 0 ? (
-          <span className="text-destructive">
-            Esta tarefa tem {formatarMinutos(minutosTotais)} de horas apontadas em{" "}
-            {apontamentos.length} {apontamentos.length === 1 ? "apontamento" : "apontamentos"}.
-            Excluir perde esses registros.
-          </span>
+        modo === "excluir" && avisoHoras !== null ? (
+          <span className="text-destructive">{avisoHoras}</span>
         ) : tarefa.observacao_cliente ? (
           <span>Cliente pediu: “{tarefa.observacao_cliente}”</span>
         ) : undefined
