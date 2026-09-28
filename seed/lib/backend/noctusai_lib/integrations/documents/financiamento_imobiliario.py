@@ -200,6 +200,18 @@ _BANCOS: dict[str, tuple[str, str]] = {
 }
 
 
+def _banco_por_codigo(codigo: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """`(nome canônico, código)` for a printed FEBRABAN code ("0341", "341")
+    — only codes `_BANCOS` already carries; anything else is `(None, None)`."""
+    digitos = re.sub(r"\D", "", codigo or "")
+    if not digitos:
+        return (None, None)
+    for canonico, cod in _BANCOS.values():
+        if int(cod) == int(digitos):
+            return (canonico, cod)
+    return (None, None)
+
+
 def _banco_por_nome(nome: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """`(nome canônico, código)` for the FIRST `_BANCOS` synonym found
     anywhere inside `nome` — never a guess: an unrecognised bank name
@@ -259,6 +271,10 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
         "CONTA DE CREDITO DO VENDEDOR",
         "DADOS BANCARIOS DO VENDEDOR",
         "CONTA PARA CREDITO AO VENDEDOR",
+        #: Itaú item 8 — the amount on the label line, the account on the
+        #: NEXT line as `|`-separated sub-fields (883, measured). See
+        #: `_bloco_conta`.
+        "VALOR A SER LIBERADO AO VENDEDOR",
     ),
 }
 
@@ -422,11 +438,41 @@ def _pessoas(valor: Optional[str]) -> tuple[PessoaFinanciamento, ...]:
 #: the bank/agência/conta/titular only mean anything AS a group, printed
 #: together inside one Quadro box.
 _CONTA_ROTULOS: dict[str, tuple[str, ...]] = {
-    "banco": ("BANCO",),
+    #: Itaú prints the CODE ("CÓD. BANCO: 0341") — see `_banco_por_codigo`.
+    "banco": ("COD. BANCO", "COD BANCO", "BANCO"),
     "agencia": ("AGENCIA", "AG"),
     "conta": ("CONTA", "CONTA CORRENTE", "C/C"),
-    "titular_cpf": ("CPF DO TITULAR", "CPF TITULAR", "CPF"),
+    "titular_cpf": ("CPF DO TITULAR", "CPF TITULAR", "CPF / CNPJ", "CPF/CNPJ", "CPF"),
 }
+
+#: A numbered Quadro item ("9 - VALOR A SER LIBERADO AO COMPRADOR") ends the
+#: account block `_bloco_conta` gathers.
+#: A box never runs longer than this — a missing item number must not let the
+#: block swallow the rest of the contract.
+_BLOCO_CONTA_MAX_LINHAS = 3
+_ITEM_NUMERADO_RE = re.compile(r"^\d+(\.\d+)?\s*[-–.]\s")
+
+
+def _bloco_conta(linhas: list[str], rotulo: Optional[str], valor: Optional[str]) -> Optional[str]:
+    """The account box's text when the label line itself carries no account
+    sub-field (Itaú: "VALOR A SER LIBERADO AO VENDEDOR: R$ …" with the
+    account on the NEXT line) — the label line's value plus the lines after
+    it, up to the next numbered item or blank line. Otherwise `valor` as is."""
+    if valor is None or rotulo is None:
+        return valor
+    sub = tuple(s for sins in _CONTA_ROTULOS.values() for s in sins)
+    if any(s in strip_accents_upper(valor) for s in sub):
+        return valor
+    for i, linha in enumerate(linhas):
+        if rotulo not in linha:
+            continue
+        seguintes: list[str] = []
+        for prox in linhas[i + 1 : i + 1 + _BLOCO_CONTA_MAX_LINHAS]:
+            if not prox.strip() or _ITEM_NUMERADO_RE.match(prox):
+                break
+            seguintes.append(prox)
+        return "\n".join([valor, *seguintes]) if seguintes else valor
+    return valor
 
 
 @dataclass(frozen=True)
@@ -455,7 +501,7 @@ def _conta_credito(valor: Optional[str]) -> Optional[ContaCreditoVendedor]:
     `ContaCreditoVendedor` whose sub-fields are individually `None`."""
     if not valor:
         return None
-    partes = re.split(r"[;\n]", valor)
+    partes = re.split(r"[;\n|]", valor)
     norm_partes = [strip_accents_upper(p) for p in partes]
     achados: dict[str, str] = {}
     for campo, sinonimos in _CONTA_ROTULOS.items():
@@ -465,7 +511,7 @@ def _conta_credito(valor: Optional[str]) -> Optional[ContaCreditoVendedor]:
                 idx = norm.find(sinonimo)
                 if idx < 0:
                     continue
-                resto = bruta[idx + len(sinonimo) :].lstrip(" :").strip()
+                resto = bruta[idx + len(sinonimo) :].lstrip(" .:").strip()
                 if resto and resto not in (_ILEGIVEL, _EM_BRANCO):
                     achados[campo] = resto
                     encontrado = True
@@ -474,6 +520,11 @@ def _conta_credito(valor: Optional[str]) -> Optional[ContaCreditoVendedor]:
                 break
 
     banco_nome, banco_codigo = _banco_por_nome(achados.get("banco"))
+    if banco_nome is None:
+        banco_nome, banco_codigo = _banco_por_codigo(achados.get("banco"))
+    agencia = achados.get("agencia")
+    if agencia:
+        agencia = agencia.rstrip("-– ") or None
     titular_cpf_bruto = achados.get("titular_cpf")
     titular_cpf = format_cpf(titular_cpf_bruto) if titular_cpf_bruto else None
     titular_cpf_valido = bool(titular_cpf_bruto) and _cpf_is_valid(titular_cpf_bruto)
@@ -481,7 +532,7 @@ def _conta_credito(valor: Optional[str]) -> Optional[ContaCreditoVendedor]:
     return ContaCreditoVendedor(
         banco_nome=banco_nome,
         banco_codigo=banco_codigo,
-        agencia=achados.get("agencia"),
+        agencia=agencia,
         conta=achados.get("conta"),
         titular_cpf=titular_cpf,
         titular_cpf_valido=titular_cpf_valido,
@@ -698,7 +749,9 @@ def parse_financiamento_imobiliario(
         if brutos[campo] is not None:
             confiancas[campo] = _temper(ExtractionConfidence.ALTA, source)
 
-    conta_credito_vendedor = _conta_credito(brutos["conta_credito_vendedor"])
+    conta_credito_vendedor = _conta_credito(
+        _bloco_conta(linhas, rotulos["conta_credito_vendedor"], brutos["conta_credito_vendedor"])
+    )
     if conta_credito_vendedor is None:
         confiancas["conta_credito_vendedor"] = ExtractionConfidence.NENHUMA
     elif conta_credito_vendedor.titular_cpf and not conta_credito_vendedor.titular_cpf_valido:

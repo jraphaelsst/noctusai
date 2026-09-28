@@ -239,6 +239,55 @@ class TestItauQuadro:
         assert f.prazo_meses == 360
 
 
+
+class TestItauContaVendedor:
+    """P1/883 (2026-09-27): Itaú prints the seller's account on the line
+    AFTER "VALOR A SER LIBERADO AO VENDEDOR: R$ …", as `|`-separated
+    sub-fields with the bank as a FEBRABAN code."""
+
+    _ITEM_8 = (
+        "8 - VALOR A SER LIBERADO AO VENDEDOR: R$ 400.000,00\n"
+        f"Nome: FULANA DE TAL | CPF / CNPJ: {CPF_VALIDO} | Cód. Banco: 0033 | "
+        "Agência: 1234- | Conta: 01000123-4 | Percentual: 100.00%\n"
+        "9 - VALOR A SER LIBERADO AO COMPRADOR: R$ 0,00 | Cód. Banco: 341 | "
+        "Agência: 9999 | Conta: 88888-8\n"
+    )
+
+    def test_reads_the_account_from_the_next_line(self):
+        f = parse_financiamento_imobiliario(_ITAU_QUADRO + self._ITEM_8, TextSource.OCR, "contrato")
+        c = f.conta_credito_vendedor
+        assert c is not None
+        assert c.banco_codigo == "033"
+        assert c.banco_nome == "Banco Santander (Brasil) S.A."
+        assert c.agencia == "1234"
+        assert c.conta == "01000123-4"
+        assert c.titular_cpf == CPF_VALIDO
+        assert c.titular_cpf_valido is True
+
+    def test_the_buyer_item_never_bleeds_into_the_seller_account(self):
+        f = parse_financiamento_imobiliario(_ITAU_QUADRO + self._ITEM_8, TextSource.OCR, "contrato")
+        assert f.conta_credito_vendedor.conta != "88888-8"
+
+    def test_an_unknown_bank_code_is_not_guessed(self):
+        texto = _ITAU_QUADRO + self._ITEM_8.replace("Cód. Banco: 0033", "Cód. Banco: 0999")
+        c = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato").conta_credito_vendedor
+        assert c.banco_codigo is None
+        assert c.banco_nome is None
+        assert c.conta == "01000123-4"
+
+    def test_amount_line_alone_yields_an_empty_account_not_a_crash(self):
+        texto = _ITAU_QUADRO + "8 - VALOR A SER LIBERADO AO VENDEDOR: R$ 400.000,00\n"
+        c = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato").conta_credito_vendedor
+        assert c is not None
+        assert (c.agencia, c.conta, c.titular_cpf) == (None, None, None)
+
+    def test_the_semicolon_box_shape_still_reads(self):
+        c = parse_financiamento_imobiliario(_quadro(), TextSource.TEXT_LAYER, "contrato").conta_credito_vendedor
+        assert c.banco_codigo == "341"
+        assert c.agencia == "0001"
+        assert c.conta == "99999-9"
+
+
 class TestDpsTripwire:
     def test_dps_marker_short_circuits_with_no_fields(self):
         texto = (
