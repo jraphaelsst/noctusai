@@ -310,7 +310,7 @@ export function CertidoesMatrizSection({ clienteId }: CertidoesMatrizSectionProp
       </div>
 
       <Dialog open={!!colunaAberta} onOpenChange={(open) => !open && setColunaAberta(null)}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-5xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-4 w-4" />

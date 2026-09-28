@@ -40,7 +40,14 @@ const DialogContent = React.forwardRef<
         // its content and never horizontally scrolls. Long values (URLs, tokens, IDs)
         // must use break-all/break-words on their text element; this class is the
         // panel-level backstop. Width/max-width defaults unchanged.
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 overflow-x-hidden border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
+        // max-h + overflow-y-auto: a tall modal (e.g. a person's 12-row
+        // certidões list) used to run off-screen with no way to scroll to its
+        // header or last rows. [&>*]:min-w-0: grid children default to
+        // `min-width: auto`, so a wide table stretched its grid column past
+        // the panel and overflow-x-hidden CLIPPED its right-hand columns
+        // (the row actions) instead of letting the table's own overflow-auto
+        // wrapper scroll — P1/883, 2026-09-28.
+        "fixed left-[50%] top-[50%] z-50 grid max-h-[90dvh] w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 overflow-x-hidden overflow-y-auto border [&>*]:min-w-0 bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
         className,
       )}
       {...props}
