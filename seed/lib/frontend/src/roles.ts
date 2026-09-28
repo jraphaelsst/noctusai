@@ -50,6 +50,20 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   corretor: 'Corretor',
 };
 
+/**
+ * Org roles that belong to END CUSTOMERS, never to staff (SEC-2, 2026-09-28).
+ * A customer role is not an `OrgRole` on purpose — it is never assignable on
+ * the team page. 🔴 Mirrors `CUSTOMER_ORG_ROLES` in
+ * `noctusai_lib/primitives/roles.py` (the source); enforced by keeper
+ * `check_org_identity_function_parity`.
+ */
+export const CUSTOMER_ORG_ROLES: readonly string[] = ['membro'];
+
+/** True when `orgRole` belongs to an end customer (never staff). */
+export function isCustomerRole(orgRole: string | null | undefined): boolean {
+  return !!orgRole && CUSTOMER_ORG_ROLES.includes(orgRole);
+}
+
 /** Assignable roles (cannot assign "owner" — that's the org creator only) */
 export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor'];
 

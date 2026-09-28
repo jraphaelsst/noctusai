@@ -18,7 +18,7 @@ export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining,
 export type { SSORoleInfo, SSOContext, SSOPlanInfo, SSOSubscriptionInfo, SSOLicenseInfo, SSOOrgInfo } from './sso';
 
 // Roles
-export { ORG_ROLES, ADMIN_ROLES, MANAGE_TEAM_ROLES, DEV_ROLES, PRODUCT_ADMIN_ROLES, ASSIGNABLE_ROLES, ORG_ROLE_LABELS, isDevOrOwner, canManageTeam, canManageBilling } from './roles';
+export { ORG_ROLES, ADMIN_ROLES, MANAGE_TEAM_ROLES, DEV_ROLES, PRODUCT_ADMIN_ROLES, ASSIGNABLE_ROLES, ORG_ROLE_LABELS, isDevOrOwner, canManageTeam, canManageBilling, CUSTOMER_ORG_ROLES, isCustomerRole } from './roles';
 export type { OrgRole } from './roles';
 
 // Page Status

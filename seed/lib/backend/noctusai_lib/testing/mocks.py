@@ -1761,6 +1761,43 @@ class MockSupabaseClient:
         self._constraint_manifest = manifest
         self._presence_manifest = presence_manifest
 
+    # -----------------------------------------------------------------
+    # Implicit trusted membership row (SEC-2, 2026-09-28)
+    # -----------------------------------------------------------------
+    #
+    # Production invariant: every real user has a `public.noctus_users` row,
+    # and core's SSO bridge syncs `user_metadata.org_id / org_role /
+    # noctus_role` FROM that row. The auth deps now read ONLY the row (a
+    # metadata org is never an authorization source), so a fixture that binds
+    # `MockUser(org_id=X)` is modelling "a user whose trusted row says X". When
+    # a test has NOT set `noctus_users` itself, the mock answers with that
+    # projected row — the same user the fixture authenticated, never a
+    # different one. A test proving the no-row / other-row case sets the table
+    # explicitly (`set_table_data("noctus_users", [])`), which always wins.
+
+    _NOCTUS_USERS_NAMES = ("noctus_users", "public.noctus_users")
+
+    def _implicit_noctus_users_rows(self) -> Optional[list]:
+        from noctusai_lib.testing.clients import MockUser
+
+        get_user = getattr(self.auth, "get_user", None)
+        user = getattr(getattr(get_user, "return_value", None), "user", None)
+        if not isinstance(user, MockUser):
+            return None
+        meta = user.user_metadata or {}
+        if not meta.get("org_id"):
+            return None
+        # Only the ORG is projected. Roles are NOT lifted from metadata: a
+        # test proving "a metadata role claim grants nothing" must keep
+        # proving it — elevated roles come from an explicit row.
+        return [{
+            "id": user.id,
+            "email": user.email,
+            "org_id": meta["org_id"],
+            "org_role": "member",
+            "role": "user",
+        }]
+
     def _builder_for(self, name: str, data=None) -> MockRequestBuilder:
         # If the caller passes "schema.table", split it; otherwise use bound schema.
         if "." in name:
@@ -1781,6 +1818,15 @@ class MockSupabaseClient:
 
     def table(self, name):
         if name not in self._tables:
+            # Any bound schema: `noctus_users` exists only in `public`, and
+            # several product fixtures hand ONE schema-bound mock out as the
+            # core (public) client too.
+            if name in self._NOCTUS_USERS_NAMES and self._data is None:
+                implicit = self._implicit_noctus_users_rows()
+                if implicit is not None:
+                    # Not cached: re-derived per call so a later re-bind of
+                    # `auth.get_user` (bind_user_metadata) is honoured.
+                    return self._builder_for(name, data=implicit)
             self._tables[name] = self._builder_for(name)
         return self._tables[name]
 

@@ -65,6 +65,7 @@ from fastapi import Header, HTTPException, Request
 
 from noctusai_lib.api.audit import AuditActor
 
+from noctusai_lib.primitives.roles import CUSTOMER_ORG_ROLES, is_customer_role  # noqa: F401 — CUSTOMER_ORG_ROLES re-exported next to the auth deps
 from noctusai_lib.primitives.timeutil import now_utc
 
 logger = logging.getLogger(__name__)
@@ -318,6 +319,28 @@ def make_require_role(get_current_user_fn, get_user_role_fn):
     return require_role
 
 
+def _resolve_trusted_membership(
+    get_admin_client_fn: Callable[[], Any], user_id
+) -> Optional[dict]:
+    """``{"org_id", "org_role"}`` from ``public.noctus_users`` for ``user_id``,
+    or ``None`` when no row exists. Same client contract and fail-open-on-
+    exception shape as :func:`_resolve_trusted_org_id` (which reads through
+    this) — the row every product's RLS reads, never ``user_metadata``.
+    """
+    core = get_admin_client_fn()
+    result = (
+        core.table("noctus_users")
+        .select("org_id, org_role")
+        .eq("id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return None
+    row = result.data[0]
+    return {"org_id": row.get("org_id"), "org_role": row.get("org_role")}
+
+
 def _resolve_trusted_org_id(get_admin_client_fn: Callable[[], Any], user_id) -> Optional[str]:
     """Look up ``org_id`` from ``public.noctus_users`` for ``user_id``.
 
@@ -349,16 +372,9 @@ def _resolve_trusted_org_id(get_admin_client_fn: Callable[[], Any], user_id) -> 
     Any OTHER exception (network / auth / schema error) is NOT swallowed
     here — it propagates so the caller can fail closed.
     """
-    core = get_admin_client_fn()
-    result = (
-        core.table("noctus_users")
-        .select("org_id")
-        .eq("id", user_id)
-        .limit(1)
-        .execute()
-    )
-    if result.data and result.data[0].get("org_id"):
-        return result.data[0]["org_id"]
+    membership = _resolve_trusted_membership(get_admin_client_fn, user_id)
+    if membership and membership.get("org_id"):
+        return membership["org_id"]
     return None
 
 
@@ -520,6 +536,7 @@ def make_get_current_user_org(
     required: bool = True,
     missing_status: int = 403,
     missing_detail: str = "Usuario sem organizacao associada",
+    allow_customer: bool = False,
 ):
     """Factory that creates a product-specific ``get_current_user_org`` dependency.
 
@@ -537,16 +554,20 @@ def make_get_current_user_org(
     **Trust model** (``seed-trusted-org-resolution``, 2026-07-14): org_id is
     resolved from ``public.noctus_users`` (see :func:`_resolve_trusted_org_id`)
     FIRST — the SAME source RLS trusts. ``get_org_id_fn`` (historically
-    ``user_metadata``-based) is now ONLY a transition fallback, used solely
-    when no ``noctus_users`` row exists yet, and it fires with a
-    ``logger.warning`` naming the user id — never silently. Any REAL user
-    has a ``noctus_users`` row, so the DB lookup wins and a spoofed
-    ``user_metadata.org_id`` is simply ignored — this closes the residual
-    org-spoofing hole (a user rewriting their own ``user_metadata.org_id``
-    via ``auth.updateUser({data})`` to reach another tenant's data) by
-    construction. On a genuine DB/transport ERROR (as opposed to "no row"),
-    resolution fails CLOSED — it does NOT fall back to the spoofable
-    resolver; see the inner dependency body for the full rationale.
+    ``user_metadata``-based) is NEVER consulted for authorization (SEC-2,
+    2026-09-28): a user with no ``noctus_users`` row has no org — 403 (or
+    ``None`` when ``required=False``). The former "no row ⇒ read
+    ``user_metadata.org_id``" transition fallback let a row-less user name
+    any tenant's org (metadata is user-writable via ``auth.updateUser``),
+    so it is gone. On a genuine DB/transport ERROR (as opposed to "no
+    row"), resolution fails CLOSED; see the inner dependency body.
+
+    **Customers are refused by default** (SEC-2). A caller whose trusted
+    ``org_role`` is in ``CUSTOMER_ORG_ROLES`` (an end customer, e.g.
+    ``membro``) gets 403 "Área restrita à equipe." — org membership is not
+    back-office access. A route that genuinely serves customers binds its
+    own dep with ``allow_customer=True`` (e.g. a member portal), and then
+    MUST scope what it returns to that customer itself.
 
     Parameters:
         get_current_user_fn: The product's already-wrapped
@@ -554,12 +575,12 @@ def make_get_current_user_org(
             of :func:`make_get_current_user`). Must be an async callable
             that takes ``authorization: Optional[str]`` and returns
             ``(user, token)``.
-        get_org_id_fn: A sync callable ``(user) -> Optional[str]`` that
-            resolves the org_id for a user — now a FALLBACK, used only when
-            ``public.noctus_users`` has no row for the user. Each product
-            provides its own (typically ``lambda u: (u.user_metadata or
-            {}).get("org_id")`` or ERP's pre-existing ``get_org_id(user)``
-            resolver).
+        get_org_id_fn: RETIRED — accepted only so the ~15 existing call
+            sites keep binding positionally; never called (SEC-2, 2026-09-28:
+            a metadata org is not an authorization source).
+            NOC-REMEDIATE[auth-org-fallback-param]: drop the argument from
+            every ``make_get_current_user_org(...)`` call site, then from
+            this signature. — 2026-09-28
         get_admin_client_fn: A sync callable ``() -> Client`` returning a
             service-role Supabase client scoped to the ``public`` schema
             (``DatabaseModule.get_core_client()``). Required — every caller
@@ -574,6 +595,9 @@ def make_get_current_user_org(
             required=True)`` uses 400 — pass ``missing_status=400`` to mirror.
         missing_detail: HTTP detail string raised with ``missing_status``.
             Defaults to PF's "Usuario sem organizacao associada".
+        allow_customer: False (default) ⇒ a customer-role caller gets 403
+            "Área restrita à equipe.". True ⇒ customers pass through with
+            their org_id — only for routes built to serve customers.
 
     Returns:
         An async dependency callable
@@ -588,7 +612,7 @@ def make_get_current_user_org(
         get_current_user = make_get_current_user(lambda: _db.get_client())
         get_current_user_org = make_get_current_user_org(
             get_current_user,
-            lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only
+            lambda u: None,  # retired positional slot — never consulted
             get_admin_client_fn=lambda: _db.get_core_client(),  # public schema, service role
             required=True,  # 403 on missing
         )
@@ -637,12 +661,11 @@ def make_get_current_user_org(
                 user_id=getattr(user, "id", None), org_id=org_id, role=None
             )
 
-        # Trusted-first resolution — `public.noctus_users` is the SAME
-        # source every product's RLS `current_org_id()` reads. It wins over
-        # the spoofable `get_org_id_fn` (typically `user_metadata`)
-        # whenever a row exists.
+        # Trusted-only resolution — `public.noctus_users` is the SAME source
+        # every product's RLS `current_org_id()` reads. `get_org_id_fn`
+        # (historically `user_metadata`) is never consulted (SEC-2).
         try:
-            org_id = _resolve_trusted_org_id(get_admin_client_fn, user.id)
+            membership = _resolve_trusted_membership(get_admin_client_fn, user.id)
         except Exception:
             # Fail CLOSED on a genuine DB/transport error. Falling back to
             # the spoofable resolver here would reopen the exact hole this
@@ -668,19 +691,27 @@ def make_get_current_user_org(
             _stash_actor(None)
             return user, token, None
 
-        if org_id is None:
-            # No noctus_users row (as opposed to a DB ERROR) — a
-            # legitimate transition state (e.g. a provisioning race).
-            # Fall back to the caller-supplied resolver so existing flows
-            # keep working, but LOUDLY — never silent.
-            fallback_org_id = get_org_id_fn(user)
-            if fallback_org_id:
+        if membership is not None and not allow_customer and is_customer_role(
+            membership.get("org_role")
+        ):
+            # An end customer is a member of the org but never of its staff —
+            # same rule the RLS layer enforces (`current_org_id()` is NULL for
+            # CUSTOMER_ORG_ROLES). Refused regardless of `required`.
+            _stash_actor(None)
+            raise HTTPException(status_code=403, detail="Área restrita à equipe.")
+
+        org_id = membership.get("org_id") if membership else None
+        if membership is None:
+            # No noctus_users row (as opposed to a DB ERROR): no org. A
+            # `user_metadata.org_id` is user-writable and is NOT an
+            # authorization source — logged when present so a provisioning
+            # race is visible, never honoured.
+            if (getattr(user, "user_metadata", None) or {}).get("org_id"):
                 logger.warning(
-                    "trusted_org_lookup_empty user_id=%s — no noctus_users "
-                    "row, falling back to org_from_user resolver (org_id=%r)",
-                    getattr(user, "id", "<unknown>"), fallback_org_id,
+                    "trusted_org_lookup_empty user_id=%s — no noctus_users row; "
+                    "user_metadata names an org, IGNORED for authorization",
+                    getattr(user, "id", "<unknown>"),
                 )
-            org_id = fallback_org_id
 
         if not org_id:
             if required:

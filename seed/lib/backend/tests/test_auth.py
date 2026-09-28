@@ -583,19 +583,19 @@ class TestMakeGetCurrentUserOrg:
     - a DB/transport ERROR fails closed — never falls back to metadata,
       whether required=True (raises 503) or required=False (returns None)
 
-    Every ``_build(...)`` call defaults ``admin_client`` to a
-    ``_FakeCoreClient`` with NO ``noctus_users`` rows — i.e. every
-    pre-existing test below exercises the (now-fallback) ``user_metadata``
-    resolution path exactly as it did before the trusted-DB-first change,
-    so their assertions are unchanged.
+    SEC-2 (2026-09-28): ``user_metadata`` is never an authorization source
+    any more, so every ``_build(...)`` call defaults ``admin_client`` to a
+    ``_FakeCoreClient`` carrying the TRUSTED ``noctus_users`` row for
+    ``org_id`` (no row when ``org_id`` is None). The metadata carries the
+    same org so a test proving it is ignored has something to ignore.
     """
 
-    def _build(self, *, org_id="org-123", admin_client=None, **factory_kwargs):
+    def _build(self, *, org_id="org-123", org_role="member", admin_client=None, **factory_kwargs):
         """Helper: returns (dep, fake_user) bound to the given org_id and
         factory kwargs. Fake get_current_user_fn always succeeds with the
         same user; tests vary org_id (set None to simulate missing org).
-        ``admin_client`` defaults to a no-rows fake — trusted lookup misses,
-        falls back to ``fake_get_org_id`` reading ``user_metadata``."""
+        ``admin_client`` defaults to a fake whose trusted row carries
+        ``org_id`` / ``org_role`` (no row when ``org_id`` is None)."""
         fake_user = _FakeUserWithMetadata(
             id="u1",
             user_metadata={"org_id": org_id} if org_id else {},
@@ -609,7 +609,10 @@ class TestMakeGetCurrentUserOrg:
         def fake_get_org_id(user):
             return (user.user_metadata or {}).get("org_id")
 
-        core = admin_client if admin_client is not None else _FakeCoreClient()
+        if admin_client is not None:
+            core = admin_client
+        else:
+            core = _FakeCoreClient(rows=[{"org_id": org_id, "org_role": org_role}] if org_id else [])
 
         dep = make_get_current_user_org(
             fake_get_current_user,
@@ -685,28 +688,24 @@ class TestMakeGetCurrentUserOrg:
         assert "Token ausente" in exc.value.detail
 
     @pytest.mark.asyncio
-    async def test_resolver_receives_user_object(self):
-        """The injected resolver is called with the user object returned by
-        get_current_user_fn — not a dict, not the token. Validates the
-        injection contract."""
-        captured = {}
-
+    async def test_retired_org_resolver_is_never_called(self):
+        """SEC-2: the positional `get_org_id_fn` slot is retired — it is never
+        consulted, with or without a trusted row."""
+        calls = []
         fake_user = _FakeUserWithMetadata(id="u1", user_metadata={"org_id": "o1"})
 
         async def fake_get_current_user(authorization=None):
             return fake_user, "token-abc"
 
-        def capturing_resolver(user):
-            captured["user"] = user
-            return (user.user_metadata or {}).get("org_id")
-
-        dep = make_get_current_user_org(
-            fake_get_current_user,
-            capturing_resolver,
-            get_admin_client_fn=lambda: _FakeCoreClient(),  # no noctus_users row
-        )
-        await dep(authorization="Bearer xxx")
-        assert captured["user"] is fake_user
+        for rows in ([], [{"org_id": "o1", "org_role": "member"}]):
+            dep = make_get_current_user_org(
+                fake_get_current_user,
+                lambda u: calls.append(u) or "o1",
+                get_admin_client_fn=lambda rows=rows: _FakeCoreClient(rows=rows),
+                required=False,
+            )
+            await dep(authorization="Bearer xxx")
+        assert calls == []
 
     # -----------------------------------------------------------------
     # Trusted-DB-first resolution — `seed-trusted-org-resolution` (2026-07-14)
@@ -744,21 +743,84 @@ class TestMakeGetCurrentUserOrg:
         assert fallback_calls == [], "fallback resolver must NOT run when the trusted DB row exists"
 
     @pytest.mark.asyncio
-    async def test_fallback_fires_and_warns_when_no_noctus_users_row(self, caplog):
-        """No `noctus_users` row (transition state) → falls back to
-        `get_org_id_fn` (user_metadata) AND logs a warning naming the user —
-        never silent."""
+    async def test_no_row_metadata_org_is_ignored_403(self, caplog):
+        """SEC-2: no `noctus_users` row + a self-written `user_metadata.org_id`
+        → 403 (no org), NOT that org. The claim is logged, never honoured."""
         dep, fake_user = self._build(
             org_id="org-from-metadata",
             admin_client=_FakeCoreClient(rows=[]),  # no row
         )
         with caplog.at_level(logging.WARNING, logger="noctusai_lib.api.auth"):
-            user, token, org_id = await dep(authorization="Bearer xxx")
-        assert org_id == "org-from-metadata"
+            with pytest.raises(HTTPException) as exc:
+                await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "Usuario sem organizacao associada"
         assert any(
             "trusted_org_lookup_empty" in r.message and fake_user.id in r.message
             for r in caplog.records
-        ), "expected a loud warning naming the user id when falling back"
+        ), "a row-less user naming an org in metadata must be logged, not trusted"
+
+    @pytest.mark.asyncio
+    async def test_no_row_metadata_org_is_ignored_required_false(self):
+        """Same, required=False → (user, token, None) — never the metadata org."""
+        dep, _ = self._build(
+            org_id="org-from-metadata",
+            admin_client=_FakeCoreClient(rows=[]),
+            required=False,
+        )
+        _, _, org_id = await dep(authorization="Bearer xxx")
+        assert org_id is None
+
+    # -----------------------------------------------------------------
+    # Customer roles — SEC-2 customer-role isolation (2026-09-28)
+    # -----------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_customer_role_is_refused_by_default(self):
+        """A `membro` (CUSTOMER_ORG_ROLES) is an org member, never staff → 403."""
+        dep, _ = self._build(org_id="org-123", org_role="membro")
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "Área restrita à equipe."
+
+    @pytest.mark.asyncio
+    async def test_customer_role_is_refused_even_when_org_optional(self):
+        dep, _ = self._build(org_id="org-123", org_role="membro", required=False)
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_customer_role_passes_with_explicit_opt_in(self):
+        dep, _ = self._build(org_id="org-123", org_role="membro", allow_customer=True)
+        _, _, org_id = await dep(authorization="Bearer xxx")
+        assert org_id == "org-123"
+
+    @pytest.mark.asyncio
+    async def test_staff_roles_unaffected(self):
+        for role in ("owner", "admin", "manager", "member", "viewer", "dev", "test", "corretor", None):
+            dep, _ = self._build(org_id="org-123", org_role=role)
+            _, _, org_id = await dep(authorization="Bearer xxx")
+            assert org_id == "org-123", role
+
+    @pytest.mark.asyncio
+    async def test_customer_role_read_from_trusted_row_not_metadata(self):
+        """Metadata cannot make a customer staff: the row says membro → 403
+        even when user_metadata claims owner."""
+        fake_user = _FakeUserWithMetadata(id="u1", user_metadata={"org_role": "owner", "org_id": "o1"})
+
+        async def fake_get_current_user(authorization=None):
+            return fake_user, "t"
+
+        dep = make_get_current_user_org(
+            fake_get_current_user,
+            lambda u: None,
+            get_admin_client_fn=lambda: _FakeCoreClient(rows=[{"org_id": "o1", "org_role": "membro"}]),
+        )
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer xxx")
+        assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_required_true_raises_when_neither_trusted_nor_fallback_yields_org(self):

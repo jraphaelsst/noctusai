@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from noctusai_lib.testing import TEST_ORG_ID, MockUser, MockUserResponse
+
 
 _ENC_KEY = "QrNxsUUWeoIb1OnT5e_n7P9MbESvJ6KkA8b8q3lXiBg="
 
@@ -161,9 +163,7 @@ class TestPatchVideoEncryptionGap:
         with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=MagicMock(
             schema=MagicMock(return_value=mock_schema),
             auth=MagicMock(get_user=MagicMock(
-                return_value=MagicMock(user=MagicMock(
-                    app_metadata={"org_id": "test-org-123"}
-                ))
+                return_value=MockUserResponse(MockUser(org_id=TEST_ORG_ID))
             )),
         )):
             # Without a proper enc key, build_youtube_service_for_org raises → 503.
@@ -229,10 +229,11 @@ class TestPatchVideoWriteThrough:
         # Build a mock Supabase chain that returns _row for any .select().execute().
         mock_resp = MockSupabaseResponse(data=[_row])
         mock_sb = MagicMock()
+        # A real MockUser — the org dep now resolves org from the trusted
+        # noctus_users row keyed on user.id (SEC-2), so a MagicMock user
+        # (id = a MagicMock) no longer "has" an org by accident.
         mock_sb.auth.get_user = MagicMock(
-            return_value=MagicMock(
-                user=MagicMock(app_metadata={"org_id": "test-org-123"})
-            )
+            return_value=MockUserResponse(MockUser(org_id=TEST_ORG_ID))
         )
         # Chain: schema().table().select().eq().eq().limit().execute() or
         #        schema().table().update().eq().eq().execute()
@@ -305,10 +306,11 @@ class TestDeleteVideoSuccess:
         _row_id = {"id": "00000000-0000-0000-0000-000000000003"}
 
         mock_sb = MagicMock()
+        # A real MockUser — the org dep now resolves org from the trusted
+        # noctus_users row keyed on user.id (SEC-2), so a MagicMock user
+        # (id = a MagicMock) no longer "has" an org by accident.
         mock_sb.auth.get_user = MagicMock(
-            return_value=MagicMock(
-                user=MagicMock(app_metadata={"org_id": "test-org-123"})
-            )
+            return_value=MockUserResponse(MockUser(org_id=TEST_ORG_ID))
         )
         mock_execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
         mock_delete_execute = MagicMock(return_value=MockSupabaseResponse(data=[]))
@@ -353,10 +355,11 @@ class TestDeleteVideoSuccess:
         _row_id = {"id": "00000000-0000-0000-0000-000000000004"}
 
         mock_sb = MagicMock()
+        # A real MockUser — the org dep now resolves org from the trusted
+        # noctus_users row keyed on user.id (SEC-2), so a MagicMock user
+        # (id = a MagicMock) no longer "has" an org by accident.
         mock_sb.auth.get_user = MagicMock(
-            return_value=MagicMock(
-                user=MagicMock(app_metadata={"org_id": "test-org-123"})
-            )
+            return_value=MockUserResponse(MockUser(org_id=TEST_ORG_ID))
         )
         mock_chain = MagicMock()
         mock_chain.execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
@@ -428,10 +431,11 @@ class TestPurgeRemoteSuccess:
         _row_id = {"id": "00000000-0000-0000-0000-000000000010"}
 
         mock_sb = MagicMock()
+        # A real MockUser — the org dep now resolves org from the trusted
+        # noctus_users row keyed on user.id (SEC-2), so a MagicMock user
+        # (id = a MagicMock) no longer "has" an org by accident.
         mock_sb.auth.get_user = MagicMock(
-            return_value=MagicMock(
-                user=MagicMock(app_metadata={"org_id": "test-org-123"})
-            )
+            return_value=MockUserResponse(MockUser(org_id=TEST_ORG_ID))
         )
         mock_execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
         mock_delete_execute = MagicMock(return_value=MockSupabaseResponse(data=[]))
@@ -491,10 +495,11 @@ class TestPurgeRemoteApiFailurePreservesCatalog:
         _row_id = {"id": "00000000-0000-0000-0000-000000000011"}
 
         mock_sb = MagicMock()
+        # A real MockUser — the org dep now resolves org from the trusted
+        # noctus_users row keyed on user.id (SEC-2), so a MagicMock user
+        # (id = a MagicMock) no longer "has" an org by accident.
         mock_sb.auth.get_user = MagicMock(
-            return_value=MagicMock(
-                user=MagicMock(app_metadata={"org_id": "test-org-123"})
-            )
+            return_value=MockUserResponse(MockUser(org_id=TEST_ORG_ID))
         )
         mock_execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
         mock_chain = MagicMock()
@@ -550,10 +555,11 @@ class TestDefaultDeleteStillCatalogOnly:
         _row_id = {"id": "00000000-0000-0000-0000-000000000012"}
 
         mock_sb = MagicMock()
+        # A real MockUser — the org dep now resolves org from the trusted
+        # noctus_users row keyed on user.id (SEC-2), so a MagicMock user
+        # (id = a MagicMock) no longer "has" an org by accident.
         mock_sb.auth.get_user = MagicMock(
-            return_value=MagicMock(
-                user=MagicMock(app_metadata={"org_id": "test-org-123"})
-            )
+            return_value=MockUserResponse(MockUser(org_id=TEST_ORG_ID))
         )
         mock_chain = MagicMock()
         mock_chain.execute = MagicMock(return_value=MockSupabaseResponse(data=[_row_id]))
