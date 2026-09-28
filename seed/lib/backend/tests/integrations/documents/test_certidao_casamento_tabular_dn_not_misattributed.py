@@ -105,23 +105,30 @@ class TestTabularLayoutDoesNotMisattributeTheOtherSpousesBirthdate:
             titular=TitularEsperado(nome="Fulano de Tal Santos"),
         )
         assert out.nome == "FULANO DE TAL SANTOS"
-        # Missing, never the whole-document reading (which belongs to the
-        # OTHER spouse on this fixture) — honesty over a guessed coverage win.
-        assert out.data_nascimento is None
-        assert out.data_nascimento_confianca.value == "nenhuma"
+        # Never the whole-document reading (which belongs to the OTHER spouse
+        # on this fixture): the titular's OWN row, attributed by the tabular
+        # branch of `conjuges.find_conjuges` (2026-09-28 follow-up).
+        assert out.data_nascimento is not None
+        assert out.data_nascimento != whole_doc[0]
+        assert out.data_nascimento.isoformat() == "1961-10-04"
+        assert out.data_nascimento_confianca.value != "alta"
 
     @pytest.mark.asyncio
     async def test_the_other_titular_is_not_credited_by_coincidence_either(self) -> None:
-        """The spouse whose row DOES sit near a label must not be credited
-        with it either, unless it is genuinely attributed to THEM by the
-        segment scope — a coincidental match is still a guess."""
+        """The spouse whose row DOES sit near a label is credited only via
+        the segment scope that attributes it to HER — never a coincidental
+        whole-document match, whose confidence (`alta`) it must not inherit."""
         out = await LadderIdentityExtractor(ladder=_Ladder(CERTIDAO_TABULAR)).extract(
             b"%PDF",
             mimetype="application/pdf",
             titular=TitularEsperado(nome="Ciclana de Tal Pereira"),
         )
         assert out.nome == "CICLANA DE TAL PEREIRA"
-        assert out.data_nascimento is None
+        # Credited through HER OWN row's positional attribution, capped below
+        # `alta` — not through the whole-document coincidence.
+        assert out.data_nascimento is not None
+        assert out.data_nascimento.isoformat() == "1990-04-20"
+        assert out.data_nascimento_confianca.value == "media"
 
     @pytest.mark.asyncio
     async def test_couple_level_facts_are_unaffected(self) -> None:
@@ -133,3 +140,77 @@ class TestTabularLayoutDoesNotMisattributeTheOtherSpousesBirthdate:
             titular=TitularEsperado(nome="Fulano de Tal Santos"),
         )
         assert out.regime_bens == "comunhao_parcial"
+
+
+# --- `conjuges.find_conjuges` tabular branch (follow-up, 2026-09-28) --------
+
+from noctusai_lib.integrations.documents.conjuges import find_conjuges  # noqa: E402
+
+#: Same layout, fields interleaved BY FIELD (A's DN, B's DN, A's nac, B's nac)
+#: instead of grouped by person — the positional split must hold either way.
+CERTIDAO_TABULAR_POR_CAMPO = """
+NOMES
+
+FULANO DE TAL SANTOS
+
+NUMERO DO CPF
+111.222.333-44
+
+CICLANA DE TAL PEREIRA
+
+NUMERO DO CPF
+555.666.777-88
+
+DATA DE NASCIMENTO
+04 10 1961
+
+DATA DE NASCIMENTO
+20 04 1990
+
+PROFISSAO
+ENGENHEIRO
+
+PROFISSAO
+ADVOGADA
+
+DATA DO CASAMENTO
+DIA MES ANO
+15 08 2010
+"""
+
+
+class TestFindConjugesTabularBranch:
+    def test_grouped_by_person_each_spouse_gets_their_own_row(self) -> None:
+        a, b = find_conjuges(CERTIDAO_TABULAR)
+        assert (a.nome, a.data_nascimento.isoformat()) == ("FULANO DE TAL SANTOS", "1961-10-04")
+        assert (b.nome, b.data_nascimento.isoformat()) == ("CICLANA DE TAL PEREIRA", "1990-04-20")
+        assert a.nacionalidade and b.nacionalidade
+
+    def test_interleaved_by_field_each_spouse_gets_their_own_row(self) -> None:
+        a, b = find_conjuges(CERTIDAO_TABULAR_POR_CAMPO)
+        assert a.data_nascimento.isoformat() == "1961-10-04"
+        assert b.data_nascimento.isoformat() == "1990-04-20"
+        assert a.profissao and "ENGENHEIR" in a.profissao.upper()
+        assert b.profissao and "ADVOGAD" in b.profissao.upper()
+
+    def test_positional_attribution_is_never_alta(self) -> None:
+        for c in find_conjuges(CERTIDAO_TABULAR_POR_CAMPO):
+            assert c.data_nascimento_confianca in ("baixa", "media")
+            assert c.profissao_confianca in ("baixa", "media")
+
+    def test_the_last_spouses_empty_row_never_reads_the_wedding_date(self) -> None:
+        """B's own DN row is blank: the couple's `DATA DO CASAMENTO` row
+        closes B's segment, so B gets nothing — not the wedding date."""
+        texto = CERTIDAO_TABULAR_POR_CAMPO.replace("DATA DE NASCIMENTO\n20 04 1990\n", "DATA DE NASCIMENTO\n\n")
+        a, b = find_conjuges(texto)
+        assert a.data_nascimento.isoformat() == "1961-10-04"
+        assert b.data_nascimento is None
+
+    def test_a_label_count_other_than_two_is_ambiguous_and_reads_nothing(self) -> None:
+        texto = CERTIDAO_TABULAR_POR_CAMPO.replace(
+            "PROFISSAO\nENGENHEIRO\n", "PROFISSAO\nENGENHEIRO\n\nPROFISSAO\nMEDICO\n"
+        )
+        a, b = find_conjuges(texto)
+        assert a.profissao is None and b.profissao is None
+        # Other fields, still exactly two rows each, are unaffected.
+        assert a.data_nascimento.isoformat() == "1961-10-04"

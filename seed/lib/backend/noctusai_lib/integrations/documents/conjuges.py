@@ -18,6 +18,10 @@ This module attributes the per-PERSON facts to each spouse separately:
   comment beside `find_birthdate(seg_orig)`, below, for a P1/883
   (2026-09-25) real bug this segment-scoping does NOT by itself fully
   cover, and what does (a cross-document plausibility check in `real.py`).
+  A TABULAR certidão (one labelled row per field, no such clause) is read
+  by `_dados_tabulares` instead: the k-th `DATA DE NASCIMENTO` /
+  `NACIONALIDADE` / `PROFISSÃO` row after the names belongs to the k-th
+  spouse, when that label occurs exactly twice (P1/883, 2026-09-28).
 
 Couple-level facts (estado civil, regime de bens, data do casamento) are NOT
 here: they belong to both spouses equally and stay on `IdentityFields`.
@@ -94,6 +98,66 @@ def _genero(segmento_norm: str) -> tuple[Optional[str], str]:
     if fem and not masc:
         return (FEMININO, "baixa")
     return (None, "nenhuma")
+_ROTULOS_TABULARES: dict[str, re.Pattern[str]] = {
+    "data_nascimento": re.compile(r"(?m)^[ \t]*DATA\s+DE\s+NASCIMENTO\b"),
+    "nacionalidade": re.compile(r"(?m)^[ \t]*NACIONALIDADE\b"),
+    "profissao": re.compile(r"(?m)^[ \t]*(?:PROFISSAO|OCUPACAO)\b"),
+}
+#: Couple-level rows that close the per-person block of a tabular certidão.
+_ROTULOS_DO_CASAL = re.compile(
+    r"(?m)^[ \t]*(?:DATA\s+(?:DO|DE)\s+CASAMENTO|REGIME\s+DE\s+BENS|AVERBAC|ANOTAC|OBSERVAC)"
+)
+_ORDEM_CONFIANCA = ("nenhuma", "baixa", "media", "alta")
+
+
+def _no_maximo_media(confianca: str) -> str:
+    """Attribution by position is an inference, never `alta`."""
+    if _ORDEM_CONFIANCA.index(confianca) > _ORDEM_CONFIANCA.index("media"):
+        return "media"
+    return confianca
+
+
+def _dados_tabulares(
+    text: str, norm: str, origem: list[int], indice: int, fim_dos_nomes: int
+) -> dict:
+    """Per-person facts of the `indice`-th spouse on a TABULAR certidão.
+
+    That layout prints no "NOME, nascido ..." clause: after the `NOMES` block
+    each per-person field is its own labelled row, once per spouse, in the
+    same order as the names. A label that occurs EXACTLY twice after the
+    names is split by position — its k-th row belongs to the k-th spouse.
+    Any other count is ambiguous and yields nothing for that field. Each
+    row's reading is bounded by the next labelled row (per-person or
+    couple-level), so another row's value cannot bleed in; its confidence
+    is capped at `media` because the attribution is positional.
+    """
+    limites = sorted(
+        {m.start() for r in _ROTULOS_TABULARES.values() for m in r.finditer(norm, fim_dos_nomes)}
+        | {m.start() for m in _ROTULOS_DO_CASAL.finditer(norm, fim_dos_nomes)}
+    )
+    trechos: dict[str, str] = {}
+    for campo, rotulo in _ROTULOS_TABULARES.items():
+        linhas = list(rotulo.finditer(norm, fim_dos_nomes))
+        if len(linhas) != 2:
+            continue
+        a = linhas[indice].start()
+        fim = min(next((x for x in limites if x > a), len(norm)), a + _SEGMENTO_MAX)
+        if fim > a:
+            trechos[campo] = text[origem[a] : origem[fim - 1] + 1]
+    dados: dict = {}
+    if "data_nascimento" in trechos:
+        d, conf, _ = find_birthdate(trechos["data_nascimento"])
+        if d:
+            dados.update(data_nascimento=d, data_nascimento_confianca=_no_maximo_media(conf))
+    if "nacionalidade" in trechos:
+        nac, conf, _ = find_nacionalidade(trechos["nacionalidade"])
+        if nac:
+            dados.update(nacionalidade=nac, nacionalidade_confianca=_no_maximo_media(conf))
+    if "profissao" in trechos:
+        prof, conf, _ = find_profissao(trechos["profissao"])
+        if prof:
+            dados.update(profissao=prof, profissao_confianca=_no_maximo_media(conf))
+    return dados
 
 
 def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
@@ -198,6 +262,8 @@ def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
                     genero=gen,
                     genero_confianca=gen_conf,
                 )
+        if qualif is None:
+            dados = _dados_tabulares(text, norm, origem, i, ocorrencias[ordem[1]][0].end())
         out.append(
             ConjugeLido(
                 nome=nome,

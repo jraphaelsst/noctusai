@@ -529,3 +529,29 @@ class TestMultiHolderCollectorSkipsAnyCpfLabelRow:
         # nubente is collected under this header, same as before this fix.
         assert find_name_conflitos(texto) is None
         assert find_name(texto) == ("FULANO DE TAL SANTOS", "alta", "NOMES")
+
+
+class TestTabularLabelRowIsNotANubente:
+    """A tabular certidão can put a per-field label row (`DATA DE
+    NASCIMENTO`) directly after the `NOMES` block. It is name-SHAPED, and was
+    collected as a THIRD holder — which pushed the document off
+    `conjuges.find_conjuges`'s exactly-two path (2026-09-28)."""
+
+    def test_label_row_after_the_names_block_is_not_collected(self) -> None:
+        from noctusai_lib.integrations.documents.name import find_name_conflitos
+
+        texto = (
+            "NOMES\n\nFULANO DE TAL SANTOS\n\nNUMERO DO CPF\n111.222.333-44\n\n"
+            "CICLANA DE TAL PEREIRA\n\nNUMERO DO CPF\n555.666.777-88\n\n"
+            "DATA DE NASCIMENTO\n04 10 1961\n"
+        )
+        assert sorted(find_name_conflitos(texto)) == [
+            "CICLANA DE TAL PEREIRA",
+            "FULANO DE TAL SANTOS",
+        ]
+
+    def test_nascimento_as_a_surname_is_still_a_name(self) -> None:
+        from noctusai_lib.integrations.documents.name import looks_like_a_name
+
+        assert looks_like_a_name("MARIA DO NASCIMENTO")
+        assert not looks_like_a_name("DATA DE NASCIMENTO")

@@ -154,6 +154,12 @@ _INSTITUTIONAL = frozenset(
         "LEI N 7 116 DE 29 08 83",
         "ASSINATURA DO TITULAR",
         "POLEGAR DIREITO",
+        # A tabular certidão's per-field label rows, which can follow the
+        # `NOMES` block directly. Exact phrases, not tokens: `NASCIMENTO` is
+        # also a common surname ("MARIA DO NASCIMENTO").
+        "DATA DE NASCIMENTO",
+        "DATA DO CASAMENTO",
+        "REGIME DE BENS",
     }
 )
 
@@ -173,6 +179,7 @@ _INSTITUTIONAL_TOKENS = frozenset(
         # Field labels that are name-SHAPED ("Número do CPF" is three
         # letters-only words) and sit inside a certidão's holder block.
         "CPF", "NUMERO", "MATRICULA",
+        "NACIONALIDADE", "PROFISSAO", "OCUPACAO", "CASAMENTO",
     }
 )
 
