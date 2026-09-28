@@ -189,6 +189,19 @@ class TestEnviar:
         assert resp.status_code == 409
         assert resp.json()["code"] == "orcamento_bloqueado"
 
+    def test_a_past_validade_expires_before_the_send_check(self, api, repos, lead, smtp, senders):
+        """Achado 16: `/enviar` read the orçamento through `repos.orcamento`,
+        which does not run `orcamentos.py`'s read-time expiry — a past-
+        validade rascunho/enviado row could still be e-mailed via the API
+        even though the UI (which lists through the expiring endpoint) would
+        never show it as sendable."""
+        orc = _orcamento(repos, lead, validade="2020-01-01")
+        resp = _enviar(api, orc["id"])
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "orcamento_bloqueado"
+        assert repos.orcamento.buscar(ORG, orc["id"])["status"] == "expirado"
+        assert senders.fake.sent == []
+
     def test_send_failure_is_502_and_not_marked_sent(self, api, repos, lead, smtp, senders):
         senders.falhar = True
         orc = _orcamento(repos, lead)

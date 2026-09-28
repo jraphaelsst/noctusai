@@ -192,17 +192,27 @@ class TestResposta:
         assert senders.fake.sent[0].to == ["dono@agencia.com"]
         assert "Topamos" in senders.fake.sent[0].text
 
-    def test_the_negocio_responsavel_is_notified_in_app(self, api, cenario, gmail, repos, core_db):
+    def test_the_negocio_responsavel_is_notified_alongside_the_owners(
+        self, api, cenario, gmail, repos, core_db, senders,
+    ):
+        """Achado 16: in-app used to go ONLY to the responsável (owners got
+        nothing in-app) and e-mail ALWAYS to owners only (the responsável
+        never got an e-mail) — both channels now reach BOTH, deduped."""
         prof = repos.profissional.criar(ORG, {"nome": "Ana", "usuario_id": "ana-user"})
         negocio = repos.store.insert("negocio", ORG, {
             "lead_id": cenario["orcamento"]["lead_id"], "titulo": "Sol", "etapa_id": "e1",
             "responsavel_id": prof["id"],
         })
         repos.orcamento.atualizar(ORG, cenario["orcamento"]["id"], {"negocio_id": negocio["id"]})
+        core_db.table("noctus_users").insert(
+            {"id": "ana-user", "email": "ana@agencia.com", "org_id": ORG, "org_role": "member"}
+        ).execute()
         _resposta(gmail)
         _push(api)
         notas = core_db.table("notifications").inserted_payloads
-        assert [n["user_id"] for n in notas] == ["ana-user"]
+        assert sorted(n["user_id"] for n in notas) == ["ana-user", "owner-1"]
+        assert len(senders.fake.sent) == 1
+        assert sorted(senders.fake.sent[0].to) == ["ana@agencia.com", "dono@agencia.com"]
 
     def test_redelivered_push_does_not_double(self, api, cenario, gmail, repos, core_db):
         _resposta(gmail)

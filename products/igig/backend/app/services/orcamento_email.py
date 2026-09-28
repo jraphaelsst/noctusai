@@ -10,7 +10,8 @@ Watch: Gmail ``users.watch`` → Pub/Sub push → ``POST /api/webhooks/gmail/pus
 → :func:`processar_notificacao`: ``list_history`` from the stored cursor →
 ``get_message_metadata`` → seed ``match_reply`` against the ``out`` rows the
 reply's ``In-Reply-To``/``References`` name → ``in`` row, ``respondido_em``,
-in-app notification + an e-mail to the org owner.
+in-app notification + e-mail to BOTH the negócio's responsável and every
+org owner (deduped) — achado 16.
 
 FastAPI-free: the router, the daily renewal job and tests all call in here;
 refusals are :class:`RegraViolada`.
@@ -46,6 +47,7 @@ from app.repositories.email import (
 from app.services import email_config
 from app.services.email_config import EmailSettings
 from app.services.notificacoes import notificar
+from app.services.quadro_comum import hoje_local
 from app.services.regras import RegraViolada
 
 logger = logging.getLogger(__name__)
@@ -133,6 +135,21 @@ def _corpo_texto(orcamento: dict, lead: dict | None, mensagem: str | None, remet
     return "\n".join(linhas)
 
 
+def _expirar_se_vencido(repos: Repositorios, org_id: str, orcamento: dict) -> dict:
+    """Flip a past-validade rascunho/enviado to `expirado` BEFORE the send
+    check (achado 16): `repos.orcamento.buscar` (this module's read seam) does
+    not run `orcamentos.py`'s read-time expiry, so an API caller hitting
+    `/enviar` directly (bypassing the UI, which only shows non-expired ones
+    via the list endpoint) could otherwise e-mail a proposal whose validade
+    already passed."""
+    if orcamento.get("status") not in _STATUS_ENVIAVEIS:
+        return orcamento
+    validade = orcamento.get("validade")
+    if not validade or str(validade)[:10] >= hoje_local().isoformat():
+        return orcamento
+    return repos.orcamento.atualizar(org_id, str(orcamento["id"]), {"status": "expirado"})
+
+
 def _mailbox_observada(repos: Repositorios, org_id: str) -> str | None:
     registro = repos.integracao.por_canal(org_id, email_config.CANAL_GMAIL)
     if registro is None or not registro.get("token_cifrado") or not registro.get("ativo"):
@@ -158,6 +175,7 @@ async def enviar_orcamento(
 ) -> tuple[dict, str]:
     """Send the orçamento PDF. Returns ``(orcamento_atualizado, message_id)``."""
     orcamento = repos.orcamento.buscar(org_id, orcamento_id)
+    orcamento = _expirar_se_vencido(repos, org_id, orcamento)
     if orcamento.get("status") not in _STATUS_ENVIAVEIS:
         raise RegraViolada(
             409, "orcamento_bloqueado",
@@ -366,24 +384,35 @@ def _candidatos(meta: GmailMessageMetadata) -> list[str]:
 def _destinatarios_internos(
     repos: Repositorios, core: Any, org_id: str, orcamento: dict
 ) -> tuple[list[str], list[str]]:
-    """``(user_ids para o in-app, e-mails dos donos)``."""
+    """``(user_ids para o in-app, e-mails)`` — BOTH channels to BOTH the
+    negócio's responsável AND every org owner, deduped (achado 16: in-app
+    used to go ONLY to the responsável when set — owners got nothing in-app —
+    and e-mail ALWAYS to owners only, so the responsável never got an
+    e-mail)."""
     donos = (
         core.table("noctus_users").select("id,email,org_role")
         .eq("org_id", org_id).eq("org_role", "owner").limit(20).execute().data
     ) or []
-    responsavel: str | None = None
+    usuarios: set[str] = {str(d["id"]) for d in donos}
+    emails: set[str] = {str(d["email"]) for d in donos if d.get("email")}
     if orcamento.get("negocio_id"):
         try:
             negocio = repos.store.get("negocio", org_id, str(orcamento["negocio_id"]))
             if negocio.get("responsavel_id"):
-                responsavel = repos.profissional.buscar(
+                usuario_resp = repos.profissional.buscar(
                     org_id, str(negocio["responsavel_id"])
                 ).get("usuario_id")
+                if usuario_resp:
+                    usuarios.add(str(usuario_resp))
+                    linhas = (
+                        core.table("noctus_users").select("id,email")
+                        .eq("id", str(usuario_resp)).limit(1).execute().data or []
+                    )
+                    if linhas and linhas[0].get("email"):
+                        emails.add(str(linhas[0]["email"]))
         except RecordNotFound:
             logger.warning("orçamento %s: negócio/responsável ausente", orcamento.get("id"))
-    usuarios = [str(responsavel)] if responsavel else [str(d["id"]) for d in donos]
-    emails = [str(d["email"]) for d in donos if d.get("email")]
-    return usuarios, emails
+    return list(usuarios), list(emails)
 
 
 async def _avisar(
@@ -396,7 +425,7 @@ async def _avisar(
     sender_factory: EmailSenderFactory,
     settings: EmailSettings,
 ) -> None:
-    usuarios, emails_donos = _destinatarios_internos(repos, core, org_id, orcamento)
+    usuarios, emails = _destinatarios_internos(repos, core, org_id, orcamento)
     titulo = f"Resposta ao orçamento: {orcamento.get('titulo') or ''}".strip()
     link = f"/orcamentos?id={orcamento['id']}"
     try:
@@ -407,20 +436,21 @@ async def _avisar(
         )
     except Exception:  # noqa: BLE001 — the reply is already recorded
         logger.exception("falha na notificação in-app org=%s orcamento=%s", org_id, orcamento["id"])
-    if not emails_donos:
-        logger.warning("resposta ao orçamento %s: org=%s sem dono com e-mail", orcamento["id"], org_id)
+    if not emails:
+        logger.warning("resposta ao orçamento %s: org=%s sem destinatário com e-mail",
+                       orcamento["id"], org_id)
         return
     try:
         config, _origem = email_config.resolver_smtp(repos, org_id, settings)
     except RegraViolada as erro:
         logger.warning(
-            "resposta ao orçamento %s: e-mail ao dono NÃO enviado org=%s — %s",
+            "resposta ao orçamento %s: e-mail NÃO enviado org=%s — %s",
             orcamento["id"], org_id, erro.mensagem,
         )
         return
     try:
         await sender_factory(config).send(OutgoingEmail(
-            to=emails_donos,
+            to=emails,
             subject=titulo,
             text=f"{remetente} respondeu ao orçamento \"{orcamento.get('titulo')}\":\n\n{snippet}\n\n"
                  f"Abra no IgIg: {link}",
