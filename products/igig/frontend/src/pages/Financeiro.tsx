@@ -74,7 +74,7 @@ export default function Financeiro() {
   const { linhas, loading: carregandoDRE, isError: erroDRE } = useDRE(competencia);
   const { excedentes, loading: carregandoExc, isError: erroExc } = useExcedentes(competencia);
   const { faturas, loading: carregandoFat, isError: erroFat } = useFaturas();
-  const { atrasadas } = useInadimplentes();
+  const { atrasadas, isError: erroAtrasadas, error: erroAtrasadasDetalhe } = useInadimplentes();
   const marcarPaga = useMarcarPaga();
   const cancelarFatura = useCancelarFatura();
   const enviarFatura = useEnviarFatura();
@@ -119,24 +119,30 @@ export default function Financeiro() {
       <FechamentoMes competencia={competencia} />
       <RelatorioSheet open={relatorioAberto} onClose={() => setRelatorioAberto(false)} />
 
-      {atrasadas.length > 0 && (
-        <div className="rounded-lg border border-destructive/40 bg-card p-4">
-          <h2 className="flex items-center gap-2 text-sm font-semibold text-destructive">
-            <AlertTriangle className="h-4 w-4" />
-            {atrasadas.length} fatura(s) em atraso
-          </h2>
-          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-            {atrasadas.slice(0, 5).map((f) => (
-              <li key={f.fatura_id}>
-                {nomeCliente(f.cliente_id) && (
-                  <span className="font-medium text-foreground">{nomeCliente(f.cliente_id)} · </span>
-                )}
-                {f.competencia} · {BRL.format(f.valor_total)} ·{" "}
-                <span className="text-destructive">{f.dias_atraso} dias</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {erroAtrasadas ? (
+        <p role="alert" className="rounded-lg border border-destructive/40 bg-card p-4 text-sm text-destructive">
+          {describeError(erroAtrasadasDetalhe, "Não foi possível carregar as faturas em atraso.")}
+        </p>
+      ) : (
+        atrasadas.length > 0 && (
+          <div className="rounded-lg border border-destructive/40 bg-card p-4">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-destructive">
+              <AlertTriangle className="h-4 w-4" />
+              {atrasadas.length} fatura(s) em atraso
+            </h2>
+            <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+              {atrasadas.slice(0, 5).map((f) => (
+                <li key={f.fatura_id}>
+                  {nomeCliente(f.cliente_id) && (
+                    <span className="font-medium text-foreground">{nomeCliente(f.cliente_id)} · </span>
+                  )}
+                  {f.competencia} · {BRL.format(f.valor_total)} ·{" "}
+                  <span className="text-destructive">{f.dias_atraso} dias</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
       )}
 
       {/* ── DRE ────────────────────────────────────────────────────── */}
@@ -400,7 +406,9 @@ function LinhaFatura({
   onPedirEnvio: () => void;
   onPedirMarcarEnviada: () => void;
 }) {
-  const { itens, loading } = useFaturaItens(aberta ? fatura.id : undefined);
+  const { itens, loading, isError: erroItens, error: erroItensDetalhe } = useFaturaItens(
+    aberta ? fatura.id : undefined,
+  );
 
   return (
     <li className="py-2">
@@ -466,7 +474,11 @@ function LinhaFatura({
 
       {aberta && (
         <div className="mt-2 rounded-md border border-border bg-background p-3">
-          {loading ? (
+          {erroItens ? (
+            <p role="alert" className="text-xs text-destructive">
+              {describeError(erroItensDetalhe, "Não foi possível carregar os itens desta fatura.")}
+            </p>
+          ) : loading ? (
             <Skeleton className="h-12 w-full" />
           ) : itens.length === 0 ? (
             <p className="text-xs text-muted-foreground">

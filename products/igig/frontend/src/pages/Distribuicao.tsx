@@ -255,7 +255,7 @@ export default function Distribuicao() {
  * history is the point.
  */
 function PainelMetricas({ publicacao }: { publicacao: Publicacao }) {
-  const { metricas, loading } = useMetricas(publicacao.id);
+  const { metricas, loading, isError, error } = useMetricas(publicacao.id);
   const registrar = useRegistrarMetrica();
   const [form, setForm] = useState({
     curtidas: "",
@@ -300,7 +300,11 @@ function PainelMetricas({ publicacao }: { publicacao: Publicacao }) {
 
   return (
     <div className="mt-2 w-full rounded-md border border-border bg-background p-3">
-      {loading ? (
+      {isError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {describeError(error, "Não foi possível carregar as coletas de métricas.")}
+        </p>
+      ) : loading ? (
         <Skeleton className="h-10 w-full" />
       ) : metricas.length === 0 ? (
         <p className="text-xs text-muted-foreground">
