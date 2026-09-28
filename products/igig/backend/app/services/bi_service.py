@@ -20,6 +20,23 @@ from app.repositories import Repositorios
 __all__ = ["EficienciaCliente", "BIService"]
 
 
+def _segundos(apontamento: dict) -> float:
+    """Precise elapsed seconds — `duracao_segundos` (every segment recorded
+    since migration 028) when present, else `minutos * 60` for a legacy row.
+
+    Never floored `minutos` alone: summing already-per-segment-floored
+    minutes is exactly how three 40-second sessions used to total 0 instead
+    of the 2 minutes they actually add up to (achado 22) — the Esteira UI's
+    own "Total" (`useApontamentos.minutosTotais`) was fixed to sum seconds
+    first, but BI's cost/taxa-de-refação numbers and the DRE they feed kept
+    reading the floored column directly (tech-lead addendum, 2026-09).
+    """
+    segundos = apontamento.get("duracao_segundos")
+    if segundos is not None:
+        return float(segundos)
+    return float(apontamento.get("minutos") or 0) * 60
+
+
 @dataclass(slots=True)
 class EficienciaCliente:
     """Efficiency rollup for one client."""
@@ -122,21 +139,26 @@ class BIService:
             alvo.refacoes += int(tarefa.get("refacoes") or 0)
 
         custos = self._custos(org_id)
+        # Precise seconds, summed PER CLIENTE before ever converting to
+        # minutes — converting per-apontamento first (as the old `minutos`
+        # column does) is the truncation achado 22 fixed for the Esteira UI.
+        segundos_por_cliente: dict[str, float] = {cid: 0.0 for cid in resultado}
         for apontamento in self._repos.apontamento.listar(org_id):
             cliente_id = tarefa_para_cliente.get(str(apontamento.get("tarefa_id")), "")
             alvo = resultado.get(cliente_id)
             if alvo is None:
                 continue
-            minutos = int(apontamento.get("minutos") or 0)
-            alvo.minutos += minutos
+            segundos = _segundos(apontamento)
+            segundos_por_cliente[cliente_id] = segundos_por_cliente.get(cliente_id, 0.0) + segundos
             taxa = custos.taxa(apontamento)
             if taxa is None:
                 # Unknown rate: count it, never treat it as free.
                 alvo.apontamentos_sem_custo += 1
                 continue
-            alvo.custo_reais += (minutos / 60) * taxa
+            alvo.custo_reais += (segundos / 3600) * taxa
 
-        for alvo in resultado.values():
+        for cliente_id, alvo in resultado.items():
+            alvo.minutos = int(segundos_por_cliente.get(cliente_id, 0.0) // 60)
             alvo.custo_reais = round(alvo.custo_reais, 2)
             if alvo.apontamentos_sem_custo:
                 alvo.alertas.append(
@@ -158,11 +180,10 @@ class BIService:
         alertas: list[str] = []
         for apontamento in self._repos.apontamento.da_tarefa(org_id, tarefa_id):
             taxa = custos.taxa(apontamento)
-            minutos = int(apontamento.get("minutos") or 0)
             if taxa is None:
                 alertas.append(
                     f"apontamento {apontamento.get('id')} sem custo/hora — não somado"
                 )
                 continue
-            total += (minutos / 60) * taxa
+            total += (_segundos(apontamento) / 3600) * taxa
         return round(total, 2), alertas
