@@ -41,6 +41,18 @@ def _get_resend():
 _FROM_EMAIL = "NoctusAI <noreply@noctusai.com>"
 
 
+def email_provider_configured() -> bool:
+    """True when the mailer has real transport (`RESEND_API_KEY` set).
+
+    Lets a caller explain a `send_*` `False` return to the end user WITHOUT
+    duplicating `_get_resend`'s provider-detection logic — a caller (e.g. the
+    team-invite route) needs to say "the e-mail was not sent because the
+    provider isn't configured" vs. "the send failed", and only this module
+    knows which one happened.
+    """
+    return _get_resend() is not None
+
+
 def _send(to: str, subject: str, html: str) -> bool:
     """Send an email via Resend or log it if not configured."""
     client = _get_resend()

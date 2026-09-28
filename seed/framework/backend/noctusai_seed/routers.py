@@ -44,7 +44,10 @@ from noctusai_lib.domain.org import (
 from noctusai_lib.api.auth import make_get_current_user_org
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
-from noctusai_lib.integrations.email.templates import send_product_invitation_email
+from noctusai_lib.integrations.email.templates import (
+    email_provider_configured,
+    send_product_invitation_email,
+)
 from noctusai_lib.domain.notifications import map_notification_to_pt
 from noctusai_lib.primitives.roles import (
     ADMIN_ROLES,
@@ -279,7 +282,13 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         inviter_name = (user.user_metadata or {}).get("name", "Um administrador")
         org_name = _org_display_name(deps.get_core_client(), org_id)
         base_url = settings.cors_origins.split(",")[0] if settings.cors_origins else "http://localhost:3000"
-        send_product_invitation_email(
+        # 🔴 no-silent-errors (finais, 2026-09-28): this call's `bool` return
+        # was previously discarded — with RESEND_API_KEY missing (or any send
+        # failure) the invitation row was created but NO e-mail went out,
+        # while the response (and the FE toast reading it) still said
+        # "enviado com sucesso". `email_enviado` lets the caller tell the
+        # truth; `email_motivo` names WHY when it's false.
+        email_enviado = send_product_invitation_email(
             to=email,
             product_name=product_name,
             org_name=org_name,
@@ -288,7 +297,14 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
             invited_by=inviter_name,
             base_url=base_url,
         )
-        return {"data": invite}
+        response: dict = {"data": invite, "email_enviado": email_enviado}
+        if not email_enviado:
+            response["email_motivo"] = (
+                "Servico de e-mail nao configurado"
+                if not email_provider_configured()
+                else "Falha ao enviar o e-mail de convite"
+            )
+        return response
 
     @router.get("/accept/validate")
     async def validate_invite(token: str = Query(...)):
