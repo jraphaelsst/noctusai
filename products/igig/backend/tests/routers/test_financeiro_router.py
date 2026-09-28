@@ -348,16 +348,23 @@ def _plano(repos, cliente, contrato, *, quantidade_plano, mes="2026-08"):
 
 
 class TestExcedentesPlanoVsExtra:
-    """Task-3 closeout: a PLAN pauta (`gerada_automaticamente`, traced to the
-    accepted orçamento's own recurring item) can never be an excedente, no
-    matter how many of it the real calendar produces in a given month — only
-    a hand-added EXTRA pauta, measured against that same `posts_por_mes`,
-    can. Worked examples mirrored in `scratchpad/kb/delta-closeout.md`."""
+    """A PLAN pauta (`gerada_automaticamente`, traced to the accepted
+    orçamento's own recurring item) can never be an excedente, no matter how
+    many of it the real calendar produces in a given month. A hand-added
+    EXTRA pauta bills against whatever PACKAGE CAPACITY the plan did NOT
+    already use that competência —
+    `capacidade_restante = max(0, posts_por_mes − plano_entregue)`,
+    `excedentes = max(0, extras − capacidade_restante)` — never against the
+    raw `posts_por_mes` (achado A, 2026-09 audit: the old code compared
+    extras straight to `posts_por_mes`, under-billing whenever the plan
+    itself had already delivered part, or all, of the package). Worked
+    examples mirrored in `scratchpad/kb/delta-excedentes-fatura.md`."""
 
     def test_a_5_week_month_never_bills_the_plans_own_calendar_variance(self, api, repos, cliente):
         """pacote=8 ('2x/semana', priced flat at 4 semanas/mês —
         `orcamentos.quantidade_mensal`); this month's real calendar gives 10
-        occurrences of that same recurring item — still zero excedentes."""
+        occurrences of that same recurring item — still zero excedentes, even
+        though the plan alone already exceeds the nominal package size."""
         contrato = _contrato(repos, cliente, pacote=8, excedente=100.0)
         _plano(repos, cliente, contrato, quantidade_plano=10)
         linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
@@ -366,27 +373,54 @@ class TestExcedentesPlanoVsExtra:
         assert linha["excedentes"] == 0
         assert linha["valor_total"] == 0.0
 
-    def test_extra_pautas_are_measured_against_the_same_package_not_the_plans_own_count(
+    def test_plan_fully_consuming_the_package_bills_every_avulsa(self, api, repos, cliente):
+        """pacote=12, plano=12 (the plan alone fills the whole package this
+        month) ⇒ remaining capacity is zero, so BOTH avulsas bill — not zero,
+        which is what comparing them to the raw `posts_por_mes` would give."""
+        contrato = _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _plano(repos, cliente, contrato, quantidade_plano=12)
+        _pautas(repos, cliente, 2)
+        linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
+        assert linha["entregues"] == 14  # 12 plano + 2 avulsas
+        assert linha["excedentes"] == 2  # max(0, 2 avulsas − max(0, 12 − 12))
+        assert linha["valor_total"] == 300.0  # 2 × 150
+
+    def test_partial_remaining_capacity_after_the_plan(self, api, repos, cliente):
+        """pacote=12, plano=10 ⇒ 2 slots of the package are still free; 3
+        avulsas ⇒ only the ONE beyond those 2 free slots bills."""
+        contrato = _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _plano(repos, cliente, contrato, quantidade_plano=10)
+        _pautas(repos, cliente, 3)
+        linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
+        assert linha["entregues"] == 13  # 10 plano + 3 avulsas
+        assert linha["excedentes"] == 1  # max(0, 3 avulsas − max(0, 12 − 10))
+        assert linha["valor_total"] == 150.0
+
+    def test_extras_within_the_remaining_capacity_are_not_billed(self, api, repos, cliente):
+        """pacote=12, plano=8 ⇒ 4 slots free; 3 avulsas fit inside that
+        remaining capacity ⇒ zero excedentes."""
+        contrato = _contrato(repos, cliente, pacote=12, excedente=150.0)
+        _plano(repos, cliente, contrato, quantidade_plano=8)
+        _pautas(repos, cliente, 3)
+        linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
+        assert linha["excedentes"] == 0
+        assert linha["valor_total"] == 0.0
+
+    def test_extras_measured_against_remaining_capacity_never_the_plans_own_count(
         self, api, repos, cliente
     ):
-        """Same contract, same month: the plan's own 10 (still free) PLUS 9
-        hand-added extras — only the ONE extra beyond the 8-post package
-        bills, never the plan's own count."""
+        """Same contract, same month: the plan's own 10 (still free, and
+        already ABOVE the 8-post package on its own — a 5-week-month
+        variance) PLUS 9 hand-added extras — since the plan already used up
+        (and exceeded) the whole package, remaining capacity is zero and
+        every extra bills."""
         contrato = _contrato(repos, cliente, pacote=8, excedente=100.0)
         _plano(repos, cliente, contrato, quantidade_plano=10)
         _pautas(repos, cliente, 9)
         linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
         assert linha["entregues"] == 19  # 10 plano + 9 extras
-        assert linha["excedentes"] == 1  # max(0, 9 extras − 8 pacote)
-        assert linha["valor_total"] == 100.0
-
-    def test_extras_within_the_package_size_are_not_billed(self, api, repos, cliente):
-        contrato = _contrato(repos, cliente, pacote=8, excedente=100.0)
-        _plano(repos, cliente, contrato, quantidade_plano=10)
-        _pautas(repos, cliente, 3)
-        linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
-        assert linha["excedentes"] == 0
-        assert linha["valor_total"] == 0.0
+        assert linha["excedentes"] == 9  # max(0, 9 extras − max(0, 8 − 10))
+        assert linha["valor_total"] == 900.0
 
     def test_a_plan_pauta_from_a_different_orcamento_is_not_conflated(self, api, repos, cliente):
         """Two clients, two plans, two contracts — a plan pauta never
@@ -924,6 +958,27 @@ class TestEnviarFatura:
     def test_unknown_invoice_returns_404(self, api_email, smtp):
         assert api_email.post("/api/financeiro/faturas/nao-existe/enviar").status_code == 404
 
+    def test_sending_a_vencida_invoice_does_not_undo_the_overdue_status(
+        self, api_email, senders, smtp, repos, cliente
+    ):
+        """achado B, 2026-09 audit: sending a `vencida` invoice used to flip
+        it back to `enviada`, and the next 06:00 `atualizar_inadimplencia`
+        sweep flipped it right back to `vencida` — flip-flop, with the
+        cliente's inadimplente state wobbling along with it. `enviar` may
+        still be used on an overdue invoice (it is not in `FATURA_FECHADA`),
+        but the status must stay `vencida`."""
+        repos.cliente.atualizar(ORG, cliente["id"], {"email": "cliente@padaria.com"})
+        fatura = api_email.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        repos.fatura.atualizar(ORG, fatura["id"], {"status": "vencida"})
+
+        resp = api_email.post(f"/api/financeiro/faturas/{fatura['id']}/enviar")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()
+        assert corpo["fatura"]["status"] == "vencida"
+        assert corpo["fatura"]["enviada_em"] is not None
+
 
 class TestMarcarFaturaEnviada:
     """`POST /faturas/{id}/marcar-enviada` — a manual flag for a fatura sent
@@ -952,6 +1007,20 @@ class TestMarcarFaturaEnviada:
 
     def test_unknown_invoice_returns_404(self, api):
         assert api.post("/api/financeiro/faturas/nao-existe/marcar-enviada").status_code == 404
+
+    def test_marking_a_vencida_invoice_does_not_undo_the_overdue_status(self, api, repos, cliente):
+        """Same flip-flop guard as `enviar` (achado B, 2026-09 audit) — the
+        manual 'sent outside the system' flag must not resurrect a `vencida`
+        invoice as `enviada` either."""
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        repos.fatura.atualizar(ORG, fatura["id"], {"status": "vencida"})
+
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/marcar-enviada")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "vencida"
+        assert resp.json()["enviada_em"] is not None
 
 
 class TestPermissoes:

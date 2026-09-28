@@ -189,3 +189,34 @@ def test_cascade_delete_removes_dependent_rows(repos, cliente, tarefa):
     repos.cliente.remover(ORG, cliente["id"])
     assert repos.pauta.do_cliente(ORG, cliente["id"]) == []
     assert repos.tarefa.listar(ORG) == []
+
+
+# ── Fatura (Módulo 6) ───────────────────────────────────────────────
+def test_marcar_enviada_moves_an_open_invoice_to_enviada(repos, cliente):
+    fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+    atualizada = repos.fatura.marcar_enviada(ORG, fatura["id"])
+    assert atualizada["status"] == "enviada"
+    assert atualizada["enviada_em"] is not None
+
+
+def test_marcar_enviada_never_downgrades_a_vencida_invoice(repos, cliente):
+    """achado B, 2026-09 audit: sending (or manually flagging) a `vencida`
+    invoice used to flip it back to `enviada`, and the next 06:00
+    `atualizar_inadimplencia` sweep flipped it right back to `vencida` —
+    flip-flop, with the cliente's inadimplente state wobbling along with it.
+    `status` must stay `vencida`; only `enviada_em` moves."""
+    fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+    repos.fatura.atualizar(ORG, fatura["id"], {"status": "vencida"})
+    atualizada = repos.fatura.marcar_enviada(ORG, fatura["id"])
+    assert atualizada["status"] == "vencida"
+    assert atualizada["enviada_em"] is not None
+
+
+def test_marcar_enviada_refreshes_enviada_em_on_a_genuine_resend(repos, cliente):
+    """Re-marking an already-`enviada` invoice still moves `enviada_em`
+    forward — a second send is a new event, not a fact frozen at the first."""
+    fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+    primeira = repos.fatura.marcar_enviada(ORG, fatura["id"])
+    segunda = repos.fatura.marcar_enviada(ORG, fatura["id"])
+    assert segunda["status"] == "enviada"
+    assert segunda["enviada_em"] >= primeira["enviada_em"]
