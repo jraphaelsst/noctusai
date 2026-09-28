@@ -98,6 +98,15 @@ _VALOR_LABELS = (
     "CNS",
     "TITULO DE ELEITOR",
     "CERTIDAO",
+    # A statute reference: the RG's own verso prints "LEI Nº 7.116, DE 29 DE
+    # AGOSTO DE 1983" under the "CARTEIRA DE IDENTIDADE" heading, so the law
+    # number sat inside that heading's label window and was read as a second,
+    # disagreeing labelled RG — which blanked the real "REGISTRO GERAL" value
+    # (P2 corpus, 2026-09-28). Longest-first matching makes "LEI NO"/"LEI N"
+    # win over the bare word.
+    "LEI NO",
+    "LEI N",
+    "LEI",
 )
 
 #: `52.179.965-X`, `52.179.965-1`, `52179965X`, `1234567`, `44886493866`.

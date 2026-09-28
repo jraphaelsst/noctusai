@@ -387,3 +387,25 @@ class TestOrgaoLabelledColumnBox:
         # as one of the address/jurisdiction decoy words.
         texto = "ORG EMISSOR: EM ALGUM LUGAR"
         assert find_rg_orgao(texto) == (None, "nenhuma")
+
+
+class TestLeiNumberOnTheVersoIsNotAnRg:
+    """P2 corpus, 2026-09-28: an SP RG's verso prints "LEI Nº 7.116 ..." right
+    under the "CARTEIRA DE IDENTIDADE" heading. The law number was read as a
+    second labelled RG, disagreed with the real REGISTRO GERAL, and blanked it."""
+
+    VERSO = (
+        "# VERSO DA CARTEIRA DE IDENTIDADE\n"
+        "LEI Nº 7.116, DE 29 DE AGOSTO DE 1983\n"
+        "Número: 123.456.789-09\n"
+        "REGISTRO GERAL: 12.345.678-9\n"
+        "DATA EXPEDIÇÃO: 01/02/2015\n"
+    )
+
+    def test_registro_geral_wins(self):
+        from noctusai_lib.integrations.documents.rg import find_rg
+
+        valor, confianca, rotulo = find_rg(self.VERSO)
+        assert valor == "12.345.678-9"
+        assert confianca == "alta"
+        assert rotulo == "REGISTRO GERAL"
