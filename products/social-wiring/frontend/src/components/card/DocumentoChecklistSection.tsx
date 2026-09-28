@@ -506,6 +506,22 @@ function SugestaoExtraida({
           RG idêntico ao CPF já cadastrado — confira o documento antes de confirmar.
         </p>
       )}
+      {/* Owner decision (2026-09-28): the document this suggestion comes
+          from was flagged `leitura_comprometida` — a label/value type
+          mismatch, a high ilegível-marker share, or the holder name
+          matching a FILIAÇÃO/parent name. The server already refused to
+          apply it unattended; this is the SAME warning at the human's own
+          decision point, so "Confirmar" is never clicked blind. */}
+      {s.leitura_comprometida && (
+        <p
+          className="mt-1 flex items-center gap-1 text-xs text-destructive"
+          data-testid={`${tid}-aviso-leitura-comprometida`}
+        >
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          Legibilidade comprometida — este documento pode ter sido lido
+          incorretamente. Conferência humana obrigatória.
+        </p>
+      )}
       <div className="mt-2 flex gap-2">
         <Button
           size="sm"

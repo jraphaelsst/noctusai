@@ -70,6 +70,21 @@ function leituraConcluida(status: string | null): boolean {
   return status === "ok" || status === "sem_dados";
 }
 
+//: `extracao_aviso` is a "+"-joined list of codes (migration 172, mirrors
+//: `IdentityFields.aviso`) — membership, never a substring check, so a
+//: DIFFERENT code that merely contains this string never matches.
+const LEITURA_COMPROMETIDA = "leitura_comprometida";
+
+//: Owner decision (2026-09-28): "when a document's readability is
+//: compromised, we'll warn on the human-gate review, so humans are aware
+//: the doc is risky ... human check is mandatory." Independent of
+//: `extracao_status` — the reading still ran to a terminal `ok`, so
+//: `extracaoRotulo` above renders nothing; THIS is the one signal that a
+//: document worth trusting less made it through anyway.
+function leituraComprometida(aviso: string | null): boolean {
+  return !!aviso && aviso.split("+").includes(LEITURA_COMPROMETIDA);
+}
+
 export interface AnexosSectionProps {
   documentos: Documento[];
   /** The active catalogue (`GET .../documentos/tipos`) — what the picker
@@ -274,6 +289,26 @@ export function AnexosSection({
                         — {doc.extracao_erro}
                       </span>
                     )}
+                  </p>
+                )}
+                {/* Owner decision (2026-09-28): independent of the badge
+                    above — a compromised reading still ends in a terminal
+                    `ok`, so `rotulo` is null here in the common case this
+                    exists to catch. */}
+                {leituraComprometida(doc.extracao_aviso) && (
+                  <p
+                    className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-amber-600"
+                    data-testid={`anexo-leitura-comprometida-${doc.id}`}
+                    title={doc.extracao_aviso_mensagem ?? undefined}
+                  >
+                    <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span className="shrink-0">Legibilidade comprometida</span>
+                    {/* `min-w-0` for the same reason the erro row's own
+                        equivalent span needs it — see that comment above. */}
+                    <span className="min-w-0 flex-1 truncate italic">
+                      — este documento pode ter sido lido incorretamente.
+                      Conferência humana obrigatória.
+                    </span>
                   </p>
                 )}
               </div>

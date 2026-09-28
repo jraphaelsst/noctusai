@@ -40,6 +40,8 @@ function documento(id: string, over: Partial<Documento> = {}): Documento {
     thumbnail_url: null,
     extracao_status: null,
     extracao_erro: null,
+    extracao_aviso: null,
+    extracao_aviso_mensagem: null,
     ...over,
   };
 }
@@ -271,5 +273,51 @@ describe("AnexosSection — a failed extraction is visible (Gap 4)", () => {
     );
     expect((getByTestId("anexo-reextrair-d1") as HTMLButtonElement).disabled).toBe(true);
     expect((getByTestId("anexo-reextrair-d2") as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("AnexosSection — leitura comprometida banner (owner decision, 2026-09-28)", () => {
+  it("🔴 warns even on a terminal `ok` — the badge above stays quiet there", async () => {
+    const doc = documento("d1", {
+      extracao_status: "ok",
+      extracao_aviso: "leitura_comprometida",
+      extracao_aviso_mensagem:
+        "leitura comprometida: um campo de data trouxe um valor que nao " +
+        "parece uma data — conferencia humana obrigatoria",
+    });
+    const { getByTestId, queryByTestId, getByText } = await render(
+      baseProps({ documentos: [doc] }),
+    );
+    expect(queryByTestId("anexo-extracao-status-d1")).toBeNull();
+    expect(getByTestId("anexo-leitura-comprometida-d1")).toBeTruthy();
+    expect(getByText("Legibilidade comprometida", { exact: false })).toBeTruthy();
+    expect(getByTestId("anexo-leitura-comprometida-d1").title).toContain(
+      "conferencia humana obrigatoria",
+    );
+  });
+
+  it("says nothing when there is no aviso at all", async () => {
+    const doc = documento("d1", { extracao_status: "ok" });
+    const { queryByTestId } = await render(baseProps({ documentos: [doc] }));
+    expect(queryByTestId("anexo-leitura-comprometida-d1")).toBeNull();
+  });
+
+  it("a DIFFERENT aviso code never triggers this banner (membership, not substring)", async () => {
+    const doc = documento("d1", {
+      extracao_status: "ok",
+      extracao_aviso: "titulares_multiplos",
+      extracao_aviso_mensagem: "documento nomeia mais de um titular",
+    });
+    const { queryByTestId } = await render(baseProps({ documentos: [doc] }));
+    expect(queryByTestId("anexo-leitura-comprometida-d1")).toBeNull();
+  });
+
+  it("still fires when joined with another aviso code", async () => {
+    const doc = documento("d1", {
+      extracao_status: "ok",
+      extracao_aviso: "titulares_multiplos+leitura_comprometida",
+    });
+    const { getByTestId } = await render(baseProps({ documentos: [doc] }));
+    expect(getByTestId("anexo-leitura-comprometida-d1")).toBeTruthy();
   });
 });

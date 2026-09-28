@@ -230,6 +230,26 @@ class TestListAndUrlAndDelete:
         assert resp.status_code == 200, resp.text
         assert {d["id"] for d in resp.json()["items"]} == {active["id"]}
 
+    def test_list_surfaces_leitura_comprometida_aviso(self, client, scoped):
+        """Migration 172 — `extracao_aviso`/`_mensagem` ride on every
+        document read, so `AnexosSection`'s readability banner (owner
+        decision, 2026-09-28) has something to read."""
+        cid = str(uuid4())
+        doc = documento_row(str(uuid4()), cid)
+        doc["extracao_aviso"] = "leitura_comprometida"
+        doc["extracao_aviso_mensagem"] = (
+            "leitura comprometida: um campo de data trouxe um valor que nao "
+            "parece uma data — conferencia humana obrigatoria"
+        )
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data("cliente_documentos", [doc])
+
+        resp = client.get(f"/api/clientes/{cid}/documentos", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        item = resp.json()["items"][0]
+        assert item["extracao_aviso"] == "leitura_comprometida"
+        assert "conferencia humana obrigatoria" in item["extracao_aviso_mensagem"]
+
     def test_get_url_mints_and_logs_view(self, client, scoped, fake_storage):
         cid = str(uuid4())
         doc = documento_row(str(uuid4()), cid)

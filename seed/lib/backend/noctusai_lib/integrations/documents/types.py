@@ -439,6 +439,24 @@ class IdentityFields:
             ExtractionConfidence.MEDIA,
         )
 
+    @property
+    def leitura_comprometida(self) -> bool:
+        """Did `legibilidade.avaliar_legibilidade` flag this transcription
+        as readability-compromised (owner decision, 2026-09-28)?
+
+        `aviso` is a "+"-joined list of codes (see its own docstring), so
+        this is a membership check rather than a substring one — a
+        different aviso code that merely CONTAINS this string as a
+        substring must never match. A consumer with its own downstream
+        human-review surface (social-wiring's pending-decision path) should
+        check this BEFORE treating any field on this result as safe to
+        auto-apply, confirmed or not: per the owner directive, a
+        compromised reading writes NOTHING unattended, at any confidence —
+        every field it would have written goes to that human-review surface
+        instead.
+        """
+        return bool(self.aviso) and "leitura_comprometida" in self.aviso.split("+")
+
     # ─── Named aliases ────────────────────────────────────────────────
     #
     # Kept so existing callers read the same as they always did, and so a

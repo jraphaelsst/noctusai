@@ -221,6 +221,80 @@ describe("sugestão de RG idêntico ao CPF (migration 110)", () => {
   });
 });
 
+describe("sugestão com leitura comprometida (migration 172, owner decision 2026-09-28)", () => {
+  it("🔴 warns BEFORE confirmar, in text a human reads without a tooltip", async () => {
+    const rgComprometido = item("rg", "RG", {
+      sugestao: {
+        valor: "41295423898",
+        documento_id: "doc-1",
+        documento_nome: "cnh.jpg",
+        tipo_documento: "cnh",
+        confianca: "baixa",
+        fonte: "ocr",
+        rotulo: "RG",
+        valor_atual: null,
+        aviso: null,
+        leitura_comprometida: true,
+      },
+    });
+    const { getByTestId, getByText } = await renderSection(
+      baseProps({ items: [rgComprometido], onResolverSugestao: vi.fn() }),
+    );
+    const aviso = getByTestId("documento-checklist-rg-sugestao-aviso-leitura-comprometida");
+    expect(aviso).toBeTruthy();
+    expect(getByText("Legibilidade comprometida", { exact: false })).toBeTruthy();
+    expect(getByText("Conferência humana obrigatória", { exact: false })).toBeTruthy();
+    // Confirmar/Descartar stay available — the warning informs the
+    // decision, it does not replace the existing confirm/discard gate.
+    expect(getByTestId("documento-checklist-rg-sugestao-confirmar")).toBeTruthy();
+    expect(getByTestId("documento-checklist-rg-sugestao-descartar")).toBeTruthy();
+  });
+
+  it("não mostra o aviso para uma sugestão comum", async () => {
+    const rgOrdinario = item("rg", "RG", {
+      sugestao: {
+        valor: "41295423898",
+        documento_id: "doc-1",
+        documento_nome: "rg.pdf",
+        tipo_documento: "rg",
+        confianca: "alta",
+        fonte: "texto",
+        rotulo: "RG",
+        valor_atual: null,
+        aviso: null,
+      },
+    });
+    const { queryByTestId } = await renderSection(
+      baseProps({ items: [rgOrdinario], onResolverSugestao: vi.fn() }),
+    );
+    expect(
+      queryByTestId("documento-checklist-rg-sugestao-aviso-leitura-comprometida"),
+    ).toBeNull();
+  });
+
+  it("both avisos can appear together (RG==CPF on a compromised reading)", async () => {
+    const rgAmbos = item("rg", "RG", {
+      sugestao: {
+        valor: "41295423898",
+        documento_id: "doc-1",
+        documento_nome: "cnh.jpg",
+        tipo_documento: "cnh",
+        confianca: "baixa",
+        fonte: "ocr",
+        rotulo: "RG",
+        valor_atual: null,
+        aviso: "rg_igual_cpf",
+        leitura_comprometida: true,
+      },
+    });
+    const { getByTestId } = await renderSection(
+      baseProps({ items: [rgAmbos], onResolverSugestao: vi.fn() }),
+    );
+    expect(getByTestId("documento-checklist-rg-sugestao-aviso-rg-cpf")).toBeTruthy();
+    expect(getByTestId("documento-checklist-rg-sugestao-aviso-leitura-comprometida")).toBeTruthy();
+  });
+});
+
 describe("sugestões de estado civil / regime de bens (migration 110)", () => {
   it("oferece a sugestão de estado civil com rótulo em pt-BR", async () => {
     const { getByTestId } = await renderSection(

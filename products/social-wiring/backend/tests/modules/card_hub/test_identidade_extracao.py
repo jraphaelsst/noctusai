@@ -32,6 +32,7 @@ import pytest
 
 from app.modules.card_hub import identidade_extracao_service as svc
 from noctusai_lib.integrations.documents import (
+    AVISO_LEITURA_COMPROMETIDA,
     ExtractionConfidence,
     FakeIdentityExtractor,
     IdentityFields,
@@ -175,6 +176,100 @@ class TestD1FillEmptyAtAnyConfidence:
         assert out["status"] == "sem_dados"
         assert _documento(scoped, did)["extracao_status"] == "sem_dados"
         assert _documento(scoped, did)["extracao_erro"] is None
+
+
+class TestLeituraComprometidaWithholdsEverything:
+    """Owner decision (2026-09-28): a `leitura_comprometida` document writes
+    NOTHING onto the cliente record, at ANY confidence — every field it
+    would have written stays reachable only through the human-review
+    surface (`sugestoes_pendentes`, which reads the document row directly
+    and is unaffected by this gate). Mirrors the measured CNH-screenshot
+    failure: a wrong nome + CPF, both read at what would otherwise be
+    write-eligible confidence, must not reach an otherwise-empty record.
+    """
+
+    def _comprometida(self) -> IdentityFields:
+        return IdentityFields(
+            nome="MARIA APARECIDA DAS DORES",
+            nome_confianca=ExtractionConfidence.ALTA,
+            cpf="412.954.238-98",
+            cpf_confianca=ExtractionConfidence.ALTA,
+            data_nascimento=date(1980, 5, 12),
+            data_nascimento_confianca=ExtractionConfidence.ALTA,
+            source=TextSource.OCR,
+            aviso=AVISO_LEITURA_COMPROMETIDA,
+            aviso_mensagem="leitura comprometida: um campo de data trouxe um "
+            "valor que nao parece uma data — conferencia humana obrigatoria",
+        )
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_written_to_an_empty_cliente(self, client, scoped):
+        cid, did, storage = await _setup(scoped)
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._comprometida()),
+        )
+        assert out["leitura_comprometida"] is True
+        assert out["aplicado_ao_cliente"]["nome_oficial"] is False
+        assert out["aplicado_ao_cliente"]["cpf"] is False
+        assert out["aplicado_ao_cliente"]["data_nascimento"] is False
+
+        c = _cliente(scoped, cid)
+        assert c.get("nome_oficial") is None
+        assert c.get("cpf") is None
+        assert c.get("data_nascimento") is None
+
+    @pytest.mark.asyncio
+    async def test_the_reading_still_survives_on_the_document_row(self, client, scoped):
+        """Not dropped — still visible for a human on Anexos/the pessoa
+        checklist, and still offered via `sugestoes_pendentes` (which reads
+        these columns directly, never `pode_persistir`)."""
+        cid, did, storage = await _setup(scoped)
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._comprometida()),
+        )
+        doc = _documento(scoped, did)
+        assert doc["extracao_nome"] == "MARIA APARECIDA DAS DORES"
+        assert doc["extracao_aviso"] == AVISO_LEITURA_COMPROMETIDA
+        assert "conferencia humana obrigatoria" in doc["extracao_aviso_mensagem"]
+
+        sugestoes = svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
+        assert sugestoes["nome_oficial"]["valor"] == "MARIA APARECIDA DAS DORES"
+        assert sugestoes["cpf"]["valor"] == "412.954.238-98"
+        # The pessoa checklist warns BEFORE a human clicks confirm — same
+        # signal `AnexosSection`'s banner shows, one level down.
+        assert sugestoes["nome_oficial"]["leitura_comprometida"] is True
+        assert sugestoes["cpf"]["leitura_comprometida"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_disagreeing_value_opens_no_conflict_either(self, client, scoped):
+        """A compromised reading disagreeing with an existing value is not
+        evidence worth an admin's attention — same "nothing auto-applied"
+        rule, applied to the conflict path rather than the empty-field
+        fill path."""
+        cid, did, storage = await _setup(
+            scoped,
+            cliente={"cpf": "111.111.111-11", "cpf_origem": "rg"},
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._comprometida()),
+        )
+        assert out["conflitos_abertos"] == []
+        assert _cliente(scoped, cid)["cpf"] == "111.111.111-11"
+
+    @pytest.mark.asyncio
+    async def test_a_clean_reading_still_applies_normally(self, client, scoped):
+        """Sanity check — the gate fires ONLY on `leitura_comprometida`,
+        never on an ordinary D1 read."""
+        cid, did, storage = await _setup(scoped)
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(_alta()),
+        )
+        assert out["leitura_comprometida"] is False
+        assert out["aplicado_ao_cliente"]["data_nascimento"] is True
 
 
 class TestFirstWriterWins:

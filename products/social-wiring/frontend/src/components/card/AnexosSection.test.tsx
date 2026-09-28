@@ -40,6 +40,8 @@ function documento(id: string, over: Partial<Documento> = {}): Documento {
     thumbnail_url: null,
     extracao_status: null,
     extracao_erro: null,
+    extracao_aviso: null,
+    extracao_aviso_mensagem: null,
     ...over,
   };
 }

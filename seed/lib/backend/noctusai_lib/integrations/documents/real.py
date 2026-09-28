@@ -57,6 +57,10 @@ from noctusai_lib.integrations.documents.cpf import (
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
+from noctusai_lib.integrations.documents.legibilidade import (
+    AVISO_LEITURA_COMPROMETIDA,
+    avaliar_legibilidade,
+)
 from noctusai_lib.integrations.documents.misfile import classificar_tipo_provavel
 from noctusai_lib.integrations.documents.transcription import (
     identity_document_render_dpi_policy,
@@ -477,6 +481,22 @@ class LadderIdentityExtractor:
                 "titular menor de 16 anos na data do casamento — leitura "
                 "descartada, nao gravada",
             ))
+
+        # 🔴 Legibilidade (owner directive, 2026-09-28) — a cross-field pass
+        # over the SAME transcription every parser above already read, run
+        # AFTER `nome` is resolved (titular selection / conjuge pairing)
+        # so the filiação check compares the value this function is ABOUT
+        # TO RETURN, not a raw candidate already discarded. See
+        # `legibilidade.py`'s module docstring for the measured failure this
+        # closes.
+        legibilidade = avaliar_legibilidade(text, nome_titular=nome)
+        if legibilidade.comprometida:
+            avisos.append((
+                AVISO_LEITURA_COMPROMETIDA,
+                "leitura comprometida: " + (legibilidade.mensagem or "") +
+                " — conferencia humana obrigatoria, nada foi gravado sem revisao",
+            ))
+
         aviso: Optional[str] = "+".join(codigo for codigo, _ in avisos) or None
         aviso_mensagem: Optional[str] = " | ".join(msg for _, msg in avisos) or None
 

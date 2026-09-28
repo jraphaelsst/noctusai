@@ -94,6 +94,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
+    AVISO_LEITURA_COMPROMETIDA,
     IdentityFields,
     TitularEsperado,
     canonical_gender,
@@ -1467,11 +1468,42 @@ async def extrair_identidade(
         marcacoes["extracao_endereco_titular"] = endereco.titular if endereco else None
         marcacoes["extracao_endereco_confianca"] = endereco.confianca if endereco else None
         marcacoes["extracao_endereco_rotulo"] = endereco.rotulo if endereco else None
+        # Migration 172: `fields.aviso`/`aviso_mensagem` survive on the
+        # document row — unlike every OTHER `extracao_*` triple above,
+        # `cliente_documentos` had no aviso column at all before this, so
+        # `titulares_multiplos`/`data_nascimento_implausivel`/
+        # `leitura_comprometida` used to reach only the logs.
+        marcacoes["extracao_aviso"] = fields.aviso
+        marcacoes["extracao_aviso_mensagem"] = fields.aviso_mensagem
         # Recorded BEFORE anything touches the client record, so a failure while
         # applying still leaves the reading on the document rather than a row
         # stuck in `processando` — the runner's own try/except (lesson G6) is
         # what turns a failure PAST this point into `erro`, never a false `ok`.
         _marcar(client, documento_id, **marcacoes)
+
+        # 🔴 LEITURA COMPROMETIDA — NOTHING AUTO-APPLIED (owner directive,
+        # 2026-09-28). `fields.leitura_comprometida` means
+        # `legibilidade.avaliar_legibilidade` found the TRANSCRIPTION itself
+        # suspect (a label/value type mismatch, a high ilegível-marker
+        # share, or the holder name matching a FILIAÇÃO/parent name — see
+        # that module's own docstring for the measured CNH-screenshot
+        # failure). Every value is still recorded on THIS document row
+        # (`marcacoes` above, unconditionally) — including through
+        # `sugestoes_pendentes`, which reads those columns directly and does
+        # not consult `pode_persistir` — so a human still sees and can
+        # confirm a field that happens to be correct despite the warning.
+        # What changes is `aplicar_campos_ao_cliente`'s `pode` gate: every
+        # field is withheld from writing onto `clientes` at ANY confidence,
+        # whether that write would have been a first-time machine-pending
+        # fill (the exact shape the CNH-screenshot bug exploited: a wrong
+        # nome + CPF written onto an otherwise-empty record) or a conflict
+        # against an existing value — a compromised reading disagreeing with
+        # the record is not evidence worth an admin's attention either.
+        lidos_para_aplicar = (
+            {chave: (valor, confianca, rotulo, False) for chave, (valor, confianca, rotulo, _pode) in lidos.items()}
+            if fields.leitura_comprometida
+            else lidos
+        )
 
         conflitos: list[dict] = []
         aplicados, abertos = aplicar_campos_ao_cliente(
@@ -1479,7 +1511,7 @@ async def extrair_identidade(
             org_id,
             cliente_id,
             tipo,
-            lidos,
+            lidos_para_aplicar,
             documento_id=documento_id,
             fonte_tabela=DOCUMENTOS_TABLE,
             fonte_id=documento_id,
@@ -1487,15 +1519,23 @@ async def extrair_identidade(
         conflitos += abertos
 
         if endereco is not None:
-            aplicado_end, conflito_end = aplicar_endereco_ao_cliente(
-                client, org_id, cliente_id, tipo, partes_endereco,
-                titular_documento=endereco.titular,
-                confianca=endereco.confianca,
-                documento_id=documento_id,
-            )
-            aplicados[CAMPO_ENDERECO] = aplicado_end
-            if conflito_end is not None:
-                conflitos.append(conflito_end)
+            # Same leitura_comprometida gate as every field above — the
+            # address group is written/conflicted as one unit
+            # (`aplicar_endereco_ao_cliente`'s own contract), so it is
+            # skipped as one unit here too. The reading still rides on the
+            # document row (`marcacoes` above) for a human to review.
+            if fields.leitura_comprometida:
+                aplicados[CAMPO_ENDERECO] = False
+            else:
+                aplicado_end, conflito_end = aplicar_endereco_ao_cliente(
+                    client, org_id, cliente_id, tipo, partes_endereco,
+                    titular_documento=endereco.titular,
+                    confianca=endereco.confianca,
+                    documento_id=documento_id,
+                )
+                aplicados[CAMPO_ENDERECO] = aplicado_end
+                if conflito_end is not None:
+                    conflitos.append(conflito_end)
 
         # 🔴 BOTH SPOUSES (migration 153). The spouse the card belongs to was
         # applied above (the extractor's `titular` hint selected them and carried
@@ -1511,7 +1551,11 @@ async def extrair_identidade(
             if titular_idx is not None and len(conjuges) == 2:
                 outro = conjuges[1 - titular_idx]
                 outro_id = _cliente_do_outro_conjuge(client, org_id, cliente_id, outro)
-                if outro_id is not None:
+                # `outro_id` is still resolved above (used below to attribute
+                # `registro_conjuges`, a document-row RECORD, not a write to
+                # any cliente) even when comprometida — only the WRITE to the
+                # other spouse's record and the reciprocal link are gated.
+                if outro_id is not None and not fields.leitura_comprometida:
                     _, abertos_outro = aplicar_campos_ao_cliente(
                         client, org_id, UUID(outro_id), tipo,
                         _lidos_do_conjuge(outro, fields),
@@ -1565,6 +1609,7 @@ async def extrair_identidade(
             "aplicado_ao_cliente": aplicados,
             "conflitos_abertos": [c["campo"] for c in conflitos],
             "conjuges": registro_conjuges,
+            "leitura_comprometida": fields.leitura_comprometida,
         }
 
     identity_config = replace(
@@ -1890,6 +1935,21 @@ def _e_cin(doc: dict, cliente: dict) -> bool:
     return False
 
 
+def _doc_leitura_comprometida(doc: dict) -> bool:
+    """Was the document THIS suggestion comes from flagged `leitura_
+    comprometida` (migration 172)? Membership on the "+"-joined
+    `extracao_aviso` string, mirroring `IdentityFields.leitura_
+    comprometida` — a different code that merely CONTAINS this string must
+    never match. Surfaced on every suggestion this document offers so the
+    pessoa checklist warns a human BEFORE they click confirm (owner
+    decision, 2026-09-28) — `aplicar_campos_ao_cliente` already refused to
+    write it unattended; this is the same warning at the human's own
+    decision point.
+    """
+    aviso = doc.get("extracao_aviso")
+    return bool(aviso) and AVISO_LEITURA_COMPROMETIDA in str(aviso).split("+")
+
+
 def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """Per checklist-item, the newest extracted value still awaiting a decision.
 
@@ -1955,6 +2015,7 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
                 "rotulo": doc.get(campo.coluna_rotulo),
                 "substitui": bool(campo.sobrescreve and atual),
                 "aviso": aviso,
+                "leitura_comprometida": _doc_leitura_comprometida(doc),
             }
             break
 
@@ -1979,6 +2040,7 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
                 "titular_documento": doc.get("extracao_endereco_titular"),
                 "substitui": False,
                 "aviso": None,
+                "leitura_comprometida": _doc_leitura_comprometida(doc),
             }
             break
     return out

@@ -71,10 +71,19 @@ def _extracao_servida(row: dict) -> dict:
     and by `sugestoes_pendentes` — a document stuck in `erro` (an OpenAI 429,
     a corrupt PDF) showed nowhere on the card, indistinguishable from one that
     was never meant to be read at all. `None` for a non-identity type (never
-    queued) is the honest value, not a gap."""
+    queued) is the honest value, not a gap.
+
+    `extracao_aviso`/`_mensagem` (migration 172) ride alongside — a
+    non-fatal advisory on an otherwise terminal `ok`, distinct from
+    `extracao_erro`'s failed-read meaning. Surfaced here so
+    `AnexosSection`'s `leitura_comprometida` banner (owner decision,
+    2026-09-28) has something to read without a second round-trip.
+    """
     return {
         "extracao_status": row.get("extracao_status"),
         "extracao_erro": row.get("extracao_erro"),
+        "extracao_aviso": row.get("extracao_aviso"),
+        "extracao_aviso_mensagem": row.get("extracao_aviso_mensagem"),
     }
 
 

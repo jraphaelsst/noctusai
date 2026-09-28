@@ -158,6 +158,16 @@ export interface Documento {
   /** The human-readable failure reason, set only when `extracao_status ===
    *  "erro"`. `POST .../documentos/{id}/extrair` clears both together. */
   extracao_erro: string | null;
+  /**
+   * A non-fatal advisory alongside a terminal `extracao_status` — a
+   * "+"-joined list of codes (migration 172, mirrors
+   * `IdentityFields.aviso`), e.g. `"leitura_comprometida"`. `null` for the
+   * common case. Distinct from `extracao_erro`, which is a FAILED read.
+   */
+  extracao_aviso: string | null;
+  /** The pt-BR sentence naming every reason in `extracao_aviso`,
+   *  `" | "`-joined. `null` when `extracao_aviso` is `null`. */
+  extracao_aviso_mensagem: string | null;
 }
 
 /**
@@ -598,6 +608,16 @@ export interface ExtracaoSugestao {
   aviso?: "rg_igual_cpf" | null;
   /* Never set for a CIN (a cin-typed file, or órgão IIGDR): there RG == CPF
      is the document's valid state (2026-09-23). */
+  /**
+   * Migration 172, owner decision (2026-09-28) — the document this
+   * suggestion comes from was flagged `leitura_comprometida`
+   * (`legibilidade.avaliar_legibilidade`): a label/value type mismatch, a
+   * high ilegível-marker share, or the holder name matching a FILIAÇÃO/
+   * parent name. `aplicar_campos_ao_cliente` already refused to write this
+   * value unattended — the checklist must warn BEFORE a human clicks
+   * confirm, not just after the fact on Anexos.
+   */
+  leitura_comprometida?: boolean;
 }
 
 export interface DocumentoChecklistItem {
