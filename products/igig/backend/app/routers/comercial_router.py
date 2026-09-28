@@ -28,6 +28,7 @@ finding 2: it used to accept any caller holding a guessable id).
 # NOTE: no `from __future__ import annotations` — this module IS rate-limited;
 # see esteira_router.py for the slowapi/PEP 563 interaction.
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -241,16 +242,27 @@ async def reabrir_negocio(
     Perdidos archive's "Reabrir" (achado #10: there was no way back at all).
 
     A generic `move_card` (seed) call, deliberately NOT routed through
-    `comercial_funil.mover_negocio` (owned by another slice): it lands on the
-    stage the negócio was lost from (falling back to the funnel's first
-    active stage if that one is gone or was deactivated meanwhile), clears
-    the loss fields, and runs the entry-stage automations same as any other
-    arrival — a reabertura is a fresh entry, exactly like a card leaving and
-    coming back per the automations engine's own rule.
+    `comercial_funil.mover_negocio`: it lands on the stage the negócio was
+    lost from (falling back to the funnel's first active stage if that one
+    is gone or was deactivated meanwhile), clears the loss fields, and runs
+    the entry-stage automations same as any other arrival — a reabertura is
+    a fresh entry, exactly like a card leaving and coming back per the
+    automations engine's own rule. `mover_negocio`'s papel-specific closing
+    rules (orçamento required into `fechado`) have no business firing here.
+
+    `stage_entered_at` is reset explicitly (leftovers item 14): `perder_
+    negocio` never moves `etapa_id`, so a reopen back into that SAME stage —
+    the common case — reads to `move_card` as "no stage change", which
+    writes NO history row and leaves the OLD `stage_entered_at` in place;
+    dwell/SLA math would then count the entire time spent `perdido` as time
+    sitting in the stage. Both are corrected here rather than in the seed:
+    a fresh `pipeline_movimentos` entry (mirroring `qc.registrar_entrada`)
+    whenever `move_card` itself would have skipped one.
     """
     org_id = _org(auth)
     negocio = qc.carregar(
-        db, "negocio", org_id, negocio_id, select="id, status, perdido_stage_id", rotulo="negócio"
+        db, "negocio", org_id, negocio_id, select="id, status, etapa_id, perdido_stage_id",
+        rotulo="negócio",
     )
     if negocio.get("status") != "perdido":
         raise HTTPException(
@@ -265,6 +277,7 @@ async def reabrir_negocio(
     destino_id = str(negocio.get("perdido_stage_id") or "")
     if not any(str(s["id"]) == destino_id for s in stages):
         destino_id = str(stages[0]["id"])
+    etapa_antes = str(negocio.get("etapa_id") or "")
     posicao = qc.posicao_no_topo(db, PIPELINE_COMERCIAL, org_id=org_id, etapa_id=destino_id)
     linha = move_card(
         db, PIPELINE_COMERCIAL,
@@ -273,9 +286,15 @@ async def reabrir_negocio(
         extra_updates={
             "status": "aberto", "perdido_em": None, "motivo_perda": None,
             "perdido_stage_id": None,
+            "stage_entered_at": datetime.now(timezone.utc).isoformat(),
         },
         org_id=org_id,
     )
+    if etapa_antes == destino_id:
+        qc.registrar_entrada(
+            db, PIPELINE_COMERCIAL, org_id=org_id, card_id=negocio_id, etapa_id=destino_id,
+            user_id=str(auth[0].id),
+        )
     await automacoes.ao_entrar_etapa(
         portas, org_id, pipeline="comercial", card_id=negocio_id, user_id=str(auth[0].id)
     )

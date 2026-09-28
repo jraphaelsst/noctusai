@@ -38,6 +38,7 @@ import { useProfissionais } from "@/hooks/useCustos";
 import { useDRE, useInadimplentes } from "@/hooks/useFinanceiro";
 import { esteiraPipeline } from "@/hooks/useEsteira";
 import { PAPEL_APROVACAO_CLIENTE } from "@/components/esteira/moveRules";
+import { describeError } from "@/lib/errors";
 import { comercialPipeline } from "@/lib/pipelines";
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -87,7 +88,12 @@ export default function Dashboard() {
   const profissionaisQuery = useProfissionais();
   const { profissionais, loading: carregandoProfissionais } = profissionaisQuery;
   const { linhas: dre, loading: carregandoDRE } = useDRE(COMPETENCIA_ATUAL);
-  const { atrasadas: inadimplentes } = useInadimplentes();
+  const {
+    atrasadas: inadimplentes,
+    loading: carregandoInadimplentes,
+    isError: erroInadimplentes,
+    error: erroInadimplentesMsg,
+  } = useInadimplentes();
 
   // Stages are the org's own editable rows, so "in production" is keyed on
   // ORDER and ROLE, never on slugs or labels: every column BEFORE the
@@ -220,7 +226,13 @@ export default function Dashboard() {
 
         <section className="rounded-lg border border-border bg-card p-4">
           <h2 className="mb-3 text-sm font-semibold text-foreground">Inadimplência</h2>
-          {inadimplentes.length === 0 ? (
+          {erroInadimplentes ? (
+            <p role="alert" className="text-sm text-destructive">
+              {describeError(erroInadimplentesMsg, "Não foi possível carregar a inadimplência.")}
+            </p>
+          ) : carregandoInadimplentes ? (
+            <TableSkeleton rows={2} />
+          ) : inadimplentes.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma fatura vencida.</p>
           ) : (
             <ul className="space-y-2">

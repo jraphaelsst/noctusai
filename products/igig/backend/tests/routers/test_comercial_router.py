@@ -259,6 +259,36 @@ class TestReabrirNegocio:
         assert corpo["motivo_perda"] is None
         assert corpo["perdido_stage_id"] is None
 
+    def test_resets_stage_entered_at_and_writes_history_even_into_the_same_stage(
+        self, crm_api, igig_db, comercial
+    ):
+        """Leftovers item 14: `perder_negocio` never moves `etapa_id`, so
+        reopening back into the SAME stage it was lost from (the common
+        case) reads to `move_card` as "no stage change" — no history row,
+        and the OLD `stage_entered_at` (from before the loss) would stay,
+        making dwell/SLA math count the whole `perdido` interval as time
+        sitting in the stage."""
+        negocio = self._negocio_perdido(crm_api, comercial)
+        antes = [
+            m for m in igig_db.table("pipeline_movimentos")._data
+            if m["entidade_id"] == negocio["id"]
+        ]
+
+        resp = crm_api.post(f"/api/comercial/negocios/{negocio['id']}/reabrir")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()["data"]
+        assert corpo["etapa_id"] == comercial["leads"]["id"] == negocio["etapa_id"]
+        assert corpo["stage_entered_at"] != negocio["stage_entered_at"]
+
+        depois = [
+            m for m in igig_db.table("pipeline_movimentos")._data
+            if m["entidade_id"] == negocio["id"]
+        ]
+        assert len(depois) == len(antes) + 1
+        assert depois[-1]["motivo"] is None  # registrar_entrada's shape, not move_card's
+        assert depois[-1]["de_etapa_id"] is None
+        assert depois[-1]["para_etapa_id"] == comercial["leads"]["id"]
+
     def test_appears_back_on_the_board(self, crm_api, comercial):
         negocio = self._negocio_perdido(crm_api, comercial)
         crm_api.post(f"/api/comercial/negocios/{negocio['id']}/reabrir")

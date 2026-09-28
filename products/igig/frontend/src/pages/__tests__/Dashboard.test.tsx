@@ -43,6 +43,7 @@ interface Estado {
   clientesAtivos?: unknown;
   clientesInadimplentes?: unknown;
   comercial?: unknown;
+  inadimplentes?: unknown;
 }
 
 /** Routes every `useQuery` call by its key; anything unspecified settles
@@ -53,7 +54,7 @@ function mockEstado(estado: Estado) {
     if (chave[0] === COMERCIAL_BOARD_KEY) return estado.comercial ?? VAZIO;
     if (chave[0] === ESTEIRA_BOARD_KEY) return VAZIO;
     if (chave[1] === "financeiro" && chave[2] === "dre") return estado.dre ?? VAZIO;
-    if (chave[1] === "financeiro" && chave[2] === "inadimplentes") return VAZIO;
+    if (chave[1] === "financeiro" && chave[2] === "inadimplentes") return estado.inadimplentes ?? VAZIO;
     if (chave[1] === CUSTOS_QUERY_KEY[1] && chave[2] === "profissionais") {
       return estado.profissionais ?? VAZIO;
     }
@@ -182,5 +183,28 @@ describe("Dashboard — Comercial KPIs (achado #21)", () => {
     renderDashboard();
     const rotulo = screen.getByText("Ganhos no mês");
     expect(rotulo.closest("a")).toHaveTextContent("0");
+  });
+});
+
+describe("Dashboard — Inadimplência two-signal loading (leftovers item 13)", () => {
+  it("shows a skeleton while still loading, never a confident 'Nenhuma fatura vencida'", () => {
+    mockEstado({ inadimplentes: LOADING });
+    renderDashboard();
+    expect(screen.queryByText("Nenhuma fatura vencida.")).not.toBeInTheDocument();
+  });
+
+  it("shows the server's error instead of a confident empty state", () => {
+    mockEstado({
+      inadimplentes: { data: undefined, isPending: false, isFetching: false, isError: true, error: new Error("Falha ao carregar") },
+    });
+    renderDashboard();
+    expect(screen.getByRole("alert")).toHaveTextContent("Falha ao carregar");
+    expect(screen.queryByText("Nenhuma fatura vencida.")).not.toBeInTheDocument();
+  });
+
+  it("shows the empty state only once loaded, with no error", () => {
+    mockEstado({ inadimplentes: VAZIO });
+    renderDashboard();
+    expect(screen.getByText("Nenhuma fatura vencida.")).toBeInTheDocument();
   });
 });
