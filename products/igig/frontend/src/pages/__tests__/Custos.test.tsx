@@ -54,7 +54,8 @@ describe("Custos — profissional edit + delete confirmation", () => {
 
     // Two inputs share this placeholder: the "add profissional" form (always
     // rendered) and this row's edit form — the edit one is the LAST one.
-    const overrideInput = screen.getAllByPlaceholderText("herda da função").at(-1)!;
+    const todos = screen.getAllByPlaceholderText("herda da função");
+    const overrideInput = todos[todos.length - 1];
     fireEvent.change(overrideInput, { target: { value: "120" } });
     fireEvent.click(screen.getByRole("button", { name: /Salvar/ }));
 
