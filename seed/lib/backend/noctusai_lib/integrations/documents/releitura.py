@@ -269,7 +269,17 @@ def mesclar(
                 updates[f"{campo}_confianca"] = ExtractionConfidence.NENHUMA
                 updates[f"{campo}_rotulo"] = None
                 conflitantes.append(campo)
-                if campo == "rg":
+                if campo == "rg" and not (
+                    original.rg_orgao
+                    and escalada.rg_orgao
+                    and _mesmo_valor("rg_orgao", original.rg_orgao, escalada.rg_orgao)
+                ):
+                    # The issuer travels with the number, but a number the
+                    # two reads disagree on does not make an issuer they
+                    # AGREE on wrong — measured on the P2 corpus, two CNHs
+                    # lost a correct "SSP/SP" alongside an OCR-garbled RG.
+                    # Kept (original's value + confidence) only when both
+                    # reads name the same issuer; otherwise dropped with it.
                     updates["rg_orgao"] = None
                     updates["rg_orgao_confianca"] = ExtractionConfidence.NENHUMA
         # both absent: nothing to do — neither read found this field.
