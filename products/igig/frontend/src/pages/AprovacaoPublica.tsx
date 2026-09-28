@@ -12,6 +12,9 @@
  *   loading         — skeleton
  *   rate-limited     — 429: distinct from "invalid" (achado 8) — try again shortly
  *   unreachable      — network failure / 5xx: distinct from "invalid" too
+ *   bloqueado        — 423 `portal_bloqueado`: a valid link, an agency policy
+ *                      (`IGIG_PORTAL_BLOQUEIO_DIAS`) currently refuses it —
+ *                      distinct from "the link itself is bad"
  *   invalid          — unknown / expired / already-decided-and-later-pulled
  *                      (indistinguishable BY DESIGN, so one message covers them)
  *   decided          — the client already answered
@@ -21,7 +24,7 @@ import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { ApiError } from "@noctusai/lib";
 import { Button, Skeleton } from "@noctusai/lib/design-system";
-import { AlertCircle, CheckCircle2, MessageSquare, WifiOff } from "lucide-react";
+import { AlertCircle, CheckCircle2, Lock, MessageSquare, WifiOff } from "lucide-react";
 
 import { useAprovacaoPublica, useDecidirAprovacao } from "@/hooks/useEsteira";
 
@@ -39,10 +42,11 @@ function Moldura({ children }: { children: React.ReactNode }) {
  * expirado", which told a client with a perfectly good link to go ask their
  * agency for a new one over a passing network hiccup.
  */
-function estadoDoErro(erro: unknown): "rate-limited" | "unreachable" | "invalid" {
+function estadoDoErro(erro: unknown): "rate-limited" | "unreachable" | "bloqueado" | "invalid" {
   if (erro instanceof ApiError) {
     if (erro.status === 429) return "rate-limited";
     if (erro.status === null || erro.status >= 500) return "unreachable";
+    if (erro.status === 423) return "bloqueado";
   }
   return "invalid";
 }
@@ -90,6 +94,19 @@ export default function AprovacaoPublica() {
               <p className="mt-1 text-sm text-muted-foreground">
                 Verifique sua conexão e tente novamente.
               </p>
+            </div>
+          </div>
+        </Moldura>
+      );
+    }
+    if (estado === "bloqueado") {
+      return (
+        <Moldura>
+          <div className="flex items-start gap-3">
+            <Lock className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+            <div>
+              <h1 className="font-semibold text-foreground">Portal temporariamente indisponível</h1>
+              <p className="mt-1 text-sm text-muted-foreground">Contate a agência.</p>
             </div>
           </div>
         </Moldura>

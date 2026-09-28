@@ -65,6 +65,19 @@ describe("AprovacaoPublica — error state honesty (achado 8)", () => {
     expect(screen.getByText("Não foi possível carregar")).toBeInTheDocument();
   });
 
+  it("shows the portal-blocked message for a 423 portal_bloqueado, not the invalid-link copy", () => {
+    mockUseAprovacaoPublica.mockReturnValue({
+      aprovacao: null, loading: false,
+      error: new ApiError(423, "Portal temporariamente indisponível, contate a agência.", {
+        code: "portal_bloqueado",
+      }),
+    });
+    renderPortal();
+    expect(screen.getByText("Portal temporariamente indisponível")).toBeInTheDocument();
+    expect(screen.getByText("Contate a agência.")).toBeInTheDocument();
+    expect(screen.queryByText("Link inválido ou expirado")).not.toBeInTheDocument();
+  });
+
   it("keeps the single opaque message for a genuine 404 (unknown/expired/decided)", () => {
     mockUseAprovacaoPublica.mockReturnValue({
       aprovacao: null, loading: false, error: new ApiError(404, "Link inválido ou expirado"),

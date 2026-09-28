@@ -684,6 +684,68 @@ class TestPortalPublico:
         assert api.raw().get(f"/api/esteira/aprovar/{forjado}").status_code == 404
 
 
+class TestPortalBloqueioFinanceiro:
+    """`IGIG_PORTAL_BLOQUEIO_DIAS` — off by default; when set, a cliente with
+    a fatura overdue past that many days gets 423 `portal_bloqueado` on BOTH
+    the view and the decision, instead of the normal portal.
+
+    `bloqueado` overrides `get_settings` — the router's own DI seam
+    (`decidir_aprovacao_publica` already took `Depends(get_settings)`) —
+    never the bare `settings` singleton.
+    """
+
+    @pytest.fixture
+    def token(self, api, tarefa) -> str:
+        return api.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao").json()["token"]
+
+    @pytest.fixture
+    def bloqueado(self, api):
+        """`IGIG_PORTAL_BLOQUEIO_DIAS=5` for the duration of one test."""
+        from app.config import get_settings, settings
+        from app.main import app
+
+        app.dependency_overrides[get_settings] = lambda: settings.model_copy(
+            update={"igig_portal_bloqueio_dias": 5}
+        )
+        yield
+        app.dependency_overrides.pop(get_settings, None)
+
+    @staticmethod
+    def _fatura_vencida(igig_db, cliente_id: str, *, dias_atraso: int) -> dict:
+        vencimento = (datetime.now(timezone.utc) - timedelta(days=dias_atraso)).date().isoformat()
+        return igig_db.table("fatura").insert({
+            "org_id": ORG, "cliente_id": cliente_id, "competencia": "2026-01",
+            "valor_total": 500, "status": "aberta", "vencimento": vencimento,
+        }).execute().data[0]
+
+    def test_off_by_default_even_with_an_old_overdue_fatura(self, api, igig_db, pauta, token):
+        self._fatura_vencida(igig_db, pauta["cliente_id"], dias_atraso=999)
+        assert api.raw().get(f"/api/esteira/aprovar/{token}").status_code == 200
+
+    def test_view_is_423_past_the_configured_days(self, api, igig_db, pauta, token, bloqueado):
+        self._fatura_vencida(igig_db, pauta["cliente_id"], dias_atraso=10)
+        resp = api.raw().get(f"/api/esteira/aprovar/{token}")
+        assert resp.status_code == 423
+        assert resp.json()["code"] == "portal_bloqueado"
+
+    def test_not_yet_blocked_below_the_threshold(self, api, igig_db, pauta, token, bloqueado):
+        self._fatura_vencida(igig_db, pauta["cliente_id"], dias_atraso=3)
+        assert api.raw().get(f"/api/esteira/aprovar/{token}").status_code == 200
+
+    def test_decision_is_also_423_and_never_applied(self, api, igig_db, repos, pauta, token, bloqueado):
+        self._fatura_vencida(igig_db, pauta["cliente_id"], dias_atraso=10)
+        resp = api.raw().post(f"/api/esteira/aprovar/{token}", json={"decisao": "aprovado"})
+        assert resp.status_code == 423
+        assert resp.json()["code"] == "portal_bloqueado"
+        aprovacao = repos.aprovacao.por_token(token)
+        assert not repos.aprovacao.decidida(aprovacao), "a blocked decision must not be recorded"
+
+    def test_a_paid_fatura_never_blocks(self, api, igig_db, pauta, token, bloqueado):
+        fatura = self._fatura_vencida(igig_db, pauta["cliente_id"], dias_atraso=10)
+        igig_db.table("fatura").update({"status": "paga"}).eq("id", fatura["id"]).execute()
+        assert api.raw().get(f"/api/esteira/aprovar/{token}").status_code == 200
+
+
 class TestPublicPortalWiring:
     """Structural guarantees the request-level tests cannot give.
 

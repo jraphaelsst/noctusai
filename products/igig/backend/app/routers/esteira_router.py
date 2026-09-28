@@ -80,6 +80,7 @@ from app.schemas.esteira import (
 from app.schemas.pipeline import MoverCardIn, TarefaCreate
 from app.services import automacoes, esteira_quadro
 from app.services.automacoes import PortasAutomacao
+from app.services.financeiro_service import cliente_bloqueado_no_portal
 from app.services.notificacoes import notificar
 from app.services.regras import RegraViolada, http_de
 from app.storage import get_storage
@@ -105,6 +106,24 @@ stages_router = pipeline_stages_router(
 #: One message for every public-lookup failure. Distinct messages would let a
 #: caller probe which tokens exist.
 _LINK_INVALIDO = "Link inválido ou expirado"
+
+#: `IGIG_PORTAL_BLOQUEIO_DIAS` gate (financeiro_service.cliente_bloqueado_no_portal).
+#: 423 — the token IS valid, the request is understood, the resource is just
+#: not available right now (RFC's own "Locked"), distinct from every 404
+#: `_LINK_INVALIDO` above already means.
+_PORTAL_BLOQUEADO = "Portal temporariamente indisponível, contate a agência."
+
+
+def _recusar_se_bloqueado(repos: Repositorios, org_id: str, cliente_id: str, cfg: Any) -> None:
+    """`cfg` comes from `Depends(get_settings)` at the call site — the seam
+    tests override, never the bare `settings` singleton (`KB § PATTERNS/
+    backend/di-test-seam.md`)."""
+    if cliente_bloqueado_no_portal(
+        repos, org_id, cliente_id, dias_bloqueio=cfg.igig_portal_bloqueio_dias
+    ):
+        raise HTTPException(
+            status_code=423, detail={"detail": _PORTAL_BLOQUEADO, "code": "portal_bloqueado"}
+        )
 
 
 def _org(auth: tuple) -> str:
@@ -401,12 +420,20 @@ async def ver_aprovacao_publica(
     token: str,
     repos: Repositorios = Depends(get_repositorios_admin),
     storage: StorageBackend = Depends(get_storage),
+    cfg: Any = Depends(get_settings),
 ) -> AprovacaoPublicaOut:
-    """What the client sees. No auth; narrow projection."""
+    """What the client sees. No auth; narrow projection.
+
+    423 `portal_bloqueado` when `IGIG_PORTAL_BLOQUEIO_DIAS` is set and this
+    cliente has a fatura overdue past that many days — the link itself is
+    fine, the portal is just not open right now (`financeiro_service.
+    cliente_bloqueado_no_portal`). OFF by default (the env var is 0/absent).
+    """
     aprovacao = _resolver_link(repos, token)
     org_id = str(aprovacao["org_id"])
     tarefa = repos.tarefa.buscar(org_id, str(aprovacao["tarefa_id"]))
     pauta = repos.pauta.buscar(org_id, str(tarefa["pauta_id"]))
+    _recusar_se_bloqueado(repos, org_id, str(pauta["cliente_id"]), cfg)
 
     cliente_nome = None
     try:
@@ -481,6 +508,10 @@ async def decidir_aprovacao_publica(
 
     Also fires the destination stage's `entrada_etapa` automations — the same
     ones a board drag fires, which a portal decision never triggered before.
+
+    423 `portal_bloqueado` under the same `IGIG_PORTAL_BLOQUEIO_DIAS` gate the
+    GET carries — a blocked client cannot submit a decision either, checked
+    BEFORE the decision is applied, never after.
     """
     aprovacao = _resolver_link(repos, token)
     if repos.aprovacao.decidida(aprovacao):
@@ -488,6 +519,9 @@ async def decidir_aprovacao_publica(
 
     org_id = str(aprovacao["org_id"])
     tarefa_id = str(aprovacao["tarefa_id"])
+    tarefa_para_bloqueio = repos.tarefa.buscar(org_id, tarefa_id)
+    pauta_para_bloqueio = repos.pauta.buscar(org_id, str(tarefa_para_bloqueio["pauta_id"]))
+    _recusar_se_bloqueado(repos, org_id, str(pauta_para_bloqueio["cliente_id"]), cfg)
     try:
         esteira_quadro.decidir_aprovacao(
             db, org_id, tarefa_id=tarefa_id, decisao=payload.decisao,
