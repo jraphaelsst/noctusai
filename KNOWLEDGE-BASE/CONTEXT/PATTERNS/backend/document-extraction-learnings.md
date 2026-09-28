@@ -45,6 +45,28 @@ Extraction is its own process, measured separately from contract generation (own
 | **The MRZ is also a vision read**: misreads one letter | 1/3 MRZs | a strict MRZ-vs-label check erased a correct name | single-edit token differences agree; a real disagreement demotes to `baixa` (human), never blanks |
 | Transcribes the page's decoys faithfully — the RG verso's "LEI Nº 7.116", a CPF-shaped "Matrícula" | RG, casamento | a decoy number becomes a candidate | teach the parser the decoy (statute refs, matrícula labels) |
 
+### 2a · Measurements that change how we build (P2, 2026-09-28)
+
+- **Run-to-run variance is material.** The same RG, same code, same model: 4 local reads found the
+  RG, the prod read did not. A single vision read is a *sample*, not a fact → **re-read** (second
+  sample or stronger model) when a core field is missing or the read is flagged.
+- **Prompt tuning is a weak lever; structure is the strong one.** An identity prompt v2 with explicit
+  label rules, measured on all 10 deals: +1 name, +1 CPF filled, but CPF wrong 2→4, RG wrong 7→9,
+  gênero 15→11 → **not shipped** (a wrong value on a real person is worse than a missing one). A
+  comprovante-specific prompt: 4/9 → 4/9. Parser-side structural rules moved CNH names 5/11 → 9/11.
+- **A stronger model is the lever for hard images.** Sonnet 5 read the hallucinated app screenshot
+  correctly; comprovante addresses Haiku 4/9, Sonnet 6/9, union 7/9. Escalate selectively (on
+  missing core field / low legibility), not by default.
+- **Calibrate every gate on the real corpus before shipping.** The legibility gate's first version
+  flagged 17/28 genuine ID cards (compound CNH labels, "DOC IDENTIDADE / ÓRG EMISSOR / UF"); the
+  second flagged 8/9 comprovantes (a bill legitimately carries CNPJ/ICMS) and 7/13 certidões
+  (extenso dates, cartório footer CEP). Final: signals scoped by document kind → 3/49 flagged
+  (both real hallucinations + one genuinely illegible CNH), 0 false alarms.
+- **Don't derive what you can't verify.** The SP RG check digit (weights 2..9, 11−mod) matched only
+  12/18 contract RGs → never complete a CNH-sourced RG automatically; flag it for a human.
+- **Persist what the model read.** Prod keeps no identity transcription, so a prod miss cannot be
+  diagnosed after the fact — store per-page transcriptions privately (LGPD retention).
+
 ## 3 · Layout catalog (what the parsers must know)
 
 - **CNH (2022+, bilingual)** — "NOME E SOBRENOME / NAME AND SURNAME:": drop the English gloss
@@ -58,6 +80,16 @@ Extraction is its own process, measured separately from contract generation (own
   (the document's own verdict is *casado* unless an averbação says otherwise); "Nome que o
   [primeiro|segundo] cônjuge passou a utilizar" is the post-marriage legal name; a single
   "Número do CPF" near the "Nome atual dos cônjuges" header; the matrícula line is CPF-shaped.
+- **Certidão de casamento, older layouts** — (a) "NOME: …/NOME: …" then "ELE: <name>, nascido…" /
+  "ELA: …" with the qualification glued to the name by a comma; (b) "inteiro teor" holder list
+  (name + clause per row under a "… DOS CÔNJUGES" header); (c) the pre-CNJ narrative: both names
+  only once ("assento do matrimônio de X e Y"), then "O/A contratante nascido… profissão… estado
+  civil solteiro" — the **only document in the corpus that carries PROFISSÃO**, and the names are
+  deliberately NOT split on "e" (it is also a surname particle). OCR writes "contratente" too.
+- **gov.br CIN (PDF from the app)** — text layer = app boilerplate + a date; the data is an embedded
+  image → a text-layer read that lacks nome/CPF/RG must fall through to vision. The CIN number is
+  the CPF (no separate RG).
+- **Old-model CNH** — the name is a bare line with no label; "CPF" merged into the identity line.
 - **Serasa Crednet** — "Participação Societária" rows can print `100.0 %` (dot decimal) and an
   unpunctuated 14-digit CNPJ; a share never has a thousands separator.
 - **Guia ITBI (Carapicuíba)** — no transaction-value box: price = "Valor do Instrumento (à vista)"
@@ -71,6 +103,9 @@ Extraction is its own process, measured separately from contract generation (own
   certidão's post-marriage name → which one is the contract name is an **owner rule** (open).
 - **Certidões**: the contract can cite a different emission (número/date) than the file in the
   folder (P1/883 RF). Score against the document; flag the divergence.
+
+- **Proof of address in someone else's name**: most comprovantes in the corpus are bills in a
+  relative's/other person's name → read correctly but not attributable (owner rule open).
 
 ## 5 · Sources for data no identity document carries (automation ideas)
 
