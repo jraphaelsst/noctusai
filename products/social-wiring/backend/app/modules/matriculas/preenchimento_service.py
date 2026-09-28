@@ -92,14 +92,33 @@ def _ref(ato: dict) -> Optional[tuple[str, int]]:
 
 def derivar_situacao_onus(
     atos: list[dict], detalhes: dict[str, dict], sugestoes_onus: list[dict]
-) -> str:
-    """The property's ônus status from its acts. Pure.
+) -> Optional[str]:
+    """The property's ônus status from its acts, or `None` — indeterminate,
+    apply nothing — when it cannot be vouched for. Pure.
 
     An encumbrance counts unless a LATER act releases it: a `cancelamento`
     whose typed `atos_referidos` names it, or (the text heuristic
     `sugerir` already computes) a later cancellation act citing its number.
     None active → `livre`; one kind → that kind; several kinds → `outro`
     (the vocabulary has no plural; a human reads `onus_fonte` for detail).
+
+    🔴 [situacao-onus-unclassified-act] `livre` is asserted ONLY when every
+    non-abertura act was actually classified — typed (`natureza` set, by a
+    human or the seed's own `extrair_detalhes_ato`), flagged by the text
+    heuristic as an onus candidate (present in `sugestoes_onus`, cancelled
+    or not), or recognised by the heuristic as a CANCELLATION citing
+    another act by number (`cancelamento_citado_por`) even when the
+    canceller act itself has no typed reading — `sugerir` never adds a
+    cancelamento act to its own onus list, so this is the only heuristic
+    signal for it, and without it an untyped release would wrongly read as
+    "unclassified" and block a genuinely `livre` result. An act that is
+    none of the above — the seed extractor's `natureza` regex AND the text
+    heuristic's onus terms both missed it (unusual wording, an OCR
+    artefact, …) — is a BLIND SPOT, not evidence it is not an ônus:
+    asserting `livre` there could let a real hipoteca/penhora through as
+    "livre e desembaraçado" in a signed contract. The caller does not apply
+    the field in that case, leaving it for a human to classify the
+    outstanding act(s) — never a silent "no ônus found so far" default.
     """
     ordenados = sorted(atos, key=lambda r: r["ordem"])
     liberados: set[tuple[str, int]] = set()
@@ -119,9 +138,32 @@ def derivar_situacao_onus(
     liberados_por_texto = {
         str(o["ato_id"]) for o in sugestoes_onus if o.get("cancelamento_citado_por")
     }
+    # Every act CITED as a canceller in some onus entry's own
+    # `cancelamento_citado_por` — the heuristic classifying THAT act as a
+    # cancellation, independent of it ever getting an onus entry of its own.
+    canceladores_por_texto: set[str] = set()
+    for o in sugestoes_onus:
+        for canc_id in o.get("cancelamento_citado_por") or []:
+            canceladores_por_texto.add(str(canc_id))
 
     def _liberado(ato: dict) -> bool:
         return _ref(ato) in liberados or str(ato["id"]) in liberados_por_texto
+
+    sugeridos_por_id = {str(o["ato_id"]) for o in sugestoes_onus}
+    for ato in ordenados:
+        if ato.get("kind") == "abertura":
+            continue
+        aid = str(ato["id"])
+        if (detalhes.get(aid) or {}).get("natureza"):
+            continue
+        if aid in sugeridos_por_id or aid in canceladores_por_texto:
+            continue
+        logger.warning(
+            "situacao_onus: ato %s has neither a typed natureza nor a text-heuristic "
+            "reading — indeterminate, not livre",
+            aid,
+        )
+        return None
 
     ativos: list[str] = []
     tipados: set[str] = set()
@@ -304,11 +346,13 @@ def preencher_sincrono(
         if credores:
             aplicar("onus_credor", "; ".join(credores))
 
-    aplicar(
-        "situacao_onus",
-        derivar_situacao_onus(atos, detalhes, sugestoes["onus"]),
-        documento_id=eid,
-    )
+    situacao_onus = derivar_situacao_onus(atos, detalhes, sugestoes["onus"])
+    if situacao_onus is not None:
+        aplicar("situacao_onus", situacao_onus, documento_id=eid)
+    else:
+        # A named destination, not a silent skip: at least one act could not
+        # be classified as encumbering or not — see `derivar_situacao_onus`.
+        resumo["situacao_onus"] = "indeterminado"
     return resumo, conflitos
 
 

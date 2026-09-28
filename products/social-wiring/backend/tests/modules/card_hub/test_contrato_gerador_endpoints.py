@@ -43,17 +43,24 @@ from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 _T0 = "2026-01-01T00:00:00+00:00"
 
-#: [Owner directive, 2026-09-23] `derivacao.comarca_de_texto` reads the
-#: RAW extraction text (`matricula_extracoes.texto_extraido`), never the
-#: selected-acts quote — appended after `fx.MATRICULA_TEXTO` (never
-#: inside it: `fx.MATRICULA_TEXTO`'s own exact shape is pinned byte-for-
-#: byte elsewhere, `test_contrato_gerador.py`'s
-#: `test_descricao_imovel_block_narrows_the_imovel_clause_when_present`).
-#: `_imovel()`'s `texto_len` stays `len(fx.MATRICULA_TEXTO)` (the OLD,
-#: shorter length) so the confirmed título aquisitivo quote keeps citing
-#: only the R.1 sentence, never this suffix.
-_MATRICULA_TEXTO_COM_COMARCA = (
-    fx.MATRICULA_TEXTO + " Situado nesta cidade, município e comarca de Cidade Exemplo."
+#: [Owner directive, 2026-09-23; scoped to the abertura 2026-09-28 —
+#: `derivacao.comarca_de_texto`'s foro-comarca audit fix] `comarca_de_texto`
+#: reads the RAW extraction text (`matricula_extracoes.texto_extraido`),
+#: never the selected-acts quote — but only its OWN abertura (everything
+#: before the first R./AV header), never an act's body. Spliced into
+#: `fx.MATRICULA_TEXTO`'s abertura line, right before the "\nR.1/12.345"
+#: boundary — never inside `fx.MATRICULA_TEXTO` itself (its own exact
+#: shape is pinned byte-for-byte elsewhere, `test_contrato_gerador.py`'s
+#: `test_descricao_imovel_block_narrows_the_imovel_clause_when_present`)
+#: and never after the R.1 sentence (outside the abertura, unreadable by
+#: the scoped derivation). `_imovel()`'s `texto_len` below is
+#: `len(_MATRICULA_TEXTO_COM_COMARCA)` — the whole (now longer) text, since
+#: the R.1 sentence is still the last thing in it — so the confirmed título
+#: aquisitivo quote keeps citing exactly that sentence, same relationship
+#: `len(fx.MATRICULA_TEXTO)` had to the unmodified text.
+_MATRICULA_TEXTO_COM_COMARCA = fx.MATRICULA_TEXTO.replace(
+    "\nR.1/12.345",
+    " Situado nesta cidade, município e comarca de Cidade Exemplo.\nR.1/12.345",
 )
 
 #: Every table the generator's loader reads. Seeded empty by `_seed_base` so a
@@ -334,7 +341,7 @@ def _seed_completo(scoped, n: int = 1) -> dict:
         scoped, codigo="EX001", empreendimento="Edifício Exemplo", logradouro="Rua Fictícia",
         numero="100", complemento="Apto 11", matricula="12345", inscricao="000.000.0000-0",
         extracao_id=objeto["extracao_id"], ato_id=objeto["r1_id"], corte=objeto["corte"],
-        texto_len=len(fx.MATRICULA_TEXTO), onus=onus, credor=credor,
+        texto_len=len(_MATRICULA_TEXTO_COM_COMARCA), onus=onus, credor=credor,
     )
     selecao = [
         {"id": str(uuid4()), "org_id": ORG_ID, "contrato_id": ids["contrato"],

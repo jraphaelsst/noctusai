@@ -38,7 +38,11 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from noctusai_lib.domain.texto_ptbr import formatar_brl, parse_brl
-from noctusai_lib.integrations.documents import derivar_endereco, has_raw_markup
+from noctusai_lib.integrations.documents import (
+    derivar_endereco,
+    has_raw_markup,
+    segment_matricula_atos,
+)
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
 from app.modules.card_hub.contrato_gerador import frases
@@ -232,6 +236,14 @@ _COMARCA_REGISTRO_RE = re.compile(
 )
 
 
+def _mesma_cidade(com_uf: str, sem_uf: str) -> bool:
+    """Case/accent-insensitive city-name compare — `com_uf` may carry the
+    registry header's "/UF" suffix (`_COMARCA_REGISTRO_RE`'s shape),
+    `sem_uf` never does (`_COMARCA_MUNICIPIO_RE`'s) — only the city name
+    itself is compared."""
+    return _dobra_acentos(com_uf.split("/", 1)[0]) == _dobra_acentos(sem_uf)
+
+
 def comarca_de_texto(texto: Optional[str]) -> Optional[str]:
     """[Owner directive, 2026-09-23] The DA ELEIÇÃO DO FORO clause's
     comarca, read off a matrícula's OWN transcription — never a manual
@@ -241,24 +253,51 @@ def comarca_de_texto(texto: Optional[str]) -> Optional[str]:
     independent of which acts the operator selected to quote — the comarca
     is a fact about the property's registry, not a clause excerpt.
 
+    🔴 [foro-comarca-abertura-scope] Scoped to the matrícula's OWN abertura
+    — everything before the first accepted R./AV header
+    (`segment_matricula_atos`'s own boundary, the same segmenter that backs
+    `matricula_atos`). Unscoped, an ACT's body can legitimately name an
+    unrelated "município e comarca de X" (a notary's own city, cited inside
+    an instrumento) or a different deal's elected foro, and whichever such
+    citation happened to sit first in the raw text used to win over the
+    matrícula's own registry heading — a Cotia matrícula whose R.5 cites a
+    "Tabelião de Notas do Município e Comarca de São Paulo" must never
+    resolve to São Paulo. Within the abertura, the registry's own heading
+    (`_COMARCA_REGISTRO_RE`) is PREFERRED over the generic boilerplate
+    phrase (`_COMARCA_MUNICIPIO_RE`); when both are present and name
+    DIFFERENT cidades, neither is trusted — `None`, the SAME named gap
+    (`negociacao.foro_comarca`, `_contrato` below) an unreadable matrícula
+    already produces, never a silent pick between the two.
+
     Matches ONLY the two shapes a matrícula's own abertura/registry
     boilerplate uses (see the two regexes above); `None` when neither is
     found — the caller (`_contrato`) treats that as a real gap to name,
     never a guess."""
     if not texto:
         return None
-    m = _COMARCA_MUNICIPIO_RE.search(texto)
-    if m:
-        cidade = re.sub(r"\s+", " ", m.group(1)).strip(" .")
-        if cidade:
-            return cidade
-    m = _COMARCA_REGISTRO_RE.search(texto)
+    abertura = next(
+        (a for a in segment_matricula_atos(texto) if a.kind == "abertura"), None
+    )
+    escopo = texto[: abertura.end] if abertura is not None else ""
+
+    cabecalho: Optional[str] = None
+    m = _COMARCA_REGISTRO_RE.search(escopo)
     if m:
         cidade = re.sub(r"\s+", " ", m.group(1)).strip(" .")
         if cidade:
             uf = m.group(2)
-            return f"{cidade}/{uf.upper()}" if uf else cidade
-    return None
+            cabecalho = f"{cidade}/{uf.upper()}" if uf else cidade
+
+    boilerplate: Optional[str] = None
+    m = _COMARCA_MUNICIPIO_RE.search(escopo)
+    if m:
+        cidade = re.sub(r"\s+", " ", m.group(1)).strip(" .")
+        if cidade:
+            boilerplate = cidade
+
+    if cabecalho and boilerplate:
+        return cabecalho if _mesma_cidade(cabecalho, boilerplate) else None
+    return cabecalho or boilerplate
 
 
 def _verificar_coerencia_endereco(

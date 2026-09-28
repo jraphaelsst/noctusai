@@ -1514,6 +1514,32 @@ class TestComarcaDaMatricula:
     def test_no_recognizable_phrase_is_none(self):
         assert derivacao.comarca_de_texto("MATRÍCULA Nº 12.345 - IMÓVEL: apartamento nº 11.") is None
 
+    def test_a_later_ato_citing_an_unrelated_tabeliao_comarca_never_wins(self):
+        """[MED-HIGH audit finding] A Cotia matrícula whose AV.2 quotes a
+        Tabelião de Notas located in São Paulo must still resolve Cotia —
+        the citation lives in an act's BODY, outside the abertura, and used
+        to win by appearing first in the unscoped full-text search."""
+        texto = (
+            "Registro de imóveis da comarca de Cotia – SP\n"
+            "Imóvel: apartamento nº 11, situado nesta cidade.\n"
+            "R.1 - Compra e venda em favor de João da Silva.\n"
+            "AV.2 - Lavrado perante o Tabelião de Notas do Município e "
+            "Comarca de São Paulo, reconhecida firma das partes.\n"
+        )
+        assert derivacao.comarca_de_texto(texto) == "Cotia/SP"
+
+    def test_header_and_abertura_boilerplate_disagreeing_is_a_gap_not_a_guess(self):
+        """[MED-HIGH audit finding] Both phrases sit INSIDE the abertura
+        itself and name different cidades — an inconsistency in the
+        matrícula's own opening text, never silently resolved either way."""
+        texto = (
+            "Registro de imóveis da comarca de Cotia – SP\n"
+            "O imóvel está situado nesta cidade, município e comarca de "
+            "São Paulo.\n"
+            "R.1 - Abertura da matrícula.\n"
+        )
+        assert derivacao.comarca_de_texto(texto) is None
+
     def test_an_unresolvable_comarca_blocks_generation(self):
         d = replace(fx.variante(1), matricula=replace(fx.variante(1).matricula, comarca=None))
         _d, _pol, _sw, av = _avaliar(1, d)

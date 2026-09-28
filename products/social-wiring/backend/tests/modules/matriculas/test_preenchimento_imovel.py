@@ -299,6 +299,46 @@ class TestDerivarSituacaoOnus:
             atos, {"a1": {"natureza": "hipoteca"}}, sugestoes
         ) == "livre"
 
+    def test_all_acts_classified_and_none_onus_is_livre(self):
+        """[HIGH audit finding] The unambiguous positive case: every
+        non-abertura act was actually typed and none is an ônus — `livre`
+        is warranted, not merely the absence of a match."""
+        atos = [_ato(0, "abertura", None), _ato(1, "R", 1), _ato(2, "AV", 2)]
+        detalhes = {
+            "a1": {"natureza": "compra_e_venda"},
+            "a2": {"natureza": "outro"},
+        }
+        assert preench.derivar_situacao_onus(atos, detalhes, []) == "livre"
+
+    def test_an_act_neither_typed_nor_heuristically_flagged_is_indeterminate(self):
+        """[HIGH audit finding] A hipoteca the seed's own `natureza` regex
+        AND the text heuristic BOTH missed (unusual wording, an OCR
+        artefact, ...) must never silently read as "not onus" — from this
+        function's inputs alone it is indistinguishable from a genuinely
+        untyped act, so the honest answer is "don't know", not `livre`."""
+        atos = [_ato(1, "R", 2)]
+        assert preench.derivar_situacao_onus(atos, {}, []) is None
+
+    def test_one_unclassified_act_blocks_livre_even_with_other_classified_acts(self):
+        atos = [_ato(1, "R", 1), _ato(2, "AV", 2)]
+        detalhes = {"a1": {"natureza": "compra_e_venda"}}  # a2 stays untyped
+        assert preench.derivar_situacao_onus(atos, detalhes, []) is None
+
+    def test_heuristic_only_cancellation_of_an_untyped_hipoteca_is_still_livre(self):
+        """[HIGH audit finding — regression guard] Neither the hipoteca nor
+        its cancelamento act is typed; both are recognised purely by the
+        text heuristic (the hipoteca as its own onus entry, the cancelamento
+        only as the `cancelamento_citado_por` target — `sugerir` never gives
+        a cancelamento act an onus entry of its own). The stricter
+        classification check above must not mistake the untyped canceller
+        for a blind spot and block this otherwise-correct `livre`."""
+        atos = [_ato(1, "R", 2), _ato(2, "AV", 3)]
+        sugestoes = [{
+            "ato_id": "a1", "tipo": "hipoteca", "sugerido": False,
+            "cancelamento_citado_por": ["a2"],
+        }]
+        assert preench.derivar_situacao_onus(atos, {}, sugestoes) == "livre"
+
 
 class TestTranscriptionRetry:
     """D3: a failed transcription whose PDF was kept is retried in place at
