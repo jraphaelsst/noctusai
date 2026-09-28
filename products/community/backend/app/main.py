@@ -34,9 +34,11 @@ from app.routers.checkout_router import router as checkout_router
 from app.routers.dashboard_router import router as dashboard_router
 from app.routers.example_router import router as example_router
 from app.routers.lancamentos_router import router as lancamentos_router
+from app.routers.grupoterapia_router import router as grupoterapia_router
 from app.routers.membros_router import router as membros_router
 from app.routers.pagamentos_router import router as pagamentos_router
 from app.routers.planos_router import router as planos_router
+from app.routers.portal_grupoterapia_router import router as portal_grupoterapia_router
 from app.routers.webhook_router import router as webhook_router
 from app.routers.webhooks_router import router as webhooks_router
 from app.routers.whatsapp_connections_router import router as whatsapp_connections_router
@@ -108,6 +110,8 @@ app = create_product_app(
     # + dashboard) — cashflow CRUD (staff read, admin write, manual-only
     # PATCH/DELETE) and the read-only `GET /api/dashboard` KPI/series
     # rollup, both staff-gated via `get_current_user_org`.
+    # `grupoterapia_router` (staff) / `portal_grupoterapia_router` (member)
+    # are Ninho Vazio slice BE-D (CONTRACT.md §Grupoterapia).
     routers=[
         example_router, webhook_router, planos_router, membros_router,
         aplicacoes_router, checkout_router, webhooks_router,
@@ -117,6 +121,7 @@ app = create_product_app(
         whatsapp_webhook_router,
         api_keys_router, whatsapp_connections_router,
         lancamentos_router, dashboard_router,
+        grupoterapia_router, portal_grupoterapia_router,
     ],
     # Module 3 registers `community.moderacao_whatsapp` (AI-flagged
     # WhatsApp moderation) in `app/services/ai_consent_features.py` —
