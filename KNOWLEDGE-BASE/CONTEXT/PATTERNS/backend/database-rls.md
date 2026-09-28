@@ -371,6 +371,16 @@ See also `CLAUDE.md → MCP migrations mirror the file` and `CONTEXT/01-PHILOSOP
 - Tenant key per product: see `02-LANDSCAPE.md` product table (`org_id` for most; `clinic_id` for Therapy).
 - Every business table has the tenant key as the first filter in its RLS policy.
 
+### Customer roles — org membership is not staff access (SEC-2, 2026-09-28)
+
+End customers (`public.noctus_users.org_role ∈ CUSTOMER_ORG_ROLES`, today `membro` — `noctusai_lib.primitives.roles`) belong to an org without being its staff (Ninho Vazio members join the platform's own org). One rule, three layers, all reading the trusted row — never `user_metadata`:
+
+- **RLS.** `public.current_org_id()` / `current_user_org_id()` return NULL for a customer, so every `org_id = current_org_id()` policy in every schema denies them at once. A product that serves customers keys its customer-facing policies on `public.current_customer_org_id()` (non-NULL ONLY for a customer) and uses `public.is_customer()` — never `current_org_id()`.
+- **One definition.** The body is rendered by `noctusai_lib.domain.sql_templates.org_identity_function_sql(<name>)`; every migration that (re)declares one of these functions pastes it verbatim, because every chain writes the same shared `public` function and the last one applied on a fresh environment wins. Keeper `check_org_identity_function_parity` (pre-commit, critical) fails any drifted copy and the `roles.ts` mirror. Behaviour probe `org_identity.customer_gets_no_org` (`noctus.dev.verify_db_guards`).
+- **API.** `make_get_current_user_org` refuses a customer with 403 "Área restrita à equipe." unless bound with `allow_customer=True` (customer-serving routes only, which must then scope to the customer themself). A user with no `noctus_users` row has no org and no platform role — the old `user_metadata` fallbacks are gone for authorization.
+- **SSO + switcher.** Core `/api/sso/token` · `/api/sso/launch/{slug}` · `/api/auth/me` let a customer reach only products whose catalog row declares `products.aceita_clientes = true` (`customer_may_access_product`) — data, never a slug list.
+- **`invitations.token`** is never readable through `anon`/`authenticated` (`invitation_token_lockdown_sql(<schema>)`: table SELECT revoked, every other column re-granted); the invite flow reads tokens with the service role. Probe `invitations.token_not_api_readable`.
+
 ## Per-user-scoped vs org-scoped tables (the decision matrix) — 2026-05-10
 
 **Two RLS-scoping conventions coexist intentionally** across the ERP product (and by extension other products that adopt the same pattern). The choice is design-driven, not a bug:

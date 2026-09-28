@@ -10948,7 +10948,7 @@ def check_org_identity_function_parity(
                     f"chain writes the same shared function, so on a fresh apply this copy can "
                     f"win and silently undo the customer-role exclusion fleet-wide. Paste "
                     f"`noctusai_lib.domain.sql_templates.org_identity_function_sql("
-                    f"{decl['name']!r})` verbatim. Per `{_OIF_KB}` § customer roles."
+                    f"{decl['name']!r})` verbatim. Per `{_OIF_KB}` § Customer roles."
                 ),
                 "severity": "critical",
             })
