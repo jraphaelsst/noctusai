@@ -2051,29 +2051,32 @@ _IGIG_EXECUCAO_DA_ENTRADA = (
     "WHERE a.org_id = v_org AND m.org_id = v_org;"
 )
 
-def _igig_probe(
-    *, probe_id: str, guard_name: str, setup_sql: tuple[str, ...], attack_sql: str, what: str,
-    rationale: str, migrations: tuple[str, ...],
+def _fresh_org_write_refusal_probe(
+    *, product: str, schema: str, exists_table: str, exists_migration: str,
+    declare_vars: tuple[str, ...], probe_id: str, guard_name: str,
+    setup_sql: tuple[str, ...], attack_sql: str, what: str, rationale: str,
+    migrations: tuple[str, ...],
 ) -> GuardProbe:
-    """One self-provisioned igig write-refusal probe. The expected refusal is
-    classified on `guard_name` itself appearing in SQLERRM — Postgres names the
-    violated constraint/index in both the CHECK and the UNIQUE message."""
+    """One self-provisioned write-refusal probe on a FRESH org id.
+
+    For products whose `org_id` columns carry no FK (igig, community), the
+    probe mints `v_org := gen_random_uuid()` and builds whatever rows it
+    needs itself — no borrowed fixture, so it runs on an empty database too.
+    The expected refusal is classified on `guard_name` itself appearing in
+    SQLERRM: Postgres names the violated constraint/index in both the CHECK
+    and the UNIQUE message. `declare_vars` are extra `name type` locals the
+    setup needs.
+    """
     name_lit = _sql_lit(guard_name)
     what_lit = _sql_lit(what)
     setup = "\n".join(f"    {stmt}" for stmt in setup_sql)
+    declares = "".join(f"\n  {v};" for v in declare_vars)
     sql = _do_block(f"""
 DECLARE
-  v_org uuid := gen_random_uuid();
-  v_stage uuid;
-  v_lead uuid;
-  v_negocio uuid;
-  v_cliente uuid;
-  v_pauta uuid;
-  v_tarefa uuid;
-  v_orcamento uuid;
+  v_org uuid := gen_random_uuid();{declares}
 BEGIN
-  IF to_regclass('{_IGIG_SCHEMA}.negocio') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_IGIG_SCHEMA}.negocio does not exist (migration 018 not applied)';
+  IF to_regclass('{schema}.{exists_table}') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {schema}.{exists_table} does not exist (migration {exists_migration} not applied)';
   END IF;
   BEGIN
 {setup}
@@ -2092,13 +2095,33 @@ END;
 """)
     return GuardProbe(
         id=probe_id,
-        product="igig",
-        schema=_IGIG_SCHEMA,
+        product=product,
+        schema=schema,
         guard_name=guard_name,
         kind="write_refusal",
         migrations=migrations,
         sql=sql,
         rationale=rationale,
+    )
+
+
+_IGIG_PROBE_VARS = (
+    "v_stage uuid", "v_lead uuid", "v_negocio uuid", "v_cliente uuid",
+    "v_pauta uuid", "v_tarefa uuid", "v_orcamento uuid",
+)
+
+
+def _igig_probe(
+    *, probe_id: str, guard_name: str, setup_sql: tuple[str, ...], attack_sql: str, what: str,
+    rationale: str, migrations: tuple[str, ...],
+) -> GuardProbe:
+    """One self-provisioned igig write-refusal probe (see
+    `_fresh_org_write_refusal_probe`)."""
+    return _fresh_org_write_refusal_probe(
+        product="igig", schema=_IGIG_SCHEMA, exists_table="negocio", exists_migration="018",
+        declare_vars=_IGIG_PROBE_VARS, probe_id=probe_id, guard_name=guard_name,
+        setup_sql=setup_sql, attack_sql=attack_sql, what=what, rationale=rationale,
+        migrations=migrations,
     )
 
 
@@ -2815,6 +2838,127 @@ _INVITATION_TOKEN_PROBE = GuardProbe(
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — community, migration 013 (Ninho Vazio). Fresh-org probes: every
+# community `org_id` is FK-less, so each probe builds its own chain.
+# ---------------------------------------------------------------------------
+
+_COMMUNITY_SCHEMA = "community"
+_COMMUNITY_013 = ("013_ninho_vazio.sql",)
+_C = _COMMUNITY_SCHEMA
+_COMMUNITY_PLANO = (
+    f"INSERT INTO {_C}.planos (org_id, nome, preco_centavos, ciclo) "
+    "VALUES (v_org, 'NOC probe', 700, 'mensal') RETURNING id INTO v_plano;"
+)
+_COMMUNITY_MEMBRO = (
+    f"INSERT INTO {_C}.membros (org_id, nome, email, status, origem) "
+    "VALUES (v_org, 'NOC probe', 'noc-probe@example.invalid', 'ativo', 'cadastro') RETURNING id INTO v_membro;"
+)
+_COMMUNITY_PAGAMENTO_CHAIN = (
+    _COMMUNITY_PLANO,
+    _COMMUNITY_MEMBRO,
+    f"INSERT INTO {_C}.assinaturas (org_id, membro_id, plano_id, gateway, estado, metodo, ciclo) "
+    "VALUES (v_org, v_membro, v_plano, 'asaas', 'ativa', 'pix', 'mensal') RETURNING id INTO v_assinatura;",
+    f"INSERT INTO {_C}.pagamentos (org_id, assinatura_id, membro_id, gateway, cobranca_externa_id, valor_centavos, metodo, estado) "
+    "VALUES (v_org, v_assinatura, v_membro, 'asaas', 'noc-probe-' || gen_random_uuid()::text, 700, 'pix', 'pago') RETURNING id INTO v_pagamento;",
+)
+_COMMUNITY_VARS = ("v_plano uuid", "v_membro uuid", "v_assinatura uuid", "v_pagamento uuid")
+
+
+def _community_probe(**kw: Any) -> GuardProbe:
+    return _fresh_org_write_refusal_probe(
+        product="community", schema=_C, exists_table="grupoterapia_reservas",
+        exists_migration="013", declare_vars=_COMMUNITY_VARS, migrations=_COMMUNITY_013, **kw,
+    )
+
+
+_COMMUNITY_PROBES: tuple[GuardProbe, ...] = (
+    _community_probe(
+        probe_id="community.membros.origem_check",
+        guard_name="membros_origem_check",
+        setup_sql=(),
+        attack_sql=(
+            f"INSERT INTO {_C}.membros (org_id, nome, email, status, origem) "
+            "VALUES (v_org, 'NOC probe', 'noc-probe@example.invalid', 'ativo', 'inventada');"
+        ),
+        what="a membro with an unknown origem",
+        rationale=(
+            "origem drives the dashboard's members-by-origin series; an "
+            "unlisted value would silently fall out of every breakdown."
+        ),
+    ),
+    _community_probe(
+        probe_id="community.membros.one_login_per_membro",
+        guard_name="membros_org_user_unique",
+        setup_sql=(
+            f"INSERT INTO {_C}.membros (org_id, nome, email, status, origem, user_id) "
+            "VALUES (v_org, 'A', 'a@example.invalid', 'ativo', 'cadastro', v_org);",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_C}.membros (org_id, nome, email, status, origem, user_id) "
+            "VALUES (v_org, 'B', 'b@example.invalid', 'ativo', 'cadastro', v_org);"
+        ),
+        what="two membros linked to the same login in one org",
+        rationale=(
+            "get_membro_context resolves the caller's membro by user_id; two "
+            "rows would make which plan, payments and grupoterapia seat a "
+            "member sees depend on read order."
+        ),
+    ),
+    _community_probe(
+        probe_id="community.assinaturas.estado_check",
+        guard_name="assinaturas_estado_check",
+        setup_sql=(_COMMUNITY_PLANO, _COMMUNITY_MEMBRO),
+        attack_sql=(
+            f"INSERT INTO {_C}.assinaturas (org_id, membro_id, plano_id, gateway, estado, metodo, ciclo) "
+            "VALUES (v_org, v_membro, v_plano, 'asaas', 'suspensa', 'pix', 'mensal');"
+        ),
+        what="an assinatura in an unknown estado",
+        rationale=(
+            "Every lifecycle move is validated against the seed "
+            "SubscriptionState machine through a fixed pt-BR mapping; a state "
+            "outside it could never be moved again, nor be counted in MRR or churn."
+        ),
+    ),
+    _community_probe(
+        probe_id="community.lancamentos.one_entrada_per_pagamento",
+        guard_name="lancamentos_pagamento_unique",
+        setup_sql=(
+            *_COMMUNITY_PAGAMENTO_CHAIN,
+            f"INSERT INTO {_C}.lancamentos (org_id, tipo, categoria, valor_centavos, data, origem, pagamento_id) "
+            "VALUES (v_org, 'entrada', 'assinatura', 700, current_date, 'pagamento', v_pagamento);",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_C}.lancamentos (org_id, tipo, categoria, valor_centavos, data, origem, pagamento_id) "
+            "VALUES (v_org, 'entrada', 'assinatura', 700, current_date, 'pagamento', v_pagamento);"
+        ),
+        what="a second cashflow entrada for one paid charge",
+        rationale=(
+            "Gateways redeliver webhooks; the unique index is what makes a "
+            "replayed charge_paid book revenue once instead of twice."
+        ),
+    ),
+    _community_probe(
+        probe_id="community.lancamentos.one_estorno_per_pagamento",
+        guard_name="lancamentos_estorno_unique",
+        setup_sql=(
+            *_COMMUNITY_PAGAMENTO_CHAIN,
+            f"INSERT INTO {_C}.lancamentos (org_id, tipo, categoria, valor_centavos, data, origem, estorno_de) "
+            "VALUES (v_org, 'saida', 'estorno', 700, current_date, 'estorno', v_pagamento);",
+        ),
+        attack_sql=(
+            f"INSERT INTO {_C}.lancamentos (org_id, tipo, categoria, valor_centavos, data, origem, estorno_de) "
+            "VALUES (v_org, 'saida', 'estorno', 700, current_date, 'estorno', v_pagamento);"
+        ),
+        what="a second cashflow saida for one refund",
+        rationale=(
+            "Same replay protection on the refund side: one estorno per "
+            "refunded charge, however many times the webhook arrives."
+        ),
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -2843,6 +2987,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _LICENSES_ONE_ACTIVE_PROBE,
     _SW_API_TOKEN_HASH_PROBE,
     _SW_RECIPIENT_CHANNEL_PROBE,
+    *_COMMUNITY_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

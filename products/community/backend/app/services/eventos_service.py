@@ -1,0 +1,55 @@
+"""Relationship timeline — `community.membro_eventos` (migration 013).
+
+One writer for every slice (CONTRACT.md §Timeline): status changes, plan
+changes, payments, subscription lifecycle, notes, contacts, access and
+grupoterapia all land here, so the CRM detail shows one ordered history.
+
+Append-only by construction — the table has no UPDATE/DELETE policy.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any, Literal
+from uuid import UUID
+
+logger = logging.getLogger(__name__)
+
+TipoEvento = Literal[
+    "status", "plano", "pagamento", "assinatura", "nota", "contato",
+    "acesso", "grupoterapia", "sistema",
+]
+
+_TABLE = "membro_eventos"
+
+
+def registrar_evento(
+    client: Any,
+    *,
+    org_id: UUID | str,
+    membro_id: UUID | str,
+    tipo: TipoEvento,
+    descricao: str,
+    dados: dict[str, Any] | None = None,
+    autor_id: UUID | str | None = None,
+) -> dict[str, Any]:
+    """Append one timeline event and return the written row.
+
+    `client` is whichever client the caller already holds: the user's
+    (staff writes — RLS checks `eh_equipe()`) or the service-role client
+    (webhooks, the billing sweep, the public signup). `autor_id` is None
+    for system-originated events.
+
+    Raises whatever the client raises: a lost timeline write is a lost
+    audit record, so it is never swallowed here. A caller that must not
+    fail its primary action on a timeline error decides that explicitly.
+    """
+    row = {
+        "org_id": str(org_id),
+        "membro_id": str(membro_id),
+        "tipo": tipo,
+        "descricao": descricao[:2000],
+        "dados": dados or {},
+        "autor_id": str(autor_id) if autor_id else None,
+    }
+    written = client.table(_TABLE).insert(row).execute().data or []
+    return written[0] if written else row

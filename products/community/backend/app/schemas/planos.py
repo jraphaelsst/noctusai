@@ -6,6 +6,7 @@ fields (`extra="forbid"`) rather than silently dropping them.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +24,9 @@ class Entitlements(BaseModel):
     conteudo_ids: list[str] = Field(default_factory=list)
     grupos_whatsapp: list[str] = Field(default_factory=list)
     conteudo_todos: bool = False
+    # Ninho Vazio tiers (CONTRACT.md §Tiers): what this plan may do in a
+    # grupoterapia session — nothing, watch, or watch + a speaking seat.
+    grupoterapia: Literal["nenhum", "ouvir", "falar"] = "nenhum"
 
 
 class PlanoCreate(BaseModel):

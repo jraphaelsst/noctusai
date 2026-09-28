@@ -57,12 +57,65 @@ get_current_user = select_get_current_user(settings, _prod_get_current_user)
 # `seed-trusted-org-resolution`, 2026-07-14 — the make_get_current_user_org
 # docstring in noctusai_lib.api.auth has the full rationale + the prod
 # incident this mirrors on the ERP side).
-get_current_user_org = make_get_current_user_org(
+_get_any_user_org = make_get_current_user_org(
     get_current_user,
     lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
     get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )
+
+#: `noctus_users.org_role` of an end customer with a login (migration 013).
+MEMBRO_ORG_ROLE = "membro"
+
+
+def _org_role_of(user: Any) -> str | None:
+    """Trusted `public.noctus_users.org_role` for `user` (None when absent)."""
+    rows = (
+        _db.get_core_client()
+        .table("noctus_users")
+        .select("org_role")
+        .eq("id", str(getattr(user, "id", "")))
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0].get("org_role") if rows else None
+
+
+async def get_current_user_org(auth: tuple = Depends(_get_any_user_org)) -> tuple:
+    """Back-office auth: any org user EXCEPT a `membro` (403).
+
+    Deny-by-default for the customer role — every pre-existing router
+    depends on this, so a member's JWT can never reach a back-office
+    route. RLS enforces the same boundary (`community.eh_equipe()`,
+    migration 013); this is the API half. Member routes use
+    `get_membro_context` instead.
+    """
+    if _org_role_of(auth[0]) == MEMBRO_ORG_ROLE:
+        raise http_error(403, "Área restrita à equipe.")
+    return auth
+
+
+async def get_membro_context(auth: tuple = Depends(_get_any_user_org)) -> tuple:
+    """Member-portal auth → `(user, token, org_id: UUID, membro: dict)`.
+
+    403 unless the caller is a `membro` with a linked `community.membros`
+    row (`user_id = auth.uid()`). The row is read with the caller's own
+    client, so RLS (`membros_select_self`) is what makes it theirs.
+    """
+    user, token, raw_org = auth
+    if _org_role_of(user) != MEMBRO_ORG_ROLE:
+        raise http_error(403, "Área exclusiva para membros.")
+    rows = (
+        get_user_client(token)
+        .table("membros")
+        .select("*")
+        .eq("user_id", str(getattr(user, "id", "")))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise http_error(403, "Cadastro de membro não encontrado.")
+    return user, token, coerce_org_uuid(raw_org), rows[0]
 
 # Plain-call helpers (NOT to be wired via ``Depends(...)``) — kept for
 # imperative call-sites and for backward compatibility.
@@ -121,7 +174,8 @@ _resolve_platform_role = make_resolve_platform_role(lambda: _db.get_core_client(
 
 
 def get_community_role(user: Any) -> str:
-    """Resolve the caller's role for THIS product: ``"admin"`` or ``"moderador"``.
+    """Resolve the caller's role for THIS product: ``"admin"``, ``"moderador"``
+    or ``"membro"`` (an end customer — migration 013; never a back-office role).
 
     Community defines its own two-tier vocabulary (contract-confirmed:
     "Manager roles: `admin` (everything) and `moderador` (moderation +
@@ -152,16 +206,9 @@ def get_community_role(user: Any) -> str:
     """
     if _resolve_platform_role(user) == "platform_admin":
         return "admin"
-    core = _db.get_core_client()
-    result = (
-        core.table("noctus_users")
-        .select("org_role")
-        .eq("id", str(getattr(user, "id", "")))
-        .limit(1)
-        .execute()
-    )
-    rows = result.data or []
-    org_role = rows[0].get("org_role") if rows else None
+    org_role = _org_role_of(user)
+    if org_role == MEMBRO_ORG_ROLE:
+        return "membro"
     return "admin" if org_role == "admin" else "moderador"
 
 
