@@ -184,7 +184,9 @@ _CONJUGE_ESTRUTURADO_FIM_RE = re.compile(
 #: multi-row reach past `_LABEL_WINDOW`, same wrong-verdict risk — measured
 #: as this parser reading "solteiro" (the groom's pre-marriage status)
 #: where the certidão's own verdict is "casado".
-_NUBENTE_NARRATIVA_INICIO_RE = re.compile(r"\b[OA]\s+CONTRA(?:TANTE|ENTE)\b")
+# "CONTRATENTE" is a real OCR slip of "CONTRATANTE" (P2 corpus, deal 895,
+# prod transcription) — accepted so the guard still fires on it.
+_NUBENTE_NARRATIVA_INICIO_RE = re.compile(r"\b[OA]\s+CONTRA(?:TANTE|TENTE|ENTE)\b")
 
 
 def _apos_ultimo_marcador_sem_fechamento(

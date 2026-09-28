@@ -145,3 +145,19 @@ class TestNubentesSemNomeNaoSaoAdivinhados:
 
     def test_find_conjuges_declines_rather_than_guessing_a_split(self) -> None:
         assert find_conjuges(CERTIDAO_NARRATIVA_ANTIGA) == ()
+
+
+def test_ocr_slip_contratente_still_guards_pre_marriage_status() -> None:
+    """P2 corpus (deal 895): the prod transcription spelled the opener
+    "O contratente" — the pre-marriage "estado civil solteiro" must still be
+    excluded from the document's verdict."""
+    from noctusai_lib.integrations.documents.civil_status import find_estado_civil
+
+    texto = (
+        "CERTIDÃO DE CASAMENTO\n"
+        "Certifico que foi feito assento do matrimônio de FULANO DE TAL e CICLANA DE TAL\n"
+        "O contratente nascido em esta Capital aos 12 de agosto de 1980 profissão comerciante estado civil solteiro\n"
+        "A contratante nascida em esta Capital aos 03 de junho de 1983 profissão professora estado civil solteira\n"
+        'Observações: Casamento realizado hoje sob o regime de "COMUNHÃO PARCIAL DE BENS"\n'
+    )
+    assert find_estado_civil(texto)[0] == "casado"
