@@ -649,11 +649,47 @@ ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<
 """
         assert find_name(texto) == ("ENZO DE OLIVEIRA SANTOS", "alta", "NOME")
 
-    def test_labelled_nome_disagreeing_with_mrz_is_not_guessed(self) -> None:
+    def test_labelled_nome_disagreeing_with_mrz_is_only_a_suggestion(self) -> None:
+        """A real disagreement demotes the labelled value to `baixa` (a human
+        confirms) — the MRZ is a vision read too and cannot veto the label."""
         texto = f"""CARTEIRA NACIONAL DE HABILITACAO
 NOME: MARIA DA SILVA PEREIRA
 {_linha_mrz_2()}
 ENZ0<<DE<<OLIVEIRA<<SANTOS<<<<<<<
+"""
+        assert find_name(texto) == ("MARIA DA SILVA PEREIRA", "baixa", "NOME")
+
+    def test_a_one_letter_mrz_misread_still_agrees(self) -> None:
+        """P2 corpus, 2026-09-28: the MRZ read one letter off (a vision slip)
+        must not demote or erase a correctly labelled NOME."""
+        texto = f"""CARTEIRA NACIONAL DE HABILITACAO
+NOME: ENZO DE OLIVEIRA SANTOS
+{_linha_mrz_2()}
+ENZ0<<DE<<OLIVEIRO<<SANTOS<<<<<<<
+"""
+        assert find_name(texto) == ("ENZO DE OLIVEIRA SANTOS", "alta", "NOME")
+
+
+class TestNomeDeslocadoPara1aHabilitacao:
+    """P2 corpus, 2026-09-28: 4/9 CNH-e scans came back with the name under
+    "1ª HABILITAÇÃO" (a date field) and no NOME row."""
+
+    def test_name_under_1a_habilitacao_on_a_cnh(self) -> None:
+        texto = """CARTEIRA NACIONAL DE HABILITAÇÃO / DRIVER LICENSE
+1ª HABILITAÇÃO: FULANO DE TAL SANTOS
+3 DATA, LOCAL E UF DE NASCIMENTO: 01/02/1980, SAO PAULO, SP
+"""
+        assert find_name(texto) == ("FULANO DE TAL SANTOS", "media", "1ª HABILITAÇÃO (nome deslocado)")
+
+    def test_a_real_date_there_is_not_a_name(self) -> None:
+        texto = """CARTEIRA NACIONAL DE HABILITAÇÃO
+1ª HABILITAÇÃO: 12/03/2001
+"""
+        assert find_name(texto) == (None, "nenhuma", None)
+
+    def test_only_on_a_cnh(self) -> None:
+        texto = """CERTIFICADO DE HABILITACAO PROFISSIONAL
+HABILITACAO: FULANO DE TAL SANTOS
 """
         assert find_name(texto) == (None, "nenhuma", None)
 
@@ -668,3 +704,11 @@ class TestCertidaoWithNoMrzIsUnaffected:
             "ALMIR TEIXEIRA DA COSTA",
             "MARIANA PELLEGRINI RANGEL",
         ]
+
+
+class TestBilingualCnhLabel:
+    """2022+ CNH: "NOME E SOBRENOME / NAME AND SURNAME: <name>" (P2, 2026-09-28)."""
+
+    def test_bilingual_label_reads_the_name(self) -> None:
+        texto = "CARTEIRA NACIONAL DE HABILITAÇÃO\n2. NOME E SOBRENOME / NAME AND SURNAME: FULANO DE TAL SANTOS\n"
+        assert find_name(texto)[0] == "FULANO DE TAL SANTOS"

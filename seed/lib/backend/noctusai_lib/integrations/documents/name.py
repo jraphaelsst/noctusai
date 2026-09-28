@@ -406,6 +406,19 @@ def _coleta_titulares_multiplos(
     return candidatos
 
 
+#: The 2022+ CNH prints each label bilingually: "NOME E SOBRENOME / NAME AND
+#: SURNAME:". The English gloss sits between the Portuguese label and its
+#: value, so the label matched but the "value" began with "/ NAME AND
+#: SURNAME:" and failed the name check (P2 corpus, 2026-09-28).
+_GLOSA_BILINGUE_RE = re.compile(
+    r"\b(NOME E SOBRENOME|NOME)\s*/\s*(?:NAME AND SURNAME|SURNAME AND NAME|NAME)\b\s*"
+)
+
+
+def _sem_glosa_bilingue(linha: str) -> str:
+    return _GLOSA_BILINGUE_RE.sub(r"\1 ", linha)
+
+
 def _candidatos(text: str) -> list[tuple[str, str]]:
     """Every (name, label) candidate on the document, before collapsing more
     than one distinct reading to absence.
@@ -414,7 +427,7 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
     (which reports the collapse's cause) — see that function's docstring
     for why the split exists.
     """
-    lines = normalize_lines(text)
+    lines = [_sem_glosa_bilingue(l) for l in normalize_lines(text)]
     if not lines:
         return []
 
@@ -568,11 +581,26 @@ def _valor_bate_com_mrz(valor: str, mrz_tokens: list[str], truncado: bool) -> bo
         return False
     for i, tok in enumerate(mrz_tokens):
         if i == len(mrz_tokens) - 1 and truncado:
-            if not palavras[i].startswith(tok):
+            if not palavras[i].startswith(tok) and not _um_erro_de_ocr(palavras[i][: len(tok)], tok):
                 return False
-        elif palavras[i] != tok:
+        elif palavras[i] != tok and not _um_erro_de_ocr(palavras[i], tok):
             return False
     return True
+
+
+def _um_erro_de_ocr(a: str, b: str) -> bool:
+    """Same word up to ONE character substitution/insertion/deletion.
+
+    The MRZ is itself a vision transcription — measured on the P2 corpus
+    (2026-09-28), an MRZ read one letter off vetoed a correctly labelled NOME.
+    A single-edit difference on a word of 4+ letters is an OCR slip on one
+    side, not a different person."""
+    if min(len(a), len(b)) < 4 or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) <= 1
+    curto, longo = (a, b) if len(a) < len(b) else (b, a)
+    return any(longo[:i] + longo[i + 1:] == curto for i in range(len(longo)))
 
 
 def _nome_corroborado_por_mrz(
@@ -589,6 +617,41 @@ def _nome_corroborado_por_mrz(
         if _valor_bate_com_mrz(valor, mrz_tokens, truncado):
             return valor
     return None
+
+
+#: A CNH's "1ª HABILITAÇÃO" row (field "1ª" / "1A" / bare "HABILITAÇÃO"),
+#: captured with its value. On the CNH this field is a DATE — the first-licence
+#: date — so a name-shaped value there can only be the adjacent "1 NOME" field
+#: the transcription mislabelled.
+_PRIMEIRA_HABILITACAO_RE = re.compile(
+    r"(?m)^[ \t]*(?:\d\s*)?(?:[ªºA]\s*)?HABILITACAO\s*:\s*(?P<valor>[^\n]+)$"
+)
+_E_CNH_RE = re.compile(r"CARTEIRA\s+NACIONAL\s+DE\s+HABILITACAO|DRIVER\s+LICENSE|PERMISO\s+DE\s+CONDUCCION")
+
+
+def _nome_deslocado_para_1a_habilitacao(text: str) -> Optional[str]:
+    """The holder's name when vision wrote it under the CNH's "1ª HABILITAÇÃO".
+
+    Measured on the P2 corpus (2026-09-28): 4 of 9 CNH-e scans came back as
+    `1ª HABILITAÇÃO: <FULL NAME>` with no NOME row at all — the CNH-e prints
+    "1 NOME" right beside "1ª HABILITAÇÃO", and the model merges them. The
+    1ª-habilitação field is a date on every CNH, so a value that is a
+    well-formed personal name (letters only, `looks_like_a_name`) is the NOME.
+    Only on a document that says it is a CNH; exactly one such row; never
+    over a value with a digit in it. `media`, never `alta`: the label is
+    wrong by construction, the evidence is structural.
+    """
+    norm = strip_accents_upper(text or "")
+    if not _E_CNH_RE.search(norm):
+        return None
+    valores = [
+        m.group("valor").strip(_SEPARATORS).strip()
+        for m in _PRIMEIRA_HABILITACAO_RE.finditer(norm)
+    ]
+    nomes = [v for v in valores if v and not any(c.isdigit() for c in v) and looks_like_a_name(v)]
+    if len(nomes) != 1:
+        return None
+    return " ".join(nomes[0].split())
 
 
 def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
@@ -645,6 +708,9 @@ def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
                 return (corroborado, "media", "MRZ (corroborado)")
             if not mrz_truncado:
                 return (" ".join(mrz_tokens), "baixa", "MRZ")
+        deslocado = _nome_deslocado_para_1a_habilitacao(text)
+        if deslocado is not None:
+            return (deslocado, "media", "1ª HABILITAÇÃO (nome deslocado)")
         return (None, "nenhuma", None)
 
     distinct = {v for v, _ in candidates}
@@ -657,11 +723,13 @@ def find_name(text: str) -> tuple[Optional[str], str, Optional[str]]:
 
     value, label = candidates[0]
     if mrz_tokens and not _valor_bate_com_mrz(value, mrz_tokens, mrz_truncado):
-        # A single labelled candidate that DISAGREES with a check-digit-
-        # anchored MRZ reading is a layout misread, exactly like the two-
-        # distinct-candidates case above — reported as absence, never a
-        # guess in either direction. See the docstring's MRZ section.
-        return (None, "nenhuma", None)
+        # A single labelled candidate that DISAGREES with the MRZ (beyond a
+        # one-character OCR slip — `_um_erro_de_ocr`). The MRZ is a vision
+        # transcription too, so it cannot veto the label; the disagreement
+        # demotes the labelled value to `baixa` — a suggestion a human must
+        # confirm — instead of blanking a correct name (measured, P2 corpus,
+        # 2026-09-28: a one-letter MRZ misread erased a correct NOME).
+        return (value, "baixa", label)
     return (value, "alta", label)
 
 
