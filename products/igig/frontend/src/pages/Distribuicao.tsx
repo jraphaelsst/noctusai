@@ -17,7 +17,9 @@ import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { AlertTriangle, Ban, BarChart3, CalendarPlus, Clock, Send } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { usePautas } from "@/hooks/usePautas";
+import { describeError } from "@/lib/errors";
 import {
   CANAIS,
   useAgendarPublicacao,
@@ -44,11 +46,14 @@ const STATUS_VARIANT: Record<StatusPublicacao, BadgeVariant> = {
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function Distribuicao() {
-  const { publicacoes, loading: carregandoPubs } = usePublicacoes();
-  const { linhas, loading: carregandoBI } = useEficiencia();
+  const { publicacoes, loading: carregandoPubs, isError: erroPubs } = usePublicacoes();
+  const { linhas, loading: carregandoBI, isError: erroBI } = useEficiencia();
+  const { pautas } = usePautas();
+  const tituloDaPauta = (pautaId: string) => pautas.find((p) => p.id === pautaId)?.titulo ?? null;
   const executar = useExecutarPublicacao();
   const cancelar = useCancelarPublicacao();
   const [metricasAbertas, setMetricasAbertas] = useState<string | null>(null);
+  const [cancelando, setCancelando] = useState<string | null>(null);
 
   return (
     <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
@@ -62,7 +67,9 @@ export default function Distribuicao() {
       {/* ── BI de eficiência ───────────────────────────────────────── */}
       <section className="rounded-lg border border-border bg-card p-4">
         <h2 className="mb-3 text-sm font-semibold text-foreground">BI de Eficiência</h2>
-        {carregandoBI ? (
+        {erroBI ? (
+          <p role="alert" className="text-sm text-destructive">Não foi possível carregar o BI de eficiência.</p>
+        ) : carregandoBI ? (
           <Skeleton className="h-24 w-full" />
         ) : linhas.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum cliente ainda.</p>
@@ -121,7 +128,9 @@ export default function Distribuicao() {
       {/* ── Fila de publicação ─────────────────────────────────────── */}
       <section className="rounded-lg border border-border bg-card p-4">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Todas as publicações</h2>
-        {carregandoPubs ? (
+        {erroPubs ? (
+          <p role="alert" className="text-sm text-destructive">Não foi possível carregar as publicações.</p>
+        ) : carregandoPubs ? (
           <Skeleton className="h-24 w-full" />
         ) : publicacoes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -134,6 +143,9 @@ export default function Distribuicao() {
                 <Badge variant={STATUS_VARIANT[pub.status]}>{pub.status}</Badge>
                 <span className="text-sm text-foreground">{pub.canal}</span>
                 <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {tituloDaPauta(pub.pauta_id) && (
+                    <span className="mr-2 text-foreground">{tituloDaPauta(pub.pauta_id)}</span>
+                  )}
                   {pub.publicada_em
                     ? `publicada em ${new Date(pub.publicada_em).toLocaleString("pt-BR")}`
                     : pub.agendada_para
@@ -151,7 +163,11 @@ export default function Distribuicao() {
                     <Button
                       size="sm"
                       disabled={executar.isPending}
-                      onClick={() => executar.mutate(pub.id)}
+                      onClick={() =>
+                        executar.mutate(pub.id, {
+                          onError: (e) => toast.error(describeError(e, "Não foi possível publicar.")),
+                        })
+                      }
                     >
                       <Send className="mr-2 h-3 w-3" />
                       Publicar
@@ -160,7 +176,7 @@ export default function Distribuicao() {
                       variant="ghost"
                       size="sm"
                       aria-label="Cancelar publicação"
-                      onClick={() => cancelar.mutate(pub.id)}
+                      onClick={() => setCancelando(pub.id)}
                     >
                       <Ban className="h-4 w-4" />
                     </Button>
@@ -199,6 +215,27 @@ export default function Distribuicao() {
           </ul>
         )}
       </section>
+
+      <ConfirmDialog
+        open={cancelando !== null}
+        title="Cancelar publicação"
+        description={
+          <p>
+            Cancelar esta publicação? Ela sai da fila e da lista de pendentes; para publicar
+            de novo será preciso agendar outra vez.
+          </p>
+        }
+        confirmLabel={cancelar.isPending ? "Cancelando…" : "Cancelar publicação"}
+        busy={cancelar.isPending}
+        onCancel={() => setCancelando(null)}
+        onConfirm={() => {
+          if (!cancelando) return;
+          cancelar.mutate(cancelando, {
+            onSuccess: () => setCancelando(null),
+            onError: (e) => toast.error(describeError(e, "Não foi possível cancelar a publicação.")),
+          });
+        }}
+      />
     </div>
   );
 }
@@ -323,10 +360,6 @@ function isoDeDataHoraLocal(valor: string): string {
   return new Date(valor).toISOString();
 }
 
-function mensagemDe(erro: unknown, padrao: string): string {
-  return erro instanceof Error && erro.message ? erro.message : padrao;
-}
-
 /**
  * Schedule a pauta on a channel. `POST /api/distribuicao/publicacoes` had no
  * consumer — the page said "agende a partir de uma pauta" and there was
@@ -350,7 +383,7 @@ function AgendarPublicacao() {
           setPautaId("");
           setQuando("");
         },
-        onError: (erro) => toast.error(mensagemDe(erro, "Não foi possível agendar.")),
+        onError: (erro) => toast.error(describeError(erro, "Não foi possível agendar.")),
       },
     );
   }
@@ -420,6 +453,8 @@ function AgendarPublicacao() {
  */
 function FilaPublicacao() {
   const { fila, loading, error } = useFila();
+  const { pautas } = usePautas();
+  const tituloDaPauta = (pautaId: string) => pautas.find((p) => p.id === pautaId)?.titulo ?? null;
   const executar = useExecutarPublicacao();
 
   return (
@@ -440,6 +475,9 @@ function FilaPublicacao() {
             <li key={pub.id} className="flex flex-wrap items-center gap-3 py-2">
               <Badge variant="muted">{pub.canal}</Badge>
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                {tituloDaPauta(pub.pauta_id) && (
+                  <span className="mr-2 text-foreground">{tituloDaPauta(pub.pauta_id)}</span>
+                )}
                 {pub.agendada_para
                   ? `agendada para ${new Date(pub.agendada_para).toLocaleString("pt-BR")}`
                   : "sem data"}
@@ -449,7 +487,7 @@ function FilaPublicacao() {
                 disabled={executar.isPending}
                 onClick={() =>
                   executar.mutate(pub.id, {
-                    onError: (e) => toast.error(mensagemDe(e, "Não foi possível publicar.")),
+                    onError: (e) => toast.error(describeError(e, "Não foi possível publicar.")),
                   })
                 }
               >
