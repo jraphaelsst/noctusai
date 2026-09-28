@@ -480,7 +480,8 @@ def _sorted_migrations_at_sha(
     root: Path, sha: str, product_slug: str, git_runner: "GitRunner"
 ) -> list[_GitBlobFile]:
     """Same ordering contract as ``_sorted_migrations`` (leading ``NNN_``
-    numeric prefix, ``.sql`` only), but the file LIST comes from
+    numeric prefix, ``.sql`` only, DIRECT children of the migrations dir
+    only — never a nested subdirectory), but the file LIST comes from
     ``git ls-tree`` and the CONTENT from ``git show`` — never the working
     tree. Raises :class:`GitQueryError` on any git failure (fail-closed,
     same posture as ``_check_tree_staleness`` — an unanswerable "what files
@@ -508,7 +509,26 @@ def _sorted_migrations_at_sha(
         line = line.strip()
         if not line or not line.endswith(".sql"):
             continue
-        name = line.rsplit("/", 1)[-1]
+        # `-r` RECURSES into every subdirectory of `rel_dir` — a nested
+        # local-dev mirror (e.g. igig's `migrations/sqlite/*.sql`, a SQLite
+        # snapshot committed alongside the real Postgres migrations) would
+        # otherwise surface here too, and once reduced to a basename below
+        # it becomes indistinguishable from a real pending migration. A
+        # `confirm=True` run would then apply SQLite DDL to prod Supabase.
+        # `_sorted_migrations` (the working-tree path) is non-recursive via
+        # `Path.iterdir()` — DIRECT children only — so sha mode must match:
+        # keep a listed file ONLY when its immediate parent is `rel_dir`
+        # itself, never a descendant subdirectory.
+        parent, _, name = line.rpartition("/")
+        if parent != rel_dir:
+            logger.debug(
+                "migrate_product: skipping nested file %s @ %s (not a direct "
+                "child of %s)",
+                line,
+                sha,
+                rel_dir,
+            )
+            continue
         m = _NN_RE.match(name)
         if m:
             numbered.append((int(m.group(1)), name, line))

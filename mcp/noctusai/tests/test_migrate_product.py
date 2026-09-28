@@ -23,6 +23,7 @@ Test seam design:
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -54,6 +55,8 @@ from tools.noctus.dev.migrate_product import (  # noqa: E402
     _schema_migrations_exists_sql,
     _slug_to_schema,
     _sorted_migrations,
+    _sorted_migrations_at_sha,
+    SubprocessGitRunner,
     make_sql_executor,
     migrate_product,
     repair_schema_migrations_ledger,
@@ -918,6 +921,79 @@ class TestMigrateProductShaSource:
         # `test_all_pending_content_is_read_before_any_ddl_runs` above).
         assert not any("001_bad_bytes" in s or "id int" in s for s in fake.executed)
         assert result["applied"] == []
+
+    def test_sha_mode_excludes_nested_sqlite_mirror(self, tmp_path):
+        """Regression (2026-09-28): `git ls-tree -r` RECURSES into every
+        subdirectory of the migrations dir, so a nested local-dev mirror
+        (e.g. igig's `migrations/sqlite/*.sql`, a SQLite snapshot committed
+        alongside the real Postgres migrations) used to surface as a
+        PENDING migration once reduced to a basename — a `confirm=True` run
+        would have applied SQLite DDL to prod Supabase. sha= mode must
+        match the working-tree path's non-recursive (`Path.iterdir()`)
+        semantics: only files whose immediate parent IS the migrations dir
+        count, never a descendant subdirectory."""
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "igig", [])
+        sha = "cafef00d" * 5  # 40 chars
+        runner = _sha_git_runner(sha, {
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/igig/backend/migrations"):
+                "products/igig/backend/migrations/001_a.sql\n"
+                "products/igig/backend/migrations/sqlite/001_a_sqlite.sql\n",
+            ("show", f"{sha}:products/igig/backend/migrations/001_a.sql"):
+                "CREATE TABLE igig.a (id int);",
+            ("show", f"{sha}:products/igig/backend/app/main.py"):
+                'app = create_product_app(name="Igig", schema="igig")\n',
+        })
+        fake = FakeSqlExecutor()
+
+        result = migrate_product(
+            "igig", confirm=False, sha=sha, executor=fake, products_dir=products,
+            git_runner=runner, live_products_fn=_live_catalog_fn("igig"),
+        )
+
+        assert result["status"] == "dry_run", result
+        assert result["pending"] == ["001_a.sql"]
+        assert "001_a_sqlite.sql" not in result["pending"]
+
+
+class TestSortedMigrationsAtShaRealGit:
+    """`_sorted_migrations_at_sha` against a REAL temp git repo + the real
+    `SubprocessGitRunner` — not `FakeGitRunner` — so the regression above is
+    also proven against actual `git ls-tree -r` output, not a hand-typed
+    mock string that could itself encode the same wrong assumption the bug
+    shipped with. No monkeypatching of our own guards (`KB §
+    PATTERNS/compliance/testing.md`) — a genuine git repo + a genuine git
+    subprocess."""
+
+    def _make_repo_with_migrations(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        mig_dir = repo / "products" / "igig" / "backend" / "migrations"
+        (mig_dir / "sqlite").mkdir(parents=True)
+        (mig_dir / "001_a.sql").write_text("CREATE TABLE igig.a (id int);", encoding="utf-8")
+        (mig_dir / "sqlite" / "001_a_sqlite.sql").write_text(
+            "CREATE TABLE a (id integer);", encoding="utf-8"
+        )
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(repo), check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=str(repo), check=True)
+        subprocess.run(["git", "add", "-A"], cwd=str(repo), check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=str(repo), check=True)
+        return repo
+
+    def test_sqlite_mirror_excluded_from_real_git_listing(self, tmp_path):
+        repo = self._make_repo_with_migrations(tmp_path)
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(repo), check=True,
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+        files = _sorted_migrations_at_sha(
+            repo, sha, "igig", git_runner=SubprocessGitRunner()
+        )
+
+        names = [f.name for f in files]
+        assert names == ["001_a.sql"]
+        assert "001_a_sqlite.sql" not in names
 
 
 class TestEdgeCases:
