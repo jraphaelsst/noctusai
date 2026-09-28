@@ -38,6 +38,9 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
       saving={mutation.isPending}
       uploading={docs.upload.isPending}
       error={
+        // The LOAD error first: a 409 (no single open atendimento on this
+        // cliente) used to render every section blank with no message.
+        query.error?.message ??
         mutation.error?.message ??
         docs.upload.error?.message ??
         docs.remove.error?.message ??

@@ -27,3 +27,19 @@ describe("rotuloAviso", () => {
     expect(rotuloAviso("")).toBe("");
   });
 });
+
+describe("rotuloErro", () => {
+  it("labels a known extraction error code in pt-BR", async () => {
+    const { rotuloErro } = await import("./useFinanciamento");
+    expect(rotuloErro("documento_sensivel_dps")).toMatch(/Declaração Pessoal de Saúde/);
+  });
+  it("falls back to the raw code, and a generic message when empty", async () => {
+    const { rotuloErro } = await import("./useFinanciamento");
+    expect(rotuloErro("codigo_desconhecido")).toBe("codigo_desconhecido");
+    expect(rotuloErro(null)).toBe("Não foi possível ler o documento.");
+  });
+  it("labels the derived ITBI transaction-value aviso", async () => {
+    const { rotuloAviso } = await import("./useFinanciamento");
+    expect(rotuloAviso("valor_transacao_derivado")).toMatch(/valor à vista \+ valor financiado/);
+  });
+});

@@ -288,6 +288,28 @@ describe("FinanciamentoPanel", () => {
       expect(onExtrair).toHaveBeenCalledWith("d-guia_itbi");
     });
 
+    it("labels a known error code in pt-BR instead of the raw key", async () => {
+      const { screen } = await render({
+        documentos: [
+          doc("contrato_financiamento", {
+            extracao_status: "erro",
+            extracao_erro: "documento_sensivel_dps",
+          }),
+        ],
+      });
+      expect(screen.queryByText("documento_sensivel_dps")).toBeNull();
+      expect(screen.getByText(/Declaração Pessoal de Saúde/)).toBeTruthy();
+    });
+
+    it("offers a re-read on a 'nothing found' reading (P1/883)", async () => {
+      const { screen, fireEvent, onExtrair } = await render({
+        documentos: [doc("guia_itbi", { extracao_status: "sem_dados" })],
+      });
+      expect(screen.getByText("Nenhum dado foi identificado neste documento.")).toBeTruthy();
+      fireEvent.click(screen.getByTestId("financiamento-slot-guia_itbi-reler"));
+      expect(onExtrair).toHaveBeenCalledWith("d-guia_itbi");
+    });
+
     it("offers confirmar/descartar only while a reading awaits a decision", async () => {
       const { screen, fireEvent, onConfirmarExtracao, onDescartarExtracao } = await render({
         documentos: [doc("guia_itbi", { extracao_status: "ok" })],

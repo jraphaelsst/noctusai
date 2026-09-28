@@ -108,7 +108,30 @@ export const AVISO_LABEL: Record<string, string> = {
     "Não foi possível confirmar que este documento pertence a este negócio — o valor foi enviado para revisão.",
   conflito_ja_rejeitado:
     "Este valor já havia sido recusado anteriormente — nada foi reaberto.",
+  valor_transacao_derivado:
+    "A guia não imprime o valor da transação — ele foi calculado como valor à vista + valor financiado. Confira.",
 };
+
+/** pt-BR for an `extracao_erro` code — the reviewer used to see the raw key
+ *  (e.g. `documento_sensivel_dps`). Unknown codes still show raw. */
+export const ERRO_LABEL: Record<string, string> = {
+  documento_sensivel_dps:
+    "O arquivo contém a Declaração Pessoal de Saúde (DPS) — por sigilo ele não é lido. Envie o contrato sem as páginas da DPS.",
+  transcricao_truncada:
+    "O documento é longo demais para ser lido de uma vez — envie só as páginas do Quadro Resumo.",
+  documento_nao_encontrado: "O documento não foi encontrado.",
+  documento_removido: "O documento foi removido.",
+  tipo_nao_extraivel: "Este tipo de documento não tem leitura automática.",
+  storage: "Não foi possível baixar o arquivo — tente reenviar para leitura.",
+  objeto_ausente: "O arquivo não está mais no armazenamento — envie-o novamente.",
+  aplicar_leitura:
+    "O documento foi lido, mas os dados não puderam ser aplicados — tente reenviar para leitura.",
+};
+
+export function rotuloErro(erro: string | null | undefined): string {
+  if (!erro) return "Não foi possível ler o documento.";
+  return ERRO_LABEL[erro.trim()] ?? erro;
+}
 
 /** An `extracao_aviso` can carry SEVERAL codes — the seed parser joins its
  *  own with "," and the backend joins the list with "; " (e.g.

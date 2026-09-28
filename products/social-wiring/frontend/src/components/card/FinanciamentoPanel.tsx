@@ -58,6 +58,7 @@ import {
   TIPO_LABEL,
   financiamentoExtracaoEmAndamento,
   rotuloAviso,
+  rotuloErro,
 } from "@/hooks/useFinanciamento";
 
 /** Radix treats `value=""` as uncontrolled, so "no agent" needs a real
@@ -540,7 +541,7 @@ function FinanciamentoDocSlot({
           className="flex items-center justify-between gap-2 text-xs text-destructive"
           data-testid={`${testId}-erro`}
         >
-          <span>{documento.extracao_erro || "Não foi possível ler o documento."}</span>
+          <span>{rotuloErro(documento.extracao_erro)}</span>
           {onExtrair && (
             <Button
               size="sm"
@@ -555,9 +556,25 @@ function FinanciamentoDocSlot({
         </div>
       )}
       {documento?.extracao_status === "sem_dados" && (
-        <p className="text-xs text-muted-foreground" data-testid={`${testId}-sem-dados`}>
-          Nenhum dado foi identificado neste documento.
-        </p>
+        <div
+          className="flex items-center justify-between gap-2 text-xs text-muted-foreground"
+          data-testid={`${testId}-sem-dados`}
+        >
+          <span>Nenhum dado foi identificado neste documento.</span>
+          {/* The readers improve over time — a "nothing found" reading must
+              be re-runnable without deleting the file (P1/883). */}
+          {onExtrair && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onExtrair(documento.id)}
+              disabled={extraindo}
+              data-testid={`${testId}-reler`}
+            >
+              Ler novamente
+            </Button>
+          )}
+        </div>
       )}
       {documento?.extracao_aviso && (
         <p

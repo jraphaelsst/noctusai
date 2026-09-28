@@ -27,6 +27,10 @@ Three distinct, easily-confused money boxes on the SAME guia — the SW field
 map (§B of the negociação/financiamento extraction contract) calls this out
 explicitly as a documented trap. This module keeps them as three separate
 typed fields; nothing here decides which one, if any, feeds a DB column.
+The one composition: on a guide that prints NO transaction value, only
+its two parts ("à vista" + financiado), `valor_transacao` is their SUM —
+see `_derivar_valor_transacao`. `valor_financiado_sfh` alone still never
+stands in for the price.
 
 🔴 `[ILEGÍVEL]` / `[EM BRANCO]` ARE `None`, NEVER THE LITERAL TOKEN
 ----------------------------------------------------------------------
@@ -140,6 +144,15 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
         # financiamento parcela exactly — measured, not assumed.
         "VALOR FINANCIADO",
     ),
+    # The cash (non-financed) part of the price. Carapicuíba's guide (883,
+    # 2026-09-28) prints "Valor do Instrumento (à vista)" + "Valor
+    # Financiado" and NO transaction-value box at all — see
+    # `_derivar_valor_transacao`.
+    "valor_a_vista": (
+        "VALOR DO INSTRUMENTO (A VISTA)",
+        "VALOR DO INSTRUMENTO",
+        "VALOR A VISTA",
+    ),
     "aliquota_pct": ("ALIQUOTA", "ALIQUOTA APLICADA"),
     # "(=)Vr. Imposto R$" on the 883 guide; "VL." is the other common abbrev.
     "valor_itbi": ("VALOR DO ITBI", "VALOR DO IMPOSTO", "TOTAL A PAGAR",
@@ -160,8 +173,31 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
 #: and `_confianca_valor` rather than the plain string/date parsers below.
 _CAMPOS_MONETARIOS: tuple[str, ...] = (
     "valor_transacao", "valor_venal", "base_calculo", "valor_financiado_sfh",
-    "valor_itbi",
+    "valor_a_vista", "valor_itbi",
 )
+
+
+def _derivar_valor_transacao(
+    a_vista: Optional[Decimal],
+    financiado: Optional[Decimal],
+    base_calculo: Optional[Decimal],
+) -> tuple[Optional[Decimal], ExtractionConfidence]:
+    """The transaction value of a guide that prints only its two PARTS.
+
+    Some municípios (Carapicuíba, measured on deal 883) print the price
+    split into "à vista" + "financiado" and no transaction-value box. The
+    price is then their sum — measured on 883: the sum equals the signed
+    contract's price, and the guide's own base de cálculo. Derived, never
+    read, so never above `media`: `media` when the base de cálculo
+    corroborates the sum, `baixa` otherwise (the base may legitimately be a
+    higher valor venal). Both parts are required — one alone is not a price.
+    """
+    if a_vista is None or financiado is None:
+        return None, ExtractionConfidence.NENHUMA
+    soma = a_vista + financiado
+    if base_calculo is not None and base_calculo == soma:
+        return soma, ExtractionConfidence.MEDIA
+    return soma, ExtractionConfidence.BAIXA
 
 
 def _todos_rotulos() -> tuple[str, ...]:
@@ -229,6 +265,7 @@ class GuiaItbiFields:
     valor_venal: Optional[Decimal] = None
     base_calculo: Optional[Decimal] = None
     valor_financiado_sfh: Optional[Decimal] = None
+    valor_a_vista: Optional[Decimal] = None
     aliquota_pct: Optional[Decimal] = None
     valor_itbi: Optional[Decimal] = None
     vencimento: Optional[date] = None
@@ -328,11 +365,24 @@ def parse_guia_itbi(text: str, source: TextSource) -> GuiaItbiFields:
             else _confianca_valor(lido, source)
         )
 
+    valor_transacao = lidos["valor_transacao"].valor
+    if valor_transacao is None:
+        valor_transacao, conf_derivada = _derivar_valor_transacao(
+            lidos["valor_a_vista"].valor, lidos["valor_financiado_sfh"].valor, base_calculo,
+        )
+        if valor_transacao is not None:
+            confiancas["valor_transacao"] = conf_derivada
+            rotulos["valor_transacao"] = (
+                f"{rotulos['valor_a_vista']} + {rotulos['valor_financiado_sfh']}"
+            )
+            avisos.append("valor_transacao_derivado")
+
     return GuiaItbiFields(
-        valor_transacao=lidos["valor_transacao"].valor,
+        valor_transacao=valor_transacao,
         valor_venal=lidos["valor_venal"].valor,
         base_calculo=base_calculo,
         valor_financiado_sfh=lidos["valor_financiado_sfh"].valor,
+        valor_a_vista=lidos["valor_a_vista"].valor,
         aliquota_pct=aliquota_pct,
         valor_itbi=valor_itbi,
         vencimento=vencimento,

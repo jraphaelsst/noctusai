@@ -211,9 +211,13 @@ class TestLayoutMedido883:
         assert f.valor_itbi == Decimal("10000.00")
 
     def test_valor_do_instrumento_a_vista_is_not_the_transaction_value(self):
-        """It is only the up-front portion (à vista + financiado = total)."""
+        """It is only the up-front portion (à vista + financiado = total):
+        never read AS the transaction value, only summed into it."""
+        from decimal import Decimal
         f = parse_guia_itbi(self.TEXTO, TextSource.OCR)
-        assert f.valor_transacao is None
+        assert f.valor_a_vista == Decimal("100000.00")
+        assert f.valor_transacao != f.valor_a_vista
+        assert f.valor_transacao == Decimal("500000.00")
 
 
 class TestSharedBoxMatcherGuard:
@@ -239,3 +243,54 @@ class TestSharedBoxMatcherGuard:
             [linha], ("PRECO DE VENDA DO IMOVEL",), todos_rotulos=todos
         )
         assert (valor, achado, mascarado) == (None, None, False)
+
+
+# --- a guide that prints the price only as its two parts (P1/883, 2026-09-28) --
+
+from decimal import Decimal as _D  # noqa: E402
+
+from noctusai_lib.integrations.documents.guia_itbi import parse_guia_itbi as _parse  # noqa: E402
+from noctusai_lib.integrations.documents.types import (  # noqa: E402
+    ExtractionConfidence as _C,
+    TextSource as _S,
+)
+
+#: Carapicuíba's layout (invented values): "Valor do Instrumento (à vista)" +
+#: "Valor Financiado", and no transaction-value box anywhere.
+GUIA_PARTES = """
+Imposto sobre Transmissão de Bens Imóveis e de Direitos: ITBI
+Inscrição Cadastral: 12345.67.89.0001.00.000
+Transação: COMPRA E VENDA
+Valor do Instrumento (à vista): 200.000,00
+Valor Financiado: 800.000,00
+Base Cálculo: 1.000.000,00
+(=)Vr. Imposto R$: 20.000,00
+"""
+
+
+class TestValorTransacaoDerivadoDasPartes:
+    def test_sum_of_the_parts_is_the_transaction_value(self) -> None:
+        r = _parse(GUIA_PARTES, _S.OCR)
+        assert r.valor_a_vista == _D("200000.00")
+        assert r.valor_financiado_sfh == _D("800000.00")
+        assert r.valor_transacao == _D("1000000.00")
+        assert "valor_transacao_derivado" in (r.aviso or "")
+
+    def test_corroborated_by_the_base_is_media_never_alta(self) -> None:
+        r = _parse(GUIA_PARTES, _S.TEXT_LAYER)
+        assert r.confiancas["valor_transacao"] is _C.MEDIA
+
+    def test_a_base_that_disagrees_leaves_it_baixa(self) -> None:
+        r = _parse(GUIA_PARTES.replace("1.000.000,00", "1.200.000,00"), _S.OCR)
+        assert r.valor_transacao == _D("1000000.00")
+        assert r.confiancas["valor_transacao"] is _C.BAIXA
+
+    def test_one_part_alone_is_not_a_price(self) -> None:
+        r = _parse(GUIA_PARTES.replace("Valor Financiado: 800.000,00\n", ""), _S.OCR)
+        assert r.valor_transacao is None
+        assert "valor_transacao_derivado" not in (r.aviso or "")
+
+    def test_a_printed_transaction_value_always_wins(self) -> None:
+        r = _parse(GUIA_PARTES + "Valor da Transação: 1.050.000,00\n", _S.OCR)
+        assert r.valor_transacao == _D("1050000.00")
+        assert "valor_transacao_derivado" not in (r.aviso or "")
