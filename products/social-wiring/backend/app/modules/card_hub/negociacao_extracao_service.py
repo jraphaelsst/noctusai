@@ -192,29 +192,19 @@ def _rotulo_lido(leitura: Any, campo: str) -> bool:
 def _ja_rejeitado_pelo_usuario(
     client: Any, org_id: UUID, atendimento_id: UUID, campo: str, valor_proposto: Any,
 ) -> bool:
-    """Finding [MEDIUM] (audit, 2026-09-28), ported from `imovel_hub.
-    campos_extraidos_service.aplicar`'s own REJEITADO_ANTES check: a human
-    already said no to EXACTLY this value on this field — re-running the
-    same extraction must not re-open (and re-notify) the same question.
+    """A human already said no to EXACTLY this value on this field —
+    re-running the same extraction must not re-open (and re-notify) the
+    same question.
 
-    🔴 TIGHTENED vs. the imóvel version: only counts a row with
-    `decidido_por` SET — a genuine human decision. `campo_conflitos.
-    registrar_conflito`'s own supersede-by-newer-proposal (`decidido_por=
-    None`, a SYSTEM resolution) also lands in `status='rejeitado'`; without
-    this filter, a value a machine merely SUPERSEDED (not a human refused)
-    would wrongly block its own later, legitimate re-proposal.
-    `NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]` — the imóvel
-    version's own check does not filter this and shares the same, smaller
-    gap — 2026-09-28.
+    N=3 formalization (`NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]`,
+    2026-09-28): this used to be its own copy of `imovel_hub.
+    campos_extraidos_service.aplicar`'s REJEITADO_ANTES check; both now
+    call the shared `campo_conflitos.ja_rejeitado_pelo_usuario` — see that
+    function's own docstring for the `decidido_por`-set filter (only a
+    genuine human decision counts — a machine-superseded row does not).
     """
-    rows = (
-        _t(client, ATENDIMENTO.table).select("valor_proposto,decidido_por")
-        .eq("org_id", str(org_id)).eq("atendimento_id", str(atendimento_id))
-        .eq("campo", campo).eq("status", "rejeitado").execute()
-    ).data or []
-    alvo = str(valor_proposto)
-    return any(
-        r.get("decidido_por") and str(r.get("valor_proposto")) == alvo for r in rows
+    return campo_conflitos.ja_rejeitado_pelo_usuario(
+        client, ATENDIMENTO, org_id, atendimento_id, campo, valor_proposto,
     )
 
 

@@ -113,6 +113,9 @@ class TestAplicar:
         assert _dados(scoped)["numero_matricula"] == "45.678"
 
     def test_a_rejected_reading_is_not_reopened(self, scoped):
+        """A HUMAN rejection (`decidido_por` set) blocks the exact same
+        value being proposed again — `NOC-REMEDIATE[imovel-rejeitado-antes-
+        decidido-por]` (2026-09-28): only a genuine human decision counts."""
         seed(
             scoped,
             dados=[dados_row(situacao_onus="livre", situacao_onus_origem="manual")],
@@ -121,6 +124,7 @@ class TestAplicar:
                 "campo": "situacao_onus", "valor_anterior": "livre",
                 "origem_anterior": "manual", "valor_proposto": "hipoteca",
                 "origem_proposto": "matricula", "status": "rejeitado",
+                "decidido_por": str(uuid4()),
                 "created_at": "2026-09-01T00:00:00+00:00",
             }],
         )
@@ -129,6 +133,30 @@ class TestAplicar:
         )
         assert r.status == campos_svc.REJEITADO_ANTES
         assert len(_conflitos(scoped)) == 1
+
+    def test_a_machine_superseded_rejection_does_not_block_reproposal(self, scoped):
+        """`NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]` (2026-09-28):
+        `campo_conflitos.registrar_conflito`'s own supersede-on-disagreeing-
+        dedupe also lands a row in `status='rejeitado'`, with `decidido_por
+        =None` (a SYSTEM resolution, never shown to a human) — that must
+        never block the SAME value being proposed again."""
+        seed(
+            scoped,
+            dados=[dados_row(situacao_onus="livre", situacao_onus_origem="manual")],
+            conflitos=[{
+                "id": str(uuid4()), "org_id": ORG_ID, "codigo": CODIGO,
+                "campo": "situacao_onus", "valor_anterior": "livre",
+                "origem_anterior": "manual", "valor_proposto": "hipoteca",
+                "origem_proposto": "matricula", "status": "rejeitado",
+                "decidido_por": None,
+                "created_at": "2026-09-01T00:00:00+00:00",
+            }],
+        )
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "situacao_onus", "hipoteca", origem="matricula",
+        )
+        assert r.status == campos_svc.CONFLITO
+        assert len(_conflitos(scoped)) == 2
 
     def test_a_group_compares_by_act_identity_not_offsets(self, scoped):
         eid, ato = str(uuid4()), str(uuid4())

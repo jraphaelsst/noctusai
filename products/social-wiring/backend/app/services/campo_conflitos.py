@@ -148,6 +148,51 @@ def conflito_pendente_existente(
     return rows[0] if rows else None
 
 
+def ja_rejeitado_pelo_usuario(
+    client: Any,
+    table: ConflictTable,
+    org_id: Any,
+    owner: Any,
+    campo: str,
+    valor_proposto: Any,
+    *,
+    igual: Optional[Callable[[Any], bool]] = None,
+) -> bool:
+    """A human already said no to exactly this reading on (owner, campo) —
+    re-running the same extraction (or a sibling document proposing the
+    identical value) must not re-open (and re-notify) the same question.
+
+    N=3 formalization (`NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]`,
+    2026-09-28): `imovel_hub.campos_extraidos_service.aplicar`'s own
+    REJEITADO_ANTES check and `card_hub.negociacao_extracao_service.
+    _ja_rejeitado_pelo_usuario` each grew this same rule independently —
+    this is the ONE copy both now call.
+
+    Only counts a `rejeitado` row with `decidido_por` SET — a genuine human
+    decision. `registrar_conflito`'s own supersede-by-newer-proposal
+    (`decidido_por=None`, a SYSTEM resolution — see its docstring) also
+    lands in `status='rejeitado'`; without this filter, a value a machine
+    merely SUPERSEDED (never shown to a human) would wrongly block its own
+    later, legitimate re-proposal.
+
+    `igual` compares a stored `valor_proposto` against the new one — pass a
+    field-aware comparator (imóvel's `iguais`) when a bare stringified
+    equality check is not enough; the default mirrors negociação's own
+    rule (`str(a) == str(b)`).
+    """
+    rows = (
+        _t(client, table.table)
+        .select("valor_proposto,decidido_por")
+        .eq("org_id", str(org_id))
+        .eq(table.owner_col, str(owner))
+        .eq("campo", campo)
+        .eq("status", "rejeitado")
+        .execute()
+    ).data or []
+    comparar = igual or (lambda proposto: str(proposto) == str(valor_proposto))
+    return any(r.get("decidido_por") and comparar(r.get("valor_proposto")) for r in rows)
+
+
 def registrar_conflito(
     client: Any,
     table: ConflictTable,

@@ -436,10 +436,13 @@ def aplicar(
     if _conflitos(client, org_id, codigo, chave, "pendente"):
         return Resultado(CONFLITO_EXISTENTE)
     # A human already said no to exactly this reading — re-running the same
-    # extraction must not re-open (and re-notify) the same question.
-    if any(
-        iguais(campo, r.get("valor_proposto"), valor)
-        for r in _conflitos(client, org_id, codigo, chave, "rejeitado")
+    # extraction must not re-open (and re-notify) the same question. Shared
+    # with `card_hub.negociacao_extracao_service` — see
+    # `campo_conflitos.ja_rejeitado_pelo_usuario`'s own docstring
+    # (`NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]`, 2026-09-28).
+    if campo_conflitos.ja_rejeitado_pelo_usuario(
+        client, campo_conflitos.IMOVEL, org_id, codigo, chave, valor,
+        igual=lambda proposto: iguais(campo, proposto, valor),
     ):
         return Resultado(REJEITADO_ANTES)
 

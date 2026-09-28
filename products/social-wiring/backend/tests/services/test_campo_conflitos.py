@@ -173,6 +173,80 @@ class TestDocumentoIdProposto:
         assert "documento_id_proposto" not in empresa_row
 
 
+class TestJaRejeitadoPeloUsuario:
+    """N=3 formalization (`NOC-REMEDIATE[imovel-rejeitado-antes-decidido-
+    por]`, 2026-09-28) — the ONE shared REJEITADO_ANTES check `imovel_hub.
+    campos_extraidos_service.aplicar` and `card_hub.negociacao_extracao_
+    service._ja_rejeitado_pelo_usuario` both now call."""
+
+    def _rejeitar(self, client, table, row_id, *, decidido_por):
+        client.table(table.table).update(
+            {"status": "rejeitado", "decidido_por": decidido_por}
+        ).eq("id", row_id).execute()
+
+    def test_a_human_rejected_value_blocks_reproposal(self, client):
+        row = campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
+            valor_anterior="a", origem_anterior="manual",
+            valor_proposto="b", origem_proposto="rg",
+        )
+        self._rejeitar(client, campo_conflitos.CLIENTE, row["id"], decidido_por="admin-1")
+        assert campo_conflitos.ja_rejeitado_pelo_usuario(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg", "b",
+        ) is True
+
+    def test_a_machine_superseded_value_does_not_block_reproposal(self, client):
+        """`registrar_conflito`'s own supersede-on-disagreeing-dedupe also
+        lands a row in `status='rejeitado'`, with `decidido_por=None` (a
+        SYSTEM resolution, never shown to a human) — that must never block
+        the SAME value being proposed again later (the imóvel-side bug this
+        formalization fixes)."""
+        primeiro = campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
+            valor_anterior="a", origem_anterior="manual",
+            valor_proposto="b", origem_proposto="rg",
+        )
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
+            valor_anterior="a", origem_anterior="manual",
+            valor_proposto="c", origem_proposto="rg",
+        )
+        stored = (
+            client.table(campo_conflitos.CLIENTE.table).select("*")
+            .eq("id", primeiro["id"]).execute()
+        ).data[0]
+        assert stored["status"] == "rejeitado"
+        assert stored["decidido_por"] is None
+        assert campo_conflitos.ja_rejeitado_pelo_usuario(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg", "b",
+        ) is False
+
+    def test_a_different_proposed_value_never_blocks(self, client):
+        row = campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg",
+            valor_anterior="a", origem_anterior="manual",
+            valor_proposto="b", origem_proposto="rg",
+        )
+        self._rejeitar(client, campo_conflitos.CLIENTE, row["id"], decidido_por="admin-1")
+        assert campo_conflitos.ja_rejeitado_pelo_usuario(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-1", "rg", "z",
+        ) is False
+
+    def test_a_custom_igual_comparator_is_used_when_given(self, client):
+        """Imóvel passes its own field-aware `iguais` — a comparator that
+        treats `12.846` and `12846` as the same `numero_matricula`."""
+        row = campo_conflitos.registrar_conflito(
+            client, campo_conflitos.IMOVEL, ORG, "SP-001", "numero_matricula",
+            valor_anterior="12345", origem_anterior="matricula",
+            valor_proposto="12.846", origem_proposto="matricula",
+        )
+        self._rejeitar(client, campo_conflitos.IMOVEL, row["id"], decidido_por="admin-1")
+        assert campo_conflitos.ja_rejeitado_pelo_usuario(
+            client, campo_conflitos.IMOVEL, ORG, "SP-001", "numero_matricula", "12846",
+            igual=lambda proposto: proposto.replace(".", "") == "12846",
+        ) is True
+
+
 class TestMesmoDocumentoPendente:
     """The D1 same-document-re-read refinement's shared predicate (see the
     module docstring)."""
