@@ -20,12 +20,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from noctusai_lib.domain.pipeline import get_stage, group_into_colunas, move_card
+from noctusai_lib.domain.pipeline import (
+    get_stage,
+    group_into_colunas,
+    move_card,
+    stage_by_role,
+    update_stage,
+)
 from noctusai_lib.integrations.persistence.table_reads import paged_rows
 
 from app.pipelines import PAPEL_APROVACAO_CLIENTE, PIPELINE_ESTEIRA, etapas
 from app.services import quadro_comum as qc
-from app.services.regras import RegraViolada
+from app.services.regras import RegraViolada, mensagem_horas_perdidas
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +43,7 @@ __all__ = [
     "levar_para_aprovacao",
     "mover_tarefa",
     "quadro",
+    "reatribuir_papel",
 ]
 
 CFG = PIPELINE_ESTEIRA
@@ -64,7 +71,10 @@ def quadro(
     linhas = paged_rows(db, CFG.card_table, org_id, eq_filters=filtros, select=TAREFA_SELECT)
     pautas = qc.por_ids(
         db, "pauta", org_id, (r.get("pauta_id") for r in linhas),
-        select="id, titulo, formato, data_publicacao",
+        # `marca_id` rides along so the tarefa detail sheet's Repertório da
+        # marca sidebar can default to the pauta's OWN brand instead of an
+        # arbitrary one when the cliente carries several (achado 2).
+        select="id, titulo, formato, data_publicacao, marca_id",
     )
     clientes = qc.por_ids(db, "cliente", org_id, (r.get("cliente_id") for r in linhas),
                           select="id, nome")
@@ -134,15 +144,37 @@ def criar_tarefa(
 
 
 # ── Delete ───────────────────────────────────────────────────────────
-def excluir_tarefa(db: Any, org_id: str, *, tarefa_id: str, user_id: Any = None) -> None:
+def _apontamentos_da_tarefa(db: Any, org_id: str, tarefa_id: str) -> list[dict]:
+    return (
+        db.table("apontamento").select("minutos").eq("tarefa_id", tarefa_id)
+        .eq("org_id", org_id).execute().data or []
+    )
+
+
+def excluir_tarefa(
+    db: Any, org_id: str, *, tarefa_id: str, user_id: Any = None,
+    confirmar_perda_horas: bool = False,
+) -> None:
     """Remove a tarefa from the board (smoke finding 5: there was no delete).
 
     Org-scoped lookup first so another org's id is a 404, never a silent no-op.
     Apontamentos and approval links go with it (`ON DELETE CASCADE`, migrations
     006/007); the `pipeline_movimentos` history is kept on purpose — it is the
     audit trail of what happened to the card, and a delete is part of it.
+
+    Refuses (409 `horas_serao_perdidas`) when the tarefa carries logged hours
+    and the caller has not explicitly confirmed the loss — deleting used to
+    silently erase every apontamento (and the custo real / DRE input they
+    feed) with no warning at all.
     """
     qc.carregar(db, CFG.card_table, org_id, tarefa_id, select="id")
+    apontamentos = _apontamentos_da_tarefa(db, org_id, tarefa_id)
+    if apontamentos and not confirmar_perda_horas:
+        minutos = sum(int(a.get("minutos") or 0) for a in apontamentos)
+        raise RegraViolada(
+            409, "horas_serao_perdidas",
+            mensagem_horas_perdidas(minutos, len(apontamentos)),
+        )
     db.table(CFG.card_table).delete().eq("id", tarefa_id).eq("org_id", org_id).execute()
     logger.info("tarefa excluída org=%s tarefa=%s por=%s", org_id, tarefa_id, user_id)
 
@@ -277,4 +309,50 @@ def decidir_aprovacao(
         db.table(CFG.card_table).update({"observacao_cliente": observacao}).eq(
             "id", tarefa_id
         ).eq("org_id", org_id).execute()
+    else:
+        # A later approval must not leave a STALE "Cliente pediu: …" note on
+        # screen (achado 9) — an earlier round's ajuste observation has
+        # nothing to do with what the client just approved.
+        db.table(CFG.card_table).update({"observacao_cliente": None}).eq(
+            "id", tarefa_id
+        ).eq("org_id", org_id).execute()
     return linha
+
+
+# ── Stage roles ──────────────────────────────────────────────────────
+def reatribuir_papel(db: Any, org_id: str, *, etapa_id: str, papel: str | None) -> dict:
+    """Atomically move a system role (`aprovacao_cliente`/`agendado`) onto —
+    or off of — one stage.
+
+    The seed's generic stage PATCH (`noctusai_lib.domain.pipeline.
+    update_stage`) refuses to set a role that another stage already holds
+    (by design — at most one stage per role), so "reassign" is really two
+    writes: clear the old holder, then set the new one. Doing that from the
+    frontend as two separate PATCH calls leaves a window with NO stage
+    carrying the role, and offers no way to refuse "clear the only
+    `aprovacao_cliente` holder and assign nothing else" (achado 11 — the
+    seed's own `DeleteStageDialog` copy told users to "atribua o papel a
+    outra etapa primeiro" with no UI action that did it).
+
+    Refuses (409 `papel_aprovacao_obrigatorio`) a bare CLEAR (`papel=None` or
+    any other role) of the stage that is currently the SOLE
+    `aprovacao_cliente` holder — link minting and the public portal have
+    nowhere to route without one. Reassigning to a DIFFERENT stage stays a
+    single call: pass the new holder's `etapa_id` with `papel=
+    "aprovacao_cliente"`; this function clears the previous holder itself.
+    """
+    atual = get_stage(db, CFG, etapa_id, org_id=org_id)
+    papel_atual = atual.get("papel")
+    if papel_atual == papel:
+        return atual
+    if papel_atual == PAPEL_APROVACAO_CLIENTE and papel != PAPEL_APROVACAO_CLIENTE:
+        raise RegraViolada(
+            409, "papel_aprovacao_obrigatorio",
+            "Esta é a única etapa marcada como 'Aprovação do cliente'. "
+            "Atribua o papel a outra etapa antes de tirá-lo desta.",
+        )
+    if papel:
+        titular = stage_by_role(db, CFG, papel, org_id=org_id)
+        if titular is not None and str(titular["id"]) != str(etapa_id):
+            update_stage(db, CFG, str(titular["id"]), {"papel": None}, org_id=org_id)
+    return update_stage(db, CFG, etapa_id, {"papel": papel}, org_id=org_id)

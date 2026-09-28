@@ -453,6 +453,42 @@ class TestEntradaEsteira:
         assert novas[0]["pauta_id"] == tarefa["pauta_id"]
         assert novas[0]["etapa_id"] == esteira["aguardando_roteiro"]["id"]
 
+    def test_new_tarefa_itself_fires_its_entry_stages_automations(
+        self, admin, esteira, igig_db,
+    ):
+        """achado 5: creating a tarefa used to fire NOTHING — only a board
+        drag ever ran `entrada_etapa` rules, so a rule on the esteira's own
+        first stage never saw a brand-new card at all."""
+        regra = _regra(admin, "esteira", esteira["aguardando_roteiro"]["id"], "notificar",
+                       {"usuario_ids": ["user-gestor"]})
+        cliente = igig_db.table("cliente").insert(
+            {"org_id": ORG, "nome": "Padaria Sol", "status": "ativo"}).execute().data[0]
+        pauta = igig_db.table("pauta").insert(
+            {"org_id": ORG, "cliente_id": cliente["id"], "titulo": "Post"}).execute().data[0]
+        resp = admin.post("/api/esteira/tarefas", json={"pauta_id": pauta["id"], "titulo": "X"})
+        assert resp.status_code == 201, resp.text
+        assert [e["status"] for e in _execucoes(igig_db, regra["id"])] == ["sucesso"]
+
+    def test_a_portal_decision_fires_the_destination_stages_automations(
+        self, admin, esteira, igig_db, tarefa,
+    ):
+        """achado 5: a client decision on `/aprovar/{token}` used to skip
+        automations entirely — only a board drag ran them."""
+        regra = _regra(admin, "esteira", esteira["pronto_para_agendamento"]["id"], "notificar",
+                       {"usuario_ids": ["user-gestor"]})
+        admin.post(f"/api/esteira/tarefas/{tarefa['id']}/mover-etapa",
+                   json={"para_etapa_id": esteira["roteiro_em_producao"]["id"]})
+        for slug in ("aguardando_design", "design_em_producao", "revisao_interna"):
+            admin.post(f"/api/esteira/tarefas/{tarefa['id']}/mover-etapa",
+                       json={"para_etapa_id": esteira[slug]["id"]})
+        link = admin.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao").json()
+        resp = admin.raw().post(
+            f"/api/esteira/aprovar/{link['token']}", json={"decisao": "aprovado"}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["notificado"] in (True, False)  # the field exists, either way
+        assert [e["status"] for e in _execucoes(igig_db, regra["id"])] == ["sucesso"]
+
 
 # ── SLA sweep ────────────────────────────────────────────────────────
 class TestSla:

@@ -9,12 +9,14 @@ from noctusai_lib.api.schemas import StrictHttpModel
 
 __all__ = [
     "TarefaOut",
+    "TarefaUpdate",
     "ApontamentoOut",
     "LinkAprovacaoOut",
     "AprovacaoPublicaOut",
     "PecaPublica",
     "DecisaoIn",
     "DecisaoOut",
+    "PapelEtapaIn",
 ]
 
 class TarefaOut(BaseModel):
@@ -37,6 +39,23 @@ class TarefaOut(BaseModel):
     observacao_cliente: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class TarefaUpdate(StrictHttpModel):
+    """PATCH `/api/esteira/tarefas/{id}` — título, responsável, prazo, pauta.
+
+    Deliberately does NOT accept `etapa_id`: moving a tarefa between stages
+    is `mover-etapa`'s job (the one-step-forward / motivo-to-go-back rules,
+    the refação count, the automations) — a second path that could write
+    `etapa_id` directly would bypass every one of those. Before this schema
+    existed there was no edit at all: fixing a typo in `titulo`, or a wrong
+    `responsavel_id`, meant deleting the tarefa and losing its apontamentos.
+    """
+
+    titulo: str | None = Field(default=None, min_length=1, max_length=200)
+    responsavel_id: str | None = None
+    prazo: str | None = None
+    pauta_id: str | None = None
 
 
 class ApontamentoOut(BaseModel):
@@ -107,3 +126,22 @@ class DecisaoIn(StrictHttpModel):
 class DecisaoOut(BaseModel):
     ok: bool
     decisao: str
+    #: Whether the agency was ACTUALLY notified (an in-app row was written for
+    #: at least one recipient). The portal's "Sua agência já foi notificada"
+    #: copy used to be shown unconditionally — including when the notify call
+    #: raised, or had zero recipients — which is a promise the backend cannot
+    #: keep. Defaults to `False` so a caller that forgets to set it never
+    #: overstates what happened.
+    notificado: bool = False
+
+
+class PapelEtapaIn(StrictHttpModel):
+    """`PATCH /api/esteira/stages/{id}/papel` — reassign a system role.
+
+    `papel: None` CLEARS the role from this stage. Sent through a dedicated
+    endpoint (not the generic stage PATCH) because reassigning a role — never
+    leaving zero stages carrying it — needs to read AND write more than one
+    stage atomically; see `esteira_router.atribuir_papel_etapa`.
+    """
+
+    papel: str | None = None

@@ -135,6 +135,78 @@ class TestEtapas:
             app.dependency_overrides.pop(exigir_admin_da_org, None)
 
 
+# ── Stage roles (achado 11) ───────────────────────────────────────────
+class TestAtribuirPapelEtapa:
+    @pytest.fixture
+    def admin(self, api):
+        from app.main import app
+        from app.pipelines import exigir_admin_da_org
+
+        app.dependency_overrides[exigir_admin_da_org] = lambda: None
+        yield api
+        app.dependency_overrides.pop(exigir_admin_da_org, None)
+
+    def test_requires_auth(self, api, etapas):
+        resp = api.raw().patch(
+            f"/api/esteira/stages/{etapas['pronto_para_agendamento']['id']}/papel",
+            json={"papel": "agendado"},
+        )
+        assert resp.status_code == 401
+
+    def test_non_admin_is_refused(self, api, etapas):
+        resp = api.patch(
+            f"/api/esteira/stages/{etapas['pronto_para_agendamento']['id']}/papel",
+            json={"papel": "agendado"},
+        )
+        assert resp.status_code == 403
+
+    def test_reassigning_to_a_new_stage_clears_the_old_holder(self, admin, etapas):
+        resp = admin.patch(
+            f"/api/esteira/stages/{etapas['pronto_para_agendamento']['id']}/papel",
+            json={"papel": "agendado"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["papel"] == "agendado"
+        antigo = admin.get("/api/esteira/stages").json()["data"]
+        antigo_agendado = next(s for s in antigo if s["slug"] == "agendado")
+        assert antigo_agendado["papel"] is None
+
+    def test_refuses_to_clear_the_sole_aprovacao_cliente_holder(self, admin, etapas):
+        resp = admin.patch(
+            f"/api/esteira/stages/{etapas['aprovacao_cliente']['id']}/papel",
+            json={"papel": None},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "papel_aprovacao_obrigatorio"
+
+    def test_reassigning_aprovacao_cliente_elsewhere_is_the_sanctioned_path(
+        self, admin, etapas
+    ):
+        """The 409 above forces this single-call path instead: hand the role
+        to a DIFFERENT stage, and the old holder is cleared automatically."""
+        resp = admin.patch(
+            f"/api/esteira/stages/{etapas['revisao_interna']['id']}/papel",
+            json={"papel": "aprovacao_cliente"},
+        )
+        assert resp.status_code == 200, resp.text
+        etapas_atuais = {s["slug"]: s for s in admin.get("/api/esteira/stages").json()["data"]}
+        assert etapas_atuais["revisao_interna"]["papel"] == "aprovacao_cliente"
+        assert etapas_atuais["aprovacao_cliente"]["papel"] is None
+
+    def test_no_op_when_already_holding_the_role(self, admin, etapas):
+        resp = admin.patch(
+            f"/api/esteira/stages/{etapas['aprovacao_cliente']['id']}/papel",
+            json={"papel": "aprovacao_cliente"},
+        )
+        assert resp.status_code == 200
+
+    def test_unknown_stage_returns_404(self, admin):
+        resp = admin.patch(
+            "/api/esteira/stages/nao-existe/papel", json={"papel": "agendado"}
+        )
+        assert resp.status_code == 404
+
+
 # ── Board ───────────────────────────────────────────────────────────
 class TestBoard:
     def test_requires_auth(self, api):
@@ -182,6 +254,68 @@ class TestCriarTarefa:
         resp = api.post("/api/esteira/tarefas", json={"pauta_id": "nao-existe", "titulo": "X"})
         assert resp.status_code == 404
 
+    def test_missing_pauta_message_agrees_in_gender(self, api, etapas):
+        """The seed `NotFoundError` used to say 'Pauta não encontrado'
+        through `qc.carregar` while every router-level 404 already said
+        'Pauta não encontrada' — a gender mismatch (achado 23)."""
+        resp = api.post("/api/esteira/tarefas", json={"pauta_id": "nao-existe", "titulo": "X"})
+        assert "Pauta não encontrada" in resp.text
+        assert "Pauta não encontrado" not in resp.text
+
+
+# ── Edit ────────────────────────────────────────────────────────────
+class TestAtualizarTarefa:
+    """achado 3: there was no way to fix título/responsável/prazo/pauta
+    short of deleting the tarefa (and losing its apontamentos)."""
+
+    def test_requires_auth(self, api, tarefa):
+        resp = api.raw().patch(
+            f"/api/esteira/tarefas/{tarefa['id']}", json={"titulo": "Novo"}
+        )
+        assert resp.status_code == 401
+
+    def test_edits_titulo(self, api, tarefa):
+        resp = api.patch(f"/api/esteira/tarefas/{tarefa['id']}", json={"titulo": "Carrossel novo"})
+        assert resp.status_code == 200
+        assert resp.json()["titulo"] == "Carrossel novo"
+
+    def test_edits_prazo(self, api, tarefa):
+        resp = api.patch(f"/api/esteira/tarefas/{tarefa['id']}", json={"prazo": "2026-12-01"})
+        assert resp.status_code == 200
+        assert resp.json()["prazo"] == "2026-12-01"
+
+    def test_changing_pauta_follows_the_new_pautas_cliente(self, api, igig_db, tarefa, pauta):
+        outro_cliente = igig_db.table("cliente").insert(
+            {"org_id": ORG, "nome": "Café Lua", "status": "ativo"}
+        ).execute().data[0]
+        outra_pauta = igig_db.table("pauta").insert(
+            {"org_id": ORG, "cliente_id": outro_cliente["id"], "titulo": "Post da lua"}
+        ).execute().data[0]
+        resp = api.patch(
+            f"/api/esteira/tarefas/{tarefa['id']}", json={"pauta_id": outra_pauta["id"]}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["cliente_id"] == outro_cliente["id"]
+
+    def test_unknown_responsavel_returns_404(self, api, tarefa):
+        resp = api.patch(
+            f"/api/esteira/tarefas/{tarefa['id']}", json={"responsavel_id": "nao-existe"}
+        )
+        assert resp.status_code == 404
+
+    def test_no_fields_returns_400(self, api, tarefa):
+        assert api.patch(f"/api/esteira/tarefas/{tarefa['id']}", json={}).status_code == 400
+
+    def test_cannot_move_etapa_through_this_endpoint(self, api, tarefa):
+        """Stage moves stay `mover-etapa`'s job — this endpoint doesn't even
+        accept the field."""
+        resp = api.patch(f"/api/esteira/tarefas/{tarefa['id']}", json={"etapa_id": "x"})
+        assert resp.status_code == 422
+
+    def test_unknown_tarefa_returns_404(self, api, etapas):
+        resp = api.patch("/api/esteira/tarefas/nao-existe", json={"titulo": "X"})
+        assert resp.status_code == 404
+
 
 # ── Delete ──────────────────────────────────────────────────────────
 class TestExcluirTarefa:
@@ -207,6 +341,32 @@ class TestExcluirTarefa:
         igig_db.table("tarefa").update({"org_id": "outra-org"}).eq("id", tarefa["id"]).execute()
         assert api.delete(f"/api/esteira/tarefas/{tarefa['id']}").status_code == 404
         assert any(t["id"] == tarefa["id"] for t in igig_db.table("tarefa")._data)
+
+    def test_refuses_when_hours_are_logged(self, api, igig_db, tarefa):
+        """achado 4 (esteira half): deleting used to erase apontamentos with
+        no warning — the input to custo real / DRE."""
+        igig_db.table("apontamento").insert({
+            "org_id": ORG, "tarefa_id": tarefa["id"], "usuario_id": TEST_USER_ID,
+            "iniciado_em": "2026-01-01T10:00:00", "encerrado_em": "2026-01-01T10:40:00",
+            "minutos": 40,
+        }).execute()
+        resp = api.delete(f"/api/esteira/tarefas/{tarefa['id']}")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "horas_serao_perdidas"
+        assert "40 min" in resp.json()["detail"]
+        assert any(t["id"] == tarefa["id"] for t in igig_db.table("tarefa")._data)
+
+    def test_confirming_deletes_it_anyway(self, api, igig_db, tarefa):
+        igig_db.table("apontamento").insert({
+            "org_id": ORG, "tarefa_id": tarefa["id"], "usuario_id": TEST_USER_ID,
+            "iniciado_em": "2026-01-01T10:00:00", "encerrado_em": "2026-01-01T10:40:00",
+            "minutos": 40,
+        }).execute()
+        resp = api.delete(
+            f"/api/esteira/tarefas/{tarefa['id']}", params={"confirmar_perda_horas": "true"}
+        )
+        assert resp.status_code == 204
+        assert all(t["id"] != tarefa["id"] for t in igig_db.table("tarefa")._data)
 
 
 # ── Move rules ──────────────────────────────────────────────────────
@@ -340,6 +500,29 @@ class TestLinkAprovacao:
     def test_missing_task_returns_404(self, api, etapas):
         assert api.post("/api/esteira/tarefas/nao-existe/link-aprovacao").status_code == 404
 
+    def test_minting_again_revokes_the_older_undecided_link(self, api, repos, tarefa):
+        """achado 6: every click used to leave the previous link live for the
+        rest of its 14 days — an old link could decide a round of feedback
+        the client was never shown."""
+        primeiro = api.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao").json()
+        api.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao")
+        aprovacao_antiga = repos.aprovacao.buscar(ORG, primeiro["id"])
+        assert repos.aprovacao.expirada(aprovacao_antiga)
+        resp = api.raw().get(f"/api/esteira/aprovar/{primeiro['token']}")
+        assert resp.status_code == 404
+
+    def test_a_decided_link_is_never_revoked(self, api, repos, tarefa):
+        """Revoking a SPENT link would blur the audit trail of what the
+        client actually saw and answered. `ajuste` returns the tarefa one
+        stage (still before approval), so a second link can legally be
+        minted afterwards."""
+        primeiro = api.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao").json()
+        api.raw().post(f"/api/esteira/aprovar/{primeiro['token']}", json={"decisao": "ajuste"})
+        segundo = api.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao")
+        assert segundo.status_code == 201, segundo.text
+        aprovacao_antiga = repos.aprovacao.buscar(ORG, primeiro["id"])
+        assert not repos.aprovacao.expirada(aprovacao_antiga)
+
 
 # ── PUBLIC portal ───────────────────────────────────────────────────
 class TestPortalPublico:
@@ -408,6 +591,35 @@ class TestPortalPublico:
         assert [n["user_id"] for n in enviadas] == [TEST_USER_ID], "the link's emitter"
         assert enviadas[0]["org_id"] == ORG
         assert enviadas[0]["metadata"]["decisao"] == "aprovado"
+
+    def test_response_reports_whether_the_notify_actually_landed(self, api, token):
+        """achado 8: the portal used to say 'sua agência já foi notificada'
+        unconditionally. `notificado` is the honest signal the FE now reads."""
+        resp = api.raw().post(f"/api/esteira/aprovar/{token}", json={"decisao": "aprovado"})
+        assert resp.json()["notificado"] is True
+
+    def test_notificado_is_false_with_no_recipient_to_tell(self, api, igig_db, token):
+        """`emitido_por` is the ONLY guaranteed recipient here — remove it
+        and no responsável exists, so nobody can be notified."""
+        igig_db.table("aprovacao")._data[
+            next(i for i, a in enumerate(igig_db.table("aprovacao")._data) if a["token"] == token)
+        ]["emitido_por"] = None
+        resp = api.raw().post(f"/api/esteira/aprovar/{token}", json={"decisao": "aprovado"})
+        assert resp.json()["notificado"] is False
+
+    def test_aprovar_clears_a_stale_ajuste_observation(self, api, igig_db, tarefa, etapas):
+        """achado 9: an earlier round's 'Cliente pediu: …' used to keep
+        showing even after a LATER approval."""
+        link1 = api.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao").json()
+        api.raw().post(
+            f"/api/esteira/aprovar/{link1['token']}",
+            json={"decisao": "ajuste", "observacao": "trocar a cor"},
+        )
+        link2 = api.post(f"/api/esteira/tarefas/{tarefa['id']}/link-aprovacao").json()
+        api.raw().post(f"/api/esteira/aprovar/{link2['token']}", json={"decisao": "aprovado"})
+        atual = next(t for t in igig_db.table("tarefa")._data if t["id"] == tarefa["id"])
+        assert atual["observacao_cliente"] is None
+
 
     def test_a_decision_needs_the_tarefa_still_in_approval(
         self, api, igig_db, tarefa, token, etapas
