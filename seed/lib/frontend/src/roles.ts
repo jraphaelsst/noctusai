@@ -68,6 +68,26 @@ export function isCustomerRole(orgRole: string | null | undefined): boolean {
 export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor'];
 
 /**
+ * Roles gated behind elevated privilege at invite time — mirrors the
+ * backend's `_GRANT_REQUIRES` in `noctusai_seed/routers.py`: granting
+ * "admin" via `/api/team/invite` requires the inviter to be an org
+ * owner/admin OR a NoctusAI platform operator, i.e. exactly
+ * `SSORoleInfo.isProductAdmin`. A role absent here is grantable by anyone
+ * who can invite at all (`MANAGE_TEAM_ROLES` — owner/admin/manager).
+ */
+export const ELEVATED_GRANT_ROLES: OrgRole[] = ['admin'];
+
+/**
+ * Roles the invite form may offer, given whether the caller `isProductAdmin`
+ * — `ASSIGNABLE_ROLES` filtered by `ELEVATED_GRANT_ROLES` so the dropdown
+ * never offers a role the server would then reject with 403 (before this, a
+ * Gerente saw "Administrador" in the list and got a 403 on submit).
+ */
+export function grantableRoles(isProductAdmin: boolean): OrgRole[] {
+  return ASSIGNABLE_ROLES.filter((role) => isProductAdmin || !ELEVATED_GRANT_ROLES.includes(role));
+}
+
+/**
  * Check if user can see in-development pages (dev / owner / admin).
  * Consumes DEV_ROLES — the prior hardcoded `owner || dev` duplicated the
  * const beside it AND omitted admin, so it drifted from its own source of

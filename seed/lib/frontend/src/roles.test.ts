@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { DEV_ROLES, isDevOrOwner } from './roles';
+import { ASSIGNABLE_ROLES, DEV_ROLES, grantableRoles, isDevOrOwner } from './roles';
 
 describe('DEV_ROLES', () => {
   it('is the single source of truth for dev-page visibility', () => {
@@ -43,5 +43,23 @@ describe('isDevOrOwner', () => {
 
   it('denies an unknown role string', () => {
     expect(isDevOrOwner('superuser')).toBe(false);
+  });
+});
+
+describe('grantableRoles', () => {
+  // finais, 2026-09-28: before this, the invite form offered "Administrador"
+  // to a Gerente (manager), who then got a 403 from the backend's
+  // `_GRANT_REQUIRES` gate — the dropdown must never offer what the server
+  // will refuse.
+  it('a non-product-admin (e.g. a manager) never sees "admin"', () => {
+    expect(grantableRoles(false)).not.toContain('admin');
+  });
+
+  it('a non-product-admin still sees every other assignable role', () => {
+    expect(grantableRoles(false)).toEqual(ASSIGNABLE_ROLES.filter((r) => r !== 'admin'));
+  });
+
+  it('a product admin (org owner/admin, or a NoctusAI platform operator) sees every assignable role', () => {
+    expect(grantableRoles(true)).toEqual(ASSIGNABLE_ROLES);
   });
 });
