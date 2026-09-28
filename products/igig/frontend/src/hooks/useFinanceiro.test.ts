@@ -6,8 +6,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
-vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet } }));
+const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
+vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet, post: mockPost } }));
 
 let queryState: Record<string, unknown> = {};
 const { capturedOpts } = vi.hoisted(() => ({ capturedOpts: [] as Record<string, unknown>[] }));
@@ -22,7 +22,7 @@ vi.mock("@tanstack/react-query", () => {
   return { useQuery, useMutation, useQueryClient };
 });
 
-import { useDRE, useExcedentes, useFaturas, useInadimplentes } from "./useFinanceiro";
+import { useCancelarFatura, useDRE, useExcedentes, useFaturas, useInadimplentes } from "./useFinanceiro";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -80,6 +80,14 @@ describe("useDRE — loading formula + placeholderData", () => {
   it("passes placeholderData", () => {
     useDRE();
     expect(capturedOpts[0]?.placeholderData).toBeTypeOf("function");
+  });
+});
+
+describe("useCancelarFatura", () => {
+  it("posts to the cancelar endpoint", () => {
+    const hook = useCancelarFatura() as unknown as { mutationFn: (id: string) => unknown };
+    hook.mutationFn("fatura-1");
+    expect(mockPost).toHaveBeenCalledWith("/api/financeiro/faturas/fatura-1/cancelar", {});
   });
 });
 

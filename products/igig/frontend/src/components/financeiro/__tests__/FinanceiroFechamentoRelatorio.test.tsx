@@ -9,11 +9,14 @@ import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-const { api, toast } = vi.hoisted(() => ({
+const { api, toast, user } = vi.hoisted(() => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn(), upload: vi.fn(), download: vi.fn() },
   toast: { success: vi.fn(), error: vi.fn() },
+  // "Gerar competência" is admin-only (finding #20-adjacent decision) —
+  // an org admin, same shape `Automacoes.test.tsx` uses.
+  user: { current: { id: "u1", user_metadata: { org_role: "admin" } as Record<string, unknown> } },
 }));
-vi.mock("@noctusai/seed/infra", () => ({ api }));
+vi.mock("@noctusai/seed/infra", () => ({ api, useAuthStore: () => ({ user: user.current }) }));
 vi.mock("sonner", () => ({ toast }));
 
 import { FechamentoMes } from "../FechamentoMes";
@@ -87,6 +90,18 @@ describe("FechamentoMes", () => {
     api.get.mockRejectedValue(new Error("banco indisponível"));
     wrap(<FechamentoMes competencia="2026-09" />);
     expect(await screen.findByRole("alert")).toHaveTextContent("banco indisponível");
+  });
+
+  it("hides Gerar competência from a non-admin member", async () => {
+    const original = user.current;
+    user.current = { id: "u2", user_metadata: {} };
+    try {
+      wrap(<FechamentoMes competencia="2026-09" />);
+      await screen.findByTestId("fechamento-mes");
+      expect(screen.queryByTestId("gerar-competencia")).not.toBeInTheDocument();
+    } finally {
+      user.current = original;
+    }
   });
 });
 

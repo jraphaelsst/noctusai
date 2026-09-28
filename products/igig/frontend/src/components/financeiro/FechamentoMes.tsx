@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { useGerarCompetencia, useResumoFinanceiro } from "@/hooks/useFinanceiro";
 import { describeError } from "@/lib/errors";
 import { brl } from "@/lib/format";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 function Cartao({ rotulo, valor, detalhe, alerta }: { rotulo: string; valor: string; detalhe?: string; alerta?: boolean }) {
   return (
@@ -29,6 +30,7 @@ function Cartao({ rotulo, valor, detalhe, alerta }: { rotulo: string; valor: str
 export function FechamentoMes({ competencia }: { competencia: string }) {
   const { resumo, showSkeleton, isError, error, isRefreshing } = useResumoFinanceiro(competencia);
   const gerar = useGerarCompetencia();
+  const isAdmin = useIsOrgAdmin();
 
   return (
     <section className="space-y-3" aria-label="Resumo da competência" data-testid="fechamento-mes">
@@ -59,26 +61,29 @@ export function FechamentoMes({ competencia }: { competencia: string }) {
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border p-3">
         <p className="min-w-0 flex-1 text-sm text-muted-foreground">
           Fechar {competencia}: uma fatura por contrato ativo (mensalidade + excedentes do mês).
+          {!isAdmin && " Somente administradores da agência podem fechar o mês."}
         </p>
-        <Button
-          className="max-sm:h-10 max-sm:w-full"
-          disabled={gerar.isPending || !/^\d{4}-\d{2}$/.test(competencia)}
-          data-testid="gerar-competencia"
-          onClick={() =>
-            gerar.mutate(competencia, {
-              onSuccess: (r) =>
-                toast.success(
-                  `${r.criadas.length} fatura(s) criada(s)` +
-                    (r.existentes.length ? ` · ${r.existentes.length} já existia(m)` : "") +
-                    ` em ${competencia}.`,
-                ),
-              onError: (e) => toast.error(describeError(e, "Não foi possível gerar a competência.")),
-            })
-          }
-        >
-          <FilePlus2 className="mr-1 h-4 w-4" />
-          {gerar.isPending ? "Gerando…" : "Gerar competência"}
-        </Button>
+        {isAdmin && (
+          <Button
+            className="max-sm:h-10 max-sm:w-full"
+            disabled={gerar.isPending || !/^\d{4}-\d{2}$/.test(competencia)}
+            data-testid="gerar-competencia"
+            onClick={() =>
+              gerar.mutate(competencia, {
+                onSuccess: (r) =>
+                  toast.success(
+                    `${r.criadas.length} fatura(s) criada(s)` +
+                      (r.existentes.length ? ` · ${r.existentes.length} já existia(m)` : "") +
+                      ` em ${competencia}.`,
+                  ),
+                onError: (e) => toast.error(describeError(e, "Não foi possível gerar a competência.")),
+              })
+            }
+          >
+            <FilePlus2 className="mr-1 h-4 w-4" />
+            {gerar.isPending ? "Gerando…" : "Gerar competência"}
+          </Button>
+        )}
       </div>
     </section>
   );

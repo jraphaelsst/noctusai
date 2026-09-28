@@ -143,6 +143,16 @@ export function useMarcarPaga() {
   });
 }
 
+/** Void an invoice (admin-only server-side). */
+export function useCancelarFatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (faturaId: string) =>
+      api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/cancelar`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  });
+}
+
 export function useExcedentes(competencia: string) {
   const query = useQuery({
     queryKey: [...FINANCEIRO_QUERY_KEY, "excedentes", competencia],

@@ -14,14 +14,26 @@ import { Fragment, useState } from "react";
 import { toast } from "sonner";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, FileBarChart2, FilePlus2, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  FileBarChart2,
+  FilePlus2,
+  Plus,
+  XCircle,
+} from "lucide-react";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { FechamentoMes } from "@/components/financeiro/FechamentoMes";
 import { RelatorioSheet } from "@/components/financeiro/RelatorioSheet";
 
 import { useClientes } from "@/hooks/useClientes";
+import { useContratos } from "@/hooks/useContratos";
 import {
   useAdicionarItem,
+  useCancelarFatura,
   useCriarFatura,
   useDRE,
   useExcedentes,
@@ -33,6 +45,9 @@ import {
   type StatusFatura,
   type TipoItem,
 } from "@/hooks/useFinanceiro";
+import { describeError } from "@/lib/errors";
+import { dataBR, parseValorBR } from "@/lib/format";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -52,16 +67,19 @@ function competenciaAtual(): string {
 
 export default function Financeiro() {
   const [competencia, setCompetencia] = useState(competenciaAtual);
-  const { linhas, loading: carregandoDRE } = useDRE();
-  const { excedentes, loading: carregandoExc } = useExcedentes(competencia);
-  const { faturas, loading: carregandoFat } = useFaturas();
+  const { linhas, loading: carregandoDRE, isError: erroDRE } = useDRE(competencia);
+  const { excedentes, loading: carregandoExc, isError: erroExc } = useExcedentes(competencia);
+  const { faturas, loading: carregandoFat, isError: erroFat } = useFaturas();
   const { atrasadas } = useInadimplentes();
   const marcarPaga = useMarcarPaga();
+  const cancelarFatura = useCancelarFatura();
+  const isAdmin = useIsOrgAdmin();
   const { clientes } = useClientes();
   const nomeCliente = (id: string) => clientes.find((c) => c.id === id)?.nome ?? null;
   /** Which invoice has its lines expanded, if any. */
   const [faturaAberta, setFaturaAberta] = useState<string | null>(null);
   const [relatorioAberto, setRelatorioAberto] = useState(false);
+  const [cancelandoFaturaId, setCancelandoFaturaId] = useState<string | null>(null);
 
   return (
     <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
@@ -101,6 +119,9 @@ export default function Financeiro() {
           <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
             {atrasadas.slice(0, 5).map((f) => (
               <li key={f.fatura_id}>
+                {nomeCliente(f.cliente_id) && (
+                  <span className="font-medium text-foreground">{nomeCliente(f.cliente_id)} · </span>
+                )}
                 {f.competencia} · {BRL.format(f.valor_total)} ·{" "}
                 <span className="text-destructive">{f.dias_atraso} dias</span>
               </li>
@@ -111,8 +132,13 @@ export default function Financeiro() {
 
       {/* ── DRE ────────────────────────────────────────────────────── */}
       <section className="rounded-lg border border-border bg-card p-4">
-        <h2 className="mb-3 text-sm font-semibold text-foreground">DRE por conta</h2>
-        {carregandoDRE ? (
+        <h2 className="mb-1 text-sm font-semibold text-foreground">DRE por conta — {competencia}</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Receita da competência selecionada; custo real é sempre o histórico completo.
+        </p>
+        {erroDRE ? (
+          <p role="alert" className="text-sm text-destructive">Não foi possível carregar o DRE.</p>
+        ) : carregandoDRE ? (
           <Skeleton className="h-24 w-full" />
         ) : linhas.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum cliente ainda.</p>
@@ -174,7 +200,9 @@ export default function Financeiro() {
         <p className="mb-3 text-xs text-muted-foreground">
           Cobrados na fatura do mês seguinte.
         </p>
-        {carregandoExc ? (
+        {erroExc ? (
+          <p role="alert" className="text-sm text-destructive">Não foi possível carregar os excedentes.</p>
+        ) : carregandoExc ? (
           <Skeleton className="h-20 w-full" />
         ) : excedentes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -211,7 +239,9 @@ export default function Financeiro() {
       <section className="rounded-lg border border-border bg-card p-4">
         <h2 className="mb-3 text-sm font-semibold text-foreground">Faturas</h2>
         <NovaFatura competenciaPadrao={competencia} />
-        {carregandoFat ? (
+        {erroFat ? (
+          <p role="alert" className="text-sm text-destructive">Não foi possível carregar as faturas.</p>
+        ) : carregandoFat ? (
           <Skeleton className="h-20 w-full" />
         ) : faturas.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhuma fatura emitida.</p>
@@ -223,9 +253,16 @@ export default function Financeiro() {
                 fatura={f}
                 clienteNome={nomeCliente(f.cliente_id)}
                 aberta={faturaAberta === f.id}
+                isAdmin={isAdmin}
                 onAlternar={() => setFaturaAberta(faturaAberta === f.id ? null : f.id)}
-                onMarcarPaga={() => marcarPaga.mutate(f.id)}
+                onMarcarPaga={() =>
+                  marcarPaga.mutate(f.id, {
+                    onSuccess: () => toast.success("Fatura marcada como paga."),
+                    onError: (e) => toast.error(describeError(e, "Não foi possível marcar como paga.")),
+                  })
+                }
                 marcandoPaga={marcarPaga.isPending}
+                onPedirCancelamento={() => setCancelandoFaturaId(f.id)}
               />
             ))}
           </ul>
@@ -235,6 +272,25 @@ export default function Financeiro() {
           dependem de credenciais e homologação ainda não configuradas.
         </p>
       </section>
+
+      <ConfirmDialog
+        open={cancelandoFaturaId !== null}
+        title="Cancelar fatura"
+        description={<p>Cancelar esta fatura? Uma fatura cancelada não pode ser reaberta nem marcada como paga.</p>}
+        confirmLabel={cancelarFatura.isPending ? "Cancelando…" : "Cancelar fatura"}
+        busy={cancelarFatura.isPending}
+        onCancel={() => setCancelandoFaturaId(null)}
+        onConfirm={() => {
+          if (!cancelandoFaturaId) return;
+          cancelarFatura.mutate(cancelandoFaturaId, {
+            onSuccess: () => {
+              setCancelandoFaturaId(null);
+              toast.success("Fatura cancelada.");
+            },
+            onError: (e) => toast.error(describeError(e, "Não foi possível cancelar a fatura.")),
+          });
+        }}
+      />
     </div>
   );
 }
@@ -251,16 +307,20 @@ function LinhaFatura({
   fatura,
   clienteNome,
   aberta,
+  isAdmin,
   onAlternar,
   onMarcarPaga,
   marcandoPaga,
+  onPedirCancelamento,
 }: {
   fatura: Fatura;
   clienteNome: string | null;
   aberta: boolean;
+  isAdmin: boolean;
   onAlternar: () => void;
   onMarcarPaga: () => void;
   marcandoPaga: boolean;
+  onPedirCancelamento: () => void;
 }) {
   const { itens, loading } = useFaturaItens(aberta ? fatura.id : undefined);
 
@@ -278,7 +338,7 @@ function LinhaFatura({
           {BRL.format(fatura.valor_total)}
         </span>
         {fatura.vencimento && (
-          <span className="text-xs text-muted-foreground">vence {fatura.vencimento}</span>
+          <span className="text-xs text-muted-foreground">vence {dataBR(fatura.vencimento)}</span>
         )}
 
         <Button
@@ -292,11 +352,24 @@ function LinhaFatura({
           Itens
         </Button>
 
-        {fatura.status !== "paga" && fatura.status !== "cancelada" && (
-          <Button size="sm" variant="outline" disabled={marcandoPaga} onClick={onMarcarPaga}>
-            <CheckCircle2 className="mr-2 h-3 w-3" />
-            Marcar paga
-          </Button>
+        {/* Marcar paga / cancelar são admin-only no servidor — a tela só
+            oferece o que o servidor permitiria, em vez de deixar o membro
+            tentar e receber um 403. */}
+        {isAdmin && fatura.status !== "paga" && fatura.status !== "cancelada" && (
+          <>
+            <Button size="sm" variant="outline" disabled={marcandoPaga} onClick={onMarcarPaga}>
+              <CheckCircle2 className="mr-2 h-3 w-3" />
+              Marcar paga
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Cancelar fatura ${fatura.competencia}`}
+              onClick={onPedirCancelamento}
+            >
+              <XCircle className="h-4 w-4 text-destructive" />
+            </Button>
+          </>
         )}
       </div>
 
@@ -320,17 +393,22 @@ function LinhaFatura({
                 </tr>
               </thead>
               <tbody className="text-foreground">
-                {itens.map((i) => (
-                  <tr key={i.id} className="border-t border-border">
-                    <td className="py-1">{i.descricao}</td>
-                    <td className="py-1 text-muted-foreground">{i.tipo}</td>
-                    <td className="py-1 text-right">{i.quantidade}</td>
-                    <td className="py-1 text-right">{BRL.format(i.valor_unit)}</td>
-                    <td className="py-1 text-right">
-                      {BRL.format(i.quantidade * i.valor_unit)}
-                    </td>
-                  </tr>
-                ))}
+                {itens.map((i) => {
+                  const bruto = i.quantidade * i.valor_unit;
+                  const contribuicao = i.tipo === "desconto" ? -bruto : bruto;
+                  return (
+                    <tr key={i.id} className="border-t border-border">
+                      <td className="py-1">{i.descricao}</td>
+                      <td className="py-1 text-muted-foreground">{i.tipo}</td>
+                      <td className="py-1 text-right">{i.quantidade}</td>
+                      <td className="py-1 text-right">{BRL.format(i.valor_unit)}</td>
+                      <td className={`py-1 text-right ${contribuicao < 0 ? "text-destructive" : ""}`}>
+                        {contribuicao < 0 ? "− " : ""}
+                        {BRL.format(Math.abs(contribuicao))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
@@ -353,26 +431,39 @@ const TIPOS_ITEM: { valor: TipoItem; rotulo: string }[] = [
 
 const CAMPO = "h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground";
 
-function mensagemDe(erro: unknown, padrao: string): string {
-  return erro instanceof Error && erro.message ? erro.message : padrao;
-}
-
 /**
  * Open an invoice by hand (`POST /api/financeiro/faturas` had no consumer).
  * One invoice per contrato × competência is enforced server-side (409) — the
- * message comes back verbatim.
+ * message comes back verbatim. Picking a contrato is OPTIONAL (an avulsa
+ * charge has none), but when picked it shares the SAME idempotency guard
+ * `gerar_competencia` relies on — the double-bill finding #4 exists to close.
  */
 function NovaFatura({ competenciaPadrao }: { competenciaPadrao: string }) {
   const { clientes, loading } = useClientes();
   const criar = useCriarFatura();
   const [aberto, setAberto] = useState(false);
   const [clienteId, setClienteId] = useState("");
+  const [contratoId, setContratoId] = useState("");
   const [competencia, setCompetencia] = useState(competenciaPadrao);
   const [vencimento, setVencimento] = useState("");
+  const { contratos } = useContratos(clienteId || null);
+  const contratosAtivos = contratos.filter((c) => c.status === "ativo");
 
   if (!aberto) {
     return (
-      <Button size="sm" variant="outline" className="mb-3 min-h-10" onClick={() => setAberto(true)}>
+      <Button
+        size="sm"
+        variant="outline"
+        className="mb-3 min-h-10"
+        onClick={() => {
+          // Re-sync to the header's current competência EACH time the form
+          // is (re)opened — it previously captured `competenciaPadrao` once,
+          // at the page's first render, and never again (finding #24,
+          // 2026-09 audit).
+          setCompetencia(competenciaPadrao);
+          setAberto(true);
+        }}
+      >
         <FilePlus2 className="mr-2 h-4 w-4" />
         Nova fatura
       </Button>
@@ -383,15 +474,20 @@ function NovaFatura({ competenciaPadrao }: { competenciaPadrao: string }) {
     e.preventDefault();
     if (!clienteId || !competencia) return;
     criar.mutate(
-      { cliente_id: clienteId, competencia, ...(vencimento ? { vencimento } : {}) },
+      {
+        cliente_id: clienteId, competencia,
+        ...(contratoId ? { contrato_id: contratoId } : {}),
+        ...(vencimento ? { vencimento } : {}),
+      },
       {
         onSuccess: () => {
           toast.success("Fatura aberta — adicione os itens");
           setClienteId("");
+          setContratoId("");
           setVencimento("");
           setAberto(false);
         },
-        onError: (erro) => toast.error(mensagemDe(erro, "Não foi possível abrir a fatura.")),
+        onError: (erro) => toast.error(describeError(erro, "Não foi possível abrir a fatura.")),
       },
     );
   }
@@ -399,19 +495,38 @@ function NovaFatura({ competenciaPadrao }: { competenciaPadrao: string }) {
   return (
     <form
       onSubmit={submeter}
-      className="mb-4 grid grid-cols-1 gap-3 rounded-md border border-border bg-background p-3 sm:grid-cols-[2fr_1fr_1fr_auto_auto] sm:items-end"
+      className="mb-4 grid grid-cols-1 gap-3 rounded-md border border-border bg-background p-3 sm:grid-cols-[2fr_2fr_1fr_1fr_auto_auto] sm:items-end"
     >
       <label className="text-xs text-muted-foreground">
         Cliente
         <select
           className={`mt-1 ${CAMPO}`}
           value={clienteId}
-          onChange={(e) => setClienteId(e.target.value)}
+          onChange={(e) => {
+            setClienteId(e.target.value);
+            setContratoId("");
+          }}
           disabled={loading}
         >
           <option value="">{loading ? "Carregando…" : "Selecione…"}</option>
           {clientes.map((c) => (
             <option key={c.id} value={c.id}>{c.nome}</option>
+          ))}
+        </select>
+      </label>
+      <label className="text-xs text-muted-foreground">
+        Contrato (opcional)
+        <select
+          className={`mt-1 ${CAMPO}`}
+          value={contratoId}
+          onChange={(e) => setContratoId(e.target.value)}
+          disabled={!clienteId || contratosAtivos.length === 0}
+        >
+          <option value="">Avulsa — sem contrato</option>
+          {contratosAtivos.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.numero ?? c.id.slice(0, 8)} — {BRL.format(c.valor_mensal ?? 0)}/mês
+            </option>
           ))}
         </select>
       </label>
@@ -450,18 +565,27 @@ function AdicionarItem({ faturaId }: { faturaId: string }) {
   const [tipo, setTipo] = useState<TipoItem>("avulso");
   const [quantidade, setQuantidade] = useState("1");
   const [valor, setValor] = useState("");
+  const [erroValor, setErroValor] = useState<string | null>(null);
 
   function submeter(e: React.FormEvent) {
     e.preventDefault();
     const d = descricao.trim();
     if (!d) return;
+    // pt-BR ("1.500,00") OR plain-decimal ("1500.00") — never silently 0 on
+    // an unparseable value (finding #5, 2026-09 audit).
+    const valorNumerico = parseValorBR(valor);
+    if (valorNumerico === null || valorNumerico < 0) {
+      setErroValor("Valor inválido. Use, por exemplo, 1500,00 ou 1.500,00.");
+      return;
+    }
+    setErroValor(null);
     adicionar.mutate(
       {
         faturaId,
         descricao: d,
         tipo,
         quantidade: Math.max(1, Number(quantidade) || 1),
-        valor_unit: Math.max(0, Number(valor.replace(",", ".")) || 0),
+        valor_unit: valorNumerico,
       },
       {
         onSuccess: (fatura) => {
@@ -470,7 +594,7 @@ function AdicionarItem({ faturaId }: { faturaId: string }) {
           setQuantidade("1");
           setValor("");
         },
-        onError: (erro) => toast.error(mensagemDe(erro, "Não foi possível adicionar o item.")),
+        onError: (erro) => toast.error(describeError(erro, "Não foi possível adicionar o item.")),
       },
     );
   }
@@ -515,7 +639,10 @@ function AdicionarItem({ faturaId }: { faturaId: string }) {
           inputMode="decimal"
           className="mt-1 h-11"
           value={valor}
-          onChange={(e) => setValor(e.target.value)}
+          onChange={(e) => {
+            setValor(e.target.value);
+            setErroValor(null);
+          }}
           placeholder="0,00"
         />
       </label>
@@ -528,6 +655,16 @@ function AdicionarItem({ faturaId }: { faturaId: string }) {
         <Plus className="mr-1 h-4 w-4" />
         {adicionar.isPending ? "Adicionando…" : "Adicionar item"}
       </Button>
+      {erroValor && (
+        <p role="alert" className="col-span-2 text-xs text-destructive sm:col-span-5">
+          {erroValor}
+        </p>
+      )}
+      {tipo === "desconto" && !erroValor && (
+        <p className="col-span-2 text-xs text-muted-foreground sm:col-span-5">
+          Este valor será SUBTRAÍDO do total da fatura.
+        </p>
+      )}
     </form>
   );
 }
