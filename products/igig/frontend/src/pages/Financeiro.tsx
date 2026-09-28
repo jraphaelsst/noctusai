@@ -80,6 +80,7 @@ export default function Financeiro() {
   const [faturaAberta, setFaturaAberta] = useState<string | null>(null);
   const [relatorioAberto, setRelatorioAberto] = useState(false);
   const [cancelandoFaturaId, setCancelandoFaturaId] = useState<string | null>(null);
+  const [marcandoPagaId, setMarcandoPagaId] = useState<string | null>(null);
 
   return (
     <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
@@ -255,12 +256,7 @@ export default function Financeiro() {
                 aberta={faturaAberta === f.id}
                 isAdmin={isAdmin}
                 onAlternar={() => setFaturaAberta(faturaAberta === f.id ? null : f.id)}
-                onMarcarPaga={() =>
-                  marcarPaga.mutate(f.id, {
-                    onSuccess: () => toast.success("Fatura marcada como paga."),
-                    onError: (e) => toast.error(describeError(e, "Não foi possível marcar como paga.")),
-                  })
-                }
+                onPedirMarcarPaga={() => setMarcandoPagaId(f.id)}
                 marcandoPaga={marcarPaga.isPending}
                 onPedirCancelamento={() => setCancelandoFaturaId(f.id)}
               />
@@ -272,6 +268,26 @@ export default function Financeiro() {
           dependem de credenciais e homologação ainda não configuradas.
         </p>
       </section>
+
+      <ConfirmDialog
+        open={marcandoPagaId !== null}
+        title="Marcar fatura como paga"
+        description={<p>Marcar esta fatura como paga? Registra a data de agora; não há como desfazer pela tela.</p>}
+        confirmLabel={marcarPaga.isPending ? "Marcando…" : "Marcar paga"}
+        destructive={false}
+        busy={marcarPaga.isPending}
+        onCancel={() => setMarcandoPagaId(null)}
+        onConfirm={() => {
+          if (!marcandoPagaId) return;
+          marcarPaga.mutate(marcandoPagaId, {
+            onSuccess: () => {
+              setMarcandoPagaId(null);
+              toast.success("Fatura marcada como paga.");
+            },
+            onError: (e) => toast.error(describeError(e, "Não foi possível marcar como paga.")),
+          });
+        }}
+      />
 
       <ConfirmDialog
         open={cancelandoFaturaId !== null}
@@ -309,7 +325,7 @@ function LinhaFatura({
   aberta,
   isAdmin,
   onAlternar,
-  onMarcarPaga,
+  onPedirMarcarPaga,
   marcandoPaga,
   onPedirCancelamento,
 }: {
@@ -318,7 +334,7 @@ function LinhaFatura({
   aberta: boolean;
   isAdmin: boolean;
   onAlternar: () => void;
-  onMarcarPaga: () => void;
+  onPedirMarcarPaga: () => void;
   marcandoPaga: boolean;
   onPedirCancelamento: () => void;
 }) {
@@ -357,7 +373,7 @@ function LinhaFatura({
             tentar e receber um 403. */}
         {isAdmin && fatura.status !== "paga" && fatura.status !== "cancelada" && (
           <>
-            <Button size="sm" variant="outline" disabled={marcandoPaga} onClick={onMarcarPaga}>
+            <Button size="sm" variant="outline" disabled={marcandoPaga} onClick={onPedirMarcarPaga}>
               <CheckCircle2 className="mr-2 h-3 w-3" />
               Marcar paga
             </Button>
