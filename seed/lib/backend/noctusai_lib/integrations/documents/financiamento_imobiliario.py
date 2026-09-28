@@ -20,19 +20,22 @@ and parser; `LadderContratoFinanciamentoExtractor` and
 `LadderPropostaFinanciamentoExtractor` differ only in HOW they get text in
 front of it — one paginates a long document, the other reads one image.
 
-🔴 PAGE TARGETING: THE CONTRACT'S DETERMINISTIC TWO-PASS WINDOW
+🔴 PAGE TARGETING: EVERY PAGE, PAGE BY PAGE (owner mandate 2026-09-28)
 -------------------------------------------------------------------
-A 25-page contract cannot be visioned whole (`MAX_VISION_PAGES` would
-allow it, but at real cost, for a document whose only fact this module
-needs sits on ONE table). `LadderContratoFinanciamentoExtractor` instead
-reads `documents.transcription.DocumentTranscriber.transcribe`'s new
-`paginas=` window deterministically: pages `1..janela_paginas` first; if
-the Quadro Resumo anchor plus enough of its own fields are not found
-there, pages `janela_paginas+1..max_paginas_visao` next; never the whole
-document, and never more than `max_paginas_visao` vision pages across both
-attempts (default 8). Nothing found in either window ⇒
-`error='quadro_resumo_nao_encontrado'` — a document whose summary table
-was never in the read window, not a parsing failure.
+`LadderContratoFinanciamentoExtractor` reads the WHOLE contract in one
+`documents.transcription.DocumentTranscriber.transcribe(paginas=None)`
+call — `LadderDocumentTranscriber` already makes one vision call per page
+needing it, so this is page-by-page, not a batch — then locates the Quadro
+Resumo wherever it printed it. Capped only by the transcriber's own
+`MAX_VISION_PAGES` (40) safety ceiling, which fails LOUDLY
+(`too_many_vision_pages`) rather than truncating silently.
+
+🔴 SUPERSEDED (through 2026-09-27): a deterministic two-pass 4-page window
+(`1..4`, then `5..8`, never more than 8 vision pages total) that returned
+`error='quadro_resumo_nao_encontrado'` for a Quadro sitting on page 9+ of a
+longer contract — and never read those later pages at all, Quadro or not.
+Replaced once the owner's "every page, no cost cap" mandate made the
+cost/coverage trade-off that window existed for the wrong call.
 
 🔴 THE DPS TRIPWIRE — THIS MODULE NEVER PERSISTS THAT TEXT
 ----------------------------------------------------------------
@@ -948,9 +951,22 @@ def _fonte_da_transcricao(transcricao: Transcription) -> TextSource:
 
 
 class LadderContratoFinanciamentoExtractor:
-    """The 25-page, image-only financing contract — deterministic two-pass
-    page-window reader over `documents.transcription.DocumentTranscriber`.
-    See the module header.
+    """The financing contract — page-by-page, whole-document read over
+    `documents.transcription.DocumentTranscriber`, then the Quadro Resumo is
+    located wherever it sits. See the module header.
+
+    🔴 OWNER MANDATE (2026-09-28): every uploaded document is read
+    "correctamente e precisamente, página por página, nunca em lotes" — no
+    cost cap. Before this, the contract was read in at most two 4-page
+    windows (`1..4`, then `5..8`) and gave up beyond page 8 entirely —
+    `error='quadro_resumo_nao_encontrado'` for a Quadro that happened to sit
+    on page 10, and pages 9+ of a longer contract NEVER read at all, whether
+    or not the Quadro was on them. A single `transcribe()` call with
+    `paginas=None` reads every page — one vision call per page needing it,
+    exactly as `LadderDocumentTranscriber._transcribe` already does — capped
+    only by the transcriber's own `MAX_VISION_PAGES` (40) safety ceiling,
+    which still fails LOUDLY (`too_many_vision_pages`) rather than silently
+    truncating.
 
     Construct via `make_contrato_financiamento_extractor(real=True)`.
     """
@@ -960,18 +976,13 @@ class LadderContratoFinanciamentoExtractor:
         *,
         org_id: Optional[str] = None,
         provider: Optional[str] = None,
-        janela_paginas: int = 4,
-        max_paginas_visao: int = 8,
         transcriber: Optional[DocumentTranscriber] = None,
     ) -> None:
-        self._janela_paginas = janela_paginas
-        self._max_paginas_visao = max_paginas_visao
         self._transcriber = transcriber or make_document_transcriber(
             real=True,
             org_id=org_id,
             provider=provider,
             ocr_prompt=DOCUMENT_PROMPT_FINANCIAMENTO,
-            max_vision_pages=max_paginas_visao,
         )
 
     async def extract(
@@ -986,62 +997,29 @@ class LadderContratoFinanciamentoExtractor:
                 documento="contrato", error="empty_document", error_message="no bytes to read"
             )
 
-        janela1 = range(1, self._janela_paginas + 1)
-        t1 = await self._transcriber.transcribe(
-            content, mimetype=mimetype, filename=filename, paginas=janela1
+        t = await self._transcriber.transcribe(
+            content, mimetype=mimetype, filename=filename
         )
-        if not t1.ok:
+        if not t.ok:
             return FinanciamentoImobiliarioFields(
-                documento="contrato", error=t1.error, error_message=t1.error_message
+                documento="contrato", error=t.error, error_message=t.error_message
             )
 
-        campos1 = parse_financiamento_imobiliario(
-            t1.text, _fonte_da_transcricao(t1), "contrato", paginas=[p.text for p in t1.pages]
+        campos = parse_financiamento_imobiliario(
+            t.text, _fonte_da_transcricao(t), "contrato", paginas=[p.text for p in t.pages]
         )
-        if campos1.error == "documento_sensivel_dps":
-            return campos1
+        if campos.error == "documento_sensivel_dps":
+            return campos
 
-        pages1 = tuple(sorted(p.number for p in t1.pages))
-        if campos1.quadro_encontrado:
-            return dataclasses.replace(campos1, paginas_lidas=pages1)
-
-        inicio2 = self._janela_paginas + 1
-        fim2 = min(2 * self._janela_paginas, self._max_paginas_visao)
-        if inicio2 > fim2 or (t1.num_paginas and inicio2 > t1.num_paginas):
-            # Nothing more to read within the hard cap, or the document
-            # itself has no more pages — the window search is exhausted.
-            return dataclasses.replace(
-                campos1,
-                paginas_lidas=pages1,
-                error="quadro_resumo_nao_encontrado",
-                error_message=(
-                    f"Quadro Resumo not found in pages {pages1 or '()'}"
-                ),
-            )
-
-        janela2 = range(inicio2, fim2 + 1)
-        t2 = await self._transcriber.transcribe(
-            content, mimetype=mimetype, filename=filename, paginas=janela2
-        )
-        pages_total = tuple(sorted(set(pages1) | {p.number for p in t2.pages}))
-        if not t2.ok:
-            return dataclasses.replace(
-                campos1, paginas_lidas=pages_total, error=t2.error, error_message=t2.error_message
-            )
-
-        campos2 = parse_financiamento_imobiliario(
-            t2.text, _fonte_da_transcricao(t2), "contrato", paginas=[p.text for p in t2.pages]
-        )
-        if campos2.error == "documento_sensivel_dps":
-            return campos2
-        if campos2.quadro_encontrado:
-            return dataclasses.replace(campos2, paginas_lidas=pages_total)
+        pages = tuple(sorted(p.number for p in t.pages))
+        if campos.quadro_encontrado:
+            return dataclasses.replace(campos, paginas_lidas=pages)
 
         return dataclasses.replace(
-            campos1,
-            paginas_lidas=pages_total,
+            campos,
+            paginas_lidas=pages,
             error="quadro_resumo_nao_encontrado",
-            error_message=f"Quadro Resumo not found in pages {pages_total or '()'}",
+            error_message=f"Quadro Resumo not found in pages {pages or '()'}",
         )
 
 
@@ -1092,25 +1070,16 @@ def make_contrato_financiamento_extractor(
     real: bool = False,
     org_id: Optional[str] = None,
     provider: Optional[str] = None,
-    janela_paginas: int = 4,
-    max_paginas_visao: int = 8,
 ) -> FinanciamentoImobiliarioExtractor:
     """Return a financing CONTRACT extractor. Fake-by-default.
 
-    `janela_paginas` is the size of each of the two page-windows (pages
-    `1..janela_paginas`, then `janela_paginas+1..max_paginas_visao`);
-    `max_paginas_visao` is the hard cap on vision pages across BOTH
-    attempts combined — never the whole 25-page document. See the module
-    header.
+    Reads every page of the contract, page by page, then locates the Quadro
+    Resumo wherever it sits — see `LadderContratoFinanciamentoExtractor`'s
+    own docstring for the two-pass-window design this replaced.
     """
     if not real:
         return FakeContratoFinanciamentoExtractor()
-    return LadderContratoFinanciamentoExtractor(
-        org_id=org_id,
-        provider=provider,
-        janela_paginas=janela_paginas,
-        max_paginas_visao=max_paginas_visao,
-    )
+    return LadderContratoFinanciamentoExtractor(org_id=org_id, provider=provider)
 
 
 def make_proposta_financiamento_extractor(

@@ -30,12 +30,13 @@ def make_identity_extractor(
             resolution and budget accounting.
         document_prompt: Product-specific framing for the vision rung.
         max_pages: Page cap for the vision rung. Omit for the adapter's
-            default (3 pages — right for an ID card); pass `None` to read
-            EVERY page, which a document whose later pages can reverse its
-            meaning requires. A certidão de casamento is the canonical case:
-            the marriage is on page 1 and the AVERBAÇÃO that dissolved it is
-            further in, so a truncated read does not lose detail — it returns
-            the opposite answer.
+            default (`None` — EVERY page, up to `documents.transcription.
+            MAX_VISION_PAGES`). A certidão de casamento is the canonical case
+            for why every page matters: the marriage is on page 1 and the
+            AVERBAÇÃO that dissolved it is further in, so a truncated read
+            does not lose detail — it returns the opposite answer. Pass a
+            concrete N only to deliberately lower the cap below that safety
+            ceiling.
         provider: Which vendor reads a scanned page — any key of
             `documents.transcription.OCR_MODELS` (`"openai"` /
             `"anthropic"` / `"gemini"`). `None` = the seed's canonical

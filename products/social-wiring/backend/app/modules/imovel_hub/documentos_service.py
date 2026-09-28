@@ -61,7 +61,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from uuid import UUID
 
 from noctusai_lib.integrations.llm import chat_completion
@@ -139,13 +139,16 @@ RESULTADO_VALUES: tuple[str, ...] = (
 #: (migration 107); there is no `api` leg here, only `ia` and `manual`.
 ORIGENS_ESTRUTURA: tuple[str, ...] = ("ia", "manual")
 
-#: Vision pages the structured-fields read may bill. Unlike
-#: `certidoes._extract_pdf_text`'s scheduler-driven `CERTIDAO_MAX_VISION_
-#: PAGES=0`, this runs once per upload (never on a loop), and every tipo in
-#: `TIPOS_ESTRUTURA_EXTRAIVEL` is a short document (a CND/guia is 1-3 pages,
-#: not the 20-40-page matrícula scan `matricula_extracao_service` budgets
-#: for) — so a small vision cap is affordable here.
-MAX_VISION_PAGES_ESTRUTURA = 5
+#: 🔴 SUPERSEDED (through 2026-09-27): a flat 5-page vision cap on the
+#: theory that "every tipo in `TIPOS_ESTRUTURA_EXTRAIVEL` is a short
+#: document" — wrong for `matricula`'s own entry in that set (its `emitida_em`
+#: leg, `CAMPOS_ESTRUTURA_POR_TIPO["matricula"]`), which reads the SAME
+#: 20-40-page scan `matricula_extracao_service` budgets 40 pages for. Owner
+#: mandate 2026-09-28 ("every page, page by page, no cost cap") removed the
+#: cap outright — `_extrair_paginas` below no longer passes `max_vision_pages`
+#: to the transcriber, so it inherits the transcriber's own global
+#: `MAX_VISION_PAGES` (40) safety ceiling, which still fails LOUDLY
+#: (`too_many_vision_pages`) rather than truncating silently.
 
 #: The certidões `GET /{codigo}/certidoes` surfaces — every tipo the imóvel
 #: CND clause needs a date for. `guia_iptu` is excluded: it carries an
@@ -495,6 +498,14 @@ async def _analisar_estrutura(
     fields — numero/emitida_em/validade_ate/resultado/inscricao_imobiliaria,
     per `CAMPOS_ESTRUTURA_POR_TIPO`.
 
+    🔴 `texto` IS ONE PAGE, NOT THE WHOLE DOCUMENT (owner mandate 2026-09-28):
+    `extrair_estrutura` calls this once per page `_extrair_paginas` returned,
+    and merges the per-page answers deterministically
+    (`_merge_estrutura_por_pagina`) — a single joined-text call used to hide
+    which page a field actually came from and could not disagree with
+    itself, which is exactly the property `resultado`'s worst-wins merge
+    needs.
+
     🔴 REUSES THE SEAM `certidoes.service._analyze_estrutura_with_ai`
     established, extended with `inscricao_imobiliaria` (which that seam has
     no reason to ask for) — the SAME `chat_completion` client, the SAME
@@ -556,31 +567,105 @@ async def _analisar_estrutura(
     return _parse_json_estrutura(raw, campos)
 
 
-async def _extrair_texto(
-    conteudo: bytes, mimetype: Optional[str], org_id: Optional[str]
-) -> Optional[str]:
-    """Bytes → text, via the seed transcription ladder (`noctusai_lib.
-    integrations.documents.make_document_transcriber`) — the "seed documents
-    pipeline" half of the reused seam. Text-layer first, vision second, up to
-    `MAX_VISION_PAGES_ESTRUTURA` pages.
+#: Severity order for `resultado` when two pages of the SAME document
+#: answer differently — the WORST finding wins, never the best: a page
+#: that reads "negativa" must never silently outrank a LATER page that
+#: found a debt. `positiva_com_efeito_de_negativa` sits between the two:
+#: legally treated as clean, but only because of an explicit legal effect
+#: on a positiva finding — worse than a plain `negativa`, better than an
+#: unqualified `positiva`.
+_RESULTADO_SEVERIDADE: dict[str, int] = {
+    "negativa": 0,
+    "positiva_com_efeito_de_negativa": 1,
+    "positiva": 2,
+}
 
-    Never raises: a failed or empty transcription returns `None`, logged.
+
+def _merge_estrutura_por_pagina(
+    respostas: Sequence[Optional[dict]], campos: tuple[str, ...]
+) -> tuple[Optional[dict], tuple[str, ...]]:
+    """Deterministic, order-preserving merge of ONE structured answer PER
+    PAGE into a single row (owner mandate 2026-09-28: every page read, page
+    by page, never batched into one call).
+
+    - `numero` / `emitida_em` / `validade_ate` / `inscricao_imobiliaria`:
+      the FIRST page (in document order) that answered a field wins — each
+      prints once, on one page, so an earlier page's silence is not
+      evidence against a later page's real answer.
+    - `resultado`: the MOST SEVERE answer across every page wins
+      (`_RESULTADO_SEVERIDADE`) — a resultado is a finding, and silently
+      keeping the better of two disagreeing answers is the wrong default
+      for a due-diligence document.
+
+    Returns `(merged, avisos)`. `merged` is `None` when no page answered
+    anything (the caller's existing `sem_dados` path). `avisos` names every
+    field where two pages disagreed — informational only, logged by the
+    caller; it never withholds or changes the applied value.
+    """
+    merged: dict = {}
+    avisos: list[str] = []
+    for campo in campos:
+        if campo == "resultado":
+            continue
+        for resposta in respostas:
+            valor = (resposta or {}).get(campo)
+            if valor is None:
+                continue
+            if campo not in merged:
+                merged[campo] = valor
+            elif merged[campo] != valor:
+                avisos.append(f"{campo}: paginas divergem ({merged[campo]!r} vs {valor!r})")
+
+    if "resultado" in campos:
+        pior: Optional[str] = None
+        for resposta in respostas:
+            valor = (resposta or {}).get("resultado")
+            if valor is None:
+                continue
+            if pior is None:
+                pior = valor
+            elif valor != pior:
+                avisos.append(f"resultado: paginas divergem ({pior!r} vs {valor!r})")
+                if _RESULTADO_SEVERIDADE.get(valor, -1) > _RESULTADO_SEVERIDADE.get(pior, -1):
+                    pior = valor
+        if pior is not None:
+            merged["resultado"] = pior
+
+    return (merged or None, tuple(avisos))
+
+
+async def _extrair_paginas(
+    conteudo: bytes, mimetype: Optional[str], org_id: Optional[str]
+) -> tuple[str, ...]:
+    """Bytes → the document's PAGES, text only, via the seed transcription
+    ladder (`noctusai_lib.integrations.documents.make_document_transcriber`)
+    — the "seed documents pipeline" half of the reused seam. Text-layer
+    first, vision second, EVERY page (owner mandate 2026-09-28: no cost cap
+    — the flat `MAX_VISION_PAGES_ESTRUTURA=5` this superseded silently
+    truncated `matricula`'s own 20-40-page scan). Capped only by the
+    transcriber's own global `MAX_VISION_PAGES` (40) safety ceiling, which
+    still fails LOUDLY (`too_many_vision_pages`) rather than truncating.
+
+    One string per page that carries text, in page order — blank pages
+    dropped, same rule `Transcription.text` uses to join them, kept apart
+    here instead so the caller can ask each page its own question
+    (`_analisar_estrutura`) rather than one call over the whole joined
+    document.
+
+    Never raises a transcription failure silently: it is re-raised as
+    `EstruturaFalhou` so the caller can tell "the document has no text"
+    apart from "the read failed and should be retried". Returns `()` for a
+    document with nothing readable in it.
     """
     try:
         from noctusai_lib.integrations.documents import make_document_transcriber
 
         from app.services.api_keys_store import resolve_vision_provider
 
-        provider = (
-            resolve_vision_provider(org_id)
-            if MAX_VISION_PAGES_ESTRUTURA > 0
-            else None
-        )
         transcriber = make_document_transcriber(
             real=True,
             org_id=org_id,
-            max_vision_pages=MAX_VISION_PAGES_ESTRUTURA,
-            provider=provider,
+            provider=resolve_vision_provider(org_id),
         )
         resultado = await transcriber.transcribe(
             conteudo, mimetype=mimetype or "application/pdf"
@@ -595,7 +680,7 @@ async def _extrair_texto(
         raise EstruturaFalhou(
             resultado.error or "transcription_failed", resultado.error_message or ""
         )
-    return resultado.text or None
+    return tuple(p.text for p in resultado.pages if p.text)
 
 
 #: tipo → (structured field, `imovel_dados` field it feeds under D1). The
@@ -658,14 +743,19 @@ async def extrair_estrutura(
     overwrite, and never stamped as if a human had typed it.
 
     `extract_text` / `analyze_estrutura` are DI seams (default: the real
-    `_extrair_texto` / `_analisar_estrutura`) — a test injects a stub instead
-    of patching this module's own functions. A seam signals FAILURE by
-    raising `EstruturaFalhou`, and "nothing found" by returning None.
+    `_extrair_paginas` / `_analisar_estrutura`) — a test injects a stub
+    instead of patching this module's own functions. `extract_text` returns
+    the document's pages (`tuple[str, ...]`, page order, blank pages
+    dropped); `analyze_estrutura` is called ONCE PER PAGE (owner mandate
+    2026-09-28: every page read, none batched), and the per-page answers are
+    merged deterministically (`_merge_estrutura_por_pagina`). A seam signals
+    FAILURE by raising `EstruturaFalhou`, and "nothing found" by returning
+    `None`.
     → KB § PATTERNS/backend/di-test-seam.md
     """
     from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 
-    extract_text = extract_text or _extrair_texto
+    extract_text = extract_text or _extrair_paginas
     analyze_estrutura = analyze_estrutura or _analisar_estrutura
 
     rows = (
@@ -726,8 +816,19 @@ async def extrair_estrutura(
         return _falhou("objeto_ausente", "objeto ausente no storage")
 
     try:
-        texto = await extract_text(blob.data, doc.get("mime_type"), str(org_id))
-        via_ia = await analyze_estrutura(texto, tipo, str(org_id)) if texto else None
+        paginas = await extract_text(blob.data, doc.get("mime_type"), str(org_id))
+        via_ia: Optional[dict] = None
+        if paginas:
+            respostas = [
+                await analyze_estrutura(pagina, tipo, str(org_id)) for pagina in paginas
+            ]
+            campos = CAMPOS_ESTRUTURA_POR_TIPO.get(tipo) or ()
+            via_ia, avisos = _merge_estrutura_por_pagina(respostas, campos)
+            if avisos:
+                logger.warning(
+                    "extracao estrutura %s: paginas divergem: %s",
+                    documento_id, "; ".join(avisos),
+                )
     except EstruturaFalhou as falha:
         return _falhou(falha.codigo, str(falha).split(": ", 1)[-1])
     except Exception as exc:  # noqa: BLE001 - background job must not die
@@ -736,7 +837,7 @@ async def extrair_estrutura(
         )
         return _falhou("erro_inesperado", str(exc))
 
-    if not texto:
+    if not paginas:
         logger.info("extracao estrutura %s: sem texto legivel", documento_id)
         _marcar(
             client, documento_id,

@@ -40,12 +40,17 @@ from tests.modules.imovel_hub.conftest import (
 
 
 def _texto_fixo(texto):
+    """A ONE-page document — `extract_text` now returns `tuple[str, ...]`
+    (one entry per page, owner mandate 2026-09-28: every page, page by
+    page). `texto=None` is a document with nothing readable."""
     async def _fn(conteudo, mimetype, org_id):
-        return texto
+        return (texto,) if texto else ()
     return _fn
 
 
 def _analise_fixa(resultado):
+    """Answers every page the SAME way — fine for the single-page fixtures
+    below; `TestExtrairEstruturaPorPagina` exercises per-page divergence."""
     async def _fn(texto, tipo_documento, org_id):
         return resultado
     return _fn
@@ -271,6 +276,144 @@ class TestParseJsonEstrutura:
 
         docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
         assert docs["items"][0]["resultado"] == "negativa"
+
+
+class TestMergeEstruturaPorPagina:
+    """`_merge_estrutura_por_pagina` — pure, no DI seam needed. Owner mandate
+    2026-09-28: every page read, page by page, merged deterministically."""
+
+    def test_first_page_with_a_value_wins_for_scalar_fields(self):
+        campos = ("numero", "emitida_em", "validade_ate", "inscricao_imobiliaria")
+        respostas = [
+            {"numero": "PRIMEIRO"},
+            {"numero": "SEGUNDO", "emitida_em": "2026-09-01"},
+        ]
+        merged, avisos = documentos_service._merge_estrutura_por_pagina(respostas, campos)
+        assert merged["numero"] == "PRIMEIRO"
+        assert merged["emitida_em"] == "2026-09-01"
+        assert any("numero" in a for a in avisos)
+
+    def test_resultado_takes_the_most_severe_across_pages(self):
+        campos = ("resultado",)
+        respostas = [
+            {"resultado": "negativa"},
+            {"resultado": "positiva_com_efeito_de_negativa"},
+            {"resultado": "negativa"},
+        ]
+        merged, avisos = documentos_service._merge_estrutura_por_pagina(respostas, campos)
+        assert merged["resultado"] == "positiva_com_efeito_de_negativa"
+        assert any("resultado" in a for a in avisos)
+
+    def test_a_plain_positiva_outranks_the_efeito_de_negativa_variant(self):
+        campos = ("resultado",)
+        respostas = [{"resultado": "positiva_com_efeito_de_negativa"}, {"resultado": "positiva"}]
+        merged, _ = documentos_service._merge_estrutura_por_pagina(respostas, campos)
+        assert merged["resultado"] == "positiva"
+
+    def test_no_page_answering_is_none_with_no_aviso(self):
+        merged, avisos = documentos_service._merge_estrutura_por_pagina(
+            [None, {}], ("numero", "resultado")
+        )
+        assert merged is None
+        assert avisos == ()
+
+    def test_agreeing_pages_raise_no_aviso(self):
+        merged, avisos = documentos_service._merge_estrutura_por_pagina(
+            [{"resultado": "negativa"}, {"resultado": "negativa"}], ("resultado",)
+        )
+        assert merged == {"resultado": "negativa"}
+        assert avisos == ()
+
+
+class TestExtrairEstruturaPorPagina:
+    """Owner mandate 2026-09-28: every page is read, page by page, never
+    batched into one call — and merged deterministically. Proves a value
+    sitting PAST the old `MAX_VISION_PAGES_ESTRUTURA=5` cap is read."""
+
+    @staticmethod
+    def _paginas_fixas(*paginas):
+        async def _fn(conteudo, mimetype, org_id):
+            return tuple(paginas)
+        return _fn
+
+    @staticmethod
+    def _analise_por_pagina(respostas: dict):
+        """Answers keyed by the EXACT page text handed in — proves each
+        page is analyzed independently rather than joined into one call."""
+        async def _fn(texto, tipo_documento, org_id):
+            return respostas.get(texto)
+        return _fn
+
+    @pytest.mark.asyncio
+    async def test_a_value_beyond_the_old_five_page_cap_is_read(
+        self, client, scoped, fake_storage
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="cnd_iptu", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+
+        # 7 pages — past the superseded 5-page cap; the value sits on the
+        # LAST one, which the old cap would never have reached.
+        paginas = tuple(f"pagina {n}" for n in range(1, 8))
+        respostas = {paginas[6]: {"validade_ate": "2026-11-01"}}
+
+        out = await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=self._paginas_fixas(*paginas),
+            analyze_estrutura=self._analise_por_pagina(respostas),
+        )
+        assert out["status"] == "ok"
+        docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
+        assert docs["items"][0]["validade_ate"] == "2026-11-01"
+
+    @pytest.mark.asyncio
+    async def test_numero_takes_the_first_page_that_answers(
+        self, client, scoped, fake_storage
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="cnd_iptu", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+
+        respostas = {"pagina 1": {"numero": "PRIMEIRO"}, "pagina 2": {"numero": "SEGUNDO"}}
+        out = await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=self._paginas_fixas("pagina 1", "pagina 2"),
+            analyze_estrutura=self._analise_por_pagina(respostas),
+        )
+        assert out["status"] == "ok"
+        docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
+        assert docs["items"][0]["numero"] == "PRIMEIRO"
+
+    @pytest.mark.asyncio
+    async def test_resultado_disagreeing_across_pages_takes_the_worst_and_logs(
+        self, client, scoped, fake_storage, caplog
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(
+            scoped,
+            documentos=[documento_row(did, tipo_documento="cnd_condominio", storage_path=path)],
+        )
+        await _seed_storage(fake_storage, path)
+
+        respostas = {
+            "pagina 1": {"emitida_em": "2026-09-01", "resultado": "negativa"},
+            "pagina 2": {"resultado": "positiva"},
+        }
+        with caplog.at_level("WARNING"):
+            out = await documentos_service.extrair_estrutura(
+                scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+                extract_text=self._paginas_fixas("pagina 1", "pagina 2"),
+                analyze_estrutura=self._analise_por_pagina(respostas),
+            )
+        assert out["status"] == "ok"
+        docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
+        row = docs["items"][0]
+        assert row["resultado"] == "positiva"
+        assert row["emitida_em"] == "2026-09-01"
+        assert any("resultado" in r.message and "divergem" in r.message for r in caplog.records)
 
 
 class TestEveryFailureIsRecordedNeverRaised:

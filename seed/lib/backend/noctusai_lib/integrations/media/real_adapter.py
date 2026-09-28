@@ -94,25 +94,37 @@ _DEFAULT_SCENE_PROMPT = (
 
 _KEYFRAME_FRACTIONS = (0.10, 0.30, 0.60, 0.90)
 
-#: Default page cap for rasterize→vision. Three is right for the documents
-#: this resolver was built for (an ID card, a one-page comprovante): it bounds
-#: the vision bill on a long PDF nobody meant to send.
+#: Default page cap for rasterize→vision. `None` — EVERY page — is the
+#: default since 2026-09-28 (owner mandate: every uploaded document is read
+#: "correctly and precisely, page by page, never in batches", no cost cap).
 #:
-#: 🔴 IT IS WRONG FOR ANY DOCUMENT WHOSE CORRECTION LIVES AT THE END.
-#: A certidão de casamento states the marriage on page 1 and its AVERBAÇÃO —
-#: the divorce, the name change — on a later page. Truncating such a document
-#: does not lose detail; it inverts the answer, and reads as a confident
-#: "casado, comunhão parcial" for someone who has been divorced for years.
-#: Callers that read those pass `max_pages=None` for no cap.
+#: 🔴 A LITERAL 3 WAS MEASURABLY WRONG. Before this change, every caller
+#: that did not pass its own `max_pages=` (RG/CNH, comprovante de endereço,
+#: Cartão CNPJ, Guia ITBI, Proposta de financiamento, the matrícula número
+#: leg — `documents.ladder.DocumentTextLadder`'s own default mirrors this
+#: constant) silently stopped at page 3 of a scanned document. A certidão de
+#: casamento states the marriage on page 1 and its AVERBAÇÃO — the divorce,
+#: the name change — on a later page; truncating such a document does not
+#: lose detail, it inverts the answer, and reads as a confident "casado,
+#: comunhão parcial" for someone who has been divorced for years — the exact
+#: failure `identidade_extracao_service.TIPOS_LEITURA_INTEGRAL` already had
+#: to work around, per document type, by naming `max_pages=None` explicitly.
+#: The fix belongs at THIS default, not at N more per-caller overrides: the
+#: safety valve is `documents.transcription.MAX_VISION_PAGES` (40), which
+#: still fails LOUDLY (`too_many_vision_pages`) rather than silently
+#: truncating — see that constant's own docstring.
 #:
-#: 🔴 THIS ONLY BOUNDS VISION SPEND — IT NO LONGER BOUNDS WHICH PAGES ARE
-#: READ. Before 2026-09-20, `_resolve_pdf` rasterized up to this many pages
-#: and then described ONLY `page_images[0]` — every scanned PDF, regardless
-#: of `max_pages`, effectively read page 1 alone. It now delegates to
-#: `documents.make_document_transcriber`, whose `max_vision_pages` this
-#: value feeds: pages with a real text layer are still read for free, and
-#: up to this many of the REMAINING pages get a vision call, in order.
-_RASTERIZE_MAX_PAGES = 3
+#: This bounds vision spend, not which pages are read — pages with a real
+#: text layer are read for free regardless (`documents.make_document_
+#: transcriber`'s rung 1); only the REMAINING (scanned) pages count against
+#: the cap this value feeds as `max_vision_pages`.
+#:
+#: The chatbot/WhatsApp inline-media path (`app/services/media_service.py`'s
+#: own `_rasterize_pdf_pages`) is a SEPARATE code path with its own
+#: independent `max_pages=3` default — it does not read this constant, is
+#: NOT a document-extraction consumer, and is deliberately unaffected by
+#: this change.
+_RASTERIZE_MAX_PAGES = None
 
 
 class RealMediaResolver:
@@ -528,12 +540,13 @@ class RealMediaResolver:
         own dependency graph for a caller who only ever resolves
         audio/image/video.
 
-        `max_vision_pages` mirrors `self._max_pages`: `None` keeps the
-        transcriber's own generous safety cap (`MAX_VISION_PAGES`, pages
-        NEEDING vision — free text-layer pages are unlimited either way);
-        a concrete N (the resolver's own default of 3) caps vision spend at
-        N pages rather than, as before this delegation existed, silently
-        describing page 1 alone regardless of N.
+        `max_vision_pages` mirrors `self._max_pages`: `None` (the resolver's
+        own default since 2026-09-28) keeps the transcriber's own generous
+        safety cap (`MAX_VISION_PAGES`, pages NEEDING vision — free
+        text-layer pages are unlimited either way); a concrete N, only ever
+        set by a caller that explicitly wants a lower bound, caps vision
+        spend at N pages rather than, as before this delegation existed,
+        silently describing page 1 alone regardless of N.
         """
         if self._document_transcriber is None:
             from noctusai_lib.integrations.documents.transcription import (

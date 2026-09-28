@@ -107,9 +107,8 @@ _FACTORY_SHAPED_EXTRATORES: frozenset[str] = frozenset(
         "noctusai_lib.integrations.documents.serasa_crednet.make_crednet_extractor",
         "noctusai_lib.integrations.documents.cartao_cnpj.make_cartao_cnpj_extractor",
         # S2 contract `sw-negociacao-extracao-contract.md` §D/§E1 — the same
-        # `(*, real, org_id, provider)` factory calling convention; page
-        # targeting (`janela_paginas`/`max_paginas_visao`) is each factory's
-        # OWN default, never resolved here.
+        # `(*, real, org_id, provider)` factory calling convention; how many
+        # pages get read is each factory's OWN default, never resolved here.
         "noctusai_lib.integrations.documents.guia_itbi.make_guia_itbi_extractor",
         (
             "noctusai_lib.integrations.documents.financiamento_imobiliario"

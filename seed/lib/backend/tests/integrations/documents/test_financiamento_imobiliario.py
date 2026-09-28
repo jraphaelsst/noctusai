@@ -570,134 +570,64 @@ class TestFabricationGuards:
         assert f.confiancas["valor_compra_venda"] is ExtractionConfidence.ALTA
 
 
-class TestContratoTwoPassPageWindow:
-    """The deterministic two-pass window over `DocumentTranscriber` — a
-    fake, injected transcriber stands in for `documents.transcription`'s
-    real ladder; the page-targeting itself is covered end-to-end in
+class TestContratoLeEveryPage:
+    """Owner mandate 2026-09-28: every page read, page by page, in ONE
+    `transcribe()` call (`paginas=None`) — no two-pass window, no per-window
+    page cap. A fake, injected transcriber stands in for
+    `documents.transcription`'s real ladder; the page-by-page vision-call
+    mechanics themselves are covered end-to-end in
     `test_transcription_paginas.py`."""
 
     class _FakeTranscriber:
-        def __init__(self, respostas: dict[tuple[int, ...], Transcription]):
-            self._respostas = respostas
-            self.chamadas: list[list[int]] = []
+        def __init__(self, transcricao: Transcription):
+            self._transcricao = transcricao
+            self.chamadas: list[object] = []
 
         async def transcribe(self, content, *, mimetype=None, filename=None, force_vision=False, paginas=None):
-            janela = list(paginas)
-            self.chamadas.append(janela)
-            return self._respostas[tuple(janela)]
+            self.chamadas.append(paginas)
+            return self._transcricao
 
     @pytest.mark.asyncio
-    async def test_found_in_pass_one_never_reads_pass_two(self):
+    async def test_a_single_call_reads_every_page_paginas_is_none(self):
         t = self._FakeTranscriber(
-            {
-                (1, 2, 3, 4): Transcription(
-                    pages=(TranscribedPage(number=1, text=_quadro(), source=TextSource.OCR),),
-                    num_paginas=25,
-                ),
-            }
+            Transcription(
+                pages=(TranscribedPage(number=1, text=_quadro(), source=TextSource.OCR),),
+                num_paginas=25,
+            )
         )
         ext = LadderContratoFinanciamentoExtractor(transcriber=t)
         r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
-        assert t.chamadas == [[1, 2, 3, 4]]
+        assert t.chamadas == [None]
         assert r.quadro_encontrado is True
         assert r.paginas_lidas == (1,)
         assert r.error is None
 
     @pytest.mark.asyncio
-    async def test_falls_through_to_pass_two_when_not_found_in_pass_one(self):
-        t = self._FakeTranscriber(
-            {
-                (1, 2, 3, 4): Transcription(
-                    pages=tuple(
-                        TranscribedPage(number=n, text="nada aqui", source=TextSource.OCR)
-                        for n in (1, 2, 3, 4)
-                    ),
-                    num_paginas=25,
-                ),
-                (5, 6, 7, 8): Transcription(
-                    pages=(TranscribedPage(number=5, text=_quadro(), source=TextSource.OCR),),
-                    num_paginas=25,
-                ),
-            }
+    async def test_a_quadro_past_the_old_eight_page_hard_cap_is_found(self):
+        """The superseded two-pass window never read past page 8 — this
+        Quadro sits on page 10 of a 25-page contract."""
+        paginas = tuple(
+            TranscribedPage(number=n, text="nada aqui" if n != 10 else _quadro(), source=TextSource.OCR)
+            for n in range(1, 11)
         )
+        t = self._FakeTranscriber(Transcription(pages=paginas, num_paginas=25))
         ext = LadderContratoFinanciamentoExtractor(transcriber=t)
         r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
-        assert t.chamadas == [[1, 2, 3, 4], [5, 6, 7, 8]]
         assert r.quadro_encontrado is True
-        assert r.paginas_lidas == (1, 2, 3, 4, 5)
+        assert r.paginas_lidas == tuple(range(1, 11))
+        assert r.error is None
 
     @pytest.mark.asyncio
-    async def test_not_found_in_either_pass_is_the_named_error(self):
-        t = self._FakeTranscriber(
-            {
-                (1, 2, 3, 4): Transcription(
-                    pages=tuple(
-                        TranscribedPage(number=n, text="nada aqui", source=TextSource.OCR)
-                        for n in (1, 2, 3, 4)
-                    ),
-                    num_paginas=25,
-                ),
-                (5, 6, 7, 8): Transcription(
-                    pages=tuple(
-                        TranscribedPage(number=n, text="nada aqui tambem", source=TextSource.OCR)
-                        for n in (5, 6, 7, 8)
-                    ),
-                    num_paginas=25,
-                ),
-            }
+    async def test_not_found_anywhere_is_the_named_error(self):
+        paginas = tuple(
+            TranscribedPage(number=n, text="nada aqui", source=TextSource.OCR)
+            for n in range(1, 9)
         )
+        t = self._FakeTranscriber(Transcription(pages=paginas, num_paginas=25))
         ext = LadderContratoFinanciamentoExtractor(transcriber=t)
         r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
         assert r.error == "quadro_resumo_nao_encontrado"
-        assert r.paginas_lidas == (1, 2, 3, 4, 5, 6, 7, 8)
-
-    @pytest.mark.asyncio
-    async def test_never_exceeds_the_eight_page_hard_cap(self):
-        """`janela_paginas=4, max_paginas_visao=8` (the defaults) never
-        requests a third window."""
-        t = self._FakeTranscriber(
-            {
-                (1, 2, 3, 4): Transcription(
-                    pages=tuple(
-                        TranscribedPage(number=n, text="nada", source=TextSource.OCR)
-                        for n in (1, 2, 3, 4)
-                    ),
-                    num_paginas=25,
-                ),
-                (5, 6, 7, 8): Transcription(
-                    pages=tuple(
-                        TranscribedPage(number=n, text="nada", source=TextSource.OCR)
-                        for n in (5, 6, 7, 8)
-                    ),
-                    num_paginas=25,
-                ),
-            }
-        )
-        ext = LadderContratoFinanciamentoExtractor(transcriber=t)
-        await ext.extract(b"fake-bytes", mimetype="application/pdf")
-        total_paginas = sum(len(c) for c in t.chamadas)
-        assert total_paginas <= 8
-        assert len(t.chamadas) == 2
-
-    @pytest.mark.asyncio
-    async def test_short_document_skips_pass_two(self):
-        """A document with fewer pages than the pass-2 window start never
-        triggers a second call."""
-        t = self._FakeTranscriber(
-            {
-                (1, 2, 3, 4): Transcription(
-                    pages=tuple(
-                        TranscribedPage(number=n, text="nada", source=TextSource.OCR)
-                        for n in (1, 2, 3)
-                    ),
-                    num_paginas=3,
-                ),
-            }
-        )
-        ext = LadderContratoFinanciamentoExtractor(transcriber=t)
-        r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
-        assert t.chamadas == [[1, 2, 3, 4]]
-        assert r.error == "quadro_resumo_nao_encontrado"
+        assert r.paginas_lidas == tuple(range(1, 9))
 
     @pytest.mark.asyncio
     async def test_transcriber_failure_is_surfaced_not_swallowed(self):
@@ -711,62 +641,47 @@ class TestContratoTwoPassPageWindow:
         assert r.quadro_encontrado is False
 
     @pytest.mark.asyncio
-    async def test_dps_short_circuits_before_pass_two(self):
+    async def test_dps_short_circuits_with_no_further_reading(self):
         t = self._FakeTranscriber(
-            {
-                (1, 2, 3, 4): Transcription(
-                    pages=(
-                        TranscribedPage(
-                            number=1,
-                            text=(
-                                "DECLARACAO PESSOAL DE SAUDE\nPESO: ... ALTURA: ...\n"
-                                "CIRURGIA? SIM ( ) NAO ( )"
-                            ),
-                            source=TextSource.OCR,
+            Transcription(
+                pages=(
+                    TranscribedPage(
+                        number=1,
+                        text=(
+                            "DECLARACAO PESSOAL DE SAUDE\nPESO: ... ALTURA: ...\n"
+                            "CIRURGIA? SIM ( ) NAO ( )"
                         ),
+                        source=TextSource.OCR,
                     ),
-                    num_paginas=25,
                 ),
-            }
+                num_paginas=25,
+            )
         )
         ext = LadderContratoFinanciamentoExtractor(transcriber=t)
         r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
-        assert t.chamadas == [[1, 2, 3, 4]]  # pass 2 never called
+        assert len(t.chamadas) == 1
         assert r.error == "documento_sensivel_dps"
 
     @pytest.mark.asyncio
-    async def test_dps_is_judged_per_page_across_the_pass_two_window(self):
+    async def test_dps_is_judged_per_page_across_the_whole_document(self):
         """P1/883: the extractor hands the parser its pages, so a mention on
-        page 7 and insurance words on page 8 no longer refuse the contract."""
-        t = self._FakeTranscriber(
-            {
-                (1, 2, 3, 4): Transcription(
-                    pages=tuple(
-                        TranscribedPage(number=n, text="nada", source=TextSource.OCR)
-                        for n in (1, 2, 3, 4)
-                    ),
-                    num_paginas=25,
-                ),
-                (5, 6, 7, 8): Transcription(
-                    pages=(
-                        TranscribedPage(number=5, text="nada", source=TextSource.OCR),
-                        TranscribedPage(number=6, text="nada", source=TextSource.OCR),
-                        TranscribedPage(
-                            number=7,
-                            text=_ITAU_QUADRO
-                            + "SEGURO MIP: a Declaracao Pessoal de Saude do DEVEDOR.",
-                            source=TextSource.OCR,
-                        ),
-                        TranscribedPage(
-                            number=8,
-                            text="Nao cobre DOENCA preexistente nem TRATAMENTO em curso.",
-                            source=TextSource.OCR,
-                        ),
-                    ),
-                    num_paginas=25,
-                ),
-            }
+        page 7 and insurance words on page 8 do not refuse the contract."""
+        paginas = (
+            TranscribedPage(number=1, text="nada", source=TextSource.OCR),
+            TranscribedPage(number=2, text="nada", source=TextSource.OCR),
+            TranscribedPage(
+                number=7,
+                text=_ITAU_QUADRO
+                + "SEGURO MIP: a Declaracao Pessoal de Saude do DEVEDOR.",
+                source=TextSource.OCR,
+            ),
+            TranscribedPage(
+                number=8,
+                text="Nao cobre DOENCA preexistente nem TRATAMENTO em curso.",
+                source=TextSource.OCR,
+            ),
         )
+        t = self._FakeTranscriber(Transcription(pages=paginas, num_paginas=25))
         ext = LadderContratoFinanciamentoExtractor(transcriber=t)
         r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
         assert r.error is None

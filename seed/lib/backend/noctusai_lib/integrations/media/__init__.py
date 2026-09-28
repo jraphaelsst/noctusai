@@ -84,10 +84,14 @@ def get_media_resolver(
         org_id: Forwarded to the seed LLM entry points for per-org key
             resolution + budget accounting. Real only.
         max_pages: Page cap for rasterize→vision on a PDF. Omit for the
-            adapter's default (3); pass `None` for EVERY page, which is what
-            a document whose later pages can reverse its meaning needs — a
-            certidão's averbação, for instance. The sentinel `-1` means
-            "not specified" so `None` can keep its own meaning. Real only.
+            adapter's default (`None` — EVERY page, up to `documents.
+            transcription.MAX_VISION_PAGES`) — the right answer for a
+            document whose later pages can reverse its meaning, a certidão's
+            averbação, for instance. Pass a concrete N only to deliberately
+            lower the cap below that safety ceiling. The sentinel `-1` means
+            "not specified" so an explicit `None` can still be told apart
+            from "caller didn't set this" if that distinction is ever
+            needed again. Real only.
         provider: Which vendor reads a scanned page / image — any key of
             `documents.providers.OCR_MODELS`. `None` = the seed's canonical
             DOCUMENT provider (`DEFAULT_DOCUMENT_PROVIDER`, Anthropic since

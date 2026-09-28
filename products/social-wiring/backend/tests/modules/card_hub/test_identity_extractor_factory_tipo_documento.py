@@ -247,10 +247,15 @@ class _PageCappedResolver:
     """Stands in for `RealMediaResolver` — the ONE place `max_pages`
     genuinely gates what reaches the model. `PAGINAS` mimics a certidão
     whose page 1 states the marriage and whose divórcio averbação sits on
-    the LAST page; a resolver built with a positive cap never sees it,
-    exactly like the production adapter this stubs (`-1` — "not specified"
-    — mirrors the adapter's own literal 3-page default, per
-    `documents.factory.make_identity_extractor`'s own docstring)."""
+    the LAST page.
+
+    🔴 UPDATED 2026-09-28 (owner mandate: every document read whole, no cost
+    cap): the adapter's OWN default (`documents.media.real_adapter.
+    _RASTERIZE_MAX_PAGES`) is now `None` — EVERY page — so `-1` ("not
+    specified", `documents.factory.make_identity_extractor`'s sentinel for
+    "let the adapter apply its own default") now resolves to "every page"
+    too, identically to an explicit `None`. Only a caller passing a
+    CONCRETE positive `max_pages` still truncates."""
 
     PAGINAS = (
         "CERTIDAO DE CASAMENTO\n"
@@ -259,21 +264,15 @@ class _PageCappedResolver:
         "OBSERVACOES: nenhuma\n",
         "AVERBACAO: DIVORCIO AVERBADO EM 10/03/2020, CONFORME SENTENCA\n",
     )
-    _ADAPTER_DEFAULT_CAP = 3
 
     def __init__(self, max_pages: Optional[int]) -> None:
         self._max_pages = max_pages
 
     async def resolve(self, media):
-        if self._max_pages is None:
+        if self._max_pages is None or self._max_pages == -1:
             paginas = self.PAGINAS
         else:
-            cap = (
-                self._ADAPTER_DEFAULT_CAP
-                if self._max_pages == -1
-                else self._max_pages
-            )
-            paginas = self.PAGINAS[:cap]
+            paginas = self.PAGINAS[: self._max_pages]
         return _ResolvedText("".join(paginas))
 
 
@@ -299,10 +298,18 @@ def _patch_media_resolver(monkeypatch):
 class TestContentOnTheLastPageReachesTheExtractedFields:
     """🔴 The whole point of the fix, proven end-to-end through the deps
     factory: a certidão de casamento's divórcio averbação — the LAST
-    "page" — must reach `IdentityFields.estado_civil`. A document type
-    outside `TIPOS_LEITURA_INTEGRAL` must NOT: it keeps the adapter's own
-    3-page default and never sees it, which is the behaviour-preserving
-    half of this fix."""
+    "page" — must reach `IdentityFields.estado_civil`.
+
+    🔴 UPDATED 2026-09-28: an `rg` (outside `TIPOS_LEITURA_INTEGRAL`) used to
+    keep the adapter's own 3-page default and never see it — the
+    behaviour-preserving half of the ORIGINAL fix, back when the adapter's
+    default was a literal 3. The owner's later "every document, page by
+    page, no cost cap" mandate removed that default outright
+    (`real_adapter._RASTERIZE_MAX_PAGES` is now `None`), so an `rg` now
+    reads every page too — `TIPOS_LEITURA_INTEGRAL` still exists (it is
+    still what makes `paginas_maximas` return an explicit `None` rather than
+    the `-1` "ask the adapter" sentinel), but the two paths now resolve to
+    the SAME page count."""
 
     @pytest.mark.asyncio
     async def test_certidao_casamento_reads_the_averbacao_on_the_last_page(
@@ -328,12 +335,11 @@ class TestContentOnTheLastPageReachesTheExtractedFields:
         assert out.regime_bens == "comunhao_parcial"
 
     @pytest.mark.asyncio
-    async def test_an_rg_keeps_the_adapters_default_and_never_reaches_it(
-        self, monkeypatch
-    ):
+    async def test_an_rg_now_also_reads_every_page(self, monkeypatch):
         """The same 4-'page' document, read through a type NOT in
-        `TIPOS_LEITURA_INTEGRAL` — the truncated read this fix must NOT
-        change for a type that never needed a whole one."""
+        `TIPOS_LEITURA_INTEGRAL` (`paginas_maximas("rg") == -1`) — since the
+        owner's 2026-09-28 mandate, `-1` reaches the SAME "every page"
+        default `None` does, so this type now sees the averbação too."""
         _patch_media_resolver(monkeypatch)
         extractor = deps._build_identity_extractor(
             ORG_ID, "rg", resolve_provider=lambda _org_id: "openai"
@@ -343,8 +349,7 @@ class TestContentOnTheLastPageReachesTheExtractedFields:
             b"\x89PNG", mimetype="image/png", filename="rg.png"
         )
 
-        # The registro still reads "casado" — the averbação past page 3
-        # never arrived.
-        assert out.estado_civil == "casado"
+        # The averbação past the old 3-page cap now arrives.
+        assert out.estado_civil == "divorciado"
         assert out.estado_civil_rotulo is not None
-        assert "AVERBACAO" not in out.estado_civil_rotulo
+        assert "AVERBACAO" in out.estado_civil_rotulo

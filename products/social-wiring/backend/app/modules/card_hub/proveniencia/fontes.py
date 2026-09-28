@@ -353,10 +353,9 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         # `identidade_extracao_service.TIPOS_LEITURA_INTEGRAL` ->
         # `paginas_maximas()` -> `make_identity_extractor`'s own page cap —
         # a mechanism this Fonte never reaches (`_FACTORY_SHAPED_EXTRATORES`
-        # routes it to `make_contrato_financiamento_extractor` instead). The
-        # deterministic pass-1 (1..4) / pass-2 (5..8) Quadro Resumo targeting
-        # (contract §D.4) is the seed factory's OWN `janela_paginas`/
-        # `max_paginas_visao` parameters, never this flag.
+        # routes it to `make_contrato_financiamento_extractor` instead), which
+        # reads every page of the contract on its own, unconditionally — see
+        # `LadderContratoFinanciamentoExtractor`'s own docstring.
     ),
 )
 

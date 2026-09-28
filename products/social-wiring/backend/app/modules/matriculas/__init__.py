@@ -53,6 +53,19 @@ transcription pipeline every other entry point reaches (closing the
 missing-fields gap), but it does not collapse the double PDF read this
 marker names — that is still blocked on the same seed work.
 
+STILL OPEN as of 2026-09-28: the owner's "every document, page by page, no
+cost cap" mandate closed the SMALLER half of this — every leg now reads
+EVERY page (``imovel_hub.matricula_extracao_service``'s número leg and
+``imovel_hub.documentos_service``'s migration-118 ``emitida_em`` leg for
+``tipo=matricula`` both used to stop early, at 3 and 5 pages respectively;
+neither caps pages any more), so the three legs can no longer disagree
+because one of them silently never reached a later page. The COST half —
+``imovel_hub.router``'s upload handler still queues THREE independent
+vision transcriptions of the SAME PDF (número leg, migration-118 estrutura
+leg, and this module's own full transcription) — is unchanged and is
+exactly what this marker's ``matricula_fields_from_transcription`` seam
+would collapse. Still blocked on that seed work, not attempted here.
+
 Seam contract
 ─────────────
 ``app/main.py`` iterates ``MODULES`` — a list of zero-arg callables, each
