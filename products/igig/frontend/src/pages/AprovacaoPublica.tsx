@@ -8,17 +8,20 @@
  * and shows nothing about the agency's internals. The backend already enforces
  * that with a narrow projection; this page must not reintroduce it.
  *
- * Four states, all reachable:
- *   loading      — skeleton
- *   invalid      — unknown / expired / already-decided (indistinguishable by
- *                  design, so one message covers all three)
- *   decided      — the client already answered
- *   actionable   — show the content + [Aprovar Conteúdo] / [Solicitar Ajuste]
+ * States:
+ *   loading         — skeleton
+ *   rate-limited     — 429: distinct from "invalid" (achado 8) — try again shortly
+ *   unreachable      — network failure / 5xx: distinct from "invalid" too
+ *   invalid          — unknown / expired / already-decided-and-later-pulled
+ *                      (indistinguishable BY DESIGN, so one message covers them)
+ *   decided          — the client already answered
+ *   actionable       — show the content + [Aprovar Conteúdo] / [Solicitar Ajuste]
  */
 import { useState } from "react";
 import { useParams } from "react-router-dom";
+import { ApiError } from "@noctusai/lib";
 import { Button, Skeleton } from "@noctusai/lib/design-system";
-import { AlertCircle, CheckCircle2, MessageSquare } from "lucide-react";
+import { AlertCircle, CheckCircle2, MessageSquare, WifiOff } from "lucide-react";
 
 import { useAprovacaoPublica, useDecidirAprovacao } from "@/hooks/useEsteira";
 
@@ -28,6 +31,20 @@ function Moldura({ children }: { children: React.ReactNode }) {
       <div className="w-full rounded-lg border border-border bg-card p-6">{children}</div>
     </main>
   );
+}
+
+/**
+ * Classify a load failure — achado 8. Before this, EVERY failure (rate
+ * limit, a dropped connection, a 5xx) rendered the SAME "Link inválido ou
+ * expirado", which told a client with a perfectly good link to go ask their
+ * agency for a new one over a passing network hiccup.
+ */
+function estadoDoErro(erro: unknown): "rate-limited" | "unreachable" | "invalid" {
+  if (erro instanceof ApiError) {
+    if (erro.status === 429) return "rate-limited";
+    if (erro.status === null || erro.status >= 500) return "unreachable";
+  }
+  return "invalid";
 }
 
 export default function AprovacaoPublica() {
@@ -46,9 +63,41 @@ export default function AprovacaoPublica() {
     );
   }
 
-  // Unknown, expired and already-spent all arrive here as the same 404 — the
-  // backend deliberately does not distinguish them, so neither does this copy.
   if (error || !aprovacao) {
+    const estado = estadoDoErro(error);
+    if (estado === "rate-limited") {
+      return (
+        <Moldura>
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+            <div>
+              <h1 className="font-semibold text-foreground">Muitas tentativas</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Aguarde um minuto e tente novamente.
+              </p>
+            </div>
+          </div>
+        </Moldura>
+      );
+    }
+    if (estado === "unreachable") {
+      return (
+        <Moldura>
+          <div className="flex items-start gap-3">
+            <WifiOff className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+            <div>
+              <h1 className="font-semibold text-foreground">Não foi possível carregar</h1>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Verifique sua conexão e tente novamente.
+              </p>
+            </div>
+          </div>
+        </Moldura>
+      );
+    }
+    // Unknown, expired and already-spent all arrive here as the same 404 —
+    // the backend deliberately does not distinguish them, so neither does
+    // this copy.
     return (
       <Moldura>
         <div className="flex items-start gap-3">
@@ -65,6 +114,12 @@ export default function AprovacaoPublica() {
   }
 
   if (aprovacao.ja_decidida || decidir.isSuccess) {
+    // "Sua agência já foi notificada" is a promise the backend cannot always
+    // keep (achado 8) — `notificado` is `undefined` when this page loads
+    // straight into an already-decided link (no `decidir` response exists
+    // yet), so this only ever claims success when the CURRENT session's own
+    // decision is known to have landed.
+    const notificado = decidir.data?.notificado === true;
     return (
       <Moldura>
         <div className="flex items-start gap-3">
@@ -72,7 +127,7 @@ export default function AprovacaoPublica() {
           <div>
             <h1 className="font-semibold text-foreground">Resposta registrada</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Obrigado! Sua agência já foi notificada.
+              {notificado ? "Obrigado! Sua agência já foi notificada." : "Obrigado pela resposta."}
             </p>
           </div>
         </div>

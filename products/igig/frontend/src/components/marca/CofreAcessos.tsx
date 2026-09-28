@@ -12,8 +12,9 @@
  */
 import { useState } from "react";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
-import { Eye, KeyRound, Pencil, Save, ShieldAlert, Trash2, X } from "lucide-react";
+import { Eye, KeyRound, Lock, Pencil, Save, ShieldAlert, Trash2, X } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
   useAcessos,
   useAtualizarAcesso,
@@ -22,12 +23,8 @@ import {
   useRevelarSenha,
   type Acesso,
 } from "@/hooks/useMarca";
-
-/** The server's own message — a 409 says the vault is not configured, a 404
- * says the cliente vanished, and this must never blame the wrong one. */
-function mensagem(err: unknown, fallback: string): string {
-  return err instanceof Error && err.message ? err.message : fallback;
-}
+import { describeError } from "@/lib/errors";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 /**
  * One vault entry, with an inline edit mode. `senha` starts empty in edit
@@ -36,12 +33,14 @@ function mensagem(err: unknown, fallback: string): string {
  */
 function AcessoRow({
   acesso,
+  isAdmin,
   revelado,
   onRevelar,
   revelarPending,
   onRemover,
 }: {
   acesso: Acesso;
+  isAdmin: boolean;
   revelado: string | undefined;
   onRevelar: () => void;
   revelarPending: boolean;
@@ -49,6 +48,7 @@ function AcessoRow({
 }) {
   const atualizar = useAtualizarAcesso();
   const [editando, setEditando] = useState(false);
+  const [confirmandoRemocao, setConfirmandoRemocao] = useState(false);
   const [campos, setCampos] = useState({
     rotulo: acesso.rotulo,
     usuario: acesso.usuario ?? "",
@@ -67,11 +67,18 @@ function AcessoRow({
         {acesso.tem_senha ? (
           revelado ? (
             <code className="max-w-full break-all rounded bg-muted px-2 py-1 text-xs text-foreground">{revelado}</code>
-          ) : (
+          ) : isAdmin ? (
             <Button variant="outline" size="sm" className="max-sm:h-10" disabled={revelarPending} onClick={onRevelar}>
               <Eye className="mr-2 h-3 w-3" />
               Revelar
             </Button>
+          ) : (
+            // Achado 15: a member always got a 403 here — showing the button
+            // only to invite a failed tap. A lock is the honest affordance.
+            <Badge variant="muted" title="Apenas administradores podem revelar senhas">
+              <Lock className="mr-1 h-3 w-3" />
+              Protegida
+            </Badge>
           )
         ) : (
           <Badge variant="muted">sem senha</Badge>
@@ -82,7 +89,10 @@ function AcessoRow({
           className="max-sm:h-10 max-sm:w-10"
           aria-label={`Editar ${acesso.rotulo}`}
           onClick={() => {
-            setCampos({ rotulo: acesso.rotulo, usuario: acesso.usuario ?? "", url: acesso.url ?? "", senha: "" });
+            setCampos({
+              rotulo: acesso.rotulo, usuario: acesso.usuario ?? "",
+              url: acesso.url ?? "", senha: "",
+            });
             setEditando(true);
           }}
         >
@@ -93,10 +103,22 @@ function AcessoRow({
           size="icon"
           className="max-sm:h-10 max-sm:w-10"
           aria-label={`Remover ${acesso.rotulo}`}
-          onClick={onRemover}
+          onClick={() => setConfirmandoRemocao(true)}
         >
           <Trash2 className="h-4 w-4" />
         </Button>
+
+        <ConfirmDialog
+          open={confirmandoRemocao}
+          title="Remover acesso"
+          description={<p>Remover o acesso <strong>{acesso.rotulo}</strong>? Isto não pode ser desfeito.</p>}
+          confirmLabel="Remover"
+          onConfirm={() => {
+            onRemover();
+            setConfirmandoRemocao(false);
+          }}
+          onCancel={() => setConfirmandoRemocao(false)}
+        />
       </li>
     );
   }
@@ -112,8 +134,11 @@ function AcessoRow({
             {
               id: acesso.id,
               rotulo: campos.rotulo.trim(),
-              usuario: campos.usuario.trim() || undefined,
-              url: campos.url.trim() || undefined,
+              // Explicit `null` CLEARS the field now (the backend moved to
+              // `exclude_unset`) — a blank input means "clear it", not
+              // "leave the old value" (achado 18).
+              usuario: campos.usuario.trim() || null,
+              url: campos.url.trim() || null,
               senha: campos.senha.trim() || undefined,
             },
             { onSuccess: () => setEditando(false) },
@@ -131,6 +156,14 @@ function AcessoRow({
           value={campos.usuario}
           onChange={(e) => setCampos((c) => ({ ...c, usuario: e.target.value }))}
           className="max-sm:h-10 sm:min-w-[120px] sm:flex-1"
+        />
+        <Input
+          aria-label={`URL de ${acesso.rotulo}`}
+          type="url"
+          placeholder="https://…"
+          value={campos.url}
+          onChange={(e) => setCampos((c) => ({ ...c, url: e.target.value }))}
+          className="max-sm:h-10 sm:min-w-[140px] sm:flex-1"
         />
         <Input
           aria-label={`Nova senha de ${acesso.rotulo}`}
@@ -157,7 +190,7 @@ function AcessoRow({
         </div>
       </form>
       {atualizar.isError && (
-        <p className="text-xs text-destructive">{mensagem(atualizar.error, "Não foi possível salvar.")}</p>
+        <p className="text-xs text-destructive">{describeError(atualizar.error, "Não foi possível salvar.")}</p>
       )}
     </li>
   );
@@ -168,6 +201,7 @@ export function CofreAcessos({ clienteId }: { clienteId: string }) {
   const criarAcesso = useCriarAcesso();
   const removerAcesso = useRemoverAcesso();
   const revelar = useRevelarSenha();
+  const isAdmin = useIsOrgAdmin();
   const [reveladas, setReveladas] = useState<Record<string, string>>({});
   const [novo, setNovo] = useState({ rotulo: "", usuario: "", senha: "", url: "" });
 
@@ -221,6 +255,14 @@ export function CofreAcessos({ clienteId }: { clienteId: string }) {
           className="max-sm:h-10 sm:min-w-[120px] sm:flex-1"
         />
         <Input
+          aria-label="URL"
+          type="url"
+          placeholder="https://…"
+          value={novo.url}
+          onChange={(e) => setNovo((a) => ({ ...a, url: e.target.value }))}
+          className="max-sm:h-10 sm:min-w-[140px] sm:flex-1"
+        />
+        <Input
           aria-label="Senha"
           type="password"
           placeholder="senha"
@@ -235,14 +277,14 @@ export function CofreAcessos({ clienteId }: { clienteId: string }) {
       </form>
 
       {criarAcesso.isError && (
-        <p className="mt-2 text-sm text-destructive">{mensagem(criarAcesso.error, "Não foi possível guardar.")}</p>
+        <p className="mt-2 text-sm text-destructive">{describeError(criarAcesso.error, "Não foi possível guardar.")}</p>
       )}
 
       {loading ? (
         <Skeleton className="mt-3 h-16 w-full" />
       ) : isError ? (
         <p role="alert" className="mt-3 text-sm text-destructive">
-          {mensagem(error, "Não foi possível carregar o cofre.")}
+          {describeError(error, "Não foi possível carregar o cofre.")}
         </p>
       ) : acessos.length === 0 ? (
         <p className="mt-3 text-sm text-muted-foreground">Nenhum acesso guardado.</p>
@@ -252,6 +294,7 @@ export function CofreAcessos({ clienteId }: { clienteId: string }) {
             <AcessoRow
               key={acesso.id}
               acesso={acesso}
+              isAdmin={isAdmin}
               revelado={reveladas[acesso.id]}
               onRevelar={() => handleRevelar(acesso.id)}
               revelarPending={revelar.isPending}
@@ -262,10 +305,10 @@ export function CofreAcessos({ clienteId }: { clienteId: string }) {
       )}
 
       {revelar.isError && (
-        <p className="mt-2 text-sm text-destructive">{mensagem(revelar.error, "Não foi possível revelar.")}</p>
+        <p className="mt-2 text-sm text-destructive">{describeError(revelar.error, "Não foi possível revelar.")}</p>
       )}
       {removerAcesso.isError && (
-        <p className="mt-2 text-sm text-destructive">{mensagem(removerAcesso.error, "Não foi possível remover.")}</p>
+        <p className="mt-2 text-sm text-destructive">{describeError(removerAcesso.error, "Não foi possível remover.")}</p>
       )}
     </section>
   );

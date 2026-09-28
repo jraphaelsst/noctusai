@@ -21,6 +21,7 @@ const mockCriarAcesso = { mutate: vi.fn(), isPending: false, isError: false, err
 const mockAtualizarAcesso = { mutate: vi.fn(), isPending: false, isError: false, error: null as unknown };
 const mockRemoverAcesso = { mutate: vi.fn(), isPending: false, isError: false, error: null as unknown };
 const mockRevelarSenha = { mutate: vi.fn(), isPending: false, isError: false, error: null as unknown };
+const mockIsOrgAdmin = vi.fn(() => true);
 
 vi.mock("@/hooks/useMarca", () => ({
   useAcessos: () => mockUseAcessos(),
@@ -28,6 +29,10 @@ vi.mock("@/hooks/useMarca", () => ({
   useAtualizarAcesso: () => mockAtualizarAcesso,
   useRemoverAcesso: () => mockRemoverAcesso,
   useRevelarSenha: () => mockRevelarSenha,
+}));
+
+vi.mock("@/lib/useIsOrgAdmin", () => ({
+  useIsOrgAdmin: () => mockIsOrgAdmin(),
 }));
 
 import { CofreAcessos } from "../CofreAcessos";
@@ -42,6 +47,7 @@ beforeEach(() => {
   mockCriarAcesso.error = null;
   mockRevelarSenha.isError = false;
   mockRevelarSenha.error = null;
+  mockIsOrgAdmin.mockReturnValue(true);
 });
 
 describe("CofreAcessos — Cofre error honesty", () => {
@@ -140,5 +146,42 @@ describe("CofreAcessos — Cofre CRUD", () => {
       expect.objectContaining({ id: "a1", rotulo: "Meta Business — novo" }),
       expect.anything(),
     );
+  });
+});
+
+describe("CofreAcessos — achado 15 fixes", () => {
+  const ACESSO = {
+    id: "a1", cliente_id: "c1", rotulo: "Meta Business", plataforma: null,
+    url: null, usuario: "operador", observacoes: null, tem_senha: true,
+  };
+
+  it("the create form has a URL field", () => {
+    mockUseAcessos.mockReturnValue({ acessos: [], loading: false, cofreConfigurado: true });
+    renderCofre();
+    expect(screen.getByLabelText("URL")).toBeInTheDocument();
+  });
+
+  it("the edit form has a URL field pre-filled from the entry", () => {
+    mockUseAcessos.mockReturnValue({ acessos: [ACESSO], loading: false, cofreConfigurado: true });
+    renderCofre();
+    fireEvent.click(screen.getByRole("button", { name: "Editar Meta Business" }));
+    expect(screen.getByLabelText("URL de Meta Business")).toBeInTheDocument();
+  });
+
+  it("delete asks for confirmation before removing", () => {
+    mockUseAcessos.mockReturnValue({ acessos: [ACESSO], loading: false, cofreConfigurado: true });
+    renderCofre();
+    fireEvent.click(screen.getByRole("button", { name: "Remover Meta Business" }));
+    expect(mockRemoverAcesso.mutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remover" }));
+    expect(mockRemoverAcesso.mutate).toHaveBeenCalledWith("a1");
+  });
+
+  it("hides Revelar from a non-admin — they always get a 403 anyway", () => {
+    mockIsOrgAdmin.mockReturnValue(false);
+    mockUseAcessos.mockReturnValue({ acessos: [ACESSO], loading: false, cofreConfigurado: true });
+    renderCofre();
+    expect(screen.queryByRole("button", { name: "Revelar" })).not.toBeInTheDocument();
+    expect(screen.getByText("Protegida")).toBeInTheDocument();
   });
 });
