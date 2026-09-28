@@ -31,7 +31,9 @@ from app.routers.aplicacoes_router import router as aplicacoes_router
 from app.routers.api_keys_router import router as api_keys_router
 from app.routers.assinaturas_router import router as assinaturas_router
 from app.routers.checkout_router import router as checkout_router
+from app.routers.dashboard_router import router as dashboard_router
 from app.routers.example_router import router as example_router
+from app.routers.lancamentos_router import router as lancamentos_router
 from app.routers.membros_router import router as membros_router
 from app.routers.pagamentos_router import router as pagamentos_router
 from app.routers.planos_router import router as planos_router
@@ -101,6 +103,11 @@ app = create_product_app(
     # connections_router` are Slice C's (this dispatch, 2026-09-17) —
     # both admin-only; WhatsApp connections mount the mechanism only,
     # no number is paired (`NOC-REMEDIATE[community-waha-pairing]`).
+    # `lancamentos_router` / `dashboard_router` are Ninho Vazio's slice
+    # BE-C (products/community/projects/ninho-vazio/CONTRACT.md §Cashflow
+    # + dashboard) — cashflow CRUD (staff read, admin write, manual-only
+    # PATCH/DELETE) and the read-only `GET /api/dashboard` KPI/series
+    # rollup, both staff-gated via `get_current_user_org`.
     routers=[
         example_router, webhook_router, planos_router, membros_router,
         aplicacoes_router, checkout_router, webhooks_router,
@@ -109,6 +116,7 @@ app = create_product_app(
         whatsapp_transmissoes_router, whatsapp_flags_router,
         whatsapp_webhook_router,
         api_keys_router, whatsapp_connections_router,
+        lancamentos_router, dashboard_router,
     ],
     # Module 3 registers `community.moderacao_whatsapp` (AI-flagged
     # WhatsApp moderation) in `app/services/ai_consent_features.py` —
