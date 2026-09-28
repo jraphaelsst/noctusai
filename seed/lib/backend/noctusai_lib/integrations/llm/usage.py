@@ -46,6 +46,20 @@ class UsageEvent:
       Batch API (discounted rate) rather than a real-time call. NOT the
       same concept as a `generate_embeddings_batch`-shaped synchronous
       multi-input call — see `models.ModelEntry.supports_batch` docstring.
+    - `cache_creation_input_tokens` / `cache_read_input_tokens`: Anthropic
+      prompt-caching counts (`providers.anthropic_provider` is the only
+      populator today — OpenAI/Gemini callers leave both `None`). Additive
+      to (never a re-use of) `prompt_tokens`, which on Anthropic's response
+      is the *uncached* input-token count only. `cost_estimate_usd` already
+      folds these in at Anthropic's published multipliers (1.25x input for
+      a cache write, 0.1x for a cache read) via `estimate_cost_usd` — the
+      raw counts here are additionally kept for analytics/debugging, same
+      as `image_input_tokens`/`image_output_tokens` below. Like those two,
+      no shipped `<schema>.llm_usage` table has columns for them yet, so
+      `SupabaseUsageSink.record()` does not persist the raw counts — only
+      the already-priced `cost_estimate_usd` reaches the DB (see that
+      class's docstring for the `supports_image_columns` precedent this
+      would extend if a consumer ever needs the raw per-call breakdown).
     """
     provider: str
     model: str
@@ -54,6 +68,8 @@ class UsageEvent:
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    cache_creation_input_tokens: Optional[int] = None
+    cache_read_input_tokens: Optional[int] = None
     # Image-token counts — populated by `image_edit` / multi-image vision
     # calls. Additive to (never a re-use of) `prompt_tokens`/
     # `completion_tokens` above, because `ModelEntry` prices image tokens at
@@ -200,6 +216,20 @@ def _aggregate_events(events: list[UsageEvent]) -> dict[tuple[str, str, str], di
 
 # ── Cost calc helper ───────────────────────────────────────────────
 
+#: Anthropic's published prompt-cache multipliers on the base per-1M INPUT
+#: rate (`ModelEntry.cost_per_1m_input_tokens`) — there is no separate
+#: per-model "cache rate" column in the catalog because Anthropic prices
+#: caching as a multiplier of whatever the model's normal input rate is,
+#: not an independently-published number. These are the 5-minute-TTL
+#: (the default `CacheControlEphemeralParam` — `chat.build_cached_messages`
+#: never sets `ttl`, so it always gets this tier) rates: a cache WRITE
+#: costs 1.25x a normal input token, a cache READ costs 0.1x. The 1-hour
+#: TTL tier (2x write / 0.1x read) is not modelled — nothing in this
+#: codebase requests it yet.
+_ANTHROPIC_CACHE_WRITE_MULTIPLIER = 1.25
+_ANTHROPIC_CACHE_READ_MULTIPLIER = 0.1
+
+
 def estimate_cost_usd(
     *,
     provider: str,
@@ -208,6 +238,8 @@ def estimate_cost_usd(
     completion_tokens: Optional[int],
     image_input_tokens: Optional[int] = None,
     image_output_tokens: Optional[int] = None,
+    cache_creation_input_tokens: Optional[int] = None,
+    cache_read_input_tokens: Optional[int] = None,
 ) -> float:
     """Compute a rough cost estimate from the model catalog.
 
@@ -216,6 +248,16 @@ def estimate_cost_usd(
     `..._output_tokens`) — additive to the text `prompt_tokens` /
     `completion_tokens` legs, never a substitute for them. Omitting them
     (every pre-S2 caller) reproduces the exact prior text-only result.
+
+    `cache_creation_input_tokens` / `cache_read_input_tokens` price against
+    the model's own `cost_per_1m_input_tokens` rate at Anthropic's published
+    multipliers (see `_ANTHROPIC_CACHE_WRITE_MULTIPLIER` /
+    `_ANTHROPIC_CACHE_READ_MULTIPLIER`) — additive to `prompt_tokens`, which
+    on an Anthropic response is only the *uncached* portion of the input.
+    Gated on `provider == "anthropic"`: OpenAI/Gemini providers never
+    populate these two args today, so the gate is inert for them, but a
+    future non-Anthropic caller passing them in wouldn't silently get
+    Anthropic's multiplier applied to a different vendor's rate card.
 
     Returns 0.0 when any input is missing or the model has no price in the
     catalog (common for stubs + future models). A rate missing for just ONE
@@ -238,9 +280,17 @@ def estimate_cost_usd(
         ct = completion_tokens or 0
         ipt = image_input_tokens or 0
         ipo = image_output_tokens or 0
-        return (
+        cost = (
             pt * in_rate + ct * out_rate + ipt * img_in_rate + ipo * img_out_rate
         ) / 1_000_000.0
+        if provider == "anthropic":
+            cache_write = cache_creation_input_tokens or 0
+            cache_read = cache_read_input_tokens or 0
+            cost += (
+                cache_write * in_rate * _ANTHROPIC_CACHE_WRITE_MULTIPLIER
+                + cache_read * in_rate * _ANTHROPIC_CACHE_READ_MULTIPLIER
+            ) / 1_000_000.0
+        return cost
     except Exception as exc:
         logger.debug("estimate_cost_usd failed for %s/%s: %s", provider, model, exc)
         return 0.0
@@ -259,15 +309,19 @@ async def record_usage(
     org_id: Optional[str] = None,
     image_input_tokens: Optional[int] = None,
     image_output_tokens: Optional[int] = None,
+    cache_creation_input_tokens: Optional[int] = None,
+    cache_read_input_tokens: Optional[int] = None,
     model_version: Optional[str] = None,
     batch: bool = False,
 ) -> None:
     """Provider-side convenience — builds a `UsageEvent` and dispatches to
     the active sink. Safe to call with `sink=None` (no-op). Never raises.
 
-    `image_input_tokens` / `image_output_tokens` / `model_version` / `batch`
-    are additive, keyword-only, defaulted params — every pre-S2 call site
-    (which passes none of them) behaves identically to before.
+    `image_input_tokens` / `image_output_tokens` / `cache_creation_input_
+    tokens` / `cache_read_input_tokens` / `model_version` / `batch` are
+    additive, keyword-only, defaulted params — every call site that passes
+    none of them (every pre-existing caller plus every non-Anthropic
+    provider) behaves identically to before.
 
     Imported lazily inside provider methods to avoid a circular import
     (provider → client → usage → ...).
@@ -288,6 +342,8 @@ async def record_usage(
         completion_tokens=completion_tokens,
         image_input_tokens=image_input_tokens,
         image_output_tokens=image_output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
     )
     try:
         await sink.record(UsageEvent(
@@ -300,6 +356,8 @@ async def record_usage(
             total_tokens=total_tokens,
             image_input_tokens=image_input_tokens,
             image_output_tokens=image_output_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
             cost_estimate_usd=cost,
             model_version=model_version,
             batch=batch,

@@ -9,7 +9,16 @@ OpenAI / another provider.
 Translation notes (OpenAI-shaped → Anthropic):
   - OpenAI's `system` role entries become Anthropic's top-level `system=`
     parameter. Any `system` messages in the list get concatenated.
-  - Remaining user/assistant messages pass through unchanged.
+  - Remaining user/assistant messages pass through unchanged — including any
+    `cache_control` markers on their content blocks (`chat.
+    build_cached_messages` never sets those today, but a caller hand-building
+    messages can, and passthrough already preserves them for free).
+  - A `system` message carrying a top-level `cache_control` key (the marker
+    `chat.build_cached_messages` sets) is translated into Anthropic's
+    content-block system shape — `[{"type": "text", "text": ..., "cache_control":
+    {...}}]` — so the Anthropic SDK actually receives the breakpoint. A plain
+    system message (no `cache_control`) still collapses to a single string,
+    matching the pre-existing wire shape for every non-caching caller.
   - Vision: images are passed as content blocks inside the user message
     per the Anthropic spec (`{"type": "image", "source": {...}}`).
 
@@ -49,26 +58,67 @@ _DEFAULT_MAX_TOKENS = 4096
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 
-def _split_system_and_messages(messages: list[dict]) -> tuple[str, list[dict]]:
+def _split_system_and_messages(
+    messages: list[dict],
+) -> tuple[Union[str, list[dict]], list[dict]]:
     """Anthropic expects `system` as a top-level parameter, not a role.
 
     Concatenates all `system` messages (preserving order) and returns the
     rest. If there are no system messages, returns an empty string.
+
+    🔴 Preserves `cache_control`. `chat.build_cached_messages(...,
+    provider="anthropic")` marks its system message with a top-level
+    `{"cache_control": {"type": "ephemeral"}}` key — a seed-internal
+    convention, not itself valid Anthropic wire shape (Anthropic only
+    recognizes `cache_control` INSIDE a system content block, never as a
+    sibling of `role`/`content`). Before this function threaded that
+    convention through, every Anthropic call silently dropped the marker:
+    it read only `content` (str or list-of-blocks text), so a cached system
+    message and an uncached one produced the identical plain string — no
+    Anthropic consumer ever got a cache write, let alone a cache hit.
+
+    When ANY system message (or one of its content blocks, for the
+    already-block-shaped case) carries `cache_control`, the return value
+    switches to Anthropic's content-block system shape — a list of
+    `{"type": "text", "text": ..., "cache_control": {...}}` (or bare
+    `{"type": "text", "text": ...}` for parts with no marker) — so the
+    breakpoint reaches the SDK. Callers that never opt into caching keep
+    getting the original plain string; `chat_completion`'s `system=... or
+    ""` fallback treats an empty list the same as `""`.
     """
     system_parts: list[str] = []
+    system_blocks: list[dict] = []
+    needs_block_shape = False
     rest: list[dict] = []
     for msg in messages:
         if msg.get("role") == "system":
             content = msg.get("content", "")
+            msg_cache_control = msg.get("cache_control")
             if isinstance(content, str):
                 system_parts.append(content)
+                block: dict = {"type": "text", "text": content}
+                if msg_cache_control:
+                    block["cache_control"] = msg_cache_control
+                    needs_block_shape = True
+                system_blocks.append(block)
             elif isinstance(content, list):
-                # Content blocks; concat the text-block strings.
-                system_parts.extend(
-                    b.get("text", "") for b in content if b.get("type") == "text"
-                )
+                # Content blocks; concat the text-block strings, and carry
+                # forward any block-level cache_control the caller already set.
+                for b in content:
+                    if b.get("type") != "text":
+                        continue
+                    text = b.get("text", "")
+                    system_parts.append(text)
+                    block = {"type": "text", "text": text}
+                    block_cache_control = b.get("cache_control")
+                    if block_cache_control:
+                        block["cache_control"] = block_cache_control
+                        needs_block_shape = True
+                    system_blocks.append(block)
         else:
             rest.append(msg)
+    if needs_block_shape:
+        return [b for b in system_blocks if b.get("text")], rest
     return "\n\n".join(p for p in system_parts if p), rest
 
 
@@ -110,16 +160,28 @@ class AnthropicProvider:
         # system prompt. We honour the OpenAI hint minimally by adding a
         # "return strict JSON" instruction when response_format looks like
         # JSON. Consumers needing richer schemas should set it in-prompt.
+        #
+        # `system_prompt` is now either a plain string OR a list of Anthropic
+        # content blocks (the cache_control breakpoint case) — handle both so
+        # a cached call doesn't crash trying to `str + list`.
         if (
             response_format
             and isinstance(response_format, dict)
             and response_format.get("type") == "json_object"
-            and system_prompt is not None
         ):
-            system_prompt = (
-                (system_prompt + "\n\n" if system_prompt else "")
-                + "Return your response as a valid JSON object. No prose outside the JSON."
+            json_instruction = (
+                "Return your response as a valid JSON object. No prose outside the JSON."
             )
+            if isinstance(system_prompt, list):
+                # Append as an uncached trailing block — appending after the
+                # cached block(s) keeps their content (and thus the cache
+                # breakpoint) stable across calls; this instruction text is
+                # cheap and doesn't need its own cache_control.
+                system_prompt = [*system_prompt, {"type": "text", "text": json_instruction}]
+            else:
+                system_prompt = (
+                    (system_prompt + "\n\n" if system_prompt else "") + json_instruction
+                )
 
         try:
             response = await client.messages.create(
@@ -153,6 +215,8 @@ class AnthropicProvider:
                     + (getattr(usage, "output_tokens", None) or 0)
                     if usage else None
                 ),
+                cache_creation_input_tokens=getattr(usage, "cache_creation_input_tokens", None),
+                cache_read_input_tokens=getattr(usage, "cache_read_input_tokens", None),
             )
             return content
         except AnthropicAPIError as exc:
@@ -279,6 +343,17 @@ class AnthropicProvider:
 
         Each text delta is yielded as it arrives. Usage counts are available
         on the final `message` object — recorded once at end-of-stream.
+
+        `system_prompt` is either a plain string or the cache_control
+        content-block list from `_split_system_and_messages`; `or ""` treats
+        an empty list the same as an empty string (both mean "no system").
+
+        Cache token counts: the SDK's streaming accumulator (`anthropic.lib.
+        streaming._messages`) merges `cache_creation_input_tokens` /
+        `cache_read_input_tokens` into the running usage snapshot as they
+        arrive on `message_start` / `message_delta` events, so
+        `get_final_message().usage` already carries the fully-accumulated
+        values — no separate `message_start` listener needed.
         """
         from ..usage import record_usage
 
@@ -286,6 +361,7 @@ class AnthropicProvider:
         system_prompt, conversation = _split_system_and_messages(messages)
 
         prompt_tokens = completion_tokens = total_tokens = None
+        cache_creation_input_tokens = cache_read_input_tokens = None
         try:
             async with client.messages.stream(
                 model=model,
@@ -305,6 +381,8 @@ class AnthropicProvider:
                     completion_tokens = getattr(usage, "output_tokens", None)
                     if prompt_tokens is not None and completion_tokens is not None:
                         total_tokens = prompt_tokens + completion_tokens
+                    cache_creation_input_tokens = getattr(usage, "cache_creation_input_tokens", None)
+                    cache_read_input_tokens = getattr(usage, "cache_read_input_tokens", None)
         except AnthropicAPIError as exc:
             logger.error("Anthropic chat_completion_stream failed: %s", exc)
             raise LLMAPIError("anthropic", str(exc)) from exc
@@ -317,6 +395,8 @@ class AnthropicProvider:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
         )
 
     async def close(self) -> None:
