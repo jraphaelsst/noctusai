@@ -77,11 +77,9 @@ ORG_UUID = str(_uuid5(_NAMESPACE_OID, TEST_ORG_ID))
 def seed_community_role(client, *, org_role: str | None = None, platform_role: str = "user") -> None:
     """Seed the trusted `public.noctus_users` row `get_community_role` reads.
 
-    `org_role="admin"` also satisfies the seed's platform-admin cascade
-    (`owner`/`admin` → `"platform_admin"`) — both paths converge on the
-    same `"admin"` community-tier answer. `org_role="moderador"` (or any
-    other value) falls through the cascade and is read back verbatim by
-    `get_community_role`'s direct query, resolving to `"moderador"`.
+    `org_role` in `COMMUNITY_STAFF_ORG_ROLES` is staff (`owner`/`admin` →
+    `"admin"`, `moderador`/`dev` → `"moderador"`), `"membro"` is a customer,
+    anything else (or None) is refused by the staff gate with 403.
     """
     client.mock_supabase.set_table_data(
         "noctus_users",
@@ -131,5 +129,11 @@ def client():
         # See KB § PATTERNS/testing.md § Consent-guard product conftest pattern.
         bind_consent_module_to_mock(mock_sb)
 
-        tc = TestClient(app)
-        yield AuthClient(tc, mock_sb)
+        # The default authenticated caller is community STAFF (moderador):
+        # `get_current_user_org` reads the trusted profile row and refuses a
+        # caller with none (security review 2026-09-28, H6). Tests that need
+        # admin/membro/no-profile call `seed_community_role` or clear the
+        # table themselves.
+        auth_client = AuthClient(TestClient(app), mock_sb)
+        seed_community_role(auth_client, org_role="moderador")
+        yield auth_client

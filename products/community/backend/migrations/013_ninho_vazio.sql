@@ -29,10 +29,12 @@ SET search_path = community, public;
 -- ----------------------------------------------------------------------------
 -- 1. Staff predicate
 --
--- Deny-list, deliberately: every role that could read the back office
--- before this migration still can (owner/admin/moderador/dev/member…);
--- only the NEW customer role is excluded. A user with no noctus_users row
--- has no current_org_id() either, so the org predicate already denies them.
+-- ALLOW-list. The community org is the platform org, shared with other
+-- products' users (17 `corretor` rows on 2026-09-28): a deny-list of just
+-- 'membro' would have made every broker a community moderator. Unknown,
+-- NULL and future roles are NOT staff. Mirrored by
+-- `app.dependencies.COMMUNITY_STAFF_ORG_ROLES` — keep the two identical.
+-- `noctus_users.role = 'admin'` is the platform admin.
 -- ----------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION community.eh_equipe()
@@ -42,10 +44,23 @@ CREATE OR REPLACE FUNCTION community.eh_equipe()
   SET search_path TO 'public'
 AS $f$
   SELECT COALESCE(
-    (SELECT org_role IS DISTINCT FROM 'membro'
+    (SELECT org_role IN ('owner', 'admin', 'moderador', 'dev') OR role = 'admin'
        FROM public.noctus_users WHERE id = (SELECT auth.uid())),
     false
   );
+$f$;
+
+-- The caller's org read straight from their profile, WITHOUT the role
+-- filter the fleet-wide `public.current_org_id()` applies to customer roles
+-- (it returns NULL for a `membro`, so no other product's org-scoped policy
+-- can match them). Community's member-self policies need the org anyway.
+CREATE OR REPLACE FUNCTION community.org_do_usuario()
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid());
 $f$;
 
 -- The caller's own membro id (NULL for staff / non-members).
@@ -56,13 +71,15 @@ CREATE OR REPLACE FUNCTION community.meu_membro_id()
   SET search_path TO 'community', 'public'
 AS $f$
   SELECT id FROM community.membros
-   WHERE user_id = (SELECT auth.uid()) AND org_id = public.current_org_id()
+   WHERE user_id = (SELECT auth.uid()) AND org_id = community.org_do_usuario()
    LIMIT 1;
 $f$;
 
 REVOKE ALL ON FUNCTION community.eh_equipe() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION community.org_do_usuario() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION community.meu_membro_id() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION community.eh_equipe() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION community.org_do_usuario() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION community.meu_membro_id() TO authenticated, service_role;
 
 -- Narrow every existing org-scoped `authenticated` policy to staff.
@@ -78,7 +95,7 @@ BEGIN
         SELECT schemaname, tablename, policyname, cmd, qual, with_check
           FROM pg_policies
          WHERE schemaname = 'community'
-           AND 'authenticated' = ANY (roles)
+           AND ('authenticated' = ANY (roles) OR 'public' = ANY (roles))
            AND tablename <> 'status_pagina'
            AND COALESCE(qual, '') || COALESCE(with_check, '') LIKE '%current_org_id()%'
            AND COALESCE(qual, '') || COALESCE(with_check, '') NOT LIKE '%eh_equipe%'
@@ -111,15 +128,16 @@ ALTER TABLE community.membros ADD CONSTRAINT membros_origem_check
 CREATE UNIQUE INDEX IF NOT EXISTS membros_org_user_unique
     ON community.membros (org_id, user_id) WHERE user_id IS NOT NULL;
 
+-- Deliberately NO member-self SELECT on `membros`: the row carries staff-only
+-- `observacoes` and `tags` (sensitive for this audience — LGPD). Members read
+-- their own record only through `/api/portal/*`, which projects the columns
+-- (the API resolves the row with the service-role client, keyed on the JWT).
 DROP POLICY IF EXISTS "membros_select_self" ON community.membros;
-CREATE POLICY "membros_select_self" ON community.membros
-    FOR SELECT TO authenticated
-    USING (user_id = (SELECT auth.uid()) AND org_id = public.current_org_id());
 
 DROP POLICY IF EXISTS "planos_select_ativos_membro" ON community.planos;
 CREATE POLICY "planos_select_ativos_membro" ON community.planos
     FOR SELECT TO authenticated
-    USING (ativo AND org_id = public.current_org_id());
+    USING (ativo AND org_id = community.org_do_usuario());
 
 -- ----------------------------------------------------------------------------
 -- 3. Billing lifecycle
@@ -387,18 +405,22 @@ BEGIN
             RAISE EXCEPTION 'migration 013: RLS is not enabled on community.%', tbl;
         END IF;
     END LOOP;
-    -- Every org-scoped authenticated policy outside status_pagina must now
-    -- carry either the staff predicate or a member-self predicate.
+    -- Every authenticated/public policy outside status_pagina must carry the
+    -- staff predicate, or be one of the NAMED member-facing policies below.
+    -- A name allow-list, not a text match on `auth.uid()`: a future
+    -- `org_id IN (SELECT … auth.uid())` policy must fail here, not pass.
     IF EXISTS (
         SELECT 1 FROM pg_policies
          WHERE schemaname = 'community'
-           AND 'authenticated' = ANY (roles)
+           AND ('authenticated' = ANY (roles) OR 'public' = ANY (roles))
            AND tablename <> 'status_pagina'
-           AND COALESCE(qual, '') || COALESCE(with_check, '') NOT LIKE '%eh_equipe%'
-           AND COALESCE(qual, '') || COALESCE(with_check, '') NOT LIKE '%auth.uid()%'
-           AND COALESCE(qual, '') || COALESCE(with_check, '') NOT LIKE '%meu_membro_id%'
-           AND policyname <> 'planos_select_ativos_membro'
+           AND COALESCE(qual, '') || COALESCE(with_check, '') NOT LIKE '%eh_equipe()%'
+           AND policyname NOT IN (
+               'planos_select_ativos_membro',
+               'assinaturas_select_self',
+               'pagamentos_select_self',
+               'gt_reservas_select_self')
     ) THEN
-        RAISE EXCEPTION 'migration 013: an authenticated community policy is not staff- or self-scoped';
+        RAISE EXCEPTION 'migration 013: a community policy is neither staff-gated nor a named member-self policy';
     END IF;
 END $$;

@@ -40,9 +40,16 @@ Foundation already on `feat/community-ninho-vazio` (do not re-create):
 
 | role | who | reaches |
 |---|---|---|
-| `admin` | Mônica / owner | everything, all writes |
-| `moderador` | team | staff reads; no writes except where stated |
+| `admin` | org `owner`/`admin`, or platform admin (`noctus_users.role='admin'`) | everything, all writes |
+| `moderador` | org `moderador`/`dev` | staff reads; no writes except where stated |
 | `membro` | end customer (`noctus_users.org_role='membro'`) | `/api/eu`, `/api/portal/*` only |
+
+Staff is an **allow-list** (`COMMUNITY_STAFF_ORG_ROLES` ↔ `community.eh_equipe()`),
+read only from the trusted `public.noctus_users` row — never `user_metadata`.
+The org is the platform org, shared with other products' users (`corretor`…):
+any other role, NULL, or a user with no profile row gets 403 on staff routes.
+Members have **no** RLS read on `membros` (staff notes are LGPD-sensitive); the
+portal resolves their row server-side and projects the columns.
 
 ## Tiers (data, not code)
 
@@ -108,15 +115,17 @@ checked like `/api/checkout` (`turnstile_token`). Body (extra fields rejected):
 {"nome": "str 1..120", "email": "email", "telefone": "str|null (same regex as membros)",
  "senha": "str 8..72", "turnstile_token": "str", "aceite_termos": true}
 ```
-Side effects, in order: find-or-create the auth identity
-(`noctusai_lib.domain.org.provision_invited_identity`); if the identity already
-existed → **409 "Este e-mail já tem cadastro. Entre com sua senha."** and
-nothing else happens (never touch an existing password). Then
-`attach_user_to_org(org_role="membro")`; then find-or-create the `membros` row
-by email (an existing CRM row created by staff or checkout is LINKED — set
-`user_id`, keep its data), setting `origem='cadastro'` only on create, status
-`ativo`, plan = free plan unless the row already has a plan. Evento `acesso`
-"Cadastro realizado pelo site". 201:
+Side effects, in order (revised 2026-09-28 after the security review, H5):
+(1) no free plan → **409 "Plano gratuito não configurado."**; (2) ANY `membros`
+row with this email (case-insensitive) → **409 "Já existe um cadastro com este
+e-mail. Fale com a equipe para receber seu acesso."** — a public form never links
+an existing CRM record (staff use `POST /api/membros/{id}/acesso`); (3) create
+the auth identity (`provision_invited_identity`); if it already existed → **409
+"Este e-mail já tem cadastro. Entre com sua senha."**, never touching its
+password; (4) `attach_user_to_org(org_role="membro")` and create a NEW `membros`
+row (`origem='cadastro'`, `ativo`, free plan). If (4) fails, the identity created
+in (3) is deleted before the error propagates. Evento `acesso` "Cadastro
+realizado pelo site". 201:
 ```json
 {"membro_id": "uuid", "email": "str", "proximo_passo": "entrar"}
 ```

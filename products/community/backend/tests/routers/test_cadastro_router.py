@@ -127,48 +127,44 @@ class TestCadastroExistingIdentity:
         assert client.mock_supabase.table("membros").select("*").execute().data == []
 
 
-class TestCadastroLinksExistingCrmRow:
-    def test_links_staff_created_row_keeps_its_data_assigns_free_plan(self, client):
-        """A CRM row created by staff/checkout, no login yet: cadastro
-        LINKS `user_id` and keeps everything else (contract: "keep its
-        data"), except assigning the free plan since the row had none."""
-        _seed_base(client)
+class TestCadastroRefusesExistingCrmEmail:
+    """A public form must never LINK an existing CRM row: whoever typed the
+    email would inherit a stranger's record, payments and subscription
+    (security review 2026-09-28, H5). Staff grant access with "Criar acesso"."""
+
+    MSG = "Já existe um cadastro com este e-mail. Fale com a equipe para receber seu acesso."
+
+    def _seed_crm_row(self, client, email="ana@x.com"):
         client.mock_supabase.set_table_data("membros", [{
             "id": "aaaaaaaa-1111-1111-1111-111111111111", "org_id": ORG_UUID, "nome": "Ana Staff",
-            "email": "ana@x.com", "telefone": None, "status": "pendente",
+            "email": email, "telefone": None, "status": "pendente",
             "plano_id": None, "origem": "aplicacao", "tags": ["vip"], "user_id": None,
             "observacoes": "nota da equipe", "entrou_em": None,
             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
         }])
-        resp = client.raw().post("/api/cadastro", json=_payload())
-        assert resp.status_code == 201
-        row = client.mock_supabase.table("membros").select("*").execute().data[0]
-        assert row["id"] == "aaaaaaaa-1111-1111-1111-111111111111"
-        assert row["origem"] == "aplicacao"  # NOT overwritten to "cadastro"
-        assert row["status"] == "pendente"  # kept, not forced to "ativo"
-        assert row["observacoes"] == "nota da equipe"
-        assert row["plano_id"] == PLANO_GRATUITO  # assigned since it had none
-        assert row["user_id"] == NEW_USER_ID
 
-    def test_links_row_that_already_has_a_plan_does_not_overwrite_it(self, client):
-        _seed_base(client, planos=[
-            _plano_gratuito_row(),
-            {"id": PLANO_PAGO, "org_id": ORG_UUID, "nome": "Premium", "descricao": None,
-             "preco_centavos": 2700, "ciclo": "mensal", "entitlements": {"grupoterapia": "falar"},
-             "ativo": True, "ordem": 2,
-             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"},
-        ])
-        client.mock_supabase.set_table_data("membros", [{
-            "id": "aaaaaaaa-2222-2222-2222-222222222222", "org_id": ORG_UUID, "nome": "Ana Paga",
-            "email": "ana@x.com", "telefone": None, "status": "ativo",
-            "plano_id": PLANO_PAGO, "origem": "checkout", "tags": [], "user_id": None,
-            "observacoes": None, "entrou_em": "2026-01-01T00:00:00+00:00",
-            "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
+    def test_existing_crm_email_409_and_no_identity_created(self, client):
+        _seed_base(client)
+        self._seed_crm_row(client)
+        resp = client.raw().post("/api/cadastro", json=_payload())
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == self.MSG
+        client.mock_supabase.auth.admin.create_user.assert_not_called()
+        (row,) = client.mock_supabase.table("membros").select("*").execute().data
+        assert row["user_id"] is None
+        assert row["observacoes"] == "nota da equipe"
+
+    def test_identity_is_undone_when_a_later_step_fails(self, client):
+        """`attach_user_to_org` refuses (409) a profile already in ANOTHER
+        org; the identity this request just created must not survive."""
+        _seed_base(client)
+        client.mock_supabase.set_table_data("noctus_users", [{
+            "id": NEW_USER_ID, "org_id": "outra-org", "org_role": "admin", "role": "user",
         }])
         resp = client.raw().post("/api/cadastro", json=_payload())
-        assert resp.status_code == 201
-        row = client.mock_supabase.table("membros").select("*").execute().data[0]
-        assert row["plano_id"] == PLANO_PAGO
+        assert resp.status_code == 409
+        client.mock_supabase.auth.admin.delete_user.assert_called_once_with(NEW_USER_ID)
+        assert client.mock_supabase.table("membros").select("*").execute().data == []
 
 
 class TestCadastroNoFreePlan:

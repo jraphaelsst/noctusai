@@ -87,6 +87,21 @@ class CadastroService:
         email = payload["email"]
         nome = payload["nome"]
 
+        # Pre-checks BEFORE any identity exists, so a refusal never leaves a
+        # half-created login behind.
+        free_id = _resolve_free_plano_id(self._client, org_id=self._org_id)
+        if not free_id:
+            raise CadastroServiceError("Plano gratuito não configurado.", status_code=409)
+        if self._membro_com_email(email):
+            # Never LINK an existing CRM row from a public form: whoever types
+            # that email would inherit a stranger's record, payments and
+            # subscription (security review 2026-09-28, finding H5). Staff
+            # grant access to existing members with "Criar acesso".
+            raise CadastroServiceError(
+                "Já existe um cadastro com este e-mail. Fale com a equipe para receber seu acesso.",
+                status_code=409,
+            )
+
         user_id, created = provision_invited_identity(
             self._core, email=email, password=payload["senha"], nome=nome,
         )
@@ -95,12 +110,19 @@ class CadastroService:
                 "Este e-mail já tem cadastro. Entre com sua senha.", status_code=409,
             )
 
-        attach_user_to_org(
-            self._core, user_id, org_id=self._org_id, email=email, nome=nome,
-            org_role=MEMBRO_ORG_ROLE,
-        )
-
-        membro = self._find_or_link_membro(payload=payload, user_id=user_id)
+        try:
+            attach_user_to_org(
+                self._core, user_id, org_id=self._org_id, email=email, nome=nome,
+                org_role=MEMBRO_ORG_ROLE,
+            )
+            membro = self._criar_membro(payload=payload, user_id=user_id, plano_id=free_id)
+        except Exception:
+            # The identity was created by THIS request; a login with no
+            # profile or no membro row is an orphan (and a no-profile user
+            # must never exist — authorization reads the profile). Undo it,
+            # then re-raise the original failure.
+            self._desfazer_identidade(user_id)
+            raise
 
         registrar_evento(
             self._client, org_id=self._org_id, membro_id=membro["id"], tipo="acesso",
@@ -111,35 +133,45 @@ class CadastroService:
 
     # ── writes ───────────────────────────────────────────────────────
 
-    def _find_or_link_membro(self, *, payload: dict, user_id: str) -> dict:
-        email = payload["email"]
-        existing = (
+    def _membro_com_email(self, email: str) -> bool:
+        rows = (
             self._client.table(_MEMBROS_TABLE)
-            .select("*")
+            .select("id")
             .eq("org_id", self._org_id)
-            .eq("email", email)
+            # Case-insensitive EXACT match: escape ilike's wildcards so a
+            # `_` or `%` in an address cannot match someone else's row.
+            .ilike("email", email.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_"))
+            .limit(1)
             .execute()
             .data
             or []
         )
-        if existing:
-            row = existing[0]
-            update: dict[str, Any] = {"user_id": user_id}
-            if not row.get("plano_id"):
-                free_id = _resolve_free_plano_id(self._client, org_id=self._org_id)
-                if not free_id:
-                    raise CadastroServiceError(
-                        "Plano gratuito não configurado.", status_code=409,
-                    )
-                update["plano_id"] = free_id
-            result = (
-                self._client.table(_MEMBROS_TABLE)
-                .update(update)
-                .eq("org_id", self._org_id)
-                .eq("id", row["id"])
-                .execute()
-            )
-            return result.data[0] if result.data else {**row, **update}
+        return bool(rows)
+
+    def _desfazer_identidade(self, user_id: str) -> None:
+        """Compensating delete for an identity this request created.
+
+        Failures here are logged loudly and do not mask the original error
+        (the caller re-raises it); the orphan is then visible in the log with
+        its id for manual cleanup."""
+        try:
+            self._core.table("noctus_users").delete().eq("id", user_id).execute()
+            self._core.auth.admin.delete_user(user_id)
+        except Exception:
+            logger.exception("cadastro: falha ao desfazer identidade órfã user_id=%s", user_id)
+
+    def _criar_membro(self, *, payload: dict, user_id: str, plano_id: str) -> dict:
+        now = datetime.now(timezone.utc).isoformat()
+        row = {
+            "id": str(uuid4()), "org_id": self._org_id, "nome": payload["nome"],
+            "email": payload["email"], "telefone": payload.get("telefone"), "status": "ativo",
+            "plano_id": plano_id, "origem": "cadastro", "tags": [], "observacoes": None,
+            "user_id": user_id, "entrou_em": now, "created_at": now, "updated_at": now,
+        }
+        result = self._client.table(_MEMBROS_TABLE).insert(row).execute()
+        if not result.data:
+            raise CadastroServiceError("Falha ao criar cadastro.")
+        return result.data[0] if result.data else {**row, **update}
 
         free_id = _resolve_free_plano_id(self._client, org_id=self._org_id)
         if not free_id:

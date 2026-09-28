@@ -28,7 +28,6 @@ from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
     make_get_current_user_org,
-    make_resolve_platform_role,
     resolve_sso_role,  # noqa: F401 — re-exported for product imports
 )
 from app.config import settings
@@ -67,30 +66,53 @@ _get_any_user_org = make_get_current_user_org(
 #: `noctus_users.org_role` of an end customer with a login (migration 013).
 MEMBRO_ORG_ROLE = "membro"
 
+#: Org roles that are community STAFF. An ALLOW-list: the community org is
+#: the platform org, shared with other products' users (e.g. `corretor`),
+#: who must never read Mônica's members. Mirrors `community.eh_equipe()` in
+#: migration 013 — keep the two identical. `noctus_users.role == 'admin'`
+#: (platform admin) is staff too.
+COMMUNITY_STAFF_ORG_ROLES: frozenset[str] = frozenset({"owner", "admin", "moderador", "dev"})
+_ADMIN_ORG_ROLES: frozenset[str] = frozenset({"owner", "admin"})
 
-def _org_role_of(user: Any) -> str | None:
-    """Trusted `public.noctus_users.org_role` for `user` (None when absent)."""
+
+def _perfil_of(user: Any) -> dict | None:
+    """The caller's trusted `public.noctus_users` row (org_id, org_role, role),
+    or None. Authorization reads THIS, never `user_metadata` — metadata is
+    writable by the user themselves (`auth.updateUser({data})`)."""
     rows = (
         _db.get_core_client()
         .table("noctus_users")
-        .select("org_role")
+        .select("org_id, org_role, role")
         .eq("id", str(getattr(user, "id", "")))
         .limit(1)
         .execute()
     ).data or []
-    return rows[0].get("org_role") if rows else None
+    return rows[0] if rows else None
+
+
+def _org_role_of(user: Any) -> str | None:
+    """Trusted `public.noctus_users.org_role` for `user` (None when absent)."""
+    perfil = _perfil_of(user)
+    return perfil.get("org_role") if perfil else None
+
+
+def _eh_equipe(perfil: dict | None) -> bool:
+    if not perfil:
+        return False
+    return perfil.get("org_role") in COMMUNITY_STAFF_ORG_ROLES or perfil.get("role") == "admin"
 
 
 async def get_current_user_org(auth: tuple = Depends(_get_any_user_org)) -> tuple:
-    """Back-office auth: any org user EXCEPT a `membro` (403).
+    """Back-office auth: community STAFF only (403 otherwise).
 
-    Deny-by-default for the customer role — every pre-existing router
-    depends on this, so a member's JWT can never reach a back-office
-    route. RLS enforces the same boundary (`community.eh_equipe()`,
-    migration 013); this is the API half. Member routes use
-    `get_membro_context` instead.
+    Staff = `COMMUNITY_STAFF_ORG_ROLES` or a platform admin, read from the
+    trusted profile row. A `membro`, another product's user (`corretor`…),
+    an unknown role, or a user with NO profile row (whose org would
+    otherwise come from spoofable metadata) all get 403. RLS enforces the
+    same boundary (`community.eh_equipe()`, migration 013); this is the API
+    half. Member routes use `get_membro_context` instead.
     """
-    if _org_role_of(auth[0]) == MEMBRO_ORG_ROLE:
+    if not _eh_equipe(_perfil_of(auth[0])):
         raise http_error(403, "Área restrita à equipe.")
     return auth
 
@@ -98,24 +120,30 @@ async def get_current_user_org(auth: tuple = Depends(_get_any_user_org)) -> tupl
 async def get_membro_context(auth: tuple = Depends(_get_any_user_org)) -> tuple:
     """Member-portal auth → `(user, token, org_id: UUID, membro: dict)`.
 
-    403 unless the caller is a `membro` with a linked `community.membros`
-    row (`user_id = auth.uid()`). The row is read with the caller's own
-    client, so RLS (`membros_select_self`) is what makes it theirs.
+    403 unless the caller's trusted profile says `membro` and a
+    `community.membros` row is linked to their login in THAT org. The row
+    is read with the service-role client — members have no RLS read on
+    `membros` (its `observacoes`/`tags` are staff-only) — keyed on the
+    verified JWT subject and the profile's org, never on request input.
+    Portal handlers must project the columns they return.
     """
-    user, token, raw_org = auth
-    if _org_role_of(user) != MEMBRO_ORG_ROLE:
+    user = auth[0]
+    perfil = _perfil_of(user)
+    if not perfil or perfil.get("org_role") != MEMBRO_ORG_ROLE or not perfil.get("org_id"):
         raise http_error(403, "Área exclusiva para membros.")
+    org_id = coerce_org_uuid(perfil["org_id"])
     rows = (
-        get_user_client(token)
+        get_admin_client()
         .table("membros")
         .select("*")
         .eq("user_id", str(getattr(user, "id", "")))
+        .eq("org_id", str(org_id))
         .limit(1)
         .execute()
     ).data or []
     if not rows:
         raise http_error(403, "Cadastro de membro não encontrado.")
-    return user, token, coerce_org_uuid(raw_org), rows[0]
+    return user, auth[1], org_id, rows[0]
 
 
 # `GET /api/eu` (contract §Identity, slice BE-A): "any authenticated org
@@ -183,52 +211,32 @@ def http_error(status_code: int, detail: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"detail": detail, "code": code})
 
 
-# ── Community role gate — admin / moderador (contract §Conventions) ─────
-#
-# Reuses the seed's trusted-first platform-admin cascade
-# (``noctusai_lib.api.auth.make_resolve_platform_role``) — the same
-# mechanism ``ProductDependencies.get_user_role`` composes for the
-# "team" standard router — rather than inventing a parallel role store.
-_resolve_platform_role = make_resolve_platform_role(lambda: _db.get_core_client())
+# ── Community role gate — admin / moderador / membro ────────────────────
 
 
 def get_community_role(user: Any) -> str:
     """Resolve the caller's role for THIS product: ``"admin"``, ``"moderador"``
     or ``"membro"`` (an end customer — migration 013; never a back-office role).
 
-    Community defines its own two-tier vocabulary (contract-confirmed:
-    "Manager roles: `admin` (everything) and `moderador` (moderation +
-    content)"), distinct from the generic org-role vocabulary
-    (``owner``/``admin``/``manager``/``member``) the seed's ``team``
-    router (``noctusai_seed.routers._create_team_router``) uses for
-    invites. A community manager is invited through that SAME router
-    with ``role="admin"`` or ``role="moderador"`` in the invite body —
-    an arbitrary string the seed's ``attach_user_to_org`` writes
-    verbatim to the trusted ``public.noctus_users.org_role`` column.
-
-    Resolution order:
-    1. NoctusAI platform admin OR org owner/admin (the seed's
-       trusted-first cascade, ``make_resolve_platform_role``) →
-       ``"admin"`` — mirrors every other product's role-cascade-trusted
-       convention: a platform/org admin is never locked out of a
-       product's back office.
-    2. Otherwise, read the trusted ``public.noctus_users.org_role`` for
-       this user DIRECTLY (not through
-       ``ProductDependencies.get_user_role``, which collapses any
-       non-admin ``org_role`` to the metadata ``"role"`` key — a
-       different, non-mirrored field — and would silently lose the
-       "moderador" distinction). The literal value ``"admin"`` maps to
-       ``"admin"``; anything else (including an absent row, a stale
-       metadata-only member, or a value this product hasn't defined)
-       degrades to ``"moderador"`` — the least-privileged of the two
-       tiers, so an unrecognized value can read but never write.
+    Read ONLY from the trusted ``public.noctus_users`` row (``_perfil_of``):
+    ``membro`` → ``"membro"``; platform admin (``role='admin'``) or org
+    ``owner``/``admin`` → ``"admin"``; ``moderador``/``dev`` → ``"moderador"``.
+    Anything else is not community staff and raises 403. The previous
+    cascade also consulted ``resolve_sso_role(user_metadata)`` — writable by
+    the user — and degraded unknown roles to ``"moderador"``; with the org
+    shared with other products' users, both were privilege leaks
+    (security review 2026-09-28).
     """
-    if _resolve_platform_role(user) == "platform_admin":
-        return "admin"
-    org_role = _org_role_of(user)
-    if org_role == MEMBRO_ORG_ROLE:
+    perfil = _perfil_of(user)
+    if perfil and perfil.get("org_role") == MEMBRO_ORG_ROLE:
         return "membro"
-    return "admin" if org_role == "admin" else "moderador"
+    if not _eh_equipe(perfil):
+        # Unreachable behind `get_current_user_org`; kept strict so a route
+        # that forgot the gate still cannot grant a role.
+        raise http_error(403, "Área restrita à equipe.")
+    if perfil.get("role") == "admin" or perfil.get("org_role") in _ADMIN_ORG_ROLES:
+        return "admin"
+    return "moderador"
 
 
 def require_admin(role: str, *, action: str) -> None:
