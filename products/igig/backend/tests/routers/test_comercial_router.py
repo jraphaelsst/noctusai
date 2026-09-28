@@ -79,7 +79,11 @@ class TestFormularioPublico:
     lead AND its funnel card), so these run on the shared `igig` mock."""
 
     @pytest.fixture
-    def publico(self, crm_api):
+    def publico(self, crm_api, core_db):
+        # `capturar_lead` 404s an org_id that isn't a real organização
+        # (achado plat#13) — every test here uses a REAL one unless it is
+        # specifically testing that refusal.
+        core_db.table("organizations").insert({"id": ORG, "nome": "Agência Teste"}).execute()
         return crm_api
 
     def test_accepts_a_lead_without_auth(self, publico):
@@ -123,8 +127,44 @@ class TestFormularioPublico:
                                   json={"org_id": ORG, "nome": "J", "admin": True})
         assert resp.status_code == 422
 
+    def test_unknown_org_is_404(self, crm_api):
+        """No `organizations` row seeded — an unauthenticated caller pointing
+        the form at an arbitrary UUID used to seed a full default funnel for
+        a phantom tenant."""
+        resp = crm_api.raw().post("/api/comercial/leads/publico",
+                                  json={"org_id": ORG, "nome": "João"})
+        assert resp.status_code == 404
+
+    def test_unknown_org_creates_no_lead(self, crm_api, igig_db):
+        crm_api.raw().post("/api/comercial/leads/publico", json={"org_id": ORG, "nome": "João"})
+        assert igig_db.table("lead")._data == []
+
+    def test_non_uuid_org_is_404_not_500(self, crm_api):
+        resp = crm_api.raw().post("/api/comercial/leads/publico",
+                                  json={"org_id": "nao-e-um-uuid", "nome": "João"})
+        assert resp.status_code == 404
+
     def test_listing_leads_still_requires_auth(self, api):
         assert api.raw().get("/api/comercial/leads").status_code == 401
+
+
+class TestObterLead:
+    def test_requires_auth(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João"})
+        assert api.raw().get(f"/api/comercial/leads/{lead['id']}").status_code == 401
+
+    def test_returns_the_lead(self, api, repos):
+        lead = repos.lead.criar(ORG, {"nome": "João", "empresa": "Padaria Sol"})
+        resp = api.get(f"/api/comercial/leads/{lead['id']}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["nome"] == "João"
+
+    def test_unknown_lead_is_404(self, api):
+        assert api.get("/api/comercial/leads/nao-existe").status_code == 404
+
+    def test_is_org_scoped(self, api, repos):
+        outro = repos.lead.criar("outra-org", {"nome": "De outra org"})
+        assert api.get(f"/api/comercial/leads/{outro['id']}").status_code == 404
 
 
 class TestAtualizarLead:
@@ -180,26 +220,111 @@ class TestAtualizarLead:
         assert resp.status_code == 404
 
 
-class TestConversao:
-    def test_creates_a_cliente_and_links_it(self, api, repos):
-        repos.lead.criar(ORG, {"nome": "João", "empresa": "Padaria Sol", "nicho": "food"})
-        lead = repos.lead.listar(ORG)[0]
-        resp = api.post(f"/api/comercial/leads/{lead['id']}/converter")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "convertido"
-        assert resp.json()["cliente_id"]
-        assert [c["nome"] for c in repos.cliente.listar(ORG)] == ["Padaria Sol"]
+class TestReabrirNegocio:
+    """`POST /negocios/{id}/reabrir` — the Perdidos archive's only way back
+    (achado #10). Runs on the shared `igig` mock (`crm_api`): the negócio +
+    its stages come from the real funnel endpoints, `reabrir` is the one
+    under test."""
 
-    def test_conversion_is_idempotent(self, api, repos):
-        """A second click must not create a second cliente."""
-        repos.lead.criar(ORG, {"nome": "João", "empresa": "Padaria Sol"})
-        lead = repos.lead.listar(ORG)[0]
-        api.post(f"/api/comercial/leads/{lead['id']}/converter")
-        api.post(f"/api/comercial/leads/{lead['id']}/converter")
-        assert len(repos.cliente.listar(ORG)) == 1
+    @pytest.fixture
+    def comercial(self, crm_api) -> dict[str, dict]:
+        resp = crm_api.get("/api/comercial/pipeline/stages")
+        assert resp.status_code == 200, resp.text
+        return {s["slug"]: s for s in resp.json()["data"]}
 
-    def test_unknown_lead_returns_404(self, api):
-        assert api.post("/api/comercial/leads/nao-existe/converter").status_code == 404
+    def _negocio_perdido(self, crm_api, comercial, motivo="sem orçamento") -> dict:
+        resp = crm_api.post("/api/comercial/negocios", json={
+            "lead": {"nome": "João", "empresa": "Padaria Sol"}, "valor_estimado": 1000,
+        })
+        assert resp.status_code == 201, resp.text
+        negocio = resp.json()["data"]
+        resp = crm_api.post(f"/api/comercial/negocios/{negocio['id']}/perder",
+                            json={"motivo": motivo})
+        assert resp.status_code == 200, resp.text
+        return negocio
+
+    def test_requires_auth(self, crm_api):
+        assert crm_api.raw().post(
+            "/api/comercial/negocios/nao-existe/reabrir"
+        ).status_code == 401
+
+    def test_returns_to_the_stage_it_was_lost_from(self, crm_api, comercial):
+        negocio = self._negocio_perdido(crm_api, comercial)
+        resp = crm_api.post(f"/api/comercial/negocios/{negocio['id']}/reabrir")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()["data"]
+        assert corpo["status"] == "aberto"
+        assert corpo["etapa_id"] == comercial["leads"]["id"]
+        assert corpo["perdido_em"] is None
+        assert corpo["motivo_perda"] is None
+        assert corpo["perdido_stage_id"] is None
+
+    def test_appears_back_on_the_board(self, crm_api, comercial):
+        negocio = self._negocio_perdido(crm_api, comercial)
+        crm_api.post(f"/api/comercial/negocios/{negocio['id']}/reabrir")
+        colunas = crm_api.get("/api/comercial/board").json()["data"]
+        ids = [n["id"] for c in colunas for n in c["cards"]]
+        assert negocio["id"] in ids
+
+    def test_only_a_perdido_negocio_can_be_reopened(self, crm_api, comercial):
+        resp = crm_api.post("/api/comercial/negocios", json={
+            "lead": {"nome": "João"}, "valor_estimado": 1000,
+        })
+        negocio = resp.json()["data"]
+        resp = crm_api.post(f"/api/comercial/negocios/{negocio['id']}/reabrir")
+        assert resp.status_code == 409
+
+    def test_unknown_negocio_is_404(self, crm_api):
+        assert crm_api.post(
+            "/api/comercial/negocios/nao-existe/reabrir"
+        ).status_code == 404
+
+    def test_is_org_scoped(self, crm_api, igig_db, comercial):
+        outro = igig_db.table("negocio").insert({
+            "org_id": "outra-org", "lead_id": None, "titulo": "De outra org",
+            "etapa_id": comercial["leads"]["id"], "kanban_pos": "0", "status": "perdido",
+        }).execute().data[0]
+        assert crm_api.post(
+            f"/api/comercial/negocios/{outro['id']}/reabrir"
+        ).status_code == 404
+
+    def test_falls_back_to_the_first_active_stage_when_the_lost_one_is_gone(
+        self, crm_api, igig_db, comercial
+    ):
+        """The negócio was lost from 'qualificacao'; that stage is gone by the
+        time someone reopens it (deleted — a real 'Perdidos'-cleared column,
+        per the sibling `count_excludes` fix, can now be retired even though
+        it still HOLDS the archived card). Reabrir must not 404/500 on a
+        dangling `perdido_stage_id` — it lands on the funnel's current first
+        active stage instead, and THAT is a real stage change worth a
+        history row."""
+        from app.pipelines import exigir_admin_da_org
+        from app.main import app
+
+        resp = crm_api.post("/api/comercial/negocios", json={"lead": {"nome": "João"}})
+        negocio = resp.json()["data"]
+        crm_api.post(f"/api/comercial/negocios/{negocio['id']}/mover-etapa",
+                    json={"para_etapa_id": comercial["qualificacao"]["id"]})
+        crm_api.post(f"/api/comercial/negocios/{negocio['id']}/perder",
+                    json={"motivo": "sem orçamento"})
+
+        app.dependency_overrides[exigir_admin_da_org] = lambda: None
+        try:
+            resp = crm_api.delete(f"/api/comercial/pipeline/stages/{comercial['qualificacao']['id']}")
+            assert resp.status_code == 200, resp.text  # 0 non-perdido cards: no reassign_to needed
+        finally:
+            app.dependency_overrides.pop(exigir_admin_da_org, None)
+
+        resp = crm_api.post(f"/api/comercial/negocios/{negocio['id']}/reabrir")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()["data"]
+        assert corpo["etapa_id"] == comercial["leads"]["id"]
+
+        movimentos = [
+            m for m in igig_db.table("pipeline_movimentos")._data
+            if m["entidade_id"] == negocio["id"]
+        ]
+        assert any(m["motivo"] == "Reaberto do arquivo de perdidos" for m in movimentos)
 
 
 class TestContratoEAssinatura:
@@ -308,6 +433,16 @@ class TestContratoEAssinatura:
 
     def test_signed_but_invalid_body_returns_422(self, api, assinado):
         assert assinado(api, {"external_id": "x.y", "evento": "talvez"}).status_code == 422
+
+    def test_the_422_uses_the_platform_envelope(self, api, assinado):
+        """Not a raw pydantic-errors LIST (plat achado #23) — `describeError`
+        on the frontend only reads a STRING `detail`, and the seed's
+        `http_exception_handler` passes a `{detail, code}` dict through flat
+        (KB § PATTERNS/backend — verbatim `{detail, code}` shape)."""
+        resp = assinado(api, {"external_id": "x.y", "evento": "talvez"})
+        corpo = resp.json()
+        assert isinstance(corpo["detail"], str) and corpo["detail"]
+        assert corpo["code"] == "corpo_invalido"
 
     def test_refusal_does_not_activate(self, api, repos, assinado):
         cliente, corpo = self._gerar(api, repos)

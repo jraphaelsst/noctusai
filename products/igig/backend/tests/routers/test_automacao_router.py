@@ -233,6 +233,26 @@ class TestCrud:
 
 
 # ── Engine: stage entry on the Comercial funnel ──────────────────────
+class TestEntradaFormularioPublico:
+    """The public pré-qualificação form used to skip entry-stage automations
+    entirely (achado #2) — unlike a hand-made negócio, a WAHA lead, or a Meta
+    Lead Ads lead, all of which fire them. `comercial_router.capturar_lead`
+    now calls `ao_entrar_etapa` exactly like `fontes_lead._criar_lead_e_negocio`."""
+
+    def test_a_public_lead_fires_the_entry_stage_rule(self, admin, comercial, igig_db, core_db):
+        core_db.table("organizations").insert({"id": ORG, "nome": "Agência Teste"}).execute()
+        # `criar_checklist` needs no destinatário — an anonymous public
+        # submission (no `user_id`, no responsável) is exactly the case
+        # `test_a_public_lead_fires_the_entry_stage_rule` needs isolated from
+        # "who gets notified", which `TestEntradaComercial` already covers.
+        regra = _regra(admin, "comercial", comercial["leads"]["id"], "criar_checklist",
+                       {"titulo": "Qualificar {nome}", "itens": ["Ligar"]})
+        resp = admin.raw().post("/api/comercial/leads/publico", json={"org_id": ORG, "nome": "Ana"})
+        assert resp.status_code == 201, resp.text
+        execs = _execucoes(igig_db, regra["id"])
+        assert [e["status"] for e in execs] == ["sucesso"]
+
+
 class TestEntradaComercial:
     def test_move_runs_the_stage_rule_once_per_entry(self, admin, comercial, igig_db, core_db):
         regra = _regra(admin, "comercial", comercial["qualificacao"]["id"], "notificar",
