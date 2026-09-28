@@ -180,8 +180,17 @@ def pipeline_stages_router(
         auth=Depends(auth_dependency),
     ):
         ctx = resolve_context(auth)
+        # `moved_by=ctx.user_id`: every mount of this router sits behind
+        # `auth_dependency` (+ `require_stage_admin` on this route), so
+        # `ctx.user_id` is always the authenticated admin doing the delete —
+        # threading it through gives every product's bulk reassignment the
+        # SAME per-card `pipeline_movimentos` trail a drag-and-drop move gets,
+        # for free, at the one place every product's stage-delete goes
+        # through (`delete_stage`'s `moved_by` stays optional and defaults to
+        # no history for any OTHER direct caller).
         result = delete_stage(
-            ctx.db, cfg, stage_id, reassign_to=reassign_to, org_id=ctx.org_id
+            ctx.db, cfg, stage_id, reassign_to=reassign_to, org_id=ctx.org_id,
+            moved_by=ctx.user_id,
         )
         if log_action:
             log_action(

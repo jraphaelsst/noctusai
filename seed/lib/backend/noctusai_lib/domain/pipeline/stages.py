@@ -314,6 +314,7 @@ def delete_stage(
     *,
     reassign_to: str | None = None,
     org_id: str | None = None,
+    moved_by: str | None = None,
 ) -> dict:
     """Delete a stage, refusing the two cases that would lose data or break a feature.
 
@@ -321,6 +322,16 @@ def delete_stage(
     the cards move first, then the stage goes. The alternative — deleting the
     cards with the column — is the kind of "obvious" cascade that quietly
     destroys a user's pipeline.
+
+    `moved_by` is the OPTIONAL acting user id. When given, each reassigned
+    card gets its own `cfg.history_table` row (same shape `move_card` writes
+    for a drag), so "who moved this and when" survives a stage delete exactly
+    as it does a normal move — before this parameter existed, the bulk
+    reassignment above moved every card with NO trace of who did it. Omitted
+    (every caller before this change) ⇒ the exact old behaviour: cards move,
+    nothing is written to history. `pipeline_movimentos.responsavel_id` is
+    NOT NULL on some pipelines (the ERP-shaped boards), so this must never be
+    written with a null id — the default keeps every existing caller safe.
     """
     stage = get_stage(db, cfg, stage_id, org_id=org_id)
 
@@ -353,11 +364,11 @@ def delete_stage(
         if destino.get("papel"):
             # A role-carrying stage (e.g. a CRM's `fechado`) has side effects
             # its OWN mover is responsible for (accepting an orçamento,
-            # creating a cliente…) that this bulk, history-free reassignment
-            # cannot run — landing cards there this way would silently
-            # complete that role's transition without them. Refuse; the
-            # operator reassigns to a plain stage, or moves these cards by
-            # hand first (which DOES run the role's rules).
+            # creating a cliente…) that this bulk reassignment cannot run —
+            # landing cards there this way would silently complete that
+            # role's transition without them. Refuse; the operator reassigns
+            # to a plain stage, or moves these cards by hand first (which
+            # DOES run the role's rules).
             raise ValidationError_(
                 f"'{destino['label']}' tem o papel '{destino['papel']}' — mover cartas para lá em "
                 "massa ignoraria as regras desse papel. Escolha uma etapa sem papel especial, ou "
@@ -369,7 +380,30 @@ def delete_stage(
         )
         if org_id:
             query = query.eq("org_id", org_id)
-        query.execute()
+        # Default representation: PostgREST (and this project's
+        # `MockSupabaseClient`) return the mutated rows on an UPDATE with no
+        # `.select()` narrowing — the same assumption `update_stage` already
+        # makes. Reused here (rather than a separate SELECT before the
+        # update) to find out WHICH cards moved, for the optional per-card
+        # history write below.
+        moved_rows = query.execute().data or []
+
+        if moved_by is not None:
+            motivo = f"Etapa \"{stage['label']}\" excluída — carta movida para \"{destino['label']}\"."
+            for card in moved_rows:
+                history: dict[str, Any] = {
+                    "pipeline": cfg.pipeline,
+                    "entidade_id": card["id"],
+                    "de_etapa_id": stage_id,
+                    "para_etapa_id": destino["id"],
+                    "responsavel_id": moved_by,
+                    "motivo": motivo,
+                }
+                if cfg.cliente_field:
+                    history["cliente_id"] = card.get(cfg.cliente_field)
+                if org_id:
+                    history["org_id"] = org_id
+                db.table(cfg.history_table).insert(history).execute()
 
     db.table(cfg.stages_table).delete().eq("id", stage_id).execute()
     return {"id": stage_id, "cards_movidos": total, "movidos_para": reassign_to}

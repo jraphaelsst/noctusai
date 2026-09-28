@@ -213,6 +213,51 @@ def test_delete_reassigns_cards_before_removing(db):
     assert db.table("negociacoes_venda").updated_payloads == [{"etapa_id": "s2"}]
 
 
+def test_delete_without_moved_by_writes_no_history(db):
+    """Backward compatibility: every caller before `moved_by` existed keeps
+    the exact old behaviour — cards move, nothing lands in history. Some
+    pipelines' `responsavel_id` is NOT NULL, so this default must never
+    attempt a null write."""
+    delete_stage(db, FUNIL, "s1", reassign_to="s2")
+    assert db.table("pipeline_movimentos").inserted_payloads == []
+
+
+def test_delete_with_moved_by_writes_one_history_row_per_moved_card(db):
+    """The bulk reassignment now leaves the SAME kind of trail a drag-and-drop
+    `move_card` does, attributed to whoever deleted the stage — the gap this
+    closes: before `moved_by`, a stage delete moved cards with no record of
+    who did it or when."""
+    db.set_table_data(
+        "negociacoes_venda",
+        [
+            {"id": "n1", "cliente_id": "c1", "etapa_id": "s1", "kanban_pos": 0,
+             "valor_estimado": 100},
+            {"id": "n1b", "cliente_id": "c4", "etapa_id": "s1", "kanban_pos": 1,
+             "valor_estimado": 80},
+            {"id": "n2", "cliente_id": "c2", "etapa_id": "s3", "kanban_pos": 0,
+             "valor_estimado": 250},
+            {"id": "n3", "cliente_id": "c3", "etapa_id": "s3", "kanban_pos": 1,
+             "valor_estimado": 50},
+        ],
+    )
+    result = delete_stage(db, FUNIL, "s1", reassign_to="s2", moved_by="admin-1")
+    assert result["cards_movidos"] == 2
+
+    history = db.table("pipeline_movimentos").inserted_payloads
+    assert len(history) == 2
+    by_card = {h["entidade_id"]: h for h in history}
+    assert set(by_card) == {"n1", "n1b"}
+    for row in history:
+        assert row["pipeline"] == "funil"
+        assert row["de_etapa_id"] == "s1"
+        assert row["para_etapa_id"] == "s2"
+        assert row["responsavel_id"] == "admin-1"
+        assert "excluída" in row["motivo"]
+    # cliente_id still denormalised onto the row, same as a drag move.
+    assert by_card["n1"]["cliente_id"] == "c1"
+    assert by_card["n1b"]["cliente_id"] == "c4"
+
+
 def test_delete_refuses_to_reassign_into_a_role_carrying_stage(db):
     """s1 holds n1; s4 ('Fechado', papel='final') holds nothing. A bulk
     reassignment there would land a card in a role-gated stage without
