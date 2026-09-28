@@ -12,6 +12,7 @@ import os
 from typing import Mapping, Optional
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -21,6 +22,7 @@ from noctusai_lib.primitives.exceptions import (
     app_exception_handler,
     http_exception_handler,
     validation_exception_handler,
+    request_validation_exception_handler,
     postgrest_exception_handler,
     generic_exception_handler,
 )
@@ -288,6 +290,11 @@ def configure_app(
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(ValidationError, validation_exception_handler)
+    # RequestValidationError — NOT a subclass of pydantic's ValidationError —
+    # is what FastAPI actually raises for a request body/query/path failure;
+    # unregistered, it fell through to FastAPI's own default handler, which
+    # serves pydantic's raw English `msg` text. See its docstring.
+    app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
 
     # Handle PostgREST errors (e.g. .single() with 0 rows -> 404 instead of 500)
     try:

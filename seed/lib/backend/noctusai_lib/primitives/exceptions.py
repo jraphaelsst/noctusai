@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 from fastapi import HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 import logging
@@ -273,6 +274,130 @@ async def validation_exception_handler(request: Request, exc: ValidationError) -
         content=format_error_response(
             code="VALIDATION_ERROR",
             message="Erro de validação nos dados enviados",
+            details={"errors": errors},
+        ),
+    )
+
+
+#: Where-did-this-value-come-from marker FastAPI prepends to every
+#: `error["loc"]` for a request-body/query/path/header/cookie validation
+#: failure ("body", "email") — noise for a human field label or a machine
+#: `field` key; stripped by `_validation_field`.
+_LOC_SOURCE_PREFIXES = {"body", "query", "path", "header", "cookie"}
+
+
+def _validation_field(loc: tuple) -> str:
+    """Dotted field name for one `error["loc"]` tuple, source-prefix stripped.
+
+    Used for BOTH the machine `errors[].field` and the human per-field label
+    — there is no established prior shape for `RequestValidationError` to
+    preserve (it was previously unhandled), so this is the new canonical
+    rendering for both.
+    """
+    parts = [p for p in loc]
+    if parts and parts[0] in _LOC_SOURCE_PREFIXES:
+        parts = parts[1:]
+    if not parts:
+        return "dados enviados"
+    return ".".join(str(p) for p in parts)
+
+
+#: pt-BR templates for pydantic v2's stable `error["type"]` values, keyed off
+#: `error["ctx"]` (its structured parameters — STABLE across locales, unlike
+#: `error["msg"]`, which pydantic only ever renders in English). Deliberately
+#: NOT string-matching `msg` — pydantic error text is not a documented
+#: contract and a version bump could silently break a substring match.
+_VALIDATION_TYPE_MESSAGES = {
+    "missing": lambda ctx: "Campo obrigatório",
+    "string_too_short": lambda ctx: f"Deve ter pelo menos {ctx.get('min_length')} caracteres",
+    "string_too_long": lambda ctx: f"Deve ter no máximo {ctx.get('max_length')} caracteres",
+    "greater_than": lambda ctx: f"Deve ser maior que {ctx.get('gt')}",
+    "greater_than_equal": lambda ctx: f"Deve ser maior ou igual a {ctx.get('ge')}",
+    "less_than": lambda ctx: f"Deve ser menor que {ctx.get('lt')}",
+    "less_than_equal": lambda ctx: f"Deve ser menor ou igual a {ctx.get('le')}",
+    "literal_error": lambda ctx: f"Valor inválido — deve ser {ctx.get('expected')}",
+    "extra_forbidden": lambda ctx: "Campo não permitido",
+    "int_parsing": lambda ctx: "Deve ser um número inteiro",
+    "int_type": lambda ctx: "Deve ser um número inteiro",
+    "float_parsing": lambda ctx: "Deve ser um número",
+    "float_type": lambda ctx: "Deve ser um número",
+    "bool_parsing": lambda ctx: "Deve ser verdadeiro ou falso",
+    "bool_type": lambda ctx: "Deve ser verdadeiro ou falso",
+    "string_type": lambda ctx: "Deve ser um texto",
+    "list_type": lambda ctx: "Deve ser uma lista",
+    "dict_type": lambda ctx: "Deve ser um objeto",
+    "uuid_parsing": lambda ctx: "Identificador inválido",
+    "date_parsing": lambda ctx: "Data inválida",
+    "date_from_datetime_parsing": lambda ctx: "Data inválida",
+    "datetime_parsing": lambda ctx: "Data e hora inválidas",
+    "datetime_from_date_parsing": lambda ctx: "Data e hora inválidas",
+}
+
+
+def _pt_br_validation_message(error: dict) -> str:
+    """pt-BR translation for one `error["type"]` (+ `ctx`), never `msg`.
+
+    `value_error` (raised by any custom validator, including pydantic's
+    `EmailStr`) has no fixed `ctx` shape — the email case is common enough to
+    special-case by its stable English substring; anything else falls back
+    to `ctx["reason"]` when the validator supplied one, or the raw `msg` as a
+    last resort. An untranslated message beats a swallowed one — this is a
+    display fallback for an uncommon/unmapped error type, not a silently
+    discarded error (status code, type, and field all still reach the
+    caller).
+    """
+    error_type = error.get("type", "")
+    ctx = error.get("ctx") or {}
+    if error_type == "value_error":
+        msg = error.get("msg", "") or ""
+        if "email address" in msg:
+            return "E-mail inválido"
+        reason = ctx.get("reason")
+        if isinstance(reason, str) and reason:
+            return reason
+        return msg or "Valor inválido"
+    template = _VALIDATION_TYPE_MESSAGES.get(error_type)
+    if template:
+        try:
+            return template(ctx)
+        except Exception:
+            logger.warning(
+                "validation: pt-BR template for type=%s raised on ctx=%r", error_type, ctx,
+            )
+    return error.get("msg", "Valor inválido")
+
+
+async def request_validation_exception_handler(
+    request: Request, exc: RequestValidationError,
+) -> JSONResponse:
+    """Handle FastAPI's `RequestValidationError` — pt-BR, per field.
+
+    This — not a bare `pydantic.ValidationError` — is the exception FastAPI
+    ACTUALLY raises for a `StrictHttpModel` request body/query/path failure,
+    so leaving it unregistered meant FastAPI's own default handler served
+    pydantic's raw ENGLISH `msg` straight through as `{"detail": [...]}`; the
+    frontend's `extractErrorMessage` (`seed/lib/frontend/src/api.ts`) then
+    joined every `msg` with "; " into one English toast. The machine
+    `errors[].message` stays pydantic's raw `msg` (untranslated, for any
+    client parsing it field-by-field); only the human `message` — what a
+    toast renders — is pt-BR, one clause per field.
+    """
+    errors = []
+    human_parts = []
+    for error in exc.errors():
+        field = _validation_field(tuple(error["loc"]))
+        errors.append({
+            "field": field,
+            "message": error["msg"],
+            "type": error["type"],
+        })
+        human_parts.append(f"{field}: {_pt_br_validation_message(error)}")
+
+    return JSONResponse(
+        status_code=422,
+        content=format_error_response(
+            code="VALIDATION_ERROR",
+            message="; ".join(human_parts) or "Erro de validação nos dados enviados",
             details={"errors": errors},
         ),
     )

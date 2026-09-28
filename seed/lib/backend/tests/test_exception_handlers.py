@@ -11,10 +11,18 @@ and the legacy `{error: {code, message}}` envelope).
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
+from datetime import date
+from typing import Literal
 
-from noctusai_lib.primitives.exceptions import http_exception_handler
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.testclient import TestClient
+from pydantic import BaseModel, EmailStr, Field
+
+from noctusai_lib.primitives.exceptions import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
 
 
 def _make_app() -> TestClient:
@@ -76,3 +84,153 @@ class TestHttpExceptionHandlerForwardsHeaders:
         assert resp.status_code == 404
         assert resp.json() == {"error": {"code": "NOT_FOUND", "message": "não encontrado"}}
         assert "retry-after" not in resp.headers
+
+
+# ---------------------------------------------------------------------------
+# request_validation_exception_handler — pt-BR 422 messages (finais)
+# ---------------------------------------------------------------------------
+
+
+class _Payload(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    nome: str = Field(min_length=3, max_length=5)
+    idade: int = Field(gt=0, le=120)
+    email: EmailStr
+    tipo: Literal["a", "b"]
+    nascimento: date
+    ativo: bool
+
+
+def _make_validation_app() -> TestClient:
+    app = FastAPI()
+    app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+
+    @app.post("/payload")
+    async def create_payload(body: _Payload) -> dict:
+        return {"ok": True}
+
+    return TestClient(app)
+
+
+class TestRequestValidationExceptionHandlerIsPtBr:
+    """FastAPI raises `RequestValidationError` for a request-body failure —
+    NOT the bare `pydantic.ValidationError` `validation_exception_handler`
+    covers — so this exercises the actual 422 path every `StrictHttpModel`
+    route uses. Before this handler existed, FastAPI's own default served
+    pydantic's raw ENGLISH `msg` as `{"detail": [...]}`.
+    """
+
+    def test_missing_field_is_pt_br(self) -> None:
+        client = _make_validation_app()
+        resp = client.post("/payload", json={})
+        assert resp.status_code == 422
+        body = resp.json()
+        assert "Campo obrigatório" in body["error"]["message"]
+        # Machine-readable array stays untranslated (raw pydantic msg/type).
+        by_field = {e["field"]: e for e in body["error"]["details"]["errors"]}
+        assert by_field["nome"]["message"] == "Field required"
+        assert by_field["nome"]["type"] == "missing"
+
+    def test_string_too_short_and_too_long_are_pt_br(self) -> None:
+        client = _make_validation_app()
+        resp = client.post(
+            "/payload",
+            json={
+                "nome": "a",
+                "idade": 30,
+                "email": "a@b.com",
+                "tipo": "a",
+                "nascimento": "2020-01-01",
+                "ativo": True,
+            },
+        )
+        assert resp.status_code == 422
+        assert "pelo menos 3 caracteres" in resp.json()["error"]["message"]
+
+    def test_greater_than_and_less_than_equal_are_pt_br(self) -> None:
+        client = _make_validation_app()
+        resp = client.post(
+            "/payload",
+            json={
+                "nome": "abcd",
+                "idade": 0,
+                "email": "a@b.com",
+                "tipo": "a",
+                "nascimento": "2020-01-01",
+                "ativo": True,
+            },
+        )
+        assert resp.status_code == 422
+        assert "maior que 0" in resp.json()["error"]["message"]
+
+    def test_invalid_email_is_pt_br(self) -> None:
+        client = _make_validation_app()
+        resp = client.post(
+            "/payload",
+            json={
+                "nome": "abcd",
+                "idade": 30,
+                "email": "not-an-email",
+                "tipo": "a",
+                "nascimento": "2020-01-01",
+                "ativo": True,
+            },
+        )
+        assert resp.status_code == 422
+        assert "E-mail inválido" in resp.json()["error"]["message"]
+
+    def test_literal_error_is_pt_br(self) -> None:
+        client = _make_validation_app()
+        resp = client.post(
+            "/payload",
+            json={
+                "nome": "abcd",
+                "idade": 30,
+                "email": "a@b.com",
+                "tipo": "z",
+                "nascimento": "2020-01-01",
+                "ativo": True,
+            },
+        )
+        assert resp.status_code == 422
+        assert "Valor inválido" in resp.json()["error"]["message"]
+
+    def test_extra_forbidden_is_pt_br(self) -> None:
+        client = _make_validation_app()
+        resp = client.post(
+            "/payload",
+            json={
+                "nome": "abcd",
+                "idade": 30,
+                "email": "a@b.com",
+                "tipo": "a",
+                "nascimento": "2020-01-01",
+                "ativo": True,
+                "campo_desconhecido": 1,
+            },
+        )
+        assert resp.status_code == 422
+        assert "Campo não permitido" in resp.json()["error"]["message"]
+        campos = {e["field"] for e in resp.json()["error"]["details"]["errors"]}
+        # Source prefix ("body") is stripped — the field name is the raw key.
+        assert "campo_desconhecido" in campos
+
+    def test_int_float_bool_date_parsing_are_pt_br(self) -> None:
+        client = _make_validation_app()
+        resp = client.post(
+            "/payload",
+            json={
+                "nome": "abcd",
+                "idade": "not-an-int",
+                "email": "a@b.com",
+                "tipo": "a",
+                "nascimento": "not-a-date",
+                "ativo": "not-a-bool",
+            },
+        )
+        assert resp.status_code == 422
+        message = resp.json()["error"]["message"]
+        assert "número inteiro" in message
+        assert "Data inválida" in message
+        assert "verdadeiro ou falso" in message

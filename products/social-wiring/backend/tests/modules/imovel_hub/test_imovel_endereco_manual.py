@@ -244,7 +244,10 @@ class TestRegistrarImovel:
             "/api/imoveis/OFFMKT01/registrar", json=sem_bairro, headers=auth()
         )
         assert r.status_code == 422
-        campos = {erro["loc"][-1] for erro in r.json()["detail"]}
+        # pt-BR validation envelope (seed fix, finais): errors live under
+        # error.details.errors, keyed "field" (dotted, source-prefix
+        # stripped) — not FastAPI's raw {"detail": [{"loc": [...]}]}.
+        campos = {erro["field"] for erro in r.json()["error"]["details"]["errors"]}
         assert "bairro" in campos
 
     def test_a_blank_required_field_is_also_422(self, client, scoped):
