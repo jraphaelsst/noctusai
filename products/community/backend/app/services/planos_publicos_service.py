@@ -86,4 +86,7 @@ class PlanosPublicosService:
             "ciclo": row["ciclo"],
             "beneficios": beneficios,
             "metodos_disponiveis": metodos_disponiveis,
+            # Ninho Vazio tier cards (CONTRACT.md §Planos públicos).
+            "nivel_grupoterapia": entitlements.get("grupoterapia", "nenhum"),
+            "ordem": row.get("ordem") or 0,
         }

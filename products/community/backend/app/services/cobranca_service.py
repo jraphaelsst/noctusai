@@ -32,17 +32,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Optional
 
-from noctusai_lib.integrations.payments import PaymentGatewayError
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 from app.services.ciclo_assinatura import (
-    GatewayNaoConfigurado,
     TransicaoIlegal,
     agora_utc,
+    cancelar_no_gateway,
     gateway_estrito,
     iso,
     ler_configuracoes,
     ler_timestamp,
+    marcar_cancelamento_pendente,
     plano_gratuito,
     validar_transicao,
 )
@@ -166,23 +166,10 @@ class CobrancaService:
     def _cancelar_no_gateway(self, assinatura: dict) -> Optional[str]:
         """Stop future charges at the gateway. Returns an error text, or
         None on success / nothing to cancel."""
-        externa = assinatura.get("assinatura_externa_id")
-        if not externa:
-            return None
-        try:
-            self._gateway_factory(assinatura["gateway"]).cancel_subscription(externa)
-        except (PaymentGatewayError, GatewayNaoConfigurado) as exc:
-            logger.error(
-                "cobranca: gateway cancel failed for assinatura_id=%s gateway=%s: %s",
-                assinatura["id"], assinatura.get("gateway"), exc,
-            )
-            return f"{assinatura['id']}: cancelamento no gateway falhou: {exc}"
-        return None
+        return cancelar_no_gateway(assinatura, self._gateway_factory)
 
     def _marcar_pendente(self, assinatura_id: Any, pendente: bool) -> None:
-        self._client.table(_ASSINATURAS_TABLE).update(
-            {"gateway_cancelamento_pendente": pendente}
-        ).eq("org_id", self._org_id).eq("id", str(assinatura_id)).execute()
+        marcar_cancelamento_pendente(self._client, self._org_id, assinatura_id, pendente)
 
     async def _mover_para_gratuito(self, assinatura: dict, gratuito: dict) -> bool:
         """Put the subscription's member on the free plan, `ativo`.

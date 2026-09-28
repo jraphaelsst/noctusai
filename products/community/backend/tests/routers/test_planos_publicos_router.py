@@ -66,9 +66,9 @@ class TestPublicoPublicAccess:
         item = resp.json()["items"][0]
         assert set(item.keys()) == {
             "id", "nome", "descricao", "preco_centavos", "ciclo",
-            "beneficios", "metodos_disponiveis",
+            "beneficios", "metodos_disponiveis", "nivel_grupoterapia", "ordem",
         }
-        for forbidden in ("ref_externo", "membros_ativos", "ativo", "ordem", "created_at", "updated_at"):
+        for forbidden in ("ref_externo", "membros_ativos", "ativo", "created_at", "updated_at"):
             assert forbidden not in item
         assert set(item["beneficios"].keys()) == {"feed", "forum", "chat", "eventos"}
         assert "conteudo_ids" not in item["beneficios"]
@@ -85,3 +85,20 @@ class TestPublicoPublicAccess:
         resp = client.raw().get("/api/planos/publicos")
         item = resp.json()["items"][0]
         assert item["metodos_disponiveis"] == []
+
+
+class TestNinhoVazioTierFields:
+    """CONTRACT.md §Planos públicos — the tier cards read the grupoterapia
+    level and the tier order straight off this public listing."""
+
+    def test_nivel_grupoterapia_and_ordem(self, client):
+        ouvinte = "44444444-4444-4444-4444-444444444444"
+        _seed(client, plano_rows=[
+            _plano_row(id=ouvinte, nome="Ouvinte", ordem=1, entitlements={"grupoterapia": "ouvir"}),
+            _plano_row(nome="Gratuito", preco_centavos=0, ordem=0, entitlements={}),
+        ])
+        items = client.raw().get("/api/planos/publicos").json()["items"]
+        assert [(i["nome"], i["ordem"], i["nivel_grupoterapia"]) for i in items] == [
+            ("Gratuito", 0, "nenhum"),
+            ("Ouvinte", 1, "ouvir"),
+        ]

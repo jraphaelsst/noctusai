@@ -46,6 +46,8 @@ from noctusai_lib.integrations.turnstile import TurnstileVerifier, make_turnstil
 from noctusai_lib.security.api_keys import resolve_api_key
 
 from app.config import settings
+from app.services.ciclo_assinatura import ESTADOS_EM_COBRANCA
+from app.services.eventos_service import registrar_evento
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,10 @@ _PAGAMENTOS_TABLE = "pagamentos"
 
 _METODO_GATEWAY = {"cartao": "stripe", "pix": "asaas", "boleto": "asaas"}
 _METODO_BILLING_METHOD = {"cartao": "card", "pix": "pix", "boleto": "boleto"}
+
+PLANO_GRATUITO_CHECKOUT = "Este plano é gratuito — faça seu cadastro."
+PLANO_GRATUITO_PORTAL = "Este plano é gratuito."
+JA_TEM_ESTE_PLANO = "Você já tem este plano."
 
 
 class CheckoutServiceError(Exception):
@@ -141,7 +147,10 @@ class CheckoutService:
         self._hosted_checkout_factory = hosted_checkout_factory or functools.partial(
             _default_hosted_checkout_factory, org_id=self._org_id
         )
-        self._turnstile = turnstile_verifier or _default_turnstile_verifier(self._org_id)
+        # Resolved lazily (`_turnstile_verifier`): only the anonymous
+        # route verifies a token, so the member route never pays for the
+        # key lookup.
+        self._turnstile = turnstile_verifier
         # Config values read HERE (constructor time), not per-call — the
         # DI seam a test uses to exercise the abuse-cap branches with a
         # small cap, without monkeypatching `app.config.settings`
@@ -160,11 +169,13 @@ class CheckoutService:
         )
 
     async def checkout(self, *, payload: dict, remote_ip: Optional[str] = None) -> dict:
+        """PUBLIC `POST /api/checkout` — anonymous; the email in the body
+        is the only identity, so every anti-abuse amendment applies."""
         # 1. Turnstile (product decision P2) — before ANY DB read/write
         # or gateway call. A missing token is `payload.get(...)` → None
         # → treated identically to an empty string by the verifier.
         token = payload.get("turnstile_token") or ""
-        verification = await self._turnstile.verify(token, remote_ip=remote_ip)
+        verification = await self._turnstile_verifier().verify(token, remote_ip=remote_ip)
         if not verification.success:
             raise CheckoutServiceError(
                 "Verificação de segurança falhou. Recarregue a página e tente novamente.",
@@ -172,28 +183,14 @@ class CheckoutService:
             )
 
         metodo = payload["metodo"]
-        gateway = _METODO_GATEWAY[metodo]
         plano_id = str(payload["plano_id"])
-        email = payload["email"]
 
         # 2. Plan + gateway ref — about the PLAN, never the email; safe
         # to fail loud before any membership check (amendment A2 only
         # forbids varying behavior on EMAIL existence, not plan_id).
-        plano = self._fetch_active_plano(plano_id)
-        if not plano:
-            raise CheckoutServiceError("Plano não encontrado.", status_code=404)
-        # Ninho Vazio CONTRACT.md §Billing: a zero-price plan never touches
-        # a gateway — the free tier is joined through `/api/cadastro`.
-        if int(plano.get("preco_centavos") or 0) <= 0:
-            raise CheckoutServiceError(
-                "Este plano é gratuito — faça seu cadastro.", status_code=409,
-            )
-        ref = self._fetch_gateway_ref(plano_id, gateway)
-        if not ref:
-            raise CheckoutServiceError(
-                "Este plano ainda não está disponível para esse meio de pagamento.",
-                status_code=409,
-            )
+        plano, ref = self._plano_pago_com_ref(
+            plano_id, metodo, detalhe_gratuito=PLANO_GRATUITO_CHECKOUT,
+        )
 
         # 3. Per-org/hour cap (amendment A10) — org-wide, checked before
         # touching the membros table at all.
@@ -210,10 +207,12 @@ class CheckoutService:
         # code and body SHAPE as anyone else — no gateway call, no
         # second real subscription, `checkout_url` is None, and `status`
         # explains what happened (the real explanation goes out-of-band
-        # by email, per the contract).
+        # by email, per the contract). A logged-in member upgrades
+        # through `trocar_plano` (`POST /api/portal/assinatura`) instead —
+        # this anonymous rule is never relaxed for that.
         if membro.get("status") == "ativo":
             assinatura_id = self._insert_assinatura_row(
-                membro_id=membro["id"], plano_id=plano_id, gateway=gateway,
+                membro_id=membro["id"], plano_id=plano_id, gateway=_METODO_GATEWAY[metodo],
                 metodo=metodo, ciclo=plano["ciclo"],
                 assinatura_externa_id=None, cliente_externo_id=None,
             )
@@ -222,6 +221,110 @@ class CheckoutService:
                 "membro_id": membro["id"], "pix_qr": None,
                 "status": "verifique_seu_email",
             }
+
+        return self._iniciar_cobranca(
+            membro=membro, plano=plano, ref=ref, metodo=metodo,
+            nome=payload["nome"], email=payload["email"], tax_id=payload.get("cpf"),
+        )
+
+    async def trocar_plano(
+        self,
+        *,
+        membro: dict,
+        plano_id: Any,
+        metodo: str,
+        cpf_cnpj: str,
+        autor_id: Any = None,
+    ) -> dict:
+        """Member portal `POST /api/portal/assinatura` — the logged-in
+        member's plan change (CONTRACT.md §Member portal, troca de plano).
+
+        `membro` is the CALLER's own row, resolved server-side from the
+        verified JWT (`get_membro_context`) — never an email or id from the
+        request body, so nobody can open a subscription for someone else.
+        That is also why amendment A2 does not apply here: the caller IS
+        the member, there is no oracle to protect.
+
+        The previous live subscription keeps billing until the new one's
+        first charge is paid; `webhooks_service` then cancels it (CONTRACT.md
+        §Billing lifecycle, "replaced by a plan change").
+        """
+        plano_id = str(plano_id)
+        plano, ref = self._plano_pago_com_ref(
+            plano_id, metodo, detalhe_gratuito=PLANO_GRATUITO_PORTAL,
+        )
+        if self._tem_assinatura_em_cobranca(membro_id=membro["id"], plano_id=plano_id):
+            raise CheckoutServiceError(JA_TEM_ESTE_PLANO, status_code=409)
+        self._check_org_cap()
+        self._check_email_cap(membro["id"])
+
+        result = self._iniciar_cobranca(
+            membro=membro, plano=plano, ref=ref, metodo=metodo,
+            nome=membro["nome"], email=membro["email"], tax_id=cpf_cnpj,
+        )
+        if result["status"] == "checkout_em_andamento":
+            # The member already has this Pix/boleto open (amendment A10
+            # reuse) — hand them the stored charge again instead of an
+            # empty answer. Their own row, so no oracle concern.
+            result.update(self._cobranca_pendente(result["assinatura_id"]))
+            return result
+        registrar_evento(
+            self._client, org_id=self._org_id, membro_id=membro["id"],
+            tipo="assinatura", descricao="Troca de plano iniciada",
+            dados={
+                "assinatura_id": str(result["assinatura_id"]),
+                "plano_id": plano_id,
+                "plano_nome": plano.get("nome"),
+                "plano_anterior_id": (
+                    str(membro["plano_id"]) if membro.get("plano_id") else None
+                ),
+                "metodo": metodo,
+            },
+            autor_id=autor_id,
+        )
+        return result
+
+    # ── the shared paid-subscription path (public checkout + portal) ──
+
+    def _plano_pago_com_ref(
+        self, plano_id: str, metodo: str, *, detalhe_gratuito: str,
+    ) -> tuple[dict, dict]:
+        """The active, PAID plan and its gateway ref for `metodo`, or the
+        contract error: 404 unknown/inactive plan; 409 zero-price plan (a
+        free plan never touches a gateway — CONTRACT.md §Billing); 409 no
+        ref for this payment method."""
+        plano = self._fetch_active_plano(plano_id)
+        if not plano:
+            raise CheckoutServiceError("Plano não encontrado.", status_code=404)
+        if int(plano.get("preco_centavos") or 0) <= 0:
+            raise CheckoutServiceError(detalhe_gratuito, status_code=409)
+        ref = self._fetch_gateway_ref(plano_id, _METODO_GATEWAY[metodo])
+        if not ref:
+            raise CheckoutServiceError(
+                "Este plano ainda não está disponível para esse meio de pagamento.",
+                status_code=409,
+            )
+        return plano, ref
+
+    def _iniciar_cobranca(
+        self,
+        *,
+        membro: dict,
+        plano: dict,
+        ref: dict,
+        metodo: str,
+        nome: str,
+        email: str,
+        tax_id: Optional[str],
+    ) -> dict:
+        """Open the gateway subscription for `membro` on `plano` and record
+        it locally (`assinaturas` `iniciada` + the Asaas first `pagamentos`
+        row). Returns the `POST /api/checkout` response shape.
+
+        `tax_id` (CPF/CNPJ) goes to the gateway ONLY — never persisted or
+        logged (product decision P1)."""
+        gateway = _METODO_GATEWAY[metodo]
+        plano_id = str(plano["id"])
 
         # Amendment A10, Asaas-only leg (see this module's docstring for
         # why Stripe is exempt): reuse a recent `iniciada` subscription
@@ -237,7 +340,7 @@ class CheckoutService:
                     "status": "checkout_em_andamento",
                 }
 
-        # 5. Mint the local row's id FIRST so it can travel as the
+        # Mint the local row's id FIRST so it can travel as the
         # gateway's `external_reference` — the conciliation key
         # `webhooks_service.py` resolves by. This is the ONLY reliable
         # key for a Stripe FIRST payment: Stripe has no subscription id
@@ -247,7 +350,7 @@ class CheckoutService:
         request = CheckoutRequest(
             external_reference=assinatura_id,
             email=email,
-            name=payload["nome"],
+            name=nome,
             price=Money(plano["preco_centavos"], "BRL"),
             billing_cycle="monthly" if plano["ciclo"] == "mensal" else "yearly",
             billing_method=_METODO_BILLING_METHOD[metodo],
@@ -261,7 +364,7 @@ class CheckoutService:
             plan_ref=ref["ref_externo"] if gateway == "stripe" else None,
             success_url=f"{settings.frontend_base_url}/assinar?status=sucesso" if gateway == "stripe" else None,
             cancel_url=f"{settings.frontend_base_url}/assinar?status=cancelado" if gateway == "stripe" else None,
-            tax_id=payload.get("cpf"),
+            tax_id=tax_id,
         )
         try:
             session = hosted_checkout.create_checkout(request)
@@ -295,6 +398,11 @@ class CheckoutService:
             "checkout_url": session.checkout_url, "assinatura_id": assinatura_id,
             "membro_id": membro["id"], "pix_qr": pix_qr_out, "status": None,
         }
+
+    def _turnstile_verifier(self) -> TurnstileVerifier:
+        if self._turnstile is None:
+            self._turnstile = _default_turnstile_verifier(self._org_id)
+        return self._turnstile
 
     # ── reads ────────────────────────────────────────────────────────
 
@@ -348,6 +456,51 @@ class CheckoutService:
         ]
         candidates.sort(key=lambda r: r.get("created_at") or "", reverse=True)
         return candidates[0] if candidates else None
+
+    def _tem_assinatura_em_cobranca(self, *, membro_id: str, plano_id: str) -> bool:
+        """True when the member already pays for `plano_id` (a live
+        `ativa`/`carencia`/`inadimplente` subscription)."""
+        rows = (
+            self._client.table(_ASSINATURAS_TABLE)
+            .select("id,estado,plano_id")
+            .eq("org_id", self._org_id)
+            .eq("membro_id", str(membro_id))
+            .eq("plano_id", plano_id)
+            .in_("estado", list(ESTADOS_EM_COBRANCA))
+            .execute()
+            .data
+            or []
+        )
+        return any(
+            r.get("estado") in ESTADOS_EM_COBRANCA and str(r.get("plano_id")) == plano_id
+            for r in rows
+        )
+
+    def _cobranca_pendente(self, assinatura_id: Any) -> dict:
+        """`checkout_url` + `pix_qr` of the subscription's open first
+        charge, as stored at checkout time (`_create_initial_pagamento`)."""
+        rows = (
+            self._client.table(_PAGAMENTOS_TABLE)
+            .select("*")
+            .eq("org_id", self._org_id)
+            .eq("assinatura_id", str(assinatura_id))
+            .eq("estado", "pendente")
+            .execute()
+            .data
+            or []
+        )
+        if not rows:
+            return {}
+        rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        pagamento = rows[0]
+        pix_qr = None
+        if pagamento.get("pix_payload") and pagamento.get("pix_imagem_base64"):
+            pix_qr = {
+                "payload": pagamento["pix_payload"],
+                "imagem_base64": pagamento["pix_imagem_base64"],
+                "expira_em": None,
+            }
+        return {"checkout_url": pagamento.get("url_fatura"), "pix_qr": pix_qr}
 
     # ── abuse caps (amendment A10) — config values, never literals ────
 

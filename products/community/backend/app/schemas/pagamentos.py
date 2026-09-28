@@ -11,7 +11,7 @@ this slice); `plano_gateway_refs` is its own table with its own service
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -94,8 +94,9 @@ class PlanoPublico(BaseModel):
     """Response body for `GET /api/planos/publicos` (PUBLIC, amendment
     A17) — deliberately NARROWER than `schemas.planos.Plano`.
     `ref_externo` / any gateway reference, `membros_ativos`, `ativo`,
-    `ordem`, and timestamps are never serialized here (this model simply
-    has no such fields)."""
+    and timestamps are never serialized here (this model simply has no
+    such fields). `nivel_grupoterapia` + `ordem` were added for the Ninho
+    Vazio tier cards (both are public facts about the tier)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -106,6 +107,8 @@ class PlanoPublico(BaseModel):
     ciclo: str
     beneficios: Beneficios
     metodos_disponiveis: list[str]
+    nivel_grupoterapia: Literal["nenhum", "ouvir", "falar"] = "nenhum"
+    ordem: int = 0
 
 
 class PlanoPublicoListResponse(BaseModel):

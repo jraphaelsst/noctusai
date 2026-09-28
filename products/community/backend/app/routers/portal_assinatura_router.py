@@ -1,5 +1,6 @@
-"""Member portal — subscription cancel. projects/ninho-vazio/CONTRACT.md
-§Member portal, `POST /api/portal/assinatura/cancelar` (slice BE-B).
+"""Member portal — subscription change + cancel. projects/ninho-vazio/
+CONTRACT.md §Member portal: `POST /api/portal/assinatura` (troca de plano)
+and `POST /api/portal/assinatura/cancelar` (slice BE-B).
 
 Auth is `get_membro_context` (403 for staff / non-members). A member has
 SELECT-only RLS on their own `assinaturas` and no write on
@@ -15,15 +16,21 @@ from __future__ import annotations
 import functools
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 
 from app.dependencies import actor_uuid, get_admin_client, get_membro_context, http_error
-from app.schemas.cobranca import AssinaturaPortal, CancelarAssinaturaPortalRequest
+from app.schemas.checkout import CheckoutOut
+from app.schemas.cobranca import (
+    AssinaturaPortal,
+    CancelarAssinaturaPortalRequest,
+    TrocaPlanoPortalRequest,
+)
 from app.services.assinaturas_service import (
     AssinaturasService,
     AssinaturasServiceError,
     CancelamentoGatewayFalhou,
 )
+from app.services.checkout_service import CheckoutService, CheckoutServiceError
 from app.services.ciclo_assinatura import gateway_estrito
 
 logger = logging.getLogger(__name__)
@@ -32,6 +39,27 @@ router = APIRouter(prefix="/api/portal/assinatura", tags=["portal"])
 
 SEM_ASSINATURA = "Você não tem assinatura ativa."
 FALHA_GATEWAY = "Não foi possível cancelar no gateway. Tente novamente."
+
+
+@router.post("", response_model=CheckoutOut, status_code=status.HTTP_201_CREATED)
+async def trocar_meu_plano(
+    payload: TrocaPlanoPortalRequest,
+    ctx: tuple = Depends(get_membro_context),
+) -> CheckoutOut:
+    """Troca de plano (CONTRACT.md §Member portal): open a paid
+    subscription for the CALLER's own membro row — same gateway path and
+    response shape as `POST /api/checkout`, without its anonymous-caller
+    rules (A2), which exist because that route cannot know who is asking."""
+    user, _token, org_id, membro = ctx
+    service = CheckoutService(get_admin_client(), org_id=org_id)
+    try:
+        result = await service.trocar_plano(
+            membro=membro, plano_id=payload.plano_id, metodo=payload.metodo,
+            cpf_cnpj=payload.cpf_cnpj, autor_id=actor_uuid(user),
+        )
+    except CheckoutServiceError as exc:
+        raise http_error(exc.status_code, exc.detail) from exc
+    return CheckoutOut(**result)
 
 
 @router.post("/cancelar", response_model=AssinaturaPortal)

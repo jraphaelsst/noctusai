@@ -24,11 +24,11 @@ from __future__ import annotations
 import calendar
 import logging
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from noctusai_lib.domain.payments import Subscription, SubscriptionState, transition
-from noctusai_lib.integrations.payments import make_payment_gateway
+from noctusai_lib.integrations.payments import PaymentGatewayError, make_payment_gateway
 from noctusai_lib.security.api_keys import resolve_api_key
 from postgrest.exceptions import APIError
 
@@ -65,6 +65,11 @@ SEED_PARA_ESTADO: dict[SubscriptionState, str] = {
 #: Subscriptions whose charges still run at the gateway ("current paid
 #: subscription" for the member portal's cancel).
 ESTADOS_EM_COBRANCA = ("ativa", "inadimplente", "carencia")
+
+#: Subscriptions a paid plan change REPLACES (CONTRACT.md §Billing
+#: lifecycle): the ones still billing plus an `iniciada` one whose first
+#: Pix/boleto is still open at the gateway.
+ESTADOS_VIVOS = ("iniciada", *ESTADOS_EM_COBRANCA)
 
 
 class TransicaoIlegal(ValueError):
@@ -266,9 +271,42 @@ def gateway_estrito(gateway: str, *, org_id: str):
     raise GatewayNaoConfigurado(f"Gateway desconhecido: {gateway!r}.")
 
 
+def cancelar_no_gateway(assinatura: dict, gateway_factory: Callable[[str], Any]) -> Optional[str]:
+    """Stop the subscription's future charges at its gateway.
+
+    Returns None on success (or when no gateway object exists — the A2/A10
+    shortcut rows never reached one), else an error text for the caller to
+    report and to flag `gateway_cancelamento_pendente` with; the billing
+    sweep retries every flagged row. Never raises for a gateway refusal or
+    a missing key — both are "pending", never a silent success.
+    """
+    externa = assinatura.get("assinatura_externa_id")
+    if not externa:
+        return None
+    try:
+        gateway_factory(assinatura["gateway"]).cancel_subscription(externa)
+    except (PaymentGatewayError, GatewayNaoConfigurado) as exc:
+        logger.error(
+            "ciclo_assinatura: gateway cancel failed for assinatura_id=%s gateway=%s: %s",
+            assinatura["id"], assinatura.get("gateway"), exc,
+        )
+        return f"{assinatura['id']}: cancelamento no gateway falhou: {exc}"
+    return None
+
+
+def marcar_cancelamento_pendente(
+    client: Any, org_id: Any, assinatura_id: Any, pendente: bool,
+) -> None:
+    """Set/clear `gateway_cancelamento_pendente` (the sweep's retry flag)."""
+    client.table("assinaturas").update({"gateway_cancelamento_pendente": pendente}).eq(
+        "org_id", str(org_id)
+    ).eq("id", str(assinatura_id)).execute()
+
+
 __all__ = [
     "DIAS_CARENCIA_PADRAO",
     "ESTADOS_EM_COBRANCA",
+    "ESTADOS_VIVOS",
     "ESTADO_PARA_SEED",
     "FUSO_HORARIO",
     "GatewayNaoConfigurado",
@@ -276,6 +314,7 @@ __all__ = [
     "TransicaoIlegal",
     "agora_utc",
     "calcular_carencia_ate",
+    "cancelar_no_gateway",
     "formatar_data",
     "formatar_reais",
     "gateway_estrito",
@@ -285,6 +324,7 @@ __all__ = [
     "ler_configuracoes",
     "ler_data",
     "ler_timestamp",
+    "marcar_cancelamento_pendente",
     "plano_gratuito",
     "somar_ciclo",
     "validar_transicao",

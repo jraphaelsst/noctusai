@@ -8,11 +8,14 @@ Every model is a `StrictHttpModel` (`extra="forbid"`): an unknown key is a
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
+import re
+from typing import Literal, Optional
 from uuid import UUID
 
 from noctusai_lib.api.schemas import StrictHttpModel
-from pydantic import Field
+from pydantic import Field, field_validator
+
+_NAO_DIGITOS = re.compile(r"\D+")
 
 
 class ConfiguracoesCobranca(StrictHttpModel):
@@ -47,6 +50,27 @@ class CancelarAssinaturaPortalRequest(StrictHttpModel):
     """`POST /api/portal/assinatura/cancelar` body."""
 
     motivo: Optional[str] = Field(None, max_length=500)
+
+
+class TrocaPlanoPortalRequest(StrictHttpModel):
+    """`POST /api/portal/assinatura` body (troca de plano). No email, no
+    membro id: the subscription is always opened for the CALLER's own
+    `membros` row (`get_membro_context`); extra fields are rejected.
+
+    `cpf_cnpj` goes to the gateway only — never stored or logged (product
+    decision P1). 11 digits (CPF) or 14 (CNPJ); punctuation is stripped."""
+
+    plano_id: UUID
+    metodo: Literal["pix", "boleto"]
+    cpf_cnpj: str = Field(..., min_length=11, max_length=32)
+
+    @field_validator("cpf_cnpj")
+    @classmethod
+    def _somente_digitos(cls, value: str) -> str:
+        digitos = _NAO_DIGITOS.sub("", value)
+        if len(digitos) not in (11, 14):
+            raise ValueError("cpf_cnpj deve conter 11 (CPF) ou 14 (CNPJ) dígitos.")
+        return digitos
 
 
 class AssinaturaPortal(StrictHttpModel):

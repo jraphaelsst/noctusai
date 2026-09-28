@@ -8,6 +8,7 @@ code. Abuse-cap values are ALSO injected via constructor (never
 `monkeypatch.setattr(settings, ...)`) — the same DI seam.
 """
 import asyncio
+import dataclasses
 
 from noctusai_lib.integrations.payments.checkout import FakeHostedCheckout
 from noctusai_lib.integrations.turnstile import FakeTurnstileVerifier
@@ -298,3 +299,90 @@ class TestZeroPricePlanGuard:
             assert exc.detail == "Este plano é gratuito — faça seu cadastro."
         assert calls == []
         assert (client.table("assinaturas").select("*").execute().data or []) == []
+
+
+# ── troca de plano (member portal) — CONTRACT.md §Member portal ──────────
+
+GRATUITO = "44444444-4444-4444-4444-444444444444"
+
+
+class _AsaasLikeCheckout(FakeHostedCheckout):
+    """The seed Fake plus the Asaas first-payment `raw` the real adapter
+    returns (the Fake omits it), so the stored-charge path is exercised."""
+
+    def create_checkout(self, request):
+        session = super().create_checkout(request)
+        return dataclasses.replace(
+            session, raw={"payment": {"id": f"pay_{len(self.calls)}", "dueDate": "2026-10-05"}},
+        )
+
+
+def _membro_logado(**over) -> dict:
+    base = {
+        "id": "mmm-logada", "org_id": ORG_ID, "nome": "Ana", "email": "ana@x.com",
+        "telefone": None, "status": "ativo", "plano_id": GRATUITO, "origem": "cadastro",
+        "tags": [], "user_id": "user-ana", "observacoes": None,
+        "entrou_em": "2026-01-01T00:00:00+00:00",
+        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00",
+    }
+    base.update(over)
+    return base
+
+
+def _trocar(service, membro, **over):
+    kwargs = {"membro": membro, "plano_id": PLANO_1, "metodo": "pix", "cpf_cnpj": "12345678901"}
+    kwargs.update(over)
+    return _run(service.trocar_plano(**kwargs))
+
+
+class TestTrocaDePlano:
+    def _client(self):
+        client = _new_client()
+        membro = _membro_logado()
+        client.set_table_data("membros", [membro])
+        client.set_table_data("pagamentos", [])
+        client.set_table_data("membro_eventos", [])
+        return client, membro
+
+    def test_opens_a_gateway_subscription_for_the_given_member_without_turnstile(self):
+        client, membro = self._client()
+        gateway = _AsaasLikeCheckout()
+        service = CheckoutService(
+            client, org_id=ORG_ID, hosted_checkout_factory=lambda _g: gateway,
+            turnstile_verifier=FakeTurnstileVerifier(accept=False),  # never consulted
+        )
+        result = _trocar(service, membro)
+        assert result["status"] is None and result["membro_id"] == "mmm-logada"
+        [(_, request)] = gateway.calls
+        assert request.email == "ana@x.com" and request.tax_id == "12345678901"
+        [pagamento] = client.table("pagamentos").select("*").execute().data
+        assert pagamento["assinatura_id"] == result["assinatura_id"]
+
+    def test_repeat_hands_back_the_stored_open_charge(self):
+        client, membro = self._client()
+        gateway = _AsaasLikeCheckout()
+        service = _service(client, hosted_checkout_factory=lambda _g: gateway)
+        first = _trocar(service, membro)
+        second = _trocar(service, membro)
+        assert len(gateway.calls) == 1
+        assert second["status"] == "checkout_em_andamento"
+        assert second["assinatura_id"] == first["assinatura_id"]
+        assert second["checkout_url"] == first["checkout_url"]
+        assert second["pix_qr"]["payload"] == first["pix_qr"]["payload"]
+
+    def test_gateway_failure_502_writes_nothing(self):
+        from noctusai_lib.integrations.payments import PaymentGatewayError
+
+        class _Falha(FakeHostedCheckout):
+            def create_checkout(self, request):
+                raise PaymentGatewayError("asaas", "timeout")
+
+        client, membro = self._client()
+        service = _service(client, hosted_checkout_factory=lambda _g: _Falha())
+        try:
+            _trocar(service, membro)
+            assert False, "expected CheckoutServiceError"
+        except CheckoutServiceError as exc:
+            assert exc.status_code == 502
+        assert (client.table("assinaturas").select("*").execute().data or []) == []
+        assert client.table("membro_eventos").select("*").execute().data == []

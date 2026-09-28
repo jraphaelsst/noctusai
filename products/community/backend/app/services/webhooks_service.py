@@ -25,6 +25,7 @@ stay in one place").
 """
 from __future__ import annotations
 
+import functools
 import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -38,12 +39,15 @@ from postgrest.exceptions import APIError
 
 from app.services.ciclo_assinatura import (
     ESTADO_PARA_SEED,
+    ESTADOS_VIVOS,
     SEED_PARA_ESTADO,
     TransicaoIlegal,
     agora_utc,
     calcular_carencia_ate,
+    cancelar_no_gateway,
     formatar_data,
     formatar_reais,
+    gateway_estrito,
     hoje_local,
     inicio_do_dia,
     iso,
@@ -66,6 +70,8 @@ _LANCAMENTOS_TABLE = "lancamentos"
 #: Postgres unique_violation — the replay-safety net on
 #: `lancamentos_pagamento_unique` / `lancamentos_estorno_unique`.
 _UNIQUE_VIOLATION = "23505"
+
+MOTIVO_SUBSTITUIDA_POR_TROCA = "Substituída por troca de plano"
 
 EVENTO_PAGAMENTO_APOS_ENCERRAMENTO = (
     "Pagamento recebido após o encerramento — verificar reembolso ou reativação."
@@ -136,6 +142,7 @@ class WebhooksService:
         inbox: EventInbox,
         org_id: Any,
         clock: Optional[Callable[[], datetime]] = None,
+        gateway_factory: Optional[Callable[[str], Any]] = None,
     ) -> None:
         self._client = client
         self._inbox = inbox
@@ -150,6 +157,13 @@ class WebhooksService:
         self._org_id = str(org_id)
         # Clock seam (tests pin "now"; production reads the wall clock).
         self._clock = clock or agora_utc
+        # Headless gateway for cancelling a subscription a plan change
+        # replaced. STRICT (a missing key is "pending", never a Fake
+        # success) — same factory the billing sweep uses, so the sweep's
+        # retry of a flagged row talks to the same gateway.
+        self._gateway_factory = gateway_factory or functools.partial(
+            gateway_estrito, org_id=self._org_id
+        )
 
     async def handle(self, event: GatewayEvent) -> None:
         """Claim → dispatch → (release + re-raise) on failure.
@@ -306,6 +320,13 @@ class WebhooksService:
                 logger.error("webhooks: charge_paid not applied — %s (event_id=%s)", exc, event.event_id)
                 return
 
+        if estado == "iniciada":
+            # A NEW subscription's first charge is paid: it replaces every
+            # other live subscription of this member (troca de plano) —
+            # BEFORE this row is written `ativa`, so a failure that makes
+            # the inbox release this event re-runs the replacement too.
+            self._substituir_assinaturas_anteriores(assinatura, now=now)
+
         vencimento = _extract_due_date(event) or hoje_local(now)
         proxima = somar_ciclo(vencimento, assinatura.get("ciclo") or "mensal")
         pago_ate = inicio_do_dia(proxima)
@@ -360,6 +381,75 @@ class WebhooksService:
                 f"Pagamento de {formatar_reais(valor)} confirmado — acesso até "
                 f"{formatar_data(pago_ate)}.",
                 {**dados_pagamento, "estado_anterior": estado, "pago_ate": iso(pago_ate)},
+            )
+
+    def _substituir_assinaturas_anteriores(self, nova: dict, *, now: datetime) -> None:
+        """CONTRACT.md §Billing lifecycle "replaced by a plan change": every
+        OTHER live (`iniciada`/`ativa`/`inadimplente`/`carencia`)
+        subscription of the member is cancelled at the gateway FIRST (a
+        failure flags `gateway_cancelamento_pendente` — the billing sweep
+        retries it), then locally `cancelada` by `sistema`, through the
+        seed state machine, with a timeline evento. Idempotent: a row
+        already cancelled is no longer live, so a replay finds nothing.
+        """
+        linhas = (
+            self._client.table(_ASSINATURAS_TABLE)
+            .select("*")
+            .eq("org_id", self._org_id)
+            .eq("membro_id", str(nova["membro_id"]))
+            .in_("estado", list(ESTADOS_VIVOS))
+            .execute()
+            .data
+            or []
+        )
+        for antiga in linhas:
+            if str(antiga["id"]) == str(nova["id"]) or antiga.get("estado") not in ESTADOS_VIVOS:
+                continue
+            if str(antiga.get("membro_id")) != str(nova["membro_id"]):
+                continue
+            try:
+                validar_transicao(antiga, "cancelada", now=now)
+            except TransicaoIlegal as exc:
+                logger.error("webhooks: replaced subscription not cancelled — %s", exc)
+                continue
+            erro_gateway = cancelar_no_gateway(antiga, self._gateway_factory)
+            escritas = (
+                self._client.table(_ASSINATURAS_TABLE)
+                .update({
+                    "estado": "cancelada",
+                    "cancelada_em": iso(now),
+                    "cancelamento_solicitado_por": "sistema",
+                    "cancelamento_motivo": MOTIVO_SUBSTITUIDA_POR_TROCA,
+                    "gateway_cancelamento_pendente": bool(erro_gateway),
+                })
+                .eq("org_id", self._org_id)
+                .eq("id", str(antiga["id"]))
+                .eq("estado", antiga["estado"])
+                .execute()
+                .data
+                or []
+            )
+            if not escritas:
+                # Moved by someone else since it was read (optimistic guard).
+                logger.warning(
+                    "webhooks: replaced assinatura_id=%s changed concurrently — "
+                    "left as is (gateway cancel %s)",
+                    antiga["id"], "failed" if erro_gateway else "done",
+                )
+                continue
+            self._evento(
+                antiga, "assinatura",
+                "Assinatura substituída por troca de plano — cancelada."
+                + (
+                    " Cancelamento no gateway pendente; a rotina de cobrança tenta de novo."
+                    if erro_gateway else ""
+                ),
+                {
+                    "estado_anterior": antiga["estado"],
+                    "substituida_por": str(nova["id"]),
+                    "plano_novo_id": str(nova.get("plano_id")),
+                    "gateway_cancelamento_pendente": bool(erro_gateway),
+                },
             )
 
     # ── charge_failed / PAYMENT_OVERDUE — the grace path ──────────────

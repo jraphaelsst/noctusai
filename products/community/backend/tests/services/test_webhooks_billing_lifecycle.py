@@ -390,3 +390,148 @@ class TestLancamentoUniqueConflict:
         with pytest.raises(APIError):
             _run(WebhooksService(client, inbox=inbox, org_id=ORG_ID, clock=_clock).handle(event))
         assert inbox.claim(gateway=event.gateway, event_id=event.event_id) is True
+
+
+# ── troca de plano: the paid new subscription replaces the old ones ──────
+
+PLANO_OUVINTE = "55555555-5555-5555-5555-555555555555"
+ASSINATURA_ANTIGA = "66666666-6666-6666-6666-666666666666"
+ASSINATURA_ABANDONADA = "77777777-7777-7777-7777-777777777777"
+OUTRO_MEMBRO = "88888888-8888-8888-8888-888888888888"
+ASSINATURA_DE_OUTRA = "99999999-9999-9999-9999-999999999999"
+
+
+class _GatewayCancel:
+    """Records cancels; raises `erro` when set (DI seam, no monkeypatch)."""
+
+    def __init__(self, erro: Exception | None = None) -> None:
+        self.erro = erro
+        self.cancelados: list[str] = []
+
+    def cancel_subscription(self, id_at_gateway: str):
+        if self.erro is not None:
+            raise self.erro
+        self.cancelados.append(id_at_gateway)
+
+
+def _cliente_troca(*, antigas: list[dict]) -> MockSupabaseClient:
+    c = _client(membro=_membro(status="ativo", plano_id=PLANO_OUVINTE,
+                               entrou_em="2026-01-01T00:00:00+00:00"))
+    c.set_table_data("assinaturas", [_assinatura(), *antigas])
+    return c
+
+
+def _antiga(id_=ASSINATURA_ANTIGA, **over) -> dict:
+    campos = {
+        "id": id_, "plano_id": PLANO_OUVINTE, "assinatura_externa_id": f"sub_{id_[:4]}",
+        "estado": "ativa", "ativa_em": "2026-08-01T00:00:00+00:00",
+        "pago_ate": "2026-11-01T03:00:00+00:00", "proxima_cobranca": "2026-11-01",
+        "created_at": "2026-08-01T00:00:00+00:00",
+    }
+    campos.update(over)
+    return _assinatura(**campos)
+
+
+def _service_troca(client, gateway, inbox=None) -> WebhooksService:
+    return WebhooksService(
+        client, inbox=inbox or FakeEventInbox(), org_id=ORG_ID, clock=_clock,
+        gateway_factory=lambda _name: gateway,
+    )
+
+
+class TestTrocaDePlanoSubstituiAssinaturaAnterior:
+    def test_first_paid_charge_cancels_every_other_live_subscription_gateway_first(self):
+        antigas = [
+            _antiga(),
+            _antiga(ASSINATURA_ABANDONADA, estado="iniciada", ativa_em=None, pago_ate=None),
+            _antiga(ASSINATURA_DE_OUTRA, membro_id=OUTRO_MEMBRO),
+            _antiga("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", estado="expirada"),
+        ]
+        client = _cliente_troca(antigas=antigas)
+        gateway = _GatewayCancel()
+        _run(_service_troca(client, gateway).handle(_asaas("charge_paid")))
+
+        assert _row(client, "assinaturas", id=ASSINATURA_1)["estado"] == "ativa"
+        assert sorted(gateway.cancelados) == sorted(["sub_6666", "sub_7777"])
+        for sub_id in (ASSINATURA_ANTIGA, ASSINATURA_ABANDONADA):
+            sub = _row(client, "assinaturas", id=sub_id)
+            assert sub["estado"] == "cancelada"
+            assert sub["cancelamento_solicitado_por"] == "sistema"
+            assert sub["cancelamento_motivo"] == "Substituída por troca de plano"
+            assert sub["cancelada_em"] == NOW.isoformat()
+            assert sub["gateway_cancelamento_pendente"] is False
+        # never another member's row, never an ended one
+        assert _row(client, "assinaturas", id=ASSINATURA_DE_OUTRA)["estado"] == "ativa"
+        assert _row(client, "assinaturas", id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")["estado"] == "expirada"
+        # the member moves to the new plan
+        assert _row(client, "membros", id=MEMBRO_1)["plano_id"] == PLANO_PREMIUM
+        substituidas = [
+            e for e in _eventos_do_tipo(client, "assinatura")
+            if e["dados"].get("substituida_por") == ASSINATURA_1
+        ]
+        assert {e["dados"]["assinatura_id"] for e in substituidas} == {
+            ASSINATURA_ANTIGA, ASSINATURA_ABANDONADA,
+        }
+
+    def test_gateway_failure_still_cancels_locally_and_flags_pending(self):
+        from noctusai_lib.integrations.payments import PaymentGatewayError
+
+        client = _cliente_troca(antigas=[_antiga()])
+        gateway = _GatewayCancel(erro=PaymentGatewayError("asaas", "fora do ar"))
+        _run(_service_troca(client, gateway).handle(_asaas("charge_paid")))
+
+        sub = _row(client, "assinaturas", id=ASSINATURA_ANTIGA)
+        assert sub["estado"] == "cancelada"
+        assert sub["gateway_cancelamento_pendente"] is True  # the sweep retries it
+        evento = [
+            e for e in _eventos_do_tipo(client, "assinatura")
+            if e["dados"].get("substituida_por") == ASSINATURA_1
+        ]
+        assert len(evento) == 1 and evento[0]["dados"]["gateway_cancelamento_pendente"] is True
+        assert _row(client, "assinaturas", id=ASSINATURA_1)["estado"] == "ativa"
+
+    def test_missing_gateway_key_is_pending_never_a_silent_success(self):
+        from app.services.ciclo_assinatura import GatewayNaoConfigurado
+
+        client = _cliente_troca(antigas=[_antiga()])
+
+        def _sem_chave(_name):
+            raise GatewayNaoConfigurado("Chave do Asaas não configurada.")
+
+        service = WebhooksService(
+            client, inbox=FakeEventInbox(), org_id=ORG_ID, clock=_clock,
+            gateway_factory=_sem_chave,
+        )
+        _run(service.handle(_asaas("charge_paid")))
+        assert _row(client, "assinaturas", id=ASSINATURA_ANTIGA)["gateway_cancelamento_pendente"] is True
+
+    def test_replay_and_second_charge_event_cancel_nothing_twice(self):
+        client = _cliente_troca(antigas=[_antiga()])
+        gateway = _GatewayCancel()
+        inbox = FakeEventInbox()
+        service = _service_troca(client, gateway, inbox=inbox)
+        _run(service.handle(_asaas("charge_paid")))
+        _run(service.handle(_asaas("charge_paid")))  # exact replay (inbox)
+        _run(service.handle(_asaas("charge_paid", event_id="evt_received")))  # same charge, new id
+        assert gateway.cancelados == ["sub_6666"]
+        substituidas = [
+            e for e in _eventos_do_tipo(client, "assinatura")
+            if e["dados"].get("substituida_por") == ASSINATURA_1
+        ]
+        assert len(substituidas) == 1
+
+    def test_renewal_of_an_active_subscription_replaces_nothing(self):
+        """Only a NEW subscription's first charge replaces: a renewal of the
+        current plan must never cancel an upgrade the member just opened."""
+        client = _client(
+            assinatura=_assinatura(estado="ativa", ativa_em="2026-09-05T00:00:00+00:00"),
+            membro=_membro(status="ativo", plano_id=PLANO_PREMIUM),
+        )
+        client.set_table_data("assinaturas", [
+            _assinatura(estado="ativa", ativa_em="2026-09-05T00:00:00+00:00"),
+            _antiga(ASSINATURA_ABANDONADA, estado="iniciada", ativa_em=None, pago_ate=None),
+        ])
+        gateway = _GatewayCancel()
+        _run(_service_troca(client, gateway).handle(_asaas("charge_paid")))
+        assert gateway.cancelados == []
+        assert _row(client, "assinaturas", id=ASSINATURA_ABANDONADA)["estado"] == "iniciada"
