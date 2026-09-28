@@ -24,6 +24,7 @@ import pytest
 
 from noctusai_lib.domain.pipeline import (
     PipelineConfig,
+    count_cards_in_stage,
     create_stage,
     delete_stage,
     group_into_colunas,
@@ -210,6 +211,17 @@ def test_delete_reassigns_cards_before_removing(db):
     result = delete_stage(db, FUNIL, "s1", reassign_to="s2")
     assert result["cards_movidos"] == 1
     assert db.table("negociacoes_venda").updated_payloads == [{"etapa_id": "s2"}]
+
+
+def test_delete_refuses_to_reassign_into_a_role_carrying_stage(db):
+    """s1 holds n1; s4 ('Fechado', papel='final') holds nothing. A bulk
+    reassignment there would land a card in a role-gated stage without
+    running whatever that role requires (e.g. a CRM's accepted-orçamento
+    check) — refuse rather than silently completing it."""
+    with pytest.raises(AppException) as exc:
+        delete_stage(db, FUNIL, "s1", reassign_to="s4")
+    assert "papel" in exc.value.message
+    assert db.table("negociacoes_venda").updated_payloads == []
 
 
 def test_delete_refuses_to_empty_the_funnel(db):
@@ -497,3 +509,73 @@ def test_the_delete_message_uses_it_too(db):
     with pytest.raises(AppException) as exc:
         delete_stage(db, FUNIL, "s1")
     assert "1 negociação" in str(exc.value) and "negociaçãos" not in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# status_field / count_excludes — a CRM's archived (`perdido`) cards must not
+# block emptying a stage they no longer visibly occupy
+# ---------------------------------------------------------------------------
+
+CRM = PipelineConfig(
+    pipeline="comercial",
+    card_table="negocio",
+    value_field="valor_estimado",
+    entity_label="negócio",
+    entity_kind="negocio",
+    stage_roles=("fechado",),
+    status_field="status",
+    count_excludes=("perdido",),
+)
+
+
+@pytest.fixture
+def crm_db():
+    def _crm_stage(sid, slug, label, posicao, papel=None):
+        return {
+            "id": sid, "org_id": ORG, "pipeline": "comercial", "slug": slug,
+            "label": label, "cor": "secondary", "posicao": posicao, "papel": papel,
+            "ativo": True,
+        }
+
+    client = MockSupabaseClient(validate_schema=False, schema="igig")
+    client.set_table_data(
+        "pipeline_stages",
+        [
+            _crm_stage("e1", "leads", "Leads", 0),
+            _crm_stage("e2", "fechado", "Fechado", 1, papel="fechado"),
+        ],
+    )
+    client.set_table_data("pipeline_movimentos", [])
+    client.set_table_data(
+        "negocio",
+        [
+            {"id": "n1", "etapa_id": "e1", "kanban_pos": 0, "status": "perdido",
+             "valor_estimado": 100},
+            {"id": "n2", "etapa_id": "e1", "kanban_pos": 1, "status": "aberto",
+             "valor_estimado": 200},
+        ],
+    )
+    return client
+
+
+def test_count_excludes_the_configured_statuses(crm_db):
+    assert count_cards_in_stage(crm_db, CRM, "e1") == 1  # only n2 ("aberto") counts
+
+
+def test_a_stage_holding_only_excluded_cards_can_be_emptied(crm_db):
+    """e1 has one 'aberto' (n2) and one 'perdido' (n1) card. Reassigning n2
+    away leaves only the excluded 'perdido' row, which must not count."""
+    crm_db.table("negocio").update({"status": "ganho", "etapa_id": "e2"}).eq("id", "n2").execute()
+    # 'ganho' is not excluded but n2 no longer occupies e1 — this simulates
+    # the "only archived cards remain" state directly instead of via a second
+    # delete_stage call. count_cards_in_stage must still see 0 excluded-only.
+    assert count_cards_in_stage(crm_db, CRM, "e1") == 0
+
+
+def test_delete_ignores_excluded_cards_for_the_holds_cards_check(crm_db):
+    """e1 holds n1 ('perdido', excluded) only, after n2 leaves — deleting it
+    with no reassign_to must succeed (0 REAL cards), not demand a target for
+    an archived row the board never shows."""
+    crm_db.table("negocio").update({"etapa_id": "e2"}).eq("id", "n2").execute()
+    result = delete_stage(crm_db, CRM, "e1")
+    assert result["cards_movidos"] == 0

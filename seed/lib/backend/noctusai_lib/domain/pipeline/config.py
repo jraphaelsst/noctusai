@@ -62,6 +62,15 @@ class PipelineConfig:
             forking the validation. A product whose ``papel`` column carries a
             CHECK constraint must widen that constraint to match — the API
             validates against this tuple, the database against its CHECK.
+        status_field: Optional card column `count_cards_in_stage` filters on.
+            `None` (default) for a card table with no status concept — the
+            ERP-shaped boards this organ started with. A pipeline whose cards
+            carry a lifecycle status (a CRM's `aberto`/`ganho`/`perdido`) sets
+            this alongside `count_excludes` so an archived card stops
+            blocking a stage delete/deactivate it no longer occupies on the
+            board.
+        count_excludes: Status values `count_cards_in_stage` does not count —
+            e.g. `("perdido",)`. Ignored when `status_field` is `None`.
     """
 
     pipeline: str
@@ -74,6 +83,8 @@ class PipelineConfig:
     cliente_field: str | None = "cliente_id"
     entity_label_plural: str | None = None
     stage_roles: tuple[str, ...] = DEFAULT_STAGE_ROLES
+    status_field: str | None = None
+    count_excludes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # A list would make the frozen dataclass unhashable and silently
@@ -85,6 +96,7 @@ class PipelineConfig:
         if len(set(roles)) != len(roles):
             raise ValueError("PipelineConfig.stage_roles must not repeat a role.")
         object.__setattr__(self, "stage_roles", roles)
+        object.__setattr__(self, "count_excludes", tuple(self.count_excludes))
 
     def count_label(self, total: int) -> str:
         """``"1 negociação"`` / ``"2 negociações"`` — never ``"2 negociaçãos"``."""

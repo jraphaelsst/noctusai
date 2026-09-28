@@ -295,9 +295,15 @@ def _guard_deactivation(
 def count_cards_in_stage(
     db, cfg: PipelineConfig, stage_id: str, *, org_id: str | None = None
 ) -> int:
+    """Cards a delete/deactivate would strand — excludes `cfg.count_excludes`
+    statuses (e.g. a CRM's `perdido`) when `cfg.status_field` is set, so an
+    archived card no longer occupying the board does not block emptying its
+    stage."""
     query = db.table(cfg.card_table).select("id").eq("etapa_id", stage_id)
     if org_id:
         query = query.eq("org_id", org_id)
+    if cfg.status_field and cfg.count_excludes:
+        query = query.not_.in_(cfg.status_field, list(cfg.count_excludes))
     return len(query.execute().data or [])
 
 
@@ -344,9 +350,26 @@ def delete_stage(
         destino = get_stage(db, cfg, reassign_to, org_id=org_id)
         if destino["id"] == stage_id:
             raise ValidationError_("Não é possível mover as cartas para a própria etapa.")
-        db.table(cfg.card_table).update({"etapa_id": destino["id"]}).eq(
+        if destino.get("papel"):
+            # A role-carrying stage (e.g. a CRM's `fechado`) has side effects
+            # its OWN mover is responsible for (accepting an orçamento,
+            # creating a cliente…) that this bulk, history-free reassignment
+            # cannot run — landing cards there this way would silently
+            # complete that role's transition without them. Refuse; the
+            # operator reassigns to a plain stage, or moves these cards by
+            # hand first (which DOES run the role's rules).
+            raise ValidationError_(
+                f"'{destino['label']}' tem o papel '{destino['papel']}' — mover cartas para lá em "
+                "massa ignoraria as regras desse papel. Escolha uma etapa sem papel especial, ou "
+                "mova essas cartas manualmente antes de excluir.",
+                field="reassign_to",
+            )
+        query = db.table(cfg.card_table).update({"etapa_id": destino["id"]}).eq(
             "etapa_id", stage_id
-        ).execute()
+        )
+        if org_id:
+            query = query.eq("org_id", org_id)
+        query.execute()
 
     db.table(cfg.stages_table).delete().eq("id", stage_id).execute()
     return {"id": stage_id, "cards_movidos": total, "movidos_para": reassign_to}

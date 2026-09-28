@@ -90,6 +90,13 @@ PIPELINE_COMERCIAL = PipelineConfig(
     entity_kind="negocio",
     cliente_field="cliente_id",
     stage_roles=(PAPEL_FECHADO,),
+    # A `perdido` negócio is already off the board (`quadro()` only ever
+    # groups `aberto`/`ganho`), so it must not count against a stage delete
+    # or deactivate either — otherwise a column holding only archived losses
+    # can never be retired, and the seed's own refusal message ("tem N
+    # negócios") disagrees with what the board visibly shows (0 cards).
+    status_field="status",
+    count_excludes=("perdido",),
 )
 
 PIPELINE_ESTEIRA = PipelineConfig(
