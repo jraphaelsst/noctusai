@@ -21,7 +21,13 @@ from unittest.mock import patch
 
 import pytest
 
-from env_bootstrap import load_repo_env
+import env_bootstrap
+from env_bootstrap import (
+    get_loaded_keys,
+    load_repo_env,
+    redact_secrets_in_text,
+    sanitize_subprocess_env,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -30,9 +36,16 @@ def _restore_environ():
     `monkeypatch.delenv(..., raising=False)` records nothing for a key that
     was never set — so without this, the fake `SUPABASE_*` values below
     outlive the test and every later test that builds a Supabase client
-    fails with "Invalid API key" (CI, 2026-09-14)."""
+    fails with "Invalid API key" (CI, 2026-09-14). Also snapshots/restores
+    the module-level `_loaded_keys` set `load_repo_env` writes into — the
+    same leak shape, one layer up: a probe key `load_repo_env` records in
+    one test must not make a LATER test think it was actually injected
+    from `.env` (it wasn't; it was set directly via `monkeypatch.setenv`)."""
+    before = frozenset(env_bootstrap._loaded_keys)
     with patch.dict(os.environ):
         yield
+    env_bootstrap._loaded_keys.clear()
+    env_bootstrap._loaded_keys.update(before)
 
 
 def _git(*args: str, cwd: Path) -> None:
@@ -165,3 +178,161 @@ class TestCandidateRootsNonGitDir:
         roots = _candidate_roots(tmp_path)
 
         assert roots == (tmp_path.resolve(),)
+
+
+class TestGetLoadedKeys:
+    """`get_loaded_keys()` names exactly what `load_repo_env` injected from
+    `.env` — never a value, and never a key that was already set before it
+    ran (`override=False` means that key was NOT this call's doing)."""
+
+    def test_records_keys_actually_injected_from_dotenv(self, tmp_path, probe_env_var):
+        env_bootstrap._loaded_keys.clear()
+        (tmp_path / ".env").write_text(f"{probe_env_var}=from-dotenv\n")
+
+        load_repo_env(tmp_path)
+
+        assert probe_env_var in get_loaded_keys()
+
+    def test_does_not_record_a_key_already_set_before_the_call(
+        self, tmp_path, probe_env_var, monkeypatch
+    ):
+        env_bootstrap._loaded_keys.clear()
+        monkeypatch.setenv(probe_env_var, "from-real-env")
+        (tmp_path / ".env").write_text(f"{probe_env_var}=from-dotenv\n")
+
+        load_repo_env(tmp_path)
+
+        assert probe_env_var not in get_loaded_keys()
+
+    def test_empty_before_any_load(self):
+        env_bootstrap._loaded_keys.clear()
+
+        assert get_loaded_keys() == frozenset()
+
+
+class TestSanitizeSubprocessEnv:
+    """The subprocess-env leg of the 2026-09-27 fix: a gate subprocess must
+    not inherit whatever `load_repo_env` pulled in from `.env`."""
+
+    def test_strips_a_dotenv_injected_key(self, tmp_path, probe_env_var):
+        env_bootstrap._loaded_keys.clear()
+        (tmp_path / ".env").write_text(f"{probe_env_var}=super-secret-value\n")
+        load_repo_env(tmp_path)
+        assert os.environ.get(probe_env_var) == "super-secret-value"
+
+        sanitized = sanitize_subprocess_env()
+
+        assert probe_env_var not in sanitized
+
+    def test_keeps_everything_else(self, tmp_path, probe_env_var, monkeypatch):
+        env_bootstrap._loaded_keys.clear()
+        monkeypatch.setenv("NOC_TEST_KEEP_ME", "still-here")
+        (tmp_path / ".env").write_text(f"{probe_env_var}=super-secret-value\n")
+        load_repo_env(tmp_path)
+
+        sanitized = sanitize_subprocess_env()
+
+        assert sanitized.get("NOC_TEST_KEEP_ME") == "still-here"
+        assert "PATH" in sanitized  # the harness genuinely needs this
+
+    def test_extra_strip_removes_additional_named_keys(self):
+        env_bootstrap._loaded_keys.clear()
+        base = {"PATH": "/usr/bin", "NOC_HAND_SET_SECRET": "x"}
+
+        sanitized = sanitize_subprocess_env(base, extra_strip=["NOC_HAND_SET_SECRET"])
+
+        assert sanitized == {"PATH": "/usr/bin"}
+
+    def test_does_not_mutate_the_real_os_environ(self, tmp_path, probe_env_var):
+        env_bootstrap._loaded_keys.clear()
+        (tmp_path / ".env").write_text(f"{probe_env_var}=super-secret-value\n")
+        load_repo_env(tmp_path)
+
+        sanitize_subprocess_env()
+
+        assert os.environ.get(probe_env_var) == "super-secret-value"
+
+
+class TestRedactSecretsInText:
+    """The redaction backstop: a gate `summary` must never carry a real
+    secret value or a recognizable token shape, whether or not the
+    subprocess-env leg above already stopped it at the source."""
+
+    def test_masks_a_known_dotenv_loaded_value(self, tmp_path, probe_env_var):
+        env_bootstrap._loaded_keys.clear()
+        secret_value = "re_totally_fake_resend_key_abc123"
+        (tmp_path / ".env").write_text(f"{probe_env_var}={secret_value}\n")
+        load_repo_env(tmp_path)
+
+        text = f"assert {{'api_key': '{secret_value}'}} is None"
+        redacted = redact_secrets_in_text(text)
+
+        assert secret_value not in redacted
+
+    def test_masks_secret_named_env_value_even_without_dotenv(self, monkeypatch):
+        env_bootstrap._loaded_keys.clear()
+        monkeypatch.setenv("NOC_TEST_API_TOKEN", "hand-set-not-from-dotenv")
+
+        redacted = redact_secrets_in_text("token=hand-set-not-from-dotenv")
+
+        assert "hand-set-not-from-dotenv" not in redacted
+
+    def test_does_not_mask_short_non_secret_values(self, monkeypatch):
+        env_bootstrap._loaded_keys.clear()
+        monkeypatch.setenv("NOC_TEST_FLAG_TOKEN", "on")  # < min maskable length
+
+        redacted = redact_secrets_in_text("flag is on")
+
+        assert redacted == "flag is on"
+
+    @pytest.mark.parametrize(
+        "raw,masked_prefix",
+        [
+            ("re_1234567890abcdef", "re_***"),
+            ("sk-1234567890abcdef1234", "sk-***"),
+            ("sk-ant-api03-abc123def456", "sk-ant-***"),
+            ("ghp_abcdefghijklmnopqrstuvwxyz012345", "ghp_***"),
+            ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dQw4w9WgXcQ", "eyJ***"),
+        ],
+    )
+    def test_masks_common_token_shapes_by_pattern_alone(self, raw, masked_prefix):
+        env_bootstrap._loaded_keys.clear()
+
+        redacted = redact_secrets_in_text(f"unexpected value: {raw}")
+
+        assert raw not in redacted
+        assert masked_prefix in redacted
+
+    def test_sk_ant_is_masked_as_anthropic_not_generic_sk(self):
+        env_bootstrap._loaded_keys.clear()
+        raw = "sk-ant-api03-abc123def456ghijklmnop"
+
+        redacted = redact_secrets_in_text(f"key={raw}")
+
+        assert "sk-ant-***" in redacted
+        assert "sk-***" not in redacted
+
+    def test_clean_text_with_no_secrets_passes_through_unchanged(self):
+        env_bootstrap._loaded_keys.clear()
+
+        text = "6232 passed, 0 failed in 42.11s"
+
+        assert redact_secrets_in_text(text) == text
+
+    def test_none_and_empty_text_are_returned_as_is(self):
+        assert redact_secrets_in_text("") == ""
+
+    def test_longer_known_value_masked_before_a_shorter_overlapping_one(
+        self, monkeypatch
+    ):
+        """A shorter secret value that happens to be a PREFIX of a longer
+        one must not partially clobber the longer one's occurrence — masked
+        longest-first."""
+        env_bootstrap._loaded_keys.clear()
+        monkeypatch.setenv("NOC_TEST_SHORT_SECRET", "abcdef")
+        monkeypatch.setenv("NOC_TEST_LONG_SECRET", "abcdefghijklmno")
+
+        redacted = redact_secrets_in_text("value=abcdefghijklmno")
+
+        assert "abcdefghijklmno" not in redacted
+        assert redacted.count("***REDACTED***") == 1

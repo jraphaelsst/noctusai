@@ -20,8 +20,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import env_bootstrap  # noqa: E402
 from tools.noctus.dev import gate_sweep as GS  # noqa: E402
 from tools.noctus.dev.migrate_product import (  # noqa: E402
     FakeGitRunner,
@@ -655,6 +658,30 @@ def test_a_genuine_red_still_wins_over_a_suspect(tmp_path):
     assert len(result["harness"]["suspects"]) == 1
 
 
+def test_harness_suspect_matched_line_is_also_redacted(tmp_path):
+    """`matched_line` is sliced from the RAW combined output (`harness_
+    signatures.harness_suspect`), a second leak surface independent of
+    `summary` — a secret sitting on the very line a signature matches must
+    not survive into the returned `harness.suspects` entry either."""
+    _make_product(tmp_path, "core")
+    git_runner = _clean_git_runner(diff_files="products/core/backend/app/main.py\n")
+    # `node_deps_missing`'s pattern is a plain text match (no exit_codes
+    # gate), so — unlike the exit-code-127 `command_not_found` signature,
+    # which reports a fixed "(exit code 127, ...)" string with no line text
+    # at all — this exercises the branch where `matched_line` genuinely
+    # carries the raw output line, secret and all.
+    leaking_output = "Cannot find module 're_totally_fake_resend_abc123'\n"
+
+    def fake_run(spec):
+        return 1, "failed", 0.1, leaking_output
+
+    result = GS.gate_sweep(repo_root=str(tmp_path), git_runner=git_runner, run_gate=fake_run)
+    matched_lines = [s["matched_line"] for s in result["harness"]["suspects"]]
+    assert matched_lines, "expected at least one harness_suspect entry"
+    assert not any("re_totally_fake_resend_abc123" in line for line in matched_lines)
+    assert all("re_***" in line for line in matched_lines)
+
+
 def test_e2e_gate_is_derived_for_products_with_playwright(tmp_path):
     """The suite CI enforces was missing from the local sweep entirely —
     which is how a Playwright investigation ended up in raw shell."""
@@ -703,3 +730,124 @@ def test_verdict_precedence_table():
         g("a", False, None, harness_invalid=[{"precondition": "node_modules"}]),
         g("b", True, 0),
     ]) == "inconclusive"
+
+
+# ── env hygiene (2026-09-27) ────────────────────────────────────────
+#
+# The one place in this file that runs a REAL subprocess: `_default_run_gate`
+# itself is the fix's actual mechanism (`_run_gates`/`gate_sweep` stay fully
+# hermetic above via injected `run_gate`), so it needs a real child process
+# to prove a real env var either does or does not cross the boundary. No
+# real secret ever touches these tests — `env_bootstrap._loaded_keys` is
+# seeded directly with a synthetic name, exactly like a real `load_repo_env`
+# call would have populated it, without needing a real `.env` file on disk.
+
+
+@pytest.fixture(autouse=True)
+def _restore_loaded_keys():
+    """Isolate `env_bootstrap._loaded_keys` (module-level, process-wide)
+    across tests in this file — same shape as `test_env_bootstrap.py`'s
+    own `_restore_environ` fixture."""
+    before = frozenset(env_bootstrap._loaded_keys)
+    yield
+    env_bootstrap._loaded_keys.clear()
+    env_bootstrap._loaded_keys.update(before)
+
+
+class TestDefaultRunGateEnvHygiene:
+    """`_default_run_gate` is the ONLY place `gate_sweep` actually spawns a
+    subprocess — this is where the 2026-09-27 incident lived (a bare
+    `subprocess.run(...)` inherited every `.env`-loaded secret) and where
+    the fix must be observed."""
+
+    def _probe_spec(self, tmp_path, code: str) -> "GS.GateSpec":
+        return GS.GateSpec("probe", [sys.executable, "-c", code], tmp_path)
+
+    def test_dotenv_loaded_key_is_absent_in_the_subprocess(self, tmp_path, monkeypatch):
+        """The exact shape of the incident: a key `load_repo_env` injected
+        from `.env` must NOT reach the gate subprocess — a test asserting
+        'unset env -> exit 0' would otherwise see the real value and
+        false-red on `exit 1`."""
+        monkeypatch.setenv("NOC_TEST_DOTENV_SECRET", "sb_secret_do_not_leak_xyz123")
+        env_bootstrap._loaded_keys.clear()
+        env_bootstrap._loaded_keys.add("NOC_TEST_DOTENV_SECRET")
+        spec = self._probe_spec(
+            tmp_path,
+            "import os, sys; "
+            "sys.exit(0 if os.environ.get('NOC_TEST_DOTENV_SECRET') is None else 1)",
+        )
+
+        exit_code, summary, duration, output = GS._default_run_gate(spec, timeout=30)
+
+        assert exit_code == 0, f"secret leaked into subprocess env: {summary}"
+
+    def test_non_dotenv_env_var_still_reaches_the_subprocess(self, tmp_path, monkeypatch):
+        """Sanitization is SCOPED — only keys `load_repo_env` actually
+        injected are stripped. A var the caller's own shell/CI job set
+        (never touched `.env`) must still be visible, same posture as
+        `.github/workflows/test.yml`'s job-level `env:` blocks."""
+        monkeypatch.setenv("NOC_TEST_KEEP_THIS_VAR", "keep-me")
+        env_bootstrap._loaded_keys.clear()
+        spec = self._probe_spec(
+            tmp_path,
+            "import os, sys; "
+            "sys.exit(0 if os.environ.get('NOC_TEST_KEEP_THIS_VAR') == 'keep-me' else 1)",
+        )
+
+        exit_code, summary, duration, output = GS._default_run_gate(spec, timeout=30)
+
+        assert exit_code == 0, f"a legitimately-needed env var was stripped: {summary}"
+
+    def test_path_still_resolves_so_the_interpreter_itself_still_runs(self, tmp_path):
+        """Sanity floor: sanitizing must not also strip `PATH`/the venv —
+        the gate must still be ABLE to run at all."""
+        env_bootstrap._loaded_keys.clear()
+        spec = self._probe_spec(tmp_path, "import sys; sys.exit(0)")
+
+        exit_code, summary, duration, output = GS._default_run_gate(spec, timeout=30)
+
+        assert exit_code == 0
+
+    def test_summary_is_redacted_when_a_secret_leaks_into_output(self, tmp_path, monkeypatch):
+        """Backstop leg: even if a secret DOES reach the subprocess (e.g. a
+        legitimately-kept var, or a future gap), the returned `summary`
+        must never carry it verbatim — the second half of the 2026-09-27
+        incident (a real Resend key printed straight into an MCP tool
+        result)."""
+        monkeypatch.setenv("NOC_TEST_RESEND_LIKE_TOKEN", "re_totally_fake_resend_abc123")
+        env_bootstrap._loaded_keys.clear()
+        env_bootstrap._loaded_keys.add("NOC_TEST_RESEND_LIKE_TOKEN")
+        spec = self._probe_spec(
+            tmp_path,
+            "import os, sys; "
+            "print('AssertionError: unexpected ' + "
+            "os.environ.get('NOC_TEST_RESEND_LIKE_TOKEN', 're_totally_fake_resend_abc123')); "
+            "sys.exit(1)",
+        )
+
+        exit_code, summary, duration, output = GS._default_run_gate(spec, timeout=30)
+
+        assert exit_code == 1  # the failure itself is still faithfully reported
+        assert "re_totally_fake_resend_abc123" not in summary
+        assert "re_***" in summary or "***REDACTED***" in summary
+
+    def test_clean_pass_still_reports_green_end_to_end(self, tmp_path):
+        """The fix must not turn a genuinely clean gate red — full
+        `gate_sweep()` orchestration, real subprocess, real env sanitizing,
+        zero secrets anywhere in the picture."""
+        env_bootstrap._loaded_keys.clear()
+        _make_product(tmp_path, "core")
+        git_runner = _clean_git_runner(diff_files="products/core/backend/app/main.py\n")
+
+        def real_pytest_stub_gate(spec):
+            # Route every derived gate through a trivially-green probe, but
+            # via the REAL `_default_run_gate` subprocess path (not an
+            # injected fake), so env sanitization is genuinely exercised.
+            probe = GS.GateSpec(spec.gate, [sys.executable, "-c", "pass"], tmp_path)
+            return GS._default_run_gate(probe, timeout=30)
+
+        result = GS.gate_sweep(
+            repo_root=str(tmp_path), git_runner=git_runner, run_gate=real_pytest_stub_gate,
+        )
+
+        assert result["status"] == "green"

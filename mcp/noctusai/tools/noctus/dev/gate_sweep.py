@@ -75,6 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from env_bootstrap import redact_secrets_in_text, sanitize_subprocess_env
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
@@ -462,11 +463,25 @@ GateRunResult = tuple
 def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
     """Run ONE gate as its OWN subprocess; return its OWN `.returncode`
     directly. `exit_code=None` means the gate did not produce a verdict at
-    all (timeout, missing executable) — never conflated with `0`."""
+    all (timeout, missing executable) — never conflated with `0`.
+
+    🔴 ENV HYGIENE (2026-09-27) — runs with `sanitize_subprocess_env()`,
+    NOT a bare inherited `os.environ`. This process (the MCP server / CLI)
+    may have loaded real secrets from `.env` via `env_bootstrap`; CI runs
+    these exact suites from a scrubbed `env -i` (see `.github/workflows/
+    test.yml`'s Seed/Tooling Tests jobs), so an inherited-secrets
+    subprocess is a PERMANENT false-red for any test asserting "unset env
+    -> X" — the harness, not the code (`KB § PATTERNS/common/methodology-
+    execution-discipline.md` § 7). The `summary` this returns is also
+    passed through `redact_secrets_in_text` — a failing assertion line can
+    otherwise copy a live credential straight into an MCP tool result. See
+    `mcp/noctusai/env_bootstrap.py`'s module docstring for the full
+    incident."""
     start = time.time()
     try:
         proc = subprocess.run(
             spec.argv, cwd=str(spec.cwd), capture_output=True, text=True, timeout=timeout,
+            env=sanitize_subprocess_env(),
         )
     except subprocess.TimeoutExpired:
         return None, f"timeout after {timeout}s", time.time() - start
@@ -474,7 +489,10 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
         return None, f"could not run {spec.argv[0]!r}: {exc}", time.time() - start
     duration = time.time() - start
     combined = (proc.stdout or "") + (proc.stderr or "")
-    summary = _last_meaningful_line(combined) if combined.strip() else "(no output)"
+    summary = (
+        redact_secrets_in_text(_last_meaningful_line(combined))
+        if combined.strip() else "(no output)"
+    )
     return proc.returncode, summary, duration, combined
 
 
@@ -521,6 +539,11 @@ def _run_gates(
         if exit_code not in (0, None):
             suspect = _harness_suspect(output or "", exit_code)
             if suspect:
+                # `matched_line` is sliced from the RAW combined stdout/
+                # stderr (see `harness_signatures.harness_suspect`), so it
+                # is a second leak surface independent of `summary` — same
+                # redaction, same reason (module docstring, 2026-09-27).
+                suspect["matched_line"] = redact_secrets_in_text(suspect["matched_line"])
                 entry["harness_suspect"] = suspect
         results.append(entry)
     return results
