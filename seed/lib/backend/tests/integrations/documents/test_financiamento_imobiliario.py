@@ -170,6 +170,75 @@ class TestQuadroEncontrado:
         assert f.quadro_encontrado is True
 
 
+#: An Itaú-shaped summary (P1/883, 2026-09-26) — numbered items, no "QUADRO
+#: RESUMO" title, "CREDOR: ITAÚ UNIBANCO", and a financed-amount label that
+#: CONTAINS the compra-e-venda one. Values invented; A+B+C sums to item 1.
+_ITAU_QUADRO = (
+    "INSTRUMENTO PARTICULAR DE VENDA E COMPRA DE BEM IMÓVEL, FINANCIAMENTO\n"
+    "CREDOR: ITAÚ UNIBANCO S.A.\n"
+    "3 - FINANCIAMENTO:\n"
+    "A - Valor destinado ao pagamento do preço de venda do Imóvel: R$ 400.000,00\n"
+    "B - Valor destinado ao pagamento de despesas: R$ 0,00\n"
+    "C - Valor total do financiamento (saldo devedor): R$ 412.000,00\n"
+    "1 - PREÇO DE VENDA DO IMÓVEL: Apartamento / Casa / Imóvel Comercial R$ 500.000,00\n"
+    "Valor Total R$ 500.000,00\n"
+    "A - Recursos próprios R$ 80.000,00\n"
+    "B - Recursos do FGTS R$ 20.000,00\n"
+    "C - Recursos do financiamento R$ 400.000,00\n"
+    "4 - CONDIÇÕES DO FINANCIAMENTO:\n"
+    "A - Taxa efetiva anual de juros: 11,50%\n"
+    "D - Prazo de amortização (número de prestações): 360 meses\n"
+    "E - Sistema de Amortização: SAC\n"
+    "12 - PRAZO DE CARÊNCIA PARA EXPEDIÇÃO DE INTIMAÇÃO: 30 dias\n"
+    "13 - VALOR DA AVALIAÇÃO REALIZADA E ATRIBUÍDA PARA FINS DE VENDA EM LEILÃO "
+    "PÚBLICO: Apartamento descrito no item 1 acima R$ 520.000,00\n"
+)
+
+
+class TestItauQuadro:
+    """P1/883 (2026-09-26): the label wording of the real Itaú contract."""
+
+    def test_reads_every_money_field_and_the_sum_confers(self):
+        f = parse_financiamento_imobiliario(_ITAU_QUADRO, TextSource.OCR, "contrato")
+        assert f.error is None
+        assert f.quadro_encontrado is True
+        assert f.valor_compra_venda == Decimal("500000.00")
+        assert f.valor_financiado == Decimal("400000.00")
+        assert f.valor_fgts == Decimal("20000.00")
+        assert f.valor_recursos_proprios == Decimal("80000.00")
+        assert f.valor_avaliacao == Decimal("520000.00")
+        assert "quadro_resumo_soma_divergente" not in (f.aviso or "")
+
+    def test_preco_de_venda_inside_the_financed_label_is_not_compra_venda(self):
+        """Item 3A ("Valor destinado ao pagamento do PREÇO DE VENDA DO
+        IMÓVEL") is printed BEFORE item 1 here; the longer label of the
+        other field owns that line."""
+        f = parse_financiamento_imobiliario(_ITAU_QUADRO, TextSource.OCR, "contrato")
+        assert f.rotulos["valor_compra_venda"] == "PRECO DE VENDA DO IMOVEL"
+        assert f.valor_compra_venda != f.valor_financiado
+
+    def test_saldo_devedor_is_not_the_financed_amount(self):
+        texto = _ITAU_QUADRO.replace("C - Recursos do financiamento R$ 400.000,00\n", "")
+        texto = texto.replace(
+            "A - Valor destinado ao pagamento do preço de venda do Imóvel: R$ 400.000,00\n", ""
+        )
+        f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
+        assert f.valor_financiado is None
+
+    def test_credor_names_the_bank_not_unibanco_s_a(self):
+        f = parse_financiamento_imobiliario(_ITAU_QUADRO, TextSource.OCR, "contrato")
+        assert f.rotulos["banco_nome"] == "CREDOR"
+        assert f.banco_codigo == "341"
+
+    def test_prazo_is_amortizacao_not_the_intimacao_carencia(self):
+        texto = _ITAU_QUADRO.replace(
+            "12 - PRAZO DE CARÊNCIA PARA EXPEDIÇÃO DE INTIMAÇÃO: 30 dias\n", ""
+        )
+        texto = "12 - PRAZO DE CARÊNCIA PARA EXPEDIÇÃO DE INTIMAÇÃO: 30 dias\n" + texto
+        f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
+        assert f.prazo_meses == 360
+
+
 class TestDpsTripwire:
     def test_dps_marker_short_circuits_with_no_fields(self):
         texto = (
@@ -207,6 +276,34 @@ class TestDpsTripwire:
     def test_dps_variant_questionario_de_saude(self):
         texto = "QUESTIONARIO DE SAUDE\nPergunta 1: ..."
         f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
+        assert f.error == "documento_sensivel_dps"
+
+    def test_mention_and_insurance_words_on_different_pages_is_not_a_dps(self):
+        """P1/883 (Itaú, 2026-09-26): page 7 names the DPS in the MIP clause,
+        page 8's insurance text says "doença"/"tratamento". Joined, the 5–8
+        window looked like a questionnaire that exists on no page."""
+        pagina7 = _quadro() + "\nSEGURO MIP: o DEVEDOR preencheu a Declaracao Pessoal de Saude."
+        pagina8 = "A seguradora nao cobre DOENCA preexistente nem TRATAMENTO em curso."
+        f = parse_financiamento_imobiliario(
+            pagina7 + "\n\n" + pagina8, TextSource.OCR, "contrato", paginas=[pagina7, pagina8]
+        )
+        assert f.error is None
+        assert f.quadro_encontrado is True
+
+    def test_mention_and_questionnaire_on_the_same_page_still_refuses(self):
+        pagina = "DECLARACAO PESSOAL DE SAUDE\nPESO: ... ALTURA: ...\nDOENCA? SIM ( ) NAO ( )"
+        f = parse_financiamento_imobiliario(
+            _quadro() + "\n\n" + pagina, TextSource.OCR, "contrato", paginas=[_quadro(), pagina]
+        )
+        assert f.error == "documento_sensivel_dps"
+
+    def test_a_form_title_on_any_page_still_refuses(self):
+        f = parse_financiamento_imobiliario(
+            _quadro() + "\n\nQUESTIONARIO DE SAUDE",
+            TextSource.OCR,
+            "contrato",
+            paginas=[_quadro(), "QUESTIONARIO DE SAUDE"],
+        )
         assert f.error == "documento_sensivel_dps"
 
 
@@ -430,6 +527,45 @@ class TestContratoTwoPassPageWindow:
         r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
         assert t.chamadas == [[1, 2, 3, 4]]  # pass 2 never called
         assert r.error == "documento_sensivel_dps"
+
+    @pytest.mark.asyncio
+    async def test_dps_is_judged_per_page_across_the_pass_two_window(self):
+        """P1/883: the extractor hands the parser its pages, so a mention on
+        page 7 and insurance words on page 8 no longer refuse the contract."""
+        t = self._FakeTranscriber(
+            {
+                (1, 2, 3, 4): Transcription(
+                    pages=tuple(
+                        TranscribedPage(number=n, text="nada", source=TextSource.OCR)
+                        for n in (1, 2, 3, 4)
+                    ),
+                    num_paginas=25,
+                ),
+                (5, 6, 7, 8): Transcription(
+                    pages=(
+                        TranscribedPage(number=5, text="nada", source=TextSource.OCR),
+                        TranscribedPage(number=6, text="nada", source=TextSource.OCR),
+                        TranscribedPage(
+                            number=7,
+                            text=_ITAU_QUADRO
+                            + "SEGURO MIP: a Declaracao Pessoal de Saude do DEVEDOR.",
+                            source=TextSource.OCR,
+                        ),
+                        TranscribedPage(
+                            number=8,
+                            text="Nao cobre DOENCA preexistente nem TRATAMENTO em curso.",
+                            source=TextSource.OCR,
+                        ),
+                    ),
+                    num_paginas=25,
+                ),
+            }
+        )
+        ext = LadderContratoFinanciamentoExtractor(transcriber=t)
+        r = await ext.extract(b"fake-bytes", mimetype="application/pdf")
+        assert r.error is None
+        assert r.quadro_encontrado is True
+        assert r.valor_financiado == Decimal("400000.00")
 
 
 class TestEmptyAndErrors:

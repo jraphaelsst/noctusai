@@ -128,13 +128,26 @@ _DPS_MIN_SINAIS = 2
 
 
 def _e_dps(normalizado: str) -> bool:
-    """The tripwire predicate — see `_DPS_TITULOS_FORMULARIO`."""
+    """The tripwire predicate for ONE page's text — see
+    `_DPS_TITULOS_FORMULARIO` and `_algum_dps`."""
     if any(t in normalizado for t in _DPS_TITULOS_FORMULARIO):
         return True
     if _DPS_MENCAO not in normalizado:
         return False
     sinais = sum(1 for s in _DPS_SINAIS_QUESTIONARIO if s in normalizado)
     return sinais >= _DPS_MIN_SINAIS
+
+
+def _algum_dps(text: str, paginas: Optional[Sequence[str]]) -> bool:
+    """The tripwire, judged PAGE BY PAGE when the caller has pages. A mention
+    and its questionnaire signals must sit on the SAME page — measured live on
+    deal 883 (Itaú, 2026-09-26): page 7 names the DPS in the MIP clause and
+    page 8's insurance text says "doença"/"tratamento", so a joined 5–8
+    window tripped a questionnaire that exists on no page. A real DPS prints
+    its questions on its own form page. `paginas=None` (a single image, the
+    proposta) judges the whole text as its one page."""
+    textos = paginas if paginas is not None else (text,)
+    return any(_e_dps(strip_accents_upper(t or "")) for t in textos)
 
 
 def _temper(confidence: ExtractionConfidence, source: TextSource) -> ExtractionConfidence:
@@ -204,7 +217,9 @@ def _banco_por_nome(nome: Optional[str]) -> tuple[Optional[str], Optional[str]]:
 # ─── label synonym table (as data) — the shared Quadro Resumo vocabulary ──
 
 _ROTULOS: dict[str, tuple[str, ...]] = {
-    "banco_nome": ("BANCO", "INSTITUICAO FINANCEIRA", "AGENTE FINANCEIRO"),
+    #: "CREDOR" first: Itaú prints "CREDOR: ITAÚ UNIBANCO S.A." and a bare
+    #: "BANCO" would match inside "UNIBANCO" (883, measured).
+    "banco_nome": ("CREDOR", "BANCO", "INSTITUICAO FINANCEIRA", "AGENTE FINANCEIRO"),
     "numero_contrato": ("NUMERO DO CONTRATO", "CONTRATO NO", "N DO CONTRATO"),
     "numero_proposta": ("NUMERO DA PROPOSTA", "PROPOSTA NO", "N DA PROPOSTA"),
     "data_documento": ("DATA", "DATA DE EMISSAO", "DATA DO CONTRATO"),
@@ -212,16 +227,29 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
         "VALOR DE COMPRA E VENDA",
         "VALOR DA COMPRA E VENDA",
         "VALOR DO IMOVEL",
+        "PRECO DE VENDA DO IMOVEL",  # Itaú item 1 (883, measured)
     ),
-    "valor_avaliacao": ("VALOR DE AVALIACAO", "VALOR AVALIADO"),
-    "valor_financiado": ("VALOR FINANCIADO", "VALOR DO FINANCIAMENTO"),
+    #: Itaú item 13 — "VALOR DA AVALIAÇÃO REALIZADA E ATRIBUÍDA PARA FINS DE
+    #: VENDA EM LEILÃO PÚBLICO" (Lei 9.514 art. 24 VI: the appraisal value).
+    "valor_avaliacao": ("VALOR DE AVALIACAO", "VALOR AVALIADO", "VALOR DA AVALIACAO"),
+    #: Itaú items 1C / 3A (883, measured == the contract's financiamento
+    #: parcela). NOT "VALOR TOTAL DO FINANCIAMENTO (SALDO DEVEDOR)": that one
+    #: adds financed despesas the seller never receives.
+    "valor_financiado": (
+        "VALOR FINANCIADO",
+        "VALOR DO FINANCIAMENTO",
+        "RECURSOS DO FINANCIAMENTO",
+        "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO IMOVEL",
+    ),
     "valor_fgts": ("RECURSOS DO FGTS", "VALOR DO FGTS", "RECURSOS FGTS"),
     "valor_recursos_proprios": (
         "RECURSOS PROPRIOS",
         "VALOR DE RECURSOS PROPRIOS",
         "ENTRADA",
     ),
-    "prazo_meses": ("PRAZO", "PRAZO DE AMORTIZACAO", "PRAZO EM MESES"),
+    #: Specific first — the bare "PRAZO" also matches Itaú's "PRAZO DE
+    #: CARÊNCIA PARA EXPEDIÇÃO DE INTIMAÇÃO: 30 dias".
+    "prazo_meses": ("PRAZO DE AMORTIZACAO", "PRAZO EM MESES", "PRAZO"),
     "taxa_nominal_aa": ("TAXA NOMINAL", "TAXA NOMINAL AA", "TAXA DE JUROS NOMINAL"),
     "taxa_efetiva_aa": ("TAXA EFETIVA", "TAXA EFETIVA AA", "TAXA DE JUROS EFETIVA"),
     "sistema_amortizacao": ("SISTEMA DE AMORTIZACAO", "SISTEMA"),
@@ -235,7 +263,14 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
 }
 
 #: The Quadro Resumo's own anchor line — see `_quadro_encontrado`.
-_QUADRO_ANCHOR: tuple[str, ...] = ("QUADRO RESUMO", "RESUMO DO FINANCIAMENTO")
+#: Itaú prints no "QUADRO RESUMO" title — its summary is numbered items
+#: headed "CONDIÇÕES DO FINANCIAMENTO" (883, measured); the ≥3-fields rule in
+#: `_quadro_encontrado` still has to hold beside it.
+_QUADRO_ANCHOR: tuple[str, ...] = (
+    "QUADRO RESUMO",
+    "RESUMO DO FINANCIAMENTO",
+    "CONDICOES DO FINANCIAMENTO",
+)
 
 _CAMPOS_MONETARIOS: tuple[str, ...] = (
     "valor_compra_venda", "valor_avaliacao", "valor_financiado", "valor_fgts",
@@ -256,11 +291,21 @@ def _campo(
     KNOWN label) — see this slice's delivery note for the N=2 duplication
     this creates; a shared box-matcher module is the N=3 candidate, not
     yet, per the negociação/financiamento extraction contract's own file
-    list (only `money.py` is named as shared)."""
+    list (only `money.py` is named as shared).
+
+    An occurrence that lies INSIDE a longer label of ANOTHER field is not
+    this field's box — "PRECO DE VENDA DO IMOVEL" (compra e venda) sits
+    inside Itaú's "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO IMOVEL"
+    (financiado)."""
     for rotulo in sinonimos:
+        maiores_alheios = tuple(
+            o for o in todos_rotulos if o not in sinonimos and len(o) > len(rotulo) and rotulo in o
+        )
         for i, linha in enumerate(linhas):
             idx = linha.find(rotulo)
             if idx < 0:
+                continue
+            if _dentro_de_rotulo_maior(linha, idx, rotulo, maiores_alheios):
                 continue
             resto = linha[idx + len(rotulo) :].lstrip(" :").rstrip()
             corte = len(resto)
@@ -284,6 +329,21 @@ def _campo(
                     return (prox, rotulo, False)
             return (None, rotulo, False)
     return (None, None, False)
+
+
+def _dentro_de_rotulo_maior(
+    linha: str, idx: int, rotulo: str, maiores: Sequence[str]
+) -> bool:
+    """Whether `rotulo` at `idx` is covered by an occurrence of one of
+    `maiores` in the same line — see `_campo`."""
+    fim = idx + len(rotulo)
+    for maior in maiores:
+        p = linha.find(maior)
+        while p >= 0:
+            if p <= idx and p + len(maior) >= fim:
+                return True
+            p = linha.find(maior, p + 1)
+    return False
 
 
 def _data_br(txt: Optional[str]) -> Optional[date]:
@@ -498,13 +558,18 @@ def _quadro_encontrado(
 
 
 def parse_financiamento_imobiliario(
-    text: str, source: TextSource, documento: Literal["contrato", "proposta"]
+    text: str,
+    source: TextSource,
+    documento: Literal["contrato", "proposta"],
+    *,
+    paginas: Optional[Sequence[str]] = None,
 ) -> FinanciamentoImobiliarioFields:
     """Text (already ladder/transcriber-read) → `FinanciamentoImobiliarioFields`.
     Pure, never raises. Shared by both readers — see the module header.
+    `paginas` — the same text's pages, one string each, so the DPS tripwire
+    judges each page on its own (`_algum_dps`); `None` ⇒ one page.
     """
-    normalizado = strip_accents_upper(text or "")
-    if _e_dps(normalizado):
+    if _algum_dps(text, paginas):
         # The DPS tripwire — no other field, no text, whichever reader
         # called this. See the module header.
         return FinanciamentoImobiliarioFields(
@@ -868,7 +933,9 @@ class LadderContratoFinanciamentoExtractor:
                 documento="contrato", error=t1.error, error_message=t1.error_message
             )
 
-        campos1 = parse_financiamento_imobiliario(t1.text, _fonte_da_transcricao(t1), "contrato")
+        campos1 = parse_financiamento_imobiliario(
+            t1.text, _fonte_da_transcricao(t1), "contrato", paginas=[p.text for p in t1.pages]
+        )
         if campos1.error == "documento_sensivel_dps":
             return campos1
 
@@ -900,7 +967,9 @@ class LadderContratoFinanciamentoExtractor:
                 campos1, paginas_lidas=pages_total, error=t2.error, error_message=t2.error_message
             )
 
-        campos2 = parse_financiamento_imobiliario(t2.text, _fonte_da_transcricao(t2), "contrato")
+        campos2 = parse_financiamento_imobiliario(
+            t2.text, _fonte_da_transcricao(t2), "contrato", paginas=[p.text for p in t2.pages]
+        )
         if campos2.error == "documento_sensivel_dps":
             return campos2
         if campos2.quadro_encontrado:
