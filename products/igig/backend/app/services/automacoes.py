@@ -137,7 +137,11 @@ class _Contexto:
     def link(self) -> str:
         if self.pipeline == "comercial":
             return f"/comercial?negocio={self.card.get('id')}"
-        return "/esteira"
+        # plat achado #10: this used to be a bare "/esteira" — the board, not
+        # the tarefa. `?tarefa=<id>` names the card; Esteira.tsx (another
+        # slice's file) still needs to READ that param and open it, the same
+        # way Comercial.tsx now reads `?negocio=`.
+        return f"/esteira?tarefa={self.card.get('id')}"
 
 
 # ── entry point: stage entry ─────────────────────────────────────────

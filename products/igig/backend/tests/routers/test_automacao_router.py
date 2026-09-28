@@ -461,6 +461,15 @@ class TestEntradaEsteira:
         assert resp.status_code == 201, resp.text
         return resp.json()
 
+    def test_notificacao_link_names_the_tarefa(self, admin, esteira, igig_db, core_db, tarefa):
+        """plat achado #10: the esteira link used to be a bare '/esteira'
+        (the board, not the card)."""
+        _regra(admin, "esteira", esteira["roteiro_em_producao"]["id"], "notificar", {})
+        admin.post(f"/api/esteira/tarefas/{tarefa['id']}/mover-etapa",
+                  json={"para_etapa_id": esteira["roteiro_em_producao"]["id"]})
+        [aviso] = _notificacoes(core_db, "automacao")
+        assert aviso["metadata"]["link"] == f"/esteira?tarefa={tarefa['id']}"
+
     def test_criar_tarefa_adds_one_on_the_same_pauta(self, admin, esteira, igig_db, tarefa):
         regra = _regra(admin, "esteira", esteira["roteiro_em_producao"]["id"], "criar_tarefa",
                        {"titulo": "Revisar roteiro de {titulo}", "prazo_dias": 1})
