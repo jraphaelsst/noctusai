@@ -137,6 +137,18 @@ async def executar_publicacao(
                 "code": "publicacao_cancelada",
             },
         )
+    if status_atual == "publicando":
+        # The in-flight claim — see `publicacao_publisher.processar_fila_publicacao`'s
+        # docstring. Closes the other half of finding #6: two overlapping
+        # `executar` calls (a double-tap, or the queue worker racing a manual
+        # click) must not both reach the publisher for the same row.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "Esta publicação já está sendo executada.",
+                "code": "publicacao_em_andamento",
+            },
+        )
 
     canal = str(publicacao["canal"])
     try:
@@ -161,6 +173,11 @@ async def executar_publicacao(
 
     pauta = repos.pauta.buscar(org_id, str(publicacao["pauta_id"]))
     pecas = repos.peca.da_pauta(org_id, str(pauta["id"]))
+
+    # Claim the row right before the actual attempt — a credential refusal
+    # above never touches the row's status, so a retry after fixing the
+    # credential still finds it `agendada`/`falhou`, not stuck `publicando`.
+    repos.publicacao.atualizar(org_id, publicacao_id, {"status": "publicando"})
 
     try:
         resultado = get_publisher(canal, token=token).publicar(

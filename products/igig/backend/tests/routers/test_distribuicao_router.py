@@ -235,6 +235,24 @@ class TestExecucao:
             f"/api/distribuicao/publicacoes/{pub['id']}/cancelar"
         ).status_code == 409
 
+    def test_cannot_execute_a_publication_already_in_flight(self, api, repos, pauta):
+        """The `publicando` claim — closes the double-execution half of
+        finding #6 (a double-tap, or a manual click racing the queue
+        worker)."""
+        pub = self._agendar(api, pauta)
+        repos.publicacao.atualizar(ORG, pub["id"], {"status": "publicando"})
+        resp = api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "publicacao_em_andamento"
+
+    def test_a_credential_refusal_does_not_strand_the_row_in_publicando(self, api, pauta):
+        """A refusal (no token / illegible token) happens BEFORE the claim —
+        the row stays retryable, never stuck."""
+        pub = self._agendar(api, pauta)
+        api.post(f"/api/distribuicao/publicacoes/{pub['id']}/executar")  # 409 canal_nao_configurado
+        ainda = api.get(f"/api/distribuicao/publicacoes?pauta_id={pauta['id']}").json()[0]
+        assert ainda["status"] == "agendada"
+
     def test_cannot_execute_a_cancelled_publication(self, api, pauta):
         """Closes the unique-index race finding #6: executing a cancelled row
         must never reach `marcar_publicada`."""
