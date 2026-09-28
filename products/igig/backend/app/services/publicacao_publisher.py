@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
+
+from noctusai_lib.integrations.persistence import iter_paged_rows
 
 from app.repositories import Repositorios
 
@@ -43,6 +45,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CANAIS",
     "CANAIS_HOMOLOGADOS",
+    "STUCK_APOS_MINUTOS",
     "PublishResult",
     "ChannelPublisher",
     "FakePublisher",
@@ -56,6 +59,8 @@ __all__ = [
     "get_publisher",
     "resolver_token",
     "processar_fila_publicacao",
+    "orgs_com_publicacao_pendente",
+    "liberar_travadas",
 ]
 
 #: Mirrors the DB CHECK on `publicacao.canal`.
@@ -67,6 +72,11 @@ CANAIS: tuple[str, ...] = ("instagram", "facebook", "tiktok", "linkedin")
 #: set; every other channel would fail every single tick with the same
 #: "ainda não homologada" message, which is pure log noise, not a finding.
 CANAIS_HOMOLOGADOS: frozenset[str] = frozenset()
+
+#: A row claimed (`status → 'publicando'`) longer than this without landing
+#: `publicada`/`falhou` is presumed orphaned by a crashed worker — see
+#: :func:`liberar_travadas`.
+STUCK_APOS_MINUTOS = 15
 
 
 class PublisherNotConfigured(RuntimeError):
@@ -340,3 +350,59 @@ async def processar_fila_publicacao(
         resumo["publicadas"] += 1
 
     return resumo
+
+
+def orgs_com_publicacao_pendente(db: Any, ate: str) -> list[str]:
+    """Every org with at least one `agendada` publicação due by `ate` — the
+    scheduler's per-org fan-out list for :func:`processar_fila_publicacao`.
+
+    `Repositorios`/`RecordStore` require an `org_id` on every call by
+    construction (the module docstring's cross-org note), so this cross-org
+    DISCOVERY step reads the raw service-role client directly — the same
+    shape `financeiro_service.atualizar_inadimplencia` and
+    `email.iter_todos_watches` use for their own daily sweeps.
+    """
+    orgs: set[str] = set()
+    for linha in iter_paged_rows(
+        lambda inicio, fim: (
+            db.table("publicacao").select("id,org_id")
+            .eq("status", "agendada").lte("agendada_para", ate)
+            .order("id").range(inicio, fim).execute().data
+        ),
+        label="igig.publicacao pendentes (fan-out)",
+    ):
+        orgs.add(str(linha["org_id"]))
+    return sorted(orgs)
+
+
+def liberar_travadas(db: Any, *, agora: datetime | None = None,
+                      minutos: int = STUCK_APOS_MINUTOS) -> int:
+    """Return publicações stuck in `publicando` for more than `minutos` back
+    to `agendada` — the worker's own crash recovery.
+
+    `processar_fila_publicacao` claims a row (`status → 'publicando'`)
+    BEFORE the network call, on purpose (see its docstring): a slow publish
+    must not be picked up twice by an overlapping tick. But nothing ever
+    un-claimed a row whose worker process died mid-publish (a deploy, an
+    OOM kill, a crash) — that publicação stayed `publicando` forever,
+    invisible to `pendentes()` and to any operator not reading logs. Cross-
+    org, same admin-client shape as every other sweep in this module;
+    `publicacao.updated_at` is bumped by the DB trigger on the CLAIM update
+    itself, so it is exactly "how long has this been claimed".
+    """
+    momento = agora or datetime.now(timezone.utc)
+    limite = (momento - timedelta(minutes=minutos)).isoformat()
+    travadas = (
+        db.table("publicacao").select("id,org_id")
+        .eq("status", "publicando").lt("updated_at", limite)
+        .execute().data or []
+    )
+    for linha in travadas:
+        db.table("publicacao").update({
+            "status": "agendada", "erro": "tentativa interrompida",
+        }).eq("id", linha["id"]).eq("org_id", linha["org_id"]).execute()
+    if travadas:
+        logger.warning(
+            "fila: %d publicação(ões) travada(s) em 'publicando' recuperada(s)", len(travadas)
+        )
+    return len(travadas)
