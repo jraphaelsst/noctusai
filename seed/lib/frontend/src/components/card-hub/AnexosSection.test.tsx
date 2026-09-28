@@ -196,6 +196,29 @@ describe("AnexosSection — a failed extraction is visible (Gap 4)", () => {
     expect(onReextrairDocumento).toHaveBeenCalledWith("d1");
   });
 
+  it.each(["ok", "sem_dados"])(
+    "a finished read (%s) stays badge-free but can be re-read (P1/883)",
+    async (status) => {
+      const doc = documento("d1", { extracao_status: status });
+      const onReextrairDocumento = vi.fn();
+      const { getByTestId, queryByTestId } = await render(
+        baseProps({ documentos: [doc], onReextrairDocumento }),
+      );
+      expect(queryByTestId("anexo-extracao-status-d1")).toBeNull();
+      const rtl = await import("@testing-library/react");
+      rtl.fireEvent.click(getByTestId("anexo-reextrair-d1"));
+      expect(onReextrairDocumento).toHaveBeenCalledWith("d1");
+    },
+  );
+
+  it("never offers a re-read for a document that was never meant to be read", async () => {
+    const doc = documento("d1", { tipo_documento: "contrato", extracao_status: null });
+    const { queryByTestId } = await render(
+      baseProps({ documentos: [doc], onReextrairDocumento: vi.fn() }),
+    );
+    expect(queryByTestId("anexo-reextrair-d1")).toBeNull();
+  });
+
   it("🔴 a long error string truncates (min-w-0) instead of forcing horizontal overflow", async () => {
     // A raw provider error can run hundreds of characters (e.g. an
     // `insufficient_quota` Anthropic body) — without `min-w-0` on this flex

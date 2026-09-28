@@ -65,6 +65,11 @@ function extracaoRotulo(status: string | null): { texto: string; tom: "lendo" | 
   return null;
 }
 
+//: A read that ran to completion — quiet (no badge), but re-runnable.
+function leituraConcluida(status: string | null): boolean {
+  return status === "ok" || status === "sem_dados";
+}
+
 export interface AnexosSectionProps {
   documentos: Documento[];
   /** The active catalogue (`GET .../documentos/tipos`) — what the picker
@@ -84,7 +89,8 @@ export interface AnexosSectionProps {
   onUpload: (file: File, tipoDocumento: string) => void;
   onOpenDocumento: (id: string) => void;
   onDeleteDocumento: (id: string, motivo: string) => void;
-  /** Re-queues a stuck/never-run extraction (`POST .../extrair`). Optional:
+  /** Re-queues an extraction (`POST .../extrair`) — a failed read, or a
+   *  finished one (`ok`/`sem_dados`) worth re-running. Optional:
    *  a caller that has not wired the mutation yet simply gets no retry
    *  affordance, never a crash. */
   onReextrairDocumento?: (id: string) => void;
@@ -271,9 +277,17 @@ export function AnexosSection({
                   </p>
                 )}
               </div>
-              {rotulo?.tom === "erro" && onReextrairDocumento && (
+              {/* A FINISHED read (`ok`/`sem_dados`) is re-runnable too: the
+                  readers improve, and delete + re-upload would destroy the
+                  document's LGPD access history (P1/883, 2026-09-28). */}
+              {(rotulo?.tom === "erro" || leituraConcluida(doc.extracao_status)) &&
+                onReextrairDocumento && (
                 <TooltipIconButton
-                  label="Tentar ler o documento novamente"
+                  label={
+                    rotulo?.tom === "erro"
+                      ? "Tentar ler o documento novamente"
+                      : "Ler o documento novamente"
+                  }
                   icon={RotateCw}
                   testId={`anexo-reextrair-${doc.id}`}
                   disabled={reextraindo}
