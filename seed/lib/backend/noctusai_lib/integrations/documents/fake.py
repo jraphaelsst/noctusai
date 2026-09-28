@@ -53,6 +53,11 @@ class FakeIdentityExtractor:
         #: The `titular` hint each call received, in call order — lets a
         #: consumer test assert it passed the card's own identity.
         self.titulares: list[Optional[TitularEsperado]] = []
+        #: The `tipo_documento` hint each call received, in call order —
+        #: lets a consumer test assert its own declared type (e.g.
+        #: `identidade_extracao_service`'s `tipo`) actually reached the
+        #: extractor, the same way `titulares` does for `titular`.
+        self.tipos_documento: list[Optional[str]] = []
 
     async def extract(
         self,
@@ -61,8 +66,10 @@ class FakeIdentityExtractor:
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
         titular: Optional[TitularEsperado] = None,
+        tipo_documento: Optional[str] = None,
     ) -> IdentityFields:
         self.titulares.append(titular)
+        self.tipos_documento.append(tipo_documento)
         self.calls.append((len(content or b""), mimetype, filename))
         if self._result is not None:
             return self._result

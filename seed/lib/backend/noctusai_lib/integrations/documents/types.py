@@ -579,6 +579,14 @@ class IdentityExtractor(Protocol):
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
         titular: Optional[TitularEsperado] = None,
+        #: The caller's OWN declared type ("rg", "cnh", "certidao_casamento",
+        #: "comprovante_endereco", ...) — a selector, like `titular`, never a
+        #: source: `legibilidade.avaliar_legibilidade` uses it to scope which
+        #: signals apply (a card's mismatch checks are meaningless on a
+        #: certidão's own extenso dates or a comprovante's legitimate
+        #: CNPJ/ICMS lines). `classify_kind`'s filename guess is the fallback
+        #: when a caller has nothing better — see `real.py`'s own comment.
+        tipo_documento: Optional[str] = None,
     ) -> IdentityFields:
         ...
 

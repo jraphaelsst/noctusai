@@ -1380,11 +1380,21 @@ async def extrair_identidade(
         # that spouse's name and CPF instead of declining both. A selector
         # only: the extractor returns a hinted value solely when the
         # document printed it.
+        #
+        # `tipo_documento=tipo` (P2 corpus, round 2, 2026-09-28) — this
+        # module is the one place that KNOWS the declared type; the
+        # extractor's own `classify_kind` filename guess is only ever
+        # RG/CPF/CNH/UNKNOWN and can never tell a certidão or comprovante
+        # apart from "unknown". Without this, `avaliar_legibilidade` had no
+        # way to scope its signals and a genuine certidão's extenso dates /
+        # cartório-footer CEP, or a comprovante's legitimate CNPJ/ICMS
+        # lines, over-fired as `comprometida`.
         return await extractor.extract(
             blob_bytes,
             mimetype=doc_row.get("mime_type"),
             filename=doc_row.get("nome_original"),
             titular=_titular_do_card(client, org_id, cliente_id),
+            tipo_documento=tipo,
         )
 
     async def _processar(fields: IdentityFields, doc_row: dict) -> dict:

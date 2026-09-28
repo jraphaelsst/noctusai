@@ -51,7 +51,7 @@ class TestLegibilidadeWiredThroughExtract:
     async def test_compromised_reading_carries_the_aviso(self):
         ladder = _Ladder(_CNH_SCREENSHOT_COMPROMETIDA)
         out = await LadderIdentityExtractor(ladder=ladder).extract(
-            b"fake-bytes", mimetype="image/jpeg"
+            b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh"
         )
         assert out.leitura_comprometida is True
         assert AVISO_LEITURA_COMPROMETIDA in (out.aviso or "").split("+")
@@ -61,7 +61,36 @@ class TestLegibilidadeWiredThroughExtract:
     async def test_clean_reading_is_not_flagged(self):
         ladder = _Ladder(_CNH_LIMPA)
         out = await LadderIdentityExtractor(ladder=ladder).extract(
-            b"fake-bytes", mimetype="image/jpeg"
+            b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh"
         )
         assert out.leitura_comprometida is False
         assert AVISO_LEITURA_COMPROMETIDA not in (out.aviso or "").split("+")
+
+    @pytest.mark.asyncio
+    async def test_classify_kind_filename_guess_is_the_fallback_when_no_tipo_hint(self):
+        """Round 2 (2026-09-28) — a caller with no declared type (no
+        `tipo_documento=`) still gets card-scoped signals when the FILENAME
+        alone is enough for `classify_kind` to guess `cnh`/`rg`/`cpf`."""
+        ladder = _Ladder(_CNH_SCREENSHOT_COMPROMETIDA)
+        out = await LadderIdentityExtractor(ladder=ladder).extract(
+            b"fake-bytes", mimetype="image/jpeg", filename="minha_cnh.jpg"
+        )
+        assert out.leitura_comprometida is True
+        assert "campo de data" in (out.aviso_mensagem or "")
+        assert AVISO_LEITURA_COMPROMETIDA in (out.aviso or "").split("+")
+
+    @pytest.mark.asyncio
+    async def test_no_hint_at_all_still_catches_the_agnostic_signal(self):
+        """Neither `tipo_documento` nor a classifiable filename — the SAFE
+        default (`ClasseDocumento.OUTRO`) skips the card-only mismatches
+        (data/CEP), but `nome_igual_filiacao` is document-agnostic and
+        still fires: the holder's own name is still identical to a
+        parent's, whatever this document turns out to be."""
+        ladder = _Ladder(_CNH_SCREENSHOT_COMPROMETIDA)
+        out = await LadderIdentityExtractor(ladder=ladder).extract(
+            b"fake-bytes", mimetype="image/jpeg"
+        )
+        assert out.leitura_comprometida is True
+        motivos = (out.aviso_mensagem or "")
+        assert "identico ao de um dos pais" in motivos
+        assert "campo de data" not in motivos

@@ -83,6 +83,7 @@ from noctusai_lib.integrations.documents.cpf import find_cpf
 from noctusai_lib.integrations.documents.gender import canonical_gender, find_gender
 from noctusai_lib.integrations.documents.legibilidade import (
     AVISO_LEITURA_COMPROMETIDA,
+    ClasseDocumento,
     LegibilidadeAvaliacao,
     LegibilidadeStatus,
     avaliar_legibilidade,
@@ -278,6 +279,7 @@ __all__ = [
     "cp1252_safe",
     "render_html_pdf",
     "AVISO_LEITURA_COMPROMETIDA",
+    "ClasseDocumento",
     "LegibilidadeAvaliacao",
     "LegibilidadeStatus",
     "avaliar_legibilidade",

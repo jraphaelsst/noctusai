@@ -77,12 +77,26 @@ from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
 from noctusai_lib.integrations.documents.types import (
     CAMPOS,
     ExtractionConfidence,
+    IdentityDocumentKind,
     IdentityFields,
     TextSource,
     TitularEsperado,
 )
 
 logger = logging.getLogger(__name__)
+
+#: `legibilidade.avaliar_legibilidade`'s `tipo_documento` FALLBACK when a
+#: caller passes none — `classify_kind`'s classification IS already one of
+#: these three strings for the cases it can tell apart at all (a filename
+#: guess, never certidão/comprovante — see that function's own docstring).
+#: `UNKNOWN` deliberately has no entry: `.get(...)` then returns `None`,
+#: which `avaliar_legibilidade` reads as "unclassified" and scopes to its
+#: safe, restricted default rather than guessing "card".
+_TIPO_DOCUMENTO_POR_KIND = {
+    IdentityDocumentKind.RG: "rg",
+    IdentityDocumentKind.CPF: "cpf",
+    IdentityDocumentKind.CNH: "cnh",
+}
 
 #: The vision prompt for rung 2, when the caller names none. Every field
 #: parser in this module is LABEL-ANCHORED (`_candidatos`'s same-line
@@ -184,6 +198,7 @@ class LadderIdentityExtractor:
         mimetype: Optional[str] = None,
         filename: Optional[str] = None,
         titular: Optional[TitularEsperado] = None,
+        tipo_documento: Optional[str] = None,
     ) -> IdentityFields:
         kind = classify_kind(mimetype, filename)
         if not content:
@@ -202,7 +217,7 @@ class LadderIdentityExtractor:
             # because retrying it is pointless.
             return IdentityFields(kind=kind, source=source)
 
-        fields = self._ler(text, source, kind, titular)
+        fields = self._ler(text, source, kind, titular, tipo_documento)
         if source is TextSource.TEXT_LAYER and not _achou_algo(fields):
             # 🔴 A TEXT LAYER THAT YIELDS NOTHING FALLS THROUGH TO VISION.
             # `classify_pdf_text_layer` judges whether a text layer is
@@ -228,7 +243,7 @@ class LadderIdentityExtractor:
                     kind=kind, source=fonte_ocr, error=err_ocr[0], error_message=err_ocr[1]
                 )
             if texto_ocr.strip():
-                return self._ler(texto_ocr, fonte_ocr, kind, titular)
+                return self._ler(texto_ocr, fonte_ocr, kind, titular, tipo_documento)
         return fields
 
     def _ler(
@@ -237,6 +252,7 @@ class LadderIdentityExtractor:
         source: TextSource,
         kind,
         titular: Optional[TitularEsperado],
+        tipo_documento: Optional[str] = None,
     ) -> IdentityFields:
         """Pure half: text + the rung that produced it -> typed fields."""
         data, data_conf, data_label = find_birthdate(text)
@@ -489,7 +505,21 @@ class LadderIdentityExtractor:
         # TO RETURN, not a raw candidate already discarded. See
         # `legibilidade.py`'s module docstring for the measured failure this
         # closes.
-        legibilidade = avaliar_legibilidade(text, nome_titular=nome)
+        #
+        # 🔴 TIPO SCOPING (P2 corpus, round 2, 2026-09-28) — the caller's OWN
+        # declared `tipo_documento` (e.g. "certidao_casamento",
+        # "comprovante_endereco") is what `avaliar_legibilidade` needs to
+        # scope its signal set correctly — a certidão's own extenso dates
+        # and cartório-footer CEP, or a comprovante's legitimate CNPJ/ICMS
+        # lines, are not defects. `kind` (`classify_kind`'s FILENAME guess)
+        # is only ever RG/CPF/CNH/UNKNOWN and is the fallback for a caller
+        # with nothing better — never a substitute when the real caller
+        # (social-wiring's `identidade_extracao_service`) already knows the
+        # declared type.
+        tipo_efetivo = tipo_documento or _TIPO_DOCUMENTO_POR_KIND.get(kind)
+        legibilidade = avaliar_legibilidade(
+            text, nome_titular=nome, tipo_documento=tipo_efetivo
+        )
         if legibilidade.comprometida:
             avisos.append((
                 AVISO_LEITURA_COMPROMETIDA,

@@ -220,6 +220,21 @@ class TestLeituraComprometidaWithholdsEverything:
         assert c.get("data_nascimento") is None
 
     @pytest.mark.asyncio
+    async def test_the_declared_tipo_is_passed_to_the_extractor(self, client, scoped):
+        """Round 2 (2026-09-28) — this module is the one place that KNOWS
+        the declared type; `legibilidade.avaliar_legibilidade` needs it to
+        scope its signals (a certidão's own extenso dates are not defects).
+        Without this, the extractor's own `classify_kind` filename guess
+        (RG/CPF/CNH/`None` only) can never tell a certidão/comprovante
+        apart from "unknown"."""
+        cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
+        fake = FakeIdentityExtractor(_alta())
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did), extractor=fake,
+        )
+        assert fake.tipos_documento == ["certidao_casamento"]
+
+    @pytest.mark.asyncio
     async def test_the_reading_still_survives_on_the_document_row(self, client, scoped):
         """Not dropped — still visible for a human on Anexos/the pessoa
         checklist, and still offered via `sugestoes_pendentes` (which reads
@@ -1230,6 +1245,13 @@ class TestDataCasamentoEDataEmissaoViaLadderReal:
         )
         assert out["status"] == "ok"
         assert out["aplicado_ao_cliente"]["data_casamento"] is True
+        # Round 2 (2026-09-28): this certidão writes its dates IN WORDS
+        # ("DOZE DE MARCO DE DOIS MIL E DEZ", "15 DE MARCO DE 2024") — a
+        # shape `campo_data_invalido` never recognised before, and this
+        # is a `certidao_casamento`, a class that signal does not even run
+        # on any more. Either fix alone would have kept this clean; both
+        # apply here.
+        assert out["leitura_comprometida"] is False
 
         row = _cliente(scoped, cid)
         assert row["data_casamento"] == "2010-03-12"

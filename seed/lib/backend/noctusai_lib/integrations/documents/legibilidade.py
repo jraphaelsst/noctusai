@@ -113,6 +113,62 @@ module did not have before:
    — `SECÇÃO DE SEGURANÇA PUBLICA DO ESTADO DE SEGURANÇA PUBLICA` restates
    "SEGURANÇA PUBLICA", the shape a model produces when it loses its place
    mid-transcription and re-reads the same phrase.
+
+🔴 ROUND 2 (2026-09-28) — SIGNALS SCOPED BY DOCUMENT KIND
+------------------------------------------------------------
+Round 1's fixes made identity CARDS (RG/CNH/CIN) measure clean, but the SAME
+signal set, run over certidões and comprovantes, over-fired badly:
+
+- `comprovante_endereco`: 8/9 flagged, almost all by `campo_incompativel_
+  documento_pessoal`. A utility bill LEGITIMATELY carries the utility
+  company's own CNPJ, ICMS/PIS/COFINS line items, and "contribuinte" text —
+  that is not a hallucination, it is what a real conta de água/luz says.
+- `certidao_casamento`: 7/13 flagged. A certidão writes dates IN WORDS
+  ("catorze de junho de dois mil e vinte e um", "Dia 15 / Mês 08 / Ano
+  2020", "aos 12 de agosto de 1980") — `campo_data_invalido` had never seen
+  anything but numeric dates. Its own cartório letterhead address block, at
+  the foot, is routinely partial/garbled in a way that has nothing to do
+  with the PERSON's identity — `cep_invalido` fired on it. Its legal
+  boilerplate repeats stock phrases by design — `texto_repetido` fired on
+  ordinary legal language, not a transcription defect.
+- A clean RG was flagged `campo_data_invalido`: its embedded CPF-card
+  section prints `Data: 08/2019` — a MONTH/YEAR, not a full date, and just
+  as legitimate.
+
+Two changes, not one bigger threshold:
+
+**(a) Every signal that depends on a document TYPE'S OWN shape is now
+scoped by `tipo_documento`** (see `_classe_documento`) into three buckets:
+- `"cartao"` (RG/CPF/CNH/CIN) — the FULL signal set from round 1.
+- `"comprovante"` — ONLY `endereco_sem_texto`, because an address comprovante
+  IS about an address (its own subject); none of the card-specific checks
+  (a comprovante has no CPF/UF/CEP-as-identity field, and DOES legitimately
+  carry a CNPJ) apply.
+- everything else (`"certidao"`, unclassified/`"outro"`) — NO type-specific
+  signal at all. A certidão's own address is the CARTÓRIO's, never the
+  document's subject, so even `endereco_sem_texto` does not apply there.
+
+Every bucket still runs the two DOCUMENT-AGNOSTIC signals — `alta_taxa_
+ilegivel` and `nome_igual_filiacao` — because neither depends on what kind
+of document this is: a document that came back mostly unreadable, or whose
+holder's name is literally identical to a parent's, is suspect regardless
+of type.
+
+`tipo_documento` is the caller's OWN declared type (`identidade_extracao_
+service`'s `tipo_documento` column value) when available — `real.py` falls
+back to its `classify_kind` filename guess (RG/CPF/CNH/`None`) when the
+caller has nothing better, which is why `real.py`'s fallback map has no
+entry for "unknown": an unclassifiable document gets the SAFE (restricted)
+bucket, never the full card set by default.
+
+**(b) The date check now accepts every date SHAPE a certidão and a CNH's
+own CPF-card section actually use, not only `DD/MM/YYYY`**: a bare
+`MM/YYYY` (`"08/2019"`), a labelled `Dia N / Mês N / Ano N` form, and any
+value naming a Portuguese month (`"JUNHO"`, `"AGOSTO"`, ...) — which covers
+both `"aos 12 de agosto de 1980"` (numerals + month name) and a fully
+written-out `"catorze de junho de dois mil e vinte e um"` (no digits at
+all: the month name alone is enough evidence this is a date, since nothing
+else would ever print a Portuguese month name under a `DATA` label).
 """
 from __future__ import annotations
 
@@ -163,6 +219,28 @@ _ROTULO_DATA = "DATA"
 #: the value" — `birthdate.find_birthdate`'s own plausibility gate is what
 #: judges whether a date THIS module found is a good one.
 _DATA_RE = re.compile(r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}")
+
+#: `08/2019` — a bare MONTH/YEAR, no day at all. A real RG's own embedded
+#: CPF-card section prints its issuance this way (measured, P2 corpus round
+#: 2, 2026-09-28) and it is just as legitimate a date as a full `DD/MM/
+#: YYYY` — this label's TYPE is still satisfied.
+_DATA_MES_ANO_RE = re.compile(r"\b\d{1,2}[/\-.]\d{4}\b")
+
+#: `Dia 15 / Mês 08 / Ano 2020` — a certidão's own labelled, split date
+#: form (values already upper-cased/accent-stripped by `normalize_lines`
+#: before this runs, so `MÊS` reads as `MES`).
+_DATA_DIA_MES_ANO_RE = re.compile(r"DIA\s*\d{1,2}.{0,15}MES\s*\d{1,2}.{0,15}ANO\s*\d{2,4}")
+
+#: Every Portuguese month name — accent-stripped, since `valor` already is
+#: by the time this runs. A certidão writes its dates IN WORDS
+#: (`"catorze de junho de dois mil e vinte e um"`, `"aos 12 de agosto de
+#: 1980"`) — no digit-shaped date ever appears at all in the fully-written-
+#: out form. A month name under a `DATA` label is sufficient evidence this
+#: is a date: nothing else legitimately prints one there.
+_MESES_EXTENSO = (
+    "JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO",
+    "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO",
+)
 
 #: A label containing this token introduces a CEP.
 _ROTULO_CEP = "CEP"
@@ -227,6 +305,50 @@ _BLOCO_FILIACAO = ("FILIACAO", "NOME DO PAI", "NOME DA MAE", "PAI", "MAE")
 #: a human looking at the whole thing, not just the flagged field.
 _ILEGIVEL_CONTAGEM_MINIMA = 2
 _ILEGIVEL_TAXA_MINIMA = 0.25
+
+#: `tipo_documento` values (case/accent-normalised) that are an identity
+#: CARD, not a certidão/comprovante/other — the ONLY bucket that runs the
+#: type-specific signal set in full. Exact match, not substring: these are
+#: closed-vocabulary single tokens (`identidade_extracao_service.
+#: TIPOS_EXTRAIVEIS`), never suffixed the way `certidao_casamento`/
+#: `comprovante_endereco` are.
+_TIPOS_CARTAO = frozenset({"RG", "CPF", "CNH", "CIN"})
+
+
+class ClasseDocumento(str, Enum):
+    """The bucket `avaliar_legibilidade` scopes its signals by — see the
+    module docstring's "ROUND 2" section for why each exists."""
+
+    #: RG / CPF / CNH / CIN — the full signal set.
+    CARTAO = "cartao"
+    #: A certidão — no type-specific signal at all (extenso dates, a
+    #: cartório-footer address, and legal boilerplate repetition are all
+    #: ordinary here, not defects).
+    CERTIDAO = "certidao"
+    #: A comprovante de endereço — ONLY `endereco_sem_texto`: the address
+    #: IS the document's own subject, but its legitimate CNPJ/ICMS content
+    #: means every OTHER type-specific signal would misfire.
+    COMPROVANTE = "comprovante"
+    #: Anything else, or nothing declared at all — the SAFE default: no
+    #: type-specific signal, same restriction as `CERTIDAO`.
+    OUTRO = "outro"
+
+
+def _classe_documento(tipo_documento: Optional[str]) -> ClasseDocumento:
+    """`tipo_documento` (the caller's declared type, or `None`) -> which
+    signal bucket applies. `None`/unrecognised -> `OUTRO`, the RESTRICTED
+    default — an unclassifiable document never silently inherits the full
+    card signal set."""
+    if not tipo_documento:
+        return ClasseDocumento.OUTRO
+    normalizado = strip_accents_upper(tipo_documento)
+    if normalizado in _TIPOS_CARTAO:
+        return ClasseDocumento.CARTAO
+    if "CERTIDAO" in normalizado:
+        return ClasseDocumento.CERTIDAO
+    if "COMPROVANTE" in normalizado:
+        return ClasseDocumento.COMPROVANTE
+    return ClasseDocumento.OUTRO
 
 
 class LegibilidadeStatus(str, Enum):
@@ -294,16 +416,51 @@ def _tem_palavra_real(valor: str, *, minimo: int = _PALAVRA_MINIMA) -> bool:
     return False
 
 
-def _mismatches_tipo(linhas: list[str]) -> list[str]:
+def _tem_data(valor: str) -> bool:
+    """Does this value contain a date, in ANY shape this document family's
+    real layouts use?
+
+    `valor` arrives already upper-cased/accent-stripped (`normalize_lines`
+    runs before any of this) — `_MESES_EXTENSO`'s entries are plain ASCII
+    for that reason. Four shapes, any one sufficient: `DD/MM/YYYY`, a bare
+    `MM/YYYY`, a certidão's labelled `DIA N / MES N / ANO N`, or a
+    Portuguese month name anywhere (covers both a numeral-plus-word date
+    like `"12 DE AGOSTO DE 1980"` and a fully written-out one with no
+    digits at all).
+    """
+    if _DATA_RE.search(valor) or _DATA_MES_ANO_RE.search(valor):
+        return True
+    if _DATA_DIA_MES_ANO_RE.search(valor):
+        return True
+    return any(mes in valor for mes in _MESES_EXTENSO)
+
+
+def _endereco_sem_texto(linhas: list[str]) -> Optional[str]:
+    """An `ENDERECO`-labelled value with no real word in it — see
+    `_tem_palavra_real`'s own comment. Standalone (not folded into
+    `_mismatches_cartao`) because `ClasseDocumento.COMPROVANTE` runs THIS
+    signal alone, without the rest of the card-only set."""
+    for linha in linhas:
+        rotulo, valor = _dividir_rotulo_valor(linha)
+        if rotulo is None or not valor or _tem_marcador_ilegivel(valor):
+            continue
+        if _ROTULO_ENDERECO in rotulo and not _tem_palavra_real(valor):
+            return "endereco_sem_texto"
+    return None
+
+
+def _mismatches_cartao(linhas: list[str]) -> list[str]:
     """Label/value TYPE mismatches — the signal that catches a confident,
     well-formed, WRONG transcription (see the module docstring's measured
-    case). Skips any value already carrying an ilegível marker: a model
+    case). CARD-ONLY (`ClasseDocumento.CARTAO`) — a certidão's own extenso
+    dates and cartório-footer address, and a comprovante's legitimate CNPJ/
+    ICMS content, are not defects; see the module docstring's "ROUND 2"
+    section. Skips any value already carrying an ilegível marker: a model
     that admits it could not read a field is a different, already-covered
     signal (`_taxa_ilegivel` below), not a second, redundant mismatch.
     """
     motivos: list[str] = []
-    viu_data_invalida = viu_cep_invalido = viu_cpf_invalido = False
-    viu_uf_invalida = viu_endereco_sem_texto = False
+    viu_data_invalida = viu_cep_invalido = viu_cpf_invalido = viu_uf_invalida = False
 
     for linha in linhas:
         rotulo, valor = _dividir_rotulo_valor(linha)
@@ -311,7 +468,7 @@ def _mismatches_tipo(linhas: list[str]) -> list[str]:
             continue
 
         if _ROTULO_DATA in rotulo and not viu_data_invalida:
-            if not _DATA_RE.search(valor):
+            if not _tem_data(valor):
                 viu_data_invalida = True
 
         if _ROTULO_CEP in rotulo and not viu_cep_invalido:
@@ -339,10 +496,6 @@ def _mismatches_tipo(linhas: list[str]) -> list[str]:
             if candidato and (len(candidato) != 2 or candidato not in UFS):
                 viu_uf_invalida = True
 
-        if _ROTULO_ENDERECO in rotulo and not viu_endereco_sem_texto:
-            if not _tem_palavra_real(valor):
-                viu_endereco_sem_texto = True
-
     if viu_data_invalida:
         motivos.append("campo_data_invalido")
     if viu_cep_invalido:
@@ -351,8 +504,6 @@ def _mismatches_tipo(linhas: list[str]) -> list[str]:
         motivos.append("cpf_invalido")
     if viu_uf_invalida:
         motivos.append("uf_invalida")
-    if viu_endereco_sem_texto:
-        motivos.append("endereco_sem_texto")
     return motivos
 
 
@@ -497,7 +648,10 @@ _SINAIS_FRACOS = frozenset({"cpf_invalido"})
 
 
 def avaliar_legibilidade(
-    text: str, *, nome_titular: Optional[str] = None
+    text: str,
+    *,
+    nome_titular: Optional[str] = None,
+    tipo_documento: Optional[str] = None,
 ) -> LegibilidadeAvaliacao:
     """Pure, deterministic readability assessment over one transcription.
 
@@ -505,21 +659,40 @@ def avaliar_legibilidade(
     `find_name` / etc. — no second read, no model call. `nome_titular` is
     optional: pass whatever the caller is about to persist as the holder's
     name to enable the filiação cross-check; omit it and every other signal
-    still runs.
+    still runs. `tipo_documento` (the caller's declared type — "rg", "cnh",
+    "certidao_casamento", "comprovante_endereco", ...) scopes WHICH
+    type-specific signals apply — see `_classe_documento`/`ClasseDocumento`
+    and the module docstring's "ROUND 2" section; omit it and only the two
+    document-agnostic signals (`alta_taxa_ilegivel`, `nome_igual_filiacao`)
+    run, the SAFE restricted default.
     """
     linhas = normalize_lines(text)
+    classe = _classe_documento(tipo_documento)
 
     motivos: list[str] = []
-    motivos += _mismatches_tipo(linhas)
+    if classe is ClasseDocumento.CARTAO:
+        motivos += _mismatches_cartao(linhas)
+        endereco = _endereco_sem_texto(linhas)
+        if endereco:
+            motivos.append(endereco)
+        incompativel = _campo_incompativel(linhas)
+        if incompativel:
+            motivos.append(incompativel)
+        repetido = _texto_repetido(linhas)
+        if repetido:
+            motivos.append(repetido)
+    elif classe is ClasseDocumento.COMPROVANTE:
+        # ONLY the address-is-the-subject signal — see `ClasseDocumento
+        # .COMPROVANTE`'s own comment for why every other card-only signal
+        # would misfire on a genuine utility bill.
+        endereco = _endereco_sem_texto(linhas)
+        if endereco:
+            motivos.append(endereco)
+    # ClasseDocumento.CERTIDAO / OUTRO: no type-specific signal at all.
+
     taxa = _taxa_ilegivel(linhas)
     if taxa:
         motivos.append(taxa)
-    incompativel = _campo_incompativel(linhas)
-    if incompativel:
-        motivos.append(incompativel)
-    repetido = _texto_repetido(linhas)
-    if repetido:
-        motivos.append(repetido)
     filiacao = _nome_igual_filiacao(linhas, nome_titular)
     if filiacao:
         motivos.append(filiacao)
@@ -542,6 +715,7 @@ def avaliar_legibilidade(
 
 __all__ = [
     "AVISO_LEITURA_COMPROMETIDA",
+    "ClasseDocumento",
     "LegibilidadeAvaliacao",
     "LegibilidadeStatus",
     "avaliar_legibilidade",
