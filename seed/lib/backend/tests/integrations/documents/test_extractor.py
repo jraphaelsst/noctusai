@@ -84,7 +84,8 @@ class TestLadder:
         """🔴 The cost + accuracy argument for the whole module."""
         resolver = _StubResolver()
         with patch(
-            "noctusai_lib.integrations.media.classify_pdf_text_layer", return_value=_camada(RG_TEXT)
+            "noctusai_lib.integrations.media.classify_pdf_text_layer",
+            return_value=_camada(RG_TEXT_COM_NOME),
         ):
             out = await _extractor(resolver).extract(
                 b"%PDF-1.4", mimetype="application/pdf", filename="rg.pdf"
@@ -93,6 +94,20 @@ class TestLadder:
         assert out.source is TextSource.TEXT_LAYER
         assert out.data_nascimento == date(1980, 5, 12)
         assert out.data_nascimento_confianca is ExtractionConfidence.ALTA
+
+    @pytest.mark.asyncio
+    async def test_a_text_layer_with_only_boilerplate_dates_falls_through_to_vision(self):
+        """P2 corpus (2026-09-28): the gov.br CIN PDF's text layer carries only
+        the app's notice + a date; the identity data is an embedded image.
+        A date alone is not "found" — vision must read the page."""
+        resolver = _StubResolver()
+        with patch(
+            "noctusai_lib.integrations.media.classify_pdf_text_layer", return_value=_camada(RG_TEXT)
+        ):
+            await _extractor(resolver).extract(
+                b"%PDF-1.4", mimetype="application/pdf", filename="cin.pdf"
+            )
+        assert resolver.calls == 1
 
     @pytest.mark.asyncio
     async def test_scanned_pdf_falls_through_to_vision(self):

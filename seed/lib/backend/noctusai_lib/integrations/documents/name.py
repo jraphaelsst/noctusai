@@ -411,7 +411,10 @@ def _coleta_titulares_multiplos(
 #: value, so the label matched but the "value" began with "/ NAME AND
 #: SURNAME:" and failed the name check (P2 corpus, 2026-09-28).
 _GLOSA_BILINGUE_RE = re.compile(
-    r"\b(NOME E SOBRENOME|NOME)\s*/\s*(?:NAME AND SURNAME|SURNAME AND NAME|NAME)\b\s*"
+    # "NOME E SOBRENOME / NAME AND SURNAME / NOMBRE Y APELLIDO:" (trilingual,
+    # 2022+ CNH) and OCR-garbled glosses ("NOME / SOBRENOMEL:") — any run of
+    # "/ <label words>" between the Portuguese name label and the colon.
+    r"\b(NOME E SOBRENOME|NOME)(?:\s*/\s*[A-Z][A-Z ]{1,40}?)+\s*(?=:)"
 )
 
 

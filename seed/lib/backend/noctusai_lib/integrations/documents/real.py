@@ -572,12 +572,21 @@ class LadderIdentityExtractor:
 
 
 def _achou_algo(fields: IdentityFields) -> bool:
-    """Did this read find ANY field a consumer can use?"""
+    """Did this TEXT LAYER read find what the document is FOR?
+
+    A text layer that only carries boilerplate must fall through to vision.
+    Measured on the P2 corpus (2026-09-28): the gov.br CIN PDF's text layer
+    holds only the app's legal notice ("Compartilhado pelo aplicativo
+    gov.br…", a date, "Decreto nº …") while the identity data sits in an
+    embedded image — an incidental date/emission read counted as "found
+    something", vision never ran, and the CIN came back empty. A date alone
+    (birth/emission) is not enough; the read must carry a core identity field
+    (nome/CPF/RG), an address, the spouses, or an estado civil."""
     return (
-        any(fields.presente(c) for c in CAMPOS)
-        or fields.data_emissao is not None
+        any(fields.presente(c) for c in ("nome", "cpf", "rg"))
         or fields.endereco is not None
         or bool(fields.conjuges)
+        or fields.presente("estado_civil")
     )
 
 

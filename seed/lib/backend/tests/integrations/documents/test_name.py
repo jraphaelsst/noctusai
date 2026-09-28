@@ -712,3 +712,13 @@ class TestBilingualCnhLabel:
     def test_bilingual_label_reads_the_name(self) -> None:
         texto = "CARTEIRA NACIONAL DE HABILITAÇÃO\n2. NOME E SOBRENOME / NAME AND SURNAME: FULANO DE TAL SANTOS\n"
         assert find_name(texto)[0] == "FULANO DE TAL SANTOS"
+
+
+class TestMultilingualAndGarbledNameGloss:
+    def test_trilingual(self) -> None:
+        texto = "CARTEIRA NACIONAL DE HABILITAÇÃO\n2. NOME E SOBRENOME / NAME AND SURNAME / NOMBRE Y APELLIDO: FULANO DE TAL SANTOS\n"
+        assert find_name(texto)[0] == "FULANO DE TAL SANTOS"
+
+    def test_ocr_garbled_gloss(self) -> None:
+        texto = "CARTEIRA NACIONAL DE HABILITAÇÃO\n2. NOME / SOBRENOMEL: FULANO DE TAL SANTOS\n"
+        assert find_name(texto)[0] == "FULANO DE TAL SANTOS"
