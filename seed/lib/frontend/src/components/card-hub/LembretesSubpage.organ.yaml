@@ -1,0 +1,79 @@
+name: LembretesSubpage
+path: seed/lib/frontend/src/components/card-hub/LembretesSubpage.tsx
+phase: pilot-seed
+registered_at: '2026-09-28'
+validation_status: emerging
+known_facts:
+- 'The card-hub `lembretes` table (migration 019/056), its wire types
+  (`ProximoLembrete`/`CardDatas`) and the scheduler delivery drain
+  (`app/services/notificacoes.py::processar_lembretes_pendentes`, igig)
+  shipped with NO create/list/edit/delete surface — this organ is that
+  surface. Backend twin: `noctusai_lib.domain.card_hub.services`
+  (`list_lembretes`/`create_lembrete`/`update_lembrete`/`delete_lembrete`),
+  gated behind the NEW opt-in `CardHubConfig.lembretes_crud` flag (default
+  `False`) so social-wiring''s already-shipped `lembretes` table stays
+  column-for-column pinned by `test_template_columns_equal_sw_056_057_083`.'
+- 'The `lembretes` table gains two columns ONLY when `lembretes_crud=True`:
+  `titulo` (required) and an optional `responsavel_id` FK into
+  `member_source.table`. The router mounts `GET/POST .../lembretes` and
+  `PATCH/DELETE .../lembretes/{id}` ONLY behind the same flag — a 404 for an
+  unopted-in product, never a raw missing-column DB error.'
+- '"Concluído" is `enviado_em IS NOT NULL` — the SAME column the scheduler''s
+  drain sets on delivery. A user-completed reminder is therefore
+  indistinguishable from a delivered one (both mean "no longer needs
+  attention"), and the scheduler''s own `enviado_em IS NULL` pending query
+  already treats a user-completed row as done — no second "done" column, no
+  redelivery.'
+- 'Data/hora is a `datetime-local` value SENT AS A NAIVE ISO STRING (no browser
+  timezone conversion, no forced `-03:00` suffix) — the seed backend
+  (`_normalize_dispara_em`) already treats a naive `dispara_em` as
+  América/São Paulo wall-clock (Brazil has carried no DST since 2019, so this
+  is a fixed offset going forward, not a tz-database lookup). Display + the
+  edit form''s pre-fill DO need `Intl.DateTimeFormat(..., {timeZone:
+  "America/Sao_Paulo"})` (`format.ts`: `dataHoraLocalParaIsoSP` /
+  `isoParaDataHoraLocalSP` / `formatarDataHoraSP`), since the stored value
+  comes back UTC.'
+- 'Only ONE delivery channel exists (an in-app `public.notifications` row via
+  `notificacoes.notificar`) — no "canal" picker in the form; a channel choice
+  would be a UI lie about a capability the backend does not have.'
+- 'Presentational only, same contract as the rest of `card-hub/**`: the
+  product''s hook (igig: `useLembretesSubpage`) owns data + mutations; this
+  file owns only how it looks. Mounted as its OWN `CardSubpage` tab (not a
+  `GeralSubpage` section) — reminders are a distinct working surface from
+  notas/checklists/anexos, matching the rail''s "distinct job at a distinct
+  moment" rationale (`CardSidebarNav`).'
+- 'Consumer #1 = igig (`CARD_HUB_CLIENTE`/`CARD_HUB_NEGOCIO`,
+  `lembretes_crud=True`, mounted on both the cliente and negócio cards).
+  Consumer #2 (deferred, owner decision): social-wiring keeps the flag OFF —
+  its card-hub suites stay green with zero new routes/columns; the "Datas"
+  section''s single Trello-style reminder (`lembrete_minutos_antes`) is
+  UNCHANGED and untouched by this organ.'
+errors_encountered:
+- 'A naive Postgres `.order("dispara_em")` on the FAKE mock is a no-op (only
+  validates the column exists) — `list_lembretes` sorts the fetched rows in
+  Python explicitly rather than trusting the backend to have returned them
+  ordered, so the mock and a real Postgres agree.'
+drifts_surfaced:
+- 'social-wiring''s `agendamentos_service` still writes the generic
+  `lembretes` table through its OWN cancel/reschedule mechanic
+  (`sync_lembrete`/`cancelar_lembretes`, unrelated to this CRUD) — this
+  organ''s `list_lembretes` excludes any `cancelado_em` row for exactly that
+  reason, so a future SW-side consumer of this CRUD would not resurrect a
+  superseded reminder from that other mechanic.'
+alternatives_considered:
+- 'A full-screen confirm `Dialog` for delete — rejected: a subpage renders
+  inside the card''s own scroll area with no sheet chrome to host a THIRD
+  competing modal on a 360px phone; a two-tap "Excluir" → "Confirmar
+  exclusão?" row action meets the same confirmation requirement without it.'
+- 'A `canal` field on the create form (per the original ask, "canal if the
+  delivery supports it") — rejected once `notificacoes.py` was read: only one
+  channel (in-app) exists, so a picker would offer a choice the backend
+  cannot honour.'
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

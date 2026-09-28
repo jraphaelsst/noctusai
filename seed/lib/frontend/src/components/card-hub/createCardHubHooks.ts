@@ -51,6 +51,7 @@ import type {
   Documento,
   DocumentoUrlResponse,
   ItemsEnvelope,
+  Lembrete,
   Membro,
   Nota,
   NotaTipo,
@@ -117,6 +118,7 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
     /** Prefix of every timeline query of one card (all `kinds` filters). */
     timelineAll: (id: string) => [...ROOT_KEY, id, "timeline"] as const,
     membros: (id: string) => [...ROOT_KEY, id, "membros"] as const,
+    lembretes: (id: string) => [...ROOT_KEY, id, "lembretes"] as const,
     checklists: (id: string) => [...ROOT_KEY, id, "checklists"] as const,
     checklistExtras: (id: string) => [...ROOT_KEY, id, "checklist-extras"] as const,
     documentos: (id: string) => [...ROOT_KEY, id, "documentos"] as const,
@@ -304,6 +306,55 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
           qc.invalidateQueries({ queryKey: keys.membros(id) }),
         ]),
     });
+  }
+
+  // ─── Lembretes (ad-hoc CRUD, `lembretes_crud` opt-in) ───────────────────
+
+  function useLembretes(id: string | null) {
+    return useQuery({
+      queryKey: keys.lembretes(id ?? "__none__"),
+      queryFn: async () => {
+        const res = await api.get<ItemsEnvelope<Lembrete>>(`${entityBase(id as string)}/lembretes`);
+        return res?.items ?? [];
+      },
+      enabled: !!id,
+    });
+  }
+
+  /**
+   * NOT optimistic (like `useChecklistExtraMutations`): create/edit/delete
+   * each touch a server-assigned row the badges/timeline never derive from,
+   * so a narrow invalidate of the lembretes list alone is enough — no
+   * snapshot to roll back if the request fails.
+   */
+  function useLembreteMutations(id: string) {
+    const qc = useQueryClient();
+    const base = `${entityBase(id)}/lembretes`;
+    const invalidate = () => qc.invalidateQueries({ queryKey: keys.lembretes(id) });
+
+    const criar = useMutation({
+      mutationFn: (body: { titulo: string; dispara_em: string; responsavel_id?: string | null }) =>
+        api.post<Lembrete>(base, body),
+      onSuccess: invalidate,
+    });
+
+    const atualizar = useMutation({
+      mutationFn: ({
+        lembreteId,
+        body,
+      }: {
+        lembreteId: string;
+        body: { titulo?: string; dispara_em?: string; responsavel_id?: string | null; concluido?: boolean };
+      }) => api.patch<Lembrete>(`${base}/${encodeURIComponent(lembreteId)}`, body),
+      onSuccess: invalidate,
+    });
+
+    const remover = useMutation({
+      mutationFn: (lembreteId: string) => api.delete(`${base}/${encodeURIComponent(lembreteId)}`),
+      onSuccess: invalidate,
+    });
+
+    return { criar, atualizar, remover };
   }
 
   // ─── Checklists ──────────────────────────────────────────────────────────
@@ -640,6 +691,8 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
     useSetTagsMutation,
     useCardMembros,
     useSetMembrosMutation,
+    useLembretes,
+    useLembreteMutations,
     useChecklists,
     useChecklistMutations,
     useDocumentos,

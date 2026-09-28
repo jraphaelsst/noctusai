@@ -106,6 +106,47 @@ export interface DatasPatchBody {
   recorrencia?: Recorrencia;
 }
 
+// ─── Lembretes (ad-hoc CRUD, `lembretes_crud` opt-in — igig) ────────────────
+//
+// A DIFFERENT surface from `ProximoLembrete`/`DatasPatchResponse` above: those
+// describe the SINGLE fire the Datas section's `lembrete_minutos_antes`
+// materialises; this is the full "Lembretes" subpage — many reminders per
+// card, user-titled, editable, completable, deletable
+// (`noctusai_lib.domain.card_hub.services.list_lembretes` et al).
+
+export interface Lembrete {
+  id: string;
+  titulo: string;
+  /** UTC ISO — always normalised server-side, even when the create/edit
+   *  payload carried a wall-clock América/São Paulo offset. */
+  dispara_em: string;
+  responsavel: Membro | null;
+  /** Mirrors `enviado_em`: set by the scheduler's delivery drain OR by a
+   *  direct "marcar como concluído" action — both mean "handled". */
+  concluido: boolean;
+  concluido_em: string | null;
+  created_at: string;
+}
+
+export type LembretesResponse = ItemsEnvelope<Lembrete>;
+
+export interface LembreteCreateBody {
+  titulo: string;
+  /** ISO datetime, WITH an explicit offset — the organ always sends
+   *  América/São Paulo's fixed `-03:00` (Brazil has carried no DST since
+   *  2019), so a naive value is never handed to the wire. */
+  dispara_em: string;
+  responsavel_id?: string | null;
+}
+
+export interface LembreteUpdateBody {
+  titulo?: string;
+  dispara_em?: string;
+  /** `null` clears the assignment; an ABSENT key leaves it untouched. */
+  responsavel_id?: string | null;
+  concluido?: boolean;
+}
+
 // ─── Checklists (D11 — both halves) ────────────────────────────────────────
 
 export type ChecklistOrigem = "ad_hoc" | "etapa";

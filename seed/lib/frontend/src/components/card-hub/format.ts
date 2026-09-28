@@ -51,6 +51,57 @@ export function formatarDataISO(iso: string): string {
  * an expired signed URL between mint and click) still opens the file in a
  * new tab rather than leaving the click looking like it did nothing.
  */
+/**
+ * ─── Lembretes: `<input type="datetime-local">` ↔ América/São Paulo ────────
+ *
+ * Brazil has carried no DST since 2019, so América/São Paulo is a fixed
+ * UTC-3 offset going forward — no `Intl` timezone-database round trip is
+ * needed to anchor a wall-clock reading to it.
+ */
+
+/**
+ * A `datetime-local` value ("YYYY-MM-DDTHH:mm", no timezone of its own) →
+ * the naive ISO string the wire sends. Deliberately NOT converted through
+ * the browser's own timezone (`new Date(valor).toISOString()` would read a
+ * traveling operator's device clock, not the agency's business timezone) —
+ * the seed backend (`card_hub.services._normalize_dispara_em`) already
+ * treats a naive `dispara_em` as América/São Paulo wall-clock, so this is a
+ * plain string append, not a conversion.
+ */
+export function dataHoraLocalParaIsoSP(valor: string): string {
+  return `${valor}:00`;
+}
+
+/**
+ * Stored UTC ISO → the `datetime-local` value showing that instant AS SEEN
+ * in América/São Paulo (for pre-filling the edit form).
+ */
+export function isoParaDataHoraLocalSP(iso: string): string {
+  const partes = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(iso));
+  const v = Object.fromEntries(partes.map((p) => [p.type, p.value]));
+  return `${v.year}-${v.month}-${v.day}T${v.hour}:${v.minute}`;
+}
+
+/** Stored UTC ISO → `"DD/MM/AAAA, HH:mm"` in América/São Paulo, for display. */
+export function formatarDataHoraSP(iso: string): string {
+  return new Date(iso).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export async function baixarArquivo(url: string, nomeArquivo: string): Promise<void> {
   try {
     const resp = await fetch(url);

@@ -43,6 +43,9 @@ export type { DescricaoSectionProps } from "./DescricaoSection";
 export { ChecklistsSection, ChecklistBlock } from "./ChecklistsSection";
 export type { ChecklistsSectionProps, ChecklistBlockProps } from "./ChecklistsSection";
 
+export { LembretesSubpage } from "./LembretesSubpage";
+export type { LembretesSubpageProps } from "./LembretesSubpage";
+
 export { ComentarioComposer } from "./ComentarioComposer";
 export type { ComentarioComposerProps } from "./ComentarioComposer";
 
@@ -68,7 +71,14 @@ export type { MembrosPopoverProps } from "./popovers/MembrosPopover";
 export { ChecklistDialog } from "./popovers/ChecklistDialog";
 export type { ChecklistDialogProps } from "./popovers/ChecklistDialog";
 
-export { formatBytes, formatarDataISO, baixarArquivo } from "./format";
+export {
+  formatBytes,
+  formatarDataISO,
+  baixarArquivo,
+  dataHoraLocalParaIsoSP,
+  isoParaDataHoraLocalSP,
+  formatarDataHoraSP,
+} from "./format";
 
 export { useSheetLayout, SHEET_MEDIA_QUERY } from "./useSheetLayout";
 
