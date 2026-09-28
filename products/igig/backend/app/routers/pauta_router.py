@@ -151,6 +151,7 @@ async def remover_pauta(
     confirmar_perda_horas: bool = False,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
 ) -> dict:
     """Delete a pauta. Cascades to its tarefas, apontamentos and peças.
 
@@ -158,6 +159,11 @@ async def remover_pauta(
     apontamentos and `confirmar_perda_horas` was not sent — the confirm
     dialog used to warn about nothing (achado 4: deleting a pauta silently
     took every hour logged on its tarefas with it).
+
+    Every peça's STORAGE OBJECT is deleted too, the same as `remover_peca`
+    does one at a time — the DB row cascades via `ON DELETE CASCADE`, but
+    nothing ever told the bucket, so a pauta deleted whole (not peça by
+    peça) leaked its files forever (tech-lead addendum, 2026-09).
     """
     org_id = _org(auth)
     try:
@@ -177,8 +183,20 @@ async def remover_pauta(
                 mensagem_horas_perdidas(minutos, len(apontamentos)),
             ))
 
+    # Read the peças BEFORE the cascading delete removes their rows.
+    pecas = repos.peca.da_pauta(org_id, pauta_id)
+
     if not repos.pauta.remover(org_id, pauta_id):
         raise HTTPException(status_code=404, detail="Pauta não encontrada")
+
+    for peca in pecas:
+        try:
+            await storage.delete(bucket=settings.igig_storage_bucket, key=str(peca["storage_key"]))
+        except Exception:  # noqa: BLE001 — the row delete already succeeded
+            logger.exception(
+                "falha ao remover peça do armazenamento org=%s pauta=%s key=%s",
+                org_id, pauta_id, peca.get("storage_key"),
+            )
     return {"ok": True}
 
 

@@ -301,6 +301,58 @@ class TestPecas:
         assert api.delete(f"/api/pautas/{pauta_b['id']}/pecas/{peca['id']}").status_code == 404
 
 
+class TestExcluirPautaLimpaArmazenamento:
+    """Deleting a WHOLE pauta must clean up every peça's storage object too —
+    the DB row cascades via `ON DELETE CASCADE`, but nothing told the bucket
+    (tech-lead addendum, 2026-09). `remover_peca` (one at a time) already did
+    this; `remover_pauta` did not."""
+
+    @pytest.fixture
+    def api_pinned(self, client, repos):
+        """Same as the file's `api` fixture, but with ONE `FakeStorageBackend`
+        instance pinned across every request in the test — the default `api`
+        fixture hands a FRESH one to each request, so there is no way to
+        inspect it after the fact."""
+        from app.main import app
+        from app.storage import get_storage
+
+        backend = FakeStorageBackend()
+        app.dependency_overrides[get_repositorios] = lambda: repos
+        app.dependency_overrides[get_repositorios_admin] = lambda: repos
+        app.dependency_overrides[get_storage] = lambda: backend
+        yield client, backend
+        app.dependency_overrides.pop(get_repositorios, None)
+        app.dependency_overrides.pop(get_repositorios_admin, None)
+        app.dependency_overrides.pop(get_storage, None)
+
+    @staticmethod
+    def _upload(api, pauta_id, *, nome="arte.png"):
+        return api.raw().post(
+            f"/api/pautas/{pauta_id}/pecas",
+            files={"arquivo": (nome, b"\x89PNG...", "image/png")},
+            headers={"Authorization": "Bearer test-token-valid"},
+        )
+
+    def test_deleting_a_pauta_deletes_every_pecas_storage_object(self, api_pinned, cliente):
+        api, backend = api_pinned
+        pauta = _criar(api, cliente).json()
+        p1 = self._upload(api, pauta["id"], nome="a.png").json()
+        p2 = self._upload(api, pauta["id"], nome="b.png").json()
+        assert backend._blobs.get("igig", {}).get(p1["storage_key"]) is not None
+        assert backend._blobs.get("igig", {}).get(p2["storage_key"]) is not None
+
+        resp = api.delete(f"/api/pautas/{pauta['id']}")
+        assert resp.status_code == 200
+
+        assert backend._blobs.get("igig", {}).get(p1["storage_key"]) is None
+        assert backend._blobs.get("igig", {}).get(p2["storage_key"]) is None
+
+    def test_deleting_a_pauta_with_no_pecas_does_not_error(self, api_pinned, cliente):
+        api, _backend = api_pinned
+        pauta = _criar(api, cliente).json()
+        assert api.delete(f"/api/pautas/{pauta['id']}").status_code == 200
+
+
 class TestPortalMostraAPeca:
     """The Módulo 4 gap this module closes."""
 
