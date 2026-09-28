@@ -4,7 +4,7 @@
 >
 > **Regra de manutenção.** Este arquivo descreve o comportamento REAL do código. Toda mudança de página, regra, mensagem ou fluxo atualiza este guia no MESMO commit (`products/igig/backend/app/knowledge/guia-igig.md`). Um guia desatualizado faz o assistente afirmar com confiança um comportamento que não existe mais.
 >
-> **Como ler.** Capítulo 0 = visão geral, acesso, papéis, navegação, rotas, endpoints, modelo de dados, ciclo de vida, jobs, configuração, erros, IA e glossário. Capítulos 1–4 = uma especificação por página/funcionalidade, sempre com as mesmas 11 seções: 1. Propósito · 2. Acesso · 3. Layout · 4. Campos · 5. Ações · 6. Estados · 7. Regras de negócio e por quê · 8. Fluxo de dados · 9. Dependências de configuração · 10. Limitações conhecidas · 11. Perguntas frequentes.
+> **Como ler.** Capítulo 0 = visão geral, acesso, papéis, navegação, rotas, endpoints, modelo de dados, ciclo de vida, jobs, configuração, erros, IA e glossário. Capítulos 1–4 = uma especificação por página/funcionalidade, sempre com as mesmas 11 seções: 1. Propósito · 2. Acesso · 3. Layout · 4. Campos · 5. Ações · 6. Estados · 7. Regras de negócio e por quê · 8. Fluxo de dados · 9. Dependências de configuração · 10. Limitações conhecidas · 11. Perguntas frequentes. Capítulo 5 = limitações globais e itens que dependem de fornecedor ou de decisão do dono do produto.
 
 ## Sumário
 - Capítulo 0 — Plataforma (visão geral, acesso, papéis, navegação, rotas, endpoints, dados, ciclo de vida, jobs, configuração, erros, IA, glossário)
@@ -12,6 +12,7 @@
 - Capítulo 2 — Orçamentos, Produtos e Serviços, Custos, Contrato, E-mail
 - Capítulo 3 — Esteira, Calendário, Central da Marca e Cofre, Portal de Aprovação
 - Capítulo 4 — Distribuição, Financeiro, Integrações, Relatórios
+- Capítulo 5 — Limitações globais e itens dependentes de fornecedor/decisão
 
 
 ---
@@ -20,7 +21,7 @@
 
 ## IgIg — Guia da Plataforma (visão geral, acesso, papéis, navegação, rotas, API, dados, ciclo de vida, configuração, erros, IA e glossário)
 
-> Camada TRANSVERSAL do manual do IgIg. Público: (1) o assistente de ajuda do IgIg, que responde usuários a partir deste texto; (2) o dono do produto, como especificação durável. Conferido no código final do IgIg (frontend React, backend FastAPI, migrations SQL) e, onde o IgIg delega, no seed da plataforma NoctusAI. Textos entre aspas "assim" são os rótulos/mensagens EXATOS (alguns textos da plataforma base aparecem sem acento no código, ex.: "Pagina nao encontrada", "Sem permissao" — mantidos como estão). "(não confirmado no código)" marca o que não foi possível confirmar. Os guias por página são `01-comercial-clientes.md`, `02-orcamentos-contratos-custos.md`, `03-esteira-calendario-marca-portal.md` e `04-distribuicao-financeiro-integracoes.md`.
+> Camada TRANSVERSAL do manual do IgIg. Público: (1) o assistente de ajuda do IgIg, que responde usuários a partir deste texto; (2) o dono do produto, como especificação durável. Conferido no código final do IgIg (frontend React, backend FastAPI, migrations SQL) e, onde o IgIg delega, no seed da plataforma NoctusAI. Textos entre aspas "assim" são os rótulos/mensagens EXATOS (alguns textos da plataforma base aparecem sem acento no código, ex.: "Pagina nao encontrada", "Sem permissao" — mantidos como estão). "(não confirmado no código)" marca o que não foi possível confirmar. As especificações por página estão nos Capítulos 1 a 4 deste mesmo arquivo; o Capítulo 5 consolida as limitações globais.
 
 ---
 
@@ -36,11 +37,13 @@ Módulos (na ordem do menu):
 5. **Esteira** — produção: tarefas por etapa (roteiro → design → revisão → aprovação do cliente → agendamento), cronômetro de horas, link público de aprovação para o cliente.
 6. **Calendário** — pautas (conteúdos planejados) com copy, direção de vídeo e peças.
 7. **Distribuição** — agendar/publicar nas redes, métricas, BI de eficiência.
-8. **Financeiro** — fechamento do mês (faturas dos contratos ativos + excedentes), DRE por cliente, inadimplência, relatórios.
+8. **Financeiro** — fechamento do mês (faturas dos contratos ativos + excedentes), envio da fatura por e-mail, DRE por cliente, inadimplência (atualizada todo dia às 06:00), relatórios.
 9. **Integrações** — e-mail (SMTP/Gmail), fontes de lead (WAHA, Meta Lead Ads), canais de publicação.
 10. **Automações** — regras "ao entrar na etapa" e "SLA estourado" nos dois quadros.
 11. **Custos** — funções e profissionais com custo/hora (alimenta orçamento, BI e DRE).
 12. **Equipe** — contas de login e convites.
+
+Em todas as telas logadas: **Assistente IgIg**, o chat de ajuda que responde dúvidas de uso a partir deste manual (ver §13.2).
 
 Tudo é **multiempresa**: cada agência é uma **organização** e só enxerga os próprios dados.
 
@@ -49,7 +52,7 @@ Tudo é **multiempresa**: cada agência é uma **organização** e só enxerga o
 ## 2. Acesso, login, SSO, convites, organizações
 
 ### 2.1 Página pública inicial (Landing) — `/`
-Quem não está logado vê: barra com o logotipo (ícone de paleta) e "IgIg", botão "Entrar" (→ `/login`); título "O ERP da sua agência de comunicação"; botões "Começar agora" (→ `/login`) e "Conhecer NoctusAI" (site da NoctusAI); rodapé "© <ano> NoctusAI. Todos os direitos reservados.". Qualquer outro endereço interno aberto sem login redireciona para `/` e **o endereço pedido não é lembrado** (depois de entrar, é preciso navegar de novo). `/landing` também redireciona para `/`.
+Quem não está logado vê: barra com o logotipo (ícone de paleta) e "IgIg", botão "Entrar" (→ `/login`); título "O ERP da sua agência de comunicação"; botões "Começar agora" (→ `/login`) e "Conhecer NoctusAI" (site da NoctusAI); rodapé "© <ano> NoctusAI. Todos os direitos reservados.". Qualquer outro endereço interno aberto sem login redireciona para `/`, mas **o endereço pedido é lembrado**: depois de entrar na mesma aba (login direto ou retorno do SSO), a pessoa é levada de volta a ele (ex.: um link `/esteira?tarefa=<id>` recebido numa notificação ou compartilhado por um colega). O endereço fica guardado só naquela aba do navegador (`sessionStorage`), só vale para caminhos internos do próprio IgIg e é usado uma única vez; se a pessoa, depois de entrar, já estiver navegando para outra página, ele é descartado. `/landing` também redireciona para `/`.
 
 ### 2.2 Duas formas de entrar
 **A) SSO pela central NoctusAI (caminho principal).** A pessoa entra no portal NoctusAI e abre o IgIg de lá; o navegador chega em `/sso?token=...` e a tela mostra "Autenticando via NoctusAI..." até abrir o Dashboard. O portal grava no perfil a organização, o papel, a assinatura e a licença. Limite de tentativas: "Aguardando limite de requisicoes" com contagem ("Tentando novamente em:"). Falha: "Erro no login SSO" com "Tentar novamente" e "Voltar ao NoctusAI". Quem entrou por SSO vê "Voltar ao NoctusAI" no rodapé do menu.
@@ -57,7 +60,7 @@ Quem não está logado vê: barra com o logotipo (ícone de paleta) e "IgIg", bo
 **B) Login direto — `/login`.** "Entrar" / "ERP para agências de comunicação"; campos "Email" (exemplo "seu@email.com") e "Senha"; link "Esqueceu a senha?" (→ `/forgot-password`); botão "Entrar" ("Entrando..."). Validações "Email invalido", "Senha deve ter no minimo 6 caracteres". Sucesso "Login realizado com sucesso!"; erro "Erro ao entrar". Rodapé "Acesse pelo NoctusAI". Não existe "criar conta" no IgIg: contas nascem por convite ou pela central.
 
 ### 2.3 Esqueci a senha — `/forgot-password`
-"Email" → "Enviar link de recuperacao". Sucesso "Email enviado com sucesso!" ("Verifique sua caixa de entrada"); erros "Erro ao enviar email", "Erro inesperado ao enviar email"; validação "Email invalido". A redefinição é do provedor de autenticação (Supabase) (fluxo da tela de nova senha: não confirmado no código). Logado, a senha também muda pelo menu do usuário ("Nova Senha", "Confirmar Senha", "Atualizar Senha").
+"Email" → "Enviar link de recuperacao". Sucesso "Email enviado com sucesso!" ("Verifique sua caixa de entrada"); erros "Erro ao enviar email", "Erro inesperado ao enviar email"; validação "Email invalido". A redefinição é do provedor de autenticação (Supabase). O IgIg **não tem tela própria de "nova senha"** (nenhuma rota de redefinição é registrada); para onde o link do e-mail leva e se ele já abre uma sessão dependem da configuração do provedor (não confirmado no código). Logado, a senha também muda pelo menu do usuário ("Nova Senha", "Confirmar Senha", "Atualizar Senha").
 
 ### 2.4 Convites — `/accept-invite/<token>`
 1. Um Proprietário, Administrador ou Gerente convida em "Equipe" (e-mail + papel). O convite vale **7 dias**; não pode haver dois convites pendentes para o mesmo e-mail ("Ja existe um convite pendente para este email").
@@ -68,13 +71,14 @@ Regras: o e-mail do convite manda (não dá para aceitar com outro); conta já e
 
 ### 2.5 Sair, sessão, avisos
 - "Sair": avatar (canto superior direito) → ícone de saída. Quem entrou por SSO volta à central; quem entrou direto volta a `/login`.
-- A sessão é renovada automaticamente em uso; após inatividade aparece um aviso com "Continuar" (tempo exato: não confirmado no código).
+- A sessão é renovada automaticamente em uso. Após **28 minutos sem interação** aparece o aviso "Sessao expirando" — "Sua sessao sera encerrada em M:SS por inatividade." — com o botão "Continuar" (renova a sessão). Sem clique, aos **30 minutos** a sessão termina e o navegador volta para a central NoctusAI.
 - Avisos da central no topo (últimos 7 dias): "Periodo de teste expira em N dias." / "Periodo de teste expirado." / "Licenca expira em N dias." / "Licenca expirada.".
 
 ### 2.6 Organizações (multiempresa)
 - Cada agência é uma organização (`org_id`). Toda tabela de negócio tem `org_id`; o banco aplica **RLS**: só volta linha com `org_id` igual ao da função `public.current_org_id()`, que lê a tabela confiável `public.noctus_users` (nunca dados editáveis pelo usuário).
 - O servidor também filtra `org_id` em toda operação, inclusive nos caminhos com acesso de serviço (portal de aprovação, webhooks, rotinas, card hub, formulário público).
 - Não existe "trocar de organização" no IgIg. O nome da organização aparece sob "IgIg" no topo do menu (sem nome: "NoctusAI").
+- **Cliente final da plataforma** (papel de organização `membro`, reservado a clientes que se cadastram sozinhos em produtos NoctusAI voltados ao consumidor) **não enxerga nada do IgIg**: para esse papel `public.current_org_id()` responde vazio e todas as regras RLS negam acesso (migração 031). Esse papel nunca é atribuível pela tela Equipe.
 
 ---
 
@@ -85,11 +89,11 @@ Papéis de organização (rótulo na tela Equipe): "Proprietário" (`owner`), "A
 
 Grupos que o código usa:
 - **Administrador da agência** (`ADMIN_ROLES`) = Proprietário ou Administrador (ou admin da plataforma). No servidor: `exigir_admin_da_org` / `exigir_admin_do_quadro` (`app/pipelines.py`) e a checagem própria do Cofre (`marca_router`); no navegador: `useIsOrgAdmin` (só esconde o que o servidor recusaria).
-- **Pode convidar** (`MANAGE_TEAM_ROLES`) = Proprietário, Administrador, Gerente.
+- **Pode convidar** (`MANAGE_TEAM_ROLES`) = Proprietário, Administrador, Gerente — com teto: só Proprietário convida como "Proprietário"; só Proprietário ou Administrador convidam como "Administrador"; o Gerente convida nos demais papéis. O papel e a organização de quem convida/remove são lidos da tabela confiável `public.noctus_users` (nunca de dados editáveis pelo usuário), e toda leitura, convite e remoção da Equipe fica restrita à organização de quem pede.
 - **Vê páginas em desenvolvimento** (`DEV_ROLES`) = Proprietário, Desenvolvedor, Administrador.
 - Todos os demais papéis (Membro, Visualizador, Desenvolvedor, Teste, Corretor, Gerente fora do convite) são tratados como **membro comum**. **Visualizador NÃO é somente leitura** no IgIg (não há trava no código).
 
-Recusa de ação só-admin: 403, `code` `admin_obrigatorio`, com "Apenas administradores podem alterar as etapas do quadro." (editores de etapas) ou "Apenas administradores da organização podem realizar esta ação." (demais). Revelar senha do Cofre: 403 "Apenas administradores podem revelar senhas". Equipe (seed): 403 "Sem permissao para convidar" / "Sem permissao".
+Recusa de ação só-admin: 403, `code` `admin_obrigatorio`, com "Apenas administradores podem alterar as etapas do quadro." (editores de etapas) ou "Apenas administradores da organização podem realizar esta ação." (demais). Revelar senha do Cofre: 403 "Apenas administradores podem revelar senhas". Equipe (seed): 403 "Sem permissao para convidar" / "Sem permissao para convidar como <papel>" / "Sem permissao"; 400 "Papel invalido: <papel>".
 
 ### 3.2 Matriz papel × ação
 Legenda: ✅ pode; ❌ o servidor recusa; "UI" = o que a tela faz para quem não pode.
@@ -102,34 +106,36 @@ Legenda: ✅ pode; ❌ o servidor recusa; "UI" = o que a tela faz para quem não
 | **Criar/renomear/recolorir/reordenar/excluir etapas do Comercial** | ✅ | ❌ | ❌ | Cabeçalhos sem controles; sem "Configurar etapas" e "+ coluna" |
 | **Criar/renomear/recolorir/reordenar/excluir etapas da Esteira** | ✅ | ❌ | ❌ | Idem |
 | **Reatribuir papel de etapa da Esteira** ("Papéis das etapas") | ✅ | ❌ | ❌ | Painel não aparece |
+| **Reatribuir o papel "Fechado" do Comercial** ("Papéis das etapas") | ✅ | ❌ | ❌ | Painel não aparece |
 | Criar/editar/ativar clientes, marcas, acessos do Cofre (sem revelar) | ✅ | ✅ | ✅ | — |
 | **Remover cliente** (exclusão em cascata) | ✅ | ❌ | ❌ | Botão aparece; servidor recusa com 403 |
 | **Revelar senha do Cofre** | ✅ | ❌ | ❌ | Selo "Protegida" com cadeado |
 | Orçamentos (criar, versionar, PDF, enviar, aceitar, recusar, gerar pautas), contratos (gerar, marcar assinado), produtos e serviços | ✅ | ✅ | ✅ | — |
 | Custos — ver funções/profissionais | ✅ | ✅ | ✅ | — |
-| **Custos — criar/editar/remover funções e profissionais** | ✅ | ❌ | ❌ | Botões aparecem (a tela não esconde); o servidor recusa com 403 |
+| **Custos — criar/editar/remover/ativar/desativar funções e profissionais, vincular usuário** | ✅ | ❌ | ❌ | Controles escondidos: a pessoa vê as tabelas só para leitura |
 | Esteira — tarefas, cronômetro, link de aprovação; Calendário — pautas e peças | ✅ | ✅ | ✅ | — |
 | Distribuição — agendar, publicar, cancelar publicação, métricas | ✅ | ✅ | ✅ | — |
 | Financeiro — ver, criar fatura manual, adicionar item | ✅ | ✅ | ✅ | — |
-| **Financeiro — marcar fatura paga** | ✅ | ❌ | ❌ | Página Financeiro esconde; aba Financeiro do cliente mostra "Paga" e o servidor recusa com 403 |
+| **Financeiro — marcar fatura paga** | ✅ | ❌ | ❌ | Botão escondido (página Financeiro e aba Financeiro do card do cliente) |
+| **Financeiro — "Enviar fatura" / "Marcar como enviada"** | ✅ | ❌ | ❌ | Botões escondidos |
 | **Financeiro — cancelar fatura** | ✅ | ❌ | ❌ | Botão escondido |
 | **Financeiro — "Gerar competência" (fechar o mês)** | ✅ | ❌ | ❌ | "Somente administradores da agência podem fechar o mês." |
 | **Automações — criar/editar/pausar/excluir** | ✅ | ❌ | ❌ | "Somente administradores da agência podem criar ou alterar automações." |
 | Automações — ver regras e execuções | ✅ | ✅ | ✅ | — |
 | **Integrações — fontes de lead (WAHA, Meta): salvar/desconectar** | ✅ | ❌ | ❌ | Formulário desabilitado + "Somente administradores da agência podem alterar esta configuração." |
 | **Integrações — canais de publicação: conectar/desconectar** | ✅ | ❌ | ❌ | "Somente administradores da agência podem alterar este canal." |
-| **Integrações — SMTP salvar/remover; Gmail conectar/desconectar** | ✅ | ❌ | ❌ | Botões aparecem (a tela não esconde); o servidor recusa com 403 |
+| **Integrações — SMTP salvar/remover; Gmail conectar/desconectar** | ✅ | ❌ | ❌ | Formulário/botões escondidos, com "Apenas administradores da organização podem configurar o SMTP." / "Apenas administradores da organização podem conectar ou desconectar o Gmail." |
 | Integrações — testar SMTP; ver status | ✅ | ✅ | ✅ | — |
 | Equipe — ver membros | ✅ | ✅ | ✅ | — |
-| **Equipe — convidar** | ✅ | ✅ | ❌ | Sem botão "Convidar" |
+| **Equipe — convidar** | ✅ (Administrador não convida como Proprietário) | ✅ (não como Administrador/Proprietário) | ❌ | Sem botão "Convidar"; papel acima do permitido: 403 "Sem permissao para convidar como <papel>" |
 | **Equipe — ver/cancelar convites pendentes; remover membro** | ✅ | ❌ | ❌ | Sem "Convites pendentes" e sem coluna "Ações" |
 | Portal de aprovação (`/aprovar/<token>`), formulário de pré-qualificação | público (qualquer pessoa com o link) | | | — |
 
 ### 3.3 Lista completa das ações só-admin no servidor
-`exigir_admin_do_quadro` (mensagem "Apenas administradores podem alterar as etapas do quadro."): POST/PATCH/DELETE e POST `/reordenar` em `/api/comercial/pipeline/stages` e `/api/esteira/stages`.
-`exigir_admin_da_org` (mensagem "Apenas administradores da organização podem realizar esta ação."): PATCH `/api/esteira/stages/{id}/papel`; DELETE `/api/clientes/{id}`; POST/PATCH/DELETE `/api/automacoes…`; PUT/DELETE `/api/integracoes/leads/whatsapp` e `/meta`; POST/DELETE `/api/integracoes/{canal}`; PUT/DELETE `/api/integracoes/email/smtp`; GET `/api/integracoes/email/gmail/oauth/start`; DELETE `/api/integracoes/email/gmail`; POST/PATCH/DELETE `/api/custos/funcoes…` e `/api/custos/profissionais…`; POST `/api/financeiro/faturas/{id}/pagar`, `/cancelar` e `/api/financeiro/faturas/gerar-competencia`.
+`exigir_admin_do_quadro` (mensagem "Apenas administradores podem alterar as etapas do quadro."): POST/PATCH/DELETE e POST `/reordenar` em `/api/comercial/pipeline/stages` e `/api/esteira/stages`; PATCH `/api/comercial/pipeline/stages/{id}/papel` e PATCH `/api/esteira/stages/{id}/papel` (reatribuir papel).
+`exigir_admin_da_org` (mensagem "Apenas administradores da organização podem realizar esta ação."): DELETE `/api/clientes/{id}`; POST/PATCH/DELETE `/api/automacoes…`; PUT/DELETE `/api/integracoes/leads/whatsapp` e `/meta`; POST/DELETE `/api/integracoes/{canal}`; PUT/DELETE `/api/integracoes/email/smtp`; GET `/api/integracoes/email/gmail/oauth/start`; DELETE `/api/integracoes/email/gmail`; POST/PATCH/DELETE `/api/custos/funcoes…` e `/api/custos/profissionais…`; POST `/api/financeiro/faturas/{id}/pagar`, `/cancelar`, `/enviar`, `/marcar-enviada` e `/api/financeiro/faturas/gerar-competencia`.
 Checagem própria: POST `/api/marcas/acessos/{id}/revelar` ("Apenas administradores podem revelar senhas").
-Seed (Equipe): POST `/api/team/invite` (owner/admin/manager); GET/DELETE `/api/team/invitations…` e DELETE `/api/team/{user_id}` (owner/admin).
+Seed (Equipe): POST `/api/team/invite` (owner/admin/manager, com o teto de papel acima); GET/DELETE `/api/team/invitations…` e DELETE `/api/team/{user_id}` (owner/admin; só remove membros da própria organização — "Membro nao encontrado" (404) para quem não é dela; só o Proprietário remove um Proprietário: 403 "Somente o proprietario pode remover um proprietario"; ninguém remove a si mesmo: 400 "Nao pode remover a si mesmo").
 
 ---
 
@@ -164,7 +170,7 @@ Topo do menu: ícone de paleta, "IgIg" e o nome da organização. Rodapé (só S
 ### 4.3 Cabeçalho
 Botão de menu (celular); à direita: selos de IA (consentimentos pendentes e gasto de IA da organização), **sino de notificações** e **avatar**. O avatar abre: nome, papel ("Administrador" para Proprietário/Administrador, senão o rótulo do papel), "Sair", tema claro/escuro, edição de perfil ("Nome", "Email", "Telefone", "Salvar"/"Salvando..."; "Apenas administradores podem alterar o email" quando o e-mail não é editável) e troca de senha. Mensagens "Perfil atualizado com sucesso!", "Senha atualizada com sucesso!".
 
-**Sino**: notificações do usuário (mais recentes primeiro), contador de não lidas, marcar uma/todas como lidas. O IgIg gera notificações quando: o cliente aprova ou pede ajuste no portal ("Cliente aprovou: <tarefa>" / "Cliente pediu ajuste: <tarefa>"); o cliente responde por e-mail a um orçamento ("Resposta ao orçamento: <título>", link `/orcamentos?id=<id>`); uma automação "Notificar" roda (tipo `automacao`) ou um SLA estoura (tipo `sla_estourado`), com link `/comercial?negocio=<id>` ou `/esteira?tarefa=<id>`.
+**Sino**: notificações do usuário (mais recentes primeiro), contador de não lidas, marcar uma/todas como lidas. O IgIg gera notificações quando: o cliente aprova ou pede ajuste no portal ("Cliente aprovou: <tarefa>" / "Cliente pediu ajuste: <tarefa>"); o cliente responde por e-mail a um orçamento ("Resposta ao orçamento: <título>", link `/orcamentos?id=<id>`; vai para o responsável do negócio, os Proprietários **e os Administradores** da agência); uma automação "Notificar" roda (tipo `automacao`) ou um SLA estoura (tipo `sla_estourado`), com link `/comercial?negocio=<id>` ou `/esteira?tarefa=<id>` (os dois abrem o card/tarefa certo); um lembrete de card vence ("Lembrete: <nome>" — "Lembrete agendado para “<nome>”.", link `/clientes?id=<id>` ou `/comercial?negocio=<id>`; vai para os membros do card vinculados a um login em Custos, ou, sem nenhum, para os administradores). Ver §9 sobre os lembretes.
 
 ### 4.4 Visibilidade de páginas (`status_pagina`)
 Cada item do menu tem uma linha em `igig.status_pagina` (`nome_pagina` = chave da rota, `status`):
@@ -195,23 +201,23 @@ Cada item do menu tem uma linha em `igig.status_pagina` (`nome_pagina` = chave d
 | `/sso` | Retorno do SSO | Recebe o login vindo da central |
 | `/forgot-password` | Esqueci a senha | Link de recuperação |
 | `/accept-invite/<token>` | Aceitar Convite | Cria/vincula a conta do convidado |
-| `/aprovar/<token>` | Portal de aprovação (white-label) | O cliente da agência aprova ou pede ajuste de uma peça (guia 03) |
-| `/pre-qualificacao/<orgId>` | Formulário de pré-qualificação | O prospect envia seus dados; vira lead + negócio (guia 01) |
+| `/aprovar/<token>` | Portal de aprovação (white-label) | O cliente da agência aprova ou pede ajuste de uma peça (Capítulo 3) |
+| `/pre-qualificacao/<orgId>` | Formulário de pré-qualificação | O prospect envia seus dados; vira lead + negócio (Capítulo 1) |
 | `/consent`, `/consent/privacy-policy`, `/consent/terms-of-use` | Central de consentimento | Páginas legais da plataforma (seed) |
 
 ### 5.2 Internas (logado)
 | Rota | Tela | Parâmetros de URL |
 |---|---|---|
 | `/` | Dashboard | — |
-| `/comercial` | Comercial | `?negocio=<id>` abre o card do negócio (também perdido) |
+| `/comercial` | Comercial | `?negocio=<id>` abre o card do negócio (também perdido; é para onde "Novo negócio" no card do cliente leva) |
 | `/clientes` | Clientes | `?id=<id>` abre o card do cliente |
 | `/orcamentos` | Orçamentos | `?id=<id>` abre o orçamento |
 | `/produtos-servicos` | Produtos e Serviços | — |
-| `/esteira` | Esteira de Produção | `?cliente=<id>` filtra; `?tarefa=<id>` é enviado pelas notificações mas ainda não é lido |
+| `/esteira` | Esteira de Produção | `?cliente=<id>` filtra; `?tarefa=<id>` abre a tarefa (usado pelas notificações); se ela não existir mais ou estiver fora do filtro de cliente: aviso "Tarefa não encontrada — pode ter sido excluída, ou pertence a um cliente fora do filtro atual."; fechar a tarefa limpa o parâmetro |
 | `/calendario` | Calendário Editorial | `?cliente=<id>` filtra |
 | `/distribuicao` | Distribuição e Métricas | — |
 | `/financeiro` | Financeiro | — |
-| `/integracoes` | Integrações | `?gmail=ok|erro` (retorno do Google) |
+| `/integracoes` | Integrações | `?gmail=ok\|erro` (retorno do Google) |
 | `/automacoes` | Automações | — |
 | `/custos` | Custos | — |
 | `/equipe` | Equipe | — |
@@ -239,9 +245,10 @@ Base `/api` (exceto sondas `/_health` e `/_ready`). **Auth** = exige login (`Aut
 | POST `/api/team/accept` | Aceita convite | Público (ou logado) |
 | GET `/api/team/invitations` | Convites pendentes | Auth — owner/admin |
 | DELETE `/api/team/invitations/{id}` | Cancela convite | Auth — owner/admin |
-| DELETE `/api/team/{user_id}` | Remove membro (não a si mesmo) | Auth — owner/admin |
+| DELETE `/api/team/{user_id}` | Remove membro da própria organização (não a si mesmo; Proprietário só por Proprietário) | Auth — owner/admin |
+| POST `/api/ajuda/chat` | Assistente IgIg (chat de ajuda, resposta em streaming) — ver §13.2 | Auth, 20/min por pessoa |
 
-Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/api/status-paginas`, `/api/ajuda/chat` (ver §13), `/api/example`, `/api/webhooks/example` (removido nesta versão).
+Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/api/status-paginas`, `/api/example`, `/api/webhooks/example` (removido nesta versão).
 
 ### 6.2 Clientes
 | Método e caminho | Propósito | Acesso |
@@ -276,10 +283,11 @@ Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/ap
 |---|---|---|
 | GET `/api/comercial/pipeline/stages`, GET `…/opcoes` | Etapas; cores e papéis válidos | Auth |
 | POST `/api/comercial/pipeline/stages`, PATCH/DELETE `…/{stage_id}` (`?reassign_to=`), POST `…/reordenar` | Editar etapas | **Admin** |
+| PATCH `/api/comercial/pipeline/stages/{stage_id}/papel` `{papel}` | Move o papel `fechado` para esta etapa (tirando-o da anterior) ou o limpa | **Admin** |
 | GET `/api/comercial/board` | Quadro (negócios aberto + ganho) | Auth |
 | GET `/api/comercial/negocios?status=&q=` | Todos os negócios (inclui perdidos) | Auth |
 | GET `/api/comercial/negocios/{id}` | Um negócio (qualquer status) | Auth |
-| POST `/api/comercial/negocios` | Novo negócio (lead existente ou novo manual) | Auth |
+| POST `/api/comercial/negocios` | Novo negócio (lead existente ou novo manual; `cliente_id` opcional = negócio para um cliente já existente) | Auth |
 | PATCH `/api/comercial/negocios/{id}` | Título, valor, responsável | Auth |
 | POST `/api/comercial/negocios/{id}/mover-etapa` | Move; Fechado exige `orcamento_id` | Auth |
 | POST `/api/comercial/negocios/{id}/perder` | Marca perdido (motivo) | Auth |
@@ -328,7 +336,7 @@ Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/ap
 | GET `/api/pautas/calendario?…` | Pautas num período | Auth |
 | GET/POST `/api/pautas` | Todas / criar | Auth |
 | GET/PATCH `/api/pautas/{id}` | Ler/editar | Auth |
-| DELETE `/api/pautas/{id}?confirmar_perda_horas=` | Excluir (409 se há horas e não confirmou) | Auth |
+| DELETE `/api/pautas/{id}?confirmar_perda_horas=` | Excluir (409 se há horas e não confirmou); apaga também os arquivos das peças no armazenamento | Auth |
 | GET/POST `/api/pautas/{id}/pecas` | Peças (com link) / enviar (até 50 MB) | Auth |
 | DELETE `/api/pautas/{id}/pecas/{peca_id}` | Remover peça | Auth |
 
@@ -346,7 +354,7 @@ Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/ap
 | GET `/api/esteira/tarefas/{id}/apontamentos` | Horas | Auth |
 | POST `/api/esteira/tarefas/{id}/timer/iniciar` / `…/encerrar` | Cronômetro | Auth |
 | POST `/api/esteira/tarefas/{id}/link-aprovacao` | Link do cliente + mover para aprovação | Auth |
-| GET/POST `/api/esteira/aprovar/{token}` | Portal do cliente | **Público**, limitado |
+| GET/POST `/api/esteira/aprovar/{token}` | Portal do cliente (423 `portal_bloqueado` quando o bloqueio por inadimplência está ligado e se aplica) | **Público**, limitado |
 
 ### 6.9 Distribuição
 GET/POST `/api/distribuicao/publicacoes`; POST `…/publicacoes/{id}/executar`; POST `…/publicacoes/{id}/cancelar`; GET `/api/distribuicao/fila`; POST/GET `…/publicacoes/{id}/metricas`; GET `/api/distribuicao/bi/eficiencia` — todos Auth.
@@ -358,12 +366,14 @@ GET/POST `/api/distribuicao/publicacoes`; POST `…/publicacoes/{id}/executar`; 
 | GET/POST `/api/financeiro/faturas/{id}/itens` | Itens / adicionar | Auth |
 | POST `/api/financeiro/faturas/{id}/pagar` | Marcar paga | **Admin** |
 | POST `/api/financeiro/faturas/{id}/cancelar` | Cancelar fatura | **Admin** |
+| POST `/api/financeiro/faturas/{id}/enviar` | Envia a fatura por e-mail ao cliente com o PDF anexo; marca `enviada` | **Admin** |
+| POST `/api/financeiro/faturas/{id}/marcar-enviada` | Marca `enviada` sem mandar e-mail | **Admin** |
 | POST `/api/financeiro/faturas/gerar-competencia` | Fechamento do mês | **Admin** |
 | GET `/api/financeiro/resumo?competencia=` | A receber, recebido, inadimplente, MRR | Auth |
 | GET `/api/financeiro/excedentes/{competencia}` | Entregue × contratado | Auth |
 | GET `/api/financeiro/dre?competencia=` | Receita × custo real por cliente | Auth |
 | GET `/api/financeiro/inadimplentes?hoje=` | Faturas vencidas | Auth |
-| GET `/api/relatorios/{comercial|financeiro}?inicio=&fim=&formato=json|pdf|csv` | Relatório do período | Auth |
+| GET `/api/relatorios/{comercial\|financeiro}?inicio=&fim=&formato=json\|pdf\|csv` | Relatório do período | Auth |
 
 ### 6.11 Custos
 GET `/api/custos/funcoes`, GET `/api/custos/profissionais` — Auth. POST/PATCH/DELETE em `/api/custos/funcoes[/{id}]` e `/api/custos/profissionais[/{id}]` — **Admin**.
@@ -422,27 +432,28 @@ Todas as tabelas têm `id` (UUID) e `org_id`; em geral `created_at`/`updated_at`
 - **cliente** — `nome`, `nicho`, `email`, `telefone`, `status` (`prospect`/`ativo`/`inativo`/`inadimplente`), `origem`, `observacoes`, `encerrado_em`, `lead_id` (um cliente por lead), `negocio_id`, datas do card (`recorrencia` diaria/semanal/mensal/anual).
 - **marca** — `cliente_id`, `nome`, `logo_url`/`logo_key`, `paleta`, `tom_de_voz`, `termos_proibidos`, `nivel_formalidade`, `linhas_editoriais`, `personas`.
 - **acesso** — `cliente_id`, `rotulo`, `plataforma`, `url`, `usuario`, `senha_cifrada`, `observacoes`.
-- **cofre_revelacoes** (novo, migração 028) — `acesso_id`, `revelado_por`, `revelado_em`: registro permanente de cada revelação de senha.
+- **cofre_revelacoes** (migração 028) — `acesso_id`, `revelado_por`, `revelado_em`: registro permanente (só inclusão) de cada revelação de senha do Cofre.
 - **contrato** — `cliente_id`, `orcamento_id`, `numero`, `valor_mensal`, `posts_por_mes`, `valor_excedente`, `dia_vencimento` (1–31), `data_inicio`, `data_fim`, `status` (`rascunho`/`aguardando_assinatura`/`ativo`/`encerrado`), `assinado_em`, `modalidade_assinatura` (`digital`/`fisica`), `assinado_manual_em`, `documento_key`, `documento_assinado_key`, `provedor_assinatura`, `assinatura_external_id`, `link_assinatura`.
 
 ### 7.4 Produção
 - **pauta** — `cliente_id`, `marca_id`, `titulo`, `formato`, `funil` (`topo`/`meio`/`fundo`), `linha_editorial`, `copy_texto`, `direcao_video`, `canal`, `data_publicacao`, `publicado_em` (gravado quando uma publicação sai), `orcamento_item_id`, `gerada_automaticamente`.
 - **peca** — `pauta_id`, `storage_key`, `nome_arquivo`, `mime_type`, `tamanho_bytes`, `ordem`.
 - **tarefa** — `pauta_id`, `cliente_id`, `titulo`, `etapa_id`, `kanban_pos`, `responsavel_id`, `prazo`, `refacoes`, `observacao_cliente`.
-- **apontamento** — `tarefa_id`, `usuario_id`, `profissional_id`, `iniciado_em`, `encerrado_em`, `minutos`, `duracao_segundos` (novo). No máximo um cronômetro aberto por pessoa.
+- **apontamento** — `tarefa_id`, `usuario_id`, `profissional_id`, `iniciado_em`, `encerrado_em`, `minutos` (arredondado para baixo, legado), `duracao_segundos` (migração 028: duração exata em segundos; o total da Esteira, o BI de eficiência, a DRE e o relatório financeiro somam os segundos e só então convertem para horas/custo; linhas antigas sem segundos usam `minutos × 60`). No máximo um cronômetro aberto por pessoa.
 - **aprovacao** — `tarefa_id`, `token`, `expira_em` (+14 dias), `emitido_por`, `decidido_em`, `decisao` (`aprovado`/`ajuste`), `observacao`.
+- **pauta_slot_gerado** (migração 033) — `orcamento_item_id`, `slot_date`, `created_at`; único por (organização, item, dia). Registro **só de inclusão** de cada "vaga" (item recorrente × dia) para a qual uma pauta automática já foi gerada. A geração de pautas consulta este registro, e não as pautas existentes: apagar uma pauta automática ou arrastá-la para outra data **não** libera a vaga, então ela nunca é recriada sozinha.
 
 ### 7.5 Custos
 - **funcao** — `nome` (único), `custo_hora_padrao`.
 - **profissional** — `nome`, `usuario_id`, `funcao_id`, `custo_hora_override` (vazio = herda; 0 = custo zero), `ativo`.
 
 ### 7.6 Distribuição e integrações
-- **publicacao** — `pauta_id`, `canal` (`instagram`/`facebook`/`tiktok`/`linkedin`), `status` (`agendada`/`publicando`/`publicada`/`falhou`/`cancelada`), `agendada_para`, `publicada_em`, `external_id`, `permalink`, `erro`, `tentativas`.
+- **publicacao** — `pauta_id`, `canal` (`instagram`/`facebook`/`tiktok`/`linkedin`), `status` (`agendada`/`publicando`/`publicada`/`falhou`/`cancelada`), `agendada_para`, `publicada_em`, `external_id`, `permalink`, `erro` (ex.: "tentativa interrompida" quando a rotina recupera uma publicação presa em `publicando`), `tentativas`.
 - **metrica** — `publicacao_id`, `coletada_em`, `curtidas`, `comentarios`, `compartilhamentos`, `alcance`, `cliques_bio`, `visualizacoes`.
 - **integracao** — `canal` (`instagram`, `facebook`, `tiktok`, `linkedin`, `smtp`, `gmail`, `whatsapp`, `meta_leads`), `token_cifrado`, `config`, `conta_externa`, `conectado_em`, `ultimo_erro`, `ativo`. Uma por canal.
 
 ### 7.7 Financeiro
-- **fatura** — `cliente_id`, `contrato_id`, `competencia` (`AAAA-MM`), `valor_total`, `vencimento`, `status` (`aberta`/`enviada`/`paga`/`vencida`/`cancelada`), `pago_em`, `gateway_id`, `nfse_id`. Uma fatura não cancelada por contrato+competência.
+- **fatura** — `cliente_id`, `contrato_id`, `competencia` (`AAAA-MM`), `valor_total`, `vencimento`, `status` (`aberta`/`enviada`/`paga`/`vencida`/`cancelada`), `pago_em`, `enviada_em` (migração 032: data do último "Enviar fatura"/"Marcar como enviada"; um novo envio atualiza a data), `gateway_id`, `nfse_id` (sem uso: não há gateway de pagamento nem NFS-e). Uma fatura não cancelada por contrato+competência.
 - **fatura_item** — `fatura_id`, `descricao`, `tipo` (`mensalidade`/`excedente`/`desconto`/`avulso`; desconto subtrai), `quantidade`, `valor_unit`.
 
 ### 7.8 Automações
@@ -455,6 +466,7 @@ Todas as tabelas têm `id` (UUID) e `org_id`; em geral `created_at`/`updated_at`
 ### 7.10 Relações
 ```
 lead ─1:N─ negocio ─1:N─ orcamento ─1:N─ orcamento_item ─(gera)→ pauta
+                                              └─1:N─ pauta_slot_gerado (vagas já geradas)
  │            │ (fechar) cria/reusa ↓
  └─ cliente_id ─────────→ cliente ─1:N─ marca ─(opcional)→ pauta
                             ├─1:N─ acesso ─1:N─ cofre_revelacoes
@@ -466,7 +478,7 @@ lead ─1:N─ negocio ─1:N─ orcamento ─1:N─ orcamento_item ─(gera)→
 negocio/tarefa ─ etapa_id → pipeline_stages ; movimentos → pipeline_movimentos
 automacao → pipeline_stages ; automacao_execucao → pipeline_movimentos
 ```
-Excluir **cliente** apaga em cascata marcas, acessos, contratos, faturas, pautas (peças, tarefas, apontamentos, aprovações, publicações) e o card. Excluir **pauta** apaga tarefas, apontamentos, peças e publicações. Excluir **marca** não apaga pautas. Excluir **etapa** apaga as automações dela.
+Excluir **cliente** apaga em cascata marcas, acessos, contratos, faturas, pautas (peças, tarefas, apontamentos, aprovações, publicações) e o card. Excluir **pauta** apaga tarefas, apontamentos, peças (inclusive os arquivos no armazenamento) e publicações. Excluir **marca** não apaga pautas. Excluir **etapa** apaga as automações dela.
 
 ---
 
@@ -476,38 +488,43 @@ Excluir **cliente** apaga em cascata marcas, acessos, contratos, faturas, pautas
 |---|---|---|---|
 | 1 | Lead chega pelo formulário | `/pre-qualificacao/<org>` | `lead` (`origem='formulario'`, `status='novo'`, `como_conheceu`); `negocio` (`status='aberto'`, `etapa_id`=1ª etapa, `stage_entered_at`); `pipeline_movimentos` (entrada); automações da etapa |
 | 1b | … pelo WhatsApp / Meta | Webhooks | `lead` (`origem='whatsapp'`/`'meta_ads'`, `waha_chat_id`/`meta_lead_id`), `negocio`, `pipeline_movimentos`, automações |
-| 1c | … manual | Comercial → "Novo lead" | `lead` (`origem='manual'`), `negocio`, `pipeline_movimentos`, automações |
+| 1c | … manual | Comercial → "Novo lead" ("Novo contato") | `lead` (`origem='manual'`), `negocio`, `pipeline_movimentos`, automações |
+| 1d | Novo negócio para cliente existente (upsell/renovação) | Comercial → "Novo lead" → "Cliente existente", ou Clientes → card → "Novo negócio" | `lead` novo (`origem='manual'`, com nome/e-mail/telefone do cliente), `negocio` com `cliente_id` do cliente escolhido; ao fechar, o **mesmo** cliente é reaproveitado |
 | 2 | Qualificação/negociação | Arrastar no Comercial | `negocio.etapa_id`, `kanban_pos`, `stage_entered_at`; nova linha em `pipeline_movimentos`; `automacao_execucao` (+ `public.notifications`) |
 | 3 | Orçamento | Modal do orçamento | `orcamento` (`versao=1`, `status='rascunho'`, totais, `margem_estimada`); `orcamento_item` |
 | 4 | PDF e envio | "Gerar PDF", "Enviar" | `orcamento.pdf_key`; `status='enviado'`, `enviado_em`; `orcamento_email` (`out`) |
-| 5 | Resposta do lead (Gmail conectado) | Webhook Gmail | `orcamento_email` (`in`); `orcamento.respondido_em`; notificação "Resposta ao orçamento: …" + e-mail ao responsável e aos donos |
-| 6 | Fechamento (ganho) — arrastar para Fechado **ou** "Aceitar orçamento" (mesmo mecanismo) | Comercial / Orçamentos | outros orçamentos abertos → `status='substituido'`; escolhido → `status='aceito'`, `aceito_em`, `cliente_id`; `cliente` criado ou reaproveitado (`status='prospect'`, `lead_id`, `negocio_id`); `lead.status='convertido'`, `lead.cliente_id`; `negocio.status='ganho'`, `ganho_em`, `orcamento_aceito_id`, `cliente_id`; `pauta` dos próximos 30 dias (`gerada_automaticamente=true`, `orcamento_item_id`); automações da etapa Fechado |
-| 6b | Perda | "Marcar como perdido" | `negocio.status='perdido'`, `perdido_em`, `motivo_perda`, `perdido_stage_id` (reabrir volta `status='aberto'` e limpa esses campos) |
-| 7 | Pautas contínuas | Job diário 06:45 | novas `pauta` para manter 30 dias à frente de todo orçamento aceito (pausa se o orçamento tem contrato não ativo) |
+| 5 | Resposta do lead (Gmail conectado) | Webhook Gmail | `orcamento_email` (`in`); `orcamento.respondido_em`; notificação "Resposta ao orçamento: …" + e-mail ao responsável, aos Proprietários e aos Administradores |
+| 6 | Fechamento (ganho) — arrastar para Fechado **ou** "Aceitar orçamento" (mesmo mecanismo) | Comercial / Orçamentos | outros orçamentos abertos → `status='substituido'`; escolhido → `status='aceito'`, `aceito_em`, `cliente_id`; `cliente` criado ou reaproveitado (`status='prospect'`, `lead_id`, `negocio_id`); `lead.status='convertido'`, `lead.cliente_id`; `negocio.status='ganho'`, `ganho_em`, `orcamento_aceito_id`, `cliente_id`; `pauta` dos próximos 30 dias (`gerada_automaticamente=true`, `orcamento_item_id`) + uma linha em `pauta_slot_gerado` por item × dia gerado; automações da etapa Fechado |
+| 6b | Perda | "Marcar como perdido" | `negocio.status='perdido'`, `perdido_em`, `motivo_perda`, `perdido_stage_id` (reabrir volta `status='aberto'`, limpa esses campos, reinicia `stage_entered_at` e grava uma linha em `pipeline_movimentos`) |
+| 7 | Pautas contínuas | Job diário 06:45 | novas `pauta` para manter 30 dias à frente de todo orçamento aceito (pausa se o orçamento tem contrato não ativo); vagas já registradas em `pauta_slot_gerado` nunca são geradas de novo |
 | 8 | Contrato | "Contrato" no orçamento aceito | `contrato` (`status='aguardando_assinatura'`, `valor_mensal`, `posts_por_mes` = itens recorrentes de criação, `valor_excedente`, `dia_vencimento`, `data_inicio`, `documento_key`, `modalidade_assinatura`) |
 | 9a | Assinatura física | Clientes → "Marcar como assinado" | `contrato.status='ativo'`, `assinado_em`, `assinado_manual_em`, `documento_assinado_key`; `cliente.status='ativo'` |
 | 9b | Assinatura digital (hoje simulação) | Webhook de assinatura | `assinado` → `contrato.status='ativo'`, `cliente.status='ativo'`, leads `convertido`; `recusado`/`expirado` → `contrato.status='rascunho'` |
 | 10 | Marca e acessos | Clientes → Marcas | `marca`, `acesso` (`cofre_revelacoes` a cada revelação) |
 | 11 | Produção | Calendário / Esteira | `pauta.copy_texto`/`direcao_video`; `peca`; `tarefa` (1ª etapa); `apontamento` (cronômetro) |
 | 12 | Aprovação do cliente | "Gerar link de aprovação" → portal | `aprovacao` (token, 14 dias; links anteriores não respondidos invalidados); `tarefa.etapa_id` → aprovação; decisão: `aprovado` avança uma etapa; `ajuste` volta uma, `refacoes += 1`, `observacao_cliente`; notificação |
-| 13 | Distribuição | Distribuição | `publicacao` (`agendada` → `publicada` com `external_id`, ou `falhou`/recusa se canal sem token); `pauta.publicado_em`; `metrica` |
-| 14 | Fechamento do mês | Financeiro → "Gerar competência" (admin) | `fatura` (`status='aberta'`, `vencimento`=dia do contrato) + `fatura_item` "Retainer mensal" e "Excedentes de <mês anterior>"; `valor_total` recalculado |
-| 15 | Cobrança | Financeiro / Dashboard | Faturas não pagas vencidas aparecem em Inadimplência (status da fatura e do cliente **não** mudam sozinhos hoje) |
+| 13 | Distribuição | Distribuição | `publicacao` (`agendada` → `publicada` com `external_id`, ou `falhou`/recusa se canal sem token); `pauta.publicado_em`; `metrica`. A rotina da fila (a cada 5 min) hoje só ignora as agendadas — nenhum canal está homologado — e devolve para `agendada` as presas em `publicando` há mais de 15 min |
+| 14 | Fechamento do mês | Financeiro → "Gerar competência" (admin) | `fatura` (`status='aberta'`, `vencimento`=dia do contrato) + `fatura_item` "Retainer mensal" e "Excedentes de <mês anterior>" (só peças **avulsas** entregues acima do pacote; peças do plano nunca contam); `valor_total` recalculado |
+| 14b | Envio da fatura | Financeiro → "Enviar fatura" (e-mail com PDF) ou "Marcar como enviada" (admin) | `fatura.status='enviada'`, `enviada_em` |
+| 15 | Cobrança | Job diário 06:00 / Financeiro / Dashboard | Faturas `aberta`/`enviada` com vencimento anterior a hoje → `vencida`; cliente com alguma fatura vencida → `inadimplente`; cliente `inadimplente` sem nenhuma → volta a `ativo`. Com `IGIG_PORTAL_BLOQUEIO_DIAS` ligado, o portal de aprovação desse cliente fica bloqueado após N dias de atraso |
 | 16 | Pagamento | "Marcar paga" (admin) | `fatura.status='paga'`, `pago_em` (segunda marcação não sobrescreve); cancelamento: `status='cancelada'` |
 
 ---
 
 ## 9. Jobs agendados
 
-Só rodam no container implantado com `NOCTUS_SCHEDULERS_ENABLED` ligado.
+Só rodam no container implantado com `NOCTUS_SCHEDULERS_ENABLED` ligado (ambiente local e testes não rodam rotinas). Horários em horário de Brasília (São Paulo). Uma falha numa rotina fica registrada no log do servidor e não derruba as outras.
 
-| Rotina | Quando | O que faz |
-|---|---|---|
-| `igig_gmail_watch_renovar` | Todo dia 06:15 (São Paulo) | Renova a escuta das caixas Gmail (expira em até 7 dias) |
-| `igig_automacoes_sla` | A cada 15 minutos | Varre regras de SLA ativas; executa a ação e envia `sla_estourado` uma vez por entrada na etapa |
-| `igig_pautas_extensao` | Todo dia 06:45 (São Paulo) | Mantém 30 dias de pautas à frente para todo orçamento Aceito (idempotente por dia) |
+| Rotina | Quando | O que faz | O que o usuário percebe |
+|---|---|---|---|
+| `igig_financeiro_inadimplencia` | Todo dia 06:00 | Faturas `aberta`/`enviada` com vencimento **anterior a hoje** → `vencida`. Cliente com pelo menos uma fatura `vencida` → status `inadimplente`. Cliente `inadimplente` sem nenhuma fatura vencida (pagou ou a fatura foi cancelada) → volta a `ativo` | Selo "Vencida" nas faturas; cliente "Inadimplente" em Clientes e na nota do Dashboard. Entre 00:00 e 06:00 uma fatura que venceu ontem ainda aparece `aberta`/`enviada` (mas já está na lista "Inadimplência", que é calculada na hora) |
+| `igig_gmail_watch_renovar` | Todo dia 06:15 | Renova a escuta das caixas Gmail conectadas (a escuta do Google expira em até 7 dias) | Respostas de leads a orçamentos continuam sendo detectadas |
+| `igig_pautas_extensao` | Todo dia 06:45 | Mantém 30 dias de pautas à frente para todo orçamento Aceito (pausa se o orçamento tem contrato não ativo). Idempotente por dia e consulta o registro `pauta_slot_gerado`: uma pauta automática apagada ou movida de data **nunca** é recriada | Novas pautas aparecem no Calendário a cada manhã |
+| `igig_automacoes_sla` | A cada 15 minutos | Varre as regras de SLA ativas; executa a ação e envia `sla_estourado` uma vez por entrada na etapa | Notificações de SLA no sino; linhas em Automações → "Execuções recentes" |
+| `igig_publicacao_fila` | A cada 5 minutos | (1) Devolve para `agendada`, com o erro "tentativa interrompida", toda publicação presa em `publicando` há mais de 15 minutos (servidor caiu no meio do envio). (2) Processa, organização por organização, as publicações agendadas cujo horário chegou — **mas só em canais homologados, e hoje nenhum canal está homologado**: as publicações agendadas são ignoradas (continuam `agendada`, sem erro) | Hoje: nada é publicado sozinho. O botão "Publicar agora"/"Publicar" em Distribuição tenta publicar na hora, mas também termina em `falhou` ("A integração com {canal} ainda não está disponível (homologação da API pendente).") enquanto os canais não forem homologados (ver Capítulos 4 e 5). Uma publicação presa volta a aparecer como agendada |
+| `igig_lembretes_pendentes` | A cada 5 minutos | Entrega como notificação no sino todo lembrete de card (Cliente ou Negócio) cujo horário chegou, uma única vez ("Lembrete: <nome>") | Hoje o IgIg **não tem tela para criar lembretes**, então esta rotina não tem o que entregar (ver Capítulo 5) |
 
-Existem no código mas **não estão agendados** (sem efeito hoje): entrega de lembretes de card como notificação (`processar_lembretes_pendentes`) e varredura diária de inadimplência (`atualizar_inadimplencia`: marcar faturas `vencida` e clientes `inadimplente`). Não há rotina para: publicar na hora agendada (a fila existe; publicar é pelo botão), fechar o mês, cobrar inadimplentes, expirar orçamentos (acontece na leitura) ou expirar convites.
+Não há rotina para: fechar o mês ("Gerar competência" é manual), cobrar/enviar faturas automaticamente, expirar orçamentos (acontece na leitura) ou expirar convites.
 
 ---
 
@@ -516,7 +533,7 @@ Existem no código mas **não estão agendados** (sem efeito hoje): entrega de l
 ### 10.1 Servidor
 | Variável | Para que serve | Se faltar |
 |---|---|---|
-| `IGIG_COFRE_KEY` | Chave Fernet do Cofre, senha SMTP e tokens das integrações | **Obrigatória em produção: o servidor não sobe sem ela.** Fora de produção, gravar senha/token é recusado com 409 ("Cofre não configurado: defina IGIG_COFRE_KEY no ambiente. Nenhuma senha é gravada em texto puro." / "Criptografia não configurada: defina IGIG_COFRE_KEY. …"); chave inválida: 409 "IGIG_COFRE_KEY está mal configurada (não é uma chave Fernet válida). Peça ao responsável técnico para gerar uma nova chave." |
+| `IGIG_COFRE_KEY` | Chave Fernet do Cofre, senha SMTP e tokens das integrações | **Obrigatória em produção: o servidor não sobe sem ela** (checagem de inicialização `required_prod_config`). Fora de produção, gravar senha/token é recusado com 409 ("Cofre não configurado: defina IGIG_COFRE_KEY no ambiente. Nenhuma senha é gravada em texto puro." / "Criptografia não configurada: defina IGIG_COFRE_KEY. …"); chave inválida: 409 "IGIG_COFRE_KEY está mal configurada (não é uma chave Fernet válida). Peça ao responsável técnico para gerar uma nova chave." |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | Banco, autenticação, arquivos | Nada funciona |
 | `JWT_SECRET`, `SSO_JWT_SECRET`, `CORE_API_URL` | Sessão e SSO | Login falha |
 | `CORS_ORIGINS` | Domínios autorizados (padrão: registro do produto) | Navegador bloqueia chamadas |
@@ -532,9 +549,10 @@ Existem no código mas **não estão agendados** (sem efeito hoje): entrega de l
 | `GMAIL_PUSH_GCP_PROJECT`, `GMAIL_PUSH_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT` | Aviso de respostas por e-mail | Qualquer um vazio: nenhuma escuta; webhook do Gmail recusa (503); respostas não detectadas |
 | `IGIG_WAHA_WEBHOOK_HMAC_SECRET` | Assinatura extra do webhook WAHA | Mensagens aceitas sem verificar assinatura (só o token da URL protege) |
 | `IGIG_META_APP_SECRET` | App secret Meta (reserva) | Sem este e sem o da agência: entregas da Meta recusadas (401) |
-| `IGIG_PORTAL_BLOQUEIO_DIAS` | Bloqueio do portal para cliente com fatura vencida há mais de N dias (0 = desligado) | Desligado (e a lógica ainda não está ligada ao portal) |
-| Chave da Anthropic (`ANTHROPIC_API_KEY`, resolvida pela cadeia de credenciais da plataforma) | Assistente IA (e chat de ajuda) | 503 "A IA não está configurada (chave da Anthropic ausente)." |
+| `IGIG_PORTAL_BLOQUEIO_DIAS` | Bloqueio do portal de aprovação para cliente com fatura vencida há **mais de** N dias (0 ou ausente = desligado) | Desligado: o portal nunca bloqueia. Ligado: o cliente vê "Portal temporariamente indisponível" / "Contate a agência." (423 `portal_bloqueado`) — ver Capítulo 3 |
+| Chave da Anthropic (`ANTHROPIC_API_KEY` dentro do container, resolvida pela cadeia de credenciais da plataforma; na frota de produção ela vem da variável dedicada e com teto de gasto **`IGIG_ANTHROPIC_API_KEY`**) | Assistente do negócio e Assistente IgIg (chat de ajuda) | Assistente do negócio: 503 "A IA não está configurada (chave da Anthropic ausente)."; Assistente IgIg: "O assistente de IA ainda não foi configurado para este produto." e o campo passa a "Assistente indisponível no momento" |
 | `NOCTUS_SCHEDULERS_ENABLED` | Liga as rotinas agendadas | Rotinas não rodam |
+| `RESEND_API_KEY` | E-mail de convite da Equipe (provedor da plataforma) | O convite é criado e a tela mostra sucesso, mas nenhum e-mail sai |
 | `REDIS_URL` | Contadores de limite de requisições | Contadores em memória |
 | `SENTRY_DSN`, `DEBUG`, `MAX_BODY_BYTES` (1 MB), `DATABASE_BACKEND` | Operação | Padrões |
 
@@ -545,17 +563,18 @@ Existem no código mas **não estão agendados** (sem efeito hoje): entrega de l
 
 ## 11. Armazenamento de arquivos, limites, prazos de links
 
-- Bucket privado **`igig`** (criado pela migração 028; só o servidor acessa): peças (`<org>/pautas/<pauta>/<arquivo>` — cada envio com nome único), logos, PDFs de orçamento (`<org>/orcamentos/<id>/v<versão>.pdf`), contratos (`<org>/contratos/<id>/contrato.pdf` e o assinado).
+- Bucket privado **`igig`** (criado pela migração 028; só o servidor acessa): peças (`<org>/pautas/<pauta>/<arquivo>` — cada envio com nome único; removidas do armazenamento tanto ao excluir a peça quanto ao excluir a pauta inteira), logos, PDFs de orçamento (`<org>/orcamentos/<id>/v<versão>.pdf`), contratos (`<org>/contratos/<id>/contrato.pdf` e o assinado).
 - Bucket privado **`igig-cardhub`**: documentos dos cards (cliente e negócio), na pasta da organização.
 - Nada é público; ver/baixar é sempre por **link temporário assinado**:
 
 | Arquivo | Limite de tamanho | Formatos | Validade do link |
 |---|---|---|---|
-| Peça (pauta) | 50 MB ("Peça excede 50 MB") | PNG, JPEG, WebP, GIF, MP4, MOV | temporário (não confirmado no código o prazo exato) |
-| Logo da marca | 2 MB ("Logo excede 2 MB") | PNG, JPEG, WebP ("Formato não suportado: <tipo>. Envie PNG, JPEG ou WebP.") | cerca de 1 hora |
+| Peça (pauta) | 50 MB ("Peça excede 50 MB") | PNG, JPEG, WebP, GIF, MP4, MOV | 1 hora (Calendário e portal de aprovação; um link novo é gerado a cada abertura) |
+| Logo da marca | 2 MB ("Logo excede 2 MB") | PNG, JPEG, WebP ("Formato não suportado: <tipo>. Envie PNG, JPEG ou WebP."); SVG não é aceito nem oferecido no seletor | 1 hora (um link novo é gerado a cada leitura) |
 | Documento do card | 25 MB | PDF, JPEG, PNG, WebP | 5 minutos |
 | Contrato assinado (digitalização) | 25 MB | PDF, JPG, PNG ("Envie o contrato assinado em PDF, JPG ou PNG."; vazio: "O arquivo enviado está vazio.") | — |
 | PDF de orçamento / contrato | — | PDF | 10 minutos (gere de novo) |
+| PDF da fatura | — | PDF | Não há link: o PDF é gerado na hora a cada "Enviar fatura" e vai só como anexo do e-mail ("fatura-AAAA-MM.pdf") |
 
 - Corpo de requisição: 1 MB padrão; uploads têm teto próprio um pouco acima do limite de negócio (60 MB peças, 3 MB logo, 30 MB documentos/contrato assinado) para que a mensagem clara do limite apareça.
 - Prazos de negócio: convite 7 dias; link de aprovação 14 dias e uso único para decidir (gerar um novo invalida os anteriores não respondidos); pautas 30 dias à frente.
@@ -570,7 +589,7 @@ Sucesso: os módulos mais novos (funil, orçamentos, produtos, contratos, e-mail
 Erros — quatro formatos:
 1. **Regra de negócio**: `{"detail": "<mensagem em português>", "code": "<código>"}` (409/422/403/502/503…). A tela mostra a mensagem como aviso ou texto vermelho (sem o prefixo "[409]").
 2. **Erro genérico**: `{"error": {"code": "NOT_FOUND" | "UNAUTHORIZED" | "FORBIDDEN" | "BAD_REQUEST" | "HTTP_ERROR" | "CONFLICT" | "INTERNAL_ERROR", "message": "…"}}` — ex.: "Cliente não encontrado", "Negócio não encontrado", "Etapa não encontrada", "Registro duplicado — este recurso já existe", "Só um negócio perdido pode ser reaberto.", "Organização não encontrada.".
-3. **Validação de campos**: 422 com a lista de campos inválidos (formato padrão do servidor web; a tela mostra uma mensagem genérica da ação).
+3. **Validação de campos**: 422 com a lista de campos inválidos (formato padrão do servidor web: `{"detail": [{loc, msg, type}]}`). A tela mostra os textos `msg` juntados por "; " — esses textos vêm **em inglês**, do validador (ex.: "String should have at least 1 character", "value is not a valid email address: …"); não há tradução.
 4. **Limite de requisições**: 429 `{"error": {"code": "RATE_LIMITED", "message": "Muitas requisições. Tente novamente em breve."}}`.
 
 ### 12.2 Tabela de códigos
@@ -578,7 +597,7 @@ Erros — quatro formatos:
 |---|---|---|
 | `admin_obrigatorio` (403) | "Apenas administradores podem alterar as etapas do quadro." / "Apenas administradores da organização podem realizar esta ação." | Peça a um Proprietário/Administrador |
 | — (403) | "Apenas administradores podem revelar senhas" | Idem |
-| — (403) | "Sem permissao para convidar" / "Sem permissao" | Convidar: Proprietário/Admin/Gerente; convites/remover: Proprietário/Admin |
+| — (403) | "Sem permissao para convidar" / "Sem permissao para convidar como <papel>" / "Sem permissao" / "Somente o proprietario pode remover um proprietario" | Convidar: Proprietário/Admin/Gerente (Gerente não convida como Administrador/Proprietário; Administrador não convida como Proprietário); convites/remover: Proprietário/Admin |
 | `funil_sem_etapas` (409) | "O funil comercial não tem nenhuma etapa ativa. Configure as etapas primeiro." | Admin cria/ativa etapas no Comercial |
 | `funil_sem_fechamento` (409) | "O funil comercial não tem etapa de fechamento ativa. Configure as etapas primeiro." | Garantir uma etapa com papel Fechado ativa |
 | `orcamento_obrigatorio` (409) | "Para fechar o negócio, informe qual orçamento foi aceito." | Escolha o orçamento no seletor |
@@ -616,7 +635,8 @@ Erros — quatro formatos:
 | `esteira_sem_etapas` (409) | "A esteira não tem nenhuma etapa ativa. Configure as etapas primeiro." | Admin cria etapas |
 | `etapa_invalida` (409/422) | "A tarefa só pode avançar uma etapa por vez." / "Esta etapa está desativada." / "Esta tarefa já passou da aprovação do cliente." / "Esta etapa não existe neste quadro." | — |
 | `etapa_aprovacao_ausente` (409) | "Nenhuma etapa da esteira está marcada como 'Aprovação do cliente'." | Admin atribui o papel |
-| `papel_aprovacao_obrigatorio` (409) | "Esta é a única etapa marcada como 'Aprovação do cliente'. Atribua o papel a outra etapa antes de tirá-lo desta." | — |
+| `papel_obrigatorio` (409) | "Esta é a única etapa marcada como '<Aprovação do cliente \| Agendado>'. Atribua esse papel a outra etapa antes de trocá-lo ou removê-lo desta." | Esteira: primeiro mova o papel atual da etapa para outra etapa em "Papéis das etapas" |
+| `papel_fechado_obrigatorio` (409) | "Esta é a única etapa marcada como 'Fechado'. Atribua o papel a outra etapa antes de tirá-lo desta." | Comercial: escolha outra etapa para "Fechado" em "Papéis das etapas" |
 | `fora_de_aprovacao` (409) | "Este conteúdo não está mais aguardando a sua aprovação." | (cliente) contate a agência |
 | `horas_serao_perdidas` (409) | "Isto tem <Xh> de horas apontadas em N apontamento(s). Confirme a exclusão para perder esses registros." | Confirme na segunda janela |
 | `canal_nao_configurado` (409) | "Canal {canal} não está configurado. Conecte um token em Integrações antes de publicar." | Admin conecta o canal |
@@ -624,6 +644,10 @@ Erros — quatro formatos:
 | `publicacao_cancelada` (409) | "Publicação cancelada não pode ser executada." | Agende de novo |
 | `publicacao_em_andamento` (409) | "Esta publicação já está sendo executada." | Aguarde |
 | `fatura_paga` / `fatura_cancelada` (409) | "Fatura paga não pode ser cancelada." / "Fatura cancelada não pode ser paga." | — |
+| `fatura_fechada` (409) — envio | "Fatura <paga\|cancelada> não pode ser enviada." / "Fatura <paga\|cancelada> não pode ser marcada como enviada." | Fatura paga ou cancelada não é mais enviada |
+| `email_destinatario_ausente` (422) — fatura | "O cliente não tem e-mail cadastrado." | Cadastre o e-mail em Clientes → card → Dados |
+| `fatura_nao_encontrada` / `cliente_nao_encontrado` (404) | "Fatura não encontrada." / "Cliente não encontrado." | Recarregue a página |
+| `portal_bloqueado` (423) | "Portal temporariamente indisponível, contate a agência." (na tela: "Portal temporariamente indisponível" / "Contate a agência.") | (cliente) falar com a agência; (agência) regularizar a fatura vencida |
 | `fatura_fechada` (409) | "Fatura <status> não aceita novos itens." | — |
 | `total_negativo` (422) | "Este desconto deixaria o total da fatura negativo." | Reduza o desconto |
 | `acao_incompativel` (422) | "Checklists automáticos existem só no funil comercial (card do negócio)." | Escolha outra ação |
@@ -645,28 +669,41 @@ Erros — quatro formatos:
 
 ### 13.1 Assistente do negócio (card do negócio → aba "Assistente")
 - Ações: "Resumo" (até 6 tópicos), "Próxima ação" (com porquê, prazo e riscos) e "Rascunho de mensagem" (WhatsApp curto, até 3 parágrafos, ou e-mail com linha "Assunto:").
-- Modelo: Claude (Anthropic) pela pilha de IA da plataforma; o modelo é o **primeiro modelo de chat Anthropic do catálogo do seed** (hoje `claude-opus-5`; o operador da plataforma pode sobrepor o catálogo), temperatura 0.4, até 1200 tokens de resposta.
+- Modelo: Claude (Anthropic) pela pilha de IA da plataforma, **fixo em `claude-sonnet-4-6`** (Claude Sonnet), temperatura 0.4, até 1200 tokens de resposta. O modelo não muda sozinho quando o catálogo de modelos da plataforma é atualizado; se esse modelo sair do catálogo, o assistente falha de forma visível em vez de trocar de modelo em silêncio.
 - Contexto enviado (minimização de dados): lead (nome, empresa, e-mail, telefone, Instagram, origem, como conheceu, especificações, observações, status, nicho, canais atuais, dores, orçamento disponível), negócio (título, valor, status, entrada na etapa, motivo de perda, criação, etapa, responsável), histórico de etapas, orçamentos (versão, título, status, total, validade, envio, resposta, motivo de recusa) e até 30 itens da linha do tempo (nunca o conteúdo dos documentos).
 - Instruções: responder sempre em português do Brasil, só com fatos do contexto, sem inventar dados; se faltar informação, dizer o que falta.
 - **Nada é gravado nem enviado**; sem cache de respostas (dados pessoais).
 - Limites: gasto de IA da organização (selo no cabeçalho) e **20 pedidos por minuto por pessoa**.
 - Erros: `ia_nao_configurada` (503), `orcamento_ia_excedido` (429), `RATE_LIMITED` (429), `ia_indisponivel` (502), `ia_resposta_vazia` (502); genérico na tela "O assistente não respondeu.".
 - Endpoint: POST `/api/comercial/negocios/{id}/assistente` `{acao, canal?}` → `{data:{texto}}`.
-- Observação LGPD: o assistente envia dados pessoais do lead à Anthropic sem um consentimento de IA específico do produto (o catálogo de consentimentos de IA do IgIg não está ativado — `consent_features` comentado no `main.py`).
+- Observação LGPD: o assistente envia dados pessoais do lead à Anthropic sem um consentimento de IA específico do produto (o catálogo de consentimentos de IA do IgIg não está ativado — `consent_features` comentado no `main.py`). Ativar esse consentimento é uma **decisão pendente do dono do produto** (ver Capítulo 5).
 
-### 13.2 Assistente de ajuda (chat bubble) — organ do seed `noctusai_lib.domain.help_chat`
-- O que é: um balão de chat flutuante em todas as páginas logadas, onde a pessoa conversa com um especialista de IA que conhece **o produto** a partir de um único arquivo de conhecimento em markdown (este manual é o conteúdo previsto). Frontend: `HelpChatBubble` (`@noctusai/lib`), ligado pelo layout do seed com a opção `helpChat`.
-- Modelo: `claude-haiku-4-5` (padrão do organ; provedor `anthropic`), temperatura 0.4, até 1200 tokens por resposta, **resposta em streaming**.
-- Comportamento definido no prompt do organ: entende a dúvida antes de responder e faz perguntas curtas de esclarecimento quando falta contexto; nunca adivinha; guia passo a passo com os nomes EXATOS de menus, botões e campos; explica o porquê das regras; sugere o próximo passo; se o conhecimento não cobre algo, diz isso e sugere contactar o suporte do produto — nunca inventa funcionalidades, números ou prazos; menciona limitações com honestidade; nunca pede, guarda ou revela senhas, tokens ou chaves; usa a página atual da pessoa como contexto; responde em português do Brasil (ou no idioma em que a pessoa escrever); parágrafos curtos e listas (uso em celular).
-- Dados: **só** o arquivo de conhecimento + a conversa. Nunca acessa dados da organização (clientes, negócios, documentos). O servidor não grava a conversa nem registra o texto das mensagens (só tamanhos/tempos). O histórico fica apenas no navegador (`sessionStorage`, limitado, por aba).
-- Limites: até 20 mensagens por pedido, até 4000 caracteres por mensagem, **20 pedidos por minuto por pessoa**; sujeito ao orçamento de IA da organização.
-- Endpoint: POST `/api/ajuda/chat` `{messages:[…], pagina_atual?}` → `text/event-stream` (`data: {"delta": …}` … `data: {"done": true}`; erro no meio: `data: {"error": {"code", "message"}}`).
-- Erros e mensagens na tela: `ia_nao_configurada` (503) "O assistente de IA ainda não foi configurado para este produto."; `orcamento_ia_excedido` (429) "O limite de uso de IA da organização foi atingido. Tente novamente mais tarde."; `limite_de_mensagens` (429) "Você enviou mensagens rápido demais. Aguarde um instante e tente novamente."; `ia_indisponivel` (502) "O assistente não respondeu. Tente novamente em instantes."; falha de rede "Falha de conexão com o assistente. Verifique sua internet e tente novamente.".
-- Tela: título configurável (ex.: "Assistente IgIg"), saudação "Olá! Envie uma pergunta sobre o <produto> e eu ajudo.", sugestões iniciais opcionais, campo "Digite sua pergunta..." (ou "Assistente indisponível no momento"), botões "Enviar", "Nova conversa", "Fechar".
-- **Estado no IgIg nesta versão**: o organ existe no seed, mas o IgIg **ainda não monta** o roteador (`/api/ajuda/chat` não está em `app/main.py`) nem passa `helpChat` ao layout. Sem um arquivo de conhecimento, o servidor se recusa a iniciar o chat (falha de propósito para não inventar respostas).
+### 13.2 Assistente IgIg (chat de ajuda) — disponível em todas as telas
+- **O que é**: um balão de chat flutuante, no canto inferior direito da tela, presente em **todas as páginas logadas** do IgIg. Título do painel: "Assistente IgIg". A pessoa pergunta como usar a plataforma e um especialista de IA responde a partir **deste manual** (`app/knowledge/guia-igig.md`), que é todo o seu conhecimento do IgIg. Construído sobre o organ do seed `noctusai_lib.domain.help_chat` (frontend `HelpChatBubble`, ligado pelo layout do seed com a opção `helpChat` em `App.tsx`; backend `app/routers/ajuda_router.py`).
+- **Modelo**: `claude-haiku-4-5` (Anthropic), temperatura 0.4, até 1200 tokens por resposta, **resposta em streaming** (o texto aparece aos poucos).
+- **Comportamento** (definido no prompt do organ): entende a dúvida antes de responder e faz perguntas curtas de esclarecimento quando falta contexto; nunca adivinha; guia passo a passo com os nomes EXATOS de menus, botões e campos; explica o porquê das regras; sugere o próximo passo; se este manual não cobre algo, diz isso e sugere contatar o suporte — nunca inventa funcionalidades, números ou prazos; menciona limitações com honestidade; nunca pede, guarda ou revela senhas, tokens ou chaves; usa a página em que a pessoa está como contexto (o endereço atual vai junto com a pergunta); responde em português do Brasil (ou no idioma em que a pessoa escrever); parágrafos curtos e listas (uso em celular).
+- **Dados**: **só** este manual + a conversa. O assistente **não acessa** dados da organização (clientes, negócios, faturas, documentos) — ele explica como fazer, não consulta nem altera registros. O servidor não grava a conversa nem registra o texto das mensagens (só tamanhos/tempos). O histórico fica apenas no navegador, naquela aba (`sessionStorage`, limitado), e some ao fechar a aba ou tocar em "Nova conversa".
+- **Limites**: até 20 mensagens por pedido, até 4000 caracteres por mensagem, **20 pedidos por minuto por pessoa**; sujeito ao orçamento de IA da organização.
+- **Endpoint**: POST `/api/ajuda/chat` (login obrigatório) `{messages:[…], pagina_atual?}` → `text/event-stream` (`data: {"delta": …}` … `data: {"done": true}`; erro no meio: `data: {"error": {"code", "message"}}`).
+- **Erros e mensagens na tela**: `ia_nao_configurada` (503) "O assistente de IA ainda não foi configurado para este produto." (e o campo passa a "Assistente indisponível no momento"); `orcamento_ia_excedido` (429) "O limite de uso de IA da organização foi atingido. Tente novamente mais tarde."; `limite_de_mensagens` (429) "Você enviou mensagens rápido demais. Aguarde um instante e tente novamente."; `ia_indisponivel` (502) "O assistente não respondeu. Tente novamente em instantes."; falha de rede "Falha de conexão com o assistente. Verifique sua internet e tente novamente.". Junto de qualquer erro aparece o link "Tentar de novo", que reenvia a última pergunta.
+- **Configuração**: precisa da chave da Anthropic no servidor — em produção, `IGIG_ANTHROPIC_API_KEY` (mapeada para `ANTHROPIC_API_KEY` no container). O servidor se recusa a iniciar se este manual estiver ausente ou vazio (de propósito: sem conhecimento, o assistente inventaria respostas).
+- **Manutenção**: toda mudança de página, regra ou mensagem do IgIg atualiza este manual no mesmo commit; um manual desatualizado faz o assistente descrever com confiança um comportamento que não existe mais.
+
+### 13.2.1 Como usar o Assistente IgIg
+1. Em qualquer tela logada, toque no **balão de chat** no canto inferior direito (rótulo de acessibilidade "Abrir Assistente IgIg"). No celular o painel abre em tela cheia; no computador, como uma janela flutuante.
+2. Na primeira vez aparece "Olá! Envie uma pergunta ou escolha um exemplo:" com quatro sugestões prontas — toque numa para enviá-la:
+   - "Como cadastro um lead e levo até cliente?"
+   - "Como monto e envio um orçamento?"
+   - "Como funciona a esteira de produção e a aprovação do cliente?"
+   - "Por que minha margem aparece como indisponível?"
+3. Ou escreva no campo "Digite sua pergunta..." e toque em "Enviar" (ou tecle Enter; Shift+Enter quebra a linha). A resposta aparece aos poucos; enquanto isso, três pontinhos indicam que o assistente está escrevendo.
+4. Seja específico e diga em que tela está ("Em Orçamentos, por que o botão Enviar está desabilitado?"). O assistente já sabe a página aberta, mas detalhes ajudam. Se ele fizer uma pergunta de volta, responda — é para acertar a resposta.
+5. "Nova conversa" apaga o histórico e recomeça; "Fechar" (ou tocar de novo no balão) recolhe o painel sem perder a conversa daquela aba.
+6. O que ele **não** faz: não executa ações (não cria lead, não envia orçamento, não marca fatura), não vê os seus dados, não sabe valores ou nomes dos seus clientes e não guarda senhas. Para ações, siga o passo a passo que ele indicar na própria tela.
+7. Se ele disser que o manual não cobre o assunto, ou se o comportamento na tela divergir do que ele descreveu, fale com o suporte do produto.
 
 ### 13.3 Outros usos
-Nenhuma outra parte do IgIg usa IA (as automações não têm ação de IA).
+Nenhuma outra parte do IgIg usa IA (as automações não têm ação de IA). Resumo: **Assistente do negócio** (card do negócio, `claude-sonnet-4-6`, usa os dados do lead/negócio) e **Assistente IgIg** (balão de ajuda, `claude-haiku-4-5`, usa só este manual).
 
 ---
 
@@ -679,7 +716,7 @@ Nenhuma outra parte do IgIg usa IA (as automações não têm ação de IA).
 - **Perdidos** — arquivo de negócios perdidos, com busca e "Reabrir".
 - **Funil / quadro Comercial** — kanban de vendas; etapas padrão "Leads", "Qualificação", "Negociação", "Agendar briefing", "Fechado".
 - **Etapa** — coluna de um quadro; admins criam/renomeiam/reordenam/recolorem/excluem.
-- **Papel da etapa** — marca especial: "fechado" (Comercial: fechar exige orçamento), "aprovação do cliente" e "agendado" (Esteira). Regras seguem o papel, não o nome.
+- **Papel da etapa** — marca especial: "fechado" (Comercial: fechar exige orçamento), "aprovação do cliente" e "agendado" (Esteira). Regras seguem o papel, não o nome. Admins reatribuem em "Papéis das etapas" (Comercial e Esteira); um papel nunca fica sem etapa.
 - **Etapa de entrada** — a primeira etapa ativa; onde todo lead novo entra.
 - **Pré-qualificação** — formulário público preenchido pelo prospect antes da reunião.
 - **Orçamento** — proposta mensal de um negócio; status rascunho, enviado, aceito, recusado, expirado, substituído.
@@ -695,7 +732,9 @@ Nenhuma outra parte do IgIg usa IA (as automações não têm ação de IA).
 - **Contrato** — gerado do orçamento aceito: retainer, pacote, excedente, dia de vencimento; assinatura digital (hoje simulação) ou física.
 - **Retainer** — valor mensal fixo ("Retainer mensal" na fatura).
 - **Pacote (posts por mês)** — peças incluídas no retainer (itens recorrentes de criação).
-- **Excedente** — peças acima do pacote; cobradas na fatura do mês seguinte.
+- **Excedente** — peça **avulsa** (criada fora do plano, direto no Calendário) entregue acima do pacote do contrato; cobrada na fatura do mês seguinte. Peças do plano recorrente nunca viram excedente.
+- **Peça do plano × peça avulsa** — do plano: pauta gerada automaticamente a partir de um item recorrente do orçamento aceito; avulsa: qualquer outra pauta.
+- **Entregue** (para excedentes) — pauta publicada de verdade (`publicado_em`) ou, na falta disso, aprovada pelo cliente no portal; a data planejada não conta.
 - **Pauta** — conteúdo planejado no calendário (título, formato, funil, linha editorial, copy, direção de vídeo, data, marca, canal).
 - **Formato** — feed, carrossel, reels, story, artigo, vídeo.
 - **Funil (da pauta)** — topo, meio, fundo.
@@ -712,10 +751,10 @@ Nenhuma outra parte do IgIg usa IA (as automações não têm ação de IA).
 - **BI de eficiência** — taxa de refação e custo real por cliente.
 - **Publicação** — agendamento/postagem de uma pauta numa rede. **Métrica** — retrato de desempenho.
 - **Competência** — mês de referência AAAA-MM. **Fechamento do mês** — "Gerar competência".
-- **Fatura** — cobrança de um contrato numa competência; aberta, enviada, paga, vencida, cancelada.
+- **Fatura** — cobrança de um contrato numa competência; aberta, enviada (por "Enviar fatura" ou "Marcar como enviada"), paga, vencida (pela rotina diária das 06:00), cancelada.
 - **MRR** — soma dos retainers dos contratos ativos.
 - **DRE** — receita faturada (da competência) × custo real (histórico completo) por cliente.
-- **Inadimplência** — faturas vencidas e não pagas.
+- **Inadimplência** — faturas vencidas e não pagas; o cliente com alguma delas fica com status "Inadimplente" (rotina diária).
 - **Automação** — regra "ao entrar na etapa" ou "SLA estourado" → checklist, responsável, tarefa, notificação, e-mail, WhatsApp.
 - **SLA** — tempo máximo de um card numa etapa.
 - **Execução** — registro de uma automação que rodou (sucesso/erro + detalhe).
@@ -725,7 +764,7 @@ Nenhuma outra parte do IgIg usa IA (as automações não têm ação de IA).
 - **RLS** — regra do banco que só deixa cada organização ver os próprios dados.
 - **status_pagina / DEV** — controle de visibilidade de páginas no menu.
 - **Assistente IA** — IA do card do negócio (resumo, próxima ação, rascunho).
-- **Assistente de ajuda** — chat flutuante que responde dúvidas sobre o uso do IgIg a partir deste manual.
+- **Assistente IgIg** — chat de ajuda flutuante, em todas as telas, que responde dúvidas sobre o uso do IgIg a partir deste manual (não acessa dados da agência).
 
 ---
 
@@ -754,7 +793,7 @@ Tela inicial depois do login: visão geral da agência — carteira de clientes,
 
 ### 2. Acesso
 - Rota: `/`. Menu lateral: "Dashboard" (1º item do grupo "Principal").
-- Quem vê: qualquer usuário logado da organização (sem restrição de papel). Visibilidade no menu depende de `status_pagina` (`dashboard`) — ver `00-plataforma.md`.
+- Quem vê: qualquer usuário logado da organização (sem restrição de papel). Visibilidade no menu depende de `status_pagina` (`dashboard`) — ver Capítulo 0.
 - Ações: nenhuma ação de escrita; todos os blocos são atalhos (links) para outras páginas.
 
 ### 3. Layout
@@ -784,9 +823,9 @@ De cima para baixo:
 | Tocar no alerta vermelho | Alerta visível | Abre `/custos` | — | — |
 
 ### 6. Estados
-- Carregando: cada indicador mostra "—" enquanto o seu próprio dado carrega (clientes, quadro da Esteira, quadro Comercial, DRE). A seção "Aguardando aprovação do cliente" mostra linhas de esqueleto. O alerta de custo/hora **não aparece** enquanto os profissionais carregam (antes aparecia por um instante e dava a impressão falsa de que não havia profissionais).
+- Carregando: cada indicador mostra "—" enquanto o seu próprio dado carrega (clientes, quadro da Esteira, quadro Comercial, DRE). As seções "Aguardando aprovação do cliente" e "Inadimplência" mostram linhas de esqueleto no primeiro carregamento. O alerta de custo/hora **não aparece** enquanto os profissionais carregam (antes aparecia por um instante e dava a impressão falsa de que não havia profissionais).
 - Vazio: "Nada parado com o cliente no momento." / "Nenhuma fatura vencida.".
-- Erro: não há mensagem de erro dedicada nesta página (não confirmado no código — os hooks não exibem erro aqui).
+- Erro: a seção "Inadimplência" mostra a mensagem do servidor (ou "Não foi possível carregar a inadimplência.") em vermelho — nunca "Nenhuma fatura vencida." no lugar de um erro. Os indicadores e a seção "Aguardando aprovação do cliente" não têm mensagem de erro própria: se a busca falhar, o indicador continua mostrando "—".
 - Atualizando: sem indicador visual.
 
 ### 7. Regras de negócio e por quê
@@ -802,7 +841,7 @@ De cima para baixo:
 - `comercialPipeline.useBoard()` → GET `/api/comercial/board` (negócios `aberto` + `ganho`).
 - `useProfissionais()` → GET `/api/custos/profissionais` (campo `custo_hora_indefinido`).
 - `useDRE(competência)` → GET `/api/financeiro/dre?competencia=AAAA-MM`.
-- `useInadimplentes()` → GET `/api/financeiro/inadimplentes`.
+- `useInadimplentes()` → GET `/api/financeiro/inadimplentes` (esqueleto só no primeiro carregamento; erro exibido).
 - Nada é gravado.
 
 ### 9. Dependências de configuração
@@ -812,9 +851,9 @@ De cima para baixo:
 ### 10. Limitações conhecidas
 - **"Margem no mês" mistura períodos**: a receita é do mês, mas o custo real do DRE é sempre o **histórico completo** de horas apontadas (regra do DRE: "competência filtra só a receita"). A margem mensal tende a ficar subestimada à medida que o histórico cresce.
 - "Ganhos no mês" compara o mês da data de ganho gravada em UTC; um negócio ganho perto da meia-noite do último dia do mês (horário de Brasília) pode cair no mês seguinte.
-- A seção "Inadimplência" não tem estado de carregando: enquanto os dados chegam ela mostra "Nenhuma fatura vencida.".
 - A lista de inadimplência não mostra o nome do cliente (só competência, valor e dias).
-- O status do cliente só vira "Inadimplente" se alguém mudar à mão (a rotina diária de inadimplência existe no código mas não está agendada — ver `00-plataforma.md`), então a nota "N inadimplente(s)" pode não refletir as faturas vencidas.
+- A nota "N inadimplente(s)" usa o status do cliente, que a rotina diária das 06:00 atualiza (Capítulo 0, §9); já a seção "Inadimplência" é calculada na hora. Entre a meia-noite e as 06:00 os dois podem divergir por um dia.
+- Os indicadores não mostram mensagem de erro própria quando a busca falha (ficam em "—").
 
 ### 11. Perguntas frequentes
 - **P: Por que a margem aparece "indisponível"?** R: Há profissional sem custo/hora (ou nenhum profissional) em Custos. Cadastre o custo/hora e a margem volta a ser calculada.
@@ -822,7 +861,7 @@ De cima para baixo:
 - **P: O número de clientes ativos está certo mesmo com mais de 50 clientes?** R: Sim, é a contagem do servidor.
 - **P: O que é "Peças em produção"?** R: Tarefas da Esteira nas etapas anteriores à "Aprovação do cliente".
 - **P: "Valor em negociação" inclui negócios ganhos?** R: Não, só os abertos.
-- **P: Por que um cliente com fatura vencida não aparece como inadimplente?** R: O status do cliente não muda sozinho hoje; a fatura aparece em "Inadimplência", mas o status do cliente precisa ser alterado em Clientes → Dados.
+- **P: Por que um cliente com fatura vencida não aparece como inadimplente?** R: O status muda sozinho todo dia às 06:00 (horário de Brasília). Se a fatura venceu ontem, espere a rotina da manhã; ela já aparece na seção "Inadimplência". Quando não houver mais fatura vencida (paga ou cancelada), o cliente volta a "Ativo" na rotina seguinte.
 
 ---
 
@@ -833,8 +872,8 @@ O funil de vendas (kanban) da agência. Contém: o link do formulário de pré-q
 
 ### 2. Acesso
 - Rota: `/comercial`. Menu lateral: "Comercial" (2º item). Deep link: `/comercial?negocio=<id>` abre direto o card daquele negócio (usado pelas notificações de automação e de lembretes).
-- Qualquer membro logado: ver o funil, criar lead, mover cards (inclusive fechar), marcar como perdido, ver Perdidos e **reabrir**, editar lead/negócio, usar o card, o Assistente IA e gerar orçamento.
-- Só administradores: criar, renomear, recolorir, reordenar e excluir etapas ("Configurar etapas", "+ coluna", menu "⋯" do cabeçalho da coluna). Para os demais, os cabeçalhos aparecem sem controles de edição.
+- Qualquer membro logado: ver o funil, criar lead (novo contato ou cliente existente), mover cards (inclusive fechar), marcar como perdido, ver Perdidos e **reabrir**, editar lead/negócio, usar o card, o Assistente IA e gerar orçamento.
+- Só administradores: criar, renomear, recolorir, reordenar e excluir etapas ("Configurar etapas", "+ coluna", menu "⋯" do cabeçalho da coluna) e mover o papel "Fechado" para outra etapa (painel "Papéis das etapas"). Para os demais, os cabeçalhos aparecem sem controles de edição e o painel não aparece.
 
 ### 3. Layout
 - **Cabeçalho**: título "Comercial", subtítulo, botões "Perdidos" (ícone de arquivo) e "Novo lead" (ícone +).
@@ -842,11 +881,14 @@ O funil de vendas (kanban) da agência. Contém: o link do formulário de pré-q
 - **Barra de ferramentas do quadro** (só administradores): botão "Configurar etapas" (vira "Fechar configuração"), que abre o painel de gerenciamento de etapas acima do quadro.
 - **Quadro**: uma coluna por etapa ativa, na ordem configurada. Cabeçalho da coluna: nome da etapa (para admin, editável), contador de cards (se a coluna estiver truncada, "X de Y" com a dica "Mostrando X de Y cartões") e a soma dos valores estimados da coluna em R$. Etapa com papel mostra o selo "Fechado (exige orçamento aceito)". No fim do quadro, para admin, a coluna "+ coluna".
 - **Face do card**: título = empresa do lead (ou nome do lead, ou título do negócio); abaixo, o nome da pessoa se for diferente da empresa; selo da origem ("Formulário", "Manual", "WhatsApp", "Meta Ads"); selo "Ganho" (com troféu) se fechado; valor estimado em R$; nome do responsável (ícone de pessoa). Em negócios abertos, ícone "Gerar orçamento" (documento com +), que abre o modal de orçamento sem abrir o card.
+- **Painel "Papéis das etapas"** (só administradores, abaixo do quadro, recolhido por padrão — toque no título para abrir): uma linha "Fechado (exige orçamento aceito)" com um seletor das etapas do funil ("Escolha uma etapa…"); a etapa marcada é a que hoje tem o papel.
 - **Quais negócios aparecem**: só `aberto` e `ganho`. Perdidos saem do quadro e ficam na área "Perdidos". Ganhos continuam na coluna de papel Fechado.
 - **Celular (≤640px)**: cada coluna ocupa ~85% da largura da tela; o quadro rola para os lados **dentro da própria moldura** (a página não rola lateralmente) e cada coluna rola verticalmente. Para arrastar um card: **pressionar e segurar** (~250 ms) e arrastar; um deslize rápido é rolagem. Diálogos (Novo lead, card, Perdidos, seletor de orçamento) abrem em tela cheia. **Computador**: colunas de largura fixa (~320px), arrastar com o mouse.
 
 ### 4. Campos
-Formulário "Novo lead" (janela "Novo lead" — "Entra na primeira etapa do funil."):
+Formulário "Novo lead" (janela "Novo lead" — "Entra na primeira etapa do funil."). No topo, duas opções: **"Novo contato"** (padrão; campos abaixo) e **"Cliente existente"** (negócio para um cliente que a agência já tem — upsell/renovação).
+
+Opção "Novo contato":
 
 | Campo | Tipo | Obrigatório | Validação/limites | Padrão | Observação |
 |---|---|---|---|---|---|
@@ -857,6 +899,13 @@ Formulário "Novo lead" (janela "Novo lead" — "Entra na primeira etapa do funi
 | "Instagram" | texto | Não | até 120 | vazio | Exemplo "@perfil" |
 | "Valor estimado (R$/mês)" | número | Não | ≥ 0 (negativo vira 0) | vazio | — |
 | "Observações" | texto longo | Não | até 4000 | vazio | — |
+
+Opção "Cliente existente":
+
+| Campo | Tipo | Obrigatório | Validação/limites | Padrão | Observação |
+|---|---|---|---|---|---|
+| "Buscar cliente por nome…" | busca | Sim (escolher um) | lista até 20 clientes da agência que batem com a busca | vazio | Cada linha mostra nome, nicho · e-mail ou telefone (ou "Sem dados adicionais") e o selo de status. Escolhido, vira um resumo com o botão "Trocar"; o botão principal vira "Criar negócio" e só habilita com um cliente escolhido |
+| "Valor estimado (R$/mês)" | número | Não | ≥ 0 | vazio | Aparece depois de escolher o cliente |
 
 Campos do card do negócio (aba "Geral" → resumo):
 
@@ -890,6 +939,8 @@ Etapas (admin): nome da etapa 1–60 caracteres; cor entre `primary`, `secondary
 |---|---|---|---|---|
 | "Copiar" (link do formulário) | Usuário com organização | Copia a URL pública do formulário | Botão vira "Copiado" | Se o navegador bloquear a área de transferência, nada é copiado; a URL continua visível para copiar à mão |
 | "Novo lead" → "Criar lead" (ou Enter) | Nome preenchido | Cria o lead com origem "Manual" e um negócio na **primeira etapa ativa**, no topo da coluna; grava o histórico de entrada; roda as automações "Ao entrar na etapa" dessa etapa | "Lead criado — o card entrou na primeira etapa." | 409 `funil_sem_etapas` "O funil comercial não tem nenhuma etapa ativa. Configure as etapas primeiro." (peça a um admin para criar/ativar etapas); 404 profissional inexistente; outros: mensagem do servidor ou "Não foi possível criar o lead." |
+| "Novo lead" → "Cliente existente" → escolher o cliente → "Criar negócio" | Cliente escolhido | Cria um lead novo (origem "Manual") com nome, e-mail e telefone do cliente e um negócio **ligado a esse cliente** na primeira etapa ativa; roda as automações da etapa. Ao fechar esse negócio, o **mesmo** cliente é reaproveitado (nunca é criado um segundo cadastro) | "Negócio criado para <cliente> — o card entrou na primeira etapa." | 409 `funil_sem_etapas` (como acima); 404 cliente inexistente; outros: mensagem do servidor ou "Não foi possível criar o negócio." |
+| "Papéis das etapas" → escolher outra etapa em "Fechado (exige orçamento aceito)" (admin) | Painel aberto | Move o papel `fechado` para a etapa escolhida numa única operação (a etapa anterior perde o papel); a nova etapa passa a exigir orçamento aceito e ganha o selo | — (o seletor e o selo atualizam) | Mensagem do servidor ou "Não foi possível reatribuir o papel."; 409 `papel_fechado_obrigatorio` "Esta é a única etapa marcada como 'Fechado'. Atribua o papel a outra etapa antes de tirá-lo desta." (tentativa de apenas remover o papel); 403 "Apenas administradores podem alterar as etapas do quadro." |
 | Arrastar card para outra coluna | Negócio não perdido; se ganho, só pode ser reordenado dentro da coluna Fechado | Card move na hora (otimista); servidor grava etapa, data de entrada na etapa e histórico (`pipeline_movimentos`); roda automações "Ao entrar na etapa" da etapa destino | — (o card fica na nova coluna) | Recusa: o card volta e aparece um aviso com a mensagem do servidor (ou "Não foi possível mover o negócio."): 409 "Este negócio foi marcado como perdido."; 409 "Um negócio fechado não sai da etapa de fechamento."; 404 "Etapa não encontrada" (recarregue a página) |
 | Reordenar dentro da coluna | — | Posição salva; não é nova entrada na etapa (não roda automação) | — | Idem acima |
 | Arrastar para a etapa de papel Fechado | Negócio aberto | Abre "Qual orçamento foi aceito?" (card fica aguardando a decisão) | — | Ver linha seguinte |
@@ -900,7 +951,7 @@ Etapas (admin): nome da etapa 1–60 caracteres; cor entre `primary`, `secondary
 | Clicar/tocar num card | — | Abre o card do negócio | — | "Não foi possível carregar este cartão." |
 | "Marcar como perdido" (ícone no cabeçalho do card) → "Marcar como perdido" | Negócio aberto; motivo preenchido | Negócio vira `perdido` com data, motivo e a etapa em que estava (`perdido_stage_id`); sai do quadro; não é apagado | "Negócio marcado como perdido." (o card fecha) | 409 `negocio_encerrado` "Só um negócio em aberto pode ser marcado como perdido (status: ganho)."; 422 `motivo_obrigatorio` "Informe o motivo da perda."; outros: "Não foi possível marcar como perdido." |
 | "Perdidos" | — | Abre a área "Perdidos" com todos os negócios perdidos da organização | — | "Não foi possível carregar os perdidos." (ou mensagem do servidor) |
-| "Reabrir" (em Perdidos) | Negócio com status `perdido` | Devolve o negócio para a etapa em que foi perdido (se essa etapa foi excluída ou desativada, vai para a primeira etapa ativa), no topo da coluna; limpa data/motivo/etapa de perda; status volta a `aberto`; grava histórico com motivo "Reaberto do arquivo de perdidos"; roda automações "Ao entrar na etapa" da etapa destino; fecha Perdidos e abre o card | "Negócio reaberto." | 409 "Só um negócio perdido pode ser reaberto."; 409 "O funil comercial não tem nenhuma etapa ativa. Configure as etapas primeiro."; outros: "Não foi possível reabrir o negócio." |
+| "Reabrir" (em Perdidos) | Negócio com status `perdido` | Devolve o negócio para a etapa em que foi perdido (se essa etapa foi excluída ou desativada, vai para a primeira etapa ativa), no topo da coluna; limpa data/motivo/etapa de perda; status volta a `aberto`; **reinicia o relógio "tempo nesta etapa"** (`stage_entered_at`), inclusive quando volta para a mesma etapa em que foi perdido; grava histórico com motivo "Reaberto do arquivo de perdidos" (e, na volta para a mesma etapa, uma nova entrada no histórico do card); roda automações "Ao entrar na etapa" da etapa destino; fecha Perdidos e abre o card | "Negócio reaberto." | 409 "Só um negócio perdido pode ser reaberto."; 409 "O funil comercial não tem nenhuma etapa ativa. Configure as etapas primeiro."; outros: "Não foi possível reabrir o negócio." |
 | Editar valor / responsável (aba Geral) | Negócio aberto | PATCH do negócio | — (campo atualiza) | "Não foi possível salvar o valor." / "Não foi possível trocar o responsável."; 404 profissional inexistente |
 | "Salvar lead" (aba Lead) | Algo alterado e nome preenchido | Atualiza os dados de contato do lead (campo apagado grava vazio de verdade) | "Lead atualizado." | Mensagem inline: mensagem do servidor (ex.: e-mail inválido) ou "Não foi possível salvar o lead."; 422 "Nenhum campo para atualizar."; 404 "Lead não encontrado" |
 | Renomear etapa (admin) | — | Duplo clique no nome (dica "Clique duas vezes para renomear") ou menu "⋯" → "Renomear"; Enter salva, Esc cancela | Etapa "X" atualizada | "Erro ao atualizar etapa" + mensagem: "O nome da etapa não pode ficar vazio.", "O nome da etapa deve ter no máximo 60 caracteres.", "Já existe uma etapa com o identificador '<slug>'. Escolha outro nome." |
@@ -912,8 +963,8 @@ Etapas (admin): nome da etapa 1–60 caracteres; cor entre `primary`, `secondary
 
 ### 6. Estados
 - Carregando: três colunas-esqueleto no quadro.
-- Vazio: coluna sem cards "Nenhum negócio nesta etapa"; nenhuma etapa: "Nenhuma etapa configurada." (para admin acrescenta ' Use "Configurar etapas" para criar a primeira.'); Perdidos vazio: "Nenhum negócio perdido ainda."; busca sem resultado: "Nenhum perdido corresponde à busca."; aba Orçamentos vazia: "Nenhum orçamento ainda."; seletor de Fechado sem elegíveis: "Este negócio ainda não tem orçamento em aberto.".
-- Erro: card "Não foi possível carregar este cartão."; seletor "Não foi possível carregar os orçamentos."; Perdidos "Não foi possível carregar os perdidos."; aba Lead "Não foi possível carregar o lead.".
+- Vazio: "Cliente existente" sem resultado: "Nenhum cliente encontrado."; coluna sem cards "Nenhum negócio nesta etapa"; nenhuma etapa: "Nenhuma etapa configurada." (para admin acrescenta ' Use "Configurar etapas" para criar a primeira.'); Perdidos vazio: "Nenhum negócio perdido ainda."; busca sem resultado: "Nenhum perdido corresponde à busca."; aba Orçamentos vazia: "Nenhum orçamento ainda."; seletor de Fechado sem elegíveis: "Este negócio ainda não tem orçamento em aberto.".
+- Erro: "Cliente existente": "Não foi possível carregar os clientes."; card "Não foi possível carregar este cartão."; seletor "Não foi possível carregar os orçamentos."; Perdidos "Não foi possível carregar os perdidos."; aba Lead "Não foi possível carregar o lead.".
 - Atualizando: movimentos são otimistas (o card já aparece na nova coluna); o quadro recarrega em segundo plano.
 
 ### 7. Regras de negócio e por quê
@@ -925,21 +976,24 @@ Etapas (admin): nome da etapa 1–60 caracteres; cor entre `primary`, `secondary
 6. **O cliente nunca é duplicado**: é localizado pelo cliente já ligado ao negócio, depois pelo lead (índice único cliente×lead).
 7. **Negócio ganho não sai de Fechado** (pode ser reordenado dentro dela). Não há "desfechar".
 8. **Perder não apaga**: guarda motivo, etapa e tempo parado, que alimentam as estatísticas de perda.
-9. **Reabrir é uma nova entrada**: volta à etapa onde foi perdido e as automações daquela etapa rodam de novo.
+9. **Reabrir é uma nova entrada**: volta à etapa onde foi perdido, as automações daquela etapa rodam de novo e o tempo na etapa recomeça do zero — o período arquivado como perdido não conta como tempo parado na etapa (nem para o SLA).
 10. **Uma automação roda uma vez por entrada**: reordenar na coluna, repetir a requisição ou o SLA correndo junto nunca executam a mesma regra duas vezes.
 11. **Falha de automação não desfaz o movimento**; fica registrada em Automações → "Execuções recentes".
 12. **Excluir etapa com cards** exige um destino; destino com papel especial é recusado (movê-los em massa pularia as regras do papel, ex.: criar cliente).
 13. **Etapa com papel não pode ser excluída nem desativada**.
 14. Isolamento: todas as tabelas do funil são filtradas pela organização (RLS).
+15. **Negócio para cliente existente reaproveita o cliente.** Todo negócio precisa de um lead, então é criado um lead novo com os dados do cliente, mas o negócio já nasce ligado ao cliente escolhido; o fechamento usa esse cliente primeiro. *Por quê:* evita cadastros duplicados da mesma conta em upsell/renovação.
+16. **O papel "Fechado" nunca fica sem etapa.** Mover o papel é uma operação só (tira de uma, põe na outra); apenas remover é recusado. *Por quê:* sem etapa de fechamento nenhum negócio poderia ser fechado.
 
 ### 8. Fluxo de dados
 - Quadro: `PipelineBoard` (seed) + `comercialPipeline` → GET `/api/comercial/board` → `comercial_funil.quadro` → `negocio` (status aberto/ganho) + `lead` + `profissional`, agrupado por `pipeline_stages` (`pipeline='comercial'`). As etapas padrão ("Leads", "Qualificação", "Negociação", "Agendar briefing", "Fechado" com papel `fechado`) são criadas na primeira leitura de uma organização que nunca configurou o funil.
 - Mover: POST `/api/comercial/negocios/{id}/mover-etapa` `{para_etapa_id, novo_indice, orcamento_id?}` → `comercial_funil.mover_negocio` → `_fechar` quando o destino tem papel `fechado` (tabelas `orcamento`, `cliente`, `lead`, `pauta`) → seed `move_card` (grava `negocio.etapa_id`, `kanban_pos`, `stage_entered_at` e `pipeline_movimentos`) → `automacoes.ao_entrar_etapa` (automações, notificações `automacao`).
-- Novo lead: `NovoLeadDialog` → `useCriarNegocio` → POST `/api/comercial/negocios` `{lead:{…}, valor_estimado}` → insert `lead` (origem `manual`) → `comercial_funil.abrir_negocio` → `pipeline_movimentos` (entrada) → automações.
+- Novo lead: `NovoLeadDialog` → `useCriarNegocio` → POST `/api/comercial/negocios` `{lead:{…}, valor_estimado, cliente_id?}` → insert `lead` (origem `manual`) → `comercial_funil.abrir_negocio` (grava `negocio.cliente_id` quando veio `cliente_id`; confere que o cliente existe na organização) → `pipeline_movimentos` (entrada) → automações. Cliente existente: `useClientes({busca, limit:20})` → GET `/api/clientes?busca=…`.
+- Papéis das etapas: `StageRolePanel` → `useAtribuirPapelEtapaComercial` → PATCH `/api/comercial/pipeline/stages/{id}/papel` `{papel:"fechado"}` → `comercial_funil.reatribuir_papel` (limpa a etapa anterior e grava a nova em `pipeline_stages.papel`).
 - Editar negócio: PATCH `/api/comercial/negocios/{id}` (`titulo`, `valor_estimado`, `responsavel_id`).
 - Perder: POST `/api/comercial/negocios/{id}/perder` `{motivo}` → `negocio.status='perdido'`, `perdido_em`, `motivo_perda`, `perdido_stage_id`.
 - Perdidos: `usePerdidos` → GET `/api/comercial/negocios?status=perdido` (traz etapa de perda e `dwell_dias`); filtro por texto feito no navegador.
-- Reabrir: `useReabrirNegocio` → POST `/api/comercial/negocios/{id}/reabrir` → seed `move_card` com `status='aberto'` e campos de perda limpos → automações.
+- Reabrir: `useReabrirNegocio` → POST `/api/comercial/negocios/{id}/reabrir` → seed `move_card` com `status='aberto'`, campos de perda limpos e `stage_entered_at` = agora → (mesma etapa) nova linha em `pipeline_movimentos` → automações.
 - Deep link: `?negocio=<id>` → procura o card no quadro; se não estiver (ex.: perdido), busca GET `/api/comercial/negocios/{id}`. Fechar o card remove o parâmetro da URL.
 - Etapas (admin): GET/POST `/api/comercial/pipeline/stages`, GET `/api/comercial/pipeline/stages/opcoes`, PATCH/DELETE `/api/comercial/pipeline/stages/{stage_id}` (`?reassign_to=`), POST `/api/comercial/pipeline/stages/reordenar`. Escrita protegida por `exigir_admin_do_quadro`.
 - Lead: GET `/api/comercial/leads/{id}` (um lead só) e PATCH `/api/comercial/leads/{id}`.
@@ -951,13 +1005,11 @@ Etapas (admin): nome da etapa 1–60 caracteres; cor entre `primary`, `secondary
 - Assistente IA: chave da Anthropic no servidor (senão "A IA não está configurada (chave da Anthropic ausente).").
 
 ### 10. Limitações conhecidas
-- **Não há como criar um negócio para um cliente já existente** (upsell/renovação) pela tela nem pela API pública: "Novo lead" sempre cria um lead novo e, ao fechar, é criado **outro** cliente. O servidor já sabe reaproveitar um cliente ligado ao negócio, mas a entrada (`cliente_id` em POST `/api/comercial/negocios`) ainda não existe (pendente).
 - Não há "desfechar" um negócio ganho; ganhos acumulam na coluna Fechado.
-- Não há tela para mudar o **papel** de uma etapa do Comercial (a Esteira ganhou esse painel; o Comercial não). A mensagem "Atribua o papel a outra etapa…" não tem ação correspondente na tela.
 - Não há busca/filtro no quadro; a busca existe só em Perdidos.
 - Não há tela para ver/filtrar leads diretamente nem para mudar o status do lead (novo/qualificado/descartado).
-- A exclusão de etapa com reatribuição em massa para uma etapa comum **não grava histórico** de movimento para os cards movidos (lacuna de auditoria; o SLA desses cards continua contando da entrada anterior).
-- Reabrir um negócio não atualiza `stage_entered_at`; o SLA usa o registro de histórico da reabertura (não confirmado no código se algum relatório usa `stage_entered_at` para negócios reabertos).
+- A exclusão de etapa com reatribuição em massa para uma etapa comum **não grava histórico** de movimento para os cards movidos (lacuna de auditoria; o SLA desses cards continua contando da entrada anterior). A correção depende de uma mudança na função compartilhada de etapas do seed (três produtos usam), ainda não feita.
+- Um negócio para cliente existente ainda cria uma linha de lead nova (o funil exige um lead por negócio).
 - Anexo removido no card é removido na hora, sem confirmação (motivo registrado automaticamente como "Removido pelo usuário"; exclusão lógica).
 - O quadro de Perdidos não tem paginação (lista todos os perdidos da organização).
 
@@ -971,7 +1023,8 @@ Etapas (admin): nome da etapa 1–60 caracteres; cor entre `primary`, `secondary
 - **P: A pessoa não aparece como responsável.** R: Cadastre-a como profissional ativo em Custos.
 - **P: O responsável não recebe notificações.** R: Vincule o profissional ao usuário de login em Custos.
 - **P: A notificação de automação abre o card?** R: Sim, o link `/comercial?negocio=<id>` abre o card do negócio.
-- **P: Como vendo mais para um cliente que já existe?** R: Ainda não há essa opção; hoje é preciso criar um novo lead, e o fechamento criará outro cliente.
+- **P: Como vendo mais para um cliente que já existe?** R: Em Comercial, "Novo lead" → "Cliente existente", busque o cliente e toque em "Criar negócio". Ou, em Clientes, abra o card do cliente e toque em "Novo negócio". Ao fechar, o mesmo cliente é reaproveitado.
+- **P: Quero que outra coluna seja a de fechamento.** R: Um administrador abre "Papéis das etapas" (abaixo do quadro) e escolhe a nova etapa em "Fechado (exige orçamento aceito)". O papel sai da etapa antiga automaticamente.
 
 ---
 
@@ -1040,7 +1093,7 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 
 ### 8. Fluxo de dados
 - Card hub (seed) sob o prefixo `/api/comercial/negocios`: GET `/{id}/card`, GET `/{id}/timeline`, POST/PATCH/DELETE `/{id}/notas…`, GET/POST/PATCH/DELETE `/tags…`, PUT `/{id}/tags`, GET/PUT `/{id}/membros` (`profissional_ids`), `/{id}/checklists…`, GET/POST `/{id}/documentos`, GET `/{id}/documentos/{doc}/url`, DELETE `/{id}/documentos/{doc}?motivo=` → tabelas `negocio_notas`, `negocio_tags`, `negocio_tag_links`, `negocio_membros`, `negocio_checklists`, `negocio_checklist_itens`, `negocio_documentos`, `negocio_documento_acessos` (gravação pelo cliente service-role filtrando `org_id`).
-- Assistente: `AssistenteSubpage` → `useAssistenteNegocio` → POST `/api/comercial/negocios/{id}/assistente` `{acao, canal?}` → `assistente.montar_contexto` → provedor `anthropic`, modelo = primeiro modelo de chat Anthropic do catálogo do seed (hoje `claude-opus-5`), temperatura 0.4, até 1200 tokens → `{data:{texto}}`.
+- Assistente: `AssistenteSubpage` → `useAssistenteNegocio` → POST `/api/comercial/negocios/{id}/assistente` `{acao, canal?}` → `assistente.montar_contexto` → provedor `anthropic`, modelo fixo `claude-sonnet-4-6` (conferido contra o catálogo de modelos do seed; se sair do catálogo, o assistente falha em vez de trocar de modelo), temperatura 0.4, até 1200 tokens → `{data:{texto}}`.
 
 ### 9. Dependências de configuração
 - `IGIG_CARDHUB_BUCKET` (padrão `igig-cardhub`) para anexos.
@@ -1051,7 +1104,9 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 - Não há histórico das respostas do Assistente.
 - Remover anexo não pede confirmação.
 - Linhas livres de checklist (texto/arquivo) existem no servidor, mas não têm tela no IgIg.
-- Lembretes de card (data de entrega + lembrete) não têm tela no IgIg.
+- Lembretes de card (data de entrega + lembrete) não têm tela no IgIg: a rotina que os entrega como notificação roda a cada 5 minutos, mas não há como criar um lembrete hoje.
+- O Assistente envia dados pessoais do lead à Anthropic sem um consentimento de IA específico do produto (decisão pendente do dono do produto — Capítulo 5).
+- Este Assistente (do negócio) é diferente do **Assistente IgIg** (balão de ajuda em todas as telas), que só explica o uso da plataforma e não vê os dados do negócio.
 
 ### 11. Perguntas frequentes
 - **P: O Assistente envia a mensagem ao cliente?** R: Não. Ele só sugere; copie, revise e envie você.
@@ -1060,6 +1115,7 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 - **P: Por que aparece "Muitas requisições. Tente novamente em breve."?** R: Você fez mais de 20 pedidos em um minuto. Aguarde um pouco.
 - **P: Quanto tempo vale o link de um anexo?** R: 5 minutos; abra de novo para gerar outro.
 - **P: As etiquetas de um negócio aparecem nos clientes?** R: Não; o catálogo de etiquetas de clientes é separado.
+- **P: Qual IA o Assistente usa?** R: Claude Sonnet (`claude-sonnet-4-6`), da Anthropic, sempre o mesmo modelo.
 
 ---
 
@@ -1142,8 +1198,8 @@ A carteira de clientes da agência. A lista abre o **card do cliente**, que reú
 
 ### 2. Acesso
 - Rota: `/clientes`. Menu lateral: "Clientes" (3º item). Deep link: `/clientes?id=<id do cliente>` abre o card (fechar remove o `?id=`). O endereço antigo `/marca` redireciona para `/clientes`.
-- Qualquer membro logado: ver, criar, editar, ativar clientes; usar todas as abas; criar/editar marcas e acessos do Cofre.
-- Só administradores: **"Remover cliente"** (o botão aparece para todos, mas o servidor recusa não-admins com 403 "Apenas administradores da organização podem realizar esta ação."); **"Revelar"** senha do Cofre (para não-admin aparece o selo "Protegida" com cadeado); **"Paga"** na aba Financeiro (o botão aparece para todos; o servidor recusa não-admins com a mesma mensagem 403).
+- Qualquer membro logado: ver, criar, editar, ativar clientes; abrir um **"Novo negócio"** para o cliente; usar todas as abas; criar/editar marcas e acessos do Cofre.
+- Só administradores: **"Remover cliente"** (o botão aparece para todos, mas o servidor recusa não-admins com 403 "Apenas administradores da organização podem realizar esta ação."); **"Revelar"** senha do Cofre (para não-admin aparece o selo "Protegida" com cadeado); **"Paga"** na aba Financeiro (o botão só aparece para administradores).
 
 ### 3. Layout
 - Cabeçalho: "Clientes" e o total ("N cliente"/"N clientes"; "Carregando…" na primeira carga; " · atualizando…" durante recarga). Botão "Novo cliente".
@@ -1151,14 +1207,14 @@ A carteira de clientes da agência. A lista abre o **card do cliente**, que reú
 - Lista: **celular (<768px)**: um cartão por cliente com nome, "nicho · e-mail ou telefone" (ou "Sem nicho definido"), selo de status e seta. **Computador**: tabela com colunas "Cliente", "Nicho", "Contato", "Status", "Desde".
 - Paginação: 50 clientes por página; com mais de uma página aparecem no rodapé "Anterior", "Página X de Y" e "Próxima". Trocar busca/status volta para a página 1.
 - Cores do status: Prospect (cinza), Ativo (principal), Inativo (contorno), Inadimplente (vermelho).
-- **Card do cliente**: mesma janela do card do negócio (computador: abas à esquerda, conteúdo ao centro, "Comentários e atividade" à direita; celular: tela cheia). Cabeçalho com o selo de status. Abas:
+- **Card do cliente**: mesma janela do card do negócio (computador: abas à esquerda, conteúdo ao centro, "Comentários e atividade" à direita; celular: tela cheia). Cabeçalho com o selo de status e o botão **"Novo negócio"** (ícone +). Abas:
   - **"Geral"**: "Etiquetas", "Membros", "Checklist"; resumo do cliente ("Nicho", "E-mail", "Telefone", "Origem", "Cliente desde" — só os preenchidos); descrição; anexos; checklists. O catálogo de etiquetas dos clientes é separado do dos negócios.
   - **"Dados"**: todos os campos editáveis do cliente, "Salvar", "Ativar" (só para Prospect) e "Remover cliente".
-  - **"Marcas"**: chips das marcas do cliente, "Nova marca", o painel da marca selecionada e, abaixo, o **"Cofre de Acessos"** (um por cliente). Detalhes completos no guia `03-esteira-calendario-marca-portal.md` (Funcionalidade: Central da Marca + Cofre de Acessos).
-  - **"Orçamentos & Contratos"**: seção "Orçamentos" (orçamentos ligados ao cliente) e seção "Contratos". Detalhes de contrato no guia `02-orcamentos-contratos-custos.md`.
-  - **"Calendário"**: o calendário editorial filtrado para este cliente (guia 03).
-  - **"Esteira"**: o quadro de produção filtrado para este cliente (guia 03).
-  - **"Financeiro"**: totais "Em aberto" e "Recebido" e a lista de faturas do cliente.
+  - **"Marcas"**: chips das marcas do cliente, "Nova marca", o painel da marca selecionada e, abaixo, o **"Cofre de Acessos"** (um por cliente). Detalhes completos no Capítulo 3 (Funcionalidade: Central da Marca + Cofre de Acessos).
+  - **"Orçamentos & Contratos"**: seção "Orçamentos" (orçamentos ligados ao cliente) e seção "Contratos". Detalhes de contrato no Capítulo 2.
+  - **"Calendário"**: o calendário editorial filtrado para este cliente (Capítulo 3).
+  - **"Esteira"**: o quadro de produção filtrado para este cliente (Capítulo 3).
+  - **"Financeiro"**: totais "Em aberto" e "Recebido" e a lista de faturas do cliente; para administradores, botão "Paga" nas faturas não pagas nem canceladas.
   - Não existe aba de "Lembretes" nem de "Notas" separada: comentários e descrição ficam em "Geral" e na coluna "Comentários e atividade".
 
 ### 4. Campos
@@ -1183,6 +1239,13 @@ Aba "Dados":
 | "Status" | lista | Sim | Prospect / Ativo / Inativo / Inadimplente | atual | — |
 | "Observações" | texto longo | Não | — | atual | Idem |
 
+Janela "Novo negócio" (botão do cabeçalho do card):
+
+| Campo | Tipo | Obrigatório | Validação/limites | Padrão | Observação |
+|---|---|---|---|---|---|
+| "Título (opcional)" | texto | Não | — | vazio (sugestão: nome do cliente) | Vazio: o título vira o nome do cliente |
+| "Valor estimado (R$/mês)" | número | Não | ≥ 0 | vazio | — |
+
 Modal "Marcar como assinado" (contrato físico): arquivo opcional "Escolher arquivo" — PDF, JPG ou PNG, até 25 MB.
 
 ### 5. Ações
@@ -1195,12 +1258,13 @@ Modal "Marcar como assinado" (contrato físico): arquivo opcional "Escolher arqu
 | "Ativar" (Dados) | Cliente Prospect | Status → Ativo | "Cliente ativado." | "Não foi possível ativar." |
 | "Remover cliente" → "Remover" | **Administrador** | Exclusão **definitiva em cascata**: marcas, acessos do Cofre, contratos, faturas, pautas (e peças, tarefas, apontamentos, aprovações, publicações) e o conteúdo do card | "Cliente removido." (o card fecha) | 403 "Apenas administradores da organização podem realizar esta ação." (peça a um administrador); 404 "Cliente não encontrado"; "Não foi possível remover o cliente." |
 | Abas Geral (etiquetas, membros, checklist, descrição, anexos, comentários) | — | Igual ao card do negócio (ver Funcionalidade: Card do negócio) | idem | idem |
-| Marcas / Cofre | — | Ver guia 03 | "Marca criada." / "Marca removida." etc. | ver guia 03 |
+| Marcas / Cofre | — | Ver Capítulo 3 | "Marca criada." / "Marca removida." etc. | ver Capítulo 3 |
 | Tocar num orçamento (Orçamentos & Contratos) | — | Abre o modal do orçamento por cima do card | — | "Não foi possível carregar os orçamentos." |
 | "PDF" / "Via assinada" (contrato) | Documento existe | Abre link temporário do PDF em nova aba | — | "Documento indisponível."; "Não foi possível abrir o contrato." |
 | "Marcar como assinado" → "Confirmar assinatura" | Contrato **físico** ainda não Ativo nem Encerrado | Ativa o contrato e o cliente a partir de hoje; guarda a digitalização se enviada | "Contrato assinado e ativo." | "Não foi possível marcar como assinado." / mensagens do servidor (ex.: "Envie o contrato assinado em PDF, JPG ou PNG.", "O arquivo enviado está vazio.", "Este contrato está encerrado e não pode ser reativado.") |
 | "Reenviar / gerar novamente" | Contrato em Rascunho com orçamento | Abre o orçamento para gerar novo contrato | — | — |
-| "Paga" (Financeiro) | Fatura não paga nem cancelada; **administrador** | Marca a fatura como paga | "Fatura marcada como paga." | 403 "Apenas administradores da organização podem realizar esta ação."; 409 "Fatura cancelada não pode ser paga."; "Não foi possível marcar como paga." |
+| "Paga" (Financeiro) → "Marcar paga" | Fatura não paga nem cancelada; **administrador** (o botão só aparece para eles) | Abre a confirmação "Marcar fatura como paga" — "Marcar esta fatura como paga? Registra a data de agora; não há como desfazer pela tela." ("Cancelar" / "Marcar paga", que vira "Marcando…"); confirmada, marca a fatura como paga | "Fatura marcada como paga." | 403 "Apenas administradores da organização podem realizar esta ação."; 409 "Fatura cancelada não pode ser paga."; "Não foi possível marcar como paga." |
+| "Novo negócio" (cabeçalho do card) → "Criar negócio" | — | Cria um negócio **ligado a este cliente** na primeira etapa do Comercial (com um lead novo, origem "Manual", com nome/e-mail/telefone do cliente); roda as automações da etapa; fecha a janela e leva ao card do novo negócio em `/comercial?negocio=<id>`. Ao fechar esse negócio, o mesmo cliente é reaproveitado | "Negócio criado para <cliente> — o card entrou na primeira etapa." | 409 "O funil comercial não tem nenhuma etapa ativa. Configure as etapas primeiro."; outros: mensagem do servidor ou "Não foi possível criar o negócio." (mostrado na janela) |
 
 ### 6. Estados
 - Carregando: esqueleto de tabela na lista; "Carregando…" no cabeçalho; esqueletos nas abas.
@@ -1214,18 +1278,20 @@ Modal "Marcar como assinado" (contrato físico): arquivo opcional "Escolher arqu
 2. Clientes nascem sozinhos ao fechar um negócio no Comercial (nome = empresa ou nome do lead, com e-mail, telefone, origem e o vínculo ao lead e ao negócio).
 3. **Remover cliente é só para administrador** e é definitivo em cascata — por isso a confirmação cita marcas, contratos, pautas, tarefas e apontamentos.
 4. Limpar um campo em "Dados" grava vazio de verdade (não texto vazio).
-5. Orçamentos só nascem de um negócio; por isso um cliente criado à mão não recebe orçamento/contrato pela interface.
+5. Orçamentos só nascem de um negócio. Para orçar para um cliente já existente (inclusive um criado à mão), use "Novo negócio" no card do cliente: o negócio já nasce ligado a ele e, ao fechar, o mesmo cliente é reaproveitado.
 6. O Cofre é um por **cliente** (não por marca); senhas nunca aparecem na listagem e só administradores revelam, com cada revelação gravada (quem e quando).
 7. A lista usa paginação real no servidor (50 por página, máx. 200 por chamada) e o total vem com os mesmos filtros.
+8. "Paga" é uma movimentação financeira: só administradores veem o botão, e ele sempre pede confirmação — a mesma regra da página Financeiro.
 
 ### 8. Fluxo de dados
 - Lista: `useClientes({busca, status, limit:50, offset})` → GET `/api/clientes?busca=&status=&limit=&offset=` → `igig.cliente` + contagem.
 - Detalhe: `useCliente(id)` → GET `/api/clientes/{id}`.
 - Criar: POST `/api/clientes`. Editar: PATCH `/api/clientes/{id}` (só os campos enviados; `null` limpa). Ativar: POST `/api/clientes/{id}/ativar`. Remover: DELETE `/api/clientes/{id}` (admin, `exigir_admin_da_org`).
 - Card hub sob `/api/clientes` (mesmos endpoints do card do negócio) → tabelas `cliente_notas`, `cliente_tags`, `cliente_tag_links`, `cliente_membros`, `cliente_checklists`, `cliente_checklist_itens`, `cliente_documentos`, `cliente_documento_acessos`.
-- Marcas/Cofre: `/api/marcas…` e `/api/marcas/acessos…` (guia 03).
+- Marcas/Cofre: `/api/marcas…` e `/api/marcas/acessos…` (Capítulo 3).
 - Orçamentos: GET `/api/orcamentos?cliente_id=`. Contratos: GET `/api/contratos?cliente_id=`, GET `/api/contratos/{id}/pdf`, POST `/api/contratos/{id}/marcar-assinado`.
 - Financeiro: GET `/api/financeiro/faturas?cliente_id=`; POST `/api/financeiro/faturas/{id}/pagar` (admin).
+- Novo negócio: `NovoNegocioClienteDialog` → `useCriarNegocio` → POST `/api/comercial/negocios` `{lead:{nome,email,telefone}, cliente_id, titulo?, valor_estimado?}` → navegação para `/comercial?negocio=<id>`.
 - Calendário/Esteira: os mesmos componentes das páginas Calendário e Esteira, filtrados por `cliente_id`.
 
 ### 9. Dependências de configuração
@@ -1234,22 +1300,20 @@ Modal "Marcar como assinado" (contrato físico): arquivo opcional "Escolher arqu
 - `IGIG_CARDHUB_BUCKET` para anexos.
 
 ### 10. Limitações conhecidas
-- Não há botão "Novo negócio" para um cliente existente (upsell/renovação) — pendente.
-- Cliente criado à mão não tem negócio → não recebe orçamento nem contrato pela interface.
-- Remover cliente é definitivo (sem lixeira). O botão "Remover cliente" e o botão "Paga" aparecem para quem não é administrador, que recebe o erro 403 ao confirmar.
-- O status "Inadimplente" não é aplicado automaticamente (a rotina diária existe no código, mas não está agendada).
+- Remover cliente é definitivo (sem lixeira). O botão "Remover cliente" aparece para quem não é administrador, que recebe o erro 403 ao confirmar.
+- O status "Inadimplente" é aplicado (e retirado) pela rotina diária das 06:00; entre a meia-noite e as 06:00 pode estar um dia atrasado em relação às faturas.
 - O e-mail/WhatsApp de boas-vindas e o formulário de onboarding após a assinatura não estão implementados (`NOC-REMEDIATE[igig-onboarding]`).
 - Assinatura digital ainda é simulação (link de teste).
-- Lembretes de card não têm tela; a entrega deles como notificação existe no código mas não está agendada.
+- Lembretes de card não têm tela para serem criados; a rotina que os entrega como notificação roda a cada 5 minutos, mas hoje não tem o que entregar.
 - Na aba Financeiro o status da fatura aparece com o código técnico (ex.: "aberta", "paga").
-- Aba Marcas: a dica do logo ainda diz "PNG, SVG, JPEG ou WebP · até 2 MB." e o seletor oferece SVG, mas o servidor recusa SVG ("Formato não suportado: image/svg+xml. Envie PNG, JPEG ou WebP.").
 
 ### 11. Perguntas frequentes
 - **P: Como um cliente vira Ativo?** R: Ao marcar o contrato físico como assinado, quando o provedor confirma o contrato digital, pelo botão "Ativar" (Prospect) ou pelo campo "Status" em Dados.
 - **P: Onde fica a Central da Marca?** R: Clientes → abrir o cliente → aba "Marcas".
 - **P: Não consigo remover um cliente.** R: Só Proprietário/Administrador podem; é uma exclusão definitiva de tudo do cliente.
 - **P: Só aparecem 50 clientes.** R: Use "Próxima" no rodapé ou a busca.
-- **P: Criei um cliente à mão; como faço o orçamento?** R: Orçamentos nascem de um negócio no Comercial; hoje não é possível ligar um orçamento a um cliente criado à mão.
+- **P: Criei um cliente à mão; como faço o orçamento?** R: Abra o card do cliente e toque em "Novo negócio". Você será levado ao card do negócio no Comercial, onde gera o orçamento.
+- **P: Não vejo o botão "Paga" na aba Financeiro.** R: Só administradores da agência marcam fatura como paga.
 - **P: Quem pode ver as senhas do Cofre?** R: Só administradores, pelo botão "Revelar"; cada revelação fica registrada.
 - **P: Como abro um cliente direto por link?** R: `/clientes?id=<id>`.
 - **P: Apaguei o telefone e salvei; ficou vazio?** R: Sim, o campo é gravado vazio.
@@ -1342,7 +1406,6 @@ Execução das ações (motor):
 - SLA só roda no servidor implantado (`NOCTUS_SCHEDULERS_ENABLED`).
 
 ### 10. Limitações conhecidas
-- O link `/esteira?tarefa=<id>` das notificações abre a Esteira, mas a página ainda não abre a tarefa pelo parâmetro.
 - Excluir uma etapa apaga as automações dela (cascata no banco).
 - Não há ação de IA nas automações.
 - "Ignorada" foi removido da tela porque o motor nunca grava esse status.
@@ -1351,6 +1414,7 @@ Execução das ações (motor):
 - **P: Não consigo criar automação.** R: Só Proprietário/Administrador.
 - **P: A regra rodou duas vezes?** R: Não roda: uma execução por entrada na etapa. Se o card saiu e voltou, é nova entrada.
 - **P: O SLA não disparou.** R: A verificação é a cada 15 minutos e só no servidor de produção; a contagem começa na entrada do card na etapa.
+- **P: Tocar na notificação abre o card?** R: Sim. Notificações de automação e de SLA levam a `/comercial?negocio=<id>` (card do negócio) ou `/esteira?tarefa=<id>` (detalhes da tarefa). Se a tarefa não for encontrada (excluída ou fora do filtro de cliente), aparece "Tarefa não encontrada — pode ter sido excluída, ou pertence a um cliente fora do filtro atual.".
 - **P: A notificação não chegou.** R: Veja o detalhe em "Execuções recentes". Normalmente falta responsável com usuário vinculado em Custos.
 - **P: O e-mail da automação falhou.** R: Configure o SMTP em Integrações → E-mail, ou preencha "Para"/o e-mail do contato.
 - **P: Pausar ou excluir?** R: Pausar mantém o histórico; excluir apaga a regra e suas execuções.
@@ -1445,7 +1509,7 @@ Lista as **contas de login** da agência (membros da organização) e os convite
 ### 2. Acesso
 - Rota: `/equipe`. Menu lateral: "Equipe" (13º, último item).
 - Todos: ver a lista de membros.
-- **"Convidar"**: Proprietário, Administrador **e Gerente** (e administrador da plataforma).
+- **"Convidar"**: Proprietário, Administrador **e Gerente** (e administrador da plataforma). Teto de papel: só o Proprietário convida como Proprietário; só Proprietário/Administrador convidam como "Administrador"; o Gerente convida como "Gerente", "Membro", "Visualizador", "Desenvolvedor", "Teste" ou "Corretor".
 - **"Ações"** (remover membro) e **"Convites pendentes"** (ver/cancelar): só Proprietário e Administrador.
 
 ### 3. Layout
@@ -1459,14 +1523,14 @@ Lista as **contas de login** da agência (membros da organização) e os convite
 | Campo | Tipo | Obrigatório | Validação/limites | Padrão | Observação |
 |---|---|---|---|---|---|
 | "E-mail" | e-mail | Sim | — | vazio | Exemplo "colaborador@empresa.com" |
-| "Papel" | lista | Sim | Administrador, Gerente, Membro, Visualizador, Desenvolvedor, Teste, Corretor | "Membro" | "Proprietário" não é oferecido |
+| "Papel" | lista | Sim | Administrador, Gerente, Membro, Visualizador, Desenvolvedor, Teste, Corretor | "Membro" | "Proprietário" não é oferecido. A lista é a mesma para todos, mas o servidor recusa um Gerente que escolha "Administrador" (403 "Sem permissao para convidar como Administrador") |
 
 ### 5. Ações
 | Ação | Pré-condições | O que acontece | Mensagem de sucesso | Erros possíveis |
 |---|---|---|---|---|
-| "Convidar" → "Enviar convite" ("Enviando…") | Proprietário/Admin/Gerente; e-mail | Cria convite (válido por **7 dias**) e envia e-mail com o link de aceite | "Convite enviado com sucesso" | "Erro ao enviar convite" + descrição: 403 "Sem permissao para convidar"; 409 "Ja existe um convite pendente para este email" |
+| "Convidar" → "Enviar convite" ("Enviando…") | Proprietário/Admin/Gerente; e-mail | Cria convite (válido por **7 dias**, na organização de quem convida) e envia e-mail "Aceitar Convite" com o link `/accept-invite/<token>`, pelo provedor de e-mail da plataforma (Resend) | "Convite enviado com sucesso" | "Erro ao enviar convite" + descrição: 403 "Sem permissao para convidar"; 403 "Sem permissao para convidar como <papel>" (papel acima do permitido para você); 400 "Papel invalido: <papel>"; 400 "Email e obrigatorio"; 409 "Ja existe um convite pendente para este email" |
 | "Cancelar" (convite) | Proprietário/Admin | Cancela o convite | "Convite cancelado" | "Erro ao cancelar convite"; 403 "Sem permissao" |
-| "Remover" → "Confirmar remoção" ("Removendo…") | Proprietário/Admin; não é você nem o Proprietário | Confirmação "Tem certeza que deseja remover <nome> da organização? Esta ação não pode ser desfeita." Remove o membro | "Membro removido" | "Erro ao remover membro" + descrição: 400 "Nao pode remover a si mesmo"; 403 "Sem permissao" |
+| "Remover" → "Confirmar remoção" ("Removendo…") | Proprietário/Admin; não é você nem o Proprietário | Confirmação "Tem certeza que deseja remover <nome> da organização? Esta ação não pode ser desfeita." Remove o membro (só se ele for da sua organização) | "Membro removido" | "Erro ao remover membro" + descrição: 400 "Nao pode remover a si mesmo"; 403 "Sem permissao"; 403 "Somente o proprietario pode remover um proprietario"; 404 "Membro nao encontrado" |
 
 ### 6. Estados
 - Carregando: esqueleto de tabela; "Carregando…".
@@ -1475,24 +1539,29 @@ Lista as **contas de login** da agência (membros da organização) e os convite
 - Atualizando: " · atualizando…".
 
 ### 7. Regras de negócio e por quê
-1. Três níveis: ver (todos), convidar (Proprietário/Administrador/Gerente — o que o servidor sempre permitiu), gerenciar (Proprietário/Administrador).
+1. Três níveis: ver (todos), convidar (Proprietário/Administrador/Gerente, com teto de papel), gerenciar (Proprietário/Administrador).
 2. O convite vale 7 dias e só pode ser aceito com o e-mail convidado.
 3. Uma pessoa pertence a uma organização; se já está em outra, o aceite é recusado ("Voce ja pertence a outra organizacao. Entre em contato com o suporte para transferir sua conta.").
 4. Ser membro não cria custo/hora: para aparecer como responsável/membro dos cards e ter custo nas horas, cadastre a pessoa como profissional em Custos e vincule o usuário.
+5. **Ninguém convida acima de si.** O Gerente não cria Administradores e o Administrador não cria Proprietários. *Por quê:* sem o teto, qualquer Gerente poderia se promover indiretamente a administrador por meio de uma conta convidada.
+6. **Papel e organização vêm da tabela confiável** (`public.noctus_users`), nunca do perfil editável do usuário; todo convite, listagem e remoção é filtrado pela organização de quem pede. *Por quê:* as rotas de equipe usam acesso de serviço, então esse filtro é a fronteira entre agências.
 
 ### 8. Fluxo de dados
-`Equipe.tsx` → `useEquipe` (TanStack Query) → GET `/api/team`, GET `/api/team/invitations` (só se admin), POST `/api/team/invite` `{email, role}`, DELETE `/api/team/invitations/{id}`, DELETE `/api/team/{user_id}` → roteador de equipe do seed → `public.noctus_users` e `igig.invitations`. Aceite: página `/accept-invite/<token>` (ver `00-plataforma.md`).
+`Equipe.tsx` → `useEquipe` (TanStack Query) → GET `/api/team`, GET `/api/team/invitations` (só se admin), POST `/api/team/invite` `{email, role}`, DELETE `/api/team/invitations/{id}`, DELETE `/api/team/{user_id}` → roteador de equipe do seed → `public.noctus_users` e `igig.invitations`. Aceite: página `/accept-invite/<token>` (ver Capítulo 0).
 
 ### 9. Dependências de configuração
-- Envio de e-mail da plataforma para o convite (não confirmado no código do IgIg qual provedor/variável — é do seed).
+- E-mail do convite: provedor **Resend** da plataforma, variável `RESEND_API_KEY`, remetente "NoctusAI <noreply@noctusai.com>"; o link usa o primeiro domínio de `CORS_ORIGINS`. **Sem `RESEND_API_KEY`, o convite é criado e a tela mostra "Convite enviado com sucesso", mas nenhum e-mail sai** (o servidor só registra no log) — nesse caso, envie à pessoa o link de aceite por outro meio (ver Limitações).
 
 ### 10. Limitações conhecidas
 - Não é possível mudar o papel de um membro existente nesta tela.
 - As mensagens de erro vindas do servidor da plataforma estão sem acento ("Sem permissao", "Nao pode remover a si mesmo").
+- Se o envio do e-mail de convite falhar (provedor não configurado ou erro do Resend), o convite continua criado e a tela mostra sucesso mesmo assim; a tela não mostra o link de aceite para copiar.
+- A lista "Papel" oferece "Administrador" também para o Gerente, que recebe 403 ao enviar.
 - Depois de convidar, é preciso cadastrar a pessoa em Custos para ela aparecer como responsável.
 
 ### 11. Perguntas frequentes
-- **P: Sou Gerente; posso convidar?** R: Sim. Ver e cancelar convites pendentes e remover membros é só para Proprietário/Administrador.
+- **P: Sou Gerente; posso convidar?** R: Sim, como Gerente, Membro, Visualizador, Desenvolvedor, Teste ou Corretor (não como Administrador). Ver e cancelar convites pendentes e remover membros é só para Proprietário/Administrador.
+- **P: A pessoa diz que não recebeu o convite.** R: Confira o spam. Se não chegou, o envio de e-mail da plataforma pode não estar configurado; cancele o convite em "Convites pendentes" e convide de novo, ou peça ao responsável técnico para verificar o e-mail da plataforma.
 - **P: Quanto tempo vale o convite?** R: 7 dias.
 - **P: A pessoa entrou mas não aparece como responsável dos cards.** R: Cadastre-a como profissional em Custos e vincule o usuário.
 - **P: Posso mudar o papel de alguém?** R: Não por esta tela.
@@ -1596,12 +1665,12 @@ Status possíveis:
 | Editar qualquer campo/item | Editável | Recalcula os totais no servidor ~0,4 s depois (nada é gravado). | — | 422 `recorrencia_invalida` "O item "{descrição}" é recorrente: escolha ao menos um dia da semana e a quantidade por dia." → marque ao menos um dia. 422 `desconto_invalido` "O desconto não pode ser maior que o subtotal do orçamento." → reduza. 422 `produto_invalido` "Um dos itens referencia um produto/serviço que não existe neste catálogo." → remova e readicione. Genérico: "Não foi possível calcular." |
 | "Criar orçamento" | Negócio escolhido e em aberto | Grava como Rascunho; versão = maior versão do negócio + 1; lead e cliente copiados do negócio; totais recalculados e gravados. | "Orçamento v{N} criado." | Sem negócio: "Escolha o negócio deste orçamento." 409 `negocio_encerrado` "Este negócio está {ganho/perdido} — não aceita novos orçamentos." → abra um novo negócio no Comercial. Os 422 acima. Genérico: "Não foi possível salvar o orçamento." |
 | "Salvar" | Rascunho/Enviado, com alteração | Substitui todos os itens, recalcula e grava os totais e **apaga a referência ao PDF** (o PDF anterior deixa de valer; o link some da tela). | "Orçamento salvo." | 409 `orcamento_bloqueado` "Não é possível editar: este orçamento está {status}." → use "Nova versão". 422 `sem_campos` "Nenhum campo para atualizar." Os 422 de cálculo. |
-| "Nova versão" → caixa → "Confirmar nova versão" | Status Rascunho, Enviado, Recusado ou Expirado; sem alterações não salvas (o botão não aparece para Aceito nem Substituído) | Cria cópia (título, itens, desconto, limites, observações) em Rascunho com a validade escolhida; **recalcula totais e margem com o custo/hora ATUAL**. O original: se Rascunho/Enviado → "Substituído"; se Recusado/Expirado → **mantém** o status. O modal passa para a nova versão. | "Versão {N} criada — a anterior foi substituída." | 409 `orcamento_bloqueado` "Não é possível criar nova versão: este orçamento está {aceito/substituido}." Genérico: "Não foi possível criar a nova versão." |
+| "Nova versão" → caixa → "Confirmar nova versão" | Status Rascunho, Enviado, Recusado ou Expirado; sem alterações não salvas (o botão não aparece para Aceito nem Substituído) | Cria cópia (título, itens, desconto, limites, observações) em Rascunho com a validade escolhida; **recalcula totais e margem com o custo/hora ATUAL**. O original: se Rascunho/Enviado → "Substituído"; se Recusado/Expirado → **mantém** o status. O modal passa para a nova versão. | Original Rascunho/Enviado: caixa "Cria uma cópia como nova versão em Rascunho; a atual vira Substituído." e aviso "Versão {N} criada — a anterior foi substituída.". Original Recusado/Expirado: caixa "Cria uma cópia como nova versão em Rascunho; esta continua recusado." (ou "… continua expirado.") e aviso "Versão {N} criada — a anterior continua recusado." (ou "… continua expirado.") | 409 `orcamento_bloqueado` "Não é possível criar nova versão: este orçamento está {aceito/substituido}." Genérico: "Não foi possível criar a nova versão." |
 | "Gerar PDF" | Orçamento salvo (qualquer status) | Ver "Funcionalidade: PDF do orçamento". | "PDF gerado." | "Não foi possível gerar o PDF." |
 | "E-mail" | Rascunho/Enviado, salvo | Abre/fecha o painel "Enviar por e-mail". | — | Ver "Funcionalidade: Envio do orçamento por e-mail". |
-| ✓ "Aceitar orçamento" → "Confirmar aceite" | Rascunho/Enviado, salvo. Caixa: "Aceitar move o negócio para **Fechado**, cria o cliente e gera as pautas do calendário. Confirmar?" | Fecha o negócio (etapa com papel Fechado), cria/reaproveita o Cliente, marca este Aceito e as outras versões abertas como Substituído, gera as pautas dos próximos 30 dias, dispara as automações de entrada em Fechado. O modal passa a mostrar o painel "Contrato". | "Orçamento aceito — cliente {nome} criado, {N} pautas no calendário." — "já existia" no lugar de "criado" quando o cliente foi reaproveitado; termina em "criado." / "já existia." quando não há pautas. {N} = total de pautas deste orçamento no calendário. | 409 `negocio_ganho` "Este negócio já foi fechado com outro orçamento." 409 `orcamento_expirado` "A validade deste orçamento já passou." → Nova versão com nova validade. 409 `orcamento_ja_aceito` "Outro orçamento deste negócio já foi aceito — feche com ele." 409 `orcamento_invalido` "Este orçamento está {status} e não pode ser aceito." / "Este orçamento não pertence a este negócio." 409 `negocio_perdido` "Este negócio foi marcado como perdido." 409 `funil_sem_fechamento` "O funil comercial não tem etapa de fechamento ativa. Configure as etapas primeiro." → no Comercial, garanta uma etapa com papel Fechado. 409 `aceite_nao_aplicado` "O negócio não pôde ser fechado com este orçamento — verifique a etapa do card." → mova o card para outra etapa e aceite de novo. Genérico: "Não foi possível aceitar o orçamento." |
+| ✓ "Aceitar orçamento" → "Confirmar aceite" | Rascunho/Enviado, salvo. Caixa: "Aceitar move o negócio para **Fechado**, cria o cliente e gera as pautas do calendário. Confirmar?" | Fecha o negócio (etapa com papel Fechado), cria/reaproveita o Cliente, marca este Aceito e as outras versões abertas como Substituído, gera as pautas dos próximos 30 dias, dispara as automações de entrada em Fechado. O modal passa a mostrar o painel "Contrato". | "Orçamento aceito — cliente {nome} criado, {N} pautas no calendário." — "já existia" no lugar de "criado" quando o cliente foi reaproveitado; termina em "criado." / "já existia." quando este aceite não criou nenhuma pauta. {N} = pautas **criadas por este aceite** (não o total histórico do negócio). | 409 `negocio_ganho` "Este negócio já foi fechado com outro orçamento." 409 `orcamento_expirado` "A validade deste orçamento já passou." → Nova versão com nova validade. 409 `orcamento_ja_aceito` "Outro orçamento deste negócio já foi aceito — feche com ele." 409 `orcamento_invalido` "Este orçamento está {status} e não pode ser aceito." / "Este orçamento não pertence a este negócio." 409 `negocio_perdido` "Este negócio foi marcado como perdido." 409 `funil_sem_fechamento` "O funil comercial não tem etapa de fechamento ativa. Configure as etapas primeiro." → no Comercial, garanta uma etapa com papel Fechado. 409 `aceite_nao_aplicado` "O negócio não pôde ser fechado com este orçamento — verifique a etapa do card." → mova o card para outra etapa e aceite de novo. Genérico: "Não foi possível aceitar o orçamento." |
 | X "Recusar orçamento" → "Recusar" | Rascunho/Enviado; motivo preenchido. Janela "Recusar orçamento" — "O motivo fica registrado para as estatísticas de perda." | Grava Recusado, data e motivo. **Não** marca o negócio como perdido. | "Orçamento recusado." | 422 `motivo_obrigatorio` "Informe o motivo da recusa." 409 `orcamento_bloqueado` "Não é possível recusar: este orçamento está {status}." Genérico: "Não foi possível recusar o orçamento." |
-| "Gerar pautas" | Status Aceito | Completa as pautas dos próximos 30 dias a partir de hoje, sem duplicar nenhuma (idempotente). | "Calendário em dia — {N} pautas geradas ao todo." ou "Nenhuma pauta para gerar (nenhum item recorrente de Criação de conteúdo)." | 409 `orcamento_nao_aceito` "Só um orçamento aceito pode gerar pautas." Genérico: "Não foi possível gerar as pautas." |
+| "Gerar pautas" | Status Aceito | Completa as pautas dos próximos 30 dias a partir de hoje, sem duplicar nenhuma (idempotente) e sem recriar pautas automáticas que foram apagadas ou movidas de data. | "Calendário em dia — {N} pautas geradas ao todo." ou "Nenhuma pauta para gerar (nenhum item recorrente de Criação de conteúdo)." | 409 `orcamento_nao_aceito` "Só um orçamento aceito pode gerar pautas." Genérico: "Não foi possível gerar as pautas." |
 | Tocar num card da lista | — | Abre o modal (põe `?id=` na URL). | — | "Não foi possível carregar o orçamento." |
 | "Limpar filtros" | Algum filtro ativo | Limpa busca, status, lead e datas, mantendo a aba. | — | — |
 
@@ -1627,7 +1696,7 @@ Status possíveis:
 4. **Custo/hora médio da equipe** = média simples do custo/hora efetivo dos profissionais **ativos** em Custos. Quem não tem custo definido (sem função e sem valor próprio) é **excluído** da média (não entra como zero) e gera o alerta "{N} profissional(is) sem custo/hora definido — excluídos da média." A média não é ponderada por quem vai trabalhar no job.
 5. **Margem pode ser negativa** (preço abaixo do custo) — nunca é travada em zero, para o dono ver o problema. Com total zero, a margem é indefinida e o selo mostra **"Margem indisponível"** (cinza, sem número).
 6. **Selo de margem**: menor que 20% → "Margem baixa" (vermelho); de 20% a menos de 40% → "Margem média" (âmbar); 40% ou mais → "Margem saudável" (verde). Mostra o número com até 1 casa decimal (ex.: "Margem média · 32,5%").
-7. **Margem sem base**: se **nenhum** profissional ativo tem custo/hora, o custo/hora médio vira 0 → custo R$ 0 → a margem aparece como **100%** ("Margem saudável · 100%"). Durante a edição o painel Totais mostra o alerta âmbar "Nenhum profissional com custo/hora definido: custo e margem estimados ficam sem base e NÃO devem ser usados. Cadastre funções e custos antes de orçar." Em orçamento já salvo e não editável, o alerta **não** aparece (mostra os totais gravados).
+7. **Margem sem base**: se **nenhum** profissional ativo tem custo/hora (nem próprio, nem herdado da função), o servidor **não calcula margem**: custo estimado R$ 0 e o selo mostra **"Margem indisponível"** (cinza, sem número) — nunca mais "Margem saudável · 100%". *Por quê:* 100% seria um número confiante sobre um cálculo sem base nenhuma. Durante a edição o painel Totais mostra o alerta âmbar "Nenhum profissional com custo/hora definido: custo e margem estimados ficam sem base e NÃO devem ser usados. Cadastre funções e custos antes de orçar." Em orçamento já salvo e não editável, o alerta **não** aparece (mostra os totais gravados).
 8. **Itens avulsos e produtos com 0 horas** não somam horas → não somam custo → deixam a margem maior do que a real.
 9. **As horas vêm do catálogo no momento do cálculo**; o preço é copiado no momento em que o item é adicionado. A margem é **gravada** ao criar/salvar/criar versão: mudar Custos ou horas depois não altera orçamentos salvos até serem salvos de novo (ou até uma nova versão, que recalcula).
 10. **Validade**: vazia = nunca expira. Vencido = validade **anterior a hoje** no fuso America/São_Paulo. A expiração é gravada **na leitura** (ao listar, abrir, salvar, enviar, criar versão, recusar ou aceitar); não há rotina agendada para isso. Expirado não pode ser editado, enviado nem aceito; use "Nova versão".
@@ -1658,8 +1727,8 @@ Equipe em Custos (todos ativos): Ana (função "Designer", R$ 40/h), Bruno (sem 
 - Horas = 24 + 32 + 8 = **64 h/mês**; custo = 64 × 50 = **R$ 3.200,00** → linha "Custo estimado R$ 3.200,00 · 64 h/mês".
 - Margem = (3.300 − 3.200) ÷ 3.300 × 100 = 3,03% → selo **"Margem baixa · 3%"**.
 - Para 40% de margem com esse custo: total ≥ 3.200 ÷ 0,6 ≈ **R$ 5.333,34**. Ex.: tirando o desconto e subindo o Reels para R$ 400: criação = 960 + 3.200 = 4.160; total = 4.660; margem = (4.660 − 3.200) ÷ 4.660 = 31,3% → "Margem média · 31,3%".
-- Variações: (a) se Ana e Bruno fossem desativados, custo/hora = 0 → custo R$ 0 → "Margem saudável · 100%" + alerta "Nenhum profissional com custo/hora definido…" — número sem base; (b) trocando o Post feed por um item avulso de mesmo preço, as 24 h somem do custo (40 h × R$ 50 = R$ 2.000) e a margem sobe artificialmente de 3% para 39,4% ("Margem média · 39,4%").
-- No **aceite** em segunda-feira 28/09/2026, a janela vai de 28/09 a 27/10 (30 dias): Post feed gera 13 pautas (12 Seg/Qua/Sex em 4 semanas + seg. 26/10) e Reels 9 (8 + ter. 27/10) → toast "…, 22 pautas no calendário." (30 dias ≠ as 4 semanas do preço).
+- Variações: (a) se Ana e Bruno fossem desativados, não há custo/hora → custo R$ 0 → "Margem indisponível" + alerta "Nenhum profissional com custo/hora definido…"; (b) trocando o Post feed por um item avulso de mesmo preço, as 24 h somem do custo (40 h × R$ 50 = R$ 2.000) e a margem sobe artificialmente de 3% para 39,4% ("Margem média · 39,4%").
+- No **aceite** em segunda-feira 28/09/2026, a janela vai de 28/09 a 27/10 (30 dias): Post feed gera 13 pautas (12 Seg/Qua/Sex em 4 semanas + seg. 26/10) e Reels 9 (8 + ter. 27/10) → toast "…, 22 pautas no calendário." (30 dias ≠ as 4 semanas do preço). Essas 22 são peças **do plano**: nunca viram excedente no Financeiro, mesmo num mês "de 5 semanas".
 - No **contrato** gerado desse orçamento: valor mensal R$ 3.300,00; posts/mês = 12 + 8 = **20** (só Criação recorrente; Gestão não conta); valor do excedente = o "Valor por excedente (R$)".
 
 ### 8. Fluxo de dados
@@ -1671,9 +1740,9 @@ Equipe em Custos (todos ativos): Ana (função "Designer", R$ 40/h), Bruno (sem 
 | Criar | `useOrcamentoMutations().criar` | `POST /api/orcamentos` (201) | insere `orcamento` (rascunho, versão = máx+1) + `orcamento_item`. |
 | Salvar | `.atualizar` | `PATCH /api/orcamentos/{id}` | apaga e reinsere itens, recalcula, zera `pdf_key`. |
 | Nova versão | `.novaVersao` | `POST /api/orcamentos/{id}/nova-versao` `{validade}` (201) | origem aberta → `substituido`; insere cópia + itens com totais recalculados. `validade` omitida ⇒ servidor calcula os mesmos dias do original; `null` ⇒ sem validade. |
-| Aceitar | `.aceitar` | `POST /api/orcamentos/{id}/aceitar` | `orcamentos.aceitar` → `comercial_funil.mover_negocio` → `_fechar` (orcamento, negocio, cliente, lead) → `pautas.gerar` (tabela `pauta`) → automações de entrada em Fechado. Resposta: orçamento, negócio, cliente, `cliente_criado`, `pautas_criadas`. |
+| Aceitar | `.aceitar` | `POST /api/orcamentos/{id}/aceitar` | `orcamentos.aceitar` → `comercial_funil.mover_negocio` → `_fechar` (orcamento, negocio, cliente, lead) → `pautas.gerar` (tabela `pauta`) → automações de entrada em Fechado. Resposta: orçamento, negócio, cliente, `cliente_criado`, `pautas_criadas` (total do negócio) e `pautas_novas` (criadas por esta chamada — é o número do aviso). Cada pauta gerada registra sua vaga em `pauta_slot_gerado`. |
 | Recusar | `.recusar` | `POST /api/orcamentos/{id}/recusar` `{motivo}` | `status='recusado'`, `recusado_em`, `motivo_recusa`. |
-| Gerar pautas | `.gerarPautas` | `POST /api/orcamentos/{id}/gerar-pautas` | `pautas.gerar` → `{pautas_criadas}` (total no calendário). |
+| Gerar pautas | `.gerarPautas` | `POST /api/orcamentos/{id}/gerar-pautas` | `pautas.gerar` (consulta `pauta_slot_gerado` para saber quais item × dia já foram gerados) → `{pautas_criadas}` (total no calendário). |
 | Job diário | — | agendador `igig_pautas_extensao` (06:45) | `pautas.estender_pendentes` → `pauta`. |
 | PDF / E-mail / Contrato | ver as Funcionalidades | — | — |
 
@@ -1688,18 +1757,18 @@ Toda gravação atualiza a lista de orçamentos e o quadro do Comercial; o aceit
 - Agendador ligado no ambiente implantado para a renovação diária das pautas.
 
 ### 10. Limitações conhecidas
-- O alerta de custo/hora incompleto só aparece durante a edição; orçamentos salvos exibem a margem gravada sem alerta — uma margem "100%" antiga pode ter sido calculada sem custos.
-- A caixa "Nova versão" diz "a atual vira Substituído" e o aviso de sucesso diz "a anterior foi substituída" mesmo quando o original é Recusado/Expirado (que, no servidor, mantém o status).
-- Na mensagem de aceite, "{N} pautas no calendário" é o **total** de pautas do orçamento, não só as criadas agora.
+- O alerta de custo/hora incompleto só aparece durante a edição; orçamentos salvos exibem a margem gravada sem alerta — uma margem "100%" gravada **antes desta versão** pode ter sido calculada sem custos (salve de novo ou crie nova versão para recalcular).
 - "já existia" × "criado" considera o cliente ligado ao negócio ou ao lead; um cliente reaproveitado apenas pela busca "mesmo lead" pode aparecer como "criado".
-- Idempotência por dia: se o operador **apagar** uma pauta gerada ou **mudar a data** dela, o dia original volta a ficar "descoberto" e o job diário/"Gerar pautas" recria a pauta naquele dia (comportamento derivado do código).
-- Preço em 4 semanas × calendário real: meses com mais ocorrências dos dias marcados geram mais pautas que o pacote do contrato; como o Financeiro conta pautas com data de publicação no mês, isso pode gerar cobrança de excedente sobre peças do próprio plano (ver Funcionalidade: Contrato).
+- Uma pauta automática apagada (ou movida de data) **não volta**: o registro `pauta_slot_gerado` guarda que aquela vaga já foi gerada. Se foi engano, crie a pauta à mão no Calendário — mas ela conta como peça avulsa para excedentes.
+- Preço em 4 semanas × calendário real: meses com mais ocorrências dos dias marcados geram mais pautas que o pacote do contrato; essas peças do plano **não** geram excedente (ver Página Financeiro).
 - A tela não oferece recusar um orçamento Expirado (o servidor permite).
 - O filtro "De/Até" é aplicado no navegador, sobre a data de criação.
-- Mensagens de validação 422 genéricas (ex.: descrição vazia) aparecem com o texto que o cliente HTTP extrair — texto exato (não confirmado no código).
+- Mensagens de validação 422 do formato padrão (ex.: descrição vazia, e-mail inválido em "Para"/"CC") aparecem com o texto do validador, **em inglês** (ex.: "String should have at least 1 character"), juntados por "; ".
 
 ### 11. Perguntas frequentes
-- **P: Por que a margem está 100%?** R: Nenhum profissional ativo com custo/hora em Custos, ou produtos com 0 horas, ou itens avulsos. Cadastre funções/profissionais e horas no catálogo e salve de novo (ou crie nova versão, que recalcula).
+- **P: Por que a margem aparece "Margem indisponível"?** R: Nenhum profissional ativo tem custo/hora em Custos (ou o total é zero). Cadastre funções e profissionais com custo/hora em Custos e salve o orçamento de novo (ou crie nova versão, que recalcula).
+- **P: Por que a margem está 100% (ou alta demais)?** R: Produtos com 0 horas ou itens avulsos não somam custo. Informe as horas no catálogo. Um orçamento salvo antes desta versão pode ter 100% gravado sem custo nenhum: salve de novo.
+- **P: Apaguei uma pauta gerada pelo orçamento; ela volta?** R: Não. Pautas automáticas apagadas ou movidas de data nunca são recriadas pelo job diário nem por "Gerar pautas".
 - **P: Por que não consigo editar?** R: Só Rascunho e Enviado são editáveis. Use "Nova versão" (não disponível para Aceito).
 - **P: Meu orçamento virou "Expirado". E agora?** R: A validade passou. Toque "Nova versão", defina a nova validade e confirme.
 - **P: Por que as outras versões viraram "Substituído"?** R: Só uma proposta vale por negócio: ao aceitar ou criar nova versão de uma aberta, as demais em aberto são substituídas.
@@ -1796,15 +1865,15 @@ A **tabela de custo/hora** da agência: funções (com custo/hora padrão) e pro
 ### 2. Acesso
 - **Rota**: `/custos`. **Menu lateral**: grupo "Principal", item **"Custos"** — 12ª posição (penúltimo, antes de "Equipe"). Visibilidade conforme o status da página "custos".
 - **Ver**: qualquer usuário autenticado da agência.
-- **Só-admin (dono ou admin da agência, ou admin da plataforma)**: criar, editar e remover função; criar, editar (nome, função, custo próprio, vínculo de usuário, ativar/desativar) e remover profissional. Membros comuns (inclui "manager") só leem. A tela **não esconde** os controles para membros; o servidor recusa com 403 "Apenas administradores podem alterar as etapas do quadro." (texto genérico, herdado do editor de etapas).
+- **Só-admin (dono ou admin da agência, ou admin da plataforma)**: criar, editar e remover função; criar, editar (nome, função, custo próprio, vínculo de usuário, ativar/desativar) e remover profissional. Membros comuns (inclui "manager") só leem: para eles a tela **esconde** os formulários "Adicionar função"/"Adicionar profissional", os lápis, as lixeiras, "Desativar"/"Ativar" e o seletor de usuário (que vira só o nome do usuário vinculado, ou "Sem vínculo"). Se uma escrita chegar ao servidor vinda de não-admin, a resposta é 403 "Apenas administradores da organização podem realizar esta ação.".
 
 ### 3. Layout
 - Cabeçalho "Custos" — "Funções e profissionais. Esta é a tabela de custo/hora que alimenta a calculadora de escopo, o BI de eficiência e o DRE."
 - Avisos vermelhos no topo (quando se aplicam):
   - "1 profissional está sem custo/hora definido: as horas dele não entram no custo real e a margem fica superestimada." (ou "N profissionais estão sem custo/hora definido: as horas deles…");
   - "1 profissional não está vinculado a um usuário: as horas que ele apontar na esteira não viram custo, mesmo com custo/hora definido." (ou "N profissionais não estão vinculados…").
-- Seção **"Funções"**: formulário ("Nome da função", "Custo/hora (R$)", botão "Adicionar função") e lista (nome, "R$ X/h", lápis "Editar {nome}", lixeira "Remover {nome}"). Edição em linha: "Nome", "R$/hora", "Salvar", X "Cancelar edição".
-- Seção **"Profissionais"**: formulário ("Nome", "Função", "Usuário", "Custo/hora próprio", botão "Adicionar profissional") e lista: nome; linha "{função ou "Sem função"}" + " · custo próprio" (se tem valor próprio) + " · horas não contabilizadas" (se sem usuário); custo efetivo "R$ X/h" ou selo **"Sem custo/hora"**; seletor "Usuário de {nome}" (muda na hora); lápis "Editar {nome}"; botão "Desativar"/"Ativar"; lixeira "Remover {nome}". Edição em linha: "Nome", "Função", "Custo/hora próprio", "Salvar", X "Cancelar edição". A lista mostra ativos e inativos.
+- Seção **"Funções"**: formulário (só admin: "Nome da função", "Custo/hora (R$)", botão "Adicionar função") e lista (nome, "R$ X/h", lápis "Editar {nome}", lixeira "Remover {nome}"). Edição em linha: "Nome", "R$/hora", "Salvar", X "Cancelar edição".
+- Seção **"Profissionais"**: formulário (só admin: "Nome", "Função", "Usuário", "Custo/hora próprio", botão "Adicionar profissional") e lista: nome; linha "{função ou "Sem função"}" + " · custo próprio" (se tem valor próprio) + " · horas não contabilizadas" (se sem usuário); custo efetivo "R$ X/h" ou selo **"Sem custo/hora"**; seletor "Usuário de {nome}" (muda na hora; para não-admin, só o nome do usuário ou "Sem vínculo"); e, só para admin, lápis "Editar {nome}", botão "Desativar"/"Ativar" e lixeira "Remover {nome}". Edição em linha: "Nome", "Função", "Custo/hora próprio", "Salvar", X "Cancelar edição". A lista mostra ativos e inativos.
 - **Celular**: formulários quebram em várias linhas; campos de edição em linha com 44px de altura. **Computador**: formulários numa linha.
 
 ### 4. Campos
@@ -1823,14 +1892,14 @@ A **tabela de custo/hora** da agência: funções (com custo/hora padrão) e pro
 
 | Ação | Pré-condições | O que acontece | Sucesso | Erros |
 |---|---|---|---|---|
-| "Adicionar função" | Admin; nome preenchido | Cria a função. | (sem aviso; limpa o formulário) | Qualquer falha mostra "Não foi possível criar a função. Talvez já exista uma com esse nome." (inclui o 409 `funcao_duplicada` "Já existe uma função chamada "{nome}"." e o 403 de não-admin). |
-| Lápis → "Salvar" (função) | Admin | Atualiza nome/custo; todos os profissionais que herdam passam a usar o novo valor. | "Função atualizada — custos e DRE passam a usar o novo valor" | Aviso com o texto do erro (409 `funcao_duplicada` "Já existe uma função com esse nome."; 403; 404 "Função não encontrada"). Formato exato do texto (não confirmado no código). |
-| Lixeira "Remover {nome}" (função) | Admin; confirma "Remover a função "{nome}"? Os profissionais vinculados ficam sem função." | Apaga a função; profissionais ficam sem função (quem não tinha custo próprio vira "Sem custo/hora"). | (lista atualiza) | Falha não mostra mensagem na tela. |
-| "Adicionar profissional" | Admin; nome preenchido | Cria o profissional (ativo). | (limpa o formulário) | "Não foi possível criar o profissional. Verifique os dados e tente novamente." |
-| Lápis → "Salvar" (profissional) | Admin | Atualiza nome, função e custo próprio. | (lista atualiza) | Falha não mostra mensagem na tela. |
-| Seletor "Usuário de {nome}" | Admin | Troca o vínculo na hora. | — | Falha não mostra mensagem. |
-| "Desativar" / "Ativar" | Admin | Tira/põe o profissional na média de custo/hora dos orçamentos. | — | Falha não mostra mensagem. |
-| Lixeira "Remover {nome}" (profissional) | Admin; confirma "Remover o profissional "{nome}"?" | Apaga o profissional. | — | Falha não mostra mensagem. |
+| "Adicionar função" | Admin; nome preenchido | Cria a função. | (sem aviso; limpa o formulário) | Mensagem real do servidor abaixo do formulário, ex.: 409 `funcao_duplicada` 'Já existe uma função chamada "{nome}".'; sem texto do servidor: "Não foi possível criar a função." |
+| Lápis → "Salvar" (função) | Admin | Atualiza nome/custo; todos os profissionais que herdam passam a usar o novo valor. | "Função atualizada — custos e DRE passam a usar o novo valor" | Aviso com a mensagem do servidor (sem o prefixo "[código]"), ex.: 409 `funcao_duplicada`; 404 "Função não encontrada"; sem texto do servidor: "Não foi possível salvar a função." |
+| Lixeira "Remover {nome}" (função) | Admin; confirma "Remover a função "{nome}"? Os profissionais vinculados ficam sem função." | Apaga a função; profissionais ficam sem função (quem não tinha custo próprio vira "Sem custo/hora"). | (lista atualiza) | Aviso com a mensagem do servidor ou "Não foi possível remover a função." |
+| "Adicionar profissional" | Admin; nome preenchido | Cria o profissional (ativo). | (limpa o formulário) | Mensagem real do servidor abaixo do formulário, ou "Não foi possível criar o profissional." |
+| Lápis → "Salvar" (profissional) | Admin | Atualiza nome, função e custo próprio. | (lista atualiza) | Aviso com a mensagem do servidor ou "Não foi possível salvar o profissional." |
+| Seletor "Usuário de {nome}" | Admin | Troca o vínculo na hora. | — | Aviso com a mensagem do servidor ou "Não foi possível salvar o profissional." |
+| "Desativar" / "Ativar" | Admin | Tira/põe o profissional na média de custo/hora dos orçamentos. | — | Aviso com a mensagem do servidor ou "Não foi possível salvar o profissional." |
+| Lixeira "Remover {nome}" (profissional) | Admin; confirma "Remover o profissional "{nome}"?" | Apaga o profissional. | — | Aviso com a mensagem do servidor ou "Não foi possível remover o profissional." |
 
 ### 6. Estados
 - **Carregando**: tabela-esqueleto de 3 linhas em cada seção.
@@ -1841,12 +1910,13 @@ A **tabela de custo/hora** da agência: funções (com custo/hora padrão) e pro
 ### 7. Regras de negócio e por quê
 1. **Custo/hora efetivo**: tem "Custo/hora próprio" preenchido (inclusive 0) → usa ele; senão, tem função → custo da função; senão → **indefinido** ("Sem custo/hora").
 2. **Vazio ≠ 0**: vazio = herdar; 0 = custo real (ex.: estagiário não remunerado).
-3. **Indefinido nunca vira zero**: nos orçamentos a pessoa sai da média (com alerta); no BI/DRE as horas dela aparecem sem custo e a margem é sinalizada como superestimada.
+3. **Indefinido nunca vira zero**: nos orçamentos a pessoa sai da média (com alerta) — e, se **ninguém** tem custo/hora, a margem do orçamento fica "Margem indisponível"; no BI/DRE as horas dela aparecem sem custo e a margem é sinalizada como superestimada.
 4. **Remover função não apaga profissionais**: eles ficam sem função.
 5. **Desativar** tira o profissional da média de custo/hora dos orçamentos.
 6. **Vínculo com usuário**: o BI e o DRE convertem horas apontadas na Esteira em custo pelo usuário que apontou; sem vínculo, as horas não viram custo. Também define quem é notificado quando o lead responde (responsável do negócio). Na margem do orçamento o vínculo **não** importa.
 7. **Mudanças valem para os próximos cálculos**: orçamentos já salvos mantêm a margem gravada até serem salvos de novo ou ganharem nova versão.
-8. **Escrita só para admin** (dono/admin): a tabela de custos define a margem de toda a agência.
+8. **Escrita só para admin** (dono/admin): a tabela de custos define a margem de toda a agência. A tela só mostra os controles a quem o servidor permitiria.
+9. **Custo real em segundos**: o BI, a DRE e o relatório financeiro somam o tempo apontado **em segundos** antes de converter em horas × custo/hora — três sessões de 40 segundos custam o equivalente a 2 minutos, não R$ 0,00.
 
 ### 8. Fluxo de dados
 `useFuncoes` / `useProfissionais` / `useMembrosEquipe` → `GET /api/custos/funcoes` · `POST /api/custos/funcoes` · `PATCH /api/custos/funcoes/{id}` · `DELETE /api/custos/funcoes/{id}` · `GET /api/custos/profissionais?apenas_ativos=` · `POST /api/custos/profissionais` · `PATCH /api/custos/profissionais/{id}` · `DELETE /api/custos/profissionais/{id}` · `GET /api/team` (membros para o vínculo). Tabelas `igig.funcao` (nome único por agência, `custo_hora_padrao`) e `igig.profissional` (`funcao_id` com "ON DELETE SET NULL", `custo_hora_override`, `usuario_id`, `ativo`). O custo efetivo é calculado na leitura (não é gravado). Efeitos: margem dos orçamentos (`OrcamentoService.custo_hora_medio`), BI e DRE.
@@ -1855,16 +1925,14 @@ A **tabela de custo/hora** da agência: funções (com custo/hora padrão) e pro
 — (nenhuma variável de ambiente). Depende de membros cadastrados em Equipe para o vínculo "Usuário".
 
 ### 10. Limitações conhecidas
-- Membros não-admin veem todos os botões; o erro 403 fala de "etapas do quadro" (mensagem genérica compartilhada).
-- Falhas ao editar/remover profissional, trocar vínculo, ativar/desativar e remover função **não mostram mensagem** na tela.
-- O erro de "Adicionar função" é sempre o mesmo texto, mesmo quando a causa é falta de permissão.
+- Não-admin vê a tabela sem controles, mas nenhum aviso explicando por quê (ao contrário de Integrações → E-mail).
 - O cabeçalho ainda fala em "calculadora de escopo"; hoje o orçamento não sugere preço, mostra custo e margem.
 
 ### 11. Perguntas frequentes
 - **P: Por que aparece "Sem custo/hora"?** R: O profissional não tem função nem custo próprio. Edite e escolha uma função ou informe o custo próprio.
 - **P: Deixo o custo próprio em 0 ou vazio?** R: Vazio para herdar da função; 0 só se a hora dele realmente não custa nada.
 - **P: Mudei o custo e o orçamento não mudou.** R: Orçamentos salvos guardam a margem. Abra, altere algo e salve, ou crie "Nova versão".
-- **P: Não consigo salvar nada aqui.** R: Só dono ou admin da agência altera Custos. Peça a um administrador.
+- **P: Não vejo os botões de adicionar/editar.** R: Só Proprietário ou Administrador da agência altera Custos; para os demais a tabela é só leitura. Peça a um administrador.
 - **P: Para que vincular o usuário?** R: Para as horas apontadas na Esteira virarem custo no BI/DRE e para esse profissional ser avisado quando o lead responder a um orçamento do negócio dele.
 - **P: Desativar e remover dão no mesmo?** R: Não. Desativar mantém o cadastro e só tira da média; remover apaga.
 
@@ -1971,7 +2039,7 @@ Modal do orçamento → botão **"E-mail"** → painel **"Enviar por e-mail"** (
 3. **Vencido não sai**: validade passada ⇒ marcado Expirado antes da checagem ⇒ recusado.
 4. **Detecção de resposta**: cada envio grava o Message-ID; o Gmail avisa o Pub/Sub do Google a cada mudança na caixa; o IgIg lê o histórico da INBOX e compara `In-Reply-To`/`References` (e a conversa) com os e-mails enviados. A resposta precisa estar na mesma conversa do e-mail enviado pelo IgIg.
 5. **Quando é resposta**: grava linha "Resposta" no histórico; preenche "respondido" na primeira vez (o card da lista passa a mostrar "respondeu por e-mail"); **não muda o status** (continua Enviado); uma mesma resposta nunca é registrada duas vezes.
-6. **Quem é avisado** (sino **e** e-mail, sem duplicar): todos os **donos** da agência **e** o usuário vinculado ao **responsável do negócio** (profissional em Custos com "Usuário"). Sino: título "Resposta ao orçamento: {título}", mensagem "{remetente}: {trecho}", link `/orcamentos?id=…`. E-mail (pelo SMTP): "{remetente} respondeu ao orçamento "{título}": … Abra no IgIg: /orcamentos?id=…". Sem SMTP, só o e-mail não sai (fica em log).
+6. **Quem é avisado** (sino **e** e-mail, sem duplicar): todos os **Proprietários e Administradores** da agência **e** o usuário vinculado ao **responsável do negócio** (profissional em Custos com "Usuário"). Sino: título "Resposta ao orçamento: {título}", mensagem "{remetente}: {trecho}", link `/orcamentos?id=…`. E-mail (pelo SMTP): "{remetente} respondeu ao orçamento "{título}": … Abra no IgIg: /orcamentos?id=…". Sem SMTP, só o e-mail não sai (fica em log).
 7. **Monitoramento expira** em até 7 dias; um job diário às **06:15 (Brasília)** renova todos (só no ambiente implantado).
 
 ### 8. Fluxo de dados
@@ -1981,8 +2049,8 @@ Modal do orçamento → botão **"E-mail"** → painel **"Enviar por e-mail"** (
 SMTP (Integrações → E-mail ou SMTP da plataforma); `IGIG_COFRE_KEY` (para ler a senha do SMTP da agência); armazenamento do PDF. Para respostas: Gmail conectado + `GOOGLE_OAUTH_CLIENT_ID/SECRET` + `GMAIL_PUSH_GCP_PROJECT`, `GMAIL_PUSH_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT`. Detalhes em "Funcionalidade: Integrações → E-mail".
 
 ### 10. Limitações conhecidas
-- O e-mail aos donos/responsável sobre a resposta não sai se não houver SMTP (só log).
-- Só donos (papel "owner") recebem o aviso da resposta além do responsável; admins que não são donos só recebem se forem o responsável do negócio.
+- O e-mail aos Proprietários/Administradores/responsável sobre a resposta não sai se não houver SMTP (só log); o aviso no sino sai mesmo assim.
+- Gerentes e membros só são avisados se forem o responsável do negócio.
 - Respostas fora da conversa original (e-mail novo) não são reconhecidas.
 - Editar e salvar depois de enviar deixa o lead com o PDF antigo.
 
@@ -1992,7 +2060,7 @@ SMTP (Integrações → E-mail ou SMTP da plataforma); `IGIG_COFRE_KEY` (para le
 - **P: Posso mandar para mais de uma pessoa?** R: Sim, separe os e-mails por vírgula em "Para" ou "CC (opcional)".
 - **P: O lead respondeu e nada aconteceu.** R: Confira o cartão Gmail: "conectado", "Monitoramento: ativo" e sem o aviso "Configuração GCP pendente…". A resposta precisa ser na mesma conversa do e-mail enviado pelo IgIg.
 - **P: A resposta muda o status do orçamento?** R: Não; ele continua "Enviado" e o card mostra "respondeu por e-mail".
-- **P: Quem é avisado da resposta?** R: Os donos da agência e o responsável do negócio (se o profissional responsável estiver vinculado a um usuário), pelo sino e por e-mail.
+- **P: Quem é avisado da resposta?** R: Os Proprietários e Administradores da agência e o responsável do negócio (se o profissional responsável estiver vinculado a um usuário), pelo sino e por e-mail — cada pessoa uma vez só.
 - **P: Enviar de novo cria outro registro?** R: Sim, cada envio vira uma linha "Enviado" no histórico.
 
 ---
@@ -2012,7 +2080,7 @@ Gerar o **contrato de prestação de serviços** a partir de um **orçamento ace
 **Painel "Contrato" (no orçamento aceito)**
 - Se já existe contrato **vivo** (Aguardando assinatura ou Ativo): mostra só "Contrato {físico/digital} gerado · {status}." e "Consulte, baixe o PDF e marque como assinado em Clientes → Orçamentos & Contratos."
 - Senão: aviso âmbar (se um contrato digital anterior voltou para rascunho) "O contrato digital anterior voltou para rascunho (assinatura recusada ou expirada) — gere um novo."; escolha **"Digital"** / **"Física"**; "Dia de vencimento (opcional)"; "Número de vias" (Física) ou "E-mail do signatário" (Digital); botão **"Gerar contrato"** (ou **"Gerar novo contrato"**).
-- Após gerar: quadro "Contrato {físico/digital} gerado · {status}.", link **"Abrir PDF do contrato"** e, na Digital, em vermelho "Simulação (assinatura digital ainda não integrada) — este link não ativa o contrato de verdade." + "Link (simulação): {link}". (Ver limitação sobre quanto tempo esse quadro fica visível.)
+- Após gerar: quadro "Contrato {físico/digital} gerado · {status}.", link **"Abrir PDF do contrato"** e, na Digital, em vermelho "Simulação (assinatura digital ainda não integrada) — este link não ativa o contrato de verdade." + "Link (simulação): {link}". Depois que a lista de contratos recarrega, o painel passa à visão do "contrato vivo" (aguardando assinatura ou ativo), que **continua** mostrando o link "Abrir PDF do contrato" (sempre que o contrato tem documento) e, para contrato Digital com link, o aviso em vermelho "Simulação (assinatura digital ainda não integrada) — este link não ativa o contrato de verdade.".
 
 **Aba "Orçamentos & Contratos" do cliente**
 - Seção "Orçamentos": orçamentos ligados ao cliente ("{título} · v{versão}", "R$ X/mês · {data}", selo de status); toque abre o modal.
@@ -2058,7 +2126,7 @@ Gerar o **contrato de prestação de serviços** a partir de um **orçamento ace
 6. **Ativo ⇒ cliente ativo** (Física por "Marcar como assinado"; Digital pelo webhook, que também marca os leads do cliente como convertidos).
 7. **Webhook**: HMAC-SHA256 do corpo com `IGIG_ASSINATURA_WEBHOOK_SECRET` no cabeçalho `X-Webhook-Hmac-SHA256`; sem segredo configurado **toda chamada é recusada (401)**. Corpo `{"external_id", "evento": "assinado"|"recusado"|"expirado"}`. `assinado` → ativo (reenvio responde "ja_processado"); `recusado`/`expirado` → contrato volta para **Rascunho**; não encontrado → 404 "Contrato não encontrado".
 8. **Conteúdo do PDF**: "Contrato de prestação de serviços de marketing digital"; partes (CONTRATADA = agência; CONTRATANTE = cliente, com e-mail/telefone); "Referente à proposta v{N}", "Emitido em {data}", "Assinatura física/digital"; Cláusula 1ª Do objeto (+ tabela dos itens e "Valor mensal"); 2ª Do valor e do pagamento ("com vencimento todo dia D de cada mês" ou "em data acordada entre as partes"); 3ª Do escopo e das revisões; 4ª Da vigência (**12 meses** a partir do início, renovação automática); 5ª Da rescisão (**aviso prévio de 30 dias**); 6ª Da confidencialidade e dos dados pessoais (LGPD). Física: fecho "…em {N} ({extenso}) vias de igual teor e forma…", linha de local/data, assinaturas CONTRATANTE/CONTRATADA e Testemunha 1/2 (Nome/CPF) mantidas juntas. Digital: reconhecimento da assinatura eletrônica (MP 2.200-2/2001 e Lei 14.063/2020).
-9. **Contrato → fatura**: no Financeiro, "Gerar competência" cria uma fatura por contrato **Ativo** com "Retainer mensal" = valor mensal e, quando no mês anterior as pautas do cliente com data de publicação no mês passaram de posts/mês, "Excedentes de {AAAA-MM}" = (pautas − pacote) × valor do excedente. Aguardando assinatura não fatura. (Detalhes no guia do Financeiro.)
+9. **Contrato → fatura**: no Financeiro, "Gerar competência" cria uma fatura por contrato **Ativo** com "Retainer mensal" = valor mensal e, quando no mês anterior as peças **avulsas** entregues (fora do plano recorrente) passaram de posts/mês, "Excedentes de {AAAA-MM}" = (avulsas entregues − pacote) × valor do excedente. Peças do plano nunca contam como excedente, e "entregue" = publicada de verdade ou aprovada pelo cliente no portal. Aguardando assinatura não fatura. (Detalhes no guia do Financeiro.)
 
 ### 8. Fluxo de dados
 - Gerar: `ContratoPanel` → `useOrcamentoMutations().gerarContrato` → `POST /api/orcamentos/{id}/contrato {modalidade_assinatura, dia_vencimento?, vias?, signatario_email?}` (201) → `contratos.gerar` → insere `igig.contrato` → PDF `{org}/contratos/{id}/contrato.pdf` → `documento_key`; Digital: `contrato_documento.enviar_para_assinatura` (simulação) → `provedor_assinatura='interno'`, `assinatura_external_id` (`<org>.dry-interno-…`), `link_assinatura`.
@@ -2077,10 +2145,8 @@ Gerar o **contrato de prestação de serviços** a partir de um **orçamento ace
 - **Assinatura digital é simulação** (`NOC-REMEDIATE[igig-assinatura]`): nenhum provedor (Clicksign, DocuSign, Autentique) está integrado; o link (`https://exemplo.invalido/assinar/...`) **não funciona**. Um contrato Digital só fica Ativo se um sistema externo chamar o webhook com o segredo. **Para ativar contratos hoje, use "Física" + "Marcar como assinado".**
 - Enquanto o contrato Digital não ativa, ele não gera fatura e o job de pautas fica pausado para esse orçamento.
 - Boas-vindas/onboarding automáticos após a assinatura não existem (`NOC-REMEDIATE[igig-onboarding]`).
-- Depois de "Gerar contrato", a lista de contratos é recarregada e o painel passa para a visão "contrato vivo"; o quadro com "Abrir PDF do contrato" e o aviso de simulação tende a sumir logo em seguida (comportamento derivado do código). O PDF continua acessível em Clientes → "Orçamentos & Contratos" → "PDF".
 - No quadro pós-geração o status aparece com o código interno (ex.: "aguardando_assinatura").
-- Pacote em 4 semanas × pautas no calendário real: em meses com mais ocorrências dos dias marcados, as pautas geradas automaticamente podem passar de posts/mês e gerar "Excedentes" na fatura seguinte.
-- Cliente com mais de um contrato Ativo com pacote não tem excedente calculado (não há como atribuir pautas a um contrato).
+- Cliente com mais de um contrato Ativo com pacote: as peças do plano são atribuídas ao contrato certo (pelo orçamento de origem), mas as peças **avulsas** desse cliente não entram em nenhum contrato (não há como saber a qual pertencem) — então não geram excedente.
 
 ### 11. Perguntas frequentes
 - **P: Como ativo o contrato?** R: Física: Clientes → card → "Orçamentos & Contratos" → "Marcar como assinado". Digital hoje é simulação e não ativa sozinho.
@@ -2097,12 +2163,13 @@ Gerar o **contrato de prestação de serviços** a partir de um **orçamento ace
 ## Funcionalidade: Integrações → E-mail (SMTP/Gmail)
 
 ### 1. Propósito
-Configurar a **conta SMTP** que envia orçamentos e e-mails das automações, e conectar o **Gmail** que **observa** as respostas aos orçamentos (o Gmail não envia; o envio continua pelo SMTP).
+Configurar a **conta SMTP** que envia orçamentos, faturas e e-mails das automações, e conectar o **Gmail** que **observa** as respostas aos orçamentos (o Gmail não envia; o envio continua pelo SMTP).
 
 ### 2. Acesso
 - **Rota**: `/integracoes`; **menu lateral**: grupo "Principal", item **"Integrações"** — 10ª posição. Página com os grupos **"E-mail"**, **"Fontes de lead"** e **"Canais de publicação"**; o grupo "E-mail" tem os cartões **"E-mail (SMTP)"** e **"Gmail (respostas de orçamentos)"**.
 - **Ver** status: qualquer usuário autenticado. **Testar envio**: qualquer usuário autenticado.
-- **Só-admin (dono/admin da agência ou admin da plataforma)**: "Salvar SMTP", "Remover" SMTP, "Conectar Gmail"/"Reconectar" e "Desconectar" Gmail. A tela não esconde esses botões; o servidor recusa com 403 "Apenas administradores podem alterar as etapas do quadro."
+- **Só-admin (dono/admin da agência ou admin da plataforma)**: o formulário do SMTP ("Salvar SMTP", "Remover") e "Conectar Gmail"/"Reconectar"/"Desconectar". Para os demais a tela **esconde** esses controles e mostra "Apenas administradores da organização podem configurar o SMTP." / "Apenas administradores da organização podem conectar ou desconectar o Gmail."; se a escrita chegar ao servidor, 403 "Apenas administradores da organização podem realizar esta ação.".
+- **"Testar envio" continua aberto a qualquer membro** (decisão do dono do produto): usar uma configuração já salva para mandar um e-mail de teste não muda a configuração.
 
 ### 3. Layout
 - Cabeçalho "Integrações" — "E-mail, fontes de lead e canais de publicação. Senhas e tokens são gravados criptografados e nunca são exibidos de volta."
@@ -2146,9 +2213,10 @@ O formulário só é preenchido com o SMTP **próprio** da agência; os dados da
 2. **Credenciais sempre criptografadas** com `IGIG_COFRE_KEY`; sem a chave, nada é gravado (nunca texto puro).
 3. **Gmail só observa**: não envia; o envio é sempre SMTP. Se o Gmail conectado for diferente do remetente SMTP, vira o "Responder para" dos orçamentos.
 4. **Monitoramento** (Gmail `users.watch`) expira em até 7 dias e para em silêncio; renovado todo dia às 06:15 (Brasília) no ambiente implantado.
-5. **Escrita só para admin**: a conta de e-mail fala em nome de toda a agência.
+5. **Escrita só para admin**: a conta de e-mail fala em nome de toda a agência. Testar o envio com a conta já salva é livre.
 6. O retorno do Google é público, mas a organização vem de um "state" assinado com validade de 10 minutos.
 7. Para Gmail/Google Workspace como SMTP normalmente é preciso uma "senha de app" (orientação geral; o IgIg não valida).
+8. **A mesma conta SMTP envia as faturas** ("Enviar fatura" no Financeiro), com a mesma prioridade: agência → plataforma → recusa 409.
 
 ### 8. Fluxo de dados
 | Ação | Hook | Endpoint |
@@ -2177,15 +2245,14 @@ Tabelas: `igig.integracao` (canais `smtp` e `gmail`; segredo em `token_cifrado`,
 Essas variáveis são da plataforma: a agência não as configura pela tela — deve acionar o suporte/administrador da plataforma.
 
 ### 10. Limitações conhecidas
-- Membros não-admin veem os botões de salvar/conectar; o 403 fala em "etapas do quadro" (mensagem genérica compartilhada).
-- "Testar envio" não exige admin.
+- "Testar envio" não exige admin (decisão registrada do dono do produto — não é falha).
 - Se o Gmail foi conectado depois do envio, respostas a e-mails antigos só são reconhecidas a partir do início do monitoramento (e desde que na mesma conversa).
 - Motivos de falha no retorno do Google fora da lista acima aparecem com o código cru.
 
 ### 11. Perguntas frequentes
 - **P: Preciso configurar SMTP?** R: Se a plataforma tiver SMTP de reserva, os e-mails saem por ela ("usando SMTP da plataforma"). Para enviar com o endereço da agência, configure o seu.
 - **P: Usei minha senha do Gmail e deu erro.** R: Contas Google normalmente exigem uma "senha de app" para SMTP.
-- **P: Não consigo salvar o SMTP.** R: Só dono ou admin da agência pode. Peça a um administrador.
+- **P: Não vejo o formulário do SMTP / o botão "Conectar Gmail".** R: Só Proprietário ou Administrador da agência configura e-mail (aparece "Apenas administradores da organização podem…"). Você ainda pode usar "Testar envio".
 - **P: O Gmail envia os orçamentos?** R: Não; ele só observa as respostas. O envio é pelo SMTP.
 - **P: Aparece "conectado · sem monitoramento".** R: A plataforma não tem o Pub/Sub configurado ou o monitoramento expirou. Toque "Reconectar"; se persistir com o aviso "Configuração GCP pendente…", acione o suporte.
 - **P: A senha some depois de salvar.** R: É proposital: senhas nunca são exibidas; deixe o campo vazio para manter a atual.
@@ -2199,7 +2266,7 @@ Essas variáveis são da plataforma: a agência não as configura pela tela — 
 
 ## IgIg — Guia: Esteira, Calendário, Central da Marca + Cofre, Portal de Aprovação
 
-> Fonte: código final em `products/igig` (worktree `igig-guia`), conferido arquivo a arquivo. Rótulos, mensagens e toasts aparecem entre "aspas" exatamente como estão no código. Onde algo não pôde ser confirmado, está escrito "(não confirmado no código)". Onde uma conclusão vem da leitura do código, e não de um texto explícito, está marcada como "(dedução do código)".
+> Fonte: código final em `products/igig`, conferido arquivo a arquivo. Rótulos, mensagens e toasts aparecem entre "aspas" exatamente como estão no código. Onde algo não pôde ser confirmado, está escrito "(não confirmado no código)". Onde uma conclusão vem da leitura do código, e não de um texto explícito, está marcada como "(dedução do código)".
 >
 > **Como as quatro partes se ligam:** Cliente → N **marcas** (identidade) + 1 **Cofre de Acessos** por cliente. Cliente → **pautas** (Calendário). Pauta → **tarefas** (Esteira); a tarefa sempre herda o cliente da pauta. Tarefa → **link de aprovação** → **portal público** `/aprovar/<token>`, onde o cliente final aprova ou pede ajuste, e o cartão anda sozinho na esteira.
 
@@ -2213,7 +2280,7 @@ Quadro kanban da produção. Cada cartão é uma **tarefa** ligada a uma pauta, 
 Etapas padrão (criadas automaticamente na primeira leitura do quadro pela organização), nesta ordem: "Aguardando roteiro", "Roteiro em produção", "Aguardando design", "Design em produção", "Revisão interna", "Aprovação do cliente" (papel `aprovacao_cliente`), "Pronto para agendamento", "Agendado" (papel `agendado`).
 
 ### 2. Acesso
-- **Rota:** `/esteira` (filtro opcional `?cliente=<id>`).
+- **Rota:** `/esteira` (filtro opcional `?cliente=<id>`). Deep link `/esteira?tarefa=<id>` (usado pelas notificações de automação e SLA) abre direto os detalhes daquela tarefa assim que o quadro carrega; fechar a tarefa tira o `?tarefa=` do endereço.
 - **Menu lateral:** grupo "Principal", item **"Esteira"**, 6º item (depois de "Dashboard", "Comercial", "Clientes", "Orçamentos", "Produtos e Serviços"; antes de "Calendário"). A visibilidade do item segue o cadastro de páginas do produto (`status_pagina`, rota `esteira` em produção).
 - **Também em:** "Clientes" → abrir o cliente → aba **"Esteira"** (mesmo quadro, já filtrado por esse cliente, sem o seletor "Cliente").
 - **Quem pode ver/executar:**
@@ -2225,7 +2292,7 @@ Etapas padrão (criadas automaticamente na primeira leitura do quadro pela organ
 - **Barra do quadro:** botão **"Nova tarefa"**; para admins, botão **"Configurar etapas"** / **"Fechar configuração"**.
 - **Colunas:** uma por etapa ativa. Cabeçalho com o nome da etapa, o total de cartões e, para admins, o menu de opções ("Opções da etapa <nome>"). Na etapa com papel aparece a etiqueta "Aprovação do cliente" ou "Agendado". Coluna vazia: "Nenhuma tarefa". Para admins, no fim do quadro há o espaço **"+ coluna"**.
 - **Cartão:** nome do cliente (em maiúsculas), título da tarefa, título da pauta com etiqueta do formato, responsável (ou "Sem responsável"), prazo `dd/mm/aa` (em vermelho se vencido) e etiqueta vermelha "N refação"/"N refações". O cartão não tem botões: tocar abre os detalhes.
-- **Painel "Papéis das etapas"** (só admins, abaixo do quadro, recolhível): dois seletores, "Aprovação do cliente" e "Agendado", mostrando qual etapa tem cada papel.
+- **Painel "Papéis das etapas"** (só admins, abaixo do quadro, recolhível): dois seletores, "Aprovação do cliente" e "Agendado", mostrando qual etapa tem cada papel. Uma etapa tem no máximo um papel, e nenhum papel pode ficar sem etapa.
 - **Detalhes da tarefa** (janela; tela cheia no celular): título da tarefa, cliente como subtítulo, etiquetas da etapa atual e das refações, nota "Cliente pediu: “…”" quando houver. Campos: "Cliente", "Pauta", "Formato", "Responsável", "Prazo" (com " · vencido"), "Publicação". Seções **"Tempo"**, **"Apontamentos"** e **"Aprovação do cliente"**. Rodapé: **"Editar"**, **"Excluir tarefa"**, **"Fechar"**.
   - **Desktop (≥640px):** "Repertório da marca" aparece como painel lateral fixo à direita.
   - **Celular (<640px):** "Repertório da marca" vira um botão recolhível (com seta) no topo dos detalhes.
@@ -2266,15 +2333,16 @@ Etapas padrão (criadas automaticamente na primeira leitura do quadro pela organ
 | "Iniciar" (Tempo) | — | Inicia o cronômetro **do usuário logado**. Se ele tinha outro cronômetro rodando em qualquer tarefa, esse é encerrado. O apontamento guarda o profissional vinculado ao usuário (ou fica sem). | Se outro foi encerrado: "O cronômetro de outra tarefa foi encerrado automaticamente." | 404 "Tarefa não encontrada" · fallback "Não foi possível atualizar o cronômetro." |
 | "Pausar" (Tempo) | Cronômetro do usuário rodando nesta tarefa | Grava fim, segundos exatos e minutos (arredondados para baixo). | — | 404 "Nenhum apontamento aberto nesta tarefa" (foi encerrado em outro lugar; recarregue) |
 | "Gerar e copiar link de aprovação" | Tarefa não pode estar **depois** da etapa de aprovação; precisa existir etapa com papel "Aprovação do cliente" | (1) Move a tarefa direto para a etapa "Aprovação do cliente" (pula as intermediárias; motivo gravado "Link de aprovação enviado ao cliente"); (2) dispara as automações da etapa de aprovação; (3) cria um link novo válido por **14 dias**; (4) **invalida todos os links anteriores ainda não respondidos** dessa tarefa; (5) copia o link e o mostra por extenso. Botão mostra "Gerando…". | "Link copiado — a tarefa foi para aprovação do cliente." ou, se a cópia for bloqueada, "Copie o link abaixo e envie ao cliente." | 409 `etapa_invalida` "Esta tarefa já passou da aprovação do cliente." (devolva a tarefa com motivo e gere de novo) · 409 `etapa_aprovacao_ausente` "Nenhuma etapa da esteira está marcada como 'Aprovação do cliente'." (admin atribui o papel em "Papéis das etapas") · 404 "Tarefa não encontrada" · fallback "Não foi possível gerar o link." |
-| "Excluir tarefa" → "Confirmar exclusão" | — | Se a tarefa tem horas, a janela mostra "Esta tarefa tem <h> de horas apontadas em N apontamento(s). Excluir perde esses registros." antes de confirmar. Apaga a tarefa, os apontamentos e os links de aprovação; o histórico de movimentos é mantido. Botão mostra "Excluindo…". | "Tarefa excluída" | 409 `horas_serao_perdidas` "Isto tem <h> de horas apontadas em N apontamento(s). Confirme a exclusão para perder esses registros." (ver Limitações) · 404 "Tarefa não encontrada" · fallback "Não foi possível excluir a tarefa." |
+| "Excluir tarefa" → "Confirmar exclusão" (e, se houver horas, "Excluir mesmo assim") | — | (1) Se **o seu** cronômetro está rodando nesta tarefa, ele é encerrado primeiro (para o aviso mostrar o tempo real, não zero). (2) A primeira confirmação pede a exclusão **sem** forçar. (3) Se a tarefa tem **qualquer** apontamento (mesmo de segundos), o servidor recusa e a janela mostra, em vermelho, a mensagem real do servidor — "Isto tem <h> de horas apontadas em N apontamento(s). Confirme a exclusão para perder esses registros." — e o botão vira **"Excluir mesmo assim"**. (4) Tocando nele, a tarefa é apagada com os apontamentos e os links de aprovação; o histórico de movimentos é mantido. "Cancelar" volta aos detalhes e limpa o aviso. Botão mostra "Excluindo…". | "Tarefa excluída" | Não foi possível encerrar o cronômetro: "Não foi possível encerrar o cronômetro em andamento." (nada é excluído) · 404 "Tarefa não encontrada" · fallback "Não foi possível excluir a tarefa." |
 | "Configurar etapas" (admin) | Admin | Abre o gerenciador de etapas. Renomear: clique duplo no nome ou menu → "Renomear" (Enter salva, Esc cancela, sair do campo salva). Menu: "Renomear", "Cor da etapa", "Excluir etapa". "+ coluna" cria etapa ("Nome da nova etapa", "Adicionar"/"Cancelar"). Colunas podem ser arrastadas para reordenar. | — | 403 `admin_obrigatorio` "Apenas administradores podem alterar as etapas do quadro." · Etapa com papel: "Excluir etapa" bloqueado, dica "Esta etapa tem um papel do qual outras funcionalidades dependem"; a janela diz "<etapa> não pode ser excluída: ela tem o papel <papel>, do qual outras funcionalidades dependem. Atribua o papel a outra etapa primeiro." · Etapa com cartões: "Excluir <etapa>? Esta etapa tem N carta(s). Escolha para onde movê-las:" + "Mover cartas para". |
-| Trocar etapa em "Papéis das etapas" (admin) | Admin | Atribui o papel à etapa escolhida e tira da etapa que o tinha, numa ação só. | — | 409 `papel_aprovacao_obrigatorio` "Esta é a única etapa marcada como 'Aprovação do cliente'. Atribua o papel a outra etapa antes de tirá-lo desta." (acontece ao tentar dar outro papel, ex. "Agendado", à etapa que hoje é a de aprovação) · 403 `admin_obrigatorio` · fallback "Não foi possível reatribuir o papel." |
+| Trocar etapa em "Papéis das etapas" (admin) | Admin | Atribui o papel à etapa escolhida e tira da etapa que o tinha, numa ação só. | — | 409 `papel_obrigatorio` "Esta é a única etapa marcada como '<Aprovação do cliente \| Agendado>'. Atribua esse papel a outra etapa antes de trocá-lo ou removê-lo desta." — acontece ao dar um papel a uma etapa que já tem **o outro** papel (ex.: pôr "Aprovação do cliente" na etapa "Agendado"); primeiro mova o papel atual dela para outra etapa · 403 `admin_obrigatorio` "Apenas administradores podem alterar as etapas do quadro." · fallback "Não foi possível reatribuir o papel." |
+| Abrir `/esteira?tarefa=<id>` (link de notificação) | Logado (se não estiver, entra e volta ao link) | Quando o quadro termina de carregar, abre os detalhes da tarefa. Se ela não está no quadro carregado, avisa e limpa o parâmetro. | — | Toast "Tarefa não encontrada — pode ter sido excluída, ou pertence a um cliente fora do filtro atual." (tire o filtro "Cliente" e abra o link de novo) |
 | "Repertório da marca" (celular: tocar para abrir) | Tarefa com cliente | Mostra logo, "Paleta" (tocar numa cor copia o HEX), "Tom de voz" + formalidade, "Termos proibidos" (em vermelho), "Linhas editoriais". Se o cliente tem várias marcas, aparece um seletor; a marca da pauta vem pré-selecionada. | Ícone de "copiado" ao lado do HEX. | Nunca mostra erro: "Repertório indisponível." |
 
 ### 6. Estados
 - **Carregando:** esqueleto do quadro (seed). Apontamentos: barra cinza. Repertório: "Carregando repertório…". Pautas no "Nova tarefa": opção "Carregando…".
 - **Vazio:** coluna sem cartões: "Nenhuma tarefa". Esteira sem etapas: "Nenhuma etapa configurada." (+ para admin: " Use "Configurar etapas" para criar a primeira."). Apontamentos: "Nenhum tempo registrado ainda.". Sem pauta no "Nova tarefa": "Nenhuma pauta cadastrada (para este cliente). Crie uma pauta no Calendário Editorial para abrir tarefas na esteira." (o link leva ao Calendário sem recarregar a página). Repertório com várias marcas e nenhuma escolhida: "Este cliente tem mais de uma marca — escolha qual repertório ver acima."; cliente sem marca: "Este cliente ainda não tem marca cadastrada.".
-- **Erro:** quadro: "Não foi possível carregar o quadro." ou a mensagem do erro (seed). Apontamentos: "Não foi possível carregar os apontamentos.". Movimentos recusados: toast com a mensagem do servidor, sem o prefixo "[código]".
+- **Erro:** quadro: "Não foi possível carregar o quadro." ou a mensagem do erro (seed). Link `?tarefa=` sem tarefa correspondente: toast "Tarefa não encontrada — pode ter sido excluída, ou pertence a um cliente fora do filtro atual.". Apontamentos: "Não foi possível carregar os apontamentos.". Movimentos recusados: toast com a mensagem do servidor, sem o prefixo "[código]".
 - **Atualizando:** o quadro não volta ao esqueleto durante recargas; movimento de cartão é otimista e volta em caso de erro. Cronômetro rodando: "Rodando desde HH:MM · <tempo>" atualiza a cada 30 s. Parado: "Total: 1h05" / "Total: 40 min".
 
 ### 7. Regras de negócio e por quê
@@ -2282,24 +2350,25 @@ Etapas padrão (criadas automaticamente na primeira leitura do quadro pela organ
 2. **Para trás, qualquer distância, com motivo obrigatório** — o motivo fica no histórico (`pipeline_movimentos`) e torna o retrocesso auditável.
 3. **Refação conta só quando o cartão sai da etapa de aprovação para trás** (arrastando com motivo ou pelo "Solicitar ajuste" do portal). Voltar de uma etapa posterior passando por cima da aprovação não conta. A contagem é atômica no banco.
 4. **As regras usam papel e ordem das etapas, nunca o nome** — renomear etapas não quebra nada.
-5. **Etapas com papel não podem ser excluídas nem desativadas**; o papel pode ser movido para outra etapa em "Papéis das etapas". Não é possível deixar a esteira sem etapa "Aprovação do cliente".
+5. **Etapas com papel não podem ser excluídas nem desativadas**; o papel pode ser movido para outra etapa em "Papéis das etapas". **Nenhum papel some em silêncio**: não é possível deixar a esteira sem etapa "Aprovação do cliente" nem sem etapa "Agendado" — dar um papel a uma etapa que já carrega o outro é recusado.
 6. **A tarefa nasce na primeira etapa ativa e herda o cliente da pauta** — uma única fonte para o cliente evita divergência.
 7. **Editar não muda a etapa** — mudança de etapa só pelo arrastar, para que as regras 1–3 e as automações sempre valham.
 8. **Cronômetro sempre do usuário logado; um por pessoa** — antes era possível lançar horas em nome de colegas. Um índice único no banco impede dois cronômetros abertos por usuário.
 9. **Horas em segundos exatos**: o total soma os segundos antes de converter para minutos, então sessões curtas contam (três sessões de 40 s = 2 min).
 10. **Gerar o link = "está com o cliente"**: a tarefa vai para aprovação na mesma hora. Um link novo invalida os anteriores não respondidos, para que um link antigo não decida uma rodada que o cliente não viu.
-11. **Excluir tarefa com horas pede confirmação** — as horas alimentam o custo real do job e o DRE.
+11. **Excluir tarefa com horas pede confirmação** — as horas alimentam o custo real do job e o DRE. Vale para **qualquer** apontamento, mesmo de poucos segundos ou com cronômetro rodando; a tela mostra o texto que o próprio servidor calculou.
 12. **Automações de entrada de etapa** disparam ao arrastar, ao criar a tarefa (primeira etapa), ao gerar o link (etapa de aprovação) e na decisão do cliente no portal. Falhas de automação não desfazem o movimento.
 13. **"Sem profissional vinculado"** nos apontamentos = o usuário não está ligado a um profissional em Custos; as horas ficam gravadas, mas sem custo/hora. Vincular em Custos vale para os próximos apontamentos.
 
 ### 8. Fluxo de dados
 - Quadro: `EsteiraBoard` → seed `esteiraPipeline.useBoard` (chave `igig-esteira-board`) → `GET /api/esteira/board[?cliente_id=]` → `esteira_quadro.quadro` → `igig.pipeline_stages` (cria as padrão na primeira leitura) + `igig.tarefa`, com pauta (título, formato, data, marca), cliente (nome) e responsável (nome) anexados.
-- Etapas: seed → `GET/POST/PATCH/DELETE /api/esteira/stages…` (escrita exige admin, `exigir_admin_da_org`) → `igig.pipeline_stages`.
-- Papel: `useAtribuirPapelEtapa` → `PATCH /api/esteira/stages/{id}/papel` `{papel}` → `esteira_quadro.reatribuir_papel`.
+- Etapas: seed → `GET/POST/PATCH/DELETE /api/esteira/stages…` (escrita exige admin, `exigir_admin_do_quadro`) → `igig.pipeline_stages`.
+- Papel: `useAtribuirPapelEtapa` → `PATCH /api/esteira/stages/{id}/papel` `{papel}` (admin, `exigir_admin_do_quadro`) → `esteira_quadro.reatribuir_papel` (recusa com `papel_obrigatorio` se a etapa perderia outro papel).
+- Deep link: `Esteira.tsx` lê `?tarefa=` → `EsteiraBoard` (`deepLinkTarefaId`) procura a tarefa nas colunas já carregadas (não há busca de tarefa por id no servidor) → abre os detalhes ou avisa e limpa o parâmetro.
 - Mover: seed `useMoveCard` (otimista) → `POST /api/esteira/tarefas/{id}/mover-etapa` `{para_etapa_id, novo_indice?, motivo?}` → `esteira_quadro.mover_tarefa` → seed `move_card` (`tarefa.etapa_id`, `kanban_pos`, linha em `igig.pipeline_movimentos`) → RPC `igig.incrementar_refacoes` se saiu da aprovação para trás → `automacoes.ao_entrar_etapa`.
 - Criar: `useCriarTarefa` → `POST /api/esteira/tarefas` `{pauta_id, titulo, responsavel_id?, prazo?}` → `esteira_quadro.criar_tarefa` → `igig.tarefa` + movimento de entrada → automações.
 - Editar: `useAtualizarTarefa` → `PATCH /api/esteira/tarefas/{id}` → `igig.tarefa` (`titulo`, `responsavel_id`, `prazo`, `pauta_id`, `cliente_id`).
-- Excluir: `useExcluirTarefa` → `DELETE /api/esteira/tarefas/{id}[?confirmar_perda_horas=true]` → 204; cascata em `igig.apontamento` e `igig.aprovacao`.
+- Excluir: (se o seu cronômetro roda nesta tarefa) `useEncerrarTimer` → `POST …/timer/encerrar`; depois `useExcluirTarefa` → `DELETE /api/esteira/tarefas/{id}` (1ª tentativa) → 409 `horas_serao_perdidas` se houver apontamentos → `DELETE …?confirmar_perda_horas=true` ao tocar "Excluir mesmo assim" → 204; cascata em `igig.apontamento` e `igig.aprovacao`.
 - Apontamentos: `useApontamentos` → `GET /api/esteira/tarefas/{id}/apontamentos` → `igig.apontamento` (mais recentes primeiro; `minutos`, `duracao_segundos`).
 - Timer: `useIniciarTimer` → `POST …/timer/iniciar` (sem corpo; resposta com `timer_anterior_encerrado`); `useEncerrarTimer` → `POST …/timer/encerrar`.
 - Link: `useEmitirLinkAprovacao` → `POST /api/esteira/tarefas/{id}/link-aprovacao` → `levar_para_aprovacao` → automações → `igig.aprovacao` (`token = <org_id>.<segredo 256 bits>`, `expira_em = agora + 14 dias`, `emitido_por`) → `revogar_pendentes` (põe `expira_em = agora` nos links anteriores não decididos). URL = `<origem do app>/aprovar/<token>`.
@@ -2313,7 +2382,6 @@ Etapas padrão (criadas automaticamente na primeira leitura do quadro pela organ
 - **Storage** configurado para as peças aparecerem no portal (ver Calendário).
 
 ### 10. Limitações conhecidas
-- **Excluir tarefa com apontamentos que somam menos de 1 minuto, ou com um cronômetro ainda rodando:** a tela só envia a confirmação de perda de horas quando o total é ≥ 1 min; o servidor recusa com 409 "Isto tem 0 min de horas apontadas…" e a tela não oferece como confirmar (dedução do código). Contorno: pausar o cronômetro; se o total continuar abaixo de 1 min, não há caminho pela tela.
 - Na lista de apontamentos, cada linha mostra os minutos da sessão arredondados para baixo (uma sessão de 40 s aparece "0 min"), embora o "Total" some os segundos exatos.
 - O "Total" do cronômetro é a soma de **todas as pessoas** na tarefa, não só do usuário.
 - Não há lançamento manual, edição ou exclusão de apontamentos pela tela.
@@ -2322,8 +2390,9 @@ Etapas padrão (criadas automaticamente na primeira leitura do quadro pela organ
 - O IgIg **não envia** o link ao cliente; é preciso copiar e mandar (WhatsApp, e-mail…). Não há botão para revogar um link sem gerar outro.
 - A etapa com papel `agendado` não tem comportamento automático ligado a ela no código.
 - Não existe tela de histórico de movimentos (os dados existem em `pipeline_movimentos`).
-- Trocar o papel "Aprovação do cliente" para uma etapa que hoje é "Agendado" tira dela o papel "Agendado" (dedução do código; não confirmado no seed).
-- A notificação da decisão do cliente leva para "/esteira", não direto ao cartão.
+- A notificação da **decisão do cliente no portal** ("Cliente aprovou: …" / "Cliente pediu ajuste: …") ainda leva para "/esteira", não direto ao cartão (as notificações de automação e SLA já abrem a tarefa).
+- O link `?tarefa=` só encontra tarefas do quadro carregado: com o filtro "Cliente" ativo, uma tarefa de outro cliente aparece como "não encontrada".
+- Excluir a tarefa encerra só o **seu** cronômetro; se um colega estiver com o cronômetro rodando nela, o tempo dele que ainda não foi encerrado não entra no aviso de horas.
 - `SHEET_MOBILE` (janelas em tela cheia no celular) é um ajuste local marcado `NOC-REMEDIATE[seed-dialog-mobile-sheet]`.
 
 ### 11. Perguntas frequentes
@@ -2335,6 +2404,9 @@ Etapas padrão (criadas automaticamente na primeira leitura do quadro pela organ
 - **P: Aparece "Sem profissional vinculado" nas horas.** R: Em "Custos", vincule seu usuário ao seu cadastro de profissional. Vale para os próximos apontamentos.
 - **P: Como mando para o cliente aprovar?** R: Abra a tarefa → "Gerar e copiar link de aprovação" → envie o link. Vale 14 dias e aceita uma resposta. Gerar outro link invalida o anterior não respondido.
 - **P: Aparece "Esta tarefa já passou da aprovação do cliente."** R: Arraste a tarefa de volta (com motivo) para antes da aprovação e gere o link de novo.
+- **P: Tentei excluir e apareceu "Isto tem … de horas apontadas…".** R: A tarefa tem horas registradas (mesmo que poucos segundos). Se quiser mesmo perder esses registros, toque "Excluir mesmo assim".
+- **P: Cliquei na notificação e apareceu "Tarefa não encontrada…".** R: A tarefa foi excluída, ou o filtro "Cliente" está escondendo-a. Escolha "Todos os clientes" e abra a notificação de novo.
+- **P: Não consigo pôr "Aprovação do cliente" na etapa "Agendado".** R: Cada etapa tem um papel só e nenhum papel pode ficar sem etapa. Primeiro mova "Agendado" para outra etapa, depois atribua "Aprovação do cliente".
 - **P: Não vejo "Configurar etapas".** R: Só administradores da agência veem e alteram as etapas.
 - **P: Não consigo excluir a etapa "Aprovação do cliente".** R: Ela tem um papel do sistema. Em "Papéis das etapas", passe o papel para outra etapa; depois ela pode ser excluída.
 
@@ -2396,7 +2468,7 @@ Planejar **o que será publicado e quando**. Cada item é uma **pauta** (título
 | Editar "Título"/"Canal"/linha (texto) e sair do campo | Valor mudou | Salva. | — | Iguais ao item acima. |
 | "Salvar textos" | — | Salva Legenda + Direção de vídeo juntas. Botão mostra "Salvando…". | — | fallback "Não foi possível salvar." |
 | Fechar o editor ("×", clicar fora ou Esc) com legenda/direção não salvas | Texto alterado | Pergunta do navegador: "Você tem alterações não salvas na legenda ou na direção de vídeo. Fechar sem salvar?" — cancelar mantém o editor aberto. | — | — |
-| Lixeira ("Remover pauta") → "Confirmar remoção" | — | Sem horas nas tarefas: remove na hora. Com horas: abre "Excluir pauta com horas apontadas" com a mensagem "Isto tem <h> de horas apontadas em N apontamento(s). Confirme a exclusão para perder esses registros." e o botão "Excluir mesmo assim" (durante: "Excluindo…") ou "Cancelar". Remover apaga em cascata as tarefas da pauta, seus apontamentos, links de aprovação e as peças. | Nenhuma (editor fecha) | 404 "Pauta não encontrada" · fallback "Não foi possível remover." |
+| Lixeira ("Remover pauta") → "Confirmar remoção" | — | Sem horas nas tarefas: remove na hora. Com horas: abre "Excluir pauta com horas apontadas" com a mensagem "Isto tem <h> de horas apontadas em N apontamento(s). Confirme a exclusão para perder esses registros." e o botão "Excluir mesmo assim" (durante: "Excluindo…") ou "Cancelar". Remover apaga em cascata as tarefas da pauta, seus apontamentos, links de aprovação e as peças — **inclusive os arquivos das peças no armazenamento**. Se a pauta foi gerada automaticamente, ela **não** será recriada pela rotina diária nem por "Gerar pautas". | Nenhuma (editor fecha) | 404 "Pauta não encontrada" · fallback "Não foi possível remover." |
 | "Enviar peça" | Arquivo aceito | Envia ao armazenamento (cada envio tem arquivo próprio, mesmo com nome repetido) e adiciona à lista. Botão mostra "Enviando…". | — | 422 "Formato não suportado: <tipo>. Envie PNG, JPEG, WebP, GIF, MP4 ou MOV." · 413 "Peça excede 50 MB" · 404 "Pauta não encontrada" · fallback "Não foi possível enviar a peça." |
 | Olho ("Ver <arquivo>") | Link assinado disponível | Abre a peça em nova aba. | — | Sem link assinado o ícone não aparece. |
 | Lixeira da peça ("Remover <arquivo>") | — | Janela "Remover peça" — "Remover esta peça? O cliente deixa de vê-la no portal de aprovação." — "Remover" (durante: "Removendo…") / "Cancelar". Apaga o registro e o arquivo do armazenamento. | — | 404 "Peça não encontrada" · fallback "Não foi possível remover a peça." |
@@ -2413,22 +2485,23 @@ Planejar **o que será publicado e quando**. Cada item é uma **pauta** (título
 3. **Legenda e direção só salvam com "Salvar textos"**; os demais campos salvam sozinhos. Fechar com texto não salvo pede confirmação.
 4. **Pautas sem data** ficam fora da grade (a grade é por data), mas aparecem em "Sem data (N)" para receberem uma data.
 5. **Remover pauta com horas apontadas pede segunda confirmação** mostrando quanto será perdido — as horas alimentam custo real e DRE.
-6. **Pautas automáticas:** ao aceitar um orçamento (no modal ou arrastando o negócio para "Fechado" no Comercial), o sistema cria pautas dos itens **recorrentes** da seção **criação de conteúdo** para os próximos 30 dias: uma por dia da semana marcado, repetida pela quantidade por dia (títulos "Descrição (1/2)", "(2/2)"), formato = formato do produto/serviço. Uma rotina diária (06:45, horário de São Paulo) **mantém o calendário 30 dias à frente** para orçamentos aceitos cujo contrato está ativo ou ainda não existe. É idempotente por dia: nunca duplica. Há também o botão "Gerar pautas" no orçamento aceito (recuperação). Funil, linha editorial, legenda e marca não são preenchidos. **Tarefas não são criadas automaticamente.**
+6. **Pautas automáticas:** ao aceitar um orçamento (no modal ou arrastando o negócio para "Fechado" no Comercial), o sistema cria pautas dos itens **recorrentes** da seção **criação de conteúdo** para os próximos 30 dias: uma por dia da semana marcado, repetida pela quantidade por dia (títulos "Descrição (1/2)", "(2/2)"), formato = formato do produto/serviço. Uma rotina diária (06:45, horário de São Paulo) **mantém o calendário 30 dias à frente** para orçamentos aceitos cujo contrato está ativo ou ainda não existe. É idempotente por dia: nunca duplica. **Cada vaga (item recorrente × dia) é gerada uma única vez na vida**: fica registrada em `pauta_slot_gerado`, então uma pauta automática que você **apagou** ou **arrastou para outra data** nunca volta sozinha. Há também o botão "Gerar pautas" no orçamento aceito (recuperação, mesma regra). Funil, linha editorial, legenda e marca não são preenchidos. **Tarefas não são criadas automaticamente.**
 7. **Peças: só imagem e vídeo, até 50 MB** — lista de formatos permitidos, não de proibidos.
-8. **O link de cada peça é temporário** (gerado a cada carregamento); o armazenamento é privado.
+8. **O link de cada peça é temporário** (1 hora, gerado a cada carregamento); o armazenamento é privado.
+9. **Peça do plano × peça avulsa (Financeiro):** pautas geradas automaticamente pelo plano nunca viram excedente; pautas criadas à mão aqui são **avulsas** e, se entregues (publicadas ou aprovadas pelo cliente no portal) além do pacote do contrato, geram excedente na fatura do mês seguinte.
 
 ### 8. Fluxo de dados
 - Mês: `CalendarioMes` → `useCalendario(inicio, fim, clienteId?)` → `GET /api/pautas/calendario?inicio=&fim=[&cliente_id=]` (início/fim enviados como instantes UTC de 00:00 local do dia 1 e 23:59:59 local do último dia) → `igig.pauta` com `data_publicacao` na janela (pautas sem data excluídas); cada item com `caracteres_copy` calculado no servidor.
 - "Sem data" e seletor de pautas: `usePautas(clienteId?)` → `GET /api/pautas[?cliente_id=]`.
 - Criar: `useCriarPauta` → `POST /api/pautas` `{cliente_id, titulo, data_publicacao}`.
 - Editar/reagendar/tirar data: `useAtualizarPauta` → `PATCH /api/pautas/{id}` (só os campos enviados; `null` limpa).
-- Remover: `useRemoverPauta` → `DELETE /api/pautas/{id}[?confirmar_perda_horas=true]` → cascata em `igig.tarefa` → `apontamento`, `aprovacao`; e `igig.peca`.
+- Remover: `useRemoverPauta` → `DELETE /api/pautas/{id}[?confirmar_perda_horas=true]` → lê as peças → cascata em `igig.tarefa` → `apontamento`, `aprovacao`; e `igig.peca` → apaga cada arquivo de peça do bucket `igig` (falha ao apagar um arquivo fica no log; a pauta já foi removida). O registro `pauta_slot_gerado` **não** é tocado.
 - Peças: `usePecas` → `GET /api/pautas/{id}/pecas` (com `url` assinada); `useEnviarPeca` → `POST /api/pautas/{id}/pecas` (multipart, campo `arquivo`) → bucket `igig`, chave `<org_id>/pautas/<pauta_id>/<uuid>-<arquivo>` + `igig.peca`; `useRemoverPeca` → `DELETE /api/pautas/{id}/pecas/{peca_id}` → apaga linha e arquivo.
-- Automáticas: `orcamentos.aceitar` / `comercial_funil._fechar` → `pautas.gerar`; job `igig_pautas_extensao` → `pautas.estender_pendentes`; botão "Gerar pautas" → `POST /api/orcamentos/{id}/gerar-pautas`. Gravam `gerada_automaticamente=true` e `orcamento_item_id`.
+- Automáticas: `orcamentos.aceitar` / `comercial_funil._fechar` → `pautas.gerar`; job `igig_pautas_extensao` → `pautas.estender_pendentes`; botão "Gerar pautas" → `POST /api/orcamentos/{id}/gerar-pautas`. Gravam `gerada_automaticamente=true` e `orcamento_item_id`, e registram cada item × dia em `igig.pauta_slot_gerado` (consultado antes de gerar).
 
 ### 9. Dependências de configuração
 - **Armazenamento:** `IGIG_STORAGE_KIND` (padrão "supabase"), `IGIG_STORAGE_BUCKET` (padrão "igig", privado; criado pela migration 028). Sem ele, o envio de peças falha ("Não foi possível enviar a peça." ou a mensagem do servidor) e o olho de ver peça não aparece.
-- **Pautas automáticas:** produtos/serviços com formato; itens de orçamento recorrentes na seção criação de conteúdo com dias da semana marcados. A extensão diária depende do agendador estar ligado no ambiente (guarda `NOCTUS_SCHEDULERS_ENABLED` do seed; valor em produção não confirmado no código).
+- **Pautas automáticas:** produtos/serviços com formato; itens de orçamento recorrentes na seção criação de conteúdo com dias da semana marcados. A extensão diária depende do agendador estar ligado no ambiente (`NOCTUS_SCHEDULERS_ENABLED`, ligado só no container implantado; o valor em produção é configuração da frota, não do código).
 
 ### 10. Limitações conhecidas
 - Não há visão semanal nem diária, só o mês (grade/agenda).
@@ -2438,9 +2511,9 @@ Planejar **o que será publicado e quando**. Cada item é uma **pauta** (título
 - A pergunta de "alterações não salvas" é a caixa nativa do navegador.
 - Personas, termos proibidos e tom de voz da marca não são verificados contra a legenda.
 - Remover pauta sem horas apontadas remove as tarefas dela sem aviso específico sobre tarefas.
-- Os arquivos de peças de uma pauta removida (por cascata) não são apagados do armazenamento (não confirmado no código que sejam limpos); só a remoção individual de peça apaga o arquivo.
 - Peças não podem ser reordenadas nem substituídas (só remover e enviar de novo).
-- Não existe publicação automática nas redes a partir desta tela (a publicação pertence a outro módulo; não confirmado aqui).
+- Não existe publicação nas redes a partir desta tela: agendar e publicar ficam em Distribuição, e hoje nenhum canal está homologado (nada é publicado de verdade — ver Capítulos 4 e 5).
+- Uma pauta automática apagada por engano não volta sozinha; recrie à mão (ela passa a contar como avulsa para excedentes).
 
 ### 11. Perguntas frequentes
 - **P: Como reagendo pelo celular?** R: Toque na pauta → "Data de publicação".
@@ -2452,6 +2525,8 @@ Planejar **o que será publicado e quando**. Cada item é uma **pauta** (título
 - **P: Como ligo a pauta a uma marca?** R: No editor, campo "Marca". Depois, "Linha editorial" lista as linhas dessa marca.
 - **P: Não consigo remover a pauta, abriu outra janela.** R: As tarefas dela têm horas apontadas; a janela mostra quanto será perdido. "Excluir mesmo assim" confirma.
 - **P: Como vejo ou apago uma peça?** R: No editor, em "Peças": ícone de olho para ver, lixeira para remover.
+- **P: Apaguei (ou mudei a data de) uma pauta automática. Ela vai voltar amanhã?** R: Não. Cada vaga do plano é gerada uma única vez; apagar ou mover é definitivo.
+- **P: Apagar a pauta apaga os arquivos das peças?** R: Sim, os arquivos saem do armazenamento junto com a pauta.
 
 ---
 
@@ -2482,7 +2557,7 @@ No celular os botões ficam maiores (altura 40px) e os formulários do cofre emp
 |---|---|---|---|---|---|
 | Nome da nova marca (placeholder = nome do cliente ou "Nome da marca") | texto | Não | 1–200 | nome do cliente, ou "Nova marca" | Vazio → usa o padrão. |
 | "Nome da marca" | texto | Sim | 1–200 | nome atual | Salva ao sair do campo. Vazio ou igual: nada é salvo e o nome antigo volta a aparecer. |
-| Logo ("Enviar logo"/"Trocar logo") | arquivo | Não | servidor aceita PNG, JPEG, WebP; até 2 MB | — | A tela ainda oferece SVG e diz "PNG, SVG, JPEG ou WebP · até 2 MB." (ver Limitações). |
+| Logo ("Enviar logo"/"Trocar logo") | arquivo | Não | PNG, JPEG, WebP; até 2 MB | — | Dica na tela: "PNG, JPEG ou WebP · até 2 MB."; o seletor de arquivo só oferece esses formatos (SVG não é oferecido nem aceito). |
 | Paleta: "Nome da cor" (placeholder "primária") + "Cor" (seletor) | texto + cor | Nome sim | nome 1–60; HEX `#RGB` ou `#RRGGBB` | cor `#f97316` | "+" ("Adicionar cor") só ativo com nome. |
 | "Tom de voz" (placeholder "Como a marca fala com o público…") | texto longo | Não | — | — | Salva ao sair, se mudou. |
 | "Formalidade:" | 3 botões: "informal", "neutro", "formal" | Não | só esses | nenhum | Salva ao tocar; não volta a "nenhuma". |
@@ -2529,7 +2604,7 @@ No celular os botões ficam maiores (altura 40px) e os formulários do cofre emp
 
 ### 7. Regras de negócio e por quê
 1. **N marcas por cliente; cofre por cliente** — o cofre guarda contas do cliente, não de uma marca.
-2. **O logo guarda a chave do arquivo, e o link é gerado a cada leitura** (validade ~1 h) — antes o link salvo expirava e o logo "sumia". Se o logo não aparecer, recarregue.
+2. **O logo guarda a chave do arquivo, e o link é gerado a cada leitura** (validade de 1 hora) — antes o link salvo expirava e o logo "sumia". Se o logo não aparecer, recarregue.
 3. **SVG recusado no servidor** — SVG pode conter script executável quando aberto direto.
 4. **Trocar o logo ou remover a marca apaga o arquivo antigo** do armazenamento.
 5. **Senha nunca aparece em listagens** (nem criptografada); só um booleano "tem senha".
@@ -2554,7 +2629,6 @@ No celular os botões ficam maiores (altura 40px) e os formulários do cofre emp
 - **Armazenamento** (`IGIG_STORAGE_KIND`, `IGIG_STORAGE_BUCKET`="igig") para o logo.
 
 ### 10. Limitações conhecidas
-- **A tela de logo ainda oferece e anuncia SVG** ("PNG, SVG, JPEG ou WebP · até 2 MB."), mas o servidor recusa SVG com "Formato não suportado: image/svg+xml. Envie PNG, JPEG ou WebP.".
 - Não há remoção de logo (só troca).
 - Cores da paleta não são editáveis nem reordenáveis (remova e adicione de novo).
 - Formalidade não volta a "nenhuma" (decisão mantida).
@@ -2606,8 +2680,8 @@ O cliente **não** vê: nomes da equipe, responsável, refações, IDs internos,
 
 | Ação | Pré-condições | O que acontece | Mensagem de sucesso | Erros possíveis |
 |---|---|---|---|---|
-| Abrir o link | Link existe, não expirou (14 dias) e não foi invalidado | Mostra o conteúdo **atual** da pauta (se a agência mudou a legenda ou as peças depois, o cliente vê a versão nova). | — | 404 → "Link inválido ou expirado" · 429 → "Muitas tentativas" · falha de conexão/5xx → "Não foi possível carregar" |
-| "Aprovar conteúdo" | Tarefa na etapa "Aprovação do cliente"; link não respondido | A tarefa avança **uma etapa** (padrão: "Pronto para agendamento"; histórico "Aprovado pelo cliente"); limpa a nota antiga "Cliente pediu…"; dispara automações da etapa de destino; grava decisão; notifica a agência. Se a aprovação for a última etapa, o cartão não se move. | "Resposta registrada" + "Obrigado! Sua agência já foi notificada." (ou "Obrigado pela resposta." se ninguém foi notificado) | Qualquer erro: "Não foi possível registrar sua resposta. Tente novamente." (inclui 404 link usado/expirado, 409 `fora_de_aprovacao`, 429) |
+| Abrir o link | Link existe, não expirou (14 dias) e não foi invalidado | Mostra o conteúdo **atual** da pauta (se a agência mudou a legenda ou as peças depois, o cliente vê a versão nova). | — | 404 → "Link inválido ou expirado" · 423 `portal_bloqueado` → "Portal temporariamente indisponível" + "Contate a agência." (bloqueio por inadimplência ligado) · 429 → "Muitas tentativas" · falha de conexão/5xx → "Não foi possível carregar" |
+| "Aprovar conteúdo" | Tarefa na etapa "Aprovação do cliente"; link não respondido | A tarefa avança **uma etapa** (padrão: "Pronto para agendamento"; histórico "Aprovado pelo cliente"); limpa a nota antiga "Cliente pediu…"; dispara automações da etapa de destino; grava decisão; notifica a agência. Se a aprovação for a última etapa, o cartão não se move. | "Resposta registrada" + "Obrigado! Sua agência já foi notificada." (ou "Obrigado pela resposta." se ninguém foi notificado) | Qualquer erro: "Não foi possível registrar sua resposta. Tente novamente." (inclui 404 link usado/expirado, 409 `fora_de_aprovacao`, 423 `portal_bloqueado`, 429) |
 | "Solicitar ajuste" | Idem | A tarefa **volta uma etapa** (padrão: "Revisão interna"); **refação +1**; grava a observação como "Cliente pediu"; histórico = observação ou "Ajuste solicitado pelo cliente"; automações; notificação. | Idem | Idem |
 
 **Notificação no sininho do IgIg** (tipo `igig_aprovacao_cliente`) para quem gerou o link e para o usuário ligado ao profissional responsável: título "Cliente aprovou: <tarefa>" ou "Cliente pediu ajuste: <tarefa>"; mensagem = observação, ou "Conteúdo aprovado." / "Ajuste solicitado."; link "/esteira". Se a notificação falhar, a decisão vale mesmo assim.
@@ -2615,6 +2689,7 @@ O cliente **não** vê: nomes da equipe, responsável, refações, IDs internos,
 ### 6. Estados
 - **Carregando:** esqueleto cinza.
 - **Link inválido** (desconhecido, malformado, expirado, invalidado por um link mais novo, ou já respondido na hora de decidir): "Link inválido ou expirado" + "Peça um novo link de aprovação à sua agência."
+- **Portal bloqueado (423, cliente com fatura vencida além do limite configurado):** ícone de cadeado + "Portal temporariamente indisponível" + "Contate a agência." — nenhum conteúdo é mostrado, e nunca uma tela em branco ou erro genérico.
 - **Muitas tentativas (429):** "Muitas tentativas" + "Aguarde um minuto e tente novamente."
 - **Sem conexão / erro do servidor:** "Não foi possível carregar" + "Verifique sua conexão e tente novamente."
 - **Já respondido** (reabrir um link respondido antes de expirar, ou logo após responder): "Resposta registrada" + "Obrigado! Sua agência já foi notificada." (só quando a resposta desta visita notificou alguém) ou "Obrigado pela resposta.". O conteúdo **não** é mostrado de novo.
@@ -2631,10 +2706,13 @@ O cliente **não** vê: nomes da equipe, responsável, refações, IDs internos,
 6. **Limite de 60 acessos por minuto por IP** (GET e POST).
 7. **Projeção estreita:** o portal nunca devolve dados internos da agência.
 8. **"Sua agência já foi notificada" só aparece quando a notificação de fato foi gravada** para ao menos um destinatário.
+9. **Bloqueio por inadimplência (opcional, desligado por padrão):** com `IGIG_PORTAL_BLOQUEIO_DIAS` = N > 0, se o cliente dono da tarefa tem alguma fatura vencida há **mais de** N dias, abrir o link e responder são recusados com 423 `portal_bloqueado`. A checagem é feita na hora (mesma consulta da faixa de faturas em atraso do Financeiro), sem esperar a rotina diária, e vem **antes** de qualquer outra validação da decisão — uma resposta nesse estado nunca é aplicada. *Por quê:* bloquear o cliente é uma política que a agência escolhe ligar, nunca um efeito colateral. O link continua válido: regularizada a fatura (paga ou cancelada), o mesmo link volta a funcionar.
+10. **Aprovação conta como entrega:** enquanto nenhum canal publica de verdade, a aprovação do cliente aqui é o que marca a peça como "entregue" para o cálculo de excedentes do Financeiro (a data da primeira aprovação).
 
 ### 8. Fluxo de dados
 - Ver: `AprovacaoPublica` → `useAprovacaoPublica(token)` (sem novas tentativas) → `GET /api/esteira/aprovar/{token}` (público, limite `WEBHOOK_RATE_LIMIT`) → `_resolver_link` (`igig.aprovacao` pelo token; 404 se não existe/expirou) → `igig.tarefa` → `igig.pauta` → nome em `igig.cliente` → `igig.peca` com URLs assinadas → `{titulo, copy_texto, direcao_video, formato, cliente_nome, pecas[], ja_decidida, aguardando_aprovacao}`.
-- Decidir: `useDecidirAprovacao(token)` → `POST /api/esteira/aprovar/{token}` `{decisao: "aprovado"|"ajuste", observacao}` → 404 se já decidido → `esteira_quadro.decidir_aprovacao` (409 `fora_de_aprovacao`; move ±1 etapa; ajuste: `incrementar_refacoes` + `observacao_cliente`; aprovado: limpa `observacao_cliente`) → `automacoes.ao_entrar_etapa` → `registrar_decisao` (`decisao`, `observacao`, `decidido_em`) → `notificar` em `public.notifications` → resposta `{ok, decisao, notificado}`.
+- Bloqueio (GET e POST): `_recusar_se_bloqueado` → `financeiro_service.cliente_bloqueado_no_portal(dias_bloqueio=IGIG_PORTAL_BLOQUEIO_DIAS)` → `FinanceiroService.inadimplentes` (faturas `igig.fatura` não pagas/canceladas com vencimento passado) → 423 `{detail, code:"portal_bloqueado"}`.
+- Decidir: `useDecidirAprovacao(token)` → `POST /api/esteira/aprovar/{token}` `{decisao: "aprovado"|"ajuste", observacao}` → 404 se já decidido → 423 se bloqueado → `esteira_quadro.decidir_aprovacao` (409 `fora_de_aprovacao`; move ±1 etapa; ajuste: `incrementar_refacoes` + `observacao_cliente`; aprovado: limpa `observacao_cliente`) → `automacoes.ao_entrar_etapa` → `registrar_decisao` (`decisao`, `observacao`, `decidido_em`) → `notificar` em `public.notifications` → resposta `{ok, decisao, notificado}`.
 - Usa clientes de serviço (sem usuário logado); todas as leituras filtram pelo `org_id` do token.
 
 ### 9. Dependências de configuração
@@ -2642,11 +2720,11 @@ O cliente **não** vê: nomes da equipe, responsável, refações, IDs internos,
 - **Armazenamento** configurado para as peças (URLs temporárias). Sem URL, aparece o aviso de peça não carregada.
 - **`WEBHOOK_RATE_LIMIT`** (padrão "60/minute").
 - **Profissionais vinculados a usuários** (Custos) para o responsável ser notificado.
-- **`IGIG_PORTAL_BLOQUEIO_DIAS`** (padrão 0 = desligado): configuração já existe para bloquear o portal a clientes com fatura vencida há mais de N dias, **mas o portal ainda não a usa** — ver Limitações e Pendências.
+- **`IGIG_PORTAL_BLOQUEIO_DIAS`** (padrão 0 = desligado): N > 0 bloqueia o portal para clientes com fatura vencida há mais de N dias (regra 9). É configuração do servidor — a agência não liga pela tela; peça ao responsável técnico.
 
 ### 10. Limitações conhecidas
-- **Bloqueio do portal para cliente inadimplente não está ativo:** existe a configuração `IGIG_PORTAL_BLOQUEIO_DIAS` e a regra `cliente_bloqueado_no_portal` (recusa quando há fatura vencida há mais de N dias), com a mensagem planejada "Portal temporariamente indisponível, contate a agência.", mas o portal ainda não chama essa regra e a tela não tem esse estado. Hoje nenhum cliente é bloqueado.
-- Qualquer erro ao responder mostra a mesma mensagem genérica, inclusive quando a agência já retirou o conteúdo da aprovação ou o link foi invalidado.
+- O bloqueio por inadimplência vale para a organização inteira (um único N no servidor); não há exceção por cliente nem liga/desliga pela tela.
+- Qualquer erro ao responder mostra a mesma mensagem genérica, inclusive quando a agência já retirou o conteúdo da aprovação, o link foi invalidado ou o portal ficou bloqueado entre abrir e responder.
 - Reabrir um link já respondido mostra só "Resposta registrada", sem o conteúdo e sem dizer qual foi a decisão.
 - O portal não mostra o logo da marca nem a data de publicação.
 - O IgIg não envia o link por e-mail ou WhatsApp.
@@ -2662,6 +2740,7 @@ O cliente **não** vê: nomes da equipe, responsável, refações, IDs internos,
 - **P: E quando pede ajuste?** R: O cartão volta uma etapa (padrão: "Revisão interna"), conta uma refação e a observação aparece na tarefa como "Cliente pediu: …".
 - **P: O cliente vê quem da equipe fez a peça?** R: Não. O portal não mostra equipe, responsável, refações nem dados internos.
 - **P: O cliente aparece como "Este conteúdo não está mais aguardando a sua aprovação".** R: A tarefa foi tirada da etapa de aprovação pela agência. Quando voltar, gere um novo link.
+- **P: O cliente vê "Portal temporariamente indisponível".** R: O bloqueio por inadimplência está ligado no servidor e esse cliente tem fatura vencida há mais dias que o limite. Regularize a fatura (Financeiro → "Marcar paga") e o mesmo link volta a funcionar.
 
 ---
 
@@ -2671,7 +2750,7 @@ O cliente **não** vê: nomes da equipe, responsável, refações, IDs internos,
 
 ## IgIg — Guia: Distribuição, Financeiro, Integrações e Relatórios
 
-> Fonte: código final do IgIg (backend FastAPI + frontend React), worktree `igig-guia`. Rótulos, mensagens e avisos entre "aspas" são copiados do código. Quando algo não pôde ser confirmado no código, está marcado "(não confirmado no código)".
+> Fonte: código final do IgIg (backend FastAPI + frontend React). Rótulos, mensagens e avisos entre "aspas" são copiados do código. Quando algo não pôde ser confirmado no código, está marcado "(não confirmado no código)".
 >
 > Convenções usadas em todo este arquivo:
 > - **Competência** = o mês a que uma cobrança se refere, no formato `AAAA-MM` (ex.: `2026-09`). NÃO é a data de vencimento.
@@ -2725,7 +2804,7 @@ De cima para baixo:
 ### 6. Estados
 - **Carregando:** blocos cinza (skeleton) no BI, na Fila, em "Todas as publicações" e no painel de métricas; lista de pautas mostra "Carregando…".
 - **Vazio:** BI: "Nenhum cliente ainda." · Fila: "Nada na fila agora." · Todas as publicações: "Nenhuma publicação ainda. Use "Agendar publicação" acima." · Agendar sem pautas: "Nenhuma pauta cadastrada. Crie uma no Calendário Editorial." · Métricas: "Nenhuma coleta registrada ainda."
-- **Erro:** BI: "Não foi possível carregar o BI de eficiência." · Fila: "Não foi possível carregar a fila." · Todas as publicações: "Não foi possível carregar as publicações." · Métricas: sem mensagem de erro de carregamento (não confirmado no código que exista).
+- **Erro:** BI: "Não foi possível carregar o BI de eficiência." · Fila: "Não foi possível carregar a fila." · Todas as publicações: "Não foi possível carregar as publicações." · Métricas: a mensagem do servidor ou "Não foi possível carregar as coletas de métricas." (nunca "Nenhuma coleta registrada ainda." no lugar de um erro).
 - **Atualizando:** após cada ação, a página recarrega todas as consultas de distribuição; não há indicador visual específico de "atualizando".
 
 ### 7. Regras de negócio e por quê
@@ -2742,14 +2821,14 @@ De cima para baixo:
 11. **Métricas são somente-adição.** *Por quê:* as métricas mudam ao longo da primeira semana do post; substituí-las destruiria o histórico.
 12. **BI — Tarefas por cliente:** cada tarefa da Esteira pertence a uma pauta, e a pauta a um cliente. Tarefas cuja pauta não tem cliente conhecido são ignoradas.
 13. **BI — Refações:** soma do contador `refacoes` das tarefas do cliente (o contador é incrementado pela Esteira/portal de aprovação — ver guia da Esteira).
-14. **BI — Taxa** = refações ÷ tarefas, arredondada em 3 casas, exibida com 2 casas e ponto (ex.: "0.40"). **Não é porcentagem:** 0.40 = 0,4 refação por tarefa. Sem tarefas, 0.
-15. **BI — Horas** = soma dos `minutos` dos apontamentos (cronômetro da Esteira) das tarefas do cliente ÷ 60, 2 casas. Inclui TODAS as horas, mesmo as que não puderam ser custeadas.
-16. **BI — Custo real** = Σ (minutos ÷ 60 × custo/hora efetivo de quem apontou), arredondado em centavos, sobre **todo o histórico** (sem filtro de período).
+14. **BI — Taxa** = refações ÷ tarefas, arredondada em 3 casas, exibida com 2 casas e vírgula (ex.: "0,40"). **Não é porcentagem:** 0,40 = 0,4 refação por tarefa. Sem tarefas, "0,00".
+15. **BI — Horas** = soma da duração **exata em segundos** dos apontamentos (cronômetro da Esteira) das tarefas do cliente, convertida em minutos inteiros e depois em horas (2 casas), exibida como "1,5 h" / "39 h". Apontamentos antigos sem a duração em segundos usam os minutos gravados. Inclui TODAS as horas, mesmo as que não puderam ser custeadas.
+16. **BI — Custo real** = Σ (segundos ÷ 3600 × custo/hora efetivo de quem apontou), arredondado em centavos, sobre **todo o histórico** (sem filtro de período). *Por quê (segundos):* somar minutos já arredondados por sessão fazia três sessões de 40 s custarem R$ 0,00; agora custam o equivalente a 2 minutos.
 17. **Qual custo/hora vale:** (a) apontamento com `profissional_id` usa o custo desse profissional; (b) apontamentos antigos usam o `usuario_id` e procuram o profissional vinculado a esse usuário. Custo/hora efetivo: o "custo/hora próprio" do profissional se preenchido — **inclusive 0**, que é valor real (ex.: estagiário não remunerado); senão o custo/hora padrão da função; sem ambos (ou função sem valor) → **indefinido**.
 18. **Horas sem custo nunca são tratadas como grátis.** Apontamentos com custo indefinido são contados à parte e geram o alerta "{N} apontamento(s) sem custo/hora definido — o custo real está SUBESTIMADO." N conta **apontamentos** (segmentos de cronômetro), não horas. *Por quê:* um custo que parece preciso mas está baixo leva a conclusões erradas sobre margem. *O que fazer:* na página "Custos", dar função ou custo/hora próprio a cada profissional e vincular cada profissional ao seu usuário.
 19. **BI e DRE usam a mesma conta de custo** (`BIService`) — as duas telas nunca discordam sobre o custo de um cliente.
 
-**Exemplo trabalhado — BI custo real.** Cliente "Padaria Sol": 10 tarefas, refações somadas = 4 → Taxa = 4 ÷ 10 = "0.40".
+**Exemplo trabalhado — BI custo real.** Cliente "Padaria Sol": 10 tarefas, refações somadas = 4 → Taxa = 4 ÷ 10 = "0,40".
 
 | Quem apontou | Configuração em Custos | Horas | Custo |
 |---|---|---|---|
@@ -2758,7 +2837,7 @@ De cima para baixo:
 | Duda | custo próprio R$ 0,00 (estagiária) | 4h | 4 × 0 = R$ 0,00 (zero é real, sem alerta) |
 | Carla | sem função e sem custo próprio; 3 segmentos de cronômetro | 5h | não somado → alerta |
 
-Na tabela: Tarefas 10 · Refações 4 · Taxa 0.40 · Horas 39 · Custo real R$ 2.100,00, e abaixo: "3 apontamento(s) sem custo/hora definido — o custo real está SUBESTIMADO." As 5h da Carla entram em "Horas", mas não em "Custo real". Se a Carla recebesse a função Designer (R$ 60/h), o custo subiria 5 × 60 = R$ 300,00 → R$ 2.400,00 e o alerta sumiria.
+Na tabela: Tarefas 10 · Refações 4 · Taxa 0,40 · Horas 39 h · Custo real R$ 2.100,00, e abaixo: "3 apontamento(s) sem custo/hora definido — o custo real está SUBESTIMADO." As 5h da Carla entram em "Horas", mas não em "Custo real". Se a Carla recebesse a função Designer (R$ 60/h), o custo subiria 5 × 60 = R$ 300,00 → R$ 2.400,00 e o alerta sumiria.
 
 ### 8. Fluxo de dados
 - **Listas:** `usePublicacoes` → **GET `/api/distribuicao/publicacoes`** (opcional `pauta_id`) → `igig.publicacao` ordenada por `agendada_para`. Títulos das pautas vêm de `usePautas` (Calendário). `useFila` → **GET `/api/distribuicao/fila`** (opcional `ate`, ISO-8601; padrão agora) → `PublicacaoRepository.pendentes` (`status='agendada'` e `agendada_para <= ate`).
@@ -2767,7 +2846,7 @@ Na tabela: Tarefas 10 · Refações 4 · Taxa 0.40 · Horas 39 · Custo real R$ 
 - **Cancelar:** `useCancelarPublicacao` → **POST `/api/distribuicao/publicacoes/{id}/cancelar`** → `status='cancelada'`.
 - **Métricas:** `useMetricas` → **GET `/api/distribuicao/publicacoes/{id}/metricas`** (mais nova primeiro); `useRegistrarMetrica` → **POST `/api/distribuicao/publicacoes/{id}/metricas`** → `igig.metrica`.
 - **BI:** `useEficiencia` → **GET `/api/distribuicao/bi/eficiencia`** → `BIService.eficiencia_por_cliente`: `igig.cliente`, `igig.pauta`, `igig.tarefa` (`pauta_id`, `refacoes`), `igig.profissional` (`custo_hora_override`, `funcao_id`, `usuario_id`), `igig.funcao.custo_hora_padrao`, `igig.apontamento` (`tarefa_id`, `minutos`, `profissional_id`, `usuario_id`). Somente leitura.
-- **Efeitos automáticos:** nenhum. Não existe job agendado ativo que publique a fila (ver Limitações). Toda mutação invalida as consultas de distribuição.
+- **Efeitos automáticos:** a rotina `igig_publicacao_fila` roda a cada 5 minutos: (1) devolve para `agendada`, com erro "tentativa interrompida", publicações presas em `publicando` há mais de 15 minutos; (2) processa as agendadas vencidas, organização por organização — mas só tenta canais homologados (hoje nenhum), então elas continuam `agendada` sem erro. Toda mutação invalida as consultas de distribuição. Quando "Publicar" falha com `credencial_ilegivel`, a tela também recarrega o status de Integrações (o canal passa a mostrar "reconectar" sem precisar recarregar a página).
 
 ### 9. Dependências de configuração
 - Pelo menos uma pauta no Calendário Editorial (senão o bloco de agendar mostra o aviso com link).
@@ -2779,24 +2858,23 @@ Na tabela: Tarefas 10 · Refações 4 · Taxa 0.40 · Horas 39 · Custo real R$ 
 
 ### 10. Limitações conhecidas
 - **Publicação real não implementada** em nenhum canal (`NOC-REMEDIATE[igig-publishing]`). O conjunto de canais homologados está vazio.
-- **Agendar não publica sozinho.** O processamento automático da fila existe como lógica (`processar_fila_publicacao`), mas **não está registrado no agendador** — os jobs ativos do IgIg são só renovação do Gmail, SLA das automações e extensão de pautas. E mesmo quando ligado, ele só tentará canais homologados (hoje nenhum). A publicação só acontece tocando "Publicar"/"Publicar agora".
+- **Agendar não publica sozinho — ainda.** A rotina da fila já roda a cada 5 minutos, mas só tenta canais homologados, e hoje nenhum está: as publicações agendadas ficam `agendada` (sem erro) na "Fila". Tocar "Publicar"/"Publicar agora" tenta na hora, mas também termina em `falhou` com "A integração com {canal} ainda não está disponível (homologação da API pendente).". Quando um canal for homologado, a rotina passa a publicá-lo sozinha, sem mudança na tela.
 - Não há como editar o horário de uma publicação; cancele e agende outra. Não há "descancelar".
 - Sem política automática de novas tentativas: cada tentativa é manual; o sistema só conta.
-- Se o servidor cair no meio de uma tentativa, a linha pode ficar em `publicando`; tocar "Publicar" nela devolve "Esta publicação já está sendo executada.". A única saída pela tela é cancelar e agendar de novo.
+- Se o servidor cair no meio de uma tentativa, a linha fica em `publicando` por até ~15–20 minutos (tocar "Publicar" nela devolve "Esta publicação já está sendo executada."); depois a rotina da fila a devolve para `agendada` com o erro "tentativa interrompida", e ela pode ser publicada de novo.
 - As mídias enviadas ao publicador são chaves de armazenamento, não URLs públicas — precisará ser ajustado quando a integração real existir.
 - Métricas: coleta automática pelas APIs não existe; não há painel agregado por cliente; as métricas não entram no BI.
 - BI: sem filtro de período (sempre todo o histórico); não mostra custo por tarefa.
-- BI usa o campo `minutos` de cada apontamento, que é arredondado para baixo por segmento (um segmento de 40 segundos conta 0 minuto), embora o cronômetro agora grave também a duração exata em segundos. Ver Pendências.
-- "Horas" aparece como número cru (ex.: "12.5", com ponto), e "Taxa" com ponto ("0.40").
 
 ### 11. Perguntas frequentes
-- **P: Agendei o post e ele não saiu no horário.** R: O IgIg ainda não publica sozinho. Vá em "Fila — prontas para publicar" e toque em "Publicar agora". Além disso, a integração real com as redes ainda está em homologação.
+- **P: Agendei o post e ele não saiu no horário.** R: Nenhuma rede está homologada ainda, então o IgIg não publica de verdade — nem sozinho, nem pelo botão "Publicar agora". Publique pela própria rede social; o agendamento fica registrado aqui. Quando a integração for liberada, a fila passa a publicar sozinha.
 - **P: Toquei em "Publicar" e apareceu "Canal instagram não está configurado. Conecte um token em Integrações antes de publicar."** R: O canal não tem token. Um administrador da agência precisa conectar o canal em Integrações → "Canais de publicação". A publicação continua agendada; nada foi perdido.
 - **P: Apareceu "A integração com instagram ainda não está disponível (homologação da API pendente)."** R: O token está salvo, mas a conexão real com a rede ainda não foi liberada pela plataforma. Reconectar não resolve; é pendência de desenvolvimento/homologação.
 - **P: Apareceu "O token salvo para facebook não pôde ser lido. Reconecte o canal."** R: A chave de criptografia do servidor mudou. Um administrador deve colar o token de novo em Integrações ("Substituir").
 - **P: "Esta pauta já tem publicação ativa em tiktok".** R: Já existe uma publicação dessa pauta nesse canal (agendada, falhou ou publicada). Cancele-a para reagendar, ou use "Publicar" nela.
 - **P: Por que a publicação que falhou não está na Fila?** R: A Fila mostra só itens agendados cujo horário chegou. Falhas ficam em "Todas as publicações", com o erro e o botão "Publicar" para tentar de novo.
-- **P: A taxa 0.40 é 40%?** R: Não. É 0,4 refação por tarefa (refações ÷ tarefas).
+- **P: A taxa 0,40 é 40%?** R: Não. É 0,4 refação por tarefa (refações ÷ tarefas).
+- **P: Uma publicação ficou em "publicando" e não sai disso.** R: O servidor caiu durante a tentativa. Em até uns 20 minutos ela volta sozinha para "agendada" (com o erro "tentativa interrompida"); aí é possível tentar de novo.
 - **P: Por que aparece "o custo real está SUBESTIMADO"?** R: Há horas apontadas por alguém sem custo/hora (sem função e sem custo próprio) ou sem profissional vinculado ao usuário. Corrija na página "Custos".
 - **P: Posso apagar ou corrigir uma coleta de métricas?** R: Não. As coletas só se acumulam; registre uma nova com os números corretos.
 - **P: Quem pode publicar ou cancelar?** R: Qualquer membro da agência. Só conectar/desconectar canais (em Integrações) exige administrador.
@@ -2806,7 +2884,7 @@ Na tabela: Tarefas 10 · Refações 4 · Taxa 0.40 · Horas 39 · Custo real R$ 
 ## Página: Financeiro
 
 ### 1. Propósito
-Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, recebido, inadimplente), fechamento mensal ("Gerar competência") que abre as faturas dos contratos ativos com mensalidade e excedentes, faturas manuais e seus itens (inclusive desconto), baixa manual ("Marcar paga"), cancelamento de faturas, cálculo de itens excedentes, aviso de inadimplência, DRE por conta (margem por cliente) e acesso ao Relatório (ver "Funcionalidade: Relatórios"). Título: "Financeiro"; subtítulo: "Margem por conta, excedentes e cobrança."
+Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, recebido, inadimplente), fechamento mensal ("Gerar competência") que abre as faturas dos contratos ativos com mensalidade e excedentes, faturas manuais e seus itens (inclusive desconto), envio da fatura por e-mail ("Enviar fatura") ou registro de envio por fora ("Marcar como enviada"), baixa manual ("Marcar paga"), cancelamento de faturas, cálculo de itens excedentes, aviso de inadimplência, DRE por conta (margem por cliente) e acesso ao Relatório (ver "Funcionalidade: Relatórios"). Título: "Financeiro"; subtítulo: "Margem por conta, excedentes e cobrança."
 
 ### 2. Acesso
 - **Rota:** `/financeiro`.
@@ -2815,21 +2893,21 @@ Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, rece
 - **Quem vê:** qualquer usuário autenticado da agência vê tudo (resumo, DRE, excedentes, faturas, atraso, relatório).
 - **Quem executa:**
   - Qualquer membro: trocar competência, "Nova fatura", "Adicionar item" (inclusive desconto), abrir "Itens", "Relatório".
-  - **Só administradores da agência:** "Gerar competência", "Marcar paga", "Cancelar fatura". Para membros a tela esconde esses botões e, na faixa de fechamento, mostra "Somente administradores da agência podem fechar o mês.". O servidor também recusa (403).
+  - **Só administradores da agência:** "Gerar competência", "Enviar fatura", "Marcar como enviada", "Marcar paga", "Cancelar fatura" (e "Paga" na aba Financeiro do card do cliente). Para membros a tela esconde esses botões e, na faixa de fechamento, mostra "Somente administradores da agência podem fechar o mês.". O servidor também recusa (403 "Apenas administradores da organização podem realizar esta ação.").
 
 ### 3. Layout
 - **Cabeçalho:** título e subtítulo à esquerda; à direita o seletor "Competência" (mês/ano; começa no mês atual) e o botão "Relatório".
 - **Blocos, de cima para baixo:**
   1. **Resumo** — quatro cartões: "MRR" (detalhe "contratos ativos hoje"), "A receber" (detalhe = competência), "Recebido" (detalhe = competência), "Inadimplente" (detalhe "{N} fatura(s)", valor em vermelho se N > 0). Celular: 2 colunas; telas grandes: 4 colunas.
   2. **Faixa de fechamento** (borda tracejada): "Fechar {competência}: uma fatura por contrato ativo (mensalidade + excedentes do mês)." + botão "Gerar competência" (só administrador; no celular ocupa a largura toda).
-  3. **Aviso de atraso** (só aparece se houver): título vermelho "{N} fatura(s) em atraso" e as 5 mais atrasadas: "{Cliente} · {competência} · {valor} · {N} dias".
+  3. **Aviso de atraso** (só aparece se houver): título vermelho "{N} fatura(s) em atraso" e as 5 mais atrasadas: "{Cliente} · {competência} · {valor} · {N} dias". Se a consulta falhar, aparece em vermelho a mensagem do servidor ou "Não foi possível carregar as faturas em atraso." (nunca some em silêncio).
   4. **"DRE por conta — {competência}"** com a nota "Receita da competência selecionada; custo real é sempre o histórico completo." Colunas "Cliente", "Receita", "Custo real", "Margem", "%". Margem negativa em vermelho. Linha de alerta vermelha abaixo do cliente quando há horas sem custo. Rola para o lado no celular.
-  5. **"Itens excedentes — {competência}"** com a nota "Cobrados na fatura do mês seguinte." Cada linha: cliente, "{entregues} / {contratados} entregues", e então etiqueta vermelha "+{N}", valor e "→ {competência de cobrança}", ou etiqueta "dentro do pacote".
-  6. **"Faturas"** — botão "Nova fatura" (abre formulário no lugar), lista de todas as faturas de todas as competências (da mais recente para a mais antiga). Cada linha: etiqueta de status (`aberta`, `enviada`, `paga`, `vencida`, `cancelada`), nome do cliente, competência, valor total, "vence {dd/mm/aaaa}" (se houver), botão "Itens" (abre/fecha), e para administradores em faturas não pagas/não canceladas: "Marcar paga" e ícone vermelho de cancelar. Rodapé: "Baixa manual: o webhook do gateway (Asaas/Iugu) e a emissão de NFS-e dependem de credenciais e homologação ainda não configuradas."
-  - Painel "Itens": tabela "Descrição", "Tipo", "Qtd", "Valor un.", "Total" (desconto aparece com "− " e em vermelho); abaixo, formulário de adicionar item (só em faturas `aberta`, `enviada` ou `vencida`).
+  5. **"Itens excedentes — {competência}"** com a nota "Cobrados na fatura do mês seguinte. As peças do plano recorrente nunca contam como excedente, mesmo em meses com mais publicações previstas no calendário — só peças avulsas (fora do plano) além do pacote geram cobrança extra." Cada linha: cliente, "{entregues} / {contratados} entregues", e então etiqueta vermelha "+{N}", valor e "→ {competência de cobrança}", ou etiqueta "dentro do pacote".
+  6. **"Faturas"** — botão "Nova fatura" (abre formulário no lugar), lista de todas as faturas de todas as competências (da mais recente para a mais antiga). Cada linha: etiqueta de status (`aberta`, `enviada`, `paga`, `vencida`, `cancelada`), nome do cliente, competência, valor total, "vence {dd/mm/aaaa}" (se houver), botão "Itens" (abre/fecha), e para administradores em faturas não pagas/não canceladas: "Enviar fatura" (ícone de envelope), ícone de envelope com visto ("Marcar fatura {competência} como enviada"), "Marcar paga" e ícone vermelho de cancelar. Rodapé: "Baixa manual: o webhook do gateway (Asaas/Iugu) e a emissão de NFS-e dependem de credenciais e homologação ainda não configuradas."
+  - Painel "Itens": tabela "Descrição", "Tipo", "Qtd", "Valor un.", "Total" (desconto aparece com "− " e em vermelho); abaixo, formulário de adicionar item (só em faturas `aberta`, `enviada` ou `vencida`). Se os itens não carregarem: mensagem do servidor ou "Não foi possível carregar os itens desta fatura.".
 - **O seletor "Competência" afeta:** cartões do resumo (exceto MRR), "Gerar competência", DRE (só a receita), excedentes e a competência pré-preenchida em "Nova fatura" (cada vez que o formulário é aberto). **Não afeta:** a lista de faturas e o aviso de atraso (mostram tudo).
 - **Formulários no celular (≤640px):** "Nova fatura" com campos empilhados; "Adicionar item" em 2 colunas (Descrição e Tipo ocupando a linha inteira). No desktop, cada formulário numa linha.
-- **Aba Financeiro do cartão do cliente:** cartões "Em aberto" e "Recebido"; lista das faturas do cliente (competência, "vence {dd/mm/aaaa}" ou "sem vencimento", "· paga em {dd/mm/aaaa}", valor, status) e botão "Paga" em faturas não pagas/não canceladas. Vazio: "Nenhuma fatura para este cliente. Faturas saem de "Gerar competência" no Financeiro."
+- **Aba Financeiro do cartão do cliente:** cartões "Em aberto" e "Recebido"; lista das faturas do cliente (competência, "vence {dd/mm/aaaa}" ou "sem vencimento", "· paga em {dd/mm/aaaa}", valor, status) e, **só para administradores**, botão "Paga" em faturas não pagas/não canceladas (com confirmação). Vazio: "Nenhuma fatura para este cliente. Faturas saem de "Gerar competência" no Financeiro."
 
 ### 4. Campos
 | Campo (rótulo exato) | Tipo | Obrigatório | Validação/limites | Padrão | Observação |
@@ -2842,7 +2920,7 @@ Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, rece
 | "Descrição" (item) | texto | Sim | 1–200 caracteres | vazio | Exemplo no campo: "Post extra — outubro" |
 | "Tipo" (item) | lista | Sim | "Mensalidade", "Excedente", "Avulso", "Desconto" | "Avulso" | "Desconto" SUBTRAI; a tela avisa "Este valor será SUBTRAÍDO do total da fatura." |
 | "Qtd" (item) | número | Sim | inteiro ≥ 1 (vazio ou inválido vira 1) | 1 | |
-| "Valor un. (R$)" (item) | texto decimal | Sim | aceita `1500,00`, `1.500,00` ou `1500.00`; ≥ 0; vazio ou ilegível → "Valor inválido. Use, por exemplo, 1500,00 ou 1.500,00." e nada é enviado | vazio (exemplo "0,00") | Atenção: `1.500` **sem vírgula** é lido como 1,5 (ponto tratado como decimal) |
+| "Valor un. (R$)" (item) | texto decimal | Sim | aceita `1500,00`, `1.500,00`, `1.500` (ponto seguido de grupos de 3 dígitos = milhar) ou `1500.00`/`1500.5` (ponto seguido de 1–2 dígitos = decimal); ≥ 0; vazio ou ilegível → "Valor inválido. Use, por exemplo, 1500,00 ou 1.500,00." e nada é enviado | vazio (exemplo "0,00") | `1.500` = mil e quinhentos (padrão brasileiro) |
 
 ### 5. Ações
 | Ação (botão/gesto exato) | Pré-condições | O que acontece | Mensagem de sucesso | Erros possíveis |
@@ -2852,15 +2930,17 @@ Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, rece
 | "Nova fatura" → "Abrir fatura" ("Abrindo…") | Cliente e competência preenchidos | Cria `igig.fatura` `aberta`, total R$ 0,00, com ou sem contrato. Fecha o formulário. "Cancelar" fecha sem salvar. | "Fatura aberta — adicione os itens" | 404 "Cliente não encontrado". 404 "Contrato não encontrado". 409 "Já existe fatura para este contrato em {competência}" (já há fatura não cancelada desse contrato no mês — use a existente ou cancele-a). 422 validação. Genérico: "Não foi possível abrir a fatura." |
 | "Itens" | — | Abre/fecha o painel de itens da fatura (carrega as linhas só ao abrir) | — | — |
 | "Adicionar item" ("Adicionando…") | Fatura `aberta`/`enviada`/`vencida`; descrição preenchida; valor válido | Insere linha em `igig.fatura_item`; servidor recalcula `valor_total` (Σ linhas; desconto negativo) e devolve a fatura. Limpa descrição, qtd e valor. | "Item adicionado — total R$ {novo total}" | Na tela: "Valor inválido. Use, por exemplo, 1500,00 ou 1.500,00.". 422 "Este desconto deixaria o total da fatura negativo." (reduza o desconto). 409 "Fatura paga não aceita novos itens." / "Fatura cancelada não aceita novos itens.". 404 "Fatura não encontrada". Genérico: "Não foi possível adicionar o item." |
+| "Enviar fatura" → confirmação | **Administrador**; fatura não paga e não cancelada; cliente com e-mail; algum SMTP utilizável | Janela "Enviar fatura": "Enviar esta fatura por e-mail para o cliente, com o PDF em anexo?" Botão "Enviar fatura" ("Enviando…"). Gera o PDF da fatura na hora (agência, "Fatura — {competência}", cliente, competência, vencimento, status, itens com valores em R$ e total) e envia ao e-mail do cadastro do cliente, assunto "Fatura — {competência}", anexo "fatura-{competência}.pdf", pelo SMTP da agência (ou o da plataforma). Só depois do envio bem-sucedido grava `status='enviada'` e `enviada_em = agora` (um novo envio atualiza a data). | "Fatura enviada por e-mail." | 409 `smtp_nao_configurado` "Nenhum SMTP configurado: cadastre uma conta em Integrações → E-mail." · 422 `email_destinatario_ausente` "O cliente não tem e-mail cadastrado." (cadastre em Clientes → Dados) · 409 `fatura_fechada` "Fatura paga não pode ser enviada." / "Fatura cancelada não pode ser enviada." · 502 `envio_falhou` "Falha ao enviar o e-mail: {erro}" (a fatura **não** é marcada como enviada) · 404 "Fatura não encontrada." / "Cliente não encontrado." · 403 (não admin) · genérico "Não foi possível enviar a fatura." |
+| Ícone "Marcar fatura {competência} como enviada" → confirmação | **Administrador**; fatura não paga e não cancelada | Janela "Marcar fatura como enviada": "Marcar esta fatura como enviada sem enviar nenhum e-mail? Use quando a fatura já foi entregue ao cliente por outro meio." Botão "Marcar como enviada" ("Marcando…"). Grava `status='enviada'` e `enviada_em = agora`, sem mandar nada. | "Fatura marcada como enviada." | 409 `fatura_fechada` "Fatura paga não pode ser marcada como enviada." / "Fatura cancelada não pode ser marcada como enviada." · 404 "Fatura não encontrada" · 403 · genérico "Não foi possível marcar como enviada." |
 | "Marcar paga" → confirmação | **Administrador**; fatura não paga e não cancelada | Janela "Marcar fatura como paga": "Marcar esta fatura como paga? Registra a data de agora; não há como desfazer pela tela." Botão "Marcar paga" ("Marcando…"). Grava `status='paga'`, `pago_em = agora`. Pagar de novo uma fatura já paga não altera a data original. | "Fatura marcada como paga." | 409 "Fatura cancelada não pode ser paga.". 404 "Fatura não encontrada". 403 (não admin). Genérico: "Não foi possível marcar como paga." |
 | Ícone vermelho "Cancelar fatura {competência}" → confirmação | **Administrador**; fatura não paga e não cancelada | Janela "Cancelar fatura": "Cancelar esta fatura? Uma fatura cancelada não pode ser reaberta nem marcada como paga." Botão "Cancelar fatura" ("Cancelando…"). Status `cancelada`; itens e histórico mantidos; libera a vaga contrato+competência para um novo "Gerar competência". Cancelar de novo não dá erro. | "Fatura cancelada." | 409 "Fatura paga não pode ser cancelada.". 404. 403. Genérico: "Não foi possível cancelar a fatura." |
-| "Paga" (aba Financeiro do cliente) | Fatura não paga/não cancelada. **Sem confirmação; botão aparece para todos.** | Mesmo efeito de "Marcar paga". | "Fatura marcada como paga." | Membro não administrador recebe 403 com o texto "Apenas administradores podem alterar as etapas do quadro." (texto genérico do servidor; significa "só administrador pode fazer isto"). Demais erros como em "Marcar paga". |
+| "Paga" (aba Financeiro do cliente) → "Marcar paga" | **Administrador** (o botão só aparece para eles); fatura não paga/não cancelada | Mesma confirmação "Marcar fatura como paga" e mesmo efeito de "Marcar paga". | "Fatura marcada como paga." | Como em "Marcar paga". |
 | "Relatório" | — | Abre a janela de relatório (ver "Funcionalidade: Relatórios") | — | — |
 
 ### 6. Estados
 - **Carregando:** resumo com 4 blocos cinza; DRE, excedentes, faturas e itens com blocos cinza; lista de clientes do formulário mostra "Carregando…".
 - **Vazio:** DRE: "Nenhum cliente ainda." · Excedentes: "Nenhum contrato ativo com pacote definido nesta competência." · Faturas: "Nenhuma fatura emitida." · Itens: "Nenhum item lançado nesta fatura." · Aviso de atraso: não aparece. · Cartão do cliente: "Nenhuma fatura para este cliente. Faturas saem de "Gerar competência" no Financeiro."
-- **Erro:** Resumo: texto do servidor ou "Não foi possível carregar o resumo." · DRE: "Não foi possível carregar o DRE." · Excedentes: "Não foi possível carregar os excedentes." · Faturas: "Não foi possível carregar as faturas." · Cartão do cliente: texto do servidor ou "Não foi possível carregar as faturas." · Aviso de atraso e painel de itens: sem mensagem de erro (se falharem, simplesmente não mostram nada).
+- **Erro:** Resumo: texto do servidor ou "Não foi possível carregar o resumo." · DRE: "Não foi possível carregar o DRE." · Excedentes: "Não foi possível carregar os excedentes." · Faturas: "Não foi possível carregar as faturas." · Cartão do cliente: texto do servidor ou "Não foi possível carregar as faturas." · Aviso de atraso: texto do servidor ou "Não foi possível carregar as faturas em atraso." · Painel de itens: texto do servidor ou "Não foi possível carregar os itens desta fatura.".
 - **Atualizando:** cartões do resumo ficam esmaecidos enquanto a nova competência carrega; toda ação recarrega todas as consultas do Financeiro.
 
 ### 7. Regras de negócio e por quê
@@ -2878,73 +2958,79 @@ Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, rece
 12. **Fatura paga ou cancelada não aceita itens** (409). *Por quê:* mudaria em silêncio um valor já pago ou anulado.
 13. **Fatura manual com contrato** usa a mesma trava de duplicidade do fechamento (409). **Sem contrato ("Avulsa — sem contrato")** não tem trava: é possível abrir várias para o mesmo cliente e mês, e o fechamento não as enxerga (pode gerar outra fatura para o mesmo cliente). Use avulsa para cobranças extras; para a mensalidade, prefira "Gerar competência" ou escolha o contrato.
 14. **Marcar paga** grava a data do clique (não a data real do pagamento); é idempotente; fatura cancelada não pode ser paga. **Cancelar** não apaga nada; fatura paga não pode ser cancelada (estorno é outro processo, não construído).
-15. **Excedentes — "entregue"** = pauta do cliente cuja **data de publicação planejada** (`data_publicacao`, do Calendário) cai no mês (dia 1º 00:00 até o último dia 23:59:59). *Por quê (código):* contar tarefas contaria duas vezes uma peça com várias etapas; contar publicações deixaria de fora o que foi postado manualmente. Consequência: pautas agendadas no mês contam mesmo que não tenham sido produzidas.
-16. **Excedentes = máx(0, entregues − pacote)**; entregar menos não gera crédito. Valor = excedentes × `valor_excedente` (2 casas). Contrato sem pacote (`posts_por_mes` vazio ou 0) não aparece.
-17. **Cliente com mais de um contrato ativo com pacote não aparece em excedentes** (nem é cobrado automaticamente). *Por quê:* o banco não registra a qual contrato cada pauta pertence; contar tudo contra cada contrato cobraria em dobro. O caso é registrado em log para o time técnico.
-18. **Inadimplência (aviso de atraso)** = fatura não paga, não cancelada, com vencimento **anterior a hoje**; dias de atraso = hoje − vencimento. No dia do vencimento ainda não está atrasada. Ordenada da mais atrasada para a menos. Somente leitura: a lista não bloqueia o cliente nem envia cobrança. *Por quê:* bloquear o portal é decisão de negócio, não efeito colateral de um relatório.
-19. **DRE — Receita** = soma do `valor_total` das faturas não canceladas do cliente **na competência selecionada** (pagas e não pagas — é faturamento, não caixa). **Custo real** = o mesmo "Custo real" do BI de Eficiência, sobre **todo o histórico** de horas. **Margem** = Receita − Custo (2 casas). **%** = Margem ÷ Receita × 100 (1 casa); sem receita, % = 0.0 (não significa empate).
+14b. **Enviar fatura** só marca `enviada` depois que o e-mail realmente saiu; se o SMTP falhar, nada muda. "Marcar como enviada" existe para quando a fatura foi entregue por fora (e-mail próprio, em mãos). Os dois exigem administrador (comunicação financeira com o cliente) e são recusados em fatura paga ou cancelada. *Por quê:* a etiqueta `enviada` precisa significar que o cliente de fato recebeu a cobrança.
+14c. **Vencida e inadimplente são automáticos**: todo dia às 06:00 (Brasília) a rotina marca `vencida` toda fatura `aberta`/`enviada` com vencimento anterior a hoje, marca o cliente como `inadimplente` enquanto ele tiver alguma fatura vencida e o devolve a `ativo` quando não tiver mais nenhuma (paga ou cancelada).
+15. **Excedentes — "entregue"** = pauta **publicada de verdade** (`publicado_em`) ou, na falta disso, **aprovada pelo cliente no portal** (data da primeira aprovação) dentro do mês (dia 1º até o último dia). A data **planejada** (`data_publicacao`) não conta mais. *Por quê:* uma peça que atrasou ou foi retirada depois de agendada não foi entregue e não pode ser cobrada. Como hoje nenhum canal publica de verdade, na prática "entregue" = aprovada no portal.
+16. **Peça do plano nunca é excedente.** O pacote (`posts_por_mes`) é precificado com a convenção fixa de 4 semanas/mês (Σ dias da semana × quantidade por dia × 4). Num mês "de 5 semanas" o item recorrente gera uma ocorrência a mais — isso é o próprio plano, não pedido extra. Por isso as pautas geradas automaticamente a partir do orçamento aceito (`gerada_automaticamente` + `orcamento_item_id`) **nunca** entram na conta de excedentes; aparecem só em "entregues" (informativo).
+17. **Excedentes = máx(0, avulsas entregues − pacote)**: só pautas **avulsas** (criadas à mão no Calendário, fora do plano) são comparadas com o pacote. Entregar menos não gera crédito. Valor = excedentes × `valor_excedente` (2 casas). Contrato sem pacote (`posts_por_mes` vazio ou 0) não aparece. A coluna "{entregues} / {contratados}" mostra plano + avulsas entregues.
+17b. **Atribuição ao contrato:** uma peça do plano pertence ao contrato gerado do seu orçamento de origem (sem ambiguidade, mesmo com dois contratos). Uma peça avulsa só tem o cliente: é atribuída ao único contrato ativo com pacote desse cliente; se ele tiver dois ou mais, a avulsa não é atribuída a nenhum (registrado em log, nunca cobrado em dobro).
+18. **Inadimplência (aviso de atraso)** = fatura não paga, não cancelada, com vencimento **anterior a hoje**; dias de atraso = hoje − vencimento. No dia do vencimento ainda não está atrasada. Ordenada da mais atrasada para a menos. A lista é calculada na hora (não espera a rotina das 06:00). Ela não envia cobrança; o bloqueio do portal de aprovação só acontece se a agência ligou `IGIG_PORTAL_BLOQUEIO_DIAS` (ver Capítulo 3, Portal). *Por quê:* bloquear o portal é decisão de negócio, não efeito colateral de um relatório.
+19. **DRE — Receita** = soma do `valor_total` das faturas não canceladas do cliente **na competência selecionada** (pagas e não pagas — é faturamento, não caixa). **Custo real** = o mesmo "Custo real" do BI de Eficiência, sobre **todo o histórico** de horas. **Margem** = Receita − Custo (2 casas). **%** = Margem ÷ Receita × 100 (1 casa), exibida com vírgula (ex.: "52,8%"); sem receita, "0%" (não significa empate). O custo real soma os apontamentos em **segundos** (não em minutos arredondados).
 20. **DRE — alerta:** se há horas sem custo/hora, a linha diz "{N} apontamento(s) sem custo/hora definido — a margem está SUPERESTIMADA." *Por quê:* custo subestimado deixa a margem mais alta do que a real. *O que fazer:* completar custo/hora e vínculos na página "Custos".
 
 **Exemplo trabalhado — excedentes + fechamento.** Contrato ativo da "Padaria Sol": `valor_mensal` R$ 4.000,00; pacote 12 posts/mês; `valor_excedente` R$ 150,00; dia de vencimento 10.
-- Em agosto/2026 há 15 pautas da Padaria Sol com data de publicação em agosto.
-- Competência 2026-08 → "Itens excedentes — 2026-08": "Padaria Sol · 15 / 12 entregues · +3 · R$ 450,00 · → 2026-09" (3 × R$ 150,00).
+- Em agosto/2026 (mês "de 5 semanas"), o item recorrente do plano gerou 13 pautas, todas aprovadas pelo cliente no portal em agosto → **peças do plano: 13, nunca excedente**. Além disso, a agência criou à mão no Calendário 15 pautas avulsas, também aprovadas em agosto.
+- Competência 2026-08 → "Itens excedentes — 2026-08": "Padaria Sol · 28 / 12 entregues · +3 · R$ 450,00 · → 2026-09" (entregues = 13 do plano + 15 avulsas; excedentes = 15 avulsas − 12 do pacote = 3; 3 × R$ 150,00). As 13 do plano não geram cobrança, mesmo passando de 12.
+- Uma pauta avulsa agendada para agosto mas **não aprovada** (nem publicada) em agosto não conta; se for aprovada em setembro, conta em setembro.
 - Competência 2026-09 → administrador toca "Gerar competência" → toast "1 fatura(s) criada(s) em 2026-09." e a fatura 2026-09 tem:
   - "Retainer mensal" — 1 × R$ 4.000,00 = R$ 4.000,00
   - "Excedentes de 2026-08" — 3 × R$ 150,00 = R$ 450,00
   - **Total R$ 4.450,00**, "vence 10/09/2026".
 - Tocar "Gerar competência" de novo: "0 fatura(s) criada(s) · 1 já existia(m) em 2026-09." — nada duplicado.
-- Se em agosto houvesse só 10 pautas: "10 / 12 entregues" e "dentro do pacote"; a fatura de setembro teria só o retainer (R$ 4.000,00).
+- Se em agosto houvesse só as 13 do plano e 10 avulsas: "23 / 12 entregues" e "dentro do pacote" (10 avulsas ≤ 12); a fatura de setembro teria só o retainer (R$ 4.000,00).
 - Desconto: na fatura de R$ 4.450,00, um item "Desconto" de 1 × R$ 200,00 deixa o total em R$ 4.450,00 − 200,00 = **R$ 4.250,00** (toast "Item adicionado — total R$ 4.250,00"; a linha aparece "− R$ 200,00" em vermelho). Um desconto de R$ 5.000,00 seria recusado: "Este desconto deixaria o total da fatura negativo.".
 
 **Exemplo trabalhado — DRE (margem).** Padaria Sol, com o custo do exemplo do BI (R$ 2.100,00; 3 apontamentos sem custo da Carla). Faturas: 2026-08 R$ 4.000,00 (paga) e 2026-09 R$ 4.450,00 (aberta).
-- Competência **2026-09**: Receita R$ 4.450,00 · Custo real R$ 2.100,00 · **Margem = 4.450,00 − 2.100,00 = R$ 2.350,00** · **% = 2.350 ÷ 4.450 × 100 = 52.8%** · alerta "3 apontamento(s) sem custo/hora definido — a margem está SUPERESTIMADA.".
-- Se a Carla ganhasse função de R$ 60/h: custo = 2.100 + 5 × 60 = R$ 2.400,00 → margem R$ 2.050,00 → 2.050 ÷ 4.450 = **46.1%** (sem alerta).
-- Competência **2026-08**: Receita R$ 4.000,00; o custo continua R$ 2.100,00 (todo o histórico) → margem R$ 1.900,00 → 47.5%. Por isso a nota "custo real é sempre o histórico completo": somar as margens mensais não dá a margem real do período.
-- Cliente novo "Loja Lua", sem faturas na competência e com 8h da Ana (R$ 60/h): Receita R$ 0,00 · Custo R$ 480,00 · Margem **−R$ 480,00** (vermelho) · % **0.0%**.
+- Competência **2026-09**: Receita R$ 4.450,00 · Custo real R$ 2.100,00 · **Margem = 4.450,00 − 2.100,00 = R$ 2.350,00** · **% = 2.350 ÷ 4.450 × 100 = 52,8%** · alerta "3 apontamento(s) sem custo/hora definido — a margem está SUPERESTIMADA.".
+- Se a Carla ganhasse função de R$ 60/h: custo = 2.100 + 5 × 60 = R$ 2.400,00 → margem R$ 2.050,00 → 2.050 ÷ 4.450 = **46,1%** (sem alerta).
+- Competência **2026-08**: Receita R$ 4.000,00; o custo continua R$ 2.100,00 (todo o histórico) → margem R$ 1.900,00 → 47,5%. Por isso a nota "custo real é sempre o histórico completo": somar as margens mensais não dá a margem real do período.
+- Cliente novo "Loja Lua", sem faturas na competência e com 8h da Ana (R$ 60/h): Receita R$ 0,00 · Custo R$ 480,00 · Margem **−R$ 480,00** (vermelho) · % **0%**.
 
 ### 8. Fluxo de dados
 - **Resumo:** `useResumoFinanceiro` → **GET `/api/financeiro/resumo?competencia=AAAA-MM`** → `FinanceiroService.resumo`: `igig.contrato` ativos (MRR), `igig.fatura` da competência, `inadimplentes()` filtrado pela competência.
 - **Fechamento:** `useGerarCompetencia` → **POST `/api/financeiro/faturas/gerar-competencia`** `{competencia}` (admin) → `gerar_faturas_da_competencia`: valida competência → `excedentes(mês anterior)` → faturas existentes da competência (com contrato, não canceladas) → para cada `igig.contrato` `status='ativo'`: garante linha de excedente na existente ou insere `igig.fatura` (`cliente_id`, `contrato_id`, `competencia`, `vencimento`, `status='aberta'`) + `igig.fatura_item` → `recalcular_total` grava `valor_total`. Resposta `{criadas, existentes}`.
-- **Faturas:** `useFaturas` → **GET `/api/financeiro/faturas`** (filtros `cliente_id` ou `competencia`; se ambos, vale `cliente_id`) → ordenado por competência decrescente. `useCriarFatura` → **POST `/api/financeiro/faturas`** `{cliente_id, competencia, contrato_id?, vencimento?}`. `useFaturaItens` → **GET `/api/financeiro/faturas/{id}/itens`**. `useAdicionarItem` → **POST `/api/financeiro/faturas/{id}/itens`** `{descricao, tipo, quantidade, valor_unit}` → `igig.fatura_item` + `recalcular_total`. `useMarcarPaga` → **POST `/api/financeiro/faturas/{id}/pagar`** (admin) → `status='paga'`, `pago_em`. `useCancelarFatura` → **POST `/api/financeiro/faturas/{id}/cancelar`** (admin) → `status='cancelada'`.
-- **Excedentes:** `useExcedentes` → **GET `/api/financeiro/excedentes/{AAAA-MM}`** → `igig.pauta` por `data_publicacao`, `igig.cliente`, `igig.contrato` ativos. Somente leitura.
+- **Faturas:** `useFaturas` → **GET `/api/financeiro/faturas`** (filtros `cliente_id` ou `competencia`; se ambos, vale `cliente_id`) → ordenado por competência decrescente. `useCriarFatura` → **POST `/api/financeiro/faturas`** `{cliente_id, competencia, contrato_id?, vencimento?}`. `useFaturaItens` → **GET `/api/financeiro/faturas/{id}/itens`**. `useAdicionarItem` → **POST `/api/financeiro/faturas/{id}/itens`** `{descricao, tipo, quantidade, valor_unit}` → `igig.fatura_item` + `recalcular_total`. `useMarcarPaga` → **POST `/api/financeiro/faturas/{id}/pagar`** (admin) → `status='paga'`, `pago_em`. `useCancelarFatura` → **POST `/api/financeiro/faturas/{id}/cancelar`** (admin) → `status='cancelada'`. `useEnviarFatura` → **POST `/api/financeiro/faturas/{id}/enviar`** (admin) → `financeiro_service.enviar_fatura` → `email_config.resolver_smtp` (agência → plataforma → 409) → `documentos_pdf.renderizar_fatura_pdf` (PDF gerado na hora, não guardado) → envio SMTP com anexo → `FaturaRepository.marcar_enviada` (`status='enviada'`, `enviada_em`) → `{fatura, message_id}`. `useMarcarFaturaEnviada` → **POST `/api/financeiro/faturas/{id}/marcar-enviada`** (admin) → `marcar_enviada` (sem e-mail).
+- **Excedentes:** `useExcedentes` → **GET `/api/financeiro/excedentes/{AAAA-MM}`** → `FinanceiroService.excedentes`: todas as `igig.pauta` → data de entrega (`publicado_em`, senão a primeira `igig.aprovacao` com `decisao='aprovado'` das tarefas da pauta) dentro do mês → pautas do plano atribuídas ao contrato via `orcamento_item` → `orcamento` → `igig.contrato`; avulsas ao único contrato ativo com pacote do cliente → `igig.cliente`. Somente leitura.
 - **DRE:** `useDRE(competencia)` → **GET `/api/financeiro/dre?competencia=AAAA-MM`** → `igig.cliente`, `igig.fatura` (exceto canceladas, da competência) + `BIService.eficiencia_por_cliente`.
 - **Atraso:** `useInadimplentes` → **GET `/api/financeiro/inadimplentes`** (opcional `hoje=AAAA-MM-DD`; data malformada → 422 "data inválida: '...'; esperado AAAA-MM-DD").
-- **Efeitos:** toda mutação invalida as consultas do Financeiro. Não há e-mail, notificação ou cobrança automática disparada por esta página. O job diário de inadimplência existe como lógica mas não está agendado (ver Limitações).
+- **Efeitos:** toda mutação invalida as consultas do Financeiro. O único e-mail disparado por esta página é o de "Enviar fatura" (para o cliente). Não há notificação nem cobrança automática. **Rotina diária 06:00** (`igig_financeiro_inadimplencia` → `atualizar_inadimplencia`): `igig.fatura` `aberta`/`enviada` vencidas → `vencida`; `igig.cliente.status` → `inadimplente` / de volta a `ativo`.
 
 ### 9. Dependências de configuração
 - Contratos `ativo` (vindos de orçamento aceito + assinatura) com `valor_mensal`; para excedentes, `posts_por_mes` e `valor_excedente`; para vencimento automático, `dia_vencimento`. Sem contratos ativos, "Gerar competência" cria 0 faturas.
-- Pautas com data de publicação no Calendário (base dos excedentes).
+- Pautas avulsas aprovadas no portal (ou publicadas) no Calendário (base dos excedentes).
+- SMTP (Integrações → E-mail, ou o SMTP da plataforma) e e-mail do cliente cadastrado, para "Enviar fatura".
+- Agendador ligado no servidor (`NOCTUS_SCHEDULERS_ENABLED`) para as marcações automáticas de `vencida`/`inadimplente`.
 - Tabela de custo/hora na página "Custos" e apontamentos na Esteira (base do custo real do DRE).
-- `IGIG_PORTAL_BLOQUEIO_DIAS` (servidor, padrão 0 = desligado) — prevista para bloquear o portal de aprovação de clientes com fatura vencida há mais de N dias, mas ainda não ligada ao portal.
+- `IGIG_PORTAL_BLOQUEIO_DIAS` (servidor, padrão 0 = desligado) — com N > 0, o portal de aprovação fica bloqueado para clientes com fatura vencida há mais de N dias ("Portal temporariamente indisponível").
 - Gateway de pagamento (Asaas/Iugu) e NFS-e: **não configurados/não implementados** — daí o rodapé "Baixa manual: ...".
 
 ### 10. Limitações conhecidas
 - **Sem gateway de pagamento, boleto ou NFS-e.** Colunas `gateway_id`/`nfse_id` ficam vazias; a baixa é manual.
-- **Fechamento não roda sozinho** (nada fecha o mês automaticamente no dia 1º) e não envia a fatura ao cliente.
-- **Status `enviada` não tem ação:** nenhuma tela marca a fatura como enviada.
-- **Status `vencida` e cliente "inadimplente":** a lógica diária que marca faturas vencidas como `vencida`, marca o cliente como `inadimplente` e o devolve a `ativo` quando quita (`atualizar_inadimplencia`) existe, mas **não está registrada no agendador**. Hoje uma fatura atrasada continua com a etiqueta `aberta`; o atraso aparece no aviso vermelho e no cartão "Inadimplente".
-- **Régua de cobrança não implementada:** sem lembretes automáticos por WhatsApp/e-mail; o bloqueio do portal de aprovação está pronto como regra, mas não é chamado pelo portal.
-- **Excedentes contam pautas planejadas**, não peças realmente entregues/aprovadas/publicadas; se pautas do mês forem remarcadas depois, o número muda (é recalculado na hora).
-- Excedentes usam os contratos ativos **hoje**, não os que estavam ativos no mês consultado.
-- Cliente com 2+ contratos ativos com pacote some da lista de excedentes, sem aviso na tela.
+- **Fechamento não roda sozinho** (nada fecha o mês automaticamente no dia 1º) e a fatura não é enviada automaticamente: "Enviar fatura" é um clique por fatura.
+- **Régua de cobrança não implementada:** sem lembretes automáticos de cobrança por WhatsApp/e-mail.
+- Enviar (ou marcar como enviada) uma fatura já `vencida` volta a etiqueta para `enviada`; na rotina das 06:00 do dia seguinte ela volta a `vencida` (o atraso continua aparecendo no aviso vermelho o tempo todo).
+- O e-mail da fatura vai só para o e-mail do cadastro do cliente, sem CC e sem texto editável; o PDF não fica guardado nem tem link para baixar pela tela.
+- **Excedentes comparam só as avulsas com o pacote inteiro**, sem descontar as peças do plano já entregues (o pacote é usado como está, para precificação). Na prática, só é cobrado o que passar de `posts_por_mes` em peças avulsas.
+- Excedentes usam os contratos ativos **hoje**, não os que estavam ativos no mês consultado; e, como "entregue" depende da aprovação no portal, uma aprovação tardia muda o número de um mês já consultado (é recalculado na hora).
+- Cliente com 2+ contratos ativos com pacote: as peças avulsas dele não são atribuídas a nenhum contrato (sem aviso na tela); as do plano são.
 - Não há editar/apagar fatura nem editar/apagar item; um item errado precisa ser compensado (ex.: com desconto) ou a fatura cancelada.
 - Marcar paga não registra valor parcial, forma de pagamento nem data retroativa; não há "desfazer pagamento".
 - DRE considera só custo de horas (sem ferramentas, mídia, impostos, overhead) e mistura períodos (receita do mês × custo de todo o histórico).
-- A coluna "%" do DRE mostra ponto decimal (ex.: "52.8%").
-- Botão "Paga" do cartão do cliente aparece para todos e não pede confirmação; membros recebem erro 403 com texto genérico ("Apenas administradores podem alterar as etapas do quadro.").
-- Aviso de atraso e painel de itens não mostram mensagem se a consulta falhar.
 
 ### 11. Perguntas frequentes
 - **P: Não vejo o botão "Gerar competência" / "Marcar paga".** R: São ações só de administradores da agência. Membros veem "Somente administradores da agência podem fechar o mês.".
 - **P: Rodei "Gerar competência" duas vezes; duplicou?** R: Não. Contratos já faturados no mês aparecem como "já existia(m)".
 - **P: Por que o excedente de agosto está na fatura de setembro?** R: Regra do contrato: excedentes são cobrados na fatura do mês seguinte ao trabalho.
 - **P: Lancei um desconto; o que acontece?** R: O valor é subtraído do total (a linha aparece com "−" em vermelho). Se deixar o total negativo, é recusado: "Este desconto deixaria o total da fatura negativo.".
-- **P: Como digito R$ 1.500,00?** R: `1500,00`, `1.500,00` ou `1500.00` funcionam. Evite `1.500` sem vírgula — é lido como R$ 1,50.
+- **P: Como digito R$ 1.500,00?** R: `1500,00`, `1.500,00`, `1.500` ou `1500.00` funcionam — todos viram mil e quinhentos.
 - **P: Errei um item. Como apago?** R: Não é possível apagar itens. Lance um desconto compensando ou peça a um administrador para cancelar a fatura e abrir outra.
 - **P: Mudei a competência e a lista de faturas não mudou.** R: Correto: a lista mostra todas as faturas. A competência afeta resumo, fechamento, DRE e excedentes.
 - **P: Por que a margem diz SUPERESTIMADA?** R: Há horas de alguém sem custo/hora ou sem profissional vinculado ao usuário. Corrija em "Custos".
-- **P: A fatura está atrasada mas continua "aberta".** R: A marcação automática como `vencida` ainda não está ligada. O atraso aparece no aviso vermelho e no cartão "Inadimplente".
-- **P: O sistema cobra quem está atrasado ou bloqueia o portal?** R: Ainda não. A lista de atraso é informativa.
+- **P: A fatura está atrasada mas continua "aberta".** R: A marcação como `vencida` acontece todo dia às 06:00 (horário de Brasília). Se venceu ontem, aguarde a rotina da manhã; o atraso já aparece no aviso vermelho.
+- **P: O sistema cobra quem está atrasado ou bloqueia o portal?** R: Não cobra sozinho. O bloqueio do portal de aprovação só acontece se o servidor tiver `IGIG_PORTAL_BLOQUEIO_DIAS` ligado.
+- **P: Como mando a fatura para o cliente?** R: Na lista "Faturas", toque em "Enviar fatura" e confirme — vai por e-mail, com o PDF anexo, para o e-mail do cadastro do cliente. Se você já enviou por outro meio, use o ícone "Marcar como enviada". Só administradores veem esses botões.
+- **P: Apareceu "O cliente não tem e-mail cadastrado."** R: Cadastre o e-mail em Clientes → card do cliente → "Dados" e envie de novo.
+- **P: Por que as peças do plano não viraram excedente num mês com 5 segundas?** R: O pacote é calculado com 4 semanas por mês; a ocorrência extra do calendário faz parte do plano. Só peças avulsas acima do pacote geram cobrança.
 
 ---
 
@@ -3004,7 +3090,7 @@ Nos grupos E-mail e Fontes de lead, os cartões ficam em duas colunas em telas g
 4. **Ordem de uso na publicação:** 1º token da agência; 2º token de ambiente do servidor.
 5. **Conectar de novo substitui:** sobrescreve token, conta e data, reativa o canal e apaga o `ultimo_erro`.
 6. **Só administradores alteram canais.** *Por quê:* trocar ou apagar a credencial de publicação tem o mesmo nível de confiança dos cartões de fontes de lead.
-7. **"reconectar" só aparece para problema de credencial que reconectar resolve** (ex.: token ilegível após troca da chave do cofre). A falha "ainda não está disponível (homologação da API pendente)" **não** marca "reconectar".
+7. **"reconectar" só aparece para problema de credencial que reconectar resolve** (ex.: token ilegível após troca da chave do cofre). A falha "ainda não está disponível (homologação da API pendente)" **não** marca "reconectar". Quando uma tentativa de "Publicar" em Distribuição falha por token ilegível, esta página é atualizada automaticamente e já mostra "reconectar" (sem precisar recarregar).
 8. **Uma chave (`IGIG_COFRE_KEY`) protege todos os segredos da agência:** tokens dos canais, senha SMTP, API key do WAHA, tokens da Meta Lead Ads, refresh token do Gmail e senhas do Cofre de Acessos (página Marca). Se a chave do servidor for trocada, os segredos gravados ficam ilegíveis e cada integração precisa ser reconectada.
 9. **O token não é validado ao salvar** — um token inválido é aceito; o problema só aparece ao publicar.
 
@@ -3025,7 +3111,6 @@ Nos grupos E-mail e Fontes de lead, os cartões ficam em duas colunas em telas g
 - Token não é validado ao salvar.
 - Publicação real não existe em nenhum canal (`NOC-REMEDIATE[igig-publishing]`).
 - Conectar não mostra toast de sucesso; a confirmação é visual (campo limpo, etiqueta "conectado").
-- Depois de um erro "token ilegível" na Distribuição, a etiqueta "reconectar" só aparece ao recarregar a página de Integrações (não confirmado no código que a lista seja recarregada automaticamente).
 
 ### 11. Perguntas frequentes
 - **P: Não consigo conectar; o botão está cinza.** R: Ou o token está vazio, ou o servidor não tem a chave de criptografia (aviso vermelho). No segundo caso só o suporte resolve.
@@ -3055,7 +3140,7 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 - Prévia logo abaixo (atualiza sozinha ao mudar tipo/datas; a anterior fica esmaecida enquanto a nova carrega).
 - Rodapé: botões "CSV" e "PDF" ("Baixando…" durante o download). No celular (<640px) a janela é uma folha que sobe de baixo e os botões ocupam a largura.
 - **Prévia Financeiro:** quadro vermelho de alertas (se houver); cartões "Faturamento", "Recebido", "A receber", "Inadimplência ({N})" (vermelho se N > 0); seção "Por cliente" com uma linha por cliente: nome, "fat. R$", "receb. R$", "custo R$", "margem R$ (x%)" (margem negativa em vermelho), e a nota "Custo por cliente é o custo medido total (não só do período)."
-- **Prévia Comercial:** quadro de alertas (hoje sempre vazio); cartões "Ganhos" ("{qtd} · R$"), "Perdidos", "Orçamentos env./aceit./recus." ("{e}/{a}/{r}"), "Ticket médio"; seção "Funil" (etapa, "{N} entradas · {N} saídas", %); seção "Motivos de perda · tempo médio parado {N} dias" (motivo, "em {etapa}", "{N}× · R$").
+- **Prévia Comercial:** quadro vermelho de alertas (só quando algum dos alertas da regra 12 se aplica); cartões "Ganhos" ("{qtd} · R$"), "Perdidos", "Orçamentos env./aceit./recus." ("{e}/{a}/{r}"), "Ticket médio"; seção "Funil" (etapa, "{N} entradas · {N} saídas", %); seção "Motivos de perda · tempo médio parado {N} dias" (motivo, "em {etapa}", "{N}× · R$").
 
 ### 4. Campos
 | Campo (rótulo exato) | Tipo | Obrigatório | Validação/limites | Padrão | Observação |
@@ -3089,17 +3174,25 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 9. Motivos de perda agrupados por (motivo, etapa em que perdeu); sem motivo → "Sem motivo"; sem etapa → "Sem etapa"; ordenados pela quantidade.
 10. Orçamentos enviados/aceitos/recusados pelas datas de envio/aceite/recusa no período; ticket médio = média do total mensal dos aceitos no período (0 se nenhum).
 11. O relatório é **somente leitura** e usa o mesmo serviço (`gerar_relatorio`) para tela, CSV e PDF — os números nunca divergem entre formatos.
+12. **Comercial — alertas** (só aparecem quando os dados sustentam; sem nenhum, a lista fica vazia — nada é inventado):
+    - "{N} negócio(s) parado(s) além do SLA configurado da etapa em que estão." — usa a **mesma** regra de SLA por etapa configurada em Automações (regra "SLA estourado" ativa do Comercial); etapa sem regra de SLA não gera este alerta. Referência: meio-dia (UTC) do dia em que o relatório é gerado.
+    - "{N} negócio(s) aberto(s) sem responsável definido." — negócios abertos do funil sem "Responsável" (ninguém faz o follow-up).
+    - "{N} orçamento(s) expirando nos próximos 7 dias." — orçamentos ainda Rascunho/Enviado cuja validade cai entre hoje e hoje + 7 dias.
+    - "Taxa de perda acima de 50% na(s) etapa(s): {etapas}." — só para etapas com pelo menos 3 entradas no período (uma perda isolada nunca vira alerta).
+    Os alertas de SLA, sem responsável e orçamentos expirando olham a situação **atual** (não o período escolhido); o de taxa de perda usa o período.
 
 **Exemplo trabalhado — relatório financeiro.** Período 01/08/2026–30/09/2026, com os dados da Padaria Sol acima: faturas 2026-08 (R$ 4.000,00, paga) e 2026-09 (R$ 4.450,00, aberta, vence 10/09/2026). Gerado em 28/09/2026:
 - Faturamento R$ 8.450,00 · Recebido R$ 4.000,00 · A receber R$ 4.450,00 · Inadimplência (1) R$ 4.450,00 (vencida há 18 dias).
 - Por cliente — Padaria Sol: fat. R$ 8.450,00 · receb. R$ 4.000,00 · custo R$ 2.100,00 · margem R$ 6.350,00 (6.350 ÷ 8.450 = 75,1%).
 - Alertas: "Padaria Sol: 3 apontamento(s) sem custo/hora definido — a margem está SUPERESTIMADA." e o aviso de custo de todo o histórico.
 
+**Exemplo — alertas do relatório comercial.** Gerado em 28/09/2026 para 01/09–28/09: a regra de SLA de "Negociação" é 72 h e há 2 negócios abertos nela desde 20/09 → "2 negócio(s) parado(s) além do SLA configurado da etapa em que estão."; 1 negócio aberto sem responsável → "1 negócio(s) aberto(s) sem responsável definido."; um orçamento Enviado com validade 02/10 → "1 orçamento(s) expirando nos próximos 7 dias."; "Qualificação" teve 4 entradas e 3 perdas no período (75%) → "Taxa de perda acima de 50% na(s) etapa(s): Qualificação.". Uma etapa com 2 entradas e 2 perdas não gera alerta (amostra pequena).
+
 ### 8. Fluxo de dados
 - Prévia: `useRelatorioPreview` → **GET `/api/relatorios/{comercial|financeiro}?inicio=AAAA-MM-DD&fim=AAAA-MM-DD&formato=json`** (resposta no envelope `{data: ...}`).
 - Download: `useBaixarRelatorio` → mesmo endpoint com `formato=csv|pdf`, baixado com o token de sessão e salvo no aparelho.
 - Servidor: `gerar_relatorio(repos, org_id, tipo, inicio, fim)` (serviço puro, sem dependência de requisição) → `para_csv` / `para_pdf` (reportlab).
-- Tabelas: comercial — `etapa` (pipeline comercial), `pipeline_movimentos`, `negocio`, `orcamento`; financeiro — `cliente`, `fatura` + BI (`tarefa`, `apontamento`, `profissional`, `funcao`, `pauta`).
+- Tabelas: comercial — `etapa` (pipeline comercial), `pipeline_movimentos`, `negocio`, `orcamento`, `automacao` (regras de SLA, para o alerta de parados); financeiro — `cliente`, `fatura` + BI (`tarefa`, `apontamento`, `profissional`, `funcao`, `pauta`).
 - Sem efeitos colaterais; nenhum envio agendado.
 
 ### 9. Dependências de configuração
@@ -3109,7 +3202,7 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 
 ### 10. Limitações conhecidas
 - Não há envio agendado de relatório por e-mail (o serviço é chamável, mas nada o agenda).
-- O quadro de alertas do relatório **comercial** nunca é preenchido (sempre vazio).
+- Os alertas comerciais de SLA/sem responsável/orçamentos expirando refletem a situação de hoje, não a do período escolhido; o de SLA só existe para etapas com regra de SLA ativa em Automações.
 - Custo por cliente não é do período (aviso explícito).
 - O PDF é gerado com reportlab, não com o motor xhtml2pdf pedido pelo dono do produto para todos os PDFs.
 - CSV usa ponto decimal nos números e datas ISO; PDF mostra o período em datas ISO ("Período: 2026-08-01 a 2026-09-30").
@@ -3123,5 +3216,53 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 - **P: O CSV abre com acentos estranhos.** R: O arquivo é UTF-8 com BOM, feito para abrir corretamente no Excel; se o programa pedir, escolha a codificação UTF-8.
 - **P: O funil está fora de ordem?** R: Ele segue a ordem das etapas configurada no quadro comercial.
 - **P: O PDF mostra valores como "R$ 4.450,00"?** R: Sim, padrão brasileiro.
+- **P: Por que o relatório comercial não mostra alerta de negócios parados?** R: Esse alerta usa as regras "SLA estourado" configuradas em Automações; sem regra de SLA ativa na etapa, não há alerta. Os alertas só aparecem quando os dados sustentam.
 
 ---
+
+# Capítulo 5 — Limitações globais e itens dependentes de fornecedor/decisão
+
+> O que o IgIg **não faz hoje**, reunido num só lugar. Cada item foi conferido no código final. Use este capítulo para responder "o IgIg faz X?" com honestidade: se está aqui, a resposta é "ainda não" (ou "só em parte"), com o motivo e o que fazer enquanto isso. As limitações específicas de cada tela continuam na seção 10 da própria página.
+
+## 5.1 Dependem de fornecedor externo (homologação, credenciais, contrato)
+
+| Item | Situação no código | O que o usuário vê / o que fazer |
+|---|---|---|
+| **Publicação real nas redes** (Instagram, Facebook, TikTok, LinkedIn) | Os publicadores existem, mas **nenhum canal está homologado** (`CANAIS_HOMOLOGADOS` vazio; `NOC-REMEDIATE[igig-publishing]`). A rotina da fila roda a cada 5 minutos e ignora canais não homologados; o botão "Publicar"/"Publicar agora" termina em `falhou` com "A integração com {canal} ainda não está disponível (homologação da API pendente)." | Agende no IgIg para organizar a fila e publique diretamente na rede. Conectar o token em Integrações é possível, mas não publica. Quando um canal for homologado, a fila passa a publicá-lo sozinha, sem mudança de tela |
+| **Coleta automática de métricas** das redes | Não existe; as métricas são digitadas à mão ("Entrada manual…") | Registre as coletas no painel "Métricas" de cada publicação |
+| **Login OAuth das redes** ("Conectar com Instagram") | Não existe; o token é colado à mão e não é validado ao salvar | Um administrador cola o token em Integrações → "Canais de publicação" |
+| **Assinatura digital de contratos** | **Simulação (dry-run)**: nenhum provedor (Clicksign, DocuSign, Autentique) integrado (`NOC-REMEDIATE[igig-assinatura]`); o link gerado não funciona; o webhook de assinatura existe e exige `IGIG_ASSINATURA_WEBHOOK_SECRET` | Aviso "Simulação (assinatura digital ainda não integrada) — este link não ativa o contrato de verdade.". Use a modalidade **"Física"** e "Marcar como assinado" |
+| **Gateway de pagamento, boleto, Pix e NFS-e** (Asaas/Iugu) | Não implementados; `gateway_id`/`nfse_id` ficam vazios | Rodapé "Baixa manual: …". Cobre por fora e marque a fatura com "Marcar paga" |
+| **Detecção de respostas por e-mail (Gmail)** | Depende da configuração GCP/Pub/Sub **da plataforma** (`GMAIL_PUSH_*`) e do app OAuth do Google | Sem ela: "Configuração GCP pendente na plataforma…" e as respostas não são detectadas; acione o suporte |
+| **E-mail de convite da Equipe** | Enviado pelo provedor Resend da plataforma (`RESEND_API_KEY`) | Sem a chave, o convite é criado e a tela mostra sucesso, mas o e-mail não sai; peça ao suporte para verificar |
+| **Meta Lead Ads** | Depende do app Meta configurado fora do IgIg (Webhooks → Page → `leadgen`) | Configure o app na Meta antes de salvar a fonte em Integrações |
+| **Assistente IgIg (chat de ajuda) e Assistente do negócio** | Dependem da chave Anthropic no servidor (em produção, `IGIG_ANTHROPIC_API_KEY`) e do orçamento de IA da organização | Sem chave: "O assistente de IA ainda não foi configurado para este produto." (chat) / "A IA não está configurada (chave da Anthropic ausente)." (card do negócio) |
+
+## 5.2 Dependem de decisão do dono do produto
+
+| Item | Situação | Efeito hoje |
+|---|---|---|
+| **Consentimento LGPD para o Assistente do negócio** | O catálogo de consentimentos de IA do IgIg **não está ativado** (`consent_features` comentado em `app/main.py`); ativar é decisão pendente do dono do produto | O Assistente do negócio envia dados pessoais do lead (nome, e-mail, telefone, dores etc.) à Anthropic sem um consentimento de IA específico do produto. Nada é gravado nem cacheado. O Assistente IgIg (chat de ajuda) não envia dados da agência |
+| **Bloqueio do portal por inadimplência** | Implementado, mas **desligado por padrão** (`IGIG_PORTAL_BLOQUEIO_DIAS` = 0); um único N para o servidor | Ninguém é bloqueado até o responsável técnico definir N > 0 |
+| **Motor de PDF** | Os PDFs usam reportlab, não o motor xhtml2pdf pedido para todos os PDFs | Visual simples (A4, tabelas); sem impacto funcional |
+| **Visualizador somente leitura** | O papel "Visualizador" **não** tem trava no código: age como membro comum | Não conte com ele para restringir acesso |
+
+## 5.3 Lacunas funcionais confirmadas (sem tela ou sem rotina)
+
+- **Sincronização com Google Agenda:** não existe. O Calendário Editorial é interno ao IgIg; nada é enviado a nem lido de agendas externas.
+- **Lembretes de card:** a rotina que os entrega como notificação roda a cada 5 minutos, mas **não há tela para criar lembretes** (nem no card do cliente nem no do negócio) — hoje ela não tem o que entregar.
+- **Onboarding após a assinatura** (e-mail/WhatsApp de boas-vindas, formulário): não implementado (`NOC-REMEDIATE[igig-onboarding]`).
+- **Régua de cobrança:** sem lembretes automáticos de cobrança; o envio de fatura é manual ("Enviar fatura"), uma por vez. Fechar o mês ("Gerar competência") também é manual.
+- **Estorno, pagamento parcial, data retroativa de pagamento, editar/apagar fatura ou item:** não existem.
+- **Relatórios agendados por e-mail:** não existem; o relatório é gerado sob demanda (Financeiro → "Relatório").
+- **Histórico de movimentos na tela:** os dados existem (`pipeline_movimentos`), mas não há tela para vê-los fora da linha do tempo do card.
+- **Excluir etapa do Comercial movendo os cards em massa** não grava o histórico de movimento desses cards (depende de uma mudança na função compartilhada de etapas do seed).
+- **Mudar o papel de um membro da Equipe** ou o status de visibilidade das páginas (`status_pagina`): sem tela; feito pela equipe da plataforma.
+- **Notificação da decisão do cliente no portal** leva à Esteira, não direto à tarefa (as de automação e SLA já abrem a tarefa).
+- **Mensagens de validação de formato (422)** aparecem em inglês, vindas do validador (ex.: "String should have at least 1 character").
+- **Textos da plataforma base sem acento** (ex.: "Sem permissao", "Pagina nao encontrada", "Sessao expirando"): vêm do seed da plataforma.
+- **Assistente IgIg:** responde só a partir deste manual; não consulta nem altera dados, não executa ações e não guarda a conversa no servidor.
+
+## 5.4 O que mudou nesta versão (para quem conhecia a anterior)
+
+Resolvido e já descrito nas páginas: rotinas diárias de inadimplência (06:00), fila de publicação e lembretes (a cada 5 min) agora rodam; portal de aprovação pode ser bloqueado por inadimplência (423); "Enviar fatura" e "Marcar como enviada"; excedentes contam só peças avulsas **entregues** (publicadas ou aprovadas), nunca peças do plano; alertas no relatório comercial; custo real em segundos no BI/DRE/relatório; números em padrão brasileiro ("52,8%", "0,40", "1,5 h", "1.500" = mil e quinhentos); exclusão de tarefa com qualquer apontamento ("Excluir mesmo assim"); apagar a pauta apaga os arquivos das peças; papel de etapa nunca some em silêncio (Esteira) e "Papéis das etapas" no Comercial; `/esteira?tarefa=` abre a tarefa; "Paga" no card do cliente só para admin e com confirmação; logo sem SVG; negócio para cliente existente ("Cliente existente" / "Novo negócio"); "Margem indisponível" sem custo/hora; texto correto de "Nova versão"; aviso de pautas conta só as criadas no aceite; pautas automáticas apagadas/movidas não voltam; o contrato vivo mantém "Abrir PDF do contrato"; Custos e Integrações → E-mail escondem controles só-admin; respostas de e-mail avisam também os Administradores; Assistente do negócio fixo em Claude Sonnet; reabrir reinicia o tempo na etapa; estados de carregamento/erro na Inadimplência do Dashboard; rótulo "Proprietário" com acento; o endereço pedido é lembrado depois do login; o menu no celular fecha ao navegar; Assistente IgIg disponível em todas as telas.
