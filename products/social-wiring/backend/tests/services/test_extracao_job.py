@@ -86,7 +86,7 @@ def client():
     # A synthetic table with no backing migration — schema validation off,
     # same posture `tests/services/test_campo_conflitos.py` takes for its
     # own service-level unit coverage.
-    return MockSupabaseClient(validate_schema=False)
+    return MockSupabaseClient()
 
 
 @pytest.fixture

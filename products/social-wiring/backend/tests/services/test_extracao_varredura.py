@@ -65,7 +65,7 @@ def _config(*, extrair_fn=_noop_extrair_fn) -> extracao_varredura.SweepConfig:
 def client():
     # A synthetic table, no backing migration — schema validation off,
     # same posture `tests/services/test_extracao_job.py` takes.
-    return MockSupabaseClient(validate_schema=False)
+    return MockSupabaseClient()
 
 
 class TestRetentavelFiltersTheErrorLeg:
