@@ -32,12 +32,19 @@ from app.automacoes_deps import get_portas_automacao
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import (
     PIPELINE_COMERCIAL,
+    exigir_admin_da_org,
     exigir_admin_do_quadro,
     get_db,
     get_pipeline_auth,
     pipeline_context,
 )
-from app.schemas.pipeline import MoverNegocioIn, NegocioCreate, NegocioUpdate, PerderNegocioIn
+from app.schemas.pipeline import (
+    MoverNegocioIn,
+    NegocioCreate,
+    NegocioUpdate,
+    PapelEtapaIn,
+    PerderNegocioIn,
+)
 from app.services import automacoes, comercial_funil
 from app.services import quadro_comum as qc
 from app.services.regras import RegraViolada, http_de
@@ -64,6 +71,25 @@ def _org(auth: tuple) -> str:
 
 def _usuario(auth: tuple) -> str:
     return str(auth[0].id)
+
+
+@router.patch("/pipeline/stages/{stage_id}/papel", dependencies=[Depends(exigir_admin_da_org)])
+async def atribuir_papel_etapa(
+    stage_id: str,
+    payload: PapelEtapaIn,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+) -> dict:
+    """Reassign the `fechado` role to this stage, or clear it — the control
+    the seed's generic stage editor never had (achado comercial #14: it can
+    tell a delete is blocked by a role, but no screen moves that role
+    anywhere). Sibling of `esteira_router.atribuir_papel_etapa`; see
+    `comercial_funil.reatribuir_papel` for the atomic swap."""
+    try:
+        etapa = comercial_funil.reatribuir_papel(db, _org(auth), etapa_id=stage_id, papel=payload.papel)
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
+    return success_response(etapa)
 
 
 @router.get("/board")
@@ -128,6 +154,7 @@ async def criar_negocio(
             titulo=payload.titulo,
             valor_estimado=payload.valor_estimado,
             responsavel_id=payload.responsavel_id,
+            cliente_id=payload.cliente_id,
             user_id=_usuario(auth),
         )
     except RegraViolada as erro:

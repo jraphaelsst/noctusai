@@ -19,6 +19,7 @@ __all__ = [
     "LeadManualIn",
     "NegocioCreate",
     "NegocioUpdate",
+    "PapelEtapaIn",
     "PerderNegocioIn",
     "TarefaCreate",
 ]
@@ -59,6 +60,11 @@ class NegocioCreate(StrictHttpModel):
     titulo: str | None = Field(default=None, max_length=200)
     valor_estimado: float | None = Field(default=None, ge=0)
     responsavel_id: str | None = None
+    #: An EXISTING cliente this negócio is for (owner decision 2026-09-28,
+    #: comercial achado 12 — upsell/renewal). Rides straight through to
+    #: `comercial_funil.abrir_negocio`, which already supports it — this is
+    #: the route wiring the FE "Novo negócio"/"Cliente existente" flows call.
+    cliente_id: str | None = None
 
     @model_validator(mode="after")
     def _um_lead(self) -> "NegocioCreate":
@@ -75,6 +81,17 @@ class NegocioUpdate(StrictHttpModel):
 
 class PerderNegocioIn(StrictHttpModel):
     motivo: str = Field(min_length=1, max_length=2000)
+
+
+class PapelEtapaIn(StrictHttpModel):
+    """`PATCH /api/comercial/pipeline/stages/{id}/papel` — reassign the
+    funnel's one system role (`fechado`), mirroring `esteira_router`'s
+    `PapelEtapaIn` for the funnel's own stage editor (achado comercial #14 —
+    the seed's generic stage editor has no control for moving a role between
+    stages, only a delete-time refusal). `papel: None` clears it; see
+    `comercial_funil.reatribuir_papel`."""
+
+    papel: str | None = None
 
 
 class TarefaCreate(StrictHttpModel):

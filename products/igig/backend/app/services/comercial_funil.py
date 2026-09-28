@@ -22,7 +22,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from noctusai_lib.domain.pipeline import get_stage, group_into_colunas, move_card
+from noctusai_lib.domain.pipeline import get_stage, group_into_colunas, move_card, stage_by_role, update_stage
 from noctusai_lib.integrations.persistence.table_reads import paged_rows
 
 from app.pipelines import PAPEL_FECHADO, PIPELINE_COMERCIAL, etapas
@@ -40,6 +40,7 @@ __all__ = [
     "quadro",
     "listar_negocios",
     "buscar_negocio",
+    "reatribuir_papel",
 ]
 
 CFG = PIPELINE_COMERCIAL
@@ -440,3 +441,37 @@ def perder_negocio(db: Any, org_id: str, *, negocio_id: str, motivo: str) -> dic
     if not linhas:
         raise RuntimeError("update de negocio não retornou a linha")
     return linhas[0]
+
+
+def reatribuir_papel(db: Any, org_id: str, *, etapa_id: str, papel: str | None) -> dict:
+    """Atomically move the funnel's one system role (`fechado`) onto — or off
+    of — one stage (achado comercial #14: the seed's generic stage editor can
+    tell you a role is blocking a delete but has no screen to move it).
+
+    Mirrors `esteira_quadro.reatribuir_papel` for `PIPELINE_COMERCIAL`'s one
+    role: the seed's generic stage PATCH refuses to set a role another stage
+    already holds, so "reassign" is two writes — clear the old holder, then
+    set the new one — done atomically here instead of as two separate FE
+    calls (which would leave a window with no `fechado` stage at all).
+
+    Refuses (409 `papel_fechado_obrigatorio`) a bare CLEAR of the stage that
+    is currently the SOLE `fechado` holder: with none, `mover_negocio` can
+    never close a deal and `onBeforeMove`'s "Qual orçamento foi aceito?" gate
+    has nowhere to fire into. Reassigning to a DIFFERENT stage stays one call
+    — this function clears the previous holder itself.
+    """
+    atual = get_stage(db, CFG, etapa_id, org_id=org_id)
+    papel_atual = atual.get("papel")
+    if papel_atual == papel:
+        return atual
+    if papel_atual == PAPEL_FECHADO and papel != PAPEL_FECHADO:
+        raise RegraViolada(
+            409, "papel_fechado_obrigatorio",
+            "Esta é a única etapa marcada como 'Fechado'. Atribua o papel a "
+            "outra etapa antes de tirá-lo desta.",
+        )
+    if papel:
+        titular = stage_by_role(db, CFG, papel, org_id=org_id)
+        if titular is not None and str(titular["id"]) != str(etapa_id):
+            update_stage(db, CFG, str(titular["id"]), {"papel": None}, org_id=org_id)
+    return update_stage(db, CFG, etapa_id, {"papel": papel}, org_id=org_id)

@@ -42,14 +42,19 @@ const CONTRATO_FISICO = {
   documento_assinado_key: null, link_assinatura: null, created_at: "2026-09-20T10:00:00Z",
 };
 
-function renderCard(onClose = vi.fn(), onAbrirOrcamento = vi.fn()) {
+function renderCard(onClose = vi.fn(), onAbrirOrcamento = vi.fn(), onNegocioCriado = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <ClienteCardDialog clienteId="c1" onClose={onClose} onAbrirOrcamento={onAbrirOrcamento} />
+      <ClienteCardDialog
+        clienteId="c1"
+        onClose={onClose}
+        onAbrirOrcamento={onAbrirOrcamento}
+        onNegocioCriado={onNegocioCriado}
+      />
     </QueryClientProvider>,
   );
-  return { onClose, onAbrirOrcamento };
+  return { onClose, onAbrirOrcamento, onNegocioCriado };
 }
 
 beforeEach(() => {
@@ -129,5 +134,23 @@ describe("ClienteCardDialog", () => {
     const [path, form] = api.upload.mock.calls[0] as [string, FormData];
     expect(path).toBe("/api/contratos/k1/marcar-assinado");
     expect((form.get("arquivo") as File).name).toBe("assinado.pdf");
+  });
+
+  it('"Novo negócio" posts cliente_id and bubbles the new id to onNegocioCriado (comercial achado 12)', async () => {
+    api.post.mockResolvedValue({ data: { id: "n9", titulo: "Padaria Sol" } });
+    const { onNegocioCriado } = renderCard();
+    await screen.findByTestId("cliente-card-dialog");
+
+    fireEvent.click(await screen.findByTestId("cliente-novo-negocio"));
+    const sheet = await screen.findByTestId("novo-negocio-cliente-dialog");
+    fireEvent.click(within(sheet).getByRole("button", { name: "Criar negócio" }));
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/comercial/negocios",
+        expect.objectContaining({ cliente_id: "c1" }),
+      ),
+    );
+    await waitFor(() => expect(onNegocioCriado).toHaveBeenCalledWith("n9"));
   });
 });

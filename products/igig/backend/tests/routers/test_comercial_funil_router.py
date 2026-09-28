@@ -93,6 +93,64 @@ class TestEtapas:
         assert resp.status_code == 403
 
 
+# ── Stage role (achado comercial #14) ─────────────────────────────────
+class TestPapelEtapa:
+    @pytest.fixture
+    def admin(self, api):
+        from app.main import app
+        from app.pipelines import exigir_admin_da_org
+
+        app.dependency_overrides[exigir_admin_da_org] = lambda: None
+        yield api
+        app.dependency_overrides.pop(exigir_admin_da_org, None)
+
+    def test_requires_auth(self, api, etapas):
+        resp = api.raw().patch(
+            f"/api/comercial/pipeline/stages/{etapas['negociacao']['id']}/papel",
+            json={"papel": "fechado"},
+        )
+        assert resp.status_code == 401
+
+    def test_non_admin_is_refused(self, api, etapas):
+        resp = api.patch(
+            f"/api/comercial/pipeline/stages/{etapas['negociacao']['id']}/papel",
+            json={"papel": "fechado"},
+        )
+        assert resp.status_code == 403
+
+    def test_reassigning_to_a_new_stage_clears_the_old_holder(self, admin, etapas):
+        resp = admin.patch(
+            f"/api/comercial/pipeline/stages/{etapas['negociacao']['id']}/papel",
+            json={"papel": "fechado"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["papel"] == "fechado"
+
+        etapas_atuais = {e["slug"]: e for e in admin.get("/api/comercial/pipeline/stages").json()["data"]}
+        assert etapas_atuais["fechado"]["papel"] is None
+
+    def test_refuses_to_clear_the_sole_fechado_holder(self, admin, etapas):
+        resp = admin.patch(
+            f"/api/comercial/pipeline/stages/{etapas['fechado']['id']}/papel",
+            json={"papel": None},
+        )
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["code"] == "papel_fechado_obrigatorio"
+
+    def test_no_op_when_already_holding_the_role(self, admin, etapas):
+        resp = admin.patch(
+            f"/api/comercial/pipeline/stages/{etapas['fechado']['id']}/papel",
+            json={"papel": "fechado"},
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_unknown_stage_returns_404(self, admin):
+        resp = admin.patch(
+            "/api/comercial/pipeline/stages/nao-existe/papel", json={"papel": "fechado"}
+        )
+        assert resp.status_code == 404
+
+
 # ── Create / edit ───────────────────────────────────────────────────
 class TestCriarNegocio:
     def test_requires_auth(self, api):
@@ -248,6 +306,29 @@ class TestMoverEtapa:
         resp = _mover(api, upsell["id"], etapas["fechado"]["id"], orcamento_id=orc["id"])
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["cliente_id"] == cliente["id"]
+        assert len(igig_db.table("cliente")._data) == 1
+
+    def test_criar_negocio_route_accepts_cliente_id_for_upsell(self, api, etapas, igig_db):
+        """The ROUTE itself must carry `cliente_id` through, not just the
+        service (achado comercial nota 1 — upsell): the FE "Novo
+        negócio"/"Cliente existente" flows call `POST /negocios`, never
+        `comercial_funil.abrir_negocio` directly."""
+        cliente = igig_db.table("cliente").insert(
+            {"org_id": ORG, "nome": "Padaria Sol", "status": "ativo"}
+        ).execute().data[0]
+        resp = api.post("/api/comercial/negocios", json={
+            "lead": {"nome": "Padaria Sol", "email": "contato@sol.com"},
+            "cliente_id": cliente["id"],
+            "titulo": "Upsell — pacote maior",
+        })
+        assert resp.status_code == 201, resp.text
+        negocio = resp.json()["data"]
+        assert negocio["cliente_id"] == cliente["id"]
+
+        orc = _orcamento(igig_db, negocio)
+        fechado = _mover(api, negocio["id"], etapas["fechado"]["id"], orcamento_id=orc["id"])
+        assert fechado.status_code == 200, fechado.text
+        assert fechado.json()["data"]["cliente_id"] == cliente["id"]
         assert len(igig_db.table("cliente")._data) == 1
 
     def test_the_cliente_is_created_once_per_lead(self, api, negocio, etapas, igig_db):

@@ -16,9 +16,10 @@
  * Only the ACTIVE subpage renders (the organ's registry is thunked), so an
  * unopened tab fetches nothing.
  */
-import { CalendarDays, FileText, KanbanSquare, Palette, UserRound, Wallet } from "lucide-react";
+import { useState } from "react";
+import { CalendarDays, FileText, KanbanSquare, Palette, Plus, UserRound, Wallet } from "lucide-react";
 import { CardHubDialog, type CardSubpage } from "@noctusai/lib/components";
-import { Badge, Skeleton } from "@noctusai/lib/design-system";
+import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
 
 import { CalendarioMes } from "@/components/calendario/CalendarioMes";
 import { useCardHubGeral } from "@/components/common/useCardHubGeral";
@@ -31,6 +32,7 @@ import { dataBR } from "@/lib/format";
 import { ClienteDadosPanel } from "./ClienteDadosPanel";
 import { ClienteFinanceiro } from "./ClienteFinanceiro";
 import { ClienteOrcamentosContratos } from "./ClienteOrcamentosContratos";
+import { NovoNegocioClienteDialog } from "./NovoNegocioClienteDialog";
 import { STATUS_CLIENTE_LABEL, STATUS_CLIENTE_VARIANT } from "./status";
 
 export type ClienteSubpageKey =
@@ -49,11 +51,22 @@ export interface ClienteCardDialogProps {
   clienteDaLista?: Cliente | null;
   onClose: () => void;
   onAbrirOrcamento: (orcamentoId: string) => void;
+  /** "Novo negócio" (comercial achado 12): fired with the new negócio's id
+   * right after create — optional, so a caller that has nowhere to send it
+   * (or a test) may omit it. */
+  onNegocioCriado?: (negocioId: string) => void;
 }
 
-export function ClienteCardDialog({ clienteId, clienteDaLista, onClose, onAbrirOrcamento }: ClienteCardDialogProps) {
+export function ClienteCardDialog({
+  clienteId,
+  clienteDaLista,
+  onClose,
+  onAbrirOrcamento,
+  onNegocioCriado,
+}: ClienteCardDialogProps) {
   const detalhe = useCliente(clienteId);
   const cliente = detalhe.cliente ?? clienteDaLista ?? null;
+  const [novoNegocio, setNovoNegocio] = useState(false);
   const hubGeral = useCardHubGeral(hub, clienteId, {
     afterTags: cliente ? <ClienteResumo cliente={cliente} /> : null,
   });
@@ -113,23 +126,41 @@ export function ClienteCardDialog({ clienteId, clienteDaLista, onClose, onAbrirO
   const notFound = detalhe.isError && (detalhe.error as { status?: number } | null)?.status === 404;
 
   return (
-    <CardHubDialog<ClienteSubpageKey>
-      open={!!clienteId}
-      onClose={onClose}
-      isLoading={hubGeral.showSkeleton}
-      error={notFound ? null : hubGeral.error}
-      notFound={notFound}
-      nome={cliente?.nome ?? hubGeral.nome ?? "Cliente"}
-      testId="cliente-card-dialog"
-      headerActions={
-        cliente ? (
-          <Badge variant={STATUS_CLIENTE_VARIANT[cliente.status]}>{STATUS_CLIENTE_LABEL[cliente.status]}</Badge>
-        ) : null
-      }
-      subpages={subpages}
-      defaultSubpage="geral"
-      activity={hubGeral.activity}
-    />
+    <>
+      <CardHubDialog<ClienteSubpageKey>
+        open={!!clienteId}
+        onClose={onClose}
+        isLoading={hubGeral.showSkeleton}
+        error={notFound ? null : hubGeral.error}
+        notFound={notFound}
+        nome={cliente?.nome ?? hubGeral.nome ?? "Cliente"}
+        testId="cliente-card-dialog"
+        headerActions={
+          cliente ? (
+            <div className="flex items-center gap-2">
+              <Badge variant={STATUS_CLIENTE_VARIANT[cliente.status]}>{STATUS_CLIENTE_LABEL[cliente.status]}</Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                className="max-sm:h-10"
+                onClick={() => setNovoNegocio(true)}
+                data-testid="cliente-novo-negocio"
+              >
+                <Plus className="mr-1 h-4 w-4" /> Novo negócio
+              </Button>
+            </div>
+          ) : null
+        }
+        subpages={subpages}
+        defaultSubpage="geral"
+        activity={hubGeral.activity}
+      />
+      <NovoNegocioClienteDialog
+        cliente={novoNegocio ? cliente : null}
+        onClose={() => setNovoNegocio(false)}
+        onCriado={onNegocioCriado}
+      />
+    </>
   );
 }
 

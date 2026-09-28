@@ -135,7 +135,13 @@ export function useReabrirNegocio() {
   });
 }
 
-/** "Novo lead" — a manual lead lands on the funnel's entry stage, on top. */
+/**
+ * "Novo lead" — a manual lead lands on the funnel's entry stage, on top.
+ *
+ * `cliente_id` (comercial achado 12 — upsell/renewal): an EXISTING cliente
+ * this negócio is for. Closing it reuses that cliente instead of creating a
+ * second one from the fresh `lead` row every negócio still requires.
+ */
 export function useCriarNegocio() {
   const invalidate = useInvalidateFunil();
   return useMutation({
@@ -145,6 +151,7 @@ export function useCriarNegocio() {
       titulo?: string;
       valor_estimado?: number;
       responsavel_id?: string;
+      cliente_id?: string;
     }) => api.post("/api/comercial/negocios", payload).then(unwrapData<Negocio>),
     onSuccess: invalidate,
   });
@@ -182,6 +189,23 @@ export function useAtualizarLead() {
   return useMutation({
     mutationFn: ({ id, ...payload }: LeadPatch & { id: string }) =>
       api.patch(`/api/comercial/leads/${encodeURIComponent(id)}`, payload).then(unwrapData<Lead>),
+    onSuccess: invalidate,
+  });
+}
+
+/**
+ * Reassign the funnel's one system role (`fechado`) to a stage, or clear it.
+ * Sibling of the seed's generic stage PATCH (still used for
+ * label/cor/posicao/ativo) and of `useEsteira`'s `useAtribuirPapelEtapa` —
+ * this one atomically moves `fechado` off whatever stage held it, and
+ * refuses to clear the sole holder (comercial achado #14, 409
+ * `papel_fechado_obrigatorio`).
+ */
+export function useAtribuirPapelEtapaComercial() {
+  const invalidate = useInvalidateFunil();
+  return useMutation({
+    mutationFn: ({ etapaId, papel }: { etapaId: string; papel: string | null }) =>
+      api.patch(`/api/comercial/pipeline/stages/${encodeURIComponent(etapaId)}/papel`, { papel }),
     onSuccess: invalidate,
   });
 }

@@ -16,7 +16,7 @@
  * A card opens the negócio `CardHubDialog`; its "Gerar orçamento" icon (and
  * the dialog's) open the shared `OrcamentoModal`.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Archive, Plus } from "lucide-react";
 import { PipelineBoard } from "@noctusai/lib/components";
@@ -29,8 +29,9 @@ import { NegocioCardDialog } from "@/components/comercial/NegocioCardDialog";
 import { NegocioCardFace } from "@/components/comercial/NegocioCardFace";
 import { NovoLeadDialog } from "@/components/comercial/NovoLeadDialog";
 import { PerdidosView } from "@/components/comercial/PerdidosView";
+import { StageRolePanel } from "@/components/common/StageRolePanel";
 import { OrcamentoModal } from "@/components/orcamento/OrcamentoModal";
-import { useNegocioPorId } from "@/hooks/useComercial";
+import { useAtribuirPapelEtapaComercial, useNegocioPorId } from "@/hooks/useComercial";
 import { describeError } from "@/lib/errors";
 import { brl } from "@/lib/format";
 import { comercialPipeline } from "@/lib/pipelines";
@@ -86,6 +87,13 @@ export default function Comercial() {
 
   const gate = useFechadoGate();
 
+  // "Papéis das etapas" (comercial achado #14) — the seed's generic stage
+  // editor ("Configurar etapas") can tell you a role is blocking a delete,
+  // but has no control to actually reassign it. `colunas` already carries
+  // each column's `stage`, so no extra fetch.
+  const etapasComPapel = useMemo(() => (colunas ?? []).map((c) => c.stage), [colunas]);
+  const atribuirPapel = useAtribuirPapelEtapaComercial();
+
   function gerarOrcamento(negocio: Negocio) {
     setOrcamento({ negocioId: negocio.id });
   }
@@ -136,6 +144,20 @@ export default function Comercial() {
           )}
         />
       </div>
+
+      {isAdmin && etapasComPapel.length > 0 && (
+        <StageRolePanel
+          roleLabels={ROLE_LABELS}
+          stages={etapasComPapel}
+          isPending={atribuirPapel.isPending}
+          onAssign={(etapaId, papel) =>
+            atribuirPapel.mutate(
+              { etapaId, papel },
+              { onError: (erro) => toast.error(describeError(erro, "Não foi possível reatribuir o papel.")) },
+            )
+          }
+        />
+      )}
 
       <NovoLeadDialog open={novoLead} onClose={() => setNovoLead(false)} />
 

@@ -15,7 +15,7 @@
  * list hook keeps the previous rows on screen while a new `busca` loads.
  */
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Badge, Button, Field, FormError, Input, Select, TableSkeleton } from "@noctusai/lib/design-system";
 import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ import { useDebouncedValue } from "@/lib/useDebouncedValue";
 const TAMANHO_PAGINA = 50;
 
 export default function Clientes() {
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const abertoId = params.get("id");
   const [busca, setBusca] = useState("");
@@ -241,6 +242,7 @@ export default function Clientes() {
         clienteDaLista={aberto}
         onClose={() => abrir(null)}
         onAbrirOrcamento={setOrcamentoId}
+        onNegocioCriado={(negocioId) => navigate(`/comercial?negocio=${encodeURIComponent(negocioId)}`)}
       />
 
       <OrcamentoModal open={!!orcamentoId} onClose={() => setOrcamentoId(null)} orcamentoId={orcamentoId} />
