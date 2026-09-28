@@ -50,7 +50,7 @@ import {
   type TipoItem,
 } from "@/hooks/useFinanceiro";
 import { describeError } from "@/lib/errors";
-import { dataBR, parseValorBR } from "@/lib/format";
+import { dataBR, parseValorBR, pct } from "@/lib/format";
 import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -182,7 +182,7 @@ export default function Financeiro() {
                           l.margem < 0 ? "text-destructive" : "text-foreground"
                         }`}
                       >
-                        {l.margem_percentual.toFixed(1)}%
+                        {pct(l.margem_percentual)}
                       </td>
                     </tr>
                     {l.alertas.length > 0 && (

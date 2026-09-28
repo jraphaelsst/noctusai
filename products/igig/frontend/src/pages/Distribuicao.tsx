@@ -20,6 +20,7 @@ import { AlertTriangle, Ban, BarChart3, CalendarPlus, Clock, Send } from "lucide
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { usePautas } from "@/hooks/usePautas";
 import { describeError } from "@/lib/errors";
+import { horasBR, numeroBR } from "@/lib/format";
 import {
   CANAIS,
   useAgendarPublicacao,
@@ -96,9 +97,9 @@ export default function Distribuicao() {
                       <td className="py-2 text-right text-foreground">{linha.tarefas}</td>
                       <td className="py-2 text-right text-foreground">{linha.refacoes}</td>
                       <td className="py-2 text-right text-foreground">
-                        {linha.taxa_refacao.toFixed(2)}
+                        {numeroBR(linha.taxa_refacao)}
                       </td>
-                      <td className="py-2 text-right text-foreground">{linha.horas}</td>
+                      <td className="py-2 text-right text-foreground">{horasBR(linha.horas)}</td>
                       <td className="py-2 text-right text-foreground">
                         {BRL.format(linha.custo_reais)}
                       </td>
