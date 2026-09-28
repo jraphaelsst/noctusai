@@ -435,6 +435,31 @@ if [[ -n "$STAGED_MIGRATIONS" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-sexies-bis. Org-identity function parity (blocking, critical) ─────
+# Keeper `check_org_identity_function_parity` (SEC-2 customer-role isolation,
+# 2026-09-28). public.current_org_id() & co are ONE shared function that many
+# migration chains re-declare; a single non-canonical copy re-opens every
+# org-scoped RLS policy fleet-wide to end customers on a fresh apply. Staged
+# migrations are checked against the canonical rendering; staging the SOURCE
+# of the rendering (roles.py / sql_templates.py / roles.ts) triggers a full
+# audit, because every existing copy must then follow it.
+STAGED_OIF_SOURCE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^seed/lib/(backend/noctusai_lib/(primitives/roles|domain/sql_templates)\.py|frontend/src/roles\.ts)$' || true)
+STAGED_OIF_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+|templates/product-seed)/backend/migrations/.*\.sql$' || true)
+if [[ ( -n "$STAGED_OIF_SOURCE" || -n "$STAGED_OIF_MIGRATIONS" ) ]] && have_py; then
+    echo "[pre-commit] Checking org-identity function parity (customer-role isolation)..."
+    # Empty --paths = full audit (bash-3.2-safe: no empty-array expansion under set -u).
+    OIF_PATHS=""
+    if [[ -z "$STAGED_OIF_SOURCE" ]]; then
+        OIF_PATHS=$(echo "$STAGED_OIF_MIGRATIONS" | paste -sd, -)
+    fi
+    if ! "$PY" "$CLI" --check-org-identity-function-parity --paths "$OIF_PATHS" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] org-identity-function-parity check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Paste noctusai_lib.domain.sql_templates.org_identity_function_sql(<name>)" >&2
+        echo "[pre-commit] verbatim into every re-declaration. KB § PATTERNS/backend/database-rls.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6b-septies. Schema-wide anon grant gate (blocking, critical, NO ─────
 # allowlist / suppression marker) ──────────────────────────────────────────
 # Keeper `check_schema_wide_anon_grant`. THE INCIDENT (2026-09-20): the

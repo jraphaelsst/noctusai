@@ -10772,6 +10772,189 @@ _SP_DROP_POLICY_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# `check_org_identity_function_parity` — SEC-2 customer-role isolation
+# (2026-09-28). `public.current_org_id()` (+ `current_user_org_id`,
+# `current_org_role`, `is_customer`, `current_customer_org_id`) is ONE shared
+# function re-declared by `CREATE OR REPLACE` in many product chains (each
+# 001, the template's 001_seed.sql, core 001/035, every forward migration).
+# On a fresh environment the LAST chain applied wins — one stale copy ANYWHERE
+# silently re-opens every org-scoped RLS policy in every schema to end
+# customers. The only allowed body is the rendering of
+# `noctusai_lib.domain.sql_templates.org_identity_function_sql()`, itself
+# derived from `CUSTOMER_ORG_ROLES`; this keeper diffs every re-declaration
+# against it (whitespace- and dollar-tag-insensitive) and also holds the
+# TS mirror (`seed/lib/frontend/src/roles.ts CUSTOMER_ORG_ROLES`) to the
+# Python source. Hand-maintained copies drift (CLAUDE.md §1).
+#
+# Canon loading is deliberately file-based, never `import noctusai_lib`: from
+# a worktree the interpreter resolves the PRIMARY checkout's seed lib, so an
+# import would judge this tree's migrations against another tree's canon.
+# ---------------------------------------------------------------------------
+
+_OIF_ROLES_PY = ("seed", "lib", "backend", "noctusai_lib", "primitives", "roles.py")
+_OIF_TEMPLATES_PY = ("seed", "lib", "backend", "noctusai_lib", "domain", "sql_templates.py")
+_OIF_ROLES_TS = ("seed", "lib", "frontend", "src", "roles.ts")
+_OIF_TS_RE = re.compile(r"export\s+const\s+CUSTOMER_ORG_ROLES\b[^=]*=\s*\[([^\]]*)\]")
+_OIF_KB = "KB § PATTERNS/backend/database-rls.md"
+
+
+def _oif_fn_re(names) -> "re.Pattern[str]":
+    return re.compile(
+        r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\.(?P<name>"
+        + "|".join(re.escape(n) for n in names)
+        + r")\s*\(\s*\)(?P<head>.*?)\bAS\s+(?P<tag>\$[A-Za-z_]*\$)(?P<body>.*?)(?P=tag)",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+
+def _oif_norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def org_identity_declarations(sql_text: str, names) -> list[dict]:
+    """Every NON-commented ``CREATE [OR REPLACE] FUNCTION public.<name>()``
+    re-declaration in ``sql_text`` → ``{name, head, body, line}``. A match
+    whose line starts a ``--`` comment before it is prose, not DDL."""
+    out: list[dict] = []
+    for m in _oif_fn_re(names).finditer(sql_text):
+        line_start = sql_text.rfind("\n", 0, m.start()) + 1
+        if "--" in sql_text[line_start:m.start()]:
+            continue
+        out.append({
+            "name": m.group("name").lower(),
+            "head": _oif_norm(m.group("head")),
+            "body": _oif_norm(m.group("body")),
+            "line": sql_text.count("\n", 0, m.start()) + 1,
+        })
+    return out
+
+
+def _oif_load_canon(root: Path) -> tuple[dict[str, dict], frozenset[str]]:
+    """(canonical {name: {head, body}}, CUSTOMER_ORG_ROLES) read from ``root``'s
+    own files. Raises ValueError when either anchor is missing/unparseable."""
+    import importlib.util
+
+    roles_py = root.joinpath(*_OIF_ROLES_PY)
+    tree = ast.parse(roles_py.read_text(encoding="utf-8"))
+    roles: frozenset[str] | None = None
+    for node in ast.walk(tree):
+        target = None
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            target, value = node.target.id, node.value
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            target, value = node.targets[0].id, node.value
+        if target != "CUSTOMER_ORG_ROLES" or value is None:
+            continue
+        if isinstance(value, ast.Call) and getattr(value.func, "id", "") == "frozenset" and value.args:
+            value = value.args[0]
+        roles = frozenset(ast.literal_eval(value))
+    if not roles:
+        raise ValueError(f"cannot parse CUSTOMER_ORG_ROLES from {'/'.join(_OIF_ROLES_PY)}")
+
+    tpl = root.joinpath(*_OIF_TEMPLATES_PY)
+    spec = importlib.util.spec_from_file_location(
+        f"_noc_oif_sql_templates_{hashlib.sha1(str(tpl).encode(), usedforsecurity=False).hexdigest()[:10]}",
+        tpl,
+    )
+    if spec is None or spec.loader is None:
+        raise ValueError(f"cannot load {'/'.join(_OIF_TEMPLATES_PY)}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    names = tuple(getattr(mod, "ORG_IDENTITY_FUNCTION_NAMES"))
+    canon: dict[str, dict] = {}
+    for n in names:
+        decl = org_identity_declarations(mod.org_identity_function_sql(n, customer_roles=roles), (n,))
+        if len(decl) != 1:
+            raise ValueError(f"canonical rendering of public.{n}() is not a single parseable declaration")
+        canon[n] = decl[0]
+    return canon, roles
+
+
+def check_org_identity_function_parity(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Every re-declaration of a shared org-identity function must equal the
+    canonical rendering; the TS ``CUSTOMER_ORG_ROLES`` must equal the Python
+    source.
+
+    ``paths=None`` → full audit of ``products/*/backend/migrations`` +
+    ``templates/product-seed/backend/migrations``. ``paths=[...]`` (pre-commit)
+    → only those files (non-SQL paths ignored). Deliberately NOT active-only:
+    a stale copy in an asleep product's chain reverts the live function just
+    the same when that chain is applied. Severity ``critical``: a drifted copy
+    re-opens the whole fleet's RLS to end customers.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    try:
+        canon, roles = _oif_load_canon(root)
+    except (OSError, SyntaxError, ValueError, AttributeError) as exc:
+        return [{
+            "product": "<seed-lib>",
+            "file": "/".join(_OIF_TEMPLATES_PY),
+            "issue": (
+                f"cannot load the canonical org-identity functions ({exc}) — parity "
+                f"with every migration's re-declaration cannot be verified. Per `{_OIF_KB}`."
+            ),
+            "severity": "critical",
+        }]
+
+    roles_ts = root.joinpath(*_OIF_ROLES_TS)
+    ts_match = _OIF_TS_RE.search(roles_ts.read_text(encoding="utf-8")) if roles_ts.exists() else None
+    if ts_match is None:
+        issues.append({
+            "product": "<seed-lib>",
+            "file": "/".join(_OIF_ROLES_TS),
+            "issue": "cannot locate `export const CUSTOMER_ORG_ROLES ... = [...]` — the "
+                     "frontend mirror of CUSTOMER_ORG_ROLES cannot be verified.",
+            "severity": "critical",
+        })
+    else:
+        ts_roles = set(_QUOTED_RE.findall(ts_match.group(1)))
+        if ts_roles != set(roles):
+            issues.append({
+                "product": "<seed-lib>",
+                "file": "/".join(_OIF_ROLES_TS),
+                "issue": (
+                    f"CUSTOMER_ORG_ROLES split-brain: roles.ts {sorted(ts_roles)} ≠ "
+                    f"roles.py {sorted(roles)}. Change both, same commit."
+                ),
+                "severity": "critical",
+            })
+
+    if paths is None:
+        files = sorted(root.glob("products/*/backend/migrations/*.sql")) + sorted(
+            root.glob("templates/product-seed/backend/migrations/*.sql")
+        )
+    else:
+        files = [root / p for p in paths if p.endswith(".sql") and (root / p).is_file()]
+
+    for path in files:
+        try:
+            relative = str(path.relative_to(root))
+        except ValueError:
+            relative = str(path)
+        product = relative.split("/", 2)[1] if relative.startswith("products/") else "<template>"
+        for decl in org_identity_declarations(path.read_text(encoding="utf-8"), tuple(canon)):
+            want = canon[decl["name"]]
+            if decl["head"] == want["head"] and decl["body"] == want["body"]:
+                continue
+            issues.append({
+                "product": product,
+                "file": f"{relative}:{decl['line']}",
+                "issue": (
+                    f"public.{decl['name']}() re-declared with a NON-canonical body. Every "
+                    f"chain writes the same shared function, so on a fresh apply this copy can "
+                    f"win and silently undo the customer-role exclusion fleet-wide. Paste "
+                    f"`noctusai_lib.domain.sql_templates.org_identity_function_sql("
+                    f"{decl['name']!r})` verbatim. Per `{_OIF_KB}` § customer roles."
+                ),
+                "severity": "critical",
+            })
+    return issues
+
+
 def _check_status_pagina_dev_reachability(root: Path) -> list[dict]:
     """Flag a product whose every `status_pagina` policy filters on 'producao'.
 
@@ -14516,6 +14699,10 @@ def check_all_products() -> tuple[int, list]:
     # gap hid `meta`/`instagram_insights` in prod.
     # KB § PATTERNS/frontend/status-pagina-dev-visibility.md.
     all_issues.extend(check_status_pagina_role_parity())
+    # SEC-2 customer-role isolation (2026-09-28) — every re-declaration of the
+    # shared public.current_org_id() & co must equal the canonical rendering;
+    # one stale copy re-opens the fleet's RLS to end customers on a fresh apply.
+    all_issues.extend(check_org_identity_function_parity())
     # fleet-limiter-conftest-adoption Stage-4 (2026-05-23) — products with
     # app/rate_limit.py must import the seed `reset_rate_limiter` autouse
     # fixture into tests/conftest.py, else the in-memory slowapi limiter
