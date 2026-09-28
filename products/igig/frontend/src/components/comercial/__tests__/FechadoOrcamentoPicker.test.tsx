@@ -95,6 +95,15 @@ describe("FechadoOrcamentoPicker", () => {
     ).toEqual(["a", "b", "c"]);
   });
 
+  it("excludes a past-validade rascunho/enviado orçamento the server would 409 on (comercial achado 22)", () => {
+    const vencido = { ...orc("g", "rascunho"), validade: "2020-01-01" };
+    const emDia = { ...orc("h", "enviado"), validade: "2999-01-01" };
+    const semValidade = { ...orc("i", "rascunho"), validade: null };
+    expect(
+      orcamentosElegiveis([vencido, emDia, semValidade] as Orcamento[]).map((o) => o.id),
+    ).toEqual(["h", "i"]);
+  });
+
   it("lists the negócio's orçamentos and confirms the chosen id", async () => {
     api.get.mockResolvedValue({ data: [orc("o1", "enviado", 1), orc("o2", "rascunho", 2), orc("o0", "substituido", 0)] });
     const onEscolher = vi.fn();

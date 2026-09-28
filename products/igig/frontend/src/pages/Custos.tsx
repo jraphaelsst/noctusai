@@ -27,6 +27,9 @@ import {
   useRemoverFuncao,
   useRemoverProfissional,
   type Funcao,
+  type MembroEquipe,
+  type Profissional,
+  type ProfissionalPayload,
 } from "@/hooks/useCustos";
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -169,7 +172,7 @@ export default function Custos() {
           <TableSkeleton rows={3} />
         ) : funcoes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhuma função cadastrada. Sem ela, a calculadora de escopo não consegue sugerir preço.
+            Nenhuma função cadastrada. Sem ela, o orçamento não consegue estimar custo nem margem.
           </p>
         ) : (
           <ul className="divide-y divide-border rounded-md border border-border">
@@ -178,7 +181,11 @@ export default function Custos() {
                 key={f.id}
                 funcao={f}
                 removendo={removerFuncao.isPending}
-                onRemover={() => removerFuncao.mutate(f.id)}
+                onRemover={() => {
+                  if (window.confirm(`Remover a função "${f.nome}"? Os profissionais vinculados ficam sem função.`)) {
+                    removerFuncao.mutate(f.id);
+                  }
+                }}
               />
             ))}
           </ul>
@@ -271,62 +278,20 @@ export default function Custos() {
           </p>
         ) : (
           <ul className="divide-y divide-border rounded-md border border-border">
-            {profissionais.map((p) => {
-              const funcao = funcoes.find((f) => f.id === p.funcao_id);
-              return (
-                <li key={p.id} className="flex flex-wrap items-center gap-3 p-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-foreground">{p.nome}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {funcao ? funcao.nome : "Sem função"}
-                      {p.custo_hora_override !== null && " · custo próprio"}
-                      {!p.usuario_id && " · horas não contabilizadas"}
-                    </p>
-                  </div>
-
-                  {p.custo_hora_indefinido ? (
-                    <Badge variant="destructive">Sem custo/hora</Badge>
-                  ) : (
-                    <span className="text-sm font-medium text-foreground">
-                      {BRL.format(p.custo_hora_efetivo ?? 0)}/h
-                    </span>
-                  )}
-
-                  <select
-                    aria-label={`Usuário de ${p.nome}`}
-                    className="h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-                    value={p.usuario_id ?? ""}
-                    onChange={(e) =>
-                      atualizarProf.mutate({ id: p.id, usuario_id: e.target.value || null })
-                    }
-                  >
-                    <option value="">Sem vínculo</option>
-                    {membros.map((m) => (
-                      <option key={m.id} value={m.id}>{m.nome || m.email}</option>
-                    ))}
-                  </select>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={atualizarProf.isPending}
-                    onClick={() => atualizarProf.mutate({ id: p.id, ativo: !p.ativo })}
-                  >
-                    {p.ativo ? "Desativar" : "Ativar"}
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Remover ${p.nome}`}
-                    disabled={removerProf.isPending}
-                    onClick={() => removerProf.mutate(p.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </li>
-              );
-            })}
+            {profissionais.map((p) => (
+              <LinhaProfissional
+                key={p.id}
+                profissional={p}
+                funcoes={funcoes}
+                membros={membros}
+                atualizando={atualizarProf.isPending}
+                removendo={removerProf.isPending}
+                onAtualizar={(patch) => atualizarProf.mutate({ id: p.id, ...patch })}
+                onRemover={() => {
+                  if (window.confirm(`Remover o profissional "${p.nome}"?`)) removerProf.mutate(p.id);
+                }}
+              />
+            ))}
           </ul>
         )}
       </section>
@@ -426,6 +391,162 @@ function LinhaFuncao({
         variant="ghost"
         size="sm"
         aria-label={`Remover ${funcao.nome}`}
+        disabled={removendo}
+        onClick={onRemover}
+      >
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </li>
+  );
+}
+
+/**
+ * One profissional. Achado 13: after creation, only `usuario_id`/`ativo`
+ * could be changed here even though the backend already supports editing
+ * `nome`/`funcao_id`/`custo_hora_override` — fixing a typo'd name or a wrong
+ * função meant deleting and recreating the person (unlinking their usuário
+ * and losing history).
+ */
+function LinhaProfissional({
+  profissional: p,
+  funcoes,
+  membros,
+  atualizando,
+  removendo,
+  onAtualizar,
+  onRemover,
+}: {
+  profissional: Profissional;
+  funcoes: Funcao[];
+  membros: MembroEquipe[];
+  atualizando: boolean;
+  removendo: boolean;
+  onAtualizar: (patch: Partial<ProfissionalPayload>) => void;
+  onRemover: () => void;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [nome, setNome] = useState(p.nome);
+  const [funcaoId, setFuncaoId] = useState(p.funcao_id ?? "");
+  const [override, setOverride] = useState(p.custo_hora_override === null ? "" : String(p.custo_hora_override));
+  const funcao = funcoes.find((f) => f.id === p.funcao_id);
+
+  function abrir() {
+    setNome(p.nome);
+    setFuncaoId(p.funcao_id ?? "");
+    setOverride(p.custo_hora_override === null ? "" : String(p.custo_hora_override));
+    setEditando(true);
+  }
+
+  function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    const n = nome.trim();
+    if (!n) return;
+    onAtualizar({
+      nome: n,
+      funcao_id: funcaoId || null,
+      custo_hora_override: override === "" ? null : Number(override.replace(",", ".")),
+    });
+    setEditando(false);
+  }
+
+  if (editando) {
+    return (
+      <li className="p-3">
+        <form onSubmit={salvar} className="flex flex-wrap items-end gap-2">
+          <label className="min-w-0 flex-1 text-xs text-muted-foreground">
+            Nome
+            <Input className="mt-1 h-11" value={nome} onChange={(e) => setNome(e.target.value)} />
+          </label>
+          <label className="min-w-[150px] text-xs text-muted-foreground">
+            Função
+            <select
+              className="mt-1 h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+              value={funcaoId}
+              onChange={(e) => setFuncaoId(e.target.value)}
+            >
+              <option value="">Sem função</option>
+              {funcoes.map((f) => (
+                <option key={f.id} value={f.id}>{f.nome}</option>
+              ))}
+            </select>
+          </label>
+          <label className="w-36 text-xs text-muted-foreground">
+            Custo/hora próprio
+            <Input
+              className="mt-1 h-11"
+              inputMode="decimal"
+              placeholder="herda da função"
+              value={override}
+              onChange={(e) => setOverride(e.target.value)}
+            />
+          </label>
+          <Button type="submit" size="sm" className="min-h-11" disabled={!nome.trim() || atualizando}>
+            <Check className="mr-1 h-4 w-4" />
+            {atualizando ? "Salvando…" : "Salvar"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="min-h-11"
+            aria-label="Cancelar edição"
+            onClick={() => setEditando(false)}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </form>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-3 p-3">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm text-foreground">{p.nome}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {funcao ? funcao.nome : "Sem função"}
+          {p.custo_hora_override !== null && " · custo próprio"}
+          {!p.usuario_id && " · horas não contabilizadas"}
+        </p>
+      </div>
+
+      {p.custo_hora_indefinido ? (
+        <Badge variant="destructive">Sem custo/hora</Badge>
+      ) : (
+        <span className="text-sm font-medium text-foreground">
+          {BRL.format(p.custo_hora_efetivo ?? 0)}/h
+        </span>
+      )}
+
+      <select
+        aria-label={`Usuário de ${p.nome}`}
+        className="h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+        value={p.usuario_id ?? ""}
+        onChange={(e) => onAtualizar({ usuario_id: e.target.value || null })}
+      >
+        <option value="">Sem vínculo</option>
+        {membros.map((m) => (
+          <option key={m.id} value={m.id}>{m.nome || m.email}</option>
+        ))}
+      </select>
+
+      <Button variant="ghost" size="sm" aria-label={`Editar ${p.nome}`} onClick={abrir}>
+        <Pencil className="h-4 w-4" />
+      </Button>
+
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={atualizando}
+        onClick={() => onAtualizar({ ativo: !p.ativo })}
+      >
+        {p.ativo ? "Desativar" : "Ativar"}
+      </Button>
+
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={`Remover ${p.nome}`}
         disabled={removendo}
         onClick={onRemover}
       >

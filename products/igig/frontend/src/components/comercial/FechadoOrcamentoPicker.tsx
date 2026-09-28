@@ -26,8 +26,22 @@ import { ORCAMENTO_STATUS_LABEL, type Negocio, type Orcamento } from "@/types/cr
 /** Statuses that can no longer be the accepted one. */
 const ENCERRADOS = new Set(["recusado", "expirado", "substituido"]);
 
+/** Same "vencido" rule the server applies on read (`orcamentos.py::_vencido`
+ * — validade < hoje, América/São_Paulo): a rascunho/enviado orçamento whose
+ * validade has passed reads as `expirado` the moment the server touches it,
+ * but a client that fetched the list a moment BEFORE that flip (or reads it
+ * with a slightly different clock) could still show it here — the server
+ * then 409s `orcamento_expirado` (achado comercial 22). Defensive-only: the
+ * server's read-time expiry is authoritative either way.
+ */
+function vencido(o: Orcamento): boolean {
+  if (!o.validade) return false;
+  const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  return o.validade.slice(0, 10) < hoje;
+}
+
 export function orcamentosElegiveis(orcamentos: Orcamento[]): Orcamento[] {
-  return orcamentos.filter((o) => !ENCERRADOS.has(o.status));
+  return orcamentos.filter((o) => !ENCERRADOS.has(o.status) && !vencido(o));
 }
 
 interface Pendente {

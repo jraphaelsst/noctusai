@@ -22,7 +22,7 @@
  * screen shows.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ExternalLink, FileText, Mail, Plus, X } from "lucide-react";
+import { CalendarPlus, Check, ExternalLink, FileText, Mail, Plus, X } from "lucide-react";
 import { Badge, Button, Field, FormError, Input, Select, Skeleton, Textarea } from "@noctusai/lib/design-system";
 import { MotivoMoveDialog, TooltipIconButton } from "@noctusai/lib/components";
 import { toast } from "sonner";
@@ -83,10 +83,33 @@ const CALCULO_DEBOUNCE_MS = 400;
 let chaveSeq = 0;
 const novaChave = () => `item-${Date.now()}-${chaveSeq++}`;
 
+/** "Today" in America/Sao_Paulo — every date rule in igig reads THIS clock
+ * (achado 7), never the browser's local timezone. `toISOString()` reads UTC,
+ * which is a different calendar day than São Paulo for hours every evening. */
+function hojeSaoPauloISO(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}
+
 function hojeMais(dias: number): string {
-  const d = new Date();
+  // Noon avoids a DST/date-boundary rollover from `setDate` landing on the
+  // wrong day when the local clock and São Paulo's date briefly disagree.
+  const d = new Date(`${hojeSaoPauloISO()}T12:00:00`);
   d.setDate(d.getDate() + dias);
   return d.toISOString().slice(0, 10);
+}
+
+/** `nova_versao`'s default validade, mirrored client-side so the confirm
+ * dialog can show it BEFORE the request: the same days-ahead-of-creation the
+ * original had, counted from today. `null` when the original never expired
+ * or its dates cannot be parsed — the new version should not silently gain
+ * an expiry it never had. */
+function validadeAutomaticaNovaVersao(o: Orcamento): string | null {
+  if (!o.validade || !o.created_at) return null;
+  const validade = new Date(`${o.validade.slice(0, 10)}T12:00:00`);
+  const criado = new Date(`${o.created_at.slice(0, 10)}T12:00:00`);
+  const dias = Math.round((validade.getTime() - criado.getTime()) / 86_400_000);
+  if (!Number.isFinite(dias) || dias < 0) return null;
+  return hojeMais(dias);
 }
 
 function formVazio(): FormState {
@@ -271,6 +294,8 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
   // ── Actions ─────────────────────────────────────────────────────────────
   const [painel, setPainel] = useState<"email" | null>(null);
   const [confirmandoAceite, setConfirmandoAceite] = useState(false);
+  const [confirmandoNovaVersao, setConfirmandoNovaVersao] = useState(false);
+  const [novaVersaoValidade, setNovaVersaoValidade] = useState<string>("");
   const [recusando, setRecusando] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [erroAcao, setErroAcao] = useState<string | null>(null);
@@ -278,6 +303,7 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
   useEffect(() => {
     setPainel(null);
     setConfirmandoAceite(false);
+    setConfirmandoNovaVersao(false);
     setPdfUrl(null);
     setErroAcao(null);
   }, [atualId, open]);
@@ -321,6 +347,10 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
           onSuccess: () => {
             toast.success("Orçamento salvo.");
             setSujo(false);
+            // Editing voids the PDF server-side (`pdf_key` cleared) — the
+            // OLD signed link must not keep looking valid on screen
+            // (achado 8).
+            setPdfUrl(null);
           },
           onError: (e) => setErroAcao(describeError(e, "Não foi possível salvar o orçamento.")),
         },
@@ -328,16 +358,29 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
     }
   }
 
+  function abrirConfirmacaoNovaVersao() {
+    if (!orcamento) return;
+    setNovaVersaoValidade(validadeAutomaticaNovaVersao(orcamento) ?? "");
+    setConfirmandoNovaVersao(true);
+  }
+
   function novaVersao() {
     if (!atualId) return;
     setErroAcao(null);
-    mut.novaVersao.mutate(atualId, {
-      onSuccess: (o) => {
-        toast.success(`Versão ${o.versao} criada — a anterior foi substituída.`);
-        trocarPara(o);
+    mut.novaVersao.mutate(
+      { id: atualId, validade: novaVersaoValidade || null },
+      {
+        onSuccess: (o) => {
+          setConfirmandoNovaVersao(false);
+          toast.success(`Versão ${o.versao} criada — a anterior foi substituída.`);
+          trocarPara(o);
+        },
+        onError: (e) => {
+          setConfirmandoNovaVersao(false);
+          setErroAcao(describeError(e, "Não foi possível criar a nova versão."));
+        },
       },
-      onError: (e) => setErroAcao(describeError(e, "Não foi possível criar a nova versão.")),
-    });
+    );
   }
 
   function gerarPdf() {
@@ -366,8 +409,11 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
     mut.aceitar.mutate(atualId, {
       onSuccess: (r) => {
         setConfirmandoAceite(false);
+        // "criado" only when the Cliente is actually new — reusing an
+        // existing one (upsell) used to say "criado" regardless (achado 20).
+        const acaoCliente = r.cliente_criado ? "criado" : "já existia";
         toast.success(
-          `Orçamento aceito — cliente ${r.cliente?.nome ?? ""} criado` +
+          `Orçamento aceito — cliente ${r.cliente?.nome ?? ""} ${acaoCliente}` +
             (r.pautas_criadas ? `, ${r.pautas_criadas} pautas no calendário.` : "."),
         );
       },
@@ -375,6 +421,20 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
         setConfirmandoAceite(false);
         setErroAcao(describeError(e, "Não foi possível aceitar o orçamento."));
       },
+    });
+  }
+
+  function gerarPautas() {
+    if (!atualId) return;
+    setErroAcao(null);
+    mut.gerarPautas.mutate(atualId, {
+      onSuccess: (r) =>
+        toast.success(
+          r.pautas_criadas > 0
+            ? `Calendário em dia — ${r.pautas_criadas} pautas geradas ao todo.`
+            : "Nenhuma pauta para gerar (nenhum item recorrente de Criação de conteúdo).",
+        ),
+      onError: (e) => setErroAcao(describeError(e, "Não foi possível gerar as pautas.")),
     });
   }
 
@@ -427,14 +487,25 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
                 {salvando ? "Salvando…" : novo ? "Criar orçamento" : "Salvar"}
               </Button>
             ) : null}
-            {!novo && orcamento && status !== "substituido" ? (
-              <Button variant="outline" onClick={novaVersao} disabled={mut.novaVersao.isPending || sujo}>
+            {!novo && orcamento && status !== "substituido" && status !== "aceito" ? (
+              <Button variant="outline" onClick={abrirConfirmacaoNovaVersao} disabled={mut.novaVersao.isPending || sujo}>
                 <Plus className="mr-1 h-4 w-4" /> Nova versão
               </Button>
             ) : null}
             {!novo && orcamento ? (
               <Button variant="outline" onClick={gerarPdf} disabled={!salvo || mut.gerarPdf.isPending}>
                 <FileText className="mr-1 h-4 w-4" /> {mut.gerarPdf.isPending ? "Gerando…" : "Gerar PDF"}
+              </Button>
+            ) : null}
+            {!novo && orcamento && status === "aceito" ? (
+              <Button
+                variant="outline"
+                onClick={gerarPautas}
+                disabled={mut.gerarPautas.isPending}
+                data-testid="orcamento-gerar-pautas"
+              >
+                <CalendarPlus className="mr-1 h-4 w-4" />
+                {mut.gerarPautas.isPending ? "Gerando…" : "Gerar pautas"}
               </Button>
             ) : null}
             {!novo && orcamento && podeDecidir ? (
@@ -499,6 +570,36 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
                   </Button>
                   <Button size="sm" onClick={aceitar} disabled={mut.aceitar.isPending}>
                     {mut.aceitar.isPending ? "Aceitando…" : "Confirmar aceite"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {confirmandoNovaVersao ? (
+              <div role="alert" className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+                <p className="text-foreground">
+                  Cria uma cópia como nova versão em Rascunho; a atual vira Substituído.
+                </p>
+                <div className="mt-2">
+                  <Field label="Validade da nova versão">
+                    <Input
+                      type="date"
+                      aria-label="Validade da nova versão"
+                      value={novaVersaoValidade}
+                      onChange={(e) => setNovaVersaoValidade(e.target.value)}
+                      className="sm:w-44"
+                    />
+                  </Field>
+                  {!novaVersaoValidade ? (
+                    <p className="mt-1 text-xs text-muted-foreground">Sem validade — a nova versão não expira.</p>
+                  ) : null}
+                </div>
+                <div className="mt-2 flex justify-end gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmandoNovaVersao(false)}>
+                    Cancelar
+                  </Button>
+                  <Button size="sm" onClick={novaVersao} disabled={mut.novaVersao.isPending}>
+                    {mut.novaVersao.isPending ? "Criando…" : "Confirmar nova versão"}
                   </Button>
                 </div>
               </div>
@@ -670,6 +771,7 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
               vazio={form.itens.length === 0}
               refreshing={editavel && (calculo.isRefreshing || !emDia)}
               error={editavel && calculo.isError ? describeError(calculo.error, "Não foi possível calcular.") : null}
+              alertas={editavel ? calculo.calculo?.alertas : undefined}
             />
 
             {painel === "email" && orcamento ? (

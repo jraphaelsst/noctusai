@@ -23,9 +23,18 @@ import { SheetDialog } from "@/components/common/SheetDialog";
 import { useProdutoServicoMutations, useProdutosServicos } from "@/hooks/useProdutosServicos";
 import { describeError } from "@/lib/errors";
 import { brl } from "@/lib/format";
-import { SECAO_LABEL, SECOES, type ProdutoServico, type ProdutoServicoInput, type Secao } from "@/types/crm";
+import {
+  FORMATO_LABEL,
+  SECAO_LABEL,
+  SECOES,
+  type Formato,
+  type ProdutoServico,
+  type ProdutoServicoInput,
+  type Secao,
+} from "@/types/crm";
 
 const UNIDADES = ["unidade", "mês", "hora", "post", "vídeo"];
+const FORMATOS: readonly Formato[] = ["feed", "carrossel", "reels", "story", "artigo", "video"];
 
 function vazio(secao: Secao, ordem: number): ProdutoServicoInput {
   return {
@@ -35,6 +44,7 @@ function vazio(secao: Secao, ordem: number): ProdutoServicoInput {
     preco_base: 0,
     unidade: secao === "gestao_conta" ? "mês" : "unidade",
     horas_estimadas: 0,
+    formato: null,
     ativo: true,
     ordem,
   };
@@ -53,7 +63,7 @@ export default function ProdutosServicos() {
     remover.mutate(p.id, {
       onSuccess: (r) =>
         toast.success(
-          r && r.ativo === false
+          r?.desativado
             ? `"${p.nome}" está em orçamentos — foi desativado em vez de excluído.`
             : `"${p.nome}" excluído.`,
         ),
@@ -267,8 +277,22 @@ function ProdutoForm({
               Ativo
             </label>
           </div>
+          <Field label="Formato (opcional)">
+            <Select
+              value={v.formato ?? ""}
+              onChange={(e) => setV({ ...v, formato: (e.target.value || null) as Formato | null })}
+            >
+              <option value="">Sem formato</option>
+              {FORMATOS.map((f) => (
+                <option key={f} value={f}>
+                  {FORMATO_LABEL[f]}
+                </option>
+              ))}
+            </Select>
+          </Field>
           <p className="text-xs text-muted-foreground">
-            As horas alimentam o custo estimado e a margem do orçamento (custo/hora médio da equipe).
+            As horas alimentam o custo estimado e a margem do orçamento (custo/hora médio da equipe). O formato
+            alimenta as pautas geradas quando o orçamento é aceito.
           </p>
           <FormError message={mut.isError ? describeError(mut.error, "Não foi possível salvar.") : null} />
         </div>

@@ -43,9 +43,10 @@ function calcular({ itens, desconto = 0 }: { itens: OrcamentoItemInput[]; descon
     desconto,
     total_mensal: total,
     custo_estimado: custo,
-    margem_estimada: total ? ((total - custo) / total) * 100 : 0,
+    margem_estimada: total ? ((total - custo) / total) * 100 : null,
     horas_estimadas: 10,
     itens: linhas,
+    alertas: [] as string[],
   };
 }
 
@@ -180,7 +181,12 @@ describe("OrcamentoModal — lifecycle", () => {
     api.post.mockImplementation(async (path: string, body: any) => {
       if (path === "/api/orcamentos/calcular") return { data: calcular(body) };
       if (path === "/api/orcamentos/o1/aceitar")
-        return { data: { orcamento: orcamento({ status: "aceito" }), negocio: { id: "n1", status: "ganho" }, cliente: { id: "c1", nome: "Padaria Ana" }, pautas_criadas: 12 } };
+        return {
+          data: {
+            orcamento: orcamento({ status: "aceito" }), negocio: { id: "n1", status: "ganho" },
+            cliente: { id: "c1", nome: "Padaria Ana" }, cliente_criado: true, pautas_criadas: 12,
+          },
+        };
       throw new Error(`POST inesperado ${path}`);
     });
     renderModal({ orcamentoId: "o1" });
@@ -227,8 +233,61 @@ describe("OrcamentoModal — lifecycle", () => {
     fireEvent.click(fisica);
     fireEvent.click(screen.getByRole("button", { name: "Gerar contrato" }));
     await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/orcamentos/o1/contrato", { modalidade_assinatura: "fisica", dia_vencimento: 10 }),
+      expect(api.post).toHaveBeenCalledWith(
+        "/api/orcamentos/o1/contrato",
+        { modalidade_assinatura: "fisica", dia_vencimento: 10, vias: 2 },
+      ),
     );
     expect(await screen.findByTestId("contrato-gerado")).toHaveTextContent("Contrato físico gerado");
+  });
+
+  it("an accepted orçamento hides Nova versão and offers the Gerar pautas recovery action (achado 6/2)", async () => {
+    api.get.mockImplementation(async (path: string) => {
+      if (path === "/api/produtos-servicos") return { data: CATALOGO };
+      if (path === "/api/orcamentos/o1") return { data: orcamento({ status: "aceito" }) };
+      if (path === "/api/orcamentos/o1/emails") return { data: [] };
+      throw new Error(`GET inesperado ${path}`);
+    });
+    api.post.mockImplementation(async (path: string) => {
+      if (path === "/api/orcamentos/o1/gerar-pautas") return { data: { pautas_criadas: 8 } };
+      throw new Error(`POST inesperado ${path}`);
+    });
+    renderModal({ orcamentoId: "o1" });
+    await screen.findByRole("radio", { name: /Física/ });
+    // The server refuses `nova-versao` on an aceito one — the button must
+    // not even be offered (achado 6: it used to be shown, then 409).
+    expect(screen.queryByRole("button", { name: /Nova versão/ })).toBeNull();
+
+    const botao = screen.getByTestId("orcamento-gerar-pautas");
+    fireEvent.click(botao);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orcamentos/o1/gerar-pautas", {}));
+  });
+
+  it("Nova versão pre-fills the same days-ahead-of-creation validade the original had", async () => {
+    api.get.mockImplementation(async (path: string) => {
+      if (path === "/api/produtos-servicos") return { data: CATALOGO };
+      // created 2026-09-05, validade 2026-09-20 → 15 days.
+      if (path === "/api/orcamentos/o1")
+        return { data: orcamento({ created_at: "2026-09-05T09:00:00Z", validade: "2026-09-20" }) };
+      if (path === "/api/orcamentos/o1/emails") return { data: [] };
+      throw new Error(`GET inesperado ${path}`);
+    });
+    api.post.mockImplementation(async (path: string, body: any) => {
+      if (path === "/api/orcamentos/calcular") return { data: calcular(body) };
+      if (path === "/api/orcamentos/o1/nova-versao") return { data: orcamento({ id: "o2", versao: 3 }) };
+      throw new Error(`POST inesperado ${path}`);
+    });
+    renderModal({ orcamentoId: "o1" });
+    fireEvent.click(await screen.findByRole("button", { name: /Nova versão/ }));
+    const campo = (await screen.findByLabelText("Validade da nova versão")) as HTMLInputElement;
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const esperado = new Date(`${hoje}T12:00:00`);
+    esperado.setDate(esperado.getDate() + 15);
+    expect(campo.value).toBe(esperado.toISOString().slice(0, 10));
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar nova versão" }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/orcamentos/o1/nova-versao", { validade: campo.value }),
+    );
   });
 });

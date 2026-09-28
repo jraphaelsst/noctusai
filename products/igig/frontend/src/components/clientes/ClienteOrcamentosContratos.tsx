@@ -12,7 +12,7 @@
  */
 import { useState } from "react";
 import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
-import { ExternalLink, FileSignature, FileText, PenLine, Upload } from "lucide-react";
+import { AlertTriangle, ExternalLink, FileSignature, FileText, PenLine, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 
 import { SheetDialog } from "@/components/common/SheetDialog";
@@ -32,7 +32,7 @@ export function ClienteOrcamentosContratos({
   return (
     <div className="space-y-6" data-testid="cliente-orcamentos-contratos">
       <OrcamentosDoCliente clienteId={clienteId} onAbrir={onAbrirOrcamento} />
-      <ContratosDoCliente clienteId={clienteId} />
+      <ContratosDoCliente clienteId={clienteId} onAbrirOrcamento={onAbrirOrcamento} />
     </div>
   );
 }
@@ -83,7 +83,13 @@ function OrcamentosDoCliente({ clienteId, onAbrir }: { clienteId: string; onAbri
   );
 }
 
-function ContratosDoCliente({ clienteId }: { clienteId: string }) {
+function ContratosDoCliente({
+  clienteId,
+  onAbrirOrcamento,
+}: {
+  clienteId: string;
+  onAbrirOrcamento: (id: string) => void;
+}) {
   const { contratos, showSkeleton, isError, error } = useContratos(clienteId);
   const { urlPdf } = useContratoMutations();
   const [assinando, setAssinando] = useState<Contrato | null>(null);
@@ -133,8 +139,16 @@ function ContratosDoCliente({ clienteId }: { clienteId: string }) {
                 {c.dia_vencimento ? ` · vence dia ${c.dia_vencimento}` : ""}
                 {c.assinado_em ? ` · assinado em ${dataBR(c.assinado_em)}` : ""}
               </p>
-              {c.modalidade_assinatura === "digital" && c.status !== "ativo" && c.link_assinatura ? (
-                <p className="break-all text-xs text-muted-foreground">Link de assinatura: {c.link_assinatura}</p>
+              {c.modalidade_assinatura === "digital" && c.status === "aguardando_assinatura" && c.link_assinatura ? (
+                <p className="break-all text-xs text-muted-foreground">
+                  Link de assinatura (simulação — assinatura digital ainda não integrada): {c.link_assinatura}
+                </p>
+              ) : null}
+              {c.modalidade_assinatura === "digital" && c.status === "rascunho" ? (
+                <p className="flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-300">
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  Assinatura recusada ou expirada — o contrato voltou para rascunho.
+                </p>
               ) : null}
               <div className="flex flex-wrap gap-2">
                 {c.documento_key ? (
@@ -156,6 +170,17 @@ function ContratosDoCliente({ clienteId }: { clienteId: string }) {
                 {c.modalidade_assinatura === "fisica" && c.status !== "ativo" && c.status !== "encerrado" ? (
                   <Button size="sm" className="max-sm:h-10" onClick={() => setAssinando(c)} data-testid="contrato-marcar-assinado">
                     <PenLine className="mr-1 h-3 w-3" /> Marcar como assinado
+                  </Button>
+                ) : null}
+                {c.status === "rascunho" && c.orcamento_id ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="max-sm:h-10"
+                    onClick={() => onAbrirOrcamento(c.orcamento_id!)}
+                    data-testid="contrato-reenviar"
+                  >
+                    <RefreshCw className="mr-1 h-3 w-3" /> Reenviar / gerar novamente
                   </Button>
                 ) : null}
               </div>

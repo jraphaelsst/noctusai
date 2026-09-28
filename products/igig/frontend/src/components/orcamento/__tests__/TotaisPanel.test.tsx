@@ -57,10 +57,36 @@ describe("TotaisPanel — shows the SERVER's /calcular numbers", () => {
     expect(screen.queryByTestId("total-mensal")).toBeNull();
   });
 
-  it("margin levels: <20 baixa · 20–40 média · ≥40 boa", () => {
+  it("margin levels: <20 baixa · 20–40 média · ≥40 boa · null indisponível", () => {
     expect(nivelDaMargem(19.9)).toBe("baixa");
     expect(nivelDaMargem(20)).toBe("media");
     expect(nivelDaMargem(39.9)).toBe("media");
     expect(nivelDaMargem(40)).toBe("boa");
+    expect(nivelDaMargem(null)).toBe("indisponivel");
+  });
+
+  it("a null margin (total zero, or no custo/hora at all) never reads as 0% or 100% (achado 1/5)", () => {
+    render(<TotaisPanel totais={{ ...TOTAIS, margem_estimada: null }} />);
+    const badge = screen.getByTestId("margem-badge");
+    expect(badge).toHaveAttribute("data-nivel", "indisponivel");
+    expect(badge.textContent).toBe("Margem indisponível");
+    expect(badge.textContent).not.toContain("%");
+  });
+
+  it("surfaces /calcular's alertas (achado 1: the server's warning used to be silently dropped)", () => {
+    render(
+      <TotaisPanel
+        totais={TOTAIS}
+        alertas={["Nenhum profissional com custo/hora definido: custo e margem estimados ficam sem base."]}
+      />,
+    );
+    expect(screen.getByTestId("totais-alertas")).toHaveTextContent(
+      "Nenhum profissional com custo/hora definido",
+    );
+  });
+
+  it("no alertas block when there are none", () => {
+    render(<TotaisPanel totais={TOTAIS} alertas={[]} />);
+    expect(screen.queryByTestId("totais-alertas")).toBeNull();
   });
 });

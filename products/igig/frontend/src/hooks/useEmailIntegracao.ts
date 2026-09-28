@@ -105,7 +105,12 @@ export function useGmailMutations() {
   return { iniciarOAuth, desconectar };
 }
 
-/** pt-BR text for the `motivo` the OAuth callback appends to `?gmail=erro`. */
+/** pt-BR text for the `motivo` the OAuth callback appends to `?gmail=erro`.
+ *
+ * Achado 15: the callback can redirect with the RAW code of any
+ * `RegraViolada` `salvar_gmail` raises (`app/routers/integracoes_email_router.py`),
+ * not just the OAuth-flow steps below — `cofre_nao_configurado` in
+ * particular (no `IGIG_COFRE_KEY`) used to show up unlabeled in the toast. */
 export const GMAIL_MOTIVO_LABEL: Record<string, string> = {
   consentimento_negado: "o acesso não foi autorizado na tela do Google",
   parametros_ausentes: "o Google não devolveu o código de autorização",
@@ -115,4 +120,5 @@ export const GMAIL_MOTIVO_LABEL: Record<string, string> = {
   sem_refresh_token: "o Google não devolveu um token permanente — remova o acesso do app na conta Google e conecte de novo",
   escopo_insuficiente: "a permissão de leitura dos e-mails não foi concedida",
   perfil_falhou: "não foi possível ler o endereço da caixa",
+  cofre_nao_configurado: "a criptografia não está configurada no servidor (defina IGIG_COFRE_KEY)",
 };

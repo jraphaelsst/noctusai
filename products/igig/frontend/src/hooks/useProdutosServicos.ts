@@ -12,7 +12,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, cleanParams, unwrapData } from "@/lib/api";
-import type { ProdutoServico, ProdutoServicoInput, Secao } from "@/types/crm";
+import type { ProdutoServico, ProdutoServicoInput, ProdutoServicoRemovido, Secao } from "@/types/crm";
 
 export const PRODUTOS_QUERY_KEY = ["igig", "produtos-servicos"] as const;
 
@@ -50,10 +50,12 @@ export function useProdutoServicoMutations() {
       api.patch(`/api/produtos-servicos/${encodeURIComponent(id)}`, payload).then(unwrapData<ProdutoServico>),
     onSuccess: invalidate,
   });
-  /** Resolves with the row when the server soft-deleted (referenced ⇒ ativo=false). */
+  /** `{id, removido, desativado}` — NOT a `ProdutoServico` (achado 3: the
+   * caller used to check `r.ativo === false`, a field the response never
+   * carries, so the "foi desativado em vez de excluído" toast never showed). */
   const remover = useMutation({
     mutationFn: (id: string) =>
-      api.delete(`/api/produtos-servicos/${encodeURIComponent(id)}`).then(unwrapData<ProdutoServico | null>),
+      api.delete(`/api/produtos-servicos/${encodeURIComponent(id)}`).then(unwrapData<ProdutoServicoRemovido>),
     onSuccess: invalidate,
   });
   return { criar, atualizar, remover };

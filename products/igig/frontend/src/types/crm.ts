@@ -18,6 +18,20 @@ export const SECAO_LABEL: Record<Secao, string> = {
   gestao_conta: "Gestão de conta",
 };
 
+/** The pauta format a criação item delivers — feeds the calendar an accepted
+ * orçamento generates. `null` for Gestão de conta items and for anything
+ * created before the field existed. */
+export type Formato = "feed" | "carrossel" | "reels" | "story" | "artigo" | "video";
+
+export const FORMATO_LABEL: Record<Formato, string> = {
+  feed: "Feed",
+  carrossel: "Carrossel",
+  reels: "Reels",
+  story: "Stories",
+  artigo: "Artigo",
+  video: "Vídeo",
+};
+
 export interface ProdutoServico {
   id: string;
   secao: Secao;
@@ -26,11 +40,20 @@ export interface ProdutoServico {
   preco_base: number;
   unidade: string;
   horas_estimadas: number;
+  formato: Formato | null;
   ativo: boolean;
   ordem: number;
 }
 
 export type ProdutoServicoInput = Omit<ProdutoServico, "id">;
+
+/** The server's response to `DELETE /api/produtos-servicos/{id}` — a
+ * referenced product is deactivated, not removed (achado 3). */
+export interface ProdutoServicoRemovido {
+  id: string;
+  removido: boolean;
+  desativado: boolean;
+}
 
 // ─── Orçamento ─────────────────────────────────────────────────────────────
 
@@ -88,8 +111,10 @@ export interface Totais {
   desconto: number;
   total_mensal: number;
   custo_estimado: number;
-  /** % 0–100, (total-custo)/total. */
-  margem_estimada: number;
+  /** % (total-custo)/total, negative when priced below cost. `null` when
+   * `total_mensal` is 0 — the margin is UNDEFINED then, never a confident
+   * "0%" or "100%" (achado 5). */
+  margem_estimada: number | null;
   horas_estimadas: number;
 }
 
@@ -129,8 +154,18 @@ export interface OrcamentoInput {
 
 export type OrcamentoPatch = Omit<OrcamentoInput, "negocio_id">;
 
+/** `POST /api/orcamentos/{id}/nova-versao` body. Omit `validade` for the
+ * server's default (same days-ahead-of-creation the original had); send
+ * `null` explicitly for "never expires". */
+export interface NovaVersaoInput {
+  validade?: string | null;
+}
+
 export interface CalculoOrcamento extends Totais {
   itens: OrcamentoItem[];
+  /** Non-empty when the team's custo/hora is incomplete — the margin above
+   * is then not trustworthy (achado 1). */
+  alertas: string[];
 }
 
 export interface OrcamentoEmail {
@@ -160,6 +195,11 @@ export interface AceiteResultado {
   orcamento: Orcamento;
   negocio: { id: string; status: string };
   cliente: { id: string; nome: string };
+  /** Whether the Cliente was CREATED by this aceite, vs. reused from an
+   * existing one — the toast used to always say "criado" (achado 20). */
+  cliente_criado: boolean;
+  /** Total pautas generated for this deal (idempotent — a re-accept or the
+   * "Gerar pautas" recovery action reports the same total, not zero). */
   pautas_criadas: number;
 }
 

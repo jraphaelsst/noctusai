@@ -29,6 +29,7 @@ import type {
   CalculoOrcamento,
   ContratoGerado,
   ModalidadeAssinatura,
+  NovaVersaoInput,
   Orcamento,
   OrcamentoEmail,
   OrcamentoFiltros,
@@ -126,13 +127,22 @@ export function useOrcamentoMutations() {
     onSuccess: invalidate,
   });
   const novaVersao = useMutation({
-    mutationFn: (id: string) => api.post(`/api/orcamentos/${encodeURIComponent(id)}/nova-versao`, {}).then(unwrapData<Orcamento>),
+    mutationFn: ({ id, validade }: { id: string } & NovaVersaoInput) =>
+      api.post(`/api/orcamentos/${encodeURIComponent(id)}/nova-versao`, { validade }).then(unwrapData<Orcamento>),
     onSuccess: invalidate,
   });
   const aceitar = useMutation({
     mutationFn: (id: string) => api.post(`/api/orcamentos/${encodeURIComponent(id)}/aceitar`, {}).then(unwrapData<AceiteResultado>),
     onSuccess: () =>
       Promise.all([invalidate(), qc.invalidateQueries({ queryKey: ["igig", "clientes"] })]),
+  });
+  /** Idempotent recovery action on an ACCEPTED orçamento — for a deal closed
+   * before pauta generation moved into the shared close path (a legacy
+   * drag-to-Fechado), this fills the calendar in without editing anything. */
+  const gerarPautas = useMutation({
+    mutationFn: (id: string) =>
+      api.post(`/api/orcamentos/${encodeURIComponent(id)}/gerar-pautas`, {}).then(unwrapData<{ pautas_criadas: number }>),
+    onSuccess: invalidate,
   });
   const recusar = useMutation({
     mutationFn: ({ id, motivo }: { id: string; motivo: string }) =>
@@ -160,14 +170,25 @@ export function useOrcamentoMutations() {
       id,
       modalidade_assinatura,
       dia_vencimento,
-    }: { id: string; modalidade_assinatura: ModalidadeAssinatura; dia_vencimento?: number }) =>
+      vias,
+      signatario_email,
+    }: {
+      id: string;
+      modalidade_assinatura: ModalidadeAssinatura;
+      dia_vencimento?: number;
+      vias?: number;
+      signatario_email?: string;
+    }) =>
       api.post(
         `/api/orcamentos/${encodeURIComponent(id)}/contrato`,
-        cleanParams({ modalidade_assinatura, dia_vencimento }),
+        cleanParams({ modalidade_assinatura, dia_vencimento, vias, signatario_email }),
       ).then(unwrapData<ContratoGerado>),
     onSuccess: () =>
       Promise.all([invalidate(), qc.invalidateQueries({ queryKey: ["igig", "contratos"] })]),
   });
 
-  return { criar, atualizar, novaVersao, aceitar, recusar, gerarPdf, urlPdf, enviar, gerarContrato };
+  return {
+    criar, atualizar, novaVersao, aceitar, recusar, gerarPdf, urlPdf, enviar, gerarContrato,
+    gerarPautas,
+  };
 }

@@ -13,10 +13,20 @@ import { useOrcamentoMutations } from "@/hooks/useOrcamentos";
 import { describeError } from "@/lib/errors";
 import type { Orcamento } from "@/types/crm";
 
+/** The server's own default when `assunto` is left empty — mirrored here so
+ * the field's placeholder matches EXACTLY what actually goes out, instead of
+ * a second, different-looking default (achado 19: the screen pre-filled
+ * "Orçamento — {título}" while the server's real default was
+ * "Proposta: {título} (vN)"). */
+function assuntoPadrao(orcamento: Orcamento): string {
+  return `Proposta: ${orcamento.titulo} (v${orcamento.versao})`;
+}
+
 export function EnviarEmailPanel({ orcamento, onEnviado }: { orcamento: Orcamento; onEnviado?: () => void }) {
   const { enviar } = useOrcamentoMutations();
   const [para, setPara] = useState(orcamento.lead?.email ?? "");
-  const [assunto, setAssunto] = useState(`Orçamento — ${orcamento.titulo}`);
+  const [cc, setCc] = useState("");
+  const [assunto, setAssunto] = useState(assuntoPadrao(orcamento));
   const [mensagem, setMensagem] = useState("");
   const semPdf = !orcamento.pdf_key;
 
@@ -31,6 +41,14 @@ export function EnviarEmailPanel({ orcamento, onEnviado }: { orcamento: Orcament
       <Field label="Para">
         <Input type="email" value={para} onChange={(e) => setPara(e.target.value)} placeholder="email@cliente.com" />
       </Field>
+      <Field label="CC (opcional)">
+        <Input
+          type="text"
+          value={cc}
+          onChange={(e) => setCc(e.target.value)}
+          placeholder="copia1@agencia.com, copia2@agencia.com"
+        />
+      </Field>
       <Field label="Assunto">
         <Input value={assunto} onChange={(e) => setAssunto(e.target.value)} />
       </Field>
@@ -43,7 +61,13 @@ export function EnviarEmailPanel({ orcamento, onEnviado }: { orcamento: Orcament
           disabled={semPdf || enviar.isPending}
           onClick={() =>
             enviar.mutate(
-              { id: orcamento.id, para: para || undefined, assunto: assunto || undefined, mensagem: mensagem || undefined },
+              {
+                id: orcamento.id,
+                para: para || undefined,
+                cc: cc || undefined,
+                assunto: assunto || undefined,
+                mensagem: mensagem || undefined,
+              },
               {
                 onSuccess: () => {
                   toast.success("Orçamento enviado por e-mail.");
