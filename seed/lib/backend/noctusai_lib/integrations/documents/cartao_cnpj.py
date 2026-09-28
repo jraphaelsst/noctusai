@@ -119,16 +119,18 @@ looks further -- measured live as `rotulos.situacao_cadastral` carrying
 the document's own title text. So two changes: (1) EVERY `_campo`
 match, whichever shape produced the line, is now ALSO rejected when it
 sits inside an occurrence of the document's own title text
-(`_embutido_no_titulo`, the same "is this substring actually inside
-something LONGER" contract `_embutido_em_rotulo_maior` already applies
-to sibling KNOWN labels); (2) `situacao_cadastral` alone gets its own
-scanner, `_campo_situacao_cadastral`, that does NOT stop at the first
-admissible occurrence -- it walks every one, in document order, and
-returns the FIRST whose own resolved value actually contains a closed
--vocabulary word, falling back to the first occurrence's raw text (so a
-human still sees what was read) only when NONE of them do. A document
-with a single admissible occurrence behaves exactly like `_campo`
-always did.
+(`caixa_rotulada.embutido_no_titulo`, the same "is this substring
+actually inside something LONGER" contract
+`caixa_rotulada.embutido_em_rotulo_maior` already applies to sibling
+KNOWN labels — both shared with `financiamento_imobiliario`/`guia_itbi`
+now, see `caixa_rotulada.py`'s own module header); (2) `situacao_cadastral`
+alone gets its own scanner, `_campo_situacao_cadastral`, that does NOT
+stop at the first admissible occurrence -- it walks every one, in
+document order, and returns the FIRST whose own resolved value actually
+contains a closed-vocabulary word, falling back to the first
+occurrence's raw text (so a human still sees what was read) only when
+NONE of them do. A document with a single admissible occurrence behaves
+exactly like `_campo` always did.
 """
 from __future__ import annotations
 
@@ -137,6 +139,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal, Mapping, Optional, Protocol, Sequence, runtime_checkable
 
+from noctusai_lib.integrations.documents.caixa_rotulada import (
+    campo as _caixa_campo,
+    data_br as _caixa_data_br,
+    proxima_ocorrencia as _caixa_proxima_ocorrencia,
+    resolver_valor_caixa as _caixa_resolver_valor_caixa,
+    temperar_alta_por_fonte,
+)
 from noctusai_lib.integrations.documents.cnpj import format_cnpj, is_valid as _cnpj_is_valid
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
@@ -170,12 +179,12 @@ DOCUMENT_PROMPT_CARTAO_CNPJ = (
 
 
 def _temper(confidence: ExtractionConfidence, source: TextSource) -> ExtractionConfidence:
-    """`alta` is reachable only off a PDF's own text layer — own copy, not
-    shared with the sibling extractors, per this family's own convention
-    (see `serasa_crednet._temper`)."""
-    if confidence is ExtractionConfidence.ALTA and source is not TextSource.TEXT_LAYER:
-        return ExtractionConfidence.BAIXA
-    return confidence
+    """`alta` is reachable only off a PDF's own text layer — shared with
+    `financiamento_imobiliario`/`guia_itbi` via
+    `caixa_rotulada.temperar_alta_por_fonte` (identical semantics in all
+    three; see `serasa_crednet._temper` for the one OTHER copy of this
+    same convention, outside this document family)."""
+    return temperar_alta_por_fonte(confidence, source)
 
 
 # ─── small parsing helpers, local to this layout ──────────────────────────
@@ -477,147 +486,35 @@ def _sem_residuo_de_pipe(valor: Optional[str]) -> Optional[str]:
     return sem_residuo or None
 
 
-def _data_br(txt: str) -> Optional[date]:
-    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", txt)
-    if not m:
-        return None
-    try:
-        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-    except ValueError:
-        return None
-
-
-def _embutido_em_rotulo_maior(
-    linha: str, pos: int, rotulo: str, todos_rotulos: Sequence[str]
-) -> bool:
-    """Is this match of `rotulo` actually a SUBSTRING of a longer, different
-    label — at ANY position, not just the tail ("SITUACAO CADASTRAL" inside
-    "DATA DA SITUACAO CADASTRAL" / "MOTIVO DE SITUACAO CADASTRAL"; "NUMERO"
-    (the address box) as the literal PREFIX of "NUMERO DE INSCRICAO")?
-    Checked against every OTHER known label so a shorter label never steals
-    a longer sibling's own value, regardless of where inside it sits."""
-    for outro in todos_rotulos:
-        if outro == rotulo or len(outro) <= len(rotulo) or rotulo not in outro:
-            continue
-        k = outro.find(rotulo)
-        inicio = pos - k
-        fim = inicio + len(outro)
-        if inicio >= 0 and fim <= len(linha) and linha[inicio:fim] == outro:
-            return True
-    return False
-
-
-def _embutido_no_titulo(linha: str, pos: int) -> bool:
-    """Is this match at `pos` actually sitting inside an occurrence of
-    the document's own printed TITLE (`_TITULO_DOCUMENTO`) — the
-    document's own line, a table-flattened cell, or a same-line prefix,
-    not a real box's label? See the module header. Purely positional
-    against every occurrence of the title text in `linha`."""
-    inicio = 0
-    while True:
-        k = linha.find(_TITULO_DOCUMENTO, inicio)
-        if k < 0:
-            return False
-        if k <= pos < k + len(_TITULO_DOCUMENTO):
-            return True
-        inicio = k + 1
-
-
-def _proxima_ocorrencia(
-    linha: str, busca: int, rotulo: str, todos_rotulos: Sequence[str]
-) -> Optional[int]:
-    """The next position `>= busca` in `linha` where `rotulo` genuinely
-    starts a box's OWN label — never a position sitting inside a longer
-    KNOWN label (`_embutido_em_rotulo_maior`) or inside the document's own
-    printed title (`_embutido_no_titulo`, see the module header). `None`
-    when no further admissible occurrence exists on this line."""
-    while True:
-        achado = linha.find(rotulo, busca)
-        if achado < 0:
-            return None
-        if not _embutido_em_rotulo_maior(
-            linha, achado, rotulo, todos_rotulos
-        ) and not _embutido_no_titulo(linha, achado):
-            return achado
-        busca = achado + 1
-
-
-def _resolver_valor_caixa(
-    linhas: list[str],
-    i: int,
-    linha: str,
-    idx: int,
-    rotulo: str,
-    todos_rotulos: Sequence[str],
-) -> tuple[Optional[str], bool]:
-    """`(valor, mascarado)` for the box whose label starts at
-    `linha[idx : idx + len(rotulo)]` — the same-line/next-line resolution
-    both `_campo` and `_campo_situacao_cadastral` need per ADMISSIBLE
-    occurrence (see the module header on why `situacao_cadastral` alone
-    needs to try more than one).
-
-    🔴 REAL RECEITA CARTÕES DO NOT ALWAYS PRINT THE COLON THIS MODULE'S
-    PROMPT ASKS FOR. Measured against a real Cartão CNPJ (2026-09-24): the
-    vision transcription sometimes runs `RÓTULO valor` on one line with no
-    separator at all, and sometimes prints the label alone with the value on
-    the box's OWN next transcribed line — the prompt's instruction competes
-    with "transcribe verbatim" and a real model does not always resolve
-    that tension the same way twice. So this tries, in order: same line
-    (colon or not, trimmed at the NEXT known label so two concatenated
-    boxes never bleed into each other), then the next non-blank line that
-    is not itself another label's own box, and not the document's own
-    title line.
-    """
-    resto = linha[idx + len(rotulo) :].lstrip(" :").rstrip()
-    corte = len(resto)
-    for outro in todos_rotulos:
-        if outro == rotulo:
-            continue
-        p = resto.find(outro)
-        if p >= 0:
-            corte = min(corte, p)
-    resto = resto[:corte].strip(" :")
-
-    if resto == _MASCARADO:
-        return (None, True)
-    if resto:
-        return (resto, False)
-
-    # The label's own line carried nothing usable — Receita boxes that
-    # print the value on the NEXT line. Stop at the next line that looks
-    # like it starts a DIFFERENT box, or is the document's own title.
-    for prox in linhas[i + 1 :]:
-        if prox == _TITULO_DOCUMENTO:
-            break
-        if any(o != rotulo and prox.startswith(o) for o in todos_rotulos):
-            break
-        if prox == _MASCARADO:
-            return (None, True)
-        if prox:
-            return (prox, False)
-    return (None, False)
+def _data_br(txt: Optional[str]) -> Optional[date]:
+    """Shared with `financiamento_imobiliario`/`guia_itbi` — identical
+    semantics (a `dd/mm/yyyy` date, `None` for blank/unparseable) — via
+    `caixa_rotulada.data_br`."""
+    return _caixa_data_br(txt)
 
 
 def _campo(
     linhas: list[str], rotulo: str, *, todos_rotulos: Sequence[str] = ()
 ) -> tuple[Optional[str], Optional[str], bool]:
     """`(valor, rótulo, mascarado)` for the box labelled `rotulo` — the
-    FIRST admissible occurrence only (document order), via
-    `_proxima_ocorrencia` + `_resolver_valor_caixa`. `mascarado` is `True`
-    only when the box's own value was the literal `********` (distinct
-    from "blank"/"never found" — see `endereco_mascarado`).
+    FIRST admissible occurrence only (document order), via the shared
+    `caixa_rotulada.campo` (the other-field-longer-label guard, every
+    -occurrence-per-line scanning, and word-boundary matching all live
+    there now — see that module's header). `mascarado` is `True` only
+    when the box's own value was the literal `********` (distinct from
+    "blank"/"never found" — see `endereco_mascarado`).
 
     `situacao_cadastral` does NOT use this function — see
     `_campo_situacao_cadastral` and the module header for why a
     first-occurrence-wins contract is unsafe for that one field.
     """
-    for i, linha in enumerate(linhas):
-        idx = _proxima_ocorrencia(linha, 0, rotulo, todos_rotulos)
-        if idx is None:
-            continue
-        valor, mascarado = _resolver_valor_caixa(linhas, i, linha, idx, rotulo, todos_rotulos)
-        return (valor, rotulo, mascarado)
-    return (None, None, False)
+    return _caixa_campo(
+        linhas,
+        (rotulo,),
+        todos_rotulos=todos_rotulos,
+        valores_mascarados=(_MASCARADO,),
+        titulo_documento=_TITULO_DOCUMENTO,
+    )
 
 
 def _campo_situacao_cadastral(
@@ -629,30 +526,44 @@ def _campo_situacao_cadastral(
     literal substring of the document's own printed title (see the module
     header, measured live 2026-09-25). A title-echo occurrence sitting
     ABOVE the real box would otherwise win and starve the real one — even
-    with `_embutido_no_titulo` filtering the title line's OWN occurrence,
-    a real box could still sit further down a document whose FIRST
+    with the title guard filtering the title line's OWN occurrence, a
+    real box could still sit further down a document whose FIRST
     admissible (non-title) occurrence happens to resolve to nothing or to
     something else.
 
     So this walks EVERY admissible occurrence across the whole document,
-    in order, and returns the FIRST whose own resolved value contains a
-    closed-vocabulary word — never a word picked up from anywhere else in
-    the document. A masked occurrence returns immediately (unambiguous).
-    When no occurrence resolves to the vocabulary, the FIRST occurrence's
-    raw text is returned as a last-resort fallback (so a human still sees
-    what was read, same as `_campo`'s single-occurrence contract always
-    provided) — `parse_cartao_cnpj` is the one that decides a non
-    -vocabulary value becomes `None` with the raw text kept in `rotulos`.
+    in order — via the shared `caixa_rotulada.proxima_ocorrencia` +
+    `resolver_valor_caixa` primitives, same guard + word-boundary
+    behaviour `_campo` gets — and returns the FIRST whose own resolved
+    value contains a closed-vocabulary word — never a word picked up from
+    anywhere else in the document. A masked occurrence returns
+    immediately (unambiguous). When no occurrence resolves to the
+    vocabulary, the FIRST occurrence's raw text is returned as a
+    last-resort fallback (so a human still sees what was read, same as
+    `_campo`'s single-occurrence contract always provided) —
+    `parse_cartao_cnpj` is the one that decides a non-vocabulary value
+    becomes `None` with the raw text kept in `rotulos`.
     """
     fallback: Optional[tuple[Optional[str], bool]] = None
     for i, linha in enumerate(linhas):
         busca = 0
         while True:
-            idx = _proxima_ocorrencia(linha, busca, rotulo, todos_rotulos)
+            idx = _caixa_proxima_ocorrencia(
+                linha, busca, rotulo, todos_rotulos, (rotulo,), titulo_documento=_TITULO_DOCUMENTO
+            )
             if idx is None:
                 break
             busca = idx + 1
-            valor, mascarado = _resolver_valor_caixa(linhas, i, linha, idx, rotulo, todos_rotulos)
+            valor, mascarado = _caixa_resolver_valor_caixa(
+                linhas,
+                i,
+                linha,
+                idx,
+                rotulo,
+                todos_rotulos,
+                valores_mascarados=(_MASCARADO,),
+                titulo_documento=_TITULO_DOCUMENTO,
+            )
             if mascarado:
                 return (None, rotulo, True)
             if valor and _SITUACAO_VOCAB_RE.search(valor):

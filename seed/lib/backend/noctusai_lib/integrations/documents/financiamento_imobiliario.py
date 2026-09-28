@@ -69,6 +69,13 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal, Mapping, Optional, Protocol, Sequence, runtime_checkable
 
+from noctusai_lib.integrations.documents.caixa_rotulada import (
+    campo as _caixa_campo,
+    data_br as _caixa_data_br,
+    percentual as _caixa_percentual,
+    pessoas_com_cpf,
+    temperar_alta_por_fonte,
+)
 from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as _cpf_is_valid
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.money import ValorLido, ler_valor
@@ -153,12 +160,11 @@ def _algum_dps(text: str, paginas: Optional[Sequence[str]]) -> bool:
 
 
 def _temper(confidence: ExtractionConfidence, source: TextSource) -> ExtractionConfidence:
-    """`alta` is reachable only off a PDF's own text layer — own copy, not
-    shared with the sibling extractors, per this family's own convention.
-    Applies to every field EXCEPT the money ones — see `_confianca_valor`."""
-    if confidence is ExtractionConfidence.ALTA and source is not TextSource.TEXT_LAYER:
-        return ExtractionConfidence.BAIXA
-    return confidence
+    """`alta` is reachable only off a PDF's own text layer — shared with
+    `cartao_cnpj`/`guia_itbi` via `caixa_rotulada.temperar_alta_por_fonte`
+    (identical semantics in all three). Applies to every field EXCEPT the
+    money ones — see `_confianca_valor`."""
+    return temperar_alta_por_fonte(confidence, source)
 
 
 def _confianca_valor(
@@ -231,12 +237,20 @@ def _banco_por_nome(nome: Optional[str]) -> tuple[Optional[str], Optional[str]]:
 # ─── label synonym table (as data) — the shared Quadro Resumo vocabulary ──
 
 _ROTULOS: dict[str, tuple[str, ...]] = {
-    #: "CREDOR" first: Itaú prints "CREDOR: ITAÚ UNIBANCO S.A." and a bare
-    #: "BANCO" would match inside "UNIBANCO" (883, measured).
+    #: Itaú prints "CREDOR: ITAÚ UNIBANCO S.A." — a bare "BANCO" sitting
+    #: INSIDE "UNIBANCO" is a word-boundary match failure, not an ordering
+    #: one; `caixa_rotulada.campo` word-boundary-matches every synonym (so
+    #: "BANCO" never fires there) AND tries synonyms longest-first
+    #: regardless of this tuple's own declared order (883, measured).
     "banco_nome": ("CREDOR", "BANCO", "INSTITUICAO FINANCEIRA", "AGENTE FINANCEIRO"),
     "numero_contrato": ("NUMERO DO CONTRATO", "CONTRATO NO", "N DO CONTRATO"),
     "numero_proposta": ("NUMERO DA PROPOSTA", "PROPOSTA NO", "N DA PROPOSTA"),
-    "data_documento": ("DATA", "DATA DE EMISSAO", "DATA DO CONTRATO"),
+    #: Specific-first for a human reading this table — `caixa_rotulada.campo`
+    #: tries synonyms longest-first regardless, so the bare "DATA" can no
+    #: longer shadow the specific ones the way it silently did before this
+    #: field moved onto the shared matcher (this tuple's own declared order
+    #: is no longer load-bearing, unlike before).
+    "data_documento": ("DATA DE EMISSAO", "DATA DO CONTRATO", "DATA"),
     "valor_compra_venda": (
         "VALOR DE COMPRA E VENDA",
         "VALOR DA COMPRA E VENDA",
@@ -256,7 +270,22 @@ _ROTULOS: dict[str, tuple[str, ...]] = {
         "VALOR DO CREDITO",  # Itaú proposta, app message (883, measured)
         "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO IMOVEL",
     ),
-    "valor_fgts": ("RECURSOS DO FGTS", "VALOR DO FGTS", "RECURSOS FGTS"),
+    #: Bare "FGTS" last — `caixa_rotulada.campo` tries synonyms
+    #: longest-first regardless of this tuple's own declared order, so a
+    #: bare "FGTS" can never grab a "RECURSOS DO FGTS: [EM BRANCO]"-style
+    #: line ahead of the more specific synonym that's actually printed
+    #: there; kept declared specific-first anyway for a human reading this
+    #: table. Other banks' Quadros print the vinculada-account phrasing
+    #: rather than Itaú's "RECURSOS DO FGTS" (not yet measured against a
+    #: real document from a bank other than Itaú — see the module header).
+    "valor_fgts": (
+        "RECURSOS DO FGTS",
+        "VALOR DO FGTS",
+        "RECURSOS FGTS",
+        "RECURSOS DA CONTA VINCULADA DO FGTS",
+        "VALOR DA CONTA VINCULADA",
+        "FGTS",
+    ),
     "valor_recursos_proprios": (
         "RECURSOS PROPRIOS",
         "VALOR DE RECURSOS PROPRIOS",
@@ -304,81 +333,27 @@ def _todos_rotulos() -> tuple[str, ...]:
 def _campo(
     linhas: list[str], sinonimos: Sequence[str], *, todos_rotulos: Sequence[str]
 ) -> tuple[Optional[str], Optional[str], bool]:
-    """`(valor, rótulo encontrado, mascarado)` for the FIRST synonym in
-    `sinonimos` that matches a box in `linhas`. Own copy of
-    `guia_itbi._campo`'s same-line/next-line search (trimmed at the next
-    KNOWN label) — see this slice's delivery note for the N=2 duplication
-    this creates; a shared box-matcher module is the N=3 candidate, not
-    yet, per the negociação/financiamento extraction contract's own file
-    list (only `money.py` is named as shared).
-
-    An occurrence that lies INSIDE a longer label of ANOTHER field is not
-    this field's box — "PRECO DE VENDA DO IMOVEL" (compra e venda) sits
-    inside Itaú's "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO IMOVEL"
-    (financiado)."""
-    for rotulo in sinonimos:
-        maiores_alheios = tuple(
-            o for o in todos_rotulos if o not in sinonimos and len(o) > len(rotulo) and rotulo in o
-        )
-        for i, linha in enumerate(linhas):
-            idx = linha.find(rotulo)
-            if idx < 0:
-                continue
-            if _dentro_de_rotulo_maior(linha, idx, rotulo, maiores_alheios):
-                continue
-            resto = linha[idx + len(rotulo) :].lstrip(" :").rstrip()
-            corte = len(resto)
-            for outro in todos_rotulos:
-                if outro == rotulo:
-                    continue
-                p = resto.find(outro)
-                if p >= 0:
-                    corte = min(corte, p)
-            resto = resto[:corte].strip(" :")
-            if resto in (_ILEGIVEL, _EM_BRANCO):
-                return (None, rotulo, True)
-            if resto:
-                return (resto, rotulo, False)
-            for prox in linhas[i + 1 :]:
-                if any(o != rotulo and prox.startswith(o) for o in todos_rotulos):
-                    break
-                if prox in (_ILEGIVEL, _EM_BRANCO):
-                    return (None, rotulo, True)
-                if prox:
-                    return (prox, rotulo, False)
-            return (None, rotulo, False)
-    return (None, None, False)
-
-
-def _dentro_de_rotulo_maior(
-    linha: str, idx: int, rotulo: str, maiores: Sequence[str]
-) -> bool:
-    """Whether `rotulo` at `idx` is covered by an occurrence of one of
-    `maiores` in the same line — see `_campo`."""
-    fim = idx + len(rotulo)
-    for maior in maiores:
-        p = linha.find(maior)
-        while p >= 0:
-            if p <= idx and p + len(maior) >= fim:
-                return True
-            p = linha.find(maior, p + 1)
-    return False
+    """`(valor, rótulo encontrado, mascarado)` for the FIRST admissible
+    synonym in `sinonimos` that matches a box in `linhas` — via the shared
+    `caixa_rotulada.campo`, common to `cartao_cnpj`/`guia_itbi` now (the
+    other-field-longer-label guard this field's own "PRECO DE VENDA DO
+    IMOVEL" (compra e venda) / "VALOR DESTINADO AO PAGAMENTO DO PRECO DE
+    VENDA DO IMOVEL" (financiado) pair needs, every-occurrence-per-line
+    scanning, longest-synonym-first ordering, and word-boundary matching
+    all live there now — see that module's header for the full drift
+    history this fixes)."""
+    return _caixa_campo(
+        linhas, sinonimos, todos_rotulos=todos_rotulos, valores_mascarados=(_ILEGIVEL, _EM_BRANCO)
+    )
 
 
 def _data_br(txt: Optional[str]) -> Optional[date]:
-    if not txt:
-        return None
-    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", txt)
-    if not m:
-        return None
-    try:
-        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-    except ValueError:
-        return None
+    """Shared with `cartao_cnpj`/`guia_itbi` — identical semantics — via
+    `caixa_rotulada.data_br`."""
+    return _caixa_data_br(txt)
 
 
 _INTEIRO_RE = re.compile(r"(\d+)")
-_PERCENTUAL_RE = re.compile(r"(\d+(?:,\d+)?)\s*%")
 
 
 _MESES_RE = re.compile(r"(\d+)\s*(?:MESES|MES|PRESTACOES|PARCELAS)\b")
@@ -410,21 +385,9 @@ def _inteiro(txt: Optional[str]) -> Optional[int]:
 
 
 def _percentual(txt: Optional[str]) -> Optional[Decimal]:
-    if not txt:
-        return None
-    m = _PERCENTUAL_RE.search(txt)
-    if not m:
-        return None
-    try:
-        return Decimal(m.group(1).replace(",", "."))
-    except Exception:  # noqa: BLE001 - a malformed number is simply unreadable
-        return None
-
-
-_NOME_CPF_RE = re.compile(
-    r"([^;]+?)\s*[-–—:]\s*CPF\s*[:\-]?\s*(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})",
-    re.IGNORECASE,
-)
+    """Shared with `guia_itbi` — identical semantics — via
+    `caixa_rotulada.percentual`."""
+    return _caixa_percentual(txt)
 
 
 @dataclass(frozen=True)
@@ -438,22 +401,11 @@ class PessoaFinanciamento:
 
 
 def _pessoas(valor: Optional[str]) -> tuple[PessoaFinanciamento, ...]:
-    if not valor:
-        return ()
-    pessoas: list[PessoaFinanciamento] = []
-    for parte in valor.split(";"):
-        m = _NOME_CPF_RE.search(parte)
-        if not m:
-            continue
-        nome = m.group(1).strip(" ,") or None
-        cpf_bruto = m.group(2)
-        cpf_fmt = format_cpf(cpf_bruto)
-        if cpf_fmt is None:
-            continue
-        pessoas.append(
-            PessoaFinanciamento(nome=nome, cpf=cpf_fmt, cpf_valido=_cpf_is_valid(cpf_bruto))
-        )
-    return tuple(pessoas)
+    """Shared parsing with `guia_itbi._pessoas` via
+    `caixa_rotulada.pessoas_com_cpf` — this module's own
+    `PessoaFinanciamento` type is unchanged, only the `;`-separated "Nome -
+    CPF: ..." parsing itself is shared."""
+    return pessoas_com_cpf(valor, PessoaFinanciamento)
 
 
 #: The account-detail fields inside the `conta_credito_vendedor` box — its
@@ -739,6 +691,20 @@ def parse_financiamento_imobiliario(
         soma_confere = soma == valor_compra_venda
         if not soma_confere:
             avisos.append("quadro_resumo_soma_divergente")
+    elif (
+        valor_compra_venda is not None
+        and valor_financiado is not None
+        and valor_recursos_proprios is not None
+        and valor_fgts is None
+        and (valor_financiado + valor_recursos_proprios) != valor_compra_venda
+    ):
+        # FGTS itself was never read (box not found/unreadable), so the
+        # FULL sum check above never ran at all — a softer, partial-legs
+        # aviso: financiado + recursos próprios alone already don't add up
+        # to compra e venda, which is exactly what a genuinely-unread FGTS
+        # leg would explain. Never nulls a field (same posture as the
+        # full-sum check); a human reads the aviso and checks the box.
+        avisos.append("quadro_resumo_fgts_ausente")
 
     prazo_meses = _prazo_meses(brutos["prazo_meses"])
     if brutos["prazo_meses"] and prazo_meses is None:

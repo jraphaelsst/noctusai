@@ -214,3 +214,28 @@ class TestLayoutMedido883:
         """It is only the up-front portion (à vista + financiado = total)."""
         f = parse_guia_itbi(self.TEXTO, TextSource.OCR)
         assert f.valor_transacao is None
+
+
+class TestSharedBoxMatcherGuard:
+    """`guia_itbi._campo` never had the other-field-longer-label guard
+    `financiamento_imobiliario._campo` carried — it now delegates to the
+    shared `caixa_rotulada.campo`, which has it. No município's REAL
+    label set measured so far actually needs it (no two `_ROTULOS` fields
+    here have a substring relationship today), so this exercises the
+    module's own `_campo` directly against a synthetic vocabulary shaped
+    like the 883/Itaú one that DID need it — proving the guard is wired
+    through this module too, not just present in the shared module's own
+    tests."""
+
+    def test_the_guard_is_wired_through_guia_itbi_s_own_campo(self):
+        from noctusai_lib.integrations.documents.guia_itbi import _campo
+
+        linha = "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO IMOVEL: R$ 400.000,00"
+        todos = (
+            "PRECO DE VENDA DO IMOVEL",
+            "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO IMOVEL",
+        )
+        valor, achado, mascarado = _campo(
+            [linha], ("PRECO DE VENDA DO IMOVEL",), todos_rotulos=todos
+        )
+        assert (valor, achado, mascarado) == (None, None, False)

@@ -1,0 +1,354 @@
+"""The shared labelled-box matcher — `RÓTULO: valor` (or `RÓTULO valor`, no
+colon) same-line/next-line resolution, common to every "printed as a
+labelled box, not a table row" document reader in this package
+(`cartao_cnpj.py`, `financiamento_imobiliario.py`, `guia_itbi.py`).
+
+🔴 WHY THIS EXISTS — THE SAME MATCHER WAS HAND-COPIED 3 TIMES AND DRIFTED
+-------------------------------------------------------------------------
+`cartao_cnpj._campo`, `financiamento_imobiliario._campo` and
+`guia_itbi._campo` all did the same job (find a box's label, cut its value
+at the next known label, fall back to the box's own next line) with
+independently hand-maintained copies — and the copies had ALREADY drifted
+measurably (883, 2026-09-27/28) before this module existed:
+
+- only `financiamento_imobiliario` had `_dentro_de_rotulo_maior` — a guard
+  against a label that is a genuine SUBSTRING of a LONGER label belonging
+  to a DIFFERENT field ("PRECO DE VENDA DO IMOVEL", `valor_compra_venda`,
+  sits inside Itaú's "VALOR DESTINADO AO PAGAMENTO DO PRECO DE VENDA DO
+  IMOVEL", `valor_financiado`) — `guia_itbi` had no such guard at all;
+- all three used a bare `linha.find(rotulo)` to LOCATE the field's own
+  label — only the FIRST occurrence on a line was ever considered, so a
+  guarded (or otherwise inadmissible) first occurrence made the whole line
+  a dead end even when a second, genuinely admissible, occurrence sat
+  later on the SAME line;
+- synonym try-order was hand-maintained data, and hand-maintained order
+  drifts: `financiamento_imobiliario`'s own `data_documento` tuple listed
+  the bare "DATA" BEFORE its own specific synonyms, so the specific ones
+  were never reached once "DATA" matched first (`prazo_meses`'s bare
+  "PRAZO" had already needed the identical reordering fix once);
+- none of the three used WORD-BOUNDARY matching, for the label itself or
+  for "cut the value at the next known label" — a bare label like "BANCO"
+  matches literally INSIDE another word ("CREDOR: ITAÚ UNIBANCO" cuts the
+  bank name at the "BANCO" sitting inside "UNIBANCO"), and the very same
+  hole lets a bare cutoff label swallow a value whose own text merely
+  CONTAINS that label glued to neighbouring text with no real separator
+  (a vision-transcription artifact — whitespace between two words is not
+  guaranteed to survive transcription).
+
+This module is the ONE canonical implementation those three drifted
+copies migrate onto. `campo` (the public entry point) folds in every fix
+above: the other-field-longer-label guard, generalised to ANY field (not
+just `financiamento_imobiliario`'s original one); scanning EVERY
+occurrence on a line before giving up on it; trying synonyms
+LONGEST-FIRST (so a bare label can never shadow a more specific one,
+whatever order a caller happens to declare them in); and word-boundary
+matching everywhere a label is located, including inside the "cut the
+value here" cutoff search.
+
+Masked-value tokens differ per document family (`cartao_cnpj`'s literal
+`********`; `financiamento_imobiliario`/`guia_itbi`'s `[ILEGÍVEL]`/`[EM
+BRANCO]`) — `valores_mascarados` takes the caller's own set rather than
+this module guessing one. The document-title hazard
+(`cartao_cnpj._TITULO_DOCUMENTO`, a label that is itself a substring of
+the document's own printed title) is likewise opt-in via
+`titulo_documento`; the other two document families have no such title
+to guard against, so they simply never pass one.
+
+`temperar_alta_por_fonte`, `data_br`, `percentual` and `pessoas_com_cpf`
+are the sibling small parsers that had ALSO drifted into 2-3 identical
+copies across these same three files — folded in here because their
+semantics were already byte-identical (never silently changed; see each
+function's own docstring for exactly what it preserves).
+"""
+from __future__ import annotations
+
+import re
+from datetime import date
+from decimal import Decimal
+from typing import Callable, Optional, Sequence, TypeVar
+
+from noctusai_lib.integrations.documents.cpf import format_cpf as _format_cpf, is_valid as _cpf_is_valid
+from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
+
+T = TypeVar("T")
+
+# ─── word-boundary primitives ──────────────────────────────────────────────
+
+
+def _inicio_de_palavra(linha: str, pos: int) -> bool:
+    """Is `pos` a genuine word START in `linha` — position 0, or the
+    character immediately before it is not alphanumeric?"""
+    return pos <= 0 or not linha[pos - 1].isalnum()
+
+
+def _fim_de_palavra(linha: str, pos: int) -> bool:
+    """Is `pos` a genuine word END in `linha` — end of string, or the
+    character AT `pos` is not alphanumeric?"""
+    return pos >= len(linha) or not linha[pos].isalnum()
+
+
+def _proxima_ocorrencia_com_limite(linha: str, busca: int, alvo: str) -> Optional[int]:
+    """The next position `>= busca` where `alvo` occurs in `linha` as a
+    genuine WORD (or phrase) — never a match sitting INSIDE a longer word
+    ("BANCO" inside "UNIBANCO"). `None` when no further such occurrence
+    exists."""
+    while True:
+        achado = linha.find(alvo, busca)
+        if achado < 0:
+            return None
+        if _inicio_de_palavra(linha, achado) and _fim_de_palavra(linha, achado + len(alvo)):
+            return achado
+        busca = achado + 1
+
+
+def _comeca_com_rotulo(linha: str, rotulo: str) -> bool:
+    """Does `linha` start with `rotulo` as a genuine word/phrase — never a
+    prefix match that is really the start of a longer, different word?"""
+    return linha.startswith(rotulo) and _fim_de_palavra(linha, len(rotulo))
+
+
+# ─── the other-field-longer-label guard ────────────────────────────────────
+
+
+def embutido_em_rotulo_maior(
+    linha: str, pos: int, rotulo: str, maiores: Sequence[str]
+) -> bool:
+    """Is this occurrence of `rotulo` at `pos` actually covered by an
+    occurrence of one of `maiores` — a LONGER label belonging to a
+    DIFFERENT field — at ANY position, not just as a tail/prefix? Checked
+    against every candidate in `maiores` so a shorter label never steals a
+    longer sibling's own value regardless of where inside it sits. Both
+    the outer and inner occurrences are word-boundary matched."""
+    fim = pos + len(rotulo)
+    for maior in maiores:
+        busca = 0
+        while True:
+            p = _proxima_ocorrencia_com_limite(linha, busca, maior)
+            if p is None:
+                break
+            if p <= pos and p + len(maior) >= fim:
+                return True
+            busca = p + 1
+    return False
+
+
+def embutido_no_titulo(linha: str, pos: int, titulo_documento: Optional[str]) -> bool:
+    """Is this occurrence at `pos` actually sitting inside an occurrence of
+    the document's own printed title (`titulo_documento`) — a title that
+    happens to contain a real field's label as a literal substring? `None`
+    (no title known for this document family) always answers `False`.
+    Positional, plain-substring (never word-boundaried — a title is a
+    long, specific phrase; requiring a boundary here would only weaken
+    the check for no benefit)."""
+    if not titulo_documento:
+        return False
+    inicio = 0
+    while True:
+        k = linha.find(titulo_documento, inicio)
+        if k < 0:
+            return False
+        if k <= pos < k + len(titulo_documento):
+            return True
+        inicio = k + 1
+
+
+# ─── the shared box matcher ─────────────────────────────────────────────────
+
+
+def proxima_ocorrencia(
+    linha: str,
+    busca: int,
+    rotulo: str,
+    todos_rotulos: Sequence[str],
+    sinonimos: Sequence[str] = (),
+    *,
+    titulo_documento: Optional[str] = None,
+) -> Optional[int]:
+    """The next position `>= busca` in `linha` where `rotulo` genuinely
+    starts a box's OWN label — a word-boundaried match that is never a
+    position sitting inside a longer label belonging to ANOTHER field
+    (`embutido_em_rotulo_maior`, excluding every label in `sinonimos` —
+    `rotulo`'s own synonym family — from the "another field" candidate
+    set) or inside the document's own printed title
+    (`embutido_no_titulo`). `None` when no further admissible occurrence
+    exists on this line."""
+    maiores = tuple(
+        o
+        for o in todos_rotulos
+        if o != rotulo and o not in sinonimos and len(o) > len(rotulo) and rotulo in o
+    )
+    while True:
+        achado = _proxima_ocorrencia_com_limite(linha, busca, rotulo)
+        if achado is None:
+            return None
+        if not embutido_em_rotulo_maior(
+            linha, achado, rotulo, maiores
+        ) and not embutido_no_titulo(linha, achado, titulo_documento):
+            return achado
+        busca = achado + 1
+
+
+def resolver_valor_caixa(
+    linhas: list[str],
+    i: int,
+    linha: str,
+    idx: int,
+    rotulo: str,
+    todos_rotulos: Sequence[str],
+    *,
+    valores_mascarados: Sequence[str] = (),
+    titulo_documento: Optional[str] = None,
+) -> tuple[Optional[str], bool]:
+    """`(valor, mascarado)` for the box whose label starts at
+    `linha[idx : idx + len(rotulo)]`. Tries, in order: same line (colon or
+    not, cut off at the next KNOWN label — word-boundary matched, so a cut
+    -candidate label glued to neighbouring text with no real separator
+    never fires — so two concatenated boxes never bleed into each other),
+    then the next non-blank line that does not itself start a DIFFERENT
+    box (`_comeca_com_rotulo`) and is not the document's own title line.
+    `mascarado` is `True` only when the box's own resolved text is one of
+    `valores_mascarados` verbatim — distinct from "blank"/"never found"."""
+    resto = linha[idx + len(rotulo) :].lstrip(" :").rstrip()
+    corte = len(resto)
+    for outro in todos_rotulos:
+        if outro == rotulo:
+            continue
+        p = _proxima_ocorrencia_com_limite(resto, 0, outro)
+        if p is not None:
+            corte = min(corte, p)
+    resto = resto[:corte].strip(" :")
+
+    if resto in valores_mascarados:
+        return (None, True)
+    if resto:
+        return (resto, False)
+
+    for prox in linhas[i + 1 :]:
+        if titulo_documento is not None and prox == titulo_documento:
+            break
+        if any(o != rotulo and _comeca_com_rotulo(prox, o) for o in todos_rotulos):
+            break
+        if prox in valores_mascarados:
+            return (None, True)
+        if prox:
+            return (prox, False)
+    return (None, False)
+
+
+def campo(
+    linhas: list[str],
+    sinonimos: Sequence[str],
+    *,
+    todos_rotulos: Sequence[str],
+    valores_mascarados: Sequence[str] = (),
+    titulo_documento: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str], bool]:
+    """`(valor, rótulo encontrado, mascarado)` for the FIRST admissible
+    occurrence (document order) of the first synonym — tried
+    LONGEST-FIRST, never in `sinonimos`'s own declared order — that
+    matches a box in `linhas`. A single-label field calls this with a
+    one-element `sinonimos` (`(rotulo,)`); `cartao_cnpj`'s own
+    `situacao_cadastral` field does NOT use this function — see
+    `cartao_cnpj._campo_situacao_cadastral` for why a first-occurrence
+    -wins contract is unsafe for that one field."""
+    for rotulo in sorted(sinonimos, key=len, reverse=True):
+        for i, linha in enumerate(linhas):
+            idx = proxima_ocorrencia(
+                linha, 0, rotulo, todos_rotulos, sinonimos, titulo_documento=titulo_documento
+            )
+            if idx is None:
+                continue
+            valor, mascarado = resolver_valor_caixa(
+                linhas,
+                i,
+                linha,
+                idx,
+                rotulo,
+                todos_rotulos,
+                valores_mascarados=valores_mascarados,
+                titulo_documento=titulo_documento,
+            )
+            return (valor, rotulo, mascarado)
+    return (None, None, False)
+
+
+# ─── shared small parsers (identical across the 3 callers — see the module
+# header) ────────────────────────────────────────────────────────────────
+
+
+def temperar_alta_por_fonte(
+    confidence: ExtractionConfidence, source: TextSource
+) -> ExtractionConfidence:
+    """`alta` is reachable only off a PDF's own text layer — the shared
+    "not a text layer ⇒ not alta" tempering every reader in this family
+    applies to every field except money ones (which use their own,
+    document-specific confidence rule instead)."""
+    if confidence is ExtractionConfidence.ALTA and source is not TextSource.TEXT_LAYER:
+        return ExtractionConfidence.BAIXA
+    return confidence
+
+
+_DATA_BR_RE = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
+
+
+def data_br(txt: Optional[str]) -> Optional[date]:
+    """A `dd/mm/yyyy` date, wherever it sits inside `txt` — `None` for a
+    blank/missing/out-of-range input, never a raised exception."""
+    if not txt:
+        return None
+    m = _DATA_BR_RE.search(txt)
+    if not m:
+        return None
+    try:
+        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except ValueError:
+        return None
+
+
+_PERCENTUAL_RE = re.compile(r"(\d+(?:,\d+)?)\s*%")
+
+
+def percentual(txt: Optional[str]) -> Optional[Decimal]:
+    """A `NN,N%`-shaped percentage, wherever it sits inside `txt` — `None`
+    for a blank/missing/unparseable input."""
+    if not txt:
+        return None
+    m = _PERCENTUAL_RE.search(txt)
+    if not m:
+        return None
+    try:
+        return Decimal(m.group(1).replace(",", "."))
+    except Exception:  # noqa: BLE001 - a malformed number is simply unreadable
+        return None
+
+
+_NOME_CPF_RE = re.compile(
+    r"([^;]+?)\s*[-–—:]\s*CPF\s*[:\-]?\s*(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})",
+    re.IGNORECASE,
+)
+
+
+def pessoas_com_cpf(
+    valor: Optional[str], criar: Callable[[Optional[str], str, bool], T]
+) -> tuple[T, ...]:
+    """`valor`'s `;`-separated "Nome - CPF: 000.000.000-00" entries →
+    `criar(nome, cpf_formatado, cpf_valido)` for each one whose CPF
+    formats cleanly (an unformattable CPF drops that ENTRY, never the
+    whole read). `criar` is each caller's OWN dataclass constructor
+    (`financiamento_imobiliario.PessoaFinanciamento`,
+    `guia_itbi.PessoaItbi`, ...) — this function's job is only the shared
+    parsing, never which type the result carries."""
+    if not valor:
+        return ()
+    pessoas: list[T] = []
+    for parte in valor.split(";"):
+        m = _NOME_CPF_RE.search(parte)
+        if not m:
+            continue
+        nome = m.group(1).strip(" ,") or None
+        cpf_bruto = m.group(2)
+        cpf_fmt = _format_cpf(cpf_bruto)
+        if cpf_fmt is None:
+            continue
+        pessoas.append(criar(nome, cpf_fmt, _cpf_is_valid(cpf_bruto)))
+    return tuple(pessoas)

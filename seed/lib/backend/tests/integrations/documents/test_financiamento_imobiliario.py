@@ -239,6 +239,65 @@ class TestItauQuadro:
         assert f.prazo_meses == 360
 
 
+class TestDataDocumentoSynonymOrdering:
+    """`data_documento`'s synonym tuple used to list the bare "DATA" FIRST
+    — `_campo` tried synonyms in DECLARED order, so a coincidental "DATA"
+    mention anywhere earlier in the document starved the real, specific
+    "DATA DE EMISSAO"/"DATA DO CONTRATO" box further down (the identical
+    class of bug `prazo_meses`'s bare "PRAZO" already needed fixing once).
+    `caixa_rotulada.campo` tries synonyms longest-first regardless of this
+    tuple's own declared order."""
+
+    def test_a_coincidental_bare_data_mention_never_shadows_the_real_box(self):
+        texto = (
+            _quadro()
+            + "\nO IMOVEL FOI ATUALIZADO NESTA DATA CONFORME LAUDO.\n"
+            + "DATA DE EMISSAO: 15/03/2020\n"
+        )
+        f = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato")
+        assert f.data_documento == date(2020, 3, 15)
+        assert f.rotulos["data_documento"] == "DATA DE EMISSAO"
+
+
+class TestFgtsSynonyms:
+    """Other banks' Quadros print the FGTS box under different wording
+    than Itaú's "RECURSOS DO FGTS" — see the module's own `_ROTULOS`
+    comment."""
+
+    def test_conta_vinculada_synonym_is_read(self):
+        f = parse_financiamento_imobiliario(
+            _quadro(fgts="RECURSOS DA CONTA VINCULADA DO FGTS: R$ 20.000,00"),
+            TextSource.OCR,
+            "contrato",
+        )
+        assert f.valor_fgts == Decimal("20000.00")
+
+    def test_valor_da_conta_vinculada_synonym_is_read(self):
+        f = parse_financiamento_imobiliario(
+            _quadro(fgts="VALOR DA CONTA VINCULADA: R$ 20.000,00"),
+            TextSource.OCR,
+            "contrato",
+        )
+        assert f.valor_fgts == Decimal("20000.00")
+
+    def test_bare_fgts_synonym_is_read_as_a_last_resort(self):
+        f = parse_financiamento_imobiliario(
+            _quadro(fgts="FGTS: R$ 20.000,00"), TextSource.OCR, "contrato"
+        )
+        assert f.valor_fgts == Decimal("20000.00")
+
+    def test_bare_fgts_never_overrides_a_masked_recursos_do_fgts_box(self):
+        """The bare "FGTS" is tried LAST (longest-synonym-first) — a
+        masked "RECURSOS DO FGTS: [EM BRANCO]" box is recognised as
+        MASKED (the specific, printed box), never silently overridden by
+        the bare synonym matching the same text."""
+        f = parse_financiamento_imobiliario(
+            _quadro(fgts="RECURSOS DO FGTS: [EM BRANCO]"), TextSource.OCR, "contrato"
+        )
+        assert f.valor_fgts is None
+        assert f.rotulos["valor_fgts"] == "RECURSOS DO FGTS"
+
+
 
 class TestItauContaVendedor:
     """P1/883 (2026-09-27): Itaú prints the seller's account on the line
@@ -450,6 +509,35 @@ class TestFabricationGuards:
         assert f.valor_financiado == Decimal("400000.00")  # NOT nulled
         assert f.confiancas["valor_financiado"] is ExtractionConfidence.BAIXA
         assert f.confiancas["valor_recursos_proprios"] is ExtractionConfidence.BAIXA
+
+    def test_fgts_absent_and_partial_sum_mismatch_raises_the_partial_aviso(self):
+        """The FULL sum check (`quadro_resumo_soma_divergente`) only ever
+        runs with all four legs present — when FGTS itself was never read,
+        financiado + recursos próprios alone already not adding up to
+        compra e venda is exactly what a genuinely-unread FGTS leg would
+        explain."""
+        f = parse_financiamento_imobiliario(
+            _quadro(fgts=""),  # financiado 400k + próprios 80k != compra_venda 500k
+            TextSource.OCR,
+            "contrato",
+        )
+        assert f.valor_fgts is None
+        assert "quadro_resumo_fgts_ausente" in (f.aviso or "")
+        assert "quadro_resumo_soma_divergente" not in (f.aviso or "")
+        assert f.valor_financiado == Decimal("400000.00")  # never nulled
+
+    def test_fgts_absent_but_partial_sum_matching_does_not_raise_the_aviso(self):
+        f = parse_financiamento_imobiliario(
+            _quadro(fgts="", recursos_proprios="RECURSOS PROPRIOS: R$ 100.000,00"),
+            TextSource.OCR,
+            "contrato",
+        )
+        assert f.valor_fgts is None
+        assert "quadro_resumo_fgts_ausente" not in (f.aviso or "")
+
+    def test_fgts_present_never_raises_the_partial_aviso(self):
+        f = parse_financiamento_imobiliario(_quadro(), TextSource.OCR, "contrato")
+        assert "quadro_resumo_fgts_ausente" not in (f.aviso or "")
 
     def test_financiado_over_compra_venda_is_nulled(self):
         f = parse_financiamento_imobiliario(

@@ -49,13 +49,18 @@ exactly that.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Mapping, Optional, Protocol, Sequence, runtime_checkable
 
-from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as _cpf_is_valid
+from noctusai_lib.integrations.documents.caixa_rotulada import (
+    campo as _caixa_campo,
+    data_br as _caixa_data_br,
+    percentual as _caixa_percentual,
+    pessoas_com_cpf,
+    temperar_alta_por_fonte,
+)
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.money import ValorLido, ler_valor
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
@@ -84,12 +89,12 @@ _EM_BRANCO = "[EM BRANCO]"
 
 
 def _temper(confidence: ExtractionConfidence, source: TextSource) -> ExtractionConfidence:
-    """`alta` is reachable only off a PDF's own text layer — own copy, not
-    shared with the sibling extractors, per this family's own convention.
-    Applies to every field EXCEPT the money ones — see `_confianca_valor`."""
-    if confidence is ExtractionConfidence.ALTA and source is not TextSource.TEXT_LAYER:
-        return ExtractionConfidence.BAIXA
-    return confidence
+    """`alta` is reachable only off a PDF's own text layer — shared with
+    `cartao_cnpj`/`financiamento_imobiliario` via
+    `caixa_rotulada.temperar_alta_por_fonte` (identical semantics in all
+    three). Applies to every field EXCEPT the money ones — see
+    `_confianca_valor`."""
+    return temperar_alta_por_fonte(confidence, source)
 
 
 def _confianca_valor(lido: ValorLido, source: TextSource) -> ExtractionConfidence:
@@ -166,81 +171,31 @@ def _todos_rotulos() -> tuple[str, ...]:
 def _campo(
     linhas: list[str], sinonimos: Sequence[str], *, todos_rotulos: Sequence[str]
 ) -> tuple[Optional[str], Optional[str], bool]:
-    """`(valor, rótulo encontrado, mascarado)` for the FIRST synonym in
-    `sinonimos` that matches a box in `linhas`. `mascarado` is `True` only
-    when the box's own value was `[ILEGÍVEL]`/`[EM BRANCO]` (see the module
-    header) — distinct from "never found".
-
-    Same same-line/next-line search `cartao_cnpj._campo` uses (trimmed at
-    the next KNOWN label so two concatenated boxes never bleed into each
-    other) — a smaller, own copy here rather than a shared import: this
-    document family has no measured real-world OCR-shape evidence yet (the
-    pipe-table / column-aligned complexity `cartao_cnpj.py` carries came
-    from a REAL Cartão CNPJ; nothing analogous has been measured against a
-    real guia de ITBI). See this slice's delivery note for the N=2
-    duplication this creates with `financiamento_imobiliario.py`'s own
-    copy — a shared box-matcher module is the N=3 candidate, not yet.
-    """
-    for rotulo in sinonimos:
-        for i, linha in enumerate(linhas):
-            idx = linha.find(rotulo)
-            if idx < 0:
-                continue
-            resto = linha[idx + len(rotulo) :].lstrip(" :").rstrip()
-            corte = len(resto)
-            for outro in todos_rotulos:
-                if outro == rotulo:
-                    continue
-                p = resto.find(outro)
-                if p >= 0:
-                    corte = min(corte, p)
-            resto = resto[:corte].strip(" :")
-            if resto in (_ILEGIVEL, _EM_BRANCO):
-                return (None, rotulo, True)
-            if resto:
-                return (resto, rotulo, False)
-            for prox in linhas[i + 1 :]:
-                if any(o != rotulo and prox.startswith(o) for o in todos_rotulos):
-                    break
-                if prox in (_ILEGIVEL, _EM_BRANCO):
-                    return (None, rotulo, True)
-                if prox:
-                    return (prox, rotulo, False)
-            return (None, rotulo, False)
-    return (None, None, False)
+    """`(valor, rótulo encontrado, mascarado)` for the FIRST admissible
+    synonym in `sinonimos` that matches a box in `linhas` — via the shared
+    `caixa_rotulada.campo`, common to `cartao_cnpj`/
+    `financiamento_imobiliario` now (the other-field-longer-label guard
+    this module never had, every-occurrence-per-line scanning,
+    longest-synonym-first ordering, and word-boundary matching all live
+    there — see that module's header for the full drift history this
+    fixes). `mascarado` is `True` only when the box's own value was
+    `[ILEGÍVEL]`/`[EM BRANCO]` (see the module header) — distinct from
+    "never found"."""
+    return _caixa_campo(
+        linhas, sinonimos, todos_rotulos=todos_rotulos, valores_mascarados=(_ILEGIVEL, _EM_BRANCO)
+    )
 
 
 def _data_br(txt: Optional[str]) -> Optional[date]:
-    if not txt:
-        return None
-    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", txt)
-    if not m:
-        return None
-    try:
-        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-    except ValueError:
-        return None
-
-
-_PERCENTUAL_RE = re.compile(r"(\d+(?:,\d+)?)\s*%")
+    """Shared with `cartao_cnpj`/`financiamento_imobiliario` — identical
+    semantics — via `caixa_rotulada.data_br`."""
+    return _caixa_data_br(txt)
 
 
 def _percentual(txt: Optional[str]) -> Optional[Decimal]:
-    if not txt:
-        return None
-    m = _PERCENTUAL_RE.search(txt)
-    if not m:
-        return None
-    try:
-        return Decimal(m.group(1).replace(",", "."))
-    except Exception:  # noqa: BLE001 - a malformed number is simply unreadable
-        return None
-
-
-_NOME_CPF_RE = re.compile(
-    r"([^;]+?)\s*[-–—:]\s*CPF\s*[:\-]?\s*(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})",
-    re.IGNORECASE,
-)
+    """Shared with `financiamento_imobiliario` — identical semantics — via
+    `caixa_rotulada.percentual`."""
+    return _caixa_percentual(txt)
 
 
 @dataclass(frozen=True)
@@ -254,22 +209,11 @@ class PessoaItbi:
 
 
 def _pessoas(valor: Optional[str]) -> tuple[PessoaItbi, ...]:
-    if not valor:
-        return ()
-    pessoas: list[PessoaItbi] = []
-    for parte in valor.split(";"):
-        m = _NOME_CPF_RE.search(parte)
-        if not m:
-            continue
-        nome = m.group(1).strip(" ,") or None
-        cpf_bruto = m.group(2)
-        cpf_fmt = format_cpf(cpf_bruto)
-        if cpf_fmt is None:
-            continue
-        pessoas.append(
-            PessoaItbi(nome=nome, cpf=cpf_fmt, cpf_valido=_cpf_is_valid(cpf_bruto))
-        )
-    return tuple(pessoas)
+    """Shared parsing with `financiamento_imobiliario._pessoas` via
+    `caixa_rotulada.pessoas_com_cpf` — this module's own `PessoaItbi` type
+    is unchanged, only the `;`-separated "Nome - CPF: ..." parsing itself
+    is shared."""
+    return pessoas_com_cpf(valor, PessoaItbi)
 
 
 # ─── public value object ───────────────────────────────────────────────────
