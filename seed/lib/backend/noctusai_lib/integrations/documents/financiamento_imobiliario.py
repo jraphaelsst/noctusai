@@ -448,8 +448,14 @@ _CONTA_ROTULOS: dict[str, tuple[str, ...]] = {
 #: A numbered Quadro item ("9 - VALOR A SER LIBERADO AO COMPRADOR") ends the
 #: account block `_bloco_conta` gathers.
 #: A box never runs longer than this — a missing item number must not let the
-#: block swallow the rest of the contract.
-_BLOCO_CONTA_MAX_LINHAS = 3
+#: block swallow the rest of the contract. Itaú's table flattens to one
+#: `Rótulo: valor` line per column (Nome, CPF/CNPJ, Cód. Banco, Agência,
+#: Conta, Percentual) in most transcriptions (883, 3 of 3 runs measured).
+_BLOCO_CONTA_MAX_LINHAS = 8
+
+#: A continuation line of the box is `RÓTULO: valor` shaped — anything else
+#: (a clause, a heading) ends it.
+_LINHA_ROTULADA_RE = re.compile(r"^[^:]{1,30}:")
 _ITEM_NUMERADO_RE = re.compile(r"^\d+(\.\d+)?\s*[-–.]\s")
 
 
@@ -457,7 +463,8 @@ def _bloco_conta(linhas: list[str], rotulo: Optional[str], valor: Optional[str])
     """The account box's text when the label line itself carries no account
     sub-field (Itaú: "VALOR A SER LIBERADO AO VENDEDOR: R$ …" with the
     account on the NEXT line) — the label line's value plus the lines after
-    it, up to the next numbered item or blank line. Otherwise `valor` as is."""
+    it while they stay `RÓTULO: valor` shaped, up to the next numbered item.
+    Otherwise `valor` as is."""
     if valor is None or rotulo is None:
         return valor
     sub = tuple(s for sins in _CONTA_ROTULOS.values() for s in sins)
@@ -468,7 +475,11 @@ def _bloco_conta(linhas: list[str], rotulo: Optional[str], valor: Optional[str])
             continue
         seguintes: list[str] = []
         for prox in linhas[i + 1 : i + 1 + _BLOCO_CONTA_MAX_LINHAS]:
-            if not prox.strip() or _ITEM_NUMERADO_RE.match(prox):
+            if (
+                not prox.strip()
+                or _ITEM_NUMERADO_RE.match(prox)
+                or not _LINHA_ROTULADA_RE.match(prox)
+            ):
                 break
             seguintes.append(prox)
         return "\n".join([valor, *seguintes]) if seguintes else valor

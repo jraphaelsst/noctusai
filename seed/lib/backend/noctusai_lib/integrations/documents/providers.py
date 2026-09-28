@@ -59,9 +59,28 @@ is the id the rest of the fleet (and the pricing catalog,
 `llm.models`) already uses — a dated id would be a second, unpriced spelling
 of the same model.
 
-🔴 Real-document measurement is still OWED: the synthetic set is clean
-typeset print. The same harness over prod's uploaded documents was blocked
-on a read permission 2026-09-22 — see the delivery note for that dispatch.
+REAL-DOCUMENT MEASUREMENT — DEAL 883 (2026-09-27): HAIKU STAYS
+--------------------------------------------------------------
+The hard real scans of one closed deal (Itaú financing contract, 25 image-
+only pages; bank proposta photo; Guia de ITBI; Cartão CNPJ; two certidões de
+casamento; a comprovante de endereço) were read through the real extractors
+with each model pinned here in-process, and scored against the signed
+contract (the private answer key). 2-3 runs per document per model:
+
+    document          haiku-4-5                  sonnet-5
+    contrato (x3)     money 3/3 · conta 3/3      money 3/3 · conta 3/3
+                      bank code 0/3              bank code 3/3
+    guia ITBI (x2)    2/2                        0/2 — reply hit the 4096-token
+                                                 output cap, truncated
+    proposta, cartão, comprovante, casamentos    tie (same fields ok/missed)
+    USD per contract  0.027                      0.128   (~4.5x per document:
+                                                 ~2.8x input tokens per page
+                                                 image, 2x price, more output)
+
+Haiku's one systematic miss: it reads the table border before Itaú's
+"Cód. Banco" cell ("| 033") as a leading digit. Everything else that looked
+like model instability on 883 was the parser (fixed in
+`financiamento_imobiliario`). Sonnet does not win overall, so no pin moves.
 """
 from __future__ import annotations
 

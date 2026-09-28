@@ -268,6 +268,33 @@ class TestItauContaVendedor:
         f = parse_financiamento_imobiliario(_ITAU_QUADRO + self._ITEM_8, TextSource.OCR, "contrato")
         assert f.conta_credito_vendedor.conta != "88888-8"
 
+    def test_one_sub_field_per_line_shape(self):
+        """The more common flattening of Itaú's table (883, 3 of 3 runs):
+        one `Rótulo: valor` line per column, then a clause paragraph."""
+        texto = _ITAU_QUADRO + (
+            "8 - VALOR A SER LIBERADO AO VENDEDOR: R$ 400.000,00\n\n"
+            "Nome: FULANA DE TAL\n"
+            f"CPF / CNPJ: {CPF_VALIDO}\n"
+            "Cód. Banco: 033\n"
+            "Agência: 1234-\n"
+            "Conta: 01000123-4\n"
+            "Percentual: 100.00%\n"
+            "9 - VALOR A SER LIBERADO AO COMPRADOR: R$ 0,00\n"
+            "Cód. Banco: 341\nAgência: 9999\nConta: 88888-8\n"
+        )
+        c = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato").conta_credito_vendedor
+        assert (c.banco_codigo, c.agencia, c.conta) == ("033", "1234", "01000123-4")
+        assert c.titular_cpf == CPF_VALIDO
+
+    def test_a_clause_after_the_box_ends_it(self):
+        texto = _ITAU_QUADRO + (
+            "8 - VALOR A SER LIBERADO AO VENDEDOR: R$ 400.000,00\n"
+            "O Itaú pagará o valor indicado no item 8 por meio de crédito na conta.\n"
+            "Conta: 77777-7\n"
+        )
+        c = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato").conta_credito_vendedor
+        assert c.conta is None
+
     def test_an_unknown_bank_code_is_not_guessed(self):
         texto = _ITAU_QUADRO + self._ITEM_8.replace("Cód. Banco: 0033", "Cód. Banco: 0999")
         c = parse_financiamento_imobiliario(texto, TextSource.OCR, "contrato").conta_credito_vendedor
