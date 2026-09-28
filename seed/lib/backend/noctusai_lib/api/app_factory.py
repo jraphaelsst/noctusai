@@ -35,6 +35,19 @@ from .middleware import (
 
 logger = logging.getLogger(__name__)
 
+#: Request headers a cross-origin browser call may carry. Every header the seed
+#: FE api client sends (`seed/lib/frontend/src/api.ts` `buildHeaders`) MUST be
+#: here — a missing one fails the CORS preflight, `fetch` throws, and the FE
+#: toasts "Servidor indisponivel". `X-Noctus-Client` was missing: every product's
+#: `coreApi` call (`/api/me/consents`, `/api/admin/llm-spend/{org}` → Core) failed
+#: on every page load until 2026-09-28. Pinned by
+#: `tests/api/test_cors_allow_headers_cover_fe_client.py`.
+DEFAULT_CORS_ALLOW_HEADERS: tuple[str, ...] = (
+    "Authorization", "Content-Type", "Accept", "Origin",
+    "X-Requested-With", "X-Correlation-ID", "X-Request-ID",
+    "X-Noctus-Client",
+)
+
 
 def configure_app(
     app: FastAPI,
@@ -220,10 +233,7 @@ def configure_app(
     # -----------------------------------------------------------------------
     # CORS
     # -----------------------------------------------------------------------
-    _allow_headers = cors_allow_headers or [
-        "Authorization", "Content-Type", "Accept", "Origin",
-        "X-Requested-With", "X-Correlation-ID", "X-Request-ID",
-    ]
+    _allow_headers = cors_allow_headers or list(DEFAULT_CORS_ALLOW_HEADERS)
     _expose_headers = cors_expose_headers or [
         "X-Correlation-ID", "X-Response-Time-Ms", "Content-Disposition",
     ]
