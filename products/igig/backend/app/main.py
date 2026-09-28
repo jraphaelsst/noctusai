@@ -39,7 +39,6 @@ from app.routers.integracoes_router import router as integracoes_router
 from app.routers.pauta_router import router as pauta_router
 from app.routers.custos_router import router as custos_router
 from app.routers.relatorio_router import router as relatorio_router
-from app.routers.webhook_router import router as webhook_router
 from app.routers.integracoes_email_router import router as integracoes_email_router
 from app.routers.orcamento_email_router import router as orcamento_email_router
 from app.routers.gmail_webhook_router import router as gmail_webhook_router
@@ -112,8 +111,12 @@ app = create_product_app(
     standard_routers=["health", "notificacoes", "team"],
     # Per-product routers. The seed's `example_router` scaffold was removed
     # once the six módulos landed — it shipped a live /api/example CRUD in a
-    # production agency ERP. `webhook_router` stays as the signed-receiver
-    # shape the signature provider will use (NOC-REMEDIATE[igig-assinatura]).
+    # production agency ERP. `webhook_router` (the seed's OWN skeleton,
+    # `/api/webhooks/example`) was removed the same way (achado plat#15): it
+    # was still mounted here, unsigned when `EXAMPLE_WEBHOOK_SECRET` was
+    # unset, and had never been renamed into the real signature receiver —
+    # that one is `comercial_router.assinatura_webhook`
+    # (`/api/comercial/assinatura/webhook`), already live.
     #
     # 🔴 ORDER MATTERS for the card hubs: each seed `card_hub_routers` pair is
     # (collection, entity). The COLLECTION router carries literal paths
@@ -126,7 +129,7 @@ app = create_product_app(
         distribuicao_router, integracoes_router, financeiro_router,
         comercial_stages_router, negocio_card_hub_routers[0], comercial_funil_router,
         negocio_card_hub_routers[1], comercial_router,
-        custos_router, relatorio_router, webhook_router,
+        custos_router, relatorio_router,
         # Wave-2 slice B — e-mail (SMTP + Gmail reply watch). Own files, own
         # prefixes (`/api/integracoes/email/*`, `/api/orcamentos/{id}/enviar|emails`,
         # `/api/webhooks/gmail/push`) — no shape collision with the routers above.

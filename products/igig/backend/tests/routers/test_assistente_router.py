@@ -87,6 +87,32 @@ class TestAssistente:
         assert "Padaria Sol" in prompt and "Proposta Retainer" in prompt
         assert "Leads" in prompt, "the stage label, not its id"
 
+    def test_includes_the_pre_qualificacao_fields(self, api, igig_db, core_db, chat):
+        """achado #8: the aba's own text says the assistant "lê o lead", but
+        `montar_contexto` used to drop nicho/dores/orçamento/canais — exactly
+        the four fields a formulário lead carries and the OTHER módulo-1
+        sources (manual/WhatsApp/Meta) don't have."""
+        core_db.table("organizations").insert({"id": ORG, "nome": "Agência Teste"}).execute()
+        publico = api.raw().post(
+            "/api/comercial/leads/publico",
+            json={
+                "org_id": ORG, "nome": "Ana", "empresa": "Padaria Sol",
+                "nicho": "Alimentação", "canais_atuais": "Instagram, TikTok",
+                "dores": "pouco alcance", "orcamento_disponivel": 5000,
+            },
+        )
+        assert publico.status_code == 201, publico.text
+        [negocio_pre] = [n for n in igig_db.table("negocio")._data]
+
+        resp = api.post(f"/api/comercial/negocios/{negocio_pre['id']}/assistente",
+                        json={"acao": "resumo"})
+        assert resp.status_code == 200, resp.text
+        prompt = "\n".join(str(m.get("content")) for m in chat.provider.calls[0]["messages"])
+        assert "Alimentação" in prompt
+        assert "Instagram, TikTok" in prompt
+        assert "pouco alcance" in prompt
+        assert "5000" in prompt
+
     def test_rascunho_names_the_channel(self, api, negocio, chat):
         resp = api.post(f"/api/comercial/negocios/{negocio['id']}/assistente",
                         json={"acao": "rascunho_mensagem", "canal": "email"})

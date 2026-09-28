@@ -1,11 +1,13 @@
 """Lead-source setup — the Integrações cards for WhatsApp (WAHA) and Meta Lead Ads
 (contract §E2).
 
-  GET /api/integracoes/leads/whatsapp    status + the webhook URL to paste in WAHA
-  PUT /api/integracoes/leads/whatsapp    {base_url, api_key?, session?}   (org admins)
-  GET /api/integracoes/leads/meta        status + the callback URL for the Meta app
-  PUT /api/integracoes/leads/meta        {page_id, verify_token?, page_access_token?, app_secret?}
-                                         (org admins)
+  GET    /api/integracoes/leads/whatsapp    status + the webhook URL to paste in WAHA
+  PUT    /api/integracoes/leads/whatsapp    {base_url, api_key?, session?}   (org admins)
+  DELETE /api/integracoes/leads/whatsapp    disconnect                       (org admins)
+  GET    /api/integracoes/leads/meta        status + the callback URL for the Meta app
+  PUT    /api/integracoes/leads/meta        {page_id, verify_token?, page_access_token?, app_secret?}
+                                            (org admins)
+  DELETE /api/integracoes/leads/meta        disconnect                       (org admins)
 
 WAHA is configured like social-wiring's connection (base url + api key +
 session; the inbound webhook is `/api/webhooks/waha/{token}` with a per-org
@@ -129,6 +131,26 @@ async def salvar_whatsapp(
     return success_response(_whatsapp_out(row, cfg))
 
 
+@router.delete("/whatsapp", dependencies=[Depends(exigir_admin_da_org)])
+async def desconectar_whatsapp(
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+    cfg: Any = Depends(get_settings),
+) -> dict:
+    """Disconnect WhatsApp (WAHA) lead intake (achado #20: there was no way
+    to do this at all — only reconfigure). The old webhook token stops
+    routing immediately; reconnecting mints a new one."""
+    org_id = _org(auth)
+    if not canais_org.desconectar(db, org_id, "whatsapp"):
+        raise HTTPException(
+            status_code=404,
+            detail={"detail": "WhatsApp (WAHA) não estava configurado.",
+                    "code": "whatsapp_nao_configurado"},
+        )
+    logger.info("whatsapp (leads) desconectado org=%s", org_id)
+    return success_response(_whatsapp_out(None, cfg))
+
+
 # ── Meta Lead Ads ────────────────────────────────────────────────────
 def _meta_out(row: dict | None, cfg: Any) -> dict:
     config = (row or {}).get("config") or {}
@@ -224,3 +246,23 @@ async def salvar_meta(
     )
     logger.info("meta lead ads configurado org=%s page=%s", org_id, payload.page_id)
     return success_response(_meta_out(row, cfg))
+
+
+@router.delete("/meta", dependencies=[Depends(exigir_admin_da_org)])
+async def desconectar_meta(
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+    cfg: Any = Depends(get_settings),
+) -> dict:
+    """Disconnect Meta Lead Ads intake (achado #20). Frees the Page id for
+    reconnection elsewhere (`salvar_meta`'s cross-org uniqueness check reads
+    `ativo=True` rows via `listar_por_canal`)."""
+    org_id = _org(auth)
+    if not canais_org.desconectar(db, org_id, "meta_leads"):
+        raise HTTPException(
+            status_code=404,
+            detail={"detail": "Meta Lead Ads não estava configurado.",
+                    "code": "meta_leads_nao_configurado"},
+        )
+    logger.info("meta lead ads desconectado org=%s", org_id)
+    return success_response(_meta_out(None, cfg))

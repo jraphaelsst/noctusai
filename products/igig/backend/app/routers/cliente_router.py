@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from noctusai_lib.integrations.persistence import Op, QuerySpec, RecordNotFound
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.pipelines import exigir_admin_da_org
 from app.repositories import Repositorios
 from app.schemas.cliente import (
     ClienteCreate,
@@ -130,7 +131,8 @@ async def ativar_cliente(
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
 
-@router.delete("/{cliente_id}", status_code=status.HTTP_200_OK)
+@router.delete("/{cliente_id}", status_code=status.HTTP_200_OK,
+              dependencies=[Depends(exigir_admin_da_org)])
 async def remover_cliente(
     cliente_id: str,
     auth: tuple = Depends(get_current_user_org),
@@ -141,6 +143,12 @@ async def remover_cliente(
     Hard delete — the schema cascades to marca / contrato / pauta / tarefa /
     apontamento. Módulo 6 will need a soft-delete for billing history; that
     is a deliberate follow-up, not an oversight.
+
+    Admin-only (plat achado #3): the FE already confirms with a dialog naming
+    every table the cascade touches (`ClienteDadosPanel.tsx`); the server had
+    no matching gate, so any logged-in member — not just an org admin — could
+    trigger it, inconsistent with every other destructive/financial write in
+    this product (WAHA/Meta setup, automações).
     """
     _user, _token, raw_org = auth
     org_id = str(coerce_org_uuid(raw_org))

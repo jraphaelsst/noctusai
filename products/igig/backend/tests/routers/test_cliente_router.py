@@ -49,6 +49,18 @@ def api(client, repos):
     app.dependency_overrides.pop(get_repositorios_admin, None)
 
 
+@pytest.fixture
+def admin(api):
+    """`api`, bypassing the org-admin gate — `DELETE` is admin-only (plat
+    achado #3); every OTHER verb here stays reachable by any member."""
+    from app.main import app
+    from app.pipelines import exigir_admin_da_org
+
+    app.dependency_overrides[exigir_admin_da_org] = lambda: None
+    yield api
+    app.dependency_overrides.pop(exigir_admin_da_org, None)
+
+
 class TestAuthBoundary:
     """Unauth'd callers never reach the store."""
 
@@ -145,10 +157,29 @@ class TestCrud:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ativo"
 
-    def test_delete_then_detail_returns_404(self, api):
+    def test_delete_then_detail_returns_404(self, admin):
+        criado = admin.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
+        assert admin.delete(f"/api/clientes/{criado['id']}").status_code == 200
+        assert admin.get(f"/api/clientes/{criado['id']}").status_code == 404
+
+
+class TestDeleteIsAdminOnly:
+    """Achado #3 (plat): the FE dialog already names the cascade — the
+    server had no matching gate, so any member could trigger it."""
+
+    def test_non_admin_is_403(self, api):
         criado = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
-        assert api.delete(f"/api/clientes/{criado['id']}").status_code == 200
-        assert api.get(f"/api/clientes/{criado['id']}").status_code == 404
+        resp = api.delete(f"/api/clientes/{criado['id']}")
+        assert resp.status_code == 403
+
+    def test_non_admin_delete_does_not_remove_the_row(self, api, repos):
+        criado = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
+        api.delete(f"/api/clientes/{criado['id']}")
+        assert repos.cliente.buscar(ORG, criado["id"])["nome"] == "Padaria Sol"
+
+    def test_admin_can_delete(self, admin):
+        criado = admin.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
+        assert admin.delete(f"/api/clientes/{criado['id']}").status_code == 200
 
 
 class TestMisses:
@@ -163,8 +194,8 @@ class TestMisses:
     def test_ativar_miss_returns_404(self, api):
         assert api.post("/api/clientes/nao-existe/ativar").status_code == 404
 
-    def test_delete_miss_returns_404(self, api):
-        assert api.delete("/api/clientes/nao-existe").status_code == 404
+    def test_delete_miss_returns_404(self, admin):
+        assert admin.delete("/api/clientes/nao-existe").status_code == 404
 
     def test_miss_detail_message_is_portuguese(self, api):
         """The seed wraps errors as {"error": {"code", "message"}} — not
@@ -189,7 +220,7 @@ class TestTenantIsolation:
         assert [c["nome"] for c in body["itens"]] == ["Padaria Sol"]
         assert body["total"] == 1
 
-    def test_cannot_delete_another_orgs_client(self, api, repos):
+    def test_cannot_delete_another_orgs_client(self, admin, repos):
         alheio = repos.cliente.criar("org-de-outra-agencia", {"nome": "Concorrente"})
-        assert api.delete(f"/api/clientes/{alheio['id']}").status_code == 404
+        assert admin.delete(f"/api/clientes/{alheio['id']}").status_code == 404
         assert repos.cliente.buscar("org-de-outra-agencia", alheio["id"])["nome"] == "Concorrente"

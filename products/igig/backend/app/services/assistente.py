@@ -134,8 +134,15 @@ def montar_contexto(db: Any, admin_db: Any, org_id: str, negocio_id: str) -> dic
     )
     timeline = get_timeline(CARD_HUB_NEGOCIO, admin_db, org_id, negocio_id, limit=30)["items"]
     return {
-        "lead": _enxuto(lead, ("nome", "empresa", "email", "telefone", "instagram", "origem",
-                               "como_conheceu", "especificacoes", "observacoes", "status")),
+        "lead": _enxuto(lead, (
+            "nome", "empresa", "email", "telefone", "instagram", "origem", "como_conheceu",
+            "especificacoes", "observacoes", "status",
+            # Módulo-1 pré-qualificação fields (achado #8) — the aba's own
+            # text claims the assistant "lê o lead", but these were the four
+            # fields a formulário lead actually carries and the model never
+            # saw: nicho, orçamento, canais already in use, and what hurts.
+            "nicho", "canais_atuais", "dores", "orcamento_disponivel",
+        )),
         "negocio": {
             **(_enxuto(negocio, ("titulo", "valor_estimado", "status", "stage_entered_at",
                                  "motivo_perda", "created_at")) or {}),

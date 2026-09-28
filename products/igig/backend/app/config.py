@@ -12,12 +12,11 @@ class IgIgSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:igig"
 
-    # ── Webhook receiver (consumed by app/routers/webhook_router.py) ──
-    # Empty by default → ``webhook_endpoint(bypass_when_unset=True)``
-    # accepts unsigned payloads with a WARNING (early-dev only). Set in
-    # ``.env`` (``EXAMPLE_WEBHOOK_SECRET=…``) to enforce verification.
-    # Rename per vendor (``resend_webhook_secret`` / ``meta_webhook_secret`` / etc.).
-    example_webhook_secret: str = ""
+    # ── Assistente IA (routers/assistente_router.py) ──────────────────
+    # Per-CALLER limit on the one endpoint that spends real Anthropic budget
+    # per request (plat achado #22 — see that router's module docstring for
+    # why this exists instead of a global default).
+    assistente_rate_limit: str = "20/minute"
 
     # ── Signature-provider webhook (routers/comercial_router.py) ──────
     # HMAC-SHA256 (hex, `X-Webhook-Hmac-SHA256`) of the raw body. EMPTY ⇒ the

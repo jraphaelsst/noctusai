@@ -45,6 +45,7 @@ __all__ = [
     "cifrar",
     "chave_cofre",
     "decifrar",
+    "desconectar",
     "integracao",
     "listar_por_canal",
     "meta_leads_da_linha",
@@ -118,6 +119,24 @@ def listar_por_canal(db: Any, canal: str) -> list[dict]:
         db.table("integracao").select("*").eq("canal", canal).eq("ativo", True).execute().data
         or []
     )
+
+
+def desconectar(db: Any, org_id: str, canal: str) -> bool:
+    """Disconnect the org's channel — a full row delete, the same shape
+    `IntegracaoRepository.desconectar` (SMTP/Gmail) already uses. Returns
+    `False` when nothing was configured (404 for the caller), never a
+    silent no-op.
+
+    A hard delete rather than `ativo=False` on purpose: the routing
+    `webhook_token` (WAHA) / verify token (Meta) go with it, so a
+    reconnect mints a fresh one — there is no "disconnect but keep taking
+    calls on the old secret" half-state (achado #20: there was no way to
+    disconnect a lead source at all)."""
+    atual = integracao(db, org_id, canal)
+    if atual is None:
+        return False
+    db.table("integracao").delete().eq("id", atual["id"]).eq("org_id", org_id).execute()
+    return True
 
 
 def salvar_integracao(

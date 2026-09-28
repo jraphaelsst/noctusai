@@ -85,9 +85,19 @@ class TestAuthBoundary:
     def test_meta_put_requires_auth(self, api):
         assert api.raw().put("/api/integracoes/leads/meta", json={}).status_code == 401
 
+    def test_whatsapp_delete_requires_auth(self, api):
+        assert api.raw().delete("/api/integracoes/leads/whatsapp").status_code == 401
+
+    def test_meta_delete_requires_auth(self, api):
+        assert api.raw().delete("/api/integracoes/leads/meta").status_code == 401
+
     def test_writes_are_admin_only(self, api):
         resp = api.put("/api/integracoes/leads/whatsapp", json={"base_url": "http://waha:3000"})
         assert resp.status_code == 403
+
+    def test_disconnects_are_admin_only(self, api):
+        assert api.delete("/api/integracoes/leads/whatsapp").status_code == 403
+        assert api.delete("/api/integracoes/leads/meta").status_code == 403
 
 
 # ── WhatsApp (WAHA) setup ────────────────────────────────────────────
@@ -126,6 +136,28 @@ class TestWhatsappConfig:
                          json={"base_url": "http://waha:3000", "api_key": "k"})
         assert resp.status_code == 409
         assert resp.json()["code"] == "cofre_nao_configurado"
+
+    def test_disconnect_clears_the_config_and_the_webhook_url(self, admin, igig_db):
+        admin.put("/api/integracoes/leads/whatsapp",
+                  json={"base_url": "http://waha:3000", "session": "agencia"})
+        resp = admin.delete("/api/integracoes/leads/whatsapp")
+        assert resp.status_code == 200, resp.text
+        dados = resp.json()["data"]
+        assert dados["configurado"] is False and dados["webhook_url"] is None
+        assert [r for r in igig_db.table("integracao")._data if r["canal"] == "whatsapp"] == []
+
+    def test_disconnect_without_a_configuration_is_404(self, admin):
+        resp = admin.delete("/api/integracoes/leads/whatsapp")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "whatsapp_nao_configurado"
+
+    def test_reconnecting_after_disconnect_mints_a_new_webhook_token(self, admin):
+        primeiro = admin.put("/api/integracoes/leads/whatsapp",
+                             json={"base_url": "http://waha:3000", "session": "agencia"})
+        admin.delete("/api/integracoes/leads/whatsapp")
+        segundo = admin.put("/api/integracoes/leads/whatsapp",
+                            json={"base_url": "http://waha:3000", "session": "agencia"})
+        assert primeiro.json()["data"]["webhook_url"] != segundo.json()["data"]["webhook_url"]
 
 
 # ── WAHA webhook ─────────────────────────────────────────────────────
@@ -223,6 +255,19 @@ class TestMetaConfig:
             "page_id": PAGINA, "verify_token": "verifica-12345", "page_access_token": "t"})
         assert resp.status_code == 409
         assert resp.json()["code"] == "pagina_em_uso"
+
+    def test_disconnect_frees_the_page_for_reconnection_elsewhere(self, admin, igig_db):
+        admin.put("/api/integracoes/leads/meta", json={
+            "page_id": PAGINA, "verify_token": "verifica-12345", "page_access_token": "t"})
+        resp = admin.delete("/api/integracoes/leads/meta")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["configurado"] is False
+        assert [r for r in igig_db.table("integracao")._data if r["canal"] == "meta_leads"] == []
+
+    def test_disconnect_without_a_configuration_is_404(self, admin):
+        resp = admin.delete("/api/integracoes/leads/meta")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "meta_leads_nao_configurado"
 
 
 # ── Meta Lead Ads webhook ────────────────────────────────────────────
