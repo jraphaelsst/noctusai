@@ -3,13 +3,17 @@
  *
  * The board itself is `<EsteiraBoard/>` (seed `PipelineBoard` + the esteira's
  * move rules, card sheet and "nova tarefa"), shared with the Clientes card.
- * This page adds only the cliente filter, kept in the URL (`?cliente=<id>`) so
- * a filtered board is linkable and survives a reload (roadmap R9).
+ * This page adds the cliente filter, kept in the URL (`?cliente=<id>`) so a
+ * filtered board is linkable and survives a reload (roadmap R9) — and the
+ * `?tarefa=<id>` deep link automation/card-hub reminder notifications point
+ * at (`/esteira?tarefa=<id>`), which nothing ever read: the sheet never
+ * opened, the param never cleared, a missing tarefa never explained.
  *
  * `min-w-0` on the root: the board scrolls horizontally inside its own
  * container; the page never does (R0 — smoke finding 5).
  */
 import { useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
 
 import { EsteiraBoard } from "@/components/esteira/EsteiraBoard";
 import { useClientes } from "@/hooks/useClientes";
@@ -17,6 +21,7 @@ import { useClientes } from "@/hooks/useClientes";
 export default function Esteira() {
   const [params, setParams] = useSearchParams();
   const clienteId = params.get("cliente") ?? "";
+  const tarefaId = params.get("tarefa");
   const { clientes, loading } = useClientes();
 
   function filtrar(id: string) {
@@ -24,6 +29,26 @@ export default function Esteira() {
     if (id) proximo.set("cliente", id);
     else proximo.delete("cliente");
     setParams(proximo, { replace: true });
+  }
+
+  function limparTarefaParam() {
+    setParams(
+      (atual) => {
+        if (!atual.has("tarefa")) return atual;
+        const proximo = new URLSearchParams(atual);
+        proximo.delete("tarefa");
+        return proximo;
+      },
+      { replace: true },
+    );
+  }
+
+  function aoResolverTarefaDoLink(encontrada: boolean) {
+    if (encontrada) return; // the param stays until the sheet is closed
+    toast.error(
+      "Tarefa não encontrada — pode ter sido excluída, ou pertence a um cliente fora do filtro atual.",
+    );
+    limparTarefaParam();
   }
 
   return (
@@ -52,7 +77,12 @@ export default function Esteira() {
         </label>
       </header>
 
-      <EsteiraBoard clienteId={clienteId || undefined} />
+      <EsteiraBoard
+        clienteId={clienteId || undefined}
+        deepLinkTarefaId={tarefaId}
+        onDeepLinkResolved={aoResolverTarefaDoLink}
+        onCardClose={limparTarefaParam}
+      />
     </div>
   );
 }

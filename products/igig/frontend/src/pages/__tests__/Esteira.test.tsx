@@ -9,9 +9,19 @@
  * stage editing (R3).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useSearchParams } from "react-router-dom";
+
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
+}));
+
+// The tarefa detail sheet's "Repertório da marca" panel is unrelated to the
+// deep-link behaviour under test here and needs its own query-shape wiring
+// (an object, not the generic `{data: []}` fallback every other hook below
+// gets) — stubbed out exactly like `TarefaDetalhe.test.tsx` does.
+vi.mock("@/components/RepertorioSidebar", () => ({ RepertorioSidebar: () => null }));
 
 const { mockUser } = vi.hoisted(() => ({
   mockUser: { current: { id: "usuario-1", user_metadata: {} as Record<string, unknown> } },
@@ -30,6 +40,7 @@ vi.mock("@tanstack/react-query", () => {
 });
 
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import Esteira from "../Esteira";
 import type { TarefaCard } from "@/hooks/useEsteira";
 import { ESTEIRA_BOARD_KEY } from "@/hooks/useEsteira";
@@ -76,10 +87,19 @@ function mockBoardState(state: Record<string, unknown>) {
   }) as never);
 }
 
+/** Surfaces the live `?tarefa=` param via the SAME router context `Esteira`
+ * reads/writes, so a test can assert the URL was actually updated — a bare
+ * `MemoryRouter` has no `window.location` to inspect. */
+function ProbeTarefaParam() {
+  const [params] = useSearchParams();
+  return <div data-testid="probe-tarefa-param">{params.get("tarefa") ?? "none"}</div>;
+}
+
 function renderEsteira(url = "/esteira") {
   return render(
     <MemoryRouter initialEntries={[url]}>
       <Esteira />
+      <ProbeTarefaParam />
     </MemoryRouter>,
   );
 }
@@ -169,5 +189,38 @@ describe("Esteira — stage editing is for org admins (R3)", () => {
     mockBoardState({ data: BOARD, isPending: false, isFetching: false, error: null });
     renderEsteira();
     expect(screen.getByText("Configurar etapas")).toBeInTheDocument();
+  });
+});
+
+describe("Esteira — ?tarefa=<id> deep link (tech-lead addendum, 2026-09)", () => {
+  it("opens the tarefa's detail sheet when the id is on the current board", () => {
+    mockBoardState({ data: BOARD, isPending: false, isFetching: false, error: null });
+    renderEsteira("/esteira?tarefa=tarefa-1");
+    expect(screen.getByTestId("tarefa-detalhe")).toBeInTheDocument();
+    expect(screen.getAllByText("Reels de lançamento").length).toBeGreaterThan(0);
+  });
+
+  it("shows a toast and never opens a sheet for an id not on the board", () => {
+    mockBoardState({ data: BOARD, isPending: false, isFetching: false, error: null });
+    renderEsteira("/esteira?tarefa=nao-existe");
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("não encontrada"));
+    expect(screen.queryByTestId("tarefa-detalhe")).not.toBeInTheDocument();
+  });
+
+  it("does not toast while the board is still loading — waits for real data", () => {
+    mockBoardState({ data: undefined, isPending: true, isFetching: true, error: null });
+    renderEsteira("/esteira?tarefa=tarefa-1");
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("closing the deep-linked sheet clears the ?tarefa= param", () => {
+    mockBoardState({ data: BOARD, isPending: false, isFetching: false, error: null });
+    renderEsteira("/esteira?tarefa=tarefa-1");
+    expect(screen.getByTestId("probe-tarefa-param")).toHaveTextContent("tarefa-1");
+
+    const fechar = screen.getAllByRole("button", { name: /fechar/i })[0];
+    fireEvent.click(fechar);
+
+    expect(screen.getByTestId("probe-tarefa-param")).toHaveTextContent("none");
   });
 });
