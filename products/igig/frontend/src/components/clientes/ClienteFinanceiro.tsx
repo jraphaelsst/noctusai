@@ -73,6 +73,7 @@ export function ClienteFinanceiro({ clienteId }: { clienteId: string }) {
                 <p className="text-xs text-muted-foreground">
                   {f.vencimento ? `vence ${dataBR(f.vencimento)}` : "sem vencimento"}
                   {f.pago_em ? ` · paga em ${dataBR(f.pago_em)}` : ""}
+                  {f.status === "vencida" && f.enviada_em ? ` · enviada em ${dataBR(f.enviada_em)}` : ""}
                 </p>
               </div>
               <span className="font-medium text-foreground">{brl(f.valor_total)}</span>

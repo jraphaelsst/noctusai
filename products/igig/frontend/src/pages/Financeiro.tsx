@@ -215,8 +215,9 @@ export default function Financeiro() {
         <p className="mb-3 text-xs text-muted-foreground">
           Cobrados na fatura do mês seguinte. As peças do plano recorrente nunca
           contam como excedente, mesmo em meses com mais publicações previstas
-          no calendário — só peças avulsas (fora do plano) além do pacote geram
-          cobrança extra.
+          no calendário — mas elas ocupam a capacidade do pacote. Peças avulsas
+          (fora do plano) só geram cobrança extra pela parte do pacote que o
+          plano ainda não usou nesta competência.
         </p>
         {erroExc ? (
           <p role="alert" className="text-sm text-destructive">Não foi possível carregar os excedentes.</p>
@@ -414,6 +415,11 @@ function LinhaFatura({
     <li className="py-2">
       <div className="flex flex-wrap items-center gap-3">
         <Badge variant={STATUS_VARIANT[fatura.status]}>{fatura.status}</Badge>
+        {fatura.status === "vencida" && fatura.enviada_em && (
+          <span className="text-xs text-muted-foreground">
+            · enviada em {dataBR(fatura.enviada_em)}
+          </span>
+        )}
         {clienteNome && (
           <span className="min-w-0 max-w-[12rem] truncate text-sm font-medium text-foreground">
             {clienteNome}
