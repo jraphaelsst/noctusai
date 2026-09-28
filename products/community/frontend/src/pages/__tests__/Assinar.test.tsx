@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 const mockGet = vi.fn();
 const mockPost = vi.fn();
@@ -44,7 +45,7 @@ vi.mock("@noctusai/seed/infra", () => {
   };
 });
 
-vi.mock("@/pages/checkout/TurnstileWidget", () => ({
+vi.mock("@/components/TurnstileWidget", () => ({
   TurnstileWidget: ({ onVerify }: { onVerify: (t: string) => void }) => (
     <button type="button" data-testid="turnstile-mock-verify" onClick={() => onVerify("test-token")}>
       Verificar
@@ -52,9 +53,13 @@ vi.mock("@/pages/checkout/TurnstileWidget", () => ({
   ),
 }));
 
-function renderPage(ui: React.ReactElement) {
+function renderPage(ui: React.ReactElement, path = "/assinar") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 /** `PlanoPublico` (amendment A17) — deliberately narrower than module 1's
@@ -273,5 +278,23 @@ describe("Assinar — per-tier payment methods (amendment A17)", () => {
 
     await waitFor(() => expect(mockGet).toHaveBeenCalledWith("/api/planos/publicos"));
     expect(mockGet).not.toHaveBeenCalledWith("/api/planos", expect.anything());
+  });
+});
+
+describe("Assinar — Ninho Vazio `?plano=` pre-selection", () => {
+  it("pre-selects the tier named in the query string (cadastro → login → checkout path)", async () => {
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />, "/assinar?plano=p-1");
+    await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toHaveValue("p-1"));
+    // anonymous visitor: `/api/eu` is never called
+    expect(mockGet).not.toHaveBeenCalledWith("/api/eu");
+  });
+
+  it("labels a zero-price tier as signup-only", async () => {
+    mockGet.mockResolvedValue({ items: [{ ...PLANO, id: "p-0", nome: "Gratuito", preco_centavos: 0, metodos_disponiveis: [] }], total: 1 });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />);
+    expect(await screen.findByRole("option", { name: "Gratuito — gratuito (faça seu cadastro)" })).toBeDisabled();
   });
 });

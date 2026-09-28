@@ -30,8 +30,15 @@
  * `""`) for cartao. Never persisted anywhere client-side — held only in
  * page-local `useState`, never in `localStorage`, never appended to a URL,
  * never logged.
+ *
+ * Ninho Vazio (CONTRACT.md §Frontend FE-B): `?plano=<id>` pre-selects the
+ * tier (the `/cadastro` → login → checkout path and the portal's upgrade
+ * cards), and a signed-in visitor gets nome/e-mail (and, for a member, the
+ * telefone from `/api/portal/minha-conta`) pre-filled — only into fields
+ * still empty, never overwriting what they typed.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { CheckCircle2 } from "lucide-react";
 import { Button, Input } from "@noctusai/lib/design-system";
 import { Card, EmptyState, ErrorState, Field, FormError, Select } from "@/components/FormControls";
@@ -45,15 +52,11 @@ import {
   type CheckoutMetodo,
   type CheckoutResponse,
 } from "@/hooks/useCheckout";
-import { TurnstileWidget } from "@/pages/checkout/TurnstileWidget";
+import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { PixQrCard } from "@/pages/checkout/PixQrCard";
-
-/** Read literally so Vite inlines it at build time (same convention as
- * `env.ts`'s `BACKEND_API_URL`/`CORE_URL` getters). Empty string when unset
- * — `TurnstileWidget` renders its own "unavailable" fallback in that case. */
-function getTurnstileSiteKey(): string {
-  return (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) ?? "";
-}
+import { useAuthStore } from "@noctusai/seed/infra";
+import { useEu, isMembro } from "@/hooks/useEu";
+import { useMinhaConta } from "@/hooks/usePortal";
 
 const METODO_LABELS: Record<CheckoutMetodo, string> = {
   cartao: "Cartão de crédito",
@@ -62,13 +65,17 @@ const METODO_LABELS: Record<CheckoutMetodo, string> = {
 };
 
 function planoLabel(p: PlanoPublico): string {
+  // Ninho Vazio: the free tier is never bought here (the backend answers
+  // 409 "Este plano é gratuito — faça seu cadastro.") — say so up front.
+  if (p.preco_centavos === 0) return `${p.nome} — gratuito (faça seu cadastro)`;
   const preco = `${formatBRLFromCents(p.preco_centavos)}/${p.ciclo === "mensal" ? "mês" : "ano"}`;
   return p.metodos_disponiveis.length === 0 ? `${p.nome} — ${preco} (indisponível no momento)` : `${p.nome} — ${preco}`;
 }
 
 export default function Assinar() {
   const { data, isPending, isFetching, error } = usePlanosPublicos();
-  const [planoId, setPlanoId] = useState("");
+  const [searchParams] = useSearchParams();
+  const [planoId, setPlanoId] = useState(() => searchParams.get("plano") ?? "");
   const [metodo, setMetodo] = useState<CheckoutMetodo | "">("");
   const [nome, setNome] = useState("");
   const [email, setEmail] = useState("");
@@ -78,6 +85,21 @@ export default function Assinar() {
   const [formError, setFormError] = useState<string | null>(null);
   const [result, setResult] = useState<CheckoutResponse | null>(null);
   const checkout = useCheckout();
+
+  // Pre-fill for a signed-in visitor (the query never runs for an anonymous one).
+  const { user } = useAuthStore();
+  const eu = useEu({ enabled: !!user });
+  const conta = useMinhaConta({ enabled: isMembro(eu.data) });
+  useEffect(() => {
+    const me = eu.data;
+    if (!me) return;
+    setNome((v) => v || me.nome);
+    setEmail((v) => v || me.email);
+  }, [eu.data]);
+  useEffect(() => {
+    const tel = conta.data?.membro.telefone;
+    if (tel) setTelefone((v) => v || tel);
+  }, [conta.data]);
 
   const showSkeleton = isPending && !data;
   const isRefreshing = isFetching && !!data;
@@ -253,7 +275,7 @@ export default function Assinar() {
                   />
                 </Field>
               )}
-              <TurnstileWidget siteKey={getTurnstileSiteKey()} onVerify={setTurnstileToken} onExpire={() => setTurnstileToken("")} />
+              <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken("")} />
               <Button
                 type="submit"
                 variant="primary"

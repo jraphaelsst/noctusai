@@ -8,6 +8,8 @@
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
+import { createRoleLayout } from "@/layouts/RoleLayout";
+import { MemberLayout } from "@/layouts/MemberLayout";
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
 import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone, Settings2, CalendarHeart } from "lucide-react";
@@ -53,6 +55,20 @@ const Transmissoes = lazy(() => import("@/pages/whatsapp/Transmissoes"));
 // same seam as a detail route next to its list — no status_pagina row
 // needed since it's unreachable from nav).
 const WhatsAppConexoes = lazy(() => import("@/pages/whatsapp/Conexoes"));
+
+// Ninho Vazio — member portal + public signup + role routing
+// (projects/ninho-vazio/CONTRACT.md §Frontend FE-B). A `membro` gets
+// MemberLayout (portal nav only) and every non-portal path redirects to
+// `/portal`; staff keep `Layout` below unchanged. The role comes from
+// `GET /api/eu` inside `createRoleLayout` (seam: `createProductApp.Layout`).
+const PortalMinhaConta = lazy(() => import("@/pages/portal/MinhaConta"));
+const PortalGrupoterapia = lazy(() => import("@/pages/portal/Grupoterapia"));
+// PUBLIC — self-signup, same `publicRoute` seam as `/assinar`.
+const Cadastro = lazy(() => import("@/pages/Cadastro"));
+const PORTAL_ROUTES = [
+  { path: "/portal", component: PortalMinhaConta },
+  { path: "/portal/grupoterapia", component: PortalGrupoterapia },
+];
 
 // Configurações — admin-only "Chaves de API" (community shares
 // social-wiring's mechanism for provider credentials). Nav entry visible
@@ -121,8 +137,11 @@ const Layout = createProductLayout({
   NotificationBell: infra.NotificationBell,
 });
 
+const RoleAwareLayout = createRoleLayout({ Staff: Layout, Membro: MemberLayout });
+
 export default createProductApp({
   routes: [
+    ...PORTAL_ROUTES,
     { path: "/", component: Dashboard },
     { path: "/membros", component: Membros },
     { path: "/planos", component: Planos },
@@ -137,7 +156,7 @@ export default createProductApp({
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Configuracoes },
   ],
-  Layout,
+  Layout: RoleAwareLayout,
   ...infra.appConfig,
   Landing,
   Login,
@@ -151,5 +170,6 @@ export default createProductApp({
   publicRoutes: [
     { path: "/inscrever", component: Inscrever },
     { path: "/assinar", component: Assinar },
+    { path: "/cadastro", component: Cadastro },
   ],
 });

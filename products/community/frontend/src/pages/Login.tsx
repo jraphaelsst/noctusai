@@ -1,5 +1,5 @@
-import { useNavigate, Link } from "react-router-dom";
-import { UsersRound } from "lucide-react";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { Feather } from "lucide-react";
 import { LoginForm } from "@noctusai/lib/design-system";
 import { supabase } from '@noctusai/seed/infra';
 import { env } from "@noctusai/lib";
@@ -7,18 +7,35 @@ import { env } from "@noctusai/lib";
 // canonical seed resolver (env.CORE_URL) — no hand-rolled localhost:5173
 const CORE_URL = env.CORE_URL;
 
+/** A plan id is a UUID; anything else in `?plano=` is ignored (never echoed
+ * into a navigation target). */
+const PLANO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * After login: `/login?plano=<id>` (set by `/cadastro` when a paid tier was
+ * picked) continues to `/assinar?plano=<id>` pre-filled; otherwise `/`,
+ * where `RoleLayout` sends a member to `/portal` and staff to the back office.
+ */
+export function destinoAposLogin(plano: string | null): string {
+  if (plano && PLANO_ID_RE.test(plano)) return `/assinar?plano=${encodeURIComponent(plano)}`;
+  return "/";
+}
+
 export default function Login() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
 
   return (
     <div className="relative">
       <LoginForm
-        brandIcon={UsersRound}
-        brandTitle="Community"
-        brandSubtitle="A minimal NoctusAI product"
+        brandIcon={Feather}
+        brandTitle="Ninho Vazio"
+        brandSubtitle="Entre para continuar a sua travessia"
         supabase={supabase}
-        onSuccess={() => navigate("/")}
+        onSuccess={() => navigate(destinoAposLogin(params.get("plano")))}
         showForgotPassword
+        showRegisterLink
+        registerPath="/cadastro"
         renderLink={({ to, className, children }) => (
           <Link to={to} className={className}>{children}</Link>
         )}

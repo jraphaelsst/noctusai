@@ -1,10 +1,14 @@
 /**
- * TurnstileWidget — Cloudflare Turnstile embed for the public `/assinar`
- * checkout page (community-m2-contract.md product decision P2).
+ * TurnstileWidget — Cloudflare Turnstile embed for this product's public
+ * forms: `/assinar` checkout (community-m2-contract.md product decision P2)
+ * and `/cadastro` signup (ninho-vazio CONTRACT.md, same `turnstile_token`
+ * check as `/api/checkout`).
  *
- * Co-located with `Assinar.tsx` rather than promoted to `@noctusai/lib`:
- * this is the FIRST public form on this product to need Turnstile, so
- * there is no cross-product recurrence yet (N=1). The contract's seam is
+ * Moved from `pages/checkout/` to `components/` when `/cadastro` became its
+ * second consumer; the site-key read moved with it (`getTurnstileSiteKey`
+ * is the widget's default) so neither page re-types the env lookup. Not
+ * promoted to `@noctusai/lib`: both consumers are in this one product —
+ * no cross-product recurrence yet. The contract's seam is
  * on the BACKEND side — "put the Protocol+Fake+Real in the seed
  * (`noctusai_lib.integrations`), not in the product" — which is a Python
  * verifier the backend engineer owns; this FE widget is a thin embed of
@@ -68,8 +72,16 @@ function loadTurnstileScript(): Promise<void> {
   return scriptLoadPromise;
 }
 
+/** Read literally so Vite inlines it at build time (same convention as
+ * `env.ts`'s `BACKEND_API_URL`/`CORE_URL` getters). Empty string when unset
+ * — the widget renders its own "unavailable" fallback in that case. */
+export function getTurnstileSiteKey(): string {
+  return (import.meta.env.VITE_TURNSTILE_SITE_KEY as string | undefined) ?? "";
+}
+
 export interface TurnstileWidgetProps {
-  siteKey: string;
+  /** Defaults to `VITE_TURNSTILE_SITE_KEY` (`getTurnstileSiteKey`). */
+  siteKey?: string;
   onVerify: (token: string) => void;
   onExpire?: () => void;
 }
@@ -81,7 +93,7 @@ export interface TurnstileWidgetProps {
  * functions with the Submit button disabled (no token available), and any
  * bypass attempt is caught server-side by the 403.
  */
-export function TurnstileWidget({ siteKey, onVerify, onExpire }: TurnstileWidgetProps) {
+export function TurnstileWidget({ siteKey = getTurnstileSiteKey(), onVerify, onExpire }: TurnstileWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
