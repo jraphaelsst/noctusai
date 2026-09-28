@@ -79,6 +79,22 @@ _DEFAULT_SAMPLE_MEMBER = {
 _DEFAULT_USER_ID = TEST_USER_ID
 
 
+def _caller_membership_row(org_id: str, org_role: str = "member") -> dict:
+    """The CALLER's own ``public.noctus_users`` row.
+
+    Since SEC-1 (2026-09-28) the seed team router resolves the caller's org
+    and role from ``noctus_users`` — never ``user_metadata`` (user-writable) —
+    so an authenticated list/invite/remove needs the caller's membership row
+    seeded, exactly as it exists in production. Without it the router answers
+    403 "Usuario sem organizacao associada" by design.
+    """
+    return {
+        "id": TEST_USER_ID, "nome": "Caller", "email": "caller@test.com",
+        "org_id": org_id, "org_role": org_role, "role": "user",
+        "avatar_url": None, "created_at": "2026-01-01T00:00:00Z",
+    }
+
+
 class TeamRouterListMembersSuite:
     """GET /api/team — framework's team-list endpoint.
 
@@ -87,14 +103,30 @@ class TeamRouterListMembersSuite:
     """
 
     sample_member: dict = _DEFAULT_SAMPLE_MEMBER
+    #: The org the caller's trusted ``noctus_users`` row belongs to.
+    expected_org_id: ClassVar[str] = TEST_ORG_ID
 
     def test_list_members(self, client):
-        """GET /api/team returns org members."""
-        client._mock_supabase.set_table_data("noctus_users", [self.sample_member])
+        """GET /api/team returns the members of the caller's TRUSTED org."""
+        client._mock_supabase.set_table_data("noctus_users", [
+            _caller_membership_row(self.expected_org_id),
+            {**self.sample_member, "org_id": self.expected_org_id},
+            {**self.sample_member, "id": "other-org-member", "org_id": "some-other-org"},
+        ])
         resp = client.get("/api/team")
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert isinstance(data, list)
+        assert "other-org-member" not in {m["id"] for m in data}
+
+    def test_list_members_without_membership_row_is_403(self, client):
+        """No trusted ``noctus_users`` row ⇒ no org ⇒ 403, whatever the
+        caller's ``user_metadata.org_id`` claims (SEC-1)."""
+        client._mock_supabase.set_table_data("noctus_users", [
+            {**self.sample_member, "org_id": self.expected_org_id},
+        ])
+        resp = client.get("/api/team")
+        assert resp.status_code == 403
 
     def test_list_members_no_auth(self, client):
         """401 when no authorization header."""
@@ -227,10 +259,11 @@ class TeamFlowSuite:
         instead of empty. Without ``org_id`` the filter drops every row
         and ``len(data) == 2`` fails.
         """
+        # Row 1 is the CALLER (TEST_USER_ID): the router resolves the org
+        # from the caller's own trusted membership row (SEC-1, 2026-09-28).
         client._mock_supabase.set_table_data("noctus_users", [
-            {"id": "u1", "nome": "Alice", "email": "alice@test.com",
-             "org_id": self.expected_org_id, "org_role": "owner",
-             "avatar_url": None, "created_at": "2026-01-01T00:00:00Z"},
+            {**_caller_membership_row(self.expected_org_id, "owner"),
+             "nome": "Alice", "email": "alice@test.com"},
             {"id": "u2", "nome": "Bob", "email": "bob@test.com",
              "org_id": self.expected_org_id, "org_role": "member",
              "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
