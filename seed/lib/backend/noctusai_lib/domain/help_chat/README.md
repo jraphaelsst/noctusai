@@ -154,18 +154,24 @@ All keyword-only on `create_help_chat_router(...)`:
   swap for a `chat_completion`-backed non-streaming implementation without
   touching the router's request/response contract.
 
-## Known seed gap: Anthropic prompt caching is requested but not yet wired end-to-end
+## Anthropic prompt caching
 
 This organ calls `noctusai_lib.integrations.llm.build_cached_messages(...,
 provider="anthropic")`, which marks the system message
 `"cache_control": {"type": "ephemeral"}` — the sanctioned seed idiom (see
 `products/igig/backend/app/services/assistente.py` for the same call
-shape). **However**, `AnthropicProvider._split_system_and_messages` (the
-helper both `chat_completion` and `chat_completion_stream` use to build the
-Anthropic SDK call) currently extracts only the system message's `content`
-string and drops the `cache_control` key entirely — so today, no Anthropic
-provider consumer actually gets prompt-cache pricing/latency benefits, this
-organ included. This is a pre-existing seed gap, not something introduced
-here; flagged as `scoped-improvement:` in this organ's delivery note for
-the tech-lead to schedule as its own slice (touches a shared,
-heavily-consumed provider file — outside a single-organ's blast radius).
+shape). `AnthropicProvider._split_system_and_messages` (the helper both
+`chat_completion` and `chat_completion_stream` use to build the Anthropic
+SDK call) translates that marker into Anthropic's content-block system
+shape — `[{"type": "text", "text": ..., "cache_control": {...}}]` — so the
+knowledge file (the stable, repeated-per-request part of every prompt this
+organ sends) IS written to Anthropic's prompt cache, and every subsequent
+turn in the same conversation reads it back at cache-hit pricing/latency.
+Fixed by `7477a639d` (2026-09-28) — previously the helper read only the
+system message's `content` string and silently dropped `cache_control`, so
+no Anthropic consumer, this organ included, ever got the benefit. Covered
+end-to-end (help-chat's own system prompt through the provider's
+translation seam, not just each half in isolation) by
+`TestBuildConversationMessagesReachesAnthropicProvider` in
+`tests/domain/help_chat/test_service.py`; the provider-level translation
+itself is pinned by `tests/integrations/llm/test_anthropic_prompt_cache.py`.

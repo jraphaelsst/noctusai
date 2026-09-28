@@ -75,6 +75,33 @@ class TestBuildConversationMessages:
         )
         assert "cache_control" not in messages[0]
 
+    def test_the_cache_control_marker_actually_reaches_the_anthropic_provider(self):
+        """Closes the exact gap `README.md`'s 'Known seed gap' section used
+        to document (fixed by 7477a639d, 2026-09-28): the OTHER tests in this
+        file only prove `build_conversation_messages` ATTACHES the seed's
+        internal `cache_control` marker; `test_anthropic_prompt_cache.py`
+        only proves the provider's translation seam handles a synthetic
+        message in isolation. Neither, alone, proves the two compose — this
+        threads help-chat's own system knowledge through BOTH and asserts
+        the marker survives into the Anthropic SDK's content-block shape."""
+        from noctusai_lib.integrations.llm.providers.anthropic_provider import (
+            _split_system_and_messages,
+        )
+
+        system_prompt = build_system_prompt(product_name="IgIg", knowledge="REGRA-X: so admin edita.")
+        messages = build_conversation_messages(
+            system_prompt=system_prompt,
+            history=[{"role": "user", "content": "Como edito uma regra?"}],
+            provider="anthropic",
+        )
+
+        system, conversation = _split_system_and_messages(messages)
+
+        assert system == [
+            {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}},
+        ]
+        assert conversation == [{"role": "user", "content": "Como edito uma regra?"}]
+
 
 class TestHelpChatRateLimiter:
     def test_allows_up_to_the_limit_then_denies(self):
