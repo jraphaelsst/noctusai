@@ -117,10 +117,29 @@ async def get_membro_context(auth: tuple = Depends(_get_any_user_org)) -> tuple:
         raise http_error(403, "Cadastro de membro não encontrado.")
     return user, token, coerce_org_uuid(raw_org), rows[0]
 
+
+# `GET /api/eu` (contract §Identity, slice BE-A): "any authenticated org
+# user (uses the base auth, not the staff gate)" — neither
+# `get_current_user_org` (403s a membro) nor `get_membro_context` (403s
+# anyone without a linked `membros` row) fits. `_get_any_user_org` is
+# exactly that base primitive already; this is a public re-export of it
+# (same pattern as `get_user_role`/`get_org_id` below) rather than a
+# second `make_get_current_user_org(...)` wiring.
+get_any_org_user = _get_any_user_org
+
+
 # Plain-call helpers (NOT to be wired via ``Depends(...)``) — kept for
 # imperative call-sites and for backward compatibility.
 get_user_role = _deps.get_user_role
 get_org_id = _deps.get_org_id
+# Public schema (`noctus_users`, `auth.admin.*`) — needed by
+# `noctusai_lib.domain.org.provision_invited_identity` /
+# `attach_user_to_org` / `find_auth_user_id_by_email` (contract
+# §Identity: `POST /api/cadastro`, `POST /api/membros/{id}/acesso`).
+# Same client `_create_team_router`'s `/api/team/accept` uses via
+# `deps.get_core_client()` — re-exported here so product code never
+# reaches into `_db` directly.
+get_core_client = _deps.get_core_client
 
 
 # Late-binding wrappers so test patches on ``_db.get_*`` reach call sites.

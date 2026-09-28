@@ -67,6 +67,12 @@ class SeedSettings(ProductSettings):
     # amendment A10) ──
     checkout_rate_limit: str = "20/minute"
 
+    # ── Ninho Vazio, slice BE-A: public self-signup (CONTRACT.md §Identity,
+    # `POST /api/cadastro`) — "rate-limit 5/min per IP". Tighter than
+    # `checkout_rate_limit` on purpose: a legitimate visitor submits this
+    # form once, ever.
+    cadastro_rate_limit: str = "5/minute"
+
     # Stripe's Checkout Session REQUIRES both `success_url`/`cancel_url`
     # (`StripeHostedCheckout.create_checkout` raises without either) —
     # the public `/assinar` page (contract §Frontend) is where the payer
