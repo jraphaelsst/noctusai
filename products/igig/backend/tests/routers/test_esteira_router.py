@@ -315,6 +315,46 @@ class TestCriarTarefa:
         assert "Pauta não encontrado" not in resp.text
 
 
+# ── One tarefa by id, regardless of the board's cliente filter ────────
+class TestObterTarefa:
+    """`?tarefa=<id>` deep links (a decision or automation notification) used
+    to resolve ONLY against whatever the board's active `?cliente=` filter
+    happened to have loaded — a tarefa that genuinely exists, but belongs to
+    a DIFFERENT cliente than the one currently filtered, read as "tarefa não
+    encontrada". This endpoint has no filter at all, so the frontend can
+    fetch-and-open it independent of the board's current view."""
+
+    def test_requires_auth(self, api, tarefa):
+        resp = api.raw().get(f"/api/esteira/tarefas/{tarefa['id']}")
+        assert resp.status_code == 401
+
+    def test_returns_the_rich_card_shape(self, api, tarefa, pauta):
+        resp = api.get(f"/api/esteira/tarefas/{tarefa['id']}")
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["id"] == tarefa["id"]
+        # The same nested shape the board's card carries — the detail sheet
+        # needs these, unlike the narrow `TarefaOut` create/edit responses.
+        assert body["pauta"]["id"] == pauta["id"]
+        assert body["cliente"]["nome"] == "Padaria Sol"
+
+    def test_missing_tarefa_returns_404(self, api):
+        assert api.get("/api/esteira/tarefas/nao-existe").status_code == 404
+
+    def test_another_orgs_tarefa_returns_404(self, api, core_db, igig_db, pauta):
+        """Org-scoped: `qc.carregar` filters on `org_id`, so a tarefa that
+        exists but belongs to a different org is indistinguishable from one
+        that does not exist at all."""
+        de_outra_org = igig_db.table("tarefa").insert(
+            {
+                "org_id": "outra-org", "pauta_id": pauta["id"], "titulo": "Alheia",
+                "etapa_id": pauta["id"],  # any non-null id; not read by this test
+            }
+        ).execute().data[0]
+        resp = api.get(f"/api/esteira/tarefas/{de_outra_org['id']}")
+        assert resp.status_code == 404
+
+
 # ── Edit ────────────────────────────────────────────────────────────
 class TestAtualizarTarefa:
     """achado 3: there was no way to fix título/responsável/prazo/pauta
@@ -674,6 +714,17 @@ class TestPortalPublico:
         assert [n["user_id"] for n in enviadas] == [TEST_USER_ID], "the link's emitter"
         assert enviadas[0]["org_id"] == ORG
         assert enviadas[0]["metadata"]["decisao"] == "aprovado"
+
+    def test_the_notification_link_opens_the_tarefa_not_just_the_board(
+        self, api, core_db, tarefa, token,
+    ):
+        """The client's decision notification used to link to a bare
+        `/esteira` — the board, not the tarefa the client just decided on —
+        the same gap `plat achado #10` already closed for the automation
+        notifications (`AutomacaoContext.link`)."""
+        api.raw().post(f"/api/esteira/aprovar/{token}", json={"decisao": "aprovado"})
+        aviso = core_db.table("notifications").inserted_payloads[0]
+        assert aviso["metadata"]["link"] == f"/esteira?tarefa={tarefa['id']}"
 
     def test_response_reports_whether_the_notify_actually_landed(self, api, token):
         """achado 8: the portal used to say 'sua agência já foi notificada'

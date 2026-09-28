@@ -7,6 +7,10 @@ Three surfaces in one router, because they are one workflow:
                                                     writes = org admins)
     GET   /api/esteira/board?cliente_id=            the kanban (seed columns)
     POST  /api/esteira/tarefas                      create a tarefa (entry stage)
+    GET   /api/esteira/tarefas/{id}                 one tarefa, ANY cliente — a
+                                                    `?tarefa=<id>` deep link opens it
+                                                    even outside the board's filter
+    PATCH /api/esteira/tarefas/{id}                 edit título/responsável/prazo/pauta
     DELETE /api/esteira/tarefas/{id}                delete a tarefa (204)
     POST  /api/esteira/tarefas/{id}/mover-etapa     drag: +1 forward, back w/ motivo
     GET   /api/esteira/tarefas/{id}/apontamentos    timesheet segments
@@ -178,6 +182,24 @@ async def atribuir_papel_etapa(
     except RegraViolada as erro:
         raise http_de(erro) from erro
     return success_response(etapa)
+
+
+@router.get("/tarefas/{tarefa_id}")
+async def obter_tarefa(
+    tarefa_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+) -> dict:
+    """One tarefa, in the SAME rich shape `GET /board` puts on a card
+    (pauta/cliente/responsável joined) — regardless of any `?cliente=` filter
+    active on the page. A `?tarefa=<id>` deep link (a decision or automation
+    notification) used to be resolvable ONLY against whatever the board's
+    current filter happened to have loaded, so a tarefa belonging to another
+    cliente read as "não encontrada" even though it existed. No
+    `response_model`, same as `/board`: a narrow `TarefaOut` (used by the
+    create/edit endpoints) has no `pauta`/`cliente`/`responsavel`, and the
+    detail sheet needs those to render."""
+    return success_response(esteira_quadro.buscar_tarefa(db, _org(auth), tarefa_id))
 
 
 @router.post("/tarefas", response_model=TarefaOut, status_code=status.HTTP_201_CREATED)
@@ -582,7 +604,13 @@ def _avisar_agencia(
             metadata={
                 "tarefa_id": str(tarefa.get("id")),
                 "decisao": payload.decisao,
-                "link": "/esteira",
+                # `?tarefa=<id>`, not a bare `/esteira` — same fix `plat
+                # achado #10` already applied to the automation notifications
+                # (`AutomacaoContext.link`, `services/automacoes.py`): the
+                # board, not the specific tarefa, used to be all this link
+                # opened, so seeing "Cliente aprovou: X" meant finding X by
+                # hand on the board. `Esteira.tsx` already reads this param.
+                "link": f"/esteira?tarefa={tarefa.get('id')}",
             },
         )
         return enviadas > 0

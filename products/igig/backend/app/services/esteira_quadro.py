@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "TAREFA_SELECT",
+    "buscar_tarefa",
     "criar_tarefa",
     "decidir_aprovacao",
     "excluir_tarefa",
@@ -98,6 +99,31 @@ def quadro(
         }
 
     return group_into_colunas(CFG, stages, linhas, row_to_dto=dto, limite_cards=limite_por_etapa)
+
+
+def buscar_tarefa(db: Any, org_id: str, tarefa_id: str) -> dict:
+    """One tarefa, in the SAME rich shape `quadro()` puts on a card (pauta,
+    cliente, responsável joined) — so a deep link (a decision or automation
+    notification's `?tarefa=<id>`) can open the sheet regardless of which
+    `?cliente=` filter is active on the board, instead of reading as "não
+    encontrada" for a tarefa that exists but belongs to a filtered-out
+    cliente. `qc.carregar` 404s (seed `NotFoundError`) for an unknown or
+    another org's tarefa — same as `board.py`'s own per-row lookups."""
+    row = qc.carregar(db, CFG.card_table, org_id, tarefa_id, select=TAREFA_SELECT, rotulo="tarefa")
+    pautas = qc.por_ids(
+        db, "pauta", org_id, [row.get("pauta_id")],
+        select="id, titulo, formato, data_publicacao, marca_id",
+    )
+    clientes = qc.por_ids(db, "cliente", org_id, [row.get("cliente_id")], select="id, nome")
+    responsaveis = qc.por_ids(
+        db, "profissional", org_id, [row.get("responsavel_id")], select="id, nome"
+    )
+    return {
+        **row,
+        "pauta": pautas.get(str(row.get("pauta_id"))),
+        "cliente": clientes.get(str(row.get("cliente_id"))),
+        "responsavel": responsaveis.get(str(row.get("responsavel_id"))),
+    }
 
 
 # ── Create ───────────────────────────────────────────────────────────
