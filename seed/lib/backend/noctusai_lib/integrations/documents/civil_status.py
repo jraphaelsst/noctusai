@@ -173,6 +173,38 @@ _CONJUGE_ESTRUTURADO_FIM_RE = re.compile(
     r"\bREGIME\s+DE\s+BENS\b|\bAVERBA\w*\b|\bANOTAC\w*\b|\bOBSERVAC\w*\b"
 )
 
+#: 🔴 THE SAME BUG, ON A DOCUMENT THAT PREDATES THE CNJ BLOCK LAYOUT —
+#: real, measured (P2 corpus, 2026-09-28): an "inteiro teor" narrative
+#: certidão carries no "Primeiro/Segundo Cônjuge" heading at all, but the
+#: SAME shape — a per-nubente qualification clause naming that person's OWN
+#: status BEFORE this marriage — under "O contratante ... estado civil
+#: solteiro" / "A contratante ... estado civil ..." ("contraente" on some
+#: cartório templates; both words name the party to the union, one per
+#: gender, in this narrative style). Same `ESTADO CIVIL` label, same
+#: multi-row reach past `_LABEL_WINDOW`, same wrong-verdict risk — measured
+#: as this parser reading "solteiro" (the groom's pre-marriage status)
+#: where the certidão's own verdict is "casado".
+_NUBENTE_NARRATIVA_INICIO_RE = re.compile(r"\b[OA]\s+CONTRA(?:TANTE|ENTE)\b")
+
+
+def _apos_ultimo_marcador_sem_fechamento(
+    norm: str, at: int, abertura: "re.Pattern[str]", fechamento: "re.Pattern[str]"
+) -> bool:
+    """Is `norm[at]` positioned after the LAST `abertura` match before it,
+    with no `fechamento` match in between?
+
+    The shared shape behind both per-nubente qualification guards below —
+    a document carries one layout's opener or the other, never both, but
+    "nearest opener, no closer since" is the same algorithm either way.
+    """
+    ultimo = None
+    for m in abertura.finditer(norm, 0, at):
+        ultimo = m
+    if ultimo is None:
+        return False
+    return fechamento.search(norm, ultimo.end(), at) is None
+
+
 #: Whole word/phrase -> canonical token. Requires an `ESTADO CIVIL` label —
 #: see the module docstring's "never guess" note.
 _ESTADO_CIVIL_PALAVRAS: dict[str, str] = {
@@ -280,12 +312,19 @@ def _dentro_de_bloco_de_conjuge_estruturado(norm: str, at: int) -> bool:
     in between means the block already ended — `at` is back in the
     document's own couple-level territory, not the nubente's.
     """
-    ultimo_inicio = None
-    for m in _CONJUGE_ESTRUTURADO_INICIO_RE.finditer(norm, 0, at):
-        ultimo_inicio = m
-    if ultimo_inicio is None:
-        return False
-    return _CONJUGE_ESTRUTURADO_FIM_RE.search(norm, ultimo_inicio.end(), at) is None
+    return _apos_ultimo_marcador_sem_fechamento(
+        norm, at, _CONJUGE_ESTRUTURADO_INICIO_RE, _CONJUGE_ESTRUTURADO_FIM_RE
+    )
+
+
+def _dentro_de_qualificacao_de_nubente_narrativa(norm: str, at: int) -> bool:
+    """Is `norm[at]` sitting inside an old-narrative "O/A contratante ..."
+    per-nubente qualification clause — never the document's own couple-level
+    verdict? Same algorithm as `_dentro_de_bloco_de_conjuge_estruturado`,
+    against the pre-CNJ opener — see `_NUBENTE_NARRATIVA_INICIO_RE`."""
+    return _apos_ultimo_marcador_sem_fechamento(
+        norm, at, _NUBENTE_NARRATIVA_INICIO_RE, _CONJUGE_ESTRUTURADO_FIM_RE
+    )
 
 
 def _averbacao_start(norm: str) -> Optional[int]:
@@ -481,10 +520,13 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
 
     rotulados: list[tuple[str, str]] = []
     for m in _ESTADO_CIVIL_VALOR_RE.finditer(norm):
-        if _dentro_de_bloco_de_conjuge_estruturado(norm, m.start()):
-            # A nubente's own "Primeiro/Segundo Cônjuge" block states THEIR
-            # status BEFORE this marriage — never the document's own verdict.
-            # See `_dentro_de_bloco_de_conjuge_estruturado`'s docstring.
+        if _dentro_de_bloco_de_conjuge_estruturado(
+            norm, m.start()
+        ) or _dentro_de_qualificacao_de_nubente_narrativa(norm, m.start()):
+            # A nubente's own "Primeiro/Segundo Cônjuge" block, or an
+            # old-narrative "O/A contratante ..." clause, states THEIR
+            # status BEFORE this marriage — never the document's own
+            # verdict. See both guards' own docstrings.
             continue
         valor = _ESTADO_CIVIL_PALAVRAS[m.group(1)]
         achado = _label_before(norm, m.start())

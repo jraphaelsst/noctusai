@@ -123,6 +123,15 @@ _MULTI_HOLDER_LABELS = (
     "NOMES ATUAIS DOS CONJUGES",
     "NOME DOS CONJUGES",
     "NOMES DOS CONJUGES",
+    # An "inteiro teor" holder list (P2 corpus, 2026-09-28) heads the same
+    # two co-equal names with a column-header describing every field the
+    # block carries, still ending in "DOS CONJUGES" like every variant
+    # above. Each subsequent line then holds one spouse's FULL qualification
+    # clause on the SAME line as their name (`FULANO, nascido aos ...,
+    # filho de ...`) rather than a bare name — see
+    # `_coleta_titulares_multiplos`'s use of `_melhor_leitura_de_nome`.
+    "NOMES COMPLETOS DE SOLTEIRO, DATAS E LOCAIS DE NASCIMENTO, "
+    "NACIONALIDADE E FILIACOES DOS CONJUGES",
 )
 
 #: Labels that introduce SOMEONE ELSE's name, or a name-shaped value that
@@ -369,6 +378,40 @@ def _strip_trailing_citation(value: str) -> str:
     return value
 
 
+def _ate_a_primeira_virgula(value: str) -> str:
+    """`value`, cut just before its own first comma.
+
+    A THIRD real shape (P2 corpus, 2026-09-28), alongside the two
+    `_strip_trailing_citation` already handles: the "older narrative"
+    certidão qualification clause glues the name and the rest of the
+    sentence onto ONE line with no institutional token in between —
+    `ELE: FULANO DE TAL, nascido no dia ...` or `FULANO DE TAL SILVA,
+    nascido aos ..., natural desta Capital, ..., filho de ...`. Neither the
+    raw line nor its citation-trimmed form is name-shaped (the qualification
+    prose runs to 50+ words and reads "NASCIDO"/"NATURAL"/"FILHO" — none of
+    them institutional tokens, so `_strip_trailing_citation` leaves the line
+    untouched) — but the name itself is exactly the text before the comma.
+    """
+    virgula = value.find(",")
+    return value[:virgula] if virgula > 0 else value
+
+
+def _melhor_leitura_de_nome(value: str) -> Optional[str]:
+    """The first well-formed name among `value` as printed, with a trailing
+    registry-citation clause cut, and cut at its own first comma — tried in
+    that order, each STRICTLY a fallback for when the previous one failed
+    `looks_like_a_name`, never a replacement: a value that is already
+    name-shaped as printed is returned as printed, so a genuine name that
+    happens to contain a comma-adjacent decoy is never truncated needlessly.
+    `None` when none of the three readings is name-shaped.
+    """
+    for candidato in (value, _strip_trailing_citation(value), _ate_a_primeira_virgula(value)):
+        candidato = (candidato or "").strip(_SEPARATORS).strip()
+        if candidato and looks_like_a_name(candidato):
+            return candidato
+    return None
+
+
 def _coleta_titulares_multiplos(
     lines: list[str], start: int, label: str
 ) -> list[tuple[str, str]]:
@@ -390,13 +433,28 @@ def _coleta_titulares_multiplos(
     j = start
     while j < len(lines):
         linha = lines[j]
-        # See `_strip_trailing_citation`: a wide `NOMES` table routinely
+        # 🔴 A SECOND labelled header ends the block, it is never itself a
+        # row to read — real, measured (P2 corpus, 2026-09-28): a document
+        # naming the couple TWICE (once under `NOMES`, again under a wider
+        # "... DOS CONJUGES" column header further down) has its own repeat
+        # header line land inside THIS collector's walk from the FIRST one.
+        # `_ate_a_primeira_virgula` below is happy to cut a column-header's
+        # OWN comma-separated field list ("NOMES COMPLETOS DE SOLTEIRO,
+        # DATAS DE NASCIMENTO, ...") down to a name-shaped prefix — checked
+        # BEFORE that fallback runs, so a header is recognised by its own
+        # label rather than accidentally read as a holder.
+        if _label_at(linha, 0)[0] is not None:
+            break
+        # See `_melhor_leitura_de_nome`: a wide `NOMES` table routinely
         # lands the NEXT column's `CPF` header on the same visual row as
-        # this holder's name — trim it before judging the line, so a real,
-        # well-evidenced name is not thrown away for a layout accident.
-        candidato = _strip_trailing_citation(linha)
-        if looks_like_a_name(candidato):
-            candidatos.append((candidato.strip(_SEPARATORS).strip(), label))
+        # this holder's name, and an "inteiro teor" holder list prints each
+        # nubente's own qualification clause on the SAME line as their name
+        # (`FULANO DE TAL, nascido aos ..., filho de ...`) — trim it before
+        # judging the line, so a real, well-evidenced name is not thrown
+        # away for a layout accident.
+        melhor = _melhor_leitura_de_nome(linha)
+        if melhor is not None:
+            candidatos.append((melhor, label))
             j += 1
             continue
         if _CPF_SHAPE_RE.match(linha) or _linha_e_rotulo_de_cpf(linha):
@@ -472,17 +530,21 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
                 idx += 1
                 continue
             tail = line[end:].strip(_SEPARATORS).strip()
-            tail_candidato = _strip_trailing_citation(tail)
-            if tail and looks_like_a_name(tail_candidato):
-                candidates.append((tail_candidato, label))
+            # See `_melhor_leitura_de_nome`: the CNJ modern layout's own
+            # `ELE: FULANO DE TAL, nascido no dia ...` glues the pronoun's
+            # name to its qualification clause on ONE line — the value is
+            # everything before that clause's own comma.
+            melhor = _melhor_leitura_de_nome(tail) if tail else None
+            if melhor is not None:
+                candidates.append((melhor, label))
             idx += 1
             continue
 
         # Value on the same line, e.g. `NOME: FULANO DE TAL`.
         tail = line[end:].strip(_SEPARATORS).strip()
-        tail_candidato = _strip_trailing_citation(tail)
-        if tail and looks_like_a_name(tail_candidato):
-            candidates.append((tail_candidato, label))
+        melhor = _melhor_leitura_de_nome(tail) if tail else None
+        if melhor is not None:
+            candidates.append((melhor, label))
             idx += 1
             continue
 
