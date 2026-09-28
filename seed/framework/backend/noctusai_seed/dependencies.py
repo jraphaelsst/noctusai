@@ -39,6 +39,7 @@ from typing import Optional
 from fastapi import Header, HTTPException, Request
 from noctusai_lib.api.audit import AuditActor
 from noctusai_lib.api.auth import make_resolve_platform_role
+from noctusai_lib.api.auth.session.scopes import resolve_org_role
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ class ProductDependencies:
             raise HTTPException(status_code=401, detail="Nao autenticado")
 
     def get_user_role(self, user) -> str:
-        """Resolve user role. Trusted DB cascades platform_admin; others get metadata role.
+        """Resolve the caller's role from the TRUSTED DB — never ``user_metadata``.
 
         .. deprecated::
             Do NOT wire via ``Depends(get_user_role)``: the positional
@@ -194,24 +195,43 @@ class ProductDependencies:
             imperative call ``deps.get_user_role(user)`` is fine. See
             ``KB § PATTERNS/backend.md § Auth — canonical pattern``.
 
-        Trusted-first (``role-cascade-trusted``, 2026-07-14): the
-        platform-admin cascade is resolved from ``public.noctus_users``
-        (see :func:`noctusai_lib.api.auth.make_resolve_platform_role`), NOT
-        the spoofable ``user_metadata`` a user can rewrite via
-        ``auth.updateUser({data})``. ``user_metadata.role`` remains the base
-        (non-elevated) role source — this class doesn't yet have a generic,
-        product-agnostic notion of DB-backed base roles; only the
-        cascading-admin check is hardened here.
+        Resolution order:
+
+        1. ``"platform_admin"`` — the trusted-first cascade
+           (:func:`noctusai_lib.api.auth.make_resolve_platform_role`,
+           ``role-cascade-trusted`` 2026-07-14): ``noctus_users.role == 'admin'``
+           or ``org_role`` in (owner, admin).
+        2. The raw ``public.noctus_users.org_role`` (``manager`` / ``member`` /
+           ``viewer`` / ``dev`` / ...) via
+           :func:`noctusai_lib.api.auth.session.scopes.resolve_org_role`.
+        3. ``"user"`` — no row / no org role (least privilege).
+
+        SEC-1 (2026-09-28): the former step-2 ``user_metadata.role`` fallback is
+        GONE. The platform never writes ``user_metadata.role`` (core's SSO sync
+        writes ``noctus_role`` / ``org_role``), so the only party that could set
+        it was the user themselves via ``auth.updateUser({data})`` — a
+        self-granted ``"admin"`` that passed every ``role in (...)`` gate built on
+        this method (the seed team router, igig's stage-editor gate, ...).
         """
         _warn_if_fastapi_caller("ProductDependencies.get_user_role")
         trusted = self._resolve_platform_role(user)
         if trusted:
             return trusted
-        return (user.user_metadata or {}).get("role", "user")
+        org_role = resolve_org_role(self._db.get_core_client(), getattr(user, "id", None))
+        return org_role or "user"
 
     @staticmethod
     def get_org_id(user) -> str:
         """Extract org_id from user metadata. Raises 403 if missing.
+
+        🔴 UNTRUSTED. ``user_metadata`` is user-writable (``auth.updateUser
+        ({data})``), so this value is whatever the caller says it is. It MUST
+        NOT scope a service-role (RLS-bypassing) query or an authorization
+        decision — use :func:`noctusai_lib.api.auth.make_get_current_user_org`
+        (trusted ``public.noctus_users`` first). Kept only for product call
+        sites that pass it as the no-row FALLBACK into that factory, or read
+        through a user-token client where RLS re-derives the org anyway. The
+        seed's own routers no longer call it (SEC-1, 2026-09-28).
 
         .. deprecated::
             Do NOT wire via ``Depends(get_org_id)``: the positional

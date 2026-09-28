@@ -29,6 +29,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from noctusai_lib.api.auth import make_get_current_user_org
 from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.integrations.llm import all_providers, models_for
 from noctusai_lib.primitives.parsing import parse_iso_or_400 as _parse_iso
@@ -69,9 +70,23 @@ def create_llm_router(deps) -> APIRouter:
     """
     router = APIRouter(prefix="/api/llm", tags=["LLM"])
 
+    # Trusted org (SEC-1, 2026-09-28): `public.noctus_users` first — NOT the
+    # user-writable `user_metadata.org_id` `deps.get_org_id` reads. The org
+    # scopes `resolve_credential` (a service-side lookup), so a spoofed org
+    # would report another tenant's provider configuration. NO metadata
+    # fallback: a caller without a `noctus_users` row has no org here (403).
+    _get_current_user_org = make_get_current_user_org(
+        # Late-bound: resolve `deps.get_current_user` per request, exactly as
+        # the pre-SEC-1 imperative calls did (a product/test rebinding it after
+        # mount must still take effect).
+        lambda authorization: deps.get_current_user(authorization),
+        lambda _user: None,
+        get_admin_client_fn=lambda: deps.get_core_client(),
+    )
+
     async def _require_org(authorization):
-        user, token = await deps.get_current_user(authorization)
-        return user, deps.get_org_id(user), token
+        user, token, org_id = await _get_current_user_org(authorization)
+        return user, org_id, token
 
     @router.get("/providers", response_model=list[ProviderInfo])
     async def listar_providers(authorization: Optional[str] = Header(None)):

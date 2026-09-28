@@ -41,9 +41,17 @@ from noctusai_lib.domain.org import (
     provision_invited_identity,
     sync_org_metadata,
 )
+from noctusai_lib.api.auth import make_get_current_user_org
+from noctusai_lib.api.auth.platform import resolve_platform_admin_role
+from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.integrations.email.templates import send_product_invitation_email
 from noctusai_lib.domain.notifications import map_notification_to_pt
-from noctusai_lib.primitives.roles import ORG_ROLE_LABELS
+from noctusai_lib.primitives.roles import (
+    ADMIN_ROLES,
+    MANAGE_TEAM_ROLES,
+    ORG_ROLE_LABELS,
+    ORG_ROLES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,13 +146,102 @@ def _create_notificacoes_router(deps) -> APIRouter:
     return router
 
 
+#: Pseudo-role returned by `_trusted_team_role` for a NoctusAI platform
+#: operator (`public.noctus_users.role == 'admin'`). It grants team management
+#: ONLY inside the operator's OWN trusted org — every team query is scoped by
+#: the trusted `org_id`, so it never reaches another tenant.
+_PLATFORM_ADMIN = "platform_admin"
+
+#: Who may grant which org role through `/api/team/invite`. A role absent from
+#: this map is grantable by anyone who may invite at all (MANAGE_TEAM_ROLES).
+#: Without it any inviter could mint an `owner` — i.e. a manager could invite a
+#: sock-puppet owner and take the org over.
+_GRANT_REQUIRES = {
+    "owner": frozenset({"owner", _PLATFORM_ADMIN}),
+    "admin": frozenset({"owner", "admin", _PLATFORM_ADMIN}),
+}
+
+
+def _no_untrusted_org_fallback(_user) -> None:
+    """The team router NEVER falls back to `user_metadata.org_id`.
+
+    `make_get_current_user_org` consults its `get_org_id_fn` only when the
+    caller has no `public.noctus_users` row. Every team route lists, invites
+    into, or deletes from an org using the SERVICE-ROLE client, so a
+    metadata fallback (which the user can rewrite via `auth.updateUser({data})`)
+    would hand a row-less caller another tenant's roster. No row ⇒ no org ⇒ 403.
+    """
+    return None
+
+
+def _trusted_team_role(core, user) -> Optional[str]:
+    """The caller's role for team management, from `public.noctus_users` only.
+
+    `org_role` (owner/admin/manager/...) via `resolve_org_role`; a NoctusAI
+    platform operator (`role == 'admin'`, via `resolve_platform_admin_role`)
+    maps to `_PLATFORM_ADMIN`. NEVER `user_metadata` — that is user-writable.
+    """
+    user_id = getattr(user, "id", None)
+    if resolve_platform_admin_role(core, user_id) == "admin":
+        return _PLATFORM_ADMIN
+    return resolve_org_role(core, user_id)
+
+
+def _require_team_role(role: Optional[str], allowed, detail: str) -> None:
+    if role != _PLATFORM_ADMIN and role not in allowed:
+        raise HTTPException(status_code=403, detail=detail)
+
+
+def _org_display_name(core, org_id: str) -> str:
+    """`organizations.nome` for the invitation email — read from the DB by the
+    TRUSTED org_id, never `user_metadata.org_name` (user-writable: a spoofed
+    name would let a member send an invite email impersonating another org)."""
+    try:
+        res = (
+            core.table("organizations").select("nome").eq("id", org_id)
+            .limit(1).execute()
+        )
+    except Exception as exc:  # display-only; the invite itself must not fail
+        logger.warning(
+            "team.invite: could not read organizations.nome for org=%s (%s) — "
+            "using the generic label in the email", org_id, exc,
+        )
+        return "sua organizacao"
+    rows = res.data or []
+    return (rows[0].get("nome") if rows else None) or "sua organizacao"
+
+
 def _create_team_router(deps, settings, product_name: str) -> APIRouter:
+    """`/api/team` — members + invitations.
+
+    🔴 Trust model (SEC-1, 2026-09-28): every authenticated route resolves the
+    caller's org AND role from `public.noctus_users` (the row RLS trusts) —
+    NEVER from `user_metadata`, which any user can rewrite via
+    `auth.updateUser({data})`. These routes act through the service-role client
+    (RLS bypassed), so the app-layer org scope IS the tenant boundary: every
+    read, invite and delete is filtered by the trusted `org_id`.
+    """
     router = APIRouter(prefix="/api/team", tags=["Team"])
+
+    _get_current_user_org = make_get_current_user_org(
+        # Late-bound: resolve `deps.get_current_user` per request, exactly as
+        # the pre-SEC-1 imperative calls did (a product/test rebinding it after
+        # mount must still take effect).
+        lambda authorization: deps.get_current_user(authorization),
+        _no_untrusted_org_fallback,
+        get_admin_client_fn=lambda: deps.get_core_client(),
+    )
+
+    async def _member_context(authorization: Optional[str]):
+        """(user, trusted org_id, trusted team role) — 401 unauthenticated,
+        403 when the caller has no org membership row."""
+        user, _token, org_id = await _get_current_user_org(authorization)
+        role = _trusted_team_role(deps.get_core_client(), user)
+        return user, org_id, role
 
     @router.get("")
     async def list_members(authorization: Optional[str] = Header(None)):
-        user, _ = await deps.get_current_user(authorization)
-        org_id = deps.get_org_id(user)
+        _user, org_id, _role = await _member_context(authorization)
         core = deps.get_core_client()
         result = core.table("noctus_users").select("*").eq("org_id", org_id).execute()
         return {"data": result.data or []}
@@ -154,29 +251,39 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         body: dict,
         authorization: Optional[str] = Header(None),
     ):
-        user, _ = await deps.get_current_user(authorization)
-        role = deps.get_user_role(user)
-        if role not in ("platform_admin", "owner", "admin", "manager"):
-            raise HTTPException(status_code=403, detail="Sem permissao para convidar")
-        org_id = deps.get_org_id(user)
+        user, org_id, inviter_role = await _member_context(authorization)
+        _require_team_role(inviter_role, MANAGE_TEAM_ROLES, "Sem permissao para convidar")
+
+        email = (body.get("email") or "").strip()
+        if not email:
+            raise HTTPException(status_code=400, detail="Email e obrigatorio")
+        role = body.get("role") or "member"
+        if role not in ORG_ROLES:
+            raise HTTPException(status_code=400, detail=f"Papel invalido: {role}")
+        grantors = _GRANT_REQUIRES.get(role)
+        if grantors is not None and inviter_role not in grantors:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Sem permissao para convidar como {ORG_ROLE_LABELS[role]}",
+            )
+
         admin = deps.get_admin_client()
         invite = create_invitation(
             admin,
             _INVITATIONS_TABLE,
-            email=body["email"],
+            email=email,
             org_id=org_id,
-            role=body.get("role", "member"),
+            role=role,
             invited_by=str(user.id),
         )
         inviter_name = (user.user_metadata or {}).get("name", "Um administrador")
-        org_name = (user.user_metadata or {}).get("org_name", "sua organizacao")
-        role_label = ORG_ROLE_LABELS.get(body.get("role", "member"), body.get("role", "member"))
+        org_name = _org_display_name(deps.get_core_client(), org_id)
         base_url = settings.cors_origins.split(",")[0] if settings.cors_origins else "http://localhost:3000"
         send_product_invitation_email(
-            to=body["email"],
+            to=email,
             product_name=product_name,
             org_name=org_name,
-            role_label=role_label,
+            role_label=ORG_ROLE_LABELS[role],
             invite_token=invite["token"],
             invited_by=inviter_name,
             base_url=base_url,
@@ -249,6 +356,15 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
 
         created_identity = False
         if current_user is not None:
+            # The invitation names ONE address. A signed-in caller accepts for
+            # THEMSELVES, so they must BE that address — otherwise anyone holding
+            # a leaked token joins the org under their own account.
+            caller_email = (getattr(current_user, "email", None) or "").strip().lower()
+            if caller_email != (email or "").strip().lower():
+                raise HTTPException(
+                    status_code=403,
+                    detail="Este convite foi enviado para outro email",
+                )
             user_id = str(current_user.id)
             nome = (
                 body.get("nome")
@@ -335,39 +451,44 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
 
     @router.get("/invitations")
     async def list_invitations(authorization: Optional[str] = Header(None)):
-        user, _ = await deps.get_current_user(authorization)
-        role = deps.get_user_role(user)
-        if role not in ("platform_admin", "owner", "admin"):
-            raise HTTPException(status_code=403, detail="Sem permissao")
-        org_id = deps.get_org_id(user)
+        _user, org_id, role = await _member_context(authorization)
+        _require_team_role(role, ADMIN_ROLES, "Sem permissao")
         admin = deps.get_admin_client()
         result = list_pending_invitations(admin, _INVITATIONS_TABLE, org_id)
         return {"data": result}
 
     @router.delete("/invitations/{invitation_id}")
     async def cancel_invite(invitation_id: str, authorization: Optional[str] = Header(None)):
-        user, _ = await deps.get_current_user(authorization)
-        role = deps.get_user_role(user)
-        if role not in ("platform_admin", "owner", "admin"):
-            raise HTTPException(status_code=403, detail="Sem permissao")
-        org_id = deps.get_org_id(user)
+        _user, org_id, role = await _member_context(authorization)
+        _require_team_role(role, ADMIN_ROLES, "Sem permissao")
         admin = deps.get_admin_client()
         # `cancel_invitation` takes org_id as its 4th positional arg — it scopes the
-        # cancel to the caller's org (an admin of org A must not cancel org B's
-        # invite). Omitting it raised TypeError → 500 on every DELETE.
+        # cancel to the caller's TRUSTED org (an admin of org A must not cancel
+        # org B's invite).
         cancel_invitation(admin, _INVITATIONS_TABLE, invitation_id, org_id)
         return {"ok": True}
 
     @router.delete("/{user_id}")
     async def remove_member(user_id: str, authorization: Optional[str] = Header(None)):
-        user, _ = await deps.get_current_user(authorization)
-        role = deps.get_user_role(user)
-        if role not in ("platform_admin", "owner", "admin"):
-            raise HTTPException(status_code=403, detail="Sem permissao")
+        user, org_id, role = await _member_context(authorization)
+        _require_team_role(role, ADMIN_ROLES, "Sem permissao")
         if str(user.id) == user_id:
             raise HTTPException(status_code=400, detail="Nao pode remover a si mesmo")
         core = deps.get_core_client()
-        core.table("noctus_users").delete().eq("id", user_id).execute()
+        # The target must be a member of the caller's OWN org — this is a
+        # service-role delete, so the org filter IS the tenant boundary.
+        target = (
+            core.table("noctus_users").select("id, org_role")
+            .eq("id", user_id).eq("org_id", org_id).limit(1).execute()
+        )
+        rows = target.data or []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Membro nao encontrado")
+        if rows[0].get("org_role") == "owner" and role not in ("owner", _PLATFORM_ADMIN):
+            raise HTTPException(
+                status_code=403, detail="Somente o proprietario pode remover um proprietario",
+            )
+        core.table("noctus_users").delete().eq("id", user_id).eq("org_id", org_id).execute()
         return {"ok": True}
 
     return router

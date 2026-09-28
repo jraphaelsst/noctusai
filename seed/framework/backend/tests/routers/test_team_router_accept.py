@@ -82,13 +82,35 @@ def _fake_user(
     user_id: str = "u-admin",
     name: str = "Admin Tester",
     org_name: str = "Org Teste",
+    email: str = "invitee@test.com",
 ):
-    """A gotrue-User-shaped stand-in: the router reads `.id` and
-    `.user_metadata` only."""
+    """A gotrue-User-shaped stand-in: the router reads `.id`, `.email` and
+    `.user_metadata`. `email` defaults to the invitation fixtures' address so
+    the AUTHENTICATED accept path (which must match the invited email, SEC-1)
+    is exercised as the invitee."""
     user = MagicMock()
     user.id = user_id
+    user.email = email
     user.user_metadata = {"name": name, "org_name": org_name}
     return user
+
+
+@pytest.fixture
+def as_org_owner(team_app):
+    """Seed the TRUSTED membership row for the fake caller — owner of org-123.
+
+    Since SEC-1 (2026-09-28) the team router reads org + role from
+    `public.noctus_users` (the core client), never from `deps.get_org_id` /
+    `deps.get_user_role`'s `user_metadata`. Only the member-management tests
+    use this: the accept tests need `noctus_users` EMPTY so the invitee's
+    membership row is the one the router writes.
+    """
+    team_app.state.core_db.set_table_data(
+        "noctus_users",
+        [{"id": "u-admin", "email": "admin@test.com", "org_id": "org-123",
+          "org_role": "owner", "role": "user"}],
+    )
+    return team_app
 
 
 @pytest.fixture
@@ -331,6 +353,7 @@ class TestInvitationsTableIsBare:
         assert self._table_keys(mock_db) == {"invitations"}
 
 
+@pytest.mark.usefixtures("as_org_owner")
 class TestInviteEndpoint:
     """POST /api/team/invite — the endpoint that 500'd in social-wiring.
 
@@ -380,6 +403,7 @@ class TestInviteEndpoint:
         assert "ja existe um convite pendente" in resp.json()["detail"].lower()
 
 
+@pytest.mark.usefixtures("as_org_owner")
 class TestListAndCancelInvitations:
     """GET + DELETE /api/team/invitations — both hit the same table."""
 
