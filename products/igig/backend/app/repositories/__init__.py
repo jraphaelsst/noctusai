@@ -895,6 +895,16 @@ class PipelineMovimentoRepository(BaseRepository):
     default_order = (Order("created_at", descending=True),)
 
 
+class AutomacaoRepository(BaseRepository):
+    """Automation rules — READ-ONLY here. CRUD lives in `automacoes.py`
+    (over the raw PostgREST client, decision D-A1); this repository exists
+    so `relatorios.py`'s comercial report can read the org's own configured
+    SLA thresholds per stage — the SAME numbers the automation engine
+    itself enforces — rather than inventing a separate one."""
+
+    table = "automacao"
+
+
 class Repositorios:
     """All repositories bound to one store — what routers receive.
 
@@ -928,3 +938,4 @@ class Repositorios:
         self.etapa = PipelineStageRepository(store)
         self.negocio = NegocioRepository(store)
         self.movimento = PipelineMovimentoRepository(store)
+        self.automacao = AutomacaoRepository(store)

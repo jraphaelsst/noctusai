@@ -40,7 +40,7 @@ import csv
 import io
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from app.repositories import Repositorios
@@ -153,8 +153,102 @@ class RelatorioComercial:
     alertas: list[str] = field(default_factory=list)
 
 
+#: A stage's loss rate only means something with a real sample — 1 of 1 lost
+#: is not "this stage is broken", it is one data point.
+_PERDA_ALTA_MIN_ENTRADAS = 3
+_PERDA_ALTA_LIMIAR = 0.5
+#: How far ahead "expirando em breve" looks — the same week-out horizon a
+#: human reviewing the funnel would want to be warned about.
+_ORCAMENTO_EXPIRANDO_DIAS = 7
+
+
+def _alertas_comerciais(
+    repos: Repositorios, org_id: str, *,
+    negocios: list[dict], orcamentos: dict[str, dict], stages: dict[str, dict],
+    funil: dict[str, EtapaFunil], motivos: dict[tuple[str, str], MotivoPerda], hoje: date,
+) -> list[str]:
+    """Honest, data-backed alerts — only what the platform's OWN data
+    already supports; nothing inferred or guessed:
+
+      * negócios parados além do SLA — reuses the org's OWN configured
+        `automacao` SLA rule per etapa (the same threshold the automation
+        engine enforces), not an invented number;
+      * negócios abertos sem responsável — `igig.lead` has no `responsavel`
+        column at all, so this reads the funil's own deals instead, where
+        an unowned OPEN card is the actionable risk (nobody follows up);
+      * orçamentos vencendo nos próximos 7 dias — still `rascunho`/`enviado`,
+        so a lapse would need a brand-new proposal, not a renewal;
+      * taxa de perda alta por etapa — >50% lost, with a minimum sample of
+        3 entradas so a single loss never reads as "this stage is broken".
+
+    `hoje` doubles as the SLA check's reference INSTANT (noon UTC of that
+    date) — day-level precision is enough for a periodic report and, unlike
+    `datetime.now()`, makes the "parado além do SLA" alert reproducible from
+    the SAME `hoje` a test (or a re-run) passes in.
+    """
+    alertas: list[str] = []
+    agora = datetime.combine(hoje, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=12)
+
+    regras_sla = {
+        str(r["etapa_id"]): int(r["sla_horas"])
+        for r in repos.automacao.listar(org_id)
+        if r.get("pipeline") == "comercial" and r.get("gatilho") == "sla"
+        and r.get("ativo") and r.get("sla_horas")
+    }
+    parados = 0
+    sem_responsavel = 0
+    for negocio in negocios:
+        if negocio.get("status") != "aberto":
+            continue
+        if not negocio.get("responsavel_id"):
+            sem_responsavel += 1
+        limite_horas = regras_sla.get(str(negocio.get("etapa_id") or ""))
+        entrada = _parse_dt(negocio.get("stage_entered_at"))
+        if limite_horas and entrada is not None:
+            if (agora - entrada).total_seconds() / 3600 > limite_horas:
+                parados += 1
+    if parados:
+        alertas.append(
+            f"{parados} negócio(s) parado(s) além do SLA configurado da etapa em que estão."
+        )
+    if sem_responsavel:
+        alertas.append(f"{sem_responsavel} negócio(s) aberto(s) sem responsável definido.")
+
+    limite_expiracao = hoje + timedelta(days=_ORCAMENTO_EXPIRANDO_DIAS)
+    expirando = 0
+    for orcamento in orcamentos.values():
+        if orcamento.get("status") not in ("rascunho", "enviado"):
+            continue
+        validade = orcamento.get("validade")
+        if not validade:
+            continue
+        dia = date.fromisoformat(str(validade)[:10])
+        if hoje <= dia <= limite_expiracao:
+            expirando += 1
+    if expirando:
+        alertas.append(
+            f"{expirando} orçamento(s) expirando nos próximos {_ORCAMENTO_EXPIRANDO_DIAS} dias."
+        )
+
+    perdidos_por_label: dict[str, int] = {}
+    for m in motivos.values():
+        perdidos_por_label[m.etapa_label] = perdidos_por_label.get(m.etapa_label, 0) + m.quantidade
+    etapas_criticas = [
+        etapa.etapa_label for etapa in funil.values()
+        if etapa.entradas >= _PERDA_ALTA_MIN_ENTRADAS
+        and perdidos_por_label.get(etapa.etapa_label, 0) / etapa.entradas > _PERDA_ALTA_LIMIAR
+    ]
+    if etapas_criticas:
+        alertas.append(
+            f"Taxa de perda acima de {int(_PERDA_ALTA_LIMIAR * 100)}% na(s) etapa(s): "
+            + ", ".join(etapas_criticas) + "."
+        )
+
+    return alertas
+
+
 def _relatorio_comercial(
-    repos: Repositorios, org_id: str, inicio: date, fim: date
+    repos: Repositorios, org_id: str, inicio: date, fim: date, *, hoje: date | None = None
 ) -> RelatorioComercial:
     stages = {
         str(s["id"]): s
@@ -188,8 +282,9 @@ def _relatorio_comercial(
     # `valor_estimado` is only ever an estimate, kept as the fallback for
     # deals with no accepted proposal to point at.
     orcamentos = {str(o["id"]): o for o in repos.orcamento.listar(org_id)}
+    negocios = list(repos.negocio.listar(org_id))
 
-    for negocio in repos.negocio.listar(org_id):
+    for negocio in negocios:
         status = negocio.get("status")
         if status == "ganho" and _data_no_periodo(negocio.get("ganho_em"), inicio, fim):
             negocios_ganhos += 1
@@ -235,6 +330,11 @@ def _relatorio_comercial(
         if _data_no_periodo(orcamento.get("recusado_em"), inicio, fim):
             orcamentos_recusados += 1
 
+    alertas = _alertas_comerciais(
+        repos, org_id, negocios=negocios, orcamentos=orcamentos, stages=stages,
+        funil=funil, motivos=motivos, hoje=hoje or date.today(),
+    )
+
     return RelatorioComercial(
         periodo=PeriodoRelatorio(inicio=inicio, fim=fim),
         # Insertion order, NOT re-sorted: `stages`/`funil` were built from
@@ -254,6 +354,7 @@ def _relatorio_comercial(
         orcamentos_aceitos=orcamentos_aceitos,
         orcamentos_recusados=orcamentos_recusados,
         ticket_medio=round(sum(tickets) / len(tickets), 2) if tickets else 0.0,
+        alertas=alertas,
     )
 
 
@@ -365,7 +466,8 @@ class Relatorio:
 
 
 def gerar_relatorio(
-    repos: Repositorios, org_id: str, tipo: str, inicio: date, fim: date
+    repos: Repositorios, org_id: str, tipo: str, inicio: date, fim: date, *,
+    hoje: date | None = None,
 ) -> Relatorio:
     """Pure data. Callable from a route, a scheduled job, or an MCP tool —
     nothing here depends on a request being in flight.
@@ -373,6 +475,11 @@ def gerar_relatorio(
     Raises ``ValueError`` on an invalid `tipo` or an inverted period; callers
     that sit behind HTTP turn that into a 422, same convention as every other
     service in this product (`limites_da_competencia`, `OrcamentoService.estimar`).
+
+    `hoje` is the reference date the comercial report's alertas measure
+    "parado"/"expirando em breve" against — defaults to today, overridable
+    for tests (the pattern every other `hoje`-taking function in this
+    product already uses).
     """
     if inicio > fim:
         raise ValueError(f"período inválido: início ({inicio}) é depois do fim ({fim})")
@@ -380,7 +487,7 @@ def gerar_relatorio(
         return Relatorio(
             tipo="comercial",
             periodo=PeriodoRelatorio(inicio=inicio, fim=fim),
-            comercial=_relatorio_comercial(repos, org_id, inicio, fim),
+            comercial=_relatorio_comercial(repos, org_id, inicio, fim, hoje=hoje),
         )
     if tipo == "financeiro":
         return Relatorio(
@@ -423,6 +530,9 @@ def para_csv(relatorio: Relatorio) -> bytes:
         writer.writerow(["Orçamentos aceitos", c.orcamentos_aceitos])
         writer.writerow(["Orçamentos recusados", c.orcamentos_recusados])
         writer.writerow(["Ticket médio", c.ticket_medio])
+        for alerta in c.alertas:
+            writer.writerow([])
+            writer.writerow(["Alerta", alerta])
 
     if relatorio.financeiro is not None:
         f = relatorio.financeiro
@@ -512,6 +622,9 @@ def para_pdf(relatorio: Relatorio) -> bytes:
             f"ticket médio: {brl(c.ticket_medio)}",
             estilos["Normal"],
         ))
+        for alerta in c.alertas:
+            corpo.append(Spacer(1, 0.3 * cm))
+            corpo.append(Paragraph(f"<i>{alerta}</i>", estilos["Normal"]))
 
     if relatorio.financeiro is not None:
         f = relatorio.financeiro

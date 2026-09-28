@@ -186,6 +186,151 @@ class TestRelatorioComercial:
         assert relatorio.negocios_ganhos == 0
 
 
+class TestAlertasComerciais:
+    """`RelatorioComercial.alertas` — honest, data-backed alerts only.
+    Each alert reuses data the platform already has (the org's own
+    configured SLA rule, the funil's own deals/orçamentos/losses) rather
+    than an invented threshold."""
+
+    def test_negocio_alem_do_sla_configurado_gera_alerta(self, repos):
+        etapa = _etapa(repos, slug="qualificacao", label="Qualificação")
+        repos.automacao.criar(ORG, {
+            "pipeline": "comercial", "etapa_id": etapa["id"], "gatilho": "sla",
+            "sla_horas": 24, "ativo": True,
+        })
+        prof = repos.profissional.criar(ORG, {"nome": "Ana"})
+        lead = _lead(repos)
+        _negocio(repos, lead, etapa, stage_entered_at=_dt("2026-08-01"), responsavel_id=prof["id"])
+
+        relatorio = gerar_relatorio(
+            repos, ORG, "comercial", INICIO, FIM, hoje=date(2026, 8, 5),
+        ).comercial
+        assert any("SLA" in a for a in relatorio.alertas)
+
+    def test_dentro_do_sla_nao_gera_alerta(self, repos):
+        etapa = _etapa(repos, slug="qualificacao", label="Qualificação")
+        repos.automacao.criar(ORG, {
+            "pipeline": "comercial", "etapa_id": etapa["id"], "gatilho": "sla",
+            "sla_horas": 240, "ativo": True,
+        })
+        prof = repos.profissional.criar(ORG, {"nome": "Ana"})
+        lead = _lead(repos)
+        _negocio(repos, lead, etapa, stage_entered_at=_dt("2026-08-01"), responsavel_id=prof["id"])
+
+        relatorio = gerar_relatorio(
+            repos, ORG, "comercial", INICIO, FIM, hoje=date(2026, 8, 2),
+        ).comercial
+        assert not any("SLA" in a for a in relatorio.alertas)
+
+    def test_inactive_sla_rule_is_ignored(self, repos):
+        etapa = _etapa(repos, slug="qualificacao", label="Qualificação")
+        repos.automacao.criar(ORG, {
+            "pipeline": "comercial", "etapa_id": etapa["id"], "gatilho": "sla",
+            "sla_horas": 24, "ativo": False,
+        })
+        prof = repos.profissional.criar(ORG, {"nome": "Ana"})
+        lead = _lead(repos)
+        _negocio(repos, lead, etapa, stage_entered_at=_dt("2026-08-01"), responsavel_id=prof["id"])
+
+        relatorio = gerar_relatorio(
+            repos, ORG, "comercial", INICIO, FIM, hoje=date(2026, 8, 20),
+        ).comercial
+        assert not any("SLA" in a for a in relatorio.alertas)
+
+    def test_negocio_aberto_sem_responsavel_gera_alerta(self, repos):
+        etapa = _etapa(repos, slug="entrada", label="Entrada")
+        lead = _lead(repos)
+        _negocio(repos, lead, etapa)  # no responsavel_id passed
+
+        relatorio = gerar_relatorio(repos, ORG, "comercial", INICIO, FIM).comercial
+        assert any("sem responsável" in a for a in relatorio.alertas)
+
+    def test_negocio_com_responsavel_nao_gera_alerta(self, repos):
+        etapa = _etapa(repos, slug="entrada", label="Entrada")
+        prof = repos.profissional.criar(ORG, {"nome": "Ana"})
+        lead = _lead(repos)
+        _negocio(repos, lead, etapa, responsavel_id=prof["id"])
+
+        relatorio = gerar_relatorio(repos, ORG, "comercial", INICIO, FIM).comercial
+        assert not any("sem responsável" in a for a in relatorio.alertas)
+
+    def test_orcamento_expirando_em_breve_gera_alerta(self, repos):
+        etapa = _etapa(repos, slug="entrada", label="Entrada")
+        lead = _lead(repos)
+        negocio = _negocio(repos, lead, etapa)
+        _orcamento(repos, negocio, status="enviado", validade="2026-08-10")
+
+        relatorio = gerar_relatorio(
+            repos, ORG, "comercial", INICIO, FIM, hoje=date(2026, 8, 6),
+        ).comercial
+        assert any("expirando" in a for a in relatorio.alertas)
+
+    def test_orcamento_ja_aceito_nao_conta_como_expirando(self, repos):
+        etapa = _etapa(repos, slug="entrada", label="Entrada")
+        lead = _lead(repos)
+        negocio = _negocio(repos, lead, etapa)
+        _orcamento(repos, negocio, status="aceito", validade="2026-08-10")
+
+        relatorio = gerar_relatorio(
+            repos, ORG, "comercial", INICIO, FIM, hoje=date(2026, 8, 6),
+        ).comercial
+        assert not any("expirando" in a for a in relatorio.alertas)
+
+    def test_orcamento_expirando_alem_da_janela_nao_conta(self, repos):
+        etapa = _etapa(repos, slug="entrada", label="Entrada")
+        lead = _lead(repos)
+        negocio = _negocio(repos, lead, etapa)
+        _orcamento(repos, negocio, status="enviado", validade="2026-09-15")
+
+        relatorio = gerar_relatorio(
+            repos, ORG, "comercial", INICIO, FIM, hoje=date(2026, 8, 6),
+        ).comercial
+        assert not any("expirando" in a for a in relatorio.alertas)
+
+    def test_taxa_de_perda_alta_por_etapa_gera_alerta(self, repos):
+        entrada = _etapa(repos, slug="entrada", label="Entrada", posicao=0)
+        proposta = _etapa(repos, slug="proposta", label="Proposta enviada", posicao=1)
+        lead = _lead(repos)
+        for _ in range(4):
+            _movimento(repos, de=entrada["id"], para=proposta["id"], quando=_dt("2026-08-01"))
+        for _ in range(3):
+            _negocio(
+                repos, lead, proposta, status="perdido", motivo_perda="Preço",
+                perdido_em=_dt("2026-08-05"), perdido_stage_id=proposta["id"],
+            )
+
+        relatorio = gerar_relatorio(repos, ORG, "comercial", INICIO, FIM).comercial
+        assert any("Taxa de perda" in a and "Proposta enviada" in a for a in relatorio.alertas)
+
+    def test_a_single_loss_never_reads_as_a_broken_stage(self, repos):
+        """Minimum-sample guard: 1 of 1 lost must not alert — one data point
+        is not a pattern."""
+        entrada = _etapa(repos, slug="entrada", label="Entrada", posicao=0)
+        proposta = _etapa(repos, slug="proposta", label="Proposta enviada", posicao=1)
+        lead = _lead(repos)
+        _movimento(repos, de=entrada["id"], para=proposta["id"], quando=_dt("2026-08-01"))
+        _negocio(
+            repos, lead, proposta, status="perdido", motivo_perda="Preço",
+            perdido_em=_dt("2026-08-05"), perdido_stage_id=proposta["id"],
+        )
+
+        relatorio = gerar_relatorio(repos, ORG, "comercial", INICIO, FIM).comercial
+        assert not any("Taxa de perda" in a for a in relatorio.alertas)
+
+    def test_no_alerts_on_a_healthy_funnel(self, repos):
+        """Nothing wrong ⇒ the alertas list is honestly empty, not padded."""
+        etapa = _etapa(repos, slug="entrada", label="Entrada")
+        prof = repos.profissional.criar(ORG, {"nome": "Ana"})
+        lead = _lead(repos)
+        _negocio(
+            repos, lead, etapa, responsavel_id=prof["id"], stage_entered_at=_dt("2026-08-01"),
+        )
+        relatorio = gerar_relatorio(
+            repos, ORG, "comercial", INICIO, FIM, hoje=date(2026, 8, 2),
+        ).comercial
+        assert relatorio.alertas == []
+
+
 class TestRelatorioFinanceiro:
     def test_faturamento_is_scoped_to_period_by_competencia(self, repos):
         cliente = repos.cliente.criar(ORG, {"nome": "Padaria Sol"})
@@ -288,3 +433,11 @@ class TestRenderers:
             assert isinstance(conteudo, bytes)
             assert len(conteudo) > 500
             assert conteudo[:5] == b"%PDF-"
+
+    def test_comercial_alertas_reach_the_csv(self, repos):
+        etapa = _etapa(repos, slug="entrada", label="Entrada")
+        lead = _lead(repos)
+        _negocio(repos, lead, etapa)  # aberto, sem responsável
+        relatorio = gerar_relatorio(repos, ORG, "comercial", INICIO, FIM)
+        conteudo = para_csv(relatorio).decode("utf-8-sig")
+        assert "sem responsável" in conteudo
