@@ -5,9 +5,12 @@
  * move rules, card sheet and "nova tarefa"), shared with the Clientes card.
  * This page adds the cliente filter, kept in the URL (`?cliente=<id>`) so a
  * filtered board is linkable and survives a reload (roadmap R9) — and the
- * `?tarefa=<id>` deep link automation/card-hub reminder notifications point
- * at (`/esteira?tarefa=<id>`), which nothing ever read: the sheet never
- * opened, the param never cleared, a missing tarefa never explained.
+ * `?tarefa=<id>` deep link automation/card-hub reminder AND client-decision
+ * notifications point at (`/esteira?tarefa=<id>`), which nothing ever read:
+ * the sheet never opened, the param never cleared, a missing tarefa never
+ * explained. `EsteiraBoard` resolves it even when the tarefa's cliente is
+ * outside the `?cliente=` filter above (fetched directly, not just looked up
+ * on the loaded board) — this page only surfaces a genuine miss.
  *
  * `min-w-0` on the root: the board scrolls horizontally inside its own
  * container; the page never does (R0 — smoke finding 5).
@@ -45,9 +48,11 @@ export default function Esteira() {
 
   function aoResolverTarefaDoLink(encontrada: boolean) {
     if (encontrada) return; // the param stays until the sheet is closed
-    toast.error(
-      "Tarefa não encontrada — pode ter sido excluída, ou pertence a um cliente fora do filtro atual.",
-    );
+    // A cliente outside the current `?cliente=` filter no longer causes this
+    // — `EsteiraBoard` falls back to fetching the tarefa directly when it
+    // isn't on the (possibly filtered) board. A genuine miss here means the
+    // tarefa was excluded or the link is stale.
+    toast.error("Tarefa não encontrada — pode ter sido excluída.");
     limparTarefaParam();
   }
 

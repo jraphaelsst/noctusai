@@ -38,6 +38,7 @@ import {
   ESTEIRA_ROLE_LABELS,
   esteiraPipeline,
   useAtribuirPapelEtapa,
+  useTarefaPorId,
   type TarefaCard,
 } from "@/hooks/useEsteira";
 import { describeError } from "@/lib/errors";
@@ -52,17 +53,19 @@ export interface EsteiraBoardProps {
   clienteId?: string;
   className?: string;
   /**
-   * `?tarefa=<id>` deep link (automation/card-hub reminder notifications
-   * point at `/esteira?tarefa=<id>` — Esteira.tsx only; the Clientes card's
-   * embedded mount never passes this). Opens it ONCE it is found on the
-   * CURRENTLY loaded board — a client filter active on the page can hide a
-   * tarefa belonging to another cliente, same honest limit `onDeepLinkResolved`
-   * reports (there is no single-tarefa-by-id endpoint to fall back to, unlike
-   * Comercial's `?negocio=` + `useNegocioPorId`).
+   * `?tarefa=<id>` deep link (automation/card-hub reminder notifications AND
+   * the client-approval-decision notification point at `/esteira?tarefa=<id>`
+   * — Esteira.tsx only; the Clientes card's embedded mount never passes
+   * this). Opens it once resolved — from the currently loaded board when
+   * present there, else from `useTarefaPorId` (sibling of Comercial's
+   * `useNegocioPorId`), so a tarefa belonging to a cliente OUTSIDE the
+   * page's active `?cliente=` filter still opens instead of reading as
+   * "não encontrada".
    */
   deepLinkTarefaId?: string | null;
-  /** Fires exactly once per `deepLinkTarefaId` value, once the board has
-   * loaded — `found` tells the caller whether the sheet actually opened. */
+  /** Fires exactly once per `deepLinkTarefaId` value, once resolution
+   * (board + fallback fetch) has settled — `found` tells the caller whether
+   * the sheet actually opened. */
   onDeepLinkResolved?: (found: boolean) => void;
   /** Fires whenever the open tarefa's sheet closes — lets the page clear its
    * own `?tarefa=` param, mirroring Comercial's `fecharCard`. */
@@ -94,28 +97,46 @@ export function EsteiraBoard({
   // CURRENT row (after a move, a timer or a link), never a stale snapshot.
   const { data: colunas, isPending: carregandoBoard } = esteiraPipeline.useBoard(filtros);
 
+  const [motivoPendente, setMotivoPendente] = useState<MotivoPendente | null>(null);
+  const [abertaId, setAbertaId] = useState<string | null>(null);
+  const [novaAberta, setNovaAberta] = useState(false);
+
+  // Deep-link fallback: once the board has actually loaded (mid-fetch must
+  // never read as "not on the board"), a `deepLinkTarefaId` absent from
+  // EVERY column means it belongs to a cliente the page's `?cliente=` filter
+  // currently excludes — `GET /board` never even receives that tarefa's row.
+  // `useTarefaPorId` fetches it directly instead (sibling of Comercial's
+  // `?negocio=` + `useNegocioPorId` fallback).
+  const deepLinkNaBoardAtual = useMemo(
+    () => (colunas ?? []).some((c) => c.cards.some((t) => t.id === deepLinkTarefaId)),
+    [colunas, deepLinkTarefaId],
+  );
+  const foraDoFiltro = Boolean(deepLinkTarefaId) && !carregandoBoard && !deepLinkNaBoardAtual;
+  const tarefaFallback = useTarefaPorId(foraDoFiltro ? (deepLinkTarefaId as string) : null);
+
   // Stages-only, not the board: the "Papéis das etapas" picker (below) only
-  // needs id/label/papel. `enabled: podeEditarEtapas` matches BOTH the old
-  // behaviour (only an admin ever fetched anything for this picker — it
-  // wasn't even mounted for anyone else) and `PipelineBoard`'s own
-  // `reorderableColumns`+`canEditStages` gate below, which fetches this SAME
-  // query (`useStages`, admin-only) for the "Configurar etapas" panel —
-  // TanStack dedupes the identical key+enabled pair, so this is a cache read,
-  // never a second request. The seed's stage-list endpoint returns EVERY
-  // stage (`incluir_inativas=True`, so the editor can reactivate one) while
-  // the board only ever carries active stages' columns — `.filter((e) =>
-  // e.ativo)` keeps the picker's options exactly what `useBoard()`-sourced
-  // `etapas` used to offer.
-  const { data: todasEtapas } = esteiraPipeline.useStages({ enabled: podeEditarEtapas });
+  // needs id/label/papel. `enabled: podeEditarEtapas || foraDoFiltro` matches
+  // the old behaviour (only an admin ever fetched anything for the picker)
+  // PLUS the one new case that needs a stage label without being an admin —
+  // resolving the fallback tarefa's OWN etapa below (stages aren't
+  // cliente-scoped, so they're valid for that lookup regardless of who is
+  // looking). `PipelineBoard`'s own `reorderableColumns`+`canEditStages` gate
+  // fetches this SAME query (`useStages`) for the "Configurar etapas" panel
+  // when `podeEditarEtapas` — TanStack dedupes the identical key+enabled
+  // pair, so this is a cache read, never a second request, in that case. The
+  // seed's stage-list endpoint returns EVERY stage (`incluir_inativas=True`,
+  // so the editor can reactivate one) while the board only ever carries
+  // active stages' columns — `.filter((e) => e.ativo)` keeps the role
+  // picker's options exactly what `useBoard()`-sourced `etapas` used to
+  // offer.
+  const { data: todasEtapas } = esteiraPipeline.useStages({
+    enabled: podeEditarEtapas || foraDoFiltro,
+  });
   const etapasComPapel = useMemo(
     () => (todasEtapas ?? []).filter((e) => e.ativo),
     [todasEtapas],
   );
   const atribuirPapel = useAtribuirPapelEtapa();
-
-  const [motivoPendente, setMotivoPendente] = useState<MotivoPendente | null>(null);
-  const [abertaId, setAbertaId] = useState<string | null>(null);
-  const [novaAberta, setNovaAberta] = useState(false);
 
   const aberta = useMemo(() => {
     if (!abertaId) return null;
@@ -123,23 +144,37 @@ export function EsteiraBoard({
       const card = coluna.cards.find((c) => c.id === abertaId);
       if (card) return { card, etapa: coluna.stage?.label ?? null };
     }
+    const fallbackCard = tarefaFallback.data;
+    if (fallbackCard && fallbackCard.id === abertaId) {
+      const etapa = (todasEtapas ?? []).find((e) => e.id === fallbackCard.etapa_id);
+      return { card: fallbackCard, etapa: etapa?.label ?? null };
+    }
     return null;
-  }, [abertaId, colunas]);
+  }, [abertaId, colunas, tarefaFallback.data, todasEtapas]);
 
-  // `?tarefa=<id>` deep link — resolved exactly once per id, only once the
-  // board has actually loaded (an empty `colunas` mid-fetch must never read
-  // as "not found"). A client filter active on the page can hide a tarefa
-  // that genuinely exists, same honest limit `onDeepLinkResolved`'s caller
-  // (Esteira.tsx) names in its not-found message.
+  // `?tarefa=<id>` deep link — resolved exactly once per id. Found on the
+  // (possibly filtered) board ⇒ open immediately. Not found there ⇒ wait for
+  // `tarefaFallback` to settle (an in-flight fetch must never read as a
+  // miss) before declaring it genuinely not found.
   const deepLinkResolvidoRef = useRef<string | null>(null);
   useEffect(() => {
     if (!deepLinkTarefaId || carregandoBoard) return;
     if (deepLinkResolvidoRef.current === deepLinkTarefaId) return;
+    if (deepLinkNaBoardAtual) {
+      deepLinkResolvidoRef.current = deepLinkTarefaId;
+      setAbertaId(deepLinkTarefaId);
+      onDeepLinkResolved?.(true);
+      return;
+    }
+    if (tarefaFallback.isPending) return; // still resolving — not a miss yet
     deepLinkResolvidoRef.current = deepLinkTarefaId;
-    const encontrada = (colunas ?? []).some((c) => c.cards.some((t) => t.id === deepLinkTarefaId));
+    const encontrada = Boolean(tarefaFallback.data);
     if (encontrada) setAbertaId(deepLinkTarefaId);
     onDeepLinkResolved?.(encontrada);
-  }, [deepLinkTarefaId, carregandoBoard, colunas, onDeepLinkResolved]);
+  }, [
+    deepLinkTarefaId, carregandoBoard, deepLinkNaBoardAtual,
+    tarefaFallback.isPending, tarefaFallback.data, onDeepLinkResolved,
+  ]);
 
   function onBeforeMove(ctx: MoveIntentContext<TarefaCard>): MoveDecision | Promise<MoveDecision> {
     const decisao = decidirMovimento(ctx);

@@ -19,7 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createPipelineHooks } from "@noctusai/lib/components";
 
-import { api } from "@/lib/api";
+import { api, unwrapData } from "@/lib/api";
 
 // ─── Types (mirror backend app/schemas/esteira.py + esteira_quadro.quadro) ──
 /** A tarefa as the board serves it — the row plus what a phone needs to read it. */
@@ -119,6 +119,24 @@ export function useCriarTarefa() {
       prazo?: string | null;
     }) => api.post<TarefaCard>("/api/esteira/tarefas", payload),
     onSuccess: invalidar,
+  });
+}
+
+/**
+ * One tarefa by id, regardless of the board's `?cliente=` filter — a
+ * `?tarefa=<id>` deep link (a decision or automation notification) used to
+ * be resolvable ONLY against whatever the currently-loaded board happened to
+ * carry, so a tarefa belonging to a DIFFERENT cliente than the active filter
+ * read as "não encontrada" even though it existed. Sibling of Comercial's
+ * `useNegocioPorId`. `enabled: !!id` — never fired for the common case
+ * (no deep link, or already resolved from the board).
+ */
+export function useTarefaPorId(id: string | null) {
+  return useQuery({
+    queryKey: [...ESTEIRA_QUERY_KEY, "tarefa", id ?? ""],
+    queryFn: () =>
+      api.get(`/api/esteira/tarefas/${encodeURIComponent(id as string)}`).then(unwrapData<TarefaCard>),
+    enabled: !!id,
   });
 }
 

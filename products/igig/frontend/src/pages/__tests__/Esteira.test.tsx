@@ -85,6 +85,13 @@ const BOARD = [
 function mockBoardState(state: Record<string, unknown>) {
   mockUseQuery.mockImplementation(((opts: { queryKey?: unknown[] }) => {
     if (opts?.queryKey?.[0] === ESTEIRA_BOARD_KEY) return state;
+    // `useTarefaPorId`'s key is `[...ESTEIRA_QUERY_KEY, "tarefa", id]` — a
+    // single-entity fallback, so its "nothing yet" shape is `data: undefined`
+    // (a real disabled/miss query), never `[]` like the list-returning
+    // queries every other unmatched key below stands in for.
+    if (opts?.queryKey?.[2] === "tarefa") {
+      return { data: undefined, isPending: false, isFetching: false, isError: false, error: null };
+    }
     return { data: [], isPending: false, isFetching: false, isError: false, error: null };
   }) as never);
 }
@@ -276,6 +283,47 @@ describe("Esteira — ?tarefa=<id> deep link (tech-lead addendum, 2026-09)", () 
     mockBoardState({ data: undefined, isPending: true, isFetching: true, error: null });
     renderEsteira("/esteira?tarefa=tarefa-1");
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("opens the tarefa via a direct fetch when it belongs to a cliente OUTSIDE the current filter", () => {
+    /** achado: `?tarefa=<id>` used to be resolvable only against the loaded
+     * (possibly cliente-filtered) board — a tarefa genuinely belonging to a
+     * different cliente than `?cliente=` read as "não encontrada". */
+    const foraDoFiltro: TarefaCard = {
+      ...TAREFA, id: "tarefa-2", cliente_id: "cliente-2", titulo: "Post de outro cliente",
+    };
+    mockUseQuery.mockImplementation(((opts: { queryKey?: unknown[] }) => {
+      if (opts?.queryKey?.[0] === ESTEIRA_BOARD_KEY) {
+        return { data: BOARD, isPending: false, isFetching: false, isError: false, error: null };
+      }
+      if (opts?.queryKey?.[2] === "tarefa") {
+        return { data: foraDoFiltro, isPending: false, isFetching: false, isError: false, error: null };
+      }
+      return { data: [], isPending: false, isFetching: false, isError: false, error: null };
+    }) as never);
+
+    renderEsteira("/esteira?cliente=cliente-1&tarefa=tarefa-2");
+
+    expect(screen.getByTestId("tarefa-detalhe")).toBeInTheDocument();
+    expect(screen.getAllByText("Post de outro cliente").length).toBeGreaterThan(0);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("does not toast while the fallback fetch is still resolving — an in-flight fetch is not a miss", () => {
+    mockUseQuery.mockImplementation(((opts: { queryKey?: unknown[] }) => {
+      if (opts?.queryKey?.[0] === ESTEIRA_BOARD_KEY) {
+        return { data: BOARD, isPending: false, isFetching: false, isError: false, error: null };
+      }
+      if (opts?.queryKey?.[2] === "tarefa") {
+        return { data: undefined, isPending: true, isFetching: true, isError: false, error: null };
+      }
+      return { data: [], isPending: false, isFetching: false, isError: false, error: null };
+    }) as never);
+
+    renderEsteira("/esteira?cliente=cliente-1&tarefa=tarefa-2");
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("tarefa-detalhe")).not.toBeInTheDocument();
   });
 
   it("closing the deep-linked sheet clears the ?tarefa= param", () => {
