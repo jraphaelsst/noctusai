@@ -62,7 +62,13 @@ export interface AutomacaoInput {
 
 export type AutomacaoPatch = Partial<Omit<AutomacaoInput, "pipeline">>;
 
-export type ExecucaoStatus = "executando" | "sucesso" | "erro" | "ignorada";
+// `"ignorada"` was declared here + in migration 023 + the CHECK constraint,
+// but the engine (`app/services/automacoes.py`) never wrote that status —
+// dropped from the surface (achado #16: "write it, or remove it — the
+// honest one"). The CHECK still allows the value at the DB layer (unused
+// enum members there are harmless); nothing in this product ever produces
+// one.
+export type ExecucaoStatus = "executando" | "sucesso" | "erro";
 
 export interface Execucao {
   id: string;
@@ -99,7 +105,6 @@ export const EXECUCAO_STATUS_LABEL: Record<ExecucaoStatus, string> = {
   executando: "Executando",
   sucesso: "Sucesso",
   erro: "Erro",
-  ignorada: "Ignorada",
 };
 
 export const AUTOMACOES_QUERY_KEY = ["igig", "automacoes"] as const;

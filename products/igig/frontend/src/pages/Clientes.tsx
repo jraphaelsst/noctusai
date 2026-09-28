@@ -14,10 +14,10 @@
  * Loading: `loading` is `isPending && !data` (never `isLoading`), and the
  * list hook keeps the previous rows on screen while a new `busca` loads.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Badge, Button, Field, FormError, Input, Select, TableSkeleton } from "@noctusai/lib/design-system";
-import { ChevronRight, Plus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 
 import { ClienteCardDialog } from "@/components/clientes/ClienteCardDialog";
@@ -29,6 +29,9 @@ import { describeError } from "@/lib/errors";
 import { dataBR } from "@/lib/format";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 
+/** Server default/cap — mirrors `cliente_router.py`'s `limit` default. */
+const TAMANHO_PAGINA = 50;
+
 export default function Clientes() {
   const [params, setParams] = useSearchParams();
   const abertoId = params.get("id");
@@ -37,11 +40,19 @@ export default function Clientes() {
   const [status, setStatus] = useState<StatusCliente | "">("");
   const [novo, setNovo] = useState(false);
   const [orcamentoId, setOrcamentoId] = useState<string | null>(null);
+  const [pagina, setPagina] = useState(0);
+
+  // A filter change makes the current page meaningless (it may not even
+  // exist under the new filter) — always land back on the first page.
+  useEffect(() => setPagina(0), [buscaDebounced, status]);
 
   const { clientes, total, loading, isError, error, isRefreshing } = useClientes({
     busca: buscaDebounced || undefined,
     status: status || undefined,
+    limit: TAMANHO_PAGINA,
+    offset: pagina * TAMANHO_PAGINA,
   });
+  const totalPaginas = Math.max(1, Math.ceil(total / TAMANHO_PAGINA));
 
   /** Functional update — never clobbers a param another handler just set. */
   function abrir(id: string | null) {
@@ -191,6 +202,30 @@ export default function Clientes() {
           </div>
         </>
       )}
+
+      {!loading && totalPaginas > 1 ? (
+        <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground" data-testid="clientes-paginacao">
+          <Button
+            variant="outline"
+            className="max-sm:h-10"
+            disabled={pagina === 0}
+            onClick={() => setPagina((p) => Math.max(0, p - 1))}
+          >
+            <ChevronLeft className="mr-1 h-4 w-4" /> Anterior
+          </Button>
+          <span>
+            Página {pagina + 1} de {totalPaginas}
+          </span>
+          <Button
+            variant="outline"
+            className="max-sm:h-10"
+            disabled={pagina + 1 >= totalPaginas}
+            onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
+          >
+            Próxima <ChevronRight className="ml-1 h-4 w-4" />
+          </Button>
+        </div>
+      ) : null}
 
       <NovoClienteSheet
         open={novo}

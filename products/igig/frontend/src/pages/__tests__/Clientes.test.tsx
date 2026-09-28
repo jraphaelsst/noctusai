@@ -85,7 +85,27 @@ describe("Clientes page", () => {
     renderPage();
     await screen.findByTestId("clientes-cards");
     fireEvent.change(screen.getByLabelText("Filtrar por status"), { target: { value: "prospect" } });
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/clientes", { status: "prospect" }));
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith("/api/clientes", { status: "prospect", limit: "50" }),
+    );
+  });
+
+  it("pages past the server's 50-row cap (achado plat#6/#7)", async () => {
+    api.get.mockImplementation(async (_path: string, params?: Record<string, string>) => {
+      const offset = Number(params?.offset ?? 0);
+      return offset === 0 ? { itens: [C1, C2], total: 120 } : { itens: [{ ...C1, id: "c3", nome: "Página 2" }], total: 120 };
+    });
+    renderPage();
+    await screen.findByTestId("clientes-cards");
+    expect(screen.getByText("Página 1 de 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Anterior/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /Próxima/ }));
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith("/api/clientes", { limit: "50", offset: "50" }),
+    );
+    expect(await screen.findByText("Página 2 de 3")).toBeInTheDocument();
+    expect(within(screen.getByTestId("clientes-cards")).getByText("Página 2")).toBeInTheDocument();
   });
 
   it("empty state (not loading) offers to add the first cliente", async () => {

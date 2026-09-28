@@ -68,6 +68,9 @@ export type ClienteUpdate = {
 export interface ClientesFiltros {
   busca?: string;
   status?: StatusCliente;
+  /** Page size — server default/cap is 50 (`limit` query param, 1..200). */
+  limit?: number;
+  offset?: number;
 }
 
 export const CLIENTES_QUERY_KEY = ["igig", "clientes"] as const;
@@ -77,18 +80,30 @@ function buildParams(filtros: ClientesFiltros): Record<string, string> {
   const params: Record<string, string> = {};
   if (filtros.busca) params.busca = filtros.busca;
   if (filtros.status) params.status = filtros.status;
+  if (filtros.limit != null) params.limit = String(filtros.limit);
+  if (filtros.offset) params.offset = String(filtros.offset);
   return params;
 }
 
-/** List clients for the caller's org, optionally filtered. */
+/**
+ * List clients for the caller's org, optionally filtered + paged.
+ *
+ * The list used to silently cap at the server's default `limit=50` with no
+ * paging control at all (achado plat#6 / #7): the header's own `total`
+ * proved more clientes existed than the page ever showed, with no way to
+ * reach them besides `busca`.
+ */
 export function useClientes(filtros: ClientesFiltros = {}) {
   const query = useQuery({
-    queryKey: [...CLIENTES_QUERY_KEY, filtros.busca ?? "", filtros.status ?? ""],
+    queryKey: [
+      ...CLIENTES_QUERY_KEY, filtros.busca ?? "", filtros.status ?? "",
+      filtros.limit ?? "", filtros.offset ?? "",
+    ],
     queryFn: () => api.get<ClienteListResponse>("/api/clientes", buildParams(filtros)),
-    // `busca`/`status` ride in the query key, so every keystroke is a new
-    // key. Without this the list would blank to the skeleton on each
-    // keystroke while the previous key's data is thrown away; with it, the
-    // prior result set stays on screen until the new one lands.
+    // `busca`/`status`/paging ride in the query key, so every keystroke or
+    // page change is a new key. Without this the list would blank to the
+    // skeleton on each change while the previous key's data is thrown away;
+    // with it, the prior result set stays on screen until the new one lands.
     placeholderData: (prev) => prev,
   });
 

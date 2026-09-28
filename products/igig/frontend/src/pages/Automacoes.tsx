@@ -39,7 +39,6 @@ const EXEC_VARIANT: Record<ExecucaoStatus, BadgeVariant> = {
   executando: "outline",
   sucesso: "default",
   erro: "destructive",
-  ignorada: "muted",
 };
 
 function horaBR(iso: string | null | undefined): string {
