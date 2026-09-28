@@ -102,6 +102,13 @@ def _row(client, table, **eq) -> dict:
 def _rows(client, table) -> list[dict]:
     return client.table(table).select("*").execute().data or []
 
+def _eventos_do_tipo(client, tipo: str) -> list[dict]:
+    """Timeline rows of one `tipo`. A lifecycle move also writes its own
+    `status` evento through MembrosService.set_status (slice BE-A), so tests
+    select the kind they assert on instead of assuming one row per webhook."""
+    return [e for e in _rows(client, "membro_eventos") if e["tipo"] == tipo]
+
+
 
 class TestSeedMapsAsaasOverdueToTheGracePath:
     def test_payment_overdue_parses_as_charge_failed(self):
@@ -146,8 +153,10 @@ class TestChargePaid:
         assert lanc["pagamento_id"] == pagamento["id"]
         assert lanc["membro_id"] == MEMBRO_1
 
-        (evento,) = _rows(client, "membro_eventos")
+        (evento,) = _eventos_do_tipo(client, "pagamento")
         assert evento["tipo"] == "pagamento"
+        (status,) = _eventos_do_tipo(client, "status")
+        assert status["dados"]["para"] == "ativo"
         assert evento["dados"]["pagamento_id"] == pagamento["id"]
 
     def test_renewal_on_active_sub_advances_dates_keeps_ativa_em(self):
@@ -198,7 +207,7 @@ class TestChargePaid:
 
         assert len(_rows(client, "pagamentos")) == 1
         assert len(_rows(client, "lancamentos")) == 1
-        assert [e["tipo"] for e in _rows(client, "membro_eventos")] == ["pagamento"]
+        assert len(_eventos_do_tipo(client, "pagamento")) == 1
 
     def test_exact_replay_is_deduped_by_the_inbox(self):
         client = _client()
@@ -240,8 +249,10 @@ class TestChargeFailedGrace:
         membro = _row(client, "membros", id=MEMBRO_1)
         assert membro["status"] == "atrasado"
         assert membro["plano_id"] == PLANO_PREMIUM  # access KEPT
-        (evento,) = _rows(client, "membro_eventos")
+        (evento,) = _eventos_do_tipo(client, "assinatura")
         assert evento["tipo"] == "assinatura"
+        (status,) = _eventos_do_tipo(client, "status")
+        assert status["dados"]["para"] == "atrasado"
         # settings row created on first read with the default grace
         assert _rows(client, "configuracoes_cobranca")[0]["dias_carencia"] == 5
 

@@ -137,8 +137,12 @@ class TestGraceExpiry:
         membro = _row(client, "membros", MEMBRO_1)
         assert membro["plano_id"] == GRATUITO
         assert membro["status"] == "ativo"
-        (evento,) = _eventos(client)
+        # The expiry writes its own `assinatura` evento; the member's
+        # atrasado → ativo move writes a `status` one via set_status (BE-A).
+        (evento,) = [e for e in _eventos(client) if e["tipo"] == "assinatura"]
         assert evento["tipo"] == "assinatura"
+        (status,) = [e for e in _eventos(client) if e["tipo"] == "status"]
+        assert status["dados"]["para"] == "ativo"
 
     def test_grace_not_yet_over_is_untouched(self):
         client = _client(assinaturas=[_assinatura(carencia_ate=FUTURO)])
