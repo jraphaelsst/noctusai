@@ -13,25 +13,32 @@ Jobs:
   * ``igig_automacoes_sla`` — every 15 min. SLA/stale sweep of the automation
     rules → ``sla_estourado`` notification, once per stage entry (slice E2,
     roadmap R11; ``app/services/automacoes.py::varrer_sla``).
+  * ``igig_pautas_extensao`` — daily 06:45 (São Paulo). Rolling calendar fill
+    for every ACCEPTED orçamento (`app/services/pautas.py::estender_pendentes`)
+    — the accept-time generation only ever covered the first 30 days, with
+    nothing renewing it past that window or across a month boundary (achado
+    17). Per-day idempotent, so a misfire/retry never duplicates a pauta.
 """
 from __future__ import annotations
 
 import logging
 
+import anyio
 from noctusai_lib.api import scheduler as seed_scheduler
 
 from app import database
 from app.email_deps import current_email_settings, real_gmail_client
 from app.config import settings
 from app.services import orcamento_email
+from app.services import pautas
 from app.services.automacoes import PortasAutomacao, varrer_sla
 from app.store import get_repositorios_admin
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "configure", "job_automacoes_sla", "renovar_gmail_watches_job", "start_scheduler",
-    "stop_scheduler",
+    "configure", "job_automacoes_sla", "job_pautas_extensao", "renovar_gmail_watches_job",
+    "start_scheduler", "stop_scheduler",
 ]
 
 SLA_INTERVALO_MINUTOS = 15
@@ -66,6 +73,14 @@ async def job_automacoes_sla() -> None:
         logger.exception("job igig_automacoes_sla falhou")
 
 
+async def job_pautas_extensao() -> None:
+    try:
+        admin = database._db.get_admin_client()
+        await anyio.to_thread.run_sync(pautas.estender_pendentes, admin)
+    except Exception:  # noqa: BLE001 — a job failure must be loud, not fatal to the loop
+        logger.exception("job igig_pautas_extensao falhou")
+
+
 def configure() -> None:
     seed_scheduler.register(
         "igig_gmail_watch_renovar", renovar_gmail_watches_job,
@@ -73,4 +88,8 @@ def configure() -> None:
     )
     seed_scheduler.register(
         "igig_automacoes_sla", job_automacoes_sla, minutes=SLA_INTERVALO_MINUTOS,
+    )
+    seed_scheduler.register(
+        "igig_pautas_extensao", job_pautas_extensao,
+        cron="45 6 * * *", misfire_grace_time=3600,
     )

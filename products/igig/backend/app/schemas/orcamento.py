@@ -26,6 +26,7 @@ __all__ = [
     "OrcamentoUpdate",
     "CalcularIn",
     "RecusarIn",
+    "NovaVersaoIn",
     "GerarContratoIn",
 ]
 
@@ -105,6 +106,12 @@ class OrcamentoUpdate(StrictHttpModel):
 
 class RecusarIn(StrictHttpModel):
     motivo: str = Field(max_length=2000)
+
+
+class NovaVersaoIn(StrictHttpModel):
+    #: Omitted ⇒ same days-ahead-of-creation the original had (owner decision
+    #: 2026-09-28). Explicit `null` ⇒ never expires.
+    validade: date | None = None
 
 
 class GerarContratoIn(StrictHttpModel):

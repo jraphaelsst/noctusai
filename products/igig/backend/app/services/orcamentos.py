@@ -29,14 +29,14 @@ Rule refusals raise :class:`RegraViolada` (`{"detail", "code"}` on the wire):
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
-from zoneinfo import ZoneInfo
 
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows, paged_rows
 
 from app.pipelines import PAPEL_FECHADO, PIPELINE_COMERCIAL, etapas
 from app.services import comercial_funil
+from app.services import pautas
 from app.services import quadro_comum as qc
 from app.services.regras import RegraViolada
 
@@ -47,6 +47,7 @@ __all__ = [
     "DIAS_SEMANA",
     "STATUS_ABERTOS",
     "ABAS",
+    "VALIDADE_AUTOMATICA",
     "quantidade_mensal",
     "frequencia_texto",
     "normalizar_itens",
@@ -60,7 +61,7 @@ __all__ = [
     "nova_versao",
     "recusar",
     "aceitar",
-    "gerar_pautas",
+    "gerar_pautas_pendentes",
     "itens_de",
     "hoje_local",
     "produtos_dos_itens",
@@ -74,12 +75,19 @@ DIAS_SEMANA: tuple[tuple[int, str], ...] = (
 )
 #: A month is priced as 4 weeks (contract § Shapes: popcount × qtd × 4).
 SEMANAS_POR_MES = 4
-#: How far ahead an accepted orçamento fills the calendar (roadmap R9).
-DIAS_DE_PAUTA = 30
-#: Local publishing hour of a generated pauta — a placeholder slot the
-#: operator reschedules; midnight UTC would land on the previous day in Brazil.
-HORA_PAUTA = time(10, 0)
-FUSO = ZoneInfo("America/Sao_Paulo")
+
+
+class _ValidadeAutomatica:
+    """Sentinel for `nova_versao`'s `validade` arg: "the caller did not send
+    one — compute the same days-ahead-of-creation the original version had".
+    Distinct from `None`, which explicitly means "no validade" (never
+    expires)."""
+
+    def __repr__(self) -> str:  # pragma: no cover — debugging aid only
+        return "VALIDADE_AUTOMATICA"
+
+
+VALIDADE_AUTOMATICA = _ValidadeAutomatica()
 
 STATUS_ABERTOS = ("rascunho", "enviado")
 ABAS: dict[str, tuple[str, ...]] = {
@@ -105,7 +113,12 @@ def _agora() -> str:
 
 
 def hoje_local() -> date:
-    return datetime.now(FUSO).date()
+    """America/Sao_Paulo "today" — the ONE clock every igig date rule reads
+    (`KB` achado 7: a container's UTC `date.today()` disagrees with this for
+    hours every evening). Delegates to `quadro_comum` so `comercial_funil.py`
+    reads the identical clock without importing this module (which already
+    imports `comercial_funil` — a cycle)."""
+    return qc.hoje_local()
 
 
 def _num(valor: Any, padrao: float = 0.0) -> float:
@@ -480,12 +493,46 @@ def atualizar(db: Any, org_id: str, orcamento_id: str, dados: dict, *, custo_hor
     return obter(db, org_id, orcamento_id, hoje=hoje)
 
 
-def nova_versao(db: Any, org_id: str, orcamento_id: str, *, hoje: date | None = None) -> dict:
-    """Clone as a new `rascunho` (versao = max + 1); the source → `substituido`.
+def _validade_padrao_nova_versao(origem: dict, hoje: date) -> date | None:
+    """Default new validade: the SAME days-ahead-of-creation the original had
+    (owner decision 2026-09-28) — never a silent "born with no validade" for
+    an orçamento that had one, and never a stale copied date either. `None`
+    (never expires) when the original never had one, or its own dates cannot
+    be parsed."""
+    validade_original = origem.get("validade")
+    criado_em = origem.get("created_at")
+    if not validade_original or not criado_em:
+        return None
+    try:
+        data_validade = date.fromisoformat(str(validade_original)[:10])
+        data_criacao = datetime.fromisoformat(str(criado_em).replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+    dias = (data_validade - data_criacao).days
+    if dias < 0:
+        return None
+    return hoje + timedelta(days=dias)
 
-    An aceito proposal cannot be superseded (it is the deal), nor can one that
-    is already substituido (clone the newest instead). A validade already past
-    is not carried over — the new version would be born expired.
+
+def nova_versao(
+    db: Any, org_id: str, orcamento_id: str, *, custo_hora: float,
+    validade: date | None | _ValidadeAutomatica = VALIDADE_AUTOMATICA,
+    hoje: date | None = None,
+) -> dict:
+    """Clone as a new `rascunho` (versao = max + 1).
+
+    The source is superseded (→ `substituido`) ONLY when it was still open
+    (`rascunho`/`enviado`) — a `recusado`/`expirado` source KEEPS that status
+    (achado 9: it used to be overwritten to `substituido`, destroying the loss
+    statistics the module's own docstring claimed were protected). An aceito
+    proposal cannot be superseded (it is the deal), nor can one already
+    substituido (clone the newest instead).
+
+    Totais/margem are RECOMPUTED at the current custo/hora — a straight copy
+    would silently carry a stale margin forward, same as every other write.
+    `validade` explicit (including `None` = never expires) wins; omit it (the
+    default `VALIDADE_AUTOMATICA` sentinel) to get the same days-ahead the
+    original had, counted from today.
     """
     hoje = hoje or hoje_local()
     origem = carregar(db, org_id, orcamento_id)
@@ -497,31 +544,40 @@ def nova_versao(db: Any, org_id: str, orcamento_id: str, *, hoje: date | None = 
         )
     negocio_id = str(origem["negocio_id"])
     versao = _proxima_versao(db, org_id, negocio_id)
-    copiar = (
-        "negocio_id", "lead_id", "cliente_id", "titulo", "limites_escopo", "observacoes",
-        *_NUMERICOS, "margem_estimada",
-    )
-    linha = {k: origem.get(k) for k in copiar}
-    linha.update({
+
+    itens_origem = itens_de(db, org_id, [orcamento_id])[orcamento_id]
+    itens_normalizados = normalizar_itens(itens_origem)
+    totais = _totais_para(db, org_id, itens_normalizados, _num(origem.get("desconto")), custo_hora)
+
+    if isinstance(validade, _ValidadeAutomatica):
+        validade_final = _validade_padrao_nova_versao(origem, hoje)
+    else:
+        validade_final = validade
+
+    linha = {
         "org_id": org_id,
+        "negocio_id": origem.get("negocio_id"),
+        "lead_id": origem.get("lead_id"),
+        "cliente_id": origem.get("cliente_id"),
         "versao": versao,
+        "titulo": origem.get("titulo"),
         "status": "rascunho",
-        "validade": None if _vencido(origem, hoje) else origem.get("validade"),
-    })
-    db.table("orcamento").update({"status": "substituido"}).eq("id", orcamento_id).eq(
-        "org_id", org_id
-    ).execute()
+        "validade": validade_final.isoformat() if isinstance(validade_final, date) else validade_final,
+        "limites_escopo": origem.get("limites_escopo") or dict(LIMITES_PADRAO),
+        "observacoes": origem.get("observacoes"),
+        **totais,
+    }
+    if origem.get("status") in STATUS_ABERTOS:
+        db.table("orcamento").update({"status": "substituido"}).eq("id", orcamento_id).eq(
+            "org_id", org_id
+        ).execute()
     criado = db.table("orcamento").insert(linha).execute().data or []
     if not criado:
         raise RuntimeError("insert de orcamento não retornou a linha criada")
     novo = criado[0]
-    itens = [
-        {k: v for k, v in i.items() if k not in ("id", "quantidade")}
-        for i in itens_de(db, org_id, [orcamento_id])[orcamento_id]
-    ]
-    _gravar_itens(db, org_id, str(novo["id"]), itens)
-    logger.info("orcamento nova versao org=%s de=%s para=%s v%d",
-                org_id, orcamento_id, novo["id"], versao)
+    _gravar_itens(db, org_id, str(novo["id"]), itens_normalizados)
+    logger.info("orcamento nova versao org=%s de=%s (status=%s) para=%s v%d",
+                org_id, orcamento_id, origem.get("status"), novo["id"], versao)
     return montar_dtos(db, org_id, [novo])[0]
 
 
@@ -561,13 +617,20 @@ def aceitar(db: Any, org_id: str, orcamento_id: str, *, user_id: Any,
     The transition is NOT re-implemented: the negócio is moved into the
     `fechado`-role stage by `comercial_funil.mover_negocio`, the one code path
     that accepts the orçamento, supersedes its open siblings, marks the deal
-    ganho and creates the Cliente. Re-accepting an already-accepted orçamento
-    is a no-op transition (pautas are idempotent per item).
+    ganho, creates the Cliente AND generates the pautas — the SAME close path
+    a drag-to-Fechado on the Comercial board runs (`comercial_funil._fechar`;
+    achado 2 / comercial achado 1: those two paths used to diverge, and
+    drag-to-Fechado never generated a single pauta). Re-accepting an
+    already-accepted orçamento is a no-op transition; the pauta call below
+    still runs (per-day idempotent) as the recovery path for a deal closed
+    before pauta generation moved into the shared `_fechar`.
     """
     hoje = hoje or hoje_local()
     orcamento = carregar(db, org_id, orcamento_id)
     negocio = qc.carregar(db, "negocio", org_id, str(orcamento["negocio_id"]),
                           select=comercial_funil.NEGOCIO_SELECT, rotulo="negócio")
+    lead_antes = qc.carregar(db, "lead", org_id, str(negocio["lead_id"]), select="id, cliente_id")
+    cliente_ja_existia = bool(negocio.get("cliente_id") or lead_antes.get("cliente_id"))
     ja_aceito = (
         orcamento.get("status") == "aceito"
         and negocio.get("status") == "ganho"
@@ -601,67 +664,40 @@ def aceitar(db: Any, org_id: str, orcamento_id: str, *, user_id: Any,
                 409, "aceite_nao_aplicado",
                 "O negócio não pôde ser fechado com este orçamento — verifique a etapa do card.",
             )
+    else:
+        cliente_ja_existia = True  # already accepted before now ⇒ never "new" on a re-accept
     cliente = qc.carregar(db, "cliente", org_id, str(negocio["cliente_id"]), rotulo="cliente")
-    pautas = gerar_pautas(db, org_id, orcamento_id, cliente_id=str(cliente["id"]), inicio=hoje)
+    itens = itens_de(db, org_id, [orcamento_id])[orcamento_id]
+    # Idempotent recovery: `_fechar` already generated these for a fresh
+    # close; for a deal closed before that fix (or a legacy drag-to-Fechado)
+    # this is what fills the calendar in.
+    pautas.gerar(db, org_id, itens=itens, cliente_id=str(cliente["id"]), inicio=hoje)
+    total_pautas = pautas.contar_geradas(db, org_id, itens)
     logger.info("orcamento aceito org=%s orcamento=%s negocio=%s pautas=%d",
-                org_id, orcamento_id, negocio["id"], len(pautas))
+                org_id, orcamento_id, negocio["id"], total_pautas)
     return {
         "orcamento": montar_dtos(db, org_id, [orcamento])[0],
         "negocio": negocio,
         "cliente": cliente,
-        "pautas_criadas": len(pautas),
+        "cliente_criado": not cliente_ja_existia,
+        "pautas_criadas": total_pautas,
     }
 
 
-def gerar_pautas(db: Any, org_id: str, orcamento_id: str, *, cliente_id: str,
-                 inicio: date) -> list[dict]:
-    """Calendar pautas for every RECURRING criação item, next 30 days.
-
-    Pautas only — esteira tarefas are created on demand (roadmap R9). One pauta
-    per matching weekday × `qtd_por_dia`, `gerada_automaticamente=true`, linked
-    by `orcamento_item_id`. Idempotent per item: an item that already has
-    generated pautas is skipped, so a retried aceite never doubles the calendar.
-    """
-    itens = [
-        i for i in itens_de(db, org_id, [orcamento_id])[orcamento_id]
-        if i["recorrente"] and i["secao"] == "criacao_conteudo"
-    ]
-    if not itens:
-        return []
-    existentes = {
-        str(p.get("orcamento_item_id"))
-        for p in in_batched_rows(db, "pauta", org_id, "orcamento_item_id",
-                                 [str(i["id"]) for i in itens], select="id, orcamento_item_id")
-    }
-    produtos = qc.por_ids(db, "produto_servico", org_id,
-                          (i.get("produto_servico_id") for i in itens), select="id, formato")
-    novas: list[dict] = []
-    for item in itens:
-        if str(item["id"]) in existentes:
-            continue
-        formato = (produtos.get(str(item.get("produto_servico_id"))) or {}).get("formato")
-        qtd = int(item["qtd_por_dia"])
-        for delta in range(DIAS_DE_PAUTA):
-            dia = inicio + timedelta(days=delta)
-            if not item["dias_semana"] & (1 << dia.weekday()):
-                continue
-            quando = datetime.combine(dia, HORA_PAUTA, tzinfo=FUSO).isoformat()
-            for n in range(qtd):
-                novas.append({
-                    "org_id": org_id,
-                    "cliente_id": cliente_id,
-                    "titulo": item["descricao"] if qtd == 1 else f"{item['descricao']} ({n + 1}/{qtd})",
-                    "formato": formato,
-                    "data_publicacao": quando,
-                    "gerada_automaticamente": True,
-                    "orcamento_item_id": item["id"],
-                })
-    criadas: list[dict] = []
-    for lote_inicio in range(0, len(novas), 500):
-        lote = novas[lote_inicio:lote_inicio + 500]
-        criadas.extend(db.table("pauta").insert(lote).execute().data or [])
-    if len(criadas) != len(novas):
-        raise RuntimeError(
-            f"insert de pautas retornou {len(criadas)} de {len(novas)} linhas"
+def gerar_pautas_pendentes(db: Any, org_id: str, orcamento_id: str, *,
+                           hoje: date | None = None) -> dict:
+    """"Gerar pautas" recovery button on an ACCEPTED orçamento (owner decision
+    2026-09-28): idempotent, so it is safe on a deal whose calendar is already
+    complete — it simply reports the total again."""
+    hoje = hoje or hoje_local()
+    orcamento = obter(db, org_id, orcamento_id, hoje=hoje)
+    if orcamento["status"] != "aceito":
+        raise RegraViolada(
+            409, "orcamento_nao_aceito", "Só um orçamento aceito pode gerar pautas.",
         )
-    return criadas
+    cliente_id = orcamento.get("cliente_id")
+    if not cliente_id:
+        raise RuntimeError(f"orcamento aceito {orcamento_id} sem cliente — aceite incompleto")
+    itens = orcamento["itens"]
+    pautas.gerar(db, org_id, itens=itens, cliente_id=str(cliente_id), inicio=hoje)
+    return {"pautas_criadas": pautas.contar_geradas(db, org_id, itens)}

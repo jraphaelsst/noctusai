@@ -33,6 +33,25 @@ def repos() -> Repositorios:
 
 @pytest.fixture
 def api(client, repos):
+    """Admin-equivalent by default — every test below exercises the CRUD, not
+    the auth boundary (`TestWritesAreAdminOnly` pins that separately, the way
+    `test_automacao_router.py::test_writes_are_admin_only` does)."""
+    from app.main import app
+    from app.pipelines import exigir_admin_da_org
+
+    app.dependency_overrides[get_repositorios] = lambda: repos
+    app.dependency_overrides[get_repositorios_admin] = lambda: repos
+    app.dependency_overrides[exigir_admin_da_org] = lambda: None
+    yield client
+    app.dependency_overrides.pop(get_repositorios, None)
+    app.dependency_overrides.pop(get_repositorios_admin, None)
+    app.dependency_overrides.pop(exigir_admin_da_org, None)
+
+
+@pytest.fixture
+def membro(client, repos):
+    """The conftest user holds no admin role in the trusted table — the
+    NON-admin caller admin-gated writes must refuse."""
     from app.main import app
 
     app.dependency_overrides[get_repositorios] = lambda: repos
@@ -58,6 +77,38 @@ class TestAuthBoundary:
     def test_criar_profissional_sem_auth_retorna_401(self, api):
         resposta = api.raw().post("/api/custos/profissionais", json={"nome": "X"})
         assert resposta.status_code == 401
+
+
+class TestWritesAreAdminOnly:
+    """Owner decision 2026-09-28: custos writes (função/profissional
+    create/update/delete) are admin-only — reads stay open to any member."""
+
+    def test_criar_funcao(self, membro):
+        resp = membro.post("/api/custos/funcoes", json={"nome": "X"})
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "admin_obrigatorio"
+
+    def test_atualizar_funcao(self, membro):
+        resp = membro.patch("/api/custos/funcoes/x", json={"nome": "Y"})
+        assert resp.status_code == 403
+
+    def test_remover_funcao(self, membro):
+        assert membro.delete("/api/custos/funcoes/x").status_code == 403
+
+    def test_criar_profissional(self, membro):
+        resp = membro.post("/api/custos/profissionais", json={"nome": "X"})
+        assert resp.status_code == 403
+
+    def test_atualizar_profissional(self, membro):
+        resp = membro.patch("/api/custos/profissionais/x", json={"ativo": False})
+        assert resp.status_code == 403
+
+    def test_remover_profissional(self, membro):
+        assert membro.delete("/api/custos/profissionais/x").status_code == 403
+
+    def test_reads_stay_open(self, membro):
+        assert membro.get("/api/custos/funcoes").status_code == 200
+        assert membro.get("/api/custos/profissionais").status_code == 200
 
 
 class TestFuncoes:
@@ -124,6 +175,14 @@ class TestFuncoes:
             "/api/custos/funcoes/00000000-0000-0000-0000-000000000000"
         )
         assert resposta.status_code == 404
+
+    def test_nome_duplicado_e_409_nao_500(self, api):
+        """Achado 13: the unique-index violation used to surface as an
+        unmapped 500."""
+        api.post("/api/custos/funcoes", json={"nome": "Designer"})
+        resposta = api.post("/api/custos/funcoes", json={"nome": "Designer"})
+        assert resposta.status_code == 409
+        assert resposta.json()["code"] == "funcao_duplicada"
 
 
 class TestResolucaoDeCustoHora:

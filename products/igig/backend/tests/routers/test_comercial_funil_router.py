@@ -13,6 +13,7 @@ from noctusai_lib.testing.clients import TEST_USER_ID
 
 from app.dependencies import coerce_org_uuid
 from app.pipelines import COMERCIAL_PADRAO
+from app.services import comercial_funil
 
 ORG = str(coerce_org_uuid("test-org-123"))
 
@@ -202,10 +203,52 @@ class TestMoverEtapa:
         lead = _linha(igig_db, "lead", negocio["lead_id"])
         assert lead["status"] == "convertido" and lead["cliente_id"] == cliente["id"]
 
+    def test_closing_via_drag_generates_pautas(self, api, negocio, etapas, igig_db):
+        """Achado 2 / comercial achado 1: drag-to-Fechado used to close the
+        deal WITHOUT ever generating a pauta — only the orçamento modal's ✓
+        did. `_fechar` now calls the same shared `pautas.gerar` the modal's
+        `/aceitar` calls, so both doors fill the calendar."""
+        orc = _orcamento(igig_db, negocio)
+        igig_db.table("orcamento_item").insert({
+            "org_id": ORG, "orcamento_id": orc["id"], "produto_servico_id": None,
+            "secao": "criacao_conteudo", "descricao": "Post feed", "preco_unitario": 80,
+            "recorrente": True, "dias_semana": 1 | 4 | 16, "qtd_por_dia": 1,
+            "quantidade_mensal": 12, "subtotal": 960, "ordem": 0,
+        }).execute()
+
+        resp = _mover(api, negocio["id"], etapas["fechado"]["id"], orcamento_id=orc["id"])
+        assert resp.status_code == 200, resp.text
+        cliente_id = resp.json()["data"]["cliente_id"]
+        pautas_geradas = [p for p in igig_db.table("pauta")._data if p["cliente_id"] == cliente_id]
+        assert len(pautas_geradas) > 0
+        assert all(p["gerada_automaticamente"] is True for p in pautas_geradas)
+
     def test_an_already_accepted_orcamento_closes_too(self, api, negocio, etapas, igig_db):
         aceito = _orcamento(igig_db, negocio, status="aceito")
         resp = _mover(api, negocio["id"], etapas["fechado"]["id"], orcamento_id=aceito["id"])
         assert resp.status_code == 200, resp.text
+
+    def test_abrir_negocio_with_cliente_id_reuses_it_on_close(self, api, etapas, igig_db):
+        """Comercial achado 12 (upsell): a negócio opened FOR an existing
+        cliente (`comercial_funil.abrir_negocio(cliente_id=...)`) must reuse
+        that cliente on close — never `_garantir_cliente` spinning up a
+        second one from the lead."""
+        cliente = igig_db.table("cliente").insert(
+            {"org_id": ORG, "nome": "Padaria Sol", "status": "ativo"}
+        ).execute().data[0]
+        lead = igig_db.table("lead").insert(
+            {"org_id": ORG, "nome": "Novo contato", "empresa": "Padaria Sol"}
+        ).execute().data[0]
+        upsell = comercial_funil.abrir_negocio(
+            igig_db, ORG, lead_id=lead["id"], titulo="Upsell — pacote maior",
+            cliente_id=cliente["id"],
+        )
+        assert upsell["cliente_id"] == cliente["id"]
+        orc = _orcamento(igig_db, upsell)
+        resp = _mover(api, upsell["id"], etapas["fechado"]["id"], orcamento_id=orc["id"])
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["cliente_id"] == cliente["id"]
+        assert len(igig_db.table("cliente")._data) == 1
 
     def test_the_cliente_is_created_once_per_lead(self, api, negocio, etapas, igig_db):
         primeiro = _orcamento(igig_db, negocio)

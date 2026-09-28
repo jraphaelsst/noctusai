@@ -77,7 +77,11 @@ async def gerar(
     existentes = [
         c for c in paged_rows(db, "contrato", org_id, eq_filters={"orcamento_id": orcamento_id},
                               select="id, status")
-        if c.get("status") != "encerrado"
+        # `encerrado` = closed by choice; `rascunho` = a DIGITAL contrato the
+        # signature webhook reset after `recusado`/`expirado` (achado 11) —
+        # neither is a LIVE contract, so both free the orçamento to generate
+        # a fresh one. A física contrato never reaches `rascunho`.
+        if c.get("status") not in ("encerrado", "rascunho")
     ]
     if existentes:
         raise RegraViolada(409, "contrato_existente", "Este orçamento já tem um contrato gerado.")
@@ -92,7 +96,14 @@ async def gerar(
                           select="id, nome, email, telefone", rotulo="cliente")
 
     limites = orcamento.get("limites_escopo") or {}
-    posts = sum(i["quantidade_mensal"] for i in orcamento["itens"] if i["secao"] == "criacao_conteudo")
+    # Only RECURRING criação items are ever scheduled (`pautas.gerar`) — a
+    # non-recurring one-off item summed in here (achado 18) let the
+    # contracted package diverge from what actually gets delivered from day
+    # one.
+    posts = sum(
+        i["quantidade_mensal"] for i in orcamento["itens"]
+        if i["secao"] == "criacao_conteudo" and i["recorrente"]
+    )
     criado = db.table("contrato").insert({
         "org_id": org_id,
         "cliente_id": cliente["id"],
@@ -169,6 +180,13 @@ async def marcar_assinado(
         )
     if contrato.get("status") == "ativo":
         raise RegraViolada(409, "contrato_ja_assinado", "Este contrato já está assinado.")
+    if contrato.get("status") == "encerrado":
+        # Achado 12: only `ativo` was blocked, so an `encerrado` física
+        # contrato could be re-activated straight through the API (the UI
+        # simply hides the button — no protection at all server-side).
+        raise RegraViolada(
+            409, "contrato_encerrado", "Este contrato está encerrado e não pode ser reativado.",
+        )
     agora = _agora()
     updates: dict[str, Any] = {"status": "ativo", "assinado_em": agora, "assinado_manual_em": agora}
     if arquivo is not None:

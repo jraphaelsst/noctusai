@@ -466,9 +466,19 @@ class TestAceite:
         primeiro = api.post(f"/api/orcamentos/{orc['id']}/aceitar").json()["data"]
         segundo = api.post(f"/api/orcamentos/{orc['id']}/aceitar")
         assert segundo.status_code == 200
-        assert segundo.json()["data"]["pautas_criadas"] == 0
+        # `pautas_criadas` reports the TOTAL for the deal (achado 2/17 — an
+        # idempotent recovery call must be able to report a healthy non-zero
+        # count too), so a re-accept reports the SAME total, not zero.
+        assert segundo.json()["data"]["pautas_criadas"] == primeiro["pautas_criadas"]
         assert len(_linhas(igig_db, "pauta")) == primeiro["pautas_criadas"]
         assert len(_linhas(igig_db, "cliente")) == 1
+
+    def test_reaccept_reports_cliente_criado_false(self, api, catalogo, negocio):
+        orc = _criar(api, negocio, [_item_gestao(catalogo)])
+        primeiro = api.post(f"/api/orcamentos/{orc['id']}/aceitar").json()["data"]
+        assert primeiro["cliente_criado"] is True
+        segundo = api.post(f"/api/orcamentos/{orc['id']}/aceitar").json()["data"]
+        assert segundo["cliente_criado"] is False
 
     def test_another_orcamento_after_the_deal_closed_is_409(self, api, catalogo, negocio):
         a = _criar(api, negocio, [_item_gestao(catalogo)])
@@ -610,6 +620,35 @@ class TestContrato:
         assert resp.status_code == 409
         assert resp.json()["code"] == "contrato_existente"
 
+    def test_posts_por_mes_excludes_non_recurring_criacao_items(self, api, catalogo, negocio):
+        """Achado 18: a non-recurring criação item was summed into
+        `posts_por_mes` even though `pautas.gerar` never schedules it — the
+        contracted package diverged from what gets delivered from day one."""
+        orc = _criar(api, negocio, [
+            _item_post(catalogo),
+            {"produto_servico_id": catalogo["Reels"]["id"], "secao": "criacao_conteudo",
+             "descricao": "Reels avulso", "preco_unitario": 250, "quantidade": 5},
+        ])
+        api.post(f"/api/orcamentos/{orc['id']}/aceitar")
+        contrato = api.post(
+            f"/api/orcamentos/{orc['id']}/contrato", json={"modalidade_assinatura": "fisica"},
+        ).json()["data"]["contrato"]
+        assert contrato["posts_por_mes"] == 24, "only the recurring Post feed item counts"
+
+    def test_a_webhook_reset_digital_contract_can_be_regenerated(self, api, aceito, igig_db):
+        """Achado 11: the signature webhook resets a `recusado`/`expirado`
+        digital contrato to `rascunho` with no recovery path. A `rascunho`
+        (never live) must not block generating a fresh one, the way an
+        `encerrado` contrato already doesn't."""
+        orc = aceito["orcamento"]
+        primeiro = api.post(f"/api/orcamentos/{orc['id']}/contrato",
+                            json={"modalidade_assinatura": "digital"}).json()["data"]["contrato"]
+        igig_db.table("contrato").update({"status": "rascunho"}).eq("id", primeiro["id"]).execute()
+        resp = api.post(f"/api/orcamentos/{orc['id']}/contrato",
+                        json={"modalidade_assinatura": "digital"})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["data"]["contrato"]["id"] != primeiro["id"]
+
     def test_invalid_modalidade_is_422(self, api, aceito):
         resp = api.post(f"/api/orcamentos/{aceito['orcamento']['id']}/contrato",
                         json={"modalidade_assinatura": "fax"})
@@ -674,6 +713,15 @@ class TestMarcarAssinado:
                         files={"arquivo": ("x.exe", b"MZ", "application/octet-stream")})
         assert resp.status_code == 422
         assert resp.json()["code"] == "arquivo_invalido"
+
+    def test_encerrado_cannot_be_reactivated(self, api, aceito, igig_db):
+        """Achado 12: only `ativo` was guarded — an `encerrado` física
+        contrato could be re-activated straight through the API."""
+        contrato = self._contrato(api, aceito)
+        igig_db.table("contrato").update({"status": "encerrado"}).eq("id", contrato["id"]).execute()
+        resp = api.post(f"/api/contratos/{contrato['id']}/marcar-assinado")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "contrato_encerrado"
 
     def test_unknown_contract_is_404(self, api):
         assert api.post("/api/contratos/nao-existe/marcar-assinado").status_code == 404

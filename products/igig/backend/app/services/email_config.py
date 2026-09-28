@@ -174,10 +174,17 @@ def _publico(configurado: bool, origem: str, cfg: dict[str, Any] | None) -> dict
 
 
 def status_smtp(repos: Repositorios, org_id: str, settings: EmailSettings) -> dict[str, Any]:
-    """The GET shape. NEVER carries the password."""
+    """The GET shape. NEVER carries the password.
+
+    Mirrors `resolver_smtp`'s EXACT decision tree (achado 14): a disabled org
+    row (`ativo=False`) used to be reported as `configurado=false, origem="org"`
+    while `resolver_smtp` silently fell through to the platform SMTP for that
+    same org — the status screen and the actual send disagreed about whose
+    account mail was leaving from.
+    """
     registro = repos.integracao.por_canal(org_id, CANAL_SMTP)
-    if registro is not None and registro.get("token_cifrado"):
-        return _publico(bool(registro.get("ativo")), "org", registro.get("config") or {})
+    if registro is not None and registro.get("token_cifrado") and registro.get("ativo"):
+        return _publico(True, "org", registro.get("config") or {})
     plataforma = _smtp_plataforma(settings)
     if plataforma is not None:
         return _publico(True, "plataforma", {

@@ -68,6 +68,34 @@ def gmail() -> FakeGmailClient:
 
 @pytest.fixture
 def api(client, repos, cfg, senders, gmail):
+    """Admin-equivalent by default — every test below exercises the SMTP/
+    Gmail mechanics, not the auth boundary (`TestWritesAreAdminOnly` pins
+    that separately)."""
+    from app.main import app
+    from app.pipelines import exigir_admin_da_org
+
+    async def _perfil(_creds):
+        return MAILBOX
+
+    overrides = {
+        get_repositorios: lambda: repos,
+        get_repositorios_admin: lambda: repos,
+        get_email_settings: cfg,
+        get_email_sender_factory: lambda: senders,
+        get_gmail_client_factory: lambda: (lambda _creds: gmail),
+        get_gmail_oauth_provider: lambda: FakeOAuthProvider("google"),
+        get_gmail_profile_fetcher: lambda: _perfil,
+        exigir_admin_da_org: lambda: None,
+    }
+    app.dependency_overrides.update(overrides)
+    yield client
+    for dep in overrides:
+        app.dependency_overrides.pop(dep, None)
+
+
+@pytest.fixture
+def membro(client, repos, cfg, senders, gmail):
+    """The conftest user holds no admin role in the trusted table."""
     from app.main import app
 
     async def _perfil(_creds):
@@ -86,6 +114,28 @@ def api(client, repos, cfg, senders, gmail):
     yield client
     for dep in overrides:
         app.dependency_overrides.pop(dep, None)
+
+
+class TestWritesAreAdminOnly:
+    """Owner decision 2026-09-28: SMTP/Gmail CONFIG writes are admin-only —
+    reads and sending a test e-mail through an already-saved config stay
+    open to any member."""
+
+    def test_salvar_smtp(self, membro):
+        assert membro.put("/api/integracoes/email/smtp", json=SMTP).status_code == 403
+
+    def test_remover_smtp(self, membro):
+        assert membro.delete("/api/integracoes/email/smtp").status_code == 403
+
+    def test_conectar_gmail(self, membro):
+        assert membro.get("/api/integracoes/email/gmail/oauth/start").status_code == 403
+
+    def test_desconectar_gmail(self, membro):
+        assert membro.delete("/api/integracoes/email/gmail").status_code == 403
+
+    def test_reads_stay_open(self, membro):
+        assert membro.get("/api/integracoes/email/smtp").status_code == 200
+        assert membro.get("/api/integracoes/email/gmail").status_code == 200
 
 
 # ── SMTP ─────────────────────────────────────────────────────────────
@@ -110,6 +160,37 @@ class TestSmtpStatus:
         assert data["host"] == "smtp.noctus.test"
         assert data["security"] == "ssl", "port 465 ⇒ implicit TLS"
         assert "noc-pass" not in resp.text
+
+    def test_a_disabled_org_account_reports_the_same_fallback_the_send_uses(
+        self, api, cfg, repos,
+    ):
+        """Achado 14: `status_smtp` used to report `configurado=false,
+        origem="org"` for a disabled org row while `resolver_smtp` (the send
+        path) silently used the platform SMTP for that SAME org — the status
+        screen lied about whose account mail was actually leaving from."""
+        cfg.valor = replace(
+            SEM_GCP, smtp_host="smtp.noctus.test", smtp_user="noc@noctus.test",
+            smtp_password="noc-pass",
+        )
+        api.put("/api/integracoes/email/smtp", json=SMTP)
+        linha = repos.integracao.por_canal(ORG, "smtp")
+        repos.integracao.atualizar(ORG, linha["id"], {"ativo": False})
+
+        data = api.get("/api/integracoes/email/smtp").json()["data"]
+        assert data["configurado"] is True
+        assert data["origem"] == "plataforma"
+        assert data["host"] == "smtp.noctus.test"
+
+    def test_a_disabled_org_account_with_no_platform_fallback_is_unconfigured(
+        self, api, repos,
+    ):
+        api.put("/api/integracoes/email/smtp", json=SMTP)
+        linha = repos.integracao.por_canal(ORG, "smtp")
+        repos.integracao.atualizar(ORG, linha["id"], {"ativo": False})
+
+        data = api.get("/api/integracoes/email/smtp").json()["data"]
+        assert data["configurado"] is False
+        assert data["origem"] == "nenhuma"
 
 
 class TestSmtpSalvar:

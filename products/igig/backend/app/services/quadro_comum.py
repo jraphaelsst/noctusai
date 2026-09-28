@@ -12,14 +12,18 @@ Esteira — so it lives once, here, parameterized by the `PipelineConfig`:
 """
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from noctusai_lib.domain.pipeline import PipelineConfig, position_for_index, position_of, position_on_top
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows, paged_rows
 from noctusai_lib.primitives.exceptions import NotFoundError
 
 __all__ = [
+    "FUSO",
+    "hoje_local",
     "carregar",
     "coluna",
     "por_ids",
@@ -27,6 +31,18 @@ __all__ = [
     "posicao_para_indice",
     "registrar_entrada",
 ]
+
+#: Every "is this past its date" rule in igig (orçamento validade, funil close
+#: gate, pauta scheduling) reads the SAME clock — a container's UTC `date.today()`
+#: disagrees with `America/Sao_Paulo` for hours every evening (achado 7:
+#: `comercial_funil._validar_orcamento` used to read `date.today()` while
+#: `orcamentos.py` read this; between 21h-24h BRT on the validade day the two
+#: disagreed and `/aceitar` 409'd right after its own local check passed).
+FUSO = ZoneInfo("America/Sao_Paulo")
+
+
+def hoje_local() -> date:
+    return datetime.now(FUSO).date()
 
 
 def carregar(db: Any, tabela: str, org_id: str, registro_id: str, *, select: str = "*",

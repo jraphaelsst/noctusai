@@ -29,6 +29,7 @@ from noctusai_lib.integrations.gmail import OAuthGmailCredentials
 from noctusai_lib.security.oauth import OAuthProvider
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
+from app.pipelines import exigir_admin_da_org
 from app.email_deps import (
     EmailSenderFactory,
     GmailClientFactory,
@@ -83,7 +84,7 @@ async def obter_smtp(
     return {"data": email_config.status_smtp(repos, _org(auth), cfg)}
 
 
-@router.put("/smtp")
+@router.put("/smtp", dependencies=[Depends(exigir_admin_da_org)])
 async def salvar_smtp(
     payload: SmtpIn,
     auth: tuple = Depends(get_current_user_org),
@@ -102,7 +103,7 @@ async def salvar_smtp(
     return {"data": status}
 
 
-@router.delete("/smtp")
+@router.delete("/smtp", dependencies=[Depends(exigir_admin_da_org)])
 async def remover_smtp(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
@@ -147,7 +148,7 @@ async def obter_gmail(
     }
 
 
-@router.get("/gmail/oauth/start")
+@router.get("/gmail/oauth/start", dependencies=[Depends(exigir_admin_da_org)])
 async def iniciar_oauth_gmail(
     auth: tuple = Depends(get_current_user_org),
     provider: Optional[OAuthProvider] = Depends(get_gmail_oauth_provider),
@@ -254,7 +255,7 @@ async def callback_oauth_gmail(
     return _voltar(base, "ok")
 
 
-@router.delete("/gmail")
+@router.delete("/gmail", dependencies=[Depends(exigir_admin_da_org)])
 async def desconectar_gmail(
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),

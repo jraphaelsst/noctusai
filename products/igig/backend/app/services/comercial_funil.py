@@ -19,13 +19,14 @@ accepted again as a no-op.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from noctusai_lib.domain.pipeline import get_stage, group_into_colunas, move_card
 from noctusai_lib.integrations.persistence.table_reads import paged_rows
 
 from app.pipelines import PAPEL_FECHADO, PIPELINE_COMERCIAL, etapas
+from app.services import pautas
 from app.services import quadro_comum as qc
 from app.services.regras import RegraViolada
 
@@ -168,16 +169,26 @@ def abrir_negocio(
     titulo: str | None = None,
     valor_estimado: float | None = None,
     responsavel_id: str | None = None,
+    cliente_id: str | None = None,
     user_id: Any = None,
 ) -> dict:
     """Put a lead on the funnel: a new negócio at the entry stage, on top.
 
     The entry stage is the FIRST active stage by position — whatever the
     owner named or moved there.
+
+    `cliente_id` (owner decision 2026-09-28, comercial achado 12 — upsell /
+    renewal): an EXISTING cliente this negócio is for. `_garantir_cliente`
+    checks `negocio.cliente_id` FIRST, so closing this deal reuses that
+    cliente instead of creating a second one from the lead — the gap that
+    used to force every closed lead into a brand-new cliente row even when it
+    was plainly the same account coming back for more.
     """
     lead = qc.carregar(db, "lead", org_id, lead_id, select="id, nome, empresa")
     if responsavel_id:
         qc.carregar(db, "profissional", org_id, responsavel_id, select="id", rotulo="profissional")
+    if cliente_id:
+        qc.carregar(db, "cliente", org_id, cliente_id, select="id", rotulo="cliente")
     stages = etapas(db, CFG, org_id)
     if not stages:
         raise RegraViolada(
@@ -195,6 +206,7 @@ def abrir_negocio(
                 "titulo": (titulo or lead.get("empresa") or lead.get("nome") or "Negócio").strip(),
                 "valor_estimado": valor_estimado,
                 "responsavel_id": responsavel_id,
+                "cliente_id": cliente_id,
                 "etapa_id": entrada["id"],
                 "kanban_pos": str(posicao),
                 "status": "aberto",
@@ -289,7 +301,7 @@ def _validar_orcamento(db: Any, org_id: str, negocio_id: str, orcamento_id: str 
             f"Este orçamento está {orcamento['status']} e não pode ser aceito.",
         )
     validade = orcamento.get("validade")
-    if orcamento.get("status") != "aceito" and validade and str(validade)[:10] < date.today().isoformat():
+    if orcamento.get("status") != "aceito" and validade and str(validade)[:10] < qc.hoje_local().isoformat():
         raise RegraViolada(409, "orcamento_expirado", "A validade deste orçamento já passou.")
 
     outro_aceito = (
@@ -346,8 +358,29 @@ def _garantir_cliente(db: Any, org_id: str, negocio: dict) -> str:
     return str(cliente_id)
 
 
+def _itens_do_orcamento(db: Any, org_id: str, orcamento_id: str) -> list[dict]:
+    """Just enough of `orcamento_item` for `pautas.gerar` — this module does
+    not otherwise touch orçamento internals, so it reads the raw columns
+    rather than importing `orcamentos.py` (which already imports THIS
+    module — a cycle)."""
+    return list(
+        db.table("orcamento_item").select(
+            "id, secao, recorrente, dias_semana, qtd_por_dia, descricao, produto_servico_id"
+        ).eq("org_id", org_id).eq("orcamento_id", orcamento_id).execute().data or []
+    )
+
+
 def _fechar(db: Any, org_id: str, negocio: dict, orcamento_id: str | None) -> dict:
-    """Validate, accept the orçamento, ensure the Cliente; return the card updates."""
+    """Validate, accept the orçamento, ensure the Cliente, fill the calendar
+    with pautas; return the card updates.
+
+    THE close path — the funnel's own "move into Fechado" AND
+    `orcamentos.aceitar` both close a deal by moving the card here
+    (`mover_negocio` → `_fechar`), so pauta generation lives in this ONE
+    place rather than in each caller (achado 2 / comercial achado 1: a
+    drag-to-Fechado close used to skip pautas entirely because only the
+    orçamento modal's ✓ generated them).
+    """
     negocio_id = str(negocio["id"])
     orcamento = _validar_orcamento(db, org_id, negocio_id, orcamento_id)
     cliente_id = _garantir_cliente(db, org_id, negocio)
@@ -364,6 +397,9 @@ def _fechar(db: Any, org_id: str, negocio: dict, orcamento_id: str | None) -> di
     if orcamento.get("status") != "aceito":
         aceite.update({"status": "aceito", "aceito_em": agora})
     db.table("orcamento").update(aceite).eq("id", orcamento["id"]).eq("org_id", org_id).execute()
+
+    itens = _itens_do_orcamento(db, org_id, str(orcamento["id"]))
+    pautas.gerar(db, org_id, itens=itens, cliente_id=cliente_id, inicio=qc.hoje_local())
 
     logger.info("negocio fechado org=%s negocio=%s orcamento=%s cliente=%s",
                 org_id, negocio_id, orcamento["id"], cliente_id)

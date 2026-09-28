@@ -33,6 +33,7 @@ from app.repositories import Repositorios
 from app.schemas.orcamento import (
     CalcularIn,
     GerarContratoIn,
+    NovaVersaoIn,
     OrcamentoCreate,
     OrcamentoUpdate,
     RecusarIn,
@@ -159,11 +160,36 @@ async def atualizar_orcamento(
 @router.post("/{orcamento_id}/nova-versao", status_code=status.HTTP_201_CREATED)
 async def nova_versao(
     orcamento_id: str,
+    payload: NovaVersaoIn | None = None,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+    repos: Repositorios = Depends(get_repositorios),
+) -> dict:
+    org_id = _org(auth)
+    custo_hora, _alertas = OrcamentoService(repos).custo_hora_medio(org_id)
+    dados = payload.model_dump(exclude_unset=True) if payload is not None else {}
+    validade_arg = dados["validade"] if "validade" in dados else svc.VALIDADE_AUTOMATICA
+    try:
+        return success_response(
+            svc.nova_versao(db, org_id, orcamento_id, custo_hora=custo_hora, validade=validade_arg)
+        )
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
+
+
+@router.post("/{orcamento_id}/gerar-pautas")
+async def gerar_pautas(
+    orcamento_id: str,
     auth: tuple = Depends(get_current_user_org),
     db: Any = Depends(get_db),
 ) -> dict:
+    """Idempotent recovery button on an ACCEPTED orçamento (owner decision
+    2026-09-28) — for a deal closed before pauta generation moved into the
+    shared `comercial_funil._fechar` (a legacy drag-to-Fechado, or a partial
+    failure), this is how the operator fills the calendar in without editing
+    the orçamento."""
     try:
-        return success_response(svc.nova_versao(db, _org(auth), orcamento_id))
+        return success_response(svc.gerar_pautas_pendentes(db, _org(auth), orcamento_id))
     except RegraViolada as erro:
         raise http_de(erro) from erro
 
