@@ -43,6 +43,11 @@ router = APIRouter(prefix="/api/sso", tags=["SSO"])
 
 from noctusai_lib.api.auth import SSOSessionCache
 from noctusai_lib.config.product_urls import resolve_product_url
+from noctusai_lib.primitives.roles import customer_may_access_product
+
+# SEC-2 (2026-09-28): an end customer (org_role in CUSTOMER_ORG_ROLES) only
+# ever SSOs into a product whose catalog row declares `aceita_clientes`.
+_CUSTOMER_REFUSED = "Área restrita à equipe."
 
 _CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
 
@@ -115,9 +120,11 @@ async def generate_sso_token(request: Request, body: SSOTokenRequest, authorizat
     org_role = profile.data.get("org_role", "member")
 
     # Check if org has access to product (including expiry check)
-    product = db.table("products").select("id, slug").eq("slug", body.product_slug).single().execute()
+    product = db.table("products").select("id, slug, aceita_clientes").eq("slug", body.product_slug).single().execute()
     if not product.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if not customer_may_access_product(org_role, product.data):
+        raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED)
 
     from app.dependencies import check_org_license
     if not check_org_license(db, org_id, product.data["id"]):
@@ -172,6 +179,8 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
     product = db.table("products").select("*").eq("slug", product_slug).single().execute()
     if not product.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
+    if not customer_may_access_product(org_role, product.data):
+        raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED)
 
     # Check license (including expiry)
     from app.dependencies import check_org_license

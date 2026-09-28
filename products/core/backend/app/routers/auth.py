@@ -19,6 +19,7 @@ from app.dependencies import get_current_user
 from app.rate_limit import limiter
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
 from noctusai_lib.config.product_urls import resolve_product_url
+from noctusai_lib.primitives.roles import customer_may_access_product
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -274,7 +275,11 @@ async def get_me(authorization: Optional[str] = Header(None)):
         products_with_access.append({
             **product,
             "url_base": resolved_url,
-            "has_access": product["id"] in licensed_product_ids,
+            # SEC-2: a customer (CUSTOMER_ORG_ROLES) only reaches products
+            # whose catalog row declares `aceita_clientes` — the switcher
+            # must not offer what /api/sso/token will refuse.
+            "has_access": product["id"] in licensed_product_ids
+            and customer_may_access_product(profile.get("org_role"), product),
         })
 
     return {

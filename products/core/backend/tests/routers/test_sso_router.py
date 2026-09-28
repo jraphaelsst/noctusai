@@ -692,3 +692,87 @@ class TestSSOSessionContextEnrichment:
 
         assert resp.status_code == 200
         assert resp.json()["access_token"] == "sb-access-token"
+
+
+# ---------------------------------------------------------------------------
+# SEC-2 (2026-09-28) — end customers only SSO into products that declare
+# `aceita_clientes`; staff are unaffected. The real `create_sso_token` runs
+# (no self-patching) — a 200 carries a genuinely minted, verifiable token.
+# ---------------------------------------------------------------------------
+
+_LICENSE = [{"id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1"}]
+
+
+def _seed(mock_sb, *, org_role, aceita_clientes):
+    mock_sb.set_table_data("noctus_users", {
+        "id": "test-user-123", "org_id": "org-1", "role": "user",
+        "org_role": org_role, "email": "test@example.com",
+    })
+    mock_sb.set_table_data("products", {
+        "id": "prod-1", "slug": "social-wiring", "url_base": "http://localhost:8080",
+        "aceita_clientes": aceita_clientes,
+    })
+    mock_sb.set_table_data("licenses", _LICENSE)
+
+
+class TestSSOCustomerRole:
+    def test_token_refuses_customer_for_staff_only_product(self, client):
+        _seed(client.mock_supabase, org_role="membro", aceita_clientes=False)
+        resp = client.post("/api/sso/token", json={"product_slug": "social-wiring"})
+        assert resp.status_code == 403
+        assert resp.json()["error"]["message"] == "Área restrita à equipe."
+
+    def test_token_allows_customer_for_customer_product(self, client):
+        _seed(client.mock_supabase, org_role="membro", aceita_clientes=True)
+        resp = client.post("/api/sso/token", json={"product_slug": "social-wiring"})
+        assert resp.status_code == 200
+        assert resp.json()["sso_token"]
+
+    def test_token_unchanged_for_staff(self, client):
+        _seed(client.mock_supabase, org_role="member", aceita_clientes=False)
+        resp = client.post("/api/sso/token", json={"product_slug": "social-wiring"})
+        assert resp.status_code == 200
+
+    def test_launch_refuses_customer_for_staff_only_product(self, client):
+        _seed(client.mock_supabase, org_role="membro", aceita_clientes=False)
+        resp = client.get("/api/sso/launch/social-wiring", follow_redirects=False)
+        assert resp.status_code == 403
+
+    def test_launch_allows_customer_for_customer_product(self, client):
+        _seed(client.mock_supabase, org_role="membro", aceita_clientes=True)
+        resp = client.get("/api/sso/launch/social-wiring", follow_redirects=False)
+        assert resp.status_code == 302
+
+
+class TestSwitcherCustomerRole:
+    """/api/auth/me drives the product switcher — it must not offer a
+    customer what /api/sso/token refuses."""
+
+    def _me(self, client, org_role):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123", "email": "t@x", "nome": "T",
+            "org_id": "org-1", "role": "user", "org_role": org_role,
+        })
+        mock_sb.set_table_data("organizations", {"id": "org-1", "nome": "NoctusAI"})
+        mock_sb.set_table_data("licenses", [
+            {"id": "l1", "status": "active", "org_id": "org-1", "product_id": "p-staff"},
+            {"id": "l2", "status": "active", "org_id": "org-1", "product_id": "p-cust"},
+        ])
+        mock_sb.set_table_data("products", [
+            {"id": "p-staff", "slug": "social-wiring", "nome": "SW", "ativo": True,
+             "url_base": "http://localhost:1", "aceita_clientes": False},
+            {"id": "p-cust", "slug": "community", "nome": "C", "ativo": True,
+             "url_base": "http://localhost:2", "aceita_clientes": True},
+        ])
+        resp = client.get("/api/auth/me")
+        assert resp.status_code == 200
+        return {p["slug"]: p["has_access"] for p in resp.json()["products"]}
+
+    def test_customer_sees_only_customer_products(self, client):
+        access = self._me(client, "membro")
+        assert access == {"social-wiring": False, "community": True}
+
+    def test_staff_sees_every_licensed_product(self, client):
+        access = self._me(client, "member")
+        assert access == {"social-wiring": True, "community": True}
