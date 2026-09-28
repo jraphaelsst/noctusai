@@ -1,137 +1,77 @@
-import { useEffect, useState } from "react";
-import { useAuthStore } from '@noctusai/seed/infra';
-import { api } from '@noctusai/seed/infra';
+/**
+ * Equipe — the agency's login accounts + pending invites.
+ *
+ * Rewritten off the seed pattern (achado #18): hand-rolled `useEffect`+
+ * `useState` fetching → TanStack Query; unaccented pt-BR strings
+ * ("organizacao", "Acoes", "Voce", "Proprietario", "remocao") → correct
+ * accents; inline admin check → `useIsOrgAdmin()`; a silently swallowed
+ * invitations-fetch error → shown.
+ *
+ * Two DIFFERENT admin gates, on purpose (plat achado #4): the seed's
+ * `POST /api/team/invite` allows owner/admin/manager (`canManageTeam`), but
+ * `GET/DELETE /api/team/invitations` and `DELETE /api/team/{id}` are
+ * owner/admin only (`useIsOrgAdmin`). Equipe used to gate ALL of them on one
+ * inline `isAdmin` that excluded manager — a manager who could invite via a
+ * raw request could not even see the button.
+ */
+import { useState } from "react";
+import { useAuthStore } from "@noctusai/seed/infra";
+import { canManageTeam, resolveSSOContext, type OrgRole } from "@noctusai/lib";
+import { Button, Field, FormError, Input, Select, TableSkeleton } from "@noctusai/lib/design-system";
+import { Mail, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
-import { Users, UserPlus, Trash2, Loader2, Mail, X } from "lucide-react";
-import { resolveSSOContext } from "@noctusai/lib";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { SheetDialog } from "@/components/common/SheetDialog";
+import {
+  useCancelarConvite,
+  useConvidar,
+  useConvitesPendentes,
+  useMembros,
+  useRemoverMembro,
+  type Member,
+} from "@/hooks/useEquipe";
+import { describeError } from "@/lib/errors";
+import { dataBR } from "@/lib/format";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
-interface Member {
-  id: string;
-  nome: string;
-  email: string;
-  role: string;
-  org_role: string;
-  avatar_url?: string;
-  created_at: string;
-}
-
-interface Invitation {
-  id: string;
-  email: string;
-  role: string;
-  status: string;
-  created_at: string;
-  expires_at: string;
-}
-
-const ROLE_LABELS: Record<string, string> = {
+/** Every role the seed's invite accepts (`ASSIGNABLE_ROLES` minus `owner`,
+ * which is the org creator only) — correct pt-BR accents throughout,
+ * unlike the seed's own `ORG_ROLE_LABELS` ("Proprietario", no accent), a
+ * typo every product's hand-rolled Equipe.tsx copies verbatim (N≥13 —
+ * flagged as a fleet-wide scoped-improvement, out of this file's scope). */
+const PAPEIS_CONVITE: OrgRole[] = ["admin", "manager", "member", "viewer", "dev", "test", "corretor"];
+const PAPEL_LABEL: Record<OrgRole, string> = {
+  owner: "Proprietário",
   admin: "Administrador",
+  manager: "Gerente",
   member: "Membro",
-  owner: "Proprietario",
+  viewer: "Visualizador",
+  dev: "Desenvolvedor",
+  test: "Teste",
+  corretor: "Corretor",
 };
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+function rotuloPapel(papel: string): string {
+  return PAPEL_LABEL[papel as OrgRole] ?? papel;
+}
 
 export default function Equipe() {
   const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
-  const isAdmin = ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+  const sso = resolveSSOContext(user?.user_metadata);
+  const podeConvidar = useIsOrgAdmin() || canManageTeam(sso.org.role);
+  const podeGerenciar = useIsOrgAdmin();
 
-  const [members, setMembers] = useState<Member[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { membros, showSkeleton, isRefreshing, isError, error } = useMembros();
+  const convitesQ = useConvitesPendentes(podeGerenciar);
+  const convidar = useConvidar();
+  const cancelarConvite = useCancelarConvite();
+  const removerMembro = useRemoverMembro();
 
-  // Invite modal
-  const [showInviteModal, setShowInviteModal] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"admin" | "member">("member");
-  const [inviting, setInviting] = useState(false);
-
-  // Confirm remove
-  const [confirmRemove, setConfirmRemove] = useState<Member | null>(null);
-  const [removing, setRemoving] = useState(false);
-
-  async function fetchData() {
-    try {
-      const [membersRes, invitesRes] = await Promise.all([
-        api.get<{ data: Member[] }>("/api/team"),
-        api.get<{ data: Invitation[] }>("/api/team/invitations").catch(() => ({ data: [] })),
-      ]);
-      setMembers(membersRes.data || []);
-      setInvitations(invitesRes.data || []);
-    } catch {
-      toast.error("Erro ao carregar dados da equipe");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (user) fetchData();
-  }, [user]);
-
-  async function handleInvite(e: React.FormEvent) {
-    e.preventDefault();
-    setInviting(true);
-    try {
-      await api.post("/api/team/invite", { email: inviteEmail, role: inviteRole });
-      toast.success("Convite enviado com sucesso");
-      setShowInviteModal(false);
-      setInviteEmail("");
-      setInviteRole("member");
-      fetchData();
-    } catch (err: any) {
-      toast.error("Erro ao enviar convite", {
-        description: err?.message || err?.detail || "Tente novamente",
-      });
-    } finally {
-      setInviting(false);
-    }
-  }
-
-  async function handleRemoveMember() {
-    if (!confirmRemove) return;
-    setRemoving(true);
-    try {
-      await api.delete(`/api/team/${confirmRemove.id}`);
-      toast.success("Membro removido");
-      setConfirmRemove(null);
-      fetchData();
-    } catch (err: any) {
-      toast.error("Erro ao remover membro", {
-        description: err?.message || "Tente novamente",
-      });
-    } finally {
-      setRemoving(false);
-    }
-  }
-
-  async function handleCancelInvite(inviteId: string) {
-    try {
-      await api.delete(`/api/team/invitations/${inviteId}`);
-      toast.success("Convite cancelado");
-      fetchData();
-    } catch (err: any) {
-      toast.error("Erro ao cancelar convite", {
-        description: err?.message || "Tente novamente",
-      });
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm text-muted-foreground">Carregando equipe...</p>
-      </div>
-    );
-  }
+  const [convidando, setConvidando] = useState(false);
+  const [email, setEmail] = useState("");
+  const [papel, setPapel] = useState<OrgRole>("member");
+  const [confirmarRemover, setConfirmarRemover] = useState<Member | null>(null);
 
   return (
     <div className="space-y-8">
@@ -142,102 +82,109 @@ export default function Equipe() {
           <div>
             <h1 className="text-2xl font-bold text-foreground">Equipe</h1>
             <p className="text-sm text-muted-foreground">
-              {members.length} membro{members.length !== 1 ? "s" : ""} na organizacao
+              {showSkeleton
+                ? "Carregando…"
+                : `${membros.length} ${membros.length === 1 ? "membro" : "membros"} na organização`}
+              {isRefreshing && <span> · atualizando…</span>}
             </p>
           </div>
         </div>
-        {isAdmin && (
-          <button
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-            onClick={() => setShowInviteModal(true)}
-          >
-            <UserPlus className="h-4 w-4" />
-            Convidar
-          </button>
+        {podeConvidar && (
+          <Button className="max-sm:h-10" onClick={() => setConvidando(true)} data-testid="equipe-convidar">
+            <UserPlus className="mr-1 h-4 w-4" /> Convidar
+          </Button>
         )}
       </div>
 
-      {/* Members Table */}
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-border bg-muted/50">
-            <tr>
-              <th className="px-4 py-3 font-medium text-muted-foreground">Nome</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">E-mail</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground">Papel</th>
-              <th className="px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Entrou em</th>
-              {isAdmin && (
-                <th className="px-4 py-3 font-medium text-muted-foreground">Acoes</th>
-              )}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {members.map((member) => (
-              <tr key={member.id} className="bg-card">
-                <td className="px-4 py-3 font-medium text-foreground">
-                  <div className="flex flex-col">
-                    <span>{member.nome || "—"}</span>
-                    <span className="text-xs text-muted-foreground sm:hidden">{member.email}</span>
-                  </div>
-                  {member.id === user?.id && (
-                    <span className="ml-2 inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                      Voce
-                    </span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-foreground hidden sm:table-cell">{member.email}</td>
-                <td className="px-4 py-3">
-                  <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">
-                    {ROLE_LABELS[member.role] || ROLE_LABELS[member.org_role] || member.role}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-foreground hidden md:table-cell">
-                  {member.created_at
-                    ? new Date(member.created_at).toLocaleDateString("pt-BR")
-                    : "—"}
-                </td>
-                {isAdmin && (
+      {isError ? (
+        <p role="alert" className="rounded-lg border border-border bg-card p-6 text-sm text-destructive">
+          {describeError(error, "Não foi possível carregar a equipe.")}
+        </p>
+      ) : showSkeleton ? (
+        <TableSkeleton rows={4} />
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-border bg-muted/50">
+              <tr>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Nome</th>
+                <th className="hidden px-4 py-3 font-medium text-muted-foreground sm:table-cell">E-mail</th>
+                <th className="px-4 py-3 font-medium text-muted-foreground">Papel</th>
+                <th className="hidden px-4 py-3 font-medium text-muted-foreground md:table-cell">Entrou em</th>
+                {podeGerenciar && <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {membros.map((membro) => (
+                <tr key={membro.id} className="bg-card">
+                  <td className="px-4 py-3 font-medium text-foreground">
+                    <div className="flex flex-col">
+                      <span>{membro.nome || "—"}</span>
+                      <span className="text-xs text-muted-foreground sm:hidden">{membro.email}</span>
+                    </div>
+                    {membro.id === user?.id && (
+                      <span className="ml-2 inline-flex rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                        Você
+                      </span>
+                    )}
+                  </td>
+                  <td className="hidden px-4 py-3 text-foreground sm:table-cell">{membro.email}</td>
                   <td className="px-4 py-3">
-                    {member.id !== user?.id &&
-                      member.org_role !== "owner" &&
-                      member.role !== "owner" && (
+                    <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">
+                      {rotuloPapel(membro.org_role || membro.role)}
+                    </span>
+                  </td>
+                  <td className="hidden px-4 py-3 text-foreground md:table-cell">
+                    {membro.created_at ? dataBR(membro.created_at) : "—"}
+                  </td>
+                  {podeGerenciar && (
+                    <td className="px-4 py-3">
+                      {membro.id !== user?.id && membro.org_role !== "owner" && membro.role !== "owner" && (
                         <button
-                          className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/20 transition-colors"
-                          onClick={() => setConfirmRemove(member)}
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+                          onClick={() => setConfirmarRemover(membro)}
                         >
                           <Trash2 className="h-3 w-3" />
                           Remover
                         </button>
                       )}
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {membros.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                    Nenhum membro encontrado
                   </td>
-                )}
-              </tr>
-            ))}
-            {members.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
-                  Nenhum membro encontrado
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {/* Pending Invitations */}
-      {isAdmin && (
+      {/* Pending invitations — owner/admin only */}
+      {podeGerenciar && (
         <section>
           <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-foreground">
             <Mail className="h-5 w-5 text-muted-foreground" />
             Convites pendentes
-            {invitations.length > 0 && (
+            {convitesQ.convites.length > 0 && (
               <span className="inline-flex rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400">
-                {invitations.length}
+                {convitesQ.convites.length}
               </span>
             )}
           </h2>
 
-          {invitations.length === 0 ? (
+          {convitesQ.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {describeError(convitesQ.error, "Não foi possível carregar os convites pendentes.")}
+            </p>
+          ) : convitesQ.showSkeleton ? (
+            <TableSkeleton rows={2} />
+          ) : convitesQ.convites.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhum convite pendente</p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
@@ -246,28 +193,32 @@ export default function Equipe() {
                   <tr>
                     <th className="px-4 py-3 font-medium text-muted-foreground">E-mail</th>
                     <th className="px-4 py-3 font-medium text-muted-foreground">Papel</th>
-                    <th className="px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Expira em</th>
-                    <th className="px-4 py-3 font-medium text-muted-foreground">Acoes</th>
+                    <th className="hidden px-4 py-3 font-medium text-muted-foreground sm:table-cell">Expira em</th>
+                    <th className="px-4 py-3 font-medium text-muted-foreground">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {invitations.map((inv) => (
-                    <tr key={inv.id} className="bg-card">
-                      <td className="px-4 py-3 font-medium text-foreground">{inv.email}</td>
+                  {convitesQ.convites.map((convite) => (
+                    <tr key={convite.id} className="bg-card">
+                      <td className="px-4 py-3 font-medium text-foreground">{convite.email}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">
-                          {ROLE_LABELS[inv.role] || inv.role}
+                          {rotuloPapel(convite.role)}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-foreground hidden sm:table-cell">
-                        {inv.expires_at
-                          ? new Date(inv.expires_at).toLocaleDateString("pt-BR")
-                          : "—"}
+                      <td className="hidden px-4 py-3 text-foreground sm:table-cell">
+                        {convite.expires_at ? dataBR(convite.expires_at) : "—"}
                       </td>
                       <td className="px-4 py-3">
                         <button
-                          className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/20 transition-colors"
-                          onClick={() => handleCancelInvite(inv.id)}
+                          type="button"
+                          className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+                          onClick={() =>
+                            cancelarConvite.mutate(convite.id, {
+                              onSuccess: () => toast.success("Convite cancelado"),
+                              onError: (e) => toast.error(describeError(e, "Erro ao cancelar convite")),
+                            })
+                          }
                         >
                           Cancelar
                         </button>
@@ -281,117 +232,101 @@ export default function Equipe() {
         </section>
       )}
 
-      {/* Invite Modal */}
-      {showInviteModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setShowInviteModal(false)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-foreground">Convidar membro</h2>
-              <button
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-muted transition-colors"
-                onClick={() => setShowInviteModal(false)}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <form onSubmit={handleInvite} className="space-y-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-foreground">E-mail</label>
-                <input
-                  type="email"
-                  placeholder="colaborador@empresa.com"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  required
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-foreground">Papel</label>
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as "admin" | "member")}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                >
-                  <option value="member">Membro</option>
-                  <option value="admin">Administrador</option>
-                </select>
-              </div>
-              <div className="flex justify-end gap-3 pt-2">
-                <button
-                  type="button"
-                  className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-                  onClick={() => setShowInviteModal(false)}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="inline-flex items-center gap-2 rounded-md bg-primary px-6 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={inviting || !inviteEmail}
-                >
-                  {inviting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Enviando...
-                    </>
-                  ) : (
-                    "Enviar convite"
-                  )}
-                </button>
-              </div>
-            </form>
+      {/* Invite */}
+      <SheetDialog
+        open={convidando}
+        onClose={() => setConvidando(false)}
+        title="Convidar membro"
+        widthClassName="sm:max-w-md"
+        testId="convidar-sheet"
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" className="max-sm:h-10 max-sm:flex-1" onClick={() => setConvidando(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              form="convidar-form"
+              className="max-sm:h-10 max-sm:flex-1"
+              disabled={!email.trim() || convidar.isPending}
+            >
+              {convidar.isPending ? "Enviando…" : "Enviar convite"}
+            </Button>
           </div>
-        </div>
-      )}
+        }
+      >
+        <form
+          id="convidar-form"
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!email.trim()) return;
+            convidar.mutate(
+              { email: email.trim(), role: papel },
+              {
+                onSuccess: () => {
+                  toast.success("Convite enviado com sucesso");
+                  setConvidando(false);
+                  setEmail("");
+                  setPapel("member");
+                },
+                onError: (err) => toast.error("Erro ao enviar convite", { description: describeError(err, "Tente novamente") }),
+              },
+            );
+          }}
+        >
+          <Field label="E-mail" required>
+            <Input
+              type="email"
+              inputMode="email"
+              className="max-sm:h-10"
+              placeholder="colaborador@empresa.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </Field>
+          <Field label="Papel">
+            <Select
+              className="h-10 sm:h-8"
+              aria-label="Papel"
+              value={papel}
+              onChange={(e) => setPapel(e.target.value as OrgRole)}
+            >
+              {PAPEIS_CONVITE.map((p) => (
+                <option key={p} value={p}>
+                  {PAPEL_LABEL[p]}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <FormError message={convidar.isError ? describeError(convidar.error, "Erro ao enviar convite") : null} />
+        </form>
+      </SheetDialog>
 
-      {/* Confirm Remove Modal */}
-      {confirmRemove && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setConfirmRemove(null)}
-        >
-          <div
-            className="w-full max-w-[calc(100vw-2rem)] sm:max-w-md rounded-lg border border-border bg-card p-6 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-2 text-lg font-semibold text-foreground">Remover membro</h2>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover{" "}
-              <strong className="text-foreground">{confirmRemove.nome || confirmRemove.email}</strong>{" "}
-              da organizacao? Esta acao nao pode ser desfeita.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                className="rounded-md border border-border bg-background px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-                onClick={() => setConfirmRemove(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                className="inline-flex items-center gap-2 rounded-md bg-destructive px-6 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={handleRemoveMember}
-                disabled={removing}
-              >
-                {removing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Removendo...
-                  </>
-                ) : (
-                  "Confirmar remocao"
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Remove member */}
+      <ConfirmDialog
+        open={!!confirmarRemover}
+        title="Remover membro"
+        description={
+          <p>
+            Tem certeza que deseja remover <strong>{confirmarRemover?.nome || confirmarRemover?.email}</strong> da
+            organização? Esta ação não pode ser desfeita.
+          </p>
+        }
+        confirmLabel={removerMembro.isPending ? "Removendo…" : "Confirmar remoção"}
+        busy={removerMembro.isPending}
+        onCancel={() => setConfirmarRemover(null)}
+        onConfirm={() =>
+          confirmarRemover &&
+          removerMembro.mutate(confirmarRemover.id, {
+            onSuccess: () => {
+              toast.success("Membro removido");
+              setConfirmarRemover(null);
+            },
+            onError: (e) => toast.error("Erro ao remover membro", { description: describeError(e, "Tente novamente") }),
+          })
+        }
+      />
     </div>
   );
 }
