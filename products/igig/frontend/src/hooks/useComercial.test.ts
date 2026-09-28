@@ -5,8 +5,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
-vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet } }));
+const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
+vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet, post: mockPost } }));
 vi.mock("@noctusai/lib/components", () => ({ createPipelineHooks: vi.fn(() => ({})) }));
 
 let queryState: Record<string, unknown> = {};
@@ -22,12 +22,34 @@ vi.mock("@tanstack/react-query", () => {
   return { useQuery, useMutation, useQueryClient };
 });
 
-import { useLeads } from "./useComercial";
+import { useLeads, usePerdidos, useReabrirNegocio } from "./useComercial";
 import { useOrcamentos } from "./useOrcamentos";
 
 beforeEach(() => {
   vi.clearAllMocks();
   capturedOpts.length = 0;
+});
+
+describe("usePerdidos", () => {
+  it("fetches the archive by status=perdido", async () => {
+    mockGet.mockResolvedValue({ data: [{ id: "n1", status: "perdido" }] });
+    queryState = { data: undefined, isPending: true, isFetching: true, isError: false, error: null };
+    usePerdidos();
+    const queryFn = capturedOpts[0]?.queryFn as () => Promise<unknown>;
+    await queryFn();
+    expect(mockGet).toHaveBeenCalledWith("/api/comercial/negocios", { status: "perdido" });
+  });
+});
+
+describe("useReabrirNegocio", () => {
+  it("POSTs to the reabrir endpoint", async () => {
+    // `useMutation`'s mock returns `{...opts, mutate, isPending}` directly —
+    // unlike `useQuery`, it does not push into `capturedOpts`.
+    mockPost.mockResolvedValue({ data: { id: "n1", status: "aberto" } });
+    const resultado = useReabrirNegocio() as unknown as { mutationFn: (id: string) => Promise<unknown> };
+    await resultado.mutationFn("n1");
+    expect(mockPost).toHaveBeenCalledWith("/api/comercial/negocios/n1/reabrir", {});
+  });
 });
 
 describe("useLeads — loading formula + placeholderData", () => {

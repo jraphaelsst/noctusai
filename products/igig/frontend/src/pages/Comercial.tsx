@@ -16,8 +16,9 @@
  * A card opens the negócio `CardHubDialog`; its "Gerar orçamento" icon (and
  * the dialog's) open the shared `OrcamentoModal`.
  */
-import { useState } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Archive, Plus } from "lucide-react";
 import { PipelineBoard } from "@noctusai/lib/components";
 import { Button, Skeleton } from "@noctusai/lib/design-system";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ import { LinkPreQualificacao } from "@/components/comercial/LinkPreQualificacao"
 import { NegocioCardDialog } from "@/components/comercial/NegocioCardDialog";
 import { NegocioCardFace } from "@/components/comercial/NegocioCardFace";
 import { NovoLeadDialog } from "@/components/comercial/NovoLeadDialog";
+import { PerdidosView } from "@/components/comercial/PerdidosView";
 import { OrcamentoModal } from "@/components/orcamento/OrcamentoModal";
 import { useNegocioPorId } from "@/hooks/useComercial";
 import { describeError } from "@/lib/errors";
@@ -39,11 +41,37 @@ const ROLE_LABELS = { fechado: "Fechado (exige orçamento aceito)" };
 
 export default function Comercial() {
   const isAdmin = useIsOrgAdmin();
+  const [params, setParams] = useSearchParams();
 
   // The board query is shared with `PipelineBoard` (same key: no filtros), so
   // the open card always reads the freshest row after any mutation.
   const { data: colunas } = comercialPipeline.useBoard();
-  const [abertoId, setAbertoId] = useState<string | null>(null);
+  // `?negocio=<id>` deep-links a card open — automation notifications point
+  // here (achado #4/plat#10) but this page never read the param at all.
+  const [abertoId, setAbertoId] = useState<string | null>(() => params.get("negocio"));
+  useEffect(() => {
+    const doParam = params.get("negocio");
+    if (doParam && doParam !== abertoId) setAbertoId(doParam);
+    // Only react to the URL changing (e.g. a new notification click) —
+    // never re-run on every abertoId set from clicking a card, or closing
+    // the card would immediately reopen it from a stale param.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
+  function fecharCard() {
+    setAbertoId(null);
+    if (params.has("negocio")) {
+      setParams(
+        (atual) => {
+          const prox = new URLSearchParams(atual);
+          prox.delete("negocio");
+          return prox;
+        },
+        { replace: true },
+      );
+    }
+  }
+
   const doBoard =
     (abertoId && colunas?.flatMap((c) => c.cards).find((n) => n.id === abertoId)) || null;
   // The board never holds a `perdido` card (`GET /board` is aberto+ganho
@@ -53,6 +81,7 @@ export default function Comercial() {
   const aberto: Negocio | null = doBoard || fallback.data || null;
 
   const [novoLead, setNovoLead] = useState(false);
+  const [perdidos, setPerdidos] = useState(false);
   const [orcamento, setOrcamento] = useState<{ id?: string | null; negocioId?: string | null } | null>(null);
 
   const gate = useFechadoGate();
@@ -68,9 +97,14 @@ export default function Comercial() {
           <h1 className="text-2xl font-semibold text-foreground">Comercial</h1>
           <p className="text-sm text-muted-foreground">Cada lead novo entra na primeira etapa do funil.</p>
         </div>
-        <Button onClick={() => setNovoLead(true)} data-testid="comercial-novo-lead">
-          <Plus className="mr-1 h-4 w-4" /> Novo lead
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setPerdidos(true)} data-testid="comercial-perdidos">
+            <Archive className="mr-1 h-4 w-4" /> Perdidos
+          </Button>
+          <Button onClick={() => setNovoLead(true)} data-testid="comercial-novo-lead">
+            <Plus className="mr-1 h-4 w-4" /> Novo lead
+          </Button>
+        </div>
       </header>
 
       <LinkPreQualificacao />
@@ -107,9 +141,18 @@ export default function Comercial() {
 
       <NegocioCardDialog
         negocio={aberto}
-        onClose={() => setAbertoId(null)}
+        onClose={fecharCard}
         onGerarOrcamento={gerarOrcamento}
         onAbrirOrcamento={(id) => setOrcamento({ id })}
+      />
+
+      <PerdidosView
+        open={perdidos}
+        onClose={() => setPerdidos(false)}
+        onReaberto={(id) => {
+          setPerdidos(false);
+          setAbertoId(id);
+        }}
       />
 
       <FechadoOrcamentoPicker

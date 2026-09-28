@@ -84,6 +84,38 @@ function useInvalidateFunil() {
     ]);
 }
 
+/**
+ * The Perdidos archive — negócios the board itself never shows (`GET /board`
+ * is aberto+ganho only). `GET /negocios?status=perdido` already existed with
+ * no FE consumer at all (achado #10/#14 — no way to see, let alone reopen,
+ * an archived deal).
+ */
+export function usePerdidos() {
+  const query = useQuery({
+    queryKey: [...COMERCIAL_QUERY_KEY, "perdidos"],
+    queryFn: () => api.get("/api/comercial/negocios", { status: "perdido" }).then(unwrapData<Negocio[]>),
+  });
+  return {
+    ...query,
+    perdidos: query.data ?? [],
+    showSkeleton: query.isPending && !query.data,
+  };
+}
+
+/** "Reabrir" — returns a perdido negócio to the stage it was lost from. */
+export function useReabrirNegocio() {
+  const invalidate = useInvalidateFunil();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.post(`/api/comercial/negocios/${encodeURIComponent(id)}/reabrir`, {}).then(unwrapData<Negocio>),
+    onSuccess: () => {
+      void invalidate();
+      void qc.invalidateQueries({ queryKey: [...COMERCIAL_QUERY_KEY, "perdidos"] });
+    },
+  });
+}
+
 /** "Novo lead" — a manual lead lands on the funnel's entry stage, on top. */
 export function useCriarNegocio() {
   const invalidate = useInvalidateFunil();
