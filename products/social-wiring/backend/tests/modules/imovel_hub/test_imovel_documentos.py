@@ -535,3 +535,75 @@ class TestEveryFailureIsRecorded:
         )
         assert out["erro"] == "tipo_nao_extraivel"
         assert extractor.calls == 0
+
+
+class TestG6NeverAFalseOkOnApplyFailure:
+    """Lesson G6 (2026-09-28, verified by an audit against origin/dev):
+    this used to stamp the TERMINAL `extracao_status` in the SAME write as
+    the reading, then call `campos_svc.aplicar` in a `try` that only
+    LOGGED the exception — an already-written `ok` stood even when the
+    apply failed. Now built on `app.services.extracao_job`: a REAL apply
+    failure (the imóvel vanishes from `imovel_registry` between upload and
+    this job running — `campos_svc.aplicar`'s own `ensure_imovel` refuses
+    outright, the FIRST thing it does) must end in `erro`, never `ok`."""
+
+    @pytest.mark.asyncio
+    async def test_apply_failure_ends_in_erro_with_the_reading_already_persisted(
+        self, client, scoped, fake_storage,
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(
+            scoped,
+            registry=[],  # the imóvel is gone — `ensure_imovel` raises
+            documentos=[documento_row(did, extracao_status="pendente", storage_path=path)],
+        )
+        await fake_storage.put(
+            bucket="social-wiring-documentos", key=path, data=b"%PDF",
+            content_type="application/pdf",
+        )
+
+        out = await extracao.extrair(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extractor=_Extractor(_alta("12345")),
+        )
+        assert out["status"] == "erro"
+        assert out["erro"] == "aplicar_campos"
+
+        # The imóvel is gone, so the route-based read would 404 — read the
+        # row via the mock directly, same as `_documento`-style helpers
+        # elsewhere in this file.
+        rows = scoped.table("imovel_documentos").select("*").execute().data
+        doc = [r for r in rows if r["id"] == did][0]
+        assert doc["extracao_status"] == "erro"
+        assert "aplicar_campos" in doc["extracao_erro"]
+        # The reading is NOT lost — persisted BEFORE the failing apply, so
+        # the failure is diagnosable without re-reading the document. This
+        # is the exact bug lesson G6 names: the OLD code stamped `ok` here
+        # and only LOGGED the exception from the apply step.
+        assert doc["extracao_matricula"] == "12345"
+
+    @pytest.mark.asyncio
+    async def test_a_successful_apply_writes_ok_only_after_the_apply_runs(
+        self, client, scoped, fake_storage,
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(
+            scoped,
+            documentos=[documento_row(did, extracao_status="pendente", storage_path=path)],
+        )
+        await fake_storage.put(
+            bucket="social-wiring-documentos", key=path, data=b"%PDF",
+            content_type="application/pdf",
+        )
+
+        out = await extracao.extrair(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extractor=_Extractor(_alta("54321")),
+        )
+        assert out["status"] == "ok"
+        assert out["aplicado_ao_imovel"] is True
+
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert dados["numero_matricula"] == "54321"

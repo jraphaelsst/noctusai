@@ -88,7 +88,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -111,7 +111,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.proveniencia import fontes
-from app.services import campo_conflitos
+from app.services import campo_conflitos, extracao_job
 from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub.services import _now, _t
 
@@ -1307,65 +1307,38 @@ async def extrair_identidade(
     Every failure path therefore ends in a recorded `extracao_status`, which is
     what makes `varrer_extracoes_pendentes` able to recover the one case this
     cannot record: the process dying mid-read.
+
+    🔴 lesson G6 (2026-09-28): this used to stamp the TERMINAL `extracao_
+    status` (`ok`/`sem_dados`) BEFORE calling `aplicar_campos_ao_cliente` —
+    with no `try` around it at all. A transient DB error there left the
+    document `ok` with the client record never filled and nothing to retry
+    (the sweep never revisits an `ok` row). Now built on the shared
+    `app.services.extracao_job` runner (see that module's own docstring):
+    the preamble (fetch/validate/`processando`/blob/access-log) is shared
+    via `extracao_job.preparar` — Crednet's OWN already G6-compliant
+    pipeline reuses it too, below — and the generic identity path's apply
+    steps run inside the runner's own try, terminal status last.
     """
-    rows = (
-        _t(client, DOCUMENTOS_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("id", str(documento_id))
-        .limit(1)
-        .execute()
-    ).data or []
-    if not rows:
-        logger.warning("extracao: documento %s not found for org %s", documento_id, org_id)
-        return {"status": "erro", "erro": "documento_nao_encontrado"}
-
-    doc = rows[0]
-    if doc.get("deleted_at"):
-        # Deleted between upload and this job. Reading its bytes now would be
-        # an access to something the client asked us to forget.
-        return {"status": "erro", "erro": "documento_removido"}
-    if not deve_extrair(doc["tipo_documento"]):
-        return {"status": "erro", "erro": "tipo_nao_extraivel"}
-
-    tentativas = int(doc.get("extracao_tentativas") or 0) + 1
-    _marcar(
-        client,
-        documento_id,
-        extracao_status="processando",
-        extracao_em=_now(),
-        extracao_tentativas=tentativas,
+    config = extracao_job.ExtractionJobConfig(
+        table=DOCUMENTOS_TABLE,
+        bucket=BUCKET,
+        deve_extrair=deve_extrair,
+        log_acesso=lambda org, doc_id: _log_acesso_extracao(client, org, doc_id),
     )
+    doc, blob, erro = await extracao_job.preparar(client, storage, org_id, documento_id, config)
+    if erro is not None:
+        return erro
 
-    try:
-        blob = await storage.get(bucket=BUCKET, key=doc["storage_path"])
-    except Exception as exc:  # noqa: BLE001 - detached job; record, never raise
-        logger.warning("extracao %s: storage read failed: %s", documento_id, exc)
-        _marcar(
-            client, documento_id,
-            extracao_status="erro", extracao_erro=f"storage: {exc}", extracao_em=_now(),
-        )
-        return {"status": "erro", "erro": "storage"}
-
-    if blob is None:
-        _marcar(
-            client, documento_id,
-            extracao_status="erro", extracao_erro="objeto ausente no storage",
-            extracao_em=_now(),
-        )
-        return {"status": "erro", "erro": "objeto_ausente"}
-
-    # Rule 2 — logged BEFORE the read, so a crash mid-extraction still leaves
-    # the access recorded. An access log that only records successful reads is
-    # not an access log.
-    _log_acesso_extracao(client, org_id, documento_id)
+    tipo = str(doc["tipo_documento"])
 
     # P0c contract §C3: Serasa Crednet's reading is not an `IdentityFields`
     # at all (own dataclass, own D1 fields, own empresas/certidão side
     # effects) — `crednet_service.aplicar_leitura` owns every step past the
-    # blob read + access log above; the sweep and re-run inherit this branch
-    # for free, since both call THIS function.
-    if str(doc.get("tipo_documento")) == "serasa_crednet":
+    # blob read + access log above (already G6-compliant on its own, so it
+    # does not go through `executar_com_blob`'s `ler`/`processar` split);
+    # the sweep and re-run inherit this branch for free, since both call
+    # THIS function.
+    if tipo == "serasa_crednet":
         from app.modules.card_hub import crednet_service
 
         crednet_extractor = extractor
@@ -1396,211 +1369,216 @@ async def extrair_identidade(
     extractor = extractor or make_identity_extractor(
         real=True,
         org_id=str(org_id),
-        max_pages=paginas_maximas(str(doc.get("tipo_documento") or "")),
+        max_pages=paginas_maximas(tipo),
         provider=resolve_vision_provider(str(org_id)),
     )
-    # The document was uploaded onto ONE person's card — tell the extractor
-    # who, so a two-titular certidão de casamento selects that spouse's name
-    # and CPF instead of declining both. A selector only: the extractor
-    # returns a hinted value solely when the document printed it.
-    fields: IdentityFields = await extractor.extract(
-        blob.data,
-        mimetype=doc.get("mime_type"),
-        filename=doc.get("nome_original"),
-        titular=_titular_do_card(client, org_id, cliente_id),
-    )
-    if fields.aviso:
-        # Not a failure — the result is persisted below. Recorded so the
-        # withheld fields are explainable from the logs.
-        logger.info(
-            "extracao %s: aviso %s — %s",
-            documento_id, fields.aviso, fields.aviso_mensagem,
+
+    async def _ler(blob_bytes: bytes, doc_row: dict) -> IdentityFields:
+        # The document was uploaded onto ONE person's card — tell the
+        # extractor who, so a two-titular certidão de casamento selects
+        # that spouse's name and CPF instead of declining both. A selector
+        # only: the extractor returns a hinted value solely when the
+        # document printed it.
+        return await extractor.extract(
+            blob_bytes,
+            mimetype=doc_row.get("mime_type"),
+            filename=doc_row.get("nome_original"),
+            titular=_titular_do_card(client, org_id, cliente_id),
         )
 
-    if fields.error:
-        _marcar(
-            client, documento_id,
-            extracao_status="erro",
-            extracao_erro=f"{fields.error}: {fields.error_message or ''}".strip(": "),
-            extracao_fonte=fields.source.value,
-            extracao_em=_now(),
-        )
-        return {"status": "erro", "erro": fields.error}
-
-    tipo = str(doc["tipo_documento"])
-    so_endereco = tipo in TIPOS_ENDERECO
-    # An address document contributes its address and nothing else — see
-    # `TIPOS_ENDERECO`. Its name/CPF are the bill holder's.
-    lidos = _lidos_vazios() if so_endereco else _valores_lidos(fields)
-    endereco = fields.endereco if so_endereco else None
-    data_emissao = (
-        fields.data_emissao.isoformat() if fields.data_emissao and not so_endereco else None
-    )
-    conjuges = [] if so_endereco else list(fields.conjuges or ())
-    achou_algo = (
-        data_emissao is not None
-        or endereco is not None
-        or bool(conjuges)
-        or any(v is not None for v, _, _, _ in lidos.values())
-    )
-
-    # 🔴 MISFILE DETECTION — FLAGS, NEVER RETYPES (2026-09-23, owner
-    # directive). Two independent signals, both content-only, both never
-    # writing `tipo_documento` — a human confirms via the existing card_hub
-    # UI, same posture as every other `aviso` in this family:
-    #
-    # 1. `fields.tipo_provavel` disagrees with the declared `tipo`. Real,
-    #    measured: at least two CNHs were uploaded typed `rg`, read fine by
-    #    this type-agnostic extractor (so the field yield never looked
-    #    wrong), and nothing anywhere noticed the mismatch. `None` means no
-    #    marker was recognised — NOT a claim of disagreement, so it never
-    #    logs as one (see `classificar_tipo_provavel`'s own docstring).
-    # 2. No marker recognised AT ALL (`tipo_provavel is None`) on a
-    #    supposedly-identity `tipo` that came back with NOTHING extracted
-    #    (`not achou_algo`) — a real-estate "roteiro" and an ads report have
-    #    both been uploaded typed `rg` in production. Scoped OFF
-    #    `TIPOS_ENDERECO`: this module has no positive address-content
-    #    marker (see `classificar_tipo_provavel`'s scope note), so an
-    #    ordinary illegible comprovante would otherwise flag on this signal
-    #    alone for a reason that has nothing to do with misfiling.
-    if fields.tipo_provavel and fields.tipo_provavel != tipo:
-        logger.warning(
-            "extracao %s: possivel tipo_documento incorreto — declarado=%s "
-            "provavel=%s (documento nao foi retipado)",
-            documento_id, tipo, fields.tipo_provavel,
-        )
-    elif fields.tipo_provavel is None and not achou_algo and not so_endereco:
-        logger.warning(
-            "extracao %s: nenhum marcador de identidade reconhecido para "
-            "tipo declarado=%s e nada foi extraido (documento nao foi "
-            "retipado)",
-            documento_id, tipo,
-        )
-
-    # Recorded whether or not it lands on the client — the `_confianca` and
-    # `_rotulo` columns let a human audit the reasoning without re-opening the
-    # document (another logged access).
-    marcacoes: dict[str, Any] = {
-        "extracao_status": "ok" if achou_algo else "sem_dados",
-        "extracao_fonte": fields.source.value,
-        "extracao_erro": None,
-        "extracao_em": _now(),
-    }
-    for campo in CAMPOS:
-        valor, confianca, rotulo, _ = lidos[campo.item_key]
-        marcacoes[campo.coluna_valor] = valor
-        marcacoes[campo.coluna_confianca] = confianca
-        marcacoes[campo.coluna_rotulo] = rotulo
-    # `data_emissao` rides outside the `CAMPOS` loop — see its own comment
-    # above `_TIPOS_CERTIDAO_ESTADO_CIVIL`. Recorded on the document row the
-    # same as every other extracted value, unconditionally; never promoted.
-    marcacoes["extracao_data_emissao"] = data_emissao
-    marcacoes["extracao_data_emissao_confianca"] = fields.data_emissao_confianca.value
-    marcacoes["extracao_data_emissao_rotulo"] = fields.data_emissao_rotulo
-    partes_endereco = endereco.partes() if endereco is not None else {}
-    for parte in ENDERECO_PARTES:
-        marcacoes[f"extracao_endereco_{parte}"] = partes_endereco.get(parte)
-    marcacoes["extracao_endereco_titular"] = endereco.titular if endereco else None
-    marcacoes["extracao_endereco_confianca"] = endereco.confianca if endereco else None
-    marcacoes["extracao_endereco_rotulo"] = endereco.rotulo if endereco else None
-    # Recorded BEFORE anything touches the client record, so a failure while
-    # applying still leaves the reading (and a terminal status) on the
-    # document rather than a row stuck in `processando`.
-    _marcar(client, documento_id, **marcacoes)
-
-    conflitos: list[dict] = []
-    aplicados, abertos = aplicar_campos_ao_cliente(
-        client,
-        org_id,
-        cliente_id,
-        tipo,
-        lidos,
-        documento_id=documento_id,
-        fonte_tabela=DOCUMENTOS_TABLE,
-        fonte_id=documento_id,
-    )
-    conflitos += abertos
-
-    if endereco is not None:
-        aplicado_end, conflito_end = aplicar_endereco_ao_cliente(
-            client, org_id, cliente_id, tipo, partes_endereco,
-            titular_documento=endereco.titular,
-            confianca=endereco.confianca,
-            documento_id=documento_id,
-        )
-        aplicados[CAMPO_ENDERECO] = aplicado_end
-        if conflito_end is not None:
-            conflitos.append(conflito_end)
-
-    # 🔴 BOTH SPOUSES (migration 153). The spouse the card belongs to was
-    # applied above (the extractor's `titular` hint selected them and carried
-    # their per-person facts onto `fields`). The OTHER spouse fills the
-    # cliente they already are in this product — linked as `conjuge`, or a
-    # party on one of this cliente's cards whose name/CPF matches — and
-    # nobody is ever CREATED from a certidão: an unmatched spouse is recorded
-    # on the document row (`extracao_conjuges`) and nothing more.
-    registro_conjuges: list[dict] = []
-    if conjuges:
-        outro_id: Optional[str] = None
-        titular_idx = next((i for i, c in enumerate(conjuges) if c.titular), None)
-        if titular_idx is not None and len(conjuges) == 2:
-            outro = conjuges[1 - titular_idx]
-            outro_id = _cliente_do_outro_conjuge(client, org_id, cliente_id, outro)
-            if outro_id is not None:
-                _, abertos_outro = aplicar_campos_ao_cliente(
-                    client, org_id, UUID(outro_id), tipo,
-                    _lidos_do_conjuge(outro, fields),
-                    documento_id=documento_id,
-                    fonte_tabela=DOCUMENTOS_TABLE,
-                    fonte_id=documento_id,
-                )
-                conflitos += abertos_outro
-                conflitos += vincular_conjuges(
-                    client, org_id, cliente_id, UUID(outro_id),
-                    origem=tipo, documento_id=documento_id,
-                )
-        for i, c in enumerate(conjuges):
-            if c.titular:
-                alvo: Optional[str] = str(cliente_id)
-            elif titular_idx is not None:
-                alvo = outro_id
-            else:
-                alvo = None
-            registro_conjuges.append(
-                {
-                    "nome": c.nome,
-                    "cpf": c.cpf,
-                    "data_nascimento": (
-                        c.data_nascimento.isoformat() if c.data_nascimento else None
-                    ),
-                    "nacionalidade": c.nacionalidade,
-                    "profissao": c.profissao,
-                    "genero": c.genero,
-                    "titular": bool(c.titular),
-                    "cliente_id": alvo,
-                }
+    async def _processar(fields: IdentityFields, doc_row: dict) -> dict:
+        if fields.aviso:
+            # Not a failure — the result is persisted below. Recorded so
+            # the withheld fields are explainable from the logs.
+            logger.info(
+                "extracao %s: aviso %s — %s",
+                documento_id, fields.aviso, fields.aviso_mensagem,
             )
-        _marcar(client, documento_id, extracao_conjuges=registro_conjuges)
 
-    if conflitos:
-        logger.info(
-            "extracao %s: %d campo(s) opened an admin conflict instead of "
-            "applying unattended: %s",
-            documento_id, len(conflitos), [c["campo"] for c in conflitos],
+        so_endereco = tipo in TIPOS_ENDERECO
+        # An address document contributes its address and nothing else —
+        # see `TIPOS_ENDERECO`. Its name/CPF are the bill holder's.
+        lidos = _lidos_vazios() if so_endereco else _valores_lidos(fields)
+        endereco = fields.endereco if so_endereco else None
+        data_emissao = (
+            fields.data_emissao.isoformat() if fields.data_emissao and not so_endereco else None
         )
-        await notificar_conflitos(client, org_id, conflitos, notification_service)
-    return {
-        "status": "ok" if achou_algo else "sem_dados",
-        "data_nascimento": lidos["data_nascimento"][0],
-        "nome_oficial": lidos["nome_oficial"][0],
-        "confianca": lidos["data_nascimento"][1],
-        "confianca_nome": lidos["nome_oficial"][1],
-        "fonte": fields.source.value,
-        "tentativas": tentativas,
-        "aplicado_ao_cliente": aplicados,
-        "conflitos_abertos": [c["campo"] for c in conflitos],
-        "conjuges": registro_conjuges,
-    }
+        conjuges = [] if so_endereco else list(fields.conjuges or ())
+        achou_algo = (
+            data_emissao is not None
+            or endereco is not None
+            or bool(conjuges)
+            or any(v is not None for v, _, _, _ in lidos.values())
+        )
+
+        # 🔴 MISFILE DETECTION — FLAGS, NEVER RETYPES (2026-09-23, owner
+        # directive). Two independent signals, both content-only, both never
+        # writing `tipo_documento` — a human confirms via the existing card_hub
+        # UI, same posture as every other `aviso` in this family:
+        #
+        # 1. `fields.tipo_provavel` disagrees with the declared `tipo`. Real,
+        #    measured: at least two CNHs were uploaded typed `rg`, read fine by
+        #    this type-agnostic extractor (so the field yield never looked
+        #    wrong), and nothing anywhere noticed the mismatch. `None` means no
+        #    marker was recognised — NOT a claim of disagreement, so it never
+        #    logs as one (see `classificar_tipo_provavel`'s own docstring).
+        # 2. No marker recognised AT ALL (`tipo_provavel is None`) on a
+        #    supposedly-identity `tipo` that came back with NOTHING extracted
+        #    (`not achou_algo`) — a real-estate "roteiro" and an ads report have
+        #    both been uploaded typed `rg` in production. Scoped OFF
+        #    `TIPOS_ENDERECO`: this module has no positive address-content
+        #    marker (see `classificar_tipo_provavel`'s scope note), so an
+        #    ordinary illegible comprovante would otherwise flag on this signal
+        #    alone for a reason that has nothing to do with misfiling.
+        if fields.tipo_provavel and fields.tipo_provavel != tipo:
+            logger.warning(
+                "extracao %s: possivel tipo_documento incorreto — declarado=%s "
+                "provavel=%s (documento nao foi retipado)",
+                documento_id, tipo, fields.tipo_provavel,
+            )
+        elif fields.tipo_provavel is None and not achou_algo and not so_endereco:
+            logger.warning(
+                "extracao %s: nenhum marcador de identidade reconhecido para "
+                "tipo declarado=%s e nada foi extraido (documento nao foi "
+                "retipado)",
+                documento_id, tipo,
+            )
+
+        # Recorded whether or not it lands on the client — the `_confianca`
+        # and `_rotulo` columns let a human audit the reasoning without
+        # re-opening the document (another logged access). NO terminal
+        # status here (lesson G6) — that lands only after every apply step
+        # below succeeds.
+        marcacoes: dict[str, Any] = {"extracao_fonte": fields.source.value}
+        for campo in CAMPOS:
+            valor, confianca, rotulo, _ = lidos[campo.item_key]
+            marcacoes[campo.coluna_valor] = valor
+            marcacoes[campo.coluna_confianca] = confianca
+            marcacoes[campo.coluna_rotulo] = rotulo
+        # `data_emissao` rides outside the `CAMPOS` loop — see its own comment
+        # above `_TIPOS_CERTIDAO_ESTADO_CIVIL`. Recorded on the document row the
+        # same as every other extracted value, unconditionally; never promoted.
+        marcacoes["extracao_data_emissao"] = data_emissao
+        marcacoes["extracao_data_emissao_confianca"] = fields.data_emissao_confianca.value
+        marcacoes["extracao_data_emissao_rotulo"] = fields.data_emissao_rotulo
+        partes_endereco = endereco.partes() if endereco is not None else {}
+        for parte in ENDERECO_PARTES:
+            marcacoes[f"extracao_endereco_{parte}"] = partes_endereco.get(parte)
+        marcacoes["extracao_endereco_titular"] = endereco.titular if endereco else None
+        marcacoes["extracao_endereco_confianca"] = endereco.confianca if endereco else None
+        marcacoes["extracao_endereco_rotulo"] = endereco.rotulo if endereco else None
+        # Recorded BEFORE anything touches the client record, so a failure while
+        # applying still leaves the reading on the document rather than a row
+        # stuck in `processando` — the runner's own try/except (lesson G6) is
+        # what turns a failure PAST this point into `erro`, never a false `ok`.
+        _marcar(client, documento_id, **marcacoes)
+
+        conflitos: list[dict] = []
+        aplicados, abertos = aplicar_campos_ao_cliente(
+            client,
+            org_id,
+            cliente_id,
+            tipo,
+            lidos,
+            documento_id=documento_id,
+            fonte_tabela=DOCUMENTOS_TABLE,
+            fonte_id=documento_id,
+        )
+        conflitos += abertos
+
+        if endereco is not None:
+            aplicado_end, conflito_end = aplicar_endereco_ao_cliente(
+                client, org_id, cliente_id, tipo, partes_endereco,
+                titular_documento=endereco.titular,
+                confianca=endereco.confianca,
+                documento_id=documento_id,
+            )
+            aplicados[CAMPO_ENDERECO] = aplicado_end
+            if conflito_end is not None:
+                conflitos.append(conflito_end)
+
+        # 🔴 BOTH SPOUSES (migration 153). The spouse the card belongs to was
+        # applied above (the extractor's `titular` hint selected them and carried
+        # their per-person facts onto `fields`). The OTHER spouse fills the
+        # cliente they already are in this product — linked as `conjuge`, or a
+        # party on one of this cliente's cards whose name/CPF matches — and
+        # nobody is ever CREATED from a certidão: an unmatched spouse is recorded
+        # on the document row (`extracao_conjuges`) and nothing more.
+        registro_conjuges: list[dict] = []
+        if conjuges:
+            outro_id: Optional[str] = None
+            titular_idx = next((i for i, c in enumerate(conjuges) if c.titular), None)
+            if titular_idx is not None and len(conjuges) == 2:
+                outro = conjuges[1 - titular_idx]
+                outro_id = _cliente_do_outro_conjuge(client, org_id, cliente_id, outro)
+                if outro_id is not None:
+                    _, abertos_outro = aplicar_campos_ao_cliente(
+                        client, org_id, UUID(outro_id), tipo,
+                        _lidos_do_conjuge(outro, fields),
+                        documento_id=documento_id,
+                        fonte_tabela=DOCUMENTOS_TABLE,
+                        fonte_id=documento_id,
+                    )
+                    conflitos += abertos_outro
+                    conflitos += vincular_conjuges(
+                        client, org_id, cliente_id, UUID(outro_id),
+                        origem=tipo, documento_id=documento_id,
+                    )
+            for i, c in enumerate(conjuges):
+                if c.titular:
+                    alvo: Optional[str] = str(cliente_id)
+                elif titular_idx is not None:
+                    alvo = outro_id
+                else:
+                    alvo = None
+                registro_conjuges.append(
+                    {
+                        "nome": c.nome,
+                        "cpf": c.cpf,
+                        "data_nascimento": (
+                            c.data_nascimento.isoformat() if c.data_nascimento else None
+                        ),
+                        "nacionalidade": c.nacionalidade,
+                        "profissao": c.profissao,
+                        "genero": c.genero,
+                        "titular": bool(c.titular),
+                        "cliente_id": alvo,
+                    }
+                )
+            _marcar(client, documento_id, extracao_conjuges=registro_conjuges)
+
+        if conflitos:
+            logger.info(
+                "extracao %s: %d campo(s) opened an admin conflict instead of "
+                "applying unattended: %s",
+                documento_id, len(conflitos), [c["campo"] for c in conflitos],
+            )
+            await notificar_conflitos(client, org_id, conflitos, notification_service)
+
+        return {
+            "status": "ok" if achou_algo else "sem_dados",
+            "data_nascimento": lidos["data_nascimento"][0],
+            "nome_oficial": lidos["nome_oficial"][0],
+            "confianca": lidos["data_nascimento"][1],
+            "confianca_nome": lidos["nome_oficial"][1],
+            "fonte": fields.source.value,
+            "aplicado_ao_cliente": aplicados,
+            "conflitos_abertos": [c["campo"] for c in conflitos],
+            "conjuges": registro_conjuges,
+        }
+
+    identity_config = replace(
+        config,
+        ler=_ler,
+        leitura_erro=lambda fields: fields.error,
+        leitura_erro_mensagem=lambda fields: fields.error_message,
+        leitura_fonte=lambda fields: fields.source.value,
+        processar=_processar,
+    )
+    resultado = await extracao_job.executar_com_blob(
+        client, identity_config, documento_id, doc, blob, tipo,
+    )
+    return {**resultado, "tentativas": doc.get("extracao_tentativas")}
 
 
 def _pessoas_dos_cards(client: Any, org_id: UUID, cliente_id: UUID) -> list[str]:

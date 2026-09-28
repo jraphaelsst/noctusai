@@ -27,7 +27,21 @@ WHAT THIS OWNS
 --------------
 - `candidatos` — the THREE-way UNION (stale non-terminal, never-started,
   retryable-error) every sweep above independently re-derived, deduped by
-  `id`, oldest-first.
+  `id`, oldest-first. The retryable-error branch is filtered through
+  `app.services.extracao_retentativa.retentavel` (lesson: without this, a
+  sensitive-document refusal like `documento_sensivel_dps` was retried
+  forever — re-reading the same sensitive document on every sweep pass,
+  paid vision calls and an LGPD exposure both repeated for no reason;
+  `imovel_hub.matricula_extracao_service`'s own (not-yet-migrated) sweep
+  already applies the same filter). 🔴 `SweepConfig.colunas` MUST include
+  `extracao_erro` for this filter to see anything — a config whose
+  `colunas` omits it silently gets `codigo_de_erro(None) -> None ->
+  retentavel(None) -> True` (permits retry unconditionally), the SAME
+  behaviour as before this fix. `card_hub.negociacao_extracao_service.
+  _COLUNAS_VARREDURA` and `empresas.sweep_service._COLUNAS_VARREDURA`
+  both currently omit it — `NOC-REMEDIATE[extracao-varredura-colunas-
+  erro]` (2026-09-28), one-line fix in each, both files owned by other
+  slices.
 - `varrer` — the recovery loop: exhausted rows are marked `erro` and left
   for a human; everything else is re-run through the CALLER's own
   `extrair_fn`, one bad row logged and skipped rather than stopping the
@@ -87,7 +101,9 @@ class SweepConfig:
     owner_col: str
     #: `select()` column list — must include `id, org_id, extracao_status,
     #: extracao_tentativas, extracao_em, created_at, tipo_documento` plus
-    #: `owner_col`.
+    #: `owner_col`. 🔴 MUST also include `extracao_erro`, or `candidatos`'s
+    #: retentável filter silently sees nothing to filter (every row reads
+    #: as "unknown code", which is retryable) — see `candidatos`'s own note.
     colunas: str
     extrair_fn: ExtrairFn
     max_tentativas: int = extracao_retentativa.MAX_TENTATIVAS
@@ -131,14 +147,29 @@ def candidatos(client: Any, config: SweepConfig, limite: int) -> list[dict]:
         .limit(limite)
         .execute()
     ).data or []
-    com_erro = (
-        base()
-        .eq("extracao_status", "erro")
-        .lt("extracao_tentativas", config.max_tentativas)
-        .lte("extracao_em", cutoff)
-        .limit(limite)
-        .execute()
-    ).data or []
+    # A retry re-reads the EXACT same document — never worth it for a
+    # failure the document itself caused (a DPS misfiled under another
+    # tipo, an unsupported format): that would loop forever, burning paid
+    # vision calls and, for a sensitive document, repeating the very LGPD
+    # exposure the refusal existed to avoid. `extracao_retentativa.
+    # retentavel` is the one definition of which codes ARE worth a retry
+    # (see `SweepConfig.colunas`'s own note on why `extracao_erro` must be
+    # selected for this to see anything).
+    com_erro = [
+        row
+        for row in (
+            base()
+            .eq("extracao_status", "erro")
+            .lt("extracao_tentativas", config.max_tentativas)
+            .lte("extracao_em", cutoff)
+            .limit(limite)
+            .execute()
+        ).data
+        or []
+        if extracao_retentativa.retentavel(
+            extracao_retentativa.codigo_de_erro(row.get("extracao_erro"))
+        )
+    ]
 
     vistos: set[str] = set()
     linhas: list[dict] = []

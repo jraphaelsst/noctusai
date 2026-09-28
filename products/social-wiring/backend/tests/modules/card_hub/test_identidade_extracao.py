@@ -37,6 +37,7 @@ from noctusai_lib.integrations.documents import (
     IdentityFields,
     TextSource,
 )
+from noctusai_lib.integrations.documents.conjuges import ConjugeLido
 from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.primitives.exceptions import ValidationError_
@@ -1241,3 +1242,80 @@ class TestACertidaoOfTwoSpousesStillFeedsTheCard:
         d = _documento(scoped, did)
         assert d["extracao_status"] == "ok"
         assert d["extracao_estado_civil"] == "divorciado"
+
+
+class TestG6NeverAFalseOkOnApplyFailure:
+    """Lesson G6 (2026-09-28, verified by an audit against origin/dev):
+    this used to stamp the TERMINAL `extracao_status` (`ok`/`sem_dados`) in
+    the SAME write as the reading, then call `aplicar_campos_ao_cliente`
+    with NO `try` around it at all. A transient error during the apply
+    steps left the document `ok` with the client record never actually
+    filled, and the sweep never revisits an `ok` row.
+
+    Now built on `app.services.extracao_job`. This forces a REAL exception
+    out of the apply steps — the linked spouse's `id` is a malformed value
+    (a genuine data-integrity edge case `UUID(outro_id)` refuses, not a
+    monkeypatch of this product's own code) — and pins that the failure
+    ends in `erro`, with the reading already persisted, never a false `ok`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_apply_failure_ends_in_erro_with_the_reading_already_persisted(
+        self, client, scoped,
+    ):
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"nome": "REGINA TESTE", "cpf": "04133324897"},
+        )
+        # The titular's `conjuge_cliente_id` points at a cliente row whose
+        # `id` is NOT a valid UUID — a data-integrity edge case, not
+        # something this test injects into the code path: `_cliente_do_
+        # outro_conjuge` returns whatever `clientes.id` holds verbatim, and
+        # `UUID(outro_id)` is the first thing that ever checks its shape.
+        outro_id_malformado = "nao-e-um-uuid"
+        rows = scoped.table("clientes").select("*").execute().data
+        rows[0]["conjuge_cliente_id"] = outro_id_malformado
+        rows.append(cliente_row(
+            outro_id_malformado, nome="CARLOS TESTE", cpf="98765432100",
+        ))
+        scoped.set_table_data("clientes", rows)
+
+        resultado = IdentityFields(
+            estado_civil="casado",
+            estado_civil_confianca=ExtractionConfidence.ALTA,
+            source=TextSource.OCR,
+            conjuges=(
+                ConjugeLido(nome="REGINA TESTE", cpf="04133324897", titular=True),
+                ConjugeLido(nome="CARLOS TESTE", cpf="98765432100", titular=False),
+            ),
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(resultado),
+        )
+        assert out["status"] == "erro"
+        assert out["erro"] == "aplicar_leitura"
+
+        d = _documento(scoped, did)
+        assert d["extracao_status"] == "erro"
+        assert "aplicar_leitura" in d["extracao_erro"]
+        # The reading is NOT lost — persisted BEFORE the failing apply step
+        # reached the conjuges block, so the failure is diagnosable without
+        # re-reading the document. This is the exact bug lesson G6 names:
+        # the OLD code stamped `ok` here with no `try` around the apply.
+        assert d["extracao_estado_civil"] == "casado"
+
+    @pytest.mark.asyncio
+    async def test_a_successful_apply_writes_ok_only_after_every_apply_step(
+        self, client, scoped,
+    ):
+        cid, did, storage = await _setup(scoped)
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(_alta()),
+        )
+        assert out["status"] == "ok"
+        assert out["aplicado_ao_cliente"]["data_nascimento"] is True
+        d = _documento(scoped, did)
+        assert d["extracao_status"] == "ok"
+        assert _cliente(scoped, cid)["data_nascimento"] == "1980-05-12"

@@ -25,6 +25,17 @@ mid-read. `varrer_pendentes()` is the answer to that, and it is why
 `pendente` is stamped at UPLOAD time rather than by this job — a job that
 never started is then indistinguishable from one that did, and both are
 recoverable.
+
+🔴 lesson G6 (2026-09-28): this used to stamp the TERMINAL `extracao_
+status` (`ok`/`sem_dados`) in the SAME write as the reading, then call
+`campos_svc.aplicar` in a `try` that only LOGGED the exception — the
+already-written `ok` stood even when the apply failed, so a transient DB
+error left the field never filled with nothing to retry (the sweep never
+revisits an `ok` row). Now built on the shared `app.services.extracao_job`
+runner (see that module's own docstring for the other two siblings this
+formalizes): the reading is persisted WITHOUT a terminal status, the apply
+runs inside the runner's own try, and the terminal status is written only
+after it succeeds.
 """
 from __future__ import annotations
 
@@ -38,7 +49,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import documentos_service
 from app.modules.imovel_hub.deps import BUCKET
-from app.services import extracao_retentativa, table_reads
+from app.services import extracao_job, extracao_retentativa, table_reads
 
 logger = logging.getLogger(__name__)
 
@@ -92,62 +103,6 @@ async def extrair(
     `nenhuma` (no label, or heading numbers that disagree) is still never
     written: there is no reading to validate.
     """
-    rows = (
-        _t(client, TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("id", str(documento_id))
-        .limit(1)
-        .execute()
-    ).data or []
-    if not rows:
-        logger.warning(
-            "extracao matricula: documento %s not found for org %s",
-            documento_id,
-            org_id,
-        )
-        return {"status": "erro", "erro": "documento_nao_encontrado"}
-
-    doc = rows[0]
-    if doc.get("deleted_at"):
-        # Deleted between upload and this job. Reading its bytes now would be
-        # work on something the user already withdrew.
-        return {"status": "erro", "erro": "documento_removido"}
-    if not documentos_service.deve_extrair(doc["tipo_documento"]):
-        return {"status": "erro", "erro": "tipo_nao_extraivel"}
-
-    tentativas = int(doc.get("extracao_tentativas") or 0) + 1
-    _marcar(
-        client,
-        documento_id,
-        extracao_status="processando",
-        extracao_em=_now(),
-        extracao_tentativas=tentativas,
-    )
-
-    try:
-        blob = await storage.get(bucket=BUCKET, key=doc["storage_path"])
-    except Exception as exc:  # noqa: BLE001 - detached job; record, never raise
-        logger.warning("extracao matricula %s: storage read failed: %s", documento_id, exc)
-        _marcar(
-            client,
-            documento_id,
-            extracao_status="erro",
-            extracao_erro=f"storage: {exc}",
-            extracao_em=_now(),
-        )
-        return {"status": "erro", "erro": "storage"}
-
-    if blob is None:
-        _marcar(
-            client,
-            documento_id,
-            extracao_status="erro",
-            extracao_erro="objeto_ausente: objeto ausente no storage",
-            extracao_em=_now(),
-        )
-        return {"status": "erro", "erro": "objeto_ausente"}
-
     if extractor is None:
         from noctusai_lib.integrations.documents import make_matricula_extractor
 
@@ -160,42 +115,31 @@ async def extrair(
             real=True, org_id=str(org_id), provider=resolve_vision_provider(str(org_id))
         )
 
-    campos = await extractor.extract(
-        blob.data,
-        mimetype=doc.get("mime_type"),
-        filename=doc.get("nome_original"),
-    )
-
-    if campos.error:
-        _marcar(
-            client,
-            documento_id,
-            extracao_status="erro",
-            extracao_erro=f"{campos.error}: {campos.error_message or ''}".strip(": "),
-            extracao_fonte=campos.source.value,
-            extracao_em=_now(),
+    async def _ler(blob_bytes: bytes, doc: dict) -> Any:
+        return await extractor.extract(
+            blob_bytes, mimetype=doc.get("mime_type"), filename=doc.get("nome_original"),
         )
-        return {"status": "erro", "erro": campos.error}
 
-    # Recorded whether or not it is persistable. A low-confidence read is a
-    # suggestion the UI can offer next to the empty field, and the `_rotulo`
-    # column lets a human check the reasoning without opening the PDF.
-    _marcar(
-        client,
-        documento_id,
-        extracao_status="ok" if campos.presente else "sem_dados",
-        extracao_matricula=campos.numero_matricula,
-        extracao_confianca=campos.numero_matricula_confianca.value,
-        extracao_rotulo=campos.numero_matricula_rotulo,
-        extracao_fonte=campos.source.value,
-        extracao_erro=None,
-        extracao_em=_now(),
-    )
+    async def _processar(campos: Any, doc: dict) -> dict:
+        # Recorded whether or not it is persistable, and WITHOUT the
+        # terminal status (lesson G6) — a low-confidence read is a
+        # suggestion the UI can offer next to the empty field, and the
+        # `_rotulo` column lets a human check the reasoning without
+        # opening the PDF.
+        extracao_job.marcar(
+            client, TABLE, documento_id,
+            extracao_matricula=campos.numero_matricula,
+            extracao_confianca=campos.numero_matricula_confianca.value,
+            extracao_rotulo=campos.numero_matricula_rotulo,
+        )
 
-    aplicado = False
-    conflito = False
-    if campos.persistable or campos.sugestao:
-        try:
+        aplicado = False
+        conflito = False
+        if campos.persistable or campos.sugestao:
+            # No try here — an exception now propagates to the runner's own
+            # try/except, which ends the job in `erro` (lesson G6: this used
+            # to only LOG the exception, leaving an already-written `ok`
+            # standing with nothing actually applied).
             resultado = campos_svc.aplicar(
                 client,
                 org_id,
@@ -208,12 +152,6 @@ async def extrair(
                 fonte_tabela=campos_svc.FONTE_DOCUMENTOS,
                 fonte_id=documento_id,
             )
-        except Exception as exc:  # noqa: BLE001 - detached job; the read is recorded above
-            logger.error(
-                "extracao matricula %s: reading recorded but not applied to imovel_dados: %s",
-                documento_id, exc, exc_info=True,
-            )
-        else:
             aplicado = resultado.preenchido
             if resultado.conflito is not None:
                 conflito = True
@@ -221,15 +159,27 @@ async def extrair(
                     client, org_id, codigo, [resultado.conflito], notificador
                 )
 
-    return {
-        "status": "ok" if campos.presente else "sem_dados",
-        "numero_matricula": campos.numero_matricula,
-        "confianca": campos.numero_matricula_confianca.value,
-        "fonte": campos.source.value,
-        "tentativas": tentativas,
-        "aplicado_ao_imovel": aplicado,
-        "conflito_aberto": conflito,
-    }
+        return {
+            "status": "ok" if campos.presente else "sem_dados",
+            "numero_matricula": campos.numero_matricula,
+            "confianca": campos.numero_matricula_confianca.value,
+            "fonte": campos.source.value,
+            "aplicado_ao_imovel": aplicado,
+            "conflito_aberto": conflito,
+        }
+
+    config = extracao_job.ExtractionJobConfig(
+        table=TABLE,
+        bucket=BUCKET,
+        deve_extrair=documentos_service.deve_extrair,
+        ler=_ler,
+        leitura_erro=lambda campos: campos.error,
+        leitura_erro_mensagem=lambda campos: campos.error_message,
+        leitura_fonte=lambda campos: campos.source.value,
+        erro_aplicar_codigo="aplicar_campos",
+        processar=_processar,
+    )
+    return await extracao_job.executar(client, storage, org_id, documento_id, config)
 
 
 def _stale_cutoff() -> str:
