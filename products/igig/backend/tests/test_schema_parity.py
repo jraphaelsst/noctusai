@@ -49,6 +49,8 @@ DOMAIN_TABLES = {
     # 018 — CRM foundation
     "produto_servico", "negocio", "orcamento_item", "gmail_watch", "orcamento_email",
     "automacao", "automacao_execucao",
+    # 028 — persisted Cofre reveal audit trail
+    "cofre_revelacoes",
 }
 
 

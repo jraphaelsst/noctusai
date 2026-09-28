@@ -111,6 +111,11 @@ class RepertorioOut(BaseModel):
     """
 
     cliente_nome: str | None = None
+    #: Which marca this actually is — the FE switcher needs this to
+    #: pre-select the right chip when the caller passed no `marca_id` (achado
+    #: 2: without it, "which of the client's N marcas am I looking at?" had
+    #: no answer of its own).
+    marca_id: str | None = None
     marca_nome: str | None = None
     logo_url: str | None = None
     paleta: list[CorPaleta] = Field(default_factory=list)

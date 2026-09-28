@@ -26,6 +26,7 @@ Two surfaces:
 import logging
 from typing import Any, Callable
 
+from cryptography.fernet import Fernet
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from noctusai_lib.integrations.persistence import RecordNotFound
 from noctusai_lib.integrations.storage import StorageBackend
@@ -51,17 +52,19 @@ from app.schemas.marca import (
     RepertorioOut,
     SenhaRevelada,
 )
-from app.storage import chave_da_peca, get_storage
+from app.storage import chave_do_logo, get_storage
 from app.store import get_repositorios
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/marcas", tags=["marca"])
 
-#: Logos are the only upload this router accepts. The spec asks for PNG/SVG;
-#: an allowlist (not a denylist) keeps an SVG-borne script or a disguised
-#: executable from being stored and later served back to a browser.
-_LOGO_MIMES = {"image/png", "image/svg+xml", "image/jpeg", "image/webp"}
+#: Logos are the only upload this router accepts. NOT `image/svg+xml`: the
+#: comment this allowlist used to carry claimed SVG was safe here, but an SVG
+#: can embed `<script>`/event-handler payloads that execute when the signed
+#: URL is opened directly in a browser (achado 17) — an allowlist is only as
+#: safe as what it actually allows.
+_LOGO_MIMES = {"image/png", "image/jpeg", "image/webp"}
 _LOGO_MAX_BYTES = 2 * 1024 * 1024
 
 
@@ -119,6 +122,13 @@ def _chave_cofre(cfg: Any) -> bytes:
     A 409 rather than a 500: the request is well-formed, the SERVER is not
     configured. Saying so plainly is what stops someone concluding the vault
     is broken and pasting the password into `observacoes`.
+
+    Also validates the key's SHAPE (achado 18 — a malformed
+    `IGIG_COFRE_KEY` used to reach `Fernet(...)` unchecked and 500 on the
+    first encrypt/decrypt). There is deliberately no boot-time check for
+    this: `main.py` is a different slice's file, and a 409 here — at the one
+    moment the key is actually needed — already tells the operator exactly
+    what to fix, with no dependency on when the app happened to start.
     """
     if not cfg.igig_cofre_key:
         raise HTTPException(
@@ -128,7 +138,18 @@ def _chave_cofre(cfg: Any) -> bytes:
                 "Nenhuma senha é gravada em texto puro."
             ),
         )
-    return cfg.igig_cofre_key.encode("utf-8")
+    chave = cfg.igig_cofre_key.encode("utf-8")
+    try:
+        Fernet(chave)
+    except (ValueError, TypeError) as erro:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "IGIG_COFRE_KEY está mal configurada (não é uma chave Fernet válida). "
+                "Peça ao responsável técnico para gerar uma nova chave."
+            ),
+        ) from erro
+    return chave
 
 
 def _acesso_out(row: dict) -> AcessoOut:
@@ -191,12 +212,19 @@ async def criar_marca(
 @router.get("/repertorio/{cliente_id}", response_model=RepertorioOut)
 async def obter_repertorio(
     cliente_id: str,
+    marca_id: str | None = None,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
     storage: StorageBackend = Depends(get_storage),
     cfg: Any = Depends(get_settings),
 ) -> RepertorioOut:
     """The persistent-sidebar payload for a client.
+
+    `marca_id`, when the caller knows it (the tarefa's own pauta carries one),
+    picks THAT brand — a cliente with N marcas has no notion of "the" brand
+    otherwise (achado 2). Falls back to the client's first brand by name when
+    omitted or when it does not belong to this cliente; still never errors
+    over the choice — see `MarcaRepository.repertorio`.
 
     Returns an EMPTY repertório (200) rather than 404 when the client has no
     brand yet — the sidebar is ambient chrome on a task screen, and a 404
@@ -208,12 +236,13 @@ async def obter_repertorio(
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Cliente não encontrado")
 
-    marca = repos.marca.repertorio(org_id, cliente_id)
+    marca = repos.marca.repertorio(org_id, cliente_id, marca_id=marca_id)
     if marca is None:
         return RepertorioOut(cliente_nome=cliente.get("nome"))
     marca = await _com_logo(marca, storage=storage, cfg=cfg)
     return RepertorioOut(
         cliente_nome=cliente.get("nome"),
+        marca_id=str(marca["id"]),
         marca_nome=marca.get("nome"),
         logo_url=marca.get("logo_url"),
         paleta=marca.get("paleta") or [],
@@ -260,17 +289,33 @@ async def remover_marca(
     marca_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
+    cfg: Any = Depends(get_settings),
 ) -> dict:
     """Delete one marca of a cliente (a cliente carries N marcas — roadmap R9).
 
     Pautas that pointed at it survive (`pauta.marca_id` is ON DELETE SET
     NULL); the Cofre is keyed on the CLIENTE, not the marca, so it is
-    untouched. The uploaded logo object stays in the private bucket — it is
-    only reachable through a signed URL minted from this row, which is gone.
+    untouched. The uploaded logo object IS removed from the bucket now
+    (achado 17 — it used to be orphaned, reachable by nobody but occupying
+    storage forever). Best-effort: a storage failure is logged, never
+    swallowed, and never blocks the row delete the user asked for.
     """
     org_id = _org(auth)
+    try:
+        marca = repos.marca.buscar(org_id, marca_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Marca não encontrada")
     if not repos.marca.remover(org_id, marca_id):
         raise HTTPException(status_code=404, detail="Marca não encontrada")
+    if marca.get("logo_key"):
+        try:
+            await storage.delete(bucket=cfg.igig_storage_bucket, key=str(marca["logo_key"]))
+        except Exception:  # noqa: BLE001 — the row delete already succeeded
+            logger.exception(
+                "falha ao remover logo do armazenamento org=%s marca=%s key=%s",
+                org_id, marca_id, marca.get("logo_key"),
+            )
     logger.info("marca removida org=%s id=%s", org_id, marca_id)
     return {"ok": True}
 
@@ -286,26 +331,31 @@ async def enviar_logo(
 ) -> LogoOut:
     """Upload a brand logo through the seed storage seam.
 
-    The bytes go to storage; the DB keeps only the resulting URL, so this
-    endpoint is identical whether the backend is Supabase Storage or the local
-    filesystem.
+    The bytes go to storage; the DB keeps only the KEY (`logo_key`), never a
+    URL — a signed URL is a per-read credential, minted fresh by every READ
+    path via `_com_logo` (see that function's docstring for the incident this
+    already fixed for the KEY; persisting `logo_url` too, as this endpoint
+    used to, was the same mistake one column over). The OLD logo object is
+    deleted from the bucket when this marca already had one, so replacing a
+    logo does not leak the previous file forever (achado 17).
     """
     org_id = _org(auth)
     try:
-        repos.marca.buscar(org_id, marca_id)
+        marca = repos.marca.buscar(org_id, marca_id)
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Marca não encontrada")
 
     if arquivo.content_type not in _LOGO_MIMES:
         raise HTTPException(
             status_code=422,
-            detail=f"Formato não suportado: {arquivo.content_type}. Envie PNG, SVG, JPEG ou WebP.",
+            detail=f"Formato não suportado: {arquivo.content_type}. Envie PNG, JPEG ou WebP.",
         )
     conteudo = await arquivo.read()
     if len(conteudo) > _LOGO_MAX_BYTES:
         raise HTTPException(status_code=413, detail="Logo excede 2 MB")
 
-    chave = chave_da_peca(org_id, f"marcas/{marca_id}", arquivo.filename or "logo")
+    chave_antiga = marca.get("logo_key")
+    chave = chave_do_logo(org_id, marca_id, arquivo.filename or "logo", arquivo.content_type)
     await storage.put(
         bucket=cfg.igig_storage_bucket,
         key=chave,
@@ -313,11 +363,16 @@ async def enviar_logo(
         content_type=arquivo.content_type,
     )
     url = await storage.signed_url(bucket=cfg.igig_storage_bucket, key=chave)
-    # Persist the KEY. `logo_url` is written too so a consumer reading the row
-    # directly still sees something, but it is authoritative for exactly as
-    # long as the TTL — every READ path re-signs from `logo_key` via
-    # `_com_logo`.
-    repos.marca.atualizar(org_id, marca_id, {"logo_key": chave, "logo_url": url})
+    # Persist the KEY only — never `logo_url` (see docstring above).
+    repos.marca.atualizar(org_id, marca_id, {"logo_key": chave})
+    if chave_antiga and str(chave_antiga) != chave:
+        try:
+            await storage.delete(bucket=cfg.igig_storage_bucket, key=str(chave_antiga))
+        except Exception:  # noqa: BLE001 — the new logo is already live
+            logger.exception(
+                "falha ao remover logo antigo org=%s marca=%s key=%s",
+                org_id, marca_id, chave_antiga,
+            )
     logger.info("logo enviado org=%s marca=%s key=%s", org_id, marca_id, chave)
     return LogoOut(storage_key=chave, url=url)
 
@@ -376,9 +431,19 @@ async def atualizar_acesso(
     repos: Repositorios = Depends(get_repositorios),
     cfg: Any = Depends(get_settings),
 ) -> AcessoOut:
+    """Edit a vault entry — including CLEARING `usuario`/`url`/`plataforma`/
+    `observacoes` by sending them as explicit `null` (achado 18: with
+    `exclude_none` a blank usuário always fell back to the old value, so
+    there was no way to clear it once set).
+
+    `senha` stays the one deliberate exception: omitted OR blank means "keep
+    the current password" (the edit form's own placeholder says so) — never
+    a way to erase a stored credential from the screen, so it is popped
+    BEFORE `exclude_unset` even sees it.
+    """
     org_id = _org(auth)
-    dados = payload.model_dump(exclude_none=True)
-    senha = dados.pop("senha", None)
+    senha = payload.senha
+    dados = payload.model_dump(exclude_unset=True, exclude={"senha"})
     if senha:
         from noctusai_lib.security.encrypted_tokens import encrypt
 
@@ -413,9 +478,11 @@ async def revelar_senha(
         raise HTTPException(status_code=404, detail="Acesso não encontrado")
     if senha is None:
         raise HTTPException(status_code=404, detail="Este acesso não possui senha armazenada")
+    quem = getattr(user, "id", None)
+    repos.cofre_revelacao.registrar(org_id, acesso_id, revelado_por=str(quem) if quem else None)
     logger.info(
         "cofre: senha revelada org=%s acesso=%s por=%s",
-        org_id, acesso_id, getattr(user, "id", None) or getattr(user, "email", "?"),
+        org_id, acesso_id, quem or getattr(user, "email", "?"),
     )
     return SenhaRevelada(senha=senha)
 

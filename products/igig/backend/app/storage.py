@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 from pathlib import Path
+from uuid import uuid4
 
 from noctusai_lib.integrations.storage import StorageBackend, make_storage_backend
 
@@ -23,7 +24,19 @@ from app.database import get_admin_client
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["get_storage", "chave_da_peca", "reset_storage"]
+__all__ = ["get_storage", "chave_da_peca", "chave_do_logo", "reset_storage"]
+
+#: Extension fallback when the client sends a filename with none (a bare
+#: "logo" or "arquivo"). Keyed on the same allowlists the routers validate
+#: against, so a key always carries an extension even from a bare upload.
+_EXTENSAO_POR_MIME = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+}
 
 
 @lru_cache(maxsize=1)
@@ -47,10 +60,31 @@ def chave_da_peca(org_id: str, pauta_id: str, nome_arquivo: str) -> str:
     """Key layout for an uploaded peça.
 
     Org-first so a storage-level policy (or a bucket listing) can be scoped
-    per tenant without parsing the rest of the path.
+    per tenant without parsing the rest of the path. A random prefix on the
+    filename makes every upload's key UNIQUE — two peças named "arte.png" on
+    the same pauta used to collide on the SAME storage object (the second
+    upload silently overwrote the first's bytes while both rows stayed in
+    `igig.peca`, so the portal and the editor showed two entries pointing at
+    one, ever-changing file).
     """
     seguro = Path(nome_arquivo).name  # strip any traversal the client sent
-    return f"{org_id}/pautas/{pauta_id}/{seguro}"
+    return f"{org_id}/pautas/{pauta_id}/{uuid4().hex}-{seguro}"
+
+
+def chave_do_logo(org_id: str, marca_id: str, nome_arquivo: str, content_type: str | None) -> str:
+    """Key layout for a marca's logo: `<org>/marcas/<marca_id>/logo-<uuid>.<ext>`.
+
+    Deliberately NOT `chave_da_peca(org_id, f"marcas/{marca_id}", ...)` — that
+    call yielded `<org>/pautas/marcas/<id>/<file>`, a misleading "pautas/"
+    segment for an asset that has nothing to do with a pauta. The extension
+    comes from the ORIGINAL filename when present (keeps `.png`/`.jpg`
+    recognisable in the bucket listing), falling back to the content-type
+    when the filename carries none.
+    """
+    extensao = Path(nome_arquivo).suffix.lstrip(".").lower()
+    if not extensao:
+        extensao = _EXTENSAO_POR_MIME.get(content_type or "", "bin")
+    return f"{org_id}/marcas/{marca_id}/logo-{uuid4().hex}.{extensao}"
 
 
 def reset_storage() -> None:

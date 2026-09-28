@@ -9,6 +9,7 @@ import pytest
 from cryptography.fernet import Fernet
 from noctusai_lib.integrations.persistence import SqliteRecordStore
 from noctusai_lib.integrations.storage import FakeStorageBackend
+from noctusai_lib.testing.clients import TEST_USER_ID
 
 from app.dependencies import coerce_org_uuid
 from app.repositories import Repositorios
@@ -182,6 +183,35 @@ class TestRepertorio:
     def test_unknown_client_returns_404(self, api):
         assert api.get("/api/marcas/repertorio/nao-existe").status_code == 404
 
+    def test_marca_id_wins_over_the_alphabetical_default(self, api, cliente):
+        """achado 2: a cliente with N marcas has no notion of "the" brand —
+        the caller (a pauta's own `marca_id`) gets to say which one."""
+        api.post("/api/marcas", json={"cliente_id": cliente["id"], "nome": "Alfa"})
+        segunda = api.post(
+            "/api/marcas", json={"cliente_id": cliente["id"], "nome": "Zeta"}
+        ).json()
+        body = api.get(
+            f"/api/marcas/repertorio/{cliente['id']}", params={"marca_id": segunda["id"]}
+        ).json()
+        assert body["marca_nome"] == "Zeta"
+        assert body["marca_id"] == segunda["id"]
+
+    def test_unknown_marca_id_falls_back_without_erroring(self, api, cliente):
+        """Ambient chrome must never error over the choice of brand."""
+        api.post("/api/marcas", json={"cliente_id": cliente["id"], "nome": "Alfa"})
+        resp = api.get(
+            f"/api/marcas/repertorio/{cliente['id']}", params={"marca_id": "nao-existe"}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["marca_nome"] == "Alfa"
+
+    def test_response_carries_which_marca_it_is(self, api, cliente):
+        criada = api.post(
+            "/api/marcas", json={"cliente_id": cliente["id"], "nome": "Sol"}
+        ).json()
+        body = api.get(f"/api/marcas/repertorio/{cliente['id']}").json()
+        assert body["marca_id"] == criada["id"]
+
 
 # ── Cofre de Acessos ────────────────────────────────────────────────
 class TestCofre:
@@ -324,6 +354,148 @@ class TestCofre:
             "cliente_id": "nao-existe", "rotulo": "X",
         })
         assert resp.status_code == 404
+
+    def test_reveal_persists_a_durable_audit_row(self, api, repos, cliente, como_admin):
+        """achado 18: the reveal used to live ONLY in a log line, which
+        rotates off disk and answers no query."""
+        criado = self._criar(api, cliente).json()
+        assert api.post(f"/api/marcas/acessos/{criado['id']}/revelar").status_code == 200
+        linhas = repos.cofre_revelacao.do_acesso(ORG, criado["id"])
+        assert len(linhas) == 1
+        assert linhas[0]["revelado_por"] == TEST_USER_ID
+
+    def test_each_reveal_adds_its_own_row(self, api, repos, cliente, como_admin):
+        criado = self._criar(api, cliente).json()
+        api.post(f"/api/marcas/acessos/{criado['id']}/revelar")
+        api.post(f"/api/marcas/acessos/{criado['id']}/revelar")
+        assert len(repos.cofre_revelacao.do_acesso(ORG, criado["id"])) == 2
+
+    def test_malformed_key_fails_loudly_not_with_a_500(self, api, cliente, cfg):
+        """achado 18: `Fernet(...)` on a bad key used to reach the encrypt
+        call unchecked. This must be a clear 409, never an opaque 500."""
+        from app.config import get_settings
+        from app.main import app
+
+        app.dependency_overrides[get_settings] = lambda: cfg.model_copy(
+            update={"igig_cofre_key": "isto-nao-e-uma-chave-fernet-valida"}
+        )
+        resp = self._criar(api, cliente)
+        assert resp.status_code == 409
+        assert "IGIG_COFRE_KEY" in resp.text
+
+    def test_clearing_usuario_via_explicit_null_now_works(self, api, cliente):
+        """achado 18: with `exclude_none`, a blank usuário always fell back
+        to the old value — there was no way to clear it once set."""
+        criado = api.post("/api/marcas/acessos", json={
+            "cliente_id": cliente["id"], "rotulo": "Drive", "usuario": "equipe@sol.com",
+        }).json()
+        resp = api.patch(f"/api/marcas/acessos/{criado['id']}", json={"usuario": None})
+        assert resp.status_code == 200
+        assert resp.json()["usuario"] is None
+
+    def test_omitting_a_field_leaves_it_untouched(self, api, cliente):
+        """`exclude_unset`, not `exclude_none`: NOT sending `usuario` must
+        not be indistinguishable from clearing it."""
+        criado = api.post("/api/marcas/acessos", json={
+            "cliente_id": cliente["id"], "rotulo": "Drive", "usuario": "equipe@sol.com",
+        }).json()
+        resp = api.patch(f"/api/marcas/acessos/{criado['id']}", json={"rotulo": "Google Drive"})
+        assert resp.status_code == 200
+        assert resp.json()["usuario"] == "equipe@sol.com"
+
+    def test_blank_senha_still_keeps_the_current_password(self, api, cliente, como_admin):
+        """The one deliberate exception to "explicit null clears": the edit
+        form's own placeholder promises a blank senha keeps the old one."""
+        criado = self._criar(api, cliente).json()
+        resp = api.patch(f"/api/marcas/acessos/{criado['id']}", json={"rotulo": "Meta Ads"})
+        assert resp.status_code == 200
+        assert api.post(
+            f"/api/marcas/acessos/{criado['id']}/revelar"
+        ).json()["senha"] == self.SEGREDO
+
+
+# ── Logo: format, key layout, cleanup on replace/delete ─────────────────
+class TestLogo:
+    @pytest.fixture(autouse=True)
+    def _fake_storage(self, api):
+        """ONE backend instance for the whole test — not a fresh one per
+        request — so a second upload's DELETE-the-old-object call is
+        checkable against what the first upload actually put there."""
+        from app.main import app
+        from app.storage import get_storage
+
+        backend = FakeStorageBackend()
+        app.dependency_overrides[get_storage] = lambda: backend
+        yield backend
+        app.dependency_overrides.pop(get_storage, None)
+
+    def _marca(self, api) -> dict:
+        cliente = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
+        return api.post(
+            "/api/marcas", json={"cliente_id": cliente["id"], "nome": "Padaria Sol"}
+        ).json()
+
+    def test_svg_is_rejected(self, api):
+        """achado 17: an SVG can carry a script that executes when the
+        signed URL is opened directly — no longer on the allowlist."""
+        marca = self._marca(api)
+        resp = api.raw().post(
+            f"/api/marcas/{marca['id']}/logo",
+            files={"arquivo": ("logo.svg", b"<svg onload=alert(1)></svg>", "image/svg+xml")},
+            headers={"Authorization": "Bearer test-token-valid"},
+        )
+        assert resp.status_code == 422
+
+    def test_key_layout_is_marcas_not_pautas(self, api, repos):
+        """achado 17: `chave_da_peca(org_id, f"marcas/{id}", ...)` used to
+        yield `<org>/pautas/marcas/<id>/<file>` — a misleading path for an
+        asset that has nothing to do with a pauta."""
+        marca = self._marca(api)
+        api.raw().post(
+            f"/api/marcas/{marca['id']}/logo",
+            files={"arquivo": ("logo.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+            headers={"Authorization": "Bearer test-token-valid"},
+        )
+        chave = repos.marca.buscar(ORG, marca["id"])["logo_key"]
+        assert chave.startswith(f"{ORG}/marcas/{marca['id']}/logo-")
+        assert "/pautas/" not in chave
+
+    def test_replacing_a_logo_deletes_the_old_object(self, api, _fake_storage):
+        marca = self._marca(api)
+        primeiro = api.raw().post(
+            f"/api/marcas/{marca['id']}/logo",
+            files={"arquivo": ("a.png", b"\x89PNG...", "image/png")},
+            headers={"Authorization": "Bearer test-token-valid"},
+        ).json()
+        api.raw().post(
+            f"/api/marcas/{marca['id']}/logo",
+            files={"arquivo": ("b.png", b"\x89PNG222", "image/png")},
+            headers={"Authorization": "Bearer test-token-valid"},
+        )
+        assert primeiro["storage_key"] not in _fake_storage._blobs.get("igig", {}), (
+            "old object must be deleted"
+        )
+
+    def test_deleting_a_marca_deletes_its_logo_object(self, api, _fake_storage):
+        marca = self._marca(api)
+        enviado = api.raw().post(
+            f"/api/marcas/{marca['id']}/logo",
+            files={"arquivo": ("a.png", b"\x89PNG...", "image/png")},
+            headers={"Authorization": "Bearer test-token-valid"},
+        ).json()
+        assert api.delete(f"/api/marcas/{marca['id']}").status_code == 200
+        assert enviado["storage_key"] not in _fake_storage._blobs.get("igig", {})
+
+    def test_upload_no_longer_persists_a_signed_url(self, api, repos):
+        """achado 25: persisting `logo_url` at all contradicted 015's own
+        comment that it must NEVER be persisted."""
+        marca = self._marca(api)
+        api.raw().post(
+            f"/api/marcas/{marca['id']}/logo",
+            files={"arquivo": ("a.png", b"\x89PNG...", "image/png")},
+            headers={"Authorization": "Bearer test-token-valid"},
+        )
+        assert repos.marca.buscar(ORG, marca["id"]).get("logo_url") is None
 
 
 # ── Logo: the URL is minted per-read, NEVER persisted ───────────────────────

@@ -47,6 +47,7 @@ __all__ = [
     "FuncaoRepository",
     "ProfissionalRepository",
     "AcessoRepository",
+    "CofreRevelacaoRepository",
     "PecaRepository",
     "PublicacaoRepository",
     "MetricaRepository",
@@ -89,14 +90,22 @@ class MarcaRepository(BaseRepository):
     def do_cliente(self, org_id: str, cliente_id: str) -> list[Record]:
         return self._por("cliente_id", cliente_id, org_id)
 
-    def repertorio(self, org_id: str, cliente_id: str) -> Record | None:
+    def repertorio(self, org_id: str, cliente_id: str, *, marca_id: str | None = None) -> Record | None:
         """The payload behind Módulo 2's persistent sidebar.
 
-        Returns the client's first brand, or ``None`` when none exists —
-        ``None`` is meaningful here (a client legitimately may not have a
-        brand yet), unlike a by-id miss, which raises.
+        `marca_id`, when given AND it belongs to this cliente, wins — it is
+        the pauta's own `marca_id` (roadmap R9: a cliente carries N marcas,
+        so "the" brand is only unambiguous once a pauta points at one).
+        Otherwise falls back to the client's first brand by name. `None` is
+        meaningful here (a client legitimately may not have a brand yet),
+        unlike a by-id miss, which raises — this stays a fallback, never an
+        error, because the sidebar is ambient chrome on someone's work.
         """
         marcas = self.do_cliente(org_id, cliente_id)
+        if marca_id:
+            escolhida = next((m for m in marcas if str(m["id"]) == str(marca_id)), None)
+            if escolhida is not None:
+                return escolhida
         return marcas[0] if marcas else None
 
 
@@ -157,6 +166,12 @@ class TarefaRepository(BaseRepository):
     """
 
     table = "tarefa"
+
+    def do_pauta(self, org_id: str, pauta_id: str) -> list[Record]:
+        """Every tarefa a pauta opened — deleting the pauta cascades to all of
+        them, so this is how a caller sums their apontamentos BEFORE that
+        cascade runs (`pauta_router.remover_pauta`'s hours-loss guard)."""
+        return self._por("pauta_id", pauta_id, org_id)
 
 
 class ApontamentoRepository(BaseRepository):
@@ -292,6 +307,28 @@ class AprovacaoRepository(BaseRepository):
                 "emitido_por": emitido_por,
             },
         )
+
+    def revogar_pendentes(self, org_id: str, tarefa_id: str, *, exceto_id: str) -> int:
+        """Expire every UNDECIDED prior link for this tarefa, except the one
+        just minted.
+
+        Each "Gerar e copiar link" click used to leave the previous link
+        live for the rest of its 14 days (smoke achado 6) — an old link could
+        decide a LATER approval round the client was never shown. There is no
+        "revoked" column to add: setting `expira_em` to now makes
+        :meth:`expirada` true immediately, which is exactly what the public
+        portal already treats as "Link inválido ou expirado". A DECIDED link
+        is left untouched — it is already spent, and revoking it would only
+        blur the audit trail of what the client actually saw and answered.
+        """
+        agora = datetime.now(timezone.utc).isoformat()
+        pendentes = [
+            a for a in self.da_tarefa(org_id, tarefa_id)
+            if str(a["id"]) != str(exceto_id) and a.get("decidido_em") is None
+        ]
+        for pendente in pendentes:
+            self.atualizar(org_id, str(pendente["id"]), {"expira_em": agora})
+        return len(pendentes)
 
     def por_token(self, token: str) -> Record | None:
         """Resolve a link by token — the public portal read path.
@@ -453,6 +490,31 @@ class AcessoRepository(BaseRepository):
         if not cifrada:
             return None
         return decrypt(str(cifrada), chave)
+
+
+class CofreRevelacaoRepository(BaseRepository):
+    """Persisted audit trail for `AcessoRepository.revelar_senha` (migration 028).
+
+    The reveal used to be recorded ONLY as a `logger.info` line — a log line
+    rotates off disk and answers no query. This is the durable row: who
+    revealed which acesso, and when.
+    """
+
+    table = "cofre_revelacoes"
+    default_order = (Order("revelado_em", descending=True),)
+
+    def registrar(self, org_id: str, acesso_id: str, *, revelado_por: str | None) -> Record:
+        return self.criar(
+            org_id,
+            {
+                "acesso_id": acesso_id,
+                "revelado_por": revelado_por,
+                "revelado_em": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    def do_acesso(self, org_id: str, acesso_id: str) -> list[Record]:
+        return self._por("acesso_id", acesso_id, org_id)
 
 
 class PecaRepository(BaseRepository):
@@ -799,6 +861,7 @@ class Repositorios:
         self.funcao = FuncaoRepository(store)
         self.profissional = ProfissionalRepository(store)
         self.acesso = AcessoRepository(store)
+        self.cofre_revelacao = CofreRevelacaoRepository(store)
         self.peca = PecaRepository(store)
         self.publicacao = PublicacaoRepository(store)
         self.metrica = MetricaRepository(store)
