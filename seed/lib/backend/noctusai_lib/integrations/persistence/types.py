@@ -34,6 +34,11 @@ __all__ = [
     "RecordStore",
     "RecordNotFound",
     "PersistenceError",
+    "ConstraintViolation",
+    "UniqueViolation",
+    "ForeignKeyViolation",
+    "CheckViolation",
+    "classify_constraint_violation",
 ]
 
 #: A single row, as a plain dict. Deliberately not a TypedDict/model — the
@@ -60,6 +65,92 @@ class RecordNotFound(PersistenceError):
     silent ``None`` is the "no silent errors" violation this platform
     forbids (``KB § 01-PHILOSOPHY.md``).
     """
+
+
+class ConstraintViolation(PersistenceError):
+    """A database CONSTRAINT rejected the write — dialect-neutral base.
+
+    Before this hierarchy existed, every consumer that needed to tell "the
+    write failed because of a constraint" from "the write failed for some
+    other reason" re-derived the answer itself by sniffing a raw exception:
+    a Postgres SQLSTATE / message substring on the Supabase path, a
+    ``sqlite3.IntegrityError`` message substring on the SQLite path — and
+    IgIg alone had it three times over (``automacoes.violacao_unica``,
+    ``custos_router._e_nome_duplicado``, plus two ``except PersistenceError``
+    catches in ``financeiro_router``/``financeiro_service`` and one in
+    ``distribuicao_router`` that assumed ANY ``PersistenceError`` from an
+    insert meant a duplicate — silently mislabelling a foreign-key or other
+    failure the same way). :func:`classify_constraint_violation` is now the
+    ONE place that sniffing happens; adapters call it, consumers catch the
+    member they mean.
+
+    Catch this base when you only need "was this a constraint, not
+    something else" (e.g. a generic 409). Catch :class:`UniqueViolation` /
+    :class:`ForeignKeyViolation` / :class:`CheckViolation` when the
+    response needs to differ. Never catch the wider :class:`PersistenceError`
+    to detect a constraint — that base also covers :class:`RecordNotFound`
+    and adapter-internal failures this hierarchy does not classify.
+    """
+
+
+class UniqueViolation(ConstraintViolation):
+    """A UNIQUE or PRIMARY KEY index refused a duplicate value.
+
+    Postgres SQLSTATE ``23505`` / SQLite's ``UNIQUE constraint failed``.
+    """
+
+
+class ForeignKeyViolation(ConstraintViolation):
+    """A FOREIGN KEY constraint refused a dangling reference.
+
+    Postgres SQLSTATE ``23503`` / SQLite's ``FOREIGN KEY constraint failed``.
+    """
+
+
+class CheckViolation(ConstraintViolation):
+    """A CHECK constraint refused a value outside its allowed range.
+
+    Postgres SQLSTATE ``23514`` / SQLite's ``CHECK constraint failed``.
+    """
+
+
+_POSTGRES_CONSTRAINT_CODES: dict[str, type[ConstraintViolation]] = {
+    "23505": UniqueViolation,
+    "23503": ForeignKeyViolation,
+    "23514": CheckViolation,
+}
+
+#: SQLite's ``IntegrityError`` text is fixed by the sqlite3 C library, so a
+#: substring match is the whole detection surface — there is no numeric
+#: code to prefer the way Postgres offers one via SQLSTATE.
+_SQLITE_CONSTRAINT_MARKERS: tuple[tuple[str, type[ConstraintViolation]], ...] = (
+    ("unique constraint failed", UniqueViolation),
+    ("foreign key constraint failed", ForeignKeyViolation),
+    ("check constraint failed", CheckViolation),
+)
+
+
+def classify_constraint_violation(
+    *, code: str | None = None, message: str = ""
+) -> type[ConstraintViolation]:
+    """Map a backend-specific violation signal to a dialect-neutral subclass.
+
+    ``code`` is a Postgres SQLSTATE (e.g. ``"23505"``, as surfaced by
+    PostgREST's ``APIError.code``); ``message`` is matched
+    case-insensitively against SQLite's fixed ``IntegrityError`` text.
+    Adapters are the only callers — this is where the sniffing that used to
+    live in every consumer now happens exactly once. Falls back to the base
+    :class:`ConstraintViolation` when neither signal classifies, so an
+    unrecognised violation is still raiseable, just not one of the three
+    specific members.
+    """
+    if code and code in _POSTGRES_CONSTRAINT_CODES:
+        return _POSTGRES_CONSTRAINT_CODES[code]
+    lowered = message.lower()
+    for marker, cls in _SQLITE_CONSTRAINT_MARKERS:
+        if marker in lowered:
+            return cls
+    return ConstraintViolation
 
 
 class Op(str, Enum):

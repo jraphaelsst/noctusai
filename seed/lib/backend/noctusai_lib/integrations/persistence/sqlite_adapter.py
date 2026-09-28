@@ -29,7 +29,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .types import Op, PersistenceError, QuerySpec, Record, RecordNotFound, RecordStore
+from .types import (
+    Op,
+    PersistenceError,
+    QuerySpec,
+    Record,
+    RecordNotFound,
+    RecordStore,
+    classify_constraint_violation,
+)
 
 __all__ = ["SqliteRecordStore"]
 
@@ -188,7 +196,9 @@ class SqliteRecordStore:
                 self._conn.execute(sql, [_encode(v) for v in payload.values()])
                 self._conn.commit()
             except sqlite3.IntegrityError as exc:
-                raise PersistenceError(f"insert into {table} violated a constraint: {exc}") from exc
+                raise classify_constraint_violation(message=str(exc))(
+                    f"insert into {table} violated a constraint: {exc}"
+                ) from exc
         return self.get(table, org_id, str(payload["id"]))
 
     def get(self, table: str, org_id: str, record_id: str) -> Record:
@@ -222,8 +232,13 @@ class SqliteRecordStore:
         )
         params = [_encode(v) for v in patch.values()] + [record_id, org_id]
         with self._lock:
-            cur = self._conn.execute(sql, params)
-            self._conn.commit()
+            try:
+                cur = self._conn.execute(sql, params)
+                self._conn.commit()
+            except sqlite3.IntegrityError as exc:
+                raise classify_constraint_violation(message=str(exc))(
+                    f"update of {table} violated a constraint: {exc}"
+                ) from exc
             if cur.rowcount == 0:
                 raise RecordNotFound(f"{table}:{record_id} not found in org {org_id}")
         return self.get(table, org_id, record_id)

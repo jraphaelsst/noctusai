@@ -12,6 +12,9 @@ from __future__ import annotations
 import pytest
 
 from noctusai_lib.integrations.persistence import (
+    CheckViolation,
+    ConstraintViolation,
+    ForeignKeyViolation,
     InMemoryRecordStore,
     Op,
     PersistenceError,
@@ -20,6 +23,8 @@ from noctusai_lib.integrations.persistence import (
     RecordStore,
     SqliteRecordStore,
     SupabaseRecordStore,
+    UniqueViolation,
+    classify_constraint_violation,
     get_record_store,
 )
 
@@ -281,3 +286,156 @@ def test_is_null_filter_rejects_a_non_bool():
 
     with pytest.raises(ValueError, match="needs a bool"):
         Filter("encerrado_em", Op.IS_NULL, "yes")
+
+
+# ── constraint-violation hierarchy ──────────────────────────────────
+_CONSTRAINED_SCHEMA = """
+CREATE TABLE categoria (
+    id          TEXT PRIMARY KEY,
+    org_id      TEXT NOT NULL,
+    nome        TEXT NOT NULL,
+    created_at  TEXT,
+    updated_at  TEXT,
+    UNIQUE (org_id, nome)
+);
+CREATE TABLE item (
+    id            TEXT PRIMARY KEY,
+    org_id        TEXT NOT NULL,
+    categoria_id  TEXT NOT NULL REFERENCES categoria(id),
+    quantidade    INTEGER NOT NULL CHECK (quantidade >= 0),
+    created_at    TEXT,
+    updated_at    TEXT
+);
+"""
+
+
+@pytest.fixture
+def constrained_store() -> SqliteRecordStore:
+    store = SqliteRecordStore(":memory:")
+    store.executescript(_CONSTRAINED_SCHEMA)
+    return store
+
+
+def test_hierarchy_every_specific_member_is_a_constraint_violation_and_a_persistence_error():
+    for cls in (UniqueViolation, ForeignKeyViolation, CheckViolation):
+        assert issubclass(cls, ConstraintViolation)
+        assert issubclass(cls, PersistenceError)
+
+
+def test_sqlite_insert_duplicate_raises_unique_violation(constrained_store):
+    constrained_store.insert("categoria", ORG_A, {"id": "c1", "nome": "Fotografia"})
+    with pytest.raises(UniqueViolation):
+        constrained_store.insert("categoria", ORG_A, {"id": "c2", "nome": "Fotografia"})
+
+
+def test_sqlite_update_into_a_duplicate_raises_unique_violation(constrained_store):
+    constrained_store.insert("categoria", ORG_A, {"id": "c1", "nome": "Fotografia"})
+    constrained_store.insert("categoria", ORG_A, {"id": "c2", "nome": "Video"})
+    with pytest.raises(UniqueViolation):
+        constrained_store.update("categoria", ORG_A, "c2", {"nome": "Fotografia"})
+
+
+def test_sqlite_insert_dangling_reference_raises_foreign_key_violation(constrained_store):
+    with pytest.raises(ForeignKeyViolation):
+        constrained_store.insert(
+            "item", ORG_A, {"id": "i1", "categoria_id": "does-not-exist", "quantidade": 1}
+        )
+
+
+def test_sqlite_insert_outside_check_range_raises_check_violation(constrained_store):
+    constrained_store.insert("categoria", ORG_A, {"id": "c1", "nome": "Fotografia"})
+    with pytest.raises(CheckViolation):
+        constrained_store.insert(
+            "item", ORG_A, {"id": "i1", "categoria_id": "c1", "quantidade": -1}
+        )
+
+
+def test_classify_constraint_violation_prefers_the_postgres_code():
+    assert classify_constraint_violation(code="23505", message="") is UniqueViolation
+    assert classify_constraint_violation(code="23503", message="") is ForeignKeyViolation
+    assert classify_constraint_violation(code="23514", message="") is CheckViolation
+
+
+def test_classify_constraint_violation_falls_back_to_sqlite_message():
+    assert classify_constraint_violation(message="UNIQUE constraint failed: categoria.nome") is UniqueViolation
+    assert (
+        classify_constraint_violation(message="FOREIGN KEY constraint failed")
+        is ForeignKeyViolation
+    )
+    assert classify_constraint_violation(message="CHECK constraint failed: quantidade") is CheckViolation
+
+
+def test_classify_constraint_violation_unrecognised_signal_falls_back_to_the_base():
+    assert classify_constraint_violation(code="99999", message="something else entirely") is ConstraintViolation
+
+
+class _FakeQuery:
+    """Minimal stand-in for a postgrest query builder — only ``.execute()`` matters."""
+
+    def __init__(self, exc: Exception | None = None, data: list | None = None) -> None:
+        self._exc = exc
+        self._data = data if data is not None else []
+
+    def execute(self):
+        if self._exc is not None:
+            raise self._exc
+        return type("Response", (), {"data": self._data})()
+
+
+class _FakeTable:
+    def __init__(self, exc: Exception | None = None) -> None:
+        self._exc = exc
+
+    def insert(self, payload):
+        return _FakeQuery(self._exc)
+
+    def update(self, patch):
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def execute(self):
+        if self._exc is not None:
+            raise self._exc
+        return type("Response", (), {"data": [{"id": "1"}]})()
+
+
+class _FakeSupabaseClient:
+    def __init__(self, exc: Exception | None = None) -> None:
+        self._exc = exc
+
+    def table(self, name):
+        return _FakeTable(self._exc)
+
+
+def _api_error(code: str, message: str):
+    from postgrest.exceptions import APIError
+
+    return APIError({"code": code, "message": message, "hint": None, "details": None})
+
+
+def test_supabase_insert_translates_a_unique_violation():
+    store = SupabaseRecordStore(_FakeSupabaseClient(_api_error("23505", "duplicate key value")))
+    with pytest.raises(UniqueViolation):
+        store.insert("categoria", ORG_A, {"nome": "Fotografia"})
+
+
+def test_supabase_update_translates_a_foreign_key_violation():
+    store = SupabaseRecordStore(_FakeSupabaseClient(_api_error("23503", "violates foreign key constraint")))
+    with pytest.raises(ForeignKeyViolation):
+        store.update("categoria", ORG_A, "c1", {"nome": "x"})
+
+
+def test_supabase_insert_translates_a_check_violation():
+    store = SupabaseRecordStore(_FakeSupabaseClient(_api_error("23514", "violates check constraint")))
+    with pytest.raises(CheckViolation):
+        store.insert("categoria", ORG_A, {"nome": "x"})
+
+
+def test_supabase_insert_an_unrelated_api_error_is_still_a_persistence_error_not_uncaught():
+    store = SupabaseRecordStore(_FakeSupabaseClient(_api_error("57014", "statement timeout")))
+    with pytest.raises(ConstraintViolation):
+        # An unrecognised code still classifies to the dialect-neutral base —
+        # never an unwrapped postgrest.exceptions.APIError escaping the seam.
+        store.insert("categoria", ORG_A, {"nome": "x"})

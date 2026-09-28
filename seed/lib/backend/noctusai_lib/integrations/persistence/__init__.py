@@ -38,7 +38,10 @@ from .sqlite_adapter import SqliteRecordStore
 from . import table_reads
 from .supabase_adapter import SupabaseLike, SupabaseRecordStore
 from .types import (
+    CheckViolation,
+    ConstraintViolation,
     Filter,
+    ForeignKeyViolation,
     Op,
     Order,
     PersistenceError,
@@ -46,6 +49,8 @@ from .types import (
     Record,
     RecordNotFound,
     RecordStore,
+    UniqueViolation,
+    classify_constraint_violation,
 )
 
 __all__ = [
@@ -58,6 +63,11 @@ __all__ = [
     "Op",
     "RecordNotFound",
     "PersistenceError",
+    "ConstraintViolation",
+    "UniqueViolation",
+    "ForeignKeyViolation",
+    "CheckViolation",
+    "classify_constraint_violation",
     # Implementations
     "InMemoryRecordStore",
     "SqliteRecordStore",

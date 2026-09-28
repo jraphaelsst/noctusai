@@ -17,12 +17,36 @@ The client is injected, never constructed here: ``create_database_module()``
 already owns Supabase client construction for the platform, and building
 a second one in this module would be exactly the duplicated-factory
 divergence ``KB § 03-SEED-ARCHITECTURE.md § 4`` calls out.
+
+**Constraint violations are classified here, not left raw.** ``insert``/
+``update`` used to let ``postgrest.exceptions.APIError`` bubble unwrapped —
+a real gap: a consumer catching :class:`~.types.PersistenceError` (the
+documented cross-backend contract) never actually caught anything on this
+path in production, only under a SQLite-backed test. Both write paths now
+translate the PostgREST error's SQLSTATE via
+:func:`~.types.classify_constraint_violation` into the same
+:class:`~.types.UniqueViolation` / :class:`~.types.ForeignKeyViolation` /
+:class:`~.types.CheckViolation` hierarchy :mod:`.sqlite_adapter` raises, so
+a caller's ``except`` clause behaves identically on both backends.
+``postgrest`` is a direct dependency of this package (see
+``seed/lib/backend/pyproject.toml``), so the import at module level is
+unconditional — mirrors ``noctusai_lib.testing.mocks``.
 """
 from __future__ import annotations
 
 from typing import Any, Protocol
 
-from .types import Op, PersistenceError, QuerySpec, Record, RecordNotFound, RecordStore
+from postgrest.exceptions import APIError as _PostgrestAPIError
+
+from .types import (
+    Op,
+    PersistenceError,
+    QuerySpec,
+    Record,
+    RecordNotFound,
+    RecordStore,
+    classify_constraint_violation,
+)
 
 __all__ = ["SupabaseRecordStore", "SupabaseLike"]
 
@@ -96,11 +120,26 @@ class SupabaseRecordStore:
             raise PersistenceError(f"supabase response carried no data: {response!r}")
         return list(data)
 
+    @staticmethod
+    def _execute_write(query: Any, *, action: str, table: str) -> list[Record]:
+        """Run a write ``query.execute()``, translating a constraint violation.
+
+        Shared by :meth:`insert` and :meth:`update` — the only two calls
+        that can hit a UNIQUE/FK/CHECK constraint on this backend.
+        """
+        try:
+            response = query.execute()
+        except _PostgrestAPIError as exc:
+            raise classify_constraint_violation(code=exc.code, message=exc.message or str(exc))(
+                f"{action} {table} violated a constraint: {exc}"
+            ) from exc
+        return SupabaseRecordStore._data(response)
+
     # ── RecordStore ─────────────────────────────────────────────────
     def insert(self, table: str, org_id: str, values: Record) -> Record:
         payload = dict(values)
         payload["org_id"] = org_id
-        rows = self._data(self._client.table(table).insert(payload).execute())
+        rows = self._execute_write(self._client.table(table).insert(payload), action="insert into", table=table)
         if not rows:
             raise PersistenceError(f"insert into {table} returned no row")
         return rows[0]
@@ -123,12 +162,10 @@ class SupabaseRecordStore:
         patch = {k: v for k, v in values.items() if k not in {"id", "org_id"}}
         if not patch:
             return self.get(table, org_id, record_id)
-        rows = self._data(
-            self._client.table(table)
-            .update(patch)
-            .eq("id", record_id)
-            .eq("org_id", org_id)
-            .execute()
+        rows = self._execute_write(
+            self._client.table(table).update(patch).eq("id", record_id).eq("org_id", org_id),
+            action="update of",
+            table=table,
         )
         if not rows:
             raise RecordNotFound(f"{table}:{record_id} not found in org {org_id}")
