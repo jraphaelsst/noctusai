@@ -1174,6 +1174,10 @@ _ESTRUTURA_ERRO_MENSAGENS: dict[str, str] = {
         "Documento digitalizado tem mais páginas do que o limite permitido "
         "para leitura por IA."
     ),
+    "transcricao_truncada": (
+        "Uma página tem texto demais para a leitura por IA e a transcrição "
+        "ficou incompleta — nada foi lido deste documento."
+    ),
     "missing_credentials": (
         "Provedor de IA de visão não configurado. Configure em "
         "Configurações → Chaves de API."

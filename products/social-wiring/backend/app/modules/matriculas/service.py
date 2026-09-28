@@ -99,6 +99,11 @@ _MENSAGENS: dict[str, str] = {
         "Documento muito longo para transcrição automática. "
         "Envie a matrícula em partes menores."
     ),
+    "transcricao_truncada": (
+        "Uma página tem texto demais para a leitura automática e a transcrição "
+        "ficou incompleta — nada foi preenchido. Envie uma cópia com melhor "
+        "resolução ou preencha os campos manualmente."
+    ),
     # Names both billing pages rather than guessing: the switch means the
     # empty account could be either one, and sending the operator to the
     # wrong console is the same dead end as saying nothing.

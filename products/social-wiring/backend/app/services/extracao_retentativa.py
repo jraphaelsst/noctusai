@@ -48,6 +48,11 @@ ERROS_PERMANENTES: frozenset[str] = frozenset(
         # deterministic pass-1(1..4)/pass-2(5..8) window. A retry re-reads
         # the same pages and finds the same nothing.
         "quadro_resumo_nao_encontrado",
+        # A page whose verbatim transcription outgrew the vision output cap
+        # even after the seed's own retry at the larger cap
+        # (`documents.transcription.ERROR_TRANSCRICAO_TRUNCADA`) — the same
+        # page re-read hits the same wall.
+        "transcricao_truncada",
     }
 )
 
