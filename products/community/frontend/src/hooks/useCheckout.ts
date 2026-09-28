@@ -29,7 +29,8 @@ export type CheckoutMetodo = "cartao" | "pix" | "boleto";
 export interface PixQr {
   payload: string;
   imagem_base64: string;
-  expira_em: string;
+  /** Null when the charge is handed back from storage (portal repeat). */
+  expira_em: string | null;
 }
 
 export interface CheckoutInput {
@@ -48,8 +49,9 @@ export interface CheckoutResponse {
   assinatura_id: string;
   membro_id: string;
   pix_qr: PixQr | null;
-  /** Present only on the A2 "already a member" friendly outcome. */
-  status?: "verifique_seu_email";
+  /** A2 "already a member" friendly outcome (public route only), or
+   * `checkout_em_andamento` when an open Pix/boleto was reused (A10). */
+  status?: "verifique_seu_email" | "checkout_em_andamento" | null;
 }
 
 /** Strips punctuation, keeps digits only — P1 ("digits-only after stripping punctuation"). */

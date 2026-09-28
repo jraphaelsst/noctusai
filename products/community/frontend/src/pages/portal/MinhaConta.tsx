@@ -3,13 +3,15 @@
  *
  * Plan + status, grace banner when `assinatura.estado === "carencia"`
  * (with `carencia_ate` and the open invoice link), next charge, payments,
- * upgrade cards → `/assinar?plano=<id>` (the public checkout, pre-filled for
- * a logged-in member), and cancel with a plain confirmation that says
- * access continues until `pago_ate`. No dark patterns: cancelling is one
- * clearly-labelled button and one confirmation, nothing hidden.
+ * upgrade cards → the in-portal plan change dialog (`TrocarPlanoDialog`,
+ * `POST /api/portal/assinatura`; `/portal?trocar=<plano_id>` opens it
+ * directly — the signup's paid-tier path lands there), and cancel with a
+ * plain confirmation that says access continues until `pago_ate`. No dark
+ * patterns: cancelling is one clearly-labelled button and one
+ * confirmation, nothing hidden.
  */
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Receipt } from "lucide-react";
 import { formatDate } from "@noctusai/lib";
 import { Button, Dialog, DialogBody, DialogFooter } from "@noctusai/lib/design-system";
@@ -23,6 +25,7 @@ import {
   type MinhaConta as MinhaContaData,
   type PortalAssinatura,
   type PortalPagamento,
+  type PortalPlanoDisponivel,
 } from "@/hooks/usePortal";
 import { errorMessage } from "@/lib/errors";
 import { formatBRLFromCents } from "@/lib/money";
@@ -34,6 +37,7 @@ import {
   labelDe,
   precoPorCiclo,
 } from "@/lib/ninhoVazio";
+import { TrocarPlanoDialog } from "@/pages/portal/TrocarPlanoDialog";
 
 /** The invoice a member in grace should pay: the most recent open one with a link. */
 export function faturaEmAberto(pagamentos: PortalPagamento[]): PortalPagamento | null {
@@ -156,11 +160,13 @@ function Pagamentos({ pagamentos }: { pagamentos: PortalPagamento[] }) {
   );
 }
 
-function OutrosPlanos({ conta }: { conta: MinhaContaData }) {
+/** Tiers the member can move up to: priced above their current plan. */
+export function planosParaTroca(conta: MinhaContaData): PortalPlanoDisponivel[] {
   const precoAtual = conta.plano?.preco_centavos ?? 0;
-  const opcoes = conta.planos_disponiveis.filter(
-    (p) => p.id !== conta.plano?.id && p.preco_centavos > precoAtual,
-  );
+  return conta.planos_disponiveis.filter((p) => p.id !== conta.plano?.id && p.preco_centavos > precoAtual);
+}
+
+function OutrosPlanos({ opcoes, onEscolher }: { opcoes: PortalPlanoDisponivel[]; onEscolher: (p: PortalPlanoDisponivel) => void }) {
   if (opcoes.length === 0) return null;
   return (
     <section className="space-y-3" aria-labelledby="outros-planos">
@@ -174,9 +180,9 @@ function OutrosPlanos({ conta }: { conta: MinhaContaData }) {
             <p className="text-base text-muted-foreground">{precoPorCiclo(p.preco_centavos, p.ciclo)}</p>
             <p className="mt-2 text-base text-foreground">{NIVEL_DESCRICAO[p.nivel_grupoterapia]}</p>
             {p.descricao ? <p className="mt-1 text-base text-muted-foreground">{p.descricao}</p> : null}
-            <Link to={`/assinar?plano=${encodeURIComponent(p.id)}`} className={`${BOTAO_PRIMARIO} mt-4 w-full`}>
+            <button type="button" onClick={() => onEscolher(p)} className={`${BOTAO_PRIMARIO} mt-4 w-full`}>
               Quero o {p.nome}
-            </Link>
+            </button>
           </PortalCard>
         ))}
       </div>
@@ -262,6 +268,23 @@ export default function MinhaConta() {
   const showSkeleton = isPending && !data;
   const isRefreshing = isFetching && !!data;
   const pagamentos = useMemo(() => data?.pagamentos ?? [], [data]);
+  const opcoes = useMemo(() => (data ? planosParaTroca(data) : []), [data]);
+  // `?trocar=<plano_id>` (signup → login → here) opens the dialog for that
+  // tier; an id that is not an upgrade option is ignored.
+  const [params, setParams] = useSearchParams();
+  const [escolhido, setEscolhido] = useState<PortalPlanoDisponivel | null>(null);
+  const trocarParam = params.get("trocar");
+  const planoDoLink = trocarParam ? opcoes.find((p) => p.id === trocarParam) ?? null : null;
+  const planoAberto = escolhido ?? planoDoLink;
+
+  function fecharTroca() {
+    setEscolhido(null);
+    if (trocarParam) {
+      const next = new URLSearchParams(params);
+      next.delete("trocar");
+      setParams(next, { replace: true });
+    }
+  }
 
   return (
     <PortalShell
@@ -288,7 +311,8 @@ export default function MinhaConta() {
             <BannerCarencia assinatura={data.assinatura} pagamentos={pagamentos} />
           ) : null}
           <SeuPlano conta={data} />
-          <OutrosPlanos conta={data} />
+          <OutrosPlanos opcoes={opcoes} onEscolher={setEscolhido} />
+          <TrocarPlanoDialog plano={planoAberto} onClose={fecharTroca} />
           <Pagamentos pagamentos={pagamentos} />
           {data.assinatura && ESTADOS_CANCELAVEIS.includes(data.assinatura.estado) ? (
             <CancelarAssinatura assinatura={data.assinatura} />

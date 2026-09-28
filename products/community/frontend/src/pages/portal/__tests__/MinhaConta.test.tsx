@@ -1,7 +1,9 @@
 /**
  * Portal minha conta — CONTRACT.md §Member portal: grace banner when
  * `estado === "carencia"` (carencia_ate + invoice link), upgrade cards →
- * `/assinar?plano=<id>`, cancel with confirmation explaining `pago_ate`.
+ * the in-portal plan change dialog (`POST /api/portal/assinatura`, also
+ * opened by `/portal?trocar=<id>`), cancel with confirmation explaining
+ * `pago_ate`.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/react";
@@ -58,13 +60,93 @@ describe("MinhaConta", () => {
     expect(screen.queryByTestId("banner-carencia")).not.toBeInTheDocument();
   });
 
-  it("offers only higher tiers as upgrades, linking to the pre-filled checkout", async () => {
+  it("offers only higher tiers as upgrades, each opening the plan change dialog", async () => {
     mockGet.mockResolvedValue(CONTA);
     renderPortal(<MinhaConta />);
-    const link = await screen.findByRole("link", { name: "Quero o Premium" });
-    expect(link).toHaveAttribute("href", "/assinar?plano=p-premium");
-    expect(screen.queryByRole("link", { name: "Quero o Gratuito" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Quero o Ouvinte" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Quero o Premium" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Quero o Gratuito" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Quero o Ouvinte" })).not.toBeInTheDocument();
+    // never the anonymous checkout
+    expect(document.querySelector('a[href^="/assinar"]')).toBeNull();
+  });
+
+  it("upgrade by Pix: sends only plan/method/CPF and shows the QR inline", async () => {
+    mockGet.mockResolvedValue(CONTA);
+    mockPost.mockResolvedValue({
+      checkout_url: "https://asaas/f/nova",
+      assinatura_id: "a2",
+      membro_id: "m1",
+      pix_qr: { payload: "00020126pix-copia-e-cola", imagem_base64: "iVBOR", expira_em: null },
+      status: null,
+    });
+    renderPortal(<MinhaConta />);
+    fireEvent.click(await screen.findByRole("button", { name: "Quero o Premium" }));
+    expect(screen.getByRole("dialog", { name: "Mudar para o Premium" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/CPF ou CNPJ/), { target: { value: "123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Gerar cobrança" }));
+    expect(await screen.findByText("Informe o CPF (11 dígitos) ou o CNPJ (14 dígitos).")).toBeInTheDocument();
+    expect(mockPost).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText(/CPF ou CNPJ/), { target: { value: "123.456.789-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Gerar cobrança" }));
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/api/portal/assinatura", {
+        plano_id: "p-premium",
+        metodo: "pix",
+        cpf_cnpj: "12345678901",
+      }),
+    );
+    expect(await screen.findByTestId("pix-qr-card")).toHaveTextContent("00020126pix-copia-e-cola");
+    expect(screen.getByTestId("troca-fatura")).toHaveAttribute("href", "https://asaas/f/nova");
+  });
+
+  it("upgrade by boleto: shows the boleto link", async () => {
+    mockGet.mockResolvedValue(CONTA);
+    mockPost.mockResolvedValue({
+      checkout_url: "https://asaas/b/boleto",
+      assinatura_id: "a2",
+      membro_id: "m1",
+      pix_qr: null,
+      status: null,
+    });
+    renderPortal(<MinhaConta />);
+    fireEvent.click(await screen.findByRole("button", { name: "Quero o Premium" }));
+    fireEvent.click(screen.getByLabelText("Boleto"));
+    fireEvent.change(screen.getByLabelText(/CPF ou CNPJ/), { target: { value: "12.345.678/0001-90" } });
+    fireEvent.click(screen.getByRole("button", { name: "Gerar cobrança" }));
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/api/portal/assinatura", {
+        plano_id: "p-premium",
+        metodo: "boleto",
+        cpf_cnpj: "12345678000190",
+      }),
+    );
+    expect(await screen.findByRole("link", { name: /Abrir o boleto/ })).toHaveAttribute("href", "https://asaas/b/boleto");
+  });
+
+  it("shows the 409 text verbatim", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    mockGet.mockResolvedValue(CONTA);
+    mockPost.mockRejectedValue(new ApiError(409, "Você já tem este plano."));
+    renderPortal(<MinhaConta />);
+    fireEvent.click(await screen.findByRole("button", { name: "Quero o Premium" }));
+    fireEvent.change(screen.getByLabelText(/CPF ou CNPJ/), { target: { value: "12345678901" } });
+    fireEvent.click(screen.getByRole("button", { name: "Gerar cobrança" }));
+    expect(await screen.findByText("Você já tem este plano.")).toBeInTheDocument();
+  });
+
+  it("/portal?trocar=<id> (the signup's paid-tier path) opens the dialog for that tier", async () => {
+    mockGet.mockResolvedValue(CONTA);
+    renderPortal(<MinhaConta />, "/portal?trocar=p-premium");
+    expect(await screen.findByRole("dialog", { name: "Mudar para o Premium" })).toBeInTheDocument();
+  });
+
+  it("?trocar= with a tier that is not an upgrade opens nothing", async () => {
+    mockGet.mockResolvedValue(CONTA);
+    renderPortal(<MinhaConta />, "/portal?trocar=p-ouvinte");
+    await screen.findByRole("button", { name: "Quero o Premium" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("cancels only after confirmation and explains access until pago_ate", async () => {

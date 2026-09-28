@@ -1,15 +1,17 @@
 /**
  * Member portal hooks — ninho-vazio CONTRACT.md §Member portal.
  *
- * `GET /api/portal/minha-conta` + `POST /api/portal/assinatura/cancelar`.
- * Both are `membro`-only server-side (`get_membro_context`). Personal data
- * scoped to the session — no `placeholderData` (fixed key).
+ * `GET /api/portal/minha-conta`, `POST /api/portal/assinatura` (troca de
+ * plano) and `POST /api/portal/assinatura/cancelar`. All are `membro`-only
+ * server-side (`get_membro_context`). Personal data scoped to the session —
+ * no `placeholderData` (fixed key).
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { euKeys, type NivelGrupoterapia } from "@/hooks/useEu";
 import type { Ciclo } from "@/hooks/usePlanos";
+import type { CheckoutResponse } from "@/hooks/useCheckout";
 
 /** `assinaturas.estado` including the ninho-vazio grace/expiry states. */
 export type PortalAssinaturaEstado =
@@ -99,6 +101,36 @@ export function useCancelarAssinatura() {
       qc.invalidateQueries({ queryKey: euKeys.all });
     },
   });
+}
+
+/** `POST /api/portal/assinatura` body. No e-mail, no membro id: the server
+ * opens the subscription for the logged-in member only. `cpf_cnpj` goes to
+ * the gateway and is never stored — never keep it in the URL or storage. */
+export interface TrocaPlanoInput {
+  plano_id: string;
+  metodo: "pix" | "boleto";
+  cpf_cnpj: string;
+}
+
+/** Troca de plano from the portal — same response shape as `/api/checkout`
+ * (Pix QR inline, or the boleto/fatura link in `checkout_url`). The plan
+ * itself only changes when the first charge is paid (webhook), so
+ * minha-conta is refreshed to show the new open payment. */
+export function useTrocarPlano() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: TrocaPlanoInput) => api.post<CheckoutResponse>("/api/portal/assinatura", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: portalKeys.all });
+    },
+  });
+}
+
+/** A CPF (11) or CNPJ (14) once punctuation is stripped — shape only; the
+ * backend is the source of truth. */
+export function isCpfOuCnpj(raw: string): boolean {
+  const digitos = raw.replace(/\D/g, "").length;
+  return digitos === 11 || digitos === 14;
 }
 
 /** Estados in which the member still has a paid subscription to cancel. */

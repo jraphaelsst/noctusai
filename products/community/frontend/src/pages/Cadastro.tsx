@@ -6,7 +6,8 @@
  * `/assinar`). Everyone is registered on the free plan server-side; the
  * tier picker records what the visitor WANTS so that, if it is a paid
  * tier, the success screen's "Entrar" goes to `/login?plano=<id>` and the
- * login page forwards to `/assinar?plano=<id>` (checkout pre-filled).
+ * login page forwards to `/portal?trocar=<id>` (the member's plan change
+ * dialog opens for that tier).
  *
  * Tier names and prices render from `GET /api/planos/publicos` — never
  * hardcoded. Turnstile reuses `components/TurnstileWidget` (shared with
@@ -23,9 +24,9 @@ import { LinhaDeCuidado } from "@/components/LinhaDeCuidado";
 import { BOTAO_PRIMARIO } from "@/components/PortalShell";
 import { TurnstileWidget } from "@/components/TurnstileWidget";
 import { SENHA_MAX, SENHA_MIN, TELEFONE_RE, useCadastro } from "@/hooks/useCadastro";
-import { usePlanosPublicos, type PlanoPublico } from "@/hooks/usePlanosPublicos";
+import { ordenarPlanosPublicos, usePlanosPublicos, type PlanoPublico } from "@/hooks/usePlanosPublicos";
 import { errorMessage } from "@/lib/errors";
-import { precoPorCiclo } from "@/lib/ninhoVazio";
+import { NIVEL_DESCRICAO, precoPorCiclo } from "@/lib/ninhoVazio";
 
 const INPUT_GRANDE = "h-12 text-base";
 
@@ -76,7 +77,7 @@ export default function Cadastro() {
   const [concluido, setConcluido] = useState(false);
 
   const planos = useMemo(
-    () => [...(planosQuery.data?.items ?? [])].sort((a, b) => a.preco_centavos - b.preco_centavos),
+    () => ordenarPlanosPublicos(planosQuery.data?.items ?? []),
     [planosQuery.data],
   );
   const showSkeleton = planosQuery.isPending && !planosQuery.data;
@@ -165,6 +166,9 @@ export default function Cadastro() {
                         <span>
                           <span className="block text-lg font-medium text-foreground">
                             {p.nome} · {precoPorCiclo(p.preco_centavos, p.ciclo)}
+                          </span>
+                          <span className="block text-base text-foreground" data-testid={`cadastro-nivel-${p.id}`}>
+                            {NIVEL_DESCRICAO[p.nivel_grupoterapia]}
                           </span>
                           {p.descricao ? (
                             <span className="block text-base text-muted-foreground">{p.descricao}</span>

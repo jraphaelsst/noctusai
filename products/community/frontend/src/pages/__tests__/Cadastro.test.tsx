@@ -1,7 +1,8 @@
 /**
  * Cadastro (public signup) — CONTRACT.md §Identity `POST /api/cadastro`:
  * 409 texts verbatim; success screen with the care line; a paid tier's
- * "Entrar" continues to `/login?plano=<id>` → `/assinar?plano=<id>`.
+ * "Entrar" continues to `/login?plano=<id>` → `/portal?trocar=<id>` (the
+ * member's plan change dialog — never the anonymous `/assinar`).
  */
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -29,8 +30,8 @@ import { destinoAposLogin } from "@/pages/Login";
 const PREMIUM_ID = "3f2a1b4c-0000-4000-8000-000000000002";
 const PLANOS = {
   items: [
-    { id: PREMIUM_ID, nome: "Premium", descricao: "Assiste e tem vez de fala", preco_centavos: 2700, ciclo: "mensal", beneficios: { feed: true, forum: true, chat: true, eventos: true }, metodos_disponiveis: ["pix"] },
-    { id: "3f2a1b4c-0000-4000-8000-000000000000", nome: "Gratuito", descricao: null, preco_centavos: 0, ciclo: "mensal", beneficios: { feed: true, forum: true, chat: true, eventos: true }, metodos_disponiveis: [] },
+    { id: PREMIUM_ID, nome: "Premium", descricao: "Assiste e tem vez de fala", preco_centavos: 2700, ciclo: "mensal", beneficios: { feed: true, forum: true, chat: true, eventos: true }, metodos_disponiveis: ["pix"], nivel_grupoterapia: "falar", ordem: 2 },
+    { id: "3f2a1b4c-0000-4000-8000-000000000000", nome: "Gratuito", descricao: null, preco_centavos: 0, ciclo: "mensal", beneficios: { feed: true, forum: true, chat: true, eventos: true }, metodos_disponiveis: [], nivel_grupoterapia: "nenhum", ordem: 0 },
   ],
   total: 2,
 };
@@ -65,6 +66,16 @@ describe("Cadastro", () => {
     expect(mockGet).toHaveBeenCalledWith("/api/planos/publicos");
   });
 
+  it("tier cards read the grupoterapia level from /api/planos/publicos, in `ordem`", async () => {
+    mockGet.mockResolvedValue(PLANOS);
+    renderPage();
+    expect(await screen.findByTestId(`cadastro-nivel-${PREMIUM_ID}`)).toHaveTextContent(
+      "Assiste às grupoterapias e tem vez de fala",
+    );
+    const radios = screen.getAllByRole("radio").map((r) => (r as HTMLInputElement).value);
+    expect(radios).toEqual(["3f2a1b4c-0000-4000-8000-000000000000", PREMIUM_ID]);
+  });
+
   it("shows the 409 existing-email text verbatim", async () => {
     const { ApiError } = await import("@noctusai/lib");
     mockGet.mockResolvedValue(PLANOS);
@@ -94,7 +105,7 @@ describe("Cadastro", () => {
     expect(await screen.findByTestId("cadastro-sucesso")).toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("CVV 188");
     expect(screen.getByRole("link", { name: "Entrar" })).toHaveAttribute("href", `/login?plano=${PREMIUM_ID}`);
-    expect(destinoAposLogin(PREMIUM_ID)).toBe(`/assinar?plano=${PREMIUM_ID}`);
+    expect(destinoAposLogin(PREMIUM_ID)).toBe(`/portal?trocar=${PREMIUM_ID}`);
   });
 
   it("free tier: Entrar goes to plain /login; non-uuid plano is ignored after login", async () => {

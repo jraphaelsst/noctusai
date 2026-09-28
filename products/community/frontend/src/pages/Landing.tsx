@@ -12,13 +12,13 @@ import { ArrowRight, Feather } from "lucide-react";
 
 import { LinhaDeCuidado } from "@/components/LinhaDeCuidado";
 import { BOTAO_PRIMARIO, BOTAO_SECUNDARIO } from "@/components/PortalShell";
-import { usePlanosPublicos } from "@/hooks/usePlanosPublicos";
-import { precoPorCiclo } from "@/lib/ninhoVazio";
+import { ordenarPlanosPublicos, usePlanosPublicos } from "@/hooks/usePlanosPublicos";
+import { NIVEL_DESCRICAO, precoPorCiclo } from "@/lib/ninhoVazio";
 
 function Planos() {
   const { data, isPending, error } = usePlanosPublicos();
   const showSkeleton = isPending && !data;
-  const planos = [...(data?.items ?? [])].sort((a, b) => a.preco_centavos - b.preco_centavos);
+  const planos = ordenarPlanosPublicos(data?.items ?? []);
 
   if (showSkeleton) {
     return (
@@ -49,6 +49,9 @@ function Planos() {
         <article key={p.id} className="flex flex-col rounded-xl border border-border bg-card p-6">
           <h3 className="text-xl font-semibold text-foreground">{p.nome}</h3>
           <p className="mt-1 text-lg text-primary">{precoPorCiclo(p.preco_centavos, p.ciclo)}</p>
+          <p className="mt-3 text-base text-foreground" data-testid={`landing-nivel-${p.id}`}>
+            {NIVEL_DESCRICAO[p.nivel_grupoterapia]}
+          </p>
           {p.descricao ? <p className="mt-3 flex-1 text-base text-muted-foreground">{p.descricao}</p> : <div className="flex-1" />}
         </article>
       ))}

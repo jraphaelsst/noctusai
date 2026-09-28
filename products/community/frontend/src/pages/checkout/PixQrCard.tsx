@@ -1,7 +1,8 @@
 /**
- * PixQrCard — inline Pix QR display for `/assinar` (community-m2-contract.md
- * §Frontend: "for Pix, show the QR (payload + image) inline instead of
- * redirecting"). Co-located with `Assinar.tsx`, the only consumer.
+ * PixQrCard — inline Pix QR display (community-m2-contract.md §Frontend:
+ * "for Pix, show the QR (payload + image) inline instead of redirecting").
+ * Consumers: `/assinar` (anonymous checkout) and the member portal's plan
+ * change dialog (`pages/portal/TrocarPlanoDialog.tsx`).
  */
 import { useState } from "react";
 import { Copy, CheckCircle2 } from "lucide-react";
@@ -53,8 +54,8 @@ export function PixQrCard({ pixQr }: { pixQr: PixQr }) {
         </Button>
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        Expira em {new Date(pixQr.expira_em).toLocaleString("pt-BR")}. Assim que o pagamento for
-        confirmado, sua assinatura é ativada automaticamente.
+        {pixQr.expira_em ? `Expira em ${new Date(pixQr.expira_em).toLocaleString("pt-BR")}. ` : ""}
+        Assim que o pagamento for confirmado, sua assinatura é ativada automaticamente.
       </p>
     </Card>
   );

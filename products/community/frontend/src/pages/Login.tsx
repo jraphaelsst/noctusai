@@ -13,11 +13,14 @@ const PLANO_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 /**
  * After login: `/login?plano=<id>` (set by `/cadastro` when a paid tier was
- * picked) continues to `/assinar?plano=<id>` pre-filled; otherwise `/`,
- * where `RoleLayout` sends a member to `/portal` and staff to the back office.
+ * picked) continues to `/portal?trocar=<id>`, which opens the member's plan
+ * change dialog for that tier — NOT `/assinar`: the new member is already
+ * `ativo` on the free plan, and the anonymous checkout (correctly) never
+ * opens a subscription for an active member's e-mail. Otherwise `/`, where
+ * `RoleLayout` sends a member to `/portal` and staff to the back office.
  */
 export function destinoAposLogin(plano: string | null): string {
-  if (plano && PLANO_ID_RE.test(plano)) return `/assinar?plano=${encodeURIComponent(plano)}`;
+  if (plano && PLANO_ID_RE.test(plano)) return `/portal?trocar=${encodeURIComponent(plano)}`;
   return "/";
 }
 
