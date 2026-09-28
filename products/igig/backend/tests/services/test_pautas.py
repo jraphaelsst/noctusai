@@ -45,6 +45,58 @@ class TestGerar:
         assert pautas.contar_geradas(igig_db, ORG, [item]) == len(primeira)
 
 
+class TestSlotGeradoLedger:
+    """Leftovers item 6: a slot generated once must NEVER come back, even
+    after the pauta it produced is deleted or dragged to another date — the
+    daily job / a `gerar` retry must not resurrect or duplicate it."""
+
+    def test_a_deleted_pauta_does_not_come_back(self, igig_db):
+        from app.services.quadro_comum import hoje_local
+        item = _item(igig_db, ORG, "orc-del")
+        primeira = pautas.gerar(igig_db, ORG, itens=[item], cliente_id="c", inicio=hoje_local())
+        assert len(primeira) > 0
+        antes = pautas.contar_geradas(igig_db, ORG, [item])
+
+        # The user deletes ONE generated pauta.
+        alvo = primeira[0]
+        igig_db.table("pauta").delete().eq("id", alvo["id"]).execute()
+        assert pautas.contar_geradas(igig_db, ORG, [item]) == antes - 1
+
+        # A re-run (accept retry, or the daily job) must NOT recreate it —
+        # the ledger still shows that (item, day) slot as claimed.
+        pautas.gerar(igig_db, ORG, itens=[item], cliente_id="c", inicio=hoje_local())
+        assert pautas.contar_geradas(igig_db, ORG, [item]) == antes - 1
+
+    def test_a_rescheduled_pauta_does_not_duplicate_on_its_original_slot(self, igig_db):
+        from app.services.quadro_comum import hoje_local
+        item = _item(igig_db, ORG, "orc-mv")
+        primeira = pautas.gerar(igig_db, ORG, itens=[item], cliente_id="c", inicio=hoje_local())
+        antes = pautas.contar_geradas(igig_db, ORG, [item])
+
+        # The user drags ONE generated pauta to a different date.
+        alvo = primeira[0]
+        nova_data = f"{hoje_local() + timedelta(days=90)}T10:00:00-03:00"
+        igig_db.table("pauta").update({"data_publicacao": nova_data}).eq("id", alvo["id"]).execute()
+
+        # A re-run must not regenerate a NEW pauta for the vacated slot —
+        # the total count is unchanged (the moved card still exists, just
+        # elsewhere on the calendar).
+        pautas.gerar(igig_db, ORG, itens=[item], cliente_id="c", inicio=hoje_local())
+        assert pautas.contar_geradas(igig_db, ORG, [item]) == antes
+
+    def test_ledger_dedupes_the_slot_when_qtd_por_dia_is_more_than_one(self, igig_db):
+        """One slot, several cards (`qtd_por_dia=2`) — the ledger claims the
+        (item, day) ONCE, never one row per card."""
+        from app.services.quadro_comum import hoje_local
+        item = _item(igig_db, ORG, "orc-qtd", qtd=2)
+        pautas.gerar(igig_db, ORG, itens=[item], cliente_id="c", inicio=hoje_local())
+        slots = igig_db.table("pauta_slot_gerado").select("*").eq(
+            "orcamento_item_id", item["id"]
+        ).execute().data
+        dias = [s["slot_date"] for s in slots]
+        assert len(dias) == len(set(dias)), "one ledger row per (item, day), not per card"
+
+
 class TestEstender:
     def test_extends_past_the_original_window_without_duplicating(self, igig_db):
         from app.services.quadro_comum import hoje_local

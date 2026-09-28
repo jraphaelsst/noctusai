@@ -112,6 +112,22 @@ function validadeAutomaticaNovaVersao(o: Orcamento): string | null {
   return hojeMais(dias);
 }
 
+/** `nova_versao`'s actual server rule (achado orçamentos #6/#9): only a
+ * rascunho/enviado original is superseded (→ substituido) — a recusado or
+ * expirado one KEEPS that status, so its loss statistics survive. The confirm
+ * box and the success toast used to say "a atual vira Substituído"
+ * unconditionally — true for rascunho/enviado, FALSE for recusado/expirado. */
+function statusAposNovaVersao(status: OrcamentoStatus | undefined): OrcamentoStatus {
+  return status === "recusado" || status === "expirado" ? status : "substituido";
+}
+
+function copiaNovaVersao(status: OrcamentoStatus | undefined): string {
+  const resultado = statusAposNovaVersao(status);
+  return resultado === "substituido"
+    ? "Cria uma cópia como nova versão em Rascunho; a atual vira Substituído."
+    : `Cria uma cópia como nova versão em Rascunho; esta continua ${ORCAMENTO_STATUS_LABEL[resultado].toLowerCase()}.`;
+}
+
 function formVazio(): FormState {
   return {
     titulo: "Proposta mensal",
@@ -367,12 +383,20 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
   function novaVersao() {
     if (!atualId) return;
     setErroAcao(null);
+    // Captured NOW — the ORIGINAL's status, before `trocarPara` swaps the
+    // modal onto the freshly-created version.
+    const statusOrigem = status;
     mut.novaVersao.mutate(
       { id: atualId, validade: novaVersaoValidade || null },
       {
         onSuccess: (o) => {
           setConfirmandoNovaVersao(false);
-          toast.success(`Versão ${o.versao} criada — a anterior foi substituída.`);
+          const resultado = statusAposNovaVersao(statusOrigem);
+          toast.success(
+            resultado === "substituido"
+              ? `Versão ${o.versao} criada — a anterior foi substituída.`
+              : `Versão ${o.versao} criada — a anterior continua ${ORCAMENTO_STATUS_LABEL[resultado].toLowerCase()}.`,
+          );
           trocarPara(o);
         },
         onError: (e) => {
@@ -414,7 +438,7 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
         const acaoCliente = r.cliente_criado ? "criado" : "já existia";
         toast.success(
           `Orçamento aceito — cliente ${r.cliente?.nome ?? ""} ${acaoCliente}` +
-            (r.pautas_criadas ? `, ${r.pautas_criadas} pautas no calendário.` : "."),
+            (r.pautas_novas ? `, ${r.pautas_novas} pautas no calendário.` : "."),
         );
       },
       onError: (e) => {
@@ -577,9 +601,7 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
 
             {confirmandoNovaVersao ? (
               <div role="alert" className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
-                <p className="text-foreground">
-                  Cria uma cópia como nova versão em Rascunho; a atual vira Substituído.
-                </p>
+                <p className="text-foreground">{copiaNovaVersao(status)}</p>
                 <div className="mt-2">
                   <Field label="Validade da nova versão">
                     <Input

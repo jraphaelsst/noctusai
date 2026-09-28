@@ -22,8 +22,12 @@ class OrcamentoService:
     def __init__(self, repos: Repositorios) -> None:
         self._repos = repos
 
-    def custo_hora_medio(self, org_id: str) -> tuple[float, list[str]]:
-        """Average hourly cost across ACTIVE professionals.
+    def custo_hora_medio(self, org_id: str) -> tuple[float | None, list[str]]:
+        """Average hourly cost across ACTIVE professionals, or `None` with NO
+        resolvable rate at all (achado orçamentos #5-follow-up): a bare `0.0`
+        there used to flow into `calcular_totais` and read as "custo zero,
+        margem 100%" — a confident number over data that plainly has no
+        basis. `None` forces `calcular_totais` to null the margin instead.
 
         People with no resolvable rate are EXCLUDED and reported rather than
         counted as zero: averaging in a zero would drag the mean down and make
@@ -52,5 +56,5 @@ class OrcamentoService:
                 "estimados ficam sem base e NÃO devem ser usados. Cadastre funções "
                 "e custos antes de orçar."
             )
-            return 0.0, alertas
+            return None, alertas
         return round(sum(taxas) / len(taxas), 2), alertas

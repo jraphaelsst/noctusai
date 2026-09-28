@@ -187,7 +187,7 @@ def calcular_totais(
     *,
     desconto: float,
     horas_por_produto: dict[str, float],
-    custo_hora: float,
+    custo_hora: float | None,
 ) -> dict:
     """Totais from normalized items.
 
@@ -196,6 +196,14 @@ def calcular_totais(
     a % — NEGATIVE when the proposal is below cost (shown, never clamped: a
     clamped 0 would hide the one number the owner most needs to see), `None`
     when the total is zero.
+
+    `custo_hora=None` (achado orçamentos #5-follow-up — `OrcamentoService.
+    custo_hora_medio` with NO professional carrying a resolvable rate at all)
+    forces `margem_estimada` to `None` too, UNCONDITIONALLY — a `total > 0`
+    over an undefined cost is not "margem saudável · 100%", it is undefined.
+    `custo_estimado` stays `0.0` (nothing to attribute), the same value a
+    `None` custo_hora already produced before this fix; only the margin's
+    former false-confident 100% is what this closes.
     """
     sub_criacao = round(sum(i["subtotal"] for i in itens if i["secao"] == "criacao_conteudo"), 2)
     sub_gestao = round(sum(i["subtotal"] for i in itens if i["secao"] == "gestao_conta"), 2)
@@ -211,8 +219,10 @@ def calcular_totais(
             for i in itens),
         2,
     )
-    custo = round(horas * custo_hora, 2)
-    margem = round((total - custo) / total * 100, 2) if total > 0 else None
+    custo = round(horas * custo_hora, 2) if custo_hora is not None else 0.0
+    margem = (
+        round((total - custo) / total * 100, 2) if (total > 0 and custo_hora is not None) else None
+    )
     return {
         "subtotal_criacao": sub_criacao,
         "subtotal_gestao": sub_gestao,
@@ -405,13 +415,13 @@ def _gravar_itens(db: Any, org_id: str, orcamento_id: str, itens: list[dict]) ->
         ).execute()
 
 
-def _totais_para(db: Any, org_id: str, itens: list[dict], desconto: float, custo_hora: float) -> dict:
+def _totais_para(db: Any, org_id: str, itens: list[dict], desconto: float, custo_hora: float | None) -> dict:
     produtos = produtos_dos_itens(db, org_id, itens)
     return calcular_totais(itens, desconto=desconto, horas_por_produto=horas_por_produto(produtos),
                            custo_hora=custo_hora)
 
 
-def criar(db: Any, org_id: str, dados: dict, *, custo_hora: float) -> dict:
+def criar(db: Any, org_id: str, dados: dict, *, custo_hora: float | None) -> dict:
     """New orçamento for a negócio — `versao` = max + 1 for that negócio."""
     negocio = qc.carregar(db, "negocio", org_id, dados["negocio_id"],
                           select="id, lead_id, cliente_id, titulo, status", rotulo="negócio")
@@ -456,7 +466,7 @@ def _exigir_editavel(orcamento: dict, acao: str) -> None:
         )
 
 
-def atualizar(db: Any, org_id: str, orcamento_id: str, dados: dict, *, custo_hora: float,
+def atualizar(db: Any, org_id: str, orcamento_id: str, dados: dict, *, custo_hora: float | None,
               hoje: date | None = None) -> dict:
     """Edit a rascunho/enviado orçamento. Any content change voids the PDF —
     a PDF must never show numbers the proposal no longer has."""
@@ -515,7 +525,7 @@ def _validade_padrao_nova_versao(origem: dict, hoje: date) -> date | None:
 
 
 def nova_versao(
-    db: Any, org_id: str, orcamento_id: str, *, custo_hora: float,
+    db: Any, org_id: str, orcamento_id: str, *, custo_hora: float | None,
     validade: date | None | _ValidadeAutomatica = VALIDADE_AUTOMATICA,
     hoje: date | None = None,
 ) -> dict:
@@ -631,6 +641,14 @@ def aceitar(db: Any, org_id: str, orcamento_id: str, *, user_id: Any,
                           select=comercial_funil.NEGOCIO_SELECT, rotulo="negócio")
     lead_antes = qc.carregar(db, "lead", org_id, str(negocio["lead_id"]), select="id, cliente_id")
     cliente_ja_existia = bool(negocio.get("cliente_id") or lead_antes.get("cliente_id"))
+    # Snapshot BEFORE the funnel transition: `mover_negocio` → `_fechar`
+    # already generates the pautas on a fresh close, so counting only the
+    # LATER recovery `pautas.gerar` call below (per-day idempotent, and so a
+    # no-op right after `_fechar` just ran) would report 0 "novas" pautas on
+    # the very accept that created them all. The before/after TOTAL delta is
+    # what THIS call actually added, wherever in the flow it happened.
+    itens_para_pautas = itens_de(db, org_id, [orcamento_id])[orcamento_id]
+    pautas_antes = pautas.contar_geradas(db, org_id, itens_para_pautas)
     ja_aceito = (
         orcamento.get("status") == "aceito"
         and negocio.get("status") == "ganho"
@@ -673,14 +691,20 @@ def aceitar(db: Any, org_id: str, orcamento_id: str, *, user_id: Any,
     # this is what fills the calendar in.
     pautas.gerar(db, org_id, itens=itens, cliente_id=str(cliente["id"]), inicio=hoje)
     total_pautas = pautas.contar_geradas(db, org_id, itens)
-    logger.info("orcamento aceito org=%s orcamento=%s negocio=%s pautas=%d",
-                org_id, orcamento_id, negocio["id"], total_pautas)
+    # `pautas_criadas` stays the grand TOTAL for the deal (achado 2/17 — a
+    # re-accept must still report a healthy non-zero count); leftovers item 5
+    # adds `pautas_novas` — the before/after delta THIS call added, 0 on a
+    # re-accept — instead of overloading one field with two meanings.
+    pautas_novas = total_pautas - pautas_antes
+    logger.info("orcamento aceito org=%s orcamento=%s negocio=%s pautas=%d novas=%d",
+                org_id, orcamento_id, negocio["id"], total_pautas, pautas_novas)
     return {
         "orcamento": montar_dtos(db, org_id, [orcamento])[0],
         "negocio": negocio,
         "cliente": cliente,
         "cliente_criado": not cliente_ja_existia,
         "pautas_criadas": total_pautas,
+        "pautas_novas": pautas_novas,
     }
 
 

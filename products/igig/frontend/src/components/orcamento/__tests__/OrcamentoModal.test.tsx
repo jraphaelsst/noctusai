@@ -184,7 +184,8 @@ describe("OrcamentoModal — lifecycle", () => {
         return {
           data: {
             orcamento: orcamento({ status: "aceito" }), negocio: { id: "n1", status: "ganho" },
-            cliente: { id: "c1", nome: "Padaria Ana" }, cliente_criado: true, pautas_criadas: 12,
+            cliente: { id: "c1", nome: "Padaria Ana" }, cliente_criado: true,
+            pautas_criadas: 12, pautas_novas: 12,
           },
         };
       throw new Error(`POST inesperado ${path}`);
@@ -197,6 +198,33 @@ describe("OrcamentoModal — lifecycle", () => {
     expect(api.post).not.toHaveBeenCalledWith("/api/orcamentos/o1/aceitar", expect.anything());
     fireEvent.click(screen.getByRole("button", { name: "Confirmar aceite" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orcamentos/o1/aceitar", {}));
+  });
+
+  it('accept toast uses pautas_novas (THIS action), never pautas_criadas (the deal\'s total) — leftovers item 5', async () => {
+    const toastMod = await import("sonner");
+    const spy = vi.spyOn(toastMod.toast, "success");
+    api.post.mockImplementation(async (path: string, body: any) => {
+      if (path === "/api/orcamentos/calcular") return { data: calcular(body) };
+      if (path === "/api/orcamentos/o1/aceitar")
+        return {
+          data: {
+            orcamento: orcamento({ status: "aceito" }), negocio: { id: "n1", status: "ganho" },
+            cliente: { id: "c1", nome: "Padaria Ana" }, cliente_criado: false,
+            // A re-accept: total keeps counting the whole deal, novas is 0.
+            pautas_criadas: 12, pautas_novas: 0,
+          },
+        };
+      throw new Error(`POST inesperado ${path}`);
+    });
+    renderModal({ orcamentoId: "o1" });
+    const aceitar = await screen.findByTestId("orcamento-aceitar");
+    await waitFor(() => expect(aceitar).not.toBeDisabled());
+    fireEvent.click(aceitar);
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar aceite" }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    const mensagem = spy.mock.calls[0][0] as string;
+    expect(mensagem).not.toMatch(/12 pautas/);
+    expect(mensagem).toMatch(/já existia\.$/);
   });
 
   it("an accepted orçamento is read-only and offers the contract (Digital | Física)", async () => {
@@ -289,5 +317,28 @@ describe("OrcamentoModal — lifecycle", () => {
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith("/api/orcamentos/o1/nova-versao", { validade: campo.value }),
     );
+  });
+
+  it('Nova versão copy matches the server rule: recusado/expirado is NEVER "vira Substituído" (leftovers item 4)', async () => {
+    api.get.mockImplementation(async (path: string) => {
+      if (path === "/api/produtos-servicos") return { data: CATALOGO };
+      if (path === "/api/orcamentos/o1") return { data: orcamento({ status: "recusado" }) };
+      if (path === "/api/orcamentos/o1/emails") return { data: [] };
+      throw new Error(`GET inesperado ${path}`);
+    });
+    api.post.mockImplementation(async (path: string, body: any) => {
+      if (path === "/api/orcamentos/calcular") return { data: calcular(body) };
+      if (path === "/api/orcamentos/o1/nova-versao") return { data: orcamento({ id: "o2", versao: 3, status: "recusado" }) };
+      throw new Error(`POST inesperado ${path}`);
+    });
+    renderModal({ orcamentoId: "o1" });
+    fireEvent.click(await screen.findByRole("button", { name: /Nova versão/ }));
+
+    const aviso = await screen.findByRole("alert");
+    expect(aviso).toHaveTextContent("esta continua recusado");
+    expect(aviso).not.toHaveTextContent("vira Substituído");
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar nova versão" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/orcamentos/o1/nova-versao", expect.anything()));
   });
 });

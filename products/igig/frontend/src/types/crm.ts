@@ -201,6 +201,10 @@ export interface AceiteResultado {
   /** Total pautas generated for this deal (idempotent — a re-accept or the
    * "Gerar pautas" recovery action reports the same total, not zero). */
   pautas_criadas: number;
+  /** Pautas created BY THIS aceite call specifically — 0 on a re-accept,
+   * unlike `pautas_criadas` (leftovers item 5). Use this for the accept
+   * toast so it never repeats the deal's whole history as "just created". */
+  pautas_novas: number;
 }
 
 export type ModalidadeAssinatura = "digital" | "fisica";

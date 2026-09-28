@@ -228,9 +228,14 @@ class TestCalcular:
         assert dados["total_mensal"] == 400.0
 
     def test_without_team_rates_it_warns(self, api, catalogo):
+        """Item 3 (leftovers): with NO resolvable custo/hora at all, the
+        margin must be `None` — never the false-confident "Margem saudável ·
+        100%" a bare custo_hora=0 used to compute (total > 0, custo == 0)."""
         dados = api.post("/api/orcamentos/calcular",
                          json={"itens": [_item_gestao(catalogo)]}).json()["data"]
         assert dados["custo_estimado"] == 0.0
+        assert dados["margem_estimada"] is None
+        assert dados["custo_hora_medio"] is None
         assert dados["alertas"] and "NÃO devem ser usados" in dados["alertas"][-1]
 
     def test_professionals_without_a_rate_are_excluded_not_zeroed(
@@ -449,6 +454,7 @@ class TestAceite:
         dados = api.post(f"/api/orcamentos/{orc['id']}/aceitar").json()["data"]
         esperadas = _esperadas(SEG | QUA | SEX, 2, hoje_local())
         assert dados["pautas_criadas"] == esperadas
+        assert dados["pautas_novas"] == esperadas, "a FIRST accept: novas == total"
         pautas = _linhas(igig_db, "pauta", cliente_id=dados["cliente"]["id"])
         assert len(pautas) == esperadas
         item_post = next(i for i in dados["orcamento"]["itens"] if i["descricao"] == "Post feed")
@@ -470,6 +476,9 @@ class TestAceite:
         # idempotent recovery call must be able to report a healthy non-zero
         # count too), so a re-accept reports the SAME total, not zero.
         assert segundo.json()["data"]["pautas_criadas"] == primeiro["pautas_criadas"]
+        # `pautas_novas` (leftovers item 5) is what THIS call inserted —
+        # nothing, on a re-accept, unlike the total above.
+        assert segundo.json()["data"]["pautas_novas"] == 0
         assert len(_linhas(igig_db, "pauta")) == primeiro["pautas_criadas"]
         assert len(_linhas(igig_db, "cliente")) == 1
 

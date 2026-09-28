@@ -17,7 +17,7 @@ import { Button, Field, FormError, Input, Skeleton } from "@noctusai/lib/design-
 import { cn } from "@noctusai/lib";
 import { toast } from "sonner";
 
-import { CONTRATO_STATUS_LABEL, useContratos } from "@/hooks/useContratos";
+import { CONTRATO_STATUS_LABEL, useContratoMutations, useContratos } from "@/hooks/useContratos";
 import { useOrcamentoMutations } from "@/hooks/useOrcamentos";
 import { describeError } from "@/lib/errors";
 import type { ModalidadeAssinatura, Orcamento } from "@/types/crm";
@@ -35,6 +35,7 @@ function estaVivo(status: string): boolean {
 
 export function ContratoPanel({ orcamento }: { orcamento: Orcamento }) {
   const { gerarContrato } = useOrcamentoMutations();
+  const { urlPdf } = useContratoMutations();
   const { contratos, showSkeleton } = useContratos(orcamento.cliente_id);
   const doOrcamento = contratos.filter((c) => c.orcamento_id === orcamento.id);
   const vivo = doOrcamento.find((c) => estaVivo(c.status));
@@ -46,11 +47,28 @@ export function ContratoPanel({ orcamento }: { orcamento: Orcamento }) {
   const [signatarioEmail, setSignatarioEmail] = useState(orcamento.lead?.email ?? "");
   const gerado = gerarContrato.data;
 
+  function abrirPdfDoVivo() {
+    if (!vivo) return;
+    urlPdf.mutate(vivo.id, {
+      onSuccess: (r) => {
+        if (r.url) window.open(r.url, "_blank", "noopener,noreferrer");
+        else toast.error("Documento indisponível.");
+      },
+      onError: (e) => toast.error(describeError(e, "Não foi possível abrir o contrato.")),
+    });
+  }
+
   if (showSkeleton) {
     return <Skeleton className="h-24 w-full rounded-xl" />;
   }
 
   if (vivo) {
+    // achado orçamentos #7-follow-up (leftovers item 7): this used to show
+    // "Abrir PDF" + the simulation warning ONLY from the one-time `gerado`
+    // mutation result — the instant `useContratos` refetched (the very
+    // invalidation `gerarContrato`'s own onSuccess triggers) and this branch
+    // took over, both vanished. They now come from the PERSISTED `vivo` row
+    // instead, so they survive every refetch, not just the first render.
     return (
       <section className="space-y-1 rounded-xl border border-border p-4" aria-label="Contrato">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -60,6 +78,23 @@ export function ContratoPanel({ orcamento }: { orcamento: Orcamento }) {
           Contrato {vivo.modalidade_assinatura === "fisica" ? "físico" : "digital"} gerado ·{" "}
           {CONTRATO_STATUS_LABEL[vivo.status] ?? vivo.status}.
         </p>
+        {vivo.modalidade_assinatura === "digital" && vivo.link_assinatura ? (
+          <p className="flex items-start gap-1 text-xs text-destructive">
+            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+            Simulação (assinatura digital ainda não integrada) — este link não ativa o contrato de verdade.
+          </p>
+        ) : null}
+        {vivo.documento_key ? (
+          <button
+            type="button"
+            onClick={abrirPdfDoVivo}
+            disabled={urlPdf.isPending}
+            className="text-xs text-primary underline disabled:opacity-50"
+            data-testid="contrato-vivo-abrir-pdf"
+          >
+            Abrir PDF do contrato
+          </button>
+        ) : null}
         <p className="text-xs text-muted-foreground">
           Consulte, baixe o PDF e marque como assinado em Clientes → Orçamentos &amp; Contratos.
         </p>

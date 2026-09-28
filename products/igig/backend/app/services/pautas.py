@@ -51,16 +51,44 @@ def _itens_recorrentes(itens: list[dict]) -> list[dict]:
 
 
 def _dias_cobertos(db: Any, org_id: str, item_ids: list[str]) -> dict[str, set[str]]:
-    """`{item_id: {ISO dates that already have a pauta for this item}}`."""
+    """`{item_id: {ISO dates a generation SLOT was already claimed for this
+    item}}` — read from the append-only `pauta_slot_gerado` LEDGER, never
+    from the live `pauta` rows (leftovers item 6): a pauta the user deleted,
+    or dragged to a different `data_publicacao`, must never free its slot
+    back up for the next accept retry or the daily job to regenerate. The
+    ledger is what makes "generated exactly once, ever" independent of
+    whatever happens to the card the slot produced afterwards.
+    """
     cobertos: dict[str, set[str]] = {iid: set() for iid in item_ids}
     if not item_ids:
         return cobertos
-    for p in in_batched_rows(db, "pauta", org_id, "orcamento_item_id", item_ids,
-                             select="orcamento_item_id, data_publicacao"):
+    for p in in_batched_rows(db, "pauta_slot_gerado", org_id, "orcamento_item_id", item_ids,
+                             select="orcamento_item_id, slot_date"):
         iid = str(p.get("orcamento_item_id"))
-        dia = str(p.get("data_publicacao"))[:10]
+        dia = str(p.get("slot_date"))[:10]
         cobertos.setdefault(iid, set()).add(dia)
     return cobertos
+
+
+def _registrar_slots(db: Any, org_id: str, novas: list[dict]) -> None:
+    """Claim every (item, day) slot this batch just generated, in the
+    append-only ledger — idempotent (`ON CONFLICT DO NOTHING`), so calling
+    this twice for the same slot is a no-op, never a duplicate row. A `qtd_
+    por_dia > 1` item produces several pauta rows for the SAME slot; the
+    ledger only needs one claim per (item, day), not one per card.
+    """
+    vistas: set[tuple[str, str]] = set()
+    linhas: list[dict] = []
+    for p in novas:
+        chave = (str(p["orcamento_item_id"]), str(p["data_publicacao"])[:10])
+        if chave in vistas:
+            continue
+        vistas.add(chave)
+        linhas.append({"org_id": org_id, "orcamento_item_id": chave[0], "slot_date": chave[1]})
+    if linhas:
+        db.table("pauta_slot_gerado").upsert(
+            linhas, on_conflict="org_id,orcamento_item_id,slot_date", ignore_duplicates=True
+        ).execute()
 
 
 def _linhas_da_janela(
@@ -124,7 +152,9 @@ def gerar(
     fim = inicio + timedelta(days=dias - 1)
     novas = _linhas_da_janela(db, org_id, recorrentes, cliente_id=cliente_id, inicio=inicio, fim=fim,
                               cobertos=cobertos)
-    return _inserir(db, novas)
+    criadas = _inserir(db, novas)
+    _registrar_slots(db, org_id, novas)
+    return criadas
 
 
 def estender(db: Any, org_id: str, *, itens: list[dict], cliente_id: str, ate: date) -> list[dict]:
@@ -142,7 +172,9 @@ def estender(db: Any, org_id: str, *, itens: list[dict], cliente_id: str, ate: d
     cobertos = _dias_cobertos(db, org_id, [str(i["id"]) for i in recorrentes])
     novas = _linhas_da_janela(db, org_id, recorrentes, cliente_id=cliente_id, inicio=hoje, fim=ate,
                               cobertos=cobertos)
-    return _inserir(db, novas)
+    criadas = _inserir(db, novas)
+    _registrar_slots(db, org_id, novas)
+    return criadas
 
 
 def contar_geradas(db: Any, org_id: str, itens: list[dict]) -> int:
