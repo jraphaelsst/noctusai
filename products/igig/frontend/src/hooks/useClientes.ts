@@ -52,6 +52,19 @@ export interface ClienteCreate {
   observacoes?: string;
 }
 
+/** PATCH payload — `null` CLEARS a field (the backend uses `exclude_unset`,
+ * never `exclude_none`, precisely so a `null` is distinguishable from
+ * "not sent"). */
+export type ClienteUpdate = {
+  nome?: string;
+  nicho?: string | null;
+  email?: string | null;
+  telefone?: string | null;
+  origem?: string | null;
+  observacoes?: string | null;
+  status?: StatusCliente;
+};
+
 export interface ClientesFiltros {
   busca?: string;
   status?: StatusCliente;
@@ -145,7 +158,7 @@ export function useAtivarCliente() {
 export function useAtualizarCliente() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...patch }: Partial<ClienteCreate> & { id: string; status?: StatusCliente }) =>
+    mutationFn: ({ id, ...patch }: ClienteUpdate & { id: string }) =>
       api.patch<Cliente>(`/api/clientes/${id}`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: CLIENTES_QUERY_KEY }),
   });

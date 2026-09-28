@@ -36,6 +36,7 @@ interface Campos {
   canais_atuais: string;
   dores: string;
   orcamento_disponivel: string;
+  como_conheceu: string;
 }
 
 const VAZIO: Campos = {
@@ -47,6 +48,7 @@ const VAZIO: Campos = {
   canais_atuais: "",
   dores: "",
   orcamento_disponivel: "",
+  como_conheceu: "",
 };
 
 export default function PreQualificacao() {
@@ -88,7 +90,10 @@ export default function PreQualificacao() {
             orcamento_disponivel: campos.orcamento_disponivel
               ? Number(campos.orcamento_disponivel)
               : null,
-            origem: "formulario-publico",
+            // The backend's `origem` field is free text — "como nos
+            // conheceu" — never a fixed marker. A hardcoded value here used
+            // to pollute every card with the same fake answer.
+            origem: campos.como_conheceu.trim() || null,
           }),
         },
       );
@@ -165,6 +170,10 @@ export default function PreQualificacao() {
 
         <Rotulo texto="Canais que já usa">
           <Input {...campo("canais_atuais")} placeholder="Instagram, TikTok, LinkedIn…" />
+        </Rotulo>
+
+        <Rotulo texto="Como você conheceu a gente?">
+          <Input {...campo("como_conheceu")} placeholder="Indicação, Instagram, Google…" />
         </Rotulo>
 
         <label className="block">

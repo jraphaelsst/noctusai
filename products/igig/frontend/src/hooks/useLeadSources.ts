@@ -79,6 +79,16 @@ export function useSalvarWhatsappLeads() {
   });
 }
 
+/** Disconnect WhatsApp (WAHA) lead intake — the old webhook URL stops
+ * routing immediately; reconnecting mints a new one. */
+export function useDesconectarWhatsappLeads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete("/api/integracoes/leads/whatsapp").then(unwrapData<WhatsappLeadsStatus>),
+    onSuccess: (status) => qc.setQueryData(WHATSAPP_KEY, status),
+  });
+}
+
 export function useMetaLeads() {
   const query = useQuery({
     queryKey: META_KEY,
@@ -93,6 +103,16 @@ export function useSalvarMetaLeads() {
   return useMutation({
     mutationFn: (payload: MetaLeadsInput) =>
       api.put("/api/integracoes/leads/meta", cleanParams({ ...payload })).then(unwrapData<MetaLeadsStatus>),
+    onSuccess: (status) => qc.setQueryData(META_KEY, status),
+  });
+}
+
+/** Disconnect Meta Lead Ads intake — frees the Page id for reconnection
+ * elsewhere. */
+export function useDesconectarMetaLeads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete("/api/integracoes/leads/meta").then(unwrapData<MetaLeadsStatus>),
     onSuccess: (status) => qc.setQueryData(META_KEY, status),
   });
 }

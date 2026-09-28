@@ -147,6 +147,18 @@ class TestCrud:
         assert resp.json()["nicho"] == "alimentacao"
         assert resp.json()["nome"] == "Padaria Sol"
 
+    def test_explicit_null_clears_a_field(self, api):
+        """achado #17: the router used `exclude_none` — an explicit `null`
+        was silently DROPPED (the old value survived, no error). A field not
+        sent at all must still be left untouched (`nicho` here)."""
+        criado = api.post("/api/clientes", json={
+            "nome": "Padaria Sol", "email": "sol@padaria.com", "nicho": "alimentacao",
+        }).json()
+        resp = api.patch(f"/api/clientes/{criado['id']}", json={"email": None})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["email"] is None
+        assert resp.json()["nicho"] == "alimentacao"
+
     def test_empty_patch_returns_400(self, api):
         criado = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
         assert api.patch(f"/api/clientes/{criado['id']}", json={}).status_code == 400

@@ -62,9 +62,20 @@ export function ClienteDadosPanel({ cliente, onRemovido }: { cliente: Cliente; o
     setSujo(true);
   };
 
+  const opt = (v: string) => (v.trim() ? v.trim() : null);
+
   function salvar() {
     atualizar.mutate(
-      { id: cliente.id, ...form, nome: form.nome.trim() },
+      {
+        id: cliente.id,
+        nome: form.nome.trim(),
+        nicho: opt(form.nicho),
+        email: opt(form.email),
+        telefone: opt(form.telefone),
+        origem: opt(form.origem),
+        observacoes: opt(form.observacoes),
+        status: form.status,
+      },
       {
         onSuccess: () => {
           setSujo(false);

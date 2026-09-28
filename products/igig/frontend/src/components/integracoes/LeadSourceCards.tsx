@@ -11,10 +11,13 @@
 import { useEffect, useState } from "react";
 import { Button, Field, FormError, Input } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, Megaphone, MessageCircle, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Megaphone, MessageCircle, ShieldAlert, Unlink } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
+  useDesconectarMetaLeads,
+  useDesconectarWhatsappLeads,
   useMetaLeads,
   useSalvarMetaLeads,
   useSalvarWhatsappLeads,
@@ -47,9 +50,11 @@ function SoAdmin() {
 export function WhatsappLeadsCard() {
   const { status, showSkeleton, isError, error } = useWhatsappLeads();
   const salvar = useSalvarWhatsappLeads();
+  const desconectar = useDesconectarWhatsappLeads();
   const admin = useIsOrgAdmin();
   const [f, setF] = useState({ base_url: "", session: "default", api_key: "" });
   const [sujo, setSujo] = useState(false);
+  const [desconectando, setDesconectando] = useState(false);
 
   useEffect(() => {
     if (status && !sujo) setF({ base_url: status.base_url ?? "", session: status.session || "default", api_key: "" });
@@ -79,7 +84,7 @@ export function WhatsappLeadsCard() {
           {!status.hmac_configurado ? (
             <Aviso>
               Assinatura do webhook não configurada na plataforma (IGIG_WAHA_WEBHOOK_HMAC_SECRET): as mensagens
-              recebidas serão recusadas.
+              recebidas serão aceitas sem verificar a assinatura (apenas o token da URL protege).
             </Aviso>
           ) : null}
           {status.ultimo_erro ? (
@@ -135,7 +140,19 @@ export function WhatsappLeadsCard() {
             </fieldset>
             <FormError message={salvar.isError ? describeError(salvar.error, "Não foi possível salvar o WhatsApp.") : null} />
             {admin ? (
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-between gap-2">
+                {status.configurado ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="text-destructive max-sm:h-10"
+                    onClick={() => setDesconectando(true)}
+                  >
+                    <Unlink className="mr-1 h-4 w-4" /> Desconectar
+                  </Button>
+                ) : (
+                  <span />
+                )}
                 <Button type="submit" className="max-sm:h-10" disabled={!valido || !sujo || salvar.isPending}>
                   {salvar.isPending ? "Salvando…" : "Salvar WhatsApp"}
                 </Button>
@@ -154,6 +171,30 @@ export function WhatsappLeadsCard() {
           )}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={desconectando}
+        title="Desconectar WhatsApp"
+        description={
+          <p>
+            Desconectar o WhatsApp (WAHA)? A URL do webhook atual para de funcionar; mensagens novas deixam de virar
+            leads até reconectar.
+          </p>
+        }
+        confirmLabel={desconectar.isPending ? "Desconectando…" : "Desconectar"}
+        busy={desconectar.isPending}
+        onCancel={() => setDesconectando(false)}
+        onConfirm={() =>
+          desconectar.mutate(undefined, {
+            onSuccess: () => {
+              setDesconectando(false);
+              setSujo(false);
+              toast.success("WhatsApp desconectado.");
+            },
+            onError: (e) => toast.error(describeError(e, "Não foi possível desconectar o WhatsApp.")),
+          })
+        }
+      />
     </IntegracaoCard>
   );
 }
@@ -169,9 +210,11 @@ const APP_SECRET_ORIGEM: Record<string, string> = {
 export function MetaLeadsCard() {
   const { status, showSkeleton, isError, error } = useMetaLeads();
   const salvar = useSalvarMetaLeads();
+  const desconectar = useDesconectarMetaLeads();
   const admin = useIsOrgAdmin();
   const [f, setF] = useState({ page_id: "", verify_token: "", page_access_token: "", app_secret: "" });
   const [sujo, setSujo] = useState(false);
+  const [desconectando, setDesconectando] = useState(false);
 
   useEffect(() => {
     if (status && !sujo) setF({ page_id: status.page_id ?? "", verify_token: "", page_access_token: "", app_secret: "" });
@@ -274,7 +317,19 @@ export function MetaLeadsCard() {
             </fieldset>
             <FormError message={salvar.isError ? describeError(salvar.error, "Não foi possível salvar o Meta Lead Ads.") : null} />
             {admin ? (
-              <div className="flex justify-end">
+              <div className="flex flex-wrap justify-between gap-2">
+                {status.configurado ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="text-destructive max-sm:h-10"
+                    onClick={() => setDesconectando(true)}
+                  >
+                    <Unlink className="mr-1 h-4 w-4" /> Desconectar
+                  </Button>
+                ) : (
+                  <span />
+                )}
                 <Button type="submit" className="max-sm:h-10" disabled={!valido || !sujo || salvar.isPending}>
                   {salvar.isPending ? "Salvando…" : "Salvar Meta"}
                 </Button>
@@ -291,6 +346,30 @@ export function MetaLeadsCard() {
           ) : null}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={desconectando}
+        title="Desconectar Meta Lead Ads"
+        description={
+          <p>
+            Desconectar o Meta Lead Ads? A Página fica livre para ser conectada a outra organização; leads novos de
+            anúncios deixam de chegar até reconectar.
+          </p>
+        }
+        confirmLabel={desconectar.isPending ? "Desconectando…" : "Desconectar"}
+        busy={desconectar.isPending}
+        onCancel={() => setDesconectando(false)}
+        onConfirm={() =>
+          desconectar.mutate(undefined, {
+            onSuccess: () => {
+              setDesconectando(false);
+              setSujo(false);
+              toast.success("Meta Lead Ads desconectado.");
+            },
+            onError: (e) => toast.error(describeError(e, "Não foi possível desconectar o Meta Lead Ads.")),
+          })
+        }
+      />
     </IntegracaoCard>
   );
 }

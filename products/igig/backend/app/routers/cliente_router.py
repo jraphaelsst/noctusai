@@ -102,7 +102,12 @@ async def atualizar_cliente(
 ) -> ClienteOut:
     _user, _token, raw_org = auth
     org_id = str(coerce_org_uuid(raw_org))
-    data = payload.model_dump(exclude_none=True)
+    # `exclude_unset` — NOT `exclude_none` — same reason `atualizar_lead`
+    # uses it: `exclude_none` would silently DROP an explicit `null`, so a
+    # field the operator just cleared would stay at its old value with no
+    # error at all (achado #17 — the FE side of the same bug sent `""`
+    # instead of `null`, which this alone would not have fixed).
+    data = payload.model_dump(exclude_unset=True)
     if not data:
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
