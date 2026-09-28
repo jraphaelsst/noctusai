@@ -52,13 +52,19 @@
 -- public schema — called by social_wiring and any cross-schema policies.
 -- search_path locked to 'public' so noctus_users resolves correctly even
 -- when the calling session has a different search_path.
+-- SEC-2 (2026-09-28): body re-rendered IN PLACE from noctusai_lib.domain.sql_templates
+-- .org_identity_function_sql() so a fresh-env apply of this chain can never revert
+-- the customer exclusion (prod receives it via the *_customer_role_isolation.sql
+-- forward migration). Keeper: check_org_identity_function_parity.
 CREATE OR REPLACE FUNCTION public.current_org_id()
   RETURNS uuid
   LANGUAGE sql
   STABLE SECURITY DEFINER
   SET search_path TO 'public'
 AS $f$
-  SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid());
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
 $f$;
 
 -- erp schema copy — erp policies may call erp.current_org_id() directly.

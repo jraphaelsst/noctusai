@@ -33,9 +33,12 @@ CREATE SCHEMA IF NOT EXISTS social_wiring;
 
 -- Grant usage to authenticated users (required for PostgREST)
 GRANT USAGE ON SCHEMA social_wiring TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA social_wiring TO anon, authenticated, service_role;
+-- anon: schema USAGE only, never a blanket TABLE grant (edited in place with
+-- SEC-2, 2026-09-28 — same end state 140_anon_grant_lockdown.sql already enforced; keeper
+-- check_schema_wide_anon_grant).
+GRANT ALL ON ALL TABLES IN SCHEMA social_wiring TO authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA social_wiring TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring GRANT ALL ON TABLES TO authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
 
 
@@ -51,13 +54,19 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA social_wiring GRANT ALL ON SEQUENCES TO anon,
 --     escalation (Supabase advisor: rls_references_user_metadata ERROR).
 -- This function resolves the caller's org from the authoritative DB table.
 -- ============================================================================
+-- SEC-2 (2026-09-28): body re-rendered IN PLACE from noctusai_lib.domain.sql_templates
+-- .org_identity_function_sql() so a fresh-env apply of this chain can never revert
+-- the customer exclusion (prod receives it via the *_customer_role_isolation.sql
+-- forward migration). Keeper: check_org_identity_function_parity.
 CREATE OR REPLACE FUNCTION public.current_org_id()
   RETURNS uuid
   LANGUAGE sql
   STABLE SECURITY DEFINER
   SET search_path TO 'public'
 AS $f$
-  SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid());
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
 $f$;
 
 

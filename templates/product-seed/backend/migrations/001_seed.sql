@@ -60,13 +60,19 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT ALL ON SEQUENCES TO ano
 -- This SECURITY DEFINER function reads from the trusted noctus_users table.
 -- Codified by 011_rls_current_org_id.sql on 2026-06-02.
 -- ============================================================================
+-- SEC-2 (2026-09-28): body re-rendered IN PLACE from noctusai_lib.domain.sql_templates
+-- .org_identity_function_sql() so a fresh-env apply of this chain can never revert
+-- the customer exclusion (prod receives it via the *_customer_role_isolation.sql
+-- forward migration). Keeper: check_org_identity_function_parity.
 CREATE OR REPLACE FUNCTION public.current_org_id()
   RETURNS uuid
   LANGUAGE sql
   STABLE SECURITY DEFINER
   SET search_path TO 'public'
 AS $f$
-  SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid());
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
 $f$;
 
 

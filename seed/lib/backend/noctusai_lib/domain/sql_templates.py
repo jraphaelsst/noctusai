@@ -204,3 +204,157 @@ def rls_subquery_policy(
         suffix = f"  WITH CHECK ({with_check})"
         lines.append(suffix)
     return "\n".join(lines) + ";"
+
+
+# ---------------------------------------------------------------------------
+# Org-identity functions — the ONE definition behind every org-scoped RLS
+# policy in every schema (SEC-2 customer-role isolation, 2026-09-28).
+# ---------------------------------------------------------------------------
+#
+# `public.current_org_id()` (and its core twin `current_user_org_id()`) is
+# re-declared by `CREATE OR REPLACE` in MANY migration chains — every
+# product's 001, the template's 001_seed.sql, core 001/035, and each forward
+# migration that touches it. They all write the same shared `public`
+# function, so on a fresh environment the LAST chain applied wins: one
+# stale copy anywhere silently reverts the whole fleet. The rendering below
+# is therefore the only allowed body, and keeper
+# `check_org_identity_function_parity` fails any migration whose
+# re-declaration differs from it.
+#
+# Customers (`CUSTOMER_ORG_ROLES`, e.g. `membro`) get NULL from
+# `current_org_id()` — so every `org_id = public.current_org_id()` policy
+# denies them at once, in every schema, without touching a single policy.
+# A product that genuinely serves customers keys its customer-facing
+# policies on `public.current_customer_org_id()` instead (non-NULL ONLY for
+# a customer), never on `current_org_id()`.
+
+#: Every shared org-identity function the parity keeper polices.
+ORG_IDENTITY_FUNCTION_NAMES: tuple[str, ...] = (
+    "current_org_id",
+    "current_user_org_id",
+    "current_org_role",
+    "is_customer",
+    "current_customer_org_id",
+)
+
+
+def customer_roles_sql_array(customer_roles: Iterable[str] | None = None) -> str:
+    """``ARRAY['membro', ...]`` rendered from ``CUSTOMER_ORG_ROLES`` (sorted,
+    so the rendering is deterministic).
+
+    ``customer_roles`` overrides the source set — used ONLY by the parity
+    keeper, which loads this module straight from a worktree's file and
+    must not import whichever ``noctusai_lib`` the interpreter happens to
+    resolve (the primary checkout's, from a worktree).
+    """
+    if customer_roles is None:
+        from noctusai_lib.primitives.roles import CUSTOMER_ORG_ROLES
+
+        customer_roles = CUSTOMER_ORG_ROLES
+    return "ARRAY[" + ", ".join(f"'{r}'" for r in sorted(customer_roles)) + "]"
+
+
+def _org_fn(name: str, returns: str, body: str) -> str:
+    return (
+        f"CREATE OR REPLACE FUNCTION public.{name}()\n"
+        f"  RETURNS {returns}\n"
+        "  LANGUAGE sql\n"
+        "  STABLE SECURITY DEFINER\n"
+        "  SET search_path TO 'public'\n"
+        "AS $f$\n"
+        f"{body}\n"
+        "$f$;"
+    )
+
+
+def org_identity_function_sql(name: str, customer_roles: Iterable[str] | None = None) -> str:
+    """The canonical ``CREATE OR REPLACE FUNCTION public.<name>()`` statement.
+
+    Paste it verbatim into any migration that (re)declares ``<name>`` — the
+    parity keeper compares whitespace-normalized text against this.
+    """
+    roles = customer_roles_sql_array(customer_roles)
+    staff_org = (
+        "  SELECT org_id FROM public.noctus_users\n"
+        "   WHERE id = (SELECT auth.uid())\n"
+        f"     AND COALESCE(org_role, '') <> ALL ({roles});"
+    )
+    if name in ("current_org_id", "current_user_org_id"):
+        return _org_fn(name, "uuid", staff_org)
+    if name == "current_org_role":
+        return _org_fn(
+            name,
+            "text",
+            "  SELECT org_role FROM public.noctus_users WHERE id = (SELECT auth.uid());",
+        )
+    if name == "is_customer":
+        return _org_fn(
+            name,
+            "boolean",
+            "  SELECT COALESCE(\n"
+            f"    (SELECT org_role = ANY ({roles})\n"
+            "       FROM public.noctus_users WHERE id = (SELECT auth.uid())),\n"
+            "    false\n"
+            "  );",
+        )
+    if name == "current_customer_org_id":
+        return _org_fn(
+            name,
+            "uuid",
+            "  SELECT org_id FROM public.noctus_users\n"
+            "   WHERE id = (SELECT auth.uid())\n"
+            f"     AND org_role = ANY ({roles});",
+        )
+    raise ValueError(
+        f"unknown org-identity function {name!r}; expected one of {ORG_IDENTITY_FUNCTION_NAMES}"
+    )
+
+
+def org_identity_functions_sql() -> str:
+    """Every canonical org-identity function, in one block.
+
+    The block a forward migration embeds so the functions are correct no
+    matter which product chain a fresh environment applies last. EXECUTE
+    grants are deliberately left at the PostgreSQL default (PUBLIC): many
+    policies carry no ``TO`` clause and so also evaluate for ``anon`` — a
+    revoked EXECUTE would turn their "0 rows" into a 42501 error. For an
+    anonymous caller every function already answers NULL / false.
+    """
+    return "\n\n".join(org_identity_function_sql(n) for n in ORG_IDENTITY_FUNCTION_NAMES)
+
+
+def invitation_token_lockdown_sql(schema: str) -> str:
+    """Make ``<schema>.invitations.token`` unreadable through the API roles.
+
+    A column REVOKE is a no-op while the table-level SELECT grant stands
+    (Supabase's default privileges grant ALL on every table), so the table
+    grant is revoked and SELECT re-granted on every column EXCEPT ``token``
+    — derived from the live catalog, so a column added later is not
+    silently exposed or silently dropped from the list. ``anon`` loses the
+    table entirely. The seed invite flow reads/validates tokens through the
+    service role, which this does not touch.
+    """
+    if not schema or not schema.replace("_", "").replace("{", "").replace("}", "").isalnum():
+        raise ValueError(f"invalid schema name {schema!r}")
+    # SQL DDL text for a migration file — never a PostgREST table argument.
+    table = f"{schema}.invitations"  # postgrest-qualified-ok
+    return (
+        "DO $lock$\n"
+        "DECLARE\n"
+        "  v_cols text;\n"
+        "BEGIN\n"
+        f"  IF to_regclass('{table}') IS NULL THEN\n"
+        f"    RAISE NOTICE 'no {table} table — nothing to lock';\n"
+        "    RETURN;\n"
+        "  END IF;\n"
+        "  SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)\n"
+        "    INTO v_cols\n"
+        "    FROM information_schema.columns\n"
+        f"   WHERE table_schema = '{schema}' AND table_name = 'invitations'\n"
+        "     AND column_name <> 'token';\n"
+        f"  REVOKE ALL ON {table} FROM anon;\n"
+        f"  REVOKE SELECT ON {table} FROM authenticated;\n"
+        f"  EXECUTE format('GRANT SELECT (%s) ON {table} TO authenticated', v_cols);\n"
+        "END\n"
+        "$lock$;"
+    )

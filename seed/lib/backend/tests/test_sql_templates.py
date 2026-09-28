@@ -184,3 +184,76 @@ class TestRlsSubqueryPolicy:
             using="(SELECT auth.uid()) = usuario_id",
         )
         assert "FOR SELECT TO" in actual
+
+
+# ---------------------------------------------------------------------------
+# Org-identity functions + invitations.token lockdown (SEC-2, 2026-09-28)
+# ---------------------------------------------------------------------------
+
+from noctusai_lib.domain.sql_templates import (  # noqa: E402
+    ORG_IDENTITY_FUNCTION_NAMES,
+    customer_roles_sql_array,
+    invitation_token_lockdown_sql,
+    org_identity_function_sql,
+    org_identity_functions_sql,
+)
+from noctusai_lib.primitives.roles import CUSTOMER_ORG_ROLES, is_customer_role  # noqa: E402
+
+
+class TestOrgIdentityFunctions:
+    def test_customer_array_is_rendered_from_the_frozenset(self):
+        assert customer_roles_sql_array() == "ARRAY[" + ", ".join(
+            f"'{r}'" for r in sorted(CUSTOMER_ORG_ROLES)) + "]"
+        assert customer_roles_sql_array(["b", "a"]) == "ARRAY['a', 'b']"
+
+    def test_current_org_id_excludes_customers(self):
+        sql = org_identity_function_sql("current_org_id")
+        assert "<> ALL (ARRAY['membro'])" in sql
+        assert "COALESCE(org_role, '')" in sql  # a NULL role is staff, not excluded
+        assert org_identity_function_sql("current_user_org_id").replace(
+            "current_user_org_id", "current_org_id") == sql
+
+    def test_customer_org_is_the_mirror(self):
+        sql = org_identity_function_sql("current_customer_org_id")
+        assert "org_role = ANY (ARRAY['membro'])" in sql
+
+    def test_every_function_is_security_definer_with_pinned_path(self):
+        for name in ORG_IDENTITY_FUNCTION_NAMES:
+            sql = org_identity_function_sql(name)
+            assert "STABLE SECURITY DEFINER" in sql
+            assert "SET search_path TO 'public'" in sql
+            assert sql.startswith(f"CREATE OR REPLACE FUNCTION public.{name}()")
+
+    def test_block_carries_every_function_once(self):
+        block = org_identity_functions_sql()
+        for name in ORG_IDENTITY_FUNCTION_NAMES:
+            assert block.count(f"FUNCTION public.{name}()") == 1
+
+    def test_unknown_name_refused(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            org_identity_function_sql("current_everything")
+
+    def test_is_customer_role(self):
+        assert is_customer_role("membro")
+        assert not is_customer_role("member")
+        assert not is_customer_role(None)
+
+
+class TestInvitationTokenLockdown:
+    def test_revokes_table_select_and_regrants_all_but_token(self):
+        sql = invitation_token_lockdown_sql("igig")
+        assert "REVOKE SELECT ON igig.invitations FROM authenticated;" in sql
+        assert "REVOKE ALL ON igig.invitations FROM anon;" in sql
+        assert "column_name <> 'token'" in sql
+        assert "GRANT SELECT (%s) ON igig.invitations TO authenticated" in sql
+
+    def test_template_placeholder_schema_allowed(self):
+        assert "{{SCHEMA_NAME}}.invitations" in invitation_token_lockdown_sql("{{SCHEMA_NAME}}")
+
+    def test_injection_shaped_schema_refused(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            invitation_token_lockdown_sql("igig; DROP TABLE x")

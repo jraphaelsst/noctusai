@@ -38,17 +38,20 @@
 -- so the inner SELECT does NOT re-trigger noctus_users' RLS policy.
 -- STABLE: constant within a statement. search_path '' hardens against
 -- search-path privilege escalation (fully-qualify every object).
+-- SEC-2 (2026-09-28): body re-rendered IN PLACE from noctusai_lib.domain.sql_templates
+-- .org_identity_function_sql() so a fresh-env apply of this chain can never revert
+-- the customer exclusion (prod receives it via the *_customer_role_isolation.sql
+-- forward migration). Keeper: check_org_identity_function_parity.
 CREATE OR REPLACE FUNCTION public.current_user_org_id()
-RETURNS uuid
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = ''
-AS $$
-    SELECT org_id
-    FROM public.noctus_users
-    WHERE id = (SELECT auth.uid());
-$$;
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
+$f$;
 
 -- Lock down: only authenticated users may invoke; revoke from PUBLIC.
 REVOKE ALL ON FUNCTION public.current_user_org_id() FROM PUBLIC;

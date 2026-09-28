@@ -503,10 +503,20 @@ AS $$ SELECT (SELECT auth.uid()); $$;
 -- (b) user-editable — a privilege-escalation hole if used for RLS).
 -- Root-fixed 2026-06-02 (feat/rls-migration-parity): original used
 -- auth.jwt() ->> 'org_id' which is always NULL in Supabase.
+-- SEC-2 (2026-09-28): body re-rendered IN PLACE from noctusai_lib.domain.sql_templates
+-- .org_identity_function_sql() so a fresh-env apply of this chain can never revert
+-- the customer exclusion (prod receives it via the *_customer_role_isolation.sql
+-- forward migration). Keeper: check_org_identity_function_parity.
 CREATE OR REPLACE FUNCTION public.current_org_id()
-  RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER
-  SET search_path = public
-AS $$ SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid()); $$;
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
+$f$;
 
 CREATE OR REPLACE FUNCTION public.is_platform_admin()
   RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER

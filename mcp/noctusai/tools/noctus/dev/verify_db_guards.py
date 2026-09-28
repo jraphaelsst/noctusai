@@ -2560,6 +2560,261 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — SEC-2 customer-role isolation (2026-09-28): the shared
+# `public.current_org_id()` family + the fleet-wide invitations.token lockdown
+# (core 055 + every product's *_customer_role_isolation.sql).
+# ---------------------------------------------------------------------------
+#
+# Not a trigger/CHECK — the "guard" is a FUNCTION every org-scoped RLS policy
+# in every schema calls, so its behaviour IS the fleet's customer isolation.
+# Self-provisioning: the probe inserts a throwaway org + one staff + one
+# customer `noctus_users` row inside the rollback-only wrapper, impersonates
+# each through the same JWT settings auth.uid() reads, and asserts the answers.
+# Structure-green (the function exists) is not behaviour-green (it returns NULL
+# for a customer) — a stale re-declaration from ANY chain would still "exist".
+
+_CUSTOMER_ISOLATION_MIGRATIONS = ("055_customer_role_isolation.sql",)
+
+_CUSTOMER_GETS_NO_ORG_PROBE = GuardProbe(
+    id="org_identity.customer_gets_no_org",
+    product="core",
+    schema="public",
+    guard_name="current_org_id",
+    kind="state_assertion",
+    migrations=_CUSTOMER_ISOLATION_MIGRATIONS,
+    sql=_do_block("""
+DECLARE
+  v_org uuid;
+  v_staff uuid := gen_random_uuid();
+  v_cust uuid := gen_random_uuid();
+  v_staff_org uuid;
+  v_cust_org uuid;
+  v_cust_is boolean;
+  v_cust_customer_org uuid;
+BEGIN
+  IF to_regprocedure('public.is_customer()') IS NULL
+     OR to_regprocedure('public.current_customer_org_id()') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: public.is_customer()/current_customer_org_id() missing — customer-role isolation (core 055) not applied';
+  END IF;
+  BEGIN
+    INSERT INTO public.organizations (nome, slug)
+    VALUES ('NOC probe org (customer isolation)', 'noc-probe-' || gen_random_uuid()::text)
+    RETURNING id INTO v_org;
+    INSERT INTO public.noctus_users (id, email, nome, org_id, role, org_role) VALUES
+      (v_staff, 'noc-probe-staff@invalid', 'noc probe staff', v_org, 'user', 'member'),
+      (v_cust,  'noc-probe-cust@invalid',  'noc probe customer', v_org, 'user', 'membro');
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'NOC_PROBE:ambiguous: could not self-provision the probe org/users: %', SQLERRM;
+  END;
+
+  PERFORM set_config('request.jwt.claim.sub', v_staff::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_staff, 'role', 'authenticated')::text, true);
+  v_staff_org := public.current_org_id();
+
+  PERFORM set_config('request.jwt.claim.sub', v_cust::text, true);
+  PERFORM set_config('request.jwt.claims', json_build_object('sub', v_cust, 'role', 'authenticated')::text, true);
+  v_cust_org := public.current_org_id();
+  v_cust_is := public.is_customer();
+  v_cust_customer_org := public.current_customer_org_id();
+
+  IF v_staff_org IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'NOC_PROBE:ambiguous: staff current_org_id() = % (expected %) — the probe cannot impersonate through auth.uid()', v_staff_org, v_org;
+  END IF;
+  IF v_cust_org IS NOT NULL OR NOT v_cust_is OR v_cust_customer_org IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: customer current_org_id()=% is_customer()=% current_customer_org_id()=% — a customer inherits org-member RLS fleet-wide', v_cust_org, v_cust_is, v_cust_customer_org;
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:clean: customer gets NULL from current_org_id(), staff gets their org';
+END;
+"""),
+    rationale=(
+        "End customers (org_role in CUSTOMER_ORG_ROLES) self-register into the "
+        "platform's own org, which is licensed to most products. Every org-scoped "
+        "RLS policy fleet-wide keys on public.current_org_id(); if it answers a "
+        "customer's org, the customer reads/writes every licensed product's back "
+        "office. The function is re-declared by many migration chains — a stale "
+        "copy applied last re-opens it while still 'existing', so only a behaviour "
+        "probe proves the exclusion holds (SEC-2, 2026-09-28)."
+    ),
+)
+
+# ---------------------------------------------------------------------------
+# Registry — pre-existing guards in chains SEC-2 re-rendered in place
+# (core 001, social-wiring 001). Touching those files put these long-standing,
+# never-probed guards in the diff-scoped `migration-guard-has-probe` gate;
+# fix-on-contact: prove they refuse. Self-provisioning (a throwaway org per
+# probe, inside the rollback-only wrapper) and classified by SQLSTATE +
+# constraint name via GET STACKED DIAGNOSTICS, not by message text.
+# ---------------------------------------------------------------------------
+
+
+def _constraint_refusal_probe(
+    *,
+    setup_sql: str,
+    op_sql: str,
+    sqlstate_condition: str,
+    constraint_names: tuple[str, ...],
+    what: str,
+) -> str:
+    what_lit = _sql_lit(what)
+    names = ", ".join("'" + _sql_lit(n) + "'" for n in constraint_names)
+    return _do_block(f"""
+DECLARE
+  v_org uuid;
+  v_prod uuid;
+  v_constraint text;
+BEGIN
+{setup_sql}
+  BEGIN
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard did not fire';
+  EXCEPTION
+    WHEN {sqlstate_condition} THEN
+      GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+      IF v_constraint = ANY (ARRAY[{names}]) THEN
+        RAISE EXCEPTION 'NOC_PROBE:refused: % refused by %', '{what_lit}', v_constraint;
+      END IF;
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: refused by an unexpected constraint %', v_constraint;
+    WHEN OTHERS THEN
+      IF SQLERRM LIKE 'NOC_PROBE:%' THEN
+        RAISE;
+      END IF;
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+  END;
+END;
+""")
+
+
+def _table_fixture_check(qualified: str) -> str:
+    return (
+        f"  IF to_regclass('{qualified}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(qualified)} does not exist (migrations not applied)';\n"
+        "  END IF;\n"
+    )
+
+
+_PROBE_ORG_SETUP = _table_fixture_check("public.organizations") + """
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org;
+"""
+
+_LICENSES_ONE_ACTIVE_PROBE = GuardProbe(
+    id="licenses.one_active_per_org_product",
+    product="core",
+    schema="public",
+    guard_name="idx_licenses_one_active_per_org_product",
+    kind="write_refusal",
+    migrations=("001_noctusai_core.sql",),
+    sql=_constraint_refusal_probe(
+        setup_sql="""
+  SELECT id INTO v_prod FROM public.products LIMIT 1;
+  IF v_prod IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.products row to license';
+  END IF;
+""" + _PROBE_ORG_SETUP,
+        op_sql="""
+    INSERT INTO public.licenses (org_id, product_id, status) VALUES (v_org, v_prod, 'active');
+    INSERT INTO public.licenses (org_id, product_id, status) VALUES (v_org, v_prod, 'active');
+""",
+        sqlstate_condition="unique_violation",
+        constraint_names=("idx_licenses_one_active_per_org_product",),
+        what="a second ACTIVE license for the same org+product",
+    ),
+    rationale=(
+        "Licensing is the gate core's SSO bridge checks before minting a "
+        "product token; two active rows for one org+product make expiry and "
+        "revocation ambiguous (which row wins?). Historical revoked/expired "
+        "rows stay unrestricted by design (partial index)."
+    ),
+)
+
+_SW_API_TOKEN_HASH_PROBE = GuardProbe(
+    id="social_wiring.api_tokens.active_hash_unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="idx_sw_api_tokens_hash_active",
+    kind="write_refusal",
+    migrations=("001_social-wiring.sql",),
+    sql=_constraint_refusal_probe(
+        setup_sql=_table_fixture_check("social_wiring.api_tokens") + _PROBE_ORG_SETUP,
+        op_sql="""
+    INSERT INTO social_wiring.api_tokens (org_id, label, token_hash, token_prefix)
+    VALUES (v_org, 'noc probe a', 'noc-probe-hash', 'noc_'),
+           (v_org, 'noc probe b', 'noc-probe-hash', 'noc_');
+""",
+        sqlstate_condition="unique_violation",
+        # The column-level UNIQUE(token_hash) from the same CREATE TABLE is
+        # strictly stronger and is checked first — either index refusing
+        # proves the claim "two live tokens never share a hash".
+        constraint_names=("idx_sw_api_tokens_hash_active", "api_tokens_token_hash_key"),
+        what="two live api_tokens with the same token_hash",
+    ),
+    rationale=(
+        "api_tokens authenticate machine callers by token_hash; a duplicate "
+        "live hash would make one token resolve to two orgs' principals."
+    ),
+)
+
+_SW_RECIPIENT_CHANNEL_PROBE = GuardProbe(
+    id="social_wiring.notification_recipients.has_channel",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="recipient_has_at_least_one_channel",
+    kind="write_refusal",
+    migrations=("001_social-wiring.sql",),
+    sql=_constraint_refusal_probe(
+        setup_sql=_table_fixture_check("social_wiring.notification_recipients") + _PROBE_ORG_SETUP,
+        op_sql="""
+    INSERT INTO social_wiring.notification_recipients (org_id, name, email, whatsapp_number)
+    VALUES (v_org, 'noc probe', NULL, NULL);
+""",
+        sqlstate_condition="check_violation",
+        constraint_names=("recipient_has_at_least_one_channel",),
+        what="a notification recipient with neither email nor whatsapp",
+    ),
+    rationale=(
+        "A recipient with no channel silently swallows every notification "
+        "routed to it — the dispatcher has nowhere to send and reports nothing."
+    ),
+)
+
+
+# NOC-REMEDIATE[community-invitation-token]: `community` is excluded below
+# ONLY because its own branch (feat/community-ninho-vazio) owns that schema's
+# customer-role work; its next migration must carry
+# `invitation_token_lockdown_sql('community')`, then drop the exclusion. — 2026-09-28
+_INVITATION_TOKEN_PROBE = GuardProbe(
+    id="invitations.token_not_api_readable",
+    product="<platform>",
+    schema="*",
+    guard_name="invitations.token",
+    kind="state_assertion",
+    migrations=_CUSTOMER_ISOLATION_MIGRATIONS,
+    rationale=(
+        "An invitations.token read through the API roles lets any org member "
+        "(and, before SEC-2, a self-registered customer) accept a pending invite "
+        "meant for someone else — at the invited role. The invite flow reads and "
+        "validates tokens with the service role only. A later `GRANT ... ON ALL "
+        "TABLES IN SCHEMA` silently re-opens the column, so this is asserted on "
+        "live privileges, platform-wide (every schema's invitations table)."
+    ),
+    sql=_state_assertion_probe(
+        select_count_sql=(
+            "SELECT count(*) INTO v_count FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE c.relname = 'invitations' AND c.relkind = 'r' "
+            "AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'token' AND NOT a.attisdropped) "
+            "AND n.nspname NOT IN ('community') "
+            "AND (has_column_privilege('authenticated', c.oid, 'token', 'SELECT') "
+            "OR has_column_privilege('anon', c.oid, 'token', 'SELECT'));"
+        ),
+        clean_message="0 invitations tables expose token to anon/authenticated",
+        violation_message_prefix="invitations table(s) expose token to anon/authenticated —",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -2583,6 +2838,11 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
+    _CUSTOMER_GETS_NO_ORG_PROBE,
+    _INVITATION_TOKEN_PROBE,
+    _LICENSES_ONE_ACTIVE_PROBE,
+    _SW_API_TOKEN_HASH_PROBE,
+    _SW_RECIPIENT_CHANNEL_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
