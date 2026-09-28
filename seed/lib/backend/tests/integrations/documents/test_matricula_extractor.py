@@ -167,8 +167,15 @@ class TestVisionCanNeverBeTrustedUnattended:
         parser. Coming off an exact text layer must not launder it into
         `alta`, because the doubt is about WHICH matrícula it is, not about
         the transcription.
+
+        🔴 Deliberately NOT an "ORIGINADA DA"/"REGISTRO ANTERIOR" shape here:
+        those are citations of a DIFFERENT property and `find_matricula` now
+        excludes them outright (`nenhuma`, not `baixa` — see
+        `test_matricula.py::TestCitationsAreExcludedNotOffered`). This fixture
+        needs a body-only match that ISN'T a citation, to isolate the
+        tempering assertion from that unrelated rule.
         """
-        corpo = "AV.1 ORIGINADA DA MATRICULA N 9.876 DESTE REGISTRO"
+        corpo = "AV.1 CONSTA MATRICULA N 9.876 DESTE REGISTRO"
         monkeypatch.setattr(
             "noctusai_lib.integrations.media.classify_pdf_text_layer",
             lambda content: _camada(corpo),

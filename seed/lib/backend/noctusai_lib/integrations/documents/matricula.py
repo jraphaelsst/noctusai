@@ -33,6 +33,45 @@ The rule that survives this: the document's OWN number is the one in the
 heading, before the body starts. So matches are scored by how early they
 appear, and a match that arrives after a body-opening marker is discarded
 outright.
+
+🔴 P2 CORPUS (2026-09): 4 OF 10 REAL READS WERE WRONG
+------------------------------------------------------
+Measured against 10 real certidões de matrícula (signed-contract answer
+keys), the label-proximity rule above still returned a completely different
+property's number on 4 of 10 documents, via three shapes:
+
+1. **Stacked header** — the labels print on one row (`MATRICULA ... FICHA`),
+   the values on the next. `_label_before` only sees FICHA, the nearer decoy,
+   so the heading yields nothing even though the number IS right there.
+2. **Body fallback grabs a citation** — once the heading yields nothing, the
+   earliest labelled body match is offered as a low-confidence guess, and on
+   every failing document that match was `REGISTRO ANTERIOR: ... MATRICULA
+   Nº X` or an `M-X` citation of the PARENT property, not this one.
+3. **Unlabelled heading** — some layouts print the number with no adjacent
+   real label at all (only decoys within the 40-char window), so nothing
+   passes the "must have a label" bar even though the CNM alongside it does.
+
+The fix for (3), and a second opinion for (1): the **CNM** (Código Nacional
+de Matrícula, Provimento CNJ 143/2023) is `CCCCCC.L.NNNNNNN-DD` — a 6-digit
+CNS, a 1-digit livro (`2` = matrícula), a 7-digit zero-padded matrícula
+number, and 2 check digits computed ISO 7064 MOD 97-10 over the 14 leading
+digits. Unlike every other number on the page, a DV-valid CNM is
+self-checking, so it OUTRANKS the label-proximity heading: it wins on
+disagreement, fills in when the heading is empty, and is ignored outright
+when its own check digits don't validate or when two valid CNMs disagree
+with each other (disagreement is still absence, same rule as two heading
+labels). It is only trusted for `livro == "2"` — other livro digits name a
+different book (e.g. transcrição), not a matrícula. CNM search is scoped to
+the heading zone (before the first body marker): the module's whole premise
+is "the document's own number lives in the heading," and a body citation
+could in principle carry its OWN valid CNM for the cited (different)
+property.
+
+The fix for (2): a body-fallback candidate whose left context names a
+citation (`REGISTRO ANTERIOR`, `MATRICULA MAIOR`, `ORIGINADA`, `ORIUNDA`,
+`PROVENIENTE`, or an `M-`/`R.<n>/M-` prefix directly before it) is excluded,
+not offered. A blank ("nenhuma") beats confidently attaching a neighbour's
+registry number to this sale.
 """
 from __future__ import annotations
 
@@ -103,6 +142,44 @@ _BODY_MARKERS = (
 #: digits in small comarcas to eight or more in São Paulo.
 _NUMERO = re.compile(r"\b(\d{1,3}(?:\.\d{3})+|\d{3,12})\b")
 
+#: The CNM (Código Nacional de Matrícula, Provimento CNJ 143/2023):
+#: CNS(6) . livro(1) . número-de-matrícula(7, zero-padded) - dígitos
+#: verificadores(2). OCR loves to insert stray spaces around the `.`/`-`
+#: separators (and sometimes wraps the whole thing in parentheses, which this
+#: pattern doesn't need to match explicitly — the digits/dots/dash are enough).
+_CNM = re.compile(r"\b(\d{6})\s*\.\s*(\d)\s*\.\s*(\d{7})\s*-\s*(\d{2})\b")
+
+#: The stacked-header layout: labels on one row ("MATRICULA ... FICHA"),
+#: values on the next, so `_label_before` only ever sees FICHA (the nearer
+#: decoy) and the heading yields nothing. Matched as its own shape: MATRICULA,
+#: then — separated only by pipes/dashes/underscores/whitespace, never digits
+#: — FICHA, then the first following number is the matrícula, the second the
+#: ficha. The ficha number is deliberately allowed to be as short as 1 digit
+#: (it's usually just a page index like "01").
+_STACKED_HEADER = re.compile(
+    r"MATRICULA\s*(?:NO|N\.)?\s*[|\-_\s]*FICHA\s*[|\-_\s]*"
+    r"(\d{1,3}(?:\.\d{3})+|\d{3,12})\s*[|\-_\s]*"
+    r"(\d{1,3}(?:\.\d{3})+|\d{1,12})"
+)
+
+#: How far back from a body-fallback candidate to look for a citation marker.
+_CITACAO_WINDOW = 60
+
+#: A body number introduced by one of these is a citation of a DIFFERENT
+#: property (the parent/predecessor), never this document's own number.
+_CITACAO_MARCADORES = (
+    "REGISTRO ANTERIOR",
+    "MATRICULA MAIOR",
+    "ORIGINADA",
+    "ORIUNDA",
+    "PROVENIENTE",
+)
+
+#: `R.<n>/M-<numero>` or a bare `M-<numero>` directly in front of the number —
+#: the cartório shorthand for "averbação <n> of matrícula <numero>", i.e. a
+#: citation of another property regardless of how far back a marker word is.
+_CITACAO_PREFIXO = re.compile(r"(?:R\.\d+\s*/\s*)?M-\s*$")
+
 
 def normalize(text: str) -> str:
     """Upper-case, accent-stripped, whitespace-collapsed."""
@@ -151,6 +228,44 @@ def _label_before(haystack: str, at: int) -> tuple[Optional[str], bool]:
     return (melhor, decoy)
 
 
+def _cnm_dv_valido(bloco14: str, dv: str) -> bool:
+    """ISO 7064 MOD 97-10 over the 14 leading digits (CNS + livro + número)."""
+    esperado = (98 - (int(bloco14) * 100) % 97) % 97
+    return esperado == int(dv)
+
+
+def _cnm_sinal(texto: str) -> Optional[str]:
+    """The matrícula number carried by a DV-valid, livro-2 CNM in `texto` —
+    or `None` if there isn't exactly one.
+
+    A DV-valid CNM is self-checking, unlike anything else on the page — no
+    other number here carries its own arithmetic proof. Multiple valid CNMs
+    that disagree with each other are exactly as untrustworthy as two
+    disagreeing heading labels: the rung is dropped, not resolved by
+    guessing which one is right.
+    """
+    candidatos = set()
+    for m in _CNM.finditer(texto):
+        cns, livro, numero, dv = m.groups()
+        if livro != "2":
+            continue
+        if not _cnm_dv_valido(cns + livro + numero, dv):
+            continue
+        candidatos.add(str(int(numero)))
+    if len(candidatos) == 1:
+        return next(iter(candidatos))
+    return None
+
+
+def _e_citacao(haystack: str, at: int) -> bool:
+    """Is the number starting at `at` introduced by a citation of another
+    property (a parent/predecessor matrícula named in this one's body)?"""
+    window = haystack[max(0, at - _CITACAO_WINDOW) : at]
+    if any(marcador in window for marcador in _CITACAO_MARCADORES):
+        return True
+    return bool(_CITACAO_PREFIXO.search(window))
+
+
 def find_matricula(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract this document's própria matrícula number.
 
@@ -159,11 +274,15 @@ def find_matricula(text: str) -> tuple[Optional[str], str, Optional[str]]:
     `types.ExtractionConfidence`, kept as plain strings so this module stays
     import-free of the rest of the package.
 
-    - **alta** — label-anchored, in the heading, and every heading match agrees.
+    - **alta** — label-anchored, in the heading, and every heading match
+      agrees; OR a DV-valid CNM (see module docstring), which is trusted at
+      alta on its own and overrides a disagreeing/absent heading.
     - **baixa** — label-anchored but only found in the BODY, i.e. the heading
-      did not survive transcription. Plausible and worth offering, not worth
-      writing unattended.
-    - **nenhuma** — no labelled number, or heading matches that disagree.
+      did not survive transcription, and that body match isn't a citation of
+      another property. Plausible and worth offering, not worth writing
+      unattended.
+    - **nenhuma** — no labelled, non-cited number anywhere, or heading matches
+      that disagree with no CNM to arbitrate.
       🔴 Disagreement is absence: two different numbers both labelled
       "matrícula" in the heading means the layout was misread, and choosing one
       would attach a registry number to a property at random.
@@ -183,23 +302,40 @@ def find_matricula(text: str) -> tuple[Optional[str], str, Optional[str]]:
         valor = _limpar(m.group(1))
         if m.start() < fim_do_cabecalho:
             cabecalho.append((valor, rotulo))
-        else:
+        elif not _e_citacao(norm, m.start()):
             corpo.append((valor, rotulo))
+
+    # Stacked header: labels on one row, values on the next — `_label_before`
+    # never sees this, so it's matched as its own shape and fed in as a
+    # heading match.
+    empilhado = _STACKED_HEADER.search(norm)
+    if empilhado and empilhado.start() < fim_do_cabecalho:
+        cabecalho.append((_limpar(empilhado.group(1)), "MATRICULA FICHA"))
 
     if cabecalho:
         distintos = {v for v, _ in cabecalho}
         if len(distintos) == 1:
             valor, rotulo = cabecalho[0]
-            return (valor, "alta", rotulo)
-        return (None, "nenhuma", None)
-
-    if corpo:
-        # The heading did not survive. The EARLIEST labelled number is the best
-        # remaining guess, and it is offered as a guess.
+            resultado = (valor, "alta", rotulo)
+        else:
+            resultado = (None, "nenhuma", None)
+    elif corpo:
+        # The heading did not survive. The EARLIEST labelled, non-cited number
+        # is the best remaining guess, and it is offered as a guess.
         valor, rotulo = corpo[0]
-        return (valor, "baixa", rotulo)
+        resultado = (valor, "baixa", rotulo)
+    else:
+        resultado = (None, "nenhuma", None)
 
-    return (None, "nenhuma", None)
+    # The CNM is self-checking and outranks everything above it: it confirms
+    # an agreeing heading, fills in an absent one, and overrides a
+    # disagreeing one. Scoped to the heading zone — a body citation could in
+    # principle carry its own valid CNM for the CITED (different) property.
+    cnm_valor = _cnm_sinal(norm[:fim_do_cabecalho])
+    if cnm_valor is not None and not (resultado[1] == "alta" and resultado[0] == cnm_valor):
+        return (cnm_valor, "alta", "CNM")
+
+    return resultado
 
 
 __all__ = ["find_matricula", "normalize"]

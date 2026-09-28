@@ -94,8 +94,11 @@ class TestWhichMatricula:
 
     def test_a_body_only_match_is_offered_as_a_suggestion(self):
         """The heading did not survive transcription. Plausible, not writable
-        unattended."""
-        valor, conf, _ = find_matricula("ORIGINADA DA MATRICULA 12.345")
+        unattended — but only when the body match ISN'T itself a citation of
+        another property (see `TestCitationsAreExcludedNotOffered` below:
+        "ORIGINADA DA MATRICULA X" is exactly that citation shape, so it no
+        longer lands here)."""
+        valor, conf, _ = find_matricula("AVERBACAO CONSTA MATRICULA 12.345")
         assert (valor, conf) == ("12345", "baixa")
 
     def test_averbacao_marks_the_body_too(self):
@@ -124,3 +127,100 @@ class TestNothingThere:
         valor, conf, _ = find_matricula("CERTIDAO NEGATIVA DE DEBITOS")
         assert valor is None
         assert conf == "nenhuma"
+
+
+class TestCitationsAreExcludedNotOffered:
+    """P2 corpus, 2026-09: once the heading fails, the old body-fallback took
+    `corpo[0]` unconditionally — and on every failing real document that was a
+    citation of the PARENT property. A blank beats a neighbour's number."""
+
+    def test_registro_anterior_citation_is_excluded(self):
+        texto = "REGISTRO ANTERIOR: 99 DA MATRICULA NO 9.999, FEITO EM 2020"
+        valor, conf, _ = find_matricula(texto)
+        assert (valor, conf) == (None, "nenhuma")
+
+    def test_r_barra_m_prefix_is_excluded_even_with_the_marker_word_too(self):
+        texto = "REGISTRO ANTERIOR: R.99/M-999.999, DE 01/01/2020 DESTE REGISTRO"
+        valor, conf, _ = find_matricula(texto)
+        assert (valor, conf) == (None, "nenhuma")
+
+    def test_bare_m_prefix_right_before_the_number_is_excluded(self):
+        """"M-" directly in front of a number is the citation shorthand on its
+        own, regardless of how far back a marker WORD sits."""
+        texto = "(OU 8888-77 MATRICULA MAIOR). REGISTRO ANTERIOR: R.9/M-99.999"
+        valor, conf, _ = find_matricula(texto)
+        assert (valor, conf) == (None, "nenhuma")
+
+
+class TestCNMOutranksTheHeading:
+    """The Código Nacional de Matrícula (Provimento CNJ 143/2023) carries its
+    own ISO 7064 MOD 97-10 check digits — the only number on the page that is
+    self-verifying. DVs below are the real computation, not made up."""
+
+    def test_a_dv_invalid_cnm_is_ignored(self):
+        """300000.2.0011111 would check as -27; -28 is deliberately wrong."""
+        texto = (
+            "CNM - CODIGO NACIONAL DE MATRICULA (300000.2.0011111-28) "
+            "LIVRO N.O 2 - REGISTRO GERAL SERVENTIA DO REGISTRO DE IMOVEIS "
+            "DE TESTE"
+        )
+        valor, conf, _ = find_matricula(texto)
+        assert (valor, conf) == (None, "nenhuma")
+
+    def test_two_disagreeing_valid_cnms_are_ignored(self):
+        """Both check out on their own DV, but they name different
+        matrículas — disagreement is absence here too, same rule as two
+        disagreeing heading labels."""
+        texto = "CNM 400000.2.0022222-17 E TAMBEM CNM 400000.2.0033333-52 REGISTRO GERAL"
+        valor, conf, _ = find_matricula(texto)
+        assert (valor, conf) == (None, "nenhuma")
+
+    def test_cnm_rescues_an_unlabelled_heading(self):
+        """Failure mode 3: no real label survives transcription (only decoys
+        sit within the 40-char window), so the heading yields nothing — but
+        the CNM alongside it is untouched."""
+        texto = (
+            "CNM - CODIGO NACIONAL DE MATRICULA (200000.2.0067890-67) "
+            "LIVRO N.O 2 - REGISTRO GERAL SERVENTIA DO REGISTRO DE IMOVEIS "
+            "DE TESTE - CNJ NO1234-5 6789 -54.321- 01 TESTE"
+        )
+        valor, conf, rotulo = find_matricula(texto)
+        assert (valor, conf) == ("67890", "alta")
+        assert rotulo == "CNM"
+
+    def test_cnm_confirms_an_agreeing_heading(self):
+        texto = "CNM 100000.2.0054321-79 MATRICULA 54.321 FICHA 01 VERSO"
+        valor, conf, _ = find_matricula(texto)
+        assert (valor, conf) == ("54321", "alta")
+
+    def test_cnm_wins_over_a_disagreeing_heading(self):
+        """The corpus's heading 'disagreements' turned out to be label-row
+        misreads, not real ambiguity — so a DV-valid CNM overrides them."""
+        texto = "MATRICULA 111 MATRICULA Nº 222 CNM 500000.2.0099999-23"
+        valor, conf, rotulo = find_matricula(texto)
+        assert (valor, conf) == ("99999", "alta")
+        assert rotulo == "CNM"
+
+
+class TestStackedHeaderLayout:
+    """Failure mode 1: the labels print "MATRICULA ... FICHA" on one row, the
+    values on the next, so `_label_before`'s proximity rule only ever sees
+    FICHA — the nearer decoy — and the heading yields nothing."""
+
+    def test_labels_then_two_numbers_on_the_next_line(self):
+        texto = (
+            "LIVRO NO 2 REGISTRO GERAL MATRICULA FICHA 12.345 01 "
+            "REGISTRO DE IMOVEIS DE TESTE"
+        )
+        valor, conf, rotulo = find_matricula(texto)
+        assert (valor, conf) == ("12345", "alta")
+        assert rotulo == "MATRICULA FICHA"
+
+    def test_pipe_delimited_table_layout(self):
+        texto = (
+            "SERVENTIA DO REGISTRO DE IMOVEIS DE TESTE | MATRICULA | FICHA | "
+            "| -54.321- | 02 | TESTE, DE JANEIRO DE 2026"
+        )
+        valor, conf, rotulo = find_matricula(texto)
+        assert (valor, conf) == ("54321", "alta")
+        assert rotulo == "MATRICULA FICHA"
