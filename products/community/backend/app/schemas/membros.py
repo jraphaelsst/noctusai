@@ -85,3 +85,48 @@ class MembroListResponse(BaseModel):
     items: list[Membro]
     total: int
     resumo: MembroResumo
+
+
+# ── Relationship timeline — contract §Identity, slice BE-A ─────────────
+
+EVENTO_TIPOS_CRIAVEIS = ("nota", "contato")
+
+
+class EventoCreate(BaseModel):
+    """Request body for `POST /api/membros/{id}/eventos`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tipo: str = Field(..., pattern="^(" + "|".join(EVENTO_TIPOS_CRIAVEIS) + ")$")
+    descricao: str = Field(..., min_length=1, max_length=2000)
+
+
+class Evento(BaseModel):
+    """Response body for a `community.membro_eventos` row."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tipo: str
+    descricao: str
+    dados: dict
+    autor_id: UUID | None = None
+    autor_nome: str | None = None
+    created_at: datetime
+
+
+class EventoListResponse(BaseModel):
+    """Paginated list response for `GET /api/membros/{id}/eventos`."""
+
+    items: list[Evento]
+    total: int
+
+
+# ── Access provisioning — contract §Identity, slice BE-A ───────────────
+
+
+class AcessoOut(BaseModel):
+    """Response body for `POST /api/membros/{id}/acesso` (201)."""
+
+    email: str
+    senha_temporaria: str

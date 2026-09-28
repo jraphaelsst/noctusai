@@ -30,8 +30,10 @@ from app.rate_limit import limiter
 from app.routers.aplicacoes_router import router as aplicacoes_router
 from app.routers.api_keys_router import router as api_keys_router
 from app.routers.assinaturas_router import router as assinaturas_router
+from app.routers.cadastro_router import router as cadastro_router
 from app.routers.checkout_router import router as checkout_router
 from app.routers.dashboard_router import router as dashboard_router
+from app.routers.eu_router import router as eu_router
 from app.routers.example_router import router as example_router
 from app.routers.lancamentos_router import router as lancamentos_router
 from app.routers.grupoterapia_router import router as grupoterapia_router
@@ -39,6 +41,7 @@ from app.routers.membros_router import router as membros_router
 from app.routers.pagamentos_router import router as pagamentos_router
 from app.routers.planos_router import router as planos_router
 from app.routers.portal_grupoterapia_router import router as portal_grupoterapia_router
+from app.routers.portal_router import router as portal_router
 from app.routers.webhook_router import router as webhook_router
 from app.routers.webhooks_router import router as webhooks_router
 from app.routers.whatsapp_connections_router import router as whatsapp_connections_router
@@ -112,6 +115,12 @@ app = create_product_app(
     # rollup, both staff-gated via `get_current_user_org`.
     # `grupoterapia_router` (staff) / `portal_grupoterapia_router` (member)
     # are Ninho Vazio slice BE-D (CONTRACT.md §Grupoterapia).
+    # `eu_router` / `cadastro_router` / `portal_router` are Ninho Vazio
+    # slice BE-A's (products/community/projects/ninho-vazio/CONTRACT.md
+    # §Identity, §Member portal) — `cadastro_router` is PUBLIC
+    # (self-signup); `portal_router` mounts ONLY `GET /api/portal/
+    # minha-conta` (the member-cancel endpoint is slice BE-B's, mounted
+    # from its own router module).
     routers=[
         example_router, webhook_router, planos_router, membros_router,
         aplicacoes_router, checkout_router, webhooks_router,
@@ -122,6 +131,7 @@ app = create_product_app(
         api_keys_router, whatsapp_connections_router,
         lancamentos_router, dashboard_router,
         grupoterapia_router, portal_grupoterapia_router,
+        eu_router, cadastro_router, portal_router,
     ],
     # Module 3 registers `community.moderacao_whatsapp` (AI-flagged
     # WhatsApp moderation) in `app/services/ai_consent_features.py` —

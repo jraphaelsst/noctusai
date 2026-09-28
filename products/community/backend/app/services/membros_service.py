@@ -10,14 +10,30 @@ applied server-side.
 """
 from __future__ import annotations
 
+import secrets
+import string
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.domain.org import attach_user_to_org, find_auth_user_id_by_email, provision_invited_identity
+
+from app.dependencies import MEMBRO_ORG_ROLE
 from app.schemas.membros import MEMBRO_STATUSES
+from app.services.eventos_service import registrar_evento
 
 _TABLE = "membros"
 _PLANOS_TABLE = "planos"
+_EVENTOS_TABLE = "membro_eventos"
+_NOCTUS_USERS_TABLE = "noctus_users"
+
+#: `POST /api/membros/{id}/acesso` — contract §Identity, slice BE-A.
+_SENHA_TEMP_LEN = 12
+_SENHA_TEMP_ALPHABET = string.ascii_letters + string.digits
+
+
+def _gerar_senha_temporaria() -> str:
+    return "".join(secrets.choice(_SENHA_TEMP_ALPHABET) for _ in range(_SENHA_TEMP_LEN))
 
 
 class MembrosServiceError(Exception):
@@ -156,7 +172,9 @@ class MembrosService:
         plano_nomes = self._plano_nomes([created.get("plano_id")])
         return self._to_out(created, plano_nomes)
 
-    async def update(self, *, membro_id: str, payload: dict) -> dict | None:
+    async def update(
+        self, *, membro_id: str, payload: dict, autor_id: Optional[UUID | str] = None,
+    ) -> dict | None:
         if "email" in payload:
             existing = (
                 self._client.table(_TABLE)
@@ -171,6 +189,18 @@ class MembrosService:
                 raise MembrosServiceError(
                     "Já existe um membro com esse e-mail.", status_code=409,
                 )
+        current_plano_id = None
+        plano_changing = "plano_id" in payload
+        if plano_changing:
+            current = (
+                self._client.table(_TABLE)
+                .select("plano_id")
+                .eq("org_id", self._org_id)
+                .eq("id", str(membro_id))
+                .maybe_single()
+                .execute()
+            ).data
+            current_plano_id = current.get("plano_id") if current else None
         if payload.get("plano_id") is not None:
             payload = {**payload, "plano_id": str(payload["plano_id"])}
         result = (
@@ -183,18 +213,28 @@ class MembrosService:
         if not result.data:
             return None
         row = result.data[0]
+        # Contract §Identity: "PATCH changing plano_id writes evento plano."
+        if plano_changing and str(current_plano_id) != str(row.get("plano_id")):
+            registrar_evento(
+                self._client, org_id=self._org_id, membro_id=membro_id, tipo="plano",
+                descricao="Plano alterado.",
+                dados={"de": current_plano_id, "para": row.get("plano_id")},
+                autor_id=autor_id,
+            )
         plano_nomes = self._plano_nomes([row.get("plano_id")])
         return self._to_out(row, plano_nomes)
 
-    async def set_status(self, *, membro_id: str, novo_status: str, motivo: str | None = None) -> dict | None:
+    async def set_status(
+        self, *, membro_id: str, novo_status: str, motivo: str | None = None,
+        autor_id: Optional[UUID | str] = None,
+    ) -> dict | None:
         """Set status — an event, module 2 hangs payment-driven transitions
         off this same function. Idempotent: same status → 200, unchanged.
 
-        `motivo` is accepted (contract shape) but module 1 has no
-        status-history table to persist it into yet — a later module
-        owns audit trail.
-        # NOC-REMEDIATE[status-history]: persist `motivo` once a status-change
-        # audit trail exists (module 2+). — 2026-09-16
+        `motivo` is persisted inside the `status` evento's `dados`
+        (contract §Identity: "closes NOC-REMEDIATE[status-history]") — the
+        timeline (`community.membro_eventos`, migration 013) IS the
+        status-change audit trail module 1's marker deferred to.
         """
         current = (
             self._client.table(_TABLE)
@@ -206,7 +246,12 @@ class MembrosService:
         ).data
         if not current:
             return None
-        if current.get("status") == novo_status:
+        # Captured BEFORE the update below: some request-builder test
+        # doubles mutate the row dict returned by `select()` in place, so
+        # reading `current.get("status")` AFTER the update would silently
+        # report the NEW status as the "de" value.
+        status_anterior = current.get("status")
+        if status_anterior == novo_status:
             plano_nomes = self._plano_nomes([current.get("plano_id")])
             return self._to_out(current, plano_nomes)
         if novo_status == "ativo" and not current.get("plano_id"):
@@ -223,6 +268,12 @@ class MembrosService:
         if not result.data:
             return None
         row = result.data[0]
+        registrar_evento(
+            self._client, org_id=self._org_id, membro_id=membro_id, tipo="status",
+            descricao=f"Status alterado de {status_anterior} para {novo_status}.",
+            dados={"de": status_anterior, "para": novo_status, "motivo": motivo},
+            autor_id=autor_id,
+        )
         plano_nomes = self._plano_nomes([row.get("plano_id")])
         return self._to_out(row, plano_nomes)
 
@@ -237,3 +288,123 @@ class MembrosService:
             .execute()
         )
         return bool(result.data)
+
+    # ── access provisioning — contract §Identity, slice BE-A ───────────
+
+    async def criar_acesso(
+        self, *, membro_id: str, core_client: Any, autor_id: Optional[UUID | str] = None,
+    ) -> dict | None:
+        """`POST /api/membros/{id}/acesso` — create the member's login when
+        they have none.
+
+        `core_client` reaches the PLATFORM tables (`noctus_users`,
+        `auth.admin.*`) — see `app/dependencies.py`'s `get_core_client`.
+        """
+        membro = (
+            self._client.table(_TABLE)
+            .select("*")
+            .eq("org_id", self._org_id)
+            .eq("id", str(membro_id))
+            .maybe_single()
+            .execute()
+        ).data
+        if not membro:
+            return None
+        if membro.get("user_id"):
+            raise MembrosServiceError("Este membro já tem acesso.", status_code=409)
+
+        email = membro["email"]
+        existing_id = find_auth_user_id_by_email(core_client, email)
+        if existing_id:
+            self._client.table(_TABLE).update({"user_id": existing_id}).eq(
+                "org_id", self._org_id,
+            ).eq("id", str(membro_id)).execute()
+            raise MembrosServiceError(
+                "Este e-mail já tinha login; o acesso foi vinculado.", status_code=409,
+            )
+
+        senha = _gerar_senha_temporaria()
+        user_id, _created = provision_invited_identity(
+            core_client, email=email, password=senha, nome=membro["nome"],
+        )
+        attach_user_to_org(
+            core_client, user_id, org_id=self._org_id, email=email, nome=membro["nome"],
+            org_role=MEMBRO_ORG_ROLE,
+        )
+        self._client.table(_TABLE).update({"user_id": user_id}).eq(
+            "org_id", self._org_id,
+        ).eq("id", str(membro_id)).execute()
+        registrar_evento(
+            self._client, org_id=self._org_id, membro_id=membro_id, tipo="acesso",
+            descricao="Acesso criado pela equipe", autor_id=autor_id,
+        )
+        return {"email": email, "senha_temporaria": senha}
+
+    # ── relationship timeline — contract §Identity, slice BE-A ─────────
+
+    async def list_eventos(
+        self, *, membro_id: str, page: int = 1, page_size: int = 50, core_client: Any,
+    ) -> dict:
+        rows = (
+            self._client.table(_EVENTOS_TABLE)
+            .select("*")
+            .eq("org_id", self._org_id)
+            .eq("membro_id", str(membro_id))
+            .execute()
+            .data
+            or []
+        )
+        rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        total = len(rows)
+        start = (page - 1) * page_size
+        page_rows = rows[start:start + page_size]
+        autor_nomes = self._autor_nomes(core_client, [r.get("autor_id") for r in page_rows])
+        items = [
+            {**r, "autor_nome": autor_nomes.get(str(r["autor_id"])) if r.get("autor_id") else None}
+            for r in page_rows
+        ]
+        return {"items": items, "total": total}
+
+    @staticmethod
+    def _autor_nomes(core_client: Any, autor_ids: list) -> dict[str, str]:
+        ids = sorted({str(i) for i in autor_ids if i})
+        if not ids:
+            return {}
+        rows = (
+            core_client.table(_NOCTUS_USERS_TABLE)
+            .select("id,nome")
+            .in_("id", ids)
+            .execute()
+            .data
+            or []
+        )
+        return {str(r["id"]): r.get("nome") for r in rows}
+
+    async def criar_evento(
+        self, *, membro_id: str, tipo: str, descricao: str,
+        autor_id: Optional[UUID | str] = None, autor_nome: str | None = None,
+    ) -> dict | None:
+        membro = (
+            self._client.table(_TABLE)
+            .select("id")
+            .eq("org_id", self._org_id)
+            .eq("id", str(membro_id))
+            .maybe_single()
+            .execute()
+        ).data
+        if not membro:
+            return None
+        # Explicit id: this row is echoed straight back as the HTTP
+        # response (unlike every other `registrar_evento` call in this
+        # module, which is fire-and-forget) — see `registrar_evento`'s
+        # docstring for why the id must be client-supplied here.
+        row = registrar_evento(
+            self._client, org_id=self._org_id, membro_id=membro_id, tipo=tipo,
+            descricao=descricao, autor_id=autor_id, id=uuid4(),
+        )
+        # `created_at` is a DB-computed default (migration 013); a real
+        # write always returns it, but nothing here re-derives it if the
+        # underlying client didn't — `setdefault` only fires when it's
+        # genuinely absent.
+        row.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+        return {**row, "autor_nome": autor_nome}

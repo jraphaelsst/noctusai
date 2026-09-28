@@ -31,6 +31,7 @@ def registrar_evento(
     descricao: str,
     dados: dict[str, Any] | None = None,
     autor_id: UUID | str | None = None,
+    id: UUID | str | None = None,
 ) -> dict[str, Any]:
     """Append one timeline event and return the written row.
 
@@ -39,11 +40,22 @@ def registrar_evento(
     (webhooks, the billing sweep, the public signup). `autor_id` is None
     for system-originated events.
 
+    `id` is OPTIONAL — the table's own `DEFAULT gen_random_uuid()`
+    (migration 013) fills it server-side when omitted, same as every
+    other write here. Pass it explicitly ONLY when the caller must echo
+    a UUID-typed id back in an HTTP response written in the SAME call
+    (e.g. `POST /api/membros/{id}/eventos` — contract §Identity): the
+    in-repo `MockSupabaseClient` fills a MISSING id with a `mock-<table>-
+    <n>` placeholder (never a real UUID, since it has no DB default to
+    simulate), which a strict `id: UUID` response model rejects. A real
+    Postgres write behaves identically either way (`ON CONFLICT` never
+    applies here — this is a plain append).
+
     Raises whatever the client raises: a lost timeline write is a lost
     audit record, so it is never swallowed here. A caller that must not
     fail its primary action on a timeline error decides that explicitly.
     """
-    row = {
+    row: dict[str, Any] = {
         "org_id": str(org_id),
         "membro_id": str(membro_id),
         "tipo": tipo,
@@ -51,5 +63,7 @@ def registrar_evento(
         "dados": dados or {},
         "autor_id": str(autor_id) if autor_id else None,
     }
+    if id is not None:
+        row["id"] = str(id)
     written = client.table(_TABLE).insert(row).execute().data or []
     return written[0] if written else row
