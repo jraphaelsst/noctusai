@@ -12,7 +12,7 @@
  */
 import { useState } from "react";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
-import { Eye, KeyRound, Lock, Pencil, Save, ShieldAlert, Trash2, X } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Lock, Pencil, Save, ShieldAlert, Trash2, X } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import {
@@ -36,6 +36,7 @@ function AcessoRow({
   isAdmin,
   revelado,
   onRevelar,
+  onOcultar,
   revelarPending,
   onRemover,
 }: {
@@ -43,6 +44,7 @@ function AcessoRow({
   isAdmin: boolean;
   revelado: string | undefined;
   onRevelar: () => void;
+  onOcultar: () => void;
   revelarPending: boolean;
   onRemover: () => void;
 }) {
@@ -66,7 +68,20 @@ function AcessoRow({
         </div>
         {acesso.tem_senha ? (
           revelado ? (
-            <code className="max-w-full break-all rounded bg-muted px-2 py-1 text-xs text-foreground">{revelado}</code>
+            <div className="flex min-w-0 items-center gap-1">
+              <code className="max-w-full break-all rounded bg-muted px-2 py-1 text-xs text-foreground">{revelado}</code>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="max-sm:h-10 max-sm:w-10"
+                aria-label={`Ocultar senha de ${acesso.rotulo}`}
+                onClick={onOcultar}
+              >
+                {/* achado 18: revealing had no way back — once shown, it
+                    stayed on screen until the whole tela was left. */}
+                <EyeOff className="h-4 w-4" />
+              </Button>
+            </div>
           ) : isAdmin ? (
             <Button variant="outline" size="sm" className="max-sm:h-10" disabled={revelarPending} onClick={onRevelar}>
               <Eye className="mr-2 h-3 w-3" />
@@ -297,6 +312,12 @@ export function CofreAcessos({ clienteId }: { clienteId: string }) {
               isAdmin={isAdmin}
               revelado={reveladas[acesso.id]}
               onRevelar={() => handleRevelar(acesso.id)}
+              onOcultar={() =>
+                setReveladas((atual) => {
+                  const { [acesso.id]: _omitido, ...resto } = atual;
+                  return resto;
+                })
+              }
               revelarPending={revelar.isPending}
               onRemover={() => removerAcesso.mutate(acesso.id)}
             />

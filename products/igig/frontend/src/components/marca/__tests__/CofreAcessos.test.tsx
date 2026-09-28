@@ -184,4 +184,17 @@ describe("CofreAcessos — achado 15 fixes", () => {
     expect(screen.queryByRole("button", { name: "Revelar" })).not.toBeInTheDocument();
     expect(screen.getByText("Protegida")).toBeInTheDocument();
   });
+
+  it("a revealed password can be hidden again", () => {
+    mockUseAcessos.mockReturnValue({ acessos: [ACESSO], loading: false, cofreConfigurado: true });
+    mockRevelarSenha.mutate.mockImplementation((_id, { onSuccess }) => onSuccess({ senha: "s3nh4" }));
+    renderCofre();
+
+    fireEvent.click(screen.getByRole("button", { name: "Revelar" }));
+    expect(screen.getByText("s3nh4")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar senha de Meta Business" }));
+    expect(screen.queryByText("s3nh4")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revelar" })).toBeInTheDocument();
+  });
 });
