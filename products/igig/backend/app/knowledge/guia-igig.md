@@ -63,7 +63,7 @@ Quem não está logado vê: barra com o logotipo (ícone de paleta) e "IgIg", bo
 "Email" → "Enviar link de recuperacao". Sucesso "Email enviado com sucesso!" ("Verifique sua caixa de entrada"); erros "Erro ao enviar email", "Erro inesperado ao enviar email"; validação "Email invalido". A redefinição é do provedor de autenticação (Supabase). O IgIg **não tem tela própria de "nova senha"** (nenhuma rota de redefinição é registrada); para onde o link do e-mail leva e se ele já abre uma sessão dependem da configuração do provedor (não confirmado no código). Logado, a senha também muda pelo menu do usuário ("Nova Senha", "Confirmar Senha", "Atualizar Senha").
 
 ### 2.4 Convites — `/accept-invite/<token>`
-1. Um Proprietário, Administrador ou Gerente convida em "Equipe" (e-mail + papel). O convite vale **7 dias**; não pode haver dois convites pendentes para o mesmo e-mail ("Ja existe um convite pendente para este email").
+1. Um Proprietário, Administrador ou Gerente convida em "Equipe" (e-mail + papel — a lista de papéis já vem filtrada pelo que a própria pessoa pode conceder, veja 3.1). O convite vale **7 dias**; não pode haver dois convites pendentes para o mesmo e-mail ("Ja existe um convite pendente para este email"). O convite é sempre criado; se o e-mail não puder ser enviado (ex.: serviço de e-mail não configurado), a tela mostra "Convite criado, mas o e-mail não foi enviado — copie o link" com um botão "Copiar link" que copia o próprio link de aceite (`/accept-invite/<token>`) para compartilhar manualmente.
 2. O convidado abre o link: "Aceitar Convite" / "Validando convite..."; se válido, mostra o e-mail (só leitura) e o papel e pede "Nome completo", "Senha", "Confirmar senha" → "Aceitar Convite" ("Criando conta..."). Validações "Nome e obrigatorio", "Senha deve ter no minimo 6 caracteres", "Senhas nao conferem".
 3. Sucesso: "Conta criada com sucesso!" / "Voce ja pode fazer login com seu email e senha." + "Ir para o login".
 4. Erros: "Token de convite nao encontrado na URL.", "Convite invalido ou expirado.", "Convite nao encontrado", "Convite expirado", "Este convite ja foi utilizado ou cancelado", "Erro ao validar convite. Tente novamente.", "Erro ao aceitar convite.", "Erro de conexao. Tente novamente.", "Erro ao vincular usuario a organizacao"; link "Voltar ao login".
@@ -127,7 +127,7 @@ Legenda: ✅ pode; ❌ o servidor recusa; "UI" = o que a tela faz para quem não
 | **Integrações — SMTP salvar/remover; Gmail conectar/desconectar** | ✅ | ❌ | ❌ | Formulário/botões escondidos, com "Apenas administradores da organização podem configurar o SMTP." / "Apenas administradores da organização podem conectar ou desconectar o Gmail." |
 | Integrações — testar SMTP; ver status | ✅ | ✅ | ✅ | — |
 | Equipe — ver membros | ✅ | ✅ | ✅ | — |
-| **Equipe — convidar** | ✅ (Administrador não convida como Proprietário) | ✅ (não como Administrador/Proprietário) | ❌ | Sem botão "Convidar"; papel acima do permitido: 403 "Sem permissao para convidar como <papel>" |
+| **Equipe — convidar** | ✅ (Administrador não convida como Proprietário) | ✅ (não como Administrador/Proprietário) | ❌ | Sem botão "Convidar"; a lista de papéis do formulário já esconde o que a pessoa não pode conceder (nunca mostra "Administrador" para um Gerente) — o 403 "Sem permissao para convidar como <papel>" só apareceria numa chamada direta à API |
 | **Equipe — ver/cancelar convites pendentes; remover membro** | ✅ | ❌ | ❌ | Sem "Convites pendentes" e sem coluna "Ações" |
 | Portal de aprovação (`/aprovar/<token>`), formulário de pré-qualificação | público (qualquer pessoa com o link) | | | — |
 
@@ -552,7 +552,7 @@ Não há rotina para: fechar o mês ("Gerar competência" é manual), cobrar/env
 | `IGIG_PORTAL_BLOQUEIO_DIAS` | Bloqueio do portal de aprovação para cliente com fatura vencida há **mais de** N dias (0 ou ausente = desligado) | Desligado: o portal nunca bloqueia. Ligado: o cliente vê "Portal temporariamente indisponível" / "Contate a agência." (423 `portal_bloqueado`) — ver Capítulo 3 |
 | Chave da Anthropic (`ANTHROPIC_API_KEY` dentro do container, resolvida pela cadeia de credenciais da plataforma; na frota de produção ela vem da variável dedicada e com teto de gasto **`IGIG_ANTHROPIC_API_KEY`**) | Assistente do negócio e Assistente IgIg (chat de ajuda) | Assistente do negócio: 503 "A IA não está configurada (chave da Anthropic ausente)."; Assistente IgIg: "O assistente de IA ainda não foi configurado para este produto." e o campo passa a "Assistente indisponível no momento" |
 | `NOCTUS_SCHEDULERS_ENABLED` | Liga as rotinas agendadas | Rotinas não rodam |
-| `RESEND_API_KEY` | E-mail de convite da Equipe (provedor da plataforma) | O convite é criado e a tela mostra sucesso, mas nenhum e-mail sai |
+| `RESEND_API_KEY` | E-mail de convite da Equipe (provedor da plataforma) | O convite é criado, nenhum e-mail sai, e a tela avisa ("Convite criado, mas o e-mail não foi enviado — copie o link") em vez de mostrar sucesso |
 | `REDIS_URL` | Contadores de limite de requisições | Contadores em memória |
 | `SENTRY_DSN`, `DEBUG`, `MAX_BODY_BYTES` (1 MB), `DATABASE_BACKEND` | Operação | Padrões |
 
@@ -589,7 +589,7 @@ Sucesso: os módulos mais novos (funil, orçamentos, produtos, contratos, e-mail
 Erros — quatro formatos:
 1. **Regra de negócio**: `{"detail": "<mensagem em português>", "code": "<código>"}` (409/422/403/502/503…). A tela mostra a mensagem como aviso ou texto vermelho (sem o prefixo "[409]").
 2. **Erro genérico**: `{"error": {"code": "NOT_FOUND" | "UNAUTHORIZED" | "FORBIDDEN" | "BAD_REQUEST" | "HTTP_ERROR" | "CONFLICT" | "INTERNAL_ERROR", "message": "…"}}` — ex.: "Cliente não encontrado", "Negócio não encontrado", "Etapa não encontrada", "Registro duplicado — este recurso já existe", "Só um negócio perdido pode ser reaberto.", "Organização não encontrada.".
-3. **Validação de campos**: 422 com a lista de campos inválidos (formato padrão do servidor web: `{"detail": [{loc, msg, type}]}`). A tela mostra os textos `msg` juntados por "; " — esses textos vêm **em inglês**, do validador (ex.: "String should have at least 1 character", "value is not a valid email address: …"); não há tradução.
+3. **Validação de campos**: 422 no formato `{"error": {"code": "VALIDATION_ERROR", "message": "<campo>: <mensagem>; <campo>: <mensagem>…", "details": {"errors": [{field, message, type}]}}}`. A tela mostra `message` — em **português**, um trecho por campo inválido (ex.: "email: E-mail inválido", "nome: Deve ter pelo menos 3 caracteres", "idade: Campo obrigatório"). `details.errors[].message` continua em inglês (texto bruto do validador) — é só para quem lê a resposta programaticamente, nunca aparece na tela.
 4. **Limite de requisições**: 429 `{"error": {"code": "RATE_LIMITED", "message": "Muitas requisições. Tente novamente em breve."}}`.
 
 ### 12.2 Tabela de códigos
@@ -1509,7 +1509,7 @@ Lista as **contas de login** da agência (membros da organização) e os convite
 ### 2. Acesso
 - Rota: `/equipe`. Menu lateral: "Equipe" (13º, último item).
 - Todos: ver a lista de membros.
-- **"Convidar"**: Proprietário, Administrador **e Gerente** (e administrador da plataforma). Teto de papel: só o Proprietário convida como Proprietário; só Proprietário/Administrador convidam como "Administrador"; o Gerente convida como "Gerente", "Membro", "Visualizador", "Desenvolvedor", "Teste" ou "Corretor".
+- **"Convidar"**: Proprietário, Administrador **e Gerente** (e administrador da plataforma). Teto de papel: só o Proprietário convida como Proprietário; só Proprietário/Administrador convidam como "Administrador"; o Gerente convida como "Gerente", "Membro", "Visualizador", "Desenvolvedor", "Teste" ou "Corretor" — a lista "Papel" do formulário já mostra só o que a pessoa pode conceder (ver Campos).
 - **"Ações"** (remover membro) e **"Convites pendentes"** (ver/cancelar): só Proprietário e Administrador.
 
 ### 3. Layout
@@ -1523,12 +1523,12 @@ Lista as **contas de login** da agência (membros da organização) e os convite
 | Campo | Tipo | Obrigatório | Validação/limites | Padrão | Observação |
 |---|---|---|---|---|---|
 | "E-mail" | e-mail | Sim | — | vazio | Exemplo "colaborador@empresa.com" |
-| "Papel" | lista | Sim | Administrador, Gerente, Membro, Visualizador, Desenvolvedor, Teste, Corretor | "Membro" | "Proprietário" não é oferecido. A lista é a mesma para todos, mas o servidor recusa um Gerente que escolha "Administrador" (403 "Sem permissao para convidar como Administrador") |
+| "Papel" | lista | Sim | Administrador, Gerente, Membro, Visualizador, Desenvolvedor, Teste, Corretor | "Membro" | "Proprietário" não é oferecido. A lista muda conforme quem convida: um Gerente vê "Gerente, Membro, Visualizador, Desenvolvedor, Teste, Corretor" (sem "Administrador"); Proprietário/Administrador/admin da plataforma veem todas as sete — a mesma regra do servidor (403 "Sem permissao para convidar como <papel>"), só que aplicada também na tela |
 
 ### 5. Ações
 | Ação | Pré-condições | O que acontece | Mensagem de sucesso | Erros possíveis |
 |---|---|---|---|---|
-| "Convidar" → "Enviar convite" ("Enviando…") | Proprietário/Admin/Gerente; e-mail | Cria convite (válido por **7 dias**, na organização de quem convida) e envia e-mail "Aceitar Convite" com o link `/accept-invite/<token>`, pelo provedor de e-mail da plataforma (Resend) | "Convite enviado com sucesso" | "Erro ao enviar convite" + descrição: 403 "Sem permissao para convidar"; 403 "Sem permissao para convidar como <papel>" (papel acima do permitido para você); 400 "Papel invalido: <papel>"; 400 "Email e obrigatorio"; 409 "Ja existe um convite pendente para este email" |
+| "Convidar" → "Enviar convite" ("Enviando…") | Proprietário/Admin/Gerente; e-mail | Cria convite (válido por **7 dias**, na organização de quem convida) e tenta enviar e-mail "Aceitar Convite" com o link `/accept-invite/<token>`, pelo provedor de e-mail da plataforma (Resend) | E-mail enviado: "Convite enviado com sucesso". E-mail NÃO enviado (ex.: provedor não configurado): "Convite criado, mas o e-mail não foi enviado — copie o link", com botão "Copiar link" (copia `/accept-invite/<token>` para a área de transferência) | "Erro ao enviar convite" + descrição: 403 "Sem permissao para convidar"; 403 "Sem permissao para convidar como <papel>" (papel acima do permitido para você); 400 "Papel invalido: <papel>"; 400 "Email e obrigatorio"; 409 "Ja existe um convite pendente para este email" |
 | "Cancelar" (convite) | Proprietário/Admin | Cancela o convite | "Convite cancelado" | "Erro ao cancelar convite"; 403 "Sem permissao" |
 | "Remover" → "Confirmar remoção" ("Removendo…") | Proprietário/Admin; não é você nem o Proprietário | Confirmação "Tem certeza que deseja remover <nome> da organização? Esta ação não pode ser desfeita." Remove o membro (só se ele for da sua organização) | "Membro removido" | "Erro ao remover membro" + descrição: 400 "Nao pode remover a si mesmo"; 403 "Sem permissao"; 403 "Somente o proprietario pode remover um proprietario"; 404 "Membro nao encontrado" |
 
@@ -1537,6 +1537,7 @@ Lista as **contas de login** da agência (membros da organização) e os convite
 - Vazio: "Nenhum membro encontrado"; "Nenhum convite pendente".
 - Erro: "Não foi possível carregar a equipe."; "Não foi possível carregar os convites pendentes." (antes o erro era escondido).
 - Atualizando: " · atualizando…".
+- Aviso (convite criado, e-mail não enviado): "Convite criado, mas o e-mail não foi enviado — copie o link", com o motivo (ex.: "Servico de e-mail nao configurado") e um botão "Copiar link".
 
 ### 7. Regras de negócio e por quê
 1. Três níveis: ver (todos), convidar (Proprietário/Administrador/Gerente, com teto de papel), gerenciar (Proprietário/Administrador).
@@ -1550,18 +1551,16 @@ Lista as **contas de login** da agência (membros da organização) e os convite
 `Equipe.tsx` → `useEquipe` (TanStack Query) → GET `/api/team`, GET `/api/team/invitations` (só se admin), POST `/api/team/invite` `{email, role}`, DELETE `/api/team/invitations/{id}`, DELETE `/api/team/{user_id}` → roteador de equipe do seed → `public.noctus_users` e `igig.invitations`. Aceite: página `/accept-invite/<token>` (ver Capítulo 0).
 
 ### 9. Dependências de configuração
-- E-mail do convite: provedor **Resend** da plataforma, variável `RESEND_API_KEY`, remetente "NoctusAI <noreply@noctusai.com>"; o link usa o primeiro domínio de `CORS_ORIGINS`. **Sem `RESEND_API_KEY`, o convite é criado e a tela mostra "Convite enviado com sucesso", mas nenhum e-mail sai** (o servidor só registra no log) — nesse caso, envie à pessoa o link de aceite por outro meio (ver Limitações).
+- E-mail do convite: provedor **Resend** da plataforma, variável `RESEND_API_KEY`, remetente "NoctusAI <noreply@noctusai.com>"; o link usa o primeiro domínio de `CORS_ORIGINS`. **Sem `RESEND_API_KEY` (ou se o envio falhar), o convite é criado mas nenhum e-mail sai** — a tela avisa ("Convite criado, mas o e-mail não foi enviado — copie o link") em vez de dizer que o e-mail foi enviado, e oferece o botão "Copiar link" para compartilhar o link de aceite por outro meio.
 
 ### 10. Limitações conhecidas
 - Não é possível mudar o papel de um membro existente nesta tela.
-- As mensagens de erro vindas do servidor da plataforma estão sem acento ("Sem permissao", "Nao pode remover a si mesmo").
-- Se o envio do e-mail de convite falhar (provedor não configurado ou erro do Resend), o convite continua criado e a tela mostra sucesso mesmo assim; a tela não mostra o link de aceite para copiar.
-- A lista "Papel" oferece "Administrador" também para o Gerente, que recebe 403 ao enviar.
+- As mensagens de erro vindas do servidor da plataforma estão sem acento ("Sem permissao", "Nao pode remover a si mesmo") — a mensagem de "e-mail não enviado" e a de validação de campos (ver Capítulo 0 § 12) já vêm com acento, em português.
 - Depois de convidar, é preciso cadastrar a pessoa em Custos para ela aparecer como responsável.
 
 ### 11. Perguntas frequentes
 - **P: Sou Gerente; posso convidar?** R: Sim, como Gerente, Membro, Visualizador, Desenvolvedor, Teste ou Corretor (não como Administrador). Ver e cancelar convites pendentes e remover membros é só para Proprietário/Administrador.
-- **P: A pessoa diz que não recebeu o convite.** R: Confira o spam. Se não chegou, o envio de e-mail da plataforma pode não estar configurado; cancele o convite em "Convites pendentes" e convide de novo, ou peça ao responsável técnico para verificar o e-mail da plataforma.
+- **P: A pessoa diz que não recebeu o convite.** R: Confira o spam. Se o convite foi criado com o aviso "e-mail não foi enviado", use o botão "Copiar link" e mande o link de aceite por outro meio (WhatsApp, etc.) — não precisa cancelar e convidar de novo. Se o aviso não apareceu e mesmo assim não chegou, peça ao responsável técnico para verificar o provedor de e-mail da plataforma.
 - **P: Quanto tempo vale o convite?** R: 7 dias.
 - **P: A pessoa entrou mas não aparece como responsável dos cards.** R: Cadastre-a como profissional em Custos e vincule o usuário.
 - **P: Posso mudar o papel de alguém?** R: Não por esta tela.
@@ -1763,7 +1762,6 @@ Toda gravação atualiza a lista de orçamentos e o quadro do Comercial; o aceit
 - Preço em 4 semanas × calendário real: meses com mais ocorrências dos dias marcados geram mais pautas que o pacote do contrato; essas peças do plano **não** geram excedente (ver Página Financeiro).
 - A tela não oferece recusar um orçamento Expirado (o servidor permite).
 - O filtro "De/Até" é aplicado no navegador, sobre a data de criação.
-- Mensagens de validação 422 do formato padrão (ex.: descrição vazia, e-mail inválido em "Para"/"CC") aparecem com o texto do validador, **em inglês** (ex.: "String should have at least 1 character"), juntados por "; ".
 
 ### 11. Perguntas frequentes
 - **P: Por que a margem aparece "Margem indisponível"?** R: Nenhum profissional ativo tem custo/hora em Custos (ou o total é zero). Cadastre funções e profissionais com custo/hora em Custos e salve o orçamento de novo (ou crie nova versão, que recalcula).
@@ -3259,10 +3257,9 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 - **Excluir etapa do Comercial movendo os cards em massa** não grava o histórico de movimento desses cards (depende de uma mudança na função compartilhada de etapas do seed).
 - **Mudar o papel de um membro da Equipe** ou o status de visibilidade das páginas (`status_pagina`): sem tela; feito pela equipe da plataforma.
 - **Notificação da decisão do cliente no portal** leva à Esteira, não direto à tarefa (as de automação e SLA já abrem a tarefa).
-- **Mensagens de validação de formato (422)** aparecem em inglês, vindas do validador (ex.: "String should have at least 1 character").
-- **Textos da plataforma base sem acento** (ex.: "Sem permissao", "Pagina nao encontrada", "Sessao expirando"): vêm do seed da plataforma.
+- **Textos da plataforma base sem acento** (ex.: "Sem permissao", "Pagina nao encontrada", "Sessao expirando"): vêm do seed da plataforma. As mensagens de validação de formato (422) já vêm em português, com acento (ver Capítulo 0 § 12.1) — essa é a exceção.
 - **Assistente IgIg:** responde só a partir deste manual; não consulta nem altera dados, não executa ações e não guarda a conversa no servidor.
 
 ## 5.4 O que mudou nesta versão (para quem conhecia a anterior)
 
-Resolvido e já descrito nas páginas: rotinas diárias de inadimplência (06:00), fila de publicação e lembretes (a cada 5 min) agora rodam; portal de aprovação pode ser bloqueado por inadimplência (423); "Enviar fatura" e "Marcar como enviada"; excedentes contam só peças avulsas **entregues** (publicadas ou aprovadas), nunca peças do plano; alertas no relatório comercial; custo real em segundos no BI/DRE/relatório; números em padrão brasileiro ("52,8%", "0,40", "1,5 h", "1.500" = mil e quinhentos); exclusão de tarefa com qualquer apontamento ("Excluir mesmo assim"); apagar a pauta apaga os arquivos das peças; papel de etapa nunca some em silêncio (Esteira) e "Papéis das etapas" no Comercial; `/esteira?tarefa=` abre a tarefa; "Paga" no card do cliente só para admin e com confirmação; logo sem SVG; negócio para cliente existente ("Cliente existente" / "Novo negócio"); "Margem indisponível" sem custo/hora; texto correto de "Nova versão"; aviso de pautas conta só as criadas no aceite; pautas automáticas apagadas/movidas não voltam; o contrato vivo mantém "Abrir PDF do contrato"; Custos e Integrações → E-mail escondem controles só-admin; respostas de e-mail avisam também os Administradores; Assistente do negócio fixo em Claude Sonnet; reabrir reinicia o tempo na etapa; estados de carregamento/erro na Inadimplência do Dashboard; rótulo "Proprietário" com acento; o endereço pedido é lembrado depois do login; o menu no celular fecha ao navegar; Assistente IgIg disponível em todas as telas.
+Resolvido e já descrito nas páginas: rotinas diárias de inadimplência (06:00), fila de publicação e lembretes (a cada 5 min) agora rodam; portal de aprovação pode ser bloqueado por inadimplência (423); "Enviar fatura" e "Marcar como enviada"; excedentes contam só peças avulsas **entregues** (publicadas ou aprovadas), nunca peças do plano; alertas no relatório comercial; custo real em segundos no BI/DRE/relatório; números em padrão brasileiro ("52,8%", "0,40", "1,5 h", "1.500" = mil e quinhentos); exclusão de tarefa com qualquer apontamento ("Excluir mesmo assim"); apagar a pauta apaga os arquivos das peças; papel de etapa nunca some em silêncio (Esteira) e "Papéis das etapas" no Comercial; `/esteira?tarefa=` abre a tarefa; "Paga" no card do cliente só para admin e com confirmação; logo sem SVG; negócio para cliente existente ("Cliente existente" / "Novo negócio"); "Margem indisponível" sem custo/hora; texto correto de "Nova versão"; aviso de pautas conta só as criadas no aceite; pautas automáticas apagadas/movidas não voltam; o contrato vivo mantém "Abrir PDF do contrato"; Custos e Integrações → E-mail escondem controles só-admin; respostas de e-mail avisam também os Administradores; Assistente do negócio fixo em Claude Sonnet; reabrir reinicia o tempo na etapa; estados de carregamento/erro na Inadimplência do Dashboard; rótulo "Proprietário" com acento; o endereço pedido é lembrado depois do login; o menu no celular fecha ao navegar; Assistente IgIg disponível em todas as telas; convite não enviado agora avisa (com link para copiar) em vez de mostrar sucesso falso; a lista "Papel" do convite já mostra só o que quem convida pode conceder; mensagens de validação de formato (422) agora em português, por campo.
