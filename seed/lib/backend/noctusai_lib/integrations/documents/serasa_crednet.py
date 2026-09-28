@@ -130,8 +130,12 @@ def _decimal_brl(txt: str) -> Optional[Decimal]:
 
 
 def _decimal_pct(txt: str) -> Optional[Decimal]:
-    """`100,0 %` → `Decimal("100.0")`."""
-    m = re.search(r"(\d+(?:,\d+)?)", txt)
+    """`100,0 %` / `100.0 %` → `Decimal("100.0")`.
+
+    A participação is at most 100 %, so it never carries a thousands separator:
+    either `,` or `.` is the decimal point (Crednet prints `100.0 %` on some
+    exports — P2 corpus, 2026-09-28)."""
+    m = re.search(r"(\d+(?:[.,]\d+)?)", txt)
     if not m:
         return None
     try:
@@ -173,7 +177,7 @@ _OCORRENCIA_ROTULOS: dict[str, str] = {
 #: not this regex's.
 _PARTICIPACAO_ROW_RE = re.compile(
     r"^\|\s*(?P<empresa>[^|]+?)\s*\|\s*(?P<cnpj>[0-9A-Z./\-]{14,20})\s*\|\s*"
-    r"(?P<pct>[\d,]+)\s*%?\s*\|\s*(?P<uf>[A-Z]{2})\s*\|?\s*$",
+    r"(?P<pct>\d+(?:[.,]\d+)?)\s*%?\s*\|\s*(?P<uf>[A-Z]{2})\s*\|?\s*$",
     re.MULTILINE,
 )
 #: The plain-text line right after a participação row — see the prompt's own

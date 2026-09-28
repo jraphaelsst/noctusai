@@ -419,3 +419,25 @@ class TestTheFake:
     async def test_it_still_refuses_empty_bytes(self):
         got = await FakeCrednetExtractor().extract(b"")
         assert got.error == "empty_document"
+
+
+class TestParticipacaoPercentWithDot:
+    """P2 corpus, 2026-09-28: a Crednet export printed "100.0 %" (dot decimal)
+    and an unpunctuated 14-digit CNPJ — the row regex only accepted commas, so
+    the empresa was never read and no participação/empresa was created."""
+
+    def test_dot_decimal_row_is_read(self):
+        from decimal import Decimal
+        from noctusai_lib.integrations.documents.serasa_crednet import _decimal_pct, _PARTICIPACAO_ROW_RE
+
+        linha = "| FULANA APOIO ADMINISTRATIVO LTD | 11222333000181 | 100.0 % | SP |"
+        m = _PARTICIPACAO_ROW_RE.search(linha)
+        assert m is not None
+        assert _decimal_pct(m.group("pct")) == Decimal("100.0")
+
+    def test_a_fractional_share_keeps_its_decimals(self):
+        from decimal import Decimal
+        from noctusai_lib.integrations.documents.serasa_crednet import _decimal_pct
+
+        assert _decimal_pct("33.3 %") == Decimal("33.3")
+        assert _decimal_pct("33,3 %") == Decimal("33.3")
