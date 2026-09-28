@@ -21,6 +21,8 @@ import {
   ChevronUp,
   FileBarChart2,
   FilePlus2,
+  Mail,
+  MailCheck,
   Plus,
   XCircle,
 } from "lucide-react";
@@ -36,10 +38,12 @@ import {
   useCancelarFatura,
   useCriarFatura,
   useDRE,
+  useEnviarFatura,
   useExcedentes,
   useFaturaItens,
   useFaturas,
   useInadimplentes,
+  useMarcarFaturaEnviada,
   useMarcarPaga,
   type Fatura,
   type StatusFatura,
@@ -73,6 +77,8 @@ export default function Financeiro() {
   const { atrasadas } = useInadimplentes();
   const marcarPaga = useMarcarPaga();
   const cancelarFatura = useCancelarFatura();
+  const enviarFatura = useEnviarFatura();
+  const marcarFaturaEnviada = useMarcarFaturaEnviada();
   const isAdmin = useIsOrgAdmin();
   const { clientes } = useClientes();
   const nomeCliente = (id: string) => clientes.find((c) => c.id === id)?.nome ?? null;
@@ -81,6 +87,8 @@ export default function Financeiro() {
   const [relatorioAberto, setRelatorioAberto] = useState(false);
   const [cancelandoFaturaId, setCancelandoFaturaId] = useState<string | null>(null);
   const [marcandoPagaId, setMarcandoPagaId] = useState<string | null>(null);
+  const [enviandoFaturaId, setEnviandoFaturaId] = useState<string | null>(null);
+  const [marcandoEnviadaId, setMarcandoEnviadaId] = useState<string | null>(null);
 
   return (
     <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
@@ -262,6 +270,8 @@ export default function Financeiro() {
                 onPedirMarcarPaga={() => setMarcandoPagaId(f.id)}
                 marcandoPaga={marcarPaga.isPending}
                 onPedirCancelamento={() => setCancelandoFaturaId(f.id)}
+                onPedirEnvio={() => setEnviandoFaturaId(f.id)}
+                onPedirMarcarEnviada={() => setMarcandoEnviadaId(f.id)}
               />
             ))}
           </ul>
@@ -310,6 +320,51 @@ export default function Financeiro() {
           });
         }}
       />
+
+      <ConfirmDialog
+        open={enviandoFaturaId !== null}
+        title="Enviar fatura"
+        description={<p>Enviar esta fatura por e-mail para o cliente, com o PDF em anexo?</p>}
+        confirmLabel={enviarFatura.isPending ? "Enviando…" : "Enviar fatura"}
+        destructive={false}
+        busy={enviarFatura.isPending}
+        onCancel={() => setEnviandoFaturaId(null)}
+        onConfirm={() => {
+          if (!enviandoFaturaId) return;
+          enviarFatura.mutate(enviandoFaturaId, {
+            onSuccess: () => {
+              setEnviandoFaturaId(null);
+              toast.success("Fatura enviada por e-mail.");
+            },
+            onError: (e) => toast.error(describeError(e, "Não foi possível enviar a fatura.")),
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={marcandoEnviadaId !== null}
+        title="Marcar fatura como enviada"
+        description={
+          <p>
+            Marcar esta fatura como enviada sem enviar nenhum e-mail? Use quando a fatura já foi
+            entregue ao cliente por outro meio.
+          </p>
+        }
+        confirmLabel={marcarFaturaEnviada.isPending ? "Marcando…" : "Marcar como enviada"}
+        destructive={false}
+        busy={marcarFaturaEnviada.isPending}
+        onCancel={() => setMarcandoEnviadaId(null)}
+        onConfirm={() => {
+          if (!marcandoEnviadaId) return;
+          marcarFaturaEnviada.mutate(marcandoEnviadaId, {
+            onSuccess: () => {
+              setMarcandoEnviadaId(null);
+              toast.success("Fatura marcada como enviada.");
+            },
+            onError: (e) => toast.error(describeError(e, "Não foi possível marcar como enviada.")),
+          });
+        }}
+      />
     </div>
   );
 }
@@ -331,6 +386,8 @@ function LinhaFatura({
   onPedirMarcarPaga,
   marcandoPaga,
   onPedirCancelamento,
+  onPedirEnvio,
+  onPedirMarcarEnviada,
 }: {
   fatura: Fatura;
   clienteNome: string | null;
@@ -340,6 +397,8 @@ function LinhaFatura({
   onPedirMarcarPaga: () => void;
   marcandoPaga: boolean;
   onPedirCancelamento: () => void;
+  onPedirEnvio: () => void;
+  onPedirMarcarEnviada: () => void;
 }) {
   const { itens, loading } = useFaturaItens(aberta ? fatura.id : undefined);
 
@@ -371,11 +430,24 @@ function LinhaFatura({
           Itens
         </Button>
 
-        {/* Marcar paga / cancelar são admin-only no servidor — a tela só
-            oferece o que o servidor permitiria, em vez de deixar o membro
-            tentar e receber um 403. */}
+        {/* Ações são admin-only no servidor — a tela só oferece o que o
+            servidor permitiria, em vez de deixar o membro tentar e receber
+            um 403. Enviar/marcar-enviada só fazem sentido ANTES da fatura
+            estar paga/cancelada — depois disso o "envio" já não é relevante. */}
         {isAdmin && fatura.status !== "paga" && fatura.status !== "cancelada" && (
           <>
+            <Button size="sm" variant="outline" onClick={onPedirEnvio}>
+              <Mail className="mr-2 h-3 w-3" />
+              Enviar fatura
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Marcar fatura ${fatura.competencia} como enviada`}
+              onClick={onPedirMarcarEnviada}
+            >
+              <MailCheck className="h-4 w-4" />
+            </Button>
             <Button size="sm" variant="outline" disabled={marcandoPaga} onClick={onPedirMarcarPaga}>
               <CheckCircle2 className="mr-2 h-3 w-3" />
               Marcar paga

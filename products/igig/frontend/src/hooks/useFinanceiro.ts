@@ -23,6 +23,7 @@ export interface Fatura {
   vencimento: string | null;
   status: StatusFatura;
   pago_em: string | null;
+  enviada_em: string | null;
 }
 
 export interface FaturaItem {
@@ -149,6 +150,28 @@ export function useCancelarFatura() {
   return useMutation({
     mutationFn: (faturaId: string) =>
       api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/cancelar`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  });
+}
+
+/** E-mail the fatura's PDF to the cliente (admin-only server-side). */
+export function useEnviarFatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (faturaId: string) =>
+      api.post<{ fatura: Fatura; message_id: string }>(
+        `/api/financeiro/faturas/${faturaId}/enviar`, {},
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  });
+}
+
+/** Manual "sent outside the system" flag — no e-mail (admin-only server-side). */
+export function useMarcarFaturaEnviada() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (faturaId: string) =>
+      api.post<Fatura>(`/api/financeiro/faturas/${faturaId}/marcar-enviada`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
   });
 }

@@ -12,6 +12,7 @@ __all__ = [
     "FaturaCreate", "FaturaOut", "FaturaItemCreate", "FaturaItemOut",
     "ExcedenteOut", "DREOut", "InadimplenteOut",
     "GerarCompetenciaIn", "GerarCompetenciaOut", "ResumoFinanceiroOut",
+    "EnviarFaturaOut",
 ]
 
 TipoItem = Literal["mensalidade", "excedente", "desconto", "avulso"]
@@ -58,6 +59,7 @@ class FaturaOut(BaseModel):
     vencimento: str | None = None
     status: str = "aberta"
     pago_em: str | None = None
+    enviada_em: str | None = None
 
 
 class ExcedenteOut(BaseModel):
@@ -114,3 +116,8 @@ class ResumoFinanceiroOut(BaseModel):
     recebido: float
     inadimplente_valor: float
     inadimplente_qtd: int
+
+
+class EnviarFaturaOut(BaseModel):
+    fatura: FaturaOut
+    message_id: str

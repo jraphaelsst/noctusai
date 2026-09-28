@@ -26,15 +26,18 @@ approval portal is a business decision, not a side effect of running a report.
 import logging
 from dataclasses import asdict
 from datetime import date
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
-from app.pipelines import exigir_admin_da_org
+from app.email_deps import EmailSenderFactory, get_email_sender_factory, get_email_settings
+from app.pipelines import exigir_admin_da_org, get_core_db
 from app.repositories import Repositorios, valor_da_linha_fatura
 from app.schemas.financeiro import (
     DREOut,
+    EnviarFaturaOut,
     ExcedenteOut,
     FaturaCreate,
     FaturaItemCreate,
@@ -45,15 +48,18 @@ from app.schemas.financeiro import (
     InadimplenteOut,
     ResumoFinanceiroOut,
 )
-from app.services.financeiro_service import FinanceiroService
+from app.services.documentos_pdf import nome_da_agencia
+from app.services.email_config import EmailSettings
+from app.services.financeiro_service import FATURA_FECHADA, FinanceiroService, enviar_fatura
+from app.services.regras import RegraViolada, http_de
 from app.store import get_repositorios
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/financeiro", tags=["financeiro"])
 
-#: Statuses an invoice cannot add lines to.
-_FATURA_FECHADA = frozenset({"paga", "cancelada"})
+#: Statuses an invoice cannot add lines to / be re-sent from.
+_FATURA_FECHADA = FATURA_FECHADA
 
 
 def _org(auth: tuple) -> str:
@@ -245,6 +251,67 @@ async def cancelar_fatura(
     if fatura.get("status") == "cancelada":
         return FaturaOut(**fatura)
     return FaturaOut(**repos.fatura.cancelar(org_id, fatura_id))
+
+
+@router.post(
+    "/faturas/{fatura_id}/enviar", response_model=EnviarFaturaOut,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
+async def enviar_fatura_endpoint(
+    fatura_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+    core_db: Any = Depends(get_core_db),
+    sender_factory: EmailSenderFactory = Depends(get_email_sender_factory),
+    cfg: EmailSettings = Depends(get_email_settings),
+) -> EnviarFaturaOut:
+    """E-mail the fatura's PDF to the cliente. Admin-only — a client-facing
+    financial communication, same trust level as `pagar`/`cancelar`.
+
+    409 `smtp_nao_configurado` with nothing usable configured (same as
+    orçamentos); 422 `email_destinatario_ausente` when the cliente has no
+    e-mail on file; 409 `fatura_fechada` on a `paga`/`cancelada` invoice.
+    """
+    org_id = _org(auth)
+    try:
+        atualizada, message_id = await enviar_fatura(
+            repos, org_id, fatura_id,
+            sender_factory=sender_factory, settings=cfg,
+            agencia=nome_da_agencia(core_db, org_id),
+        )
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
+    return EnviarFaturaOut(fatura=FaturaOut(**atualizada), message_id=message_id)
+
+
+@router.post(
+    "/faturas/{fatura_id}/marcar-enviada", response_model=FaturaOut,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
+async def marcar_fatura_enviada(
+    fatura_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> FaturaOut:
+    """Manual "sent outside the system" flag — e.g. the agency e-mailed the
+    fatura itself, or handed it over in person. Same status + `enviada_em`
+    the "Enviar fatura" action sets, without actually sending anything.
+    Admin-only; refuses on a `paga`/`cancelada` invoice (`fatura_fechada`).
+    """
+    org_id = _org(auth)
+    try:
+        fatura = repos.fatura.buscar(org_id, fatura_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Fatura não encontrada")
+    if fatura.get("status") in _FATURA_FECHADA:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": f"Fatura {fatura['status']} não pode ser marcada como enviada.",
+                "code": "fatura_fechada",
+            },
+        )
+    return FaturaOut(**repos.fatura.marcar_enviada(org_id, fatura_id))
 
 
 @router.post(

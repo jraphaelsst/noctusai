@@ -9,9 +9,12 @@ import pytest
 from noctusai_lib.integrations.persistence import PersistenceError, SqliteRecordStore
 
 from app.dependencies import coerce_org_uuid
+from app.email_deps import get_email_sender_factory, get_email_settings
 from app.repositories import Repositorios
+from app.services import email_config
 from app.services.financeiro_service import limites_da_competencia, proxima_competencia
 from app.store import aplicar_schema_sqlite, get_repositorios, get_repositorios_admin
+from tests.email_support import SEM_GCP, SMTP, Senders
 
 ORG = str(coerce_org_uuid("test-org-123"))
 
@@ -760,6 +763,122 @@ class TestCancelarFatura:
         assert api.post("/api/financeiro/faturas/nao-existe/cancelar").status_code == 404
 
 
+class TestEnviarFatura:
+    """`POST /faturas/{id}/enviar` — e-mails the fatura's PDF (achado 12
+    parcial, 2026-09 audit: no action ever moved a fatura to `enviada`)."""
+
+    @pytest.fixture
+    def senders(self) -> Senders:
+        return Senders()
+
+    @pytest.fixture
+    def api_email(self, api, senders):
+        from app.main import app
+
+        overrides = {get_email_settings: lambda: SEM_GCP, get_email_sender_factory: lambda: senders}
+        app.dependency_overrides.update(overrides)
+        yield api
+        for dep in overrides:
+            app.dependency_overrides.pop(dep, None)
+
+    @pytest.fixture
+    def smtp(self, repos):
+        email_config.salvar_smtp(repos, ORG, SEM_GCP, **SMTP)
+
+    def test_requires_auth(self, api_email):
+        assert api_email.raw().post("/api/financeiro/faturas/x/enviar").status_code == 401
+
+    def test_sends_the_pdf_and_marks_enviada(self, api_email, senders, smtp, repos, cliente):
+        cliente_com_email = repos.cliente.atualizar(ORG, cliente["id"], {"email": "cliente@padaria.com"})
+        fatura = api_email.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente_com_email["id"], "competencia": "2026-08",
+        }).json()
+        api_email.post(f"/api/financeiro/faturas/{fatura['id']}/itens",
+                        json={"descricao": "Mensalidade", "valor_unit": 5000.0})
+
+        resp = api_email.post(f"/api/financeiro/faturas/{fatura['id']}/enviar")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()
+        assert corpo["fatura"]["status"] == "enviada"
+        assert corpo["fatura"]["enviada_em"] is not None
+        assert corpo["message_id"]
+
+        [enviado] = senders.fake.sent
+        assert enviado.to == ["cliente@padaria.com"]
+        assert enviado.attachments[0].mime_type == "application/pdf"
+        assert enviado.attachments[0].content.startswith(b"%PDF")
+
+    def test_without_smtp_is_409(self, api_email, repos, cliente):
+        repos.cliente.atualizar(ORG, cliente["id"], {"email": "cliente@padaria.com"})
+        fatura = api_email.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        resp = api_email.post(f"/api/financeiro/faturas/{fatura['id']}/enviar")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "smtp_nao_configurado"
+
+    def test_client_without_email_is_422(self, api_email, smtp, cliente):
+        fatura = api_email.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        resp = api_email.post(f"/api/financeiro/faturas/{fatura['id']}/enviar")
+        assert resp.status_code == 422
+        assert resp.json()["code"] == "email_destinatario_ausente"
+
+    def test_a_closed_invoice_cannot_be_sent(self, api_email, smtp, repos, cliente):
+        repos.cliente.atualizar(ORG, cliente["id"], {"email": "cliente@padaria.com"})
+        fatura = api_email.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        api_email.post(f"/api/financeiro/faturas/{fatura['id']}/cancelar")
+        resp = api_email.post(f"/api/financeiro/faturas/{fatura['id']}/enviar")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "fatura_fechada"
+
+    def test_send_failure_is_502_and_not_marked_enviada(self, api_email, senders, smtp, repos, cliente):
+        senders.falhar = True
+        repos.cliente.atualizar(ORG, cliente["id"], {"email": "cliente@padaria.com"})
+        fatura = api_email.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        resp = api_email.post(f"/api/financeiro/faturas/{fatura['id']}/enviar")
+        assert resp.status_code == 502
+        assert resp.json()["code"] == "envio_falhou"
+        assert repos.fatura.buscar(ORG, fatura["id"])["status"] != "enviada"
+
+    def test_unknown_invoice_returns_404(self, api_email, smtp):
+        assert api_email.post("/api/financeiro/faturas/nao-existe/enviar").status_code == 404
+
+
+class TestMarcarFaturaEnviada:
+    """`POST /faturas/{id}/marcar-enviada` — a manual flag for a fatura sent
+    outside the system, same status+timestamp `enviar` sets, no e-mail."""
+
+    def test_requires_auth(self, api):
+        assert api.raw().post("/api/financeiro/faturas/x/marcar-enviada").status_code == 401
+
+    def test_marks_an_open_invoice_enviada(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/marcar-enviada")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "enviada"
+        assert resp.json()["enviada_em"] is not None
+
+    def test_a_closed_invoice_cannot_be_marked(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        api.post(f"/api/financeiro/faturas/{fatura['id']}/pagar")
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/marcar-enviada")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "fatura_fechada"
+
+    def test_unknown_invoice_returns_404(self, api):
+        assert api.post("/api/financeiro/faturas/nao-existe/marcar-enviada").status_code == 404
+
+
 class TestPermissoes:
     """`pagar`/`cancelar`/`gerar-competencia` are admin-only. Uses the bare
     `client` fixture (no `exigir_admin_da_org` bypass) — the `api` fixture in
@@ -788,3 +907,13 @@ class TestPermissoes:
             "/api/financeiro/faturas/gerar-competencia", json={"competencia": "2026-08"}
         )
         assert resp.status_code == 403
+
+    def test_enviar_requires_admin(self, sem_admin, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+        assert sem_admin.post(f"/api/financeiro/faturas/{fatura['id']}/enviar").status_code == 403
+
+    def test_marcar_enviada_requires_admin(self, sem_admin, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+        assert sem_admin.post(
+            f"/api/financeiro/faturas/{fatura['id']}/marcar-enviada"
+        ).status_code == 403

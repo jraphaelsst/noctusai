@@ -22,7 +22,15 @@ vi.mock("@tanstack/react-query", () => {
   return { useQuery, useMutation, useQueryClient };
 });
 
-import { useCancelarFatura, useDRE, useExcedentes, useFaturas, useInadimplentes } from "./useFinanceiro";
+import {
+  useCancelarFatura,
+  useDRE,
+  useEnviarFatura,
+  useExcedentes,
+  useFaturas,
+  useInadimplentes,
+  useMarcarFaturaEnviada,
+} from "./useFinanceiro";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -88,6 +96,22 @@ describe("useCancelarFatura", () => {
     const hook = useCancelarFatura() as unknown as { mutationFn: (id: string) => unknown };
     hook.mutationFn("fatura-1");
     expect(mockPost).toHaveBeenCalledWith("/api/financeiro/faturas/fatura-1/cancelar", {});
+  });
+});
+
+describe("useEnviarFatura", () => {
+  it("posts to the enviar endpoint", () => {
+    const hook = useEnviarFatura() as unknown as { mutationFn: (id: string) => unknown };
+    hook.mutationFn("fatura-1");
+    expect(mockPost).toHaveBeenCalledWith("/api/financeiro/faturas/fatura-1/enviar", {});
+  });
+});
+
+describe("useMarcarFaturaEnviada", () => {
+  it("posts to the marcar-enviada endpoint", () => {
+    const hook = useMarcarFaturaEnviada() as unknown as { mutationFn: (id: string) => unknown };
+    hook.mutationFn("fatura-1");
+    expect(mockPost).toHaveBeenCalledWith("/api/financeiro/faturas/fatura-1/marcar-enviada", {});
   });
 });
 

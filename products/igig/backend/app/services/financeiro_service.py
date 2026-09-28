@@ -17,16 +17,23 @@ quietly disagree about the same client.
 from __future__ import annotations
 
 import calendar
+import html
 import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from noctusai_lib.integrations.email import Attachment, OutgoingEmail
+from noctusai_lib.integrations.email.errors import EmailError
 from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound, SupabaseRecordStore
 
+from app.email_deps import EmailSenderFactory
 from app.repositories import Repositorios
+from app.services import documentos_pdf, email_config
 from app.services.bi_service import BIService
+from app.services.email_config import EmailSettings
+from app.services.regras import RegraViolada
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +48,15 @@ __all__ = [
     "alertas_de_margem",
     "cliente_bloqueado_no_portal",
     "atualizar_inadimplencia",
+    "enviar_fatura",
+    "FATURA_FECHADA",
 ]
 
 _COMPETENCIA = re.compile(r"^(\d{4})-(\d{2})$")
+
+#: Statuses an invoice cannot be re-sent from / add lines to. Canonical here;
+#: `financeiro_router.py` imports it rather than keeping its own copy.
+FATURA_FECHADA = frozenset({"paga", "cancelada"})
 
 
 def limites_da_competencia(competencia: str) -> tuple[str, str]:
@@ -646,3 +659,71 @@ async def atualizar_inadimplencia(db: Any, *, hoje: date | None = None) -> dict:
 
     logger.info("atualizar_inadimplencia: %s", resumo)
     return resumo
+
+
+async def enviar_fatura(
+    repos: Repositorios, org_id: str, fatura_id: str, *,
+    sender_factory: EmailSenderFactory, settings: EmailSettings, agencia: str,
+) -> tuple[dict, str]:
+    """E-mail the fatura's PDF to the cliente. Returns ``(fatura_atualizada,
+    message_id)`` — the "Enviar fatura" action (achado 12 (parcial), 2026-09
+    audit: no status ever moved a fatura to `enviada`).
+
+    Reuses the SAME SMTP-resolution seam `orcamento_email.enviar_orcamento`
+    uses (`email_config.resolver_smtp` — 409 `smtp_nao_configurado` when
+    nothing usable is configured). Unlike an orçamento — whose PDF a director
+    may hand-edit before sending, so it is generated once and stored — a
+    fatura's PDF is a pure, deterministic render of its own rows every time,
+    so it is built fresh here rather than round-tripped through storage.
+    """
+    try:
+        fatura = repos.fatura.buscar(org_id, fatura_id)
+    except RecordNotFound:
+        raise RegraViolada(404, "fatura_nao_encontrada", "Fatura não encontrada.")
+    if fatura.get("status") in FATURA_FECHADA:
+        raise RegraViolada(
+            409, "fatura_fechada", f"Fatura {fatura['status']} não pode ser enviada.",
+        )
+    try:
+        cliente = repos.cliente.buscar(org_id, str(fatura["cliente_id"]))
+    except RecordNotFound:
+        raise RegraViolada(404, "cliente_nao_encontrado", "Cliente não encontrado.")
+    destinatario = cliente.get("email")
+    if not destinatario:
+        raise RegraViolada(
+            422, "email_destinatario_ausente", "O cliente não tem e-mail cadastrado.",
+        )
+
+    config, origem = email_config.resolver_smtp(repos, org_id, settings)
+    itens = repos.fatura_item.da_fatura(org_id, fatura_id)
+    pdf = documentos_pdf.renderizar_fatura_pdf(fatura, itens, cliente=cliente, agencia=agencia)
+
+    competencia = str(fatura.get("competencia") or "")
+    nome_cliente = html.escape(str(cliente.get("nome") or ""))
+    assunto = f"Fatura — {competencia}"
+    email = OutgoingEmail(
+        to=[str(destinatario)],
+        cc=[],
+        subject=assunto,
+        html=(
+            f"<p>Olá, {nome_cliente}!</p>"
+            f"<p>Segue em anexo a fatura referente à competência {html.escape(competencia)}.</p>"
+        ),
+        text=f"Olá, {cliente.get('nome') or ''}! Segue em anexo a fatura referente à "
+             f"competência {competencia}.",
+        attachments=[Attachment(
+            filename=f"fatura-{competencia}.pdf", content=pdf, mime_type="application/pdf",
+        )],
+    )
+    try:
+        enviado = await sender_factory(config).send(email)
+    except EmailError as erro:
+        logger.error("envio da fatura falhou org=%s fatura=%s: %s", org_id, fatura_id, erro)
+        raise RegraViolada(502, "envio_falhou", f"Falha ao enviar o e-mail: {erro}") from erro
+
+    atualizado = repos.fatura.marcar_enviada(org_id, fatura_id)
+    logger.info(
+        "fatura enviada org=%s fatura=%s smtp=%s message_id=%s",
+        org_id, fatura_id, origem, enviado.message_id,
+    )
+    return atualizado, enviado.message_id

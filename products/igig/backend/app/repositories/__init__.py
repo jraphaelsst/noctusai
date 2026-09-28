@@ -752,6 +752,18 @@ class FaturaRepository(BaseRepository):
             {"status": "paga", "pago_em": datetime.now(timezone.utc).isoformat()},
         )
 
+    def marcar_enviada(self, org_id: str, fatura_id: str) -> Record:
+        """"Enviar fatura" (e-mail) AND "Marcar como enviada" (sent outside
+        the system) both land here — the same status+timestamp pair either
+        way. Unlike `marcar_paga`, re-marking an already-`enviada` fatura
+        DOES refresh `enviada_em`: a genuine re-send is a new event, not a
+        fact that already happened once and must never move."""
+        return self.atualizar(
+            org_id,
+            fatura_id,
+            {"status": "enviada", "enviada_em": datetime.now(timezone.utc).isoformat()},
+        )
+
     def cancelar(self, org_id: str, fatura_id: str) -> Record:
         """Void an invoice without deleting it — the history (and any lines
         already lançados) stays, only the status changes."""

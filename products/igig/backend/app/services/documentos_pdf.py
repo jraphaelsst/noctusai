@@ -30,8 +30,17 @@ __all__ = [
     "brl",
     "renderizar_orcamento_pdf",
     "renderizar_contrato_pdf",
+    "renderizar_fatura_pdf",
     "VIAS_POR_EXTENSO",
 ]
+
+#: pt-BR label per `fatura_item.tipo` — the PDF must never show the raw code.
+_ITEM_TIPO_ROTULO = {
+    "mensalidade": "Mensalidade",
+    "excedente": "Excedente",
+    "desconto": "Desconto",
+    "avulso": "Avulso",
+}
 
 COR_MARCA = "#4C1D95"
 COR_ACENTO = "#7C3AED"
@@ -358,3 +367,52 @@ def renderizar_contrato_pdf(
         + fecho
     )
     return render_html_pdf(_documento(corpo, rodape=_t(agencia) + " · Contrato de prestação de serviços"))
+
+
+def renderizar_fatura_pdf(
+    fatura: dict, itens: list[dict], *, cliente: dict, agencia: str,
+) -> bytes:
+    """The invoice a cliente receives — line items, R$ in the Brazilian
+    format (`brl`), never the American one the previous e-mail-only flow
+    would have shipped had it existed."""
+    competencia = str(fatura.get("competencia") or "")
+    vencimento = fatura.get("vencimento")
+    meta = [
+        f"Competência <b>{_t(competencia)}</b>",
+        f"Vencimento <b>{_data_br(vencimento)}</b>" if vencimento else "Sem vencimento definido",
+        f"Status <b>{_t(str(fatura.get('status') or '').capitalize())}</b>",
+    ]
+    linhas = []
+    for n, item in enumerate(itens):
+        classe = " class='par'" if n % 2 else ""
+        rotulo = _ITEM_TIPO_ROTULO.get(str(item.get("tipo")), str(item.get("tipo") or ""))
+        quantidade = int(item.get("quantidade") or 0)
+        valor_unit = float(item.get("valor_unit") or 0)
+        total_linha = valor_unit * quantidade
+        sinal = "-" if item.get("tipo") == "desconto" else ""
+        linhas.append(
+            f"<tr{classe}><td width='40%'>{_t(item.get('descricao'))}</td>"
+            f"<td width='20%'>{_t(rotulo)}</td>"
+            f"<td width='10%' class='num'>{quantidade}</td>"
+            f"<td width='15%' class='num'>{brl(valor_unit)}</td>"
+            f"<td width='15%' class='num'>{sinal}{brl(abs(total_linha))}</td></tr>"
+        )
+    tabela = (
+        "<table class='itens' cellspacing='0'>"
+        "<tr><th width='40%'>Descrição</th><th width='20%'>Tipo</th>"
+        "<th width='10%' class='num'>Qtd</th><th width='15%' class='num'>Unitário</th>"
+        "<th width='15%' class='num'>Total</th></tr>"
+        + ("".join(linhas) if linhas else "<tr><td colspan='5'>Nenhum item.</td></tr>")
+        + "</table>"
+    )
+    corpo = (
+        _cabecalho(agencia, "Fatura", meta)
+        + "<table width='100%'><tr><td width='60%' valign='top'>"
+        f"<div class='titulo'>Fatura — {_t(competencia)}</div></td>"
+        "<td width='40%' valign='top' class='cartao'><span class='rotulo'>Para</span><br/>"
+        f"<b>{_t(cliente.get('nome'))}</b></td></tr></table>"
+        + tabela
+        + "<table class='totais' width='100%' cellspacing='0'><tr class='total'>"
+        f"<td>Total</td><td class='valor'>{brl(fatura.get('valor_total'))}</td></tr></table>"
+    )
+    return render_html_pdf(_documento(corpo, rodape=_t(agencia) + " · Fatura"))
