@@ -7,12 +7,11 @@ not about any model's prose.
 """
 import pytest
 from noctusai_lib.integrations.llm import LLMNotConfigured
-from noctusai_lib.integrations.llm.models import models_for
 from noctusai_lib.integrations.llm.providers.fake_provider import FakeProvider
 
 from app.dependencies import coerce_org_uuid
 from app.routers.assistente_router import get_gerador_texto
-from app.services.assistente import GeradorTexto
+from app.services.assistente import MODELO_PADRAO_ID, GeradorTexto
 
 ORG = str(coerce_org_uuid("test-org-123"))
 
@@ -79,7 +78,7 @@ class TestAssistente:
 
         [kwargs] = chat.kwargs
         assert kwargs["provider"] == "anthropic"
-        assert kwargs["model"] == models_for("anthropic", "chat")[0].id
+        assert kwargs["model"] == MODELO_PADRAO_ID, "pinned (leftovers item 16), not whatever sorts first"
         assert kwargs["cache"] is False, "personal data never goes to the response cache"
         assert kwargs["org_id"] == ORG
         [chamada] = chat.provider.calls
@@ -140,3 +139,31 @@ class TestAssistente:
             app.dependency_overrides.pop(get_gerador_texto, None)
         assert resp.status_code == 503
         assert resp.json()["code"] == "ia_nao_configurada"
+
+    def test_an_explicit_gerador_texto_model_overrides_the_pin(self, api, negocio):
+        """The seam's own override still works — a caller (tests, a future
+        operator setting) is not locked out of the pin."""
+        from app.main import app
+
+        fake = _Chat()
+        app.dependency_overrides[get_gerador_texto] = lambda: GeradorTexto(chat=fake, model="claude-opus-5")
+        try:
+            resp = api.post(f"/api/comercial/negocios/{negocio['id']}/assistente", json={"acao": "resumo"})
+        finally:
+            app.dependency_overrides.pop(get_gerador_texto, None)
+        assert resp.status_code == 200, resp.text
+        assert fake.kwargs[0]["model"] == "claude-opus-5"
+
+
+class TestModeloPadrao:
+    def test_is_pinned_to_sonnet_4_6(self):
+        from app.services.assistente import modelo_padrao
+
+        assert modelo_padrao() == MODELO_PADRAO_ID == "claude-sonnet-4-6"
+
+    def test_fails_loudly_if_the_pin_ever_leaves_the_catalog(self, monkeypatch):
+        import app.services.assistente as assistente_mod
+
+        monkeypatch.setattr(assistente_mod, "MODELO_PADRAO_ID", "modelo-que-nao-existe")
+        with pytest.raises(RuntimeError, match="não está no catálogo"):
+            assistente_mod.modelo_padrao()

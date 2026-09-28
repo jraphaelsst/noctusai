@@ -5,9 +5,12 @@ Context = the lead + the negócio (stage, value, owner, stage history) + the
 card-hub timeline (notes, checklist events, documents — metadata only, never a
 document's content) + the negócio's orçamentos. The model is Claude through the
 seed LLM stack (`noctusai_lib.integrations.llm.chat_completion`, provider
-`anthropic`); the model id is DERIVED from the seed catalog (the first
-Anthropic chat model it lists — the newest flagship), never hand-pinned here,
-so a catalog bump moves this with it.
+`anthropic`), pinned to `claude-sonnet-4-6` (leftovers item 16): "the first
+Anthropic chat model the seed catalog lists" used to mean claude-opus-5 —
+flagship-tier cost and liable to silently change again on the next catalog
+reorder — for drafting client-facing messages that need real quality but not
+that budget. `GeradorTexto.model` still lets a caller (tests, a future
+operator setting) override the pin explicitly.
 
 `cache=False` on every call: the prompt carries a named person's contact data
 and the agency's notes about them (LGPD — the response cache is for
@@ -31,6 +34,8 @@ logger = logging.getLogger(__name__)
 __all__ = ["GeradorTexto", "gerar", "modelo_padrao", "montar_contexto"]
 
 PROVEDOR = "anthropic"
+#: Pinned (leftovers item 16) — see the module docstring.
+MODELO_PADRAO_ID = "claude-sonnet-4-6"
 
 _SISTEMA = (
     "Você é o assistente comercial de uma agência de marketing digital brasileira. "
@@ -61,13 +66,16 @@ _CANAL = {
 
 
 def modelo_padrao() -> str:
-    """The seed catalog's first Anthropic chat model. Raises if the catalog
-    has none — an unroutable assistant must fail loudly, not pick a vendor
-    the operator did not choose."""
-    modelos = models_for(PROVEDOR, "chat")
-    if not modelos:
-        raise RuntimeError("o catálogo de modelos do seed não tem nenhum modelo de chat Anthropic")
-    return modelos[0].id
+    """The pinned assistant model (`MODELO_PADRAO_ID`), verified against the
+    seed catalog. Raises if it is no longer listed there — an unroutable
+    assistant must fail loudly, never silently fall back to whichever model
+    happens to sort first."""
+    ids_catalogo = {m.id for m in models_for(PROVEDOR, "chat")}
+    if MODELO_PADRAO_ID not in ids_catalogo:
+        raise RuntimeError(
+            f"modelo padrão do assistente ({MODELO_PADRAO_ID}) não está no catálogo de modelos do seed"
+        )
+    return MODELO_PADRAO_ID
 
 
 @dataclass

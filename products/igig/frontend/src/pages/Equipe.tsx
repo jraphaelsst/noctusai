@@ -16,7 +16,7 @@
  */
 import { useState } from "react";
 import { useAuthStore } from "@noctusai/seed/infra";
-import { canManageTeam, resolveSSOContext, type OrgRole } from "@noctusai/lib";
+import { canManageTeam, ORG_ROLE_LABELS, resolveSSOContext, type OrgRole } from "@noctusai/lib";
 import { Button, Field, FormError, Input, Select, TableSkeleton } from "@noctusai/lib/design-system";
 import { Mail, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -36,24 +36,16 @@ import { dataBR } from "@/lib/format";
 import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 /** Every role the seed's invite accepts (`ASSIGNABLE_ROLES` minus `owner`,
- * which is the org creator only) — correct pt-BR accents throughout,
- * unlike the seed's own `ORG_ROLE_LABELS` ("Proprietario", no accent), a
- * typo every product's hand-rolled Equipe.tsx copies verbatim (N≥13 —
- * flagged as a fleet-wide scoped-improvement, out of this file's scope). */
+ * which is the org creator only). Labels now come straight from the seed's
+ * own `ORG_ROLE_LABELS` (fixed in the same round — it carried "Proprietario"
+ * with no accent, a typo N≥13 products' hand-rolled Equipe.tsx copied
+ * verbatim; consuming it here instead of a local copy is the DRY fix for
+ * igig's own copy — the other products' copies are a named follow-up, out
+ * of this file's scope). */
 const PAPEIS_CONVITE: OrgRole[] = ["admin", "manager", "member", "viewer", "dev", "test", "corretor"];
-const PAPEL_LABEL: Record<OrgRole, string> = {
-  owner: "Proprietário",
-  admin: "Administrador",
-  manager: "Gerente",
-  member: "Membro",
-  viewer: "Visualizador",
-  dev: "Desenvolvedor",
-  test: "Teste",
-  corretor: "Corretor",
-};
 
 function rotuloPapel(papel: string): string {
-  return PAPEL_LABEL[papel as OrgRole] ?? papel;
+  return ORG_ROLE_LABELS[papel as OrgRole] ?? papel;
 }
 
 export default function Equipe() {
@@ -294,7 +286,7 @@ export default function Equipe() {
             >
               {PAPEIS_CONVITE.map((p) => (
                 <option key={p} value={p}>
-                  {PAPEL_LABEL[p]}
+                  {ORG_ROLE_LABELS[p]}
                 </option>
               ))}
             </Select>

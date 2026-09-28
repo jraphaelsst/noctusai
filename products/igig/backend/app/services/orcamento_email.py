@@ -11,7 +11,7 @@ Watch: Gmail ``users.watch`` → Pub/Sub push → ``POST /api/webhooks/gmail/pus
 ``get_message_metadata`` → seed ``match_reply`` against the ``out`` rows the
 reply's ``In-Reply-To``/``References`` name → ``in`` row, ``respondido_em``,
 in-app notification + e-mail to BOTH the negócio's responsável and every
-org owner (deduped) — achado 16.
+org owner/admin (deduped) — achado 16 / leftovers item 10.
 
 FastAPI-free: the router, the daily renewal job and tests all call in here;
 refusals are :class:`RegraViolada`.
@@ -35,6 +35,7 @@ from noctusai_lib.integrations.gmail import (
     normalize_message_id,
 )
 from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.primitives.roles import ADMIN_ROLES
 
 from app.email_deps import EmailSenderFactory, GmailClientFactory
 from app.repositories import Repositorios
@@ -385,13 +386,14 @@ def _destinatarios_internos(
     repos: Repositorios, core: Any, org_id: str, orcamento: dict
 ) -> tuple[list[str], list[str]]:
     """``(user_ids para o in-app, e-mails)`` — BOTH channels to BOTH the
-    negócio's responsável AND every org owner, deduped (achado 16: in-app
-    used to go ONLY to the responsável when set — owners got nothing in-app —
-    and e-mail ALWAYS to owners only, so the responsável never got an
-    e-mail)."""
+    negócio's responsável AND every org owner/admin, deduped (achado 16:
+    in-app used to go ONLY to the responsável when set — owners got nothing
+    in-app — and e-mail ALWAYS to owners only, so the responsável never got
+    an e-mail; leftovers item 10: admins were left out of both channels,
+    same as any other admin-scoped notification in this product)."""
     donos = (
         core.table("noctus_users").select("id,email,org_role")
-        .eq("org_id", org_id).eq("org_role", "owner").limit(20).execute().data
+        .eq("org_id", org_id).in_("org_role", list(ADMIN_ROLES)).limit(20).execute().data
     ) or []
     usuarios: set[str] = {str(d["id"]) for d in donos}
     emails: set[str] = {str(d["email"]) for d in donos if d.get("email")}

@@ -192,6 +192,20 @@ class TestResposta:
         assert senders.fake.sent[0].to == ["dono@agencia.com"]
         assert "Topamos" in senders.fake.sent[0].text
 
+    def test_admins_are_notified_alongside_owners(self, api, cenario, gmail, core_db, senders):
+        """Leftovers item 10: an org admin (not just owner) must get BOTH the
+        in-app notification and the e-mail, same as an owner — verified
+        against `orcamento_email._destinatarios_internos`, which only
+        queried `org_role='owner'`."""
+        core_db.table("noctus_users").insert(
+            {"id": "admin-1", "email": "admin@agencia.com", "org_id": ORG, "org_role": "admin"}
+        ).execute()
+        _resposta(gmail)
+        _push(api)
+        notas = core_db.table("notifications").inserted_payloads
+        assert sorted(n["user_id"] for n in notas) == ["admin-1", "owner-1"]
+        assert sorted(senders.fake.sent[0].to) == ["admin@agencia.com", "dono@agencia.com"]
+
     def test_the_negocio_responsavel_is_notified_alongside_the_owners(
         self, api, cenario, gmail, repos, core_db, senders,
     ):

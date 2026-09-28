@@ -40,7 +40,7 @@ export const PRODUCT_ADMIN_ROLES: OrgRole[] = ['owner', 'admin'];
 
 /** Portuguese labels for UI display */
 export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
-  owner: 'Proprietario',
+  owner: 'Proprietário',
   admin: 'Administrador',
   manager: 'Gerente',
   member: 'Membro',
