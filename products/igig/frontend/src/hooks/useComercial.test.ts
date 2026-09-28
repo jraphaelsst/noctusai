@@ -22,12 +22,30 @@ vi.mock("@tanstack/react-query", () => {
   return { useQuery, useMutation, useQueryClient };
 });
 
-import { useLeads, usePerdidos, useReabrirNegocio } from "./useComercial";
+import { useLead, useLeads, usePerdidos, useReabrirNegocio } from "./useComercial";
 import { useOrcamentos } from "./useOrcamentos";
 
 beforeEach(() => {
   vi.clearAllMocks();
   capturedOpts.length = 0;
+});
+
+describe("useLead", () => {
+  it("fetches ONE lead by id (achado #11: no longer the org's whole list)", async () => {
+    mockGet.mockResolvedValue({ id: "l1", nome: "Ana" });
+    queryState = { data: undefined, isPending: true, isFetching: true, isError: false, error: null };
+    useLead("l1");
+    const opts = capturedOpts[0];
+    expect(opts?.enabled).toBe(true);
+    const queryFn = opts?.queryFn as () => Promise<unknown>;
+    await queryFn();
+    expect(mockGet).toHaveBeenCalledWith("/api/comercial/leads/l1");
+  });
+
+  it("disables the query when id is null", () => {
+    useLead(null);
+    expect(capturedOpts[0]?.enabled).toBe(false);
+  });
 });
 
 describe("usePerdidos", () => {

@@ -22,7 +22,7 @@ import { CardHubDialog, MotivoMoveDialog, TooltipIconButton, type CardSubpage } 
 import { Badge, Button, Field, FormError, Input, Select, Skeleton, Textarea } from "@noctusai/lib/design-system";
 import { toast } from "sonner";
 
-import { useAssistenteNegocio, useAtualizarLead, useAtualizarNegocio, useLeads, usePerderNegocio } from "@/hooks/useComercial";
+import { useAssistenteNegocio, useAtualizarLead, useAtualizarNegocio, useLead, usePerderNegocio } from "@/hooks/useComercial";
 import { useProfissionais } from "@/hooks/useCustos";
 import { useCardHubGeral } from "@/components/common/useCardHubGeral";
 import { negocioCardHub as hub } from "@/hooks/useNegocioCardHub";
@@ -228,8 +228,9 @@ function NegocioResumo({ negocio }: { negocio: Negocio }) {
 // ─── Lead subpage ────────────────────────────────────────────────────────────
 
 function LeadSubpage({ negocio }: { negocio: Negocio }) {
-  const { leads, loading, isError, error } = useLeads();
-  const lead = leads.find((l) => l.id === negocio.lead_id) ?? null;
+  // A single-lead fetch (`GET /leads/{id}`) — this used to be `useLeads()`,
+  // fetching the org's ENTIRE lead list to find one row (achado #11).
+  const { lead, showSkeleton: loading, isError, error } = useLead(negocio.lead_id);
   const atualizar = useAtualizarLead();
   const [f, setF] = useState({ nome: "", empresa: "", email: "", telefone: "", instagram: "", observacoes: "" });
   const [sujo, setSujo] = useState(false);

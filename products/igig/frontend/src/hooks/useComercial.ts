@@ -61,6 +61,25 @@ export function useLeads(status?: string) {
 }
 
 /**
+ * One lead by id — the negócio card's "Lead" subpage used to call
+ * `useLeads()` (the org's ENTIRE list) just to `.find()` a single row
+ * (achado #11: an N-scaling read for one card open). `enabled: !!id` — pass
+ * `null` while the negócio itself hasn't loaded yet.
+ */
+export function useLead(id: string | null) {
+  const query = useQuery({
+    queryKey: [...COMERCIAL_QUERY_KEY, "lead", id ?? ""],
+    queryFn: () => api.get(`/api/comercial/leads/${encodeURIComponent(id as string)}`).then(unwrapData<Lead>),
+    enabled: !!id,
+  });
+  return {
+    ...query,
+    lead: query.data ?? null,
+    showSkeleton: !!id && query.isPending && !query.data,
+  };
+}
+
+/**
  * One negócio, ANY status — the board query only ever holds `aberto`/`ganho`
  * cards (`GET /board`), so a `perdido` deal opened from its archive, or from
  * an orçamento deep link, falls back here (`GET /negocios/{id}`, gap G-2).
