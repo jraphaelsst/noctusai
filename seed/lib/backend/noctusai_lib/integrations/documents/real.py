@@ -380,10 +380,28 @@ class LadderIdentityExtractor:
                     marcados.append(replace(c, titular=(i == escolhido_idx)))
                 conjuges = tuple(marcados)
                 eu = conjuges[escolhido_idx]
-                if eu.data_nascimento is not None:
-                    data, data_conf, data_label = (
-                        eu.data_nascimento, eu.data_nascimento_confianca, "certidão (cônjuge titular)"
-                    )
+                # 🔴 UNCONDITIONAL REPLACEMENT, EVEN TO ABSENT — real,
+                # measured (P1/883, 2026-09-28): the comment above already
+                # names the risk this closes ("or worse, the wrong one
+                # alone") but the code used to only act on it when
+                # `eu.data_nascimento` WAS found, silently keeping the
+                # whole-document `data` above otherwise. That whole-document
+                # read has no notion of WHICH of the two co-equal holders it
+                # belongs to — on a tabular, one-field-per-row certidão
+                # layout (this module's per-person segment scoping does not
+                # yet reach), it can land squarely on the OTHER spouse's
+                # birthdate with a confident label, because THEIRS happened
+                # to sit closer to a `NASCIMENTO` label than the titular's
+                # own. Once a titular is resolved among two co-equal
+                # holders, only THEIR segment-scoped reading may answer
+                # `data_nascimento` — an unscoped document-wide guess is
+                # exactly the ambiguity this field's own docstring says to
+                # report as absent, never to guess.
+                data, data_conf, data_label = (
+                    eu.data_nascimento,
+                    eu.data_nascimento_confianca if eu.data_nascimento is not None else "nenhuma",
+                    "certidão (cônjuge titular)" if eu.data_nascimento is not None else None,
+                )
                 if eu.nacionalidade is not None:
                     nacionalidade, nacionalidade_conf, nacionalidade_label = (
                         eu.nacionalidade, eu.nacionalidade_confianca, "certidão (cônjuge titular)"

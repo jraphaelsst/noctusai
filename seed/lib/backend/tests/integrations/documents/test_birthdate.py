@@ -178,3 +178,44 @@ class TestNoFalsePositives:
 
 def test_normalize_strips_accents_and_collapses_whitespace():
     assert normalize("  Data  de\n Nascimento é  ") == "DATA DE NASCIMENTO E"
+
+
+class TestColumnarDateFormat:
+    """🔴 THE BUG THIS CLASS CLOSES — real, measured (P1/883, 2026-09-28)
+
+    A tabular certidão layout prints every date as three separate table
+    COLUMNS ("DIA MES ANO" headers over bare numbers), with only
+    whitespace between day/month/year — no `/`, `.` or `-` for
+    `_NUMERIC_DATE` to anchor on. The birthdate was not misread on this
+    layout, it was simply never a CANDIDATE at all.
+    """
+
+    def test_a_columnar_date_under_its_own_header_is_read(self):
+        texto = "DATA DE NASCIMENTO\nDIA MES ANO\n04 10 1961"
+        v, c, label = find_birthdate(texto, today=TODAY)
+        assert (v, c) == (date(1961, 10, 4), "alta")
+        assert label == "DATA DE NASCIMENTO"
+
+    def test_a_columnar_decoy_is_rejected_same_as_a_slashed_one(self):
+        """The new date FORM must not bypass the existing label/decoy
+        machinery — a columnar date under a REGISTRO field is still not a
+        birthdate."""
+        v, c, _ = find_birthdate("DATA DE REGISTRO\nDIA MES ANO\n04 10 1961", today=TODAY)
+        assert (v, c) == (None, "nenhuma")
+
+    def test_a_registry_matricula_number_is_not_misread_as_a_date(self):
+        """🔴 THE FALSE-POSITIVE THIS GUARDS AGAINST — a CNJ-format
+        matrícula (`AAAAAA CC UU YYYY T NNNNN LLL NNNNNNN-DV`) has its OWN
+        3rd/4th/5th space-separated groups shaped exactly like a calendar
+        day/month/year, and its "year" is a real registration year — not
+        anyone's age. Embedded inside the longer digit-group chain, it
+        must not be read as a columnar date."""
+        matricula = "223344 05 10 1998 3 00276 144 0012345-67"
+        assert find_birthdate(matricula, today=TODAY) == (None, "nenhuma", None)
+
+    def test_a_standalone_columnar_triple_with_no_label_is_low_confidence(self):
+        """Same posture every other date form in this module already
+        takes: genuinely unlabelled is a guess, typed as one — never
+        promoted by the new form alone."""
+        v, c, label = find_birthdate("Documento emitido\n04 10 1961", today=TODAY)
+        assert (v, c, label) == (date(1961, 10, 4), "baixa", None)

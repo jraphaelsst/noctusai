@@ -448,3 +448,84 @@ class TestAsteriskWrappedValue:
         assert find_name_conflitos(texto) == [
             "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
         ]
+
+
+class TestMultiHolderCollectorSkipsAnyCpfLabelRow:
+    """🔴 THE BUG THIS CLASS FIXES — real, measured (P1/883, 2026-09-28)
+
+    `_coleta_titulares_multiplos` used to skip a same-row-CPF interleave
+    ONLY when the row was the exact text `CPF` (or the bare digits). A real
+    certidão's own field header instead read `NUMERO DO CPF` on its own
+    row between the two names — neither name-shaped nor an exact `"CPF"`
+    match — so the collector stopped after the FIRST nubente and returned
+    just one, unopposed candidate. `find_name` then wrote that one
+    person's name with `"alta"` confidence, silently onto whichever card
+    happened to ask, with no signal anything had gone wrong: the two-
+    holder case degraded into the single-holder case by accident, not by
+    the document only naming one person.
+    """
+
+    def test_a_labelled_cpf_row_other_than_the_bare_word_does_not_stop_the_scan(self):
+        texto = (
+            "NOME ATUAL DOS CONJUGES\n"
+            "FULANO DE TAL SANTOS\n"
+            "NUMERO DO CPF\n"
+            "042.654.468-95\n"
+            "CICLANA DE TAL PEREIRA\n"
+            "NUMERO DO CPF\n"
+            "041.333.248-97\n"
+            "MATRICULA\n"
+            "115568 01 55 2011 2 00198\n"
+        )
+        assert find_name_conflitos(texto) == [
+            "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
+        ]
+        # Two co-equal holders, same as ever: still correctly declines to
+        # pick one unattended.
+        assert find_name(texto) == (None, "nenhuma", None)
+
+    def test_a_bare_n_do_cpf_row_is_recognised_too(self):
+        texto = (
+            "NOMES\n"
+            "FULANO DE TAL SANTOS\n"
+            "Nº DO CPF\n"
+            "042.654.468-95\n"
+            "CICLANA DE TAL PEREIRA\n"
+            "Nº DO CPF\n"
+            "041.333.248-97\n"
+        )
+        assert find_name_conflitos(texto) == [
+            "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
+        ]
+
+    def test_the_bare_cpf_row_still_works_unchanged(self):
+        """The original, narrower shape must keep working — this is a
+        widening of the skip condition, not a replacement of it."""
+        texto = (
+            "NOMES\n"
+            "FULANO DE TAL SANTOS\n"
+            "CPF\n"
+            "042.654.468-95\n"
+            "CICLANA DE TAL PEREIRA\n"
+            "CPF\n"
+            "041.333.248-97\n"
+        )
+        assert find_name_conflitos(texto) == [
+            "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
+        ]
+
+    def test_a_long_line_that_merely_mentions_cpf_still_stops_the_scan(self):
+        """The skip is for a SHORT administrative label row, not any line
+        that happens to contain the word — a long sentence must still end
+        the multi-holder collection where it always did."""
+        texto = (
+            "NOMES\n"
+            "FULANO DE TAL SANTOS\n"
+            "O CPF DE CADA CONTRAENTE FOI CONFERIDO PELO OFICIAL DO REGISTRO CIVIL\n"
+            "CICLANA DE TAL PEREIRA\n"
+        )
+        # The long sentence line is neither name-shaped nor a short CPF
+        # label row, so the collector stops there — only the first
+        # nubente is collected under this header, same as before this fix.
+        assert find_name_conflitos(texto) is None
+        assert find_name(texto) == ("FULANO DE TAL SANTOS", "alta", "NOMES")

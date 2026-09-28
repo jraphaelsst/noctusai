@@ -276,6 +276,34 @@ def looks_like_a_name(candidate: str) -> bool:
 #: verifies the check digits.
 _CPF_SHAPE_RE = re.compile(r"^\d{3}\.\d{3}\.\d{3}-\d{2}$|^\d{11}$")
 
+#: A short row whose ONLY content is a CPF field LABEL, sitting between two
+#: co-equal names in a multi-holder block — same reason `_CPF_SHAPE_RE`
+#: above exists, and deliberately just as narrow (a whole-word match, not a
+#: cross-import of `cpf.py`'s own label list: this module stays import-free
+#: of the rest of the package, see the module docstring).
+#:
+#: 🔴 THE BUG THIS CLOSES — real, measured (P1/883, 2026-09-28): the
+#: multi-holder collector below used to skip ONLY a line that was the exact
+#: text `CPF`. A real certidão's own field header instead read `NUMERO DO
+#: CPF` (its own row, between the two names) — a line that is neither
+#: name-shaped nor an exact `"CPF"` match, so the collector stopped after
+#: the FIRST nubente and reported a single, unopposed candidate. `find_name`
+#: then wrote that one person's name onto the OTHER spouse's card with
+#: `"alta"` confidence whenever the certidão happened to print the wrong
+#: one first — a silent wrong-person write, not a missing field, because
+#: nothing downstream had any reason to doubt a single confident reading.
+#: Recognising ANY row whose only real content is the word `CPF` (not just
+#: the bare label) restores the two-candidate read `find_name_conflitos` /
+#: `_selecionar_nome`'s titular hint is built to disambiguate.
+_CPF_LABEL_LINE_MAX_LEN = 40
+
+
+def _linha_e_rotulo_de_cpf(linha: str) -> bool:
+    """Is `linha` a short administrative row whose only content is a CPF
+    field label (`CPF`, `NUMERO DO CPF`, `Nº DO CPF`, ...) — never a name,
+    never the CPF's own digits (that is `_CPF_SHAPE_RE`'s job)?"""
+    return len(linha) <= _CPF_LABEL_LINE_MAX_LEN and "CPF" in linha.split()
+
 
 def _strip_trailing_citation(value: str) -> str:
     """Drop a trailing registry-citation / same-row field-label clause that
@@ -320,13 +348,15 @@ def _coleta_titulares_multiplos(
     right after it.
 
     A certidão de casamento's holder block interleaves each spouse's name
-    with a `CPF` label and its value (`ALMIR ... / CPF / 303.102.653-55 /
-    MARIANA ... / CPF / 478.982.096-30`). This walks PAST those CPF lines
-    rather than stopping at the first one, so BOTH names are collected as
-    candidates under the SAME label — which is what turns "found nothing"
-    into "found two, cannot choose" (see `find_name_conflitos`). It stops at
-    the first line that is neither a name nor one of those interleaved
-    document-number lines — the next section of the document.
+    with a CPF label and its value (`ALMIR ... / CPF / 303.102.653-55 /
+    MARIANA ... / CPF / 478.982.096-30`, or, on another cartório's template,
+    `ALMIR ... / NUMERO DO CPF / 303.102.653-55 / MARIANA ...`). This walks
+    PAST those interleaved label/value lines rather than stopping at the
+    first one, so BOTH names are collected as candidates under the SAME
+    label — which is what turns "found nothing" into "found two, cannot
+    choose" (see `find_name_conflitos`). It stops at the first line that is
+    neither a name nor one of those interleaved document-number lines — the
+    next section of the document.
     """
     candidatos: list[tuple[str, str]] = []
     j = start
@@ -341,7 +371,7 @@ def _coleta_titulares_multiplos(
             candidatos.append((candidato.strip(_SEPARATORS).strip(), label))
             j += 1
             continue
-        if linha == "CPF" or _CPF_SHAPE_RE.match(linha):
+        if _CPF_SHAPE_RE.match(linha) or _linha_e_rotulo_de_cpf(linha):
             j += 1
             continue
         break

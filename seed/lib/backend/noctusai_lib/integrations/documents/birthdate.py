@@ -113,6 +113,30 @@ _NUMERIC_DATE = re.compile(r"\b(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4})
 _TEXTUAL_DATE = re.compile(
     r"\b(\d{1,2})\s+DE\s+(" + "|".join(_MONTHS) + r")\s+DE\s+(\d{4})\b"
 )
+#: A date printed as three separate table COLUMNS ("DIA MES ANO" headers
+#: over bare numbers), with only whitespace between day/month/year — no
+#: `/`, `.` or `-` for `_NUMERIC_DATE` to anchor on.
+#:
+#: 🔴 THE BUG THIS CLOSES — real, measured (P1/883, 2026-09-28): a
+#: certidão de casamento's tabular layout renders every date field this
+#: way, and `_NUMERIC_DATE`'s separator requirement made the birthdate
+#: simply invisible — not misread, never even a CANDIDATE — on that
+#: layout, for every person on the document.
+#:
+#: Bounded on BOTH sides against a longer chain of space-separated digit
+#: groups — the exact shape a CNJ-format matrícula number prints
+#: (`123456 78 90 1234 5 67890 123 1234567-89`: its OWN 3rd/4th/5th groups
+#: are a 2-digit, a 2-digit and a 4-digit run in a row, which would
+#: otherwise satisfy this pattern too, and its "year-shaped" group is a
+#: real calendar year — a registration year, not anyone's age). A day/
+#: month/year triple sitting inside such a chain has ANOTHER digit group
+#: immediately before or after it, separated only by whitespace; a
+#: genuine standalone date field never does. The lookbehinds are fixed-
+#: width (Python's lookbehind requirement); the lookahead is not, which
+#: `re` allows.
+_COLUMNAR_DATE = re.compile(
+    r"(?<!\d)(?<!\d\s)(\d{1,2})\s+(\d{1,2})\s+(\d{4})(?!\s*\d)"
+)
 
 
 def normalize(text: str) -> str:
@@ -172,6 +196,12 @@ def _iter_dates(text: str):
         day, month_name, year = m.group(1), m.group(2), m.group(3)
         try:
             yield (m.start(), date(int(year), _MONTHS[month_name], int(day)))
+        except ValueError:
+            continue
+    for m in _COLUMNAR_DATE.finditer(text):
+        day, month, year = (int(g) for g in m.groups())
+        try:
+            yield (m.start(), date(year, month, day))
         except ValueError:
             continue
 
