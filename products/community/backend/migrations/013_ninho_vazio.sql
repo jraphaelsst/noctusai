@@ -27,6 +27,92 @@ SET search_path = community, public;
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
+-- 0. Fleet-wide customer-role isolation (SEC-2, 2026-09-28) — community's leg.
+--
+-- Rendered from noctusai_lib.domain.sql_templates (the ONE definition;
+-- keeper check_org_identity_function_parity fails a drifted copy):
+-- `public.current_org_id()` is NULL for a customer role, so no org-scoped
+-- policy in any product matches a `membro`; `public.current_customer_org_id()`
+-- is the org ONLY for customers — the key community's member-self policies
+-- below use. Then `invitations.token` leaves the API roles (the invite flow
+-- reads tokens with the service role only).
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.current_org_id()
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
+$f$;
+
+CREATE OR REPLACE FUNCTION public.current_user_org_id()
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
+$f$;
+
+CREATE OR REPLACE FUNCTION public.current_org_role()
+  RETURNS text
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_role FROM public.noctus_users WHERE id = (SELECT auth.uid());
+$f$;
+
+CREATE OR REPLACE FUNCTION public.is_customer()
+  RETURNS boolean
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT COALESCE(
+    (SELECT org_role = ANY (ARRAY['membro'])
+       FROM public.noctus_users WHERE id = (SELECT auth.uid())),
+    false
+  );
+$f$;
+
+CREATE OR REPLACE FUNCTION public.current_customer_org_id()
+  RETURNS uuid
+  LANGUAGE sql
+  STABLE SECURITY DEFINER
+  SET search_path TO 'public'
+AS $f$
+  SELECT org_id FROM public.noctus_users
+   WHERE id = (SELECT auth.uid())
+     AND org_role = ANY (ARRAY['membro']);
+$f$;
+
+DO $lock$
+DECLARE
+  v_cols text;
+BEGIN
+  IF to_regclass('community.invitations') IS NULL THEN
+    RAISE NOTICE 'no community.invitations table — nothing to lock';
+    RETURN;
+  END IF;
+  SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)
+    INTO v_cols
+    FROM information_schema.columns
+   WHERE table_schema = 'community' AND table_name = 'invitations'
+     AND column_name <> 'token';
+  REVOKE ALL ON community.invitations FROM anon;
+  REVOKE SELECT ON community.invitations FROM authenticated;
+  EXECUTE format('GRANT SELECT (%s) ON community.invitations TO authenticated', v_cols);
+END
+$lock$;
+
+-- ----------------------------------------------------------------------------
 -- 1. Staff predicate
 --
 -- ALLOW-list. The community org is the platform org, shared with other
@@ -50,19 +136,6 @@ AS $f$
   );
 $f$;
 
--- The caller's org read straight from their profile, WITHOUT the role
--- filter the fleet-wide `public.current_org_id()` applies to customer roles
--- (it returns NULL for a `membro`, so no other product's org-scoped policy
--- can match them). Community's member-self policies need the org anyway.
-CREATE OR REPLACE FUNCTION community.org_do_usuario()
-  RETURNS uuid
-  LANGUAGE sql
-  STABLE SECURITY DEFINER
-  SET search_path TO 'public'
-AS $f$
-  SELECT org_id FROM public.noctus_users WHERE id = (SELECT auth.uid());
-$f$;
-
 -- The caller's own membro id (NULL for staff / non-members).
 CREATE OR REPLACE FUNCTION community.meu_membro_id()
   RETURNS uuid
@@ -71,15 +144,13 @@ CREATE OR REPLACE FUNCTION community.meu_membro_id()
   SET search_path TO 'community', 'public'
 AS $f$
   SELECT id FROM community.membros
-   WHERE user_id = (SELECT auth.uid()) AND org_id = community.org_do_usuario()
+   WHERE user_id = (SELECT auth.uid()) AND org_id = public.current_customer_org_id()
    LIMIT 1;
 $f$;
 
 REVOKE ALL ON FUNCTION community.eh_equipe() FROM PUBLIC, anon;
-REVOKE ALL ON FUNCTION community.org_do_usuario() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION community.meu_membro_id() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION community.eh_equipe() TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION community.org_do_usuario() TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION community.meu_membro_id() TO authenticated, service_role;
 
 -- Narrow every existing org-scoped `authenticated` policy to staff.
@@ -137,7 +208,7 @@ DROP POLICY IF EXISTS "membros_select_self" ON community.membros;
 DROP POLICY IF EXISTS "planos_select_ativos_membro" ON community.planos;
 CREATE POLICY "planos_select_ativos_membro" ON community.planos
     FOR SELECT TO authenticated
-    USING (ativo AND org_id = community.org_do_usuario());
+    USING (ativo AND org_id = public.current_customer_org_id());
 
 -- ----------------------------------------------------------------------------
 -- 3. Billing lifecycle

@@ -56,11 +56,16 @@ get_current_user = select_get_current_user(settings, _prod_get_current_user)
 # `seed-trusted-org-resolution`, 2026-07-14 — the make_get_current_user_org
 # docstring in noctusai_lib.api.auth has the full rationale + the prod
 # incident this mirrors on the ERP side).
+# `allow_customer=True`: this is the BASE resolver both community gates wrap.
+# The seed refuses customer roles by default (SEC-2); here the decision is
+# made one level up — `get_current_user_org` (staff allow-list) and
+# `get_membro_context` (members only) — so a `membro` must reach them.
 _get_any_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+    lambda u: None,  # retired metadata fallback (seed NOC-REMEDIATE[auth-org-fallback-param])
     get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
+    allow_customer=True,
 )
 
 #: `noctus_users.org_role` of an end customer with a login (migration 013).

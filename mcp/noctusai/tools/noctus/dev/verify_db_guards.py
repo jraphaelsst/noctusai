@@ -2803,10 +2803,6 @@ _SW_RECIPIENT_CHANNEL_PROBE = GuardProbe(
 )
 
 
-# NOC-REMEDIATE[community-invitation-token]: `community` is excluded below
-# ONLY because its own branch (feat/community-ninho-vazio) owns that schema's
-# customer-role work; its next migration must carry
-# `invitation_token_lockdown_sql('community')`, then drop the exclusion. — 2026-09-28
 _INVITATION_TOKEN_PROBE = GuardProbe(
     id="invitations.token_not_api_readable",
     product="<platform>",
@@ -2828,7 +2824,6 @@ _INVITATION_TOKEN_PROBE = GuardProbe(
             "JOIN pg_namespace n ON n.oid = c.relnamespace "
             "WHERE c.relname = 'invitations' AND c.relkind = 'r' "
             "AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'token' AND NOT a.attisdropped) "
-            "AND n.nspname NOT IN ('community') "
             "AND (has_column_privilege('authenticated', c.oid, 'token', 'SELECT') "
             "OR has_column_privilege('anon', c.oid, 'token', 'SELECT'));"
         ),
