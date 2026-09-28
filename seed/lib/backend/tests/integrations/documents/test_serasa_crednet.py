@@ -441,3 +441,61 @@ class TestParticipacaoPercentWithDot:
 
         assert _decimal_pct("33.3 %") == Decimal("33.3")
         assert _decimal_pct("33,3 %") == Decimal("33.3")
+
+
+class TestPlainTextLayerShape:
+    """🔴 A digitally-generated Crednet PDF carries a REAL text layer with NO
+    pipe delimiters at all — the vision prompt's pipe-table convention never
+    applies to it. Measured on prod, 2026-09-28: two real Crednets on card
+    895 came back `participacoes=()` although the report lists one, because
+    every parser in this module assumed the pipe shape."""
+
+    def test_participacao_row_with_root_and_unpunctuated_cnpj(self):
+        texto = (
+            "PROTOCOLO DA CONSULTA : 998877\n"
+            "Participacao Societaria\n"
+            "RAZAO SOCIAL PLANA UM LTDA 11222333 11222333000181 100,0 % SP\n"
+            "SITUACAO DO CNPJ EM 15/05/2025: ATIVA\n"
+        )
+        f = parse_crednet(texto, TextSource.TEXT_LAYER)
+        assert len(f.participacoes) == 1
+        p = f.participacoes[0]
+        assert p.razao_social == "RAZAO SOCIAL PLANA UM LTDA"
+        assert p.cnpj_valido is True
+        assert p.participacao_pct == Decimal("100.0")
+        assert p.uf == "SP"
+        assert p.situacao_texto == "ATIVA"
+        assert p.situacao_em == date(2025, 5, 15)
+
+    def test_participacao_row_with_punctuated_cnpj_and_no_root(self):
+        texto = (
+            "Participacao Societaria\n"
+            f"RAZAO SOCIAL PLANA DOIS LTDA {CNPJ_VALIDO} 33,3 % RJ\n"
+        )
+        f = parse_crednet(texto, TextSource.TEXT_LAYER)
+        assert len(f.participacoes) == 1
+        p = f.participacoes[0]
+        assert p.razao_social == "RAZAO SOCIAL PLANA DOIS LTDA"
+        assert p.cnpj_valido is True
+        assert p.participacao_pct == Decimal("33.3")
+        assert p.uf == "RJ"
+
+    def test_nada_consta_report_has_zero_participacoes_and_reads_ocorrencias_as_false(self):
+        """The primary measured shape: a clean report with no societary
+        participation at all, whose four ocorrência rows still read as a
+        confident `False` rather than the "unreadable" `None`."""
+        texto = (
+            "PROTOCOLO DA CONSULTA : 445566\n"
+            "PENDENCIAS INTERNAS NADA CONSTA OCORRENCIAS - -\n"
+            "PENDENCIAS FINANCEIRAS NADA CONSTA OCORRENCIAS - -\n"
+            "PROTESTO ESTADUAL NAO CONSTAM OCORRENCIAS - -\n"
+            "CHEQUES SEM FUNDO BACEN NAO CONSTA(M) OCORRENCIAS - -\n"
+        )
+        f = parse_crednet(texto, TextSource.TEXT_LAYER)
+        assert f.participacoes == ()
+        for o in (
+            f.pendencias_internas, f.pendencias_financeiras,
+            f.protesto_estadual, f.cheques_sem_fundo,
+        ):
+            assert o.constam is False
+        assert f.ocorrencias_constam() is False

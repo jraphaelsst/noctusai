@@ -39,6 +39,22 @@ guess. Every identifier read off the OCR rung is additionally capped at
 "not a text layer ⇒ not alta" rule `matricula_extractor._temper` states for
 the same reason: nothing downstream of this module can tell a plausible
 digit slip apart from a correct read.
+
+🔴 A DIGITALLY-GENERATED PDF HAS A REAL TEXT LAYER, WITH NO PIPES (2026-09-28)
+-------------------------------------------------------------------------------
+The header above describes the *scanned* Crednet — vision-first, pipe-table
+prompt, vision rung always reached. A Crednet export that was NEVER scanned
+(a genuinely digital PDF) instead carries pypdf's own real text layer, which
+the ladder reads first and which never carries the vision prompt's pipe
+delimiters — the same `Participação Societária`/`Ocorrências` sections print
+as plain, space-separated lines instead. Measured on prod: two real Crednets
+on card 895 came back `participacoes=()` although the report lists one,
+because every parser in this module assumed the pipe shape. `_participacoes`
+and `_ocorrencia`'s row lookup therefore each carry a plain-line sibling
+(`_PARTICIPACAO_LINHA_PLANA_RE`, the `_linha_com_rotulo` plain fallback) so a
+real text layer is never silently starved this way again. `_RESUMO_RE`'s own
+plain-line shape is a NAMED, DELIBERATE gap — see
+`NOC-REMEDIATE[serasa-crednet-resumo-plain-line]` at its definition.
 """
 from __future__ import annotations
 
@@ -48,7 +64,11 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Mapping, Optional, Protocol, runtime_checkable
 
-from noctusai_lib.integrations.documents.cnpj import format_cnpj, is_valid as _cnpj_is_valid
+from noctusai_lib.integrations.documents.cnpj import (
+    format_cnpj,
+    is_valid as _cnpj_is_valid,
+    normalize as _cnpj_normalize,
+)
 from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as _cpf_is_valid
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.text import strip_accents_upper
@@ -152,6 +172,14 @@ _PROTOCOLO_RE = re.compile(r"PROTOCOLO\s+DA\s+CONSULTA\s*:?\s*(\d+)")
 
 #: The `Resumo da consulta` VALUE row only — the header row's cells are text
 #: labels, not a CPF/date, so it never matches this shape.
+#: NOC-REMEDIATE[serasa-crednet-resumo-plain-line]: a digital PDF's real
+#: text layer prints this same row without pipes too, but `nome`/`nome_mae`
+#: have no anchor to split on in that shape — both are free text with no
+#: delimiter between them, unlike the CNPJ/pct/UF anchors
+#: `_PARTICIPACAO_LINHA_PLANA_RE` has. Guessing the split would silently
+#: attribute the wrong words to the wrong field — this module never does
+#: that for an identifier and must not start doing it for a name. Left
+#: pipe-only until a real corpus sample resolves the ambiguity — 2026-09-28.
 _RESUMO_RE = re.compile(
     r"^\|\s*(?P<cpf>\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})\s*\|\s*"
     r"(?P<nome>[^|]+?)\s*\|\s*(?P<mae>[^|]+?)\s*\|\s*"
@@ -180,6 +208,21 @@ _PARTICIPACAO_ROW_RE = re.compile(
     r"(?P<pct>\d+(?:[.,]\d+)?)\s*%?\s*\|\s*(?P<uf>[A-Z]{2})\s*\|?\s*$",
     re.MULTILINE,
 )
+#: The PLAIN (non-piped) sibling of `_PARTICIPACAO_ROW_RE` — a digital PDF's
+#: real text layer prints this row space-separated, no pipes at all (measured
+#: on prod, 2026-09-28, card 895). Anchored the same way it actually prints:
+#: <razão social words> [<8-digit CNPJ root>] <CNPJ, punctuated or bare>
+#: <pct> % <UF>, end of line. `[^|\n]` on the prefix is what keeps this from
+#: ever ALSO matching a pipe row — that shape always ends `| UF |`, never a
+#: bare `UF` at end-of-line — so the two patterns are mutually exclusive
+#: per line.
+_PARTICIPACAO_LINHA_PLANA_RE = re.compile(
+    r"^(?P<prefixo>[^|\n]+?)\s+"
+    r"(?P<cnpj>\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}|\d{14})\s+"
+    r"(?P<pct>\d+(?:[.,]\d+)?)\s*%\s+"
+    r"(?P<uf>[A-Z]{2})\s*$",
+    re.MULTILINE,
+)
 #: The plain-text line right after a participação row — see the prompt's own
 #: instruction to keep it OUT of the pipe-table shape.
 _SITUACAO_CNPJ_RE = re.compile(
@@ -192,9 +235,15 @@ _JANELA_SITUACAO = 400
 
 
 def _linha_com_rotulo(norm: str, rotulo: str) -> Optional[str]:
-    """The rest of the pipe-table row whose first cell is `rotulo`, or
-    `None` when that row was never found — the "unreadable" case."""
+    """The rest of the pipe-table row whose first cell is `rotulo`, the rest
+    of a PLAIN (non-piped) line starting with `rotulo` — a digital PDF's real
+    text layer prints these rows without any pipes at all, measured on prod
+    2026-09-28 — or `None` when neither shape was found, the "unreadable"
+    case."""
     m = re.search(rf"\|\s*{re.escape(rotulo)}\s*\|(?P<resto>[^\n]*)", norm)
+    if m:
+        return m.group("resto")
+    m = re.search(rf"^\s*{re.escape(rotulo)}\b(?P<resto>[^\n]*)$", norm, re.MULTILINE)
     return m.group("resto") if m else None
 
 
@@ -205,9 +254,20 @@ def _ocorrencia(norm: str, rotulo: str) -> "OcorrenciaCrednet":
         # did not carry this section reads as unreadable, not "none",
         # because a genuinely clean report always prints the row.
         return OcorrenciaCrednet()
-    if "NAO CONSTAM" in resto:
+    if "NAO CONSTA" in resto or "NADA CONSTA" in resto:
+        # Covers "NAO CONSTAM", the "NAO CONSTA(M)" variant, and the plain
+        # text layer's own "NADA CONSTA" phrasing alike (measured on prod,
+        # 2026-09-28).
         return OcorrenciaCrednet(constam=False)
-    partes = [p.strip() for p in resto.split("|") if p.strip()]
+    if "|" in resto:
+        partes = [p.strip() for p in resto.split("|") if p.strip()]
+    else:
+        # A plain line has no pipe cells to split on — fall back to
+        # whitespace-padded columns, or the whole remainder as one token
+        # when there is no such padding to key off.
+        partes = [p.strip() for p in re.split(r"\s{2,}", resto) if p.strip()]
+        if len(partes) <= 1 and resto.strip():
+            partes = [resto.strip()]
     quantidade: Optional[int] = None
     valor: Optional[Decimal] = None
     ultimo: Optional[date] = None
@@ -230,42 +290,90 @@ def _ocorrencia(norm: str, rotulo: str) -> "OcorrenciaCrednet":
     )
 
 
+def _participacao_de(
+    *,
+    empresa: Optional[str],
+    cnpj_bruto: str,
+    pct_txt: str,
+    uf: str,
+    fim: int,
+    norm: str,
+    source: TextSource,
+) -> "ParticipacaoCrednet":
+    """One `ParticipacaoCrednet` from either row shape's already-extracted
+    groups — shared so the pipe reader and the plain-line reader stay one
+    behavior, not two."""
+    valido = _cnpj_is_valid(cnpj_bruto)
+    cnpj_formatado = format_cnpj(cnpj_bruto) or cnpj_bruto
+    confianca = _temper(
+        ExtractionConfidence.ALTA if valido else ExtractionConfidence.BAIXA,
+        source,
+    )
+
+    situacao_texto: Optional[str] = None
+    situacao_em: Optional[date] = None
+    desde: Optional[str] = None
+    janela = norm[fim : fim + _JANELA_SITUACAO]
+    sm = _SITUACAO_CNPJ_RE.search(janela)
+    if sm:
+        situacao_texto = sm.group("situacao").strip()
+        situacao_em = _data_br(sm.group("data"))
+        if sm.group("desde"):
+            desde = sm.group("desde").strip()
+
+    return ParticipacaoCrednet(
+        razao_social=(empresa or "").strip() or None,
+        cnpj=cnpj_formatado,
+        cnpj_valido=valido,
+        participacao_pct=_decimal_pct(pct_txt),
+        uf=uf,
+        situacao_texto=situacao_texto,
+        situacao_em=situacao_em,
+        desde=desde,
+        confianca=confianca,
+    )
+
+
 def _participacoes(norm: str, source: TextSource) -> tuple["ParticipacaoCrednet", ...]:
-    saida: list[ParticipacaoCrednet] = []
+    achados: list[tuple[int, "ParticipacaoCrednet"]] = []
+
     for m in _PARTICIPACAO_ROW_RE.finditer(norm):
-        cnpj_bruto = m.group("cnpj")
-        valido = _cnpj_is_valid(cnpj_bruto)
-        cnpj_formatado = format_cnpj(cnpj_bruto) or cnpj_bruto
-        confianca = _temper(
-            ExtractionConfidence.ALTA if valido else ExtractionConfidence.BAIXA,
-            source,
-        )
-
-        situacao_texto: Optional[str] = None
-        situacao_em: Optional[date] = None
-        desde: Optional[str] = None
-        janela = norm[m.end() : m.end() + _JANELA_SITUACAO]
-        sm = _SITUACAO_CNPJ_RE.search(janela)
-        if sm:
-            situacao_texto = sm.group("situacao").strip()
-            situacao_em = _data_br(sm.group("data"))
-            if sm.group("desde"):
-                desde = sm.group("desde").strip()
-
-        saida.append(
-            ParticipacaoCrednet(
-                razao_social=m.group("empresa").strip() or None,
-                cnpj=cnpj_formatado,
-                cnpj_valido=valido,
-                participacao_pct=_decimal_pct(m.group("pct")),
+        achados.append((
+            m.start(),
+            _participacao_de(
+                empresa=m.group("empresa"),
+                cnpj_bruto=m.group("cnpj"),
+                pct_txt=m.group("pct"),
                 uf=m.group("uf"),
-                situacao_texto=situacao_texto,
-                situacao_em=situacao_em,
-                desde=desde,
-                confianca=confianca,
-            )
-        )
-    return tuple(saida)
+                fim=m.end(),
+                norm=norm,
+                source=source,
+            ),
+        ))
+
+    for m in _PARTICIPACAO_LINHA_PLANA_RE.finditer(norm):
+        cnpj_bruto = m.group("cnpj")
+        raiz = _cnpj_normalize(cnpj_bruto)[:8]
+        prefixo = m.group("prefixo").strip()
+        palavras = prefixo.rsplit(maxsplit=1)
+        # A preceding 8-digit CNPJ "raiz" is not part of the razão social —
+        # drop it only when it actually IS this row's own CNPJ root.
+        empresa = palavras[0] if len(palavras) == 2 and palavras[1] == raiz else prefixo
+        achados.append((
+            m.start(),
+            _participacao_de(
+                empresa=empresa,
+                cnpj_bruto=cnpj_bruto,
+                pct_txt=m.group("pct"),
+                uf=m.group("uf"),
+                fim=m.end(),
+                norm=norm,
+                source=source,
+            ),
+        ))
+
+    achados.sort(key=lambda achado: achado[0])
+    return tuple(participacao for _, participacao in achados)
 
 
 # ─── public value objects ──────────────────────────────────────────────────
