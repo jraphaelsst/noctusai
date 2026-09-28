@@ -5,11 +5,17 @@ missing (lesson G6).
 🔴 WHY THIS EXISTS
 ------------------
 `card_hub.crednet_service.aplicar_leitura` and `card_hub.
-negociacao_extracao_service.extrair` already get this right: the reading
-is persisted, the D1 apply runs INSIDE a `try`, and the TERMINAL
-`extracao_status` is written LAST — only once the apply step (which can
-touch several tables, open conflicts, fire notifications) has actually
-succeeded. An exception there ends the job in `erro`, never a false `ok`.
+negociacao_extracao_service.extrair` already got this right BEFORE this
+runner existed: the reading is persisted, the D1 apply runs INSIDE a
+`try`, and the TERMINAL `extracao_status` is written LAST — only once the
+apply step (which can touch several tables, open conflicts, fire
+notifications) has actually succeeded. An exception there ends the job in
+`erro`, never a false `ok`. Both are now BUILT on this runner too
+(`NOC-REMEDIATE[extracao-job-runner-adopt]`, 2026-09-28 — a
+behavior-preserving swap onto the shared shape, not a fix) — see each
+module's own docstring for the one documented, test-uncovered behavioral
+note the swap carries (a failed-extraction sentinel now also (re)writes
+`extracao_fonte`, where the pre-swap code left it untouched).
 
 Three siblings did NOT follow that shape — each stamped a terminal `ok`
 BEFORE running its own apply step, with no exception handling (or a
@@ -41,7 +47,8 @@ WHAT THIS OWNS
   blob, log the access. Split out (rather than folded into `executar`) so
   a caller whose document type delegates to an ALREADY G6-compliant
   sibling pipeline (identity's Crednet branch, which owns its own
-  extract+persist+apply+terminal-status end to end once handed a blob)
+  extract+persist+apply+terminal-status end to end once handed a blob —
+  see `crednet_service.aplicar_leitura`'s own `executar_com_blob` call)
   can reuse this preamble without going through `executar`'s own
   `ler`/`processar` split.
 - `executar_com_blob` — extract, check the reading's own error, then run
@@ -60,14 +67,6 @@ The RECOVERY sweep (finding never-finished/never-started/retryable rows)
 is `app.services.extracao_varredura`'s job, not this module's — this
 module runs ONE job; that one finds candidates and calls back into
 whichever `extrair`/`extrair_cartao` a surface exposes.
-
-NOC-REMEDIATE[extracao-job-runner-adopt] — 2026-09-28: `card_hub.
-crednet_service.aplicar_leitura` and `card_hub.negociacao_extracao_
-service.extrair` are the reference shape this runner formalizes, but are
-NOT migrated onto it in this slice (`negociacao_extracao_service.py` /
-`crednet_service.py` are owned by a different in-flight slice). A
-mechanical swap onto `ExtractionJobConfig` is future work for whoever
-next touches those two files.
 """
 from __future__ import annotations
 

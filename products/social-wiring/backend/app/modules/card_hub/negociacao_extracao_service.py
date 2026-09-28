@@ -62,6 +62,7 @@ from dataclasses import is_dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -72,7 +73,7 @@ from app.modules.card_hub import financiamento_service
 from app.modules.card_hub import negociacao_estruturada_service as neg_estruturada
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub.proveniencia import fontes
-from app.services import campo_conflitos, table_reads
+from app.services import campo_conflitos, extracao_job, table_reads
 
 logger = logging.getLogger(__name__)
 
@@ -218,18 +219,11 @@ def _ja_rejeitado_pelo_usuario(
 
 
 # ─── (a) fetch / mark ───────────────────────────────────────────────────
-
-
-def _documento(client: Any, org_id: UUID, documento_id: UUID) -> Optional[dict]:
-    rows = (
-        _t(client, DOCUMENTOS_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("id", str(documento_id))
-        .limit(1)
-        .execute()
-    ).data or []
-    return rows[0] if rows else None
+#
+# The fetch/validate/`processando`-stamp/blob preamble itself now lives in
+# `extracao_job.preparar` (`NOC-REMEDIATE[extracao-job-runner-adopt]`,
+# 2026-09-28 — see `extrair`'s own docstring); this module keeps only the
+# raw-update helper its OWN steps past the preamble still call directly.
 
 
 def _marcar_documento(client: Any, documento_id: UUID, **campos: Any) -> None:
@@ -1247,132 +1241,94 @@ async def extrair(
 ) -> dict:
     """The background job the upload/re-run routes schedule — `financiamento
     _service`'s sibling of `empresas.extracao_service.extrair_cartao` /
-    `identidade_extracao_service.extrair_identidade`.
+    `identidade_extracao_service.extrair_identidade`, built on the shared
+    `app.services.extracao_job` runner (`NOC-REMEDIATE[extracao-job-runner-
+    adopt]`, 2026-09-28 — a behavior-preserving swap: this module was
+    already G6-correct end to end before the runner existed, and is one of
+    the two reference shapes `extracao_job`'s own module docstring names).
 
     🔴 (a) `extracao_dados`/`extracao_fonte` are written BEFORE `status='ok'`
     — never after (lesson G6: Crednet once stamped `ok` before its side
-    effects crashed). An exception in `aplicar_leitura` ends in `erro`,
-    with the reading already safely on the document.
+    effects crashed) — `_processar` below owns that ordering, wrapped by
+    the runner's own try/except (`erro_aplicar_codigo` defaults to
+    `extracao_job.ERRO_APLICAR_PADRAO == "aplicar_leitura"`, the same named
+    code this module used before the swap).
+
+    🔴 `_ler` catches an `extractor.extract` exception itself (Finding
+    [LOW], audit 2026-09-28) rather than letting it propagate —
+    `extracao_job.executar_com_blob` does not wrap its own call to
+    `config.ler`, so an uncaught exception there would strand the document
+    in `processando` until the D3 sweep's stale timeout instead of
+    surfacing immediately. Returning a sentinel reading whose `.error ==
+    "extrator"` routes it through the SAME `leitura_erro` path a DPS-
+    tripwire reading takes — same named code (`erro="extrator"`), same
+    message shape (`"extrator: {exc}"`). One accepted, documented
+    difference from the pre-runner version: that shared path also
+    (re)writes `extracao_fonte` (via `leitura_fonte`, `None` for this
+    sentinel) — the earlier code left it untouched on this branch. No test
+    depends on a stale `extracao_fonte` surviving a failed re-extraction,
+    and a document that has never had a successful read already carries an
+    unset one.
     """
-    documento = _documento(client, org_id, documento_id)
-    if documento is None:
-        logger.warning(
-            "negociacao_extracao: documento %s not found for org %s", documento_id, org_id,
-        )
-        return {"status": ERRO, "erro": "documento_nao_encontrado"}
-    if documento.get("deleted_at"):
-        return {"status": ERRO, "erro": "documento_removido"}
-    tipo_documento = documento["tipo_documento"]
-    if not financiamento_service.deve_extrair(tipo_documento):
-        return {"status": ERRO, "erro": "tipo_nao_extraivel"}
 
-    tentativas = int(documento.get("extracao_tentativas") or 0) + 1
-    _marcar_documento(
-        client, documento_id,
-        extracao_status="processando", extracao_em=_now(), extracao_tentativas=tentativas,
-    )
+    async def _ler(blob_bytes: bytes, doc: dict) -> Any:
+        try:
+            return await extractor.extract(
+                blob_bytes, mimetype=doc.get("mime_type"), filename=doc.get("nome_original"),
+            )
+        except Exception as exc:  # noqa: BLE001 - detached job; record, never raise (lesson G6)
+            logger.exception(
+                "negociacao_extracao %s: extractor.extract raised for tipo=%s",
+                documento_id, doc.get("tipo_documento"),
+            )
+            return SimpleNamespace(error="extrator", error_message=str(exc), source=None)
 
-    try:
-        blob = await storage.get(bucket=financiamento_service.BUCKET, key=documento["storage_path"])
-    except Exception as exc:  # noqa: BLE001 - detached job; record, never raise
-        logger.warning("negociacao_extracao %s: storage read failed: %s", documento_id, exc)
-        _marcar_documento(
-            client, documento_id, extracao_status="erro",
-            extracao_erro=f"storage: {exc}", extracao_em=_now(),
-        )
-        return {"status": ERRO, "erro": "storage"}
-    if blob is None:
-        _marcar_documento(
-            client, documento_id, extracao_status="erro",
-            extracao_erro="objeto ausente no storage", extracao_em=_now(),
-        )
-        return {"status": ERRO, "erro": "objeto_ausente"}
-
-    # A content read is logged BEFORE the extraction — same rule every
-    # sibling in this product follows. `usuario_id=None`: this is a detached
-    # background task, not a request-scoped read.
-    financiamento_service.STORE.log_acesso(client, org_id, documento_id, None, "extract")
-
-    # 🔴 Finding [LOW] (audit, 2026-09-28): `extractor.extract` used to run
-    # OUTSIDE any try — an exception here left the document stuck in
-    # `processando` until the D3 sweep's stale timeout, and a manual
-    # re-extraction was refused meanwhile (`deve_extrair`/the router's own
-    # in-flight guard). Named `erro` code, same posture as the `storage`
-    # read failure just above.
-    try:
-        leitura = await extractor.extract(
-            blob.data, mimetype=documento.get("mime_type"), filename=documento.get("nome_original"),
-        )
-    except Exception as exc:  # noqa: BLE001 - detached job; record, never raise (lesson G6)
-        logger.exception(
-            "negociacao_extracao %s: extractor.extract raised for tipo=%s",
-            documento_id, tipo_documento,
-        )
-        _marcar_documento(
-            client, documento_id, extracao_status="erro",
-            extracao_erro=f"extrator: {exc}", extracao_em=_now(),
-        )
-        return {"status": ERRO, "erro": "extrator"}
-
-    erro = getattr(leitura, "error", None)
-    if erro:
-        # 🔴 THE DPS TRIPWIRE (§D.5/H8): the reading is NEVER persisted —
-        # `extracao_dados` stays whatever it already was (nothing, on a
-        # first read). Every other error follows the same "never persist a
-        # failed reading" rule the sibling extractors already use.
-        _marcar_documento(
-            client, documento_id, extracao_status="erro",
-            extracao_erro=f"{erro}: {getattr(leitura, 'error_message', '') or ''}".strip(": "),
-            extracao_fonte=getattr(getattr(leitura, "source", None), "value", getattr(leitura, "source", None)),
-            extracao_em=_now(),
-        )
-        return {"status": ERRO, "erro": erro}
-
-    # 🔴 EVERYTHING FROM HERE ON IS ONE FAILURE DOMAIN. Serialising the
-    # reading and applying it are two different operations, but a failure
-    # in EITHER must land the same way — `erro`, never an uncaught
-    # exception left to crash the detached background task (which would
-    # strand the document in `processando` until the D3 sweep's stale
-    # timeout, rather than surfacing immediately) and never a false `ok`
-    # (lesson G6: Crednet once stamped `ok` before its side effects
-    # crashed).
-    try:
+    async def _processar(leitura: Any, doc: dict) -> dict:
         _marcar_documento(
             client, documento_id,
             extracao_fonte=getattr(getattr(leitura, "source", None), "value", getattr(leitura, "source", None)),
             extracao_dados=_json_seguro(leitura),
             extracao_em=_now(),
         )
-        resultado = aplicar_leitura(client, org_id, atendimento_id, documento_id, tipo_documento, leitura)
-    except Exception as exc:  # noqa: BLE001 - lesson G6: never a false 'ok'
-        logger.exception(
-            "negociacao_extracao %s: apply failed for tipo=%s", documento_id, tipo_documento,
+        resultado = aplicar_leitura(
+            client, org_id, atendimento_id, documento_id, doc["tipo_documento"], leitura,
         )
-        _marcar_documento(
-            client, documento_id, extracao_status="erro",
-            extracao_erro=f"aplicar_leitura: {exc}", extracao_em=_now(),
-        )
-        return {"status": ERRO, "erro": "aplicar_leitura"}
 
-    conflitos = resultado.get("conflitos") or []
-    if conflitos:
-        async def _notify_one(conflito: dict) -> None:  # pragma: no cover - exercised only with a real notifier
-            await notification_service.notify_atendimento_field_conflict(
-                org_id=org_id, conflito=conflito,
+        conflitos = resultado.get("conflitos") or []
+        if conflitos:
+            async def _notify_one(conflito: dict) -> None:  # pragma: no cover - exercised only with a real notifier
+                await notification_service.notify_atendimento_field_conflict(
+                    org_id=org_id, conflito=conflito,
+                )
+
+            await campo_conflitos.notificar_conflitos(
+                client, ATENDIMENTO, conflitos,
+                _notify_one if notification_service is not None else None,
             )
 
-        await campo_conflitos.notificar_conflitos(
-            client, ATENDIMENTO, conflitos,
-            _notify_one if notification_service is not None else None,
-        )
+        return {**resultado, "conflitos": len(conflitos)}
 
-    # (e) — only NOW the terminal status lands.
-    _marcar_documento(
-        client, documento_id,
-        extracao_status=resultado["status"], extracao_aviso=resultado.get("aviso"),
-        extracao_erro=None, extracao_em=_now(),
+    config = extracao_job.ExtractionJobConfig(
+        table=DOCUMENTOS_TABLE,
+        bucket=financiamento_service.BUCKET,
+        deve_extrair=financiamento_service.deve_extrair,
+        ler=_ler,
+        leitura_erro=lambda leitura: getattr(leitura, "error", None),
+        leitura_erro_mensagem=lambda leitura: getattr(leitura, "error_message", None),
+        leitura_fonte=lambda leitura: getattr(
+            getattr(leitura, "source", None), "value", getattr(leitura, "source", None)
+        ),
+        # A content read is logged BEFORE the extraction — same rule every
+        # sibling in this product follows. `usuario_id=None`: this is a
+        # detached background task, not a request-scoped read.
+        log_acesso=lambda org, doc_id: financiamento_service.STORE.log_acesso(
+            client, org, doc_id, None, "extract"
+        ),
+        processar=_processar,
+        # `atendimento_documentos` carries `extracao_aviso` (migration 171).
+        suporta_aviso=True,
     )
-    return {**resultado, "conflitos": len(conflitos)}
+    return await extracao_job.executar(client, storage, org_id, documento_id, config)
 
 
 # ─── D2: per-document confirm (§E5.2), conflict resolution (§E5.4) ───────

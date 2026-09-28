@@ -40,19 +40,27 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents.cnpj import normalize as normalize_cnpj
 
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
+from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.services import _now, _t
+from app.services import extracao_job
 
 logger = logging.getLogger(__name__)
 
 DOCUMENTOS_TABLE = "cliente_documentos"
 EMPRESAS_TABLE = "empresas"
 PARTICIPACOES_TABLE = "cliente_empresa_participacoes"
+
+#: `NOC-REMEDIATE[extracao-job-runner-adopt]` (2026-09-28) — the named
+#: `erro` code `extracao_job.executar_com_blob` records when `_processar`
+#: (below) raises. Unchanged from before the runner adoption.
+ERRO_SIDE_EFFECTS_FAILED = "side_effects_failed"
 
 #: The four `CampoExtraido`s a Crednet reading may write onto `clientes`
 #: (contract §C4b) — three of `identidade_extracao_service.CAMPOS`' own
@@ -298,47 +306,43 @@ async def aplicar_leitura(
     extractor: Any,
     notification_service: Optional[Any] = None,
 ) -> dict:
-    """The whole §C4 sequence. `doc` is the already-fetched `cliente_
-    documentos` row, `blob_data` the already-fetched bytes — `identidade_
-    extracao_service.extrair_identidade` does both before branching here, so
-    this module never re-reads storage. Never raises — every failure path
-    ends in a recorded `extracao_status`, matching `extrair_identidade`'s
-    own contract (this document is read by the same detached background
-    task / sweep recovery).
+    """The whole §C4 sequence, built on the shared `app.services.
+    extracao_job` runner (`NOC-REMEDIATE[extracao-job-runner-adopt]`,
+    2026-09-28 — a behavior-preserving swap: this module was already
+    G6-correct end to end before the runner existed, and is the reference
+    shape `extracao_job`'s own module docstring names). `doc` is the
+    already-fetched `cliente_documentos` row, `blob_data` the
+    already-fetched bytes — `identidade_extracao_service.
+    extrair_identidade` does both before branching here, so this module
+    never re-reads storage. Never raises — every failure path ends in a
+    recorded `extracao_status`, matching `extrair_identidade`'s own
+    contract (this document is read by the same detached background task /
+    sweep recovery).
 
-    🔴 P1/883 live bug (2026-09-24): `extracao_status` used to land `ok`/
-    `sem_dados` in step (a), BEFORE (b)/(c)/(d) ran — so a crash inside any
-    of them (a real one: `_upsert_empresa` writing a FK-violating
-    `dados_documento_id`, §6 of this same pass) propagated out of a
-    BackgroundTask uncaught, and the row was left `ok` forever: the UI
-    showed success, the D3 sweep never re-touches an `ok` row, and the
-    participações/empresas/certidão-9 side effects had silently never run.
-    (b)/(c)/(d) now run inside a try — ANY exception marks `extracao_status
-    ='erro'` with a coded `extracao_erro` and is logged, never raised
-    into the caller's `await`; `ok`/`sem_dados` is stamped only once every
-    side effect below has actually succeeded. A re-run (the D3 sweep, or
-    the `.../extrair` re-run route once status is `erro`) is safe: (b) is
-    D1 (fill-empty/conflict/equal), (c) upserts `empresas` by `(org_id,
+    🔴 P1/883 live bug (2026-09-24, unchanged by this swap): `extracao_
+    status` used to land `ok`/`sem_dados` in step (a), BEFORE (b)/(c)/(d)
+    ran — so a crash inside any of them (a real one: `_upsert_empresa`
+    writing a FK-violating `dados_documento_id`, §6 of that same pass)
+    propagated out of a BackgroundTask uncaught, and the row was left `ok`
+    forever. `_processar` below is (a) through (d), ONE failure domain per
+    `executar_com_blob`'s own contract: an exception ANYWHERE in it ends
+    the job in `erro` with `ERRO_SIDE_EFFECTS_FAILED`, logged, never
+    raised into the caller's `await`; the terminal status lands only once
+    `_processar` returns. A re-run (the D3 sweep, or the `.../extrair`
+    re-run route once status is `erro`) is safe: (b) is D1
+    (fill-empty/conflict/equal), (c) upserts `empresas` by `(org_id,
     cnpj)` and `cliente_empresa_participacoes` by `(cliente_id,
     empresa_id)`, and (d) only ever supersedes an older Crednet-derived
     resultado — every step is naturally idempotent, so nothing here needed
     its own "already ran" guard.
     """
-    fields = await extractor.extract(
-        blob_data, mimetype=doc.get("mime_type"), filename=doc.get("nome_original")
-    )
 
-    if fields.error:
-        _marcar(
-            client, documento_id,
-            extracao_status="erro",
-            extracao_erro=f"{fields.error}: {fields.error_message or ''}".strip(": "),
-            extracao_fonte=getattr(fields.source, "value", fields.source),
-            extracao_em=_now(),
+    async def _ler(blob_bytes: bytes, doc_row: dict) -> Any:
+        return await extractor.extract(
+            blob_bytes, mimetype=doc_row.get("mime_type"), filename=doc_row.get("nome_original"),
         )
-        return {"status": "erro", "erro": fields.error}
 
-    try:
+    async def _processar(fields: Any, doc_row: dict) -> dict:
         dados = _serializar_crednet(fields)
         achou_algo = bool(
             fields.nome or fields.cpf or fields.nome_mae or fields.data_nascimento
@@ -346,9 +350,10 @@ async def aplicar_leitura(
         )
 
         # (a) — the raw reading, before touching the cliente at all. NOT the
-        # final `extracao_status` (2026-09-24 fix — see the docstring
-        # above): this document is `ok`/`sem_dados` only once (b)/(c)/(d)
-        # below have all actually run without raising.
+        # final `extracao_status`: this document is `ok`/`sem_dados` only
+        # once (b)/(c)/(d) below have all actually run without raising —
+        # the runner's own try/except (lesson G6) is what turns a failure
+        # PAST this point into `erro`, never a false `ok`.
         _marcar(
             client, documento_id,
             extracao_fonte=getattr(fields.source, "value", fields.source),
@@ -407,35 +412,37 @@ async def aplicar_leitura(
         from app.modules.certidoes import service as certidoes_svc
 
         certidoes_atualizadas = certidoes_svc.registrar_serasa_de_crednet(
-            client, org_id, cliente_id, doc, fields
+            client, org_id, cliente_id, doc_row, fields
         )
-    except Exception as exc:  # noqa: BLE001 - detached task; record, never raise
-        # `on any exception` (2026-09-24 fix) means literally any — this
-        # wraps the raw-reading write too, not only (b)/(c)/(d): a crash
-        # serializing an otherwise-successful read must not leave the
-        # document silently stuck with no `extracao_status` at all.
-        logger.error(
-            "crednet %s: side effects failed: %s", documento_id, exc, exc_info=True,
-        )
-        _marcar(
-            client, documento_id,
-            extracao_status="erro",
-            extracao_erro=f"side_effects_failed: {exc}",
-            extracao_em=_now(),
-        )
-        return {"status": "erro", "erro": "side_effects_failed"}
 
-    # Every side effect above succeeded — the status is terminal now.
-    _marcar(client, documento_id, extracao_status="ok" if achou_algo else "sem_dados")
+        return {
+            "status": extracao_job.OK if achou_algo else extracao_job.SEM_DADOS,
+            "aplicados": aplicados,
+            "conflitos": len(conflitos),
+            "empresas": empresas_vinculadas,
+            "participacoes_rejeitadas": len(rejeitadas),
+            "certidoes_atualizadas": certidoes_atualizadas,
+        }
 
-    return {
-        "status": "ok" if achou_algo else "sem_dados",
-        "aplicados": aplicados,
-        "conflitos": len(conflitos),
-        "empresas": empresas_vinculadas,
-        "participacoes_rejeitadas": len(rejeitadas),
-        "certidoes_atualizadas": certidoes_atualizadas,
-    }
+    config = extracao_job.ExtractionJobConfig(
+        table=DOCUMENTOS_TABLE,
+        bucket=BUCKET,
+        deve_extrair=identidade_svc.deve_extrair,
+        ler=_ler,
+        leitura_erro=lambda fields: fields.error,
+        leitura_erro_mensagem=lambda fields: fields.error_message,
+        leitura_fonte=lambda fields: getattr(fields.source, "value", fields.source),
+        processar=_processar,
+        erro_aplicar_codigo=ERRO_SIDE_EFFECTS_FAILED,
+    )
+    # `preparar` already ran in `extrair_identidade` (this branch reuses its
+    # `doc`/`blob_data`, never re-reading storage) — only `executar_com_blob`
+    # applies here, wrapped around a blob-like object so `config.ler` sees
+    # the same `blob.data` shape `preparar` itself hands the generic path.
+    blob = SimpleNamespace(data=blob_data)
+    return await extracao_job.executar_com_blob(
+        client, config, documento_id, doc, blob, "serasa_crednet",
+    )
 
 
 __all__ = ["CAMPOS_CREDNET", "aplicar_leitura"]
