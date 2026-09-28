@@ -127,6 +127,14 @@ async def testar_smtp(
     sender_factory: EmailSenderFactory = Depends(get_email_sender_factory),
     cfg: EmailSettings = Depends(get_email_settings),
 ) -> dict:
+    """Deliberately OPEN to any member (owner decision 2026-09-28, see
+    `TestWritesAreAdminOnly`'s docstring): SMTP CONFIG writes (`PUT`/`DELETE`
+    above, and Gmail connect/disconnect) are admin-only, but sending a test
+    e-mail through an ALREADY-SAVED config is not itself a config change — a
+    non-admin verifying "does it actually send" needs no elevated role.
+    (leftovers item 9 asked to admin-gate this; verified against the code and
+    found already deliberately decided the other way — not applied.)
+    """
     try:
         message_id = await orcamento_email.enviar_teste(
             repos, _org(auth), payload.para, sender_factory=sender_factory, settings=cfg,

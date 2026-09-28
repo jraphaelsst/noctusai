@@ -31,10 +31,13 @@ import {
   type Profissional,
   type ProfissionalPayload,
 } from "@/hooks/useCustos";
+import { describeError } from "@/lib/errors";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 
 export default function Custos() {
+  const isAdmin = useIsOrgAdmin();
   const { funcoes, loading: carregandoFuncoes, error: erroFuncoes } = useFuncoes();
   const {
     profissionais,
@@ -128,41 +131,43 @@ export default function Custos() {
           <Wallet className="h-4 w-4" /> Funções
         </h2>
 
-        <form onSubmit={submeterFuncao} className="mb-4 flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[200px]">
-            <label htmlFor="funcao-nome" className="mb-1 block text-xs text-muted-foreground">
-              Nome da função
-            </label>
-            <Input
-              id="funcao-nome"
-              value={nomeFuncao}
-              onChange={(e) => setNomeFuncao(e.target.value)}
-              placeholder="Designer sênior"
-            />
-          </div>
-          <div className="min-w-[140px]">
-            <label htmlFor="funcao-custo" className="mb-1 block text-xs text-muted-foreground">
-              Custo/hora (R$)
-            </label>
-            <Input
-              id="funcao-custo"
-              type="number"
-              min={0}
-              step="0.01"
-              value={custoFuncao}
-              onChange={(e) => setCustoFuncao(e.target.value)}
-              placeholder="85,00"
-            />
-          </div>
-          <Button type="submit" disabled={!nomeFuncao.trim() || criarFuncao.isPending}>
-            <Plus className="mr-2 h-4 w-4" />
-            {criarFuncao.isPending ? "Salvando…" : "Adicionar função"}
-          </Button>
-        </form>
+        {isAdmin ? (
+          <form onSubmit={submeterFuncao} className="mb-4 flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[200px]">
+              <label htmlFor="funcao-nome" className="mb-1 block text-xs text-muted-foreground">
+                Nome da função
+              </label>
+              <Input
+                id="funcao-nome"
+                value={nomeFuncao}
+                onChange={(e) => setNomeFuncao(e.target.value)}
+                placeholder="Designer sênior"
+              />
+            </div>
+            <div className="min-w-[140px]">
+              <label htmlFor="funcao-custo" className="mb-1 block text-xs text-muted-foreground">
+                Custo/hora (R$)
+              </label>
+              <Input
+                id="funcao-custo"
+                type="number"
+                min={0}
+                step="0.01"
+                value={custoFuncao}
+                onChange={(e) => setCustoFuncao(e.target.value)}
+                placeholder="85,00"
+              />
+            </div>
+            <Button type="submit" disabled={!nomeFuncao.trim() || criarFuncao.isPending}>
+              <Plus className="mr-2 h-4 w-4" />
+              {criarFuncao.isPending ? "Salvando…" : "Adicionar função"}
+            </Button>
+          </form>
+        ) : null}
 
         {criarFuncao.isError && (
           <p className="mb-3 text-sm text-destructive">
-            Não foi possível criar a função. Talvez já exista uma com esse nome.
+            {describeError(criarFuncao.error, "Não foi possível criar a função.")}
           </p>
         )}
 
@@ -180,10 +185,14 @@ export default function Custos() {
               <LinhaFuncao
                 key={f.id}
                 funcao={f}
+                isAdmin={isAdmin}
                 removendo={removerFuncao.isPending}
                 onRemover={() => {
                   if (window.confirm(`Remover a função "${f.nome}"? Os profissionais vinculados ficam sem função.`)) {
-                    removerFuncao.mutate(f.id);
+                    removerFuncao.mutate(f.id, {
+                      onError: (erro) =>
+                        toast.error(describeError(erro, "Não foi possível remover a função.")),
+                    });
                   }
                 }}
               />
@@ -198,73 +207,75 @@ export default function Custos() {
           <Users className="h-4 w-4" /> Profissionais
         </h2>
 
-        <form onSubmit={submeterProfissional} className="mb-4 flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[180px]">
-            <label htmlFor="prof-nome" className="mb-1 block text-xs text-muted-foreground">
-              Nome
-            </label>
-            <Input
-              id="prof-nome"
-              value={nomeProf}
-              onChange={(e) => setNomeProf(e.target.value)}
-              placeholder="Ana Souza"
-            />
-          </div>
-          <div className="min-w-[160px]">
-            <label htmlFor="prof-funcao" className="mb-1 block text-xs text-muted-foreground">
-              Função
-            </label>
-            <select
-              id="prof-funcao"
-              value={funcaoProf}
-              onChange={(e) => setFuncaoProf(e.target.value)}
-              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
-            >
-              <option value="">Sem função</option>
-              {funcoes.map((f: Funcao) => (
-                <option key={f.id} value={f.id}>{f.nome}</option>
-              ))}
-            </select>
-          </div>
-          <div className="min-w-[170px]">
-            <label htmlFor="prof-usuario" className="mb-1 block text-xs text-muted-foreground">
-              Usuário
-            </label>
-            <select
-              id="prof-usuario"
-              value={usuarioProf}
-              onChange={(e) => setUsuarioProf(e.target.value)}
-              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
-            >
-              <option value="">Sem vínculo</option>
-              {membros.map((m) => (
-                <option key={m.id} value={m.id}>{m.nome || m.email}</option>
-              ))}
-            </select>
-          </div>
-          <div className="min-w-[150px]">
-            <label htmlFor="prof-override" className="mb-1 block text-xs text-muted-foreground">
-              Custo/hora próprio
-            </label>
-            <Input
-              id="prof-override"
-              type="number"
-              min={0}
-              step="0.01"
-              value={overrideProf}
-              onChange={(e) => setOverrideProf(e.target.value)}
-              placeholder="herda da função"
-            />
-          </div>
-          <Button type="submit" disabled={!nomeProf.trim() || criarProf.isPending}>
-            <Plus className="mr-2 h-4 w-4" />
-            {criarProf.isPending ? "Salvando…" : "Adicionar profissional"}
-          </Button>
-        </form>
+        {isAdmin ? (
+          <form onSubmit={submeterProfissional} className="mb-4 flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[180px]">
+              <label htmlFor="prof-nome" className="mb-1 block text-xs text-muted-foreground">
+                Nome
+              </label>
+              <Input
+                id="prof-nome"
+                value={nomeProf}
+                onChange={(e) => setNomeProf(e.target.value)}
+                placeholder="Ana Souza"
+              />
+            </div>
+            <div className="min-w-[160px]">
+              <label htmlFor="prof-funcao" className="mb-1 block text-xs text-muted-foreground">
+                Função
+              </label>
+              <select
+                id="prof-funcao"
+                value={funcaoProf}
+                onChange={(e) => setFuncaoProf(e.target.value)}
+                className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+              >
+                <option value="">Sem função</option>
+                {funcoes.map((f: Funcao) => (
+                  <option key={f.id} value={f.id}>{f.nome}</option>
+                ))}
+              </select>
+            </div>
+            <div className="min-w-[170px]">
+              <label htmlFor="prof-usuario" className="mb-1 block text-xs text-muted-foreground">
+                Usuário
+              </label>
+              <select
+                id="prof-usuario"
+                value={usuarioProf}
+                onChange={(e) => setUsuarioProf(e.target.value)}
+                className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
+              >
+                <option value="">Sem vínculo</option>
+                {membros.map((m) => (
+                  <option key={m.id} value={m.id}>{m.nome || m.email}</option>
+                ))}
+              </select>
+            </div>
+            <div className="min-w-[150px]">
+              <label htmlFor="prof-override" className="mb-1 block text-xs text-muted-foreground">
+                Custo/hora próprio
+              </label>
+              <Input
+                id="prof-override"
+                type="number"
+                min={0}
+                step="0.01"
+                value={overrideProf}
+                onChange={(e) => setOverrideProf(e.target.value)}
+                placeholder="herda da função"
+              />
+            </div>
+            <Button type="submit" disabled={!nomeProf.trim() || criarProf.isPending}>
+              <Plus className="mr-2 h-4 w-4" />
+              {criarProf.isPending ? "Salvando…" : "Adicionar profissional"}
+            </Button>
+          </form>
+        ) : null}
 
         {criarProf.isError && (
           <p className="mb-3 text-sm text-destructive">
-            Não foi possível criar o profissional. Verifique os dados e tente novamente.
+            {describeError(criarProf.error, "Não foi possível criar o profissional.")}
           </p>
         )}
 
@@ -284,11 +295,22 @@ export default function Custos() {
                 profissional={p}
                 funcoes={funcoes}
                 membros={membros}
+                isAdmin={isAdmin}
                 atualizando={atualizarProf.isPending}
                 removendo={removerProf.isPending}
-                onAtualizar={(patch) => atualizarProf.mutate({ id: p.id, ...patch })}
+                onAtualizar={(patch) =>
+                  atualizarProf.mutate(
+                    { id: p.id, ...patch },
+                    { onError: (erro) => toast.error(describeError(erro, "Não foi possível salvar o profissional.")) },
+                  )
+                }
                 onRemover={() => {
-                  if (window.confirm(`Remover o profissional "${p.nome}"?`)) removerProf.mutate(p.id);
+                  if (window.confirm(`Remover o profissional "${p.nome}"?`)) {
+                    removerProf.mutate(p.id, {
+                      onError: (erro) =>
+                        toast.error(describeError(erro, "Não foi possível remover o profissional.")),
+                    });
+                  }
                 }}
               />
             ))}
@@ -306,10 +328,12 @@ export default function Custos() {
  */
 function LinhaFuncao({
   funcao,
+  isAdmin,
   removendo,
   onRemover,
 }: {
   funcao: Funcao;
+  isAdmin: boolean;
   removendo: boolean;
   onRemover: () => void;
 }) {
@@ -336,8 +360,7 @@ function LinhaFuncao({
           toast.success("Função atualizada — custos e DRE passam a usar o novo valor");
           setEditando(false);
         },
-        onError: (erro) =>
-          toast.error(erro instanceof Error ? erro.message : "Não foi possível salvar a função."),
+        onError: (erro) => toast.error(describeError(erro, "Não foi possível salvar a função.")),
       },
     );
   }
@@ -384,18 +407,22 @@ function LinhaFuncao({
       <span className="text-sm font-medium text-foreground">
         {BRL.format(funcao.custo_hora_padrao)}/h
       </span>
-      <Button variant="ghost" size="sm" aria-label={`Editar ${funcao.nome}`} onClick={abrir}>
-        <Pencil className="h-4 w-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={`Remover ${funcao.nome}`}
-        disabled={removendo}
-        onClick={onRemover}
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
+      {isAdmin ? (
+        <>
+          <Button variant="ghost" size="sm" aria-label={`Editar ${funcao.nome}`} onClick={abrir}>
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Remover ${funcao.nome}`}
+            disabled={removendo}
+            onClick={onRemover}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </>
+      ) : null}
     </li>
   );
 }
@@ -411,6 +438,7 @@ function LinhaProfissional({
   profissional: p,
   funcoes,
   membros,
+  isAdmin,
   atualizando,
   removendo,
   onAtualizar,
@@ -419,6 +447,7 @@ function LinhaProfissional({
   profissional: Profissional;
   funcoes: Funcao[];
   membros: MembroEquipe[];
+  isAdmin: boolean;
   atualizando: boolean;
   removendo: boolean;
   onAtualizar: (patch: Partial<ProfissionalPayload>) => void;
@@ -518,40 +547,50 @@ function LinhaProfissional({
         </span>
       )}
 
-      <select
-        aria-label={`Usuário de ${p.nome}`}
-        className="h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground"
-        value={p.usuario_id ?? ""}
-        onChange={(e) => onAtualizar({ usuario_id: e.target.value || null })}
-      >
-        <option value="">Sem vínculo</option>
-        {membros.map((m) => (
-          <option key={m.id} value={m.id}>{m.nome || m.email}</option>
-        ))}
-      </select>
+      {isAdmin ? (
+        <select
+          aria-label={`Usuário de ${p.nome}`}
+          className="h-9 rounded-md border border-border bg-background px-2 text-xs text-foreground"
+          value={p.usuario_id ?? ""}
+          onChange={(e) => onAtualizar({ usuario_id: e.target.value || null })}
+        >
+          <option value="">Sem vínculo</option>
+          {membros.map((m) => (
+            <option key={m.id} value={m.id}>{m.nome || m.email}</option>
+          ))}
+        </select>
+      ) : (
+        <span className="text-xs text-muted-foreground">
+          {membros.find((m) => m.id === p.usuario_id)?.nome ?? "Sem vínculo"}
+        </span>
+      )}
 
-      <Button variant="ghost" size="sm" aria-label={`Editar ${p.nome}`} onClick={abrir}>
-        <Pencil className="h-4 w-4" />
-      </Button>
+      {isAdmin ? (
+        <>
+          <Button variant="ghost" size="sm" aria-label={`Editar ${p.nome}`} onClick={abrir}>
+            <Pencil className="h-4 w-4" />
+          </Button>
 
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={atualizando}
-        onClick={() => onAtualizar({ ativo: !p.ativo })}
-      >
-        {p.ativo ? "Desativar" : "Ativar"}
-      </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={atualizando}
+            onClick={() => onAtualizar({ ativo: !p.ativo })}
+          >
+            {p.ativo ? "Desativar" : "Ativar"}
+          </Button>
 
-      <Button
-        variant="ghost"
-        size="sm"
-        aria-label={`Remover ${p.nome}`}
-        disabled={removendo}
-        onClick={onRemover}
-      >
-        <Trash2 className="h-4 w-4" />
-      </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Remover ${p.nome}`}
+            disabled={removendo}
+            onClick={onRemover}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </>
+      ) : null}
     </li>
   );
 }

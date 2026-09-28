@@ -9,10 +9,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const { api } = vi.hoisted(() => ({
+const { api, mockUser } = vi.hoisted(() => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn(), upload: vi.fn() },
+  mockUser: { current: { id: "usuario-1", user_metadata: { org_role: "admin" } as Record<string, unknown> } },
 }));
-vi.mock("@noctusai/seed/infra", () => ({ api }));
+vi.mock("@noctusai/seed/infra", () => ({ api, useAuthStore: () => ({ user: mockUser.current }) }));
 
 import Custos from "../Custos";
 
@@ -33,6 +34,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockUser.current = { id: "usuario-1", user_metadata: { org_role: "admin" } };
   vi.spyOn(window, "confirm").mockReturnValue(true);
   api.get.mockImplementation(async (path: string) => {
     if (path === "/api/custos/funcoes") return [FUNCAO];
@@ -86,5 +88,52 @@ describe("Custos — profissional edit + delete confirmation", () => {
     renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "Remover Ana" }));
     expect(api.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe("Custos — write controls are admin-only (leftovers item 8/17)", () => {
+  it("a non-admin sees the custo/hora table read-only: no forms, no edit/remove/activate, no usuário select", async () => {
+    mockUser.current = { id: "u", user_metadata: { org_role: "member" } };
+    renderPage();
+    await screen.findByText("Designer");
+    await screen.findByText("Ana");
+
+    expect(screen.queryByLabelText("Nome da função")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adicionar função" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Nome")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adicionar profissional" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar Designer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remover Designer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Editar Ana" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remover Ana" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Desativar|Ativar/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Usuário de Ana")).not.toBeInTheDocument();
+  });
+
+  it("an admin sees every write control", async () => {
+    renderPage();
+    await screen.findByLabelText("Nome da função");
+    expect(screen.getByRole("button", { name: "Adicionar função" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adicionar profissional" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Editar Ana" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Usuário de Ana")).toBeInTheDocument();
+  });
+
+  it("shows the server's real message on a duplicate função name, never a generic guess", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    api.post.mockImplementation(async (path: string) => {
+      if (path === "/api/custos/funcoes") {
+        throw new ApiError(409, "Já existe uma função com esse nome.", {
+          detail: "Já existe uma função com esse nome.", code: "funcao_duplicada",
+        });
+      }
+      throw new Error(`POST inesperado ${path}`);
+    });
+    renderPage();
+    fireEvent.change(await screen.findByLabelText("Nome da função"), { target: { value: "Designer" } });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar função" }));
+    // describeError surfaces the server's real `detail` — never the raw
+    // "[409] " prefix, never a generic guess.
+    expect(await screen.findByText("Já existe uma função com esse nome.")).toBeInTheDocument();
   });
 });

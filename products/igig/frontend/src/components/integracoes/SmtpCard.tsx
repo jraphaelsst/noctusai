@@ -23,6 +23,7 @@ import {
   type SmtpStatus,
 } from "@/hooks/useEmailIntegracao";
 import { describeError } from "@/lib/errors";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 import { IntegracaoCard } from "./IntegracaoCard";
 
 const ORIGEM_BADGE: Record<OrigemSmtp, { texto: string; variante: BadgeVariant }> = {
@@ -59,6 +60,7 @@ function formDe(s: SmtpStatus | null): Form {
 }
 
 export function SmtpCard() {
+  const isAdmin = useIsOrgAdmin();
   const { smtp, showSkeleton, isError, error } = useSmtp();
   const { salvar, remover, testar } = useSmtpMutations();
   const [f, setF] = useState<Form>(VAZIO);
@@ -97,6 +99,11 @@ export function SmtpCard() {
       erro={isError ? describeError(error, "Não foi possível carregar o SMTP.") : null}
       testId="smtp-card"
     >
+      {!isAdmin ? (
+        <p className="text-sm text-muted-foreground" data-testid="smtp-somente-leitura">
+          Apenas administradores da organização podem configurar o SMTP.
+        </p>
+      ) : (
       <form
         className="space-y-3"
         onSubmit={(e) => {
@@ -175,7 +182,10 @@ export function SmtpCard() {
           </Button>
         </div>
       </form>
+      )}
 
+      {/* Deliberately open to any member (owner decision 2026-09-28): using an
+          already-saved SMTP config to send a test is not a config change. */}
       {smtp?.configurado ? (
         <form
           className="flex flex-wrap items-end gap-2 border-t border-border pt-3"

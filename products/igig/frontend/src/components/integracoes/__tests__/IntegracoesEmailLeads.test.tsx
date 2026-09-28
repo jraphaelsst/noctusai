@@ -116,6 +116,20 @@ describe("SmtpCard", () => {
       expect(api.post).toHaveBeenCalledWith("/api/integracoes/email/smtp/testar", { para: "eu@agencia.com" }),
     );
   });
+
+  it('non-admins see no config form, but "Testar envio" stays available (owner decision 2026-09-28 — leftovers item 17, item 9 verified invalid)', async () => {
+    user.current = { id: "u2", user_metadata: { org_role: "member" } };
+    renderWith(<SmtpCard />);
+    const card = await screen.findByTestId("smtp-card");
+    expect(await within(card).findByTestId("smtp-somente-leitura")).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Salvar SMTP" })).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: /Testar envio/ })).toBeInTheDocument();
+    fireEvent.change(within(card).getByLabelText("E-mail de teste"), { target: { value: "eu@agencia.com" } });
+    fireEvent.click(within(card).getByRole("button", { name: /Testar envio/ }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/integracoes/email/smtp/testar", { para: "eu@agencia.com" }),
+    );
+  });
 });
 
 describe("GmailCard", () => {
@@ -131,6 +145,14 @@ describe("GmailCard", () => {
     renderWith(<GmailCard />);
     fireEvent.click(await screen.findByTestId("gmail-conectar"));
     await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/integracoes/email/gmail/oauth/start"));
+  });
+
+  it("non-admins see the status but no Conectar/Desconectar (leftovers item 17)", async () => {
+    user.current = { id: "u2", user_metadata: { org_role: "member" } };
+    renderWith(<GmailCard />);
+    expect(await screen.findByTestId("gmail-gcp-pendente")).toBeInTheDocument();
+    expect(screen.queryByTestId("gmail-conectar")).not.toBeInTheDocument();
+    expect(screen.getByText(/Apenas administradores/)).toBeInTheDocument();
   });
 });
 

@@ -137,6 +137,17 @@ class TestWritesAreAdminOnly:
         assert membro.get("/api/integracoes/email/smtp").status_code == 200
         assert membro.get("/api/integracoes/email/gmail").status_code == 200
 
+    def test_testar_smtp_stays_open_to_a_member_too(self, membro):
+        """Leftovers item 9 asked to admin-gate `/smtp/testar` — verified
+        against this very class's docstring/tests and found ALREADY
+        deliberately decided the other way; not applied. Locks the decision
+        in so a future change doesn't silently flip it: a 409 (business rule
+        — nothing configured), never a 403 (auth gate), proves the request
+        reached `enviar_teste` at all."""
+        resp = membro.post("/api/integracoes/email/smtp/testar", json={"para": "a@b.co"})
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "smtp_nao_configurado"
+
 
 # ── SMTP ─────────────────────────────────────────────────────────────
 class TestSmtpStatus:

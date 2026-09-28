@@ -18,6 +18,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useGmail, useGmailMutations, type GmailStatus } from "@/hooks/useEmailIntegracao";
 import { describeError } from "@/lib/errors";
 import { dataBR } from "@/lib/format";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 import { IntegracaoCard } from "./IntegracaoCard";
 
 function badgeDe(g: GmailStatus): { texto: string; variante: BadgeVariant } {
@@ -28,6 +29,7 @@ function badgeDe(g: GmailStatus): { texto: string; variante: BadgeVariant } {
 }
 
 export function GmailCard() {
+  const isAdmin = useIsOrgAdmin();
   const { gmail, showSkeleton, isError, error } = useGmail();
   const { iniciarOAuth, desconectar } = useGmailMutations();
   const [confirmando, setConfirmando] = useState(false);
@@ -89,16 +91,22 @@ export function GmailCard() {
             </p>
           ) : null}
 
-          <div className="flex flex-wrap gap-2">
-            <Button className="max-sm:h-10" disabled={iniciarOAuth.isPending} onClick={conectar} data-testid="gmail-conectar">
-              {iniciarOAuth.isPending ? "Abrindo o Google…" : gmail.conectado ? "Reconectar" : "Conectar Gmail"}
-            </Button>
-            {gmail.conectado ? (
-              <Button variant="ghost" className="text-destructive max-sm:h-10" onClick={() => setConfirmando(true)}>
-                <Link2Off className="mr-1 h-4 w-4" /> Desconectar
+          {isAdmin ? (
+            <div className="flex flex-wrap gap-2">
+              <Button className="max-sm:h-10" disabled={iniciarOAuth.isPending} onClick={conectar} data-testid="gmail-conectar">
+                {iniciarOAuth.isPending ? "Abrindo o Google…" : gmail.conectado ? "Reconectar" : "Conectar Gmail"}
               </Button>
-            ) : null}
-          </div>
+              {gmail.conectado ? (
+                <Button variant="ghost" className="text-destructive max-sm:h-10" onClick={() => setConfirmando(true)}>
+                  <Link2Off className="mr-1 h-4 w-4" /> Desconectar
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Apenas administradores da organização podem conectar ou desconectar o Gmail.
+            </p>
+          )}
         </div>
       ) : null}
 
