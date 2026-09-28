@@ -754,15 +754,20 @@ class FaturaRepository(BaseRepository):
 
     def marcar_enviada(self, org_id: str, fatura_id: str) -> Record:
         """"Enviar fatura" (e-mail) AND "Marcar como enviada" (sent outside
-        the system) both land here — the same status+timestamp pair either
-        way. Unlike `marcar_paga`, re-marking an already-`enviada` fatura
-        DOES refresh `enviada_em`: a genuine re-send is a new event, not a
-        fact that already happened once and must never move."""
-        return self.atualizar(
-            org_id,
-            fatura_id,
-            {"status": "enviada", "enviada_em": datetime.now(timezone.utc).isoformat()},
-        )
+        the system) both land here — `enviada_em` is refreshed unconditionally
+        (a genuine re-send is a new event, not a fact that already happened
+        once and must never move), but `status` NEVER moves a `vencida`
+        invoice back to `enviada` (achado B, 2026-09 audit): the daily
+        inadimplência sweep (`atualizar_inadimplencia`, 06:00) would flip it
+        right back to `vencida` on the next run, and the cliente's
+        inadimplente state would wobble along with it. A `vencida` invoice
+        stays `vencida` — only its `enviada_em` timestamp moves; every other
+        status (`aberta`) still moves to `enviada` as before."""
+        atual = self.buscar(org_id, fatura_id)
+        valores: Record = {"enviada_em": datetime.now(timezone.utc).isoformat()}
+        if atual.get("status") != "vencida":
+            valores["status"] = "enviada"
+        return self.atualizar(org_id, fatura_id, valores)
 
     def cancelar(self, org_id: str, fatura_id: str) -> Record:
         """Void an invoice without deleting it — the history (and any lines
