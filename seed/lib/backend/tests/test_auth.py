@@ -907,24 +907,45 @@ class TestMakeResolvePlatformRole:
         assert result is None
         assert fallback_calls == [], "fallback must NOT run when a trusted (non-qualifying) row exists"
 
-    def test_fallback_fires_and_warns_when_no_noctus_users_row(self, caplog):
-        """No `noctus_users` row (transition state) → falls back to
-        `resolve_sso_role` (user_metadata) AND logs a warning naming the
-        user — never silent."""
+    def test_no_row_spoofed_noctus_role_admin_is_not_platform_admin(self, caplog):
+        """SEC-2 (2026-09-28): no `noctus_users` row + self-written
+        `user_metadata.noctus_role='admin'` → None, NEVER platform_admin.
+        The metadata claim is logged (visible), never honoured."""
         fake_user = _FakeUserWithMetadata(
-            id="u-provisioning", user_metadata={"noctus_role": "admin"},
+            id="u-rowless", user_metadata={"noctus_role": "admin"},
         )
         resolve_platform_role = self._build(admin_client=_FakeCoreClient(rows=[]))
 
         with caplog.at_level(logging.WARNING, logger="noctusai_lib.api.auth"):
             result = resolve_platform_role(fake_user)
-        assert result == "platform_admin"
+        assert result is None
         assert any(
             "trusted_role_lookup_empty" in r.message and fake_user.id in r.message
             for r in caplog.records
-        ), "expected a loud warning naming the user id when falling back"
+        ), "a row-less user claiming an elevated role must be logged, not elevated"
 
-    def test_fallback_returns_none_when_metadata_also_has_no_admin_signal(self):
+    def test_no_row_spoofed_org_role_owner_is_not_platform_admin(self):
+        """SEC-2: no row + self-written `user_metadata.org_role='owner'` →
+        None. `resolve_sso_role` alone WOULD say platform_admin — proving the
+        resolver no longer consults it."""
+        fake_user = _FakeUserWithMetadata(
+            id="u-rowless", user_metadata={"org_role": "owner", "noctus_role": "admin"},
+        )
+        resolve_platform_role = self._build(admin_client=_FakeCoreClient(rows=[]))
+
+        assert resolve_sso_role(fake_user) == "platform_admin"  # the spoofable reading
+        assert resolve_platform_role(fake_user) is None
+
+    def test_real_row_admin_owner_unchanged_by_metadata(self):
+        """A real row keeps cascading exactly as before — with metadata that
+        says nothing (or even something contrary)."""
+        for row in ({"role": "admin", "org_role": "member"}, {"role": "user", "org_role": "owner"},
+                    {"role": "user", "org_role": "admin"}):
+            fake_user = _FakeUserWithMetadata(id="u1", user_metadata={"org_role": "viewer"})
+            resolve_platform_role = self._build(admin_client=_FakeCoreClient(rows=[row]))
+            assert resolve_platform_role(fake_user) == "platform_admin", row
+
+    def test_no_row_and_no_metadata_signal_returns_none(self):
         """No row AND no admin signal in metadata → None (caller falls
         through to product-specific role logic)."""
         fake_user = _FakeUserWithMetadata(id="u1", user_metadata={})
@@ -955,17 +976,16 @@ class TestMakeResolvePlatformRole:
         assert fallback_calls == [], "fail-closed must never consult the spoofable fallback on a DB error"
         assert any("trusted_role_lookup_error" in r.message for r in caplog.records)
 
-    def test_real_resolve_sso_role_fallback_end_to_end(self):
-        """No mocking of resolve_sso_role — exercises the real function to
-        prove the wiring (not just a patched stand-in) falls through
-        correctly when no noctus_users row exists."""
+    def test_real_resolve_sso_role_is_never_an_authz_source(self):
+        """No mocking — the real `resolve_sso_role` reads metadata as admin,
+        and the resolver still answers None for a row-less user (SEC-2)."""
         fake_user = _FakeUserWithMetadata(
             id="u1", user_metadata={"org_role": "admin"},
         )
         resolve_platform_role = self._build(admin_client=_FakeCoreClient(rows=[]))
 
         assert resolve_sso_role(fake_user) == "platform_admin"  # sanity on the real fn
-        assert resolve_platform_role(fake_user) == "platform_admin"
+        assert resolve_platform_role(fake_user) is None
 
 
 # ---------------------------------------------------------------------------

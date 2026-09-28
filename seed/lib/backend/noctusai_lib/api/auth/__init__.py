@@ -36,8 +36,8 @@ reimplementing.
 - **NEW** (`role-cascade-trusted`, 2026-07-14) `make_resolve_platform_role`
   is the role-authz analog of the above: it resolves the platform-admin
   cascade from ``public.noctus_users.role`` / ``org_role`` (trusted DB)
-  FIRST, falling back to :func:`resolve_sso_role`'s spoofable
-  ``user_metadata`` read only as a transition fallback. Closes the
+  ONLY — a user with no row resolves to no role (SEC-2, 2026-09-28
+  removed the former :func:`resolve_sso_role` metadata fallback). Closes the
   role-spoofing hole flagged as a follow-up above: a user could previously
   self-grant ``platform_admin`` fleet-wide by rewriting
   ``user_metadata.org_role`` / ``noctus_role`` via ``auth.updateUser({data})``.
@@ -199,10 +199,10 @@ def resolve_sso_role(user) -> Optional[str]:
     # SECURITY (`role-cascade-trusted`, 2026-07-14): this reads
     # `user_metadata` — spoofable, since Supabase lets any authenticated
     # user rewrite their own metadata via `auth.updateUser({data})`. It is
-    # now ONLY consumed as a transition fallback by
-    # :func:`make_resolve_platform_role` (used when no trusted
-    # `public.noctus_users` row exists yet) — new callers should reach for
-    # `make_resolve_platform_role` instead of calling this directly. Kept
+    # NOT an authorization source (SEC-2, 2026-09-28: even the former
+    # no-row fallback in :func:`make_resolve_platform_role` is gone) —
+    # authorize with `make_resolve_platform_role`, which reads only the
+    # trusted `public.noctus_users` row. Kept
     # standalone (not inlined) because it is still the correct primitive
     # for reading the SSO-synced `user_metadata` shape on its own terms,
     # and existing per-product callers are migrated in the same commit
@@ -430,11 +430,16 @@ def make_resolve_platform_role(
     row that isn't ``platform_admin``-qualifying (e.g. a plain org member)
     resolves to ``None`` here, exactly like a genuinely non-admin
     ``user_metadata`` read would, so it is NOT treated as "no row" and does
-    NOT fall back to the spoofable resolver. The :func:`resolve_sso_role`
-    fallback fires ONLY when no ``noctus_users`` row exists yet (a
-    legitimate transition state, e.g. a provisioning race) — and even then,
-    LOUDLY: a ``logger.warning`` names the user id whenever the fallback
-    actually resolves a role. On a genuine DB/transport ERROR (as opposed to
+    NOT fall back to the spoofable resolver.
+
+    **No row ⇒ no role** (SEC-2, 2026-09-28). A user with NO
+    ``noctus_users`` row resolves to ``None`` — never ``platform_admin``.
+    The former :func:`resolve_sso_role` (``user_metadata``) fallback for
+    that case let a row-less user self-grant ``platform_admin`` in every
+    product (``user_metadata.org_role='owner'`` / ``noctus_role='admin'``
+    via ``auth.updateUser({data})``); it is gone for authorization. A
+    provisioning race now answers "not elevated" (fail closed) and is
+    logged, never elevated. On a genuine DB/transport ERROR (as opposed to
     "no row"), resolution fails CLOSED — the exception propagates rather
     than falling back to the spoofable resolver, for the same reason
     documented on :func:`make_get_current_user_org`: falling back in the
@@ -491,17 +496,18 @@ def make_resolve_platform_role(
             # never consulted here).
             return trusted if trusted == "platform_admin" else None
 
-        # No noctus_users row — a legitimate transition state (e.g. a
-        # provisioning race). Fall back to the caller-supplied resolver so
-        # existing flows keep working, but LOUDLY — never silent.
-        fallback = resolve_sso_role(user)
-        if fallback:
+        # No noctus_users row ⇒ no platform role. `user_metadata` is
+        # user-writable (`auth.updateUser({data})`) and is NEVER consulted for
+        # authorization (SEC-2, 2026-09-28) — a row-less user who wrote
+        # `org_role='owner'` into their own metadata stays unelevated. Logged
+        # so a genuine provisioning race is visible, not silent.
+        if resolve_sso_role(user):
             logger.warning(
-                "trusted_role_lookup_empty user_id=%s — no noctus_users row, "
-                "falling back to resolve_sso_role (user_metadata; role=%r)",
-                user_id, fallback,
+                "trusted_role_lookup_empty user_id=%s — no noctus_users row; "
+                "user_metadata claims an elevated role, IGNORED for authorization",
+                user_id,
             )
-        return fallback
+        return None
 
     return resolve_platform_role
 
