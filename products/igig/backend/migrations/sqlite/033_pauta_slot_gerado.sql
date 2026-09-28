@@ -1,4 +1,4 @@
--- SQLite mirror of ../032_igig_pauta_slot_gerado.sql — no RLS (not supported).
+-- SQLite mirror of ../033_igig_pauta_slot_gerado.sql — no RLS (not supported).
 CREATE TABLE IF NOT EXISTS pauta_slot_gerado (
     id                  TEXT PRIMARY KEY,
     org_id              TEXT NOT NULL,

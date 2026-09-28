@@ -24,7 +24,7 @@
 -- only fires if the item row itself is later purged (e.g. the orçamento is
 -- deleted outright) — at that point the ledger has nothing left to protect.
 --
--- SQLite mirror: migrations/sqlite/032_pauta_slot_gerado.sql (no RLS there).
+-- SQLite mirror: migrations/sqlite/033_pauta_slot_gerado.sql (no RLS there).
 -- ============================================================================
 SET search_path = igig, public;
 
