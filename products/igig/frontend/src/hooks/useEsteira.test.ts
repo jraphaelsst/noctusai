@@ -88,10 +88,16 @@ describe("tarefa writes", () => {
 
   it("deletes through DELETE /api/esteira/tarefas/{id} and refreshes the board", async () => {
     const m = useExcluirTarefa() as unknown as MutationStub;
-    await m.mutationFn("t1");
+    await m.mutationFn({ id: "t1" });
     expect(mockDelete).toHaveBeenCalledWith("/api/esteira/tarefas/t1");
     m.onSuccess();
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: [ESTEIRA_BOARD_KEY] });
+  });
+
+  it("appends ?confirmar_perda_horas=true when the caller confirms losing logged hours", async () => {
+    const m = useExcluirTarefa() as unknown as MutationStub;
+    await m.mutationFn({ id: "t1", confirmarPerdaHoras: true });
+    expect(mockDelete).toHaveBeenCalledWith("/api/esteira/tarefas/t1?confirmar_perda_horas=true");
   });
 
   it("starts and stops the timer WITHOUT a usuario_id (the server times the caller)", async () => {

@@ -42,6 +42,7 @@ export interface TarefaCard {
     titulo: string;
     formato: string | null;
     data_publicacao: string | null;
+    marca_id: string | null;
   } | null;
   cliente: { id: string; nome: string } | null;
   responsavel: { id: string; nome: string } | null;
@@ -115,11 +116,42 @@ export function useCriarTarefa() {
   });
 }
 
-/** `DELETE /api/esteira/tarefas/{id}` → 204. Apontamentos + links cascade. */
+/**
+ * Edit título, responsável, prazo or pauta (achado 3 — there was no way to
+ * fix any of these short of deleting the tarefa and losing its
+ * apontamentos). Never `etapa_id`: stage moves stay `useMoveCard`'s job.
+ */
+export function useAtualizarTarefa() {
+  const invalidar = useInvalidarEsteira();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: {
+      id: string;
+      titulo?: string;
+      responsavel_id?: string | null;
+      prazo?: string | null;
+      pauta_id?: string;
+    }) => api.patch<TarefaCard>(`/api/esteira/tarefas/${id}`, patch),
+    onSuccess: invalidar,
+  });
+}
+
+/**
+ * `DELETE /api/esteira/tarefas/{id}` → 204. Apontamentos + links cascade.
+ *
+ * `confirmarPerdaHoras` maps to `?confirmar_perda_horas=true` — the server
+ * refuses (409 `horas_serao_perdidas`) a tarefa with logged hours otherwise
+ * (achado 4). The UI is expected to have already shown those hours before
+ * setting this.
+ */
 export function useExcluirTarefa() {
   const invalidar = useInvalidarEsteira();
   return useMutation({
-    mutationFn: (tarefaId: string) => api.delete<null>(`/api/esteira/tarefas/${tarefaId}`),
+    // `confirmar_perda_horas` is a QUERY param on the backend, not a body —
+    // `api.delete`'s second argument is a JSON body, so it rides in the URL.
+    mutationFn: ({ id, confirmarPerdaHoras }: { id: string; confirmarPerdaHoras?: boolean }) =>
+      api.delete<null>(
+        `/api/esteira/tarefas/${id}${confirmarPerdaHoras ? "?confirmar_perda_horas=true" : ""}`,
+      ),
     onSuccess: invalidar,
   });
 }
@@ -183,6 +215,30 @@ export function useEmitirLinkAprovacao() {
   });
 }
 
+/** pt-BR labels for the esteira's own two system roles — the seed's default
+ * `STAGE_ROLE_LABELS` only covers `proposta_aceite`/`final` (the Comercial
+ * board's roles), so the esteira's badges and role picker showed the raw
+ * slug (achado 11). */
+export const ESTEIRA_ROLE_LABELS: Record<string, string> = {
+  aprovacao_cliente: "Aprovação do cliente",
+  agendado: "Agendado",
+};
+
+/**
+ * Reassign a system role to a stage (or clear it). Sibling of the seed's
+ * generic stage PATCH (still used for label/cor/posicao/ativo) — this one
+ * atomically moves the role off whatever stage held it, and refuses to
+ * clear the sole `aprovacao_cliente` holder (achado 11).
+ */
+export function useAtribuirPapelEtapa() {
+  const invalidar = useInvalidarEsteira();
+  return useMutation({
+    mutationFn: ({ etapaId, papel }: { etapaId: string; papel: string | null }) =>
+      api.patch(`/api/esteira/stages/${etapaId}/papel`, { papel }),
+    onSuccess: invalidar,
+  });
+}
+
 /** The public portal URL for a token — one definition for every copy button. */
 export function urlAprovacao(token: string, origin: string = window.location.origin): string {
   return `${origin}/aprovar/${token}`;
@@ -235,10 +291,13 @@ export function useDecidirAprovacao(token: string | undefined) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ decisao, observacao }: { decisao: Decisao; observacao: string }) =>
-      api.post<{ ok: boolean; decisao: Decisao }>(`/api/esteira/aprovar/${token}`, {
-        decisao,
-        observacao,
-      }),
+      // `notificado`: whether the agency was ACTUALLY told (achado 8) — the
+      // portal's "sua agência já foi notificada" copy reads this instead of
+      // assuming success.
+      api.post<{ ok: boolean; decisao: Decisao; notificado: boolean }>(
+        `/api/esteira/aprovar/${token}`,
+        { decisao, observacao },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["igig", "aprovacao-publica", token] }),
   });
 }

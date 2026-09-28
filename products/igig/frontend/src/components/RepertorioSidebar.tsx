@@ -14,11 +14,11 @@
  *   - termos proibidos are rendered as a warning, since getting those wrong is
  *     the expensive mistake this card exists to prevent.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge } from "@noctusai/lib/design-system";
 import { Ban, Check, Copy, Palette } from "lucide-react";
 
-import { useRepertorio } from "@/hooks/useMarca";
+import { useMarcas, useRepertorio } from "@/hooks/useMarca";
 
 function Swatch({ nome, hex }: { nome: string; hex: string }) {
   const [copiado, setCopiado] = useState(false);
@@ -59,24 +59,68 @@ function Swatch({ nome, hex }: { nome: string; hex: string }) {
   );
 }
 
-export function RepertorioSidebar({ clienteId }: { clienteId: string | undefined }) {
-  const { repertorio, loading } = useRepertorio(clienteId);
+export interface RepertorioSidebarProps {
+  clienteId: string | undefined;
+  /** The pauta's own `marca_id`, when known — wins over the switcher's
+   * default. `undefined`/`null` falls through to "let the user pick" once
+   * the cliente carries more than one marca (achado 2: no silent
+   * first-alphabetical default). */
+  marcaIdPreferida?: string | null;
+  className?: string;
+}
+
+export function RepertorioSidebar({ clienteId, marcaIdPreferida, className }: RepertorioSidebarProps) {
+  const { marcas } = useMarcas(clienteId);
+  const [marcaEscolhidaId, setMarcaEscolhidaId] = useState<string | null>(null);
+
+  // Re-derive the default whenever the pauta's own marca (or the marca list)
+  // changes — but only ever OVERWRITE an escolha the user hasn't made yet.
+  useEffect(() => {
+    setMarcaEscolhidaId((atual) => {
+      if (atual && marcas.some((m) => m.id === atual)) return atual;
+      if (marcaIdPreferida && marcas.some((m) => m.id === marcaIdPreferida)) {
+        return marcaIdPreferida;
+      }
+      return marcas.length === 1 ? marcas[0].id : null;
+    });
+  }, [marcaIdPreferida, marcas]);
+
+  const precisaEscolher = !marcaEscolhidaId && marcas.length > 1;
+  const { repertorio, loading } = useRepertorio(clienteId, marcaEscolhidaId);
 
   if (!clienteId) return null;
 
   return (
     <aside
       aria-label="Repertório da marca"
-      className="w-64 shrink-0 space-y-4 rounded-lg border border-border bg-card p-4"
+      className={`w-64 shrink-0 space-y-4 rounded-lg border border-border bg-card p-4 ${className ?? ""}`}
     >
       <header className="flex items-center gap-2">
-        <Palette className="h-4 w-4 text-muted-foreground" />
-        <h2 className="truncate text-sm font-semibold text-foreground">
-          {repertorio?.marca_nome || repertorio?.cliente_nome || "Repertório"}
-        </h2>
+        <Palette className="h-4 w-4 shrink-0 text-muted-foreground" />
+        {marcas.length > 1 ? (
+          <select
+            aria-label="Escolher marca"
+            className="min-h-8 w-full min-w-0 truncate rounded-md border border-border bg-background px-2 text-sm text-foreground"
+            value={marcaEscolhidaId ?? ""}
+            onChange={(e) => setMarcaEscolhidaId(e.target.value || null)}
+          >
+            {precisaEscolher && <option value="">Escolha uma marca…</option>}
+            {marcas.map((m) => (
+              <option key={m.id} value={m.id}>{m.nome}</option>
+            ))}
+          </select>
+        ) : (
+          <h2 className="truncate text-sm font-semibold text-foreground">
+            {repertorio?.marca_nome || repertorio?.cliente_nome || "Repertório"}
+          </h2>
+        )}
       </header>
 
-      {loading ? (
+      {precisaEscolher ? (
+        <p className="text-xs text-muted-foreground">
+          Este cliente tem mais de uma marca — escolha qual repertório ver acima.
+        </p>
+      ) : loading ? (
         <p className="text-xs text-muted-foreground">Carregando repertório…</p>
       ) : !repertorio ? (
         /* Never an error state — the sidebar must not shout over someone's work. */

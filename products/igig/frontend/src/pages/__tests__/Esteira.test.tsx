@@ -51,7 +51,10 @@ const TAREFA: TarefaCard = {
   observacao_cliente: null,
   created_at: null,
   updated_at: null,
-  pauta: { id: "pauta-1", titulo: "Lançamento outubro", formato: "reels", data_publicacao: null },
+  pauta: {
+    id: "pauta-1", titulo: "Lançamento outubro", formato: "reels",
+    data_publicacao: null, marca_id: null,
+  },
   cliente: { id: "cliente-1", nome: "Padaria Sol" },
   responsavel: { id: "prof-1", nome: "Ana Designer" },
 };

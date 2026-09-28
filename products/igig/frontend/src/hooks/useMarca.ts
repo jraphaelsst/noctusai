@@ -51,6 +51,9 @@ export interface Marca {
 /** The compact payload the persistent sidebar renders. */
 export interface Repertorio {
   cliente_nome: string | null;
+  /** Which marca this actually is — lets the sidebar pre-select the right
+   * chip in its switcher (roadmap R9: a cliente can carry N marcas). */
+  marca_id: string | null;
   marca_nome: string | null;
   logo_url: string | null;
   paleta: CorPaleta[];
@@ -94,11 +97,19 @@ export function useMarcas(clienteId?: string) {
  * A client with no brand yet returns an empty repertório with 200, so this
  * hook has no "not found" state — the sidebar degrades to showing just the
  * client's name rather than an error over someone's work.
+ *
+ * `marcaId`, when known (a pauta's own `marca_id`), picks THAT brand instead
+ * of the server's "first alphabetically" fallback — a cliente with N marcas
+ * has no single obvious "the" brand otherwise (achado 2).
  */
-export function useRepertorio(clienteId: string | undefined) {
+export function useRepertorio(clienteId: string | undefined, marcaId?: string | null) {
   const query = useQuery({
-    queryKey: ["igig", "repertorio", clienteId],
-    queryFn: () => api.get<Repertorio>(`/api/marcas/repertorio/${clienteId}`),
+    queryKey: ["igig", "repertorio", clienteId, marcaId ?? ""],
+    queryFn: () =>
+      api.get<Repertorio>(
+        `/api/marcas/repertorio/${clienteId}`,
+        marcaId ? { marca_id: marcaId } : {},
+      ),
     enabled: Boolean(clienteId),
   });
   return {
@@ -228,22 +239,25 @@ export function useCriarAcesso() {
 /**
  * Edit an existing vault entry. Backend mirror: `marca_router.atualizar_acesso`
  * (PATCH `/api/marcas/acessos/{id}`) — open to any org member, same as
- * creating one; only REVEALING a stored password is admin-gated. `senha` is
- * optional here too: omitting it edits the other fields without touching the
- * stored password, matching `AcessoUpdate`'s `exclude_none` semantics
- * server-side.
+ * creating one; only REVEALING a stored password is admin-gated.
+ *
+ * `rotulo`/`plataforma`/`url`/`usuario`/`observacoes` accept explicit `null`
+ * to CLEAR the field — the backend moved to `exclude_unset` so a field only
+ * changes when the key is actually present in the body (omit it entirely to
+ * leave it untouched). `senha` stays the one deliberate exception: omitted
+ * OR blank means "keep the current password", never a way to clear it.
  */
 export function useAtualizarAcesso() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...patch }: {
       id: string;
-      rotulo?: string;
-      plataforma?: string;
-      url?: string;
-      usuario?: string;
+      rotulo?: string | null;
+      plataforma?: string | null;
+      url?: string | null;
+      usuario?: string | null;
       senha?: string;
-      observacoes?: string;
+      observacoes?: string | null;
     }) => api.patch<Acesso>(`/api/marcas/acessos/${id}`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: COFRE_QUERY_KEY }),
   });

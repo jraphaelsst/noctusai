@@ -53,7 +53,11 @@ function mockCalendario(itens: Pauta[] | undefined, extra: Record<string, unknow
         ...extra,
       };
     }
-    return { data: { itens: [], total: 0 }, isPending: false, isFetching: false, error: null };
+    // Every OTHER query (`usePautas`'s "lista", `useMarcas`, `useClientes`…)
+    // resolves to a settled, empty ARRAY — `usePautas`/`useMarcas`/
+    // `useClientes` all read `query.data ?? []`, never the wrapped
+    // `{itens, total}` shape "calendario" alone uses.
+    return { data: [], isPending: false, isFetching: false, error: null };
   }) as never);
 }
 

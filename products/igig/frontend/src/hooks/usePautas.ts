@@ -58,6 +58,9 @@ export interface Peca {
   nome_arquivo: string | null;
   mime_type: string | null;
   ordem: number;
+  /** A freshly-signed URL, minted per response — lets the editor show/open
+   * the peça (achado 16: there was no way to view one before this). */
+  url: string | null;
 }
 
 export const PAUTAS_QUERY_KEY = ["igig", "pautas"] as const;
@@ -121,10 +124,19 @@ export function useAtualizarPauta() {
   });
 }
 
+/**
+ * Delete a pauta. `confirmarPerdaHoras` maps to `?confirmar_perda_horas=true`
+ * — the server refuses (409 `horas_serao_perdidas`) when any of its tarefas
+ * carries logged hours otherwise (achado 4: the cascade used to erase them
+ * with no warning at all).
+ */
 export function useRemoverPauta() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete<{ ok: boolean }>(`/api/pautas/${id}`),
+    mutationFn: ({ id, confirmarPerdaHoras }: { id: string; confirmarPerdaHoras?: boolean }) =>
+      api.delete<{ ok: boolean }>(
+        `/api/pautas/${id}${confirmarPerdaHoras ? "?confirmar_perda_horas=true" : ""}`,
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
   });
 }
@@ -146,6 +158,20 @@ export function useEnviarPeca() {
     onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
   });
 }
+
+/** Delete one peça. There was no way to do this at all before (achado 16). */
+export function useRemoverPeca() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pautaId, pecaId }: { pautaId: string; pecaId: string }) =>
+      api.delete<{ ok: boolean }>(`/api/pautas/${pautaId}/pecas/${pecaId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PAUTAS_QUERY_KEY }),
+  });
+}
+
+/** Mirrors the backend's `_PECA_MIMES` allowlist, as an `<input accept>`
+ * string — the picker used to offer every file type (achado 16). */
+export const PECA_ACCEPT = "image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime";
 
 export function usePecas(pautaId: string | undefined) {
   const query = useQuery({

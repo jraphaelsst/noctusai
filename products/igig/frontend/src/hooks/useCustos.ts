@@ -89,10 +89,17 @@ export function useRemoverFuncao() {
 
 // ─── Profissionais ─────────────────────────────────────────────────────────
 
-export function useProfissionais() {
+/** `apenasAtivos` maps to `?apenas_ativos=true` — omitted (the default) lists
+ * everyone, inactive profissionais included; the esteira's "Responsável"
+ * picker asks for `true` (achado 21). */
+export function useProfissionais(apenasAtivos?: boolean) {
   const query = useQuery({
-    queryKey: [...CUSTOS_QUERY_KEY, "profissionais"],
-    queryFn: () => api.get<Profissional[]>("/api/custos/profissionais"),
+    queryKey: [...CUSTOS_QUERY_KEY, "profissionais", apenasAtivos ?? false],
+    queryFn: () =>
+      api.get<Profissional[]>(
+        "/api/custos/profissionais",
+        apenasAtivos ? { apenas_ativos: true } : {},
+      ),
   });
   return {
     ...query,

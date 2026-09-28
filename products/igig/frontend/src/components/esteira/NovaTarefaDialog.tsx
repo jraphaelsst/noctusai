@@ -6,13 +6,17 @@
  * (the Clientes card's Esteira tab) only that cliente's pautas are offered.
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, Input } from "@noctusai/lib/design-system";
 
+import { useClientes } from "@/hooks/useClientes";
 import { useProfissionais } from "@/hooks/useCustos";
 import { useCriarTarefa } from "@/hooks/useEsteira";
 import { usePautas } from "@/hooks/usePautas";
+import { describeError } from "@/lib/errors";
 import { SHEET_MOBILE } from "@/lib/mobileSheet";
+import { rotuloPauta } from "./formatos";
 
 const CAMPO =
   "h-11 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground";
@@ -27,8 +31,14 @@ export function NovaTarefaDialog({
   clienteId?: string;
 }) {
   const { pautas, loading: carregandoPautas } = usePautas(clienteId);
-  const { profissionais } = useProfissionais();
+  const { profissionais } = useProfissionais(true);
+  const { clientes } = useClientes();
   const criar = useCriarTarefa();
+
+  // The picker shows every pauta by title alone, and auto-generated pautas
+  // repeat titles across many days ("Post feed (1/2)") — date + cliente is
+  // what actually tells them apart (achado 12).
+  const nomeCliente = (id: string) => clientes.find((c) => c.id === id)?.nome;
 
   const [titulo, setTitulo] = useState("");
   const [pautaId, setPautaId] = useState("");
@@ -54,8 +64,7 @@ export function NovaTarefaDialog({
           toast.success("Tarefa criada na primeira etapa");
           fechar();
         },
-        onError: (erro) =>
-          toast.error(erro instanceof Error ? erro.message : "Não foi possível criar a tarefa."),
+        onError: (erro) => toast.error(describeError(erro, "Não foi possível criar a tarefa.")),
       },
     );
   }
@@ -70,7 +79,7 @@ export function NovaTarefaDialog({
           {!carregandoPautas && pautas.length === 0 ? (
             <p className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
               Nenhuma pauta cadastrada{clienteId ? " para este cliente" : ""}. Crie uma pauta no{" "}
-              <a href="/calendario" className="underline">Calendário Editorial</a> para abrir
+              <Link to="/calendario" className="underline">Calendário Editorial</Link> para abrir
               tarefas na esteira.
             </p>
           ) : (
@@ -101,7 +110,9 @@ export function NovaTarefaDialog({
                 >
                   <option value="">{carregandoPautas ? "Carregando…" : "Selecione…"}</option>
                   {pautas.map((p) => (
-                    <option key={p.id} value={p.id}>{p.titulo}</option>
+                    <option key={p.id} value={p.id}>
+                      {rotuloPauta(p, !clienteId ? nomeCliente(p.cliente_id) : undefined)}
+                    </option>
                   ))}
                 </select>
               </div>
