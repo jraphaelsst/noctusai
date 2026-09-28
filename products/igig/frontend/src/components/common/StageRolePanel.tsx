@@ -9,14 +9,14 @@
  * do that (comercial achado #14). This is board-agnostic: a caller supplies
  * its own role labels, current stages and an `onAssign` writer, so BOTH the
  * Comercial funnel (`fechado`) and the Esteira board (`aprovacao_cliente` /
- * `agendado`) can render the same control instead of each hand-rolling it.
+ * `agendado`, `EsteiraBoard.tsx`) render the same control instead of each
+ * hand-rolling it — Esteira's own private copy (`PapeisEtapas`) was migrated
+ * onto this organ, byte-for-byte behaviour, labels and refusals preserved.
  *
- * `Esteira` currently still carries its own private copy
- * (`EsteiraBoard.tsx`'s `PapeisEtapas`, out of this slice's file scope) —
- * migrating it to this shared organ is a follow-up (see the comercial
- * delta's scoped-improvement note), not done here to keep this slice's
- * hunks file-disjoint from the parallel `igig-closeout-wiring` slice that
- * owns `EsteiraBoard.tsx`.
+ * Both consumers are within igig — no OTHER product has a stage-role picker
+ * yet (checked 2026-09: erp-imobiliario/social-wiring's pipelines have no
+ * `roleLabels=` usage), so this stays an igig-local organ rather than a
+ * `@noctusai/lib` lift. Revisit once a second PRODUCT needs it.
  */
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";

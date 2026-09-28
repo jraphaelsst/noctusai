@@ -5,11 +5,13 @@
  * through the real `esteiraPipeline` descriptor, the real board organ and the
  * real card face. Covers: first-load skeleton, the refetch-unmount regression
  * (fleet audit 2026-08-31), the error state, the rich card face (smoke finding
- * 5), the `?cliente=` filter reaching the board query (R9), and the admin-only
- * stage editing (R3).
+ * 5), the `?cliente=` filter reaching the board query (R9), the admin-only
+ * stage editing (R3), and the stage-role picker (achado 11) — migrated from
+ * a private `PapeisEtapas` onto the shared `StageRolePanel` organ, now
+ * sourced from the seed's stages-only query instead of the whole board.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
 
@@ -189,6 +191,69 @@ describe("Esteira — stage editing is for org admins (R3)", () => {
     mockBoardState({ data: BOARD, isPending: false, isFetching: false, error: null });
     renderEsteira();
     expect(screen.getByText("Configurar etapas")).toBeInTheDocument();
+  });
+});
+
+/** Stages-only query key the shared `StageRolePanel` now reads (see
+ * `EsteiraBoard.tsx`'s `useStages` comment) — distinct from `ESTEIRA_BOARD_KEY`. */
+const ESTEIRA_STAGES_KEY = `${ESTEIRA_BOARD_KEY}-stages`;
+
+/** Routes the board query AND the stages-only query independently — the
+ * migrated picker (achado 11) reads the latter, everything else on the page
+ * still reads the former. */
+function mockBoardAndStages(board: Record<string, unknown>, stages: Record<string, unknown>) {
+  mockUseQuery.mockImplementation(((opts: { queryKey?: unknown[] }) => {
+    if (opts?.queryKey?.[0] === ESTEIRA_BOARD_KEY) return board;
+    if (opts?.queryKey?.[0] === ESTEIRA_STAGES_KEY) return stages;
+    return { data: [], isPending: false, isFetching: false, isError: false, error: null };
+  }) as never);
+}
+
+describe("Esteira — stage role picker, migrated onto StageRolePanel (achado 11)", () => {
+  const STAGES = BOARD.map((c) => c.stage);
+
+  it("hides the papéis panel from a member (same gate as the stage editor)", () => {
+    mockUser.current = { id: "u", user_metadata: { org_role: "member" } };
+    mockBoardAndStages(
+      { data: BOARD, isPending: false, isFetching: false, error: null },
+      { data: STAGES, isPending: false, isFetching: false, error: null },
+    );
+    renderEsteira();
+    expect(screen.queryByTestId("stage-role-panel")).not.toBeInTheDocument();
+  });
+
+  it("offers the papéis panel to an admin, pre-selected to the aprovação-do-cliente holder", () => {
+    mockUser.current = { id: "u", user_metadata: { org_role: "admin" } };
+    mockBoardAndStages(
+      { data: BOARD, isPending: false, isFetching: false, error: null },
+      { data: STAGES, isPending: false, isFetching: false, error: null },
+    );
+    renderEsteira();
+
+    const painel = screen.getByTestId("stage-role-panel");
+    fireEvent.click(within(painel).getByText("Papéis das etapas"));
+    const select = screen.getByLabelText(
+      "Etapa com o papel Aprovação do cliente",
+    ) as HTMLSelectElement;
+    expect(painel).toContainElement(select);
+    expect(select.value).toBe("st-2");
+  });
+
+  it("sources its options from the stages-only query, excluding inactive stages (parity with the old board-derived list)", () => {
+    mockUser.current = { id: "u", user_metadata: { org_role: "admin" } };
+    const arquivada = stage("st-3", "Arquivado", 2);
+    mockBoardAndStages(
+      { data: BOARD, isPending: false, isFetching: false, error: null },
+      { data: [...STAGES, { ...arquivada, ativo: false }], isPending: false, isFetching: false, error: null },
+    );
+    renderEsteira();
+
+    const painel = screen.getByTestId("stage-role-panel");
+    fireEvent.click(within(painel).getByText("Papéis das etapas"));
+    // Two selects (one per role), each listing every ACTIVE stage as an
+    // option — "Aguardando roteiro" is expected in both, "Arquivado" in none.
+    expect(within(painel).queryByText("Arquivado")).not.toBeInTheDocument();
+    expect(within(painel).getAllByText("Aguardando roteiro").length).toBe(2);
   });
 });
 

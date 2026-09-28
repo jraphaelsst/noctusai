@@ -31,8 +31,9 @@ import {
   type MoveIntentContext,
 } from "@noctusai/lib/components";
 import { Button } from "@noctusai/lib/design-system";
-import { ChevronDown, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 
+import { StageRolePanel } from "@/components/common/StageRolePanel";
 import {
   ESTEIRA_ROLE_LABELS,
   esteiraPipeline,
@@ -80,67 +81,6 @@ interface MotivoPendente {
   refacao: boolean;
 }
 
-/**
- * Admin-only "Papéis das etapas" — the seed's `PipelineStagesManager` (the
- * "Configurar etapas" panel) has no control for reassigning a system role
- * (achado 11). Two dropdowns, one per esteira role: picking a stage calls
- * `reatribuir_papel`, which atomically clears the previous holder.
- */
-function PapeisEtapas() {
-  const { data: colunas } = esteiraPipeline.useBoard();
-  const atribuir = useAtribuirPapelEtapa();
-  const [aberto, setAberto] = useState(false);
-
-  const etapas = useMemo(() => (colunas ?? []).map((c) => c.stage), [colunas]);
-
-  function etapaComPapel(papel: string): string {
-    return etapas.find((e) => e.papel === papel)?.id ?? "";
-  }
-
-  return (
-    <div className="rounded-lg border border-border">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between p-2 text-left text-sm font-medium text-foreground"
-        onClick={() => setAberto((v) => !v)}
-        aria-expanded={aberto}
-      >
-        Papéis das etapas
-        <ChevronDown className={`h-4 w-4 transition-transform ${aberto ? "rotate-180" : ""}`} />
-      </button>
-      {aberto && (
-        <div className="space-y-2 border-t border-border p-3">
-          {Object.entries(ESTEIRA_ROLE_LABELS).map(([papel, rotulo]) => (
-            <label key={papel} className="flex items-center justify-between gap-2 text-sm">
-              <span className="text-muted-foreground">{rotulo}</span>
-              <select
-                aria-label={`Etapa com o papel ${rotulo}`}
-                className="h-9 min-w-0 max-w-[60%] rounded-md border border-border bg-background px-2 text-sm text-foreground"
-                value={etapaComPapel(papel)}
-                disabled={atribuir.isPending}
-                onChange={(e) =>
-                  atribuir.mutate(
-                    { etapaId: e.target.value, papel },
-                    {
-                      onError: (erro) =>
-                        toast.error(describeError(erro, "Não foi possível reatribuir o papel.")),
-                    },
-                  )
-                }
-              >
-                <option value="" disabled>Escolha uma etapa…</option>
-                {etapas.map((e) => (
-                  <option key={e.id} value={e.id}>{e.label}</option>
-                ))}
-              </select>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function EsteiraBoard({
   clienteId, className, deepLinkTarefaId, onDeepLinkResolved, onCardClose,
 }: EsteiraBoardProps) {
@@ -153,6 +93,25 @@ export function EsteiraBoard({
   // The open card is looked up here by id so the sheet always shows the
   // CURRENT row (after a move, a timer or a link), never a stale snapshot.
   const { data: colunas, isPending: carregandoBoard } = esteiraPipeline.useBoard(filtros);
+
+  // Stages-only, not the board: the "Papéis das etapas" picker (below) only
+  // needs id/label/papel. `enabled: podeEditarEtapas` matches BOTH the old
+  // behaviour (only an admin ever fetched anything for this picker — it
+  // wasn't even mounted for anyone else) and `PipelineBoard`'s own
+  // `reorderableColumns`+`canEditStages` gate below, which fetches this SAME
+  // query (`useStages`, admin-only) for the "Configurar etapas" panel —
+  // TanStack dedupes the identical key+enabled pair, so this is a cache read,
+  // never a second request. The seed's stage-list endpoint returns EVERY
+  // stage (`incluir_inativas=True`, so the editor can reactivate one) while
+  // the board only ever carries active stages' columns — `.filter((e) =>
+  // e.ativo)` keeps the picker's options exactly what `useBoard()`-sourced
+  // `etapas` used to offer.
+  const { data: todasEtapas } = esteiraPipeline.useStages({ enabled: podeEditarEtapas });
+  const etapasComPapel = useMemo(
+    () => (todasEtapas ?? []).filter((e) => e.ativo),
+    [todasEtapas],
+  );
+  const atribuirPapel = useAtribuirPapelEtapa();
 
   const [motivoPendente, setMotivoPendente] = useState<MotivoPendente | null>(null);
   const [abertaId, setAbertaId] = useState<string | null>(null);
@@ -234,7 +193,20 @@ export function EsteiraBoard({
 
       {podeEditarEtapas && (
         <div className="mt-3">
-          <PapeisEtapas />
+          <StageRolePanel
+            roleLabels={ESTEIRA_ROLE_LABELS}
+            stages={etapasComPapel}
+            isPending={atribuirPapel.isPending}
+            onAssign={(etapaId, papel) =>
+              atribuirPapel.mutate(
+                { etapaId, papel },
+                {
+                  onError: (erro) =>
+                    toast.error(describeError(erro, "Não foi possível reatribuir o papel.")),
+                },
+              )
+            }
+          />
         </div>
       )}
 
