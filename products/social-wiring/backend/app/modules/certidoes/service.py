@@ -44,7 +44,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 import httpx
 from noctusai_lib.integrations.documents.abnt import (
@@ -66,6 +66,7 @@ from noctusai_lib.integrations.documents.providers import (
     DEFAULT_DOCUMENT_PROVIDER,
     DOCUMENT_ANALYSIS_MODELS,
 )
+from noctusai_lib.integrations.documents.transcription import MAX_VISION_PAGES
 from noctusai_lib.integrations.llm import chat_completion
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.storage import StorageBackend
@@ -959,6 +960,33 @@ def _completar_numero_com_ano(numero: Optional[str], texto: Optional[str]) -> Op
     return f"{m.group()}/{achado.group(1)}" if achado else numero
 
 
+def _aplicar_overrides_numero(
+    resultado: Optional[dict], texto_fonte: Optional[str]
+) -> Optional[dict]:
+    """G14/G15 (P1/883, 2026-09-25) — a deterministic label/shape match on
+    `texto_fonte`, applied over whatever the AI structured read returned for
+    `numero`. See `_numero_via_codigo_controle` / `_completar_numero_com_ano`
+    for the two matches themselves.
+
+    Owner requirement (2026-09-28): when a certidão is read PAGE BY PAGE
+    (`_analyze_estrutura_por_pagina`), `texto_fonte` MUST be the certidão's
+    FULL original text, never a single page — the label these two matches
+    look for is printed once per document, on whichever page happens to
+    carry it, and a page-scoped override would miss it on every OTHER page's
+    own AI-structured `numero`.
+    """
+    if not texto_fonte:
+        return resultado
+    codigo_controle = _numero_via_codigo_controle(texto_fonte)
+    if codigo_controle:
+        return {**(resultado or {}), "numero": codigo_controle}
+    if resultado and resultado.get("numero"):
+        completado = _completar_numero_com_ano(resultado["numero"], texto_fonte)
+        if completado != resultado["numero"]:
+            return {**resultado, "numero": completado}
+    return resultado
+
+
 async def _analyze_estrutura_with_ai(
     text: str,
     nome_display: str,
@@ -1041,19 +1069,192 @@ async def _analyze_estrutura_with_ai(
         return None
 
     resultado = _parse_json_resultado(raw, nome_display)
+    return _aplicar_overrides_numero(resultado, text)
 
-    # G14/G15 (P1/883, 2026-09-25) — a deterministic label/shape match on
-    # the ORIGINAL text, applied over whatever the AI structured read
-    # returned for `numero`. See each helper's own docstring.
-    codigo_controle = _numero_via_codigo_controle(text)
-    if codigo_controle:
-        resultado = {**(resultado or {}), "numero": codigo_controle}
-    elif resultado and resultado.get("numero"):
-        completado = _completar_numero_com_ano(resultado["numero"], text)
-        if completado != resultado["numero"]:
-            resultado = {**resultado, "numero": completado}
 
-    return resultado
+#: `resultado` severity, MOST → LEAST severe. Owner requirement (2026-09-28):
+#: a positive finding on ANY page of a multi-page certidão must reach the
+#: verdict — the exact defect a single joined-and-truncated call could
+#: produce (a positive entry on page 2+ silently dropped, verdict reads
+#: "negativa"). `nao_emitida` is the LOWEST rung: a page nothing could be
+#: read from carries no information and must never outrank an actual
+#: verdict found on another page — it only wins when EVERY page agrees
+#: there is nothing to determine. See `_mesclar_resultados_estruturados`.
+_RESULTADO_SEVERIDADE: dict[str, int] = {
+    "positiva": 4,
+    "positiva_com_efeito_de_negativa": 3,
+    "negativa_com_homonimos": 2,
+    "negativa": 1,
+    "nao_emitida": 0,
+}
+
+
+def _mesclar_resultados_estruturados(
+    resultados_por_pagina: Sequence[Optional[dict]],
+) -> tuple[dict, list[str]]:
+    """Merge one structured AI read PER PAGE into the single patch a
+    resultado's row gets. Pure function — no I/O, unit-testable on its own.
+
+    `numero` / `emitida_em` / `validade_ate`: the FIRST page (document
+    order) that supplies a value. A certidão prints its own number/dates
+    once, so a LATER page agreeing or staying silent is the expected shape;
+    a later page DISAGREEING is not (a misread, or two documents
+    concatenated by mistake) and is surfaced as an `aviso` string rather
+    than silently kept or silently overwritten — never blocking the merge
+    itself, and never landing in `estrutura_erro` (that column is reserved
+    for a FAILED read, and this document was read successfully; the caller
+    logs `avisos` instead).
+
+    `resultado`: the MOST SEVERE verdict across pages — see
+    `_RESULTADO_SEVERIDADE`.
+
+    Returns `(patch, avisos)`.
+    """
+    avisos: list[str] = []
+    patch: dict = {}
+    melhor_resultado: Optional[str] = None
+    melhor_severidade = -1
+    for indice, resultado in enumerate(resultados_por_pagina, start=1):
+        if not resultado:
+            continue
+        for campo in ("numero", "emitida_em", "validade_ate"):
+            valor = resultado.get(campo)
+            if not valor:
+                continue
+            if campo not in patch:
+                patch[campo] = valor
+            elif patch[campo] != valor:
+                avisos.append(
+                    f"página {indice}: {campo}={valor!r} diverge de "
+                    f"{campo}={patch[campo]!r} lido em página anterior "
+                    "(mantido o valor da primeira página)."
+                )
+        verdict = resultado.get("resultado")
+        severidade = _RESULTADO_SEVERIDADE.get(verdict) if verdict else None
+        if severidade is not None and severidade > melhor_severidade:
+            melhor_severidade = severidade
+            melhor_resultado = verdict
+    if melhor_resultado is not None:
+        patch["resultado"] = melhor_resultado
+    return patch, avisos
+
+
+async def _analyze_estrutura_por_pagina(
+    paginas_texto: Sequence[str],
+    texto_completo: Optional[str],
+    nome_display: str,
+    org_id: Optional[str],
+    *,
+    analyze_estrutura: Callable[..., Any],
+) -> Optional[dict]:
+    """`_analyze_estrutura_with_ai`, run separately over EACH page's own
+    text and merged deterministically (`_mesclar_resultados_estruturados`)
+    — never over a joined-and-truncated blob. Owner requirement
+    (2026-09-28, verbatim): every file is parsed "page by page, never in
+    batches" — every page is sent, unconditionally.
+
+    G14/G15 are re-applied ONCE at the end, over `texto_completo` (the
+    certidão's FULL original text) rather than trusted from whichever
+    per-page call happened to see the label — see
+    `_aplicar_overrides_numero`'s own docstring for why.
+
+    Returns `None` when no page yielded a value, or when every page was
+    blank. Any inter-page disagreement is logged as a warning —
+    informational, never fatal (see `_mesclar_resultados_estruturados`).
+    """
+    resultados: list[Optional[dict]] = []
+    for pagina in paginas_texto:
+        if not pagina or not pagina.strip():
+            continue
+        resultados.append(await analyze_estrutura(pagina, nome_display, org_id))
+    if not resultados:
+        return None
+    patch, avisos = _mesclar_resultados_estruturados(resultados)
+    for aviso in avisos:
+        logger.warning(
+            "Certidão %s: leitura estruturada divergente entre páginas — %s",
+            nome_display, aviso,
+        )
+    if not patch:
+        return None
+    return _aplicar_overrides_numero(patch, texto_completo)
+
+
+#: Chars per single AI call, PAGE (or page-fragment) text. Owner requirement
+#: (2026-09-28): "no silent truncation anywhere" — this is NOT a cut point,
+#: it is the split point: `_dividir_texto_em_blocos` slices a page whose own
+#: text exceeds this into consecutive, non-overlapping blocks that are ALL
+#: sent (never dropped), each as its own call. Generous on purpose — every
+#: certidão this registry issues is a short, single-purpose document; a
+#: split is expected to be rare, and this constant exists so a page that
+#: DOES overflow is handled explicitly instead of crashing a vendor's own
+#: per-call limit.
+_TEXTO_MAX_CHARS_POR_CHAMADA = 12000
+
+
+def _dividir_texto_em_blocos(texto: str, tamanho_max: int) -> list[str]:
+    """Split `texto` into `<= tamanho_max`-char blocks, breaking on a
+    blank-line boundary when one is available near the cut point, else on
+    the cut point itself. NEVER drops a character — `"".join` (undoing
+    only the boundary trimming) reconstructs the original modulo
+    whitespace at the seams. The anti-truncation primitive `_analyze_
+    estrutura_por_pagina` and `_analisar_resumo_sem_truncar` both share so
+    an over-long PAGE is split, never cut."""
+    if len(texto) <= tamanho_max:
+        return [texto]
+    blocos: list[str] = []
+    resto = texto
+    while len(resto) > tamanho_max:
+        corte = resto.rfind("\n\n", 0, tamanho_max)
+        if corte < tamanho_max // 2:  # no usable blank-line boundary nearby
+            corte = tamanho_max
+        blocos.append(resto[:corte])
+        resto = resto[corte:]
+    if resto:
+        blocos.append(resto)
+    return blocos
+
+
+async def _analisar_resumo_sem_truncar(
+    paginas_texto: Sequence[str],
+    texto_completo: str,
+    nome_display: str,
+    org_id: Optional[str],
+    *,
+    analyze: Callable[..., Any],
+) -> Optional[str]:
+    """The free-text summary (`_analyze_with_ai`) leg, with NO silent
+    truncation. Owner requirement (2026-09-28): a document over the old
+    4000-char cut must keep its tail.
+
+    Sends the WHOLE document in one call when it fits a single call's
+    budget (`_TEXTO_MAX_CHARS_POR_CHAMADA`) — the common case, and
+    byte-for-byte what a short certidão always got. A longer document is
+    summarised PER PAGE (splitting any single page that is itself too
+    long, via `_dividir_texto_em_blocos` — never dropping it) and the
+    per-page summaries are joined, so every page's content reaches the
+    model in SOME call rather than being cut off the end.
+    """
+    if not texto_completo:
+        return None
+    if len(texto_completo) <= _TEXTO_MAX_CHARS_POR_CHAMADA:
+        return await analyze(texto_completo, org_id)
+
+    resumos: list[str] = []
+    for indice, pagina in enumerate(paginas_texto, start=1):
+        if not pagina or not pagina.strip():
+            continue
+        for bloco in _dividir_texto_em_blocos(pagina, _TEXTO_MAX_CHARS_POR_CHAMADA):
+            logger.info(
+                "Certidão %s: resumo por IA — documento longo (%d chars), "
+                "enviando página %d em bloco separado (%d chars) em vez de "
+                "truncar",
+                nome_display, len(texto_completo), indice, len(bloco),
+            )
+            resumo = await analyze(f"Certidão: {nome_display}\n\n{bloco}", org_id)
+            if resumo:
+                resumos.append(resumo)
+    return "\n\n".join(resumos) if resumos else None
 
 
 async def _derive_estrutura(
@@ -1112,10 +1313,15 @@ async def _derive_estrutura(
 class ExtractedPdfText:
     """`_extract_pdf_text`'s result, shaped for its TWO consumers.
 
-    `para_ia` is the AI-analysis input — UNCHANGED by migration 113 (still
-    `"Certidão: <nome>\\n\\n<text[:4000]>"`, still `None` when nothing
-    trustworthy is there). `texto_extraido` / `formatacao` are the
-    UNTRUNCATED transcript and its inline formatting, persisted onto
+    `para_ia` is the AI-analysis input — the FULL document text (owner
+    requirement, 2026-09-28: no silent truncation anywhere; previously cut
+    to `text[:4000]`, still `None` when nothing trustworthy is there).
+    `paginas_texto` is the SAME text, kept as separate per-page strings
+    (document order, blank pages dropped — mirrors `Transcription.pages`)
+    instead of joined, so a caller can run the structured AI read PAGE BY
+    PAGE rather than on one truncated blob (`_analyze_estrutura_por_pagina`)
+    — `()` whenever `para_ia` is `None`. `texto_extraido` / `formatacao` are
+    the UNTRUNCATED transcript and its inline formatting, persisted onto
     `certidao_resultados` for the `.../transcricao` routes. A transcription
     that finds nothing, or that raises, is `ExtractedPdfText(para_ia=None)`
     — logged, never raised; see `_extract_pdf_text`.
@@ -1124,6 +1330,7 @@ class ExtractedPdfText:
     para_ia: Optional[str]
     texto_extraido: Optional[str] = None
     formatacao: tuple[FormatRange, ...] = ()
+    paginas_texto: tuple[str, ...] = ()
     #: PT-BR sentence a UI can render when the transcription leg did NOT
     #: produce a trustworthy read — `None` on success (including the benign
     #: "nothing to extract" case an empty PDF page produces). Independent of
@@ -1141,16 +1348,22 @@ CERTIDAO_MAX_VISION_PAGES = 0
 
 #: The MANUAL-upload sibling of the constant above — a bounded, one-time,
 #: human-triggered read, not a recurring scheduler bill. A human just
-#: uploaded a PDF the automation could not obtain; keeping this at 0 (migration
-#: 113's original choice, made for the SCHEDULER path) meant a scanned
-#: certidão got no analysis, no structured fields, and nothing said about why
-#: — indistinguishable from "nothing was ever asked to read it". 3 pages
-#: covers every certificate this registry issues (`CERTIDOES_CONFIG` — none of
-#: them is a multi-page bundle); `too_many_vision_pages` is the honest refusal
-#: for the one that would exceed it, never a silent partial read. Only
-#: `process_manual_extraction` uses this — the scheduler flow
-#: (`_process_single_certidao`) keeps `CERTIDAO_MAX_VISION_PAGES` unchanged.
-CERTIDAO_MANUAL_MAX_VISION_PAGES = 3
+#: uploaded a PDF the automation could not obtain; leaving this at anything
+#: less than the transcriber's OWN safety cap means a scanned certidão
+#: longer than that gets no analysis, no structured fields, and nothing
+#: said about why beyond "too_many_vision_pages" — the exact silent-partial-
+#: read this module's contract §4 forbids. Owner requirement (2026-09-28):
+#: every file is parsed "page by page" — a document this registry could
+#: plausibly receive (a physical certidão scanned page-by-page, a bundled
+#: multi-certidão upload) must not be capped below what the transcriber
+#: itself will do. `MAX_VISION_PAGES` (the seed's own `too_many_vision_
+#: pages` ceiling, `noctusai_lib.integrations.documents.transcription`) IS
+#: the shared answer, not a locally-invented, narrower number — a 3-page
+#: cap (this module's original choice, migration 113) silently failed
+#: every certidão beyond page 3. Only `process_manual_extraction` uses
+#: this — the scheduler flow (`_process_single_certidao`) keeps
+#: `CERTIDAO_MAX_VISION_PAGES` unchanged.
+CERTIDAO_MANUAL_MAX_VISION_PAGES = MAX_VISION_PAGES
 
 #: D3 (KB roadmap `sw-extraction-contract-gate-2026-09.md`). How many times
 #: `process_manual_extraction` may be STARTED for one resultado, including the
@@ -1283,13 +1496,16 @@ async def _extract_pdf_text(
         if not extracted:
             return ExtractedPdfText(para_ia=None, erro=erro)
         # Prefix with certificate type for context (mirrors how the automated
-        # flow sends structured API response data). Truncate to avoid exceeding
-        # token limits. UNCHANGED shape — see `ExtractedPdfText.para_ia`.
-        para_ia = f"Certidão: {nome_display}\n\n{extracted[:4000]}"
+        # flow sends structured API response data). NEVER truncated — owner
+        # requirement (2026-09-28): a positive entry past the old 4000-char
+        # cut must reach the AI call, not be silently dropped. See
+        # `ExtractedPdfText.para_ia` / `.paginas_texto`.
+        para_ia = f"Certidão: {nome_display}\n\n{extracted}"
         return ExtractedPdfText(
             para_ia=para_ia,
             texto_extraido=extracted,
             formatacao=resultado.formatting,
+            paginas_texto=tuple(p.text for p in resultado.pages if p.text),
             erro=erro,
         )
     except Exception as e:
@@ -2174,9 +2390,20 @@ async def process_manual_extraction(
     # skipped naturally rather than run against a document we already know
     # failed to read.
     text_for_analysis = extracted.para_ia
+    # `extracted.paginas_texto` is `()` for a stub `extract_text` that only
+    # sets `para_ia` (pre-existing tests) — falling back to treating the
+    # whole (prefixed) text as ONE page keeps those tests' single-call
+    # behaviour exactly, while the REAL `_extract_pdf_text` always populates
+    # both together (see its own docstring).
+    paginas_texto: tuple[str, ...] = extracted.paginas_texto or (
+        (text_for_analysis,) if text_for_analysis else ()
+    )
     analise = None
     if text_for_analysis:
-        analise = await analyze(text_for_analysis, org_id)
+        analise = await _analisar_resumo_sem_truncar(
+            paginas_texto, text_for_analysis, nome_display, org_id,
+            analyze=analyze,
+        )
 
     update_data = {
         "status": "sucesso",
@@ -2192,8 +2419,13 @@ async def process_manual_extraction(
             nome_display, resultado_id, tentativa, extracted.erro,
         )
 
-    if not travado and text_for_analysis:
-        via_ia = await analyze_estrutura(text_for_analysis, nome_display, org_id)
+    if not travado and paginas_texto:
+        # PAGE BY PAGE, never the joined-and-truncated blob (owner
+        # requirement, 2026-09-28) — see `_analyze_estrutura_por_pagina`.
+        via_ia = await _analyze_estrutura_por_pagina(
+            paginas_texto, text_for_analysis, nome_display, org_id,
+            analyze_estrutura=analyze_estrutura,
+        )
         if via_ia:
             update_data.update(via_ia)
             update_data["resultado_origem"] = "ia"

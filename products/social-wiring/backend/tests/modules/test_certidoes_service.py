@@ -4024,3 +4024,417 @@ class TestRenderizarTranscricaoPdf:
         with pytest.raises(UnsupportedGlyphError) as exc:
             service.renderizar_transcricao_pdf("X", "emoji \U0001F600 aqui", [])
         assert "\U0001F600" in str(exc.value) or "1F600" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Owner requirement (2026-09-28, verbatim): every file is parsed "correctly
+# and precisely, page by page, never in batches". No silent truncation
+# anywhere; the structured verdict comes from the MOST SEVERE page, not a
+# single joined-and-truncated blob.
+# ---------------------------------------------------------------------------
+
+
+class TestMesclarResultadosEstruturados:
+    """`_mesclar_resultados_estruturados` — pure, no I/O."""
+
+    def test_resultado_mais_severo_vence_independente_da_ordem(self):
+        patch, avisos = service._mesclar_resultados_estruturados([
+            {"resultado": "negativa"},
+            {"resultado": "positiva"},
+        ])
+        assert patch["resultado"] == "positiva"
+        assert avisos == []
+
+        patch2, _ = service._mesclar_resultados_estruturados([
+            {"resultado": "positiva"},
+            {"resultado": "negativa"},
+        ])
+        assert patch2["resultado"] == "positiva"
+
+    def test_severidade_completa_das_cinco_vozes(self):
+        ordem = [
+            "positiva",
+            "positiva_com_efeito_de_negativa",
+            "negativa_com_homonimos",
+            "negativa",
+            "nao_emitida",
+        ]
+        for i, mais_severo in enumerate(ordem):
+            resultados = [{"resultado": v} for v in ordem[i:]]
+            patch, _ = service._mesclar_resultados_estruturados(resultados)
+            assert patch["resultado"] == mais_severo
+
+    def test_nao_emitida_so_vence_quando_e_o_unico_veredito(self):
+        patch, _ = service._mesclar_resultados_estruturados([
+            {"resultado": "nao_emitida"},
+            {"resultado": "negativa"},
+        ])
+        assert patch["resultado"] == "negativa"
+
+        patch2, _ = service._mesclar_resultados_estruturados([
+            {"resultado": "nao_emitida"},
+            {"resultado": "nao_emitida"},
+        ])
+        assert patch2["resultado"] == "nao_emitida"
+
+    def test_numero_e_o_da_primeira_pagina_que_tem_valor(self):
+        patch, avisos = service._mesclar_resultados_estruturados([
+            {"numero": None},
+            {"numero": "123"},
+            {"numero": "123"},
+        ])
+        assert patch["numero"] == "123"
+        assert avisos == []
+
+    def test_numero_divergente_entre_paginas_gera_aviso_mas_mantem_a_primeira(self):
+        patch, avisos = service._mesclar_resultados_estruturados([
+            {"numero": "111"},
+            {"numero": "222"},
+        ])
+        assert patch["numero"] == "111"
+        assert len(avisos) == 1
+        assert "numero" in avisos[0]
+
+    def test_paginas_none_sao_ignoradas(self):
+        patch, avisos = service._mesclar_resultados_estruturados([
+            None, {"resultado": "negativa"}, None,
+        ])
+        assert patch == {"resultado": "negativa"}
+        assert avisos == []
+
+    def test_nenhuma_pagina_com_dado_devolve_patch_vazio(self):
+        patch, avisos = service._mesclar_resultados_estruturados([None, None])
+        assert patch == {}
+        assert avisos == []
+
+
+class TestAnalyzeEstruturaPorPagina:
+    """`_analyze_estrutura_por_pagina` — orchestrates one AI call PER PAGE,
+    never a single joined-and-truncated call."""
+
+    @pytest.mark.asyncio
+    async def test_chama_uma_vez_por_pagina_com_o_texto_cru_de_cada_uma(self):
+        chamadas = []
+
+        async def fake(texto, nome, org):
+            chamadas.append(texto)
+            return {"resultado": "negativa"} if texto == "pagina 1" else {
+                "resultado": "positiva"
+            }
+
+        out = await service._analyze_estrutura_por_pagina(
+            ("pagina 1", "pagina 2"), "Certidão: X\n\npagina 1\n\npagina 2",
+            "X", ORG, analyze_estrutura=fake,
+        )
+        assert chamadas == ["pagina 1", "pagina 2"]
+        assert out["resultado"] == "positiva"
+
+    @pytest.mark.asyncio
+    async def test_pagina_em_branco_e_pulada(self):
+        chamadas = []
+
+        async def fake(texto, nome, org):
+            chamadas.append(texto)
+            return {"resultado": "negativa"}
+
+        await service._analyze_estrutura_por_pagina(
+            ("pagina 1", "   ", ""), "texto", "X", ORG, analyze_estrutura=fake,
+        )
+        assert chamadas == ["pagina 1"]
+
+    @pytest.mark.asyncio
+    async def test_nenhuma_pagina_com_texto_retorna_none_sem_chamar_ia(self):
+        estrutura = AsyncMock()
+        out = await service._analyze_estrutura_por_pagina(
+            ("", "   "), "texto", "X", ORG, analyze_estrutura=estrutura,
+        )
+        assert out is None
+        estrutura.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_divergencia_entre_paginas_e_logada_como_warning(self, caplog):
+        async def fake(texto, nome, org):
+            return {"numero": "111"} if texto == "pagina 1" else {"numero": "222"}
+
+        with caplog.at_level(logging.WARNING):
+            out = await service._analyze_estrutura_por_pagina(
+                ("pagina 1", "pagina 2"), "texto completo", "X", ORG,
+                analyze_estrutura=fake,
+            )
+        assert out["numero"] == "111"
+        assert any(
+            "divergente" in r.getMessage() and "numero" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_overrides_g14_aplicados_sobre_o_texto_completo_nao_a_pagina(self):
+        """G14/G15 must be re-applied on the FULL original text, not
+        whichever page a per-page AI read happened to see."""
+        texto_completo = (
+            "pagina 1 sem nada de especial\n\n"
+            "Código de controle da certidão: AAAA.BBBB.CCCC.DDDD"
+        )
+
+        async def fake(texto, nome, org):
+            return {"numero": "999", "resultado": "negativa"}
+
+        out = await service._analyze_estrutura_por_pagina(
+            ("pagina 1 sem nada de especial", "outra pagina"), texto_completo,
+            "X", ORG, analyze_estrutura=fake,
+        )
+        assert out["numero"] == "AAAA.BBBB.CCCC.DDDD"
+
+
+class TestDividirTextoEmBlocos:
+    def test_texto_curto_fica_em_um_bloco_so(self):
+        assert service._dividir_texto_em_blocos("abc", 10) == ["abc"]
+
+    def test_texto_longo_e_dividido_sem_perder_conteudo(self):
+        texto = "x" * 30000
+        blocos = service._dividir_texto_em_blocos(texto, 12000)
+        assert "".join(blocos) == texto
+        assert all(len(b) <= 12000 for b in blocos)
+
+    def test_prefere_quebrar_em_linha_em_branco_perto_do_corte(self):
+        pagina1 = "a" * 100
+        pagina2 = "b" * 100
+        texto = pagina1 + "\n\n" + pagina2
+        blocos = service._dividir_texto_em_blocos(texto, 105)
+        assert blocos[0] == pagina1
+
+
+class TestAnalisarResumoSemTruncar:
+    @pytest.mark.asyncio
+    async def test_texto_curto_e_enviado_em_uma_unica_chamada(self):
+        analyze = AsyncMock(return_value="resumo")
+        out = await service._analisar_resumo_sem_truncar(
+            ("pagina 1",), "Certidão: X\n\npagina 1", "X", ORG, analyze=analyze,
+        )
+        assert out == "resumo"
+        analyze.assert_awaited_once_with("Certidão: X\n\npagina 1", ORG)
+
+    @pytest.mark.asyncio
+    async def test_texto_vazio_retorna_none_sem_chamar_analyze(self):
+        analyze = AsyncMock()
+        out = await service._analisar_resumo_sem_truncar(
+            (), None, "X", ORG, analyze=analyze,
+        )
+        assert out is None
+        analyze.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_texto_longo_e_resumido_por_pagina_e_a_cauda_nao_se_perde(self):
+        """Owner requirement (2026-09-28): a document over the old
+        4000-char cut keeps its tail — every page reaches SOME call."""
+        pagina1 = "a" * 7000
+        marcador_final = "MARCADOR-FINAL-UNICO"
+        pagina2 = "b" * 7000 + marcador_final
+        texto_completo = f"Certidão: X\n\n{pagina1}\n\n{pagina2}"
+
+        vistos = []
+
+        async def fake_analyze(texto, org_id):
+            vistos.append(texto)
+            return f"resumo({len(texto)})"
+
+        out = await service._analisar_resumo_sem_truncar(
+            (pagina1, pagina2), texto_completo, "X", ORG, analyze=fake_analyze,
+        )
+        assert any(marcador_final in v for v in vistos)
+        assert out is not None
+
+
+class TestExtractPdfTextSemTruncarEComPaginas:
+    @pytest.mark.asyncio
+    async def test_documento_maior_que_4000_chars_mantem_a_cauda(self):
+        """Owner requirement (2026-09-28): no silent truncation anywhere —
+        the old `[:4000]` cut would have dropped this marker."""
+        import fitz
+
+        marcador = "MARCADOR-FINAL-UNICO"
+        # `insert_text` clips at the page's right margin rather than
+        # wrapping — `insert_textbox` wraps within `rect`, which is what
+        # actually gets >4000 chars of REAL, non-repeated-onto-itself text
+        # onto the page.
+        texto_longo = (_PREENCHIMENTO_CERTIDAO + " ") * 30 + marcador
+        doc = fitz.open()
+        page = doc.new_page()
+        rect = fitz.Rect(36, 36, page.rect.width - 36, page.rect.height - 36)
+        page.insert_textbox(rect, texto_longo, fontsize=9)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resultado = await service._extract_pdf_text(pdf_bytes, "X", org_id=None)
+        assert len(resultado.texto_extraido) > 4000
+        assert marcador in resultado.para_ia
+        assert marcador in resultado.texto_extraido
+
+    @pytest.mark.asyncio
+    async def test_paginas_texto_traz_uma_entrada_por_pagina_na_ordem(self):
+        import fitz
+
+        doc = fitz.open()
+        p1 = doc.new_page()
+        p1.insert_text((72, 72), _PREENCHIMENTO_CERTIDAO, fontsize=11)
+        p1.insert_text((72, 96), "MARCADOR-PAGINA-1", fontsize=11)
+        p2 = doc.new_page()
+        p2.insert_text((72, 72), _PREENCHIMENTO_CERTIDAO, fontsize=11)
+        p2.insert_text((72, 96), "MARCADOR-PAGINA-2", fontsize=11)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        resultado = await service._extract_pdf_text(pdf_bytes, "X", org_id=None)
+        assert len(resultado.paginas_texto) == 2
+        assert "MARCADOR-PAGINA-1" in resultado.paginas_texto[0]
+        assert "MARCADOR-PAGINA-2" in resultado.paginas_texto[1]
+        assert "MARCADOR-PAGINA-1" not in resultado.paginas_texto[1]
+
+
+class TestCertidaoManualMaxVisionPages:
+    """Owner requirement (2026-09-28): the manual-upload vision cap must be
+    the transcriber's own global max (40), never a locally-invented,
+    narrower number — a 3-page cap silently failed any certidão longer
+    than that (`too_many_vision_pages`)."""
+
+    def test_usa_o_teto_global_do_transcritor(self):
+        from noctusai_lib.integrations.documents.transcription import (
+            MAX_VISION_PAGES,
+        )
+
+        assert service.CERTIDAO_MANUAL_MAX_VISION_PAGES == MAX_VISION_PAGES
+        assert service.CERTIDAO_MANUAL_MAX_VISION_PAGES == 40
+
+    @pytest.mark.asyncio
+    async def test_process_manual_extraction_pede_o_teto_global_ao_extrator(self):
+        extract_text = AsyncMock(
+            return_value=service.ExtractedPdfText(para_ia="texto extraído")
+        )
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", nome_display="Serasa")],
+        )
+        await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            extract_text=extract_text,
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value=None),
+        )
+        extract_text.assert_awaited_once_with(
+            b"%PDF-1.4", "Serasa", ORG,
+            max_vision_pages=service.CERTIDAO_MANUAL_MAX_VISION_PAGES,
+        )
+
+
+class TestProcessManualExtractionPaginaAPagina:
+    """`process_manual_extraction` end-to-end with a multi-page
+    `ExtractedPdfText` — the exact shape `_extract_pdf_text` now returns."""
+
+    @pytest.mark.asyncio
+    async def test_positiva_na_pagina_2_vence_negativa_na_pagina_1(self):
+        """The defect this whole fix exists for: a positive entry on page 2
+        must not be hidden by a negative verdict elsewhere."""
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[
+                _resultado(tipo="cnd_federal", nome_display="CND Federal")
+            ],
+        )
+
+        async def fake_estrutura(texto, nome, org):
+            if "pagina 1" in texto:
+                return {"resultado": "negativa"}
+            return {"resultado": "positiva"}
+
+        extraido = service.ExtractedPdfText(
+            para_ia=(
+                "Certidão: CND Federal\n\npagina 1 nada consta\n\n"
+                "pagina 2 com debito"
+            ),
+            texto_extraido="pagina 1 nada consta\n\npagina 2 com debito",
+            paginas_texto=("pagina 1 nada consta", "pagina 2 com debito"),
+        )
+        update_data = await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="CND Federal",
+            org_id=ORG,
+            db=db,
+            extract_text=AsyncMock(return_value=extraido),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=fake_estrutura,
+        )
+        assert update_data["resultado"] == "positiva"
+
+        row = db.table("certidao_resultados").select("*").eq(
+            "id", "resultado-001"
+        ).execute().data[0]
+        assert row["resultado"] == "positiva"
+
+    @pytest.mark.asyncio
+    async def test_numero_divergente_entre_paginas_mantem_a_primeira_e_loga(
+        self, caplog
+    ):
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", nome_display="Serasa")],
+        )
+
+        async def fake_estrutura(texto, nome, org):
+            if "pagina 1" in texto:
+                return {"numero": "111", "resultado": "negativa"}
+            return {"numero": "222", "resultado": "negativa"}
+
+        extraido = service.ExtractedPdfText(
+            para_ia="Certidão: Serasa\n\npagina 1\n\npagina 2",
+            paginas_texto=("pagina 1", "pagina 2"),
+        )
+        with caplog.at_level(logging.WARNING):
+            update_data = await service.process_manual_extraction(
+                pdf_bytes=b"%PDF-1.4",
+                resultado_id="resultado-001",
+                consulta_id="consulta-001",
+                nome_display="Serasa",
+                org_id=ORG,
+                db=db,
+                extract_text=AsyncMock(return_value=extraido),
+                analyze=AsyncMock(return_value="resumo"),
+                analyze_estrutura=fake_estrutura,
+            )
+        assert update_data["numero"] == "111"
+        assert any("divergente" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_todas_as_paginas_sao_enviadas_para_a_leitura_estruturada(self):
+        chamadas = []
+
+        async def fake_estrutura(texto, nome, org):
+            chamadas.append(texto)
+            return {"resultado": "negativa"}
+
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="serasa", nome_display="Serasa")],
+        )
+        extraido = service.ExtractedPdfText(
+            para_ia="Certidão: Serasa\n\np1\n\np2\n\np3",
+            paginas_texto=("p1", "p2", "p3"),
+        )
+        await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="Serasa",
+            org_id=ORG,
+            db=db,
+            extract_text=AsyncMock(return_value=extraido),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=fake_estrutura,
+        )
+        assert chamadas == ["p1", "p2", "p3"]
