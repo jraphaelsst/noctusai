@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional, Union
 
 from .client import get_llm_config, get_provider, resolve_api_key
+from .vision_types import VisionResult
 
 
 async def analyze_image(
@@ -19,8 +20,9 @@ async def analyze_image(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     org_id: Optional[str] = None,
+    return_metadata: bool = False,
     **kwargs: Any,
-) -> str:
+) -> Union[str, VisionResult]:
     """Analyze an image against a text prompt via the configured provider.
 
     Args:
@@ -29,10 +31,15 @@ async def analyze_image(
         model: Override the vision model. Defaults to `LLMConfig.default_vision_model`.
         provider: Override the active provider.
         org_id: Scope the key resolution to a specific org.
-        **kwargs: Forwarded to the provider.
+        return_metadata: When True, return a `VisionResult` (text +
+            `truncated` + raw `stop_reason`) instead of a bare string.
+            Defaults to False so every existing caller is unaffected — see
+            `vision_types.VisionResult` for why this exists.
+        **kwargs: Forwarded to the provider (e.g. `max_tokens`).
 
     Returns:
-        The model's textual response.
+        The model's textual response, or a `VisionResult` when
+        `return_metadata=True`.
 
     Raises:
         LLMNotConfigured: API key missing.
@@ -51,6 +58,7 @@ async def analyze_image(
         model=effective_model,
         api_key=api_key,
         org_id=org_id,
+        return_metadata=return_metadata,
         **kwargs,
     )
 

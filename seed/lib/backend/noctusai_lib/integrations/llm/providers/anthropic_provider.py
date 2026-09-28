@@ -26,6 +26,7 @@ from anthropic import AsyncAnthropic, APIError as AnthropicAPIError
 
 from ..exceptions import LLMAPIError, LLMNotConfigured, ProviderNotImplemented
 from ..registry import register
+from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
 
@@ -194,8 +195,9 @@ class AnthropicProvider:
         model: str,
         api_key: str,
         org_id: Optional[str] = None,
+        return_metadata: bool = False,
         **kwargs: Any,
-    ) -> str:
+    ) -> Union[str, VisionResult]:
         from ..usage import record_usage
 
         client = self._client_for(api_key)
@@ -248,7 +250,15 @@ class AnthropicProvider:
                     if usage else None
                 ),
             )
-            return "\n".join(parts).strip()
+            texto = "\n".join(parts).strip()
+            if return_metadata:
+                stop_reason = getattr(response, "stop_reason", None)
+                return VisionResult(
+                    text=texto,
+                    truncated=stop_reason == "max_tokens",
+                    stop_reason=stop_reason,
+                )
+            return texto
         except AnthropicAPIError as exc:
             logger.error("Anthropic analyze_image failed: %s", exc)
             raise LLMAPIError("anthropic", str(exc)) from exc

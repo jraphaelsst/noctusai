@@ -23,6 +23,7 @@ from openai import OpenAIError
 
 from ..exceptions import LLMAPIError, LLMNotConfigured
 from ..registry import register
+from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
 
@@ -242,8 +243,9 @@ class OpenAIProvider:
         model: str,
         api_key: str,
         org_id: Optional[str] = None,
+        return_metadata: bool = False,
         **kwargs: Any,
-    ) -> str:
+    ) -> Union[str, VisionResult]:
         """Vision chat. `image` accepts either a URL string or raw bytes.
 
         Bytes are base64-encoded into a data URL. Uses the chat completions
@@ -284,7 +286,16 @@ class OpenAIProvider:
                 total_tokens=getattr(usage, "total_tokens", None),
                 model_version=getattr(response, "model", None),
             )
-            return (response.choices[0].message.content or "").strip()
+            choice = response.choices[0]
+            texto = (choice.message.content or "").strip()
+            if return_metadata:
+                finish_reason = getattr(choice, "finish_reason", None)
+                return VisionResult(
+                    text=texto,
+                    truncated=finish_reason == "length",
+                    stop_reason=finish_reason,
+                )
+            return texto
         except OpenAIError as exc:
             logger.error("OpenAI analyze_image failed: %s", exc)
             raise LLMAPIError("openai", str(exc)) from exc

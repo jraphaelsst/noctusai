@@ -59,6 +59,7 @@ from .config import KeyProvider, LLMConfig
 from .embeddings import generate_embedding, generate_embeddings_batch
 from .provider_choice import resolve_llm_provider
 from .vision import analyze_image, analyze_images
+from .vision_types import VisionResult
 from .refusal import analyze_image_with_refusal_retry, looks_like_refusal
 from .budget import (
     compute_spend_usd,
@@ -194,6 +195,7 @@ __all__ = [
     "transcribe_audio",
     "analyze_image",
     "analyze_images",
+    "VisionResult",
     "looks_like_refusal",
     "analyze_image_with_refusal_retry",
     "resolve_llm_provider",

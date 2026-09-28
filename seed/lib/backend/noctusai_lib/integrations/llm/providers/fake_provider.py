@@ -26,6 +26,8 @@ from __future__ import annotations
 from collections import deque
 from typing import Any, Deque, Iterable, List, Optional, Union
 
+from ..vision_types import VisionResult
+
 
 class FakeProvider:
     """Scripted test double. Not registered; tests use it via LLMConfig override."""
@@ -39,12 +41,19 @@ class FakeProvider:
         embedding_responses: Optional[Iterable[List[float]]] = None,
         transcription_responses: Optional[Iterable[str]] = None,
         vision_responses: Optional[Iterable[str]] = None,
+        # Aligned by call order with `vision_responses` (own deque, same
+        # convention as the other scripted-response pairs on this class) —
+        # a caller scripting `return_metadata=True` truncation scenarios
+        # sets this; every other caller leaves it unset and gets
+        # `truncated=False`, matching a real, non-truncated reply.
+        vision_truncated: Optional[Iterable[bool]] = None,
         stream_responses: Optional[Iterable[List[str]]] = None,
     ) -> None:
         self._chat: Deque[str] = deque(chat_responses or [])
         self._embeddings: Deque[List[float]] = deque(embedding_responses or [])
         self._transcriptions: Deque[str] = deque(transcription_responses or [])
         self._visions: Deque[str] = deque(vision_responses or [])
+        self._vision_truncated: Deque[bool] = deque(vision_truncated or [])
         # Each stream_response is a list of chunks — e.g. [["Hel", "lo", " world"]].
         # The outer deque.popleft() returns one full scripted stream per call.
         self._streams: Deque[List[str]] = deque(stream_responses or [])
@@ -136,8 +145,9 @@ class FakeProvider:
         *,
         model: str,
         api_key: str,
+        return_metadata: bool = False,
         **kwargs: Any,
-    ) -> str:
+    ) -> Union[str, VisionResult]:
         self._record(
             "analyze_image",
             image_type=type(image).__name__,
@@ -145,9 +155,15 @@ class FakeProvider:
             model=model,
             api_key=api_key,
         )
-        if self._visions:
-            return self._visions.popleft()
-        return f"[FAKE] default vision response for prompt: {prompt!r}"
+        texto = (
+            self._visions.popleft()
+            if self._visions
+            else f"[FAKE] default vision response for prompt: {prompt!r}"
+        )
+        if not return_metadata:
+            return texto
+        truncated = self._vision_truncated.popleft() if self._vision_truncated else False
+        return VisionResult(text=texto, truncated=truncated, stop_reason=None)
 
     async def chat_completion_stream(
         self,

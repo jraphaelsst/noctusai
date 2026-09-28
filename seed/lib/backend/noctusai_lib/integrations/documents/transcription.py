@@ -61,6 +61,7 @@ from noctusai_lib.integrations.documents.providers import (
     OCR_MODELS,
 )
 from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
+from noctusai_lib.integrations.llm.vision_types import VisionResult
 from noctusai_lib.integrations.documents.types import TextSource
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,30 @@ OCR_PROMPT = (
 #: is an ERROR rather than a quiet empty string, because "this document was
 #: not transcribed" must never look like "this document was blank".
 MAX_VISION_PAGES = 40
+
+#: The per-page vision call's normal output cap. Measured live 2026-09-27:
+#: a dense page (a Guia de ITBI) hit exactly this many output tokens on
+#: Sonnet and came back cut off mid-page — silently, because nothing here
+#: checked the provider's stop reason. `VISION_MAX_TOKENS_RETRY` below is
+#: the one-shot escape hatch for exactly that page.
+VISION_MAX_TOKENS = 4096
+
+#: The retry cap for a page whose FIRST vision call came back truncated
+#: (`VisionResult.truncated`). One retry only — see `_transcribe`'s vision
+#: rung: a page still truncated at this cap fails the whole document with
+#: `error="transcricao_truncada"` rather than silently shipping a half page.
+#:
+#: `models.py` has no per-model output-token ceiling to consult (checked
+#: 2026-09-28 — none of the three vendors' catalog entries carry one), so
+#: this is a flat constant, not a per-model lookup; every model this module
+#: is configured for as of 2026-09 (Claude/GPT-4o/Gemini vision) accepts an
+#: 8192-token `max_tokens` for a single-image call.
+VISION_MAX_TOKENS_RETRY = 8192
+
+#: The Transcription-level error when a page is STILL truncated after the
+#: one retry above. Whole-document abort, same shape as `rasterize_failed` /
+#: `too_many_vision_pages` — never a partial page silently marked complete.
+ERROR_TRANSCRICAO_TRUNCADA = "transcricao_truncada"
 
 
 @dataclass(frozen=True)
@@ -388,6 +413,40 @@ class FakeDocumentTranscriber:
         )
 
 
+async def _vision_call(
+    analyze,
+    image: bytes,
+    prompt: str,
+    *,
+    model: Optional[str],
+    provider: Optional[str],
+    org_id: Optional[str],
+    max_tokens: int,
+) -> tuple[str, bool]:
+    """Call the injected/real vision `analyze` and normalize `(text, truncated)`.
+
+    Requests `return_metadata=True`: the seed's own `analyze_image` (every
+    real provider, and `FakeProvider`) understands it and returns a
+    `VisionResult` — see `llm.vision_types`. A caller that injects its OWN
+    `analyze` (every transcriber test does, via the `analyze=` DI seam) is
+    free to accept-and-ignore the kwarg and keep returning a bare string;
+    that is read as `truncated=False` — exactly today's behaviour, so a
+    test fixture written before truncation-awareness existed is unaffected.
+    """
+    resultado = await analyze(
+        image,
+        prompt,
+        model=model,
+        provider=provider,
+        org_id=org_id,
+        max_tokens=max_tokens,
+        return_metadata=True,
+    )
+    if isinstance(resultado, VisionResult):
+        return resultado.text, resultado.truncated
+    return resultado, False
+
+
 class LadderDocumentTranscriber:
     """Text-layer-first, vision-second, decided PER PAGE.
 
@@ -621,14 +680,51 @@ class LadderDocumentTranscriber:
                     error="rasterize_failed",
                     error_message=f"could not rasterize page {numero} of {num_paginas}",
                 )
-            marcado = await analyze(
+            marcado, truncado = await _vision_call(
+                analyze,
                 img,
                 self._ocr_prompt,
                 model=self._ocr_model,
                 provider=self._provider,
                 org_id=self._org_id,
-                max_tokens=4096,
+                max_tokens=VISION_MAX_TOKENS,
             )
+            if truncado:
+                # ONE retry, at a bigger cap — see `VISION_MAX_TOKENS_RETRY`.
+                # A page dense enough to hit the FIRST cap is exactly the
+                # 2026-09-27 case this exists for; a page still truncated
+                # at the bigger cap is genuinely exceptional and gets the
+                # named, whole-document error below rather than a second
+                # (unbounded) retry loop.
+                logger.warning(
+                    "transcription: page %d/%d truncated at %d output tokens, "
+                    "retrying at %d",
+                    numero, num_paginas, VISION_MAX_TOKENS, VISION_MAX_TOKENS_RETRY,
+                )
+                marcado, truncado = await _vision_call(
+                    analyze,
+                    img,
+                    self._ocr_prompt,
+                    model=self._ocr_model,
+                    provider=self._provider,
+                    org_id=self._org_id,
+                    max_tokens=VISION_MAX_TOKENS_RETRY,
+                )
+                if truncado:
+                    # A truncated reply must NEVER reach `textos` — a half
+                    # page reported as complete is the exact silent-error
+                    # shape this whole module family exists to prevent.
+                    # Whole-document abort, same shape as `rasterize_failed`
+                    # above: no partial pages, an honest named error.
+                    return Transcription(
+                        num_paginas=num_paginas,
+                        error=ERROR_TRANSCRICAO_TRUNCADA,
+                        error_message=(
+                            f"page {numero} of {num_paginas} still truncated "
+                            f"after retrying at {VISION_MAX_TOKENS_RETRY} "
+                            "output tokens"
+                        ),
+                    )
             # Registry provenance stamps come out BEFORE `parse_markup`, not
             # after: `parse_markup` computes `ranges` as offsets into
             # WHATEVER text it is handed, so stripping first means those

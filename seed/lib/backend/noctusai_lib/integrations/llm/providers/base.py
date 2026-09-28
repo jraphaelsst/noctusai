@@ -93,7 +93,13 @@ class LLMProvider(Protocol):
     ) -> str:
         """Analyze an image (bytes or URL) against a text prompt.
 
-        Returns the model's textual response.
+        Returns the model's textual response — or a
+        `vision_types.VisionResult` (text + normalized `truncated` + raw
+        `stop_reason`) when the caller passes `return_metadata=True` via
+        `**kwargs`. Every real provider (`openai`/`anthropic`/`gemini`) and
+        `FakeProvider` implement this; `return_metadata` defaults to False
+        so every caller that doesn't ask for it keeps the bare-string
+        contract unchanged.
         """
         ...
 

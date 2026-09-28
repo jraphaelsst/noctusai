@@ -56,7 +56,8 @@ class _Vision:
         self._next = 0
 
     async def __call__(
-        self, image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None
+        self, image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None,
+        **kwargs,
     ):
         self._next += 1
         self.pages.append(self._next)

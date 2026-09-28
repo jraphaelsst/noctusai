@@ -608,7 +608,7 @@ class TestOnePromptConstantForEveryProvider:
 
         prompts: list[str] = []
 
-        async def recorder(image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None):
+        async def recorder(image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None, **kwargs):
             prompts.append(prompt)
             return "OCR SEM MARCACAO"
 
@@ -637,7 +637,7 @@ class TestVisionRungEndToEnd:
 
     @pytest.mark.asyncio
     async def test_a_scanned_page_is_parsed_from_its_markup(self) -> None:
-        async def fake_vision(image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None):
+        async def fake_vision(image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None, **kwargs):
             return (
                 "Certifico que consta **regularmente registrado** o imovel, "
                 "com <u>onus real vigente</u> anotado a margem."
@@ -661,7 +661,7 @@ class TestVisionRungEndToEnd:
     async def test_a_malformed_vision_reply_still_yields_a_document(self) -> None:
         """The parser never raises — a background transcription job must
         not die because the model's reply had one stray marker."""
-        async def fake_vision(image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None):
+        async def fake_vision(image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None, **kwargs):
             return "Texto com marcador **sem fechar corretamente"
 
         out = await LadderDocumentTranscriber(analyze=fake_vision).transcribe(

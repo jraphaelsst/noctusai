@@ -38,7 +38,9 @@ def _vision_for():
     depending on call order."""
     billed: list[int] = []
 
-    async def analyze(image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None):
+    async def analyze(
+        image, prompt, *, model=None, provider=None, org_id=None, max_tokens=None, **kwargs
+    ):
         pagina = int(image.decode())
         billed.append(pagina)
         return f"OCR PAGINA {pagina}"

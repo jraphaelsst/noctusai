@@ -29,6 +29,7 @@ from google.genai import types
 
 from ..exceptions import LLMAPIError, LLMNotConfigured
 from ..registry import register
+from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
 
@@ -326,8 +327,9 @@ class GeminiProvider:
         model: str,
         api_key: str,
         org_id: Optional[str] = None,
+        return_metadata: bool = False,
         **kwargs: Any,
-    ) -> str:
+    ) -> Union[str, VisionResult]:
         from ..usage import record_usage
 
         client = self._get_client(api_key)
@@ -342,11 +344,25 @@ class GeminiProvider:
                 "URL images not supported in Gemini analyze_image — download first and pass bytes.",
             )
 
+        # 🔴 FIXED 2026-09-28: `max_tokens` used to be accepted (via
+        # `**kwargs`) and silently dropped — `generate_content` was never
+        # given a `config=`, so a caller's output-token cap had no effect on
+        # Gemini specifically (unlike OpenAI/Anthropic, which do honour it).
+        # A truncation-retry at a bigger cap (see
+        # `documents.transcription`) would otherwise be a no-op here.
+        max_tokens = kwargs.pop("max_tokens", None)
+        config = (
+            types.GenerateContentConfig(max_output_tokens=max_tokens)
+            if max_tokens is not None
+            else None
+        )
+
         try:
             text_part = types.Part.from_text(text=prompt)
             response = await client.aio.models.generate_content(
                 model=model,
                 contents=[image_part, text_part],
+                **({"config": config} if config is not None else {}),
             )
             text = getattr(response, "text", "") or ""
             usage = getattr(response, "usage_metadata", None)
@@ -359,7 +375,26 @@ class GeminiProvider:
                 completion_tokens=getattr(usage, "candidates_token_count", None),
                 total_tokens=getattr(usage, "total_token_count", None),
             )
-            return text.strip()
+            texto = text.strip()
+            if return_metadata:
+                candidatos = getattr(response, "candidates", None) or []
+                finish_reason = (
+                    getattr(candidatos[0], "finish_reason", None) if candidatos else None
+                )
+                return VisionResult(
+                    text=texto,
+                    truncated=finish_reason == types.FinishReason.MAX_TOKENS,
+                    # `.value` when it's the real enum ("MAX_TOKENS", not
+                    # Enum's own `"FinishReason.MAX_TOKENS"` `str()`); a
+                    # plain string (a test double) has no `.value` and is
+                    # used as-is.
+                    stop_reason=(
+                        getattr(finish_reason, "value", finish_reason)
+                        if finish_reason is not None
+                        else None
+                    ),
+                )
+            return texto
         except Exception as exc:
             logger.error("Gemini analyze_image failed: %s", exc)
             raise LLMAPIError("gemini", str(exc)) from exc
