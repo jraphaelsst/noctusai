@@ -134,6 +134,43 @@ class TestEtapas:
         finally:
             app.dependency_overrides.pop(exigir_admin_do_quadro, None)
 
+    def test_deleting_a_stage_with_cards_records_who_moved_them(
+        self, api, etapas, tarefa, igig_db,
+    ):
+        """`delete_stage`'s bulk reassignment now writes ONE `pipeline_movimentos`
+        row per moved card, attributed to the deleting admin — the seed's
+        `pipeline_stages_router` threads `ctx.user_id` through as `moved_by`
+        so this trail exists with NO igig-specific code (tech-lead
+        follow-up: audit-trail gap on stage-delete reassignment)."""
+        from app.main import app
+        from app.pipelines import exigir_admin_do_quadro
+
+        origem = etapas["aguardando_roteiro"]
+        destino = etapas["roteiro_em_producao"]
+        _colocar_em(igig_db, tarefa["id"], origem["id"])
+
+        app.dependency_overrides[exigir_admin_do_quadro] = lambda: None
+        try:
+            resp = api.delete(
+                f"/api/esteira/stages/{origem['id']}",
+                params={"reassign_to": destino["id"]},
+            )
+        finally:
+            app.dependency_overrides.pop(exigir_admin_do_quadro, None)
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["cards_movidos"] == 1
+
+        # The tarefa's own entry-into-the-board row (`de_etapa_id: None`,
+        # written on creation — see `test_entry_is_recorded_in_the_history`'s
+        # comercial sibling) is ALSO in here; this test cares about the row
+        # the stage delete itself just wrote.
+        historico = _historico(igig_db, tarefa["id"])
+        reassign_row = next(m for m in historico if m["de_etapa_id"] == origem["id"])
+        assert reassign_row["pipeline"] == "esteira"
+        assert reassign_row["para_etapa_id"] == destino["id"]
+        assert reassign_row["responsavel_id"] == TEST_USER_ID
+
 
 # ── Stage roles (achado 11) ───────────────────────────────────────────
 class TestAtribuirPapelEtapa:
