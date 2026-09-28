@@ -18,7 +18,7 @@ cap + the `in_()` URL-length limit — see that module).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -334,6 +334,164 @@ def set_membros(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, *, m
             }
         ).execute()
     return get_membros(cfg, db, org_id, entity_id)
+
+
+# ─── Lembretes (ad-hoc, `lembretes_crud` opt-in) ────────────────────────
+
+#: Brazil abolished DST in 2019 — América/São Paulo is a fixed UTC-3 offset
+#: going forward, so a NAIVE `dispara_em` (no offset in the request) can be
+#: anchored without a tz database lookup.
+_SAO_PAULO = timezone(timedelta(hours=-3))
+
+
+def _normalize_dispara_em(value: datetime) -> str:
+    """UTC ISO, always — a naive `dispara_em` is assumed to already be
+    América/São Paulo wall-clock (the "Lembretes" subpage's picker, never the
+    server's own locale); an offset-aware one is trusted as given. Storing
+    one consistent representation is what makes both the scheduler's
+    `dispara_em <= now` drain and this module's own chronological `list`
+    correct string comparisons, not just correct TIMESTAMPTZ comparisons."""
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=_SAO_PAULO)
+    return aware.astimezone(timezone.utc).isoformat()
+
+
+def _lembrete_out(row: dict, responsaveis: dict[str, dict]) -> dict:
+    responsavel_id = row.get("responsavel_id")
+    return {
+        "id": row["id"],
+        "titulo": row.get("titulo") or "",
+        "dispara_em": row["dispara_em"],
+        "responsavel": responsaveis.get(responsavel_id) if responsavel_id else None,
+        # `concluido` mirrors `enviado_em`: set either by the scheduler's
+        # delivery drain OR directly by a user "mark done" action — from the
+        # card's point of view both mean "this reminder no longer needs
+        # attention", and the scheduler's own pending query
+        # (`enviado_em IS NULL`) already treats a user-completed row as done.
+        "concluido": row.get("enviado_em") is not None,
+        "concluido_em": row.get("enviado_em"),
+        "created_at": row.get("created_at"),
+    }
+
+
+def _resolve_responsaveis(cfg: CardHubConfig, db: Any, org_id: UUID, rows: list[dict]) -> dict[str, dict]:
+    ids = sorted({r["responsavel_id"] for r in rows if r.get("responsavel_id")})
+    if not ids:
+        return {}
+    src = cfg.member_source
+    found = in_batched_rows(db, src.table, org_id, "id", ids)
+    return {m["id"]: _membro_out(cfg, m) for m in found}
+
+
+def _require_lembrete(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, lembrete_id: UUID) -> dict:
+    rows = (
+        table(db, cfg.tables.lembretes)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .eq(cfg.entity_fk, str(entity_id))
+        .eq("id", str(lembrete_id))
+        .execute()
+    ).data or []
+    if not rows:
+        raise NotFoundError(cfg.tables.lembretes, str(lembrete_id))
+    return rows[0]
+
+
+def _require_responsavel(cfg: CardHubConfig, db: Any, org_id: UUID, responsavel_id: UUID) -> None:
+    src = cfg.member_source
+    found = in_batched_rows(db, src.table, org_id, "id", [str(responsavel_id)])
+    if not found:
+        raise NotFoundError(src.table, str(responsavel_id))
+
+
+def list_lembretes(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID) -> dict:
+    """Every ad-hoc reminder on the card, pending and done, oldest fire
+    first. A CANCELLED row (the generic scope-cancel mechanic
+    `lembretes.cancelar_lembretes` uses for the Datas-driven single fire) is
+    superseded and never shown here — this CRUD never produces one itself."""
+    ensure_entity(cfg, db, org_id, entity_id)
+    rows = paged_rows(
+        db, cfg.tables.lembretes, org_id, eq_filters={cfg.entity_fk: str(entity_id)}, order_col="dispara_em"
+    )
+    # `dispara_em` is stored UTC-normalized (`_normalize_dispara_em`), so a
+    # plain string sort IS a chronological sort — sorted explicitly rather
+    # than trusting `.order()`, which a fake / a read-replica lag could both
+    # leave unsorted.
+    rows = sorted((r for r in rows if not r.get("cancelado_em")), key=lambda r: r["dispara_em"])
+    responsaveis = _resolve_responsaveis(cfg, db, org_id, rows)
+    items = [_lembrete_out(r, responsaveis) for r in rows]
+    return {"items": items, "total": len(items)}
+
+
+def create_lembrete(
+    cfg: CardHubConfig,
+    db: Any,
+    org_id: UUID,
+    entity_id: UUID,
+    *,
+    titulo: str,
+    dispara_em: datetime,
+    responsavel_id: Optional[UUID] = None,
+) -> dict:
+    ensure_entity(cfg, db, org_id, entity_id)
+    if responsavel_id is not None:
+        _require_responsavel(cfg, db, org_id, responsavel_id)
+    row = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        cfg.entity_fk: str(entity_id),
+        "titulo": titulo,
+        "dispara_em": _normalize_dispara_em(dispara_em),
+        "enviado_em": None,
+        "cancelado_em": None,
+        "responsavel_id": str(responsavel_id) if responsavel_id else None,
+        "destinatarios": [],
+        "created_at": now_iso(),
+    }
+    table(db, cfg.tables.lembretes).insert(row).execute()
+    return _lembrete_out(row, _resolve_responsaveis(cfg, db, org_id, [row]))
+
+
+def update_lembrete(
+    cfg: CardHubConfig,
+    db: Any,
+    org_id: UUID,
+    entity_id: UUID,
+    lembrete_id: UUID,
+    *,
+    titulo: Any = ...,
+    dispara_em: Any = ...,
+    responsavel_id: Any = ...,
+    concluido: Any = ...,
+) -> dict:
+    """`...` (not sent) on any kwarg means "leave alone" — the route passes
+    only the fields `model_fields_set` actually carried, so
+    `responsavel_id=None` (sent explicitly) clears the assignment while an
+    absent `responsavel_id` leaves it untouched."""
+    ensure_entity(cfg, db, org_id, entity_id)
+    existing = _require_lembrete(cfg, db, org_id, entity_id, lembrete_id)
+    updates: dict = {}
+    if titulo is not ...:
+        updates["titulo"] = titulo
+    if dispara_em is not ...:
+        updates["dispara_em"] = _normalize_dispara_em(dispara_em)
+    if responsavel_id is not ...:
+        if responsavel_id is not None:
+            _require_responsavel(cfg, db, org_id, responsavel_id)
+            updates["responsavel_id"] = str(responsavel_id)
+        else:
+            updates["responsavel_id"] = None
+    if concluido is not ...:
+        updates["enviado_em"] = now_iso() if concluido else None
+    if updates:
+        table(db, cfg.tables.lembretes).update(updates).eq("id", str(lembrete_id)).execute()
+    merged = {**existing, **updates}
+    return _lembrete_out(merged, _resolve_responsaveis(cfg, db, org_id, [merged]))
+
+
+def delete_lembrete(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, lembrete_id: UUID) -> None:
+    ensure_entity(cfg, db, org_id, entity_id)
+    _require_lembrete(cfg, db, org_id, entity_id, lembrete_id)
+    table(db, cfg.tables.lembretes).delete().eq("id", str(lembrete_id)).execute()
 
 
 # ─── Checklists ──────────────────────────────────────────────────────────

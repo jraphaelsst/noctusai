@@ -18,7 +18,7 @@ seams, overridden by construction (`KB § PATTERNS/backend/di-test-seam.md`).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Optional
 from uuid import uuid4
 
@@ -176,6 +176,15 @@ class Hub:
     def member_row(self, id_, *, nome="Bia", cor="#00ff00") -> dict:
         return {"id": id_, "org_id": ORG_ID, "nome": nome, "cor": cor, "created_at": "2026-01-01T00:00:00+00:00"}
 
+    def lembrete_row(self, id_, entity_id, *, titulo="Ligar para o cliente", dispara_em="2026-01-10T12:00:00+00:00",
+                     responsavel_id=None, enviado_em=None, cancelado_em=None,
+                     created_at="2026-01-01T00:00:00+00:00") -> dict:
+        return {
+            "id": id_, "org_id": ORG_ID, self.cfg.entity_fk: entity_id, "titulo": titulo,
+            "dispara_em": dispara_em, "enviado_em": enviado_em, "cancelado_em": cancelado_em,
+            "responsavel_id": responsavel_id, "destinatarios": [], "created_at": created_at,
+        }
+
     def checklist_row(self, id_, entity_id, *, titulo="Checklist", posicao=0) -> dict:
         return {
             "id": id_, "org_id": ORG_ID, self.cfg.entity_fk: entity_id, "titulo": titulo,
@@ -283,3 +292,24 @@ def lead_schema_cache():
 @pytest.fixture(params=["lead", "sw"])
 def hub(request, lead_schema_cache) -> Hub:
     return build_hub(request.param)
+
+
+@pytest.fixture
+def lead_lembretes_hub():
+    """A `lead` hub with the opt-in `lembretes_crud` extension turned on, and
+    a schema cache built from THAT extended config (the `titulo` +
+    `responsavel_id` columns `card_hub_migration` only emits behind the
+    flag). Deliberately a SEPARATE fixture from `hub`/`lead_schema_cache`:
+    those stay pinned to social-wiring's route COUNT
+    (`test_router_shape.py::TestAuthBoundary`), which a `lead_config`
+    default flip would silently grow."""
+    base = {table: set(cols) for table, cols in _schema_cache.get_schema_map().items()}
+    cfg = replace(lead_config(lambda ids: {}), lembretes_crud=True)
+    generated = parse_sql(
+        _LEAD_PREREQS + card_hub_migration(cfg, "crm"), source_label="card_hub_migration(lead+lembretes)"
+    )
+    _schema_cache.set_cache_for_tests({**base, **generated})
+    try:
+        yield build_hub("lead", cfg_transform=lambda c: replace(c, lembretes_crud=True))
+    finally:
+        _schema_cache.set_cache_for_tests(base)

@@ -13,6 +13,7 @@ byte-identical for a product adopting the factory.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -90,6 +91,27 @@ def membros_body(cfg: CardHubConfig) -> type[StrictHttpModel]:
     )
 
 
+# ─── Lembretes (ad-hoc, `lembretes_crud` opt-in) ────────────────────────
+
+
+class LembreteCreateBody(StrictHttpModel):
+    titulo: str = Field(min_length=1)
+    dispara_em: datetime
+    responsavel_id: Optional[UUID] = None
+
+
+class LembreteUpdateBody(StrictHttpModel):
+    """Every field optional; ABSENCE means "leave alone" (`model_fields_set`,
+    never `exclude_none`) — `responsavel_id: null` clears the assignment,
+    and `concluido` sets/clears `enviado_em` directly (a user-completed
+    reminder, never the scheduler's delivery path)."""
+
+    titulo: Optional[str] = Field(default=None, min_length=1)
+    dispara_em: Optional[datetime] = None
+    responsavel_id: Optional[UUID] = None
+    concluido: Optional[bool] = None
+
+
 # ─── Checklists ──────────────────────────────────────────────────────────
 
 
@@ -139,6 +161,8 @@ __all__ = [
     "ChecklistItemCreateBody",
     "ChecklistItemUpdateBody",
     "ChecklistUpdateBody",
+    "LembreteCreateBody",
+    "LembreteUpdateBody",
     "NotaCreateBody",
     "NotaUpdateBody",
     "TagCreateBody",

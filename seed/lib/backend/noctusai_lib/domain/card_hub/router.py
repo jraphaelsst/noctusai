@@ -33,6 +33,8 @@ Routes (under `prefix`, `{id}` = `cfg.id_param`):
     PATCH / DELETE      /{id}/notas/{nota_id}           DELETE 204
     PUT                 /{id}/tags
     GET / PUT           /{id}/membros
+    GET / POST          /{id}/lembretes                 POST 201  (lembretes_crud opt-in)
+    PATCH / DELETE      /{id}/lembretes/{lembrete_id}   DELETE 204 (lembretes_crud opt-in)
     GET / POST          /{id}/checklist-extras          POST 201
     PATCH / DELETE      /{id}/checklist-extras/{eid}    DELETE 204
     POST / DELETE       /{id}/checklist-extras/{eid}/documento   DELETE 204
@@ -82,6 +84,8 @@ from .schemas import (
     ChecklistItemCreateBody,
     ChecklistItemUpdateBody,
     ChecklistUpdateBody,
+    LembreteCreateBody,
+    LembreteUpdateBody,
     NotaCreateBody,
     NotaUpdateBody,
     TagCreateBody,
@@ -261,6 +265,71 @@ def card_hub_routers(
     ) -> dict:
         ctx = resolve_context(auth, db)
         return svc.set_membros(cfg, ctx.db, ctx.org_id, entity_id, member_ids=getattr(body, member_key))
+
+    # ─── Lembretes (ad-hoc reminders, `lembretes_crud` opt-in) ─────────
+    #
+    # 🔴 GATED AT THE ROUTER, not just the DDL: when `cfg.lembretes_crud`
+    # is False (social-wiring, every other product not yet opted in) these
+    # routes are not registered at all — a 404, never a raw missing-column
+    # DB error from an unopted-in product's `titulo`-less table.
+    if cfg.lembretes_crud:
+
+        @entity_router.get(entity_path("/lembretes"), name="list_lembretes_route")
+        async def list_lembretes_route(
+            entity_id: UUID = entity_id_param(), auth=Depends(auth_dependency), db=Depends(get_db)
+        ) -> dict:
+            ctx = resolve_context(auth, db)
+            return svc.list_lembretes(cfg, ctx.db, ctx.org_id, entity_id)
+
+        @entity_router.post(entity_path("/lembretes"), status_code=201, name="create_lembrete_route")
+        async def create_lembrete_route(
+            entity_id: UUID = entity_id_param(),
+            body: LembreteCreateBody = Body(...),
+            auth=Depends(auth_dependency),
+            db=Depends(get_db),
+        ) -> dict:
+            ctx = resolve_context(auth, db)
+            return svc.create_lembrete(
+                cfg, ctx.db, ctx.org_id, entity_id,
+                titulo=body.titulo, dispara_em=body.dispara_em, responsavel_id=body.responsavel_id,
+            )
+
+        @entity_router.patch(entity_path("/lembretes/{lembrete_id}"), name="update_lembrete_route")
+        async def update_lembrete_route(
+            entity_id: UUID = entity_id_param(),
+            lembrete_id: UUID = Path(...),
+            body: LembreteUpdateBody = Body(...),
+            auth=Depends(auth_dependency),
+            db=Depends(get_db),
+        ) -> dict:
+            ctx = resolve_context(auth, db)
+            # `model_fields_set`, NOT `exclude_none`: absence is the only
+            # thing that can mean "leave alone" (`responsavel_id: null`
+            # clears it; a missing `responsavel_id` does not).
+            enviados = {k: getattr(body, k) for k in body.model_fields_set}
+            return svc.update_lembrete(
+                cfg,
+                ctx.db,
+                ctx.org_id,
+                entity_id,
+                lembrete_id,
+                titulo=enviados.get("titulo", ...),
+                dispara_em=enviados.get("dispara_em", ...),
+                responsavel_id=enviados.get("responsavel_id", ...),
+                concluido=enviados.get("concluido", ...),
+            )
+
+        @entity_router.delete(
+            entity_path("/lembretes/{lembrete_id}"), status_code=204, name="delete_lembrete_route"
+        )
+        async def delete_lembrete_route(
+            entity_id: UUID = entity_id_param(),
+            lembrete_id: UUID = Path(...),
+            auth=Depends(auth_dependency),
+            db=Depends(get_db),
+        ):
+            ctx = resolve_context(auth, db)
+            svc.delete_lembrete(cfg, ctx.db, ctx.org_id, entity_id, lembrete_id)
 
     # ─── Checklist extras (operator-authored lines) ────────────────────
 

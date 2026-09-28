@@ -172,11 +172,19 @@ END $$;"""
 
 def _lembretes(cfg: CardHubConfig, schema: str) -> str:
     t = cfg.tables.lembretes
+    # `lembretes_crud` opt-in (default False — social-wiring's real 056 table
+    # has neither column; `test_template_columns_equal_sw_056_057_083` pins
+    # that). igig's card hubs turn it on for the ad-hoc reminder CRUD.
+    extra_cols = ""
+    if cfg.lembretes_crud:
+        extra_cols = f"""
+    titulo         TEXT NOT NULL DEFAULT '',
+    responsavel_id UUID REFERENCES {schema}.{cfg.member_source.table}(id) ON DELETE SET NULL,"""
     return f"""-- One row per scheduled reminder fire; the partial index is the drain path.
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id        UUID NOT NULL,
-    {_entity_fk(cfg, schema)},
+    {_entity_fk(cfg, schema)},{extra_cols}
     dispara_em    TIMESTAMPTZ NOT NULL,
     enviado_em    TIMESTAMPTZ,
     cancelado_em  TIMESTAMPTZ,

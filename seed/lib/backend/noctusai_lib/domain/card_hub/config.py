@@ -177,6 +177,17 @@ class CardHubConfig:
             entity row (`data_inicio`, `data_entrega`, `entrega_concluida`,
             `lembrete_minutos_antes`, `recorrencia`): served in the resumo
             and emitted by `card_hub_migration`.
+        lembretes_crud: Opt-in (default `False`, so social-wiring's already
+            -shipped `lembretes` table stays column-for-column pinned by
+            `test_template_columns_equal_sw_056_057_083`). When `True`, the
+            `lembretes` table also carries `titulo` (required) and an
+            optional `responsavel_id` FK into `member_source.table`, and
+            `card_hub_routers` mounts the ad-hoc reminder CRUD
+            (`GET/POST /{id}/lembretes`, `PATCH/DELETE .../{lembrete_id}`) a
+            full "Lembretes" subpage needs — beyond the single fire the
+            Datas section's `lembrete_minutos_antes` materialises via
+            `lembretes.sync_lembrete`. Flag OFF ⇒ the routes are not
+            mounted at all (404, never a raw missing-column DB error).
         stage_table: The table `checklists.etapa_id` references (a
             stage-required checklist instantiated onto the card), or `None`
             for no FK.
@@ -203,6 +214,7 @@ class CardHubConfig:
     badge_extensions: Sequence[BadgeExtension] = ()
     resumo_extensions: Sequence[ResumoExtension] = ()
     entity_datas: bool = True
+    lembretes_crud: bool = False
     stage_table: Optional[str] = "pipeline_stages"
     documentos: DocumentoPolicy = field(default_factory=DocumentoPolicy)
     checklist_extra_tipo_documento: str = "outro"
