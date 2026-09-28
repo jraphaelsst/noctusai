@@ -63,20 +63,34 @@ class CancelamentoGatewayFalhou(AssinaturasServiceError):
         )
 
 
-def _default_gateway_factory(gateway: str, *, org_id: str):
+def _fake_ou_recusa(chave: str, allow_fake: Optional[bool] = None):
+    """Missing gateway key: the Fake only on explicit opt-in, else 503 —
+    never cancel "successfully" against a Fake in a real deploy."""
+    if settings.payments_allow_fake if allow_fake is None else allow_fake:
+        return make_payment_gateway(use_fake=True)
+    logger.error("assinaturas: %s não configurada — cancelamento recusado", chave)
+    raise AssinaturasServiceError("Pagamentos indisponíveis no momento. Tente novamente mais tarde.", status_code=503)
+
+
+def _default_gateway_factory(
+    gateway: str, *, org_id: str,
+    resolve: Callable[[str, str], Optional[str]] = resolve_api_key,
+    allow_fake: Optional[bool] = None,
+):
     """Mirrors `checkout_service._default_hosted_checkout_factory`'s
-    org-scoped-resolve-⇒-Fake-on-miss posture (Slice C: `resolve_api_key`
+    org-scoped-resolve-⇒-refuse-on-miss posture (Fake only with
+    `settings.payments_allow_fake`) (Slice C: `resolve_api_key`
     — org override first, `settings.stripe_secret_key`/`.asaas_api_key`'s
     env fallback unchanged), but for the headless `PaymentGateway`
     (cancel_subscription lives there, not on `HostedCheckout`)."""
     if gateway == "stripe":
-        key = resolve_api_key("stripe_secret_key", org_id)
+        key = resolve("stripe_secret_key", org_id)
         if not key:
-            return make_payment_gateway(use_fake=True)
+            return _fake_ou_recusa("stripe_secret_key", allow_fake)
         return make_payment_gateway(provider="stripe", stripe_api_key=key)
-    key = resolve_api_key("asaas_api_key", org_id)
+    key = resolve("asaas_api_key", org_id)
     if not key:
-        return make_payment_gateway(use_fake=True)
+        return _fake_ou_recusa("asaas_api_key", allow_fake)
     return make_payment_gateway(
         provider="asaas", asaas_api_key=key, asaas_base_url=settings.asaas_base_url,
     )
@@ -93,10 +107,6 @@ class AssinaturasService:
     ) -> None:
         self._client = client
         self._org_id = str(org_id)
-        # NOC-REMEDIATE[community-gateway-fake-fallback]: the staff default
-        # still falls back to the Fake gateway on a missing key (module 2);
-        # the member portal and the billing sweep pass
-        # `ciclo_assinatura.gateway_estrito`, which refuses instead. — 2026-09-28
         self._gateway_factory = gateway_factory or functools.partial(
             _default_gateway_factory, org_id=self._org_id
         )

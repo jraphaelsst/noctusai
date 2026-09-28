@@ -16,6 +16,8 @@ from pathlib import Path as _Path
 # BEFORE `app.config` is first imported so every run uses the in-memory
 # fallback CI uses.
 _os.environ["REDIS_URL"] = ""
+# Tests run with no gateway keys; the Fake gateway is an explicit opt-in.
+_os.environ["PAYMENTS_ALLOW_FAKE"] = "true"
 
 _REPO = _Path(__file__).resolve().parents[4]
 _LIB = _REPO / "seed" / "lib" / "backend"

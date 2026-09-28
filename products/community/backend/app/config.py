@@ -47,12 +47,17 @@ class SeedSettings(ProductSettings):
 
     # ── Module 2: payment gateways (community-m2-contract.md) ──
     # Reuses `noctusai_lib.integrations.payments` / `.checkout` verbatim —
-    # no new gateway adapter. Empty defaults route both factories to
-    # their Fake (see `app/services/checkout_service.py`'s
+    # no new gateway adapter. Empty keys route both factories to their
+    # Fake ONLY when `payments_allow_fake` is on (see `app/services/checkout_service.py`'s
     # `_default_hosted_checkout_factory` / `_default_gateway`) — a fresh
     # clone boots and its tests pass with zero real credentials.
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    # A missing gateway key REFUSES (503) unless this is explicitly on.
+    # Only the test harness / local dev set it (PAYMENTS_ALLOW_FAKE=true):
+    # a silent Fake in a real deploy would show a paying member a fake Pix
+    # QR (closes NOC-REMEDIATE[community-gateway-fake-fallback]).
+    payments_allow_fake: bool = False
     asaas_api_key: str = ""
     asaas_base_url: str = _ASAAS_DEFAULT_BASE_URL
     # Asaas' webhook auth is a bare shared-secret token in the

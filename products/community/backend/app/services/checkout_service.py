@@ -74,26 +74,38 @@ class CheckoutServiceError(Exception):
         self.status_code = status_code
 
 
-def _default_hosted_checkout_factory(gateway: str, *, org_id: str) -> HostedCheckout:
+def _fake_ou_recusa(chave: str, allow_fake: Optional[bool] = None) -> HostedCheckout:
+    """Missing gateway key: the Fake only on explicit opt-in, else 503."""
+    if settings.payments_allow_fake if allow_fake is None else allow_fake:
+        return make_hosted_checkout(use_fake=True)
+    logger.error("checkout: %s não configurada — cobrança recusada", chave)
+    raise CheckoutServiceError("Pagamentos indisponíveis no momento. Tente novamente mais tarde.", status_code=503)
+
+
+def _default_hosted_checkout_factory(
+    gateway: str, *, org_id: str,
+    resolve: Callable[[str, str], Optional[str]] = resolve_api_key,
+    allow_fake: Optional[bool] = None,
+) -> HostedCheckout:
     """Build the `HostedCheckout` for `gateway` from this org's resolved
     key (Slice C: `resolve_api_key` — this org's `community.credentials`
     override first, then the seed's `org_settings` -> `platform_settings`
     -> env chain, so `settings.stripe_secret_key` / `.asaas_api_key`
     stay a working env-var fallback unchanged).
 
-    An unresolved key routes to `FakeHostedCheckout` — mirrors
-    `make_hosted_checkout`'s own `use_fake` early-dev posture, so a
-    fresh clone's tests (and a not-yet-configured deploy) never need
-    real Stripe/Asaas credentials to boot.
+    An unresolved key REFUSES with 503 — unless `settings.payments_allow_fake`
+    is explicitly on (test harness / local dev), which routes to
+    `FakeHostedCheckout`. A silent Fake in a real deploy would show a paying
+    member a fake Pix QR.
     """
     if gateway == "stripe":
-        key = resolve_api_key("stripe_secret_key", org_id)
+        key = resolve("stripe_secret_key", org_id)
         if not key:
-            return make_hosted_checkout(use_fake=True)
+            return _fake_ou_recusa("stripe_secret_key", allow_fake)
         return make_hosted_checkout(provider="stripe", stripe_api_key=key)
-    key = resolve_api_key("asaas_api_key", org_id)
+    key = resolve("asaas_api_key", org_id)
     if not key:
-        return make_hosted_checkout(use_fake=True)
+        return _fake_ou_recusa("asaas_api_key", allow_fake)
     return make_hosted_checkout(
         provider="asaas", asaas_api_key=key, asaas_base_url=settings.asaas_base_url,
     )
