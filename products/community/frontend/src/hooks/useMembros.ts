@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tansta
 import { api } from "@/lib/api";
 
 export type MembroStatus = "pendente" | "ativo" | "atrasado" | "pausado" | "cancelado";
-export type MembroOrigem = "checkout" | "aplicacao" | "convite";
+export type MembroOrigem = "checkout" | "aplicacao" | "convite" | "cadastro";
 
 export interface Membro {
   id: string;

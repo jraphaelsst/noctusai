@@ -12,6 +12,18 @@ import { api } from "@/lib/api";
 
 export type Ciclo = "mensal" | "anual";
 
+/** Grupoterapia access a tier grants (CONTRACT.md ninho-vazio §Tiers). */
+export type NivelGrupoterapia = "nenhum" | "ouvir" | "falar";
+
+export const NIVEL_GRUPOTERAPIA_LABELS: Record<NivelGrupoterapia, string> = {
+  nenhum: "Sem grupoterapia",
+  ouvir: "Assiste",
+  falar: "Assiste e fala",
+};
+
+/** The three tier names `POST /api/planos/padrao` creates, in `ordem`. */
+export const PLANOS_PADRAO = ["Gratuito", "Ouvinte", "Premium"] as const;
+
 export interface Entitlements {
   feed: boolean;
   forum: boolean;
@@ -20,6 +32,7 @@ export interface Entitlements {
   conteudo_ids: string[];
   grupos_whatsapp: string[];
   conteudo_todos: boolean;
+  grupoterapia: NivelGrupoterapia;
 }
 
 export interface Plano {
@@ -103,6 +116,20 @@ export function useDeletePlano() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/api/planos/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: planosKeys.all }),
+  });
+}
+
+export interface PlanosPadraoResponse {
+  criados: string[];
+  existentes: string[];
+}
+
+/** Idempotent by `nome` — creates only the missing Gratuito/Ouvinte/Premium tiers. */
+export function useCriarPlanosPadrao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<PlanosPadraoResponse>("/api/planos/padrao", {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: planosKeys.all }),
   });
 }

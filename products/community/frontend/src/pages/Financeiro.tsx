@@ -15,6 +15,10 @@
  * generic placeholder, never a crash) — this is what "a moderator-shaped
  * payload not crashing the page" means in practice.
  *
+ * Ninho Vazio (CONTRACT.md §Frontend FE-A) adds a third tab, **Fluxo de
+ * caixa** (`pages/financeiro/FluxoDeCaixa.tsx`, on `/api/lancamentos`), and
+ * the grace/expiry columns + `carencia`/`expirada` filters on Assinaturas.
+ *
  * Two loading signals, never `isLoading`:
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
  */
@@ -32,6 +36,7 @@ import {
   type AssinaturaEstado,
 } from "@/hooks/useAssinaturas";
 import { usePagamentos, type Pagamento, type PagamentoEstado } from "@/hooks/usePagamentos";
+import FluxoDeCaixa from "@/pages/financeiro/FluxoDeCaixa";
 
 function formatDateBR(value: string | null): string {
   if (!value) return "—";
@@ -43,8 +48,16 @@ const ASSINATURA_ESTADO_LABELS: Record<AssinaturaEstado, string> = {
   iniciada: "Iniciada",
   ativa: "Ativa",
   inadimplente: "Inadimplente",
+  carencia: "Em carência",
   pausada: "Pausada",
   cancelada: "Cancelada",
+  expirada: "Expirada",
+};
+
+const SOLICITADO_POR_LABELS: Record<string, string> = {
+  membro: "pelo membro",
+  equipe: "pela equipe",
+  sistema: "pelo sistema",
 };
 
 const PAGAMENTO_ESTADO_LABELS: Record<PagamentoEstado, string> = {
@@ -59,8 +72,11 @@ function assinaturaBadgeVariant(estado: AssinaturaEstado): BadgeVariant {
     case "ativa":
       return "default";
     case "inadimplente":
+    case "carencia":
     case "cancelada":
       return "destructive";
+    case "expirada":
+      return "muted";
     default:
       return "outline";
   }
@@ -78,7 +94,7 @@ function pagamentoBadgeVariant(estado: PagamentoEstado): BadgeVariant {
   }
 }
 
-type Tab = "assinaturas" | "pagamentos";
+type Tab = "assinaturas" | "pagamentos" | "caixa";
 
 export default function Financeiro() {
   const [tab, setTab] = useState<Tab>("assinaturas");
@@ -113,7 +129,7 @@ export default function Financeiro() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Financeiro</h1>
-        <p className="text-sm text-muted-foreground">Assinaturas e pagamentos da comunidade.</p>
+        <p className="text-sm text-muted-foreground">Assinaturas, pagamentos e fluxo de caixa da comunidade.</p>
       </div>
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Financeiro">
@@ -123,8 +139,15 @@ export default function Financeiro() {
         <Button variant={tab === "pagamentos" ? "primary" : "outline"} size="sm" onClick={() => setTab("pagamentos")}>
           Pagamentos
         </Button>
+        <Button variant={tab === "caixa" ? "primary" : "outline"} size="sm" onClick={() => setTab("caixa")}>
+          Fluxo de caixa
+        </Button>
       </div>
 
+      {tab === "caixa" ? (
+        <FluxoDeCaixa />
+      ) : (
+      <>
       <div className="flex flex-wrap gap-3">
         <Input
           className="w-64"
@@ -169,6 +192,8 @@ export default function Financeiro() {
       ) : (
         <PagamentosTable query={pagamentos} />
       )}
+      </>
+      )}
 
       {cancelTarget && <CancelarAssinaturaDialog assinatura={cancelTarget} onClose={() => setCancelTarget(null)} />}
     </div>
@@ -186,7 +211,7 @@ function AssinaturasTable({
   const showSkeleton = isPending && !data;
   const isRefreshing = isFetching && !!data;
 
-  if (showSkeleton) return <TableSkeleton rows={6} columns={6} />;
+  if (showSkeleton) return <TableSkeleton rows={6} columns={9} />;
   if (error) return <ErrorState message={errorMessage(error)} />;
   if (!data || data.items.length === 0) {
     return (
@@ -207,6 +232,9 @@ function AssinaturasTable({
             <th className="px-4 py-3 font-medium">Método</th>
             <th className="px-4 py-3 font-medium">Estado</th>
             <th className="px-4 py-3 font-medium">Ativa desde</th>
+            <th className="px-4 py-3 font-medium">Pago até</th>
+            <th className="px-4 py-3 font-medium">Próxima cobrança</th>
+            <th className="px-4 py-3 font-medium">Carência / encerramento</th>
             <th className="px-4 py-3 font-medium text-right">Ações</th>
           </tr>
         </thead>
@@ -221,8 +249,13 @@ function AssinaturasTable({
                 <Badge variant={assinaturaBadgeVariant(a.estado)}>{ASSINATURA_ESTADO_LABELS[a.estado]}</Badge>
               </td>
               <td className="px-4 py-3 text-foreground">{formatDateBR(a.ativa_em)}</td>
+              <td className="px-4 py-3 text-foreground">{formatDateBR(a.pago_ate ?? null)}</td>
+              <td className="px-4 py-3 text-foreground">{formatDateBR(a.proxima_cobranca ?? null)}</td>
+              <td className="px-4 py-3 text-foreground" data-testid={`assinatura-ciclo-vida-${a.id}`}>
+                <CicloDeVida assinatura={a} />
+              </td>
               <td className="px-4 py-3 text-right">
-                {a.estado !== "cancelada" && (
+                {a.estado !== "cancelada" && a.estado !== "expirada" && (
                   <button
                     type="button"
                     className="text-sm bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"
@@ -239,6 +272,38 @@ function AssinaturasTable({
       </table>
     </div>
   );
+}
+
+/** The one lifecycle fact that matters for the row's current `estado`. */
+function CicloDeVida({ assinatura: a }: { assinatura: Assinatura }) {
+  if (a.estado === "carencia") {
+    return (
+      <span>
+        Carência até {formatDateBR(a.carencia_ate ?? null)}
+        {a.inadimplente_desde ? (
+          <span className="block text-xs text-muted-foreground">
+            Inadimplente desde {formatDateBR(a.inadimplente_desde)}
+          </span>
+        ) : null}
+      </span>
+    );
+  }
+  if (a.estado === "expirada") {
+    return <span>Expirada em {formatDateBR(a.expirada_em ?? null)}</span>;
+  }
+  if (a.estado === "cancelada") {
+    const por = a.cancelamento_solicitado_por ? SOLICITADO_POR_LABELS[a.cancelamento_solicitado_por] : null;
+    return (
+      <span>
+        Cancelada em {formatDateBR(a.cancelada_em)}
+        {por ? ` ${por}` : ""}
+        {a.cancelamento_motivo ? (
+          <span className="block text-xs text-muted-foreground">{a.cancelamento_motivo}</span>
+        ) : null}
+      </span>
+    );
+  }
+  return <span className="text-muted-foreground">—</span>;
 }
 
 function PagamentosTable({ query }: { query: ReturnType<typeof usePagamentos> }) {

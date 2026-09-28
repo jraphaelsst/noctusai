@@ -14,7 +14,14 @@ import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tansta
 
 import { api } from "@/lib/api";
 
-export type AssinaturaEstado = "iniciada" | "ativa" | "inadimplente" | "pausada" | "cancelada";
+export type AssinaturaEstado =
+  | "iniciada"
+  | "ativa"
+  | "inadimplente"
+  | "carencia"
+  | "pausada"
+  | "cancelada"
+  | "expirada";
 export type AssinaturaMetodo = "cartao" | "pix" | "boleto";
 export type AssinaturaGateway = "stripe" | "asaas";
 export type AssinaturaCiclo = "mensal" | "anual";
@@ -34,6 +41,15 @@ export interface Assinatura {
   iniciada_em: string | null;
   ativa_em: string | null;
   cancelada_em: string | null;
+  // Ninho Vazio grace/expiry lifecycle (CONTRACT.md §Billing). Optional:
+  // a `moderador` payload may omit them and an older row has none set.
+  inadimplente_desde?: string | null;
+  carencia_ate?: string | null;
+  pago_ate?: string | null;
+  proxima_cobranca?: string | null;
+  expirada_em?: string | null;
+  cancelamento_solicitado_por?: "membro" | "equipe" | "sistema" | null;
+  cancelamento_motivo?: string | null;
 }
 
 export interface AssinaturaListResponse {

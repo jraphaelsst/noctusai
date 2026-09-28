@@ -13,6 +13,10 @@
  * `items`/`total` that ResourceManager's self-contained, unparameterized
  * `api.get(apiPath)` fetch has no seam for.
  *
+ * Ninho Vazio (CONTRACT.md §Frontend FE-A) adds the relationship timeline
+ * (`pages/membros/MembroTimeline.tsx`) and the admin "Criar acesso" action
+ * (`pages/membros/CriarAcessoDialog.tsx`) to the detail dialog.
+ *
  * Two loading signals, never `isLoading`:
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
  */
@@ -47,6 +51,9 @@ import {
   type MembroStatus,
 } from "@/hooks/useMembros";
 import { usePlanos, type Plano } from "@/hooks/usePlanos";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { MembroTimeline } from "@/pages/membros/MembroTimeline";
+import { CriarAcessoDialog } from "@/pages/membros/CriarAcessoDialog";
 
 const STATUS_LABELS: Record<MembroStatus, string> = {
   pendente: "Pendente",
@@ -60,6 +67,7 @@ const ORIGEM_LABELS: Record<Membro["origem"], string> = {
   checkout: "Checkout",
   aplicacao: "Aplicação",
   convite: "Convite",
+  cadastro: "Cadastro no site",
 };
 
 function statusBadgeVariant(status: MembroStatus): BadgeVariant {
@@ -110,8 +118,10 @@ const ASSINATURA_ESTADO_LABELS: Record<AssinaturaEstado, string> = {
   iniciada: "Iniciada",
   ativa: "Ativa",
   inadimplente: "Inadimplente",
+  carencia: "Em carência",
   pausada: "Pausada",
   cancelada: "Cancelada",
+  expirada: "Expirada",
 };
 
 const ASSINATURA_METODO_LABELS: Record<string, string> = {
@@ -172,7 +182,7 @@ function MembroSubscriptionSummary({ membroId }: { membroId: string }) {
         <div>
           <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Estado</dt>
           <dd className="mt-0.5 text-sm">
-            <Badge variant={assinatura.estado === "ativa" ? "default" : assinatura.estado === "cancelada" || assinatura.estado === "inadimplente" ? "destructive" : "outline"}>
+            <Badge variant={assinatura.estado === "ativa" ? "default" : assinatura.estado === "cancelada" || assinatura.estado === "inadimplente" || assinatura.estado === "carencia" ? "destructive" : "outline"}>
               {ASSINATURA_ESTADO_LABELS[assinatura.estado]}
             </Badge>
           </dd>
@@ -201,6 +211,8 @@ export default function Membros() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Membro | null>(null);
   const [statusChangeFor, setStatusChangeFor] = useState<Membro | null>(null);
+  const [criarAcessoFor, setCriarAcessoFor] = useState<Membro | null>(null);
+  const isAdmin = useIsAdmin();
 
   // Small debounce so every keystroke doesn't fire a request.
   useEffect(() => {
@@ -225,6 +237,9 @@ export default function Membros() {
 
   const showSkeleton = isPending && !data;
   const isRefreshing = isFetching && !!data;
+  // `selected` is a click-time snapshot; read the refetched row when there is
+  // one so e.g. "Criar acesso" disappears once `user_id` is set.
+  const selectedAtual = (selected && data?.items.find((m) => m.id === selected.id)) || selected;
 
   async function handleCancel(m: Membro) {
     if (!window.confirm(`Cancelar o membro "${m.nome}"? Isso remove o acesso dele.`)) return;
@@ -356,6 +371,16 @@ export default function Membros() {
                   onClick: () => void handleCancel(selected),
                   testId: "membro-cancelar",
                 },
+                ...(isAdmin && !selectedAtual?.user_id
+                  ? [
+                      {
+                        label: "Criar acesso",
+                        variant: "outline" as const,
+                        onClick: () => setCriarAcessoFor(selectedAtual),
+                        testId: "membro-criar-acesso",
+                      },
+                    ]
+                  : []),
                 {
                   label: "Alterar status",
                   variant: "outline",
@@ -377,6 +402,7 @@ export default function Membros() {
         testId="membro-detail-dialog"
       >
         {selected && <MembroSubscriptionSummary membroId={selected.id} />}
+        {selected && <MembroTimeline membroId={selected.id} />}
       </EntityDetailDialog>
 
       {formOpen && (
@@ -386,6 +412,7 @@ export default function Membros() {
           onClose={() => setFormOpen(false)}
         />
       )}
+      {criarAcessoFor && <CriarAcessoDialog membro={criarAcessoFor} onClose={() => setCriarAcessoFor(null)} />}
       {statusChangeFor && (
         <StatusChangeDialog membro={statusChangeFor} onClose={() => setStatusChangeFor(null)} />
       )}

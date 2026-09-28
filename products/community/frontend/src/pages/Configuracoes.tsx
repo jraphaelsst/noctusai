@@ -16,24 +16,26 @@
  * gate (not just a subtree) since this page has nothing else on it yet;
  * `isAdmin` mirrors `Equipe.tsx`/`WhatsApp.tsx`'s exact expression.
  *
+ * Ninho Vazio (CONTRACT.md §Billing, FE-A) adds the **Cobrança** section
+ * (`pages/configuracoes/CobrancaPanel.tsx`) inside the same admin gate.
+ * The admin expression now comes from `useIsAdmin` (was inlined here).
+ *
  * Nav entry ("Configurações") is visible to every authenticated member —
  * same convention as `social-wiring`'s own `/configuracoes` nav item
  * (status_pagina governs producao/desenvolvimento/desativado rollout
  * state, not per-user role; admin-only content is gated in-page, not by
  * hiding the nav item).
  */
-import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
 import { createApiKeysHooks, ApiKeysPanel } from "@noctusai/lib/components";
 import { api } from "@/lib/api";
 import { Card } from "@/components/FormControls";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { CobrancaPanel } from "@/pages/configuracoes/CobrancaPanel";
 
 const apiKeysHooks = createApiKeysHooks(api);
 
 export default function Configuracoes() {
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
-  const isAdmin = ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+  const isAdmin = useIsAdmin();
 
   if (!isAdmin) {
     return (
@@ -55,10 +57,11 @@ export default function Configuracoes() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Configurações</h1>
         <p className="text-sm text-muted-foreground">
-          Chaves de API usadas pelos gateways de pagamento (Stripe, Asaas) e
-          pela proteção anti-spam (Turnstile) desta comunidade.
+          Regras de cobrança e chaves de API usadas pelos gateways de pagamento
+          (Stripe, Asaas) e pela proteção anti-spam (Turnstile) desta comunidade.
         </p>
       </div>
+      <CobrancaPanel />
       <ApiKeysPanel hooks={apiKeysHooks} title="Chaves de API" />
     </div>
   );

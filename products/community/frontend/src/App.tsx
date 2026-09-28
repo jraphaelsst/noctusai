@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone, Settings2 } from "lucide-react";
+import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone, Settings2, CalendarHeart } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -60,6 +60,11 @@ const WhatsAppConexoes = lazy(() => import("@/pages/whatsapp/Conexoes"));
 // in-page admin-gated (see Configuracoes.tsx).
 const Configuracoes = lazy(() => import("@/pages/Configuracoes"));
 
+// Ninho Vazio — staff grupoterapia sessions + reservations
+// (projects/ninho-vazio/CONTRACT.md §Grupoterapia). status_pagina row
+// `grupoterapia` ships in migration 013.
+const Grupoterapia = lazy(() => import("@/pages/Grupoterapia"));
+
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
   {
@@ -73,6 +78,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Planos", href: "/planos", icon: Wallet, route: "planos" },
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList, route: "inscricoes" },
       { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign, route: "financeiro" },
+      { name: "Grupoterapia", href: "/grupoterapia", icon: CalendarHeart, route: "grupoterapia" },
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle, route: "whatsapp" },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat, route: "whatsapp-sincronizacao" },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone, route: "whatsapp-transmissoes" },
@@ -95,6 +101,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Planos", href: "/planos", icon: Wallet },
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList },
       { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign },
+      { name: "Grupoterapia", href: "/grupoterapia", icon: CalendarHeart },
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone },
@@ -121,6 +128,7 @@ export default createProductApp({
     { path: "/planos", component: Planos },
     { path: "/inscricoes", component: Inscricoes },
     { path: "/financeiro", component: Financeiro },
+    { path: "/grupoterapia", component: Grupoterapia },
     { path: "/whatsapp", component: WhatsApp },
     { path: "/whatsapp/sincronizacao", component: Sincronizacao },
     { path: "/whatsapp/transmissoes", component: Transmissoes },

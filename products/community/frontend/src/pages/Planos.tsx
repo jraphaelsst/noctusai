@@ -12,6 +12,11 @@
  * `grupos_whatsapp`) have no v1 UI yet, so they round-trip untouched
  * through hidden form keys rather than being silently dropped on edit.
  *
+ * Ninho Vazio (CONTRACT.md §Tiers, FE-A): the form gains the
+ * `entitlements.grupoterapia` level select (nenhum/ouvir/falar), and a
+ * "Criar planos padrão" banner (`POST /api/planos/padrao`, idempotent by
+ * `nome`) shows while any of Gratuito/Ouvinte/Premium is missing.
+ *
  * `ativo` is NOT a form field: the DELETE endpoint already soft-deletes
  * (`ativo=false`, 204) — the "ativo toggle" the contract asks for — and a
  * per-row action reactivates (`PATCH {ativo:true}`), since a soft-deleted
@@ -19,12 +24,20 @@
  */
 import { useState } from "react";
 import { toast } from "sonner";
-import { Badge } from "@noctusai/lib/design-system";
+import { Badge, Button } from "@noctusai/lib/design-system";
 import { ResourceManager } from "@noctusai/lib/components";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { formatBRLFromCents, centsToReais, reaisToCents } from "@/lib/money";
-import type { Plano } from "@/hooks/usePlanos";
+import {
+  NIVEL_GRUPOTERAPIA_LABELS,
+  PLANOS_PADRAO,
+  useCriarPlanosPadrao,
+  usePlanos,
+  type NivelGrupoterapia,
+  type Plano,
+} from "@/hooks/usePlanos";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { GatewayRefsBadges, GatewayRefsDialog } from "@/pages/planos/GatewayRefsDialog";
 
 const ENTITLEMENT_FIELDS = [
@@ -45,6 +58,7 @@ function toForm(row: Plano): Record<string, any> {
     // Carried through untouched — no v1 UI for these two array keys.
     _conteudo_ids: row.entitlements?.conteudo_ids ?? [],
     _grupos_whatsapp: row.entitlements?.grupos_whatsapp ?? [],
+    grupoterapia: row.entitlements?.grupoterapia ?? "nenhum",
   };
   for (const f of ENTITLEMENT_FIELDS) {
     form[f.key] = !!row.entitlements?.[f.entKey as keyof typeof row.entitlements];
@@ -56,6 +70,7 @@ function toPayload(form: Record<string, any>): Record<string, any> {
   const entitlements: Record<string, any> = {
     conteudo_ids: form._conteudo_ids ?? [],
     grupos_whatsapp: form._grupos_whatsapp ?? [],
+    grupoterapia: (form.grupoterapia || "nenhum") as NivelGrupoterapia,
   };
   for (const f of ENTITLEMENT_FIELDS) {
     entitlements[f.entKey] = !!form[f.key];
@@ -79,6 +94,25 @@ export default function Planos() {
   // from a row action rather than living inside ResourceManager's own
   // create/edit form (which has no seam for a different backend call).
   const [gatewayDialogFor, setGatewayDialogFor] = useState<Plano | null>(null);
+  const isAdmin = useIsAdmin();
+  const planos = usePlanos({ page_size: 100 });
+  const criarPadrao = useCriarPlanosPadrao();
+  const nomesExistentes = new Set((planos.data?.items ?? []).map((p) => p.nome.trim().toLowerCase()));
+  // Only once the list has really loaded — never flash the banner over an
+  // unknown state.
+  const faltantes = planos.data ? PLANOS_PADRAO.filter((n) => !nomesExistentes.has(n.toLowerCase())) : [];
+
+  async function handleCriarPadrao() {
+    try {
+      const res = await criarPadrao.mutateAsync();
+      toast.success(
+        res.criados.length ? `Planos criados: ${res.criados.join(", ")}.` : "Os planos padrão já existiam.",
+      );
+      setReloadTick((n) => n + 1);
+    } catch (err) {
+      toast.error("Erro ao criar planos padrão", { description: errorMessage(err) });
+    }
+  }
 
   async function handleReativar(row: Plano) {
     try {
@@ -92,6 +126,19 @@ export default function Planos() {
 
   return (
     <>
+    {isAdmin && faltantes.length > 0 && (
+      <div
+        className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/40 p-4"
+        data-testid="planos-padrao-banner"
+      >
+        <p className="text-sm text-foreground">
+          Faltam os planos padrão do Ninho Vazio: <strong>{faltantes.join(", ")}</strong>.
+        </p>
+        <Button variant="primary" size="sm" onClick={() => void handleCriarPadrao()} disabled={criarPadrao.isPending}>
+          {criarPadrao.isPending ? "Criando..." : "Criar planos padrão"}
+        </Button>
+      </div>
+    )}
     <ResourceManager<Plano>
       key={reloadTick}
       title="Planos"
@@ -103,6 +150,7 @@ export default function Planos() {
       toForm={toForm}
       toPayload={toPayload}
       emptyMessage="Nenhum plano cadastrado. Crie o primeiro!"
+      onMutate={() => void planos.refetch()}
       columns={[
         { key: "nome", header: "Nome" },
         {
@@ -114,6 +162,11 @@ export default function Planos() {
           key: "ciclo",
           header: "Ciclo",
           render: (row) => (row.ciclo === "mensal" ? "Mensal" : "Anual"),
+        },
+        {
+          key: "grupoterapia",
+          header: "Grupoterapia",
+          render: (row) => NIVEL_GRUPOTERAPIA_LABELS[row.entitlements?.grupoterapia ?? "nenhum"],
         },
         { key: "membros_ativos", header: "Membros ativos" },
         {
@@ -151,6 +204,17 @@ export default function Planos() {
           ],
         },
         { name: "ordem", label: "Ordem", type: "number", defaultValue: 0 },
+        {
+          name: "grupoterapia",
+          label: "Grupoterapia",
+          type: "select",
+          required: true,
+          defaultValue: "nenhum",
+          options: (Object.keys(NIVEL_GRUPOTERAPIA_LABELS) as NivelGrupoterapia[]).map((n) => ({
+            value: n,
+            label: NIVEL_GRUPOTERAPIA_LABELS[n],
+          })),
+        },
         ...ENTITLEMENT_FIELDS.map((f) => ({
           name: f.key,
           label: f.label,
