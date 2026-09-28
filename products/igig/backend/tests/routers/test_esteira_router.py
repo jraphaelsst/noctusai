@@ -177,7 +177,22 @@ class TestAtribuirPapelEtapa:
             json={"papel": None},
         )
         assert resp.status_code == 409
-        assert resp.json()["code"] == "papel_aprovacao_obrigatorio"
+        assert resp.json()["code"] == "papel_obrigatorio"
+
+    def test_refuses_to_silently_drop_agendado_via_reassignment(self, admin, etapas):
+        """Symmetric case of achado 11: assigning `aprovacao_cliente` to the
+        stage that already holds `agendado` must REFUSE, not silently drop
+        `agendado` off the pipeline entirely (tech-lead addendum, 2026-09)."""
+        resp = admin.patch(
+            f"/api/esteira/stages/{etapas['agendado']['id']}/papel",
+            json={"papel": "aprovacao_cliente"},
+        )
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "papel_obrigatorio"
+        assert "Agendado" in resp.json()["detail"]
+        etapas_atuais = {s["slug"]: s for s in admin.get("/api/esteira/stages").json()["data"]}
+        assert etapas_atuais["agendado"]["papel"] == "agendado"  # untouched
+        assert etapas_atuais["aprovacao_cliente"]["papel"] == "aprovacao_cliente"  # untouched
 
     def test_reassigning_aprovacao_cliente_elsewhere_is_the_sanctioned_path(
         self, admin, etapas

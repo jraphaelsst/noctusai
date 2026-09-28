@@ -29,7 +29,7 @@ from noctusai_lib.domain.pipeline import (
 )
 from noctusai_lib.integrations.persistence.table_reads import paged_rows
 
-from app.pipelines import PAPEL_APROVACAO_CLIENTE, PIPELINE_ESTEIRA, etapas
+from app.pipelines import PAPEL_AGENDADO, PAPEL_APROVACAO_CLIENTE, PIPELINE_ESTEIRA, etapas
 from app.services import quadro_comum as qc
 from app.services.regras import RegraViolada, mensagem_horas_perdidas
 
@@ -47,6 +47,14 @@ __all__ = [
 ]
 
 CFG = PIPELINE_ESTEIRA
+
+#: pt-BR label per system role — the wording `reatribuir_papel`'s refusal
+#: message names, so it reads like the "Papéis das etapas" panel rather than
+#: the raw machine code.
+_ROTULO_PAPEL = {
+    PAPEL_APROVACAO_CLIENTE: "Aprovação do cliente",
+    PAPEL_AGENDADO: "Agendado",
+}
 
 TAREFA_SELECT = (
     "id, org_id, pauta_id, cliente_id, titulo, etapa_id, kanban_pos, responsavel_id, "
@@ -334,22 +342,31 @@ def reatribuir_papel(db: Any, org_id: str, *, etapa_id: str, papel: str | None) 
     seed's own `DeleteStageDialog` copy told users to "atribua o papel a
     outra etapa primeiro" with no UI action that did it).
 
-    Refuses (409 `papel_aprovacao_obrigatorio`) a bare CLEAR (`papel=None` or
-    any other role) of the stage that is currently the SOLE
-    `aprovacao_cliente` holder — link minting and the public portal have
-    nowhere to route without one. Reassigning to a DIFFERENT stage stays a
-    single call: pass the new holder's `etapa_id` with `papel=
-    "aprovacao_cliente"`; this function clears the previous holder itself.
+    Refuses (409 `papel_obrigatorio`) a bare CLEAR (`papel=None` or any OTHER
+    role) of a stage that currently holds a DIFFERENT system role — every
+    role here is unique-per-stage by construction, so taking `etapa_id`'s own
+    role away always leaves that role with ZERO holders fleet-wide, the exact
+    same "stranded feature" `update_stage`'s deactivation guard already
+    refuses for a `DELETE`/`ativo=false`. Before this, only `aprovacao_cliente`
+    carried this guard (achado 11): assigning `aprovacao_cliente` to the
+    stage that already held `agendado` silently dropped `agendado` — a system
+    role a card-hub reminder or a future feature could come to rely on, gone
+    with no warning and no code path pointing at it (2026-09 audit follow-up).
+    Reassigning to a DIFFERENT stage stays a single call: pass the new
+    holder's `etapa_id` with the target `papel`; this function clears the
+    previous holder of THAT role itself — the caller only ever moves ONE
+    role at a time.
     """
     atual = get_stage(db, CFG, etapa_id, org_id=org_id)
     papel_atual = atual.get("papel")
     if papel_atual == papel:
         return atual
-    if papel_atual == PAPEL_APROVACAO_CLIENTE and papel != PAPEL_APROVACAO_CLIENTE:
+    if papel_atual and papel_atual != papel:
+        rotulo = _ROTULO_PAPEL.get(papel_atual, papel_atual)
         raise RegraViolada(
-            409, "papel_aprovacao_obrigatorio",
-            "Esta é a única etapa marcada como 'Aprovação do cliente'. "
-            "Atribua o papel a outra etapa antes de tirá-lo desta.",
+            409, "papel_obrigatorio",
+            f"Esta é a única etapa marcada como '{rotulo}'. "
+            "Atribua esse papel a outra etapa antes de trocá-lo ou removê-lo desta.",
         )
     if papel:
         titular = stage_by_role(db, CFG, papel, org_id=org_id)
