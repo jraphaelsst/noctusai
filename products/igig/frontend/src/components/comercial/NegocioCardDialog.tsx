@@ -25,13 +25,14 @@ import { toast } from "sonner";
 import { useAssistenteNegocio, useAtualizarLead, useAtualizarNegocio, useLead, usePerderNegocio } from "@/hooks/useComercial";
 import { useProfissionais } from "@/hooks/useCustos";
 import { useCardHubGeral } from "@/components/common/useCardHubGeral";
+import { useLembretesSubpage } from "@/components/common/useLembretesSubpage";
 import { negocioCardHub as hub } from "@/hooks/useNegocioCardHub";
 import { useOrcamentos } from "@/hooks/useOrcamentos";
 import { describeError } from "@/lib/errors";
 import { brl, dataBR } from "@/lib/format";
 import { ORCAMENTO_STATUS_LABEL, ORIGEM_LABEL, type AssistenteAcao, type Negocio } from "@/types/crm";
 
-type SubpageKey = "geral" | "lead" | "orcamentos" | "assistente";
+type SubpageKey = "geral" | "lead" | "orcamentos" | "lembretes" | "assistente";
 
 export interface NegocioCardDialogProps {
   negocio: Negocio | null;
@@ -48,6 +49,7 @@ export function NegocioCardDialog({ negocio, onClose, onGerarOrcamento, onAbrirO
   const hubGeral = useCardHubGeral(hub, id, {
     afterTags: negocio ? <NegocioResumo negocio={negocio} /> : null,
   });
+  const lembretes = useLembretesSubpage(hub, id);
   const [perdendo, setPerdendo] = useState(false);
   const perder = usePerderNegocio();
 
@@ -65,6 +67,7 @@ export function NegocioCardDialog({ negocio, onClose, onGerarOrcamento, onAbrirO
           <OrcamentosSubpage negocio={negocio} onGerar={() => onGerarOrcamento(negocio)} onAbrir={onAbrirOrcamento} />
         ) : null,
     },
+    lembretes,
     {
       key: "assistente",
       label: "Assistente",

@@ -66,6 +66,9 @@ CARD_HUB_CLIENTE = CardHubConfig(
     member_source=_MEMBROS,
     bucket=settings.igig_cardhub_bucket,
     actor_resolver=_ATORES,
+    # The ad-hoc "Lembretes" subpage CRUD (`titulo` + optional
+    # `responsavel_id` on `cliente_lembretes`) — migration 034.
+    lembretes_crud=True,
 )
 
 CARD_HUB_NEGOCIO = CardHubConfig(
@@ -77,6 +80,7 @@ CARD_HUB_NEGOCIO = CardHubConfig(
     member_source=_MEMBROS,
     bucket=settings.igig_cardhub_bucket,
     actor_resolver=_ATORES,
+    lembretes_crud=True,
 )
 
 

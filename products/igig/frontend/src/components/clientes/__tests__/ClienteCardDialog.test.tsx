@@ -88,13 +88,37 @@ describe("ClienteCardDialog", () => {
     expect(await screen.findByTestId("cliente-resumo")).toHaveTextContent("sol@padaria.com");
   });
 
-  it("registers the seven cliente subpages", async () => {
+  it("registers the eight cliente subpages", async () => {
     renderCard();
     await screen.findByTestId("card-subpage-tab-geral");
-    for (const chave of ["geral", "dados", "marcas", "orcamentos", "calendario", "esteira", "financeiro"]) {
+    for (const chave of ["geral", "dados", "marcas", "orcamentos", "calendario", "lembretes", "esteira", "financeiro"]) {
       expect(screen.getByTestId(`card-subpage-tab-${chave}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId("card-subpage-tab-orcamentos")).toHaveAccessibleName("Orçamentos & Contratos");
+  });
+
+  it("Lembretes: empty by default, and a created reminder posts to /lembretes and lists it", async () => {
+    api.post.mockResolvedValueOnce({
+      id: "l1", titulo: "Ligar para confirmar", dispara_em: "2026-10-01T14:00:00", responsavel: null,
+      concluido: false, concluido_em: null, created_at: "2026-09-28T00:00:00Z",
+    });
+    renderCard();
+    await screen.findByTestId("cliente-card-dialog");
+    await abrirAba("lembretes");
+    expect(await screen.findByTestId("lembretes-vazio")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("lembrete-novo-btn"));
+    fireEvent.change(screen.getByTestId("lembrete-titulo-input"), { target: { value: "Ligar para confirmar" } });
+    fireEvent.change(screen.getByTestId("lembrete-data-hora-input"), { target: { value: "2026-10-01T14:00" } });
+    fireEvent.click(screen.getByTestId("lembrete-salvar-btn"));
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("/api/clientes/c1/lembretes", {
+        titulo: "Ligar para confirmar",
+        dispara_em: "2026-10-01T14:00:00",
+        responsavel_id: null,
+      }),
+    );
   });
 
   it("Marcas / Calendário / Esteira tabs receive this cliente's id", async () => {

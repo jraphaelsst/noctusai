@@ -23,6 +23,7 @@ import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
 
 import { CalendarioMes } from "@/components/calendario/CalendarioMes";
 import { useCardHubGeral } from "@/components/common/useCardHubGeral";
+import { useLembretesSubpage } from "@/components/common/useLembretesSubpage";
 import { EsteiraBoard } from "@/components/esteira/EsteiraBoard";
 import { MarcasSubpage } from "@/components/marca/MarcasSubpage";
 import { useCliente, type Cliente } from "@/hooks/useClientes";
@@ -41,6 +42,7 @@ export type ClienteSubpageKey =
   | "marcas"
   | "orcamentos"
   | "calendario"
+  | "lembretes"
   | "esteira"
   | "financeiro";
 
@@ -70,6 +72,7 @@ export function ClienteCardDialog({
   const hubGeral = useCardHubGeral(hub, clienteId, {
     afterTags: cliente ? <ClienteResumo cliente={cliente} /> : null,
   });
+  const lembretes = useLembretesSubpage(hub, clienteId);
 
   const carregando = (subpage: React.ReactNode) =>
     cliente ? (
@@ -109,6 +112,7 @@ export function ClienteCardDialog({
       icon: CalendarDays,
       render: () => (clienteId ? <CalendarioMes clienteId={clienteId} /> : null),
     },
+    lembretes,
     {
       key: "esteira",
       label: "Esteira",
