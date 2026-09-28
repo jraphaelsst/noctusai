@@ -34,6 +34,19 @@ _DEFAULT_ENTITLEMENTS = {
 }
 
 
+#: Ninho Vazio tiers — projects/ninho-vazio/CONTRACT.md §Tiers. Data, not
+#: code: `POST /api/planos/padrao` creates whichever are missing (matched by
+#: `nome`); prices stay editable in Planos afterwards.
+PLANOS_PADRAO: tuple[dict, ...] = (
+    {"nome": "Gratuito", "preco_centavos": 0, "ciclo": "mensal",
+     "grupoterapia": "nenhum", "ordem": 0},
+    {"nome": "Ouvinte", "preco_centavos": 700, "ciclo": "mensal",
+     "grupoterapia": "ouvir", "ordem": 1},
+    {"nome": "Premium", "preco_centavos": 2700, "ciclo": "mensal",
+     "grupoterapia": "falar", "ordem": 2},
+)
+
+
 class PlanosServiceError(Exception):
     """Domain-level failure surfaced to the router as an HTTP error."""
 
@@ -145,6 +158,48 @@ class PlanosService:
             raise PlanosServiceError("Falha ao criar plano.")
         created = result.data[0]
         return self._to_out(created, 0)
+
+    async def criar_padrao(self) -> dict:
+        """Create every missing tier of `PLANOS_PADRAO` (idempotent by
+        `nome`, active or not). Returns `{"criados": [...], "existentes": [...]}`
+        in the contract's table order."""
+        existentes_nomes = {
+            r.get("nome")
+            for r in (
+                self._client.table(_TABLE)
+                .select("id,nome")
+                .eq("org_id", self._org_id)
+                .execute()
+                .data
+                or []
+            )
+        }
+        criados: list[str] = []
+        existentes: list[str] = []
+        for tier in PLANOS_PADRAO:
+            if tier["nome"] in existentes_nomes:
+                existentes.append(tier["nome"])
+                continue
+            try:
+                await self.create(payload={
+                    "nome": tier["nome"],
+                    "descricao": None,
+                    "preco_centavos": tier["preco_centavos"],
+                    "ciclo": tier["ciclo"],
+                    "entitlements": {
+                        **_DEFAULT_ENTITLEMENTS, "grupoterapia": tier["grupoterapia"],
+                    },
+                    "ordem": tier["ordem"],
+                    "ativo": True,
+                })
+            except PlanosServiceError as exc:
+                if exc.status_code != 409:
+                    raise
+                # A concurrent call created it between our read and write.
+                existentes.append(tier["nome"])
+                continue
+            criados.append(tier["nome"])
+        return {"criados": criados, "existentes": existentes}
 
     async def update(self, *, plano_id: str, payload: dict) -> dict | None:
         if "nome" in payload:

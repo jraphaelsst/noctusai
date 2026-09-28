@@ -48,6 +48,7 @@ from app.schemas.pagamentos import (
     GatewayRefUpsert,
     PlanoPublicoListResponse,
 )
+from app.schemas.cobranca import PlanosPadraoResponse
 from app.schemas.planos import (
     Plano,
     PlanoCreate,
@@ -112,6 +113,23 @@ async def create_plano(
     except PlanosServiceError as exc:
         raise http_error(exc.status_code, exc.detail) from exc
     return Plano(**row)
+
+
+@router.post("/padrao", response_model=PlanosPadraoResponse)
+async def criar_planos_padrao(
+    auth: tuple = Depends(get_current_user_org),
+) -> PlanosPadraoResponse:
+    """Ninho Vazio CONTRACT.md §Tiers — create the missing standard tiers
+    (Gratuito / Ouvinte / Premium). Idempotent by `nome`."""
+    user, token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    require_admin(get_community_role(user), action="criar planos")
+    service = PlanosService(get_user_client(token), org_id=org_id)
+    try:
+        result = await service.criar_padrao()
+    except PlanosServiceError as exc:
+        raise http_error(exc.status_code, exc.detail) from exc
+    return PlanosPadraoResponse(**result)
 
 
 @router.get("/{plano_id}", response_model=Plano)

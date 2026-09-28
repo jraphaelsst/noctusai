@@ -70,8 +70,12 @@ class TestCancelHappyPath:
         result = _run(service.cancelar(assinatura_id=ASSINATURA_1, motivo="pediu"))
         assert result["estado"] == "cancelada"
 
+        # Ninho Vazio CONTRACT.md §Billing lifecycle: the member KEEPS the
+        # plan until `pago_ate` — the sweep moves them to the free plan.
         membro = client.table("membros").select("*").eq("id", MEMBRO_1).maybe_single().execute().data
-        assert membro["status"] == "cancelado"
+        assert membro["status"] == "ativo"
+        assert result["cancelamento_solicitado_por"] == "equipe"
+        assert result["cancelamento_motivo"] == "pediu"
 
 
 class TestAmendmentA14GatewayFailure:

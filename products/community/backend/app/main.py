@@ -34,6 +34,7 @@ from app.routers.cadastro_router import router as cadastro_router
 from app.routers.checkout_router import router as checkout_router
 from app.routers.dashboard_router import router as dashboard_router
 from app.routers.eu_router import router as eu_router
+from app.routers.cobranca_router import router as cobranca_router
 from app.routers.example_router import router as example_router
 from app.routers.lancamentos_router import router as lancamentos_router
 from app.routers.grupoterapia_router import router as grupoterapia_router
@@ -42,6 +43,7 @@ from app.routers.pagamentos_router import router as pagamentos_router
 from app.routers.planos_router import router as planos_router
 from app.routers.portal_grupoterapia_router import router as portal_grupoterapia_router
 from app.routers.portal_router import router as portal_router
+from app.routers.portal_assinatura_router import router as portal_assinatura_router
 from app.routers.webhook_router import router as webhook_router
 from app.routers.webhooks_router import router as webhooks_router
 from app.routers.whatsapp_connections_router import router as whatsapp_connections_router
@@ -50,6 +52,7 @@ from app.routers.whatsapp_grupos_router import router as whatsapp_grupos_router
 from app.routers.whatsapp_lotes_router import router as whatsapp_lotes_router
 from app.routers.whatsapp_transmissoes_router import router as whatsapp_transmissoes_router
 from app.routers.whatsapp_webhook_router import router as whatsapp_webhook_router
+from app.scheduler import configure as configure_scheduler, start_scheduler, stop_scheduler
 
 # ─── Tier 0: the operator-entered, encrypted key store ───────────────
 #
@@ -74,6 +77,10 @@ def _local_api_key(key: str, org_id):
 
 
 register_credential_override(_local_api_key)
+
+# Ninho Vazio billing sweep (CONTRACT.md §Billing lifecycle) — registered at
+# import; only RUNS where NOCTUS_SCHEDULERS_ENABLED is set (see app/scheduler.py).
+configure_scheduler()
 
 app = create_product_app(
     name="Community",
@@ -132,7 +139,10 @@ app = create_product_app(
         lancamentos_router, dashboard_router,
         grupoterapia_router, portal_grupoterapia_router,
         eu_router, cadastro_router, portal_router,
+        cobranca_router, portal_assinatura_router,
     ],
+    lifespan_startup=start_scheduler,
+    lifespan_shutdown=stop_scheduler,
     # Module 3 registers `community.moderacao_whatsapp` (AI-flagged
     # WhatsApp moderation) in `app/services/ai_consent_features.py` —
     # each product owns its consent catalog (KB § PATTERNS/lgpd.md § 9).

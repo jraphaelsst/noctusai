@@ -6,15 +6,17 @@ Auth: `Depends(get_current_user_org)` on every route (401 boundary).
 not a partial mask); `admin` gets the full `Assinatura` shape. The
 response is built as a plain dict (no `response_model=` on the list
 route) precisely so the two shapes can coexist behind one endpoint.
-`POST /{id}/cancelar` is `admin`-only.
+`POST /{id}/cancelar` is `admin`-only and records
+`cancelamento_solicitado_por='equipe'` (Ninho Vazio CONTRACT.md §Billing).
 """
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import (
+    actor_uuid,
     coerce_org_uuid,
     http_error,
     get_community_role,
@@ -22,7 +24,12 @@ from app.dependencies import (
     get_user_client,
     require_admin,
 )
-from app.schemas.assinaturas import Assinatura, AssinaturaCancelRequest, AssinaturaModerador
+from app.schemas.assinaturas import (
+    ESTADO_FILTRO_PATTERN,
+    Assinatura,
+    AssinaturaCancelRequest,
+    AssinaturaModerador,
+)
 from app.services.assinaturas_service import AssinaturasService, AssinaturasServiceError
 
 logger = logging.getLogger(__name__)
@@ -33,7 +40,7 @@ router = APIRouter(prefix="/api/assinaturas", tags=["assinaturas"])
 @router.get("")
 async def list_assinaturas(
     membro_id: str | None = Query(default=None),
-    estado: str | None = Query(default=None),
+    estado: str | None = Query(default=None, pattern=ESTADO_FILTRO_PATTERN),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     auth: tuple = Depends(get_current_user_org),
@@ -65,7 +72,10 @@ async def cancelar_assinatura(
     client = get_user_client(token)
     service = AssinaturasService(client, org_id=org_id)
     try:
-        row = await service.cancelar(assinatura_id=assinatura_id, motivo=payload.motivo)
+        row = await service.cancelar(
+            assinatura_id=assinatura_id, motivo=payload.motivo,
+            solicitado_por="equipe", autor_id=actor_uuid(user),
+        )
     except AssinaturasServiceError as exc:
         raise http_error(exc.status_code, exc.detail) from exc
     return Assinatura(**row)

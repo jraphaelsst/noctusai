@@ -101,11 +101,19 @@ class TestCancelar:
         assert resp.status_code == 200
         body = resp.json()
         assert body["estado"] == "cancelada"
+        assert body["cancelamento_solicitado_por"] == "equipe"
+        assert body["cancelamento_motivo"] == "Pedido da associada"
 
+        # Ninho Vazio CONTRACT.md §Billing lifecycle: the member keeps the
+        # plan until `pago_ate` (the sweep moves them afterwards).
         membro = client.mock_supabase.table("membros").select("*").eq(
             "id", MEMBRO_1
         ).maybe_single().execute().data
-        assert membro["status"] == "cancelado"
+        assert membro["status"] == "ativo"
+        eventos = client.mock_supabase.table("membro_eventos").select("*").eq(
+            "membro_id", MEMBRO_1
+        ).execute().data
+        assert [e["tipo"] for e in eventos] == ["assinatura"]
 
     def test_cancelar_unknown_assinatura_404(self, client):
         _seed(client)

@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import functools
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
@@ -183,6 +182,12 @@ class CheckoutService:
         plano = self._fetch_active_plano(plano_id)
         if not plano:
             raise CheckoutServiceError("Plano não encontrado.", status_code=404)
+        # Ninho Vazio CONTRACT.md §Billing: a zero-price plan never touches
+        # a gateway — the free tier is joined through `/api/cadastro`.
+        if int(plano.get("preco_centavos") or 0) <= 0:
+            raise CheckoutServiceError(
+                "Este plano é gratuito — faça seu cadastro.", status_code=409,
+            )
         ref = self._fetch_gateway_ref(plano_id, gateway)
         if not ref:
             raise CheckoutServiceError(

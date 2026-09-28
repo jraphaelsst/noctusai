@@ -276,3 +276,25 @@ class TestCpfNeverPersisted:
         full_row_text = repr(membro) + repr(assinatura) + repr(pagamentos)
         assert "98765432100" not in full_row_text
         assert "98765432100" not in caplog.text
+
+
+class TestZeroPricePlanGuard:
+    """Ninho Vazio CONTRACT.md §Billing: a free plan never reaches a gateway."""
+
+    def test_zero_price_plan_409_and_no_gateway_call(self):
+        client = _new_client(plano_rows=[_plano_row(preco_centavos=0)])
+        calls: list[str] = []
+
+        def _factory(gateway):
+            calls.append(gateway)
+            return FakeHostedCheckout()
+
+        service = _service(client, hosted_checkout_factory=_factory)
+        try:
+            _run(service.checkout(payload=_payload()))
+            assert False, "expected CheckoutServiceError"
+        except CheckoutServiceError as exc:
+            assert exc.status_code == 409
+            assert exc.detail == "Este plano é gratuito — faça seu cadastro."
+        assert calls == []
+        assert (client.table("assinaturas").select("*").execute().data or []) == []
