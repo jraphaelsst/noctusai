@@ -56,7 +56,6 @@ from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import (
     PAPEL_APROVACAO_CLIENTE,
     PIPELINE_ESTEIRA,
-    exigir_admin_da_org,
     exigir_admin_do_quadro,
     get_admin_db,
     get_core_db,
