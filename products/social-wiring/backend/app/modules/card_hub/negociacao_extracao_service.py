@@ -646,10 +646,19 @@ def _gravar_financiamento(
 
 def _aplicar_fgts(
     client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str,
-    documento_id: UUID, leitura: Any,
+    documento_id: UUID, leitura: Any, *, verificado: bool,
 ) -> tuple[Optional[str], Optional[dict]]:
     """Fill-empty judged by `fgts_origem IS NULL`, NOT by the boolean's
-    value — a NOT NULL boolean's `false` is indistinguishable from unset."""
+    value — a NOT NULL boolean's `false` is indistinguishable from unset.
+
+    `verificado` — see `_aplicar_valor_negociado`'s own docstring: an EMPTY
+    field routes to a pending conflict (never a direct fill) when this
+    document's membership of the deal could not be verified
+    (`NOC-REMEDIATE[sw-neg-pertencimento-demais-campos]` — 2026-09-28,
+    extending the same gate `_aplicar_valor_negociado`/`_aplicar_
+    financiamento_parcela` already had to FGTS/proposta/agente
+    financeiro/situação).
+    """
     if tipo_documento != "contrato_financiamento":
         return None, None
     valor_fgts = _dec(getattr(leitura, "valor_fgts", None))
@@ -658,6 +667,19 @@ def _aplicar_fgts(
 
     atual = _linha_financiamento(client, org_id, atendimento_id)
     if atual is None or atual.get("fgts_origem") is None:
+        if not verificado:
+            novo = campo_conflitos.registrar_conflito(
+                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.fgts",
+                valor_anterior=(atual or {}).get("fgts"),
+                origem_anterior=(atual or {}).get("fgts_origem"),
+                valor_proposto=True,
+                origem_proposto=tipo_documento,
+                confianca_proposta=_confianca(leitura, "valor_fgts"),
+                fonte_tabela=DOCUMENTOS_TABLE,
+                fonte_id=documento_id,
+                documento_id_proposto=documento_id,
+            )
+            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -712,8 +734,9 @@ def _aplicar_fgts(
 
 def _aplicar_numero_proposta(
     client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str,
-    documento_id: UUID, leitura: Any,
+    documento_id: UUID, leitura: Any, *, verificado: bool,
 ) -> tuple[Optional[str], Optional[dict]]:
+    """`verificado` — see `_aplicar_valor_negociado`'s own docstring."""
     if tipo_documento != "proposta_financiamento":
         return None, None
     proposto = getattr(leitura, "numero_proposta", None)
@@ -722,6 +745,19 @@ def _aplicar_numero_proposta(
 
     atual = _linha_financiamento(client, org_id, atendimento_id)
     if atual is None or atual.get("numero_proposta_origem") is None:
+        if not verificado:
+            novo = campo_conflitos.registrar_conflito(
+                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.numero_proposta",
+                valor_anterior=(atual or {}).get("numero_proposta"),
+                origem_anterior=(atual or {}).get("numero_proposta_origem"),
+                valor_proposto=proposto,
+                origem_proposto=tipo_documento,
+                confianca_proposta="baixa",
+                fonte_tabela=DOCUMENTOS_TABLE,
+                fonte_id=documento_id,
+                documento_id_proposto=documento_id,
+            )
+            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -782,11 +818,17 @@ def _aplicar_numero_proposta(
 
 def _aplicar_agente_financeiro(
     client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str,
-    documento_id: UUID, leitura: Any,
+    documento_id: UUID, leitura: Any, *, verificado: bool,
 ) -> tuple[Optional[str], Optional[dict]]:
     """H7 (owner, binding): auto-create the `agentes_financeiros` row when
     the bank code matches none — logged. Ambiguous (>1 active match) still
-    gets the aviso, no write."""
+    gets the aviso, no write.
+
+    `verificado` — see `_aplicar_valor_negociado`'s own docstring; gates
+    only the WRITE onto `atendimento_financiamento.agente_financeiro_id`
+    (this atendimento's own field), never the `agentes_financeiros`
+    auto-create above (an org-wide registry lookup by bank code — a
+    legitimate discovery regardless of which document prompted it)."""
     codigo = getattr(leitura, "banco_codigo", None)
     if _vazio(codigo):
         return None, None
@@ -824,6 +866,19 @@ def _aplicar_agente_financeiro(
 
     atual = _linha_financiamento(client, org_id, atendimento_id)
     if atual is None or atual.get("agente_financeiro_origem") is None:
+        if not verificado:
+            novo = campo_conflitos.registrar_conflito(
+                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.agente_financeiro",
+                valor_anterior=(atual or {}).get("agente_financeiro_id"),
+                origem_anterior=(atual or {}).get("agente_financeiro_origem"),
+                valor_proposto=str(agente_id),
+                origem_proposto=tipo_documento,
+                confianca_proposta=_confianca(leitura, "banco_codigo"),
+                fonte_tabela=DOCUMENTOS_TABLE,
+                fonte_id=documento_id,
+                documento_id_proposto=documento_id,
+            )
+            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -888,7 +943,7 @@ def _aplicar_agente_financeiro(
 
 def _aplicar_situacao(
     client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str,
-    documento_id: UUID, leitura: Any,
+    documento_id: UUID, leitura: Any, *, verificado: bool,
 ) -> tuple[Optional[str], Optional[dict]]:
     """H6 (owner, binding): a signed `contrato_financiamento` sets
     `situacao='aprovado'`. "Signed" is read as `quadro_encontrado=True` (the
@@ -903,6 +958,11 @@ def _aplicar_situacao(
     silently overridden; a human's refusal is not silently reopened by a
     later document. `financiamento.situacao` is S2b's D2 REGISTRO vocabulary
     (`ENTIDADE_FINANCIAMENTO`'s own field name).
+
+    `verificado` — see `_aplicar_valor_negociado`'s own docstring; gates
+    only the genuine NEW claim (`pendente -> aprovado`), never the
+    already-agrees backfill below (no value actually changes there, so
+    there is nothing unverified to gate).
     """
     if tipo_documento != "contrato_financiamento":
         return None, None
@@ -922,6 +982,19 @@ def _aplicar_situacao(
                 {"situacao_origem": tipo_documento, "situacao_documento_id": str(documento_id)},
             )
             return None, None
+        if not verificado:
+            novo = campo_conflitos.registrar_conflito(
+                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.situacao",
+                valor_anterior=situacao_atual,
+                origem_anterior=origem_atual,
+                valor_proposto="aprovado",
+                origem_proposto=tipo_documento,
+                confianca_proposta=None,
+                fonte_tabela=DOCUMENTOS_TABLE,
+                fonte_id=documento_id,
+                documento_id_proposto=documento_id,
+            )
+            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -1144,12 +1217,15 @@ def aplicar_leitura(
     if pertence == OUTRO_NEGOCIO:
         return {"status": SEM_DADOS, "aviso": "documento_de_outro_negocio", "conflitos": []}
     # Finding [MEDIUM] (audit, 2026-09-28) — `NAO_VERIFICADO` (no validated
-    # CPF read at all) is no longer trusted the way `PERTENCE` is: the two
-    # membership-gated appliers below route an empty field as a pending
-    # conflict instead of filling it, each signalling `AVISO_PERTENCIMENTO_
-    # NAO_VERIFICADO` on its own when that actually happens (never appended
-    # unconditionally here — an unverified document with nothing empty to
-    # fill has nothing to warn about).
+    # CPF read at all) is no longer trusted the way `PERTENCE` is: every
+    # membership-gated applier below (`valor_negociado`, the financiamento
+    # parcela, FGTS, número da proposta, agente financeiro, situação —
+    # `NOC-REMEDIATE[sw-neg-pertencimento-demais-campos]`, 2026-09-28,
+    # widened the last four onto the same gate) routes an empty field as a
+    # pending conflict instead of filling it, each signalling `AVISO_
+    # PERTENCIMENTO_NAO_VERIFICADO` on its own when that actually happens
+    # (never appended unconditionally here — an unverified document with
+    # nothing empty to fill has nothing to warn about).
     verificado = pertence == PERTENCE
 
     # The SEED PARSER's own aviso (e.g. `quadro_resumo_soma_divergente` —
@@ -1167,10 +1243,10 @@ def aplicar_leitura(
     for aplicar, kwargs in (
         (_aplicar_valor_negociado, {"verificado": verificado}),
         (_aplicar_financiamento_parcela, {"verificado": verificado}),
-        (_aplicar_fgts, {}),
-        (_aplicar_numero_proposta, {}),
-        (_aplicar_agente_financeiro, {}),
-        (_aplicar_situacao, {}),
+        (_aplicar_fgts, {"verificado": verificado}),
+        (_aplicar_numero_proposta, {"verificado": verificado}),
+        (_aplicar_agente_financeiro, {"verificado": verificado}),
+        (_aplicar_situacao, {"verificado": verificado}),
     ):
         aviso, conflito = aplicar(
             client, org_id, atendimento_id, tipo_documento, documento_id, leitura, **kwargs,
