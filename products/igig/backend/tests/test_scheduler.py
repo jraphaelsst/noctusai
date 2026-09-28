@@ -45,9 +45,16 @@ JOB_IDS = {
 
 @pytest.fixture
 def fresh_scheduler():
+    """`app/main.py` registers the real jobs once at IMPORT time — a test
+    elsewhere in the same process (`test_automacao_router.py`'s own
+    every-15-minutes assertion) reads that global state directly rather than
+    re-importing. Leaving the scheduler empty on teardown would starve it
+    depending on collection order, so teardown restores the real
+    registration instead of just clearing it."""
     seed_scheduler.reset_for_testing()
     yield seed_scheduler
     seed_scheduler.reset_for_testing()
+    igig_scheduler.configure()
 
 
 def test_configure_registers_every_igig_job(fresh_scheduler):

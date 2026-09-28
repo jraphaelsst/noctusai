@@ -199,7 +199,10 @@ export default function Financeiro() {
           Itens excedentes — {competencia}
         </h2>
         <p className="mb-3 text-xs text-muted-foreground">
-          Cobrados na fatura do mês seguinte.
+          Cobrados na fatura do mês seguinte. As peças do plano recorrente nunca
+          contam como excedente, mesmo em meses com mais publicações previstas
+          no calendário — só peças avulsas (fora do plano) além do pacote geram
+          cobrança extra.
         </p>
         {erroExc ? (
           <p role="alert" className="text-sm text-destructive">Não foi possível carregar os excedentes.</p>

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from noctusai_lib.integrations.persistence import PersistenceError, SupabaseRecordStore
+from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound, SupabaseRecordStore
 
 from app.repositories import Repositorios
 from app.services.bi_service import BIService
@@ -172,65 +172,149 @@ class FinanceiroService:
         self._repos = repos
 
     # ── Excedentes ──────────────────────────────────────────────────
+    def _entregue_em(self, org_id: str, pauta: dict) -> str | None:
+        """The date a pauta was actually DELIVERED, or `None` when it never
+        was — two signals, in this priority:
+
+          1. `pauta.publicado_em` — `publicacao_publisher` actually posted
+             it; the strongest signal there is.
+          2. The EARLIEST `aprovacao.decisao == 'aprovado'` recorded against
+             any of the pauta's tarefas — the client signed off, which is
+             what "delivered" means in practice today, since no channel's
+             real publish is homologated yet (`publicado_em` never fires).
+
+        Replaces the previous `data_publicacao` (the SCHEDULED date) signal:
+        a piece that slipped, or was pulled after being scheduled, used to
+        still bill as delivered (finding #10).
+        """
+        if pauta.get("publicado_em"):
+            return str(pauta["publicado_em"])
+        aprovados: list[str] = []
+        for tarefa in self._repos.tarefa.do_pauta(org_id, str(pauta["id"])):
+            for aprovacao in self._repos.aprovacao.da_tarefa(org_id, str(tarefa["id"])):
+                if aprovacao.get("decisao") == "aprovado" and aprovacao.get("decidido_em"):
+                    aprovados.append(str(aprovacao["decidido_em"]))
+        return min(aprovados) if aprovados else None
+
+    def _contrato_do_pauta_plano(
+        self, org_id: str, orcamento_item_id: str, cache: dict[str, str | None]
+    ) -> str | None:
+        """The ONE contrato a PLAN pauta belongs to, via `orcamento_item_id`
+        → `orcamento_item.orcamento_id` → `contrato.orcamento_id`. Memoized
+        per :meth:`excedentes` call — every pauta a recurring item generated
+        asks the same question."""
+        if orcamento_item_id in cache:
+            return cache[orcamento_item_id]
+        contrato_id: str | None = None
+        try:
+            item = self._repos.orcamento_item.buscar(org_id, orcamento_item_id)
+            contratos = self._repos.contrato.do_orcamento(org_id, str(item["orcamento_id"]))
+            if len(contratos) == 1:
+                contrato_id = str(contratos[0]["id"])
+            elif len(contratos) > 1:
+                logger.warning(
+                    "excedentes: org=%s orçamento=%s tem %d contratos — pauta do plano "
+                    "não atribuída a nenhum.", org_id, item["orcamento_id"], len(contratos),
+                )
+        except RecordNotFound:
+            logger.warning(
+                "excedentes: org=%s orcamento_item %s inexistente para uma pauta do plano",
+                org_id, orcamento_item_id,
+            )
+        cache[orcamento_item_id] = contrato_id
+        return contrato_id
+
     def excedentes(self, org_id: str, competencia: str) -> list[Excedente]:
-        """Delivered-vs-contracted for every active contract in a month.
+        """Delivered-vs-contracted for every active PACKAGED contract in a
+        month — see :meth:`_entregue_em` for what "delivered" means.
 
-        "Delivered" means a pauta whose `data_publicacao` falls in the month.
-        Counting tarefas instead would double-count a piece that took several
-        steps, and counting publicacoes would miss anything published manually.
+        **A plan pauta can never be an excedente**, no matter how many of it
+        a given month produces. `contrato.posts_por_mes` is priced off a flat
+        `dias_semana × qtd_por_dia × 4 semanas` convention
+        (`orcamentos.quantidade_mensal`) — a real calendar does not have
+        exactly 4 of every weekday every month (a 31-day month starting on a
+        Monday has 5), so a month where the SAME recurring item produces one
+        extra piece is not the client asking for more; it is the calendar.
+        Billing that variance as an excedente would charge for pieces that
+        ARE the retainer. So a pauta traced back to the accepted orçamento's
+        own recurring item (`gerada_automaticamente=True` with an
+        `orcamento_item_id`) is excluded from the excedente count on BOTH
+        sides — it never contributes to `entregues` for billing purposes and
+        can never trigger one.
 
-        Counted PER CONTRATO, never blindly per cliente: `igig.pauta` has no
-        `contrato_id` column today, so when a cliente has exactly ONE active
-        packaged contract (the shape every worked example in the product
-        guide assumes) attributing its delivered pautas to that contract is
-        unambiguous. When a cliente has MORE THAN ONE, which contract a given
-        piece counts against cannot be determined from the schema — the
-        previous behaviour counted the SAME delivered total against EACH of
-        the client's contracts (finding #10, 2026-09 audit), which is a
-        double-bill waiting to happen. Rather than guess, that case is
-        SKIPPED (logged, never silently charged) until `pauta` carries a real
-        `contrato_id` — a Calendário Editorial change outside this slice.
+        **Excedentes are hand-added pautas beyond the plan** — anything NOT
+        traced to the plan (created directly on the Calendário Editorial, or
+        a "Nova tarefa" pointing at a pauta with no orçamento origin), still
+        measured against the SAME `posts_por_mes` the plan itself is priced
+        from. Worked example: `scratchpad/kb/delta-closeout.md`.
+
+        Attribution: a plan pauta's contrato is unambiguous
+        (`orcamento_item_id` → one orçamento → at most one contrato, since
+        the product issues at most one contrato per orçamento). An EXTRA
+        pauta only carries `cliente_id`, so it is attributed to that
+        cliente's active packaged contrato IF there is exactly one — a
+        cliente with two is logged and skipped rather than guessed (finding
+        #10's original ambiguity, now narrowed to hand-created pautas only —
+        the plan side no longer has this problem at all).
         """
         inicio, fim = limites_da_competencia(competencia)
-        entregues: dict[str, int] = {}
-        for pauta in self._repos.pauta.no_periodo(org_id, inicio, fim):
-            cid = str(pauta.get("cliente_id") or "")
-            entregues[cid] = entregues.get(cid, 0) + 1
-
         clientes = {str(c["id"]): c for c in self._repos.cliente.listar(org_id)}
-        contratos_com_pacote_por_cliente: dict[str, list[dict]] = {}
-        for contrato in self._repos.contrato.ativos(org_id):
-            if not int(contrato.get("posts_por_mes") or 0):
-                continue  # no package ⇒ nothing to exceed
-            cid = str(contrato.get("cliente_id") or "")
-            contratos_com_pacote_por_cliente.setdefault(cid, []).append(contrato)
+
+        contratos_ativos = self._repos.contrato.ativos(org_id)
+        pacote_por_cliente: dict[str, list[dict]] = {}
+        for c in contratos_ativos:
+            if int(c.get("posts_por_mes") or 0):
+                pacote_por_cliente.setdefault(str(c.get("cliente_id") or ""), []).append(c)
+
+        plano_por_contrato: dict[str, int] = {}
+        extras_por_contrato: dict[str, int] = {}
+        cache_item_contrato: dict[str, str | None] = {}
+
+        for pauta in self._repos.pauta.listar(org_id):
+            entregue_em = self._entregue_em(org_id, pauta)
+            if not entregue_em or not (inicio[:10] <= entregue_em[:10] <= fim[:10]):
+                continue
+            if pauta.get("gerada_automaticamente") and pauta.get("orcamento_item_id"):
+                contrato_id = self._contrato_do_pauta_plano(
+                    org_id, str(pauta["orcamento_item_id"]), cache_item_contrato,
+                )
+                if contrato_id:
+                    plano_por_contrato[contrato_id] = plano_por_contrato.get(contrato_id, 0) + 1
+                continue
+            cliente_id = str(pauta.get("cliente_id") or "")
+            candidatos = pacote_por_cliente.get(cliente_id, [])
+            if len(candidatos) != 1:
+                if len(candidatos) > 1:
+                    logger.warning(
+                        "excedentes: org=%s cliente=%s tem %d contratos ativos com "
+                        "pacote — pauta extra não atribuída a nenhum.",
+                        org_id, cliente_id, len(candidatos),
+                    )
+                continue
+            contrato_id = str(candidatos[0]["id"])
+            extras_por_contrato[contrato_id] = extras_por_contrato.get(contrato_id, 0) + 1
 
         saida: list[Excedente] = []
-        for cliente_id, contratos in contratos_com_pacote_por_cliente.items():
-            if len(contratos) > 1:
-                logger.warning(
-                    "excedentes: org=%s cliente=%s tem %d contratos ativos com "
-                    "pacote — sem `pauta.contrato_id` não é possível atribuir "
-                    "peças entregues a um único contrato; nenhum excedente "
-                    "calculado para este cliente nesta competência.",
-                    org_id, cliente_id, len(contratos),
-                )
-                continue
-            contrato = contratos[0]
+        for contrato in contratos_ativos:
             pacote = int(contrato.get("posts_por_mes") or 0)
-            feitos = entregues.get(cliente_id, 0)
-            extras = max(0, feitos - pacote)
+            if not pacote:
+                continue  # no package ⇒ nothing to exceed
+            contrato_id = str(contrato["id"])
+            cliente_id = str(contrato.get("cliente_id") or "")
+            extras = extras_por_contrato.get(contrato_id, 0)
+            plano = plano_por_contrato.get(contrato_id, 0)
+            excedentes_qtd = max(0, extras - pacote)
             unitario = float(contrato.get("valor_excedente") or 0)
             saida.append(Excedente(
                 cliente_id=cliente_id,
                 cliente_nome=str(clientes.get(cliente_id, {}).get("nome") or ""),
-                contrato_id=str(contrato["id"]),
+                contrato_id=contrato_id,
                 competencia=competencia,
                 contratados=pacote,
-                entregues=feitos,
-                excedentes=extras,
+                entregues=plano + extras,
+                excedentes=excedentes_qtd,
                 valor_unitario=unitario,
-                valor_total=round(extras * unitario, 2),
+                valor_total=round(excedentes_qtd * unitario, 2),
                 competencia_cobranca=proxima_competencia(competencia),
             ))
         return sorted(saida, key=lambda e: e.cliente_nome)

@@ -115,6 +115,9 @@ class ContratoRepository(BaseRepository):
     def do_cliente(self, org_id: str, cliente_id: str) -> list[Record]:
         return self._por("cliente_id", cliente_id, org_id)
 
+    def do_orcamento(self, org_id: str, orcamento_id: str) -> list[Record]:
+        return self._por("orcamento_id", orcamento_id, org_id)
+
     def ativos(self, org_id: str) -> list[Record]:
         return self._por("status", "ativo", org_id)
 
@@ -819,6 +822,17 @@ class OrcamentoRepository(BaseRepository):
         return self._por("lead_id", lead_id, org_id)
 
 
+class OrcamentoItemRepository(BaseRepository):
+    """Line items — READ-ONLY here. Used by `financeiro_service.excedentes`
+    to walk a plan-generated pauta's `orcamento_item_id` back to its
+    orçamento (and from there, the contrato it belongs to)."""
+
+    table = "orcamento_item"
+
+    def do_orcamento(self, org_id: str, orcamento_id: str) -> list[Record]:
+        return self._por("orcamento_id", orcamento_id, org_id)
+
+
 class PipelineStageRepository(BaseRepository):
     """READ-ONLY view of the board stages (migration 017).
 
@@ -898,6 +912,7 @@ class Repositorios:
         self.fatura_item = FaturaItemRepository(store)
         self.lead = LeadRepository(store)
         self.orcamento = OrcamentoRepository(store)
+        self.orcamento_item = OrcamentoItemRepository(store)
         self.etapa = PipelineStageRepository(store)
         self.negocio = NegocioRepository(store)
         self.movimento = PipelineMovimentoRepository(store)

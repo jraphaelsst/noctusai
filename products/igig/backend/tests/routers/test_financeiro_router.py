@@ -54,10 +54,15 @@ def _contrato(repos, cliente, *, pacote=12, excedente=150.0):
 
 
 def _pautas(repos, cliente, quantidade, mes="2026-08"):
+    """`quantidade` EXTRA (hand-added, non-plan) pautas DELIVERED in `mes` —
+    `publicado_em` is the delivery signal `FinanceiroService.excedentes` now
+    reads (achado 10 follow-up); `data_publicacao` stays too, since it is
+    what the Calendário Editorial itself scheduled them against."""
     for i in range(quantidade):
+        quando = f"{mes}-{(i % 28) + 1:02d}T09:00:00"
         repos.pauta.criar(ORG, {
             "cliente_id": cliente["id"], "titulo": f"Post {i}",
-            "data_publicacao": f"{mes}-{(i % 28) + 1:02d}T09:00:00",
+            "data_publicacao": quando, "publicado_em": quando,
         })
 
 
@@ -287,13 +292,93 @@ class TestExcedentes:
         assert api.get("/api/financeiro/excedentes/2026-08").json() == []
 
     def test_multiple_active_contracts_are_skipped_not_double_counted(self, api, repos, cliente):
-        """`igig.pauta` has no `contrato_id` — attributing the SAME delivered
-        total to EACH of a client's active packaged contracts would
-        double-bill (finding #10, 2026-09 audit). Skipped, not guessed."""
+        """An EXTRA (non-plan) pauta only carries `cliente_id` — attributing
+        it to EACH of a client's active packaged contracts would double-bill
+        (finding #10, 2026-09 audit). Skipped, not guessed: both contracts
+        still appear (each is a real active package), but with zero counted
+        against either, rather than one guess landing on the wrong one."""
         _contrato(repos, cliente, pacote=12, excedente=150.0)
         _contrato(repos, cliente, pacote=5, excedente=50.0)
         _pautas(repos, cliente, 15)
-        assert api.get("/api/financeiro/excedentes/2026-08").json() == []
+        linhas = api.get("/api/financeiro/excedentes/2026-08").json()
+        assert len(linhas) == 2
+        assert all(l["entregues"] == 0 and l["excedentes"] == 0 for l in linhas)
+
+
+def _plano(repos, cliente, contrato, *, quantidade_plano, mes="2026-08"):
+    """`quantidade_plano` PLAN pautas — traced back to the accepted
+    orçamento's own recurring item, the same way `pautas.gerar`/`estender`
+    stamp them at generation time."""
+    orcamento = repos.orcamento.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Plano mensal"})
+    repos.contrato.atualizar(ORG, contrato["id"], {"orcamento_id": orcamento["id"]})
+    item = repos.orcamento_item.criar(ORG, {
+        "orcamento_id": orcamento["id"], "secao": "criacao_conteudo",
+        "descricao": "Posts recorrentes", "recorrente": True,
+        "dias_semana": 3, "qtd_por_dia": 1,
+    })
+    for i in range(quantidade_plano):
+        quando = f"{mes}-{(i % 28) + 1:02d}T09:00:00"
+        repos.pauta.criar(ORG, {
+            "cliente_id": cliente["id"], "titulo": f"Plano {i}",
+            "gerada_automaticamente": True, "orcamento_item_id": item["id"],
+            "publicado_em": quando,
+        })
+    return item
+
+
+class TestExcedentesPlanoVsExtra:
+    """Task-3 closeout: a PLAN pauta (`gerada_automaticamente`, traced to the
+    accepted orçamento's own recurring item) can never be an excedente, no
+    matter how many of it the real calendar produces in a given month — only
+    a hand-added EXTRA pauta, measured against that same `posts_por_mes`,
+    can. Worked examples mirrored in `scratchpad/kb/delta-closeout.md`."""
+
+    def test_a_5_week_month_never_bills_the_plans_own_calendar_variance(self, api, repos, cliente):
+        """pacote=8 ('2x/semana', priced flat at 4 semanas/mês —
+        `orcamentos.quantidade_mensal`); this month's real calendar gives 10
+        occurrences of that same recurring item — still zero excedentes."""
+        contrato = _contrato(repos, cliente, pacote=8, excedente=100.0)
+        _plano(repos, cliente, contrato, quantidade_plano=10)
+        linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
+        assert linha["contratados"] == 8
+        assert linha["entregues"] == 10
+        assert linha["excedentes"] == 0
+        assert linha["valor_total"] == 0.0
+
+    def test_extra_pautas_are_measured_against_the_same_package_not_the_plans_own_count(
+        self, api, repos, cliente
+    ):
+        """Same contract, same month: the plan's own 10 (still free) PLUS 9
+        hand-added extras — only the ONE extra beyond the 8-post package
+        bills, never the plan's own count."""
+        contrato = _contrato(repos, cliente, pacote=8, excedente=100.0)
+        _plano(repos, cliente, contrato, quantidade_plano=10)
+        _pautas(repos, cliente, 9)
+        linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
+        assert linha["entregues"] == 19  # 10 plano + 9 extras
+        assert linha["excedentes"] == 1  # max(0, 9 extras − 8 pacote)
+        assert linha["valor_total"] == 100.0
+
+    def test_extras_within_the_package_size_are_not_billed(self, api, repos, cliente):
+        contrato = _contrato(repos, cliente, pacote=8, excedente=100.0)
+        _plano(repos, cliente, contrato, quantidade_plano=10)
+        _pautas(repos, cliente, 3)
+        linha = api.get("/api/financeiro/excedentes/2026-08").json()[0]
+        assert linha["excedentes"] == 0
+        assert linha["valor_total"] == 0.0
+
+    def test_a_plan_pauta_from_a_different_orcamento_is_not_conflated(self, api, repos, cliente):
+        """Two clients, two plans, two contracts — a plan pauta never
+        crosses over to the other contract even though both recurring items
+        look identical."""
+        outro_cliente = repos.cliente.criar(ORG, {"nome": "Outra Padaria"})
+        c1 = _contrato(repos, cliente, pacote=8, excedente=100.0)
+        c2 = _contrato(repos, outro_cliente, pacote=8, excedente=100.0)
+        _plano(repos, cliente, c1, quantidade_plano=10)
+        _plano(repos, outro_cliente, c2, quantidade_plano=1)
+        linhas = {l["contrato_id"]: l for l in api.get("/api/financeiro/excedentes/2026-08").json()}
+        assert linhas[c1["id"]]["entregues"] == 10
+        assert linhas[c2["id"]]["entregues"] == 1
 
 
 class TestDRE:
