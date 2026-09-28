@@ -55,6 +55,7 @@ from app.routers.automacao_router import router as automacao_router
 from app.routers.integracoes_leads_router import router as integracoes_leads_router
 from app.routers.lead_webhooks_router import router as lead_webhooks_router
 from app.routers.assistente_router import router as assistente_router
+from app.routers.ajuda_router import router as ajuda_router
 
 # Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
 # 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
@@ -137,6 +138,8 @@ app = create_product_app(
         orcamento_router, produto_router, contrato_router,
         # Automações v1 + fontes de lead + assistente IA (slice E2, R11).
         automacao_router, integracoes_leads_router, lead_webhooks_router, assistente_router,
+        # Help-chat bubble (seed organ noctusai_lib.domain.help_chat) — POST /api/ajuda/chat.
+        ajuda_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     lifespan_startup=start_scheduler,

@@ -284,6 +284,17 @@ services:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-igig:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-igig
+    # igig's LLM features (Assistente do negócio + the help-chat bubble,
+    # seed `noctusai_lib.domain.help_chat`) read ANTHROPIC_API_KEY. Mapped
+    # from a DEDICATED, spend-capped `IGIG_ANTHROPIC_API_KEY` (compose
+    # ${...} INTERPOLATION from deploy/fleet/.env.fleet, same pattern as the
+    # `agents` service's JULIA key) — never the bare fleet key dev-team reads.
+    # env-fleet-empty-ok — REVIEWED: unset ⇒ the container stays healthy and
+    # both features answer 503 `ia_nao_configurada` (loud, never faked).
+    # The VALUE must be set in deploy/fleet/.env.fleet on the VPS (owner).
+    environment:
+      <<: *prod-env
+      ANTHROPIC_API_KEY: ${IGIG_ANTHROPIC_API_KEY:-}  # env-fleet-empty-ok — see REVIEWED comment above
     expose:
       - "8013"
     healthcheck:

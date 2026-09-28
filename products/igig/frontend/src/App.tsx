@@ -97,6 +97,19 @@ const Layout = createProductLayout({
   navGroupsFallback: NAV_FALLBACK,
   ...infra.appConfig,
   NotificationBell: infra.NotificationBell,
+  // Always-available help chat (seed organ HelpChatBubble ↔ POST /api/ajuda/chat).
+  // Same base URL + bearer source as the infra `api` client.
+  helpChat: {
+    title: "Assistente IgIg",
+    getBaseUrl: () => import.meta.env.VITE_BACKEND_API_URL ?? "",
+    getAuthToken: infra.getAuthToken,
+    starters: [
+      "Como cadastro um lead e levo até cliente?",
+      "Como monto e envio um orçamento?",
+      "Como funciona a esteira de produção e a aprovação do cliente?",
+      "Por que minha margem aparece como indisponível?",
+    ],
+  },
 });
 
 export default createProductApp({
