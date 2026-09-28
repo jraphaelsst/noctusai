@@ -133,6 +133,105 @@ participações **2/2 read, both CNPJs check-digit valid**; nome_mae written (or
 the side effects never ran. The unit mock doesn't enforce FKs, so tests were green.
 Both added to feat/sw-p1-fixes-1. After deploy: re-run extraction on this document and re-score.
 
+## Round 2 (2026-09-25, prod 123c74d8e: G1–G6 fixes live)
+
+### Re-checks
+- G4 fixed live: the vendedora's checklist now carries `serasa_crednet` (8 items).
+- Witnesses: synthetic CPFs set on /testemunhas (owner-authorized typing). UI finding: the list prints the CPF unformatted.
+
+### Step c (re-run) · Serasa Crednet → re-extraction via POST …/documentos/{id}/extrair
+- G5/G6 fixed live: 2 empresas + 2 `cliente_empresa_participacoes` created (origem serasa_crednet, `dados_documento_id` NULL, machine-pending).
+| field | result | note |
+|---|---|---|
+| cnpj ×2 | ok | both exact vs `883-empresas-verificado.json` |
+| participacao_pct ×2 | ok | 100 / 99 |
+| desde ×2 | ok | |
+| razao_social (MEI) | ok | exact |
+| razao_social (REALIZA) | difere | the Crednet itself truncates to 40 columns; DB = exact first 40 chars of the real name. Not a misread. The Cartão carries the full name |
+- Certidão 9 (Serasa) resultado: not yet written. By design it is deferred until the vendedora's certidões consulta exists (crednet_service §C5/§E7).
+
+### Step d1 · Empresas tab · Cartão CNPJ REALIZA (image-only) → ocr, 1 attempt, `ok`
+| field | result | note |
+|---|---|---|
+| cnpj | ok | check-digit valid |
+| data_abertura | ok | |
+| data_situacao_cadastral | ok | 05/02/2021 (the E1 date) |
+| situacao_cadastral | **vazio** | G7: the transcription came back as a pipe table; the parser read the situação box as `"|"`. BAIXADA lost, so E1 can't decide |
+| razao_social / motivo / natureza / porte | difere | G8: trailing `| | |` residue on every value (same root) |
+| endereço (masked `********`) | difere | G8: read as `* |`, mask not detected, `endereco_mascarado=false` (no fabrication this time; the values are the mask) |
+| razao_social vs Crednet | conflito | G9: D1 opened a conflict, but it's a truncation upgrade (Crednet 40-col prefix → full Receita name) |
+- UI: the empresa header shows "Dispensada — Falta Cartão CNPJ" (G10). `sem_cartao_cnpj` is undecided, not dispensed.
+- Dispatched feat/sw-p1-fixes-2 (G7–G10 + CPF formatting). Re-extract the Cartão after deploy.
+- Open question for the owner: the MEI's Cartão CNPJ is not in folder 883. Without it E1 can't classify the MEI (the contract lists its 11 certidões).
+
+### Step e1 · Vendedora certidões (11 of 12; nº 9 held to test the Crednet deferred fill)
+- Matrix path: "Registrar certidões manualmente" from the certidões MATRIX opens with the CPF empty (G11, `CertidoesMatrizSection` doesn't pass `documento`). From the Vendedor tab the name and CPF are prefilled, so the consulta was created there with zero typing.
+- G13: the manual consulta did NOT apply the already-read Crednet to certidão 9 (`criar_consulta_manual` never calls `aplicar_crednet_pendente`).
+- G12: the manual consulta fans out 13 rows, generic `tjsp` + `tjsp_esaj` + `tjsp_eproc`, against the owner rule "always split".
+- Each PDF uploaded through the row's upload button; structured read = `sucesso`, 1 attempt, `origem=ia`.
+
+| item | numero | emitida_em | resultado | note |
+|---|---|---|---|---|
+| 1.1 RF | **vazio** | ok | **differs from the contract, doc supports DB** | the doc says POSITIVA COM EFEITOS DE NEGATIVA; the contract wrote "negativa". G14: "Código de controle" not captured as nº. The contract's code ≠ this file's code (another emission). ⇒ Relatório Fiscal now REQUIRED for this vendedora (owner rule) |
+| 1.2 JF 1ª | ok | ok | ok | |
+| 1.3 JF 2ª | ok | ok | ok | |
+| 1.4 TRT2 digital | ok | ok | ok | |
+| 1.5 TRT2 físico | difere | ok | ok | G15: "NNNNNN / AAAA" stored without the "/ AAAA" |
+| 1.6 CNDT | ok | ok | ok | |
+| 1.7 e-SAJ | ok | differs from the contract | ok (negativa_com_homonimos) | the doc carries only 25/08; the contract says 26/08 |
+| 1.8 e-Proc | ok | ok | ok | |
+| 1.10 CENPROT | differs from the contract | differs from the contract | ok | image-only browser print of a 2025 CENPROT consultation. The folder file isn't the one the contract cites; the extractor read it faithfully |
+| 1.11 Fazenda (não inscritos) | ok | ok | ok | |
+| 1.12 Dívida ativa | ok | ok | ok | |
+- Extractor accuracy vs the documents themselves: 31/33 fields correct (2 gaps: G14, G15).
+
+### Step e2 · MEI empresa certidões (11, folder "REGINA CNPJ")
+- Consulta registered from the empresa's own panel (Empresas tab): name + CNPJ prefilled, zero typing.
+- The PJ consulta fans out 13 rows: generic `tjsp` (G12 again) + **`fgts_regularidade`**, which isn't in the owner's fixed 11-item PJ set (the contract has none). Owner question.
+- Score vs contract: **31/33**.
+  - 2.5 TRT2 físico nº: "/ AAAA" dropped (G15, same as PF).
+  - 2.9 CENPROT emitida_em: vazio. Correct: this CENPROT print carries no date anywhere in its text; the contract's date came from the office.
+- Note for G14: the PJ RF (a plain NEGATIVA) DID capture the "código de controle" as nº; the PF one (POSITIVA COM EFEITOS DE NEGATIVA layout) did not.
+
+### Step b4 · Compradores (titular = comprador 1; synthetic `[TESTE] Compradora 883` parte = comprador 2)
+- 6 uploads (CNH, casamento, comprovante ×2). Everything landed on the right cliente. Typing: only the synthetic parte name (owner-authorized).
+| field | comprador 1 | comprador 2 | note |
+|---|---|---|---|
+| nome_oficial | ok | ok | |
+| cpf | ok | ok | |
+| rg | **vazio** | ok (RG == CPF, legit on new CNH) | G16: CNH-e (Senatran digital, image-only) RG/órgão not read |
+| rg_orgao_expedidor | vazio | vazio | G16 |
+| genero | ok | ok | |
+| estado_civil | ok | ok | divorciado/a |
+| nacionalidade | ok | difere | "brasileiro" for a woman (G19: check the generator's inflection) |
+| data_nascimento | **errado** | (set, from CNH) | G17: from the certidão de casamento, year 2008 = minor at marriage; implausible, must be rejected |
+| endereço (comprovante) | CEP/nº ok; logradouro abbreviated (G18); cidade/UF **vazio** | **sem_dados** (all vazio) | G20: both bills are mixed PDFs (text pages + 1 scan), routed wholesale to OCR/vision; the text layer carries the full address |
+| profissão / e-mail | vazio / n.a. | vazio / n.a. | no document carries them (manual later, owner rule) |
+- regime_bens / data_casamento were written (the former marriages); the contract prints none for divorciados. Expected.
+- Dispatched feat/sw-p1-fixes-3 (G16–G20).
+
+### Step f0 · First "Gerar contrato" attempt
+- 🔴 G24 (prod crash): "Gerar contrato" → whole-app ErrorBoundary, `e.startsWith is not a function`. The BE injects the rich destino object into `faltando[].sugestoes[].destino` (196cd0a25); the FE `resolverDestino` expects a string. Any card with a document-sourceable faltando crashes. Dispatched feat/sw-gerar-crash-destino.
+- The click created draft contrato 2eb662d5. Readiness read via GET …/geracao (not ready):
+  - faltando: profissão ×3, RG/órgão (comprador 1, G16), órgão (comprador 2), endereço ×2 (G20), negociação (imóvel, valor, parcelas, posse prazo/marco, itens integrantes, ad corpus), Cartão CNPJ ×2 (REALIZA: G7; MEI: not in folder), RF nº (G14), Serasa certidão (G13), testemunhas (select).
+  - "Usar este imóvel" (ONE7515) showed "é o imóvel da negociação" but `negociacao.imovel` is still faltando: it needs the form's Salvar (UX: the link reads as done before it's saved).
+  - bloqueios (12): the reference date is TODAY because no assinatura date is set. The real contract was signed 2026-09-05 (answer key). Even at that date, two rules contradict the signed contract: RF emitted 61 days before signing (rule <30), and the estado-civil certidão ~1500 days old (rule <90). Owner question.
+  - avisos: e-SAJ "Negativa com apontamentos de Homônimos" is flagged as CERTIDOES_POSITIVAS (the contract prints it as a negativa). Owner question.
+  - Relatório Fiscal: the vendedora's RF = PCEN ⇒ required by the owner rule, but the rule isn't implemented yet (backlog). This is its first live example.
+- Negociação/financiamento: folder 883 holds document sources (ITBI guia with the transaction value, Itaú proposta, financing contract), but nothing extracts them; every field is typed. Owner scope decision.
+
+## Round 3 (2026-09-25, prod 4b9e88e59: round-2 fixes live; migration 171 applied)
+Re-extraction of the real docs (POST …/extrair, same pipeline as an upload):
+- ✅ G13: re-reading the Crednet filled certidão 9 (Serasa) on the manual consulta: sucesso, negativa, nº = protocolo, fonte = the Crednet document.
+- ✅ G16 (CNH-e): comprador 1's RG now matches the contract; órgão SSP/SP read.
+- ✅ G20 (mixed PDF): comprador 2's comprovante now reads the full address (CEP, cidade, UF ok; logradouro "Alameda …", 1-char spelling diff vs the contract).
+- ❌ G7 (Cartão situação) NOT fixed: vision transcribes the same PDF differently per call. This read matched the document TITLE for the situação label again (non-pipe shape). Round-2 was tuned to one sample. → round 3 (A).
+- ❌ G9 (razão prefix upgrade) didn't fire: group provenance `dados_origem` already reads cartao_cnpj. → round 3 (B).
+- NEW G25: a same-document re-read conflicts with ITSELF (Cartão motivo/natureza piped vs clean; comprador 1's endereço incomplete vs complete, both from the same comprovante row). D1 refinement: a re-read of the same document replaces its own unconfirmed values. → round 3 (C).
+- The DN conflict (casamento 2008 vs CNH) is correctly a human decision (D1/D2).
+- G26: comprador 2's phone-scan CNH (new format) still gives no órgão. → round 3 (D).
+- Prod smoke false red: core's public site serves /_site/assets/*.js; spa_smoke fixed (f4f9a6274).
+
 ---
 
 ## CHECKPOINT 2026-09-28 — handoff (session 018BxYjwcVbyKtpF4e9a1PqU)
