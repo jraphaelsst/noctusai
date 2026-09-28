@@ -134,7 +134,7 @@ async def obter_board(
     )
 
 
-@router.patch("/stages/{stage_id}/papel", dependencies=[Depends(exigir_admin_da_org)])
+@router.patch("/stages/{stage_id}/papel", dependencies=[Depends(exigir_admin_do_quadro)])
 async def atribuir_papel_etapa(
     stage_id: str,
     payload: PapelEtapaIn,
