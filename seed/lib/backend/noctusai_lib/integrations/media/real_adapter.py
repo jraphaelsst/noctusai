@@ -149,6 +149,12 @@ class RealMediaResolver:
             gets paired with that provider's OCR_MODELS pin — never the
             OpenAI-tuned default model, which is not portable across
             vendors (see `OCR_MODELS`'s own docstring).
+        ocr_model: Overrides the model `provider`'s own `OCR_MODELS` pin
+            would resolve to, on BOTH vision paths (`_resolve_image` and
+            `_resolve_pdf`'s scanned-page transcriber). `None` (the
+            default) leaves every existing caller unaffected. See
+            `documents.providers.ESCALATION_OCR_MODELS` for the one caller
+            that sets this today.
         analyze: Test seam — bound default `analyze_image_with_refusal_retry`
             (`KB § PATTERNS/backend/di-test-seam.md` Class-B).
         render_dpi_policy: `None` (the default) leaves the PDF-transcription
@@ -169,6 +175,7 @@ class RealMediaResolver:
         org_id: Optional[str] = None,
         max_pages: Optional[int] = _RASTERIZE_MAX_PAGES,
         provider: Optional[str] = None,
+        ocr_model: Optional[str] = None,
         analyze: Optional[AnalyzeFn] = None,
         document_transcriber: Optional[Any] = None,
         render_dpi_policy: Optional[Any] = None,
@@ -219,6 +226,16 @@ class RealMediaResolver:
         )
 
         self._provider = provider or DEFAULT_DOCUMENT_PROVIDER
+        # `None` (the default) leaves `_model_for_provider`'s own
+        # `OCR_MODELS` pin in sole charge, unchanged, for every existing
+        # caller. A caller that sets this OVERRIDES the model on BOTH vision
+        # paths below (`_resolve_image` and `_resolve_pdf`'s scanned-page
+        # transcriber) regardless of `self._provider` — the seam
+        # `documents.ladder.DocumentTextLadder`'s `ocr_model=` forwards
+        # verbatim from, ultimately for `documents.real.
+        # LadderIdentityExtractor`'s re-read escalation
+        # (`documents.providers.ESCALATION_OCR_MODELS`).
+        self._ocr_model_override = ocr_model
         self._analyze: AnalyzeFn = analyze or analyze_image_with_refusal_retry
         # Injected in tests; built lazily otherwise (see
         # `_get_document_transcriber`) so importing this module never drags
@@ -558,6 +575,7 @@ class RealMediaResolver:
                 "real": True,
                 "org_id": self._org_id,
                 "provider": self._provider,
+                "ocr_model": self._ocr_model_override,
             }
             if self._max_pages is not None:
                 kwargs["max_vision_pages"] = self._max_pages
@@ -580,7 +598,11 @@ class RealMediaResolver:
     def _model_for_provider(self) -> Optional[str]:
         """The OCR model paired with `self._provider`, or `None`.
 
-        `None` when `self._provider` is `"openai"` — that keeps
+        `self._ocr_model_override` wins unconditionally when set — a
+        deliberate pin (see `__init__`'s own comment) always outranks the
+        provider's own default, including for OpenAI (below).
+
+        Otherwise: `None` when `self._provider` is `"openai"` — that keeps
         `analyze_image`'s own default (`LLMConfig.default_vision_model`,
         `gpt-4o`), unchanged, for an org that explicitly picked OpenAI.
         (An unset provider no longer exists here: `__init__` resolves it to
@@ -593,6 +615,8 @@ class RealMediaResolver:
         sending an OpenAI-only model name to a different vendor's API,
         which is a 404, not a degraded answer.
         """
+        if self._ocr_model_override is not None:
+            return self._ocr_model_override
         if self._provider == "openai":
             return None
         from noctusai_lib.integrations.documents.providers import OCR_MODELS

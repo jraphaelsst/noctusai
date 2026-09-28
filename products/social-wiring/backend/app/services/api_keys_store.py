@@ -78,9 +78,11 @@ __all__ = [
     "ApiKeyOption",
     "CHAT_PROVIDER_KEY",
     "EMBEDDING_PROVIDER_KEY",
+    "RELEITURA_HABILITADA_KEY",
     "VISION_PROVIDER_KEY",
     "resolve_chat_provider",
     "resolve_embedding_provider",
+    "resolve_releitura_habilitada",
     "resolve_vision_provider",
     "MANAGED_API_KEYS",
     "PROVIDER_PREFIX",
@@ -346,6 +348,35 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         # canonical document provider, not the fleet's chat default.
         default=DEFAULT_DOCUMENT_PROVIDER,
     ),
+    #: 🔴 A FOURTH SWITCH — WHETHER, NOT WHO. On by default (owner
+    #: decision, 2026-09-28): a document that flags `leitura_comprometida`
+    #: or is missing a core field for its declared type
+    #: (`documents.releitura.deve_escalar`) gets ONE more transcription
+    #: with a stronger model (`documents.providers.ESCALATION_OCR_MODELS`)
+    #: before the extraction is recorded. This switch is the escape hatch
+    #: for an org that would rather NOT pay the escalated model's higher
+    #: per-page cost — never a quality dial past that: escalation, when on,
+    #: never lowers a confidence and never applies a value the two reads
+    #: disagree on (see `releitura.mesclar`'s own docstring).
+    ApiKeySpec(
+        name="releitura_identidade_habilitada",
+        label="Releitura automática de documentos de identidade",
+        description=(
+            "Quando uma leitura de RG/CNH/CIN/CPF, comprovante de "
+            "endereço ou certidão de casamento vem incompleta ou marcada "
+            "como comprometida, ler as mesmas páginas de novo com um "
+            "modelo mais forte antes de gravar. Ligado por padrão; "
+            "desligue para nunca pagar o custo extra da releitura."
+        ),
+        is_secret=False,
+        testable=False,
+        input_type="select",
+        options=(
+            ApiKeyOption(value="on", label="Ligado", description="Releitura automática ativa."),
+            ApiKeyOption(value="off", label="Desligado", description="Nunca releitura automaticamente."),
+        ),
+        default="on",
+    ),
     ApiKeySpec(
         name="infosimples_token",
         label="InfoSimples Token",
@@ -553,6 +584,7 @@ def resolve_api_key(name: str, org_id: Optional[str]) -> Optional[str]:
 VISION_PROVIDER_KEY = "llm_vision_provider"
 EMBEDDING_PROVIDER_KEY = "llm_embedding_provider"
 CHAT_PROVIDER_KEY = "llm_chat_provider"
+RELEITURA_HABILITADA_KEY = "releitura_identidade_habilitada"
 
 
 def _resolve_provider_choice(
@@ -659,6 +691,30 @@ def resolve_chat_provider(
     """
     return _resolve_provider_choice(
         CHAT_PROVIDER_KEY, org_id, store=store, resolver=resolver
+    )
+
+
+def resolve_releitura_habilitada(
+    org_id: Optional[str],
+    *,
+    store: Any = _UNSET,
+    resolver: Callable[[str, Optional[str]], Optional[str]] = resolve_credential,
+) -> bool:
+    """Is this org's automatic re-read escalation on? Fourth caller of
+    `_resolve_provider_choice` — same manual-switch shape as the three
+    provider selectors above, just a boolean choice ("on"/"off") instead of
+    a vendor name.
+
+    `True` (on) is the documented default: an org that never touched this
+    setting, or whose stored value is unrecognised, gets escalation ON,
+    matching `documents.factory.make_identity_extractor`'s own
+    `escalar_releitura=True` default.
+    """
+    return (
+        _resolve_provider_choice(
+            RELEITURA_HABILITADA_KEY, org_id, store=store, resolver=resolver
+        )
+        == "on"
     )
 
 

@@ -88,6 +88,7 @@ __all__ = [
     "DEFAULT_DOCUMENT_PROVIDER",
     "DOCUMENT_ANALYSIS_MODELS",
     "DOCUMENT_PROVIDERS",
+    "ESCALATION_OCR_MODELS",
     "OCR_MODELS",
 ]
 
@@ -120,3 +121,41 @@ DOCUMENT_ANALYSIS_MODELS: dict[str, str] = {
 #: Every vendor a document read can be routed to — the `allowed` set a
 #: `resolve_llm_provider("vision" | "chat", ...)` call for documents passes.
 DOCUMENT_PROVIDERS: tuple[str, ...] = tuple(OCR_MODELS)
+
+#: Rung 1, ESCALATED — the stronger vision model a re-read reaches for when
+#: the cheap `OCR_MODELS` pass either flagged `leitura_comprometida` or
+#: missed a core field for the document's declared type (`documents.
+#: releitura.deve_escalar`). PER PROVIDER, same reason `OCR_MODELS` is: a
+#: model id is not portable across vendors.
+#:
+#: WHY ANTHROPIC ESCALATES TO SONNET-5 — MEASURED (P2 corpus, 2026-09-28)
+#: -----------------------------------------------------------------------
+#: The SAME real closed-deal corpus that measured `OCR_MODELS`' Haiku pin
+#: also measured RUN-TO-RUN VARIANCE on Haiku that a stronger model does not
+#: share: the same RG read 4× locally came back correctly all 4 times, while
+#: the SAME file read once in prod came back empty — a hallucination class
+#: `legibilidade.py`'s gate now catches, but catching it still means a human
+#: has to look. On the screenshot CNH and a poor RG scan, Sonnet 5 read
+#: correctly where Haiku hallucinated; across the corpus's comprovantes,
+#: Haiku found 4/9 addresses to Sonnet's 6/9 (union 7/9 — neither
+#: subsumes the other, which is why a disagreement is reported, never
+#: silently overridden — see `releitura.mesclar`). Escalating ONLY the
+#: documents that already triggered a re-read keeps this a bounded, targeted
+#: cost (Sonnet-5 is materially more expensive per page than Haiku, per
+#: `OCR_MODELS`' own docstring) rather than a blanket model upgrade.
+#:
+#: NOC-REMEDIATE[escalation-model-openai-gemini]: OpenAI and Gemini have NO
+#: measured stronger-tier win on this corpus (the measurement above only
+#: covers Anthropic, the seed-canonical `DEFAULT_DOCUMENT_PROVIDER`) — 2026-
+#: 09-28. Rather than invent an unverified pin, both mirror `OCR_MODELS`
+#: exactly, which makes an escalated re-read for those two vendors a
+#: same-model retry: still useful against Haiku-class RUN-TO-RUN variance
+#: (a fresh sample, a second roll of the dice), but not against a
+#: systematic weakness of the model itself. Re-measure before pinning a
+#: distinct stronger tier here, the same discipline `OCR_MODELS`' own
+#: docstring asks for.
+ESCALATION_OCR_MODELS: dict[str, str] = {
+    "openai": OCR_MODELS["openai"],
+    "anthropic": "claude-sonnet-5",
+    "gemini": OCR_MODELS["gemini"],
+}

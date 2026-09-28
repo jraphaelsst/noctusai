@@ -62,6 +62,12 @@ from noctusai_lib.integrations.documents.legibilidade import (
     avaliar_legibilidade,
 )
 from noctusai_lib.integrations.documents.misfile import classificar_tipo_provavel
+from noctusai_lib.integrations.documents.providers import (
+    DEFAULT_DOCUMENT_PROVIDER,
+    ESCALATION_OCR_MODELS,
+    OCR_MODELS,
+)
+import noctusai_lib.integrations.documents.releitura as releitura
 from noctusai_lib.integrations.documents.transcription import (
     identity_document_render_dpi_policy,
 )
@@ -170,6 +176,8 @@ class LadderIdentityExtractor:
         max_pages: int | None = -1,
         provider: Optional[str] = None,
         ladder: Optional[DocumentTextLadder] = None,
+        escalar_releitura: bool = False,
+        escalation_ladder: Optional[DocumentTextLadder] = None,
     ) -> None:
         # `ladder` is a DI seam for tests that must drive BOTH rungs (the
         # text-layer-then-vision fallthrough) without a real PDF or model.
@@ -189,6 +197,40 @@ class LadderIdentityExtractor:
             max_pages=max_pages,
             provider=provider,
             render_dpi_policy=identity_document_render_dpi_policy(),
+        )
+        # Remembered so `_get_escalation_ladder` (built lazily, only when a
+        # read actually triggers `releitura.deve_escalar`) can construct a
+        # SECOND ladder on the same org/prompt/page-cap/vendor, differing
+        # only in which model reads the vision rung.
+        self._org_id = org_id
+        self._document_prompt = document_prompt
+        self._max_pages = max_pages
+        self._provider = provider
+        # 🔴 `False` HERE, `True` AT THE FACTORY — same Fake-by-default
+        # posture every seed IO module takes (`factory.py`'s own module
+        # docstring): a raw `LadderIdentityExtractor(...)` — every test in
+        # this package constructs one directly — must never pay for a
+        # surprise SECOND vision call it did not ask for. The owner
+        # decision ("on by default for the identity family") is a
+        # PRODUCTION policy, enforced at `make_identity_extractor`'s own
+        # `escalar_releitura=True` default, which explicitly forwards it
+        # here — see that factory's own docstring for the consume seam
+        # (and its per-org off switch).
+        self._escalar_releitura = escalar_releitura
+        # `escalation_ladder` mirrors `ladder` above — a DI seam for a test
+        # that must drive the SECOND (escalated) rung deterministically.
+        # Every real caller omits it; built lazily, pinned to
+        # `providers.ESCALATION_OCR_MODELS`, on first use.
+        self._escalation_ladder_override = escalation_ladder
+        self._escalation_ladder_built: Optional[DocumentTextLadder] = None
+        # `ESCALATION_OCR_MODELS` and `OCR_MODELS` share the SAME key set
+        # (every `documents.providers.DOCUMENT_PROVIDERS` vendor) — an
+        # unrecognised `provider` string falls back to the seed-canonical
+        # provider's escalation pin, the same safe-restricted-default
+        # posture `legibilidade._classe_documento` uses for an
+        # unclassifiable `tipo_documento`.
+        self._escalation_model = ESCALATION_OCR_MODELS.get(
+            provider or DEFAULT_DOCUMENT_PROVIDER, OCR_MODELS[DEFAULT_DOCUMENT_PROVIDER]
         )
 
     async def extract(
@@ -243,8 +285,69 @@ class LadderIdentityExtractor:
                     kind=kind, source=fonte_ocr, error=err_ocr[0], error_message=err_ocr[1]
                 )
             if texto_ocr.strip():
-                return self._ler(texto_ocr, fonte_ocr, kind, titular, tipo_documento)
+                fields = self._ler(texto_ocr, fonte_ocr, kind, titular, tipo_documento)
+
+        # 🔴 RE-READ ESCALATION (owner directive, 2026-09-28) — see
+        # `releitura.py`'s own module docstring for why this exists (the
+        # measured Haiku run-to-run variance a hallucination gate cannot
+        # catch) and `_escalar`'s docstring for the mechanism. Runs AFTER
+        # the text-layer→vision fallthrough above so it always judges the
+        # BEST first read this extractor already produced, never the
+        # empty-text-layer attempt.
+        if self._escalar_releitura and releitura.deve_escalar(fields, tipo_documento):
+            fields = await self._escalar(
+                fields, content, mimetype, filename, titular, tipo_documento
+            )
         return fields
+
+    async def _escalar(
+        self,
+        original: IdentityFields,
+        content: bytes,
+        mimetype: Optional[str],
+        filename: Optional[str],
+        titular: Optional[TitularEsperado],
+        tipo_documento: Optional[str],
+    ) -> IdentityFields:
+        """One more transcription of the SAME pages with a stronger model
+        (`providers.ESCALATION_OCR_MODELS`), merged via `releitura.mesclar`.
+
+        `pular_camada_texto=True`: `releitura.deve_escalar` already gated on
+        `original.source is TextSource.OCR`, so there is no text layer worth
+        retrying — going straight to vision reuses the SAME rung (and the
+        SAME page-by-page transcriber) the first read already paid for, per
+        page, never batched.
+        """
+        ladder = self._get_escalation_ladder()
+        texto, fonte, erro = await ladder.to_text(
+            content, mimetype, filename, pular_camada_texto=True
+        )
+        if erro is not None:
+            logger.warning(
+                "releitura: escalation transcription failed for org=%s: %s",
+                self._org_id, erro,
+            )
+            return original
+        if not texto.strip():
+            return original
+        escalada = self._ler(texto, fonte, original.kind, titular, tipo_documento)
+        return releitura.mesclar(
+            original, escalada, escalation_model=self._escalation_model
+        )
+
+    def _get_escalation_ladder(self) -> DocumentTextLadder:
+        if self._escalation_ladder_override is not None:
+            return self._escalation_ladder_override
+        if self._escalation_ladder_built is None:
+            self._escalation_ladder_built = DocumentTextLadder(
+                org_id=self._org_id,
+                document_prompt=self._document_prompt or _IDENTITY_DOCUMENT_PROMPT,
+                max_pages=self._max_pages,
+                provider=self._provider,
+                render_dpi_policy=identity_document_render_dpi_policy(),
+                ocr_model=self._escalation_model,
+            )
+        return self._escalation_ladder_built
 
     def _ler(
         self,

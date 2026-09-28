@@ -103,10 +103,13 @@ class TestTheSwitchIsWiredEndToEnd:
         is non-empty, so an API key that grew options would silently lose
         its write-only input.
 
-        Three switches now, all deliberate and all non-secret: the vision
+        Four switches now, all deliberate and all non-secret: the vision
         one (which vendor transcribes scanned pages), the chat one (which
-        vendor writes the certidão analysis) and the embedding one (which
-        vendor generates the permutas semantic vectors).
+        vendor writes the certidão analysis), the embedding one (which
+        vendor generates the permutas semantic vectors), and the re-read
+        escalation one (whether a triggering identity read gets a second,
+        stronger-model transcription before it is recorded — see
+        `documents.releitura.deve_escalar`).
 
         They are separate specs because the capabilities do not line up
         across vendors OR across documents. The Anthropic API has no
@@ -114,13 +117,16 @@ class TestTheSwitchIsWiredEndToEnd:
         that cannot work. And a digitally-issued certidão has a text layer,
         so it is analysed without any page being transcribed — routing its
         analysis by the transcription switch would let a control that did no
-        work decide where the work went.
+        work decide where the work went. The escalation switch is WHETHER, not
+        WHO — an on/off choice, not a vendor pick — so folding it into any of
+        the other three would offer an option ("off") none of them mean.
         """
         com_opcoes = sorted(s.name for s in API_KEY_SPECS if s.options)
         assert com_opcoes == [
             "llm_chat_provider",
             "llm_embedding_provider",
             "llm_vision_provider",
+            "releitura_identidade_habilitada",
         ]
 
     def test_no_secret_key_is_ever_a_choice(self) -> None:

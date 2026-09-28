@@ -73,6 +73,7 @@ class DocumentTextLadder:
         resolver=None,
         max_pages: int | None = -1,
         provider: Optional[str] = None,
+        ocr_model: Optional[str] = None,
         render_dpi_policy: Optional[object] = None,
         document_transcriber=None,
     ) -> None:
@@ -87,6 +88,16 @@ class DocumentTextLadder:
         # default (the resolver's own provider/model) — a MANUAL selection,
         # forwarded verbatim, never a fallback. See `resolve_llm_provider`.
         self._provider = provider
+        # `None` (the default) leaves `provider`'s own `OCR_MODELS` pin in
+        # sole charge, unchanged, for every existing caller. A caller that
+        # sets this OVERRIDES the model regardless of provider — the seam
+        # `documents.real.LadderIdentityExtractor`'s re-read escalation uses
+        # to pin `documents.providers.ESCALATION_OCR_MODELS` on a SECOND
+        # ladder instance without also having to re-derive/override
+        # `provider` (the vendor stays whatever the org already chose; only
+        # the model tier changes). Forwarded to both vision paths below —
+        # see `_get_resolver`/`_get_document_transcriber`.
+        self._ocr_model = ocr_model
         # `None` (the default) leaves the resolver's own render DPI
         # unchanged for every caller that does not set this — see
         # `documents.transcription.RenderDpiPolicy`. Typed loosely
@@ -113,6 +124,7 @@ class DocumentTextLadder:
                 document_prompt=self._document_prompt,
                 max_pages=self._max_pages,
                 provider=self._provider,
+                ocr_model=self._ocr_model,
                 render_dpi_policy=self._render_dpi_policy,
             )
         return self._resolver
@@ -139,6 +151,7 @@ class DocumentTextLadder:
                 "real": True,
                 "org_id": self._org_id,
                 "provider": self._provider,
+                "ocr_model": self._ocr_model,
             }
             # The field extractor's OWN "RÓTULO: valor"-shaped prompt, when
             # it named one — the same override `RealMediaResolver.

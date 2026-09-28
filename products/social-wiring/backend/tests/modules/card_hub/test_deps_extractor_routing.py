@@ -17,6 +17,10 @@ def _fake_provider(org_id):
     return "openai"
 
 
+def _fake_releitura(org_id):
+    return True
+
+
 class TestUnaffectedTipos:
     """Every tipo whose `Fonte.extrator` is NOT one of the two new
     factory-shaped ones keeps building the identity extractor exactly as
@@ -29,7 +33,15 @@ class TestUnaffectedTipos:
         from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 
         extractor = deps._build_identity_extractor(
-            "org-1", tipo, resolve_provider=_fake_provider
+            "org-1", tipo,
+            resolve_provider=_fake_provider,
+            # Same reason `resolve_provider` is faked: the real
+            # `resolve_releitura_habilitada` default resolves through
+            # `resolve_api_key_detail` -> `build_api_key_store()` ->
+            # `get_admin_client()`, a REAL Supabase client — see
+            # `deps._build_identity_extractor`'s own docstring on
+            # `resolve_provider` for the identical reasoning.
+            resolve_releitura=_fake_releitura,
         )
         assert isinstance(extractor, LadderIdentityExtractor)
 

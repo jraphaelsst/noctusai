@@ -19,6 +19,7 @@ def make_identity_extractor(
     document_prompt: Optional[str] = None,
     max_pages: int | None = -1,
     provider: Optional[str] = None,
+    escalar_releitura: bool = True,
 ) -> IdentityExtractor:
     """Return an identity extractor.
 
@@ -44,6 +45,15 @@ def make_identity_extractor(
             this is a MANUAL selection, nothing here fails over to another
             vendor. See `noctusai_lib.integrations.llm.resolve_llm_provider`
             for the per-org switch a caller resolves this from.
+        escalar_releitura: Re-read a triggering document (`leitura_
+            comprometida`, or a core field missing for its declared type —
+            see `documents.releitura.deve_escalar`) with a stronger model
+            (`documents.providers.ESCALATION_OCR_MODELS`) before returning.
+            `True` (the default) — on by default for the identity family,
+            per owner decision. A caller resolving a per-org off switch
+            passes `False` through here; see
+            `social_wiring...api_keys_store.resolve_releitura_habilitada`
+            for that consume seam.
     """
     if not real:
         return FakeIdentityExtractor()
@@ -55,6 +65,7 @@ def make_identity_extractor(
         document_prompt=document_prompt,
         max_pages=max_pages,
         provider=provider,
+        escalar_releitura=escalar_releitura,
     )
 
 

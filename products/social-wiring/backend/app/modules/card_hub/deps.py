@@ -26,7 +26,7 @@ from noctusai_lib.integrations.storage import (
 )
 
 from app.dependencies import get_admin_client
-from app.services.api_keys_store import resolve_vision_provider
+from app.services.api_keys_store import resolve_releitura_habilitada, resolve_vision_provider
 
 _SCHEMA = "social_wiring"
 
@@ -127,6 +127,7 @@ def _build_identity_extractor(
     tipo_documento: Optional[str] = None,
     *,
     resolve_provider: Callable[[Optional[str]], str] = resolve_vision_provider,
+    resolve_releitura: Callable[[Optional[str]], bool] = resolve_releitura_habilitada,
 ) -> Any:
     """One org's extractor for ONE document type, with ITS manually-selected
     vision provider AND (for the identity family) the page cap ITS DOCUMENT
@@ -181,6 +182,14 @@ def _build_identity_extractor(
     internals. No real caller passes this override — every real caller
     keeps the default, so production resolution is untouched.
 
+    `resolve_releitura` is the same DI seam for the re-read escalation
+    switch (`api_keys_store.resolve_releitura_habilitada`) — an org that
+    never touched it gets escalation ON, mirroring `documents.factory.
+    make_identity_extractor`'s own default. Not forwarded on the
+    `_FACTORY_SHAPED_EXTRATORES` branch below: `serasa_crednet` /
+    `cartao_cnpj` and the financing factories are not `IdentityFields`
+    readers and take no `escalar_releitura` kwarg.
+
     🔴 `tipo_documento` CLOSES THE OTHER GAP THE SAME COMMIT FOUND.
     Both real callers of `extrair_identidade` (the upload route and the
     recovery sweep) pre-build the extractor through this factory BEFORE
@@ -216,6 +225,7 @@ def _build_identity_extractor(
         org_id=org_id,
         max_pages=paginas_maximas(str(tipo_documento or "")),
         provider=resolve_provider(org_id),
+        escalar_releitura=resolve_releitura(org_id),
     )
 
 

@@ -88,6 +88,11 @@ from noctusai_lib.integrations.documents.legibilidade import (
     LegibilidadeStatus,
     avaliar_legibilidade,
 )
+from noctusai_lib.integrations.documents.releitura import (
+    AVISO_RELEITURA,
+    deve_escalar,
+    mesclar as mesclar_releitura,
+)
 from noctusai_lib.integrations.documents.address import EnderecoLido, UFS, find_endereco
 from noctusai_lib.integrations.documents.conjuges import ConjugeLido, find_conjuges
 from noctusai_lib.integrations.documents.profession import find_profissao, find_profissoes
@@ -198,6 +203,7 @@ from noctusai_lib.integrations.documents.providers import (
     DEFAULT_DOCUMENT_PROVIDER,
     DOCUMENT_ANALYSIS_MODELS,
     DOCUMENT_PROVIDERS,
+    ESCALATION_OCR_MODELS,
     OCR_MODELS,
 )
 from noctusai_lib.integrations.documents.transcription import (
@@ -279,13 +285,17 @@ __all__ = [
     "cp1252_safe",
     "render_html_pdf",
     "AVISO_LEITURA_COMPROMETIDA",
+    "AVISO_RELEITURA",
     "ClasseDocumento",
     "LegibilidadeAvaliacao",
     "LegibilidadeStatus",
     "avaliar_legibilidade",
+    "deve_escalar",
+    "mesclar_releitura",
     "DEFAULT_DOCUMENT_PROVIDER",
     "DOCUMENT_ANALYSIS_MODELS",
     "DOCUMENT_PROVIDERS",
+    "ESCALATION_OCR_MODELS",
     "OCR_MODELS",
     "AtoKind",
     "BlocoAbertura",
