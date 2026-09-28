@@ -70,11 +70,25 @@ def create_limiter(
                 exc,
             )
 
+    # `client_ip_key`, not the bare `get_remote_address` slowapi default: in
+    # prod every product sits behind the Cloudflare tunnel, so the socket
+    # peer `get_remote_address` reads is the TUNNEL CONNECTOR — the same
+    # address for every visitor. Every `@limiter.limit(...)` decorator across
+    # the fleet that does not pass its own `key_func=` (the overwhelming
+    # majority — auth/OTP, AI, portal and webhook routes alike) inherits
+    # THIS Limiter's key_func, so that bug was live fleet-wide: one shared
+    # bucket per product, not one per visitor. A burst of legitimate
+    # concurrent users could exhaust e.g. a "10/minute" login limit for
+    # EVERYONE, or a single caller could starve it for everyone else.
+    # `client_ip_key` already falls back to `get_remote_address` when the
+    # `CF-Connecting-IP` header is absent (local dev / tests behind no
+    # tunnel), so this is a same-behavior-in-dev, correct-in-prod change —
+    # never a regression.
     if storage_uri:
         return Limiter(
-            key_func=get_remote_address,
+            key_func=client_ip_key,
             default_limits=default_limits,
             storage_uri=storage_uri,
         )
 
-    return Limiter(key_func=get_remote_address, default_limits=default_limits)
+    return Limiter(key_func=client_ip_key, default_limits=default_limits)

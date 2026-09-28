@@ -233,7 +233,7 @@ export interface ProductLayoutConfig {
 }
 
 const DEFAULT_ROLE_LABELS: Record<string, string> = {
-  owner: "Proprietario",
+  owner: "Proprietário",
   admin: "Administrador",
   manager: "Gerente",
   member: "Membro",

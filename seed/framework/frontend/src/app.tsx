@@ -6,7 +6,7 @@
  * (products like Therapy with admin/therapist/patient roles).
  */
 import { Suspense, type LazyExoticComponent } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
@@ -120,6 +120,54 @@ export interface ProductAppConfig {
   unwrappedRoutes?: ProductRoute[];
 }
 
+// ── Deep-link-preserving login redirect ──────────────────────────────────
+//
+// An unauthenticated visitor opening an internal URL (e.g. a bookmarked
+// "/clientes/123" or a link shared by a teammate) was bounced to Landing/
+// Login and, after signing in, always landed on "/" — the deep link was
+// silently discarded. Fixed HERE (the seed's own route guard), not per
+// product: every `createProductApp` consumer inherits the fix.
+//
+// `sessionStorage` (not a query param) carries the intended path across the
+// redirect — a query param would show up in the URL bar and could itself be
+// abused as an open-redirect vector; `sessionStorage` is invisible and never
+// leaves the browser. The value can ONLY ever be a same-origin relative path
+// because it is captured from `useLocation()`, which reflects the CURRENT
+// window location and can never contain a scheme or host — so there is no
+// open-redirect surface even before the defense-in-depth check in
+// `_consumeIntendedPath` below.
+const _INTENDED_PATH_KEY = "noctus:intended-path";
+
+function _rememberIntendedPath(pathname: string, search: string): void {
+  const full = pathname + search;
+  // Nothing to remember for the root itself, and never overwrite a real
+  // intended path with the login/landing page we are about to bounce to.
+  if (!full || full === "/") return;
+  try {
+    window.sessionStorage.setItem(_INTENDED_PATH_KEY, full);
+  } catch {
+    // Storage unavailable (private browsing / disabled) — the deep link is
+    // lost, but that must never block the redirect itself.
+  }
+}
+
+function _consumeIntendedPath(): string | null {
+  let stored: string | null = null;
+  try {
+    stored = window.sessionStorage.getItem(_INTENDED_PATH_KEY);
+    if (stored) window.sessionStorage.removeItem(_INTENDED_PATH_KEY);
+  } catch {
+    return null;
+  }
+  // Defense in depth: only ever follow a same-origin relative path, even
+  // though `_rememberIntendedPath` can never have stored anything else.
+  // `//evil.com` is browser-parsed as protocol-relative — reject it.
+  if (stored && stored.startsWith("/") && !stored.startsWith("//")) {
+    return stored;
+  }
+  return null;
+}
+
 export function createProductApp(config: ProductAppConfig) {
   const {
     routes,
@@ -210,12 +258,17 @@ export function createProductApp(config: ProductAppConfig) {
 
   function AppContent() {
     const { user, isInitialized } = useAuth();
+    const location = useLocation();
 
     if (!isInitialized) {
       return <PageSkeleton />;
     }
 
     if (!user) {
+      // Remember where the visitor was actually trying to go BEFORE bouncing
+      // them to Landing/login — otherwise a deep link (bookmark, shared URL)
+      // is silently discarded and they always land on "/" post-login.
+      _rememberIntendedPath(location.pathname, location.search);
       // When a Landing page is provided, serve it at "/" for unauthenticated
       // users and redirect any other protected path to "/" so the visitor
       // always lands on the public marketing page.
@@ -233,6 +286,19 @@ export function createProductApp(config: ProductAppConfig) {
         );
       }
       return <Navigate to={unauthRedirect} replace />;
+    }
+
+    // Authenticated, and we just landed on "/" — the universal post-login
+    // destination (every product's own Login page, and the seed's own
+    // SSOCallback, `navigate`/redirect to "/" on success; neither is seed
+    // route-guard code we can intercept there). Restore a remembered deep
+    // link BEFORE any routing below runs. Any OTHER current path means the
+    // visitor already navigated somewhere themselves — never override that.
+    if (location.pathname === "/" && !location.search) {
+      const intended = _consumeIntendedPath();
+      if (intended) {
+        return <Navigate to={intended} replace />;
+      }
     }
 
     // Determine redirect path
