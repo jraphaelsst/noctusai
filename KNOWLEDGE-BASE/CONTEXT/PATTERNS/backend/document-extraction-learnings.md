@@ -57,6 +57,15 @@ Extraction is its own process, measured separately from contract generation (own
 - **A stronger model is the lever for hard images.** Sonnet 5 read the hallucinated app screenshot
   correctly; comprovante addresses Haiku 4/9, Sonnet 6/9, union 7/9. Escalate selectively (on
   missing core field / low legibility), not by default.
+- **The re-read escalation, measured (shipped `releitura.py`).** Trigger = OCR source ∧
+  (`leitura_comprometida` ∨ the tipo's core fields unmet); 19/62 corpus docs escalated to Sonnet 5.
+  Party fields: nome right 23→27, CPF 22→27, RG 14→16 (wrong 7→5); 28 improvements, 0 regressions.
+  Merge rule that made it safe: **agree ⇒ +1 confidence step (cap média); disagree ⇒ withhold +
+  human review, never pick** — it turned a hallucinated CNH name into a blank instead of a wrong
+  value. A group field travels with its anchor *only when the reads disagree on it too*: an
+  issuer both reads agree on survives a divergent RG number.
+- **Escalation can't fix attribution.** Comprovante address scores didn't move: the bills are read
+  correctly but belong to non-parties — that gap is an owner rule + an Info PP source, not a model.
 - **Calibrate every gate on the real corpus before shipping.** The legibility gate's first version
   flagged 17/28 genuine ID cards (compound CNH labels, "DOC IDENTIDADE / ÓRG EMISSOR / UF"); the
   second flagged 8/9 comprovantes (a bill legitimately carries CNPJ/ICMS) and 7/13 certidões
@@ -122,3 +131,7 @@ Extraction is its own process, measured separately from contract generation (own
 - Anexos silently drops a file picked before a tipo is selected; "Adicionar vendedor" ignores a
   click before the button enables — both need feedback.
 - A finished read must be re-runnable from the UI (delete + re-upload destroys LGPD access history).
+- Imóvel "Remover" uses a native `window.confirm()` — it freezes the renderer for browser
+  automation (no CDP input until a human clicks) and can't be pre-accepted from page script. A
+  misfiled doc also needs a *reclassify* action, not only delete; the upload tipo select resets
+  after a failed upload, which is how an IPTU guia got filed as a matrícula.
