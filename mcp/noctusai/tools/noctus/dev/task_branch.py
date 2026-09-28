@@ -1866,9 +1866,17 @@ def task_branch(
                     mig_findings = []
                     if verbose:
                         logger.debug("task_branch.integrate: migration_check_fn raised: %s", exc)
+                # Scoped to the FILES this branch introduces, not merely their
+                # directory: a collision between two OTHER branches in a
+                # directory this branch also writes to is theirs to resolve
+                # (2026-09-28: igig 032 on two sibling branches blocked an
+                # integrate whose only igig file was 031). A finding without
+                # structured `names` (older checker) keeps the directory scope.
+                introduced_names = {p.rsplit("/", 1)[-1] for p in introduced_migrations}
                 relevant = [
                     f for f in mig_findings
                     if str(f.get("file", "")).rstrip("/") in introduced_migration_dirs
+                    and ("names" not in f or introduced_names & set(f["names"]))
                 ]
                 if relevant:
                     # ── RENUMBER, not block — the mechanism behind the wall ──

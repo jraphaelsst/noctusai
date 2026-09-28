@@ -11110,6 +11110,10 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
                             "Renumber all but the earliest-merged one."
                         ),
                         "severity": "high",
+                        # Structured claimants: callers scope by file, never
+                        # by directory (task_branch.integrate, 2026-09-28).
+                        "number": number,
+                        "names": sorted(names),
                     })
 
     # ── Leg B — same number claimed by multiple local branches ──
@@ -11137,6 +11141,8 @@ def check_migration_number_collision(repo_root: Path | None = None) -> list[dict
                     "merges SECOND must renumber the file and every reference to it."
                 ),
                 "severity": "warning",
+                "number": number,
+                "names": sorted(by_name),
             })
 
     return findings

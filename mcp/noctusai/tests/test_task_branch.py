@@ -1780,6 +1780,69 @@ def test_migration_collision_in_unrelated_directory_does_not_block():
     assert len(fake.pushes()) == 1
 
 
+def test_sibling_collision_in_same_directory_but_other_number_does_not_block():
+    """Two OTHER branches fighting over igig 032 must not block a branch whose
+    only igig migration is 031, even though both live in the same directory
+    (2026-09-28: blocked the SEC-2 integrate). Scope is the introduced FILES."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        diff_output=_migration_diff_output(
+            "products/igig/backend/migrations/031_customer_role_isolation.sql"
+        ),
+    )
+
+    def fake_check(abs_wt_path):
+        return [{
+            "product": "igig",
+            "file": "products/igig/backend/migrations/",
+            "issue": "migration number 032 is claimed by 2 DIFFERENT files …",
+            "severity": "warning",
+            "number": "032",
+            "names": ["032_igig_fatura_enviada_em.sql", "032_igig_pauta_slot_gerado.sql"],
+        }]
+
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        migration_check=fake_check,
+    )
+    assert res["status"] == "integrated", res
+    assert len(fake.pushes()) == 1
+
+
+def test_collision_naming_an_introduced_file_still_blocks():
+    """The narrowing never lets a real collision through: when the finding's
+    claimants include THIS branch's file, integrate still refuses to push."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+        diff_output=_migration_diff_output(
+            "products/igig/backend/migrations/031_customer_role_isolation.sql"
+        ),
+    )
+
+    def fake_check(abs_wt_path):
+        return [{
+            "product": "igig",
+            "file": "products/igig/backend/migrations/",
+            "issue": "migration number 031 is claimed by 2 files …",
+            "severity": "high",
+            "number": "031",
+            "names": ["031_customer_role_isolation.sql", "031_someone_else.sql"],
+        }]
+
+    res = T.task_branch(
+        action="integrate", slug="x", confirm=True, run=fake,
+        migration_check=fake_check,
+    )
+    assert res["status"] == "blocked", res
+    assert fake.pushes() == []
+
+
 def test_no_introduced_migrations_skips_the_check_entirely():
     """Zero migrations touched by this branch ⇒ the checker is never called
     (scoped, not a blanket repo-wide gate on every integrate)."""
