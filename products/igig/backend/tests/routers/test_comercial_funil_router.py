@@ -98,11 +98,11 @@ class TestPapelEtapa:
     @pytest.fixture
     def admin(self, api):
         from app.main import app
-        from app.pipelines import exigir_admin_da_org
+        from app.pipelines import exigir_admin_do_quadro
 
-        app.dependency_overrides[exigir_admin_da_org] = lambda: None
+        app.dependency_overrides[exigir_admin_do_quadro] = lambda: None
         yield api
-        app.dependency_overrides.pop(exigir_admin_da_org, None)
+        app.dependency_overrides.pop(exigir_admin_do_quadro, None)
 
     def test_requires_auth(self, api, etapas):
         resp = api.raw().patch(
