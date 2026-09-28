@@ -167,6 +167,37 @@ class TestFaturas:
         assert resp.status_code == 201
         assert resp.json()["valor_total"] == 5450.0  # 5000 + 3×150
 
+    def test_desconto_line_subtracts_from_the_total(self, api, cliente):
+        """finding #3, 2026-09 audit: every line used to ADD regardless of
+        `tipo`, so a "Desconto" line silently INCREASED the invoice."""
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        api.post(f"/api/financeiro/faturas/{fatura['id']}/itens", json={
+            "descricao": "Mensalidade", "valor_unit": 1000.0,
+        })
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/itens", json={
+            "descricao": "Desconto negociado", "tipo": "desconto", "valor_unit": 200.0,
+        })
+        assert resp.status_code == 201
+        assert resp.json()["valor_total"] == 800.0
+
+    def test_a_discount_that_would_go_negative_is_refused(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        api.post(f"/api/financeiro/faturas/{fatura['id']}/itens", json={
+            "descricao": "Mensalidade", "valor_unit": 100.0,
+        })
+        resp = api.post(f"/api/financeiro/faturas/{fatura['id']}/itens", json={
+            "descricao": "Desconto grande demais", "tipo": "desconto", "valor_unit": 200.0,
+        })
+        assert resp.status_code == 422
+        assert resp.json()["code"] == "total_negativo"
+        # The line must NOT have been persisted — the invoice's total is untouched.
+        assert api.get(f"/api/financeiro/faturas/{fatura['id']}/itens").json()[0]["descricao"] == "Mensalidade"
+        assert len(api.get(f"/api/financeiro/faturas/{fatura['id']}/itens").json()) == 1
+
     def test_a_paid_invoice_refuses_new_items(self, api, cliente):
         fatura = api.post("/api/financeiro/faturas", json={
             "cliente_id": cliente["id"], "competencia": "2026-08",

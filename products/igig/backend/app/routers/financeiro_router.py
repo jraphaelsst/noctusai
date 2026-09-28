@@ -32,7 +32,7 @@ from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFou
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import exigir_admin_da_org
-from app.repositories import Repositorios
+from app.repositories import Repositorios, valor_da_linha_fatura
 from app.schemas.financeiro import (
     DREOut,
     ExcedenteOut,
@@ -144,6 +144,11 @@ async def adicionar_item(
 
     A `paga`/`cancelada` invoice is closed: adding a line to it would change
     a number a client already paid (or that was voided), silently.
+
+    A `desconto` line SUBTRACTS from the total (finding #3, 2026-09 audit —
+    it used to add like every other line); a discount big enough to push the
+    total negative is refused (422) rather than persisted, since a negative
+    invoice has no real-world meaning here.
     """
     org_id = _org(auth)
     try:
@@ -158,7 +163,18 @@ async def adicionar_item(
                 "code": "fatura_fechada",
             },
         )
-    repos.fatura_item.criar(org_id, {"fatura_id": fatura_id, **payload.model_dump()})
+    itens_atuais = repos.fatura_item.da_fatura(org_id, fatura_id)
+    novo_item = payload.model_dump()
+    prospectivo = sum(valor_da_linha_fatura(i) for i in itens_atuais) + valor_da_linha_fatura(novo_item)
+    if round(prospectivo, 2) < 0:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "detail": "Este desconto deixaria o total da fatura negativo.",
+                "code": "total_negativo",
+            },
+        )
+    repos.fatura_item.criar(org_id, {"fatura_id": fatura_id, **novo_item})
     itens = repos.fatura_item.da_fatura(org_id, fatura_id)
     return FaturaOut(**repos.fatura.recalcular_total(org_id, fatura_id, itens))
 

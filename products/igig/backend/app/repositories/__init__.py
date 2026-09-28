@@ -18,9 +18,25 @@ from noctusai_lib.security.encrypted_tokens import decrypt, encrypt
 
 from .base import BaseRepository, RecordNotFound
 
+def valor_da_linha_fatura(item: Record) -> float:
+    """One invoice line's signed contribution to `fatura.valor_total`.
+
+    Every `tipo` ADDS except `desconto`, which SUBTRACTS — the field itself
+    (`valor_unit`, `ge=0`) never carries a negative number, so the sign lives
+    here, not on the input (finding #3, 2026-09 audit: `recalcular_total`
+    used to sum every line the same way, so a "Desconto" line INCREASED the
+    invoice). Shared between `FaturaRepository.recalcular_total` and the
+    router's pre-flight "would this go negative" check so the two can never
+    compute a different number for the same lines.
+    """
+    valor = int(item.get("quantidade") or 0) * float(item.get("valor_unit") or 0)
+    return -valor if item.get("tipo") == "desconto" else valor
+
+
 __all__ = [
     "BaseRepository",
     "RecordNotFound",
+    "valor_da_linha_fatura",
     "ClienteRepository",
     "MarcaRepository",
     "ContratoRepository",
@@ -653,11 +669,11 @@ class FaturaRepository(BaseRepository):
 
         The total is DERIVED, never set by a caller: an invoice whose header
         disagrees with its own lines is the kind of error a client notices
-        before you do.
+        before you do. A `desconto` line SUBTRACTS (finding #3, 2026-09
+        audit: every line used to add regardless of `tipo`, so "Desconto"
+        silently INCREASED the total) — see :func:`valor_da_linha_fatura`.
         """
-        total = sum(
-            int(i.get("quantidade") or 0) * float(i.get("valor_unit") or 0) for i in itens
-        )
+        total = sum(valor_da_linha_fatura(i) for i in itens)
         return self.atualizar(org_id, fatura_id, {"valor_total": round(total, 2)})
 
 
