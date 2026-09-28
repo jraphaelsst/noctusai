@@ -38,6 +38,7 @@ __all__ = [
     "proxima_competencia",
     "competencia_anterior",
     "limites_da_competencia",
+    "alertas_de_margem",
     "cliente_bloqueado_no_portal",
     "atualizar_inadimplencia",
 ]
@@ -129,6 +130,26 @@ class LinhaDRE:
     def margem_percentual(self) -> float:
         """Margin over revenue. 0 when there is no revenue — NOT a division error."""
         return round((self.margem / self.receita) * 100, 1) if self.receita else 0.0
+
+
+def alertas_de_margem(alertas_de_custo: list[str]) -> list[str]:
+    """Reword a BI "custo real" alert as its margin mirror image.
+
+    Un-costed hours understate cost, which means they OVERSTATE any margin
+    computed from that cost — the same fact, read from the other side. Used
+    by both `FinanceiroService.dre` and `relatorios._relatorio_financeiro` so
+    the two surfaces say it identically instead of drifting (finding #15,
+    2026-09 audit: the relatório used to drop this warning entirely).
+    """
+    return [
+        # The article moves with the noun: "O custo real está SUBESTIMADO" →
+        # "A margem está SUPERESTIMADA". Replacing only the noun phrase left
+        # "o margem", which reads as a typo in a warning meant to be taken
+        # seriously.
+        a.replace("o custo real está SUBESTIMADO", "a margem está SUPERESTIMADA")
+         .replace("custo real está SUBESTIMADO", "margem está SUPERESTIMADA")
+        for a in alertas_de_custo
+    ]
 
 
 @dataclass(slots=True)
@@ -243,17 +264,7 @@ class FinanceiroService:
             if alvo is None:
                 continue
             alvo.custo = eficiencia.custo_reais
-            # Un-costed hours mean the margin is OVERSTATED here — the mirror
-            # image of the BI screen's warning, and worth saying in those terms.
-            alvo.alertas = [
-                # The article moves with the noun: "O custo real está
-                # SUBESTIMADO" → "A margem está SUPERESTIMADA". Replacing only
-                # the noun phrase left "o margem", which reads as a typo in a
-                # warning whose whole job is to be taken seriously.
-                a.replace("o custo real está SUBESTIMADO", "a margem está SUPERESTIMADA")
-                 .replace("custo real está SUBESTIMADO", "margem está SUPERESTIMADA")
-                for a in eficiencia.alertas
-            ]
+            alvo.alertas = alertas_de_margem(eficiencia.alertas)
 
         for alvo in linhas.values():
             alvo.receita = round(alvo.receita, 2)
