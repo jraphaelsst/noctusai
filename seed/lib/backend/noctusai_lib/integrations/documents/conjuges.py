@@ -50,7 +50,7 @@ from noctusai_lib.integrations.documents.cpf import _CPF_RE, format_cpf, is_vali
 from noctusai_lib.integrations.documents.gender import FEMININO, MASCULINO
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
-from noctusai_lib.integrations.documents.name import find_name_conflitos
+from noctusai_lib.integrations.documents.name import find_name_conflitos, looks_like_a_name
 from noctusai_lib.integrations.documents.profession import find_profissao
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 
@@ -68,6 +68,15 @@ class ConjugeLido:
     """One spouse's per-person facts, each with its own confidence string."""
 
     nome: str
+    #: The nubente's OWN pre-marriage/maiden name, when a structured
+    #: "Primeiro/Segundo Cônjuge" block prints one AND it differs from
+    #: `nome` — see `_ler_bloco_estruturado`. `nome` itself always holds the
+    #: document's CURRENT/post-marriage form when the certidão states one
+    #: ("Nome que o [...] cônjuge passou a utilizar"): that is the name a
+    #: contract signs against, so it is the primary field; the maiden name
+    #: rides here as secondary, never the other way round (P1/883,
+    #: 2026-09-28).
+    nome_anterior: Optional[str] = None
     cpf: Optional[str] = None
     cpf_confianca: str = "nenhuma"
     data_nascimento: Optional[date] = None
@@ -160,11 +169,233 @@ def _dados_tabulares(
     return dados
 
 
+# ─── The "Primeiro/Segundo Cônjuge" structured-block layout (P1/883,
+# 2026-09-28) ────────────────────────────────────────────────────────────
+#
+# A national CNJ-standardised certidão names neither a `NOMES` table nor a
+# narrative "NOME, nascido ..." clause. Instead each nubente owns a literal
+# "Primeiro Cônjuge:" / "Segundo Cônjuge:" block (also "1º"/"2º Cônjuge" —
+# the ordinal-indicator glyph decomposes to a bare "o" under
+# `text.strip_accents_upper`'s own NFKD pass, same as every other accent
+# this package strips), holding that spouse's OWN nome / data de
+# nascimento / nacionalidade, and — separately — a
+# "Nome que o [primeiro|segundo] cônjuge passou a utilizar" line stating
+# their CURRENT (post-marriage) name. This is recognised as an INDEPENDENT
+# two-holder signal, never routed through `find_name_conflitos`: that
+# function's own `NOMES ATUAL DOS CONJUGES` multi-holder header (when the
+# document ALSO carries one, printed separately near the top, purely as an
+# index) prints the spouses' CURRENT names, which can legitimately differ
+# from this layout's own per-block name — collapsing both into ONE
+# candidate pool would report 3 distinct holders instead of 2 whenever both
+# signals are present on the same document.
+
+_CONJUGE_BLOCO_RE = re.compile(r"\b(PRIMEIRO|SEGUNDO|1O?|2O?)\s+CONJUGE\b\s*[:\-]?\s*")
+_NOME_ATUAL_CONJUGE_RE = re.compile(
+    r"\bNOME\s+QUE\s+O\s+(PRIMEIRO|SEGUNDO|1O?|2O?)\s+CONJUGE\s+PASSOU\s+A\s+UTILIZAR\b\s*[:\-]?\s*"
+)
+#: Rows that close a nubente's own block — the couple's shared facts start
+#: here. Broader than `_ROTULOS_DO_CASAL` above: this layout's own wording
+#: is "Data DA CELEBRAÇÃO do casamento", not the tabular layout's bare
+#: "Data DO casamento" — a distinct constant rather than widening the
+#: tabular one, so the two readers stay independently correct.
+_FIM_BLOCO_ESTRUTURADO_RE = re.compile(
+    r"(?m)^[ \t]*(?:DATA\s+D[AO]\s+(?:CELEBRACAO\s+D[AO]\s+)?CASAMENTO|"
+    r"REGIME\s+DE\s+BENS|AVERBAC|ANOTAC|OBSERVAC)"
+)
+_PRIMEIRO_MARCAS = frozenset({"PRIMEIRO", "1", "1O"})
+
+#: 🔴 THE BUG THIS CLOSES — real, measured (P1/883, 2026-09-28): the
+#: "Nome atual dos cônjuges" header interleaves each current name with a
+#: "Número do CPF" row — but a cartório's own matrícula-number row
+#: ("Matrícula: 123.456.789-10") sits right after it, is CPF-shaped by
+#: coincidence, and can pass the check-digit gate too. Unguarded, the
+#: general name-to-name CPF window below would credit it to whichever
+#: spouse's occurrence happens to be nearest — a wrong, unrelated number
+#: written onto a person's record. A CPF-shaped value is never ours when a
+#: "Matrícula" label sits immediately before it, full stop — not
+#: demoted, rejected, the same posture `labels.py` takes for a
+#: value-type decoy.
+_MATRICULA_LABEL_RE = re.compile(r"\bMATRICULA\b")
+_MATRICULA_JANELA = 40
+
+
+def _e_valor_de_matricula(norm: str, pos: int) -> bool:
+    """Is the CPF-shaped match at `pos` actually a Matrícula number
+    mislabelled — never a real CPF?"""
+    janela = norm[max(0, pos - _MATRICULA_JANELA) : pos]
+    return _MATRICULA_LABEL_RE.search(janela) is not None
+
+
+def _ordinal(rotulo: str) -> int:
+    """0 for the first spouse's own marker, 1 for the second's."""
+    return 0 if rotulo in _PRIMEIRO_MARCAS else 1
+
+
+def _extrai_valor_apos(norm: str, fim: int) -> Optional[str]:
+    """The name-shaped value right after a label: on the SAME line, or —
+    when that line carries none of its own — the very next line. Mirrors
+    `name._candidatos`'s own same-line/next-line idiom; kept local rather
+    than imported, since this module already defines its own label
+    readers (`_ROTULOS_TABULARES` et al.) independently of `name.py`."""
+    quebra = norm.find("\n", fim)
+    fim_linha = quebra if quebra >= 0 else len(norm)
+    bruto = norm[fim:fim_linha].strip(" :\t-–—.|*")
+    if bruto:
+        return bruto if looks_like_a_name(bruto) else None
+    if quebra < 0:
+        return None
+    prox_quebra = norm.find("\n", quebra + 1)
+    fim_prox = prox_quebra if prox_quebra >= 0 else len(norm)
+    proximo = norm[quebra + 1 : fim_prox].strip(" :\t-–—.|*")
+    return proximo if proximo and looks_like_a_name(proximo) else None
+
+
+def _cpfs_por_adjacencia(
+    norm: str, nomes: tuple[str, str], cpfs: list[tuple[int, str]]
+) -> tuple[Optional[str], Optional[str]]:
+    """The CPF printed adjacent to each of two co-equal names — same
+    windowing rule `find_conjuges`'s own narrative/tabular branch already
+    uses (a name's FIRST occurrence to the other's, or a fixed
+    `_CPF_JANELA` past it), factored out so the structured-block reader
+    below can reuse it against a DIFFERENT pair of name strings (this
+    layout's own printed names, not `find_name_conflitos`'s)."""
+    ocorrencias = [list(_padrao_nome(n).finditer(norm)) for n in nomes]
+    if not ocorrencias[0] or not ocorrencias[1]:
+        return (None, None)
+    usados: set[int] = set()
+    resultado: list[Optional[str]] = []
+    for i in range(2):
+        outro = ocorrencias[1 - i]
+        inicio = ocorrencias[i][0].end()
+        limite = outro[0].start() if i == 0 else inicio + _CPF_JANELA
+        if limite <= inicio:
+            limite = inicio + _CPF_JANELA
+        cpf = None
+        for pos, valor in cpfs:
+            if inicio <= pos < limite and pos not in usados and valor:
+                cpf = valor
+                usados.add(pos)
+                break
+        resultado.append(cpf)
+    return (resultado[0], resultado[1])
+
+
+def _ler_bloco_estruturado(text: str) -> tuple[ConjugeLido, ...]:
+    """Both spouses of a "Primeiro/Segundo Cônjuge" structured-block
+    certidão — see the section header above. `()` unless BOTH block
+    openers are present, each with exactly one name-shaped value."""
+    norm, origem = normalized_with_offsets(text)
+
+    # 🔴 "Nome QUE O primeiro cônjuge passou a utilizar" contains the exact
+    # substring "PRIMEIRO CONJUGE" that `_CONJUGE_BLOCO_RE` also matches —
+    # a real, measured false-positive (P1/883, 2026-09-28): unguarded, the
+    # block-opener scan below saw it as a SECOND "Primeiro Cônjuge" block
+    # and rejected the whole document as malformed. Spans of the
+    # "nome atual" label are computed first so a block-opener match landing
+    # inside one is recognised as part of THAT phrase, never a fresh block.
+    nome_atual_spans = [m.span() for m in _NOME_ATUAL_CONJUGE_RE.finditer(norm)]
+
+    def _dentro_de_nome_atual(m: "re.Match[str]") -> bool:
+        return any(a <= m.start() < b for a, b in nome_atual_spans)
+
+    blocos: dict[int, "re.Match[str]"] = {}
+    for m in _CONJUGE_BLOCO_RE.finditer(norm):
+        if _dentro_de_nome_atual(m):
+            continue
+        idx = _ordinal(m.group(1))
+        if idx in blocos:
+            return ()  # more than one of the same ordinal — malformed, never guess
+        blocos[idx] = m
+    if len(blocos) != 2:
+        return ()
+
+    nomes: dict[int, str] = {}
+    for idx, m in blocos.items():
+        valor = _extrai_valor_apos(norm, m.end())
+        if valor is None:
+            return ()
+        nomes[idx] = valor
+
+    inicio_bloco = {0: blocos[0].end(), 1: blocos[1].end()}
+    fim_bloco = {
+        0: blocos[1].start(),
+        1: next(
+            (
+                m.start()
+                for m in _FIM_BLOCO_ESTRUTURADO_RE.finditer(norm, blocos[1].end())
+            ),
+            min(len(norm), blocos[1].end() + _SEGMENTO_MAX),
+        ),
+    }
+
+    nomes_atuais: dict[int, str] = {}
+    for m in _NOME_ATUAL_CONJUGE_RE.finditer(norm):
+        idx = _ordinal(m.group(1))
+        valor = _extrai_valor_apos(norm, m.end())
+        if valor is not None:
+            nomes_atuais[idx] = valor
+
+    cpfs = [
+        (m.start(), format_cpf(m.group(1)))
+        for m in _CPF_RE.finditer(norm)
+        if is_valid(m.group(1)) and not _e_valor_de_matricula(norm, m.start())
+    ]
+    cpf0, cpf1 = _cpfs_por_adjacencia(norm, (nomes[0], nomes[1]), cpfs)
+    cpfs_por_indice = {0: cpf0, 1: cpf1}
+
+    out: list[ConjugeLido] = []
+    for idx in (0, 1):
+        a, fim = inicio_bloco[idx], fim_bloco[idx]
+        seg_orig = text[origem[a] : origem[fim - 1] + 1] if fim > a else ""
+        seg_norm = norm[a:fim] if fim > a else ""
+
+        d, d_conf, _ = find_birthdate(seg_orig) if seg_orig else (None, "nenhuma", None)
+        nac, nac_conf, _ = (
+            find_nacionalidade(seg_orig) if seg_orig else (None, "nenhuma", None)
+        )
+        prof, prof_conf, _ = (
+            find_profissao(seg_orig) if seg_orig else (None, "nenhuma", None)
+        )
+        gen, gen_conf = _genero(seg_norm)
+
+        cpf = cpfs_por_indice[idx]
+        nome_bloco = nomes[idx]
+        nome_atual = nomes_atuais.get(idx)
+        # The CURRENT (post-marriage) name is what a contract signs against
+        # — see `ConjugeLido.nome_anterior`'s own comment — so it is
+        # preferred whenever the certidão states one and it actually
+        # differs from the block's own printed name.
+        nome_final = nome_atual if nome_atual else nome_bloco
+        nome_anterior = nome_bloco if nome_atual and nome_atual != nome_bloco else None
+
+        out.append(
+            ConjugeLido(
+                nome=nome_final,
+                nome_anterior=nome_anterior,
+                cpf=cpf,
+                cpf_confianca="alta" if cpf else "nenhuma",
+                data_nascimento=d,
+                data_nascimento_confianca=d_conf if d else "nenhuma",
+                nacionalidade=nac,
+                nacionalidade_confianca=nac_conf if nac else "nenhuma",
+                profissao=prof,
+                profissao_confianca=prof_conf if prof else "nenhuma",
+                genero=gen,
+                genero_confianca=gen_conf,
+            )
+        )
+    return tuple(out)
+
+
 def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
     """Both spouses of a certidão de casamento, in document order.
 
     `()` unless the document names exactly two equally-prominent holders.
     """
+    bloco = _ler_bloco_estruturado(text or "")
+    if bloco:
+        return bloco
+
     candidatos = find_name_conflitos(text or "")
     if not candidatos or len(candidatos) != 2:
         return ()
@@ -181,7 +412,7 @@ def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
     cpfs = [
         (m.start(), format_cpf(m.group(1)))
         for m in _CPF_RE.finditer(norm)
-        if is_valid(m.group(1))
+        if is_valid(m.group(1)) and not _e_valor_de_matricula(norm, m.start())
     ]
     usados: set[int] = set()
 

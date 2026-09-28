@@ -144,6 +144,35 @@ _BLOCO_LABELS = (
     "RESPONSAVEL",
 )
 
+#: 🔴 THE BUG THIS CLOSES — real, measured (P1/883, 2026-09-28): a national
+#: CNJ-standardised certidão de casamento prints each nubente's own
+#: "Primeiro Cônjuge:" / "Segundo Cônjuge:" block (also "1º"/"2º" — the
+#: ordinal-indicator glyph decomposes to a bare "O" under this module's own
+#: `normalize()`, same NFKD pass every accent here goes through), and THAT
+#: block routinely carries an `ESTADO CIVIL` row of its own — the nubente's
+#: status BEFORE this marriage ("Solteira"), never the document's own
+#: verdict. `_BLOCO_LABELS`' bare `CONJUGE` entry already names this as a
+#: block opener, but its window (`_LABEL_WINDOW`, 48 chars — built for a
+#: single SAME-LINE field, not a multi-line per-spouse block spanning
+#: several labelled rows) never reaches back far enough to see it: a real
+#: nubente block puts `ESTADO CIVIL` several ROWS below the opener, past
+#: nome/DN/nacionalidade — comfortably outside 48 chars. Unguarded, that
+#: labelled-but-wrong reading used to WIN outright (`achado.rotulo` set,
+#: not demoted), overriding the correct `regime_bens`-inferred "casado"
+#: below. This is a SEPARATE, wider-reaching scan (bounded by block
+#: boundaries, not a fixed character count) — see
+#: `_dentro_de_bloco_de_conjuge_estruturado`.
+_CONJUGE_ESTRUTURADO_INICIO_RE = re.compile(
+    r"\b(?:PRIMEIRO|SEGUNDO|1O?|2O?)\s+CONJUGE\b"
+)
+#: Rows that close a nubente's own block — the couple's shared facts start
+#: here, so a label found AT OR AFTER one of these no longer sits inside
+#: either spouse's per-person block.
+_CONJUGE_ESTRUTURADO_FIM_RE = re.compile(
+    r"\bDATA\s+D[AO]\s+(?:CELEBRACAO\s+D[AO]\s+)?CASAMENTO\b|"
+    r"\bREGIME\s+DE\s+BENS\b|\bAVERBA\w*\b|\bANOTAC\w*\b|\bOBSERVAC\w*\b"
+)
+
 #: Whole word/phrase -> canonical token. Requires an `ESTADO CIVIL` label —
 #: see the module docstring's "never guess" note.
 _ESTADO_CIVIL_PALAVRAS: dict[str, str] = {
@@ -238,6 +267,25 @@ def _label_before(haystack: str, at: int) -> Achado:
         blocos=_BLOCO_LABELS,
         window=_LABEL_WINDOW,
     )
+
+
+def _dentro_de_bloco_de_conjuge_estruturado(norm: str, at: int) -> bool:
+    """Is `norm[at]` sitting inside a nubente's own "Primeiro/Segundo
+    Cônjuge" block — never the document's own couple-level verdict?
+
+    Unlike `_label_before`'s fixed `_LABEL_WINDOW`, built for a single
+    same-line field, this scans back to the NEAREST boundary of either
+    kind: the closest block opener before `at`, and whichever couple-level
+    closing row (if any) sits between that opener and `at`. A closing row
+    in between means the block already ended — `at` is back in the
+    document's own couple-level territory, not the nubente's.
+    """
+    ultimo_inicio = None
+    for m in _CONJUGE_ESTRUTURADO_INICIO_RE.finditer(norm, 0, at):
+        ultimo_inicio = m
+    if ultimo_inicio is None:
+        return False
+    return _CONJUGE_ESTRUTURADO_FIM_RE.search(norm, ultimo_inicio.end(), at) is None
 
 
 def _averbacao_start(norm: str) -> Optional[int]:
@@ -433,6 +481,11 @@ def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
 
     rotulados: list[tuple[str, str]] = []
     for m in _ESTADO_CIVIL_VALOR_RE.finditer(norm):
+        if _dentro_de_bloco_de_conjuge_estruturado(norm, m.start()):
+            # A nubente's own "Primeiro/Segundo Cônjuge" block states THEIR
+            # status BEFORE this marriage — never the document's own verdict.
+            # See `_dentro_de_bloco_de_conjuge_estruturado`'s docstring.
+            continue
         valor = _ESTADO_CIVIL_PALAVRAS[m.group(1)]
         achado = _label_before(norm, m.start())
         if achado.rejeitado:

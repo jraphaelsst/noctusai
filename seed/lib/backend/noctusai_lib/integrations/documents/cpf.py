@@ -76,11 +76,19 @@ _BLOCO_LABELS = (
 #: if one of these is nearest, the value is not a CPF. A CNPJ is fourteen
 #: digits so it cannot be mistaken by length either — it is listed so a future
 #: looser numeric pattern cannot reintroduce the confusion.
+#:
+#: 🔴 `MATRICULA` joined 2026-09-28 (P1/883): a cartório's own registry
+#: matrícula number is CPF-SHAPED by coincidence often enough that OCR
+#: (or an honest 11-digit run) makes it indistinguishable from a real CPF
+#: on shape alone — and it can even pass the check-digit gate below, the
+#: same way a real CPF does. A `find_cpf`/`find_cpf_conflitos` caller has
+#: no other signal that would catch this; only the label does.
 _VALOR_LABELS = (
     "CNPJ",
     "PIS",
     "PASEP",
     "INSCRICAO ESTADUAL",
+    "MATRICULA",
 )
 
 #: `412.954.238-98` or `41295423898`. The lookarounds are load-bearing: without
