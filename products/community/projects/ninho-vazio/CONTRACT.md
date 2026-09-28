@@ -85,6 +85,7 @@ applied.
 | sweep: `carencia` and `carencia_ate` ≤ now | `expirada`, `expirada_em` = now; cancel at Asaas (failure → `gateway_cancelamento_pendente = true`, retried next sweep) | `ativo` on the **free plan** | evento `assinatura` |
 | member/staff cancels | `cancelada`, `cancelada_em`, `cancelamento_solicitado_por`, `cancelamento_motivo`; cancel at Asaas first (existing order) | keeps plan until `pago_ate` | evento `assinatura` |
 | sweep: `cancelada` and `pago_ate` ≤ now and member still on that plan | unchanged | `ativo` on the free plan | evento `plano` |
+| **replaced by a plan change** — a subscription's FIRST charge is paid (`iniciada` → `ativa`) | every OTHER live (`iniciada`/`ativa`/`inadimplente`/`carencia`) subscription of the same member: cancel at Asaas FIRST (failure → `gateway_cancelamento_pendente = true`, retried by the sweep), then `cancelada`, `cancelada_em`, `cancelamento_solicitado_por='sistema'`, `cancelamento_motivo='Substituída por troca de plano'` — seed transition check, illegal move logged and skipped | `plano_id` = the new sub's plan (row 1) | evento `assinatura` per replaced row (`dados.substituida_por`, `gateway_cancelamento_pendente`) |
 
 Grace is `configuracoes_cobranca.dias_carencia` (default **5**, row created on
 first read). `automacoes_ativas = false` → the sweep reports `skipped` and writes
@@ -92,6 +93,12 @@ nothing. The sweep runs hourly via the seed scheduler
 (`noctusai_lib.api.scheduler`, wired through `create_product_app(lifespan_startup=…)`)
 only when `NOCTUS_SCHEDULERS_ENABLED` is set (same switch as Core), and is also
 callable on demand by an admin.
+
+The replacement fires only on a NEW subscription's first payment: a renewal
+(or a grace recovery) of the current plan never cancels a plan change the
+member has just opened. It runs before the new row is written `ativa`, so an
+exception that makes the inbox release the event re-runs it; a replay finds
+nothing live left to cancel.
 
 Auto-renewal is Asaas's recurring subscription: each cycle Asaas emits a new
 charge and its webhook moves the row as above. Zero-price plans never touch a
@@ -170,8 +177,35 @@ Cancels the member's current paid subscription per the lifecycle table
 404 "Você não tem assinatura ativa." · 502 "Não foi possível cancelar no
 gateway. Tente novamente." (local row untouched).
 
-Upgrades/new subscriptions from the portal reuse the existing public
-`POST /api/checkout` (the FE pre-fills name/email); `charge_paid` links it by email.
+**POST `/api/portal/assinatura`** — membro. Troca de plano (added 2026-09-28
+after integration: the member-facing upgrade could not go through the public
+checkout — a self-registered member is `ativo`, and amendment A2 answers any
+`ativo` e-mail with `verifique_seu_email` and no gateway call). Body (extra
+fields rejected — no e-mail, no membro id):
+```json
+{"plano_id": "uuid", "metodo": "pix|boleto", "cpf_cnpj": "str (11 or 14 digits once punctuation is stripped)"}
+```
+Always binds to the CALLER's own `membros` row (`get_membro_context`). Same
+gateway path as `POST /api/checkout` (one shared function in
+`checkout_service`, no copy): active paid plan + gateway ref, the A10 org/
+e-mail caps, A10 Asaas reuse, `assinaturas` `iniciada` + the first
+`pagamentos` row. `cpf_cnpj` goes to the gateway only (never stored/logged —
+P1). No Turnstile, no A2 (the caller is authenticated; there is no oracle).
+201, the `POST /api/checkout` shape:
+`{"checkout_url","assinatura_id","membro_id","pix_qr","status"}` — `status`
+null, or `checkout_em_andamento` when an open Pix/boleto was reused (then
+`checkout_url`/`pix_qr` are the stored charge's, `pix_qr.expira_em` null).
+Evento `assinatura` "Troca de plano iniciada" (`dados`: `assinatura_id`,
+`plano_id`, `plano_nome`, `plano_anterior_id`, `metodo`). The member's plan
+changes only when the first charge is paid, and that payment cancels the old
+subscription (§Billing lifecycle, "replaced by a plan change"). Errors: 404
+"Plano não encontrado." (unknown/inactive) · 409 "Este plano é gratuito." ·
+409 "Você já tem este plano." (a live `ativa`/`carencia`/`inadimplente`
+subscription for that plan) · 409 no gateway ref for the method · 429 caps ·
+502 gateway · 403 staff/non-member · 422 body.
+
+The public `POST /api/checkout` is unchanged and stays the anonymous path
+(A2 intact); the portal never links to it.
 
 ### Billing — slice BE-B
 
@@ -183,7 +217,13 @@ Upgrades/new subscriptions from the portal reuse the existing public
 above. 200 `{"criados": ["Ouvinte", ...], "existentes": ["Gratuito", ...]}`.
 
 `POST /api/checkout` with a zero-price plan → 409 "Este plano é gratuito —
-faça seu cadastro." (never calls a gateway). The existing Assinaturas list
+faça seu cadastro." (never calls a gateway).
+
+**GET `/api/planos/publicos`** (PUBLIC, amendment A17) items gain two
+additive fields for the tier cards: `nivel_grupoterapia`
+(`nenhum|ouvir|falar`, from `entitlements.grupoterapia`, default `nenhum`)
+and `ordem` (int). Still never serialized: gateway refs, `membros_ativos`,
+`ativo`, timestamps. The existing Assinaturas list
 item gains `inadimplente_desde, carencia_ate, pago_ate, proxima_cobranca,
 expirada_em, cancelamento_solicitado_por, cancelamento_motivo`; its `estado`
 filter accepts `carencia` and `expirada`. Existing staff cancel sets
@@ -279,10 +319,13 @@ share one app; a `membro` must never see staff nav or pages.
   automações, "Executar rotina agora"); new page **Grupoterapia** `/grupoterapia`
   (sessions CRUD + reservations).
 - **FE-B (member + public + routing)**: `/cadastro` public signup (Ninho Vazio
-  copy; on 201 go to `/login`; if the visitor picked a paid tier, after login send
-  them to `/assinar?plano=<id>` pre-filled); `/portal` (minha conta: plan, status,
-  grace banner when `carencia`, next charge, payments, upgrade cards → checkout,
-  cancel with confirmation); `/portal/grupoterapia` (list; `bloqueado` → upgrade
+  copy; tier cards show `nivel_grupoterapia` in `ordem` from `/api/planos/publicos`,
+  as does the Landing; on 201 go to `/login`; if the visitor picked a paid tier,
+  after login send them to `/portal?trocar=<id>`); `/portal` (minha conta: plan,
+  status, grace banner when `carencia`, next charge, payments, upgrade cards →
+  in-portal plan change dialog — Pix/boleto + CPF/CNPJ → `POST /api/portal/assinatura`,
+  then the Pix QR or the boleto/fatura link; `?trocar=<id>` opens it for that
+  tier; cancel with confirmation); `/assinar` stays the anonymous checkout only; `/portal/grupoterapia` (list; `bloqueado` → upgrade
   card; `ouvir` → "Assistir" link; `falar` → reserve/cancel seat + link);
   role routing via `GET /api/eu`: `membro` → portal nav only and any staff path
   redirects to `/portal`; staff → current nav + Grupoterapia. Landing copy
