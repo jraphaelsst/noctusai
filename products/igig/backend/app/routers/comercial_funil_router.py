@@ -32,7 +32,7 @@ from app.automacoes_deps import get_portas_automacao
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import (
     PIPELINE_COMERCIAL,
-    exigir_admin_da_org,
+    exigir_admin_do_quadro,
     get_db,
     get_pipeline_auth,
     pipeline_context,
@@ -53,7 +53,7 @@ stages_router = pipeline_stages_router(
     success_response=success_response,
     prefix="/api/comercial/pipeline/stages",
     tags=["comercial-etapas"],
-    require_stage_admin=exigir_admin_da_org,
+    require_stage_admin=exigir_admin_do_quadro,
 )
 
 

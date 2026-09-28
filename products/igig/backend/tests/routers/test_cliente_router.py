@@ -183,6 +183,11 @@ class TestDeleteIsAdminOnly:
         criado = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()
         resp = api.delete(f"/api/clientes/{criado['id']}")
         assert resp.status_code == 403
+        corpo = resp.json()
+        assert corpo["code"] == "admin_obrigatorio"
+        # The GENERIC gate's wording — not the stage-editor's own sentence
+        # (exigir_admin_do_quadro), which its own router's tests pin.
+        assert corpo["detail"] == "Apenas administradores da organização podem realizar esta ação."
 
     def test_non_admin_delete_does_not_remove_the_row(self, api, repos):
         criado = api.post("/api/clientes", json={"nome": "Padaria Sol"}).json()

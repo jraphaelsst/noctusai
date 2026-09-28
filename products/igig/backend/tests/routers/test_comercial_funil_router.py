@@ -73,9 +73,9 @@ class TestEtapas:
 
     def test_the_fechado_stage_cannot_be_deleted(self, api, etapas):
         from app.main import app
-        from app.pipelines import exigir_admin_da_org
+        from app.pipelines import exigir_admin_do_quadro
 
-        app.dependency_overrides[exigir_admin_da_org] = lambda: None
+        app.dependency_overrides[exigir_admin_do_quadro] = lambda: None
         try:
             resp = api.delete(f"/api/comercial/pipeline/stages/{etapas['fechado']['id']}")
             assert resp.status_code == 400
@@ -85,7 +85,7 @@ class TestEtapas:
             )
             assert renomeada.status_code == 200, "renaming a system stage is allowed"
         finally:
-            app.dependency_overrides.pop(exigir_admin_da_org, None)
+            app.dependency_overrides.pop(exigir_admin_do_quadro, None)
 
     def test_non_admin_cannot_reorder(self, api, etapas):
         resp = api.post("/api/comercial/pipeline/stages/reordenar",

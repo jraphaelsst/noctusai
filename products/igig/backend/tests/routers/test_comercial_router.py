@@ -298,7 +298,7 @@ class TestReabrirNegocio:
         dangling `perdido_stage_id` — it lands on the funnel's current first
         active stage instead, and THAT is a real stage change worth a
         history row."""
-        from app.pipelines import exigir_admin_da_org
+        from app.pipelines import exigir_admin_do_quadro
         from app.main import app
 
         resp = crm_api.post("/api/comercial/negocios", json={"lead": {"nome": "João"}})
@@ -308,12 +308,12 @@ class TestReabrirNegocio:
         crm_api.post(f"/api/comercial/negocios/{negocio['id']}/perder",
                     json={"motivo": "sem orçamento"})
 
-        app.dependency_overrides[exigir_admin_da_org] = lambda: None
+        app.dependency_overrides[exigir_admin_do_quadro] = lambda: None
         try:
             resp = crm_api.delete(f"/api/comercial/pipeline/stages/{comercial['qualificacao']['id']}")
             assert resp.status_code == 200, resp.text  # 0 non-perdido cards: no reassign_to needed
         finally:
-            app.dependency_overrides.pop(exigir_admin_da_org, None)
+            app.dependency_overrides.pop(exigir_admin_do_quadro, None)
 
         resp = crm_api.post(f"/api/comercial/negocios/{negocio['id']}/reabrir")
         assert resp.status_code == 200, resp.text

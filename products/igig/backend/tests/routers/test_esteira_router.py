@@ -122,9 +122,9 @@ class TestEtapas:
 
     def test_admin_can_create_and_the_role_stage_is_protected(self, api, etapas):
         from app.main import app
-        from app.pipelines import exigir_admin_da_org
+        from app.pipelines import exigir_admin_do_quadro
 
-        app.dependency_overrides[exigir_admin_da_org] = lambda: None
+        app.dependency_overrides[exigir_admin_do_quadro] = lambda: None
         try:
             criada = api.post("/api/esteira/stages", json={"label": "Legendas"})
             assert criada.status_code == 200, criada.text
@@ -132,7 +132,7 @@ class TestEtapas:
             recusada = api.delete(f"/api/esteira/stages/{etapas['aprovacao_cliente']['id']}")
             assert recusada.status_code == 400, "a system-role stage must not be deletable"
         finally:
-            app.dependency_overrides.pop(exigir_admin_da_org, None)
+            app.dependency_overrides.pop(exigir_admin_do_quadro, None)
 
 
 # ── Stage roles (achado 11) ───────────────────────────────────────────

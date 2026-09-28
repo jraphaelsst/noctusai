@@ -67,6 +67,7 @@ __all__ = [
     "get_core_db",
     "get_pipeline_auth",
     "exigir_admin_da_org",
+    "exigir_admin_do_quadro",
     "pipeline_context",
     "garantir_etapas_padrao",
     "etapas",
@@ -189,26 +190,46 @@ def get_pipeline_auth(
     return auth, db
 
 
-def exigir_admin_da_org(auth: tuple = Depends(get_current_user_org)) -> None:
+def _exigir_admin(auth: tuple, mensagem: str) -> None:
     """403 unless the caller is an org owner/admin (or platform admin).
-
-    Gates every WRITE of the stage editors: reshaping a board changes it for
-    the whole agency. Reads stay open to every member. Resolves through the
-    TRUSTED `public.noctus_users` cascade — never `user_metadata`, which any
-    user can rewrite (same trust model as the Cofre reveal in
-    `marca_router`).
-    """
+    Resolves through the TRUSTED `public.noctus_users` cascade — never
+    `user_metadata`, which any user can rewrite (same trust model as the
+    Cofre reveal in `marca_router`). The machine `code` is always
+    `admin_obrigatorio`; only the human-readable `mensagem` varies by
+    call site."""
     user, _token, _raw_org = auth
     if resolve_platform_role(user) == "platform_admin":
         return
     if get_user_role(user) not in ADMIN_ROLES:
         raise HTTPException(
             status_code=403,
-            detail={
-                "detail": "Apenas administradores podem alterar as etapas do quadro.",
-                "code": "admin_obrigatorio",
-            },
+            detail={"detail": mensagem, "code": "admin_obrigatorio"},
         )
+
+
+def exigir_admin_da_org(auth: tuple = Depends(get_current_user_org)) -> None:
+    """403 unless the caller is an org owner/admin (or platform admin).
+
+    The GENERIC gate — every admin-only WRITE that is not a board's stage
+    editor (Clientes hard-delete, Automações CRUD, lead-source setup, and
+    growing: Custos/SMTP-Gmail/Integrações/Financeiro writes are expected to
+    reuse this same dependency). Use :func:`exigir_admin_do_quadro` instead
+    for a stage-editor route, whose wording is pinned by its own tests.
+    """
+    _exigir_admin(auth, "Apenas administradores da organização podem realizar esta ação.")
+
+
+def exigir_admin_do_quadro(auth: tuple = Depends(get_current_user_org)) -> None:
+    """403 unless the caller is an org owner/admin (or platform admin).
+
+    The STAGE-EDITOR gate — `comercial_funil_router` / `esteira_router` pass
+    this as `require_stage_admin` to the seed's `pipeline_stages_router`:
+    reshaping a board changes it for the whole agency. Kept as its own
+    function (not just a differently-worded call to
+    :func:`exigir_admin_da_org`) so the board's own tests, which pin this
+    exact sentence, are untouched by the generic gate's wording.
+    """
+    _exigir_admin(auth, "Apenas administradores podem alterar as etapas do quadro.")
 
 
 def org_do_auth(auth: tuple) -> str:

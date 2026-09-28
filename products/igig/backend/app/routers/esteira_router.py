@@ -56,7 +56,7 @@ from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import (
     PAPEL_APROVACAO_CLIENTE,
     PIPELINE_ESTEIRA,
-    exigir_admin_da_org,
+    exigir_admin_do_quadro,
     get_admin_db,
     get_core_db,
     get_db,
@@ -98,7 +98,7 @@ stages_router = pipeline_stages_router(
     success_response=success_response,
     prefix="/api/esteira/stages",
     tags=["esteira-etapas"],
-    require_stage_admin=exigir_admin_da_org,
+    require_stage_admin=exigir_admin_do_quadro,
 )
 
 #: One message for every public-lookup failure. Distinct messages would let a
