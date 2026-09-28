@@ -35,6 +35,13 @@ export default defineConfig({
         find: "@noctusai/lib/design-system",
         replacement: resolve(__dirname, "tests/stubs/design-system.tsx"),
       },
+      // Stub the help-chat organ at the test boundary — same rationale as
+      // the design-system stub above: `HelpChatBubble` pulls `react-markdown`
+      // + `remark-gfm` + `rehype-slug`, which aren't installed here.
+      {
+        find: "@noctusai/lib/components",
+        replacement: resolve(__dirname, "tests/stubs/components.tsx"),
+      },
       {
         find: "@noctusai/lib",
         replacement: resolve(__dirname, "../../lib/frontend/src/index.ts"),

@@ -1,0 +1,48 @@
+name: HelpChatBubble
+path: seed/lib/frontend/src/components/help-chat/HelpChatBubble.tsx
+phase: pilot-seed
+registered_at: '2026-09-28'
+validation_status: emerging
+known_facts:
+- The frontend half of the "help chat" organ — a floating, always-available
+  chat bubble that streams an AI specialist's answers scoped to the HOST
+  product's own knowledge (`noctusai_lib.domain.help_chat` on the backend).
+  A product enables both halves with one router-mount call + a knowledge
+  markdown file — no per-product frontend logic required beyond passing
+  `title`/`getBaseUrl`/`getAuthToken` (and optionally `starters`).
+- 'Auth seam: takes `getBaseUrl`/`getAuthToken` directly (`Pick<CreateApiClientOptions,
+  ...>`) rather than a constructed `ApiClient`, because streaming needs a raw
+  `fetch` + `ReadableStream` — the same two callbacks a product already wires
+  for `createApiClient`, no new auth mechanism.'
+- Mobile layout reuses `useSheetLayout` (the same `<640px` breakpoint decision
+  the card-hub organ standardizes) rather than a second ad-hoc media query —
+  full-screen sheet below `sm`, a ~400x600 anchored panel above it.
+- Transcript persists to `sessionStorage` (capped, try/catch) — never any other
+  storage; the backend never persists conversation content either (see the
+  backend module's README "what this organ does NOT do").
+- Enablement is a `createProductLayout({ helpChat: {...} })` option (seed
+  framework `layout.tsx`) that mounts the bubble on every authenticated page,
+  OR manual mounting via this direct export for a product not on
+  `createProductLayout`.
+errors_encountered: []
+drifts_surfaced:
+- 'Found while wiring this organ into `createProductLayout`: the mobile
+  sidebar drawer never closed after picking a nav item (`Sidebar`''s
+  `onNavigate` prop was never wired in `layout.tsx`) — fixed same commit as
+  a drift-fix-on-contact (`AppShell.sidebar` now also accepts a render-prop
+  form so `layout.tsx` can pass `closeSidebar` down to `<Sidebar onNavigate=.../>`).'
+alternatives_considered:
+- 'Considered building the streaming fetch on top of `createApiClient`''s
+  `post()` — rejected: `post()` always calls `response.json()`, which cannot
+  represent an `SSE`/`ReadableStream` body. The organ therefore does its own
+  minimal `fetch` + reader loop, reusing only `extractErrorMessage` and the
+  auth-token seam from `@noctusai/lib/api` for the non-streaming (pre-flight
+  error) path.'
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

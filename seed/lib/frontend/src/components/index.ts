@@ -128,3 +128,10 @@ export * from './card-hub';
 // `resolveImage`/`onNavigate` seams; the organ never touches a bundler API.
 export { MarkdownRenderer } from './markdown';
 export type { MarkdownRendererProps } from './markdown';
+
+// Help chat — the floating "AI specialist" bubble organ. Pairs with the
+// backend factory `noctusai_lib.domain.help_chat.create_help_chat_router`.
+// A product enables both with a config line + a knowledge markdown file;
+// see `seed/lib/backend/noctusai_lib/domain/help_chat/README.md`.
+export { HelpChatBubble } from './help-chat';
+export type { HelpChatBubbleProps, HelpChatMessage } from './help-chat';

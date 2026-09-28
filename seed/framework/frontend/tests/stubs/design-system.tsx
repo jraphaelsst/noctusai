@@ -26,19 +26,35 @@ export const PageSkeleton: React.FC = () => (
   <div data-testid="page-skeleton-stub" />
 );
 
+/**
+ * `sidebar` mirrors the REAL `AppShell`'s contract added 2026-09-28: either
+ * a plain `ReactNode` OR a render function receiving `{closeSidebar}` (so
+ * `layout.tsx` can wire `<Sidebar onNavigate={closeSidebar}/>` — the fix for
+ * the mobile drawer staying open after a nav pick, `AppShell.tsx`'s own
+ * `AppShell.test.tsx` covers the REAL component; this stub owns real
+ * `sidebarOpen` state too so `layout.test.tsx` can prove `layout.tsx` wires
+ * the callback through, not just that it compiles.
+ */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const AppShell: React.FC<any> = ({ sidebar, header, children }) => (
-  <div data-testid="app-shell-stub">
-    <div data-testid="app-shell-sidebar">{sidebar}</div>
-    <div data-testid="app-shell-header">
-      {typeof header === "function" ? header({ onMenuToggle: () => {} }) : header}
+export const AppShell: React.FC<any> = ({ sidebar, header, children }) => {
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const closeSidebar = () => setSidebarOpen(false);
+  const toggleSidebar = () => setSidebarOpen((o) => !o);
+  return (
+    <div data-testid="app-shell-stub" data-sidebar-open={sidebarOpen}>
+      <div data-testid="app-shell-sidebar">
+        {typeof sidebar === "function" ? sidebar({ closeSidebar }) : sidebar}
+      </div>
+      <div data-testid="app-shell-header">
+        {typeof header === "function" ? header({ onMenuToggle: toggleSidebar }) : header}
+      </div>
+      <div data-testid="app-shell-content">{children}</div>
     </div>
-    <div data-testid="app-shell-content">{children}</div>
-  </div>
-);
+  );
+};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const Sidebar: React.FC<any> = ({ brandTitle, navGroups, standaloneItems, footerContent }) => (
+export const Sidebar: React.FC<any> = ({ brandTitle, navGroups, standaloneItems, footerContent, onNavigate }) => (
   <nav data-testid="sidebar-stub">
     <span data-testid="sidebar-brand">{brandTitle}</span>
     <span data-testid="sidebar-nav-group-count">{navGroups?.length ?? 0}</span>
@@ -47,6 +63,12 @@ export const Sidebar: React.FC<any> = ({ brandTitle, navGroups, standaloneItems,
       {(navGroups ?? []).reduce((acc: number, g: any) => acc + (g.items?.length ?? 0), 0)}
     </span>
     <span data-testid="sidebar-standalone-count">{standaloneItems?.length ?? 0}</span>
+    {/* Stands in for "the user clicked a nav item" — proves `onNavigate` (the
+        `closeSidebar` wiring) is actually reachable from the sidebar, not
+        just accepted as an unused prop. */}
+    <button data-testid="sidebar-nav-item" onClick={() => onNavigate?.()}>
+      Dashboard
+    </button>
     {footerContent}
   </nav>
 );
@@ -57,11 +79,15 @@ export const Header: React.FC<any> = ({
   onLogout,
   onUpdatePassword,
   onUpdateProfile,
+  onMenuToggle,
   actions,
 }) => (
   <header data-testid="header-stub">
     <span data-testid="header-user-name">{user?.name}</span>
     <span data-testid="header-user-email">{user?.email}</span>
+    <button data-testid="menu-toggle-button" onClick={() => onMenuToggle?.()}>
+      Menu
+    </button>
     <button data-testid="logout-button" onClick={() => { void onLogout(); }}>
       Sair
     </button>

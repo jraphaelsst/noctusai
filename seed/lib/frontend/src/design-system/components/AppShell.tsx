@@ -101,8 +101,16 @@ function isKeyboardFocus(target: EventTarget | null): boolean {
 }
 
 export interface AppShellProps {
-  /** The sidebar content (typically a <Sidebar> component) */
-  sidebar: React.ReactNode;
+  /**
+   * The sidebar content (typically a <Sidebar> component). Pass a render
+   * function to receive `closeSidebar` — wire it to `<Sidebar
+   * onNavigate={closeSidebar}/>` so picking a nav item closes the MOBILE
+   * off-canvas drawer (it otherwise stays open over the page just
+   * navigated to, since `AppShell` owns `sidebarOpen` and a plain
+   * `ReactNode` has no way to reach it). A plain `ReactNode` still works
+   * exactly as before — this is additive, not a breaking change.
+   */
+  sidebar: React.ReactNode | ((props: { closeSidebar: () => void }) => React.ReactNode);
   /** The header content (typically a <Header> component receiving onMenuToggle) */
   header: (props: { onMenuToggle: () => void }) => React.ReactNode;
   /** Page content */
@@ -196,7 +204,9 @@ export function AppShell({ sidebar, header, children, railMode = "hover-expand" 
             : "md:w-64",
         )}
       >
-        <SidebarRailContext.Provider value={rail}>{sidebar}</SidebarRailContext.Provider>
+        <SidebarRailContext.Provider value={rail}>
+          {typeof sidebar === "function" ? sidebar({ closeSidebar }) : sidebar}
+        </SidebarRailContext.Provider>
       </aside>
 
       {/* Main content */}

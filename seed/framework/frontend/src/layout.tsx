@@ -45,6 +45,8 @@ import {
   usePageStatus, filterNavByPageStatus, env,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
+import { HelpChatBubble } from "@noctusai/lib/components";
+import type { HelpChatBubbleProps } from "@noctusai/lib/components";
 import { toast } from "sonner";
 import { ChevronLeft } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -215,6 +217,19 @@ export interface ProductLayoutConfig {
    * `supabase` is provided.
    */
   sessionAuth?: LayoutSessionAuth;
+  /**
+   * Mounts the seed `HelpChatBubble` organ on every authenticated page —
+   * the floating "AI specialist" chat backed by
+   * `noctusai_lib.domain.help_chat.create_help_chat_router` on the product's
+   * own backend. Omit to opt out entirely (no bubble, zero extra bundle
+   * cost beyond the import — the component itself is tiny).
+   *
+   * `getBaseUrl`/`getAuthToken` are the SAME two callbacks the product
+   * already passes to `createApiClient` (streaming needs a raw `fetch`,
+   * which the generic JSON-in/JSON-out `ApiClient` cannot express) — no
+   * new auth mechanism to wire.
+   */
+  helpChat?: Pick<HelpChatBubbleProps, "getBaseUrl" | "getAuthToken" | "title" | "starters" | "endpoint">;
 }
 
 const DEFAULT_ROLE_LABELS: Record<string, string> = {
@@ -287,6 +302,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
     roleLabelOverride,
     brandSubtitleOverride,
     useLayoutEnrichment,
+    helpChat,
   } = config;
 
   if (!sessionAuth && !supabase) {
@@ -428,8 +444,9 @@ export function createProductLayout(config: ProductLayoutConfig) {
       || (ssoCtx.isProductAdmin ? "Administrador" : roleLabels[ssoCtx.org.role] || defaultRoleLabel);
 
     return (
+      <>
       <AppShell
-        sidebar={
+        sidebar={({ closeSidebar }) => (
           <Sidebar
             brandIcon={brandIcon}
             brandTitle={brandTitle}
@@ -437,8 +454,14 @@ export function createProductLayout(config: ProductLayoutConfig) {
             navGroups={navGroups}
             standaloneItems={standaloneItems.length > 0 ? standaloneItems : undefined}
             footerContent={ssoCtx.isSSO ? BackToCore : undefined}
+            // 🔴 Fixed 2026-09-28: `onNavigate` was never wired, so picking a
+            // nav item on MOBILE left the off-canvas drawer open over the
+            // page it had just navigated to (desktop is unaffected — no
+            // drawer there). `closeSidebar` is `AppShell`'s own internal
+            // `sidebarOpen` setter, now reachable via the sidebar render-prop.
+            onNavigate={closeSidebar}
           />
-        }
+        )}
         header={({ onMenuToggle }) => (
           <SharedHeader
             user={{
@@ -514,6 +537,16 @@ export function createProductLayout(config: ProductLayoutConfig) {
           onExpired={() => { window.location.href = CORE_URL; }}
         />
       </AppShell>
+      {helpChat && (
+        <HelpChatBubble
+          title={helpChat.title}
+          getBaseUrl={helpChat.getBaseUrl}
+          getAuthToken={helpChat.getAuthToken}
+          starters={helpChat.starters}
+          endpoint={helpChat.endpoint}
+        />
+      )}
+      </>
     );
   };
 }

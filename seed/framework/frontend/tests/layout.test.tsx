@@ -289,3 +289,47 @@ describe("createProductLayout — session mode (sessionAuth)", () => {
     expect(supabase.auth.signOut).not.toHaveBeenCalled();
   });
 });
+
+describe("mobile sidebar drawer closes on navigation (2026-09-28 fix)", () => {
+  it("closes the drawer when a nav item is picked — it used to stay open", async () => {
+    const sessionAuth = makeSessionAuth();
+    const Layout = createProductLayout({ ...baseConfig(), sessionAuth });
+    renderLayout(Layout);
+
+    expect(screen.getByTestId("app-shell-stub")).toHaveAttribute("data-sidebar-open", "false");
+
+    fireEvent.click(screen.getByTestId("menu-toggle-button"));
+    expect(screen.getByTestId("app-shell-stub")).toHaveAttribute("data-sidebar-open", "true");
+
+    // The bug: `onNavigate` was never wired, so this click used to leave
+    // the drawer open over the page it had just navigated to.
+    fireEvent.click(screen.getByTestId("sidebar-nav-item"));
+    expect(screen.getByTestId("app-shell-stub")).toHaveAttribute("data-sidebar-open", "false");
+  });
+});
+
+describe("helpChat layout option", () => {
+  it("mounts the HelpChatBubble organ when `helpChat` is provided", () => {
+    const sessionAuth = makeSessionAuth();
+    const getBaseUrl = () => "https://api.example.com";
+    const getAuthToken = async () => "tok";
+    const Layout = createProductLayout({
+      ...baseConfig(),
+      sessionAuth,
+      helpChat: { title: "Assistente Teste", getBaseUrl, getAuthToken, starters: ["a", "b"] },
+    });
+    renderLayout(Layout);
+
+    expect(screen.getByTestId("help-chat-bubble-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("help-chat-title")).toHaveTextContent("Assistente Teste");
+    expect(screen.getByTestId("help-chat-starters-count")).toHaveTextContent("2");
+  });
+
+  it("renders no bubble at all when `helpChat` is omitted", () => {
+    const sessionAuth = makeSessionAuth();
+    const Layout = createProductLayout({ ...baseConfig(), sessionAuth });
+    renderLayout(Layout);
+
+    expect(screen.queryByTestId("help-chat-bubble-stub")).not.toBeInTheDocument();
+  });
+});
