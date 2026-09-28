@@ -8,8 +8,10 @@
  * "publicada" would be the exact lie this module is built to avoid.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError } from "@noctusai/lib";
 
 import { api } from "@/lib/api";
+import { INTEGRACOES_QUERY_KEY } from "@/hooks/useIntegracoes";
 
 export type Canal = "instagram" | "facebook" | "tiktok" | "linkedin";
 export const CANAIS: Canal[] = ["instagram", "facebook", "tiktok", "linkedin"];
@@ -87,6 +89,15 @@ export function useExecutarPublicacao() {
     mutationFn: (id: string) =>
       api.post<Publicacao>(`/api/distribuicao/publicacoes/${id}/executar`, {}),
     onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+    onError: (erro) => {
+      // `credencial_ilegivel` writes integracao.reconectar_necessario
+      // server-side (distribuicao_router.executar_publicacao ->
+      // integracao.registrar_erro) — the Integrações page's cached
+      // "reconectar" badge must not go stale until a manual refresh.
+      if (erro instanceof ApiError && erro.code === "credencial_ilegivel") {
+        qc.invalidateQueries({ queryKey: INTEGRACOES_QUERY_KEY });
+      }
+    },
   });
 }
 

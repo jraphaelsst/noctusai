@@ -241,7 +241,7 @@ function LogoUploader({ marca }: { marca: Marca }) {
         <input
           type="file"
           className="hidden"
-          accept="image/png,image/svg+xml,image/jpeg,image/webp"
+          accept="image/png,image/jpeg,image/webp"
           disabled={enviar.isPending}
           onChange={(e) => {
             const arquivo = e.target.files?.[0];
@@ -252,7 +252,7 @@ function LogoUploader({ marca }: { marca: Marca }) {
           }}
         />
       </label>
-      <p className="w-full text-xs text-muted-foreground">PNG, SVG, JPEG ou WebP · até 2 MB.</p>
+      <p className="w-full text-xs text-muted-foreground">PNG, JPEG ou WebP · até 2 MB.</p>
       {enviar.isError && (
         <p className="w-full text-sm text-destructive">
           {describeError(enviar.error, "Não foi possível enviar o logo. Verifique o formato e o tamanho.")}

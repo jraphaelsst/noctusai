@@ -2,16 +2,22 @@
  * Clientes card → "Financeiro": this cliente's faturas
  * (`GET /api/financeiro/faturas?cliente_id=`), newest competência first,
  * with the totals that matter at a glance (em aberto / pago) and the
- * "Marcar como paga" action the Financeiro page also offers.
+ * "Marcar como paga" action the Financeiro page also offers — same
+ * admin-only gate + confirmation dialog as that page, so a member does not
+ * see a button the server would 403 on (and cannot skip the confirmation
+ * the Financeiro page itself requires for the same money-movement action).
  */
+import { useState } from "react";
 import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useFaturas, useMarcarPaga, type StatusFatura } from "@/hooks/useFinanceiro";
 import { describeError } from "@/lib/errors";
 import { brl, dataBR } from "@/lib/format";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 const STATUS_VARIANT: Record<StatusFatura, BadgeVariant> = {
   aberta: "muted",
@@ -24,6 +30,8 @@ const STATUS_VARIANT: Record<StatusFatura, BadgeVariant> = {
 export function ClienteFinanceiro({ clienteId }: { clienteId: string }) {
   const { faturas, loading, isError, error } = useFaturas(undefined, { clienteId });
   const marcarPaga = useMarcarPaga();
+  const isAdmin = useIsOrgAdmin();
+  const [marcandoPagaId, setMarcandoPagaId] = useState<string | null>(null);
 
   const ordenadas = [...faturas].sort((a, b) => b.competencia.localeCompare(a.competencia));
   const emAberto = faturas
@@ -69,18 +77,13 @@ export function ClienteFinanceiro({ clienteId }: { clienteId: string }) {
               </div>
               <span className="font-medium text-foreground">{brl(f.valor_total)}</span>
               <Badge variant={STATUS_VARIANT[f.status] ?? "outline"}>{f.status}</Badge>
-              {f.status !== "paga" && f.status !== "cancelada" ? (
+              {isAdmin && f.status !== "paga" && f.status !== "cancelada" ? (
                 <Button
                   size="sm"
                   variant="outline"
                   className="max-sm:h-10"
                   disabled={marcarPaga.isPending}
-                  onClick={() =>
-                    marcarPaga.mutate(f.id, {
-                      onSuccess: () => toast.success("Fatura marcada como paga."),
-                      onError: (e) => toast.error(describeError(e, "Não foi possível marcar como paga.")),
-                    })
-                  }
+                  onClick={() => setMarcandoPagaId(f.id)}
                 >
                   <CheckCircle2 className="mr-1 h-3 w-3" /> Paga
                 </Button>
@@ -89,6 +92,26 @@ export function ClienteFinanceiro({ clienteId }: { clienteId: string }) {
           ))}
         </ul>
       )}
+
+      <ConfirmDialog
+        open={marcandoPagaId !== null}
+        title="Marcar fatura como paga"
+        description={<p>Marcar esta fatura como paga? Registra a data de agora; não há como desfazer pela tela.</p>}
+        confirmLabel={marcarPaga.isPending ? "Marcando…" : "Marcar paga"}
+        destructive={false}
+        busy={marcarPaga.isPending}
+        onCancel={() => setMarcandoPagaId(null)}
+        onConfirm={() => {
+          if (!marcandoPagaId) return;
+          marcarPaga.mutate(marcandoPagaId, {
+            onSuccess: () => {
+              setMarcandoPagaId(null);
+              toast.success("Fatura marcada como paga.");
+            },
+            onError: (e) => toast.error(describeError(e, "Não foi possível marcar como paga.")),
+          });
+        }}
+      />
     </div>
   );
 }

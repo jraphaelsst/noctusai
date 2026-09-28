@@ -6,8 +6,9 @@
  * here — only the `loading` formula.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { ApiError } from "@noctusai/lib";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));
+const { mockGet, mockInvalidate } = vi.hoisted(() => ({ mockGet: vi.fn(), mockInvalidate: vi.fn() }));
 vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet } }));
 
 let queryState: Record<string, unknown> = {};
@@ -15,11 +16,12 @@ let queryState: Record<string, unknown> = {};
 vi.mock("@tanstack/react-query", () => {
   const useQuery = vi.fn(() => queryState);
   const useMutation = vi.fn((opts: Record<string, unknown>) => ({ ...opts, mutate: vi.fn(), isPending: false }));
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: vi.fn() }));
+  const useQueryClient = vi.fn(() => ({ invalidateQueries: mockInvalidate }));
   return { useQuery, useMutation, useQueryClient };
 });
 
-import { useEficiencia, usePublicacoes } from "./useDistribuicao";
+import { useEficiencia, useExecutarPublicacao, usePublicacoes } from "./useDistribuicao";
+import { INTEGRACOES_QUERY_KEY } from "./useIntegracoes";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -57,5 +59,19 @@ describe("useEficiencia — loading formula", () => {
     const { loading, linhas } = useEficiencia();
     expect(loading).toBe(false);
     expect(linhas).toHaveLength(1);
+  });
+});
+
+describe("useExecutarPublicacao — credencial_ilegivel invalidates Integrações", () => {
+  it("invalidates the integrações query key on a credencial_ilegivel error", () => {
+    const hook = useExecutarPublicacao() as unknown as { onError: (e: unknown) => void };
+    hook.onError(new ApiError(409, "Token ilegível", { code: "credencial_ilegivel" }));
+    expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: INTEGRACOES_QUERY_KEY });
+  });
+
+  it("does NOT invalidate integrações on an unrelated error", () => {
+    const hook = useExecutarPublicacao() as unknown as { onError: (e: unknown) => void };
+    hook.onError(new ApiError(409, "Canal não configurado", { code: "canal_nao_configurado" }));
+    expect(mockInvalidate).not.toHaveBeenCalledWith({ queryKey: INTEGRACOES_QUERY_KEY });
   });
 });
