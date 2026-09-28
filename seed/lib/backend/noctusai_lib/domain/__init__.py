@@ -54,6 +54,12 @@ business logic" namespace.
   extenso (Decimal-exact, notarial conventions pinned by tests), ordinals,
   prazos em dias, data por extenso, percentual por extenso. Lifted
   2026-09-14 for social-wiring's contract generator (F5).
+- `help_chat/` — the "AI specialist bubble" organ. One opt-in router
+  factory (`create_help_chat_router`) streaming a product-scoped
+  help-chat over SSE, wired to a product's own knowledge markdown file
+  and the seed LLM stack (`integrations/llm`). Frontend counterpart:
+  `@noctusai/lib`'s `HelpChatBubble` (`seed/lib/frontend/src/components/
+  help-chat/`). See `help_chat/README.md`.
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)
