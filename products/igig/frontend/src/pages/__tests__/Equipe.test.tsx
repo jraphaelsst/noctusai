@@ -10,11 +10,13 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const { api, user } = vi.hoisted(() => ({
+const { api, user, toast } = vi.hoisted(() => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn(), upload: vi.fn() },
   user: { current: { id: "u1", user_metadata: { org_role: "admin" } as Record<string, unknown> } },
+  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
 vi.mock("@noctusai/seed/infra", () => ({ api, useAuthStore: () => ({ user: user.current }) }));
+vi.mock("sonner", () => ({ toast }));
 
 import Equipe from "../Equipe";
 
@@ -41,7 +43,7 @@ beforeEach(() => {
     if (path === "/api/team/invitations") return { data: [CONVITE] };
     throw new Error(`GET inesperado ${path}`);
   });
-  api.post.mockResolvedValue({ data: { ...CONVITE, id: "c2" } });
+  api.post.mockResolvedValue({ data: { ...CONVITE, id: "c2", token: "tok-abc" }, email_enviado: true });
   api.delete.mockResolvedValue({ ok: true });
 });
 afterEach(cleanup);
@@ -111,7 +113,7 @@ describe("Equipe — convidar", () => {
     );
   });
 
-  it("offers every seed-accepted role except owner, in pt-BR", async () => {
+  it("offers every seed-accepted role except owner, in pt-BR, to an org admin", async () => {
     renderPage();
     await screen.findByText("Ana Owner");
     fireEvent.click(screen.getByTestId("equipe-convidar"));
@@ -121,6 +123,57 @@ describe("Equipe — convidar", () => {
     expect(rotulos).toEqual([
       "Administrador", "Gerente", "Membro", "Visualizador", "Desenvolvedor", "Teste", "Corretor",
     ]);
+  });
+
+  it("never offers 'Administrador' to a Gerente (finais) — the server 403s that grant", async () => {
+    user.current = { id: "u2", user_metadata: { org_role: "manager" } };
+    renderPage();
+    await screen.findByText("Ana Owner");
+    fireEvent.click(screen.getByTestId("equipe-convidar"));
+    const sheet = await screen.findByTestId("convidar-sheet");
+    const select = within(sheet).getByLabelText("Papel") as HTMLSelectElement;
+    const rotulos = Array.from(select.options).map((o) => o.textContent);
+    expect(rotulos).toEqual(["Gerente", "Membro", "Visualizador", "Desenvolvedor", "Teste", "Corretor"]);
+    expect(rotulos).not.toContain("Administrador");
+  });
+
+  it("says the truth when the e-mail was not sent, with a copy-link action (finais)", async () => {
+    api.post.mockResolvedValue({
+      data: { ...CONVITE, id: "c3", token: "tok-xyz" },
+      email_enviado: false,
+      email_motivo: "Servico de e-mail nao configurado",
+    });
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    renderPage();
+    await screen.findByText("Ana Owner");
+    fireEvent.click(screen.getByTestId("equipe-convidar"));
+    const sheet = await screen.findByTestId("convidar-sheet");
+    fireEvent.change(within(sheet).getByLabelText(/E-mail/), { target: { value: "novo@agencia.com" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Enviar convite" }));
+
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+    const [message, opts] = toast.warning.mock.calls[0];
+    expect(message).toBe("Convite criado, mas o e-mail não foi enviado — copie o link");
+    expect(opts.description).toBe("Servico de e-mail nao configurado");
+    expect(opts.action.label).toBe("Copiar link");
+
+    opts.action.onClick();
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/accept-invite/tok-xyz"));
+  });
+
+  it("toasts success when the e-mail WAS sent", async () => {
+    renderPage();
+    await screen.findByText("Ana Owner");
+    fireEvent.click(screen.getByTestId("equipe-convidar"));
+    const sheet = await screen.findByTestId("convidar-sheet");
+    fireEvent.change(within(sheet).getByLabelText(/E-mail/), { target: { value: "novo@agencia.com" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Enviar convite" }));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Convite enviado com sucesso"));
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 });
 

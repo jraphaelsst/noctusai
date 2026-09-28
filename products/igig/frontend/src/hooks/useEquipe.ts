@@ -37,6 +37,24 @@ export interface Invitation {
   expires_at: string;
 }
 
+/** `POST /api/team/invite`'s own response — includes `token` (never returned
+ * by the list endpoint's column-scoped select) so the accept link can be
+ * built when `email_enviado` is false. */
+export interface ConviteCriado extends Invitation {
+  token: string;
+}
+
+/** `email_enviado`/`email_motivo` (finais, 2026-09-28): the invitation row is
+ * ALWAYS created; the e-mail may not be. Before this, the endpoint's `bool`
+ * send result was discarded and the FE always toasted success — with
+ * RESEND_API_KEY missing (or any send failure) the invitee never got a link
+ * and nobody knew. */
+export interface ConviteResponse {
+  data: ConviteCriado;
+  email_enviado: boolean;
+  email_motivo?: string;
+}
+
 export const EQUIPE_QUERY_KEY = ["igig", "equipe"] as const;
 const MEMBROS_KEY = [...EQUIPE_QUERY_KEY, "membros"] as const;
 const CONVITES_KEY = [...EQUIPE_QUERY_KEY, "convites"] as const;
@@ -76,8 +94,10 @@ export function useConvitesPendentes(podeVer: boolean) {
 export function useConvidar() {
   const qc = useQueryClient();
   return useMutation({
+    // NOT unwrapped through `unwrapData` — `email_enviado`/`email_motivo`
+    // live alongside `data`, and the caller needs all three.
     mutationFn: (payload: { email: string; role: string }) =>
-      api.post("/api/team/invite", payload).then(unwrapData<Invitation>),
+      api.post<ConviteResponse>("/api/team/invite", payload),
     onSuccess: () => qc.invalidateQueries({ queryKey: CONVITES_KEY }),
   });
 }

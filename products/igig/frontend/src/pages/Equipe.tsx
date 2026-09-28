@@ -13,10 +13,19 @@
  * owner/admin only (`useIsOrgAdmin`). Equipe used to gate ALL of them on one
  * inline `isAdmin` that excluded manager — a manager who could invite via a
  * raw request could not even see the button.
+ *
+ * Two more fixes (finais, 2026-09-28): the role dropdown offered EVERY
+ * grantable role regardless of who was inviting — a Gerente could pick
+ * "Administrador" and only find out it was refused (403) on submit; it now
+ * calls `grantableRoles(sso.isProductAdmin)`, the same hierarchy the backend
+ * enforces. And a successful-looking "Convite enviado com sucesso" used to
+ * fire even when RESEND_API_KEY wasn't configured and no e-mail actually
+ * went out — `/api/team/invite` now reports `email_enviado`, and this page
+ * shows the truth (with a copy-link fallback) instead.
  */
 import { useState } from "react";
 import { useAuthStore } from "@noctusai/seed/infra";
-import { canManageTeam, ORG_ROLE_LABELS, resolveSSOContext, type OrgRole } from "@noctusai/lib";
+import { canManageTeam, grantableRoles, ORG_ROLE_LABELS, resolveSSOContext, type OrgRole } from "@noctusai/lib";
 import { Button, Field, FormError, Input, Select, TableSkeleton } from "@noctusai/lib/design-system";
 import { Mail, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -35,15 +44,6 @@ import { describeError } from "@/lib/errors";
 import { dataBR } from "@/lib/format";
 import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
-/** Every role the seed's invite accepts (`ASSIGNABLE_ROLES` minus `owner`,
- * which is the org creator only). Labels now come straight from the seed's
- * own `ORG_ROLE_LABELS` (fixed in the same round — it carried "Proprietario"
- * with no accent, a typo N≥13 products' hand-rolled Equipe.tsx copied
- * verbatim; consuming it here instead of a local copy is the DRY fix for
- * igig's own copy — the other products' copies are a named follow-up, out
- * of this file's scope). */
-const PAPEIS_CONVITE: OrgRole[] = ["admin", "manager", "member", "viewer", "dev", "test", "corretor"];
-
 function rotuloPapel(papel: string): string {
   return ORG_ROLE_LABELS[papel as OrgRole] ?? papel;
 }
@@ -53,6 +53,10 @@ export default function Equipe() {
   const sso = resolveSSOContext(user?.user_metadata);
   const podeConvidar = useIsOrgAdmin() || canManageTeam(sso.org.role);
   const podeGerenciar = useIsOrgAdmin();
+  // Roles the invite form MAY offer — mirrors the backend's grant hierarchy
+  // (`_GRANT_REQUIRES` in `noctusai_seed/routers.py`) so a Gerente never sees
+  // "Administrador" only to get a 403 on submit.
+  const papeisConvite = grantableRoles(sso.isProductAdmin);
 
   const { membros, showSkeleton, isRefreshing, isError, error } = useMembros();
   const convitesQ = useConvitesPendentes(podeGerenciar);
@@ -256,11 +260,29 @@ export default function Equipe() {
             convidar.mutate(
               { email: email.trim(), role: papel },
               {
-                onSuccess: () => {
-                  toast.success("Convite enviado com sucesso");
+                onSuccess: (resp) => {
                   setConvidando(false);
                   setEmail("");
                   setPapel("member");
+                  if (resp.email_enviado) {
+                    toast.success("Convite enviado com sucesso");
+                    return;
+                  }
+                  // 🔴 no-silent-errors (finais): the invite row exists but
+                  // no e-mail went out (e.g. RESEND_API_KEY not configured)
+                  // — say so, and hand the invitee's link over directly.
+                  const link = `${window.location.origin}/accept-invite/${resp.data.token}`;
+                  toast.warning("Convite criado, mas o e-mail não foi enviado — copie o link", {
+                    description: resp.email_motivo,
+                    duration: 20000,
+                    action: {
+                      label: "Copiar link",
+                      onClick: () => {
+                        navigator.clipboard.writeText(link);
+                        toast.success("Link copiado");
+                      },
+                    },
+                  });
                 },
                 onError: (err) => toast.error("Erro ao enviar convite", { description: describeError(err, "Tente novamente") }),
               },
@@ -284,7 +306,7 @@ export default function Equipe() {
               value={papel}
               onChange={(e) => setPapel(e.target.value as OrgRole)}
             >
-              {PAPEIS_CONVITE.map((p) => (
+              {papeisConvite.map((p) => (
                 <option key={p} value={p}>
                   {ORG_ROLE_LABELS[p]}
                 </option>
