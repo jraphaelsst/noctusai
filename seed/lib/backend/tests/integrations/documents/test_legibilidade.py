@@ -89,11 +89,22 @@ class TestCepInvalido:
 
 
 class TestCpfInvalido:
-    def test_cpf_label_with_failed_check_digits_flags(self):
+    """P2 corpus (2026-09-28): a LONE `cpf_invalido` — nothing else wrong on
+    the document — is demoted to non-comprometida (a single OCR digit slip,
+    not whole-document damage). Co-occurring with any other signal, it
+    still counts as normal."""
+
+    def test_cpf_label_with_failed_check_digits_alone_stays_ok(self):
         texto = "CPF: 111.222.333-44\n"
         resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
+        assert resultado.motivos == ()
+
+    def test_cpf_label_with_failed_check_digits_plus_another_signal_flags(self):
+        texto = "CPF: 111.222.333-44\nUF: XX\n"
+        resultado = avaliar_legibilidade(texto)
         assert resultado.status is LegibilidadeStatus.COMPROMETIDA
-        assert "cpf_invalido" in resultado.motivos
+        assert set(resultado.motivos) == {"cpf_invalido", "uf_invalida"}
 
     def test_cpf_label_with_valid_check_digits_is_ok(self):
         texto = f"CPF: {_CPF_VALIDO}\n"
@@ -107,6 +118,21 @@ class TestCpfInvalido:
         texto = "CPF: 123\n"
         resultado = avaliar_legibilidade(texto)
         assert "cpf_invalido" not in resultado.motivos
+
+    def test_a_cnh_numero_de_registro_label_is_never_mistaken_for_a_cpf(self):
+        """A CNH's own `Nº DE REGISTRO` is an 11-digit number with no CPF
+        check-digit relationship — validating it AS a CPF would almost
+        always fail the checksum for a reason that has nothing to do with
+        legibility. The label simply does not contain `CPF`, so this check
+        never runs on it at all."""
+        texto = "Nº DE REGISTRO: 12345678900\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
+
+    def test_a_cat_hab_label_is_never_mistaken_for_a_cpf(self):
+        texto = "CAT HAB: AB\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
 
 
 class TestUfInvalida:
@@ -125,6 +151,122 @@ class TestUfInvalida:
         texto = "NATURALIDADE: SAO PAULO\n"
         resultado = avaliar_legibilidade(texto)
         assert resultado.status is LegibilidadeStatus.OK
+
+    def test_a_compound_label_merely_containing_the_uf_token_is_never_checked(self):
+        """P2 corpus (2026-09-28) — 13/28 false alarms: a real CNH's `4c DOC
+        IDENTIDADE / ÓRG EMISSOR / UF` groups three sub-fields into one
+        label; `UF` being one whitespace-separated token in it does not
+        make the LABEL a UF field."""
+        texto = "4c DOC IDENTIDADE / ÓRG EMISSOR / UF: 12345678 SSP SP\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
+
+
+class TestCampoDataInvalidoCompostoPassa:
+    """P2 corpus (2026-09-28) — 15/28 false alarms: a real CNH's date label
+    is often compound (`DATA, LOCAL E UF DE NASCIMENTO`), and its value
+    legitimately carries more than the date. The check is "does the value
+    CONTAIN a date", not "is the value nothing but a date"."""
+
+    def test_data_local_e_uf_de_nascimento(self):
+        texto = "3 DATA, LOCAL E UF DE NASCIMENTO: 01/02/1980, COTIA, SP\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
+
+    def test_data_e_local_de_nascimento_bilingual(self):
+        texto = (
+            "DATA E LOCAL DE NASCIMENTO / DATE AND PLACE OF BIRTH: "
+            "01/02/1980, SAO PAULO, SP\n"
+        )
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
+
+    def test_a_date_label_with_genuinely_no_date_in_the_value_still_flags(self):
+        """The fix widens the match, it does not disable the check."""
+        texto = "DATA, LOCAL E UF DE NASCIMENTO: COTIA, SP\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.COMPROMETIDA
+        assert "campo_data_invalido" in resultado.motivos
+
+
+class TestEnderecoSemTexto:
+    def test_address_with_no_real_word_flags(self):
+        texto = "ENDERECO: 12.345.6789 - 2 via\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.COMPROMETIDA
+        assert "endereco_sem_texto" in resultado.motivos
+
+    def test_a_genuine_address_is_ok(self):
+        texto = "ENDERECO: RUA DAS FLORES, 123\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
+
+    def test_ilegivel_marker_is_not_double_flagged_as_no_text(self):
+        texto = "ENDERECO: (ilegivel)\n"
+        resultado = avaliar_legibilidade(texto)
+        assert "endereco_sem_texto" not in resultado.motivos
+
+
+class TestCampoIncompativelDocumentoPessoal:
+    def test_icms_marker_flags(self):
+        texto = "INSCRICAO ESTADUAL DE CONTRIBUINTE DO ICMS: 12.3456789/01\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.COMPROMETIDA
+        assert "campo_incompativel_documento_pessoal" in resultado.motivos
+
+    def test_cnpj_shaped_number_flags(self):
+        texto = "INSTITUICAO RESPONSAVEL PELO REGISTRO 12.345.678/90\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.COMPROMETIDA
+        assert "campo_incompativel_documento_pessoal" in resultado.motivos
+
+    def test_an_ordinary_cnh_never_flags(self):
+        texto = "CARTEIRA NACIONAL DE HABILITACAO\nNOME: JOAO CARLOS PEREIRA\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.OK
+
+
+class TestTextoRepetido:
+    def test_a_repeated_two_word_phrase_flags(self):
+        texto = "SECCAO DE SEGURANCA PUBLICA DO ESTADO DE SEGURANCA PUBLICA\n"
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.COMPROMETIDA
+        assert "texto_repetido" in resultado.motivos
+
+    def test_ordinary_connector_repetition_never_flags(self):
+        """`DE`/`DO` repeating is ordinary Portuguese — only a gram carrying
+        at least one REAL (4+ letter) word counts."""
+        texto = "ESTADO DE SAO PAULO SECRETARIA DA SEGURANCA PUBLICA\n"
+        resultado = avaliar_legibilidade(texto)
+        assert "texto_repetido" not in resultado.motivos
+
+    def test_a_short_line_never_flags(self):
+        texto = "UF: SP\n"
+        resultado = avaliar_legibilidade(texto)
+        assert "texto_repetido" not in resultado.motivos
+
+
+class TestMissedRgHallucination:
+    """The SECOND real hallucination the P2 corpus measurement caught this
+    module missing entirely — a genuinely damaged RG scan, invented values.
+    Every signal below is new (2026-09-28); together they must flag it."""
+
+    def test_the_missed_rg_now_flags(self):
+        texto = "\n".join(
+            [
+                "REGISTRO GERAL",
+                "ENDERECO: 12.345.6789 - 2 via",
+                "PAIS: MULHERES DA FAMILIA DOS SANTOS",
+                "INSCRICAO ESTADUAL DE CONTRIBUINTE DO ICMS: 12.3456789/01",
+                "INSTITUICAO RESPONSAVEL PELO REGISTRO 12.345.678/90",
+                "SECCAO DE SEGURANCA PUBLICA DO ESTADO DE SEGURANCA PUBLICA",
+            ]
+        )
+        resultado = avaliar_legibilidade(texto)
+        assert resultado.status is LegibilidadeStatus.COMPROMETIDA
+        assert "endereco_sem_texto" in resultado.motivos
+        assert "campo_incompativel_documento_pessoal" in resultado.motivos
+        assert "texto_repetido" in resultado.motivos
 
 
 class TestAltaTaxaIlegivel:

@@ -57,6 +57,62 @@ A clean, well-transcribed document must never be flagged — a false
 having it. See each threshold's own comment for the reasoning; each is
 covered by a "stays `ok`" test using a normal, correctly-labelled
 transcription.
+
+🔴 MEASURED AGAINST 28 REAL PRODUCTION TRANSCRIPTIONS (P2 CORPUS) —
+TIGHTENED 2026-09-28
+--------------------------------------------------------------------
+The first cut of this module, measured against 28 real identity
+transcriptions from the same production prompt, flagged 17/28 as
+`comprometida` — correctly catching the hallucinated screenshot, but wrongly
+flagging 17 genuine documents (too aggressive to withhold most good
+readings) — AND missed a second, real hallucinated RG scan. Two root causes,
+both fixed below rather than papered over with a lower bar:
+
+1. **`campo_data_invalido` false-fired on COMPOUND date labels.** A real
+   CNH's own label is often `DATA, LOCAL E UF DE NASCIMENTO` or `DATA E
+   LOCAL DE NASCIMENTO / DATE AND PLACE OF BIRTH`, whose value is
+   `01/02/1980, COTIA, SP` — a date PLUS more text. The original check
+   required the WHOLE value to be nothing but a date (`fullmatch`); the
+   fix is "does the value CONTAIN a date", which is what "this label's type
+   is satisfied" actually means.
+2. **`uf_invalida` false-fired on any label merely CONTAINING the token
+   `UF`.** A real CNH's `4c DOC IDENTIDADE / ÓRG EMISSOR / UF` groups three
+   sub-fields into one label; `UF` being one whitespace-separated token in
+   it is not the same as the label BEING a UF field. Tightened to an EXACT
+   match against a small set of bare UF labels (`UF`, `ESTADO`) — a
+   compound label is simply not checked by this signal at all (the date/
+   CEP/CPF checks still cover whatever real sub-fields it groups).
+
+A third, narrower fix: **a lone `cpf_invalido` — no other signal on the same
+document — is demoted to informational, not a `comprometida` verdict.** A
+single CPF whose check digits fail is exactly what ONE OCR digit slip on an
+otherwise-clean document looks like (`cpf.py`'s own parser already demotes
+that reading to `baixa`/`nenhuma` on its own terms); nothing else here
+distinguishes "genuinely damaged transcription" from "one field's ordinary
+OCR noise" the way a co-occurring signal does. Every OTHER signal keeps its
+original stand-alone-sufficient behaviour — this demotion is scoped to
+`cpf_invalido` alone, deliberately, not a blanket "need two signals" rule
+that would also swallow a real single-signal case like `nome_igual_filiacao`.
+
+THE MISSED HALLUCINATION (a real, separate RG scan) added three signals this
+module did not have before:
+
+3. `endereco_sem_texto` — an `ENDERECO`-labelled value with no real WORD in
+   it (a token of 4+ letters) — `"12.345.6789 - 2 via"` names no street,
+   only digits and a two-letter/short suffix; a real address always names
+   one.
+4. `campo_incompativel_documento_pessoal` — a business/tax-registration
+   marker (`ICMS`, `INSCRIÇÃO ESTADUAL`, `CONTRIBUINTE`, or a CNPJ-shaped
+   `NN.NNN.NNN/NNNN`-ish number) anywhere in an identity-document
+   transcription. None of RG/CPF/CNH/CIN/certidão/comprovante ever
+   legitimately carries one — a hallucinated identity document borrowing
+   phrases from a business-registration document is exactly the failure
+   mode this catches.
+5. `texto_repetido` — a run of two-or-more real words (4+ letters, so
+   `DE`/`DO`/`DA` connectors never count) repeating later in the SAME line
+   — `SECÇÃO DE SEGURANÇA PUBLICA DO ESTADO DE SEGURANÇA PUBLICA` restates
+   "SEGURANÇA PUBLICA", the shape a model produces when it loses its place
+   mid-transcription and re-reads the same phrase.
 """
 from __future__ import annotations
 
@@ -92,16 +148,21 @@ _ILEGIVEL_MARCADOR = "ILEGIVEL"
 #: EMISSAO`, `DATA DE VALIDADE`, or a bare `DATA`). Broad on purpose: every
 #: date-carrying label in this document family contains the word `DATA`, and
 #: there is no cost to checking one extra label that turns out not to be a
-#: real date field — the value either looks like a date or it does not.
+#: real date field — the value either CONTAINS a date-shaped run or it does
+#: not (see `_DATA_RE`'s own comment — a real CNH compounds this label with
+#: `LOCAL`/`UF`, so the value legitimately carries more than the date).
 _ROTULO_DATA = "DATA"
 
-#: Accepts `10/03/1995`, `10-03-1995`, `10.03.1995`, with a 2-or-4-digit
-#: year — the shapes every sibling parser's own date regex already accepts
-#: (see `birthdate.py`). Not stricter than that on purpose: this check is
-#: "does this look like a date at all", not "is this a plausible date" —
-#: `birthdate.find_birthdate`'s own plausibility gate already owns the
-#: latter for the one field it extracts.
-_DATA_RE = re.compile(r"^\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}$")
+#: Matches `10/03/1995`, `10-03-1995`, `10.03.1995` (2-or-4-digit year)
+#: ANYWHERE in the value — deliberately a `search`-shaped pattern, not
+#: anchored to the whole string. A real CNH's compound label (`DATA, LOCAL E
+#: UF DE NASCIMENTO`) prints `01/02/1980, COTIA, SP` — a date PLUS the
+#: place — and requiring the value to be NOTHING BUT a date rejected every
+#: one of those as a false mismatch (measured, P2 corpus, 2026-09-28). This
+#: check only asks "does this label's date-type get satisfied somewhere in
+#: the value" — `birthdate.find_birthdate`'s own plausibility gate is what
+#: judges whether a date THIS module found is a good one.
+_DATA_RE = re.compile(r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}")
 
 #: A label containing this token introduces a CEP.
 _ROTULO_CEP = "CEP"
@@ -110,13 +171,46 @@ _ROTULO_CEP = "CEP"
 #: (matches `CPF`, `C.P.F` once normalised, `CPF/MF`, `CPF DO CONJUGE`,
 #: `CPF DA MAE`) — this check only asks "does the value under THIS label
 #: pass the CPF check-digit arithmetic", never who the CPF belongs to, so a
-#: parent's or spouse's CPF label is just as valid a thing to validate.
+#: parent's or spouse's CPF label is just as valid a thing to validate. A
+#: CNH's own `Nº DE REGISTRO` / `CAT HAB` labels never contain this
+#: substring, so they are never mistaken for a CPF field by this check
+#: (regression-covered in the test file).
 _ROTULO_CPF = "CPF"
 
-#: A label whose only token is `UF` (after splitting on whitespace) —
-#: `NATURALIDADE`, `NOME`, etc. never match, since none of them contains the
-#: standalone word `UF`.
-_ROTULO_UF_TOKEN = "UF"
+#: A label that IS (exactly, once normalised) a bare UF field — never a
+#: label that merely CONTAINS the token `UF` among others. A real CNH
+#: groups three sub-fields into one label (`DOC IDENTIDADE / ÓRG EMISSOR /
+#: UF`), where `UF` is one whitespace-separated token among several; that
+#: compound label is not itself a UF field and must not be checked as one
+#: (measured, P2 corpus, 2026-09-28 — 13/28 false alarms from this exact
+#: shape). `NATURALIDADE`, `NOME`, etc. never equal either string.
+_ROTULOS_UF_ESTRITOS = frozenset({"UF", "ESTADO"})
+
+#: A label containing this token introduces a postal ADDRESS.
+_ROTULO_ENDERECO = "ENDERECO"
+
+#: The shortest word length this module treats as a genuine WORD rather
+#: than a connector/suffix (`DE`, `DO`, `2`, `VIA`). A real street/city name
+#: always carries at least one word this long; a hallucinated address that
+#: is really just digits plus a short suffix (`"12.345.6789 - 2 via"`) does
+#: not. Chosen from the measured miss, not tuned finer than that one data
+#: point warrants.
+_PALAVRA_MINIMA = 4
+
+#: Business/tax-registration markers that never legitimately appear on a
+#: PERSONAL identity document (RG/CPF/CNH/CIN/certidão/comprovante) — every
+#: one of them belongs to a company-registration document instead
+#: (`cartao_cnpj.py`'s own family, never this one). Checked over the WHOLE
+#: line, not just a label, because the measured miss's garbled text did not
+#: always carry a clean `RÓTULO: valor` split.
+_MARCADORES_INCOMPATIVEIS = ("ICMS", "INSCRICAO ESTADUAL", "CONTRIBUINTE")
+
+#: A CNPJ-shaped run (`NN.NNN.NNN/NNNN`, loosely) — a real CNPJ is
+#: `NN.NNN.NNN/NNNN-NN`, but the measured miss's hallucinated text did not
+#: reproduce the trailing check digits either. Loose on purpose: a personal
+#: identity document has NO legitimate reason to print anything in this
+#: shape at all, so there is no plausible false positive to guard against.
+_CNPJ_LIKE_RE = re.compile(r"\d{2}\.\d{3}\.\d{3}/\d{2,4}")
 
 #: Block openers naming a PARENT — see `labels.py`'s own note on why
 #: `FILIACAO` starts a different person's region. Kept narrow to PARENTS
@@ -150,7 +244,10 @@ class LegibilidadeAvaliacao:
     status: LegibilidadeStatus
     #: Reason codes, stable and machine-checkable (`"campo_data_invalido"`,
     #: `"cep_invalido"`, `"cpf_invalido"`, `"uf_invalida"`,
-    #: `"alta_taxa_ilegivel"`, `"nome_igual_filiacao"`). Empty for `OK`.
+    #: `"endereco_sem_texto"`, `"campo_incompativel_documento_pessoal"`,
+    #: `"texto_repetido"`, `"alta_taxa_ilegivel"`, `"nome_igual_filiacao"`).
+    #: Empty for `OK` — including when the ONLY signal that fired is a weak
+    #: one (`_SINAIS_FRACOS`) that alone does not compromise the document.
     motivos: tuple[str, ...] = ()
     #: The pt-BR sentence naming every reason, `" | "`-joined — the same
     #: shape `real.py`'s `aviso_mensagem` already uses for other findings.
@@ -178,6 +275,25 @@ def _tem_marcador_ilegivel(valor: str) -> bool:
     return _ILEGIVEL_MARCADOR in strip_accents_upper(valor)
 
 
+def _tem_palavra_real(valor: str, *, minimo: int = _PALAVRA_MINIMA) -> bool:
+    """Does any token, once its OWN punctuation is stripped, read as a word
+    at least `minimo` letters long?
+
+    Punctuation is stripped per token first — `"RUA DAS FLORES,
+    123".split()` -> `[..., "FLORES,", "123"]`, and `"FLORES,"` is not
+    `.isalpha()` with the comma still attached, which would wrongly read a
+    perfectly genuine address as having no real word. `"12.345.6789 - 2
+    via".split()` -> `[..., "via"]` — stripped, `"via"` IS alphabetic but
+    only 3 letters, so this still returns `False`: a real street/city name
+    always carries at least one longer one.
+    """
+    for tok in valor.split():
+        letras = tok.strip(".,;/-").replace(".", "")
+        if letras.isalpha() and len(letras) >= minimo:
+            return True
+    return False
+
+
 def _mismatches_tipo(linhas: list[str]) -> list[str]:
     """Label/value TYPE mismatches — the signal that catches a confident,
     well-formed, WRONG transcription (see the module docstring's measured
@@ -186,7 +302,8 @@ def _mismatches_tipo(linhas: list[str]) -> list[str]:
     signal (`_taxa_ilegivel` below), not a second, redundant mismatch.
     """
     motivos: list[str] = []
-    viu_data_invalida = viu_cep_invalido = viu_cpf_invalido = viu_uf_invalida = False
+    viu_data_invalida = viu_cep_invalido = viu_cpf_invalido = False
+    viu_uf_invalida = viu_endereco_sem_texto = False
 
     for linha in linhas:
         rotulo, valor = _dividir_rotulo_valor(linha)
@@ -194,7 +311,7 @@ def _mismatches_tipo(linhas: list[str]) -> list[str]:
             continue
 
         if _ROTULO_DATA in rotulo and not viu_data_invalida:
-            if not _DATA_RE.match(valor):
+            if not _DATA_RE.search(valor):
                 viu_data_invalida = True
 
         if _ROTULO_CEP in rotulo and not viu_cep_invalido:
@@ -209,13 +326,22 @@ def _mismatches_tipo(linhas: list[str]) -> list[str]:
                 # is far more likely a transcription that dropped digits
                 # than a type mismatch this check should own, and CPF's own
                 # sibling parser (`cpf.py`) already demotes it to `baixa`/
-                # `nenhuma` on its own terms.
+                # `nenhuma` on its own terms. `avaliar_legibilidade` also
+                # demotes a LONE `cpf_invalido` to non-comprometida — see
+                # its own docstring.
                 viu_cpf_invalido = True
 
-        if rotulo.split() and _ROTULO_UF_TOKEN in rotulo.split() and not viu_uf_invalida:
+        # EXACT match only — a compound label merely CONTAINING the token
+        # `UF` (`DOC IDENTIDADE / ÓRG EMISSOR / UF`) is not itself a UF
+        # field. See `_ROTULOS_UF_ESTRITOS`'s own comment.
+        if rotulo in _ROTULOS_UF_ESTRITOS and not viu_uf_invalida:
             candidato = strip_accents_upper(valor).replace(".", "").replace("-", "").strip()
             if candidato and (len(candidato) != 2 or candidato not in UFS):
                 viu_uf_invalida = True
+
+        if _ROTULO_ENDERECO in rotulo and not viu_endereco_sem_texto:
+            if not _tem_palavra_real(valor):
+                viu_endereco_sem_texto = True
 
     if viu_data_invalida:
         motivos.append("campo_data_invalido")
@@ -225,7 +351,64 @@ def _mismatches_tipo(linhas: list[str]) -> list[str]:
         motivos.append("cpf_invalido")
     if viu_uf_invalida:
         motivos.append("uf_invalida")
+    if viu_endereco_sem_texto:
+        motivos.append("endereco_sem_texto")
     return motivos
+
+
+def _campo_incompativel(linhas: list[str]) -> Optional[str]:
+    """A business/tax-registration marker anywhere in the transcription —
+    never a label-anchored check, because the measured miss's garbled text
+    did not always carry a clean `RÓTULO: valor` split. See
+    `_MARCADORES_INCOMPATIVEIS`/`_CNPJ_LIKE_RE`'s own comments for why
+    neither has a plausible false positive on a genuine identity document.
+    """
+    for linha in linhas:
+        if any(marcador in linha for marcador in _MARCADORES_INCOMPATIVEIS):
+            return "campo_incompativel_documento_pessoal"
+        if _CNPJ_LIKE_RE.search(linha):
+            return "campo_incompativel_documento_pessoal"
+    return None
+
+
+def _texto_repetido(linhas: list[str]) -> Optional[str]:
+    """A run of 3 consecutive REAL words repeating later in the SAME line.
+
+    🔴 WHY EXACTLY 3, AND WHY 2-OF-3 MUST BE LONG — MEASURED, NOT GUESSED
+    -----------------------------------------------------------------------
+    A first cut checked 2-word grams too, and flagged a REAL certidão de
+    casamento: `"ALMIR TEIXEIRA DA COSTA ... filho de PEDRO TEIXEIRA DA
+    COSTA"` repeats the bigram `TEIXEIRA DA` — genuinely, because the son
+    shares his father's surname, which is the ORDINARY case a certidão de
+    casamento exists to record, not a transcription defect. Two words is
+    simply not enough signal to tell "the model lost its place" apart from
+    "two related people share a name" in running Portuguese prose.
+
+    Three words fixes it two ways at once: (a) `TEIXEIRA DA COSTA` is never
+    duplicated intact in that fixture (the comma after the first `COSTA,`
+    drops it from the word list before the gram can form), so the false
+    match disappears; (b) requiring at least 2-of-3 words to be a REAL word
+    (4+ letters — so grams built mostly from `DE`/`DO`/`DA` connectors,
+    ordinary in Portuguese, never count) is what still lets `DE SEGURANCA
+    PUBLICA` register as the phrase, not the throwaway `DE` beside it. See
+    the module docstring's `SECÇÃO DE SEGURANÇA PUBLICA DO ESTADO DE
+    SEGURANÇA PUBLICA` example — the shape a model produces when it loses
+    its place mid-transcription and re-reads the same phrase.
+    """
+    tamanho = 3
+    for linha in linhas:
+        palavras = [p for p in linha.split() if p.isalpha()]
+        if len(palavras) < tamanho + 1:
+            continue
+        vistos: set[tuple[str, ...]] = set()
+        for i in range(len(palavras) - tamanho + 1):
+            grama = tuple(palavras[i : i + tamanho])
+            if sum(1 for p in grama if len(p) >= _PALAVRA_MINIMA) < 2:
+                continue
+            if grama in vistos:
+                return "texto_repetido"
+            vistos.add(grama)
+    return None
 
 
 def _taxa_ilegivel(linhas: list[str]) -> Optional[str]:
@@ -274,6 +457,45 @@ def _nome_igual_filiacao(linhas: list[str], nome_titular: Optional[str]) -> Opti
     return None
 
 
+#: pt-BR sentence per reason code — the same shape `real.py`'s
+#: `aviso_mensagem` already uses. Keyed by every code `avaliar_legibilidade`
+#: can return; a code missing here is a bug, not a silent gap (the `[m]`
+#: lookup below raises `KeyError` rather than swallowing an unrecognised
+#: reason).
+_MENSAGENS = {
+    "campo_data_invalido": "um campo de data trouxe um valor que nao parece uma data",
+    "cep_invalido": "um CEP trouxe um valor que nao tem 8 digitos",
+    "cpf_invalido": "um CPF trouxe um valor que nao passa na validacao dos digitos verificadores",
+    "uf_invalida": "uma UF trouxe um valor que nao e uma sigla de estado valida",
+    "endereco_sem_texto": "um endereco trouxe um valor sem nenhum nome de rua ou cidade reconhecivel",
+    "campo_incompativel_documento_pessoal": (
+        "o documento traz um campo de cadastro empresarial/tributario "
+        "(ICMS, inscricao estadual ou um numero no formato de CNPJ), que "
+        "nao pertence a um documento de identidade pessoal"
+    ),
+    "texto_repetido": "um trecho do texto se repete, sinal de uma leitura desorientada",
+    "alta_taxa_ilegivel": "uma parte substancial dos campos veio marcada como ilegivel",
+    "nome_igual_filiacao": "o nome do titular e identico ao de um dos pais (filiacao) no mesmo documento",
+}
+
+#: A signal in here is sufficient ON ITS OWN to flag `comprometida` (every
+#: signal defaults to stand-alone-sufficient — this set exists only to
+#: document that fact and give `_SINAIS_FRACOS` something to be an
+#: exception TO). Not consulted directly; see `avaliar_legibilidade`'s own
+#: demotion logic.
+#:
+#: `cpf_invalido`, alone, is the one signal this module demotes: a single
+#: CPF check-digit failure with NOTHING else wrong is exactly what one
+#: ordinary OCR digit slip on an otherwise-clean document looks like
+#: (measured, P2 corpus, 2026-09-28 — 2/28 false alarms were a lone
+#: `cpf_invalido`) — `cpf.py`'s own parser already demotes that reading to
+#: `baixa`/`nenhuma` on its own terms, so this module adds no NEW
+#: information by escalating the whole document on that signal alone. Any
+#: OTHER signal co-occurring with it still flags `comprometida` as normal —
+#: this is a demotion of the LONE case, not of the signal itself.
+_SINAIS_FRACOS = frozenset({"cpf_invalido"})
+
+
 def avaliar_legibilidade(
     text: str, *, nome_titular: Optional[str] = None
 ) -> LegibilidadeAvaliacao:
@@ -292,22 +514,25 @@ def avaliar_legibilidade(
     taxa = _taxa_ilegivel(linhas)
     if taxa:
         motivos.append(taxa)
+    incompativel = _campo_incompativel(linhas)
+    if incompativel:
+        motivos.append(incompativel)
+    repetido = _texto_repetido(linhas)
+    if repetido:
+        motivos.append(repetido)
     filiacao = _nome_igual_filiacao(linhas, nome_titular)
     if filiacao:
         motivos.append(filiacao)
 
-    if not motivos:
+    if not motivos or set(motivos) <= _SINAIS_FRACOS:
+        # Either nothing fired, or every signal that fired is a WEAK one
+        # (today only a lone `cpf_invalido`) — see `_SINAIS_FRACOS`'s own
+        # comment. `set(...) <=` (subset) rather than an equality/length
+        # check so this stays correct if a weak signal is ever able to fire
+        # more than once in the same document.
         return LegibilidadeAvaliacao(status=LegibilidadeStatus.OK)
 
-    mensagens = {
-        "campo_data_invalido": "um campo de data trouxe um valor que nao parece uma data",
-        "cep_invalido": "um CEP trouxe um valor que nao tem 8 digitos",
-        "cpf_invalido": "um CPF trouxe um valor que nao passa na validacao dos digitos verificadores",
-        "uf_invalida": "uma UF trouxe um valor que nao e uma sigla de estado valida",
-        "alta_taxa_ilegivel": "uma parte substancial dos campos veio marcada como ilegivel",
-        "nome_igual_filiacao": "o nome do titular e identico ao de um dos pais (filiacao) no mesmo documento",
-    }
-    mensagem = " | ".join(mensagens[m] for m in motivos)
+    mensagem = " | ".join(_MENSAGENS[m] for m in motivos)
     return LegibilidadeAvaliacao(
         status=LegibilidadeStatus.COMPROMETIDA,
         motivos=tuple(motivos),
