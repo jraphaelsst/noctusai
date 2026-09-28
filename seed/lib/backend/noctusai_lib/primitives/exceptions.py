@@ -37,16 +37,68 @@ class AppException(Exception):
         super().__init__(message)
 
 
+#: pt-BR nouns ending in "-ma"/"-pa" that are grammatically MASCULINE despite
+#: the heuristic below reading a trailing "a" as feminine ("o problema", never
+#: "a problema"). Kept intentionally small — resource labels this exception
+#: actually receives ("Tarefa", "Pauta", "Marca", "Etapa", "Permuta"…), not an
+#: exhaustive Portuguese dictionary.
+_MASCULINOS_TERMINADOS_EM_A = {
+    "problema", "sistema", "tema", "programa", "clima", "idioma", "mapa",
+    "planeta", "cinema", "drama", "enigma", "dogma", "emblema", "esquema",
+    "fantasma", "holograma", "poema", "panorama", "telefonema", "dia",
+}
+
+
+def _feminino_por_heuristica(resource: str) -> bool:
+    """Best-effort pt-BR gender guess for a resource label.
+
+    Not a grammar engine — a targeted heuristic for the labels this
+    exception actually receives (a single noun, or a noun the caller already
+    capitalized). Endings that are reliably feminine in this vocabulary:
+    `-ção`/`-são` ("negociação", "permissão"), `-dade`, `-gem`, or a bare
+    trailing "a" MINUS the small masculine-despite-"-a" exception list above.
+    A caller that already composed a full sentence (e.g. ending in ".") falls
+    through to the masculine default unchanged — this heuristic only ever
+    ADDS correct agreement, never removes an existing one.
+    """
+    ultima_palavra = resource.strip().split()[-1].lower() if resource.strip() else ""
+    if ultima_palavra in _MASCULINOS_TERMINADOS_EM_A:
+        return False
+    if ultima_palavra.endswith(("ção", "são", "dade", "gem")):
+        return True
+    return ultima_palavra.endswith("a")
+
+
 class NotFoundError(AppException):
     """Resource not found."""
 
-    def __init__(self, resource: str, resource_id: Optional[str] = None):
+    def __init__(
+        self,
+        resource: str,
+        resource_id: Optional[str] = None,
+        *,
+        feminino: Optional[bool] = None,
+    ):
+        """
+        Args:
+            resource: The pt-BR noun shown to the user ("Tarefa", "cliente_documentos"…).
+            resource_id: Optional id, carried in `details` only (never in the message).
+            feminino: Force gender agreement ("...não encontrada" vs
+                "...não encontrado") when the heuristic would guess wrong for
+                an unusual label. Defaults to `None` — auto-detected from
+                `resource` via :func:`_feminino_por_heuristica`. Keyword-only
+                and defaulted so every existing two-positional-arg call site
+                (`NotFoundError("Tarefa", tarefa_id)`) keeps working unchanged.
+        """
         details = {"resource": resource}
         if resource_id:
             details["id"] = resource_id
+        if feminino is None:
+            feminino = _feminino_por_heuristica(resource)
+        adjetivo = "não encontrada" if feminino else "não encontrado"
         super().__init__(
             code="NOT_FOUND",
-            message=f"{resource} não encontrado",
+            message=f"{resource} {adjetivo}",
             status_code=404,
             details=details,
         )
