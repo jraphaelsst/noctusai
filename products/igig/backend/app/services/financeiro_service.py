@@ -256,11 +256,17 @@ class FinanceiroService:
         sides — it never contributes to `entregues` for billing purposes and
         can never trigger one.
 
-        **Excedentes are hand-added pautas beyond the plan** — anything NOT
-        traced to the plan (created directly on the Calendário Editorial, or
-        a "Nova tarefa" pointing at a pauta with no orçamento origin), still
-        measured against the SAME `posts_por_mes` the plan itself is priced
-        from. Worked example: `scratchpad/kb/delta-closeout.md`.
+        **Excedentes are hand-added pautas beyond the plan's REMAINING
+        capacity** — anything NOT traced to the plan (created directly on the
+        Calendário Editorial, or a "Nova tarefa" pointing at a pauta with no
+        orçamento origin) bills against whatever of `posts_por_mes` the plan
+        did NOT already use this competência:
+        `capacidade_restante = max(0, posts_por_mes − plano_entregue)`,
+        `excedentes = max(0, extras − capacidade_restante)`. Comparing extras
+        straight to `posts_por_mes` — ignoring how much of the package the
+        plan itself already delivered — under-billed whenever the plan had
+        used part (or all) of the package (achado A, 2026-09 audit). Worked
+        examples: `scratchpad/kb/delta-excedentes-fatura.md`.
 
         Attribution: a plan pauta's contrato is unambiguous
         (`orcamento_item_id` → one orçamento → at most one contrato, since
@@ -317,7 +323,15 @@ class FinanceiroService:
             cliente_id = str(contrato.get("cliente_id") or "")
             extras = extras_por_contrato.get(contrato_id, 0)
             plano = plano_por_contrato.get(contrato_id, 0)
-            excedentes_qtd = max(0, extras - pacote)
+            # The plan never counts as excedente, but it DOES consume the
+            # package's physical capacity: what is left for avulsas is the
+            # package minus whatever the plan already delivered this
+            # competência, floored at zero (achado A, 2026-09 audit — the
+            # old formula compared `extras` straight to `pacote`, ignoring
+            # `plano` entirely, and under-billed whenever the plan had
+            # already used part — or all — of the package).
+            capacidade_restante = max(0, pacote - plano)
+            excedentes_qtd = max(0, extras - capacidade_restante)
             unitario = float(contrato.get("valor_excedente") or 0)
             saida.append(Excedente(
                 cliente_id=cliente_id,
