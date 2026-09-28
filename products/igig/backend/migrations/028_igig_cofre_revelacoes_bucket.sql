@@ -18,6 +18,13 @@
 --      own module docstring already promised ("Cada revelação fica
 --      registrada"). Append-only by convention (no UPDATE/DELETE path in the
 --      app) — no `updated_at` column.
+--   3. `igig.apontamento.duracao_segundos` — the timer used to floor to whole
+--      MINUTES per segment (achado 22), so three 40-second sessions recorded
+--      0+0+0 = zero minutes instead of the 2 they actually add up to.
+--      `minutos` stays (existing readers keep working unchanged); the new
+--      column is the precise value `minutos_da_tarefa` now sums BEFORE
+--      converting to minutes, so sub-minute sessions are no longer silently
+--      discarded from the custo real / DRE input.
 --
 -- SQLite mirror: migrations/sqlite/028_igig_cofre_revelacoes_bucket.sql
 -- (parity-tested by tests/test_schema_parity.py).
@@ -55,3 +62,5 @@ CREATE POLICY cofre_revelacoes_org_isolation ON igig.cofre_revelacoes FOR ALL TO
 DROP POLICY IF EXISTS cofre_revelacoes_service_role ON igig.cofre_revelacoes;
 CREATE POLICY cofre_revelacoes_service_role ON igig.cofre_revelacoes FOR ALL TO service_role
     USING (true) WITH CHECK (true);
+
+ALTER TABLE igig.apontamento ADD COLUMN IF NOT EXISTS duracao_segundos INTEGER;

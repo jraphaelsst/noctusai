@@ -186,8 +186,10 @@ export function EsteiraBoard({ clienteId, className }: EsteiraBoardProps) {
         onBeforeMove={onBeforeMove}
         onMoveError={(erro) =>
           // The server's pt-BR `detail` (409 `etapa_invalida`, 422
-          // `motivo_obrigatorio`) is the message; the card already rolled back.
-          toast.error(erro.message || "Não foi possível mover a tarefa.")
+          // `motivo_obrigatorio`) is the message; the card already rolled
+          // back. `describeError` strips the `[status]` prefix `err.message`
+          // otherwise carries (achado 10).
+          toast.error(describeError(erro, "Não foi possível mover a tarefa."))
         }
         toolbar={
           <Button size="sm" className="min-h-10" onClick={() => setNovaAberta(true)}>

@@ -23,3 +23,7 @@ CREATE TABLE IF NOT EXISTS cofre_revelacoes (
 CREATE INDEX IF NOT EXISTS idx_igig_cofre_revelacoes_org ON cofre_revelacoes (org_id);
 CREATE INDEX IF NOT EXISTS idx_igig_cofre_revelacoes_acesso
     ON cofre_revelacoes (org_id, acesso_id, revelado_em DESC);
+
+-- achado 22: precise per-segment duration. `minutos` stays for existing
+-- readers; `minutos_da_tarefa` now sums this BEFORE converting to minutes.
+ALTER TABLE apontamento ADD COLUMN duracao_segundos INTEGER;

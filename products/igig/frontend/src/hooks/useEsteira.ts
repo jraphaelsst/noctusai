@@ -57,6 +57,12 @@ export interface Apontamento {
   iniciado_em: string;
   encerrado_em: string | null;
   minutos: number;
+  /** The precise value `minutos` floors away (achado 22). `null` for rows
+   * recorded before this column existed. */
+  duracao_segundos: number | null;
+  /** Only meaningful on the response to `useIniciarTimer` — true when
+   * starting THIS timer auto-closed a running one on another tarefa. */
+  timer_anterior_encerrado?: boolean;
 }
 
 export interface LinkAprovacao {
@@ -176,7 +182,16 @@ export function useApontamentos(tarefaId: string | null, usuarioId: string | nul
     apontamentos,
     emAndamento:
       apontamentos.find((a) => a.encerrado_em === null && a.usuario_id === usuarioId) ?? null,
-    minutosTotais: apontamentos.reduce((soma, a) => soma + (a.minutos || 0), 0),
+    // Sums the PRECISE seconds before converting to minutes (achado 22) —
+    // summing already-per-segment-floored `minutos` is exactly how three
+    // 40-second sessions used to total zero instead of the 2 minutes they
+    // actually add up to.
+    minutosTotais: Math.floor(
+      apontamentos.reduce(
+        (soma, a) => soma + (a.duracao_segundos ?? (a.minutos || 0) * 60),
+        0,
+      ) / 60,
+    ),
     loading: query.isPending && !query.data,
     refreshing: query.isFetching && !!query.data,
   };

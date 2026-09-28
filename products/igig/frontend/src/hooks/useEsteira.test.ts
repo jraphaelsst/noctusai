@@ -131,6 +131,7 @@ const seg = (over: Partial<Apontamento>): Apontamento => ({
   iniciado_em: "2026-09-23T10:00:00Z",
   encerrado_em: "2026-09-23T10:30:00Z",
   minutos: 30,
+  duracao_segundos: 1800,
   ...over,
 });
 
@@ -139,8 +140,13 @@ describe("useApontamentos", () => {
     mockUseQuery.mockReturnValue({
       data: [
         seg({ id: "1" }),
-        seg({ id: "2", usuario_id: "colega", encerrado_em: null, minutos: 0 }),
-        seg({ id: "3", encerrado_em: null, minutos: 0 }),
+        // Open segments (`encerrado_em: null`) carry NO duration yet, real
+        // backend-side (`iniciar()` sets `duracao_segundos: 0`) — the
+        // fixture must say so explicitly, or `minutosTotais` (which sums
+        // `duracao_segundos`, achado 22) would silently inherit the closed
+        // segment's default 1800s from the factory below.
+        seg({ id: "2", usuario_id: "colega", encerrado_em: null, minutos: 0, duracao_segundos: 0 }),
+        seg({ id: "3", encerrado_em: null, minutos: 0, duracao_segundos: 0 }),
       ],
       isPending: false,
       isFetching: false,
@@ -157,6 +163,30 @@ describe("useApontamentos", () => {
       isFetching: false,
     } as never);
     expect(useApontamentos("t1", "eu").emAndamento).toBeNull();
+  });
+
+  it("sums sub-minute sessions correctly instead of per-segment floor (achado 22)", () => {
+    mockUseQuery.mockReturnValue({
+      data: [
+        seg({ id: "1", minutos: 0, duracao_segundos: 40 }),
+        seg({ id: "2", minutos: 0, duracao_segundos: 40 }),
+        seg({ id: "3", minutos: 0, duracao_segundos: 40 }),
+      ],
+      isPending: false,
+      isFetching: false,
+    } as never);
+    // 3×40s = 120s = 2 minutes — summing the already-floored `minutos`
+    // (all 0) would have reported zero.
+    expect(useApontamentos("t1", "eu").minutosTotais).toBe(2);
+  });
+
+  it("falls back to minutos*60 for rows recorded before duracao_segundos existed", () => {
+    mockUseQuery.mockReturnValue({
+      data: [seg({ id: "1", minutos: 15, duracao_segundos: null })],
+      isPending: false,
+      isFetching: false,
+    } as never);
+    expect(useApontamentos("t1", "eu").minutosTotais).toBe(15);
   });
 
   it("does not report loading while data exists and a refetch is in flight", () => {

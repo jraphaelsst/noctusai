@@ -69,6 +69,14 @@ class ApontamentoOut(BaseModel):
     iniciado_em: str
     encerrado_em: str | None = None
     minutos: int = 0
+    #: The precise value `minutos` floors away (achado 22). `None` for rows
+    #: recorded before this column existed.
+    duracao_segundos: int | None = None
+    #: True on the response to `POST .../timer/iniciar` when starting THIS
+    #: timer auto-closed a running one on another tarefa — the FE surfaces
+    #: this so the user isn't left wondering why their other clock stopped.
+    #: Always `False` on every other read (there is nothing to report).
+    timer_anterior_encerrado: bool = False
 
 
 class LinkAprovacaoOut(BaseModel):

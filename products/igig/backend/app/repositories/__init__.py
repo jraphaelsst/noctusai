@@ -208,11 +208,16 @@ class ApontamentoRepository(BaseRepository):
         index reject the insert. `usuario_id` is ALWAYS the authenticated
         caller (smoke finding 3 — never a payload field); `profissional_id` is
         that user's team record, which is what cost is computed from.
+
+        The returned row carries a transient (non-column) `timer_anterior_
+        encerrado` flag so the caller can tell the user their OTHER tarefa's
+        clock just stopped (achado 22 — this used to happen with zero
+        feedback on the screen the user was actually looking at).
         """
         aberto = self.aberto_do_usuario(org_id, usuario_id)
         if aberto is not None:
             self.encerrar(org_id, str(aberto["id"]))
-        return self.criar(
+        criado = self.criar(
             org_id,
             {
                 "tarefa_id": tarefa_id,
@@ -220,24 +225,47 @@ class ApontamentoRepository(BaseRepository):
                 "profissional_id": profissional_id,
                 "iniciado_em": datetime.now(timezone.utc).isoformat(),
                 "minutos": 0,
+                "duracao_segundos": 0,
             },
         )
+        criado["timer_anterior_encerrado"] = aberto is not None
+        return criado
 
     def encerrar(self, org_id: str, apontamento_id: str) -> Record:
-        """Stop the timer and persist the elapsed minutes."""
+        """Stop the timer and persist the elapsed time.
+
+        `duracao_segundos` is the PRECISE value; `minutos` is kept alongside
+        it (floored) for every existing reader. Before `duracao_segundos`
+        existed, three separate 40-second sessions recorded 0+0+0 = zero
+        minutes — each one floored away on its own — instead of the 2
+        minutes they actually add up to (achado 22). `minutos_da_tarefa`
+        below is what actually benefits: it sums the precise seconds first.
+        """
         atual = self.buscar(org_id, apontamento_id)
         fim = datetime.now(timezone.utc)
         inicio = datetime.fromisoformat(str(atual["iniciado_em"]))
         if inicio.tzinfo is None:
             inicio = inicio.replace(tzinfo=timezone.utc)
-        minutos = max(0, int((fim - inicio).total_seconds() // 60))
+        segundos = max(0, int((fim - inicio).total_seconds()))
         return self.atualizar(
-            org_id, apontamento_id, {"encerrado_em": fim.isoformat(), "minutos": minutos}
+            org_id, apontamento_id,
+            {"encerrado_em": fim.isoformat(), "minutos": segundos // 60, "duracao_segundos": segundos},
         )
 
     def minutos_da_tarefa(self, org_id: str, tarefa_id: str) -> int:
-        """Total measured minutes — the input to custo real do job."""
-        return sum(int(a.get("minutos") or 0) for a in self.da_tarefa(org_id, tarefa_id))
+        """Total measured minutes — the input to custo real do job.
+
+        Sums `duracao_segundos` (falling back to `minutos * 60` for rows
+        recorded before that column existed) BEFORE converting to minutes —
+        summing already-floored per-segment minutes is exactly how sub-minute
+        sessions used to vanish from the total (achado 22).
+        """
+        segundos_total = sum(
+            int(a["duracao_segundos"]) if a.get("duracao_segundos") is not None
+            else int(a.get("minutos") or 0) * 60
+            for a in self.da_tarefa(org_id, tarefa_id)
+        )
+        return segundos_total // 60
 
 
 class AprovacaoRepository(BaseRepository):

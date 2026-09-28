@@ -80,6 +80,9 @@ export function TarefaDetalhe({
   const [modo, setModo] = useState<Modo>("ver");
   const [repertorioAberto, setRepertorioAberto] = useState(false);
   const [campos, setCampos] = useState({ titulo: "", responsavelId: "", prazo: "", pautaId: "" });
+  // "Rodando desde" used to be a static timestamp that never moved (achado
+  // 22) — this ticks the elapsed time forward every 30s while a timer runs.
+  const [agora, setAgora] = useState(() => Date.now());
 
   // A different card (or the sheet closing) must never inherit the previous
   // card's link, a half-armed edit or delete.
@@ -88,6 +91,12 @@ export function TarefaDetalhe({
     setModo("ver");
     setRepertorioAberto(false);
   }, [tarefaId]);
+
+  useEffect(() => {
+    if (!emAndamento) return;
+    const id = window.setInterval(() => setAgora(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [emAndamento]);
 
   if (!tarefa) {
     return <EntityDetailDialog open={false} onClose={onClose} title="" className={SHEET_MOBILE} />;
@@ -99,8 +108,20 @@ export function TarefaDetalhe({
 
   function alternarTimer() {
     if (!tarefa) return;
-    const mutacao = emAndamento ? encerrar : iniciar;
-    mutacao.mutate(tarefa.id, {
+    if (emAndamento) {
+      encerrar.mutate(tarefa.id, {
+        onError: (e) => toast.error(describeError(e, "Não foi possível atualizar o cronômetro.")),
+      });
+      return;
+    }
+    iniciar.mutate(tarefa.id, {
+      onSuccess: (apontamento) => {
+        // achado 22: starting a timer used to close another running one with
+        // zero feedback on the screen the user was actually looking at.
+        if (apontamento.timer_anterior_encerrado) {
+          toast.message("O cronômetro de outra tarefa foi encerrado automaticamente.");
+        }
+      },
       onError: (e) => toast.error(describeError(e, "Não foi possível atualizar o cronômetro.")),
     });
   }
@@ -378,7 +399,9 @@ export function TarefaDetalhe({
                   ? `Rodando desde ${new Date(emAndamento.iniciado_em).toLocaleTimeString("pt-BR", {
                       hour: "2-digit",
                       minute: "2-digit",
-                    })}`
+                    })} · ${formatarMinutos(
+                      Math.max(0, Math.floor((agora - new Date(emAndamento.iniciado_em).getTime()) / 60_000)),
+                    )}`
                   : `Total: ${formatarMinutos(minutosTotais)}`}
               </span>
             </div>

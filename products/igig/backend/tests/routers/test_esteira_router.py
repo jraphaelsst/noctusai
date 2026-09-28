@@ -14,7 +14,7 @@ Everything runs on one shared `igig` mock (`crm_api` in conftest): the
 pipeline code reads through PostgREST, the timer/portal repositories through
 the real `SupabaseRecordStore` adapter over the same mock.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from noctusai_lib.integrations.persistence import SupabaseRecordStore
@@ -464,6 +464,37 @@ class TestTimesheet:
 
     def test_iniciar_on_a_missing_tarefa_returns_404(self, api, etapas):
         assert api.post("/api/esteira/tarefas/nao-existe/timer/iniciar").status_code == 404
+
+    def test_iniciar_reports_when_it_closed_another_running_timer(self, api, pauta, etapas):
+        """achado 22: this used to happen with zero feedback on screen."""
+        outra = api.post(
+            "/api/esteira/tarefas", json={"pauta_id": pauta["id"], "titulo": "Outra tarefa"}
+        ).json()
+        primeiro = api.post(f"/api/esteira/tarefas/{outra['id']}/timer/iniciar")
+        assert primeiro.json()["timer_anterior_encerrado"] is False
+
+        segundo = api.post(f"/api/esteira/tarefas/{outra['id']}/timer/iniciar")
+        # Starting on the SAME tarefa still auto-closes the running one.
+        assert segundo.json()["timer_anterior_encerrado"] is True
+
+    def test_sub_minute_sessions_still_add_up_in_the_tarefas_total(
+        self, api, igig_db, tarefa, repos,
+    ):
+        """achado 22: three 40-second sessions used to record 0+0+0 = zero
+        minutes — each one floored away on its own."""
+        for _ in range(3):
+            api.post(f"/api/esteira/tarefas/{tarefa['id']}/timer/iniciar")
+            aberto = [
+                a for a in igig_db.table("apontamento")._data
+                if a.get("tarefa_id") == tarefa["id"] and a.get("encerrado_em") is None
+            ][0]
+            passado = datetime.now(timezone.utc) - timedelta(seconds=40)
+            igig_db.table("apontamento").update(
+                {"iniciado_em": passado.isoformat()}
+            ).eq("id", aberto["id"]).execute()
+            api.post(f"/api/esteira/tarefas/{tarefa['id']}/timer/encerrar")
+
+        assert repos.apontamento.minutos_da_tarefa(ORG, tarefa["id"]) == 2
 
 
 # ── Approval link minting ───────────────────────────────────────────
