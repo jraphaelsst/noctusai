@@ -257,3 +257,30 @@ class TestInvitationTokenLockdown:
 
         with pytest.raises(ValueError):
             invitation_token_lockdown_sql("igig; DROP TABLE x")
+
+
+# ── invitation_token_lockdown_all_sql — core 056's platform-wide sweep ──
+
+
+def test_lockdown_all_quotes_schema_names_so_hyphens_work():
+    from noctusai_lib.domain.sql_templates import invitation_token_lockdown_all_sql
+
+    sql = invitation_token_lockdown_all_sql()
+    # %I (quote_ident) on every statement — `personal-finance` is a real schema.
+    assert "REVOKE ALL ON %I.invitations FROM anon" in sql
+    assert "REVOKE SELECT ON %I.invitations FROM authenticated" in sql
+    assert "GRANT SELECT (%s) ON %I.invitations TO authenticated" in sql
+    # Only tables that actually carry a token column are touched.
+    assert "a.attname = 'token'" in sql
+
+
+def test_core_056_is_exactly_the_rendered_sweep():
+    """The migration file is RENDERED from the template, never hand-edited —
+    a drifted copy would silently stop covering a schema the probe checks."""
+    from pathlib import Path
+
+    from noctusai_lib.domain.sql_templates import invitation_token_lockdown_all_sql
+
+    repo = Path(__file__).resolve().parents[4]
+    migration = repo / "products/core/backend/migrations/056_invitation_token_lockdown_all_schemas.sql"
+    assert invitation_token_lockdown_all_sql() in migration.read_text()

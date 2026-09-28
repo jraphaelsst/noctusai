@@ -358,3 +358,43 @@ def invitation_token_lockdown_sql(schema: str) -> str:
         "END\n"
         "$lock$;"
     )
+
+
+def invitation_token_lockdown_all_sql() -> str:
+    """``invitation_token_lockdown_sql`` for EVERY schema that has an
+    ``invitations`` table with a ``token`` column — the platform-wide form.
+
+    The per-schema form is what each product's own migration renders; this
+    one is core's sweep for the schemas no awake product migrates (asleep
+    and legacy products whose tables still live in the shared DB), which the
+    platform-wide ``invitations.token_not_api_readable`` probe also checks.
+    Same statements, same live-catalog column derivation; schema names are
+    ``quote_ident``-ed, so a hyphenated schema (``personal-finance``) works.
+    Idempotent: re-running re-derives the same column grant.
+    """
+    return (
+        "DO $lock_all$\n"
+        "DECLARE\n"
+        "  r record;\n"
+        "  v_cols text;\n"
+        "BEGIN\n"
+        "  FOR r IN\n"
+        "    SELECT n.nspname AS sch\n"
+        "      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace\n"
+        "     WHERE c.relname = 'invitations' AND c.relkind = 'r'\n"
+        "       AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid\n"
+        "                    AND a.attname = 'token' AND NOT a.attisdropped)\n"
+        "  LOOP\n"
+        "    SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position)\n"
+        "      INTO v_cols\n"
+        "      FROM information_schema.columns\n"
+        "     WHERE table_schema = r.sch AND table_name = 'invitations'\n"
+        "       AND column_name <> 'token';\n"
+        "    EXECUTE format('REVOKE ALL ON %I.invitations FROM anon', r.sch);\n"
+        "    EXECUTE format('REVOKE SELECT ON %I.invitations FROM authenticated', r.sch);\n"
+        "    EXECUTE format('GRANT SELECT (%s) ON %I.invitations TO authenticated', v_cols, r.sch);\n"
+        "  END LOOP;\n"
+        "END\n"
+        "$lock_all$;"
+    )
+

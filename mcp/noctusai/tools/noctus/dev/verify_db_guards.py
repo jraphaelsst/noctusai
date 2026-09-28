@@ -2809,7 +2809,9 @@ _INVITATION_TOKEN_PROBE = GuardProbe(
     schema="*",
     guard_name="invitations.token",
     kind="state_assertion",
-    migrations=_CUSTOMER_ISOLATION_MIGRATIONS,
+    # 055 + every product's *_customer_role_isolation.sql cover the awake
+    # chains; core 056 sweeps every remaining schema (asleep/legacy included).
+    migrations=(*_CUSTOMER_ISOLATION_MIGRATIONS, "056_invitation_token_lockdown_all_schemas.sql"),
     rationale=(
         "An invitations.token read through the API roles lets any org member "
         "(and, before SEC-2, a self-registered customer) accept a pending invite "
