@@ -59,6 +59,11 @@ class PecaOut(BaseModel):
     mime_type: str | None = None
     tamanho_bytes: int | None = None
     ordem: int = 0
+    #: A freshly-signed URL, minted per response — never persisted (same
+    #: "key is durable, URL is a per-read credential" rule as the marca logo).
+    #: `None` when the caller didn't ask for it (`listar_pecas` mints it;
+    #: nothing else needs to).
+    url: str | None = None
 
 
 class PautaOut(BaseModel):

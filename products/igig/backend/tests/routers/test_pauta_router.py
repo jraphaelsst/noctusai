@@ -177,6 +177,62 @@ class TestCalendario:
         assert resp.status_code == 200
         assert resp.json()["data_publicacao"] is None
 
+    def test_titulo_marca_linha_editorial_e_canal_are_editable(self, api, repos, cliente):
+        """achado 15: these existed in `PautaUpdate` but nothing exercised
+        the API path end-to-end."""
+        marca = repos.marca.criar(ORG, {"cliente_id": cliente["id"], "nome": "Sol"})
+        pauta = _criar(api, cliente).json()
+        resp = api.patch(f"/api/pautas/{pauta['id']}", json={
+            "titulo": "Novo título", "marca_id": marca["id"],
+            "linha_editorial": "Institucional", "canal": "instagram",
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["titulo"] == "Novo título"
+        assert body["marca_id"] == marca["id"]
+        assert body["linha_editorial"] == "Institucional"
+        assert body["canal"] == "instagram"
+
+
+class TestExcluirComHorasApontadas:
+    """achado 4: deleting a pauta silently destroyed every hour logged on
+    its tarefas. Now it must be confirmed."""
+
+    def test_pauta_with_no_hours_deletes_immediately(self, api, cliente):
+        pauta = _criar(api, cliente).json()
+        assert api.delete(f"/api/pautas/{pauta['id']}").status_code == 200
+
+    def test_pauta_with_logged_hours_refuses_without_confirmation(self, api, repos, cliente):
+        pauta = _criar(api, cliente).json()
+        tarefa = repos.tarefa.criar(
+            ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "etapa-1"}
+        )
+        repos.apontamento.criar(ORG, {
+            "tarefa_id": tarefa["id"], "usuario_id": "u1",
+            "iniciado_em": "2026-01-01T10:00:00", "encerrado_em": "2026-01-01T11:05:00",
+            "minutos": 65,
+        })
+        resp = api.delete(f"/api/pautas/{pauta['id']}")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "horas_serao_perdidas"
+        assert "1h05" in resp.json()["detail"]
+
+    def test_confirming_deletes_it_anyway(self, api, repos, cliente):
+        pauta = _criar(api, cliente).json()
+        tarefa = repos.tarefa.criar(
+            ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "etapa-1"}
+        )
+        repos.apontamento.criar(ORG, {
+            "tarefa_id": tarefa["id"], "usuario_id": "u1",
+            "iniciado_em": "2026-01-01T10:00:00", "encerrado_em": "2026-01-01T11:05:00",
+            "minutos": 65,
+        })
+        resp = api.delete(
+            f"/api/pautas/{pauta['id']}", params={"confirmar_perda_horas": "true"}
+        )
+        assert resp.status_code == 200
+        assert api.get(f"/api/pautas/{pauta['id']}").status_code == 404
+
 
 class TestPecas:
     def _enviar(self, api, pauta_id, *, nome="arte.png", tipo="image/png", dados=b"\x89PNG..."):
@@ -208,6 +264,41 @@ class TestPecas:
             self._enviar(api, pauta["id"], nome=n)
         got = api.get(f"/api/pautas/{pauta['id']}/pecas").json()
         assert [p["ordem"] for p in got] == [0, 1]
+
+    def test_listing_mints_a_viewable_url(self, api, cliente):
+        """achado 16: there was no way to VIEW a peça at all before this."""
+        pauta = _criar(api, cliente).json()
+        self._enviar(api, pauta["id"])
+        got = api.get(f"/api/pautas/{pauta['id']}/pecas").json()
+        assert got[0]["url"]
+
+    def test_same_filename_twice_gets_two_distinct_storage_keys(self, api, cliente):
+        """achado 16: same-filename uploads used to overwrite the storage
+        object via `chave_da_peca`, so the second upload silently replaced
+        the first's bytes while both rows lived on in `igig.peca`."""
+        pauta = _criar(api, cliente).json()
+        primeira = self._enviar(api, pauta["id"], nome="arte.png").json()
+        segunda = self._enviar(api, pauta["id"], nome="arte.png").json()
+        assert primeira["storage_key"] != segunda["storage_key"]
+
+    def test_delete_removes_the_peca(self, api, cliente):
+        pauta = _criar(api, cliente).json()
+        peca = self._enviar(api, pauta["id"]).json()
+        resp = api.delete(f"/api/pautas/{pauta['id']}/pecas/{peca['id']}")
+        assert resp.status_code == 200
+        assert api.get(f"/api/pautas/{pauta['id']}/pecas").json() == []
+
+    def test_delete_unknown_peca_returns_404(self, api, cliente):
+        pauta = _criar(api, cliente).json()
+        assert api.delete(f"/api/pautas/{pauta['id']}/pecas/nao-existe").status_code == 404
+
+    def test_delete_with_mismatched_pauta_returns_404(self, api, cliente, repos):
+        """The URL's two ids must agree — a peça of pauta A is not
+        reachable through pauta B's delete route."""
+        pauta_a = _criar(api, cliente).json()
+        pauta_b = _criar(api, cliente, titulo="Outra").json()
+        peca = self._enviar(api, pauta_a["id"]).json()
+        assert api.delete(f"/api/pautas/{pauta_b['id']}/pecas/{peca['id']}").status_code == 404
 
 
 class TestPortalMostraAPeca:

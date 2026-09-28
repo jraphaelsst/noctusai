@@ -33,6 +33,7 @@ from app.schemas.pauta import (
     PautaUpdate,
     PecaOut,
 )
+from app.services.regras import RegraViolada, http_de, mensagem_horas_perdidas
 from app.storage import chave_da_peca, get_storage
 from app.store import get_repositorios
 
@@ -147,23 +148,64 @@ async def atualizar_pauta(
 @router.delete("/{pauta_id}", status_code=status.HTTP_200_OK)
 async def remover_pauta(
     pauta_id: str,
+    confirmar_perda_horas: bool = False,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> dict:
-    """Delete a pauta. Cascades to its tarefas, apontamentos and peças."""
-    if not repos.pauta.remover(_org(auth), pauta_id):
+    """Delete a pauta. Cascades to its tarefas, apontamentos and peças.
+
+    409 `horas_serao_perdidas` when any of its tarefas carries logged
+    apontamentos and `confirmar_perda_horas` was not sent — the confirm
+    dialog used to warn about nothing (achado 4: deleting a pauta silently
+    took every hour logged on its tarefas with it).
+    """
+    org_id = _org(auth)
+    try:
+        repos.pauta.buscar(org_id, pauta_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Pauta não encontrada")
+
+    if not confirmar_perda_horas:
+        tarefas = repos.tarefa.do_pauta(org_id, pauta_id)
+        apontamentos = [
+            a for t in tarefas for a in repos.apontamento.da_tarefa(org_id, str(t["id"]))
+        ]
+        if apontamentos:
+            minutos = sum(int(a.get("minutos") or 0) for a in apontamentos)
+            raise http_de(RegraViolada(
+                409, "horas_serao_perdidas",
+                mensagem_horas_perdidas(minutos, len(apontamentos)),
+            ))
+
+    if not repos.pauta.remover(org_id, pauta_id):
         raise HTTPException(status_code=404, detail="Pauta não encontrada")
     return {"ok": True}
 
 
 # ── Peças (closes the Módulo 4 portal gap) ──────────────────────────
+async def _peca_out(p: dict, *, storage: StorageBackend) -> PecaOut:
+    """A peça row plus a freshly-signed `url` — minted per response, same
+    "key is durable, URL is a per-read credential" rule as the marca logo. A
+    signing failure must not take the whole list down (achado 16: there was
+    no way to VIEW a peça at all before this)."""
+    url = None
+    try:
+        url = await storage.signed_url(bucket=settings.igig_storage_bucket, key=str(p["storage_key"]))
+    except Exception:  # noqa: BLE001 — a broken link is better than a 500 list
+        logger.warning("peça sem URL assinada: %s", p.get("storage_key"))
+    return PecaOut(**p, url=url)
+
+
 @router.get("/{pauta_id}/pecas", response_model=list[PecaOut])
 async def listar_pecas(
     pauta_id: str,
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
 ) -> list[PecaOut]:
-    return [PecaOut(**p) for p in repos.peca.da_pauta(_org(auth), pauta_id)]
+    return [
+        await _peca_out(p, storage=storage) for p in repos.peca.da_pauta(_org(auth), pauta_id)
+    ]
 
 
 @router.post("/{pauta_id}/pecas", response_model=PecaOut, status_code=status.HTTP_201_CREATED)
@@ -184,7 +226,8 @@ async def enviar_peca(
     if arquivo.content_type not in _PECA_MIMES:
         raise HTTPException(
             status_code=422,
-            detail=f"Formato não suportado: {arquivo.content_type}",
+            detail=f"Formato não suportado: {arquivo.content_type}. "
+                   "Envie PNG, JPEG, WebP, GIF, MP4 ou MOV.",
         )
     conteudo = await arquivo.read()
     if len(conteudo) > _PECA_MAX_BYTES:
@@ -205,4 +248,33 @@ async def enviar_peca(
         tamanho_bytes=len(conteudo),
     )
     logger.info("peça enviada org=%s pauta=%s key=%s", org_id, pauta_id, chave)
-    return PecaOut(**registro)
+    return await _peca_out(registro, storage=storage)
+
+
+@router.delete("/{pauta_id}/pecas/{peca_id}", status_code=status.HTTP_200_OK)
+async def remover_peca(
+    pauta_id: str,
+    peca_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+    storage: StorageBackend = Depends(get_storage),
+) -> dict:
+    """Remove one peça — there was no way to do this at all before (achado
+    16). 404 when the peça exists but belongs to a DIFFERENT pauta, same
+    posture as an org mismatch: the URL's two ids must agree."""
+    org_id = _org(auth)
+    try:
+        peca = repos.peca.buscar(org_id, peca_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Peça não encontrada")
+    if str(peca.get("pauta_id")) != pauta_id:
+        raise HTTPException(status_code=404, detail="Peça não encontrada")
+    repos.peca.remover(org_id, peca_id)
+    try:
+        await storage.delete(bucket=settings.igig_storage_bucket, key=str(peca["storage_key"]))
+    except Exception:  # noqa: BLE001 — the row delete already succeeded
+        logger.exception(
+            "falha ao remover peça do armazenamento org=%s peca=%s key=%s",
+            org_id, peca_id, peca.get("storage_key"),
+        )
+    return {"ok": True}
