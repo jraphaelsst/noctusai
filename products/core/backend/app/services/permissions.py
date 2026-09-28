@@ -10,6 +10,7 @@ from fastapi import Header, HTTPException
 
 from app.database import get_admin_client
 from app.dependencies import get_current_user
+from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,44 @@ async def check_permission(user_id: str, org_id: str, permission_slug: str) -> b
             return True
 
     return False
+
+
+async def require_org_permission(
+    user_id: str,
+    org_id: str,
+    permission_slug: str,
+    *,
+    detail: Optional[str] = None,
+) -> None:
+    """Imperative 403 gate for an org-scoped action — the ONE place core's
+    routers ask "may this caller do <permission_slug> in <org_id>?".
+
+    ``org_id`` MUST be the caller's TRUSTED org (``app.dependencies.get_org_id``,
+    which reads ``public.noctus_users``) — this gate authorizes the action, the
+    trusted org scopes it; neither replaces the other.
+
+    Passes when the caller's org role grants ``permission_slug``
+    (:func:`check_permission` — ``roles`` table, org-specific then system) OR
+    the caller is a NoctusAI platform operator (``noctus_users.role == 'admin'``,
+    via the seed's strict :func:`resolve_platform_admin_role` — never the
+    owner/admin CASCADE). The operator branch exists because core's ``/admin/*``
+    pages drive these same org-scoped endpoints; it still acts only inside the
+    operator's own trusted ``org_id``.
+
+    SEC-1 (2026-09-28): ``/api/settings/org`` writes, ``/api/webhooks``,
+    ``/api/api-keys`` writes and ``PATCH /api/organizations/{id}`` authenticated
+    the caller and scoped by org but never asked this question — any member
+    could rotate the org's API keys, read webhook signing secrets, or flip the
+    org's ``category`` to ``test`` (which bypasses every entitlement check).
+    """
+    if await check_permission(user_id, org_id, permission_slug):
+        return
+    if resolve_platform_admin_role(get_admin_client(), user_id) == "admin":
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=detail or f"Permissão necessária: {permission_slug}",
+    )
 
 
 def require_permission(slug: str):

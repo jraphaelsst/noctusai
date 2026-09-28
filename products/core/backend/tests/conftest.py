@@ -275,8 +275,12 @@ def _build_patches(
         ("app.routers.settings.get_current_user", mock_get_user),
         ("app.routers.settings.get_current_admin", mock_get_admin),
         ("app.routers.settings.get_org_id", mock_get_org_id),
-        # Permissions service
+        # Permissions service — `require_org_permission` (SEC-1) consults the
+        # module-level `check_permission`, so the per-fixture allow/deny stub
+        # applies to every router gated through it (settings / webhooks /
+        # api_keys / organizations), same contract as roles/team above.
         ("app.services.permissions.get_admin_client", mock_sb),
+        ("app.services.permissions.check_permission", mock_check_perm),
         # Usage router
         ("app.routers.usage.get_admin_client", mock_sb),
         ("app.routers.usage.get_current_user", mock_get_user),

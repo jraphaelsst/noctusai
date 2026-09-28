@@ -127,13 +127,25 @@ class TestOrganizationIsolation:
 class TestWebhookSecurity:
     """Tests for webhook endpoint security."""
 
-    def test_webhook_endpoints_scoped_to_org(self, client):
-        """User should only manage their own org's webhooks."""
-        client.mock_supabase.set_table_data("webhook_endpoints", [
-            {"id": "w1", "org_id": "test-org-123", "url": "https://example.com/hook", "is_active": True},
+    def test_webhook_endpoints_scoped_to_org(self, admin_client):
+        """A settings manager sees only their own org's webhooks — and never
+        the signing secret (returned once, on create)."""
+        admin_client.mock_supabase.set_table_data("webhook_endpoints", [
+            {"id": "w1", "org_id": "org-1", "url": "https://example.com/hook",
+             "is_active": True, "secret": "whsec_leak"},
+            {"id": "w2", "org_id": "org-other", "url": "https://evil.example/hook",
+             "is_active": True, "secret": "whsec_other"},
         ])
-        resp = client.get("/api/webhooks")
+        resp = admin_client.get("/api/webhooks")
         assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert [w["id"] for w in data] == ["w1"]
+        assert "secret" not in data[0]
+
+    def test_plain_member_cannot_list_webhooks(self, client):
+        """SEC-1: webhook management is `settings:manage`."""
+        resp = client.get("/api/webhooks")
+        assert resp.status_code == 403
 
 
 class TestDataIntegrityEdgeCases:

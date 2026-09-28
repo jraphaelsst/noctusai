@@ -40,6 +40,7 @@ from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
 from app.services import webhook_delivery, webhook_retention_service
 from app.schemas.webhooks import WebhookCreate, WebhookUpdate
+from app.services.permissions import require_org_permission
 from noctusai_lib.api.crud_safety import delete_or_404
 
 logger = logging.getLogger(__name__)
@@ -51,25 +52,48 @@ def _generate_webhook_secret() -> str:
     return f"whsec_{secrets.token_urlsafe(32)}"
 
 
+#: Every column a webhook endpoint may be READ back with — deliberately NOT
+#: `secret`. The signing secret is returned exactly once, on create
+#: (`signing_secret`); a `select("*")` here handed it to every org member.
+_ENDPOINT_PUBLIC_COLUMNS = "id, org_id, url, events, is_active, created_at, updated_at"
+
+
+def _without_secret(row: dict) -> dict:
+    return {k: v for k, v in row.items() if k != "secret"}
+
+
+async def _require_webhooks_manager(authorization: Optional[str]):
+    """(user, trusted org_id) for a caller allowed to manage webhooks.
+
+    SEC-1 (2026-09-28): every route here is `settings:manage` — the list
+    exposes delivery targets and the payload log, the writes redirect org
+    events to an arbitrary URL.
+    """
+    user, _token = await get_current_user(authorization)
+    org_id = await get_org_id(user)
+    await require_org_permission(user.id, org_id, "settings:manage")
+    return user, org_id
+
+
 @router.get("")
 async def listar_webhooks(authorization: Optional[str] = Header(None)):
     """List webhook endpoints for the current user's organization."""
-    user, token = await get_current_user(authorization)
-    org_id = await get_org_id(user)
+    user, org_id = await _require_webhooks_manager(authorization)
     db = get_admin_client()
 
-    result = db.table("webhook_endpoints").select("*").eq(
+    result = db.table("webhook_endpoints").select(_ENDPOINT_PUBLIC_COLUMNS).eq(
         "org_id", org_id
     ).order("created_at", desc=True).execute()
 
-    return {"data": result.data or []}
+    # Column list above already omits `secret`; strip again so the contract
+    # holds even if the select is ever widened back to "*".
+    return {"data": [_without_secret(r) for r in (result.data or [])]}
 
 
 @router.post("")
 async def criar_webhook(body: WebhookCreate, authorization: Optional[str] = Header(None)):
     """Create a new webhook endpoint. Returns the signing secret ONCE."""
-    user, token = await get_current_user(authorization)
-    org_id = await get_org_id(user)
+    user, org_id = await _require_webhooks_manager(authorization)
     db = get_admin_client()
 
     webhook_secret = _generate_webhook_secret()
@@ -89,7 +113,7 @@ async def criar_webhook(body: WebhookCreate, authorization: Optional[str] = Head
     logger.info(f"Webhook endpoint created: org={org_id} url={body.url}")
 
     # Include the secret in the response (only returned once)
-    response_data = result.data[0].copy()
+    response_data = _without_secret(result.data[0])
     response_data["signing_secret"] = webhook_secret
     return {"data": response_data}
 
@@ -101,8 +125,7 @@ async def atualizar_webhook(
     authorization: Optional[str] = Header(None),
 ):
     """Update a webhook endpoint."""
-    user, token = await get_current_user(authorization)
-    org_id = await get_org_id(user)
+    user, org_id = await _require_webhooks_manager(authorization)
     db = get_admin_client()
 
     update_data = body.model_dump(exclude_none=True)
@@ -118,14 +141,13 @@ async def atualizar_webhook(
         raise HTTPException(status_code=404, detail="Webhook endpoint não encontrado")
 
     logger.info(f"Webhook endpoint updated: {webhook_id}")
-    return {"data": result.data[0]}
+    return {"data": _without_secret(result.data[0])}
 
 
 @router.delete("/{webhook_id}")
 async def deletar_webhook(webhook_id: str, authorization: Optional[str] = Header(None)):
     """Delete a webhook endpoint."""
-    user, token = await get_current_user(authorization)
-    org_id = await get_org_id(user)
+    user, org_id = await _require_webhooks_manager(authorization)
     db = get_admin_client()
 
     # Only delete webhooks belonging to the user's org
@@ -143,8 +165,7 @@ async def listar_deliveries(
     authorization: Optional[str] = Header(None),
 ):
     """List delivery log for a webhook endpoint."""
-    user, token = await get_current_user(authorization)
-    org_id = await get_org_id(user)
+    user, org_id = await _require_webhooks_manager(authorization)
     db = get_admin_client()
 
     # Verify the endpoint belongs to the user's org

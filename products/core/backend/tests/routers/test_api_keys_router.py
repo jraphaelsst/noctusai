@@ -54,8 +54,8 @@ class TestListApiKeys:
 # ---------------------------------------------------------------------------
 
 class TestCreateApiKey:
-    def test_create_api_key_success(self, client):
-        mock_sb = client.mock_supabase
+    def test_create_api_key_success(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
             {
@@ -69,7 +69,7 @@ class TestCreateApiKey:
             }
         ])
 
-        resp = client.post("/api/api-keys", json={
+        resp = admin_client.post("/api/api-keys", json={
             "name": "New Key",
             "scopes": ["read", "write"],
         })
@@ -79,8 +79,8 @@ class TestCreateApiKey:
         assert data["raw_key"].startswith("noctus_k_")
         assert data["name"] == "New Key"
 
-    def test_create_api_key_default_scopes(self, client):
-        mock_sb = client.mock_supabase
+    def test_create_api_key_default_scopes(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
             {
@@ -94,7 +94,7 @@ class TestCreateApiKey:
             }
         ])
 
-        resp = client.post("/api/api-keys", json={
+        resp = admin_client.post("/api/api-keys", json={
             "name": "Default Scopes Key",
         })
         assert resp.status_code == 200
@@ -110,32 +110,32 @@ class TestCreateApiKey:
 # ---------------------------------------------------------------------------
 
 class TestUpdateApiKey:
-    def test_update_api_key_success(self, client):
-        mock_sb = client.mock_supabase
+    def test_update_api_key_success(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
             {"id": "key-1", "org_id": "org-1", "name": "Updated Key", "scopes": ["read", "write"]},
         ])
 
-        resp = client.patch("/api/api-keys/key-1", json={
+        resp = admin_client.patch("/api/api-keys/key-1", json={
             "name": "Updated Key",
         })
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["name"] == "Updated Key"
 
-    def test_update_api_key_empty_body(self, client):
-        mock_sb = client.mock_supabase
+    def test_update_api_key_empty_body(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
 
-        resp = client.patch("/api/api-keys/key-1", json={})
+        resp = admin_client.patch("/api/api-keys/key-1", json={})
         assert resp.status_code == 400
 
-    def test_update_api_key_not_found(self, client):
-        mock_sb = client.mock_supabase
+    def test_update_api_key_not_found(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("api_keys", [])
 
-        resp = client.patch("/api/api-keys/nonexistent", json={
+        resp = admin_client.patch("/api/api-keys/nonexistent", json={
             "name": "New Name",
         })
         assert resp.status_code == 404
@@ -146,21 +146,21 @@ class TestUpdateApiKey:
 # ---------------------------------------------------------------------------
 
 class TestRevokeApiKey:
-    def test_revoke_api_key_success(self, client):
-        mock_sb = client.mock_supabase
+    def test_revoke_api_key_success(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("noctus_users", {"org_id": "org-1"})
         mock_sb.set_table_data("api_keys", [
             {"id": "key-1", "org_id": "org-1", "is_active": False},
         ])
 
-        resp = client.delete("/api/api-keys/key-1")
+        resp = admin_client.delete("/api/api-keys/key-1")
         assert resp.status_code == 200
 
-    def test_revoke_api_key_not_found(self, client):
-        mock_sb = client.mock_supabase
+    def test_revoke_api_key_not_found(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_data("api_keys", [])
 
-        resp = client.delete("/api/api-keys/nonexistent")
+        resp = admin_client.delete("/api/api-keys/nonexistent")
         assert resp.status_code == 404
 
 

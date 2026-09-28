@@ -111,8 +111,8 @@ class TestOrgSettingsList:
 
 
 class TestOrgSettingsUpsert:
-    def test_upsert_org_setting(self, client):
-        mock_sb = client.mock_supabase
+    def test_upsert_org_setting(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_responses("noctus_users", [
             {"org_id": "org-1"},
         ])
@@ -120,7 +120,7 @@ class TestOrgSettingsUpsert:
             {"id": "s1", "org_id": "org-1", "key": "openai_api_key", "value": "sk-new", "is_secret": True, "updated_at": "2026-01-01T00:00:00Z"},
         ])
 
-        resp = client.put("/api/settings/org/openai_api_key", json={
+        resp = admin_client.put("/api/settings/org/openai_api_key", json={
             "value": "sk-new",
             "is_secret": True,
         })
@@ -130,8 +130,8 @@ class TestOrgSettingsUpsert:
 
 
 class TestOrgSettingsDelete:
-    def test_delete_org_setting(self, client):
-        mock_sb = client.mock_supabase
+    def test_delete_org_setting(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_responses("noctus_users", [
             {"org_id": "org-1"},
         ])
@@ -139,23 +139,23 @@ class TestOrgSettingsDelete:
             {"id": "s1", "org_id": "org-1", "key": "to_delete"},
         ])
 
-        resp = client.delete("/api/settings/org/to_delete")
+        resp = admin_client.delete("/api/settings/org/to_delete")
         assert resp.status_code == 200
 
-    def test_delete_org_setting_not_found(self, client):
-        mock_sb = client.mock_supabase
+    def test_delete_org_setting_not_found(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_responses("noctus_users", [
             {"org_id": "org-1"},
         ])
         mock_sb.set_table_data("org_settings", [])
 
-        resp = client.delete("/api/settings/org/nonexistent")
+        resp = admin_client.delete("/api/settings/org/nonexistent")
         assert resp.status_code == 404
 
 
 class TestResolveSettings:
-    def test_resolve_org_setting(self, client):
-        mock_sb = client.mock_supabase
+    def test_resolve_org_setting(self, admin_client):
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_responses("noctus_users", [
             {"org_id": "org-1"},
         ])
@@ -163,15 +163,15 @@ class TestResolveSettings:
             {"org_id": "org-1", "key": "openai_api_key", "value": "org-level-value"},
         ])
 
-        resp = client.get("/api/settings/resolve/openai_api_key")
+        resp = admin_client.get("/api/settings/resolve/openai_api_key")
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["value"] == "org-level-value"
         assert data["source"] == "org"
 
-    def test_resolve_falls_back_to_platform(self, client):
+    def test_resolve_falls_back_to_platform(self, admin_client):
         """Regression: when org_settings has no match, must fall back to platform_settings."""
-        mock_sb = client.mock_supabase
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_responses("noctus_users", [
             {"org_id": "org-1"},
         ])
@@ -180,7 +180,7 @@ class TestResolveSettings:
             {"key": "openai_api_key", "value": "platform-level-value"},
         ])
 
-        resp = client.get("/api/settings/resolve/openai_api_key")
+        resp = admin_client.get("/api/settings/resolve/openai_api_key")
         assert resp.status_code == 200
         data = resp.json()["data"]
         # The resolve endpoint uses .limit(1) (not .single()) so empty
@@ -189,16 +189,16 @@ class TestResolveSettings:
         assert data["source"] == "platform"
         assert data["value"] == "platform-level-value"
 
-    def test_resolve_returns_null_when_not_found(self, client):
+    def test_resolve_returns_null_when_not_found(self, admin_client):
         """Regression: when neither org nor platform has the key, return null gracefully."""
-        mock_sb = client.mock_supabase
+        mock_sb = admin_client.mock_supabase
         mock_sb.set_table_responses("noctus_users", [
             {"org_id": "org-1"},
         ])
         mock_sb.set_table_data("org_settings", [])
         mock_sb.set_table_data("platform_settings", [])
 
-        resp = client.get("/api/settings/resolve/nonexistent_key")
+        resp = admin_client.get("/api/settings/resolve/nonexistent_key")
         assert resp.status_code == 200
         assert resp.json()["data"] is None
 

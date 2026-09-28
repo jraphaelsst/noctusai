@@ -41,6 +41,7 @@ from fastapi import APIRouter, Header, HTTPException
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin, get_org_id
 from app.schemas.api_keys import ApiKeyCreate, ApiKeyUpdate
+from app.services.permissions import require_org_permission
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["API Keys"])
@@ -73,6 +74,9 @@ async def criar_api_key(body: ApiKeyCreate, authorization: Optional[str] = Heade
     """Create a new API key. Returns the full key ONCE — store it securely."""
     user, token = await get_current_user(authorization)
     org_id = await get_org_id(user)
+    # SEC-1 (2026-09-28): minting / re-scoping / revoking the org's keys is
+    # `settings:manage`, not "any member".
+    await require_org_permission(user.id, org_id, "settings:manage")
     db = get_admin_client()
 
     raw_key, key_hash, key_prefix = _generate_api_key()
@@ -120,6 +124,9 @@ async def atualizar_api_key(
     """Update an API key's name, scopes, or expiry."""
     user, token = await get_current_user(authorization)
     org_id = await get_org_id(user)
+    # SEC-1 (2026-09-28): minting / re-scoping / revoking the org's keys is
+    # `settings:manage`, not "any member".
+    await require_org_permission(user.id, org_id, "settings:manage")
     db = get_admin_client()
 
     data = body.model_dump(exclude_none=True)
@@ -139,6 +146,9 @@ async def revogar_api_key(key_id: str, authorization: Optional[str] = Header(Non
     """Revoke an API key (set inactive)."""
     user, token = await get_current_user(authorization)
     org_id = await get_org_id(user)
+    # SEC-1 (2026-09-28): minting / re-scoping / revoking the org's keys is
+    # `settings:manage`, not "any member".
+    await require_org_permission(user.id, org_id, "settings:manage")
     db = get_admin_client()
 
     result = db.table("api_keys").update(
