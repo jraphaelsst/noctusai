@@ -10924,7 +10924,7 @@ def check_org_identity_function_parity(
             })
 
     if paths is None:
-        files = sorted(root.glob("products/*/backend/migrations/*.sql")) + sorted(
+        files = sorted(root.glob("products/*/backend/migrations/*.sql")) + sorted(  # product-scope: all — any chain re-declaring the SHARED public org-identity functions reverts the fleet on a fresh apply, asleep or not
             root.glob("templates/product-seed/backend/migrations/*.sql")
         )
     else:
