@@ -27,6 +27,7 @@ import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { AlertTriangle, Link2Off, Plug, ShieldAlert } from "lucide-react";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { GmailCard } from "@/components/integracoes/GmailCard";
 import { MetaLeadsCard, WhatsappLeadsCard } from "@/components/integracoes/LeadSourceCards";
 import { SmtpCard } from "@/components/integracoes/SmtpCard";
@@ -38,6 +39,8 @@ import {
   useIntegracoes,
   type IntegracaoStatus,
 } from "@/hooks/useIntegracoes";
+import { describeError } from "@/lib/errors";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 
 const CANAL_LABEL: Record<Canal, string> = {
   instagram: "Instagram",
@@ -60,12 +63,21 @@ function statusBadge(i: IntegracaoStatus): { texto: string; variante: BadgeVaria
   return { texto: i.origem === "env" ? "conectado (env)" : "conectado", variante: "default" };
 }
 
-function LinhaCanal({ integracao }: { integracao: IntegracaoStatus }) {
+function LinhaCanal({ integracao, isAdmin }: { integracao: IntegracaoStatus; isAdmin: boolean }) {
   const conectar = useConectarCanal();
   const desconectar = useDesconectarCanal();
   const [token, setToken] = useState("");
   const [conta, setConta] = useState(integracao.conta_externa ?? "");
+  const [desconectando, setDesconectando] = useState(false);
   const badge = statusBadge(integracao);
+
+  // Re-sync the draft `conta` whenever the SERVER's value changes (e.g. a
+  // reconnect just replaced it, or another session did) — it used to be
+  // captured once from props and never refreshed again for the component's
+  // lifetime (finding #24, 2026-09 audit).
+  useEffect(() => {
+    setConta(integracao.conta_externa ?? "");
+  }, [integracao.conta_externa]);
 
   return (
     <li className="space-y-2 py-4">
@@ -78,12 +90,12 @@ function LinhaCanal({ integracao }: { integracao: IntegracaoStatus }) {
         {integracao.conta_externa && (
           <span className="text-xs text-muted-foreground">{integracao.conta_externa}</span>
         )}
-        {integracao.conectado && integracao.origem === "org" && (
+        {isAdmin && integracao.conectado && integracao.origem === "org" && (
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Desconectar ${CANAL_LABEL[integracao.canal]}`}
-            onClick={() => desconectar.mutate(integracao.canal)}
+            onClick={() => setDesconectando(true)}
           >
             <Link2Off className="h-4 w-4" />
           </Button>
@@ -99,50 +111,76 @@ function LinhaCanal({ integracao }: { integracao: IntegracaoStatus }) {
         </p>
       )}
 
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!token.trim()) return;
-          conectar.mutate(
-            { canal: integracao.canal, token: token.trim(), conta_externa: conta.trim() || undefined },
-            // Clear immediately on success — the token has no reason to stay
-            // in component state once it is stored.
-            { onSuccess: () => setToken("") },
-          );
-        }}
-      >
-        <Input
-          type="password"
-          aria-label={`Token ${CANAL_LABEL[integracao.canal]}`}
-          placeholder={integracao.conectado ? "substituir token…" : "colar token…"}
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          className="min-w-[200px] flex-1"
-        />
-        <Input
-          aria-label={`Conta ${CANAL_LABEL[integracao.canal]}`}
-          placeholder="@conta"
-          value={conta}
-          onChange={(e) => setConta(e.target.value)}
-          className="min-w-[140px]"
-        />
-        <Button
-          type="submit"
-          disabled={!token.trim() || conectar.isPending || !integracao.cofre_configurado}
+      {isAdmin ? (
+        <form
+          className="flex flex-wrap items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!token.trim()) return;
+            conectar.mutate(
+              { canal: integracao.canal, token: token.trim(), conta_externa: conta.trim() || undefined },
+              // Clear immediately on success — the token has no reason to stay
+              // in component state once it is stored.
+              { onSuccess: () => setToken("") },
+            );
+          }}
         >
-          {integracao.conectado ? "Substituir" : "Conectar"}
-        </Button>
-      </form>
+          <Input
+            type="password"
+            aria-label={`Token ${CANAL_LABEL[integracao.canal]}`}
+            placeholder={integracao.conectado ? "substituir token…" : "colar token…"}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            className="min-w-[200px] flex-1"
+          />
+          <Input
+            aria-label={`Conta ${CANAL_LABEL[integracao.canal]}`}
+            placeholder="@conta"
+            value={conta}
+            onChange={(e) => setConta(e.target.value)}
+            className="min-w-[140px]"
+          />
+          <Button
+            type="submit"
+            disabled={!token.trim() || conectar.isPending || !integracao.cofre_configurado}
+          >
+            {integracao.conectado ? "Substituir" : "Conectar"}
+          </Button>
+        </form>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Somente administradores da agência podem alterar este canal.
+        </p>
+      )}
 
       {conectar.isError && (
         <p className="text-xs text-destructive">
           {/* The server's own message — a 409 says "não configurado", a
               revoked/invalid token says something else entirely, and this
               must never blame the wrong one. */}
-          {conectar.error instanceof Error ? conectar.error.message : "Não foi possível salvar."}
+          {describeError(conectar.error, "Não foi possível salvar.")}
         </p>
       )}
+
+      <ConfirmDialog
+        open={desconectando}
+        title={`Desconectar ${CANAL_LABEL[integracao.canal]}`}
+        description={
+          <p>
+            Desconectar {CANAL_LABEL[integracao.canal]}? O token e a conta gravados são apagados; publicações
+            futuras neste canal falharão até que ele seja reconectado.
+          </p>
+        }
+        confirmLabel={desconectar.isPending ? "Desconectando…" : "Desconectar"}
+        busy={desconectar.isPending}
+        onCancel={() => setDesconectando(false)}
+        onConfirm={() =>
+          desconectar.mutate(integracao.canal, {
+            onSuccess: () => setDesconectando(false),
+            onError: (e) => toast.error(describeError(e, "Não foi possível desconectar o canal.")),
+          })
+        }
+      />
     </li>
   );
 }
@@ -184,7 +222,8 @@ function Grupo({ titulo, children }: { titulo: string; children: React.ReactNode
 }
 
 export default function Integracoes() {
-  const { integracoes, loading, cofreConfigurado } = useIntegracoes();
+  const { integracoes, loading, isError, cofreConfigurado } = useIntegracoes();
+  const isAdmin = useIsOrgAdmin();
   useRetornoGmail();
 
   return (
@@ -223,12 +262,16 @@ export default function Integracoes() {
         )}
 
         <div className="rounded-lg border border-border bg-card p-4">
-          {loading ? (
+          {isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              Não foi possível carregar os canais de publicação.
+            </p>
+          ) : loading ? (
             <Skeleton className="h-40 w-full" />
           ) : (
             <ul className="divide-y divide-border">
               {integracoes.map((i) => (
-                <LinhaCanal key={i.canal} integracao={i} />
+                <LinhaCanal key={i.canal} integracao={i} isAdmin={isAdmin} />
               ))}
             </ul>
           )}

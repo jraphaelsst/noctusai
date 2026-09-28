@@ -29,13 +29,17 @@ vi.mock("@/components/integracoes/LeadSourceCards", () => ({
   MetaLeadsCard: () => null,
 }));
 
-const { mockGet, mockPost, mockDelete } = vi.hoisted(() => ({
+const { mockGet, mockPost, mockDelete, user } = vi.hoisted(() => ({
   mockGet: vi.fn(),
   mockPost: vi.fn(),
   mockDelete: vi.fn(),
+  // Connect/disconnect are admin-only (finding #20) — an org admin by
+  // default; the permission test below swaps this to a plain member.
+  user: { current: { id: "u1", user_metadata: { org_role: "admin" } as Record<string, unknown> } },
 }));
 vi.mock("@noctusai/seed/infra", () => ({
   api: { get: mockGet, post: mockPost, delete: mockDelete },
+  useAuthStore: () => ({ user: user.current }),
 }));
 
 let queryState: Record<string, unknown> = {};
@@ -161,5 +165,28 @@ describe("Integracoes — cofre-not-configured banner", () => {
     render(<MemoryRouter><Integracoes /></MemoryRouter>);
 
     expect(screen.queryByText(/Criptografia não configurada/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Integracoes — permissões (finding #20)", () => {
+  it("hides the connect form from a non-admin member", () => {
+    const original = user.current;
+    user.current = { id: "u2", user_metadata: {} };
+    try {
+      mockUseQuery.mockReturnValue({
+        data: CANAL_CONFIGURADO,
+        isPending: false,
+        isFetching: false,
+        isError: false,
+        error: null,
+      } as never);
+
+      render(<MemoryRouter><Integracoes /></MemoryRouter>);
+
+      expect(screen.queryByLabelText("Token Instagram")).not.toBeInTheDocument();
+      expect(screen.getByText(/Somente administradores da agência podem alterar este canal/)).toBeInTheDocument();
+    } finally {
+      user.current = original;
+    }
   });
 });
