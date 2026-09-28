@@ -26,7 +26,7 @@ from typing import Any
 
 from noctusai_lib.integrations.email import Attachment, OutgoingEmail
 from noctusai_lib.integrations.email.errors import EmailError
-from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound, SupabaseRecordStore
+from noctusai_lib.integrations.persistence import RecordNotFound, SupabaseRecordStore, UniqueViolation
 
 from app.email_deps import EmailSenderFactory
 from app.repositories import Repositorios
@@ -34,6 +34,7 @@ from app.services import documentos_pdf, email_config
 from app.services.bi_service import BIService
 from app.services.email_config import EmailSettings
 from app.services.regras import RegraViolada
+from app.services.varredura import linhas_cross_org
 
 logger = logging.getLogger(__name__)
 
@@ -333,14 +334,31 @@ class FinanceiroService:
         return sorted(saida, key=lambda e: e.cliente_nome)
 
     # ── DRE ─────────────────────────────────────────────────────────
-    def dre(self, org_id: str, competencia: str | None = None) -> list[LinhaDRE]:
+    def dre(
+        self, org_id: str, competencia: str | None = None, *, custo_por_competencia: bool = False
+    ) -> list[LinhaDRE]:
         """Revenue vs real hour-cost, per client.
 
-        `competencia` filters REVENUE only. Cost is the full measured history:
-        the hours booked against a client are not partitioned by invoice month,
-        and pretending otherwise would produce a margin that looks precise and
-        is not. Stated here so the number is read correctly.
+        `competencia` always filters REVENUE. What it does to COST depends on
+        `custo_por_competencia`:
+
+        - `False` (the default — what the M6 DRE screen always passes): cost
+          is the full measured history. The hours booked against a client are
+          not partitioned by invoice month on that screen by design — the UI
+          says so explicitly ("custo real é sempre o histórico completo") —
+          and pretending otherwise there would produce a margin that looks
+          precise and is not.
+        - `True`: cost is scoped to the SAME `competencia` as revenue — hours
+          apontadas in that month, via `BIService.eficiencia_por_cliente`'s
+          own `competencia` filter. Requires `competencia`; a caller asking
+          for a month-scoped cost with no month makes no sense and raises
+          rather than silently falling back to all-time (finding: the
+          Dashboard's "Margem no mês" compared a month's revenue against
+          all-time cost — a margin that got MORE wrong every month the
+          agency operated, never shown as anything but a precise number).
         """
+        if custo_por_competencia and not competencia:
+            raise ValueError("custo_por_competencia requer uma competência")
         clientes = {str(c["id"]): c for c in self._repos.cliente.listar(org_id)}
         linhas = {
             cid: LinhaDRE(cliente_id=cid, cliente_nome=str(c.get("nome") or ""))
@@ -356,7 +374,8 @@ class FinanceiroService:
             if alvo is not None:
                 alvo.receita += float(fatura.get("valor_total") or 0)
 
-        for eficiencia in BIService(self._repos).eficiencia_por_cliente(org_id):
+        custo_competencia = competencia if custo_por_competencia else None
+        for eficiencia in BIService(self._repos).eficiencia_por_cliente(org_id, custo_competencia):
             alvo = linhas.get(eficiencia.cliente_id)
             if alvo is None:
                 continue
@@ -430,10 +449,13 @@ class FinanceiroService:
                     "competencia": competencia,
                     "vencimento": _vencimento(competencia, contrato.get("dia_vencimento")),
                 })
-            except PersistenceError:
+            except UniqueViolation:
                 # Another request closed this exact contrato+competência
                 # first — the unique index caught the race. Not a 500: the
                 # slot is filled either way, so this is "already existed".
+                # Catching the specific member (not `PersistenceError`) means
+                # an unrelated write failure here surfaces as a real error
+                # instead of being silently folded into "already existed".
                 logger.info(
                     "gerar_competencia: corrida no índice único org=%s contrato=%s "
                     "competencia=%s — tratando como já existente", org_id, contrato_id, competencia,
@@ -612,9 +634,10 @@ async def atualizar_inadimplencia(db: Any, *, hoje: date | None = None) -> dict:
     same shape `automacoes.varrer_sla`/`job_automacoes_sla` uses, and for the
     same reason: `Repositorios`/`RecordStore` require an `org_id` on every
     call by construction (the SQLite dev adapter cannot even express a
-    cross-org query), so the cross-org DISCOVERY step reads the raw client
-    directly; every row-level write below still goes through `Repositorios`
-    (built over the SAME client), scoped to that row's own `org_id`.
+    cross-org query), so the cross-org DISCOVERY step goes through
+    `app.services.varredura.linhas_cross_org` (paged, raw client); every
+    row-level write below still goes through `Repositorios` (built over the
+    SAME client), scoped to that row's own `org_id`.
     """
     referencia = hoje or date.today()
     repos = Repositorios(SupabaseRecordStore(db))
@@ -622,9 +645,10 @@ async def atualizar_inadimplencia(db: Any, *, hoje: date | None = None) -> dict:
 
     vencidas_por_org: dict[str, set[str]] = {}
 
-    abertas = (
-        db.table("fatura").select("*").not_.in_("status", ["paga", "cancelada", "vencida"])
-        .execute().data or []
+    abertas = linhas_cross_org(
+        db, "fatura",
+        filtros=lambda q: q.not_.in_("status", ["paga", "cancelada", "vencida"]),
+        label="igig.fatura (inadimplência: abertas)",
     )
     for fatura in abertas:
         vencimento = fatura.get("vencimento")
@@ -640,11 +664,19 @@ async def atualizar_inadimplencia(db: Any, *, hoje: date | None = None) -> dict:
     # Every fatura ALREADY `vencida` (from an earlier day's sweep) also keeps
     # its cliente inadimplente — the status must not clear itself just
     # because no NEW invoice crossed the line today.
-    ja_vencidas = db.table("fatura").select("org_id,cliente_id").eq("status", "vencida").execute().data or []
+    ja_vencidas = linhas_cross_org(
+        db, "fatura", select="id,org_id,cliente_id",
+        filtros=lambda q: q.eq("status", "vencida"),
+        label="igig.fatura (inadimplência: já vencidas)",
+    )
     for linha in ja_vencidas:
         vencidas_por_org.setdefault(str(linha["org_id"]), set()).add(str(linha["cliente_id"]))
 
-    clientes = db.table("cliente").select("*").in_("status", ["ativo", "inadimplente"]).execute().data or []
+    clientes = linhas_cross_org(
+        db, "cliente",
+        filtros=lambda q: q.in_("status", ["ativo", "inadimplente"]),
+        label="igig.cliente (inadimplência: candidatos)",
+    )
     for cliente in clientes:
         org_id = str(cliente["org_id"])
         cliente_id = str(cliente["id"])

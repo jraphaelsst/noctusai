@@ -6,7 +6,7 @@ treated as a credit, a re-run double-billing, a total that disagrees with its
 own lines — are each asserted.
 """
 import pytest
-from noctusai_lib.integrations.persistence import PersistenceError, SqliteRecordStore
+from noctusai_lib.integrations.persistence import ForeignKeyViolation, SqliteRecordStore, UniqueViolation
 
 from app.dependencies import coerce_org_uuid
 from app.email_deps import get_email_sender_factory, get_email_settings
@@ -115,6 +115,24 @@ class TestFaturas:
             "cliente_id": cliente["id"], "competencia": "agosto",
         })
         assert resp.status_code == 422
+
+    def test_a_non_unique_constraint_failure_is_not_mislabelled_as_duplicate(
+        self, api, repos, cliente, monkeypatch
+    ):
+        """finding #7's root cause: catching the wide `PersistenceError`
+        could not tell a genuine unique-index race from any OTHER write
+        failure, so it silently relabelled both as "duplicate invoice".
+        Catching the specific `UniqueViolation` member fixes it — a
+        `ForeignKeyViolation` from the same call must propagate as a real
+        error, never get reinterpreted as the 409 "já existe fatura"."""
+        def _criar_com_fk_violation(org_id, valores):
+            raise ForeignKeyViolation("simulated dangling reference")
+
+        monkeypatch.setattr(repos.fatura, "criar", _criar_com_fk_violation)
+        with pytest.raises(ForeignKeyViolation):
+            api.post("/api/financeiro/faturas", json={
+                "cliente_id": cliente["id"], "competencia": "2026-08",
+            })
 
     def test_duplicate_for_a_contract_month_returns_409(self, api, repos, cliente):
         """Re-running the monthly close must be idempotent, not double-billing."""
@@ -445,6 +463,63 @@ class TestDRE:
         assert api.get("/api/financeiro/dre?competencia=2026-08").json()[0]["receita"] == 5000.0
 
 
+class TestDRECustoPorCompetencia:
+    """`custo_por_competencia` — the Dashboard's "Margem no mês" fix.
+
+    Worked example: a designer at R$100/h logged 10h in julho (R$1000, work
+    on a PRIOR month's deliverable) and 4h in agosto (R$400). Agosto's
+    invoice is R$5000. Without the flag (the M6 DRE screen's own, documented
+    behaviour) cost is the full R$1400. WITH it, cost is agosto's R$400 only
+    — the number a "margin THIS MONTH" card must show.
+    """
+
+    def _apontamento(self, repos, cliente, *, mes_dia: str, minutos: int, funcao=None):
+        if funcao is None:
+            funcao = repos.funcao.criar(ORG, {"nome": "designer", "custo_hora_padrao": 100.0})
+            repos.profissional.criar(
+                ORG, {"nome": "Ana", "usuario_id": "user-1", "funcao_id": funcao["id"]}
+            )
+        pauta = repos.pauta.criar(ORG, {"cliente_id": cliente["id"], "titulo": "Post"})
+        tarefa = repos.tarefa.criar(
+            ORG, {"pauta_id": pauta["id"], "titulo": "Arte", "etapa_id": "etapa-1"}
+        )
+        repos.apontamento.criar(ORG, {
+            "tarefa_id": tarefa["id"], "usuario_id": "user-1",
+            "iniciado_em": f"{mes_dia}T09:00:00", "encerrado_em": f"{mes_dia}T09:00:00",
+            "minutos": minutos,
+        })
+        return funcao
+
+    def test_default_keeps_the_full_history_cost(self, api, repos, cliente):
+        """The M6 DRE screen's own behaviour must not change."""
+        funcao = self._apontamento(repos, cliente, mes_dia="2026-07-15", minutos=600)  # 10h
+        self._apontamento(repos, cliente, mes_dia="2026-08-01", minutos=240, funcao=funcao)  # 4h
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08", "valor_total": 5000.0,
+        })
+        linha = api.get("/api/financeiro/dre?competencia=2026-08").json()[0]
+        assert linha["receita"] == 5000.0
+        assert linha["custo"] == 1400.0  # 14h × R$100 — julho AND agosto
+
+    def test_flag_scopes_cost_to_the_same_competencia_as_revenue(self, api, repos, cliente):
+        funcao = self._apontamento(repos, cliente, mes_dia="2026-07-15", minutos=600)  # 10h
+        self._apontamento(repos, cliente, mes_dia="2026-08-01", minutos=240, funcao=funcao)  # 4h
+        repos.fatura.criar(ORG, {
+            "cliente_id": cliente["id"], "competencia": "2026-08", "valor_total": 5000.0,
+        })
+        linha = api.get(
+            "/api/financeiro/dre?competencia=2026-08&custo_por_competencia=true"
+        ).json()[0]
+        assert linha["receita"] == 5000.0
+        assert linha["custo"] == 400.0  # 4h × R$100 — agosto only
+        assert linha["margem"] == 4600.0
+        assert linha["margem_percentual"] == 92.0
+
+    def test_flag_without_a_competencia_is_rejected(self, api):
+        resp = api.get("/api/financeiro/dre?custo_por_competencia=true")
+        assert resp.status_code == 422
+
+
 class TestGerarCompetencia:
     def test_requires_auth(self, api):
         resp = api.raw().post(
@@ -599,7 +674,7 @@ class TestGerarCompetencia:
             if not estado["corrida_simulada"]:
                 estado["corrida_simulada"] = True
                 original_criar(org_id, valores)  # a "concurrent" request wins first
-                raise PersistenceError("unique violation (simulado)")
+                raise UniqueViolation("unique violation (simulado)")
             return original_criar(org_id, valores)
 
         monkeypatch.setattr(repos.fatura, "criar", _criar_com_corrida)

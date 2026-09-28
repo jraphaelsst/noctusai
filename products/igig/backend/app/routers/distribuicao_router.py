@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound
+from noctusai_lib.integrations.persistence import RecordNotFound, UniqueViolation
 
 from app.config import get_settings
 from app.dependencies import coerce_org_uuid, get_current_user_org
@@ -93,10 +93,12 @@ async def agendar_publicacao(
         registro = repos.publicacao.agendar(
             org_id, payload.pauta_id, payload.canal, payload.agendada_para.isoformat()
         )
-    except PersistenceError:
+    except UniqueViolation:
         # `agendada_para` is now schema-validated (a real datetime, 422 on
-        # anything else), so the only PersistenceError a valid request can
-        # still hit here is the partial unique index this message describes.
+        # anything else), so this is the partial unique index the message
+        # below describes — catching the specific member rather than the
+        # broader `PersistenceError` means a DIFFERENT constraint failure
+        # here surfaces as a real 500, not a mislabelled 409.
         raise HTTPException(
             status_code=409,
             detail=f"Esta pauta já tem publicação ativa em {payload.canal}",

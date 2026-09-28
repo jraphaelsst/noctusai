@@ -48,13 +48,14 @@ def tarefa(repos, cliente) -> dict:
     )
 
 
-def _apontar(repos, tarefa, *, usuario_id="user-1", minutos=0, duracao_segundos=None):
+def _apontar(repos, tarefa, *, usuario_id="user-1", minutos=0, duracao_segundos=None, iniciado_em=None):
     # A partial unique index allows at most ONE OPEN segment
     # (`encerrado_em IS NULL`) per usuário — every test segment here is a
     # finished one, so each needs its own `encerrado_em`.
+    inicio = iniciado_em or "2026-08-01T09:00:00"
     dados = {
         "tarefa_id": tarefa["id"], "usuario_id": usuario_id,
-        "iniciado_em": "2026-08-01T09:00:00", "encerrado_em": "2026-08-01T09:05:00",
+        "iniciado_em": inicio, "encerrado_em": inicio,
         "minutos": minutos,
     }
     if duracao_segundos is not None:
@@ -97,6 +98,51 @@ class TestEficienciaPorClienteSubMinuto:
         [linha] = BIService(repos).eficiencia_por_cliente(ORG)
         assert linha.minutos == 10  # 630s // 60 == 10
         assert linha.custo_reais == pytest.approx((630 / 3600) * 100.0, abs=0.01)
+
+
+class TestEficienciaPorClienteCompetencia:
+    """`competencia` scopes `custo_reais`/`minutos` — never `tarefas`/
+    `refacoes`, which stay all-time regardless (a refação count is not a
+    monthly fact). `None` (the default) is exactly the pre-existing
+    full-history behaviour every OTHER call site here still relies on."""
+
+    def test_none_is_full_history_the_unchanged_default(self, repos, cliente, profissional, tarefa):
+        _apontar(repos, tarefa, minutos=600, iniciado_em="2026-07-15T09:00:00")
+        _apontar(repos, tarefa, minutos=240, iniciado_em="2026-08-01T09:00:00")
+        [linha] = BIService(repos).eficiencia_por_cliente(ORG)
+        assert linha.minutos == 840
+        assert linha.custo_reais == pytest.approx(1400.0, abs=0.01)
+
+    def test_a_competencia_scopes_cost_to_that_month_only(self, repos, cliente, profissional, tarefa):
+        _apontar(repos, tarefa, minutos=600, iniciado_em="2026-07-15T09:00:00")
+        _apontar(repos, tarefa, minutos=240, iniciado_em="2026-08-01T09:00:00")
+        [linha] = BIService(repos).eficiencia_por_cliente(ORG, "2026-08")
+        assert linha.minutos == 240
+        assert linha.custo_reais == pytest.approx(400.0, abs=0.01)
+
+    def test_a_competencia_with_nothing_apontado_is_zero_not_an_error(
+        self, repos, cliente, profissional, tarefa
+    ):
+        _apontar(repos, tarefa, minutos=600, iniciado_em="2026-07-15T09:00:00")
+        [linha] = BIService(repos).eficiencia_por_cliente(ORG, "2026-09")
+        assert linha.minutos == 0
+        assert linha.custo_reais == 0.0
+
+    def test_task_and_refacao_counts_are_never_scoped_by_competencia(
+        self, repos, cliente, profissional, tarefa
+    ):
+        """Only cost is a monthly fact; a task's own refação history is not."""
+        repos.tarefa.atualizar(ORG, tarefa["id"], {"refacoes": 2})
+        _apontar(repos, tarefa, minutos=600, iniciado_em="2026-07-15T09:00:00")
+        [linha] = BIService(repos).eficiencia_por_cliente(ORG, "2026-09")  # no apontamento this month
+        assert linha.tarefas == 1
+        assert linha.refacoes == 2
+
+    def test_uncosted_alert_is_also_scoped_to_the_competencia(self, repos, cliente, tarefa):
+        _apontar(repos, tarefa, usuario_id="sem-rate", minutos=300, iniciado_em="2026-07-15T09:00:00")
+        [linha] = BIService(repos).eficiencia_por_cliente(ORG, "2026-08")
+        assert linha.apontamentos_sem_custo == 0
+        assert linha.alertas == []
 
 
 class TestCustoDaTarefaSubMinuto:

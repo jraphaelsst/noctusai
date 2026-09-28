@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from noctusai_lib.integrations.persistence import RecordNotFound
+from noctusai_lib.integrations.persistence import RecordNotFound, UniqueViolation
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.pipelines import exigir_admin_da_org
@@ -51,19 +51,6 @@ router = APIRouter(prefix="/api/custos", tags=["custos"])
 def _org(auth: tuple) -> str:
     _user, _token, raw_org = auth
     return str(coerce_org_uuid(raw_org))
-
-
-def _e_nome_duplicado(exc: Exception) -> bool:
-    """A unique-index ("nome" per org) violation, on EITHER backend the
-    persistence seam supports (achado 13: this used to surface as a raw,
-    unmapped 500). Postgres/PostgREST spells it `23505`/"duplicate key";
-    SQLite's `sqlite3.IntegrityError` (wrapped as `PersistenceError` by
-    `SqliteRecordStore.insert`) spells it "UNIQUE constraint failed" — both
-    checked here rather than in the shared `automacoes.violacao_unica`
-    (Postgres-only), which this router does not own."""
-    texto = str(exc).lower()
-    codigo = str(getattr(exc, "code", "") or "")
-    return codigo == "23505" or "duplicate key" in texto or "unique constraint" in texto
 
 
 def _com_taxa(repos: Repositorios, org_id: str, row: dict) -> ProfissionalOut:
@@ -107,9 +94,7 @@ async def criar_funcao(
     org_id = _org(auth)
     try:
         row = repos.funcao.criar(org_id, payload.model_dump())
-    except Exception as erro:  # noqa: BLE001 — only a unique-name violation is reclassified
-        if not _e_nome_duplicado(erro):
-            raise
+    except UniqueViolation as erro:
         raise HTTPException(
             status_code=409,
             detail={
@@ -139,9 +124,7 @@ async def atualizar_funcao(
         return FuncaoOut(**repos.funcao.atualizar(org_id, funcao_id, data))
     except RecordNotFound:
         raise HTTPException(status_code=404, detail="Função não encontrada")
-    except Exception as erro:  # noqa: BLE001 — only a unique-name violation is reclassified
-        if not _e_nome_duplicado(erro):
-            raise
+    except UniqueViolation as erro:
         raise HTTPException(
             status_code=409,
             detail={"detail": "Já existe uma função com esse nome.", "code": "funcao_duplicada"},

@@ -29,7 +29,7 @@ from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from noctusai_lib.integrations.persistence import PersistenceError, RecordNotFound
+from noctusai_lib.integrations.persistence import RecordNotFound, UniqueViolation
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.email_deps import EmailSenderFactory, get_email_sender_factory, get_email_settings
@@ -109,15 +109,19 @@ async def criar_fatura(
             repos.contrato.buscar(org_id, payload.contrato_id)
         except RecordNotFound:
             # Validated BEFORE the insert so a bad id 404s cleanly instead of
-            # surfacing as a foreign-key `PersistenceError` mislabelled below
-            # as "duplicate invoice" (finding #7).
+            # surfacing as a foreign-key violation mislabelled below as
+            # "duplicate invoice" (finding #7).
             raise HTTPException(status_code=404, detail="Contrato não encontrado")
     valores = payload.model_dump(exclude_none=True)
     if payload.vencimento is not None:
         valores["vencimento"] = payload.vencimento.isoformat()
     try:
         registro = repos.fatura.criar(org_id, valores)
-    except PersistenceError:
+    except UniqueViolation:
+        # The specific member, not `PersistenceError` — a different
+        # constraint failure here must surface as a real error, not this
+        # message (finding #7's root cause: the broad catch could not tell
+        # the two apart).
         raise HTTPException(
             status_code=409,
             detail=f"Já existe fatura para este contrato em {payload.competencia}",
@@ -383,6 +387,14 @@ async def excedentes(
 @router.get("/dre", response_model=list[DREOut])
 async def dre(
     competencia: str | None = Query(default=None, description="Filtra a RECEITA"),
+    custo_por_competencia: bool = Query(
+        default=False,
+        description=(
+            "Quando true, o custo TAMBÉM é filtrado pela competência (horas "
+            "apontadas naquele mês) em vez do histórico completo — usado "
+            "pelo Dashboard para a margem do mês; exige `competencia`."
+        ),
+    ),
     auth: tuple = Depends(get_current_user_org),
     repos: Repositorios = Depends(get_repositorios),
 ) -> list[DREOut]:
@@ -392,7 +404,12 @@ async def dre(
     can never disagree about a client. `alertas` warns when the margin is
     OVERSTATED because some hours could not be costed.
     """
-    linhas = FinanceiroService(repos).dre(_org(auth), competencia)
+    try:
+        linhas = FinanceiroService(repos).dre(
+            _org(auth), competencia, custo_por_competencia=custo_por_competencia
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return [
         DREOut(
             cliente_id=l.cliente_id, cliente_nome=l.cliente_nome,

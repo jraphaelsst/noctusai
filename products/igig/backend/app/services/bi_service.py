@@ -109,13 +109,40 @@ class BIService:
                 custos.por_usuario[str(prof["usuario_id"])] = taxa
         return custos
 
-    def eficiencia_por_cliente(self, org_id: str) -> list[EficienciaCliente]:
+    def eficiencia_por_cliente(
+        self, org_id: str, competencia: str | None = None
+    ) -> list[EficienciaCliente]:
         """Taxa de refação + custo real do job, per client.
 
         One pass over each collection rather than per-client queries: the
         report always renders every client, so N+1 round-trips would buy
         nothing.
+
+        `competencia` (`YYYY-MM`), when given, scopes `custo_reais`/`minutos`
+        (and their `apontamentos_sem_custo` alerts) to apontamentos whose
+        `iniciado_em` falls in that month — never `tarefas`/`refacoes`, which
+        stay all-time regardless (a task's refação count is not a monthly
+        fact). `None` (the default, and what M5's own screen + `relatorios`
+        always pass) keeps the full-history cost this method always computed:
+        the DRE screen's "histórico completo" caveat describes exactly that
+        call. Only `FinanceiroService.dre`'s NEW month-scoped margin passes a
+        value — see its docstring for why a month's revenue was being set
+        against all-time cost (finding: Dashboard "Margem no mês").
         """
+        inicio_dia = fim_dia = None
+        if competencia:
+            # Local import: `financeiro_service` imports `BIService` from
+            # this module at module scope, so importing back from there at
+            # module scope here would be circular. Deferred to call-time,
+            # this reuses the ONE canonical month-bounds function
+            # (`limites_da_competencia`'s calendar-aware last-day handling —
+            # smoke finding 1, 2026-09-22) instead of a second copy of the
+            # same `YYYY-MM` parsing.
+            from app.services.financeiro_service import limites_da_competencia
+
+            inicio, fim = limites_da_competencia(competencia)
+            inicio_dia, fim_dia = inicio[:10], fim[:10]
+
         clientes = {str(c["id"]): c for c in self._repos.cliente.listar(org_id)}
         resultado = {
             cid: EficienciaCliente(cliente_id=cid, cliente_nome=str(c.get("nome") or ""))
@@ -144,6 +171,14 @@ class BIService:
         # column does) is the truncation achado 22 fixed for the Esteira UI.
         segundos_por_cliente: dict[str, float] = {cid: 0.0 for cid in resultado}
         for apontamento in self._repos.apontamento.listar(org_id):
+            if inicio_dia is not None:
+                iniciado_em = str(apontamento.get("iniciado_em") or "")
+                # Date-prefix comparison — the same `limites_da_competencia`
+                # bound-check `FinanceiroService.excedentes` already uses for
+                # `pauta.entregue_em`, so this does not invent a second way
+                # to compare a timestamp against a competência.
+                if not (inicio_dia <= iniciado_em[:10] <= fim_dia):
+                    continue
             cliente_id = tarefa_para_cliente.get(str(apontamento.get("tarefa_id")), "")
             alvo = resultado.get(cliente_id)
             if alvo is None:

@@ -189,10 +189,25 @@ export function useExcedentes(competencia: string) {
   return { ...query, excedentes: query.data ?? [], loading: query.isPending && !query.data };
 }
 
-export function useDRE(competencia?: string) {
+/**
+ * `custoPorCompetencia`: when `true`, cost is ALSO scoped to `competencia`
+ * (hours apontadas that month) instead of the backend's default full
+ * history — the Dashboard's "Margem no mês" needs this so it compares the
+ * SAME month on both sides; the M6 DRE screen (`Financeiro.tsx`) never
+ * passes it, and keeps the documented "custo real é sempre o histórico
+ * completo" behaviour. Requires `competencia` — the backend 422s otherwise.
+ */
+export function useDRE(competencia?: string, custoPorCompetencia = false) {
   const query = useQuery({
-    queryKey: [...FINANCEIRO_QUERY_KEY, "dre", competencia ?? ""],
-    queryFn: () => api.get<DRE[]>("/api/financeiro/dre", competencia ? { competencia } : {}),
+    queryKey: [...FINANCEIRO_QUERY_KEY, "dre", competencia ?? "", custoPorCompetencia],
+    queryFn: () =>
+      api.get<DRE[]>(
+        "/api/financeiro/dre",
+        cleanParams({
+          competencia,
+          custo_por_competencia: custoPorCompetencia ? true : undefined,
+        }),
+      ),
     // `competencia` rides in the key — keep the previous rows on screen
     // instead of blanking to a skeleton while the new competência loads.
     placeholderData: (prev) => prev,

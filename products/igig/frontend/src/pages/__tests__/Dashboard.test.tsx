@@ -114,6 +114,18 @@ describe("Dashboard — Receita/Margem no mês (achado #6/plat#5)", () => {
     expect(dreCalls[0][3]).toMatch(/^\d{4}-\d{2}$/);
   });
 
+  it("also scopes COST to the same competência — never the DRE screen's full-history default", () => {
+    // Finding: this card compared a month's revenue against ALL-TIME cost
+    // (the M6 DRE screen's own documented behaviour, wrong here). The
+    // Dashboard's DRE query must request `custoPorCompetencia`.
+    mockEstado({});
+    renderDashboard();
+    const dreCalls = mockUseQuery.mock.calls
+      .map(([opts]) => (opts as { queryKey: unknown[] }).queryKey)
+      .filter((k) => k[1] === "financeiro" && k[2] === "dre");
+    expect(dreCalls[0][4]).toBe(true);
+  });
+
   it("sums only the loaded competência's DRE rows", () => {
     mockEstado({
       profissionais: { data: [{ id: "p1", custo_hora_indefinido: false }], isPending: false, isFetching: false, isError: false, error: null },

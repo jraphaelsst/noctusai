@@ -17,6 +17,8 @@ from typing import Any, Iterable
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows, paged_rows
 from noctusai_lib.primitives.roles import ADMIN_ROLES
 
+from app.services.varredura import linhas_cross_org
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["notificar", "processar_lembretes_pendentes"]
@@ -116,10 +118,10 @@ def processar_lembretes_pendentes(admin_db: Any, core_client: Any) -> dict:
 
     for entidade, campo_titulo, param in _LEMBRETE_ALVOS:
         cfg = cfgs[entidade]
-        pendentes = (
-            admin_db.table(cfg.tables.lembretes).select("*")
-            .lte("dispara_em", agora).is_("enviado_em", "null").is_("cancelado_em", "null")
-            .execute().data or []
+        pendentes = linhas_cross_org(
+            admin_db, cfg.tables.lembretes,
+            filtros=lambda q: q.lte("dispara_em", agora).is_("enviado_em", "null").is_("cancelado_em", "null"),
+            label=f"igig.{cfg.tables.lembretes} (lembretes pendentes)",
         )
         for lembrete in pendentes:
             resumo["processados"] += 1

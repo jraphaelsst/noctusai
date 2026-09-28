@@ -51,7 +51,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from noctusai_lib.domain.card_hub import services as card_hub_services
 from noctusai_lib.integrations.email import OutgoingEmail
-from noctusai_lib.integrations.persistence import get_record_store
+from noctusai_lib.integrations.persistence import UniqueViolation, classify_constraint_violation, get_record_store
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows, paged_rows
 from noctusai_lib.integrations.whatsapp import get_whatsapp_client
 from noctusai_lib.primitives.phone import phone_digits
@@ -65,6 +65,7 @@ from app.services.canais_org import CanalNaoConfigurado, waha_da_org
 from app.services.email_config import EmailSettings, resolver_smtp
 from app.services.regras import RegraViolada
 from app.services.notificacoes import notificar
+from app.services.varredura import linhas_cross_org
 
 logger = logging.getLogger(__name__)
 
@@ -204,9 +205,10 @@ async def varrer_sla(portas: PortasAutomacao) -> dict:
     Returns counts for the job log. One rule failing is logged and the sweep
     continues with the next — an org's broken rule must not starve another's.
     """
-    regras = list(
-        portas.db.table("automacao").select("*").eq("gatilho", "sla").eq("ativo", True)
-        .execute().data or []
+    regras = linhas_cross_org(
+        portas.db, "automacao",
+        filtros=lambda q: q.eq("gatilho", "sla").eq("ativo", True),
+        label="igig.automacao (varredura SLA)",
     )
     resumo = {"regras": len(regras), "estourados": 0, "execucoes": 0, "falhas_regra": 0}
     for regra in regras:
@@ -358,9 +360,21 @@ def _finalizar(portas: PortasAutomacao, org_id: str, execucao: dict, status: str
 
 def violacao_unica(exc: Exception) -> bool:
     """A PostgREST/psycopg unique violation (23505) — the DB's own "already
-    exists" answer, read as a duplicate rather than a failure."""
-    code = str(getattr(exc, "code", "") or "")
-    return code == "23505" or "duplicate key" in str(exc).lower()
+    exists" answer, read as a duplicate rather than a failure.
+
+    This call site talks to the raw service-role/RLS client
+    (`portas.db.table(...)`), not the `RecordStore` seam, so there is no
+    `UniqueViolation` to catch directly — but the CLASSIFICATION is still
+    delegated to `classify_constraint_violation`, the same function
+    `SupabaseRecordStore`/`SqliteRecordStore` use to raise it. One mapping
+    from raw signal to "is this a duplicate", not a second copy sniffing
+    `.code`/message text independently (that duplication is what let
+    `custos_router._e_nome_duplicado` drift into its own, slightly
+    different, string match before the two were unified here).
+    """
+    return classify_constraint_violation(
+        code=str(getattr(exc, "code", "") or ""), message=str(exc)
+    ) is UniqueViolation
 
 
 # ── reads ────────────────────────────────────────────────────────────

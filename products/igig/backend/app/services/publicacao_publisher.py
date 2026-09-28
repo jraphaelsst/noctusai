@@ -36,9 +36,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
 
-from noctusai_lib.integrations.persistence import iter_paged_rows
-
 from app.repositories import Repositorios
+from app.services.varredura import linhas_cross_org, orgs_distintos
 
 logger = logging.getLogger(__name__)
 
@@ -358,21 +357,17 @@ def orgs_com_publicacao_pendente(db: Any, ate: str) -> list[str]:
 
     `Repositorios`/`RecordStore` require an `org_id` on every call by
     construction (the module docstring's cross-org note), so this cross-org
-    DISCOVERY step reads the raw service-role client directly — the same
-    shape `financeiro_service.atualizar_inadimplencia` and
-    `email.iter_todos_watches` use for their own daily sweeps.
+    DISCOVERY step goes through `app.services.varredura.linhas_cross_org` —
+    the same helper `automacoes.varrer_sla` and
+    `financeiro_service.atualizar_inadimplencia` use for their own daily
+    sweeps.
     """
-    orgs: set[str] = set()
-    for linha in iter_paged_rows(
-        lambda inicio, fim: (
-            db.table("publicacao").select("id,org_id")
-            .eq("status", "agendada").lte("agendada_para", ate)
-            .order("id").range(inicio, fim).execute().data
-        ),
+    linhas = linhas_cross_org(
+        db, "publicacao", select="id,org_id",
+        filtros=lambda q: q.eq("status", "agendada").lte("agendada_para", ate),
         label="igig.publicacao pendentes (fan-out)",
-    ):
-        orgs.add(str(linha["org_id"]))
-    return sorted(orgs)
+    )
+    return orgs_distintos(linhas)
 
 
 def liberar_travadas(db: Any, *, agora: datetime | None = None,

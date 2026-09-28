@@ -87,7 +87,10 @@ export default function Dashboard() {
   // ── Custos / financeiro ─────────────────────────────────────────────
   const profissionaisQuery = useProfissionais();
   const { profissionais, loading: carregandoProfissionais } = profissionaisQuery;
-  const { linhas: dre, loading: carregandoDRE } = useDRE(COMPETENCIA_ATUAL);
+  // `custoPorCompetencia=true`: the card below is "Margem no mês", so cost
+  // must be the SAME month's hours, never the full history `useDRE` returns
+  // by default for the M6 DRE screen (see that hook's docstring).
+  const { linhas: dre, loading: carregandoDRE } = useDRE(COMPETENCIA_ATUAL, true);
   const {
     atrasadas: inadimplentes,
     loading: carregandoInadimplentes,

@@ -89,6 +89,21 @@ describe("useDRE — loading formula + placeholderData", () => {
     useDRE();
     expect(capturedOpts[0]?.placeholderData).toBeTypeOf("function");
   });
+
+  it("never sends custo_por_competencia when the flag is omitted (M6 DRE screen's default)", () => {
+    useDRE("2026-08");
+    (capturedOpts[0]?.queryFn as () => unknown)();
+    expect(mockGet).toHaveBeenCalledWith("/api/financeiro/dre", { competencia: "2026-08" });
+  });
+
+  it("sends custo_por_competencia=true when asked — the Dashboard's month-scoped margin", () => {
+    useDRE("2026-08", true);
+    (capturedOpts[0]?.queryFn as () => unknown)();
+    expect(mockGet).toHaveBeenCalledWith("/api/financeiro/dre", {
+      competencia: "2026-08",
+      custo_por_competencia: true,
+    });
+  });
 });
 
 describe("useCancelarFatura", () => {
