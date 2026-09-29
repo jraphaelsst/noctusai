@@ -510,16 +510,24 @@ class TestEndereco:
 # ─── both spouses ──────────────────────────────────────────────────────────
 
 
-def _certidao(titular_idx: int | None = 0) -> IdentityFields:
+def _certidao(
+    titular_idx: int | None = 0,
+    *,
+    nome_anterior_almir: str | None = None,
+    nome_anterior_mariana: str | None = None,
+    estado_civil: str = "casado",
+) -> IdentityFields:
     almir = ConjugeLido(
-        nome="ALMIR TEIXEIRA DA COSTA", cpf="303.102.653-55", cpf_confianca="alta",
+        nome="ALMIR TEIXEIRA DA COSTA", nome_anterior=nome_anterior_almir,
+        cpf="303.102.653-55", cpf_confianca="alta",
         data_nascimento=date(1961, 10, 4), data_nascimento_confianca="baixa",
         nacionalidade="brasileiro", nacionalidade_confianca="alta",
         profissao="comerciante", profissao_confianca="alta",
         genero="Masculino", genero_confianca="baixa", titular=titular_idx == 0,
     )
     mariana = ConjugeLido(
-        nome="MARIANA PELLEGRINI RANGEL", cpf="478.982.096-30", cpf_confianca="alta",
+        nome="MARIANA PELLEGRINI RANGEL", nome_anterior=nome_anterior_mariana,
+        cpf="478.982.096-30", cpf_confianca="alta",
         data_nascimento=date(1964, 4, 20), data_nascimento_confianca="baixa",
         profissao="professora", profissao_confianca="alta",
         genero="Feminino", genero_confianca="baixa", titular=titular_idx == 1,
@@ -528,7 +536,7 @@ def _certidao(titular_idx: int | None = 0) -> IdentityFields:
     return IdentityFields(
         nome=eu.nome if eu else None, nome_confianca=A if eu else ExtractionConfidence.NENHUMA,
         cpf=eu.cpf if eu else None, cpf_confianca=A if eu else ExtractionConfidence.NENHUMA,
-        estado_civil="casado", estado_civil_confianca=A,
+        estado_civil=estado_civil, estado_civil_confianca=A,
         regime_bens="comunhao_parcial", regime_bens_confianca=A,
         data_casamento=date(2011, 7, 30), data_casamento_confianca=A,
         conjuges=(almir, mariana),
@@ -645,6 +653,145 @@ class TestDoisConjuges:
         assert row["estado_civil"] == "casado"
         assert row.get("cpf") is None
         assert all(r["cliente_id"] is None for r in _documento(scoped, did)["extracao_conjuges"])
+
+
+# ─── nome_anterior confirms a marriage name adoption (owner decision,
+# 2026-09-28) ────────────────────────────────────────────────────────────
+
+
+class TestNomeAnteriorConfirmaAdocao:
+    @pytest.mark.asyncio
+    async def test_cnh_maiden_and_certidao_married_is_no_conflict_married_chosen(
+        self, client, scoped,
+    ):
+        """The RG/CNH reading fills `nome_oficial` with the maiden name
+        first; the certidão de casamento, read later, states CASADO and
+        that this exact value is the name the spouse LEFT BEHIND — the
+        married name replaces it, no conflict opens."""
+        esposa = str(uuid4())
+        cid, did_rg, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"nome": "Almir", "conjuge_cliente_id": esposa, "conjuge_origem": "manual"},
+            outros=[cliente_row(esposa, nome="Mariana")],
+        )
+        # First document: her own RG, maiden name.
+        did_rg2 = str(uuid4())
+        scoped.table("cliente_documentos").insert({
+            "id": did_rg2, "org_id": ORG_ID, "cliente_id": esposa,
+            "storage_path": f"{ORG_ID}/clientes/{esposa}/{did_rg2}",
+            "nome_original": "rg.pdf", "mime_type": "application/pdf",
+            "tipo_documento": "rg", "deleted_at": None,
+            "extracao_status": "pendente", "extracao_tentativas": 0,
+            "created_at": _old(2),
+        }).execute()
+        await storage.put(
+            bucket=BUCKET, key=f"{ORG_ID}/clientes/{esposa}/{did_rg2}",
+            data=b"%PDF-1.4", content_type="application/pdf",
+        )
+        await _extrair(scoped, storage, esposa, did_rg2, IdentityFields(
+            nome="MARIANA PELLEGRINI", nome_confianca=A, source=TextSource.OCR,
+        ))
+        assert _cliente(scoped, esposa)["nome_oficial"] == "MARIANA PELLEGRINI"
+
+        # Second document: the certidão, read against the titular's (Almir's)
+        # card — states Mariana adopted "RANGEL" and left "MARIANA
+        # PELLEGRINI" behind.
+        out = await _extrair(scoped, storage, cid, did_rg, _certidao(
+            0, nome_anterior_mariana="MARIANA PELLEGRINI",
+        ))
+        ela = _cliente(scoped, esposa)
+        assert ela["nome_oficial"] == "MARIANA PELLEGRINI RANGEL"
+        assert ela["nome_oficial_origem"] == "certidao_casamento"
+        assert ela["nome_oficial_documento_id"] == did_rg
+        assert ela.get("nome_oficial_confirmado_em") is None
+        assert out["conflitos_abertos"] == []
+        assert _conflitos(scoped) == []
+        registro = _documento(scoped, did_rg)["extracao_conjuges"]
+        mariana_registro = next(r for r in registro if r["nome"] == "MARIANA PELLEGRINI RANGEL")
+        assert mariana_registro["nome_anterior"] == "MARIANA PELLEGRINI"
+
+    @pytest.mark.asyncio
+    async def test_married_keeping_the_name_is_an_ordinary_disagreement(self, client, scoped):
+        """No `nome_anterior` (the certidão states she KEPT her name) — a
+        genuinely different on-file value is still an ordinary conflict,
+        never silently suppressed by this rule."""
+        esposa = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"nome": "Almir", "conjuge_cliente_id": esposa, "conjuge_origem": "manual"},
+            outros=[cliente_row(
+                esposa, nome="Mariana",
+                nome_oficial="MARIANA PELLEGRINI", nome_oficial_origem="rg",
+                nome_oficial_documento_id=str(uuid4()), nome_oficial_em=_old(2),
+            )],
+        )
+        await _extrair(scoped, storage, cid, did, _certidao(0))  # no nome_anterior
+        ela = _cliente(scoped, esposa)
+        assert ela["nome_oficial"] == "MARIANA PELLEGRINI"  # untouched
+        assert [c["campo"] for c in _conflitos(scoped)] == ["nome_oficial"]
+
+    @pytest.mark.asyncio
+    async def test_a_human_confirmed_maiden_name_is_never_overwritten(self, client, scoped):
+        esposa = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"nome": "Almir", "conjuge_cliente_id": esposa, "conjuge_origem": "manual"},
+            outros=[cliente_row(
+                esposa, nome="Mariana",
+                nome_oficial="MARIANA PELLEGRINI", nome_oficial_origem="rg",
+                nome_oficial_documento_id=str(uuid4()), nome_oficial_em=_old(2),
+                nome_oficial_confirmado_em=_old(1), nome_oficial_confirmado_por=str(uuid4()),
+            )],
+        )
+        await _extrair(scoped, storage, cid, did, _certidao(
+            0, nome_anterior_mariana="MARIANA PELLEGRINI",
+        ))
+        ela = _cliente(scoped, esposa)
+        assert ela["nome_oficial"] == "MARIANA PELLEGRINI"  # untouched
+        assert [c["campo"] for c in _conflitos(scoped)] == ["nome_oficial"]
+
+    @pytest.mark.asyncio
+    async def test_a_divorced_party_still_conflicts_not_auto_adopted(self, client, scoped):
+        """`NOC-REMEDIATE[nome-anterior-pos-averbacao]` — divorciado/
+        separado/viúvo has no equivalent auto-resolution yet; this rule
+        only ever fires past `casado`."""
+        esposa = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"nome": "Almir", "conjuge_cliente_id": esposa, "conjuge_origem": "manual"},
+            outros=[cliente_row(
+                esposa, nome="Mariana",
+                nome_oficial="MARIANA PELLEGRINI", nome_oficial_origem="rg",
+                nome_oficial_documento_id=str(uuid4()), nome_oficial_em=_old(2),
+            )],
+        )
+        await _extrair(scoped, storage, cid, did, _certidao(
+            0, nome_anterior_mariana="MARIANA PELLEGRINI", estado_civil="divorciado",
+        ))
+        ela = _cliente(scoped, esposa)
+        assert ela["nome_oficial"] == "MARIANA PELLEGRINI"  # untouched
+        assert [c["campo"] for c in _conflitos(scoped)] == ["nome_oficial"]
+
+    @pytest.mark.asyncio
+    async def test_the_titulars_own_maiden_name_is_also_adopted(self, client, scoped):
+        """Symmetric with the OTHER spouse: the titular's OWN card
+        benefits from the same rule when their own RG's maiden name
+        matches what THEIR certidão entry says they left behind."""
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={
+                "nome": "Almir",
+                "nome_oficial": "ALMIR TEIXEIRA", "nome_oficial_origem": "rg",
+                "nome_oficial_documento_id": str(uuid4()), "nome_oficial_em": _old(2),
+            },
+        )
+        out = await _extrair(scoped, storage, cid, did, _certidao(
+            0, nome_anterior_almir="ALMIR TEIXEIRA",
+        ))
+        eu = _cliente(scoped, cid)
+        assert eu["nome_oficial"] == "ALMIR TEIXEIRA DA COSTA"
+        assert eu["nome_oficial_origem"] == "certidao_casamento"
+        assert out["conflitos_abertos"] == []
 
 
 # ─── D3: bounded retries + the NULL-extracao_em sweep hole ─────────────────

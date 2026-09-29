@@ -609,6 +609,53 @@ def _mesmo_valor(item_key: str, a: Any, b: Any) -> bool:
     return _mesmo_nome(str(a), str(b))
 
 
+def _nome_anterior_confirma_adocao(
+    estado_civil: Any,
+    presente: Any,
+    nome_anterior: Optional[str],
+    *,
+    origem_atual: Optional[str],
+    confirmado_em_atual: Any,
+) -> bool:
+    """Owner decision, 2026-09-28: for a party the certidão states is
+    CASADO, the name it says they "passou a utilizar" (`ConjugeLido.nome`,
+    already `nome_oficial`'s proposed value by the time this is consulted)
+    is the contract/official name — not a second opinion on whatever is
+    already on file, when what is on file is exactly the name the SAME
+    certidão says they left behind (`nome_anterior`). That is a marriage
+    changing a name, evidenced by the document itself, not a misread.
+
+    `estado_civil` must normalise to `casado` — `civil_status.
+    find_estado_civil`'s own AVERBAÇÃO precedence already resolves a
+    divórcio/separação/óbito to its OWN canonical token before this ever
+    sees it, so this never fires past one.
+
+    🔴 NOC-REMEDIATE[nome-anterior-pos-averbacao] — a divorciado/separado/
+    viúvo party whose CNH/RG still carries a since-abandoned married name
+    has no equivalent auto-resolution here: `civil_status.py` has no
+    per-averbação "nome que voltou a usar" reader yet, so that case still
+    falls through to today's conflict for a human — 2026-09-28.
+
+    Never fires against a value a human already typed or confirmed — same
+    guard `campo_conflitos.mesmo_documento_pendente` applies, for the same
+    reason: a real person's decision about this field outranks any reading.
+    """
+    if not origem_atual or origem_atual == "manual":
+        return False
+    if confirmado_em_atual:
+        return False
+    # Local import: `_mesmo_valor`'s own `estado_civil` branch already
+    # imports from here for the identical reason (avoids a module-level
+    # cycle; `documento_checklist_service` imports this module).
+    from app.modules.card_hub.documento_checklist_service import (
+        _estado_civil_normalizado,
+    )
+
+    if _estado_civil_normalizado(str(estado_civil) if estado_civil else None) != "casado":
+        return False
+    return _mesmo_valor("nome_oficial", presente, nome_anterior)
+
+
 def _marcar(client: Any, documento_id: UUID, **updates: Any) -> None:
     _t(client, DOCUMENTOS_TABLE).update(updates).eq("id", str(documento_id)).execute()
 
@@ -701,6 +748,7 @@ def aplicar_campos_ao_cliente(
     fonte_tabela: Optional[str] = None,
     fonte_id: Optional[UUID] = None,
     confirmado_por: Optional[Any] = None,
+    nomes_anteriores: Optional[dict[str, Optional[str]]] = None,
 ) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record — owner decision D1.
 
@@ -732,6 +780,17 @@ def aplicar_campos_ao_cliente(
       conflict on this field is closed. A human-confirmed or manually-typed
       value is NEVER replaced this way — that still conflicts like any
       other disagreement.
+    - **`nome_oficial` already SET, the reading DIFFERS, but the certidão
+      says CASADO and the name it says the party LEFT BEHIND
+      (`nomes_anteriores["nome_oficial"]`) equals what is already on file
+      -> replaces, no conflict** (owner decision, 2026-09-28,
+      `_nome_anterior_confirma_adocao`): the on-file value is the expected
+      maiden/prior name, not a disagreeing read — a marriage the document
+      itself evidences changing the name, not a second opinion. Never fires
+      against a human-confirmed or manually-typed value, same guard as the
+      re-read branch above; never fires past `casado` (a divorciado/
+      separado/viúvo party still conflicts exactly as before —
+      `NOC-REMEDIATE[nome-anterior-pos-averbacao]`).
     - **Same fact, still machine-pending, and a human now vouches for it
       (`confirmado_por` given) -> promoted to confirmed**, `updates`-only on
       `_confirmado_por/_em`: a matrícula qualification auto-applied
@@ -822,6 +881,33 @@ def aplicar_campos_ao_cliente(
                     # docstring). The fresh reading replaces the stale
                     # one instead of opening a conflict with itself, and
                     # any stale pending conflict on this field is closed.
+                    updates[campo.item_key] = valor
+                    updates[campo.origem] = origem
+                    updates[campo.documento_id] = (
+                        str(documento_id) if documento_id else None
+                    )
+                    updates[campo.em] = now
+                    updates[campo.confirmado_por] = None
+                    updates[campo.confirmado_em] = None
+                    aplicados[campo.item_key] = True
+                    campo_conflitos.fechar_conflitos_pendentes(
+                        client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                        campo.item_key, decidido_por=None,
+                    )
+                elif campo.item_key == "nome_oficial" and _nome_anterior_confirma_adocao(
+                    lidos.get("estado_civil", (None,))[0],
+                    presente,
+                    (nomes_anteriores or {}).get("nome_oficial"),
+                    origem_atual=atual.get(campo.origem),
+                    confirmado_em_atual=atual.get(campo.confirmado_em),
+                ):
+                    # Not a disagreement — the certidão itself says CASADO
+                    # and names this exact on-file value as the name the
+                    # party left BEHIND (owner decision, 2026-09-28, see
+                    # `_nome_anterior_confirma_adocao`). The adopted name
+                    # replaces it; nothing is lost — every document keeps
+                    # its own reading, and `nome_anterior` still rides on
+                    # `cliente_documentos.extracao_conjuges` for this one.
                     updates[campo.item_key] = valor
                     updates[campo.origem] = origem
                     updates[campo.documento_id] = (
@@ -1415,6 +1501,15 @@ async def extrair_identidade(
             fields.data_emissao.isoformat() if fields.data_emissao and not so_endereco else None
         )
         conjuges = [] if so_endereco else list(fields.conjuges or ())
+        # Resolved here (not only where the OTHER spouse is filled, below)
+        # so the titular's OWN `nome_oficial` apply can also consult their
+        # own `nome_anterior` — owner decision, 2026-09-28, see
+        # `_nome_anterior_confirma_adocao`. `titular_idx` is `.titular` on
+        # `ConjugeLido`, set by the extractor's own titular-hint selection.
+        titular_idx = next((i for i, c in enumerate(conjuges) if c.titular), None)
+        nome_anterior_titular = (
+            conjuges[titular_idx].nome_anterior if titular_idx is not None else None
+        )
         achou_algo = (
             data_emissao is not None
             or endereco is not None
@@ -1525,6 +1620,7 @@ async def extrair_identidade(
             documento_id=documento_id,
             fonte_tabela=DOCUMENTOS_TABLE,
             fonte_id=documento_id,
+            nomes_anteriores={"nome_oficial": nome_anterior_titular},
         )
         conflitos += abertos
 
@@ -1557,7 +1653,8 @@ async def extrair_identidade(
         registro_conjuges: list[dict] = []
         if conjuges:
             outro_id: Optional[str] = None
-            titular_idx = next((i for i, c in enumerate(conjuges) if c.titular), None)
+            # `titular_idx` was already resolved above, before the titular's
+            # own apply, so both applies consult the SAME resolution.
             if titular_idx is not None and len(conjuges) == 2:
                 outro = conjuges[1 - titular_idx]
                 outro_id = _cliente_do_outro_conjuge(client, org_id, cliente_id, outro)
@@ -1572,6 +1669,7 @@ async def extrair_identidade(
                         documento_id=documento_id,
                         fonte_tabela=DOCUMENTOS_TABLE,
                         fonte_id=documento_id,
+                        nomes_anteriores={"nome_oficial": outro.nome_anterior},
                     )
                     conflitos += abertos_outro
                     conflitos += vincular_conjuges(
@@ -1588,6 +1686,12 @@ async def extrair_identidade(
                 registro_conjuges.append(
                     {
                         "nome": c.nome,
+                        # The maiden/prior name, when the certidão states
+                        # this spouse ADOPTED `nome` — never lost even when
+                        # `nome_oficial` moves straight to the adopted name
+                        # (owner decision, 2026-09-28; see
+                        # `_nome_anterior_confirma_adocao`).
+                        "nome_anterior": c.nome_anterior,
                         "cpf": c.cpf,
                         "data_nascimento": (
                             c.data_nascimento.isoformat() if c.data_nascimento else None
