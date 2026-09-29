@@ -18,6 +18,7 @@
  */
 import { useEffect, useState } from "react";
 import { Bot, Copy, FilePlus2, FileText, ThumbsDown, UserRound } from "lucide-react";
+import { Link } from "react-router-dom";
 import { CardHubDialog, MotivoMoveDialog, TooltipIconButton, type CardSubpage } from "@noctusai/lib/components";
 import { Badge, Button, Field, FormError, Input, Select, Skeleton, Textarea } from "@noctusai/lib/design-system";
 import { toast } from "sonner";
@@ -28,7 +29,7 @@ import { useCardHubGeral } from "@/components/common/useCardHubGeral";
 import { useLembretesSubpage } from "@/components/common/useLembretesSubpage";
 import { negocioCardHub as hub } from "@/hooks/useNegocioCardHub";
 import { useOrcamentos } from "@/hooks/useOrcamentos";
-import { describeError } from "@/lib/errors";
+import { describeError, errorCode } from "@/lib/errors";
 import { brl, dataBR } from "@/lib/format";
 import { ORCAMENTO_STATUS_LABEL, ORIGEM_LABEL, type AssistenteAcao, type Negocio } from "@/types/crm";
 
@@ -414,7 +415,7 @@ const ACOES: { acao: AssistenteAcao; rotulo: string }[] = [
   { acao: "rascunho_mensagem", rotulo: "Rascunho de mensagem" },
 ];
 
-function AssistenteSubpage({ negocioId }: { negocioId: string }) {
+export function AssistenteSubpage({ negocioId }: { negocioId: string }) {
   const assistente = useAssistenteNegocio();
   const [canal, setCanal] = useState<"email" | "whatsapp">("whatsapp");
   const texto = assistente.data?.texto ?? null;
@@ -457,6 +458,20 @@ function AssistenteSubpage({ negocioId }: { negocioId: string }) {
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-5/6" />
           <Skeleton className="h-4 w-2/3" />
+        </div>
+      ) : assistente.isError && errorCode(assistente.error) === "AI_CONSENT_REQUIRED" ? (
+        <div
+          role="alert"
+          data-testid="assistente-consent-required"
+          className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          <p>
+            Para usar o Assistente, autorize o uso de IA com dados de clientes
+            em Configurações de IA.
+          </p>
+          <Link to="/settings/ai" className="inline-block font-medium underline underline-offset-2">
+            Ir para Configurações de IA
+          </Link>
         </div>
       ) : assistente.isError ? (
         <p role="alert" className="text-sm text-destructive">
