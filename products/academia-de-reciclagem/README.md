@@ -39,6 +39,7 @@ Ports: backend **8015**, frontend **8190** (single container in prod).
 | Import of the original workspace history (verified revision counts + hashes) | shipped (M2) |
 | Scoped API (SSO users + product tokens) consumed by Julia and the `academia.*` MCP tools | shipped (M2) |
 | UI: KB browser, Decisions, Open questions, Roadmap / Tasks | shipped (M2) |
+| Public `/coleta` — calendário de coleta por município (8 cities around the Granja Viana; search by bairro/condomínio/rua; sources + caveats per city; static data in `frontend/src/content/coleta/`) | shipped 2026-09-29 |
 | Video training platform | deferred (roadmap T3) |
 
 ## Tests

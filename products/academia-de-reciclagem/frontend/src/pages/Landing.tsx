@@ -18,7 +18,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { ArrowDownRight, ArrowRight, BookOpen, Circle, CircleDot, Factory, HandHeart, Leaf, Recycle, School, Sparkles, Users } from 'lucide-react';
+import { ArrowDownRight, ArrowRight, BookOpen, CalendarDays, Circle, CircleDot, Factory, HandHeart, Leaf, Recycle, School, Sparkles, Users } from 'lucide-react';
 
 import { SiteHeader } from '@/components/site/SiteHeader';
 import { SiteFooter } from '@/components/site/SiteFooter';
@@ -104,6 +104,7 @@ export default function Landing() {
             <Reveal className="hero-actions" delay={350}>
               <a className="button-primary" href="#participar" data-testid="button-conhecer">Conheça a iniciativa <ArrowDownRight size={16} /></a>
               <Link className="button-quiet" to="/o-projeto" data-testid="button-ver-metodo">Ver o projeto</Link>
+              <Link className="button-quiet" to="/coleta" data-testid="button-coleta"><CalendarDays size={16} /> Dias de coleta na sua rua</Link>
             </Reveal>
             <Reveal className="hero-footnote" delay={470}>
               <span className="hero-footnote-line" aria-hidden="true" />

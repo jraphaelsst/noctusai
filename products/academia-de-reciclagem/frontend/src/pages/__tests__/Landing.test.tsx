@@ -114,6 +114,12 @@ describe("Landing", () => {
     renderAt("/");
     expect(screen.getByTestId("button-ver-metodo")).toHaveAttribute("href", "/o-projeto");
   });
+
+  it("links to the /coleta calendar from the hero AND the shared nav", () => {
+    renderAt("/");
+    expect(screen.getByTestId("button-coleta")).toHaveAttribute("href", "/coleta");
+    expect(screen.getByTestId("link-coleta")).toHaveAttribute("href", "/coleta");
+  });
 });
 
 describe("Landing — interest popup", () => {

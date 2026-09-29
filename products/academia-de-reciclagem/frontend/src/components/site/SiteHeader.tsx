@@ -5,7 +5,8 @@
  * the sub-pages existed).
  *
  * "O Projeto" and "A Carta" are real routes (`Link`) — the two reading
- * pages, and the first two items by design. The rest are landing sections,
+ * pages, and the first two items by design — followed by "Dias de coleta"
+ * (`/coleta`, the per-município collection calendar). The rest are landing sections,
  * resolved by `SectionLink` to either an in-page anchor (on the landing) or
  * `/#<hash>` (everywhere else) — including "Como funciona", which scrolls to
  * the landing's own section rather than opening a page of its own.
@@ -31,6 +32,9 @@ export function SiteHeader() {
           </Link>
           <Link className="nav-link" to="/a-carta" onClick={closeMenu} data-testid="link-a-carta">
             A Carta
+          </Link>
+          <Link className="nav-link" to="/coleta" onClick={closeMenu} data-testid="link-coleta">
+            Dias de coleta
           </Link>
           <SectionLink hash="como-funciona" className="nav-link" onClick={closeMenu} data-testid="link-como-funciona">
             Como funciona

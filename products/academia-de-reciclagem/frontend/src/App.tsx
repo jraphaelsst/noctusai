@@ -31,6 +31,8 @@ const OProjeto = lazy(() => import("@/pages/OProjeto"));
 const ACarta = lazy(() => import("@/pages/ACarta"));
 const Interessados = lazy(() => import("@/pages/Interessados"));
 const ComoFuncionaRedirect = lazy(() => import("@/pages/ComoFuncionaRedirect"));
+// Public "calendário de coleta por município" — data in `src/content/coleta/`.
+const Coleta = lazy(() => import("@/pages/Coleta"));
 
 // Nav
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -97,6 +99,8 @@ export default createProductApp({
     // Old path, kept alive as a redirect — see the component's own doc.
     { path: "/como-funciona", component: ComoFuncionaRedirect },
     { path: "/a-carta", component: ACarta },
+    { path: "/coleta", component: Coleta },
+    { path: "/coleta/:municipio", component: Coleta },
   ],
   Layout,
   ...infra.appConfig,
