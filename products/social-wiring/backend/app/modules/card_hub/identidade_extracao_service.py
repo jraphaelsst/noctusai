@@ -117,7 +117,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.proveniencia import fontes
-from app.services import campo_conflitos, extracao_job
+from app.services import campo_conflitos, divergencia_resolucao, extracao_job
 from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub.services import _now, _t
 
@@ -621,6 +621,8 @@ def _nome_anterior_confirma_adocao(
     *,
     origem_atual: Optional[str],
     confirmado_em_atual: Any,
+    cpf_atual: Optional[Any] = None,
+    cpf_lido: Optional[Any] = None,
 ) -> bool:
     """Owner decision, 2026-09-28: for a party the certidão states is
     CASADO, the name it says they "passou a utilizar" (`ConjugeLido.nome`,
@@ -634,6 +636,21 @@ def _nome_anterior_confirma_adocao(
     find_estado_civil`'s own AVERBAÇÃO precedence already resolves a
     divórcio/separação/óbito to its OWN canonical token before this ever
     sees it, so this never fires past one.
+
+    🔴 OWNER DIRECTIVE, 2026-09-29 — REQUIRES CPF CORROBORATION WHEN
+    AVAILABLE. Measured against the 10 signed P2 contracts: a certidão's own
+    `nome_oficial` reading is only 60% precise (3/5) — good enough to name
+    WHO adopted what only when nothing independently CONTRADICTS the match.
+    `cpf_atual`/`cpf_lido` are the on-file CPF and this same reading's CPF
+    for this party; when BOTH are present and they DISAGREE, this is refused
+    — a misread party, or two different people coincidentally sharing a
+    maiden -> married name pair — and falls through to the ordinary conflict
+    path for a human. Either side ABSENT is not refused: the caller already
+    anchored this `cliente_id` as the certidão's party before ever reaching
+    this function (a manual `conjuge_cliente_id` link, or an earlier CPF/
+    name match at `_e_a_pessoa`/`_cliente_do_outro_conjuge` time) — there is
+    no weaker "no CPF at all" case this function would otherwise be silently
+    trusting past that anchor.
 
     🔴 NOC-REMEDIATE[nome-anterior-pos-averbacao] — a divorciado/separado/
     viúvo party whose CNH/RG still carries a since-abandoned married name
@@ -658,7 +675,11 @@ def _nome_anterior_confirma_adocao(
 
     if _estado_civil_normalizado(str(estado_civil) if estado_civil else None) != "casado":
         return False
-    return _mesmo_valor("nome_oficial", presente, nome_anterior)
+    if not _mesmo_valor("nome_oficial", presente, nome_anterior):
+        return False
+    if cpf_atual and cpf_lido and only_digits(str(cpf_atual)) != only_digits(str(cpf_lido)):
+        return False
+    return True
 
 
 def _marcar(client: Any, documento_id: UUID, **updates: Any) -> None:
@@ -771,11 +792,17 @@ def aplicar_campos_ao_cliente(
       validation gate — unless `confirmado_por` is given (a human just
       vouched for this source, e.g. a matrícula qualification they
       confirmed), in which case it is stamped confirmed.
-    - **Field already SET and the reading DIFFERS -> conflict**, never an
-      overwrite: whether the value was typed by a human or written by an
-      earlier extraction, a `cliente_campo_conflitos` row opens (returned, so
-      the caller notifies an admin). `nome_oficial` included — the old
-      `sobrescreve=True` "newest document wins" is gone.
+    - **Field already SET and the reading DIFFERS -> resolved automatically,
+      or a conflict** (owner directive, 2026-09-29): `campo_conflitos.
+      resolver_e_registrar` (`app.services.divergencia_resolucao`) tries
+      validators -> corroboration -> measured source-precision tier FIRST;
+      only a genuine same-tier/unmeasured tie still opens a `pendente`
+      `cliente_campo_conflitos` row (returned, so the caller notifies an
+      admin) — never an overwrite either way, and every automatic decision
+      is written back to that SAME table as an auditable
+      `'resolvido_automatico'` row (rule + evidence in `motivo_resolucao`).
+      `nome_oficial` included — the old `sobrescreve=True` "newest document
+      wins" is gone.
     - **Field already SET, the reading DIFFERS, but it's a RE-READ of the
       SAME still machine-pending document -> replaces, no conflict**
       (`campo_conflitos.mesmo_documento_pendente`, 2026-09-25): the stored
@@ -905,6 +932,8 @@ def aplicar_campos_ao_cliente(
                     (nomes_anteriores or {}).get("nome_oficial"),
                     origem_atual=atual.get(campo.origem),
                     confirmado_em_atual=atual.get(campo.confirmado_em),
+                    cpf_atual=atual.get("cpf"),
+                    cpf_lido=lidos.get("cpf", (None,))[0],
                 ):
                     # Not a disagreement — the certidão itself says CASADO
                     # and names this exact on-file value as the name the
@@ -927,8 +956,15 @@ def aplicar_campos_ao_cliente(
                         campo.item_key, decidido_por=None,
                     )
                 else:
-                    novo = _registrar_conflito(
-                        client, org_id, cliente_id, campo,
+                    # Owner directive, 2026-09-29 — resolve without a human
+                    # FIRST, using the measured evidence table (validators ->
+                    # corroboration -> source-precision tier); only what
+                    # survives all three still opens a `pendente` conflict.
+                    # See `app.services.divergencia_resolucao` + `campo_
+                    # conflitos.resolver_e_registrar`'s own docstrings.
+                    decisao = campo_conflitos.resolver_e_registrar(
+                        client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                        campo.item_key,
                         valor_anterior=presente,
                         origem_anterior=atual.get(campo.origem),
                         valor_proposto=valor,
@@ -936,9 +972,42 @@ def aplicar_campos_ao_cliente(
                         confianca_proposta=confianca,
                         fonte_tabela=fonte_tabela,
                         fonte_id=fonte_id,
+                        mesmo_valor=_mesmo_valor,
                     )
-                    if novo is not None:
-                        conflitos.append(novo)
+                    if decisao.requer_humano:
+                        novo = _registrar_conflito(
+                            client, org_id, cliente_id, campo,
+                            valor_anterior=presente,
+                            origem_anterior=atual.get(campo.origem),
+                            valor_proposto=valor,
+                            origem_proposto=origem,
+                            confianca_proposta=confianca,
+                            fonte_tabela=fonte_tabela,
+                            fonte_id=fonte_id,
+                        )
+                        if novo is not None:
+                            conflitos.append(novo)
+                    elif decisao.vencedor == "proposto":
+                        # The resolver picked the NEW reading — apply it,
+                        # same provenance shape (and same machine-pending
+                        # posture — a human still sees it via `sugestoes_
+                        # pendentes`/the checklist) the re-read/married-name
+                        # branches above already write. The CONTRACT gate's
+                        # own auto-validation (BUILD item 2) is a SEPARATE,
+                        # read-only concern — see `validacao_extracao.
+                        # CampoValidavel.pendente` — never this column.
+                        updates[campo.item_key] = valor
+                        updates[campo.origem] = origem
+                        updates[campo.documento_id] = (
+                            str(documento_id) if documento_id else None
+                        )
+                        updates[campo.em] = now
+                        updates[campo.confirmado_por] = None
+                        updates[campo.confirmado_em] = None
+                        aplicados[campo.item_key] = True
+                    # decisao.vencedor == "atual": the record already holds
+                    # the fact — nothing to write, the audit row alone
+                    # (`resolvido_automatico`) records the resolver ran.
             elif confirmado_por and _vazio(atual.get(campo.confirmado_em)):
                 # Same fact, still machine-pending, a human now vouches for
                 # it — promote to confirmed. See the docstring's D1 bullet.
@@ -979,7 +1048,15 @@ def _endereco_json(partes: dict[str, Any], **extra: Any) -> str:
 def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
     """Same address iff every part the reading HAS agrees with the record.
     A part the reading lacks (no complemento on the bill) is not a
-    disagreement."""
+    disagreement.
+
+    🔴 Owner directive, 2026-09-29: `logradouro` is compared through
+    `divergencia_resolucao.normalizar_logradouro` FIRST — "AV Paulista" and
+    "Avenida Paulista" collapse to the same canonical string before
+    `_mesmo_nome` ever runs, so an abbreviation/format difference (measured:
+    4/9 logradouro precision against the P2 answer keys, largely AV/AVENIDA-
+    shaped) no longer opens a conflict a human then has to resolve by eye.
+    """
     for parte in ENDERECO_PARTES:
         novo = proposto.get(parte)
         if _vazio(novo):
@@ -989,6 +1066,11 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
             return False
         if parte == "cep":
             if only_digits(str(velho)) != only_digits(str(novo)):
+                return False
+        elif parte == "logradouro":
+            if divergencia_resolucao.normalizar_logradouro(
+                str(velho)
+            ) != divergencia_resolucao.normalizar_logradouro(str(novo)):
                 return False
         elif not _mesmo_nome(str(velho), str(novo)):
             return False
@@ -1093,6 +1175,17 @@ def aplicar_endereco_ao_cliente(
                 CAMPO_ENDERECO, decidido_por=None,
             )
             return True, None
+        # 🔴 NOC-REMEDIATE[endereco-data-emissao-tiebreak] — owner directive,
+        # 2026-09-29, asks a genuine two-comprovante disagreement (same
+        # verified holder — the `titular_documento` guard above already
+        # passed) to resolve automatically by "most recent issue date
+        # first". `cliente_documentos.extracao_data_emissao` is not
+        # captured for `TIPOS_ENDERECO` documents today (`so_endereco`
+        # withholds it, see `extrair_identidade`'s own comment above
+        # `_COLUNAS_DATA_EMISSAO`) — resolving by upload `created_at`
+        # instead would silently answer a question about the DOCUMENT'S
+        # OWN stated date with the wrong signal, so this stays a human
+        # conflict until that capture lands — 2026-09-29.
         return False, conflito()
     if atual.get("endereco_origem") == "manual":
         return False, None
@@ -1337,6 +1430,80 @@ def conflitos_pendentes(
         query = query.eq("cliente_id", str(cliente_id))
     rows = query.execute().data or []
     return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
+
+
+def backfill_resolver_conflitos_pendentes(
+    client: Any, org_id: UUID, *, cliente_id: Optional[UUID] = None
+) -> dict[str, list[dict]]:
+    """The callable BACKFILL owner directive (2026-09-29) explicitly asks
+    for: re-consult `divergencia_resolucao` against every conflict ALREADY
+    `pendente` in prod, exactly the same resolver the LIVE apply path
+    (`aplicar_campos_ao_cliente`'s `else:` branch) runs the instant a NEW
+    conflict would open. Not an HTTP route — none was asked for — call it
+    directly (a script, a REPL, a future scheduled job) per org.
+
+    Scoped to scalar `CAMPOS` fields, resolved via `CAMPO_POR_CHAVE` —
+    `CAMPO_ENDERECO`/`CAMPO_CONJUGE` are composite writes with their own
+    apply functions (`aplicar_endereco_ao_cliente`/`vincular_conjuges`, a
+    JSON blob and a cliente-id respectively, not a single column) and are
+    reported under `"ignorado_composto"` rather than silently skipped or
+    mis-applied through a scalar write.
+
+    Returns `{"resolvidos": [...], "ainda_pendentes": [...],
+    "ignorado_composto": [...]}` — one row (the original conflict, plus
+    `decisao_regra`/`decisao_vencedor` on a resolved one) per conflict
+    considered, so a caller can audit exactly what changed and why.
+    """
+    resolvidos: list[dict] = []
+    ainda_pendentes: list[dict] = []
+    ignorado_composto: list[dict] = []
+    now = _now()
+
+    for row in conflitos_pendentes(client, org_id, cliente_id):
+        campo_chave = row["campo"]
+        campo = CAMPO_POR_CHAVE.get(campo_chave)
+        if campo_chave in (CAMPO_ENDERECO, CAMPO_CONJUGE) or campo is None:
+            ignorado_composto.append(row)
+            continue
+        decisao = campo_conflitos.resolver_e_registrar(
+            client, campo_conflitos.CLIENTE, org_id, row["cliente_id"], campo_chave,
+            valor_anterior=row.get("valor_anterior"),
+            origem_anterior=row.get("origem_anterior"),
+            valor_proposto=row.get("valor_proposto"),
+            origem_proposto=row.get("origem_proposto"),
+            confianca_proposta=row.get("confianca_proposta"),
+            fonte_tabela=row.get("fonte_tabela"),
+            fonte_id=row.get("fonte_id"),
+            mesmo_valor=_mesmo_valor,
+            conflito_existente_id=row["id"],
+        )
+        if decisao.requer_humano:
+            ainda_pendentes.append(row)
+            continue
+        if decisao.vencedor == "proposto":
+            _t(client, CLIENTES_TABLE).update(
+                {
+                    campo.item_key: row.get("valor_proposto"),
+                    campo.origem: row.get("origem_proposto"),
+                    campo.documento_id: (
+                        row.get("fonte_id")
+                        if row.get("fonte_tabela") == DOCUMENTOS_TABLE
+                        else None
+                    ),
+                    campo.em: now,
+                    campo.confirmado_por: None,
+                    campo.confirmado_em: None,
+                    "updated_at": now,
+                }
+            ).eq("id", str(row["cliente_id"])).execute()
+        resolvidos.append(
+            {**row, "decisao_regra": decisao.regra, "decisao_vencedor": decisao.vencedor}
+        )
+    return {
+        "resolvidos": resolvidos,
+        "ainda_pendentes": ainda_pendentes,
+        "ignorado_composto": ignorado_composto,
+    }
 
 
 def resolver_conflito(

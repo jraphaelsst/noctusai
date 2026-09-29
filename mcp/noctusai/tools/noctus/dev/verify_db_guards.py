@@ -1997,6 +1997,73 @@ END;
 
 
 # ---------------------------------------------------------------------------
+# Registry — migration 175 (automatic divergence resolution): the widened
+# `status` CHECK on `cliente_campo_conflitos`/`empresa_campo_conflitos`
+# (`'resolvido_automatico'` joins `pendente`/`aceito`/`rejeitado`).
+# `imovel_campo_conflitos` shares the same CHECK shape but already had no
+# probe registered for IT specifically either — 138/154/167 raised it
+# unprobed originally; these two close the cliente/empresa half of that gap
+# the same `check_migration_guard_has_probe` gate now enforces on ANY
+# migration that re-declares the constraint (this one does, to add the new
+# value) rather than leaving it silently un-verified going forward.
+# ---------------------------------------------------------------------------
+
+_CLIENTE_CONFLITO_STATUS_PROBE = GuardProbe(
+    id="cliente_campo_conflitos.status.allowed_values",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="cliente_campo_conflitos_status_check",
+    kind="write_refusal",
+    migrations=("175_campo_conflitos_resolucao_automatica.sql",),
+    rationale=(
+        "`status` drives who ever SEES a conflict: `conflitos_pendentes` "
+        "(the admin queue) and `contrato_gerador.validacao_extracao."
+        "listar_conflitos` (the contract gate) both filter on the exact "
+        "vocabulary (`pendente`/`aceito`/`rejeitado`/`resolvido_"
+        "automatico`) — a value outside it would silently vanish from both "
+        "without ever surfacing as an error."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="cliente_campo_conflitos",
+        columns_sql="org_id, cliente_id, campo, valor_proposto, origem_proposto, status",
+        values_sql=(
+            "org_id, id, 'noc_probe_campo', 'noc_probe_valor', "
+            "'noc_probe_origem', 'noc_probe_bogus'"
+        ),
+        fixture_from=f"{_SW_SCHEMA}.clientes",
+        fixture_description=f"no row in {_SW_SCHEMA}.clientes to borrow (org_id, id) from",
+        guard_fragment='constraint "cliente_campo_conflitos_status_check"',
+    ),
+)
+
+_EMPRESA_CONFLITO_STATUS_PROBE = GuardProbe(
+    id="empresa_campo_conflitos.status.allowed_values",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="empresa_campo_conflitos_status_check",
+    kind="write_refusal",
+    migrations=("175_campo_conflitos_resolucao_automatica.sql",),
+    rationale=(
+        "Same vocabulary contract as `cliente_campo_conflitos` above, for "
+        "the empresa-scoped conflicts `app.modules.empresas` opens."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="empresa_campo_conflitos",
+        columns_sql="org_id, empresa_id, campo, valor_proposto, origem_proposto, status",
+        values_sql=(
+            "org_id, id, 'noc_probe_campo', '\"noc_probe_valor\"'::jsonb, "
+            "'noc_probe_origem', 'noc_probe_bogus'"
+        ),
+        fixture_from=f"{_SW_SCHEMA}.empresas",
+        fixture_description=f"no row in {_SW_SCHEMA}.empresas to borrow (org_id, id) from",
+        guard_fragment='constraint "empresa_campo_conflitos_status_check"',
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — igig CRM foundation (migrations 017 pipelines, 018 CRM, 019 card
 # hub; plus the 006/010 guards whose SQLite mirrors that change touched).
 # ---------------------------------------------------------------------------
@@ -2976,6 +3043,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_STUDIO_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
+    _CLIENTE_CONFLITO_STATUS_PROBE,
+    _EMPRESA_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,

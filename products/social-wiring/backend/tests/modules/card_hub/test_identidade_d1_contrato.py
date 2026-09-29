@@ -200,6 +200,185 @@ class TestD1NeverOverwrite:
         assert "sem notification_service" in caplog.text
 
 
+# ─── Automatic divergence resolution (owner directive, 2026-09-29) ─────────
+
+
+class TestResolucaoAutomaticaDeDivergencia:
+    @pytest.mark.asyncio
+    async def test_a_higher_tier_source_wins_with_no_human_conflict(self, client, scoped):
+        """cnh (100%, n=19) outranks certidao_casamento (67%, n=3) for cpf —
+        the record is updated straight through, no `pendente` row, and the
+        automatic decision is still written back auditable."""
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh",
+            cliente={"cpf": "303.102.653-55", "cpf_origem": "certidao_casamento"},
+        )
+        out = await _extrair(scoped, storage, cid, did, IdentityFields(
+            cpf="412.954.238-98", cpf_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
+        assert _cliente(scoped, cid)["cpf_origem"] == "cnh"
+        assert out["conflitos_abertos"] == []
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+        assert c["decidido_por"] is None
+        assert "[tier]" in c["motivo_resolucao"]
+
+    @pytest.mark.asyncio
+    async def test_a_same_tier_disagreement_still_needs_a_human(self, client, scoped):
+        """cnh and matricula are BOTH measured at 100% for `nacionalidade` —
+        no validator, no corroboration, no tier separation: still an
+        ordinary `pendente` conflict, unchanged from before this directive."""
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh",
+            cliente={"nacionalidade": "italiano", "nacionalidade_origem": "matricula"},
+        )
+        out = await _extrair(scoped, storage, cid, did, IdentityFields(
+            nacionalidade="brasileiro", nacionalidade_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        assert _cliente(scoped, cid)["nacionalidade"] == "italiano"
+        assert out["conflitos_abertos"] == ["nacionalidade"]
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "pendente"
+
+    @pytest.mark.asyncio
+    async def test_an_invalid_cpf_on_file_loses_to_a_valid_reading(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"cpf": "111.111.111-11", "cpf_origem": "manual"},
+        )
+        out = await _extrair(scoped, storage, cid, did, IdentityFields(
+            cpf="412.954.238-98", cpf_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
+        assert out["conflitos_abertos"] == []
+        (c,) = _conflitos(scoped)
+        assert "[validador]" in c["motivo_resolucao"]
+
+    @pytest.mark.asyncio
+    async def test_a_cnh_rg_missing_its_check_digit_loses_to_the_fuller_reading(
+        self, client, scoped,
+    ):
+        """The CNH prints the RG without its trailing DV (measured 39%
+        precision) — a matrícula qualification's fuller reading, WITH the
+        DV, already on file wins automatically."""
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh",
+            cliente={"rg": "1234567890", "rg_origem": "matricula"},
+        )
+        out = await _extrair(scoped, storage, cid, did, IdentityFields(
+            rg="123456789", rg_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        assert _cliente(scoped, cid)["rg"] == "1234567890"  # untouched, WITH the DV
+        assert out["conflitos_abertos"] == []
+        (c,) = _conflitos(scoped)
+        assert "rg_prefixo_dv" in c["motivo_resolucao"]
+
+    def test_married_name_adoption_requires_cpf_corroboration_when_both_present(self):
+        """Owner directive, 2026-09-29: `_nome_anterior_confirma_adocao`'s
+        pure decision, tested directly. A certidão's own `nome_oficial`
+        reading is only 60% precise — the adoption rule may still fire, but
+        a CPF on file that actively CONTRADICTS this same reading's CPF now
+        refuses it, falling through to the ordinary conflict path. Either
+        side ABSENT is unaffected — the tests `TestNomeAnteriorConfirmaAdocao`
+        already pin (no cpf carried into those calls) keep firing."""
+        base = dict(
+            estado_civil="casado", presente="MARIANA PELLEGRINI",
+            nome_anterior="MARIANA PELLEGRINI",
+            origem_atual="rg", confirmado_em_atual=None,
+        )
+        # No CPF on either side — the pre-existing, still-green behaviour.
+        assert svc._nome_anterior_confirma_adocao(**base) is True
+        # Both present and AGREEING — still fires.
+        assert svc._nome_anterior_confirma_adocao(
+            **base, cpf_atual="478.982.096-30", cpf_lido="478.982.096-30",
+        ) is True
+        # Both present and DISAGREEING — refused.
+        assert svc._nome_anterior_confirma_adocao(
+            **base, cpf_atual="478.982.096-30", cpf_lido="303.102.653-55",
+        ) is False
+        # Only one side present — not enough to contradict, unaffected.
+        assert svc._nome_anterior_confirma_adocao(
+            **base, cpf_atual="478.982.096-30", cpf_lido=None,
+        ) is True
+        assert svc._nome_anterior_confirma_adocao(
+            **base, cpf_atual=None, cpf_lido="303.102.653-55",
+        ) is True
+
+
+class TestBackfillResolverConflitosPendentes:
+    @pytest.mark.asyncio
+    async def test_an_existing_pendente_conflict_is_resolved_on_backfill(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"cpf": "303.102.653-55", "cpf_origem": "certidao_casamento"},
+        )
+        # A 67%-precision value already sits on file; a same-tier-ambiguous
+        # nacionalidade fight is NOT what we want here — force a genuine
+        # PENDING row the live path could not resolve at the time (an
+        # unmeasured origem back then), then confirm the backfill settles
+        # it once the resolver can compare it against a measured one.
+        scoped.table("cliente_campo_conflitos").insert({
+            "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": "cpf",
+            "valor_anterior": "303.102.653-55", "origem_anterior": "certidao_casamento",
+            "valor_proposto": "412.954.238-98", "origem_proposto": "cnh",
+            "confianca_proposta": "alta", "fonte_tabela": "cliente_documentos",
+            "fonte_id": did, "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None, "created_at": _old(3),
+        }).execute()
+
+        resultado = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+
+        assert len(resultado["resolvidos"]) == 1
+        assert resultado["resolvidos"][0]["decisao_regra"] == "tier"
+        assert resultado["ainda_pendentes"] == []
+        assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+
+    @pytest.mark.asyncio
+    async def test_a_still_ambiguous_conflict_stays_pendente(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh",
+            cliente={"nacionalidade": "italiano", "nacionalidade_origem": "matricula"},
+        )
+        scoped.table("cliente_campo_conflitos").insert({
+            "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": "nacionalidade",
+            "valor_anterior": "italiano", "origem_anterior": "matricula",
+            "valor_proposto": "brasileiro", "origem_proposto": "cnh",
+            "confianca_proposta": "alta", "fonte_tabela": "cliente_documentos",
+            "fonte_id": did, "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None, "created_at": _old(3),
+        }).execute()
+
+        resultado = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+
+        assert resultado["resolvidos"] == []
+        assert len(resultado["ainda_pendentes"]) == 1
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "pendente"
+
+    @pytest.mark.asyncio
+    async def test_a_composite_endereco_conflict_is_reported_not_mis_applied(
+        self, client, scoped,
+    ):
+        cid, did, storage = await _setup(scoped, tipo="comprovante_endereco")
+        scoped.table("cliente_campo_conflitos").insert({
+            "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": "endereco",
+            "valor_anterior": None, "origem_anterior": None,
+            "valor_proposto": json.dumps({"cep": "01000-000"}), "origem_proposto": "cnh",
+            "confianca_proposta": "alta", "fonte_tabela": "cliente_documentos",
+            "fonte_id": did, "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None, "created_at": _old(3),
+        }).execute()
+
+        resultado = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+
+        assert resultado["resolvidos"] == []
+        assert resultado["ainda_pendentes"] == []
+        assert len(resultado["ignorado_composto"]) == 1
+
+
 class TestSameDocumentReReadReplaces:
     """🔴 Regression (live deal, 2026-09-25): re-extracting a document
     whose earlier reading is STILL machine-pending must REFRESH the

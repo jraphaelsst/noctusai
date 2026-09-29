@@ -90,7 +90,8 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 from uuid import uuid4
 
-from app.services import table_reads
+from app.services import divergencia_resolucao, table_reads
+from app.services.divergencia_resolucao import Decisao
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,25 @@ def conflito_pendente_existente(
         .execute()
     ).data or []
     return rows[0] if rows else None
+
+
+def historico_valores(
+    client: Any, table: ConflictTable, org_id: Any, owner: Any, campo: str
+) -> list[tuple[Any, Optional[str]]]:
+    """Every `(valor_proposto, origem_proposto)` this (owner, campo) has EVER
+    seen proposed, across every status — corroboration evidence for
+    `divergencia_resolucao.resolver_divergencia`: how many INDEPENDENT
+    sources already agree with a candidate value. Owner directive,
+    2026-09-29 (the automatic divergence resolver)."""
+    rows = (
+        _t(client, table.table)
+        .select("valor_proposto,origem_proposto")
+        .eq("org_id", str(org_id))
+        .eq(table.owner_col, str(owner))
+        .eq("campo", campo)
+        .execute()
+    ).data or []
+    return [(r.get("valor_proposto"), r.get("origem_proposto")) for r in rows]
 
 
 def ja_rejeitado_pelo_usuario(
@@ -259,6 +279,104 @@ def registrar_conflito(
         )
     _t(client, table.table).insert(linha).execute()
     return linha
+
+
+def resolver_e_registrar(
+    client: Any,
+    table: ConflictTable,
+    org_id: Any,
+    owner: Any,
+    campo: str,
+    *,
+    valor_anterior: Any,
+    origem_anterior: Optional[str],
+    valor_proposto: Any,
+    origem_proposto: str,
+    confianca_proposta: Optional[str] = None,
+    fonte_tabela: Optional[str] = None,
+    fonte_id: Optional[Any] = None,
+    mesmo_valor: Callable[[str, Any, Any], bool],
+    conflito_existente_id: Optional[Any] = None,
+) -> Decisao:
+    """THE automatic divergence resolver — owner directive, 2026-09-29:
+    "resolve divergencies without the need of a human [...] using docs and
+    done contracts." ONE entry point for BOTH callers this directive names:
+
+    - the LIVE path, called the instant a conflict WOULD open (in place of a
+      bare `registrar_conflito`) — `conflito_existente_id=None`, nothing on
+      `<table>` yet for this (owner, campo) at `status='pendente'`;
+    - the BACKFILL path (`identidade_extracao_service.
+      backfill_resolver_conflitos_pendentes`), re-consulted against an
+      EXISTING `pendente` row — `conflito_existente_id` names it, so this
+      function updates it in place instead of inserting a duplicate.
+
+    Delegates the DECISION to `divergencia_resolucao.resolver_divergencia`
+    (validators -> corroboration -> source tier -> human) — this function
+    owns only the DB side: gathering `historico_valores` for corroboration,
+    and persisting the verdict.
+
+    `Decisao.requer_humano=True` -> nothing is written here; the caller
+    falls through to its OWN today's behaviour (`registrar_conflito` for the
+    live path, leaving the pending row untouched for the backfill path).
+
+    `Decisao.requer_humano=False` -> a row is written/updated with
+    `status='resolvido_automatico'` (never `'pendente'` — a resolved
+    divergence is never shown to a human), `decidido_por=None` (a SYSTEM
+    resolution, same convention `registrar_conflito`'s own supersede-fix
+    uses), `decidido_em=now`, and `motivo_resolucao` carrying the rule name
+    + the evidence that decided it — the auditable trail the directive
+    requires ("done contracts" cited in the precision table a human can
+    read straight off this column). The caller still decides whether to
+    WRITE `valor_proposto` onto the owner row (`Decisao.vencedor ==
+    'proposto'`) — this function never touches `clientes`/`imoveis`/
+    `empresas` itself, matching `registrar_conflito`'s own scope.
+    """
+    decisao = divergencia_resolucao.resolver_divergencia(
+        campo,
+        valor_atual=valor_anterior,
+        origem_atual=origem_anterior,
+        valor_proposto=valor_proposto,
+        origem_proposto=origem_proposto,
+        mesmo_valor=mesmo_valor,
+        historico=historico_valores(client, table, org_id, owner, campo),
+    )
+    if decisao.requer_humano:
+        return decisao
+
+    now = _now()
+    motivo = f"[{decisao.regra}] {decisao.motivo}"
+    if conflito_existente_id is not None:
+        _t(client, table.table).update(
+            {
+                "status": "resolvido_automatico",
+                "decidido_por": None,
+                "decidido_em": now,
+                "motivo_resolucao": motivo,
+            }
+        ).eq("id", conflito_existente_id).execute()
+        return decisao
+
+    linha: dict[str, Any] = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        table.owner_col: str(owner),
+        "campo": campo,
+        "valor_anterior": valor_anterior,
+        "origem_anterior": origem_anterior,
+        "valor_proposto": valor_proposto,
+        "origem_proposto": origem_proposto,
+        "confianca_proposta": confianca_proposta,
+        "fonte_tabela": fonte_tabela,
+        "fonte_id": str(fonte_id) if fonte_id else None,
+        "status": "resolvido_automatico",
+        "notificado_em": None,
+        "decidido_por": None,
+        "decidido_em": now,
+        "motivo_resolucao": motivo,
+        "created_at": now,
+    }
+    _t(client, table.table).insert(linha).execute()
+    return decisao
 
 
 def mesmo_documento_pendente(
@@ -392,7 +510,10 @@ __all__ = [
     "ConflictTable",
     "conflito_pendente_existente",
     "fechar_conflitos_pendentes",
+    "historico_valores",
+    "ja_rejeitado_pelo_usuario",
     "mesmo_documento_pendente",
     "notificar_conflitos",
     "registrar_conflito",
+    "resolver_e_registrar",
 ]

@@ -436,3 +436,118 @@ class TestNotify:
         ).data[0]
         assert boom_row["notificado_em"] is None
         assert ok_row["notificado_em"] is not None
+
+
+def _mesmo_valor(campo: str, a, b) -> bool:
+    if a is None or b is None:
+        return False
+    return str(a).strip().upper() == str(b).strip().upper()
+
+
+class TestHistoricoValores:
+    def test_every_proposal_ever_made_on_owner_campo_is_returned(self, client):
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-h1", "cpf",
+            valor_anterior=None, origem_anterior=None,
+            valor_proposto="A", origem_proposto="cnh",
+        )
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-h1", "cpf",
+            valor_anterior="A", origem_anterior="cnh",
+            valor_proposto="B", origem_proposto="rg",
+        )
+        historico = campo_conflitos.historico_valores(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-h1", "cpf"
+        )
+        assert set(historico) == {("A", "cnh"), ("B", "rg")}
+
+    def test_a_different_owner_or_campo_is_not_mixed_in(self, client):
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-h2", "cpf",
+            valor_anterior=None, origem_anterior=None,
+            valor_proposto="A", origem_proposto="cnh",
+        )
+        assert campo_conflitos.historico_valores(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-other", "cpf"
+        ) == []
+        assert campo_conflitos.historico_valores(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-h2", "rg"
+        ) == []
+
+
+class TestResolverERegistrar:
+    def test_a_tier_win_inserts_a_resolved_row_directly_never_pendente(self, client):
+        decisao = campo_conflitos.resolver_e_registrar(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-r1", "cpf",
+            valor_anterior="412.954.238-98", origem_anterior="cnh",
+            valor_proposto="303.102.653-55", origem_proposto="certidao_casamento",
+            confianca_proposta="alta", fonte_tabela="cliente_documentos", fonte_id="doc-r1",
+            mesmo_valor=_mesmo_valor,
+        )
+        assert decisao.vencedor == "atual"
+        assert not decisao.requer_humano
+        rows = (
+            client.table(campo_conflitos.CLIENTE.table).select("*")
+            .eq("cliente_id", "cliente-r1").execute()
+        ).data
+        assert len(rows) == 1
+        assert rows[0]["status"] == "resolvido_automatico"
+        assert rows[0]["decidido_por"] is None
+        assert rows[0]["decidido_em"] is not None
+        assert "[tier]" in rows[0]["motivo_resolucao"]
+
+    def test_a_human_required_verdict_writes_nothing(self, client):
+        decisao = campo_conflitos.resolver_e_registrar(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-r2", "nacionalidade",
+            valor_anterior="brasileiro", origem_anterior="cnh",
+            valor_proposto="brasileira", origem_proposto="matricula",
+            mesmo_valor=_mesmo_valor,
+        )
+        assert decisao.requer_humano
+        rows = (
+            client.table(campo_conflitos.CLIENTE.table).select("*")
+            .eq("cliente_id", "cliente-r2").execute()
+        ).data
+        assert rows == []
+
+    def test_an_existing_pendente_row_is_updated_in_place_not_duplicated(self, client):
+        pendente = campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-r3", "cpf",
+            valor_anterior="412.954.238-98", origem_anterior="cnh",
+            valor_proposto="303.102.653-55", origem_proposto="certidao_casamento",
+        )
+        decisao = campo_conflitos.resolver_e_registrar(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-r3", "cpf",
+            valor_anterior=pendente["valor_anterior"],
+            origem_anterior=pendente["origem_anterior"],
+            valor_proposto=pendente["valor_proposto"],
+            origem_proposto=pendente["origem_proposto"],
+            mesmo_valor=_mesmo_valor,
+            conflito_existente_id=pendente["id"],
+        )
+        assert decisao.vencedor == "atual"
+        rows = (
+            client.table(campo_conflitos.CLIENTE.table).select("*")
+            .eq("cliente_id", "cliente-r3").execute()
+        ).data
+        assert len(rows) == 1  # updated, not a second row
+        assert rows[0]["id"] == pendente["id"]
+        assert rows[0]["status"] == "resolvido_automatico"
+
+    def test_the_generic_resolver_composes_with_historico_for_corroboration(self, client):
+        # A THIRD document already proposed the on-file value — corroboration
+        # should win even though the two candidates' OWN tiers alone would
+        # tie (rg vs serasa_crednet are both 100% for nome_oficial).
+        campo_conflitos.registrar_conflito(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-r4", "nome_oficial",
+            valor_anterior=None, origem_anterior=None,
+            valor_proposto="ANA PAULA SOUZA", origem_proposto="matricula",
+        )
+        decisao = campo_conflitos.resolver_e_registrar(
+            client, campo_conflitos.CLIENTE, ORG, "cliente-r4", "nome_oficial",
+            valor_anterior="ANA PAULA SOUZA", origem_anterior="rg",
+            valor_proposto="ANA PAULA SOUZA COSTA", origem_proposto="serasa_crednet",
+            mesmo_valor=_mesmo_valor,
+        )
+        assert decisao.vencedor == "atual"
+        assert decisao.regra == "corroboracao"

@@ -164,6 +164,69 @@ class TestColunaAindaInexistente:
         assert not vx.CAMPO_ATO_DETALHE.pendente({**row, **patch})
 
 
+class TestAutoValidacaoPorPrecisao:
+    """BUILD item 2 (owner directive, 2026-09-29): a machine value from a
+    source measured at >=95% precision with n>=10 no longer blocks
+    `exigir_sem_pendentes` — `CampoValidavel.pendente` reads `False` for it
+    without ANY human ever clicking confirm. Scoped by
+    `divergencia_resolucao.PRECISAO` itself: every OTHER `CampoValidavel`
+    (no evidence for that (entidade, campo)) is completely unaffected."""
+
+    cpf = next(c for c in vx.CAMPOS_CLIENTE if c.campo == "cpf")
+    rg = next(c for c in vx.CAMPOS_CLIENTE if c.campo == "rg")
+
+    def _row(self, *, origem: str) -> dict:
+        return {
+            "cpf": "412.954.238-98", "cpf_origem": origem,
+            "cpf_documento_id": str(uuid4()), "cpf_em": _T0,
+            "cpf_confirmado_por": None, "cpf_confirmado_em": None,
+        }
+
+    def test_a_95_percent_n_10_plus_source_is_not_pending(self):
+        # cpf/cnh: 100% precision, n=19.
+        assert not self.cpf.pendente(self._row(origem="cnh"))
+
+    def test_a_below_bar_source_is_still_pending(self):
+        # cpf/certidao_casamento: 67% precision, n=3.
+        assert self.cpf.pendente(self._row(origem="certidao_casamento"))
+
+    def test_a_thin_sample_does_not_auto_validate_on_ratio_alone(self):
+        # rg/rg (the identity CARD): 100% precision, but n=2 — below
+        # N_MINIMO_VALIDACAO (10). Still pending.
+        row = {
+            "rg": "12.345.678-9", "rg_origem": "rg",
+            "rg_documento_id": str(uuid4()), "rg_em": _T0,
+            "rg_confirmado_por": None, "rg_confirmado_em": None,
+        }
+        assert self.rg.pendente(row)
+
+    def test_a_39_percent_source_is_still_pending(self):
+        # rg/cnh: 39% precision (the CNH prints the RG without its DV).
+        row = {
+            "rg": "12.345.678-9", "rg_origem": "cnh",
+            "rg_documento_id": str(uuid4()), "rg_em": _T0,
+            "rg_confirmado_por": None, "rg_confirmado_em": None,
+        }
+        assert self.rg.pendente(row)
+
+    def test_manual_and_confirmed_are_unaffected_by_the_precision_gate(self):
+        assert not self.cpf.pendente(self._row(origem="manual"))
+        assert not self.cpf.pendente({**self._row(origem="cnh"), "cpf_confirmado_em": _T0})
+
+    def test_an_entity_the_evidence_table_does_not_cover_is_unaffected(self):
+        # `imovel`/`certidao`/... carry no PRECISAO entries at all — every
+        # CampoValidavel outside CAMPOS_CLIENTE behaves exactly as before.
+        campo = vx.CAMPOS_IMOVEL[0]
+        row = {c: None for c in campo.valores}
+        row[campo.valores[0]] = "algo"
+        row[campo.origem] = "matricula"
+        row[campo.documento_id] = str(uuid4())
+        row[campo.em] = _T0
+        row[campo.confirmado_por] = None
+        row[campo.confirmado_em] = None
+        assert campo.pendente(row)
+
+
 # ─── Over the mock DB, real loader ───────────────────────────────────────────
 
 

@@ -79,7 +79,7 @@ from app.modules.certidoes import service as certidoes_svc
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
 from app.modules.matriculas import titulo_service
-from app.services import table_reads
+from app.services import divergencia_resolucao, table_reads
 
 LEDGER = "extracao_validacoes"
 
@@ -189,7 +189,27 @@ class CampoValidavel:
             return False
         if row.get(self.confirmado_em) is not None:
             return False
-        return any(preenchido(row.get(c)) for c in self.valores)
+        if not any(preenchido(row.get(c)) for c in self.valores):
+            return False
+        # BUILD item 2 (owner directive, 2026-09-29): a machine value from a
+        # source whose measured precision for THIS field is >=95% with
+        # n>=10 (`divergencia_resolucao.PRECISAO`) counts as validated --
+        # `exigir_sem_pendentes` may proceed without a human click. Scoped
+        # naturally by the evidence table itself: an (entidade, campo) it
+        # does not cover (every non-`cliente` entity today — imóvel,
+        # certidão, empresa, negociação, ...) always reads `False` here, so
+        # every OTHER `CampoValidavel` behaves exactly as before this
+        # directive.
+        #
+        # 🔴 NOC-REMEDIATE[validacao-corroboracao-gate] — the directive's
+        # OTHER auto-validation path ("or corroborated by >=2 independent
+        # documents") is not checked here: this dataclass sees only the
+        # single value already ON the row, with no record of how many
+        # documents agreed to put it there. `divergencia_resolucao.
+        # valido_para_contrato_sem_revisao(corroborado=True)` already exists
+        # for a future caller with that history (a `cliente_campo_
+        # conflitos` lookup keyed on this row's id) to consult — 2026-09-29.
+        return not divergencia_resolucao.valido_para_contrato_sem_revisao(self.campo, origem)
 
 
 def _quinteto(

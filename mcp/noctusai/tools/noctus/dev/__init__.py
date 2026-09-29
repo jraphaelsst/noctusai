@@ -126,6 +126,7 @@ def register_all(server) -> None:
     from . import noc_graph_cache
     from . import version_guard
     from . import supabase_advisors
+    from . import divergencia_calibrar
     from . import sync_seed_template
     from . import surface_to_tech_lead
     from . import list_pending_surfaces
@@ -259,6 +260,7 @@ def register_all(server) -> None:
     noc_graph_cache.register(server)
     version_guard.register(server)
     supabase_advisors.register(server)
+    divergencia_calibrar.register(server)
     sync_seed_template.register(server)
     surface_to_tech_lead.register(server)
     list_pending_surfaces.register(server)
