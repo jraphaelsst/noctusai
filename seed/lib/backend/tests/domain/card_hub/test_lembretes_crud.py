@@ -172,6 +172,20 @@ class TestUpdate:
         )
         assert resp.status_code == 404
 
+    def test_the_404_names_lembrete_not_the_raw_table(self, lead_lembretes_hub):
+        """"Lembrete não encontrado" — never the raw `cliente_lembretes` /
+        `negocio_lembretes` / `lead_lembretes` table name a user never typed
+        or chose."""
+        hub = lead_lembretes_hub
+        eid = hub.new_entity()
+        resp = hub.client.patch(
+            hub.url(eid, f"/lembretes/{uuid4()}"), json={"titulo": "X"}, headers=AUTH
+        )
+        body = resp.json()
+        assert body["error"]["message"] == "Lembrete não encontrado"
+        assert body["error"]["details"]["resource"] == "Lembrete"
+        assert hub.cfg.tables.lembretes not in body["error"]["message"]
+
 
 class TestDelete:
     def test_delete_removes_the_row(self, lead_lembretes_hub):

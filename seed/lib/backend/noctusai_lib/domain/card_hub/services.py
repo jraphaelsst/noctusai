@@ -392,7 +392,10 @@ def _require_lembrete(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID
         .execute()
     ).data or []
     if not rows:
-        raise NotFoundError(cfg.tables.lembretes, str(lembrete_id))
+        # "Lembrete" — a pt-BR user-facing label, not `cfg.tables.lembretes`
+        # (`cliente_lembretes`/`negocio_lembretes`): the raw table name in a
+        # 404 detail is an internal leak the user never typed or chose.
+        raise NotFoundError("Lembrete", str(lembrete_id))
     return rows[0]
 
 
