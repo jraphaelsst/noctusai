@@ -54,12 +54,26 @@ THE RESOLUTION ORDER (owner directive)
    reading that is the OTHER's prefix missing only the trailing check digit
    (a CNH prints the RG without it) — the longer one, carrying its own DV,
    wins regardless of which side it is on.
+1b. **Live evidence** (`EvidenciaViva`, 2026-09-29 second pass) — a side
+   whose OWN document no longer asserts it (deleted, or re-read to a
+   different value) has been RETRACTED and loses to a side that has not;
+   the conflict row merely remembers it. Positive evidence only: a value
+   with no document behind it (manual, derived, legacy) is never judged
+   retracted.
+   Measured on the prod queue: 897's on-file name came from a CNH pass whose
+   re-read no longer carries a name at all — and the surviving Serasa
+   reading is the one the signed contract used. A two-person document (a
+   certidão de casamento) asserts a PER-PERSON fact only through the spouse
+   entry attributed to this person (`titular`, or a CPF match) — its flat
+   single-person columns name nobody in particular (882's certidão "RG"
+   disagreed with the CNH; the contract carries the CNH's).
 2. **Corroboration** — a value independently proposed by TWO OR MORE distinct
    sources outranks a single dissenting one, regardless of either side's own
    tier. `historico` carries every OTHER (valor, origem) this (owner, campo)
-   has ever seen proposed (`campo_conflitos.historico_valores`) — the
-   evidence a THIRD document already settled what looks, today, like a
-   two-way disagreement.
+   has ever seen proposed (`campo_conflitos.historico_valores`), and
+   `EvidenciaViva.afirmacoes` every value a live document asserts right now
+   — a value merely APPLIED without a conflict (so never "proposed") is
+   still a source that agrees.
 3. **Source tier** — the higher measured `PRECISAO` wins. Equal, unmeasured,
    or too-thin-to-trust precision on both sides is NOT a tier decision.
 4. Anything still standing needs a human — same posture as today
@@ -313,6 +327,40 @@ class Decisao:
         return self.regra == "corroboracao"
 
 
+#: Documents that describe TWO people. Their per-person facts are only
+#: attributable through the spouse entry that is this person.
+DOCUMENTOS_DUAS_PESSOAS = frozenset({"certidao_casamento"})
+
+#: Facts that differ between two spouses — the ones a two-person document
+#: cannot assert without attribution. Couple-level facts (estado_civil,
+#: regime_bens, data_casamento) are the same for both and stay out.
+#: `nacionalidade` stays out too: measured 6/6 from the certidão's flat
+#: reading, because both nubentes are almost always of one nationality.
+CAMPOS_POR_PESSOA = frozenset(
+    {"nome_oficial", "cpf", "rg", "rg_orgao_expedidor", "data_nascimento", "genero", "profissao"}
+)
+
+
+@dataclass(frozen=True)
+class EvidenciaViva:
+    """What this person's LIVE documents say about one campo right now.
+
+    `afirmacoes`: `(valor, tipo_documento)` per live document, attribution
+    already applied by the caller (see `DOCUMENTOS_DUAS_PESSOAS`) — extra
+    corroboration for step 2.
+    `atual_sustentado` / `proposto_sustentado`: does the SPECIFIC document
+    behind each side still assert it? `False` only on positive evidence —
+    that document was deleted, now reads a different value, or is a
+    two-person document with no entry attributed to this person. `None`
+    when the caller cannot tell (no document behind the value: a manual
+    entry, a derived value, legacy data, or the reading being applied at
+    this very moment) — `None` never counts as retracted."""
+
+    afirmacoes: tuple[tuple[Any, str], ...] = ()
+    atual_sustentado: Optional[bool] = None
+    proposto_sustentado: Optional[bool] = None
+
+
 def _decisao(vencedor: str, regra: str, motivo: str) -> Decisao:
     return Decisao(vencedor=vencedor, regra=regra, motivo=motivo, requer_humano=False)
 
@@ -334,6 +382,7 @@ def resolver_divergencia(
     origem_proposto: str,
     mesmo_valor: Callable[[str, Any, Any], bool],
     historico: Sequence[tuple[Any, Optional[str]]] = (),
+    evidencia: Optional[EvidenciaViva] = None,
 ) -> Decisao:
     """Decide `'atual'` vs `'proposto'` for one disagreeing (campo, valores)
     pair, or admit a human is needed. Pure — no I/O, no DB. `mesmo_valor` is
@@ -349,6 +398,10 @@ def resolver_divergencia(
     nor `valor_proposto` are a third, different value and are ignored here
     (this resolver decides between the two CANDIDATES in front of it, not a
     three-way vote).
+
+    `evidencia` (optional) is what the person's live documents assert now —
+    step 1b's retraction check and extra corroboration. Omitted, the
+    resolver behaves exactly as before it existed.
     """
     # 1. Validators — an invalid side loses outright, whatever its tier.
     ok_atual = _validar(campo, valor_atual)
@@ -376,11 +429,33 @@ def resolver_divergencia(
                 f"mais longa (com DV) vence ({perdedor_origem!r} perde).",
             )
 
+    # 1b. Live evidence — a value no live document asserts any more has been
+    # retracted; the side that still has support wins.
+    if evidencia is not None:
+        sust_atual, sust_proposto = evidencia.atual_sustentado, evidencia.proposto_sustentado
+        if sust_atual is False and sust_proposto is not False:
+            return _decisao(
+                "proposto", "retratado",
+                f"{campo}: o documento {origem_atual!r} que sustentava o valor "
+                f"em registro não o afirma mais (excluído, relido com outro "
+                f"valor, ou de duas pessoas sem atribuição a esta); o "
+                f"proposto ({origem_proposto}) não foi retratado.",
+            )
+        if sust_proposto is False and sust_atual is not False:
+            return _decisao(
+                "atual", "retratado",
+                f"{campo}: o documento {origem_proposto!r} da proposta não a "
+                f"afirma mais (excluído, relido com outro valor, ou de duas "
+                f"pessoas sem atribuição a esta); o em registro "
+                f"({origem_atual}) não foi retratado.",
+            )
+
     # 2. Corroboration — ≥2 distinct origins agreeing outranks a lone
     # dissenter, regardless of tier.
     origens_atual = {origem_atual} if origem_atual else set()
     origens_proposto = {origem_proposto} if origem_proposto else set()
-    for valor, origem in historico:
+    fontes = list(historico) + list(evidencia.afirmacoes if evidencia is not None else ())
+    for valor, origem in fontes:
         if not origem or _vazio(valor):
             continue
         if mesmo_valor(campo, valor, valor_atual):
@@ -429,7 +504,10 @@ def resolver_divergencia(
 
 
 __all__ = [
+    "CAMPOS_POR_PESSOA",
     "CORROBORACAO_MINIMA",
+    "DOCUMENTOS_DUAS_PESSOAS",
+    "EvidenciaViva",
     "N_MINIMO_VALIDACAO",
     "PRECISAO",
     "PRECISAO_VALIDACAO_AUTOMATICA",

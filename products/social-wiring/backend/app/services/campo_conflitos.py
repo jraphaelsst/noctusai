@@ -297,6 +297,7 @@ def resolver_e_registrar(
     fonte_id: Optional[Any] = None,
     mesmo_valor: Callable[[str, Any, Any], bool],
     conflito_existente_id: Optional[Any] = None,
+    evidencia: Optional[divergencia_resolucao.EvidenciaViva] = None,
 ) -> Decisao:
     """THE automatic divergence resolver — owner directive, 2026-09-29:
     "resolve divergencies without the need of a human [...] using docs and
@@ -311,7 +312,9 @@ def resolver_e_registrar(
       function updates it in place instead of inserting a duplicate.
 
     Delegates the DECISION to `divergencia_resolucao.resolver_divergencia`
-    (validators -> corroboration -> source tier -> human) — this function
+    (validators -> live evidence -> corroboration -> source tier -> human;
+    `evidencia` is the caller's `EvidenciaViva`, since only the caller knows
+    which document columns carry this campo) — this function
     owns only the DB side: gathering `historico_valores` for corroboration,
     and persisting the verdict.
 
@@ -339,6 +342,7 @@ def resolver_e_registrar(
         origem_proposto=origem_proposto,
         mesmo_valor=mesmo_valor,
         historico=historico_valores(client, table, org_id, owner, campo),
+        evidencia=evidencia,
     )
     return registrar_decisao_automatica(
         client, table, org_id, owner, campo,

@@ -973,6 +973,7 @@ def aplicar_campos_ao_cliente(
                         fonte_tabela=fonte_tabela,
                         fonte_id=fonte_id,
                         mesmo_valor=_mesmo_valor,
+                        evidencia=_evidencia_ao_vivo(client, org_id, cliente_id, campo, presente),
                     )
                     if decisao.requer_humano:
                         novo = _registrar_conflito(
@@ -1204,6 +1205,13 @@ def aplicar_endereco_ao_cliente(
     if titular_documento:
         nomes = [atual.get("nome_oficial"), atual.get("nome_completo"), atual.get("nome")]
         if not any(nomes_compativeis(titular_documento, n) for n in nomes if n):
+            # A bill in someone else's name that states the address ALREADY
+            # on file asks nothing — there is no second value to choose
+            # between (prod, 2026-09-29: two conflicts were a re-read of the
+            # very document on file, same address, differing only in whose
+            # name the bill carries).
+            if tem_endereco and _mesmo_endereco(atual, partes):
+                return False, None
             return False, conflito()
 
     if tem_endereco:
@@ -1237,20 +1245,6 @@ def aplicar_endereco_ao_cliente(
             and origem_atual_grupo != "manual"
             and not atual.get("endereco_confirmado_em")
         )
-        titular_atual = (
-            _titular_do_documento(client, org_id, atual.get("endereco_documento_id"))
-            if pode_resolver_automaticamente
-            else None
-        )
-        titular_novo = titular_documento or _titular_do_documento(
-            client, org_id, documento_id
-        )
-        holder_atual = (
-            _titular_e_parte_ou_conjuge(client, org_id, atual, titular_atual)
-            if pode_resolver_automaticamente
-            else None
-        )
-        holder_novo = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_novo)
         if not pode_resolver_automaticamente:
             decisao = divergencia_resolucao.Decisao(
                 vencedor=None, regra="requer_humano",
@@ -1260,35 +1254,11 @@ def aplicar_endereco_ao_cliente(
                 ),
                 requer_humano=True,
             )
-        elif holder_novo is True and holder_atual is not True:
-            decisao = divergencia_resolucao.Decisao(
-                vencedor="proposto", regra="endereco_titular",
-                motivo=(
-                    f"endereco: o comprovante novo tem titular verificado "
-                    f"({titular_novo!r}) contra o em registro (titular "
-                    f"{titular_atual!r} nao e a parte nem o conjuge)."
-                ),
-                requer_humano=False,
-            )
-        elif holder_atual is True and holder_novo is not True:
-            decisao = divergencia_resolucao.Decisao(
-                vencedor="atual", regra="endereco_titular",
-                motivo=(
-                    f"endereco: o comprovante em registro tem titular "
-                    f"verificado ({titular_atual!r}) contra o novo (titular "
-                    f"{titular_novo!r} nao e a parte nem o conjuge)."
-                ),
-                requer_humano=False,
-            )
         else:
-            decisao = divergencia_resolucao.Decisao(
-                vencedor=None, regra="requer_humano",
-                motivo=(
-                    "endereco: nenhum dos dois comprovantes tem titular "
-                    "verificado como a parte ou o conjuge (ou ambos tem) — "
-                    "decisao humana necessaria."
-                ),
-                requer_humano=True,
+            decisao = _decisao_endereco_por_titular(
+                client, org_id, atual,
+                _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
+                titular_documento or _titular_do_documento(client, org_id, documento_id),
             )
         campo_conflitos.registrar_decisao_automatica(
             client, campo_conflitos.CLIENTE, org_id, cliente_id, CAMPO_ENDERECO,
@@ -1559,6 +1529,351 @@ def conflitos_pendentes(
     return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
 
 
+#: `CampoExtraido.item_key` -> the key a `extracao_conjuges` entry carries
+#: that fact under (the `registro_conjuges` shape `extrair_identidade`
+#: writes). A per-person campo absent here (`rg`, `rg_orgao_expedidor`) is
+#: one a certidão never states per spouse — it can never be attributed.
+_CHAVE_CONJUGE: dict[str, str] = {
+    "nome_oficial": "nome",
+    "cpf": "cpf",
+    "data_nascimento": "data_nascimento",
+    "genero": "genero",
+    "profissao": "profissao",
+}
+
+
+def _documentos_vivos(client: Any, org_id: UUID, cliente_ids: list[str]) -> list[dict]:
+    """Every non-deleted `cliente_documentos` row of these clientes."""
+    if not cliente_ids:
+        return []
+    return (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .in_("cliente_id", cliente_ids)
+        .is_("deleted_at", "null")
+        .execute()
+    ).data or []
+
+
+def _entrada_conjuge_da_pessoa(
+    conjuges: Any, cliente_id: str, cpf_cliente: Optional[str]
+) -> Optional[dict]:
+    """The `extracao_conjuges` entry that IS this person — attributed by
+    `extrair_identidade` (`cliente_id`), else by a CPF match. `None` when no
+    entry can be attributed (a pre-attribution read, or an unmatched pair)."""
+    if isinstance(conjuges, str):
+        try:
+            conjuges = json.loads(conjuges)
+        except ValueError:
+            logger.warning("extracao_conjuges is not JSON for cliente %s", cliente_id)
+            return None
+    cpf = only_digits(str(cpf_cliente or ""))
+    for e in conjuges or []:
+        if not isinstance(e, dict):
+            continue
+        if e.get("cliente_id") == cliente_id or (cpf and only_digits(str(e.get("cpf") or "")) == cpf):
+            return e
+    return None
+
+
+def evidencia_viva(
+    campo: CampoExtraido,
+    cliente_row: dict,
+    documentos: list[dict],
+    *,
+    atual_sustentado: Optional[bool] = None,
+    proposto_sustentado: Optional[bool] = None,
+) -> divergencia_resolucao.EvidenciaViva:
+    """What this person's live documents assert about `campo` right now —
+    `divergencia_resolucao.EvidenciaViva`. `documentos` is the person's own
+    non-deleted rows plus their linked spouse's (`_documentos_vivos`); the
+    two `*_sustentado` flags come from `_sustentado`, per side.
+
+    Attribution rules for `afirmacoes`:
+    - An address-only type (`TIPOS_ENDERECO`) never asserts an identity fact
+      — its printed name is the bill holder's (same rule `TIPOS_ENDERECO`
+      documents for the apply path).
+    - A two-person document (`divergencia_resolucao.DOCUMENTOS_DUAS_PESSOAS`)
+      asserts a per-person fact only through the spouse entry that is this
+      person (`_entrada_conjuge_da_pessoa`) — never its flat columns, which
+      name nobody in particular. Couple-level facts read its flat columns.
+    - A spouse's document counts ONLY through that attribution (it is the
+      same certidão, uploaded on the other spouse's record)."""
+    cliente_id = str(cliente_row["id"])
+    afirmacoes: list[tuple[Any, str]] = []
+    for d in documentos:
+        tipo = d.get("tipo_documento")
+        if not tipo or tipo in TIPOS_ENDERECO:
+            continue
+        if (
+            tipo in divergencia_resolucao.DOCUMENTOS_DUAS_PESSOAS
+            and campo.item_key in divergencia_resolucao.CAMPOS_POR_PESSOA
+        ):
+            valor = _valor_atribuido(campo, cliente_row, d)
+        elif str(d.get("cliente_id")) != cliente_id:
+            continue
+        else:
+            valor = d.get(campo.coluna_valor)
+        if not _vazio(valor):
+            afirmacoes.append((valor, tipo))
+    return divergencia_resolucao.EvidenciaViva(
+        afirmacoes=tuple(afirmacoes),
+        atual_sustentado=atual_sustentado,
+        proposto_sustentado=proposto_sustentado,
+    )
+
+
+def _valor_atribuido(campo: CampoExtraido, cliente_row: dict, documento: dict) -> Any:
+    """A two-person document's reading of a per-person `campo` FOR THIS
+    person — from the spouse entry attributed to them, never the flat
+    columns. `None` when no entry is theirs or it does not state the fact."""
+    entrada = _entrada_conjuge_da_pessoa(
+        documento.get("extracao_conjuges"), str(cliente_row["id"]), cliente_row.get("cpf")
+    )
+    chave = _CHAVE_CONJUGE.get(campo.item_key)
+    return entrada.get(chave) if entrada is not None and chave else None
+
+
+#: Campos only ever written from their own extraction column — a re-read of
+#: the document behind one that now carries NOTHING there has retracted it.
+#: Others can be DERIVED onto `clientes` without their column (nacionalidade
+#: from a civil RG issuer, f037cfbcf), so an empty column there says nothing.
+_CAMPOS_SO_DA_PROPRIA_COLUNA = frozenset({"nome_oficial", "cpf", "rg", "data_nascimento"})
+
+
+def _documento_sustenta(
+    campo: CampoExtraido, cliente_row: dict, documento: Optional[dict], valor: Any
+) -> Optional[bool]:
+    """Does THIS document (the one a value came from) still assert `valor`?
+    `False` on positive evidence only: the row is soft-deleted, it now
+    reads a different value, it is a two-person document with no reading
+    attributed to this person, or (for `_CAMPOS_SO_DA_PROPRIA_COLUNA`) its
+    re-read carries nothing. `None` when it cannot tell."""
+    if documento is None:
+        # Documents are soft-deleted; an id with no row at all points
+        # somewhere else (another table), not at a retraction.
+        return None
+    if documento.get("deleted_at"):
+        return False
+    if (
+        documento.get("tipo_documento") in divergencia_resolucao.DOCUMENTOS_DUAS_PESSOAS
+        and campo.item_key in divergencia_resolucao.CAMPOS_POR_PESSOA
+    ):
+        lido = _valor_atribuido(campo, cliente_row, documento)
+        return False if _vazio(lido) else _mesmo_valor(campo.item_key, lido, valor)
+    lido = documento.get(campo.coluna_valor)
+    if _vazio(lido):
+        return False if campo.item_key in _CAMPOS_SO_DA_PROPRIA_COLUNA else None
+    return _mesmo_valor(campo.item_key, lido, valor)
+
+
+def _sustentado(
+    client: Any,
+    org_id: UUID,
+    campo: CampoExtraido,
+    cliente_row: dict,
+    documento_id: Optional[Any],
+    valor: Any,
+    cache: dict[str, Optional[dict]],
+    *,
+    origem: Optional[str],
+    vouched: bool = False,
+) -> Optional[bool]:
+    """`_documento_sustenta` for the document `documento_id` names (any
+    owner — a certidão on the spouse's record counts). `None` — never
+    judged retracted — when no document stands behind the value, when a
+    human typed or confirmed it (`vouched`: a person now stands behind it,
+    not only the document), or when the row's type is not `origem` (that
+    id is not the document the value came from)."""
+    if vouched or origem == "manual" or not documento_id or _vazio(valor):
+        return None
+    chave = str(documento_id)
+    if chave not in cache:
+        rows = (
+            _t(client, DOCUMENTOS_TABLE)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("id", chave)
+            .limit(1)
+            .execute()
+        ).data or []
+        cache[chave] = rows[0] if rows else None
+    documento = cache[chave]
+    if documento is not None and documento.get("tipo_documento") != origem:
+        return None
+    return _documento_sustenta(campo, cliente_row, documento, valor)
+
+
+def _evidencia_ao_vivo(
+    client: Any, org_id: UUID, cliente_id: UUID, campo: CampoExtraido, valor_atual: Any
+) -> Optional[divergencia_resolucao.EvidenciaViva]:
+    """`evidencia_viva` for the LIVE apply path. The proposed side is the
+    reading being applied right now — its row may not be written yet — so
+    only the on-file side is checked (`proposto_sustentado=None`)."""
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(f"id,cpf,conjuge_cliente_id,{campo.documento_id},{campo.origem},{campo.confirmado_em}")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    row = rows[0]
+    donos = [str(cliente_id)] + (
+        [str(row["conjuge_cliente_id"])] if row.get("conjuge_cliente_id") else []
+    )
+    return evidencia_viva(
+        campo, row, _documentos_vivos(client, org_id, donos),
+        atual_sustentado=_sustentado(
+            client, org_id, campo, row, row.get(campo.documento_id), valor_atual, {},
+            origem=row.get(campo.origem), vouched=bool(row.get(campo.confirmado_em)),
+        ),
+    )
+
+
+def _decisao_endereco_por_titular(
+    client: Any,
+    org_id: UUID,
+    atual: dict,
+    titular_atual: Optional[str],
+    titular_novo: Optional[str],
+) -> divergencia_resolucao.Decisao:
+    """The holder rule for two disagreeing comprovantes (owner directive,
+    2026-09-29 follow-up): the bill whose printed titular is verifiably this
+    party OR their linked spouse wins over one whose titular is neither.
+    Ambiguous (both, neither, or unreadable) needs a human. The caller owns
+    the manual/confirmed guard — this only compares holders."""
+    holder_atual = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_atual)
+    holder_novo = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_novo)
+    if holder_novo is True and holder_atual is not True:
+        return divergencia_resolucao.Decisao(
+            vencedor="proposto", regra="endereco_titular",
+            motivo=(
+                f"endereco: o comprovante novo tem titular verificado "
+                f"({titular_novo!r}) contra o em registro (titular "
+                f"{titular_atual!r} nao e a parte nem o conjuge)."
+            ),
+            requer_humano=False,
+        )
+    if holder_atual is True and holder_novo is not True:
+        return divergencia_resolucao.Decisao(
+            vencedor="atual", regra="endereco_titular",
+            motivo=(
+                f"endereco: o comprovante em registro tem titular "
+                f"verificado ({titular_atual!r}) contra o novo (titular "
+                f"{titular_novo!r} nao e a parte nem o conjuge)."
+            ),
+            requer_humano=False,
+        )
+    return divergencia_resolucao.Decisao(
+        vencedor=None, regra="requer_humano",
+        motivo=(
+            "endereco: nenhum dos dois comprovantes tem titular "
+            "verificado como a parte ou o conjuge (ou ambos tem) — "
+            "decisao humana necessaria."
+        ),
+        requer_humano=True,
+    )
+
+
+def _resolvido(vencedor: str, regra: str, motivo: str) -> divergencia_resolucao.Decisao:
+    return divergencia_resolucao.Decisao(
+        vencedor=vencedor, regra=regra, motivo=motivo, requer_humano=False
+    )
+
+
+def _documento_vivo(client: Any, org_id: UUID, documento_id: Optional[Any]) -> Optional[bool]:
+    """`True` the row exists and is not deleted, `False` deleted/missing,
+    `None` no id to check."""
+    if not documento_id:
+        return None
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("id,deleted_at")
+        .eq("org_id", str(org_id))
+        .eq("id", str(documento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows) and not rows[0].get("deleted_at")
+
+
+def _decidir_endereco_pendente(
+    client: Any, org_id: UUID, row: dict
+) -> tuple[Optional[divergencia_resolucao.Decisao], Optional[dict]]:
+    """Re-consult one pending `endereco` conflict against what is true NOW.
+    Returns `(decisao, partes_propostas)`, or `(None, None)` when there is
+    nothing on file to compare against (the conflict is not a divergence
+    this resolver can judge — reported as composite by the caller).
+
+    Order: a human-typed/confirmed address is never overridden -> the same
+    address under today's comparison (the conflict predates a normalisation
+    fix, or re-read the very document already on file) -> a side whose
+    document was deleted is retracted -> the holder rule."""
+    try:
+        proposto = json.loads(row.get("valor_proposto") or "null")
+        anterior = json.loads(row.get("valor_anterior") or "null")
+    except ValueError:
+        logger.warning("endereco conflict %s holds non-JSON values", row.get("id"))
+        return None, None
+    if not isinstance(proposto, dict) or not isinstance(anterior, dict):
+        return None, None
+    atuais = (
+        _t(client, CLIENTES_TABLE)
+        .select(",".join([
+            "id", "nome", "nome_completo", "nome_oficial", "conjuge_cliente_id",
+            "endereco_origem", "endereco_documento_id", "endereco_confirmado_em",
+            *ENDERECO_COLUNAS,
+        ]))
+        .eq("org_id", str(org_id))
+        .eq("id", str(row["cliente_id"]))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not atuais:
+        return None, None
+    atual = atuais[0]
+    partes = {p: proposto.get(p) for p in ENDERECO_PARTES}
+    if atual.get("endereco_origem") == "manual" or atual.get("endereco_confirmado_em"):
+        return divergencia_resolucao.Decisao(
+            vencedor=None, regra="requer_humano",
+            motivo="endereco: o valor em registro foi digitado ou confirmado por um humano.",
+            requer_humano=True,
+        ), partes
+    if _mesmo_endereco(atual, partes):
+        return _resolvido(
+            "atual", "mesmo_endereco",
+            "endereco: pela comparação atual (logradouro normalizado, partes "
+            "ausentes não contam) o proposto é o mesmo endereço em registro.",
+        ), partes
+    proposta_viva = (
+        _documento_vivo(client, org_id, row.get("fonte_id"))
+        if row.get("fonte_tabela") == DOCUMENTOS_TABLE
+        else None
+    )
+    registro_vivo = _documento_vivo(client, org_id, atual.get("endereco_documento_id"))
+    if registro_vivo is False and proposta_viva is not False:
+        return _resolvido(
+            "proposto", "retratado",
+            "endereco: o comprovante que sustentava o endereço em registro foi "
+            "excluído; o proposto vem de um documento vivo.",
+        ), partes
+    if proposta_viva is False and registro_vivo is not False:
+        return _resolvido(
+            "atual", "retratado",
+            "endereco: o comprovante da proposta foi excluído; o endereço em "
+            "registro segue sustentado.",
+        ), partes
+    return _decisao_endereco_por_titular(
+        client, org_id, atual,
+        _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
+        proposto.get("titular") or _titular_do_documento(client, org_id, row.get("fonte_id")),
+    ), partes
+
+
 def backfill_resolver_conflitos_pendentes(
     client: Any, org_id: UUID, *, cliente_id: Optional[UUID] = None
 ) -> dict[str, list[dict]]:
@@ -1585,13 +1900,105 @@ def backfill_resolver_conflitos_pendentes(
     ainda_pendentes: list[dict] = []
     ignorado_composto: list[dict] = []
     now = _now()
+    pendentes = conflitos_pendentes(client, org_id, cliente_id)
 
-    for row in conflitos_pendentes(client, org_id, cliente_id):
+    # Live evidence, loaded once per cliente: their row + their own and
+    # their linked spouse's non-deleted documents (`evidencia_viva`).
+    ids = sorted({str(r["cliente_id"]) for r in pendentes})
+    clientes_rows = {
+        str(c["id"]): c
+        for c in (
+            (
+                _t(client, CLIENTES_TABLE)
+                .select("*")
+                .eq("org_id", str(org_id))
+                .in_("id", ids)
+                .execute()
+            ).data or []
+        )
+    } if ids else {}
+    donos = sorted(
+        set(ids) | {str(c["conjuge_cliente_id"]) for c in clientes_rows.values() if c.get("conjuge_cliente_id")}
+    )
+    docs_por_cliente: dict[str, list[dict]] = {}
+    cache_docs: dict[str, Optional[dict]] = {}
+    for d in _documentos_vivos(client, org_id, donos):
+        docs_por_cliente.setdefault(str(d["cliente_id"]), []).append(d)
+
+    def documentos_de(cid: str) -> list[dict]:
+        c = clientes_rows.get(cid) or {}
+        conjuge = str(c["conjuge_cliente_id"]) if c.get("conjuge_cliente_id") else None
+        return docs_por_cliente.get(cid, []) + (docs_por_cliente.get(conjuge, []) if conjuge else [])
+
+    for row in pendentes:
         campo_chave = row["campo"]
         campo = CAMPO_POR_CHAVE.get(campo_chave)
-        if campo_chave in (CAMPO_ENDERECO, CAMPO_CONJUGE) or campo is None:
+        if campo_chave == CAMPO_ENDERECO:
+            decisao_end, partes = _decidir_endereco_pendente(client, org_id, row)
+            if decisao_end is None:
+                ignorado_composto.append(row)
+                continue
+            campo_conflitos.registrar_decisao_automatica(
+                client, campo_conflitos.CLIENTE, org_id, row["cliente_id"], CAMPO_ENDERECO,
+                valor_anterior=row.get("valor_anterior"),
+                origem_anterior=row.get("origem_anterior"),
+                valor_proposto=row.get("valor_proposto"),
+                origem_proposto=row.get("origem_proposto"),
+                decisao=decisao_end,
+                conflito_existente_id=row["id"],
+            )
+            if decisao_end.requer_humano:
+                ainda_pendentes.append(row)
+                continue
+            if decisao_end.vencedor == "proposto" and partes is not None:
+                updates: dict[str, Any] = {
+                    f"endereco_{p}": (None if _vazio(partes.get(p)) else partes.get(p))
+                    for p in ENDERECO_PARTES
+                }
+                updates.update({
+                    "endereco_origem": row.get("origem_proposto"),
+                    "endereco_documento_id": (
+                        row.get("fonte_id") if row.get("fonte_tabela") == DOCUMENTOS_TABLE else None
+                    ),
+                    "endereco_em": now,
+                    "endereco_confirmado_por": None,
+                    "endereco_confirmado_em": None,
+                    "updated_at": now,
+                })
+                _t(client, CLIENTES_TABLE).update(updates).eq(
+                    "id", str(row["cliente_id"])
+                ).execute()
+            resolvidos.append(
+                {**row, "decisao_regra": decisao_end.regra, "decisao_vencedor": decisao_end.vencedor}
+            )
+            continue
+        if campo_chave == CAMPO_CONJUGE or campo is None:
             ignorado_composto.append(row)
             continue
+        cid = str(row["cliente_id"])
+        evidencia = None
+        cliente_row = clientes_rows.get(cid)
+        if cliente_row is not None:
+            # The on-file side's document is the one `clientes` still points
+            # at — only while the record still holds that same value.
+            doc_atual = (
+                cliente_row.get(campo.documento_id)
+                if _mesmo_valor(campo.item_key, cliente_row.get(campo.item_key), row.get("valor_anterior"))
+                else None
+            )
+            doc_proposto = row.get("fonte_id") if row.get("fonte_tabela") == DOCUMENTOS_TABLE else None
+            evidencia = evidencia_viva(
+                campo, cliente_row, documentos_de(cid),
+                atual_sustentado=_sustentado(
+                    client, org_id, campo, cliente_row, doc_atual, row.get("valor_anterior"),
+                    cache_docs, origem=row.get("origem_anterior"),
+                    vouched=bool(cliente_row.get(campo.confirmado_em)),
+                ),
+                proposto_sustentado=_sustentado(
+                    client, org_id, campo, cliente_row, doc_proposto, row.get("valor_proposto"),
+                    cache_docs, origem=row.get("origem_proposto"),
+                ),
+            )
         decisao = campo_conflitos.resolver_e_registrar(
             client, campo_conflitos.CLIENTE, org_id, row["cliente_id"], campo_chave,
             valor_anterior=row.get("valor_anterior"),
@@ -1603,6 +2010,7 @@ def backfill_resolver_conflitos_pendentes(
             fonte_id=row.get("fonte_id"),
             mesmo_valor=_mesmo_valor,
             conflito_existente_id=row["id"],
+            evidencia=evidencia,
         )
         if decisao.requer_humano:
             ainda_pendentes.append(row)

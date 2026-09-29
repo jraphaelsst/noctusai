@@ -379,6 +379,217 @@ class TestBackfillResolverConflitosPendentes:
         assert len(resultado["ignorado_composto"]) == 1
 
 
+def _doc(cid, tipo, *, deleted=False, **extracao) -> dict:
+    return {
+        "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid,
+        "storage_path": f"{ORG_ID}/clientes/{cid}/x", "nome_original": f"{tipo}.pdf",
+        "mime_type": "application/pdf", "tipo_documento": tipo,
+        "deleted_at": _old(1) if deleted else None, "extracao_status": "ok",
+        "extracao_tentativas": 1, "created_at": _old(5), **extracao,
+    }
+
+
+def _pendente(cid, campo, *, anterior, origem_anterior, proposto, origem_proposto,
+              fonte_id=None, fonte_tabela="cliente_documentos") -> dict:
+    return {
+        "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": campo,
+        "valor_anterior": anterior, "origem_anterior": origem_anterior,
+        "valor_proposto": proposto, "origem_proposto": origem_proposto,
+        "confianca_proposta": "alta", "fonte_tabela": fonte_tabela if fonte_id else None,
+        "fonte_id": fonte_id, "status": "pendente", "notificado_em": None,
+        "decidido_por": None, "decidido_em": None, "created_at": _old(3),
+    }
+
+
+def _cenario(scoped, cliente: dict, docs: list[dict], conflitos: list[dict], outros=()):
+    scoped.set_table_data("clientes", [cliente, *outros])
+    scoped.set_table_data("cliente_documentos", docs)
+    scoped.set_table_data("cliente_documento_acessos", [])
+    scoped.set_table_data("cliente_campo_conflitos", conflitos)
+
+
+class TestBackfillEvidenciaViva:
+    """The prod queue's 10 survivors after the first resolver pass
+    (2026-09-29), one test per shape — synthetic values, real shapes."""
+
+    def test_a_re_read_that_dropped_the_value_retracts_it(self, client, scoped):
+        cid = str(uuid4())
+        cnh = _doc(cid, "cnh", extracao_nome=None, extracao_cpf="41295423898")
+        serasa = _doc(cid, "serasa_crednet", extracao_nome="MARIA SOUZA LIMA")
+        _cenario(
+            scoped,
+            cliente_row(cid, cpf="412.954.238-98", nome_oficial="JOANA SOUZA",
+                        nome_oficial_origem="cnh", nome_oficial_documento_id=cnh["id"]),
+            [cnh, serasa],
+            [_pendente(cid, "nome_oficial", anterior="JOANA SOUZA", origem_anterior="cnh",
+                       proposto="MARIA SOUZA LIMA", origem_proposto="serasa_crednet",
+                       fonte_id=serasa["id"])],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        assert [r["decisao_regra"] for r in out["resolvidos"]] == ["retratado"]
+        assert _cliente(scoped, cid)["nome_oficial"] == "MARIA SOUZA LIMA"
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+
+    def test_a_certidao_flat_value_is_not_this_persons_without_attribution(self, client, scoped):
+        cid = str(uuid4())
+        cnh = _doc(cid, "cnh", extracao_rg="12345678")
+        certidao = _doc(cid, "certidao_casamento", extracao_rg="9876543210", extracao_conjuges=[])
+        _cenario(
+            scoped,
+            cliente_row(cid, rg="12345678", rg_origem="cnh", rg_documento_id=cnh["id"]),
+            [cnh, certidao],
+            [_pendente(cid, "rg", anterior="12345678", origem_anterior="cnh",
+                       proposto="9876543210", origem_proposto="certidao_casamento",
+                       fonte_id=certidao["id"])],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        assert [(r["decisao_regra"], r["decisao_vencedor"]) for r in out["resolvidos"]] == [
+            ("retratado", "atual")
+        ]
+        assert _cliente(scoped, cid)["rg"] == "12345678"
+
+    def test_an_attributed_certidao_entry_is_not_retracted(self, client, scoped):
+        cid = str(uuid4())
+        certidao = _doc(
+            cid, "certidao_casamento", extracao_data_nascimento="1980-05-12",
+            extracao_conjuges=[{"nome": "ANA", "data_nascimento": "1980-05-12", "cliente_id": cid}],
+        )
+        rg = _doc(cid, "rg", extracao_data_nascimento="1980-05-13")
+        _cenario(
+            scoped,
+            cliente_row(cid, data_nascimento="1980-05-13", data_nascimento_origem="rg",
+                        data_nascimento_documento_id=rg["id"]),
+            [certidao, rg],
+            [_pendente(cid, "data_nascimento", anterior="1980-05-13", origem_anterior="rg",
+                       proposto="1980-05-12", origem_proposto="certidao_casamento",
+                       fonte_id=certidao["id"])],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        # Both sides supported, no measured tier for data_nascimento: a human.
+        assert out["resolvidos"] == []
+        assert len(out["ainda_pendentes"]) == 1
+
+    def test_a_human_confirmed_value_is_never_judged_retracted(self, client, scoped):
+        cid = str(uuid4())
+        cnh = _doc(cid, "cnh", extracao_nome=None)
+        serasa = _doc(cid, "serasa_crednet", extracao_nome="MARIA SOUZA LIMA")
+        _cenario(
+            scoped,
+            cliente_row(cid, nome_oficial="JOANA SOUZA", nome_oficial_origem="cnh",
+                        nome_oficial_documento_id=cnh["id"],
+                        nome_oficial_confirmado_em=_old(2),
+                        nome_oficial_confirmado_por=str(uuid4())),
+            [cnh, serasa],
+            [_pendente(cid, "nome_oficial", anterior="JOANA SOUZA", origem_anterior="cnh",
+                       proposto="MARIA SOUZA LIMA", origem_proposto="serasa_crednet",
+                       fonte_id=serasa["id"])],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        assert out["resolvidos"] == []
+        assert _cliente(scoped, cid)["nome_oficial"] == "JOANA SOUZA"
+
+    def test_a_live_document_that_agrees_corroborates_a_typed_value(self, client, scoped):
+        cid = str(uuid4())
+        rg = _doc(cid, "rg", extracao_nome="ANA PAULA SOUZA")
+        _cenario(
+            scoped,
+            cliente_row(cid, nome_oficial="ANA PAULA SOUZA", nome_oficial_origem="manual"),
+            [rg],
+            [_pendente(cid, "nome_oficial", anterior="ANA PAULA SOUZA", origem_anterior="manual",
+                       proposto="ANA P SOUZA", origem_proposto="matricula",
+                       fonte_id=str(uuid4()), fonte_tabela="matricula_qualificacoes")],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        assert [(r["decisao_regra"], r["decisao_vencedor"]) for r in out["resolvidos"]] == [
+            ("corroboracao", "atual")
+        ]
+
+    def test_an_endereco_conflict_that_is_the_same_address_today_closes(self, client, scoped):
+        cid = str(uuid4())
+        bill = _doc(cid, "comprovante_endereco", extracao_endereco_titular="OUTRA PESSOA")
+        partes = {"cep": "01310-100", "logradouro": "AV PAULISTA", "numero": "1000",
+                  "complemento": None, "bairro": "BELA VISTA", "cidade": "SAO PAULO", "uf": "SP"}
+        _cenario(
+            scoped,
+            cliente_row(cid, endereco_origem="comprovante_endereco", endereco_documento_id=bill["id"],
+                        **{f"endereco_{k}": v for k, v in {**partes, "logradouro": "AVENIDA PAULISTA"}.items()}),
+            [bill],
+            [_pendente(cid, "endereco",
+                       anterior=json.dumps({**partes, "logradouro": "AVENIDA PAULISTA"}),
+                       origem_anterior="comprovante_endereco",
+                       proposto=json.dumps({**partes, "titular": "OUTRA PESSOA"}),
+                       origem_proposto="comprovante_endereco", fonte_id=bill["id"])],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        assert [r["decisao_regra"] for r in out["resolvidos"]] == ["mesmo_endereco"]
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+
+    def test_an_endereco_whose_bill_was_deleted_yields_to_the_live_one(self, client, scoped):
+        cid = str(uuid4())
+        velho = _doc(cid, "comprovante_endereco", deleted=True)
+        novo = _doc(cid, "comprovante_endereco", extracao_endereco_titular="ANA")
+        antigo = {"cep": "04000-000", "logradouro": "RUA A", "numero": "1", "complemento": None,
+                  "bairro": "X", "cidade": "SAO PAULO", "uf": "SP"}
+        atual = {"cep": "05000-000", "logradouro": "RUA B", "numero": "2", "complemento": None,
+                 "bairro": "Y", "cidade": "SAO PAULO", "uf": "SP"}
+        _cenario(
+            scoped,
+            cliente_row(cid, endereco_origem="comprovante_endereco", endereco_documento_id=velho["id"],
+                        **{f"endereco_{k}": v for k, v in antigo.items()}),
+            [velho, novo],
+            [_pendente(cid, "endereco", anterior=json.dumps(antigo),
+                       origem_anterior="comprovante_endereco",
+                       proposto=json.dumps({**atual, "titular": "ANA"}),
+                       origem_proposto="comprovante_endereco", fonte_id=novo["id"])],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        assert [(r["decisao_regra"], r["decisao_vencedor"]) for r in out["resolvidos"]] == [
+            ("retratado", "proposto")
+        ]
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_documento_id"]) == ("05000-000", novo["id"])
+
+    def test_a_manual_endereco_is_never_resolved_automatically(self, client, scoped):
+        cid = str(uuid4())
+        novo = _doc(cid, "comprovante_endereco", extracao_endereco_titular="ANA")
+        antigo = {"cep": "04000-000", "logradouro": "RUA A", "numero": "1", "complemento": None,
+                  "bairro": "X", "cidade": "SAO PAULO", "uf": "SP"}
+        _cenario(
+            scoped,
+            cliente_row(cid, endereco_origem="manual", **{f"endereco_{k}": v for k, v in antigo.items()}),
+            [novo],
+            [_pendente(cid, "endereco", anterior=json.dumps(antigo), origem_anterior="manual",
+                       proposto=json.dumps({**antigo, "cep": "05000-000", "titular": "ANA"}),
+                       origem_proposto="comprovante_endereco", fonte_id=novo["id"])],
+        )
+        out = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+        assert out["resolvidos"] == []
+        assert _cliente(scoped, cid)["endereco_cep"] == "04000-000"
+
+
+class TestEnderecoTitularDeOutroMesmoEndereco:
+    def test_a_bill_in_someone_elses_name_stating_the_address_on_file_asks_nothing(
+        self, client, scoped
+    ):
+        cid = str(uuid4())
+        partes = {"cep": "01310-100", "logradouro": "Avenida Paulista", "numero": "1000",
+                  "complemento": None, "bairro": "Bela Vista", "cidade": "Sao Paulo", "uf": "SP"}
+        _cenario(
+            scoped,
+            cliente_row(cid, nome="Ana", nome_oficial="ANA SOUZA", endereco_origem="comprovante_endereco",
+                        **{f"endereco_{k}": v for k, v in partes.items()}),
+            [], [],
+        )
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco",
+            {**partes, "logradouro": "AV PAULISTA"}, titular_documento="CARLOS PEREIRA",
+        )
+        assert (aplicado, conflito) == (False, None)
+        assert _conflitos(scoped) == []
+
+
 class TestSameDocumentReReadReplaces:
     """🔴 Regression (live deal, 2026-09-25): re-extracting a document
     whose earlier reading is STILL machine-pending must REFRESH the

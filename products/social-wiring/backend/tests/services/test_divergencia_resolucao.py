@@ -297,3 +297,76 @@ class TestValidoParaContratoSemRevisao:
 
     def test_unknown_origem_does_not_auto_validate(self):
         assert dr.valido_para_contrato_sem_revisao("cpf", None) is False
+
+
+class TestEvidenciaViva:
+    """Step 1b (2026-09-29 second pass): a side whose own document no longer
+    asserts it has been RETRACTED — positive evidence only."""
+
+    def test_a_retracted_on_file_value_loses_to_a_supported_proposal(self):
+        # 897's shape: both sources measure 100% on names, but the CNH pass
+        # that wrote the on-file name was re-read and no longer carries it.
+        decisao = dr.resolver_divergencia(
+            "nome_oficial",
+            valor_atual="JOAO SILVA", origem_atual="cnh",
+            valor_proposto="MARIA SOUZA", origem_proposto="serasa_crednet",
+            mesmo_valor=_mesmo_valor_simples,
+            evidencia=dr.EvidenciaViva(atual_sustentado=False, proposto_sustentado=True),
+        )
+        assert (decisao.vencedor, decisao.regra) == ("proposto", "retratado")
+
+    def test_a_retracted_proposal_loses_even_to_an_unknown_on_file_value(self):
+        # 882's shape: the certidão "RG" names no spouse in particular.
+        decisao = dr.resolver_divergencia(
+            "rg",
+            valor_atual="12345678", origem_atual="cnh",
+            valor_proposto="9876543210", origem_proposto="certidao_casamento",
+            mesmo_valor=_mesmo_valor_simples,
+            evidencia=dr.EvidenciaViva(atual_sustentado=None, proposto_sustentado=False),
+        )
+        assert (decisao.vencedor, decisao.regra) == ("atual", "retratado")
+
+    def test_both_retracted_is_not_decided_by_retraction(self):
+        decisao = dr.resolver_divergencia(
+            "profissao",
+            valor_atual="engenheiro", origem_atual="rg",
+            valor_proposto="advogado", origem_proposto="cnh",
+            mesmo_valor=_mesmo_valor_simples,
+            evidencia=dr.EvidenciaViva(atual_sustentado=False, proposto_sustentado=False),
+        )
+        assert decisao.requer_humano
+
+    def test_unknown_support_on_both_sides_changes_nothing(self):
+        sem = dr.resolver_divergencia(
+            "genero", valor_atual="Masculino", origem_atual="cnh",
+            valor_proposto="Feminino", origem_proposto="matricula",
+            mesmo_valor=_mesmo_valor_simples,
+        )
+        com = dr.resolver_divergencia(
+            "genero", valor_atual="Masculino", origem_atual="cnh",
+            valor_proposto="Feminino", origem_proposto="matricula",
+            mesmo_valor=_mesmo_valor_simples, evidencia=dr.EvidenciaViva(),
+        )
+        assert (sem.vencedor, sem.regra) == (com.vencedor, com.regra)
+
+    def test_a_validator_still_outranks_retraction(self):
+        decisao = dr.resolver_divergencia(
+            "cpf",
+            valor_atual="111.111.111-11", origem_atual="cnh",
+            valor_proposto="412.954.238-98", origem_proposto="certidao_casamento",
+            mesmo_valor=_mesmo_valor_simples,
+            evidencia=dr.EvidenciaViva(atual_sustentado=True, proposto_sustentado=False),
+        )
+        assert (decisao.vencedor, decisao.regra) == ("proposto", "validador")
+
+    def test_live_document_assertions_corroborate(self):
+        # f2a4e739's shape: a typed name, an RG that agrees with it (applied
+        # without a conflict, so never "proposed"), a lone matrícula against.
+        decisao = dr.resolver_divergencia(
+            "nome_oficial",
+            valor_atual="ANA PAULA SOUZA", origem_atual="manual",
+            valor_proposto="ANA P SOUZA", origem_proposto="matricula",
+            mesmo_valor=_mesmo_valor_simples,
+            evidencia=dr.EvidenciaViva(afirmacoes=(("ANA PAULA SOUZA", "rg"),)),
+        )
+        assert (decisao.vencedor, decisao.regra) == ("atual", "corroboracao")
