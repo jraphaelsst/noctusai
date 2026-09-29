@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
+
 from noctusai_lib.integrations.docx_render import FakeDocxRenderAdapter
 
 from ._helpers import conditional_and_loop_docx, simple_placeholder_docx
@@ -20,6 +23,17 @@ def test_fake_is_deterministic() -> None:
     a = FakeDocxRenderAdapter().render(template, {"nome": "x", "outro": "y"})
     b = FakeDocxRenderAdapter().render(template, {"nome": "x", "outro": "y"})
     assert a == b
+
+
+def test_fake_output_carries_no_wall_clock_timestamp() -> None:
+    """The byte-equality above only fails when the two renders straddle a
+    second boundary (python-docx stamps each zip entry with `now`) — a CI
+    flake, not a signal. Pin the cause instead: every entry's timestamp is
+    the fixed zip epoch, so the output cannot depend on when it was made."""
+    out = FakeDocxRenderAdapter().render(simple_placeholder_docx("{{ nome }}"), {"nome": "x"})
+    with zipfile.ZipFile(io.BytesIO(out)) as zf:
+        stamps = {info.date_time for info in zf.infolist()}
+    assert stamps == {(1980, 1, 1, 0, 0, 0)}
 
 
 def test_fake_varies_with_context_keys() -> None:
