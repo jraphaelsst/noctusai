@@ -181,3 +181,19 @@ class TestPluralGentilicos:
         valor, confianca, _ = find_nacionalidade(texto)
         assert valor == "brasileiro"
         assert confianca == "alta"
+
+
+class TestRealP2Layouts:
+    def test_english_gloss_label_survives_a_mistranscribed_portuguese_half(self):
+        texto = "9C. CATEGORIA / CAT HAB: D\n\nFILIACAO / NATIONALITY: BRASILEIRO(A)\n\nFILIACAO: JOAO DA SILVA\n"
+        valor, conf, _ = find_nacionalidade(texto)
+        assert (valor, conf) == ("brasileiro", "alta")
+
+    def test_cin_iso_code(self):
+        texto = "DATA DE NASCIMENTO / DATE OF BIRTH: 01/02/1980\nNACIONALIDADE / NATIONALITY: BRA\nNATURALIDADE / PLACE OF BIRTH: TABOAO DA SERRA/SP\n"
+        valor, conf, _ = find_nacionalidade(texto)
+        assert (valor, conf) == ("brasileiro", "alta")
+
+    def test_unlabelled_bra_is_never_read(self):
+        valor, _, _ = find_nacionalidade("CODIGO BRA 12345 EMISSOR DETRAN")
+        assert valor is None

@@ -100,7 +100,11 @@ _LABEL_WINDOW = 48
 #: suffix of it) — both are listed anyway so the reported label is the
 #: fuller, more legible one where it is present (see `labels.py`'s
 #: "ends latest, longest wins" rule).
-_NACIONALIDADE_LABELS = ("NACIONALIDADE", "DE NACIONALIDADE")
+# "NATIONALITY" is the English gloss the bilingual CNH/CIN prints beside the
+# Portuguese label ("NACIONALIDADE / NATIONALITY"); on a real P2 CNH the
+# Portuguese half was transcribed as "FILIACAO", so the gloss was the only
+# intact label left — and, being nearer to the value, it must win.
+_NACIONALIDADE_LABELS = ("NACIONALIDADE", "DE NACIONALIDADE", "NATIONALITY")
 
 #: Same block-opener discipline every sibling applies: a value sitting
 #: inside a FILIACAO/CONJUGE block may be a different person's — see the
@@ -149,6 +153,10 @@ _GENTILICOS: tuple[tuple["re.Pattern[str]", str], ...] = (
     # not a suffix of the singular stem); "espanhola"/"espanholas" are
     # regular. Kept as an explicit alternative rather than forced into the
     # generic optional-suffix shape the rest of this table uses.
+    # The gov.br CIN prints the ISO 3166 alpha-3 code ("NACIONALIDADE /
+    # NATIONALITY: BRA"). Safe only because every reading here must already
+    # sit next to a nationality label — an unlabelled "BRA" is never read.
+    (re.compile(r"\bBRA\b"), "brasileiro"),
     (re.compile(r"\b(?:ESPANHOL(?:A|AS)?|ESPANHOIS)\b"), "espanhol"),
     (re.compile(r"\bARGENTIN[OA]S?\b"), "argentino"),
     (re.compile(r"\bNORTE[- ]AMERICAN[OA]S?\b"), "norte-americano"),
@@ -206,6 +214,9 @@ _FEMININO: dict[str, str] = {
     "angolano": "angolana",
     "libanês": "libanesa",
 }
+
+
+_PAR_BILINGUE_RE = re.compile(r"\b[A-Z]+\s*/\s*NATIONALITY\b")
 
 
 def normalize(text: str) -> str:
@@ -292,6 +303,12 @@ def find_nacionalidade(text: str) -> tuple[Optional[str], str, Optional[str]]:
     norm = normalize(text or "")
     if not norm:
         return (None, "nenhuma", None)
+    # A bilingual label pair "<PT> / NATIONALITY" always has the Portuguese
+    # nationality label in the <PT> slot. On a real P2 CNH the vision read
+    # wrote "FILIACAO / NATIONALITY" — a block opener that would demote the
+    # reading as someone else's. Whatever word landed in that slot is put
+    # back to what the document prints there.
+    norm = _PAR_BILINGUE_RE.sub("NACIONALIDADE / NATIONALITY", norm)
 
     rotulados: list[tuple[str, str]] = []
     for padrao, valor in _GENTILICOS:
