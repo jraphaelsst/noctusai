@@ -205,30 +205,41 @@ class TestMesclar:
         assert "divergiu" in out.aviso_mensagem
         assert "cpf" in out.aviso_mensagem
 
-    def test_disagreement_on_rg_also_clears_rg_orgao(self):
+    def test_disagreement_on_rg_adopts_escalated_value_as_baixa(self):
+        """Measured (P2): on RG disagreements the escalated read was right
+        3/3, so it is kept — as a baixa suggestion with a divergence note —
+        instead of blanking the field."""
+        original = self._original(
+            rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
+            rg_orgao="SSP/SP", rg_orgao_confianca=ExtractionConfidence.BAIXA,
+        )
+        escalada = IdentityFields(
+            rg="99.999.999-0", rg_confianca=ExtractionConfidence.MEDIA,
+            rg_orgao="SSP/SP", rg_orgao_confianca=ExtractionConfidence.MEDIA,
+        )
+        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
+        assert out.rg == "99.999.999-0"
+        assert out.rg_confianca is ExtractionConfidence.BAIXA
+        assert out.rg_orgao == "SSP/SP"
+        assert out.rg_orgao_confianca is ExtractionConfidence.BAIXA
+        assert "adotado o valor do modelo superior" in out.aviso_mensagem
+
+    def test_disagreement_on_rg_without_escalated_issuer_clears_issuer(self):
         original = self._original(
             rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
             rg_orgao="SSP/SP", rg_orgao_confianca=ExtractionConfidence.BAIXA,
         )
         escalada = IdentityFields(rg="99.999.999-0", rg_confianca=ExtractionConfidence.BAIXA)
         out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.rg is None
+        assert out.rg == "99.999.999-0"
         assert out.rg_orgao is None
         assert out.rg_orgao_confianca is ExtractionConfidence.NENHUMA
 
-    def test_disagreement_on_rg_keeps_an_issuer_both_reads_agree_on(self):
-        original = self._original(
-            rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
-            rg_orgao="SSP/SP", rg_orgao_confianca=ExtractionConfidence.BAIXA,
-        )
-        escalada = IdentityFields(
-            rg="99.999.999-0", rg_confianca=ExtractionConfidence.BAIXA,
-            rg_orgao="ssp/sp", rg_orgao_confianca=ExtractionConfidence.BAIXA,
-        )
+    def test_disagreement_on_cpf_still_blanks(self):
+        original = self._original()
+        escalada = IdentityFields(cpf=_CPF_B, cpf_confianca=ExtractionConfidence.MEDIA)
         out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.rg is None
-        assert out.rg_orgao == "SSP/SP"
-        assert out.rg_orgao_confianca is ExtractionConfidence.BAIXA
+        assert out.cpf is None
 
     def test_no_change_when_escalation_agrees_at_the_ceiling_and_finds_nothing_new(self):
         original = self._original(

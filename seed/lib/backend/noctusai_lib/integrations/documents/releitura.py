@@ -145,6 +145,13 @@ _PROMOCAO_UM_DEGRAU: dict[ExtractionConfidence, ExtractionConfidence] = {
 }
 
 
+#: Fields where, on a disagreement, the escalated (stronger-model) read is
+#: kept as a `baixa` suggestion instead of blanking the field. Only fields
+#: with measured evidence belong here (RG: escalated read right 3/3 on the
+#: P2 corpus); everything else keeps "disagreement is absence".
+_ADOTA_ESCALADA_NA_DIVERGENCIA = frozenset({"rg"})
+
+
 def _mesmo_valor(campo: str, a: Any, b: Any) -> bool:
     """Do these two INDEPENDENT reads of the SAME document state the same
     fact for `campo`?
@@ -237,6 +244,7 @@ def mesclar(
     preenchidos: list[str] = []
     confirmados: list[str] = []
     conflitantes: list[str] = []
+    adotados: list[str] = []
 
     for campo in CAMPOS:
         tinha = original.presente(campo)
@@ -260,6 +268,22 @@ def mesclar(
                 if nova_conf is not atual_conf:
                     updates[f"{campo}_confianca"] = nova_conf
                     confirmados.append(campo)
+            elif campo in _ADOTA_ESCALADA_NA_DIVERGENCIA:
+                # Measured exception (P2 corpus, 2026-09-29): on every RG
+                # disagreement (3/3 CNHs) the escalated read matched the
+                # signed contract and the first read was wrong — blanking the
+                # field discarded the right answer. So the stronger model's
+                # value is kept, but only as a `baixa` suggestion with an
+                # explicit divergence note: still human-gated, never alta.
+                updates[campo] = v1
+                updates[f"{campo}_confianca"] = ExtractionConfidence.BAIXA
+                updates[f"{campo}_rotulo"] = getattr(escalada, f"{campo}_rotulo", None)
+                if campo == "rg":
+                    updates["rg_orgao"] = escalada.rg_orgao
+                    updates["rg_orgao_confianca"] = (
+                        ExtractionConfidence.BAIXA if escalada.rg_orgao else ExtractionConfidence.NENHUMA
+                    )
+                adotados.append(campo)
             else:
                 # Genuine disagreement — never pick one. Reported absent,
                 # not merely demoted to a suggestion: two independent
@@ -269,19 +293,6 @@ def mesclar(
                 updates[f"{campo}_confianca"] = ExtractionConfidence.NENHUMA
                 updates[f"{campo}_rotulo"] = None
                 conflitantes.append(campo)
-                if campo == "rg" and not (
-                    original.rg_orgao
-                    and escalada.rg_orgao
-                    and _mesmo_valor("rg_orgao", original.rg_orgao, escalada.rg_orgao)
-                ):
-                    # The issuer travels with the number, but a number the
-                    # two reads disagree on does not make an issuer they
-                    # AGREE on wrong — measured on the P2 corpus, two CNHs
-                    # lost a correct "SSP/SP" alongside an OCR-garbled RG.
-                    # Kept (original's value + confidence) only when both
-                    # reads name the same issuer; otherwise dropped with it.
-                    updates["rg_orgao"] = None
-                    updates["rg_orgao_confianca"] = ExtractionConfidence.NENHUMA
         # both absent: nothing to do — neither read found this field.
 
     # Grupo fields (outside `CAMPOS`) — filled ONLY when the original had
@@ -313,6 +324,11 @@ def mesclar(
         partes.append("preencheu: " + ", ".join(preenchidos))
     if confirmados:
         partes.append("confirmou: " + ", ".join(confirmados))
+    if adotados:
+        partes.append(
+            "divergiu (adotado o valor do modelo superior como sugestão baixa — "
+            "confirme): " + ", ".join(adotados)
+        )
     if conflitantes:
         partes.append(
             "divergiu (descartado, revisão humana necessária): "
