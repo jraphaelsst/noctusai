@@ -370,6 +370,50 @@ class ManterSeparadosOut(BaseModel):
     rejeitado: bool = True
 
 
+class ManterSeparadosCpfOut(BaseModel):
+    cpf_normalizado: str
+    rejeitado: bool = True
+
+
+class NegociacaoOut(BaseModel):
+    """One deal this cliente is attached to — contract `products/
+    social-wiring/projects/pessoa-mesma-cpf-multideal-CONTRACT.md` §2."""
+
+    atendimento_id: UUID
+    titulo: Optional[str] = None
+    status: Optional[str] = None
+    etapa_id: Optional[UUID] = None
+    etapa_label: Optional[str] = None
+    pipeline: Optional[str] = None
+    imovel_codigo: Optional[str] = None
+    lado: str
+    papel: str
+
+
+class CandidatoCpfOut(BaseModel):
+    id: UUID
+    nome: Optional[str] = None
+    cpf: Optional[str] = None
+
+
+class CandidatoGrupoCpfOut(BaseModel):
+    cpf_normalizado: str
+    candidatos: list[CandidatoCpfOut] = Field(default_factory=list)
+
+
+class ClienteNegociacoesOut(BaseModel):
+    """`GET /api/clientes/{cliente_id}/negociacoes` (contract §2/§3) —
+    every deal AND every pending same-person candidate for one cliente, in
+    one call. `total_negociacoes` counts every entry in `negociacoes`
+    (including the caller's own current card, if any); the FE excludes its
+    own atendimento_id client-side to render "N OTHER deals"."""
+
+    cliente_id: UUID
+    negociacoes: list[NegociacaoOut] = Field(default_factory=list)
+    total_negociacoes: int = 0
+    candidatos_pendentes: list[CandidatoGrupoCpfOut] = Field(default_factory=list)
+
+
 class MergeSegurosOut(BaseModel):
     """Result of draining the auto-mergeable part of the review queue."""
 
@@ -461,6 +505,100 @@ async def list_revisao(
     rejected = _rejected_keys(client, org_id)
     visible = [g for g in groups if g["chave_canonica"] not in rejected]
     return _paginate_items(visible, page, page_size)
+
+
+@router.get("/revisao-cpf", response_model=PageOut)
+async def list_revisao_cpf(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(12, ge=1, le=100),
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+) -> PageOut:
+    """The CPF review queue (contract `products/social-wiring/projects/
+    pessoa-mesma-cpf-multideal-CONTRACT.md` §1) — same envelope, same
+    reject-before-pagination discipline as `GET /revisao`, over a
+    completely independent grouping (`svc.list_cpf_review_groups`, not the
+    phone/email `list_review_groups`). `cliente_revisao_rejeitadas` is
+    shared across both axes (migration 174 widened its `motivo` CHECK to
+    accept `'CPF'`); `_rejected_keys` reads the whole table regardless of
+    motivo, so a rejected CPF group never resurfaces here either."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    groups = svc.list_cpf_review_groups(client, org_id)
+    rejected = _rejected_keys(client, org_id)
+    visible = [g for g in groups if g["chave_canonica"] not in rejected]
+    return _paginate_items(visible, page, page_size)
+
+
+@router.post("/revisao-cpf/{grupo}/merge", response_model=MergeGrupoOut)
+async def merge_grupo_cpf(
+    grupo: str,
+    body: MergeGrupoBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+) -> MergeGrupoOut:
+    """Operator confirms a CPF-matched same-person candidate (contract §1) —
+    folds every OTHER candidate in the group into `cliente_id_sobrevivente`
+    via `clientes_service.merge_clientes`, identically to `merge_grupo`'s
+    phone/email flow. `merge_clientes` itself repoints deal parties, the
+    buyer-side titular, documents, notes, tags and checklists onto the
+    survivor before deleting the absorbed row (`_repoint_cliente_scoped_
+    tables`) — this is the step that makes it safe to run on rows that
+    already have real deal history, which the phone/email axis's own
+    candidates never did."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    groups = svc.list_cpf_review_groups(client, org_id)
+    group = next((g for g in groups if g["chave_canonica"] == grupo), None)
+    if group is None:
+        raise NotFoundError("clientes/revisao-cpf", grupo)
+
+    candidato_ids = {c["id"] for c in group["candidatos"]}
+    survivor = str(body.cliente_id_sobrevivente)
+    if survivor not in candidato_ids:
+        raise NotFoundError("clientes/revisao-cpf candidato", survivor)
+
+    merged_ids: list[str] = []
+    merge_ids: list[str] = []
+    for candidato_id in sorted(candidato_ids - {survivor}):
+        merge_id = svc.merge_clientes(
+            client,
+            org_id,
+            cliente_id_sobrevivente=UUID(survivor),
+            cliente_id_absorvido=UUID(candidato_id),
+            motivo="CPF",
+            automatico=False,
+        )
+        merged_ids.append(candidato_id)
+        merge_ids.append(merge_id)
+
+    return MergeGrupoOut(
+        cliente_id=UUID(survivor),
+        merged_ids=[UUID(x) for x in merged_ids],
+        merge_ids=[UUID(x) for x in merge_ids],
+    )
+
+
+@router.post("/revisao-cpf/{grupo}/manter-separados", response_model=ManterSeparadosCpfOut)
+async def manter_separados_cpf(
+    grupo: str,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+) -> ManterSeparadosCpfOut:
+    """Operator rejects a CPF-matched candidate (contract §1) — durable via
+    the SAME `cliente_revisao_rejeitadas` table `manter_separados` (phone/
+    email) uses, `motivo='CPF'`."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    groups = svc.list_cpf_review_groups(client, org_id)
+    group = next((g for g in groups if g["chave_canonica"] == grupo), None)
+    if group is None:
+        raise NotFoundError("clientes/revisao-cpf", grupo)
+
+    _reject_group(client, org_id, grupo, group["motivo"])
+    return ManterSeparadosCpfOut(cpf_normalizado=grupo, rejeitado=True)
 
 
 class BackfillOrgOut(BaseModel):
@@ -718,6 +856,47 @@ async def get_touches_route(
         raise NotFoundError("clientes", str(cliente_id))
     result = svc.get_touches(client, org_id, cliente_id, page=page, page_size=page_size)
     return PageOut(**result)
+
+
+@router.get("/{cliente_id}/negociacoes", response_model=ClienteNegociacoesOut)
+async def get_negociacoes_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+) -> ClienteNegociacoesOut:
+    """One person's full multi-deal picture (contract §2/§3) — every deal
+    they are attached to as buyer-side titular OR as any party (co-buyer,
+    spouse, seller side), PLUS every pending same-person candidate
+    involving them, in one call. Additive: `get_cliente_route`'s own
+    `atendimentos` field is untouched and keeps its pre-existing,
+    titular-only meaning.
+
+    `total_negociacoes` counts every entry in `negociacoes` (including the
+    caller's own current card, if the caller is rendering one) — the FE
+    excludes its own `atendimento_id` client-side to show "N OTHER deals";
+    this route has no notion of which card is "current"."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    if svc.get_cliente(client, org_id, cliente_id) is None:
+        raise NotFoundError("clientes", str(cliente_id))
+
+    negociacoes = svc.negociacoes_do_cliente(client, org_id, cliente_id)
+
+    cid = str(cliente_id)
+    rejected = _rejected_keys(client, org_id)
+    candidatos_pendentes = [
+        {"cpf_normalizado": g["chave_canonica"], "candidatos": g["candidatos"]}
+        for g in svc.list_cpf_review_groups(client, org_id)
+        if g["chave_canonica"] not in rejected
+        and any(str(c["id"]) == cid for c in g["candidatos"])
+    ]
+
+    return ClienteNegociacoesOut(
+        cliente_id=cliente_id,
+        negociacoes=[NegociacaoOut(**n) for n in negociacoes],
+        total_negociacoes=len(negociacoes),
+        candidatos_pendentes=[CandidatoGrupoCpfOut(**g) for g in candidatos_pendentes],
+    )
 
 
 @router.get("/{cliente_id}")

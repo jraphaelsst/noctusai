@@ -11979,6 +11979,28 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "atendimento_campo_conflitos row per field) has no live table to "
         "probe against yet.",
     ),
+    # Migration 174 (social-wiring, same-person-by-CPF contract, `products/
+    # social-wiring/projects/pessoa-mesma-cpf-multideal-CONTRACT.md`) is
+    # FILE-ONLY — "MIGRATION FILE ONLY — applying is the tech-lead's + user's
+    # decision" (the migration's own header). Same reasoning as 167/171
+    # above: `verify_db_guards`'s `SqlExecutor` cannot probe a CHECK on a
+    # live constraint that does not carry the widened value set in prod yet.
+    # Remove these two entries and register real `GuardProbe`s in
+    # `verify_db_guards.DEFAULT_REGISTRY` in the SAME change that finally
+    # applies this migration.
+    (
+        "products/social-wiring/backend/migrations/174_cliente_revisao_cpf.sql",
+        "cliente_revisao_rejeitadas_motivo_check",
+        "Migration 174 unapplied — the widened motivo CHECK (+'CPF', "
+        "alongside the phone/email axis's C4/C5/C6) has no live constraint "
+        "to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/174_cliente_revisao_cpf.sql",
+        "cliente_merges_motivo_check",
+        "Migration 174 unapplied — the widened motivo CHECK (+'CPF', "
+        "alongside C1-C6) has no live constraint to probe against yet.",
+    ),
 )
 
 

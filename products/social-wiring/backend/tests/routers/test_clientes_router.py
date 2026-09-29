@@ -1640,3 +1640,214 @@ class TestBackfillOnDemand:
         finally:
             app.dependency_overrides.pop(get_backfill_runner, None)
         assert resp.status_code != 422
+
+
+# ─── CPF review queue + multi-deal read (2026-09-28) ──────────────────────
+#
+# `11144477735` / `12345678909` are the standard publicly-known CPF-DV test
+# numbers — synthetic, check-digit-valid, never a real person's document.
+
+CPF_A = "11144477735"
+CPF_A_FORMATADO = "111.444.777-35"
+
+
+def _cliente_cpf(id_, nome, cpf) -> dict:
+    return {
+        "id": id_, "org_id": ORG_ID, "nome": nome, "cpf": cpf,
+        "chave_canonica": None, "chave_tipo": None,
+        "identidade_incerta": False, "ativo": True,
+        "primeiro_contato_em": "2026-01-01T00:00:00+00:00",
+        "ultimo_contato_em": "2026-01-01T00:00:00+00:00",
+        "created_at": "2026-01-01T00:00:00+00:00", "updated_at": None,
+    }
+
+
+def _seed_cpf_group(scoped):
+    """Two `clientes` sharing a valid CPF — the card_hub axis's shared-fixture
+    equivalent of `_seed_review_group`. Returns `(cpf_normalizado, a_id, b_id)`."""
+    a, b = str(uuid4()), str(uuid4())
+    scoped.set_table_data(
+        "clientes",
+        [
+            _cliente_cpf(a, "Fulano Vendedor", CPF_A_FORMATADO),
+            _cliente_cpf(b, "Fulano Comprador", CPF_A),
+        ],
+    )
+    scoped.set_table_data("cliente_merges", [])
+    scoped.set_table_data("cliente_revisao_rejeitadas", [])
+    scoped.set_table_data("atendimentos", [])
+    scoped.set_table_data("atendimento_partes", [])
+    return CPF_A, a, b
+
+
+class TestRevisaoCpf:
+    def test_non_empty_against_seeded_fixture(self, client, scoped):
+        cpf, _a, _b = _seed_cpf_group(scoped)
+        resp = client.get("/api/clientes/revisao-cpf", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["items"]
+        assert items, "CPF review queue came back empty against seeded data"
+        assert items[0]["chave_canonica"] == cpf
+        assert items[0]["motivo"] == "CPF"
+        assert len(items[0]["candidatos"]) == 2
+
+    def test_response_envelope_matches_the_house_shape(self, client, scoped):
+        _seed_cpf_group(scoped)
+        resp = client.get("/api/clientes/revisao-cpf", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        assert set(resp.json().keys()) == {"items", "total", "page", "pages"}
+
+    def test_rejected_group_never_resurfaces(self, client, scoped):
+        cpf, _a, _b = _seed_cpf_group(scoped)
+        reject = client.post(
+            f"/api/clientes/revisao-cpf/{cpf}/manter-separados", headers=_auth()
+        )
+        assert reject.status_code == 200, reject.text
+        assert reject.json() == {"cpf_normalizado": cpf, "rejeitado": True}
+
+        resp = client.get("/api/clientes/revisao-cpf", headers=_auth())
+        assert resp.json()["items"] == []
+
+    def test_unknown_grupo_manter_separados_404(self, client, scoped):
+        _seed_cpf_group(scoped)
+        resp = client.post(
+            "/api/clientes/revisao-cpf/00000000000/manter-separados", headers=_auth()
+        )
+        assert resp.status_code == 404, resp.text
+
+
+class TestMergeGrupoCpf:
+    def test_success_merges_and_clears_group(self, client, scoped):
+        cpf, a, b = _seed_cpf_group(scoped)
+        resp = client.post(
+            f"/api/clientes/revisao-cpf/{cpf}/merge",
+            json={"cliente_id_sobrevivente": a},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["cliente_id"] == a
+        assert body["merged_ids"] == [b]
+        assert len(body["merge_ids"]) == 1
+
+        remaining = {c["id"] for c in scoped.table("clientes").select("*").execute().data}
+        assert remaining == {a}
+
+        revisao = client.get("/api/clientes/revisao-cpf", headers=_auth()).json()["items"]
+        assert cpf not in {g["chave_canonica"] for g in revisao}
+
+    def test_unknown_grupo_404(self, client, scoped):
+        _cpf, a, _b = _seed_cpf_group(scoped)
+        resp = client.post(
+            "/api/clientes/revisao-cpf/00000000000/merge",
+            json={"cliente_id_sobrevivente": a},
+            headers=_auth(),
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_survivor_not_in_group_404(self, client, scoped):
+        cpf, _a, _b = _seed_cpf_group(scoped)
+        resp = client.post(
+            f"/api/clientes/revisao-cpf/{cpf}/merge",
+            json={"cliente_id_sobrevivente": str(uuid4())},
+            headers=_auth(),
+        )
+        assert resp.status_code == 404, resp.text
+
+
+class TestNegociacoesRoute:
+    """`GET /{cliente_id}/negociacoes` — the multi-deal read (contract §2/§3),
+    exercised through the chained-deal shape from the owner's own prod
+    evidence (2026-09-28): the SELLER of card A is the SAME real person as
+    the BUYER of card B, each card having minted its own `clientes` row that
+    now carries the identical CPF."""
+
+    def _seed_chained_deal(self, scoped):
+        seller_id, buyer_id, outro_id = str(uuid4()), str(uuid4()), str(uuid4())
+        atendimento_a, atendimento_b = str(uuid4()), str(uuid4())
+        scoped.set_table_data(
+            "clientes",
+            [
+                _cliente_cpf(seller_id, "Fulano Vendedor (card A)", CPF_A_FORMATADO),
+                _cliente_cpf(buyer_id, "Fulano Comprador (card B)", CPF_A),
+                _cliente_cpf(outro_id, "Outro Comprador (card A)", None),
+            ],
+        )
+        scoped.set_table_data(
+            "atendimentos",
+            [
+                {
+                    "id": atendimento_a, "org_id": ORG_ID, "cliente_id": outro_id,
+                    "titulo": "Card A", "status": "aberta", "etapa_id": None,
+                },
+                {
+                    "id": atendimento_b, "org_id": ORG_ID, "cliente_id": buyer_id,
+                    "titulo": "Card B", "status": "aberta", "etapa_id": None,
+                },
+            ],
+        )
+        scoped.set_table_data(
+            "atendimento_partes",
+            [
+                {
+                    "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atendimento_a,
+                    "cliente_id": seller_id, "lado": "vendedor", "papel": "proprietario",
+                    "ordem": 0,
+                },
+            ],
+        )
+        scoped.set_table_data(
+            "atendimento_negociacao",
+            [
+                {"atendimento_id": atendimento_a, "org_id": ORG_ID, "imovel_codigo": "IMV-A"},
+                {"atendimento_id": atendimento_b, "org_id": ORG_ID, "imovel_codigo": "IMV-B"},
+            ],
+        )
+        scoped.set_table_data("cliente_merges", [])
+        scoped.set_table_data("cliente_revisao_rejeitadas", [])
+        return seller_id, buyer_id, outro_id, atendimento_a, atendimento_b
+
+    def test_candidate_is_flagged_before_confirm(self, client, scoped):
+        seller_id, buyer_id, _outro, _a, _b = self._seed_chained_deal(scoped)
+
+        resp = client.get(f"/api/clientes/{seller_id}/negociacoes", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["cliente_id"] == seller_id
+        assert body["total_negociacoes"] == 1
+        [group] = body["candidatos_pendentes"]
+        assert group["cpf_normalizado"] == CPF_A
+        assert {c["id"] for c in group["candidatos"]} == {seller_id, buyer_id}
+
+    def test_after_confirm_one_person_shows_both_deals_with_correct_lado_papel(
+        self, client, scoped
+    ):
+        seller_id, buyer_id, _outro, atendimento_a, atendimento_b = self._seed_chained_deal(
+            scoped
+        )
+
+        merge = client.post(
+            f"/api/clientes/revisao-cpf/{CPF_A}/merge",
+            json={"cliente_id_sobrevivente": seller_id},
+            headers=_auth(),
+        )
+        assert merge.status_code == 200, merge.text
+
+        resp = client.get(f"/api/clientes/{seller_id}/negociacoes", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total_negociacoes"] == 2
+        assert body["candidatos_pendentes"] == []
+
+        by_atendimento = {n["atendimento_id"]: n for n in body["negociacoes"]}
+        assert set(by_atendimento) == {atendimento_a, atendimento_b}
+        assert by_atendimento[atendimento_a]["lado"] == "vendedor"
+        assert by_atendimento[atendimento_a]["papel"] == "proprietario"
+        assert by_atendimento[atendimento_a]["imovel_codigo"] == "IMV-A"
+        assert by_atendimento[atendimento_b]["lado"] == "comprador"
+        assert by_atendimento[atendimento_b]["papel"] == "titular"
+        assert by_atendimento[atendimento_b]["imovel_codigo"] == "IMV-B"
+
+    def test_404_unknown_cliente(self, client, scoped):
+        resp = client.get(f"/api/clientes/{uuid4()}/negociacoes", headers=_auth())
+        assert resp.status_code == 404, resp.text

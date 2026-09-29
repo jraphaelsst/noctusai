@@ -106,6 +106,8 @@ __all__ = [
     "build_clusters",
     "longest_raw_name",
     "span",
+    "normalizar_cpf",
+    "cpf_digitos_validos",
 ]
 
 AUTO_MERGE_CODES = frozenset({"C1", "C2", "C3"})
@@ -477,3 +479,61 @@ def build_clusters(
     if nameless:
         clusters[None] = nameless
     return clusters
+
+
+# ─── CPF identity resolution (2026-09-28) ────────────────────────────────
+#
+# A SECOND, independent axis on the SAME `clientes` table, added for
+# card_hub deal parties rather than marketing leads. Migration 097's header
+# is explicit that "duplicate-CPF detection belongs with the existing dedup
+# surface" — this is that surface's CPF half. It is deliberately NOT folded
+# into `classify_group`/`build_clusters` above: those operate on
+# `identidade_incerta` leads clustered by `chave_canonica` (phone/email),
+# discovered through `cliente_touches`. A card_hub buyer/seller `clientes`
+# row is created directly (migration 073/098), is never `identidade_incerta`,
+# and has no `cliente_touches` row at all — the phone/email axis can never
+# see it. The shared surface is the TABLE (`cliente_revisao_rejeitadas`,
+# `merge_clientes`) and the REVIEW-QUEUE UX, not this classification logic.
+#
+# Same reason CPF gets its own pure functions here rather than reusing
+# `normalize_name`: a CPF's identity is entirely in its digits + check
+# digits, never in a name-similarity heuristic.
+
+
+def _cpf_check_digit(digits: str, factor: int) -> int:
+    total = sum(int(d) * f for d, f in zip(digits, range(factor, 1, -1)))
+    resto = (total * 10) % 11
+    return 0 if resto == 10 else resto
+
+
+def cpf_digitos_validos(digits: str) -> bool:
+    """True iff `digits` is exactly 11 digits, not all-repeated (`"11111111111"`
+    passes the check-digit arithmetic below despite being certainly fake —
+    the classic CPF-validator gotcha), and its two check digits are correct.
+    """
+    if len(digits) != 11 or not digits.isdigit():
+        return False
+    if digits == digits[0] * 11:
+        return False
+    d1 = _cpf_check_digit(digits[:9], 10)
+    d2 = _cpf_check_digit(digits[:9] + str(d1), 11)
+    return digits[-2:] == f"{d1}{d2}"
+
+
+def normalizar_cpf(raw: Optional[str]) -> Optional[str]:
+    """`clientes.cpf` (extracted or operator-typed, whatever punctuation it
+    arrived with — migration 097) reduced to its 11-digit comparison form,
+    or `None` when it is missing or fails the check-digit test. Mirrors the
+    DB-side `social_wiring.normalizar_documento()` (migration 097) in
+    INTENT (punctuation dropped before comparison) but is stricter: that SQL
+    function accepts any CPF/RG-shaped text, including letters (an RG check
+    digit can be `X`); this one is CPF-only and refuses anything that is not
+    11 digits with valid check digits, per the brief's 'check-digit valid'
+    requirement for the same-person signal. An operator typo that happens to
+    collide with another person's real CPF is not this function's problem to
+    solve — the review queue exists precisely so a human confirms before
+    anything merges."""
+    if not raw:
+        return None
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    return digits if cpf_digitos_validos(digits) else None

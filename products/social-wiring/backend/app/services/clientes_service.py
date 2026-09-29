@@ -109,6 +109,8 @@ __all__ = [
     "list_review_groups",
     "merge_clientes",
     "undo_merge",
+    "list_cpf_review_groups",
+    "negociacoes_do_cliente",
 ]
 
 _SCHEMA = "social_wiring"
@@ -1019,6 +1021,197 @@ def _require_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     return rows[0]
 
 
+#: Every OTHER table (besides `cliente_touches`, handled inline by
+#: `merge_clientes` itself since before this) that FKs `clientes(id) ON
+#: DELETE CASCADE` — see migrations 048/056/057/067/073/083. `merge_clientes`
+#: used to delete the absorbed row with NONE of these repointed, which was
+#: safe for its original, lead-identity-only callers (an `identidade_incerta`
+#: cliente is a fresh, just-backfilled lead — it has never had a checklist
+#: tick, a note, a tag or a deal party attached to it yet). It stopped being
+#: safe the day a review group could ALSO be two card_hub deal parties
+#: matched by CPF (2026-09-28): those rows routinely DO have real
+#: `atendimento_partes`/`cliente_documentos`/checklist history, and a bare
+#: DELETE would have let the CASCADE silently erase every one of them —
+#: including the signed contract that is the entire reason two deals turned
+#: out to be the same person.
+#:
+#: `cliente_documentos` is NEVER de-duplicated here — LGPD retention means a
+#: document is repointed or it stays exactly where it is, but it is never
+#: dropped as a "duplicate". Every other table below de-dupes on its OWN real
+#: uniqueness constraint (never on cliente_id alone), so a genuine duplicate
+#: fact (the same tag, the same checklist tick, the same deal party) collapses
+#: instead of raising a constraint violation mid-merge, while distinct facts
+#: (two different comments, two different reminders) both survive under the
+#: survivor.
+def _repoint_cliente_scoped_tables(
+    client: Any,
+    org_id: UUID,
+    *,
+    cliente_id_absorvido: UUID,
+    cliente_id_sobrevivente: UUID,
+) -> None:
+    a, s = str(cliente_id_absorvido), str(cliente_id_sobrevivente)
+
+    # atendimento_partes — uq_sw_atendimento_partes_pessoa is UNIQUE
+    # (atendimento_id, cliente_id), migration 073/098. A collision here means
+    # the survivor is ALREADY a party to that exact atendimento (under
+    # either side) — the absorbed row is a pure duplicate fact and is
+    # dropped, never the atendimento_partes row itself losing its cliente.
+    partes = (
+        _t(client, "atendimento_partes").select("id,atendimento_id")
+        .eq("cliente_id", a).execute()
+    ).data or []
+    existing_atendimentos = {
+        r["atendimento_id"]
+        for r in (
+            _t(client, "atendimento_partes").select("atendimento_id")
+            .eq("cliente_id", s).execute()
+        ).data or []
+    }
+    for row in partes:
+        if row["atendimento_id"] in existing_atendimentos:
+            _t(client, "atendimento_partes").delete().eq("id", row["id"]).execute()
+        else:
+            _t(client, "atendimento_partes").update({"cliente_id": s}).eq(
+                "id", row["id"]
+            ).execute()
+            existing_atendimentos.add(row["atendimento_id"])
+
+    # atendimentos.cliente_id — the buyer-side titular (migration 073). No
+    # uniqueness constraint: one cliente can already titular several
+    # atendimentos (that is the whole point of the multi-deal view), so this
+    # is an unconditional repoint.
+    _t(client, "atendimentos").update({"cliente_id": s}).eq("cliente_id", a).eq(
+        "org_id", str(org_id)
+    ).execute()
+
+    # cliente_notas — uq_sw_cliente_notas_one_descricao is a PARTIAL unique
+    # index on (cliente_id) WHERE tipo='descricao' AND deleted_at IS NULL
+    # (migration 056). Only a live 'descricao' can collide; every
+    # 'comentario' always survives untouched — dropping authored comment
+    # text is never an option.
+    notas = (
+        _t(client, "cliente_notas").select("id,tipo,deleted_at")
+        .eq("cliente_id", a).execute()
+    ).data or []
+    survivor_tem_descricao = any(
+        r.get("tipo") == "descricao" and r.get("deleted_at") is None
+        for r in (
+            _t(client, "cliente_notas").select("tipo,deleted_at")
+            .eq("cliente_id", s).execute()
+        ).data or []
+    )
+    for row in notas:
+        colide = (
+            row.get("tipo") == "descricao"
+            and row.get("deleted_at") is None
+            and survivor_tem_descricao
+        )
+        if colide:
+            # Keep the survivor's own descricao; fold this one in as a
+            # comentario instead of destroying the text.
+            _t(client, "cliente_notas").update(
+                {"cliente_id": s, "tipo": "comentario"}
+            ).eq("id", row["id"]).execute()
+        else:
+            _t(client, "cliente_notas").update({"cliente_id": s}).eq(
+                "id", row["id"]
+            ).execute()
+
+    # cliente_tag_links — PRIMARY KEY (cliente_id, tag_id), migration 056.
+    # Same tag on both people is a duplicate fact, not two facts.
+    links = (
+        _t(client, "cliente_tag_links").select("tag_id").eq("cliente_id", a).execute()
+    ).data or []
+    existing_tags = {
+        r["tag_id"]
+        for r in (
+            _t(client, "cliente_tag_links").select("tag_id").eq("cliente_id", s).execute()
+        ).data or []
+    }
+    for row in links:
+        if row["tag_id"] in existing_tags:
+            _t(client, "cliente_tag_links").delete().eq("cliente_id", a).eq(
+                "tag_id", row["tag_id"]
+            ).execute()
+        else:
+            _t(client, "cliente_tag_links").update({"cliente_id": s}).eq(
+                "cliente_id", a
+            ).eq("tag_id", row["tag_id"]).execute()
+
+    # cliente_membros — PRIMARY KEY (cliente_id, lead_corretor_id), migration
+    # 056. Same assignment on both people is a duplicate fact.
+    membros = (
+        _t(client, "cliente_membros").select("lead_corretor_id")
+        .eq("cliente_id", a).execute()
+    ).data or []
+    existing_membros = {
+        r["lead_corretor_id"]
+        for r in (
+            _t(client, "cliente_membros").select("lead_corretor_id")
+            .eq("cliente_id", s).execute()
+        ).data or []
+    }
+    for row in membros:
+        if row["lead_corretor_id"] in existing_membros:
+            _t(client, "cliente_membros").delete().eq("cliente_id", a).eq(
+                "lead_corretor_id", row["lead_corretor_id"]
+            ).execute()
+        else:
+            _t(client, "cliente_membros").update({"cliente_id": s}).eq(
+                "cliente_id", a
+            ).eq("lead_corretor_id", row["lead_corretor_id"]).execute()
+
+    # cliente_documento_checklist — UNIQUE (cliente_id, item_key), migration
+    # 067. `concluido_manual` is a tri-state human OVERRIDE (migration 068:
+    # NULL = derive from the cliente record, true/false = a person forced
+    # it) — never the plain boolean the column name used to hold. Same item
+    # ticked on both people collapses to one row; an existing non-NULL
+    # override always wins over NULL (a decision outranks "no opinion"),
+    # and the absorbed row's own override is carried onto the survivor when
+    # the survivor had none.
+    itens = (
+        _t(client, "cliente_documento_checklist")
+        .select("id,item_key,concluido_manual").eq("cliente_id", a).execute()
+    ).data or []
+    existing_itens = {
+        r["item_key"]: r
+        for r in (
+            _t(client, "cliente_documento_checklist")
+            .select("id,item_key,concluido_manual").eq("cliente_id", s).execute()
+        ).data or []
+    }
+    for row in itens:
+        existing = existing_itens.get(row["item_key"])
+        if existing is None:
+            _t(client, "cliente_documento_checklist").update({"cliente_id": s}).eq(
+                "id", row["id"]
+            ).execute()
+        else:
+            if row.get("concluido_manual") is not None and existing.get(
+                "concluido_manual"
+            ) is None:
+                _t(client, "cliente_documento_checklist").update(
+                    {"concluido_manual": row["concluido_manual"]}
+                ).eq("id", existing["id"]).execute()
+            _t(client, "cliente_documento_checklist").delete().eq(
+                "id", row["id"]
+            ).execute()
+
+    # cliente_lembretes / cliente_checklists / cliente_checklist_extras /
+    # cliente_documentos — no uniqueness constraint keyed on cliente_id, so
+    # an unconditional repoint, nothing to de-dup, nothing ever dropped.
+    # `cliente_documentos` in particular NEVER loses a row here — LGPD
+    # retention (see the module-level comment above this function).
+    for table_name in (
+        "cliente_lembretes",
+        "cliente_checklists",
+        "cliente_documentos",
+        "cliente_checklist_extras",
+    ):
+        _t(client, table_name).update({"cliente_id": s}).eq("cliente_id", a).execute()
+
+
 def merge_clientes(
     client: Any,
     org_id: UUID,
@@ -1029,15 +1222,18 @@ def merge_clientes(
     automatico: bool = False,
 ) -> str:
     """Fold `cliente_id_absorvido` into `cliente_id_sobrevivente`: move
-    every touch, snapshot the absorbed row into `cliente_merges` (D3),
-    delete the absorbed row, recompute the survivor's span. Returns the
-    new `cliente_merges.id`.
+    every touch AND every other table that FKs the absorbed cliente
+    (`_repoint_cliente_scoped_tables` — deal parties, the buyer-side
+    titular, documents, notes, tags, checklists), snapshot the absorbed row
+    into `cliente_merges` (D3), delete the absorbed row, recompute the
+    survivor's span. Returns the new `cliente_merges.id`.
 
     This is for merging two rows that BOTH already exist as real
     `clientes` rows — the shape `POST /api/clientes/revisao/{grupo}/merge`
-    needs (Slice B, `automatico=False`). The backfill's own automatic
-    C2/C3 folding does NOT call this: it never inserts the losing cluster
-    as a real row in the first place (see `_record_merge`).
+    (and `POST /api/clientes/revisao-cpf/{grupo}/merge`) needs, `automatico=
+    False`. The backfill's own automatic C2/C3 folding does NOT call this:
+    it never inserts the losing cluster as a real row in the first place
+    (see `_record_merge`).
     """
     absorbed = _require_cliente(client, org_id, cliente_id_absorvido)
     _require_cliente(client, org_id, cliente_id_sobrevivente)
@@ -1052,6 +1248,13 @@ def merge_clientes(
     _t(client, "cliente_touches").update(
         {"cliente_id": str(cliente_id_sobrevivente)}
     ).eq("cliente_id", str(cliente_id_absorvido)).execute()
+
+    _repoint_cliente_scoped_tables(
+        client,
+        org_id,
+        cliente_id_absorvido=cliente_id_absorvido,
+        cliente_id_sobrevivente=cliente_id_sobrevivente,
+    )
 
     merge_id = str(uuid4())
     _t(client, "cliente_merges").insert(
@@ -1844,3 +2047,141 @@ def list_review_groups(client: Any, org_id: UUID) -> list[dict]:
         motivo, _auto_merge = ident.classify_names([c.get("nome") for c in candidatos])
         groups.append({"chave_canonica": key, "motivo": motivo, "candidatos": candidatos})
     return groups
+
+
+# ─── CPF review queue (2026-09-28, same-person-across-deals) ─────────────
+#
+# A second, INDEPENDENT review axis over the same `clientes` table.
+# `list_review_groups` above only ever looks at `identidade_incerta`
+# clientes clustered through `cliente_touches.chave_canonica` — the
+# marketing-lead axis. A card_hub deal party (migration 073/098) is created
+# directly, is never `identidade_incerta`, and has no `cliente_touches`
+# row, so it can never surface there. `motivo='CPF'` is the third value
+# `cliente_revisao_rejeitadas.motivo` accepts (see the migration widening
+# its CHECK), reusing the SAME table and the SAME router pagination/reject
+# shape as the phone/email queue — the `chave_canonica` column simply holds
+# the normalized CPF for this axis, which is exactly what its own comment
+# says it is for: "the REAL shared key the candidates only ever hold".
+#
+# Computed LIVE from `clientes.cpf` on every call — no backfill, no cached
+# candidate table. A CPF written by `identidade_extracao_service` the
+# instant before is visible on the very next `GET /revisao-cpf`; there is
+# no batch job and therefore no staleness window for it to be behind.
+
+
+def list_cpf_review_groups(client: Any, org_id: UUID) -> list[dict]:
+    """Every set of 2+ `clientes` rows in `org_id` sharing a normalized,
+    check-digit-valid CPF (contract: `products/social-wiring/projects/
+    pessoa-mesma-cpf-multideal-CONTRACT.md` §1). `ativo` and
+    `identidade_incerta` are irrelevant here — an archived cliente's CPF
+    still identifies the same real person. Like `list_review_groups`, this
+    has no "don't resurface" concept of its own; the router filters
+    `cliente_revisao_rejeitadas` before pagination, same as the phone/email
+    queue."""
+    rows = _select_all(client, "clientes", org_id, columns="id,nome,cpf,ativo")
+
+    grouped: dict[str, list[dict]] = {}
+    for r in rows:
+        cpf_norm = ident.normalizar_cpf(r.get("cpf"))
+        if cpf_norm:
+            grouped.setdefault(cpf_norm, []).append(r)
+
+    groups: list[dict] = []
+    for cpf_norm, candidatos in grouped.items():
+        if len(candidatos) < 2:
+            continue  # a single cliente holding this CPF isn't a conflict
+        groups.append(
+            {"chave_canonica": cpf_norm, "motivo": "CPF", "candidatos": candidatos}
+        )
+    return groups
+
+
+# ─── multi-deal read (contract §2/§3) ────────────────────────────────────
+
+
+def negociacoes_do_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+    """Every atendimento `cliente_id` is attached to — as the buyer-side
+    TITULAR (`atendimentos.cliente_id`, migration 073) OR as ANY party
+    (`atendimento_partes.cliente_id`: co-buyer, spouse, seller side —
+    migrations 073/098). `get_cliente_route`'s pre-existing `atendimentos`
+    field only ever covered the first of these (it predates card_hub's
+    multi-party model); this is additive, not a change to that shape.
+
+    Each entry: `atendimento_id`, `titulo`, `status`, `etapa_id`,
+    `etapa_label`, `pipeline`, `imovel_codigo`, `lado`, `papel`. The
+    titular's own row carries the synthetic `lado='comprador'`,
+    `papel='titular'` — there is no `atendimento_partes` row for the
+    titular (migration 073's header explains why a second one would be a
+    second truth)."""
+    cid = str(cliente_id)
+
+    titular_rows = (
+        _t(client, "atendimentos").select("id").eq("org_id", str(org_id)).eq(
+            "cliente_id", cid
+        ).execute()
+    ).data or []
+    parte_rows = (
+        _t(client, "atendimento_partes")
+        .select("atendimento_id,lado,papel")
+        .eq("org_id", str(org_id)).eq("cliente_id", cid).execute()
+    ).data or []
+
+    entries: list[tuple[str, str, str]] = [
+        (r["id"], "comprador", "titular") for r in titular_rows
+    ]
+    entries += [
+        (r["atendimento_id"], r.get("lado") or "comprador", r.get("papel") or "comprador")
+        for r in parte_rows
+    ]
+    if not entries:
+        return []
+
+    atendimento_ids = sorted({e[0] for e in entries})
+    atendimentos_by_id = {
+        r["id"]: r
+        for r in table_reads.in_batched_rows(
+            client, "atendimentos", org_id, "id", atendimento_ids,
+            select="id,titulo,status,etapa_id",
+        )
+    }
+    negociacao_by_atendimento = {
+        r["atendimento_id"]: r
+        for r in table_reads.in_batched_rows(
+            client, "atendimento_negociacao", org_id, "atendimento_id", atendimento_ids,
+            select="atendimento_id,imovel_codigo", order_col="atendimento_id",
+        )
+    }
+    etapa_ids = sorted(
+        {a["etapa_id"] for a in atendimentos_by_id.values() if a.get("etapa_id")}
+    )
+    etapas_by_id = (
+        {
+            r["id"]: r
+            for r in table_reads.in_batched_rows(
+                client, "pipeline_stages", org_id, "id", etapa_ids,
+                select="id,label,pipeline",
+            )
+        }
+        if etapa_ids
+        else {}
+    )
+
+    out: list[dict] = []
+    for atendimento_id, lado, papel in entries:
+        a = atendimentos_by_id.get(atendimento_id, {})
+        etapa = etapas_by_id.get(a.get("etapa_id") or "", {})
+        neg = negociacao_by_atendimento.get(atendimento_id, {})
+        out.append(
+            {
+                "atendimento_id": atendimento_id,
+                "titulo": a.get("titulo"),
+                "status": a.get("status"),
+                "etapa_id": a.get("etapa_id"),
+                "etapa_label": etapa.get("label"),
+                "pipeline": etapa.get("pipeline"),
+                "imovel_codigo": neg.get("imovel_codigo"),
+                "lado": lado,
+                "papel": papel,
+            }
+        )
+    return out

@@ -1514,3 +1514,204 @@ class TestAttachLeadNow:
         assert report.touches_created == 0
         assert len(_clientes(client)) == 1
         assert len(_touches(client)) == 1
+
+
+# ─── CPF review queue + multi-deal read (2026-09-28) ──────────────────────
+#
+# `11144477735` / `12345678909` are the standard publicly-known CPF-DV test
+# numbers — synthetic, check-digit-valid, never a real person's document.
+
+CPF_A = "11144477735"
+CPF_A_FORMATADO = "111.444.777-35"
+CPF_B = "12345678909"
+
+
+def _cliente_cpf(id_, nome, cpf, *, incerta=False, ativo=True):
+    return {
+        "id": id_, "org_id": ORG, "nome": nome, "cpf": cpf,
+        "chave_canonica": None, "chave_tipo": None,
+        "identidade_incerta": incerta, "ativo": ativo,
+        "primeiro_contato_em": "2026-01-01", "ultimo_contato_em": "2026-01-01",
+    }
+
+
+class TestCpfReviewGroups:
+    def test_two_clientes_sharing_a_valid_cpf_are_a_candidate_group(self):
+        client = _scoped_client()
+        a_id, b_id = str(uuid4()), str(uuid4())
+        client.set_table_data(
+            "clientes",
+            [
+                _cliente_cpf(a_id, "Joao Vendedor", CPF_A_FORMATADO),
+                _cliente_cpf(b_id, "Joao Comprador", CPF_A),
+            ],
+        )
+        groups = svc.list_cpf_review_groups(client, ORG)
+        assert len(groups) == 1
+        [group] = groups
+        assert group["chave_canonica"] == CPF_A
+        assert group["motivo"] == "CPF"
+        assert {c["id"] for c in group["candidatos"]} == {a_id, b_id}
+
+    def test_never_identidade_incerta_unlike_the_phone_email_axis(self):
+        """Card_hub deal parties are never `identidade_incerta` — this axis
+        must find them regardless, unlike `list_review_groups`'s own
+        filter."""
+        client = _scoped_client()
+        a_id, b_id = str(uuid4()), str(uuid4())
+        client.set_table_data(
+            "clientes",
+            [
+                _cliente_cpf(a_id, "A", CPF_A, incerta=False),
+                _cliente_cpf(b_id, "B", CPF_A, incerta=False),
+            ],
+        )
+        assert len(svc.list_cpf_review_groups(client, ORG)) == 1
+
+    def test_all_repeated_digits_never_forms_a_group(self):
+        client = _scoped_client()
+        client.set_table_data(
+            "clientes",
+            [
+                _cliente_cpf(str(uuid4()), "A", "111.111.111-11"),
+                _cliente_cpf(str(uuid4()), "B", "111.111.111-11"),
+            ],
+        )
+        assert svc.list_cpf_review_groups(client, ORG) == []
+
+    def test_a_single_cliente_holding_a_cpf_is_not_a_group(self):
+        client = _scoped_client()
+        client.set_table_data("clientes", [_cliente_cpf(str(uuid4()), "A", CPF_A)])
+        assert svc.list_cpf_review_groups(client, ORG) == []
+
+    def test_two_distinct_cpfs_are_two_independent_groups(self):
+        client = _scoped_client()
+        ids = [str(uuid4()) for _ in range(4)]
+        client.set_table_data(
+            "clientes",
+            [
+                _cliente_cpf(ids[0], "A1", CPF_A),
+                _cliente_cpf(ids[1], "A2", CPF_A),
+                _cliente_cpf(ids[2], "B1", CPF_B),
+                _cliente_cpf(ids[3], "B2", CPF_B),
+            ],
+        )
+        groups = svc.list_cpf_review_groups(client, ORG)
+        assert {g["chave_canonica"] for g in groups} == {CPF_A, CPF_B}
+
+
+class TestChainedDealSamePersonByCpf:
+    """The owner's own evidence shape (prod P2, 2026-09-28): the SELLER of
+    one card is the SAME real person as the BUYER of another, each card
+    having created its own `clientes` row that now carries the identical
+    extracted CPF. Confirming the CPF candidate must fold them into ONE
+    cliente WITHOUT cascade-deleting either deal's `atendimento_partes` /
+    `atendimentos.cliente_id` row — the exact hazard `merge_clientes` used
+    to carry (see `_repoint_cliente_scoped_tables`)."""
+
+    def _seed(self, client, *, seller_id, buyer_titular_id, outro_titular_id):
+        atendimento_a, atendimento_b = "A1", "B1"
+        client.set_table_data(
+            "clientes",
+            [
+                _cliente_cpf(seller_id, "Fulano Vendedor (card A)", CPF_A_FORMATADO),
+                _cliente_cpf(buyer_titular_id, "Fulano Comprador (card B)", CPF_A),
+                _cliente_cpf(outro_titular_id, "Outro Comprador (card A)", None),
+            ],
+        )
+        client.set_table_data(
+            "atendimentos",
+            [
+                {
+                    "id": atendimento_a, "org_id": ORG, "cliente_id": outro_titular_id,
+                    "titulo": "Card A", "status": "aberta", "etapa_id": None,
+                },
+                {
+                    "id": atendimento_b, "org_id": ORG, "cliente_id": buyer_titular_id,
+                    "titulo": "Card B", "status": "aberta", "etapa_id": None,
+                },
+            ],
+        )
+        client.set_table_data(
+            "atendimento_partes",
+            [
+                {
+                    "id": str(uuid4()), "org_id": ORG, "atendimento_id": atendimento_a,
+                    "cliente_id": seller_id, "lado": "vendedor", "papel": "proprietario",
+                    "ordem": 0,
+                },
+            ],
+        )
+        client.set_table_data(
+            "atendimento_negociacao",
+            [
+                {"atendimento_id": atendimento_a, "org_id": ORG, "imovel_codigo": "IMV-A"},
+                {"atendimento_id": atendimento_b, "org_id": ORG, "imovel_codigo": "IMV-B"},
+            ],
+        )
+        client.set_table_data("cliente_merges", [])
+        client.set_table_data("cliente_revisao_rejeitadas", [])
+        return atendimento_a, atendimento_b
+
+    def test_candidate_surfaces_before_confirm(self):
+        client = _scoped_client()
+        seller_id, buyer_id, outro_id = str(uuid4()), str(uuid4()), str(uuid4())
+        self._seed(client, seller_id=seller_id, buyer_titular_id=buyer_id, outro_titular_id=outro_id)
+
+        groups = svc.list_cpf_review_groups(client, ORG)
+        assert len(groups) == 1
+        assert {c["id"] for c in groups[0]["candidatos"]} == {seller_id, buyer_id}
+
+    def test_after_confirm_the_survivor_shows_both_deals_with_correct_lado_papel(self):
+        client = _scoped_client()
+        seller_id, buyer_id, outro_id = str(uuid4()), str(uuid4()), str(uuid4())
+        atendimento_a, atendimento_b = self._seed(
+            client, seller_id=seller_id, buyer_titular_id=buyer_id, outro_titular_id=outro_id
+        )
+
+        svc.merge_clientes(
+            client, ORG,
+            cliente_id_sobrevivente=seller_id,
+            cliente_id_absorvido=buyer_id,
+            motivo="CPF",
+            automatico=False,
+        )
+
+        # The absorbed row is gone; nothing cascade-deleted the party/deal
+        # rows that pointed at it.
+        remaining_ids = {c["id"] for c in _clientes(client)}
+        assert remaining_ids == {seller_id, outro_id}
+
+        negociacoes = svc.negociacoes_do_cliente(client, ORG, seller_id)
+        by_atendimento = {n["atendimento_id"]: n for n in negociacoes}
+        assert set(by_atendimento) == {atendimento_a, atendimento_b}
+
+        assert by_atendimento[atendimento_a]["lado"] == "vendedor"
+        assert by_atendimento[atendimento_a]["papel"] == "proprietario"
+        assert by_atendimento[atendimento_a]["imovel_codigo"] == "IMV-A"
+
+        assert by_atendimento[atendimento_b]["lado"] == "comprador"
+        assert by_atendimento[atendimento_b]["papel"] == "titular"
+        assert by_atendimento[atendimento_b]["imovel_codigo"] == "IMV-B"
+
+        # atendimentos.cliente_id was actually repointed, not left dangling.
+        b_row = next(
+            r for r in client.table("atendimentos").select("*").execute().data
+            if r["id"] == atendimento_b
+        )
+        assert b_row["cliente_id"] == seller_id
+
+    def test_candidate_no_longer_surfaces_after_confirm(self):
+        client = _scoped_client()
+        seller_id, buyer_id, outro_id = str(uuid4()), str(uuid4()), str(uuid4())
+        self._seed(client, seller_id=seller_id, buyer_titular_id=buyer_id, outro_titular_id=outro_id)
+
+        svc.merge_clientes(
+            client, ORG,
+            cliente_id_sobrevivente=seller_id,
+            cliente_id_absorvido=buyer_id,
+            motivo="CPF",
+            automatico=False,
+        )
+
+        assert svc.list_cpf_review_groups(client, ORG) == []

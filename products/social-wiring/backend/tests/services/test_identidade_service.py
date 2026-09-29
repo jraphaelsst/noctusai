@@ -450,3 +450,42 @@ class TestNormalizacaoAmpliada:
         """One row carried a combining acute, the other a precomposed í."""
         combinado = "Thai" + "\u0301" + "s Lima"
         assert ident.normalize_name(combinado) == ident.normalize_name("Thaís Lima")
+
+
+# ─── CPF identity resolution (2026-09-28) ─────────────────────────────────
+#
+# `11144477735` / `12345678909` are the standard publicly-known CPF-DV test
+# numbers (111.444.777-35 / 123.456.789-09) — synthetic, check-digit-valid,
+# never a real person's document, and used the same way across Brazilian
+# dev docs. Never a live CPF.
+
+
+class TestNormalizarCpf:
+    def test_valid_cpf_with_punctuation_normalizes_to_digits(self):
+        assert ident.normalizar_cpf("111.444.777-35") == "11144477735"
+
+    def test_valid_bare_digits_pass_through(self):
+        assert ident.normalizar_cpf("12345678909") == "12345678909"
+
+    def test_two_formattings_of_the_same_cpf_normalize_identically(self):
+        a = ident.normalizar_cpf("111.444.777-35")
+        b = ident.normalizar_cpf("11144477735")
+        assert a == b == "11144477735"
+
+    def test_wrong_check_digits_is_none(self):
+        assert ident.normalizar_cpf("111.444.777-99") is None
+
+    def test_all_repeated_digits_is_none(self):
+        """`11111111111` passes the check-digit arithmetic despite being
+        certainly fake — the classic CPF-validator gotcha."""
+        assert ident.normalizar_cpf("111.111.111-11") is None
+
+    def test_wrong_length_is_none(self):
+        assert ident.normalizar_cpf("123456789") is None
+
+    def test_none_and_empty_are_none(self):
+        assert ident.normalizar_cpf(None) is None
+        assert ident.normalizar_cpf("") is None
+
+    def test_non_digit_garbage_is_none(self):
+        assert ident.normalizar_cpf("not-a-cpf") is None
