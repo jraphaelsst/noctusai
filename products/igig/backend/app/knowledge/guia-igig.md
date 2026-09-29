@@ -395,6 +395,10 @@ GET `/api/custos/funcoes`, GET `/api/custos/profissionais` — Auth. POST/PATCH/
 | DELETE `/api/integracoes/email/gmail` | Desconectar Gmail | **Admin** |
 | GET `/api/integracoes/leads/whatsapp`, `/meta` | Status + URL do webhook | Auth |
 | PUT/DELETE `/api/integracoes/leads/whatsapp`, `/meta` | Configurar / desconectar fonte de lead | **Admin** |
+| GET `/api/settings/api-keys` | Status das chaves de API geridas (hoje só `anthropic_api_key`) — nunca devolve o valor, só uma dica mascarada (`...últimos 4 caracteres`) e a origem (`local`/`platform`/`env`) | Auth |
+| PUT `/api/settings/api-keys/{chave}` | Gravar/substituir a chave, cifrada (`IGIG_COFRE_KEY`) | **Admin** |
+| DELETE `/api/settings/api-keys/{chave}` | Apagar o override local da agência (a plataforma pode continuar respondendo) | **Admin** |
+| POST `/api/settings/api-keys/{chave}/test` | Testar a chave com uma chamada real e barata ao provedor | Auth |
 
 ### 6.13 Automações
 GET `/api/automacoes?pipeline=&stage_id=`, GET `/api/automacoes/execucoes?limit=&automacao_id=` — Auth. POST `/api/automacoes`, PATCH/DELETE `/api/automacoes/{id}` — **Admin**.
@@ -454,6 +458,7 @@ Todas as tabelas têm `id` (UUID) e `org_id`; em geral `created_at`/`updated_at`
 - **publicacao** — `pauta_id`, `canal` (`instagram`/`facebook`/`tiktok`/`linkedin`), `status` (`agendada`/`publicando`/`publicada`/`falhou`/`cancelada`), `agendada_para`, `publicada_em`, `external_id`, `permalink`, `erro` (ex.: "tentativa interrompida" quando a rotina recupera uma publicação presa em `publicando`), `tentativas`.
 - **metrica** — `publicacao_id`, `coletada_em`, `curtidas`, `comentarios`, `compartilhamentos`, `alcance`, `cliques_bio`, `visualizacoes`.
 - **integracao** — `canal` (`instagram`, `facebook`, `tiktok`, `linkedin`, `smtp`, `gmail`, `whatsapp`, `meta_leads`), `token_cifrado`, `config`, `conta_externa`, `conectado_em`, `ultimo_erro`, `ativo`. Uma por canal.
+- **credentials** — migração 035: chaves de API geridas pela agência (mecanismo genérico compartilhado com social-wiring e community). `provider` (nome da chave, ex.: `api_key:anthropic_api_key`), `encrypted_tokens` (Fernet, `IGIG_COFRE_KEY`), `metadata`. Uma por (`org_id`, `provider`); grava/lê só pelo servidor (service role) — RLS de leitura restrita à própria organização, sem política de escrita para o usuário comum.
 
 ### 7.7 Financeiro
 - **fatura** — `cliente_id`, `contrato_id`, `competencia` (`AAAA-MM`), `valor_total`, `vencimento`, `status` (`aberta`/`enviada`/`paga`/`vencida`/`cancelada`), `pago_em`, `enviada_em` (migração 032: data do último "Enviar fatura"/"Marcar como enviada"; um novo envio atualiza a data), `gateway_id`, `nfse_id` (sem uso: não há gateway de pagamento nem NFS-e). Uma fatura não cancelada por contrato+competência.
@@ -553,7 +558,7 @@ Não há rotina para: fechar o mês ("Gerar competência" é manual), cobrar/env
 | `IGIG_WAHA_WEBHOOK_HMAC_SECRET` | Assinatura extra do webhook WAHA | Mensagens aceitas sem verificar assinatura (só o token da URL protege) |
 | `IGIG_META_APP_SECRET` | App secret Meta (reserva) | Sem este e sem o da agência: entregas da Meta recusadas (401) |
 | `IGIG_PORTAL_BLOQUEIO_DIAS` | Bloqueio do portal de aprovação para cliente com fatura vencida há **mais de** N dias (0 ou ausente = desligado) | Desligado: o portal nunca bloqueia. Ligado: o cliente vê "Portal temporariamente indisponível" / "Contate a agência." (423 `portal_bloqueado`) — ver Capítulo 3 |
-| Chave da Anthropic (`ANTHROPIC_API_KEY` dentro do container, resolvida pela cadeia de credenciais da plataforma; na frota de produção ela vem da variável dedicada e com teto de gasto **`IGIG_ANTHROPIC_API_KEY`**) | Assistente do negócio e Assistente IgIg (chat de ajuda) | Assistente do negócio: 503 "A IA não está configurada (chave da Anthropic ausente)."; Assistente IgIg: "O assistente de IA ainda não foi configurado para este produto." e o campo passa a "Assistente indisponível no momento" |
+| Chave da Anthropic (`ANTHROPIC_API_KEY` dentro do container, resolvida pela cadeia de credenciais da plataforma; na frota de produção ela vem da variável dedicada e com teto de gasto **`IGIG_ANTHROPIC_API_KEY`**) — **desde a decisão do dono do produto de 2026-09-28, uma agência pode gravar sua PRÓPRIA chave em Integrações → Chaves de API; essa chave da organização tem prioridade sobre a da plataforma** | Assistente do negócio e Assistente IgIg (chat de ajuda) | Assistente do negócio: 503 "A IA não está configurada (chave da Anthropic ausente)."; Assistente IgIg: "O assistente de IA ainda não foi configurado para este produto." e o campo passa a "Assistente indisponível no momento" — só acontece quando NEM a chave da agência NEM a da plataforma estão configuradas |
 | `NOCTUS_SCHEDULERS_ENABLED` | Liga as rotinas agendadas | Rotinas não rodam |
 | `RESEND_API_KEY` | E-mail de convite da Equipe (provedor da plataforma) | O convite é criado, nenhum e-mail sai, e a tela avisa ("Convite criado, mas o e-mail não foi enviado — copie o link") em vez de mostrar sucesso |
 | `REDIS_URL` | Contadores de limite de requisições | Contadores em memória |
@@ -676,6 +681,7 @@ Erros — quatro formatos:
 ### 13.1 Assistente do negócio (card do negócio → aba "Assistente")
 - Ações: "Resumo" (até 6 tópicos), "Próxima ação" (com porquê, prazo e riscos) e "Rascunho de mensagem" (WhatsApp curto, até 3 parágrafos, ou e-mail com linha "Assunto:").
 - Modelo: Claude (Anthropic) pela pilha de IA da plataforma, **fixo em `claude-sonnet-4-6`** (Claude Sonnet), temperatura 0.4, até 1200 tokens de resposta. O modelo não muda sozinho quando o catálogo de modelos da plataforma é atualizado; se esse modelo sair do catálogo, o assistente falha de forma visível em vez de trocar de modelo em silêncio.
+- Chave usada: a da própria agência, se gravada em Integrações → Chaves de API; senão, a chave padrão da plataforma (ver Capítulo 10 e a página Integrações).
 - Contexto enviado (minimização de dados): lead (nome, empresa, e-mail, telefone, Instagram, origem, como conheceu, especificações, observações, status, nicho, canais atuais, dores, orçamento disponível), negócio (título, valor, status, entrada na etapa, motivo de perda, criação, etapa, responsável), histórico de etapas, orçamentos (versão, título, status, total, validade, envio, resposta, motivo de recusa) e até 30 itens da linha do tempo (nunca o conteúdo dos documentos).
 - Instruções: responder sempre em português do Brasil, só com fatos do contexto, sem inventar dados; se faltar informação, dizer o que falta.
 - **Nada é gravado nem enviado**; sem cache de respostas (dados pessoais).
@@ -693,7 +699,7 @@ Erros — quatro formatos:
 - **Limites**: até 20 mensagens por pedido, até 4000 caracteres por mensagem, **20 pedidos por minuto por pessoa**; sujeito ao orçamento de IA da organização.
 - **Endpoint**: POST `/api/ajuda/chat` (login obrigatório) `{messages:[…], pagina_atual?}` → `text/event-stream` (`data: {"delta": …}` … `data: {"done": true}`; erro no meio: `data: {"error": {"code", "message"}}`).
 - **Erros e mensagens na tela**: `ia_nao_configurada` (503) "O assistente de IA ainda não foi configurado para este produto." (e o campo passa a "Assistente indisponível no momento"); `orcamento_ia_excedido` (429) "O limite de uso de IA da organização foi atingido. Tente novamente mais tarde."; `limite_de_mensagens` (429) "Você enviou mensagens rápido demais. Aguarde um instante e tente novamente."; `ia_indisponivel` (502) "O assistente não respondeu. Tente novamente em instantes."; falha de rede "Falha de conexão com o assistente. Verifique sua internet e tente novamente.". Junto de qualquer erro aparece o link "Tentar de novo", que reenvia a última pergunta.
-- **Configuração**: precisa da chave da Anthropic no servidor — em produção, `IGIG_ANTHROPIC_API_KEY` (mapeada para `ANTHROPIC_API_KEY` no container). O servidor se recusa a iniciar se este manual estiver ausente ou vazio (de propósito: sem conhecimento, o assistente inventaria respostas).
+- **Configuração**: precisa de uma chave da Anthropic resolvida para a organização — a própria (Integrações → Chaves de API) ou, na falta dela, a padrão da plataforma (em produção, `IGIG_ANTHROPIC_API_KEY`, mapeada para `ANTHROPIC_API_KEY` no container). O servidor se recusa a iniciar se este manual estiver ausente ou vazio (de propósito: sem conhecimento, o assistente inventaria respostas).
 - **Manutenção**: toda mudança de página, regra ou mensagem do IgIg atualiza este manual no mesmo commit; um manual desatualizado faz o assistente descrever com confiança um comportamento que não existe mais.
 
 ### 13.2.1 Como usar o Assistente IgIg
@@ -773,6 +779,7 @@ Nenhuma outra parte do IgIg usa IA (as automações não têm ação de IA). Res
 - **status_pagina / DEV** — controle de visibilidade de páginas no menu.
 - **Assistente IA** — IA do card do negócio (resumo, próxima ação, rascunho).
 - **Assistente IgIg** — chat de ajuda flutuante, em todas as telas, que responde dúvidas sobre o uso do IgIg a partir deste manual (não acessa dados da agência).
+- **Chaves de API** — seção de Integrações (só administradores) onde a agência grava sua própria chave de API da Anthropic, usada pelo Assistente IgIg e pelo Assistente do negócio; sem chave própria, usa a chave padrão da plataforma.
 
 ---
 
@@ -3075,19 +3082,20 @@ Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, rece
 ## Página: Integrações
 
 ### 1. Propósito
-Lugar onde a agência configura credenciais externas: e-mail (SMTP e Gmail), fontes de lead (WhatsApp/WAHA e Meta Lead Ads) e **canais de publicação social** (Instagram, Facebook, TikTok, LinkedIn). Título: "Integrações"; subtítulo: "E-mail, fontes de lead e canais de publicação. Senhas e tokens são gravados criptografados e nunca são exibidos de volta." Este guia detalha a casca da página e os canais sociais; os cartões de E-mail e de WhatsApp/Meta estão documentados nos guias próprios (Funcionalidade: E-mail; Fontes de lead WhatsApp/Meta).
+Lugar onde a agência configura credenciais externas: e-mail (SMTP e Gmail), fontes de lead (WhatsApp/WAHA e Meta Lead Ads), **canais de publicação social** (Instagram, Facebook, TikTok, LinkedIn) e, desde a decisão do dono do produto de 2026-09-28, a **chave de API da Anthropic** usada pelos assistentes de IA. Título: "Integrações"; subtítulo: "E-mail, fontes de lead e canais de publicação. Senhas e tokens são gravados criptografados e nunca são exibidos de volta." Este guia detalha a casca da página, os canais sociais e as Chaves de API; os cartões de E-mail e de WhatsApp/Meta estão documentados nos guias próprios (Funcionalidade: E-mail; Fontes de lead WhatsApp/Meta).
 
 ### 2. Acesso
 - **Rota:** `/integracoes`.
 - **Menu lateral:** grupo "Principal", item "Integrações" — 10º item (logo após "Financeiro"). Visibilidade sujeita ao status de página (rota `integracoes`).
-- **Quem vê:** qualquer usuário autenticado da agência vê o status de todos os canais.
-- **Quem executa:** **conectar, substituir e desconectar canais sociais: só administradores da agência** (servidor exige `exigir_admin_da_org`). Membros veem "Somente administradores da agência podem alterar este canal." no lugar do formulário. Os cartões de WhatsApp/Meta Lead Ads também são só-admin (ver guias próprios). Regras de SMTP/Gmail: ver guia de E-mail.
+- **Quem vê:** qualquer usuário autenticado da agência vê o status de todos os canais. A seção "Chaves de API" só aparece para administradores.
+- **Quem executa:** **conectar, substituir e desconectar canais sociais, e gravar/apagar chaves de API: só administradores da agência** (servidor exige `exigir_admin_da_org` para os canais; a mesma cascata confiável — `public.noctus_users`, nunca `user_metadata` — para as Chaves de API). Membros veem "Somente administradores da agência podem alterar este canal." no lugar do formulário de canal, e a seção Chaves de API simplesmente não aparece para eles. Os cartões de WhatsApp/Meta Lead Ads também são só-admin (ver guias próprios). Regras de SMTP/Gmail: ver guia de E-mail.
 
 ### 3. Layout
-Três grupos, nesta ordem:
+Quatro grupos, nesta ordem:
 1. **"E-mail"** — cartões "SMTP" e "Gmail" (ver guia de E-mail).
 2. **"Fontes de lead"** — cartões WhatsApp (WAHA) e Meta Lead Ads (ver guia de Fontes de lead).
 3. **"Canais de publicação"** — aviso vermelho de criptografia (se faltar a chave), depois um quadro com uma linha por canal (sempre os quatro, mesmo nunca configurados), e o rodapé "Enquanto um canal não estiver conectado, a publicação falha de forma explícita — nada é marcado como publicado sem confirmação da plataforma."
+4. **"Chaves de API"** (só para administradores) — quadro "Assistente de IA (Anthropic)" com uma linha para `anthropic_api_key` (etiqueta "Anthropic (Claude) API Key"), e a nota "Chave usada pelo Assistente IgIg e pelo assistente do negócio (resumo, próxima ação, rascunho de mensagem). Sem uma chave própria aqui, a IgIg usa a chave da plataforma, se houver."
 
 Nos grupos E-mail e Fontes de lead, os cartões ficam em duas colunas em telas grandes (≥1024px) e um embaixo do outro em telas menores.
 
@@ -3108,47 +3116,60 @@ Nos grupos E-mail e Fontes de lead, os cartões ficam em duas colunas em telas g
 |---|---|---|---|---|---|
 | Token do canal (rótulo de acessibilidade "Token {Canal}"; placeholder "colar token…"/"substituir token…") | senha | Sim | 1–4000 caracteres (espaços nas pontas removidos) | vazio (sempre) | Nunca é exibido de volta; limpa ao salvar |
 | "@conta" (rótulo de acessibilidade "Conta {Canal}") | texto | Não | até 200 caracteres | conta gravada, se houver | Só para exibição, não é segredo; atualiza sozinho se o valor gravado mudar |
+| Chave Anthropic (rótulo de acessibilidade "Anthropic (Claude) API Key"; placeholder "sk-ant-...") | senha | Não (só para quem quer trocar a chave da plataforma) | texto não vazio (espaços nas pontas removidos) | vazio (sempre) | Nunca é exibida de volta; limpa ao salvar. Uma dica mascarada (`...` + últimos 4 caracteres) aparece abaixo quando configurada |
 
 ### 5. Ações
 | Ação (botão/gesto exato) | Pré-condições | O que acontece | Mensagem de sucesso | Erros possíveis |
 |---|---|---|---|---|
 | "Conectar" / "Substituir" | **Administrador**; token preenchido; criptografia configurada (botão desabilitado senão ou durante o envio) | Cifra o token (Fernet, `IGIG_COFRE_KEY`) e grava/atualiza `igig.integracao` do canal: `token_cifrado`, `conta_externa`, `conectado_em = agora`, `ultimo_erro = vazio`, `ativo = true`. Limpa o campo do token. Etiqueta vira "conectado" e o aviso "reconectar" some. | Sem toast (o campo limpa e a etiqueta muda) | Texto abaixo do formulário: 409 "Criptografia não configurada: defina IGIG_COFRE_KEY. Nenhum token é gravado em texto puro." (configuração do servidor — acionar suporte/TI). 422 "Canal inválido: {canal}". 422 validação de tamanho. 403 (não admin). Genérico: "Não foi possível salvar." |
 | Ícone "Desconectar {Canal}" → confirmação | **Administrador**; canal conectado pela agência | Janela "Desconectar {Canal}": "Desconectar {Canal}? O token e a conta gravados são apagados; publicações futuras neste canal falharão até que ele seja reconectado." Botão "Desconectar" ("Desconectando…"). Apaga a linha de `igig.integracao`. A linha volta a "conectado (env)" se houver token do servidor, senão "não conectado". | Sem toast (janela fecha, status muda) | 404 "Canal não conectado". 422 "Canal inválido: {canal}". 403. Toast genérico: "Não foi possível desconectar o canal." |
+| "Salvar" (Chaves de API → Anthropic) | **Administrador**; campo preenchido; `IGIG_COFRE_KEY` configurada | Cifra o valor e grava em `igig.credentials` (uma por `org_id` + `anthropic_api_key`). Etiqueta muda para "Configurada" com a origem "Definida aqui". | Toast "Anthropic (Claude) API Key salva com sucesso." | 503 "Servidor sem chave de criptografia configurada (ENCRYPTION_KEY ausente)." (aqui, `IGIG_COFRE_KEY`). 422 "Informe um valor. Para limpar a chave, use remover.". 403 (não admin — `admin_obrigatorio`). Genérico: "Falha ao salvar a chave." |
+| Ícone de lixeira "Remover Anthropic (Claude) API Key" (Chaves de API) | **Administrador**; chave gravada pela agência | Apaga só o override local da agência em `igig.credentials`. Se a plataforma ainda responder (chave global configurada), a etiqueta continua "Configurada" com origem "Definida na plataforma"; senão vira "Não configurada". | Toast "Anthropic (Claude) API Key: override local removido — ainda configurada fora deste produto." ou "Anthropic (Claude) API Key removida." | 503 (sem `IGIG_COFRE_KEY`). 403 (não admin). Genérico: "Falha ao remover a chave." |
+| "Testar" (Chaves de API → Anthropic) | Chave configurada (local, da plataforma ou do ambiente) | Chama a Anthropic com uma mensagem mínima (`max_tokens=1`) usando a chave que **de fato** seria resolvida para esta organização | Mensagem verde "Conexão com a Anthropic bem-sucedida." | Vermelho, conforme a resposta: "API Key inválida ou expirada." · "Sem créditos na conta Anthropic. A chave é válida, mas a conta não tem saldo — adicione créditos em console.anthropic.com/settings/billing." · "Limite de requisições atingido. Aguarde alguns minutos e teste novamente." · "Erro de conexão: {detalhe}." · 422 "Anthropic (Claude) API Key não está configurada. Configure em Configurações → Chaves de API." quando nada está configurado |
 
 ### 6. Estados
-- **Carregando:** bloco cinza grande no quadro de canais.
-- **Vazio:** não se aplica — os quatro canais sempre aparecem.
-- **Erro:** "Não foi possível carregar os canais de publicação."; sem chave de criptografia: aviso vermelho "Criptografia não configurada neste ambiente (IGIG_COFRE_KEY). Nenhum canal pode ser conectado até que o servidor seja configurado." e botões desabilitados. Erros de salvar aparecem abaixo do formulário da linha.
-- **Atualizando:** após conectar/desconectar a lista é recarregada.
+- **Carregando:** bloco cinza grande no quadro de canais; a seção Chaves de API mostra seu próprio esqueleto (3 blocos) na primeira carga e um ícone girando discreto durante uma atualização silenciosa (nunca esconde a lista já carregada).
+- **Vazio:** não se aplica — os quatro canais sempre aparecem; a Anthropic sempre aparece (é a única chave gerida hoje).
+- **Erro:** "Não foi possível carregar os canais de publicação."; sem chave de criptografia: aviso vermelho "Criptografia não configurada neste ambiente (IGIG_COFRE_KEY). Nenhum canal pode ser conectado até que o servidor seja configurado." e botões desabilitados. Erros de salvar aparecem abaixo do formulário da linha. Na seção Chaves de API, um erro ao carregar mostra "Servidor sem chave de criptografia configurada (ENCRYPTION_KEY ausente)." (quando é 503) ou uma mensagem genérica, com botão "Tentar de novo".
+- **Atualizando:** após conectar/desconectar a lista é recarregada; salvar/remover uma chave de API invalida e recarrega só a lista de Chaves de API.
 
 ### 7. Regras de negócio e por quê
-1. **Nenhum token é devolvido pela API — nunca.** O status não tem campo de token; o campo sempre começa vazio; não há "mostrar token" nem máscara. *Por quê:* segredo exibido é segredo vazado; uma máscara sugeriria que o valor pode ser revelado. Para trocar, cole um novo ("Substituir").
-2. **Criptografia obrigatória.** Sem `IGIG_COFRE_KEY` nada é gravado (409). *Por quê:* nenhum token em texto puro.
+1. **Nenhum token é devolvido pela API — nunca.** O status não tem campo de token; o campo sempre começa vazio; não há "mostrar token" nem máscara. *Por quê:* segredo exibido é segredo vazado; uma máscara sugeriria que o valor pode ser revelado. Para trocar, cole um novo ("Substituir"). A mesma regra vale para a chave Anthropic — a "dica" mostrada (`...` + últimos 4 caracteres) não é o valor, só ajuda a confirmar qual chave foi colada.
+2. **Criptografia obrigatória.** Sem `IGIG_COFRE_KEY` nada é gravado (409 nos canais / 503 nas Chaves de API). *Por quê:* nenhum token em texto puro.
 3. **Um token por canal por agência.** *Por quê:* uma agência publica em contas de vários clientes; um token global da plataforma seria o modelo errado. O token de ambiente do servidor é só reserva para instalações de uma agência.
 4. **Ordem de uso na publicação:** 1º token da agência; 2º token de ambiente do servidor.
 5. **Conectar de novo substitui:** sobrescreve token, conta e data, reativa o canal e apaga o `ultimo_erro`.
-6. **Só administradores alteram canais.** *Por quê:* trocar ou apagar a credencial de publicação tem o mesmo nível de confiança dos cartões de fontes de lead.
+6. **Só administradores alteram canais e chaves de API.** *Por quê:* trocar ou apagar uma credencial (de publicação ou de IA) tem o mesmo nível de confiança dos cartões de fontes de lead.
 7. **"reconectar" só aparece para problema de credencial que reconectar resolve** (ex.: token ilegível após troca da chave do cofre). A falha "ainda não está disponível (homologação da API pendente)" **não** marca "reconectar". Quando uma tentativa de "Publicar" em Distribuição falha por token ilegível, esta página é atualizada automaticamente e já mostra "reconectar" (sem precisar recarregar).
-8. **Uma chave (`IGIG_COFRE_KEY`) protege todos os segredos da agência:** tokens dos canais, senha SMTP, API key do WAHA, tokens da Meta Lead Ads, refresh token do Gmail e senhas do Cofre de Acessos (página Marca). Se a chave do servidor for trocada, os segredos gravados ficam ilegíveis e cada integração precisa ser reconectada.
-9. **O token não é validado ao salvar** — um token inválido é aceito; o problema só aparece ao publicar.
+8. **Uma chave (`IGIG_COFRE_KEY`) protege todos os segredos da agência:** tokens dos canais, senha SMTP, API key do WAHA, tokens da Meta Lead Ads, refresh token do Gmail, senhas do Cofre de Acessos (página Marca) e agora a chave Anthropic gravada aqui. Se a chave do servidor for trocada, os segredos gravados ficam ilegíveis e cada integração precisa ser reconectada/regravada.
+9. **O token não é validado ao salvar** — um token inválido é aceito; o problema só aparece ao publicar (canais) ou ao usar o "Testar" (Anthropic).
+10. **A chave da agência tem prioridade sobre a da plataforma, nunca o contrário.** *Por quê:* mesmo mecanismo genérico do social-wiring/community (`noctusai_lib.security.api_keys` → resolução em camadas: agência → plataforma → variável de ambiente `ANTHROPIC_API_KEY`). Remover o override local nunca "desconfigura" a plataforma — só volta a resolução para a camada de baixo, e a etiqueta diz exatamente qual camada respondeu ("Definida aqui" / "Definida na plataforma" / "Definida no ambiente").
+11. **Ler o status das Chaves de API é aberto a qualquer membro** (o servidor não exige admin no GET) — só a UI escolhe não mostrar a seção fora do gate de administrador; gravar e apagar exigem administrador dos dois lados (servidor e tela).
 
 ### 8. Fluxo de dados
-- **Listar:** `useIntegracoes` → **GET `/api/integracoes`** → para cada canal (`instagram`, `facebook`, `tiktok`, `linkedin`) lê `igig.integracao` por `(org_id, canal)`: sem registro → `conectado` = existe token de ambiente, `origem = 'env' | 'nenhuma'`; com registro → `conectado = token_cifrado presente e ativo`, `origem='org'`, `conta_externa`, `conectado_em`, `ultimo_erro`; todos com `cofre_configurado`.
+- **Listar canais:** `useIntegracoes` → **GET `/api/integracoes`** → para cada canal (`instagram`, `facebook`, `tiktok`, `linkedin`) lê `igig.integracao` por `(org_id, canal)`: sem registro → `conectado` = existe token de ambiente, `origem = 'env' | 'nenhuma'`; com registro → `conectado = token_cifrado presente e ativo`, `origem='org'`, `conta_externa`, `conectado_em`, `ultimo_erro`; todos com `cofre_configurado`.
 - **Conectar:** `useConectarCanal` → **POST `/api/integracoes/{canal}`** `{token, conta_externa?}` (admin) → `IntegracaoRepository.conectar` (índice único `(org_id, canal)`).
 - **Desconectar:** `useDesconectarCanal` → **DELETE `/api/integracoes/{canal}`** (admin) → apaga a linha.
-- **Uso:** a Distribuição decifra o token no momento de publicar; token ilegível grava `ultimo_erro`.
+- **Uso (canais):** a Distribuição decifra o token no momento de publicar; token ilegível grava `ultimo_erro`.
 - A tabela `igig.integracao` também guarda `smtp`, `gmail`, `whatsapp`, `meta_leads` (ver guias próprios).
+- **Listar Chaves de API:** `createApiKeysHooks(api)` (organismo compartilhado `@noctusai/lib/components`) → **GET `/api/settings/api-keys`** → resolve `anthropic_api_key` em camadas: `igig.credentials` da organização → `platform_settings`/`org_settings` da plataforma → variável de ambiente `ANTHROPIC_API_KEY`.
+- **Salvar:** **PUT `/api/settings/api-keys/anthropic_api_key`** `{value}` (admin) → cifra e grava em `igig.credentials` (Fernet, `IGIG_COFRE_KEY`).
+- **Remover:** **DELETE `/api/settings/api-keys/anthropic_api_key`** (admin) → apaga só a linha da organização.
+- **Testar:** **POST `/api/settings/api-keys/anthropic_api_key/test`** → chama a Anthropic com o valor **resolvido para esta organização** (não necessariamente o que está no campo — o que de fato seria usado).
+- **Consumo pelo assistente:** `app/services/assistente.py` (Assistente do negócio) e o Assistente IgIg (chat de ajuda) chamam `noctusai_lib.integrations.llm.chat_completion`, que resolve `anthropic_api_key` pela MESMA cadeia acima — gravar aqui é o único passo necessário; não há outra tela ou reinício de servidor.
 
 ### 9. Dependências de configuração
-- `IGIG_COFRE_KEY` (servidor) — sem ela, aviso vermelho e botões desabilitados.
+- `IGIG_COFRE_KEY` (servidor) — sem ela, aviso vermelho e botões desabilitados nos canais; Chaves de API responde 503 ao tentar salvar/remover (leitura ainda funciona, olhando só a plataforma/ambiente).
 - Opcionais: `IGIG_META_TOKEN` (Instagram e Facebook), `IGIG_TIKTOK_TOKEN`, `IGIG_LINKEDIN_TOKEN` — geram "conectado (env)".
 - App aprovado/homologado em cada plataforma (Meta, TikTok, LinkedIn) — **ainda não**; mesmo com token conectado, publicar falha com "A integração com {canal} ainda não está disponível (homologação da API pendente).".
+- `ANTHROPIC_API_KEY` (opcional, reserva de ambiente) e a chave da plataforma (`platform_settings`) — sem nenhuma das três camadas (agência/plataforma/ambiente), o Assistente do negócio responde 503 e o Assistente IgIg mostra "Assistente indisponível no momento" (ver Capítulo 13).
 
 ### 10. Limitações conhecidas
 - Sem login OAuth ("Conectar com Instagram"): o token é colado manualmente.
 - Token não é validado ao salvar.
 - Publicação real não existe em nenhum canal (`NOC-REMEDIATE[igig-publishing]`).
 - Conectar não mostra toast de sucesso; a confirmação é visual (campo limpo, etiqueta "conectado").
+- Chaves de API: hoje só a Anthropic é gerida aqui — chaves de outros provedores de IA (se algum dia usados) não têm campo próprio. A leitura do status (GET) não exige administrador, mas a seção fica escondida de quem não é (ver seção 2).
 
 ### 11. Perguntas frequentes
 - **P: Não consigo conectar; o botão está cinza.** R: Ou o token está vazio, ou o servidor não tem a chave de criptografia (aviso vermelho). No segundo caso só o suporte resolve.
@@ -3158,6 +3179,10 @@ Nos grupos E-mail e Fontes de lead, os cartões ficam em duas colunas em telas g
 - **P: Conectei o Instagram, mas a publicação falha.** R: A integração real ainda está em homologação; a mensagem é "A integração com instagram ainda não está disponível (homologação da API pendente).". Não é problema do token.
 - **P: O que é "conectado (env)"?** R: O servidor tem um token de reserva para esse canal; a agência não gravou um próprio. Não há botão de desconectar nesse caso.
 - **P: Onde configuro SMTP, Gmail, WhatsApp ou Meta Lead Ads?** R: Na mesma página, nos grupos "E-mail" e "Fontes de lead" — ver os guias de E-mail e de Fontes de lead.
+- **P: Por que gravar minha própria chave da Anthropic?** R: Para não depender da chave (e do teto de gasto) da plataforma, e para poder trocar/desativar sem falar com o suporte.
+- **P: Removi minha chave da Anthropic e o assistente continuou funcionando.** R: Correto — a plataforma ainda tinha uma chave configurada; a etiqueta muda de "Definida aqui" para "Definida na plataforma". Só falha se nenhuma camada tiver chave.
+- **P: Cliquei em "Testar" e deu "Sem créditos na conta Anthropic".** R: A chave é válida, mas a conta Anthropic dona dela está sem saldo — adicione créditos em console.anthropic.com/settings/billing.
+- **P: Não vejo a seção "Chaves de API".** R: Ela só aparece para administradores da agência.
 
 ---
 
@@ -3274,7 +3299,7 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 | **Detecção de respostas por e-mail (Gmail)** | Depende da configuração GCP/Pub/Sub **da plataforma** (`GMAIL_PUSH_*`) e do app OAuth do Google | Sem ela: "Configuração GCP pendente na plataforma…" e as respostas não são detectadas; acione o suporte |
 | **E-mail de convite da Equipe** | Enviado pelo provedor Resend da plataforma (`RESEND_API_KEY`) | Sem a chave (ou se o envio falhar), o convite é criado, o e-mail não sai e a tela avisa "Convite criado, mas o e-mail não foi enviado — copie o link"; use "Copiar link" e peça ao suporte para verificar |
 | **Meta Lead Ads** | Depende do app Meta configurado fora do IgIg (Webhooks → Page → `leadgen`) | Configure o app na Meta antes de salvar a fonte em Integrações |
-| **Assistente IgIg (chat de ajuda) e Assistente do negócio** | Dependem da chave Anthropic no servidor (em produção, `IGIG_ANTHROPIC_API_KEY`) e do orçamento de IA da organização | Sem chave: "O assistente de IA ainda não foi configurado para este produto." (chat) / "A IA não está configurada (chave da Anthropic ausente)." (card do negócio) |
+| **Assistente IgIg (chat de ajuda) e Assistente do negócio** | Dependem de uma chave Anthropic resolvida para a organização (a própria, gravada em Integrações → Chaves de API — decisão do dono do produto, 2026-09-28 — ou, na falta dela, a padrão da plataforma, `IGIG_ANTHROPIC_API_KEY`) e do orçamento de IA da organização | Sem NENHUMA chave configurada (nem da agência nem da plataforma): "O assistente de IA ainda não foi configurado para este produto." (chat) / "A IA não está configurada (chave da Anthropic ausente)." (card do negócio) |
 
 ## 5.2 Dependem de decisão do dono do produto
 
