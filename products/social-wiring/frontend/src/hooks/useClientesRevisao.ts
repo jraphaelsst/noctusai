@@ -30,6 +30,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
+import type { Cliente } from "@/hooks/useClientes";
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** §3 — the auto-merge predicate's review-queue verdicts. */
@@ -236,4 +238,113 @@ export function useMergeSeguros() {
       qc.invalidateQueries({ queryKey: REVISAO_SEGUROS_KEY });
     },
   });
+}
+
+// ─── CPF axis (2026-09-28) ──────────────────────────────────────────────────
+//
+// `pessoa-mesma-cpf-multideal-CONTRACT.md` §0/§1 — an INDEPENDENT review
+// axis from the one above: same two operator actions and the same
+// `merge_clientes`/`cliente_revisao_rejeitadas` machinery, but grouped by
+// `clientes.cpf` (normalized) rather than `cliente_touches.chave_canonica`,
+// so it can see a card_hub deal party the identity axis never could (§0).
+// Kept as its OWN query family/hooks — not folded into `useRevisaoFila` —
+// because the two axes have separate endpoints, separate pagination, and
+// (per the contract) the CPF merge REQUIRES an explicit survivor in the
+// body, unlike the identity axis's bodiless merge.
+
+/** One `clientes` row candidate in a CPF group — the contract's own "all
+ *  clientes columns" (§1); reusing `Cliente` rather than inventing a
+ *  narrower shape keeps this in one place if the identity axis's candidate
+ *  type ever needs the same fields. */
+export type RevisaoCpfCandidato = Cliente;
+
+export interface RevisaoCpfGrupo {
+  motivo: "CPF";
+  /** The normalized 11-digit CPF — also the `{grupo}` path param below. */
+  chave_canonica: string;
+  candidatos: RevisaoCpfCandidato[];
+}
+
+export interface RevisaoCpfPage {
+  items: RevisaoCpfGrupo[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export interface RevisaoCpfFiltros {
+  page?: number;
+  page_size?: number;
+}
+
+export const DEFAULT_REVISAO_CPF_PAGE_SIZE = 12;
+
+export interface RevisaoCpfMergeResult {
+  cliente_id: string;
+  merged_ids: string[];
+  merge_ids: string[];
+}
+
+export interface RevisaoCpfManterSeparadosResult {
+  cpf_normalizado: string;
+  rejeitado: true;
+}
+
+const CPF_QUEUE_FAMILY_KEY = ["sw", "clientes", "revisao-cpf"] as const;
+const CPF_QUEUE_KEY = (f: RevisaoCpfFiltros) => [...CPF_QUEUE_FAMILY_KEY, f] as const;
+
+const REVISAO_CPF_BASE = "/api/clientes/revisao-cpf";
+
+function buildCpfQuery(f: RevisaoCpfFiltros): string {
+  const params = new URLSearchParams();
+  if (f.page) params.set("page", String(f.page));
+  if (f.page_size) params.set("page_size", String(f.page_size));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export function useRevisaoCpfFila(filtros: RevisaoCpfFiltros = {}) {
+  return useQuery({
+    queryKey: CPF_QUEUE_KEY(filtros),
+    queryFn: () => api.get<RevisaoCpfPage>(`${REVISAO_CPF_BASE}${buildCpfQuery(filtros)}`),
+    // Same reasoning as `useRevisaoFila` — a resolved group must not flash
+    // back in while the next page loads.
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useRevisaoCpfMutations() {
+  const qc = useQueryClient();
+  const invalidateQueue = () => qc.invalidateQueries({ queryKey: CPF_QUEUE_FAMILY_KEY });
+  const invalidateBoard = () => qc.invalidateQueries({ queryKey: BOARD_FAMILY_KEY });
+
+  /** §1's `POST .../revisao-cpf/{grupo}/merge` — UNLIKE the identity axis,
+   *  this one REQUIRES the survivor explicitly (`cliente_id_sobrevivente`):
+   *  the contract names no "adopt the longest name" default for this axis,
+   *  so the operator picks who survives. */
+  const merge = useMutation<
+    RevisaoCpfMergeResult,
+    unknown,
+    { grupoId: string; clienteIdSobrevivente: string }
+  >({
+    mutationFn: ({ grupoId, clienteIdSobrevivente }) =>
+      api.post<RevisaoCpfMergeResult>(
+        `${REVISAO_CPF_BASE}/${encodeURIComponent(grupoId)}/merge`,
+        { cliente_id_sobrevivente: clienteIdSobrevivente },
+      ),
+    onSuccess: () => {
+      invalidateQueue();
+      invalidateBoard();
+    },
+  });
+
+  const manterSeparados = useMutation<RevisaoCpfManterSeparadosResult, unknown, string>({
+    mutationFn: (grupoId) =>
+      api.post<RevisaoCpfManterSeparadosResult>(
+        `${REVISAO_CPF_BASE}/${encodeURIComponent(grupoId)}/manter-separados`,
+      ),
+    onSuccess: invalidateQueue,
+  });
+
+  return { merge, manterSeparados };
 }

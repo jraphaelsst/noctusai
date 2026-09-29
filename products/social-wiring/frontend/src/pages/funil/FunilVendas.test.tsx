@@ -98,10 +98,11 @@ vi.mock("@/pages/leads/components/LeadFormDialog", () => ({
     ) : null,
 }));
 
-async function renderFunil() {
+async function renderFunil(initialEntries: string[] = ["/funil"]) {
   const { default: FunilVendas } = await import("./FunilVendas");
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
+  const { MemoryRouter } = await import("react-router-dom");
   // The page now runs a mutation hook, so it needs a query client in scope —
   // rendering it bare threw "No QueryClient set".
   const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
@@ -110,7 +111,11 @@ async function renderFunil() {
   });
   return {
     ...rtl.render(
-      React.createElement(QueryClientProvider, { client: qc }, React.createElement(FunilVendas)),
+      React.createElement(
+        QueryClientProvider,
+        { client: qc },
+        React.createElement(MemoryRouter, { initialEntries }, React.createElement(FunilVendas)),
+      ),
     ),
     fireEvent: rtl.fireEvent,
   };
@@ -266,5 +271,33 @@ describe("FunilVendas — Bug 5 (prod card 755253934): a debounced search, not o
 
     fireEvent.change(input, { target: { value: "Ana" } });
     expect(input.value).toBe("Ana");
+  });
+});
+
+// ─── Deep link from "Negociações" (pessoa-mesma-cpf-multideal-CONTRACT.md
+// §2/3, brief 2026-09-28) ───────────────────────────────────────────────────
+describe("FunilVendas — abrir negociação por deep link", () => {
+  it("opens the card straight from ?atendimento=&cliente=, with no board lookup needed", async () => {
+    await renderFunil(["/funil?atendimento=at-99&cliente=cli-42"]);
+
+    const lastCall = mockClienteDetailModal.mock.calls[mockClienteDetailModal.mock.calls.length - 1]?.[0];
+    expect(lastCall?.clienteId).toBe("cli-42");
+    expect(lastCall?.atendimentoId).toBe("at-99");
+    expect(lastCall?.open).toBe(true);
+  });
+
+  it("does nothing when only one of the two params is present", async () => {
+    await renderFunil(["/funil?atendimento=at-99"]);
+
+    const lastCall = mockClienteDetailModal.mock.calls[mockClienteDetailModal.mock.calls.length - 1]?.[0];
+    expect(lastCall?.clienteId).toBeNull();
+    expect(lastCall?.open).toBe(false);
+  });
+
+  it("stays closed on a plain /funil visit", async () => {
+    await renderFunil(["/funil"]);
+
+    const lastCall = mockClienteDetailModal.mock.calls[mockClienteDetailModal.mock.calls.length - 1]?.[0];
+    expect(lastCall?.open).toBe(false);
   });
 });

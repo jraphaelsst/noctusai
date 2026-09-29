@@ -63,8 +63,12 @@ vi.mock("@tanstack/react-query", () => {
 
 import {
   formatCountOrDash,
+  maskCpf,
+  outrasNegociacoes,
   useClienteMutations,
   useClientesBoard,
+  useNegociacoesDoCliente,
+  type NegociacaoDoCliente,
 } from "./useClientes";
 
 beforeEach(() => {
@@ -146,5 +150,83 @@ describe("formatCountOrDash", () => {
 
   it("renders pt-BR thousands separators", () => {
     expect(formatCountOrDash(14483)).toBe("14.483");
+  });
+});
+
+describe("maskCpf", () => {
+  it("masks every digit except the last two of the third group plus the check digits (owner's own example)", () => {
+    expect(maskCpf("12345678901")).toBe("***.***.*89-01");
+  });
+
+  it("masks a punctuated CPF the same way", () => {
+    expect(maskCpf("123.456.789-01")).toBe("***.***.*89-01");
+  });
+
+  it("renders null/undefined as a dash", () => {
+    expect(maskCpf(null)).toBe("—");
+    expect(maskCpf(undefined)).toBe("—");
+  });
+
+  it("returns an unexpected shape unmasked rather than mangling it", () => {
+    expect(maskCpf("123")).toBe("123");
+  });
+});
+
+describe("useNegociacoesDoCliente", () => {
+  it("GETs /api/clientes/{id}/negociacoes", async () => {
+    mockGet.mockResolvedValue({
+      cliente_id: "cl1",
+      negociacoes: [],
+      total_negociacoes: 0,
+      candidatos_pendentes: [],
+    });
+    const hook = useNegociacoesDoCliente("cl1") as any;
+    await hook._queryFn();
+    expect(mockGet).toHaveBeenCalledWith("/api/clientes/cl1/negociacoes");
+  });
+
+  it("is disabled without a clienteId, never fetching /undefined/negociacoes", () => {
+    const hook = useNegociacoesDoCliente(null) as any;
+    expect(hook._enabled).toBe(false);
+  });
+});
+
+describe("outrasNegociacoes", () => {
+  const negs: NegociacaoDoCliente[] = [
+    {
+      atendimento_id: "a1",
+      titulo: "Apto Jardins",
+      status: null,
+      etapa_id: null,
+      etapa_label: "Proposta",
+      pipeline: null,
+      imovel_codigo: "IM-1",
+      lado: "comprador",
+      papel: "titular",
+    },
+    {
+      atendimento_id: "a2",
+      titulo: "Casa Moema",
+      status: null,
+      etapa_id: null,
+      etapa_label: "Visitas",
+      pipeline: null,
+      imovel_codigo: "IM-2",
+      lado: "vendedor",
+      papel: "proprietario",
+    },
+  ];
+
+  it("excludes the given atendimento id", () => {
+    expect(outrasNegociacoes(negs, "a1")).toEqual([negs[1]]);
+  });
+
+  it("excludes nothing when no id is given", () => {
+    expect(outrasNegociacoes(negs, undefined)).toEqual(negs);
+    expect(outrasNegociacoes(negs, null)).toEqual(negs);
+  });
+
+  it("returns an empty array for undefined input", () => {
+    expect(outrasNegociacoes(undefined, "a1")).toEqual([]);
   });
 });

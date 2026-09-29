@@ -73,6 +73,8 @@ import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteCon
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
 import { NovoContratoDialog } from "@/components/card/NovoContratoDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
+import { NegociacoesDoClienteSection } from "@/components/card/NegociacoesDoClienteSection";
+import { NegociacoesBadgeLazy } from "@/components/card/NegociacoesBadgeLazy";
 import { NegociacaoContainer } from "@/components/NegociacaoContainer";
 import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 import { ContratosContainer } from "@/components/ContratosContainer";
@@ -834,6 +836,18 @@ export function ClienteDetailModal({
         )
       }
       renderConflitosPendentes={() => id && <ConflitosPendentesPanel clienteId={id} />}
+      // `pessoa-mesma-cpf-multideal-CONTRACT.md` §2/3 — the titular's own
+      // "Negociações" block excludes THIS card's own atendimento
+      // (`atendimentoId`, present only when opened with one — e.g. from the
+      // Funil, per this component's own docstring on that prop).
+      renderNegociacoesDoCliente={() =>
+        id && (
+          <NegociacoesDoClienteSection clienteId={id} atendimentoAtualId={atendimentoId} />
+        )
+      }
+      renderNegociacoesBadgeDaParte={(parteClienteId) => (
+        <NegociacoesBadgeLazy clienteId={parteClienteId} excludeAtendimentoId={atendimentoId} />
+      )}
       renderQualificacaoDoTitular={() =>
         id && (
           <QualificacaoCompletudePanel

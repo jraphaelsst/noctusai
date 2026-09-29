@@ -261,6 +261,21 @@ export interface ClienteCardDialogProps {
    * component never sees the titular's raw id).
    */
   renderConflitosPendentes?: () => ReactNode;
+  /**
+   * The TITULAR's own "Negociações" block — every OTHER deal this person is
+   * on (`pessoa-mesma-cpf-multideal-CONTRACT.md` §2/3, brief 2026-09-28) —
+   * same thunk reasoning as `renderConflitosPendentes` above.
+   */
+  renderNegociacoesDoCliente?: () => ReactNode;
+  /**
+   * A PARTY's (comprador/vendedor/cônjuge) own "em N outras negociações" /
+   * "possível duplicata" signal — same contract as
+   * `renderNegociacoesDoCliente` above, scoped to one `atendimento_partes`
+   * row's `cliente_id` instead of the titular's. Keyed by `cliente_id`, the
+   * same id `renderDocumentosDePessoa`/`renderQualificacaoDaParte` use —
+   * this axis is a fact about the PERSON, not their role in this deal.
+   */
+  renderNegociacoesBadgeDaParte?: (clienteId: string) => ReactNode;
 
   /**
    * The Negociação and Financiamento/Escritura subpages.
@@ -568,6 +583,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
       >
         {() => (
           <>
+            {props.renderNegociacoesBadgeDaParte?.(parte.cliente_id) ?? null}
             {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
             {props.renderCertidoesDaParte?.(
               parte.id,
@@ -765,6 +781,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               temCin={temArquivoCin(props.documentoChecklist)}
             />
             {props.renderConflitosPendentes?.() ?? null}
+            {props.renderNegociacoesDoCliente?.() ?? null}
             {/* Same gate, same reasoning as the per-party panel
                 (`PessoaDocumentosPanel`) — reads the titular's OWN
                 `documentos` list, the same one Geral's Anexos renders, so

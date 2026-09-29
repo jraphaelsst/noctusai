@@ -22,7 +22,8 @@
  * The defaults are erp-imobiliario's, verbatim since migration 037
  * (Qualificação → Visitas → Proposta → Atendimento → Fechado).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 
@@ -86,6 +87,35 @@ export default function FunilVendas() {
   // distinct `arquivar processo` action — and the Clientes board has no
   // atendimento at all). Cleared together with `clienteAberto`.
   const [atendimentoAberto, setAtendimentoAberto] = useState<string | null>(null);
+
+  // Deep link from a "Negociações" section/badge elsewhere in the product
+  // (`pessoa-mesma-cpf-multideal-CONTRACT.md` §2/3): `/funil?atendimento=
+  // <id>&cliente=<id>` opens that deal's card directly, without the page
+  // having to search the board's own loaded columns for the atendimento —
+  // the caller already has both ids (every `negociacoes[]` entry is scoped
+  // to one `cliente_id`, per the contract). Cleared via `replace` right
+  // after so navigating back never re-opens the same card, and so this
+  // effect never re-fires on an unrelated re-render.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const atendimentoParam = searchParams.get("atendimento");
+    const clienteParam = searchParams.get("cliente");
+    if (atendimentoParam && clienteParam) {
+      setClienteAberto(clienteParam);
+      setAtendimentoAberto(atendimentoParam);
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          p.delete("atendimento");
+          p.delete("cliente");
+          return p;
+        },
+        { replace: true },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   const { mutate: aceitarProposta, isPending: aceitando, variables } =
     useAceitarProposta();
 

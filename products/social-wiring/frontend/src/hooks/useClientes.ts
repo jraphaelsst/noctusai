@@ -253,10 +253,93 @@ export function useClienteMutations() {
   return { update, remove };
 }
 
+// ─── Multi-deal read (CPF contract, `pessoa-mesma-cpf-multideal-CONTRACT.md`
+// §2/3) — `GET /api/clientes/{cliente_id}/negociacoes` ─────────────────────
+
+export type NegociacaoLado = "comprador" | "vendedor";
+
+export interface NegociacaoDoCliente {
+  atendimento_id: string;
+  titulo: string | null;
+  status: string | null;
+  etapa_id: string | null;
+  etapa_label: string | null;
+  pipeline: string | null;
+  imovel_codigo: string | null;
+  lado: NegociacaoLado;
+  papel: string;
+}
+
+/** One CPF group this cliente still belongs to and has not been decided on
+ *  yet (§2's `candidatos_pendentes[]`) — the same shape `GET /revisao-cpf`
+ *  groups under `chave_canonica`/`candidatos`, scoped to just this person's
+ *  group(s). */
+export interface CandidatoPendenteCpf {
+  cpf_normalizado: string;
+  candidatos: { id: string; nome: string | null; cpf: string | null }[];
+}
+
+export interface NegociacoesDoClienteOut {
+  cliente_id: string;
+  negociacoes: NegociacaoDoCliente[];
+  total_negociacoes: number;
+  candidatos_pendentes: CandidatoPendenteCpf[];
+}
+
+const NEGOCIACOES_KEY = (clienteId: string) => [...FAMILY_KEY, clienteId, "negociacoes"] as const;
+
+/**
+ * `total_negociacoes` counts the caller's OWN current card too (contract
+ * §2: "this route has no notion of 'current card'") — every consumer that
+ * wants "N OTHER deals" excludes `excludeAtendimentoId` client-side, exactly
+ * as the contract instructs. Passing none excludes nothing (used by the full
+ * "Negociações" list, which shows every deal, current one included).
+ */
+export function useNegociacoesDoCliente(
+  clienteId: string | null | undefined,
+  opts?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: NEGOCIACOES_KEY(clienteId ?? "__none__"),
+    queryFn: () =>
+      api.get<NegociacoesDoClienteOut>(
+        `${BASE}/${encodeURIComponent(clienteId as string)}/negociacoes`,
+      ),
+    enabled: !!clienteId && (opts?.enabled ?? true),
+  });
+}
+
+/** Every OTHER deal — `negociacoes` minus `excludeAtendimentoId`, per the
+ *  contract's own client-side exclusion rule (§2). `undefined` excludes
+ *  nothing. */
+export function outrasNegociacoes(
+  negociacoes: NegociacaoDoCliente[] | undefined,
+  excludeAtendimentoId: string | null | undefined,
+): NegociacaoDoCliente[] {
+  if (!negociacoes) return [];
+  if (!excludeAtendimentoId) return negociacoes;
+  return negociacoes.filter((n) => n.atendimento_id !== excludeAtendimentoId);
+}
+
 // ─── Display helpers ────────────────────────────────────────────────────────
 
 /** `null`/`undefined` renders "—", never a lying "0" for a count we don't have. */
 export function formatCountOrDash(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
   return value.toLocaleString("pt-BR");
+}
+
+/**
+ * `123.456.789-01` → `***.***.*89-01` — every digit masked except the last
+ * two of the third group plus the check digits, matching the owner's own
+ * example verbatim (brief, 2026-09-28). Never mutates a value that is not a
+ * clean 11-digit CPF (an unexpected shape is returned unmasked rather than
+ * silently mangled — this is a display concern, not validation, and
+ * `identidade_service.normalizar_cpf` already owns the latter server-side).
+ */
+export function maskCpf(cpf: string | null | undefined): string {
+  if (!cpf) return "—";
+  const d = cpf.replace(/\D/g, "");
+  if (d.length !== 11) return cpf;
+  return `***.***.*${d[7]}${d[8]}-${d[9]}${d[10]}`;
 }

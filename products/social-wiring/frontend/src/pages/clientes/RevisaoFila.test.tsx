@@ -25,6 +25,35 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// Stub Radix Tabs with a real onValueChange/value wiring (context-based)
+// rather than depending on Radix's own pointer-event state machine in jsdom
+// — same rationale as `ClientesBoard.test.tsx`'s own Tabs stub, extended
+// with `TabsContent` (this page, unlike that board, gates real content on
+// the active value rather than its own local conditional).
+vi.mock("@/components/ui/tabs", async () => {
+  const React = await import("react");
+  const TabsCtx = React.createContext<{ value?: string; onValueChange?: (v: string) => void }>(
+    {},
+  );
+  const Tabs = ({ value, onValueChange, children }: any) =>
+    React.createElement(TabsCtx.Provider, { value: { value, onValueChange } }, children);
+  const TabsList = ({ children, ...props }: any) => React.createElement("div", props, children);
+  const TabsTrigger = ({ value, children, ...props }: any) => {
+    const ctx = React.useContext(TabsCtx);
+    return React.createElement(
+      "button",
+      { type: "button", onClick: () => ctx.onValueChange?.(value), ...props },
+      children,
+    );
+  };
+  const TabsContent = ({ value, children, ...props }: any) => {
+    const ctx = React.useContext(TabsCtx);
+    if (ctx.value !== value) return null;
+    return React.createElement("div", props, children);
+  };
+  return { Tabs, TabsList, TabsTrigger, TabsContent };
+});
+
 const mockUseRevisaoFila = vi.fn();
 const mockMerge = { mutate: vi.fn(), isPending: false, variables: undefined as any };
 const mockManterSeparados = { mutate: vi.fn(), isPending: false, variables: undefined as any };
@@ -32,6 +61,22 @@ const mockDesfazer = { mutate: vi.fn(), isPending: false, variables: undefined a
 
 const mockUseSegurosCount = vi.fn(() => ({ data: undefined, loading: false }));
 const mockMergeSeguros = { mutate: vi.fn(), isPending: false };
+
+// CPF axis (2026-09-28) — mocked for the same reason as every hook above:
+// the real ones call TanStack directly and this suite deliberately does not
+// mount a QueryClientProvider. `useRevisaoCpfFila`/`useRevisaoCpfMutations`
+// are called UNCONDITIONALLY by `RevisaoFila` (both tabs' hooks run on every
+// render, only the ACTIVE tab's content mounts) — left unmocked, they would
+// throw "No QueryClient set" even on a render that never opens the CPF tab.
+const mockUseRevisaoCpfFila = vi.fn(() => ({
+  isPending: false,
+  isFetching: false,
+  isError: false,
+  data: { items: [], total: 0, page: 1, pages: 1 },
+  refetch: vi.fn(),
+}));
+const mockCpfMerge = { mutate: vi.fn(), isPending: false, variables: undefined as any };
+const mockCpfManterSeparados = { mutate: vi.fn(), isPending: false, variables: undefined as any };
 
 vi.mock("@/hooks/useClientesRevisao", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/useClientesRevisao")>(
@@ -50,6 +95,31 @@ vi.mock("@/hooks/useClientesRevisao", async () => {
     // this suite deliberately does not mount.
     useRevisaoSegurosCount: mockUseSegurosCount,
     useMergeSeguros: () => mockMergeSeguros,
+    useRevisaoCpfFila: mockUseRevisaoCpfFila,
+    useRevisaoCpfMutations: () => ({
+      merge: mockCpfMerge,
+      manterSeparados: mockCpfManterSeparados,
+    }),
+  };
+});
+
+// `useNegociacoesDoCliente` isn't exercised by this page directly, but
+// `RevisaoCpfGrupoCard`'s per-candidate "Ver negociações" lazily calls it —
+// mocked here too so a CPF-tab test that expands a candidate never hits the
+// real TanStack hook without a provider.
+vi.mock("@/hooks/useClientes", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/useClientes")>(
+    "@/hooks/useClientes",
+  );
+  return {
+    ...actual,
+    useNegociacoesDoCliente: vi.fn(() => ({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { cliente_id: "c1", negociacoes: [], total_negociacoes: 0, candidatos_pendentes: [] },
+      refetch: vi.fn(),
+    })),
   };
 });
 
@@ -76,11 +146,16 @@ function pagina(itens: any[]) {
   };
 }
 
-async function renderPage() {
+async function renderPage(initialEntries: string[] = ["/clientes/revisao"]) {
   const React = (await import("react")).default;
   const { default: RevisaoFila } = await import("./RevisaoFila");
+  const { MemoryRouter } = await import("react-router-dom");
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(RevisaoFila)) };
+  return {
+    ...rtl.render(
+      React.createElement(MemoryRouter, { initialEntries }, React.createElement(RevisaoFila)),
+    ),
+  };
 }
 
 beforeEach(() => {
@@ -89,6 +164,17 @@ beforeEach(() => {
   mockMerge.variables = undefined;
   mockManterSeparados.isPending = false;
   mockManterSeparados.variables = undefined;
+  mockCpfMerge.isPending = false;
+  mockCpfMerge.variables = undefined;
+  mockCpfManterSeparados.isPending = false;
+  mockCpfManterSeparados.variables = undefined;
+  mockUseRevisaoCpfFila.mockReturnValue({
+    isPending: false,
+    isFetching: false,
+    isError: false,
+    data: { items: [], total: 0, page: 1, pages: 1 },
+    refetch: vi.fn(),
+  });
 });
 
 describe("RevisaoFila — loading", () => {
@@ -327,5 +413,153 @@ describe("RevisaoFila — esvaziando a fila", () => {
     fireEvent.keyDown(input, { key: "m" });
 
     expect(mockMerge.mutate).not.toHaveBeenCalled();
+  });
+});
+
+// ─── CPF axis (2026-09-28) ───────────────────────────────────────────────────
+
+function cpfCandidato(overrides: Partial<any> = {}) {
+  return { id: "cli1", nome: "Maria Silva", cpf: "12345678901", ...overrides };
+}
+
+function cpfGrupo(overrides: Partial<any> = {}) {
+  return {
+    motivo: "CPF",
+    chave_canonica: "12345678901",
+    candidatos: [cpfCandidato(), cpfCandidato({ id: "cli2", nome: "Maria S. Silva" })],
+    ...overrides,
+  };
+}
+
+describe("RevisaoFila — CPF tab", () => {
+  it("starts on the Identidade tab and switches to CPF on click", async () => {
+    mockUseRevisaoFila.mockReturnValue(pagina([grupo()]));
+    const { getByTestId, queryByTestId } = await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+
+    expect(getByTestId("revisao-grupo-card")).toBeTruthy();
+    expect(queryByTestId("revisao-cpf-grupo-card")).toBeNull();
+
+    fireEvent.click(getByTestId("revisao-tab-cpf"));
+
+    expect(queryByTestId("revisao-grupo-card")).toBeNull();
+  });
+
+  it("deep-links straight into the CPF tab via ?tab=cpf", async () => {
+    mockUseRevisaoFila.mockReturnValue(pagina([grupo()]));
+    mockUseRevisaoCpfFila.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { items: [cpfGrupo()], total: 1, page: 1, pages: 1 },
+      refetch: vi.fn(),
+    });
+    const { getByTestId } = await renderPage(["/clientes/revisao?tab=cpf"]);
+    expect(getByTestId("revisao-cpf-grupo-card")).toBeTruthy();
+  });
+
+  it("shows the empty-success state when there is nothing to review", async () => {
+    mockUseRevisaoFila.mockReturnValue(pagina([]));
+    mockUseRevisaoCpfFila.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { items: [], total: 0, page: 1, pages: 1 },
+      refetch: vi.fn(),
+    });
+    const { getByTestId, getByText, fireEvent } = { ...(await renderPage()), fireEvent: (await import("@testing-library/react")).fireEvent };
+    fireEvent.click(getByTestId("revisao-tab-cpf"));
+    expect(getByTestId("revisao-empty-success")).toBeTruthy();
+    expect(getByText("Fila de revisão vazia — tudo certo!")).toBeTruthy();
+  });
+
+  it("renders every candidate with its masked CPF, and each group's chave masked too", async () => {
+    mockUseRevisaoFila.mockReturnValue(pagina([]));
+    mockUseRevisaoCpfFila.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { items: [cpfGrupo()], total: 1, page: 1, pages: 1 },
+      refetch: vi.fn(),
+    });
+    const { getByTestId, getAllByText, fireEvent } = {
+      ...(await renderPage()),
+      fireEvent: (await import("@testing-library/react")).fireEvent,
+    };
+    fireEvent.click(getByTestId("revisao-tab-cpf"));
+
+    // 12345678901 → ***.***.*89-01 (owner's own example shape).
+    expect(getAllByText("***.***.*89-01").length).toBeGreaterThan(0);
+  });
+
+  it("requires confirming before calling merge, and sends the selected survivor", async () => {
+    mockUseRevisaoFila.mockReturnValue(pagina([]));
+    mockUseRevisaoCpfFila.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { items: [cpfGrupo()], total: 1, page: 1, pages: 1 },
+      refetch: vi.fn(),
+    });
+    const { getByTestId, getAllByTestId } = await renderPage(["/clientes/revisao?tab=cpf"]);
+    const { fireEvent } = await import("@testing-library/react");
+
+    // Pick the second candidate as survivor.
+    const radios = getAllByTestId("cpf-candidato-sobrevivente-radio");
+    fireEvent.click(radios[1]);
+
+    fireEvent.click(getByTestId("cpf-mesclar-btn"));
+    // Clicking "Mesma pessoa — unificar" opens the confirm dialog — never
+    // window.confirm, and never fires the mutation on the first click.
+    expect(mockCpfMerge.mutate).not.toHaveBeenCalled();
+    expect(getByTestId("cpf-merge-confirm")).toBeTruthy();
+
+    fireEvent.click(getByTestId("cpf-merge-confirm"));
+    expect(mockCpfMerge.mutate).toHaveBeenCalledWith(
+      { grupoId: "12345678901", clienteIdSobrevivente: "cli2" },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+    );
+  });
+
+  it("calls manterSeparados.mutate with the group's chave and filters it out on success", async () => {
+    mockUseRevisaoFila.mockReturnValue(pagina([]));
+    mockUseRevisaoCpfFila.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { items: [cpfGrupo()], total: 1, page: 1, pages: 1 },
+      refetch: vi.fn(),
+    });
+    mockCpfManterSeparados.mutate.mockImplementation((_grupoId: string, opts: any) => {
+      opts?.onSuccess?.();
+    });
+    const { getByTestId, queryByTestId } = await renderPage(["/clientes/revisao?tab=cpf"]);
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("cpf-manter-separados-btn"));
+
+    expect(mockCpfManterSeparados.mutate).toHaveBeenCalledWith(
+      "12345678901",
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    expect(queryByTestId("revisao-cpf-grupo-card")).toBeNull();
+  });
+
+  it("J/K/M/S shortcuts stay scoped to the Identidade tab (never fire CPF merge)", async () => {
+    mockUseRevisaoFila.mockReturnValue(pagina([grupo()]));
+    mockUseRevisaoCpfFila.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { items: [cpfGrupo()], total: 1, page: 1, pages: 1 },
+      refetch: vi.fn(),
+    });
+    const { getByTestId } = await renderPage(["/clientes/revisao?tab=cpf"]);
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.keyDown(window, { key: "m" });
+
+    expect(mockMerge.mutate).not.toHaveBeenCalled();
+    expect(mockCpfMerge.mutate).not.toHaveBeenCalled();
   });
 });

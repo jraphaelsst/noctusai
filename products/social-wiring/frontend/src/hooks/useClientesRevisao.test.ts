@@ -62,7 +62,10 @@ import {
   normalizeRevisaoPage,
   useRevisaoFila,
   useRevisaoMutations,
+  useRevisaoCpfFila,
+  useRevisaoCpfMutations,
   type RevisaoGrupo,
+  type RevisaoCpfGrupo,
 } from "./useClientesRevisao";
 
 beforeEach(() => {
@@ -144,5 +147,66 @@ describe("useRevisaoMutations", () => {
     const { desfazer } = useRevisaoMutations();
     await (desfazer as any).mutateAsync("m1");
     expect(mockPost).toHaveBeenCalledWith("/api/clientes/merges/m1/desfazer");
+  });
+});
+
+// ─── CPF axis (2026-09-28) ───────────────────────────────────────────────────
+
+function cpfGrupo(overrides: Partial<RevisaoCpfGrupo> = {}): RevisaoCpfGrupo {
+  return {
+    motivo: "CPF",
+    chave_canonica: "12345678901",
+    candidatos: [
+      { id: "cli1", nome: "Maria Silva", cpf: "12345678901" } as any,
+      { id: "cli2", nome: "Maria S. Silva", cpf: "12345678901" } as any,
+    ],
+    ...overrides,
+  };
+}
+
+describe("useRevisaoCpfFila", () => {
+  it("GETs /api/clientes/revisao-cpf with page/page_size", async () => {
+    mockGet.mockResolvedValue({ items: [cpfGrupo()], total: 1, page: 1, pages: 1 });
+    const hook = useRevisaoCpfFila({ page: 1, page_size: 12 }) as any;
+    const result = await hook._queryFn();
+    expect(mockGet).toHaveBeenCalledWith("/api/clientes/revisao-cpf?page=1&page_size=12");
+    expect(result.items[0].chave_canonica).toBe("12345678901");
+  });
+
+  it("GETs with no query string when no filters are given", async () => {
+    mockGet.mockResolvedValue({ items: [], total: 0, page: 1, pages: 1 });
+    const hook = useRevisaoCpfFila() as any;
+    await hook._queryFn();
+    expect(mockGet).toHaveBeenCalledWith("/api/clientes/revisao-cpf");
+  });
+});
+
+describe("useRevisaoCpfMutations", () => {
+  it("POSTs .../revisao-cpf/{grupo}/merge with the EXPLICIT survivor (unlike the identity axis)", async () => {
+    mockPost.mockResolvedValue({ cliente_id: "cli2", merged_ids: ["cli1"], merge_ids: ["m1"] });
+    const { merge } = useRevisaoCpfMutations();
+    const result = await (merge as any).mutateAsync({
+      grupoId: "12345678901",
+      clienteIdSobrevivente: "cli2",
+    });
+    expect(mockPost).toHaveBeenCalledWith("/api/clientes/revisao-cpf/12345678901/merge", {
+      cliente_id_sobrevivente: "cli2",
+    });
+    expect(result).toEqual({ cliente_id: "cli2", merged_ids: ["cli1"], merge_ids: ["m1"] });
+    // Same double-invalidation as the identity axis: a merged group must
+    // disappear from the queue AND collapse to one card on the board.
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["sw", "clientes", "revisao-cpf"],
+    });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith({
+      queryKey: ["sw", "clientes", "board"],
+    });
+  });
+
+  it("POSTs .../revisao-cpf/{grupo}/manter-separados with no body", async () => {
+    mockPost.mockResolvedValue({ cpf_normalizado: "12345678901", rejeitado: true });
+    const { manterSeparados } = useRevisaoCpfMutations();
+    await (manterSeparados as any).mutateAsync("12345678901");
+    expect(mockPost).toHaveBeenCalledWith("/api/clientes/revisao-cpf/12345678901/manter-separados");
   });
 });
