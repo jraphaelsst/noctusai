@@ -324,22 +324,28 @@ class TestSustainedConcurrentLoadGilContrast:
         Measures BOTH sides itself (rather than depending on execution order
         against the sibling control test — pytest-randomly reorders tests)
         so the relative assertion below is always exercised.
+
+        🔴 2026-09-29 DE-FLAKE: the assertion is relative to THIS SAME RUN's
+        I/O-bound baseline, never a fixed absolute ms. A fixed threshold
+        (formerly `mx > 0.15`) is runner-speed dependent — it flaked twice in
+        CI on unrelated commits (max latency 133ms then 108ms, both under the
+        150ms floor, on faster-than-usual runners) while the property it
+        exists to prove — "CPU-bound holds the GIL, I/O-bound doesn't, under
+        the IDENTICAL load shape" — is inherently a RELATIVE one. Comparing
+        against the SAME run's measured I/O-bound control (the sibling test's
+        protected case, re-measured here rather than assumed) is therefore
+        both the machine-independent form and the more faithful one.
         """
+        io_control_max = max(self._measure_io_control())
         cpu_latencies = self._measure_cpu_experiment()
         assert len(cpu_latencies) >= self.N_MSGS * 0.9
         mx = max(cpu_latencies)
-        assert mx > 0.15, (
-            f"expected the CPU-bound load to visibly stall the transport "
-            f"(max latency only {mx*1000:.0f}ms) — either the harness "
-            f"changed or CPython's GIL behavior did; re-measure before "
-            f"trusting this test either way"
-        )
-        io_control_max = max(self._measure_io_control())
         assert mx > io_control_max * 5, (
             f"CPU-bound max ({mx*1000:.0f}ms) should be dramatically worse "
-            f"than the I/O-bound control ({io_control_max*1000:.0f}ms) under "
-            f"the IDENTICAL load shape — that gap IS the GIL hypothesis; a "
-            f"small gap would mean something else is at play"
+            f"than THIS SAME run's I/O-bound baseline ({io_control_max*1000:.0f}ms) "
+            f"under the IDENTICAL load shape — that gap IS the GIL hypothesis; "
+            f"a small gap would mean either the harness changed or CPython's "
+            f"GIL behavior did — re-measure before trusting this test either way"
         )
 
 
