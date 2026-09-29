@@ -108,6 +108,9 @@ from noctusai_lib.integrations.documents import (
 )
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
+from noctusai_lib.integrations.documents.nacionalidade_civil import (
+    derivar_nacionalidade_civil,
+)
 from noctusai_lib.integrations.documents.rg import only_alnum
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
@@ -1460,6 +1463,36 @@ def _titular_do_card(
     return TitularEsperado(nome=nome, cpf=cpf)
 
 
+def _nacionalidade_atual_confirmada(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
+    """Has a human already vouched for this party's `nacionalidade`?
+
+    Consulted ONLY on the narrow path where `derivar_nacionalidade_civil`
+    might otherwise fire (this document printed no nationality of its own,
+    but carries an issuer worth deriving from) — never on the common path
+    where nothing is inferred anyway. A lookup failure degrades to `False`
+    (the derivation then goes through `aplicar_campos_ao_cliente`'s own
+    fill-empty-or-conflict rule instead of silently skipping), same
+    best-effort posture as `_titular_do_card`.
+    """
+    try:
+        rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("nacionalidade_confirmado_em")
+            .eq("org_id", str(org_id))
+            .eq("id", str(cliente_id))
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - detached job; degrade, log
+        logger.warning(
+            "extracao: nacionalidade lookup failed for %s: %s", cliente_id, exc
+        )
+        return False
+    if not rows:
+        return False
+    return not _vazio(rows[0].get("nacionalidade_confirmado_em"))
+
+
 async def extrair_identidade(
     client: Any,
     storage: StorageBackend,
@@ -1603,6 +1636,35 @@ async def extrair_identidade(
             or bool(conjuges)
             or any(v is not None for v, _, _, _ in lidos.values())
         )
+
+        # Resolves the brief this module opened alongside `nacionalidade`
+        # itself (migration 146): 12/26 of the P2 corpus's real identity
+        # documents (older CNH models, some RGs/CINs) never print the field
+        # at all. When THIS document read no nationality but did read an
+        # issuer worth deriving from (`nacionalidade_civil.py`'s closed
+        # state-civil whitelist — never RNE/RNM/CRNM/PF/MRE), and the party
+        # has no OTHER nationality on file yet, offer a `baixa`,
+        # explicitly-labelled `"inferida: ..."` suggestion through the SAME
+        # `extracao_nacionalidade*` columns and the SAME `aplicar_campos_ao_
+        # cliente` fill-empty-or-conflict rule every other CAMPO uses — a
+        # human still confirms it, exactly like any other `baixa` read.
+        # Never on a compromised transcription: an `rg_orgao` this module's
+        # own legibilidade check does not trust is not evidence worth
+        # inferring from either.
+        if (
+            not so_endereco
+            and not fields.leitura_comprometida
+            and lidos["nacionalidade"][0] is None
+            and fields.rg_orgao
+        ):
+            ja_confirmada = _nacionalidade_atual_confirmada(client, org_id, cliente_id)
+            derivado = derivar_nacionalidade_civil(
+                fields.rg_orgao,
+                nacionalidade_lida=None,
+                nacionalidade_atual_confirmada=ja_confirmada,
+            )
+            if derivado[0] is not None:
+                lidos["nacionalidade"] = (*derivado, True)
 
         # 🔴 MISFILE DETECTION — FLAGS, NEVER RETYPES (2026-09-23, owner
         # directive). Two independent signals, both content-only, both never

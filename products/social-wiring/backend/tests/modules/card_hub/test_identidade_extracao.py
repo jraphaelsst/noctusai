@@ -1019,6 +1019,116 @@ class TestNacionalidadeIsExtracted:
         assert _cliente(scoped, cid)["nacionalidade"] == "italiano"
 
 
+class TestNacionalidadeCivilDerivation:
+    """`nacionalidade_civil.derivar_nacionalidade_civil` wired into the same
+    `CAMPOS`/`aplicar_campos_ao_cliente` machinery `TestNacionalidadeIsExtracted`
+    exercises above — 12/26 of the P2 corpus's real identity documents never
+    print `NACIONALIDADE` at all, so a state-civil RG issuer is the only
+    signal some parties will ever offer."""
+
+    @staticmethod
+    def _com_rg_orgao(rg_orgao: str, **kw) -> IdentityFields:
+        return IdentityFields(
+            rg="12.345.678-9",
+            rg_confianca=ExtractionConfidence.ALTA,
+            rg_orgao=rg_orgao,
+            source=TextSource.TEXT_LAYER,
+            **kw,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_state_civil_issuer_with_no_printed_nationality_infers(
+        self, client, scoped
+    ):
+        """The brief's own example: a CNH's issuer box reads "SSP SP", the
+        document prints no `NACIONALIDADE` field anywhere."""
+        cid, did, storage = await _setup(scoped, tipo="cnh")
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_rg_orgao("SSP/SP")),
+        )
+        assert out["aplicado_ao_cliente"]["nacionalidade"] is True
+
+        row = _cliente(scoped, cid)
+        assert row["nacionalidade"] == "brasileiro"
+        assert row.get("nacionalidade_confirmado_em") is None
+
+        doc = _documento(scoped, did)
+        assert doc["extracao_nacionalidade"] == "brasileiro"
+        assert doc["extracao_nacionalidade_confianca"] == "baixa"
+        assert doc["extracao_nacionalidade_rotulo"] == "inferida: RG civil estadual (SSP)"
+
+    @pytest.mark.asyncio
+    async def test_a_federal_foreign_document_issuer_infers_nothing(
+        self, client, scoped
+    ):
+        """RNE/RNM/CRNM/PF/MRE are the Polícia Federal's own foreign-national
+        documents — never a signal that the holder is Brazilian."""
+        cid, did, storage = await _setup(scoped, tipo="rg")
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_rg_orgao("RNE")),
+        )
+        assert out["aplicado_ao_cliente"]["nacionalidade"] is False
+        assert _cliente(scoped, cid).get("nacionalidade") is None
+        assert _documento(scoped, did).get("extracao_nacionalidade") is None
+
+    @pytest.mark.asyncio
+    async def test_a_printed_nationality_on_the_same_document_wins(
+        self, client, scoped
+    ):
+        """A document that both prints its own `NACIONALIDADE` AND carries a
+        state-civil issuer never gets the guess — the printed read already
+        filled `lidos["nacionalidade"]`, so nothing is derived."""
+        cid, did, storage = await _setup(scoped, tipo="cnh")
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_rg_orgao(
+                "SSP/SP",
+                nacionalidade="italiano",
+                nacionalidade_confianca=ExtractionConfidence.ALTA,
+                nacionalidade_rotulo="NACIONALIDADE",
+            )),
+        )
+        row = _cliente(scoped, cid)
+        assert row["nacionalidade"] == "italiano"
+        assert _documento(scoped, did)["extracao_nacionalidade_rotulo"] == "NACIONALIDADE"
+
+    @pytest.mark.asyncio
+    async def test_a_human_confirmed_nationality_is_left_untouched(
+        self, client, scoped
+    ):
+        """Never contested by a low-confidence guess — no write, no
+        conflict, nothing for an admin to be notified about."""
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh",
+            cliente={
+                "nacionalidade": "italiano",
+                "nacionalidade_origem": "manual",
+                "nacionalidade_confirmado_em": "2026-01-01T00:00:00+00:00",
+            },
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_rg_orgao("SSP/SP")),
+        )
+        assert out["aplicado_ao_cliente"]["nacionalidade"] is False
+        assert out["conflitos_abertos"] == []
+        assert _cliente(scoped, cid)["nacionalidade"] == "italiano"
+
+    @pytest.mark.asyncio
+    async def test_an_unrecognised_issuer_infers_nothing(self, client, scoped):
+        """The whitelist is closed — an acronym this module does not
+        recognise is not "not on the foreign blocklist, so it must be
+        Brazilian"."""
+        cid, did, storage = await _setup(scoped, tipo="rg")
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(self._com_rg_orgao("XYZ/SP")),
+        )
+        assert _cliente(scoped, cid).get("nacionalidade") is None
+
+
 class TestDataEmissaoRidesTheDocumentNotTheClient:
     """Migration 117. `data_emissao` is deliberately NOT a `CAMPOS` entry —
     it never reaches `clientes`, only `cliente_documentos`."""
