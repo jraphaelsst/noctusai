@@ -372,3 +372,110 @@ class TestTitularWeakPositionalHeuristics:
         )
         r = find_endereco(texto)
         assert r.titular == "FERNANDA LIMA COSTA"
+
+
+class TestAddressPresenceRound3:
+    """P2, round 3 (2026-09-28): re-measured after round 2 shipped — titular
+    now reads on 5/9 (889 joined the 4 already reading), but the remaining 3
+    (888, 882, 893) fail ONE STEP EARLIER than titular: `find_endereco`
+    returns nothing `presente` at all, so the titular fallback (gated on
+    `presente`) never gets a chance to run. Two independent gaps, both
+    fixed here: an unlabelled "END:" street label (888, never in the
+    `logradouro` whitelist before) paired with an unhyphenated 8-digit CEP
+    (already matched by `_CEP_ROTULO_RE` — the hyphen was already optional),
+    and a CEP-LESS document (882, 893 — no CEP anywhere at all) whose only
+    usable signal is a street line with a número and a trailing city/UF."""
+
+    def test_888_end_label_with_an_unhyphenated_cep_on_the_same_line(self):
+        texto = (
+            "TIPO DE FORNECIMENTO:\n"
+            "CEP:  99999999        END:  AVENIDA MONTE CASTELO, 456 - BAIRRO NOVO\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.cep == "99999-999"
+        assert r.logradouro == "AVENIDA MONTE CASTELO"
+        assert r.numero == "456"
+        assert r.confianca == "alta"
+
+    def test_888_full_shape_combines_the_end_label_fix_with_round_2s_titular_fix(self):
+        """The SAME real document (888): a column-stacked block names the
+        holder right before `COD.CLIENTE:` (round 2's fix), and a SEPARATE
+        block carries the address behind an unhyphenated `CEP:`/`END:` pair
+        (this round's fix). Neither alone made the real document read
+        end-to-end; both must land together."""
+        texto = (
+            "CLIENTE:\n"
+            "PDE/RGI:\n"
+            "HIDROMETRO:\n"
+            "LACRE:\n"
+            "11223344556677\n"
+            "SOR998877665544\n"
+            "MARIA HELENA COSTA\n"
+            "COD.CLIENTE: 5566778899\n"
+            "TIPO DE FORNECIMENTO:\n"
+            "CEP:  99999999        END:  AVENIDA MONTE CASTELO, 456 - BAIRRO NOVO\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.cep == "99999-999"
+        assert r.titular == "MARIA HELENA COSTA"
+        assert r.confianca == "alta"
+
+    def test_882_cep_less_street_line_with_number_and_trailing_city_uf(self):
+        """Vision-read, no CEP anywhere in the document at all. The street
+        line carries a número and a trailing "- CIDADE - UF", with a stray
+        trailing date token ("12/25") that must never leak into `uf`."""
+        texto = (
+            "ENEL DISTRIBUICAO SAO PAULO\n"
+            "TIPO DE FORNECIMENTO: RESIDENCIAL\n"
+            "\n"
+            "PAULO HENRIQUE ARAUJO\n"
+            "ALAMEDA CAJA MIRIM, 100 - RES PALM HILLS - COTIA - SP 12/25\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.cep is None
+        assert r.logradouro == "ALAMEDA CAJA MIRIM"
+        assert r.numero == "100"
+        assert (r.cidade, r.uf) == ("COTIA", "SP")
+        assert r.confianca == "baixa"
+        assert r.titular == "PAULO HENRIQUE ARAUJO"
+
+    def test_893_cep_less_envelope_non_party_still_reads(self):
+        """P2/893: no CEP anywhere either; same no-CEP shape as 882. The
+        holder is a non-party — reading the name at all (so social-wiring
+        can flag "comprovante em nome de terceiro") is the goal."""
+        texto = (
+            "ENEL DISTRIBUICAO SAO PAULO\n"
+            "TIPO DE FORNECIMENTO: RESIDENCIAL\n"
+            "\n"
+            "REGINA APARECIDA DOS SANTOS\n"
+            "RUA DOS CRAVOS, 99 - JARDIM DAS FLORES - SAO PAULO - SP 03/26\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.cep is None
+        assert (r.cidade, r.uf) == ("SAO PAULO", "SP")
+        assert r.titular == "REGINA APARECIDA DOS SANTOS"
+
+    def test_a_street_line_with_no_city_uf_trailer_still_yields_nothing(self):
+        """The multi-line CEP-less shape (street, bairro, city/UF each on
+        their OWN line, no CEP anywhere) is deliberately NOT read — the
+        city/UF trailer must be on the SAME line as the street. Pins the
+        pre-existing `test_no_cep_no_address` contract unchanged."""
+        texto = "RUA DAS FLORES 123\nJARDIM PAULISTA\nSAO PAULO SP\n"
+        assert not find_endereco(texto).presente
+
+    def test_a_cep_less_issuer_address_is_never_read_as_the_holders(self):
+        """No CEP anywhere, AND the only street line is the issuer's own —
+        `_emissor_proximo` (CNPJ within 2 lines) excludes it exactly like it
+        already does for the CEP-anchored paths."""
+        texto = (
+            "OPTELECOM TELECOMUNICACOES LTDA\n"
+            "AVENIDA PAULISTA, 1000 - SAO PAULO - SP\n"
+            "CNPJ 11.222.333/0001-44\n"
+        )
+        r = find_endereco(texto)
+        assert not r.presente
+        assert r.titular is None

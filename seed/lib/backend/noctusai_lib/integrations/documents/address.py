@@ -151,8 +151,14 @@ _EMISSOR_JANELA_LINHAS = 2
 #: Labelled-mode field labels (normalised). Each must start the value's line
 #: or follow at least two spaces / a separator, so "RUA" inside a street name
 #: never re-opens a field.
+#:
+#: P2 round 3 (2026-09-28): `END` joins the alternation — a text-layer water
+#: bill labels its street `END:` (the common Brazilian abbreviation), never
+#: spelled out, and the "2+ spaces / start-of-line / pipe" boundary this
+#: group already requires before the label keeps a mid-word "END" (a real
+#: word fragment, e.g. "APPEND") from ever re-opening the field.
 _ROTULOS = {
-    "logradouro": r"(?:ENDERECO(?:\s+(?:DE\s+(?:ENTREGA|CORRESPONDENCIA|INSTALACAO|COBRANCA)|DA\s+UNIDADE(?:\s+CONSUMIDORA)?|DO\s+IMOVEL|RESIDENCIAL|DO\s+CLIENTE))?|LOGRADOURO|LOCAL\s+DE\s+(?:INSTALACAO|ENTREGA|CONSUMO))",
+    "logradouro": r"(?:ENDERECO(?:\s+(?:DE\s+(?:ENTREGA|CORRESPONDENCIA|INSTALACAO|COBRANCA)|DA\s+UNIDADE(?:\s+CONSUMIDORA)?|DO\s+IMOVEL|RESIDENCIAL|DO\s+CLIENTE))?|END|LOGRADOURO|LOCAL\s+DE\s+(?:INSTALACAO|ENTREGA|CONSUMO))",
     "numero": r"(?:NUMERO|NUM|N[O°º])",
     "complemento": r"(?:COMPLEMENTO|COMPL)",
     "bairro": r"(?:BAIRRO|DISTRITO)",
@@ -210,6 +216,12 @@ def _e_nome_de_pessoa(candidato: Optional[str]) -> bool:
     )
 
 
+#: A trailing noise token a vision read sometimes appends after the UF — a
+#: stray "99/99" (often a truncated date) with nothing else on the line
+#: after it. Stripped before the city/UF split so it never leaks into `uf`.
+_RUIDO_FINAL_RE = re.compile(r"\s+\d{1,4}\s*/\s*\d{1,4}\s*$")
+
+
 #: Where a labelled value stops: two+ spaces, a pipe, or another label.
 _PARADA = r"(?=\s{2,}|\s*\||\s+(?:CEP|BAIRRO|CIDADE|MUNICIPIO|UF|ESTADO|COMPLEMENTO|NUMERO)\b\s*[:\-]|$)"
 
@@ -243,8 +255,14 @@ class EnderecoLido:
 
     @property
     def presente(self) -> bool:
-        """A usable address: a CEP plus a street at least."""
-        return bool(self.cep and self.logradouro)
+        """A usable address: a CEP plus a street at least — OR, when the
+        document carries no CEP anywhere at all (P2 round 3, 2026-09-28: two
+        vision-read bills never print one), a street WITH a número and a
+        city/UF, read by `_sem_cep`. `cep` is never guessed to satisfy this;
+        a street alone (no número, no city/UF) still does not count."""
+        if self.cep and self.logradouro:
+            return True
+        return bool(self.logradouro and self.numero and self.cidade and self.uf)
 
 
 _NADA = EnderecoLido()
@@ -627,18 +645,73 @@ def _titular_por_heuristicas_fracas(t: _Texto) -> Optional[str]:
     return None
 
 
+def _sem_cep(t: _Texto) -> EnderecoLido:
+    """A CEP-less address — no CEP anywhere in the whole document at all
+    (P2 round 3, 2026-09-28: two vision-read bills never print one). A
+    single street-type line carrying a NUMBER and a trailing "- CIDADE - UF"
+    (or "CIDADE/UF", the SAME split `_ler_bloco`'s own single-line form
+    uses) is read as a PARTIAL address: `cep` stays `None`, NEVER guessed
+    from anything else, and `confianca` is always `baixa`. A trailing noise
+    token right after the UF (a stray "99/99") is stripped first, so it
+    never leaks into `uf`. Guarded the same way every other positional read
+    here is: never the issuer's own address line (`_emissor_proximo`), never
+    a street alone with no city/UF trailer at all (that would fire on
+    `test_no_cep_no_address`'s multi-line shape, which this deliberately
+    does NOT read — the city/UF must be on the SAME line as the street).
+
+    Only ever consulted by `find_endereco` when neither `_rotulado` nor
+    `_envelope` found anything `presente` — a CEP-anchored read always wins
+    first.
+    """
+    for idx, (base, linha) in enumerate(t.linhas):
+        corpo = linha.rstrip()
+        if not _TIPO_RE.match(corpo.strip()):
+            continue
+        if _emissor_proximo(t, idx):
+            continue
+        recuo = len(linha) - len(linha.lstrip())
+        sem_ruido = _RUIDO_FINAL_RE.sub("", corpo)
+        segs = [s.strip() for s in re.split(r"\s+-\s+|\s*/\s*|,", sem_ruido) if s.strip()]
+        if len(segs) < 2 or segs[-1] not in UFS:
+            continue
+        uf = segs[-1]
+        cid_txt = segs[-2]
+        pos = sem_ruido.rfind(cid_txt)
+        if pos < 0:
+            continue
+        cidade = t.literal(base + pos, base + pos + len(cid_txt))
+        corpo_rua = sem_ruido[recuo:pos].rstrip(" -,")
+        partes = _parse_logradouro(t, base + recuo, corpo_rua)
+        if not (partes.get("logradouro") and partes.get("numero") and cidade):
+            continue
+        return EnderecoLido(
+            cep=None,
+            logradouro=partes.get("logradouro"),
+            numero=partes.get("numero"),
+            complemento=partes.get("complemento"),
+            bairro=partes.get("bairro"),
+            cidade=cidade,
+            uf=uf,
+            titular=None,
+            confianca="baixa",
+            rotulo="SEM_CEP",
+        )
+    return _NADA
+
+
 def find_endereco(text: str) -> EnderecoLido:
     """The holder's address off a comprovante, or an empty `EnderecoLido`.
 
     Labelled layout first (exact labels, `alta` when a CEP is present);
-    otherwise the CEP-anchored envelope block (`baixa` — positional). When
-    the address is `presente` but no titular was found by either primary
-    path, `_titular_por_heuristicas_fracas` tries three weaker, document-wide
-    heuristics before giving up — see that function's own docstring.
-    `logradouro`'s leading street-type token is expanded to its full DNE
-    form (G18 — `normalizar_tipo_logradouro`); every other part stays a
-    literal slice of the caller's text, per the module docstring. Never
-    raises.
+    otherwise the CEP-anchored envelope block (`baixa` — positional); when
+    neither found anything, `_sem_cep`'s CEP-less street+number+city/UF
+    read (`baixa`, `cep=None`). When the address is `presente` but no
+    titular was found by any of the three, `_titular_por_heuristicas_fracas`
+    tries three weaker, document-wide heuristics before giving up — see that
+    function's own docstring. `logradouro`'s leading street-type token is
+    expanded to its full DNE form (G18 — `normalizar_tipo_logradouro`);
+    every other part stays a literal slice of the caller's text, per the
+    module docstring. Never raises.
     """
     if not text or not text.strip():
         return _NADA
@@ -646,6 +719,8 @@ def find_endereco(text: str) -> EnderecoLido:
     lido = _rotulado(t)
     if lido is None:
         lido = _envelope(t)
+    if not lido.presente:
+        lido = _sem_cep(t)
     if not lido.presente:
         return _NADA
     if not lido.titular:
