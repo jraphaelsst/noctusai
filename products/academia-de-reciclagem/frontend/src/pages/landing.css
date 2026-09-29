@@ -364,65 +364,77 @@
 }
 
 /* ── noc addition: /coleta — calendário de coleta por município ──
-   A lookup page, not a reading page: the search box and the weekday strip
-   carry the answer, so they get the weight. Weekday chips stay a fixed
-   Seg→Dom row so a reader compares rows by column position at a glance;
-   "hoje" is an outline on the chip, "passa hoje" the one filled badge. */
-.academia-landing .coleta-section { padding-top:56px; }
-.academia-landing .coleta-busca { display:flex; align-items:center; gap:12px; max-width:720px; padding:6px 20px; background:hsl(var(--card)); border:1px solid hsl(var(--border)); border-radius:999px; color:hsl(var(--muted-foreground)); box-shadow:5px 5px 0 hsl(var(--accent) / .35); }
-.academia-landing .coleta-busca:focus-within { border-color:hsl(var(--accent)); }
-.academia-landing .coleta-busca input { flex:1; min-width:0; border:0; outline:0; background:transparent; padding:14px 0; font:inherit; font-size:1.05rem; color:hsl(var(--foreground)); }
-.academia-landing .coleta-cidades { display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:10px; margin:44px 0 18px; }
-.academia-landing .coleta-cidade { display:flex; flex-direction:column; gap:4px; padding:16px 18px; border:1px solid hsl(var(--border)); border-radius:12px; background:hsl(var(--card)); color:hsl(var(--primary)); text-decoration:none; transition:transform .2s ease, border-color .2s ease; }
-.academia-landing .coleta-cidade:hover { transform:translateY(-2px); border-color:hsl(var(--accent)); }
-.academia-landing .coleta-cidade.is-ativa { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); border-color:hsl(var(--primary)); }
-.academia-landing .coleta-cidade-nome { font-family:var(--app-font-serif); font-weight:600; font-size:1.2rem; letter-spacing:-.02em; }
-.academia-landing .coleta-cidade-cobertura { font-family:var(--app-font-mono); font-size:.6rem; letter-spacing:.1em; text-transform:uppercase; opacity:.7; }
-.academia-landing .coleta-municipio { margin-top:34px; scroll-margin-top:120px; }
-.academia-landing #municipio { scroll-margin-top:120px; }
-.academia-landing .coleta-municipio-nome { color:hsl(var(--primary)); font-size:clamp(2.4rem, 4.4vw, 3.8rem); margin:10px 0 16px; }
-.academia-landing .coleta-operador { font-size:.8rem; color:hsl(var(--muted-foreground)); margin:10px 0 0; }
-.academia-landing .coleta-aviso { display:flex; gap:14px; align-items:flex-start; margin:26px 0 0; padding:16px 20px; border-left:3px solid hsl(var(--accent)); background:hsl(39 31% 88%); color:hsl(var(--primary)); font-size:.88rem; line-height:1.55; }
-.academia-landing .coleta-aviso svg { flex-shrink:0; margin-top:2px; color:hsl(var(--accent)); }
-.academia-landing .coleta-aviso ul { margin:0; padding-left:16px; display:flex; flex-direction:column; gap:6px; }
-.academia-landing .coleta-bloco { margin-top:38px; }
-.academia-landing .coleta-bloco-titulo { font-family:var(--app-font-mono); font-size:.72rem; font-weight:500; letter-spacing:.12em; text-transform:uppercase; color:hsl(var(--accent)); margin:0 0 14px; }
-.academia-landing .coleta-rotas { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
-.academia-landing .coleta-rota, .academia-landing .coleta-resultado { padding:16px 20px; border:1px solid hsl(var(--border)); border-radius:12px; background:hsl(var(--card)); }
-.academia-landing .coleta-rota-head { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; flex-wrap:wrap; }
-.academia-landing .coleta-setor { font-family:var(--app-font-serif); font-weight:600; font-size:1.08rem; color:hsl(var(--primary)); letter-spacing:-.01em; }
-.academia-landing .coleta-meta { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:6px; font-size:.74rem; }
-.academia-landing .coleta-tipo { display:inline-flex; align-items:center; gap:5px; color:hsl(var(--muted-foreground)); }
-.academia-landing .coleta-tipo.is-seletiva { color:hsl(var(--primary)); font-weight:600; }
-.academia-landing .coleta-periodo { padding:2px 9px; border-radius:999px; background:hsl(var(--secondary)); color:hsl(var(--primary)); }
-.academia-landing .coleta-hoje { padding:2px 9px; border-radius:999px; background:hsl(var(--accent)); color:hsl(var(--accent-foreground)); font-weight:700; }
-.academia-landing .coleta-resultado-municipio { color:hsl(var(--primary)); font-weight:700; }
-.academia-landing .coleta-dias { display:flex; gap:4px; flex-shrink:0; }
-.academia-landing .coleta-dia { width:38px; padding:6px 0; text-align:center; border-radius:6px; font-family:var(--app-font-mono); font-size:.64rem; color:hsl(var(--muted-foreground) / .55); background:hsl(var(--muted) / .45); border:1px solid transparent; }
-.academia-landing .coleta-dia.is-on { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); }
-.academia-landing .coleta-dia.is-hoje { border-color:hsl(var(--accent)); }
-.academia-landing .coleta-bairros { margin:10px 0 0; font-size:.88rem; line-height:1.6; color:hsl(var(--foreground)); }
-.academia-landing .coleta-nota { margin:8px 0 0; font-size:.76rem; color:hsl(var(--muted-foreground)); }
-.academia-landing .coleta-pontos { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:10px; }
-.academia-landing .coleta-ponto { display:flex; flex-direction:column; gap:6px; padding:16px 18px; border-top:2px solid hsl(var(--primary)); background:hsl(var(--card)); font-size:.84rem; color:hsl(var(--primary)); }
-.academia-landing .coleta-ponto-linha { display:flex; gap:7px; align-items:flex-start; color:hsl(var(--foreground)); }
-.academia-landing .coleta-ponto-linha svg { flex-shrink:0; margin-top:3px; }
-.academia-landing .coleta-ponto-aceita { font-size:.76rem; color:hsl(var(--muted-foreground)); line-height:1.5; }
-.academia-landing .coleta-contatos { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; font-size:.88rem; }
-.academia-landing .coleta-contatos a, .academia-landing .coleta-fontes a, .academia-landing .coleta-vazio a { color:hsl(var(--primary)); font-weight:600; }
-.academia-landing .coleta-fontes { margin-top:40px; padding-top:20px; border-top:1px solid hsl(var(--border)); }
-.academia-landing .coleta-fontes ul { list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:8px; font-size:.8rem; }
-.academia-landing .coleta-fonte-meta { color:hsl(var(--muted-foreground)); font-family:var(--app-font-mono); font-size:.66rem; }
-.academia-landing .coleta-vazio { margin:18px 0 0; color:hsl(var(--muted-foreground)); font-size:.95rem; line-height:1.6; }
-.academia-landing .coleta-contribuir { margin-top:70px; padding:30px; border-radius:14px; background:hsl(var(--accent)); color:hsl(var(--accent-foreground)); display:flex; justify-content:space-between; align-items:center; gap:24px; flex-wrap:wrap; }
-.academia-landing .coleta-contribuir p { margin:0; max-width:560px; line-height:1.6; font-size:.95rem; }
-.academia-landing .coleta-contribuir .join-link { margin-top:0; }
+   Answer-first and quiet: one narrow column, the search in the hero, and
+   every secondary fact behind a <details>. Few colours — primary for the
+   answer, muted for context, the accent only for "hoje". */
+.academia-landing .coleta-coluna { max-width:760px; }
+.academia-landing .coleta-hero { background:hsl(var(--primary)); color:hsl(var(--primary-foreground)); padding:170px 0 56px; }
+.academia-landing .coleta-hero .eyebrow { color:var(--brand-gold); margin-bottom:14px; }
+.academia-landing .coleta-titulo { font-size:clamp(2.6rem, 6vw, 4.2rem); margin:0; }
+.academia-landing .coleta-sub { color:hsl(42 25% 82%); font-size:1rem; margin:14px 0 26px; }
+.academia-landing .coleta-busca { display:flex; align-items:center; gap:12px; padding:4px 20px; background:hsl(var(--card)); border-radius:999px; color:hsl(var(--muted-foreground)); box-shadow:0 10px 30px hsl(157 28% 8% / .25); }
+.academia-landing .coleta-busca input { flex:1; min-width:0; border:0; outline:0; background:transparent; padding:15px 0; font:inherit; font-size:1.05rem; color:hsl(var(--foreground)); }
+.academia-landing .coleta-corpo { padding:36px 0 90px; }
+.academia-landing .coleta-muted { color:hsl(var(--muted-foreground)); font-size:.85rem; }
+.academia-landing .coleta-vazio { color:hsl(var(--muted-foreground)); font-size:.95rem; line-height:1.6; margin:0; }
+.academia-landing .coleta-vazio a, .academia-landing .coleta-rodape a, .academia-landing .coleta-card-onde a,
+.academia-landing .coleta-extra a { color:hsl(var(--primary)); font-weight:600; }
+.academia-landing .coleta-hoje { flex-shrink:0; padding:2px 9px; border-radius:999px; background:hsl(var(--accent)); color:hsl(var(--accent-foreground)); font-size:.7rem; font-weight:700; }
+
+/* search results */
+.academia-landing .coleta-resultados { margin-bottom:34px; display:flex; flex-direction:column; gap:10px; }
+.academia-landing .coleta-cards { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.academia-landing .coleta-card { padding:16px 20px; background:hsl(var(--card)); border:1px solid hsl(var(--border)); border-radius:14px; }
+.academia-landing .coleta-card-topo { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.academia-landing .coleta-card-nome { font-family:var(--app-font-serif); font-size:1.15rem; color:hsl(var(--primary)); letter-spacing:-.01em; }
+.academia-landing .coleta-card-onde { font-size:.8rem; color:hsl(var(--muted-foreground)); margin-top:2px; }
+.academia-landing .coleta-linhas { margin:12px 0 0; display:flex; flex-direction:column; gap:6px; }
+.academia-landing .coleta-linhas > div { display:grid; grid-template-columns:110px 1fr; gap:10px; font-size:.95rem; }
+.academia-landing .coleta-linhas dt { color:hsl(var(--muted-foreground)); }
+.academia-landing .coleta-linhas dd { margin:0; font-weight:600; color:hsl(var(--foreground)); }
+
+/* city chips */
+.academia-landing .coleta-cidades { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:30px; }
+.academia-landing .coleta-chip { padding:8px 15px; border:1px solid hsl(var(--border)); border-radius:999px; color:hsl(var(--primary)); text-decoration:none; font-size:.85rem; font-weight:600; background:hsl(var(--card)); transition:border-color .2s ease; }
+.academia-landing .coleta-chip:hover { border-color:hsl(var(--accent)); }
+.academia-landing .coleta-chip.is-ativa { background:hsl(var(--primary)); border-color:hsl(var(--primary)); color:hsl(var(--primary-foreground)); }
+
+/* city panel */
+.academia-landing #cidade { scroll-margin-top:110px; }
+.academia-landing .coleta-cidade-topo { margin-bottom:6px; }
+.academia-landing .coleta-cidade-titulo { font-family:var(--app-font-serif); font-weight:600; font-size:2rem; letter-spacing:-.03em; color:hsl(var(--primary)); margin:0 0 4px; }
+.academia-landing .coleta-resumo { font-size:1rem; line-height:1.65; margin:20px 0 0; }
+.academia-landing .coleta-bloco { margin-top:26px; }
+.academia-landing .coleta-bloco-titulo { font-size:.8rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:hsl(var(--muted-foreground)); margin:0 0 10px; }
+.academia-landing .coleta-grupos { list-style:none; margin:0; padding:0; border:1px solid hsl(var(--border)); border-radius:14px; background:hsl(var(--card)); overflow:hidden; }
+.academia-landing .coleta-grupos > li + li { border-top:1px solid hsl(var(--border)); }
+.academia-landing .coleta-grupo summary, .academia-landing .coleta-extra summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:12px; }
+.academia-landing .coleta-grupo summary::-webkit-details-marker, .academia-landing .coleta-extra summary::-webkit-details-marker { display:none; }
+.academia-landing .coleta-grupo summary { padding:15px 18px; }
+.academia-landing .coleta-grupo-quando { flex:1; display:flex; flex-direction:column; gap:1px; min-width:0; }
+.academia-landing .coleta-grupo-dias { font-weight:600; color:hsl(var(--primary)); }
+.academia-landing .coleta-grupo-periodo { font-size:.82rem; color:hsl(var(--muted-foreground)); }
+.academia-landing .coleta-grupo-qtd { font-size:.78rem; color:hsl(var(--muted-foreground)); white-space:nowrap; }
+.academia-landing .coleta-chevron { flex-shrink:0; color:hsl(var(--muted-foreground)); transition:transform .2s ease; }
+.academia-landing details[open] > summary .coleta-chevron { transform:rotate(180deg); }
+.academia-landing .coleta-grupo-bairros { margin:0; padding:0 18px 14px; font-size:.86rem; line-height:1.7; color:hsl(var(--foreground)); }
+.academia-landing .coleta-nota { margin:0; padding:0 18px 14px; font-size:.78rem; color:hsl(var(--muted-foreground)); }
+
+/* collapsed extras */
+.academia-landing .coleta-extras { margin-top:30px; border-top:1px solid hsl(var(--border)); }
+.academia-landing .coleta-extra { border-bottom:1px solid hsl(var(--border)); }
+.academia-landing .coleta-extra summary { justify-content:space-between; padding:15px 2px; font-weight:600; color:hsl(var(--primary)); }
+.academia-landing .coleta-extra-corpo { padding:0 2px 18px; font-size:.88rem; line-height:1.6; }
+.academia-landing .coleta-extra-corpo p { margin:0 0 10px; }
+.academia-landing .coleta-pontos, .academia-landing .coleta-contatos, .academia-landing .coleta-fontes, .academia-landing .coleta-avisos { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:12px; }
+.academia-landing .coleta-pontos li, .academia-landing .coleta-contatos li { display:flex; flex-direction:column; gap:2px; }
+.academia-landing .coleta-avisos { gap:6px; margin-bottom:14px; }
+.academia-landing .coleta-avisos li { padding-left:12px; border-left:2px solid hsl(var(--accent)); }
+.academia-landing .coleta-fontes { gap:6px; }
+.academia-landing .coleta-rodape { margin:44px 0 0; font-size:.88rem; color:hsl(var(--muted-foreground)); }
+.academia-landing .coleta-rodape a { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
 
 @media (max-width: 800px) {
-  .academia-landing .coleta-section { padding-top:36px; }
-  .academia-landing .coleta-cidades { grid-template-columns:1fr 1fr; }
-  .academia-landing .coleta-rota-head { flex-direction:column; gap:10px; }
-  .academia-landing .coleta-dias { width:100%; }
-  .academia-landing .coleta-dia { flex:1; width:auto; }
+  .academia-landing .coleta-hero { padding:130px 0 40px; }
+  .academia-landing .coleta-linhas > div { grid-template-columns:1fr; gap:0; }
 }
-.academia-landing .coleta-frequencia { font-family:var(--app-font-mono); font-size:.7rem; color:hsl(var(--muted-foreground)); padding:6px 10px; border:1px dashed hsl(var(--border)); border-radius:6px; }

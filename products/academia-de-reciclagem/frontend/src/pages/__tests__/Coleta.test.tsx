@@ -38,24 +38,36 @@ describe("Coleta", () => {
     }
   });
 
-  it("shows a município's schedule, caveats and sources at /coleta/<slug>", () => {
+  it("groups a city's schedule by day pattern, with sources collapsed", () => {
     renderAt("/coleta/carapicuiba");
     const painel = screen.getByTestId("coleta-municipio-carapicuiba");
-    expect(within(painel).getByText(/Setor 24/)).toBeInTheDocument();
-    expect(within(painel).getByText(/Setor 25/)).toBeInTheDocument();
-    expect(within(painel).getByText("fontes")).toBeInTheDocument();
+    const dias = within(painel).getAllByTestId("coleta-grupo").map((g) => g.querySelector(".coleta-grupo-dias")?.textContent);
+    expect(dias).toContain("Segunda, quarta e sexta");
+    expect(dias).toContain("Terça, quinta e sábado");
+    // 30 setores collapse to a handful of patterns.
+    expect(dias.length).toBeLessThan(6);
+    expect(within(painel).getByTestId("coleta-sobre")).not.toHaveAttribute("open");
   });
 
   it("every município declares at least one source (no unsourced schedule ships)", () => {
     for (const m of MUNICIPIOS) expect(m.fontes.length).toBeGreaterThan(0);
   });
 
-  it("search finds the Fazendinha split with both day-sets", () => {
+  it("search answers in one line per kind of coleta", () => {
     renderAt("/coleta");
     fireEvent.change(screen.getByTestId("coleta-busca"), { target: { value: "Nova Fazendinha" } });
     const [primeiro] = screen.getAllByTestId("coleta-resultado");
     expect(primeiro).toHaveTextContent("Carapicuíba");
-    expect(within(primeiro).getByLabelText(/segunda-feira, quarta-feira, sexta-feira/)).toBeInTheDocument();
+    expect(primeiro).toHaveTextContent("Lixo comum");
+    expect(primeiro).toHaveTextContent("Seg · Qua · Sex, manhã e tarde");
+  });
+
+  it("a street split across setores shows both day-sets", () => {
+    renderAt("/coleta");
+    fireEvent.change(screen.getByTestId("coleta-busca"), { target: { value: "Estrada da Fazendinha" } });
+    const textos = screen.getAllByTestId("coleta-resultado").map((c) => c.textContent ?? "");
+    expect(textos.some((t) => t.includes("Seg · Qua · Sex"))).toBe(true);
+    expect(textos.some((t) => t.includes("Ter · Qui · Sáb"))).toBe(true);
   });
 
   it("an unknown place offers the contribute link instead of an empty list", () => {
