@@ -1773,6 +1773,19 @@ async def extrair_identidade(
         )
         conflitos += abertos
 
+        # A CPF read now may be the key a matrícula qualificação was waiting
+        # for (it was segmented before this person's documents existed) —
+        # re-link it so profissão/nacionalidade/RG from the registry act reach
+        # this cliente. Local import: qualificacao_service imports this module.
+        cpf_lido = re.sub(r"\D", "", str(fields.cpf or ""))
+        if len(cpf_lido) == 11 and not fields.leitura_comprometida:
+            try:
+                from app.modules.matriculas.qualificacao_service import revincular_pendentes
+
+                revincular_pendentes(client, org_id, cpf_normalizado=cpf_lido)
+            except Exception:  # noqa: BLE001 — never fail an identity read on a re-link
+                logger.exception("revincular matrícula qualificações falhou para %s", cliente_id)
+
         if endereco is not None:
             # Same leitura_comprometida gate as every field above — the
             # address group is written/conflicted as one unit

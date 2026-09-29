@@ -235,6 +235,61 @@ class TestAutoApplyOnVincular:
         assert scoped.table("cliente_campo_conflitos").select("*").execute().data == []
 
 
+class TestRevincularPendentes:
+    """P2 (2026-09-29): a matrícula is often segmented BEFORE the sellers'
+    identity documents are read, so its qualificações land
+    `sem_correspondencia`. Once a cliente carries the CPF, the link and the
+    fill-empty must follow without a human or a batch job."""
+
+    def test_a_cpf_that_arrives_later_links_and_applies_on_the_next_read(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_QUALIFICACAO)
+        seed(scoped, extracoes=[ext])  # no clientes yet
+        jose = _por_cpf(_atos(client, ext["id"])["qualificacoes"])[CPF_JOSE]
+        assert jose["vinculo_status"] == "sem_correspondencia"
+
+        cliente_jose = cliente_row(cpf=CPF_JOSE)
+        scoped.table("clientes").insert(cliente_jose).execute()
+
+        jose = _por_cpf(_atos(client, ext["id"])["qualificacoes"])[CPF_JOSE]
+        assert jose["vinculo_status"] == "vinculado"
+        cliente_atual = (
+            scoped.table("clientes").select("*").eq("id", cliente_jose["id"]).execute().data[0]
+        )
+        assert cliente_atual["profissao"] == "comerciante"
+        assert cliente_atual["profissao_confirmado_por"] is None
+
+    def test_the_identity_hook_relinks_by_cpf_directly(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_QUALIFICACAO)
+        seed(scoped, extracoes=[ext])
+        _atos(client, ext["id"])
+        cliente_camila = cliente_row(cpf=CPF_CAMILA)
+        scoped.table("clientes").insert(cliente_camila).execute()
+
+        n = qsvc.revincular_pendentes(scoped, UUID(ORG_ID), cpf_normalizado="66677788830")
+
+        assert n == 1
+        cliente_atual = (
+            scoped.table("clientes").select("*").eq("id", cliente_camila["id"]).execute().data[0]
+        )
+        assert cliente_atual["profissao"] == "arquiteta"
+
+    def test_still_unmatched_rows_are_left_alone(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_QUALIFICACAO)
+        seed(scoped, extracoes=[ext])
+        _atos(client, ext["id"])
+        assert qsvc.revincular_pendentes(scoped, UUID(ORG_ID)) == 0
+
+    def test_two_clientes_with_the_cpf_stay_ambiguous(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_QUALIFICACAO)
+        seed(scoped, extracoes=[ext])
+        _atos(client, ext["id"])
+        scoped.table("clientes").insert(cliente_row(cpf=CPF_JOSE)).execute()
+        scoped.table("clientes").insert(cliente_row(cpf=CPF_JOSE)).execute()
+
+        jose = _por_cpf(_atos(client, ext["id"])["qualificacoes"])[CPF_JOSE]
+        assert jose["vinculo_status"] != "vinculado"
+
+
 class TestBackfillAplicarCamposVinculados:
     """The catch-up for a `vinculado` row written before the hook above
     existed — a legacy row seeded directly (bypassing `persistir_sugestoes`

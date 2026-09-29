@@ -95,6 +95,7 @@ from app.modules.card_hub.identidade_extracao_service import (
     aplicar_campos_ao_cliente,
     notificar_conflitos,
 )
+from app.modules.card_hub.services import atendimentos_abertos_certificaveis
 from app.services import table_reads
 from app.services.documento_store import now_iso
 
@@ -102,6 +103,8 @@ logger = logging.getLogger(__name__)
 
 TABLE = "matricula_qualificacoes"
 CLIENTES_TABLE = "clientes"
+EXTRACOES_TABLE = "matricula_extracoes"
+ATENDIMENTO_NEGOCIACAO_TABLE = "atendimento_negociacao"
 
 #: Where a matrícula-sourced value's `<campo>_origem` reads on `clientes` —
 #: distinct from a `tipo_documento` value (`'rg'`, `'cpf'`, ...) because this
@@ -223,21 +226,87 @@ def _clientes_por_cpf(client: Any, org_id: Any) -> dict[str, list[str]]:
     return out
 
 
+def _codigo_da_extracao(client: Any, org_id: Any, extracao_id: str) -> Optional[str]:
+    """`matricula_extracoes.codigo` for one extraction, or `None` (unlinked
+    to an imóvel yet — migration 150). Used only by the ambiguous-CPF tie
+    -break below; a `sem_correspondencia`/`vinculado` outcome never needs it."""
+    rows = (
+        _t(client, EXTRACOES_TABLE)
+        .select("codigo")
+        .eq("org_id", str(org_id))
+        .eq("id", str(extracao_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return (rows[0].get("codigo") if rows else None) or None
+
+
+def _candidatos_no_imovel(
+    client: Any, org_id: Any, extracao_id: str, candidatos: list[str]
+) -> list[str]:
+    """Of `candidatos` (2+ clientes sharing one CPF/CNPJ — the chained-deal,
+    same-person-two-cards shape), the ones who are a party on an OPEN
+    atendimento whose own negociação (`atendimento_negociacao.imovel_codigo`)
+    is THIS matrícula's imóvel (`matricula_extracoes.codigo`) — both are the
+    same uppercase-canonical form (`estrutura_service.vincular_imovel`,
+    `negociacao_service._canonizar_imovel`), so a plain equality is exact.
+    Reuses `atendimentos_abertos_certificaveis` (titular OR parte OR a
+    vendedor's registered cônjuge) rather than re-deriving "which
+    atendimentos is this cliente on" a second way.
+    """
+    codigo = _codigo_da_extracao(client, org_id, extracao_id)
+    if not codigo:
+        return []
+    codigo = codigo.strip().upper()
+    escopados: list[str] = []
+    for cliente_id in candidatos:
+        atendimento_ids = atendimentos_abertos_certificaveis(client, org_id, UUID(cliente_id))
+        if not atendimento_ids:
+            continue
+        negociacoes = (
+            _t(client, ATENDIMENTO_NEGOCIACAO_TABLE)
+            .select("atendimento_id,imovel_codigo")
+            .eq("org_id", str(org_id))
+            .in_("atendimento_id", atendimento_ids)
+            .execute()
+        ).data or []
+        if any(
+            (n.get("imovel_codigo") or "").strip().upper() == codigo
+            for n in negociacoes
+        ):
+            escopados.append(cliente_id)
+    return escopados
+
+
 def _vincular(
-    normalizado: str, por_cpf: dict[str, list[str]]
+    client: Any,
+    org_id: Any,
+    extracao_id: str,
+    normalizado: str,
+    por_cpf: dict[str, list[str]],
 ) -> tuple[Optional[str], str]:
     """`(cliente_id, vinculo_status)` for one normalised CPF/CNPJ — the
-    three-outcome contract migration 137's header names. Never picks one of
-    several matches."""
+    three-outcome contract migration 137's header names.
+
+    2+ candidates (the CPF-review "same person, two cliente cards" shape)
+    first try the imóvel-scoping tie-break above (owner directive,
+    2026-09-29): exactly one candidate on the matrícula's own imóvel wins;
+    zero or more than one still stays `ambiguo` for a human — never picked
+    by a second heuristic on top of the first.
+    """
     candidatos = por_cpf.get(normalizado) or []
     if len(candidatos) == 1:
         return candidatos[0], VINCULADO
     if len(candidatos) > 1:
+        escopados = _candidatos_no_imovel(client, org_id, extracao_id, candidatos)
+        if len(escopados) == 1:
+            return escopados[0], VINCULADO
         return None, AMBIGUO
     return None, SEM_CORRESPONDENCIA
 
 
 def _linha(
+    client: Any,
     org_id: str,
     extracao_id: str,
     consolidada: QualificacaoConsolidada,
@@ -247,7 +316,7 @@ def _linha(
     normalizado = _digitos(q.cpf_cnpj)
     if not normalizado:
         return None  # mesclar_qualificacoes never emits this; defensive only
-    cliente_id, vinculo = _vincular(normalizado, por_cpf)
+    cliente_id, vinculo = _vincular(client, org_id, extracao_id, normalizado, por_cpf)
     return {
         "id": str(uuid4()),
         "org_id": org_id,
@@ -311,7 +380,7 @@ def persistir_sugestoes(
     org = str(org_id)
     linhas = [
         linha
-        for linha in (_linha(org, str(extracao_id), c, por_cpf) for c in consolidadas)
+        for linha in (_linha(db, org, str(extracao_id), c, por_cpf) for c in consolidadas)
         if linha is not None
     ]
     if linhas:
@@ -347,6 +416,72 @@ def linhas_da_extracao(client: Any, org_id: Any, extracao_id: Any) -> list[dict]
     )
 
 
+def revincular_pendentes(
+    client: Any,
+    org_id: Any,
+    *,
+    linhas: Optional[list[dict]] = None,
+    cpf_normalizado: Optional[str] = None,
+) -> int:
+    """Re-resolve qualificações that are still unlinked
+    (`sem_correspondencia` / `ambiguo`) against the org's CURRENT clientes,
+    and fill-empty the newly `vinculado` ones (`_aplicar_automatico`).
+
+    Why (measured on prod, P2 2026-09-29): the vínculo was computed once, at
+    segmentation — which in practice runs BEFORE the sellers' identity
+    documents are read, so no cliente carried the CPF yet. 13 of 26
+    `sem_correspondencia` rows matched a cliente by CPF a day later, and the
+    contract gate still reported every seller's profissão missing although
+    the matrícula carries it. Nothing re-computed the link.
+
+    `linhas` narrows to one extraction's rows (the on-read self-heal in
+    `qualificacoes_da_extracao`); `cpf_normalizado` narrows to one person
+    (the hook `identidade_extracao_service` calls when it sets a CPF). With
+    neither, every unlinked row of the org is re-evaluated. Idempotent: a
+    row that still resolves to 0 or 2+ clientes is left exactly as it was,
+    and `_aplicar_automatico` only ever fills empty fields or reuses a
+    pending conflict. Returns how many rows became `vinculado`.
+    """
+    if linhas is None:
+        linhas = []
+        for status in (SEM_CORRESPONDENCIA, AMBIGUO):
+            linhas += table_reads.paged_rows(
+                client, TABLE, org_id, eq_filters={"vinculo_status": status}
+            )
+    pendentes = [
+        r for r in linhas
+        if r.get("vinculo_status") in (SEM_CORRESPONDENCIA, AMBIGUO)
+        and not r.get("cliente_id")
+        and (cpf_normalizado is None or r.get("cpf_cnpj_normalizado") == cpf_normalizado)
+    ]
+    if not pendentes:
+        return 0
+    por_cpf = _clientes_por_cpf(client, org_id)
+    vinculados = 0
+    for row in pendentes:
+        normalizado = row.get("cpf_cnpj_normalizado") or _digitos(row.get("cpf_cnpj"))
+        if not normalizado:
+            continue
+        cliente_id, vinculo = _vincular(
+            client, org_id, str(row["extracao_id"]), normalizado, por_cpf
+        )
+        if vinculo != VINCULADO or not cliente_id:
+            continue
+        (
+            _t(client, TABLE)
+            .update({"cliente_id": cliente_id, "vinculo_status": VINCULADO})
+            .eq("org_id", str(org_id))
+            .eq("id", row["id"])
+            .execute()
+        )
+        row = {**row, "cliente_id": cliente_id, "vinculo_status": VINCULADO}
+        _aplicar_automatico(client, org_id, row)
+        vinculados += 1
+    if vinculados:
+        logger.info("matricula qualificacoes: %d re-linked to clientes", vinculados)
+    return vinculados
+
+
 def qualificacoes_da_extracao(
     client: Any, org_id: Any, extracao: dict, ato_rows: list[dict]
 ) -> list[dict]:
@@ -354,6 +489,8 @@ def qualificacoes_da_extracao(
     on read (the backfill — see module docstring). An extraction whose text
     was purged heals nothing: there is no text left to read."""
     existentes = linhas_da_extracao(client, org_id, extracao["id"])
+    if revincular_pendentes(client, org_id, linhas=existentes):
+        existentes = linhas_da_extracao(client, org_id, extracao["id"])
     texto = extracao.get("texto_extraido")
     if not existentes and texto:
         escritas = persistir_sugestoes(client, org_id, extracao["id"], texto, ato_rows)
