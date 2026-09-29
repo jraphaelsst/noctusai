@@ -48,6 +48,14 @@ class TestBuildSystemPrompt:
         assert "pergunta curta de esclarecimento" in prompt
         assert "senhas" in prompt
 
+    def test_a_multi_flow_question_is_disambiguated_before_answering(self):
+        """Live prod 2026-09-28: "Como faço para cobrar o cliente?" got a
+        full answer covering four flows instead of "which one?". The owner's
+        rule is ask-first; the preamble must say so for multi-flow questions."""
+        prompt = build_system_prompt(product_name="IgIg", knowledge="k")
+        assert "MAIS DE UM fluxo" in prompt
+        assert "Primeiro pergunte qual deles" in prompt
+
 
 class TestBuildConversationMessages:
     def test_single_turn(self):
