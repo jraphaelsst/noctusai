@@ -68,8 +68,9 @@ CICLANA_ESPERADA = "CICLANA DA COSTA"
 
 class TestLabelDrivenReadIsUnaffectedByAHint:
     """No regression: a document the label-driven path already resolves
-    must return the SAME answer whether or not the caller also supplies
-    `esperados` — the anchored fallback is tried LAST, never instead of."""
+    must return the SAME answer whether or not the caller also supplies a
+    hint the read is actually COMPATIBLE with — the anchored fallback is
+    tried LAST, never instead of, on a read the hint has no quarrel with."""
 
     def test_same_result_with_or_without_the_hint(self) -> None:
         sem_hint = find_conjuges(CERTIDAO_ROTULADA)
@@ -79,14 +80,29 @@ class TestLabelDrivenReadIsUnaffectedByAHint:
         )
         assert sem_hint == com_hint
 
-    def test_a_hint_naming_someone_not_on_the_document_changes_nothing(self) -> None:
-        """Even a hint that would anchor nowhere must not perturb a
-        label-driven read that already succeeded."""
+    def test_a_hint_naming_someone_not_on_the_document_is_now_a_conflict(
+        self,
+    ) -> None:
+        """🔴 BEHAVIOUR CHANGE (P2 corpus, 2026-09-29) — superseded by the
+        hint cross-check: this used to assert a hint anchoring nowhere
+        "must not perturb" an already-successful label read. That was the
+        right call when a hint could only ever ADD confidence. The cross-
+        check `find_conjuges` now runs makes a hint also SUBTRACT it: two
+        names naming a completely different couple than BOTH of the
+        caller's own hints is exactly the signal a stale/mismatched
+        `TitularEsperado` produces, and confidently returning the wrong
+        couple's names is worse than returning none — see
+        `test_certidao_casamento_hint_cross_check.py` for the full
+        cross-check test suite (`_leitura_conflita_com_esperados`), and
+        that file's `TestOnlyOneHintAlongsideAGenuinelyRealSecondPerson`
+        for the sibling case this must NOT be confused with — a hint that
+        covers FEWER spouses than the document names, which stays a no-op.
+        """
         resultado = find_conjuges(
             CERTIDAO_ROTULADA,
             esperados=("PESSOA TOTALMENTE DIFERENTE", "OUTRA PESSOA QUALQUER"),
         )
-        assert resultado == find_conjuges(CERTIDAO_ROTULADA)
+        assert resultado == ()
 
 
 class TestNoHintIsTheHistoricalNoOpBehaviour:

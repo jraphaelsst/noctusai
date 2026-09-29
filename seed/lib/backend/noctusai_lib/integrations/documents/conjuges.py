@@ -41,7 +41,7 @@ extractor's job.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Optional
 
@@ -436,12 +436,27 @@ _FILLER_PONTILHADO_RE = re.compile(r"\.{3,}")
 #: convention (also true of the CNJ narrative "O contratante" / "A
 #: contratante" paragraph ORDER, and of `_ler_bloco_estruturado`'s own
 #: PRIMEIRO/SEGUNDO ordinal convention).
+#: 🔴 MUST STAY WRAPPED IN A NON-CAPTURING GROUP AT EVERY USE SITE — real,
+#: measured (P2/884, 2026-09-29): this is a BARE top-level alternation
+#: (`X|Y`), and `|` binds weaker than concatenation. Every prefixed use
+#: below used to write `PREFIXO + _ADOCAO_VERBO`, which regex reads as
+#: `(PREFIXO seen only by the FIRST branch) | (the CONTINUA/CONTINUOU
+#: branch, completely unanchored)` — the "O/A CONTRATANTE" (or "ELE"/"ELA")
+#: gate silently applied to HALF of this constant only. A stray
+#: "continuou a assinar ..." anywhere else on the page — a witness's own
+#: statement, an averbação about a different marriage entirely — matched
+#: just as well as the genuine clause. Every site below now wraps this in
+#: `(?:...)` so the prefix gates BOTH branches.
 _ADOCAO_VERBO = (
     r"(?:PASSOU|PASSAR[AÁ])\s+A\s+(?:USAR|ASSINAR)(?:-SE)?(?:\s+O\s+NOME\s+DE)?|"
     r"CONTINU(?:A|OU)\s+A\s+(?:USAR|ASSINAR)(?:\s+O\s+(?:MESMO\s+NOME|NOME\s+DE))?"
 )
-_ADOCAO_MASC_RE = re.compile(r"\bO\s+CONTRA(?:TANTE|TENTE|ENTE)\b\s*" + _ADOCAO_VERBO + r"\s*")
-_ADOCAO_FEM_RE = re.compile(r"\bA\s+CONTRA(?:TANTE|TENTE|ENTE)\b\s*" + _ADOCAO_VERBO + r"\s*")
+_ADOCAO_MASC_RE = re.compile(
+    r"\bO\s+CONTRA(?:TANTE|TENTE|ENTE)\b\s*(?:" + _ADOCAO_VERBO + r")\s*"
+)
+_ADOCAO_FEM_RE = re.compile(
+    r"\bA\s+CONTRA(?:TANTE|TENTE|ENTE)\b\s*(?:" + _ADOCAO_VERBO + r")\s*"
+)
 #: 🔴 THE SAME NOTE, WRITTEN BY ANAPHORA — real, measured (P2 corpus,
 #: 2026-09-28): another certidão in this same narrative family states the
 #: adoption INSIDE the nubente's own qualification paragraph, referring back
@@ -569,6 +584,35 @@ def _ler_narrativa_matrimonio(text: str) -> tuple[ConjugeLido, ...]:
     return tuple(out)
 
 
+#: 🔴 THE SAME "ELE"/"ELA" LABELS NAME THE ADOPTION CLAUSE TOO — real,
+#: measured (P2/884, 2026-09-29): the CNJ-modern layout `_ler_rotulada`
+#: reads via `find_name_conflitos` states each spouse's PRE-MARRIAGE
+#: qualification under `ELE:`/`ELA:` ("ELE: FULANO, nascido ...") — but
+#: also restates the SAME two pronoun labels, further down, for the
+#: certidão's own "NOME QUE CADA UM DOS CÔNJUGES PASSOU A UTILIZAR" clause
+#: ("ELE: PASSOU A USAR O NOME DE ...", "ELA: CONTINUOU A USAR O MESMO
+#: NOME."). `name._candidatos`'s pronoun-label collector has no notion of
+#: "second occurrence, different section": it keeps whichever `ELE:`/`ELA:`
+#: value is name-shaped, which is ALWAYS the qualification one — the
+#: adoption clause's own "PASSOU A USAR O NOME DE" prefix pushes the word
+#: count past `name.MAX_WORDS` (8) and the whole value silently fails
+#: `looks_like_a_name`, so it never even becomes a second candidate to
+#: conflict with. A spouse whose certidão states a genuine name change is
+#: then reported under their MAIDEN name — wrong, not merely incomplete.
+#: Read directly here, the same way `_ler_bloco_estruturado`'s own
+#: `_NOME_ATUAL_CONJUGE_RE` and `_ler_narrativa_matrimonio`'s own
+#: `_ADOCAO_MASC_RE`/`_ADOCAO_FEM_RE` already read THEIR layouts' own
+#: adoption clause independently of the candidate pool that named the
+#: qualification. `_ADOCAO_VERBO` (USAR/ASSINAR, "CONTINUOU...O MESMO
+#: NOME") is reused verbatim — this layout's per-person adoption line uses
+#: the identical verb, only the label before it differs ("ELE"/"ELA"
+#: instead of "O/A CONTRATANTE").
+#: Wrapped in `(?:...)` — see `_ADOCAO_VERBO`'s own note on why a bare
+#: concatenation would leave the `CONTINUA/CONTINUOU` branch unanchored.
+_ADOCAO_ELE_RE = re.compile(r"\bELE\s*:\s*(?:" + _ADOCAO_VERBO + r")")
+_ADOCAO_ELA_RE = re.compile(r"\bELA\s*:\s*(?:" + _ADOCAO_VERBO + r")")
+
+
 def _ler_rotulada(text: str) -> tuple[ConjugeLido, ...]:
     """Both spouses via `find_name_conflitos`'s label-driven candidate pool
     (a `NOMES` block, or two equally-labelled `NOME` readings) — the
@@ -682,6 +726,35 @@ def _ler_rotulada(text: str) -> tuple[ConjugeLido, ...]:
                 **dados,
             )
         )
+
+    # The name-adoption overlay — see `_ADOCAO_ELE_RE`/`_ADOCAO_ELA_RE`'s own
+    # note above for the bug this closes. Applied AFTER the qualification
+    # read above, never instead of it: a spouse with no adoption clause (or
+    # one that states no change — `_valor_de_adocao` returns `None` for
+    # "O MESMO NOME") keeps the qualification name untouched.
+    m_ele = _ADOCAO_ELE_RE.search(norm)
+    adotado_masc = _valor_de_adocao(norm, m_ele.end()) if m_ele else None
+    m_ela = _ADOCAO_ELA_RE.search(norm)
+    adotado_fem = _valor_de_adocao(norm, m_ela.end()) if m_ela else None
+    if adotado_masc or adotado_fem:
+        generos_lidos = [cj.genero for cj in out]
+        for i, cj in enumerate(out):
+            if cj.genero == MASCULINO:
+                adotado = adotado_masc
+            elif cj.genero == FEMININO:
+                adotado = adotado_fem
+            elif MASCULINO not in generos_lidos and FEMININO not in generos_lidos:
+                # No grammatical gender signal on EITHER spouse's own
+                # qualification clause — fall back to the same
+                # first-occurrence-is-the-groom convention
+                # `_ler_bloco_estruturado` (PRIMEIRO) and
+                # `_ler_narrativa_matrimonio` (recital order) already rely
+                # on: `ordem`, hence `out`, is sorted by first occurrence.
+                adotado = adotado_masc if i == 0 else adotado_fem
+            else:
+                adotado = None
+            if adotado and adotado != cj.nome:
+                out[i] = replace(cj, nome=adotado, nome_anterior=cj.nome)
     return tuple(out)
 
 
@@ -952,6 +1025,52 @@ def _ler_ancorada(text: str, esperados: tuple[str, ...]) -> tuple[ConjugeLido, .
     return tuple(out)
 
 
+def _leitura_conflita_com_esperados(
+    lido: tuple[ConjugeLido, ...], esperados: tuple[str, ...]
+) -> bool:
+    """Does some spouse in `lido` match NEITHER hinted name?
+
+    A "conflict" is stronger than "no opinion": it means the label-driven
+    read named someone the caller's OWN records rule out, not merely
+    someone the caller happens not to have a hint for. Two guards keep
+    that distinction real, not just asserted:
+
+    - `esperados_validos` empty ⇒ never a conflict — no hint means no
+      opinion at all.
+    - `len(esperados_validos) < len(lido)` ⇒ never a conflict — real,
+      measured (P2 corpus, 2026-09-29): a caller who names only ONE of two
+      spouses (a single-titular hint, `conjuge_nome` unknown) supplies
+      strictly fewer opinions than there are people on the certidão. The
+      OTHER, un-hinted spouse then matches NEITHER name in `esperados` —
+      not because the read is wrong, but because nobody asked about them.
+      Confusing "no opinion" with "ruled out" here would silently drop a
+      correctly-read second spouse's own facts (birthdate, CPF, ...) on
+      EVERY two-spouse certidão whenever the caller's hint covers only the
+      titular — `test_certidao_casamento_tabular_dn_not_misattributed.py`
+      and `test_data_nascimento_casamento_plausibilidade.py`'s own
+      single-hint fixtures caught this the first time it was tried.
+
+    A spouse `lido` left EMPTY (no `nome`/`nome_anterior` at all) never
+    conflicts either — absence is not a wrong guess.
+
+    Deliberately "compatible with ANY hint", not a strict one-to-one
+    assignment, once the length guard above has passed — this is a
+    is-this-read-trustworthy gate, not a matching algorithm; a name that
+    happens to satisfy the wrong slot's hint is still evidence the
+    transcription read a REAL, platform-known person, not a decoy.
+    """
+    esperados_validos = [e for e in esperados if e]
+    if not esperados_validos or len(esperados_validos) < len(lido):
+        return False
+    for cj in lido:
+        candidatos = [n for n in (cj.nome, cj.nome_anterior) if n]
+        if not candidatos:
+            continue
+        if not any(nomes_compativeis(c, e) for c in candidatos for e in esperados_validos):
+            return True
+    return False
+
+
 def find_conjuges(
     text: str, *, esperados: tuple[str, ...] = ()
 ) -> tuple[ConjugeLido, ...]:
@@ -963,25 +1082,39 @@ def find_conjuges(
     exactly two equally-prominent holders.
 
     `esperados` — the couple the caller already knows (a `TitularEsperado`
-    hint's `nome` and `conjuge_nome`, 0/1/2 names) — is consulted ONLY when
-    all three decline: `_ler_ancorada` confirms each hinted name directly
-    against the text instead of depending on a label this run's own
-    transcription may have garbled. See that section's own header for why.
+    hint's `nome` and `conjuge_nome`, 0/1/2 names) — is consulted in TWO
+    ways:
+
+    1. When all three label-driven readers decline: `_ler_ancorada`
+       confirms each hinted name directly against the text instead of
+       depending on a label this run's own transcription may have
+       garbled. See that section's own header for why.
+    2. 🔴 THE HINT CROSS-CHECK (P2 corpus, 2026-09-29) — when a label-driven
+       reader DID find something, but it names a spouse compatible with
+       NEITHER hint (`_leitura_conflita_com_esperados`), the label read is
+       replaced OUTRIGHT by `_ler_ancorada`'s — even when that anchored
+       read is itself `()`. A wrong name is worse than an empty one: a
+       label a run's own vision pass garbled can print a real-looking name
+       for the WRONG person (a parent, a witness, the officiating
+       clerk's own name caught by a layout accident, an averbação's
+       reference to an earlier marriage) with the SAME "alta" confidence
+       a genuinely correct label-driven read carries, and nothing
+       downstream has any reason to doubt it. The anchored reader can only
+       ever CONFIRM a name the document itself prints (`_ancora_nome`), so
+       preferring it here can only ever remove a wrong guess, never invent
+       a new one.
+
     A caller with no hint (the historical, still-supported call shape) gets
-    exactly the historical behaviour — `()` on the same inputs that used to
-    return `()`.
+    exactly the historical behaviour on every document whose label-driven
+    read has no such conflict to notice.
     """
-    bloco = _ler_bloco_estruturado(text or "")
-    if bloco:
-        return bloco
-
-    narrativa = _ler_narrativa_matrimonio(text or "")
-    if narrativa:
-        return narrativa
-
-    rotulada = _ler_rotulada(text or "")
-    if rotulada:
-        return rotulada
+    for leitor in (_ler_bloco_estruturado, _ler_narrativa_matrimonio, _ler_rotulada):
+        lido = leitor(text or "")
+        if not lido:
+            continue
+        if esperados and _leitura_conflita_com_esperados(lido, esperados):
+            return _ler_ancorada(text or "", esperados)
+        return lido
 
     if esperados:
         return _ler_ancorada(text or "", esperados)
