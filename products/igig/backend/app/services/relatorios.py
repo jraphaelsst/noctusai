@@ -41,6 +41,7 @@ import io
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from app.services.quadro_comum import hoje_local
 from typing import Literal
 
 from app.repositories import Repositorios
@@ -332,7 +333,7 @@ def _relatorio_comercial(
 
     alertas = _alertas_comerciais(
         repos, org_id, negocios=negocios, orcamentos=orcamentos, stages=stages,
-        funil=funil, motivos=motivos, hoje=hoje or date.today(),
+        funil=funil, motivos=motivos, hoje=hoje or hoje_local(),
     )
 
     return RelatorioComercial(

@@ -22,6 +22,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from app.services.quadro_comum import hoje_local
 from typing import Any
 
 from noctusai_lib.integrations.email import Attachment, OutgoingEmail
@@ -580,7 +581,7 @@ class FinanceiroService:
         data rather than acting on it: deciding to block a client's approval
         portal is a business action, not a side effect of running a report.
         """
-        referencia = hoje or date.today()
+        referencia = hoje or hoje_local()
         atrasadas: list[dict] = []
         for fatura in self._repos.fatura.listar(org_id):
             if fatura.get("status") in ("paga", "cancelada"):
@@ -627,7 +628,7 @@ def cliente_bloqueado_no_portal(
     """
     if dias_bloqueio <= 0:
         return False
-    referencia = hoje or date.today()
+    referencia = hoje or hoje_local()
     for fatura in FinanceiroService(repos).inadimplentes(org_id, hoje=referencia):
         if fatura["cliente_id"] == cliente_id and fatura["dias_atraso"] > dias_bloqueio:
             return True
@@ -653,7 +654,7 @@ async def atualizar_inadimplencia(db: Any, *, hoje: date | None = None) -> dict:
     row-level write below still goes through `Repositorios` (built over the
     SAME client), scoped to that row's own `org_id`.
     """
-    referencia = hoje or date.today()
+    referencia = hoje or hoje_local()
     repos = Repositorios(SupabaseRecordStore(db))
     resumo = {"faturas_vencidas": 0, "clientes_inadimplentes": 0, "clientes_normalizados": 0}
 

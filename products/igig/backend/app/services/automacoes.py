@@ -595,7 +595,7 @@ async def _definir_responsavel(portas: PortasAutomacao, org_id: str, params: dic
 async def _criar_tarefa(portas: PortasAutomacao, org_id: str, params: dict, ctx: _Contexto) -> str:
     titulo = _render(params.get("titulo"), ctx)
     prazo_dias = params.get("prazo_dias")
-    prazo = (date.today() + timedelta(days=int(prazo_dias))) if prazo_dias is not None else None
+    prazo = (qc.hoje_local() + timedelta(days=int(prazo_dias))) if prazo_dias is not None else None
     if ctx.pipeline == "esteira":
         from app.services import esteira_quadro
 
