@@ -75,6 +75,7 @@ from noctusai_lib.primitives.exceptions import AppException, ValidationError_
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato, Pessoa
 from app.modules.card_hub.contrato_gerador.derivacao import ROTULO_QUALIFICACAO
 from app.modules.card_hub.identidade_extracao_service import CAMPOS as CAMPOS_IDENTIDADE
+from app.modules.card_hub.identidade_extracao_service import _mesmo_valor
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.imovel_hub import dados_service
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
@@ -179,7 +180,7 @@ class CampoValidavel:
     def ativo(self, row: dict) -> bool:
         return self.origem in row and self.confirmado_em in row
 
-    def pendente(self, row: dict) -> bool:
+    def pendente(self, row: dict, *, corroborado: bool = False) -> bool:
         if not self.ativo(row):
             return False
         origem = row.get(self.origem)
@@ -191,25 +192,22 @@ class CampoValidavel:
             return False
         if not any(preenchido(row.get(c)) for c in self.valores):
             return False
-        # BUILD item 2 (owner directive, 2026-09-29): a machine value from a
-        # source whose measured precision for THIS field is >=95% with
-        # n>=10 (`divergencia_resolucao.PRECISAO`) counts as validated --
+        # BUILD item 2 (owner directive, 2026-09-29) + its follow-up
+        # (2026-09-29): a machine value from a source whose measured
+        # precision for THIS field is >=95% with n>=10
+        # (`divergencia_resolucao.PRECISAO`), OR one corroborated by >=2
+        # independent documents (`corroborado`, computed by the caller —
+        # `_pendentes_brutos`'s own batched `_corroboracao_cliente`, ONE
+        # query per contract read, never per field), counts as validated --
         # `exigir_sem_pendentes` may proceed without a human click. Scoped
         # naturally by the evidence table itself: an (entidade, campo) it
         # does not cover (every non-`cliente` entity today — imóvel,
-        # certidão, empresa, negociação, ...) always reads `False` here, so
-        # every OTHER `CampoValidavel` behaves exactly as before this
-        # directive.
-        #
-        # 🔴 NOC-REMEDIATE[validacao-corroboracao-gate] — the directive's
-        # OTHER auto-validation path ("or corroborated by >=2 independent
-        # documents") is not checked here: this dataclass sees only the
-        # single value already ON the row, with no record of how many
-        # documents agreed to put it there. `divergencia_resolucao.
-        # valido_para_contrato_sem_revisao(corroborado=True)` already exists
-        # for a future caller with that history (a `cliente_campo_
-        # conflitos` lookup keyed on this row's id) to consult — 2026-09-29.
-        return not divergencia_resolucao.valido_para_contrato_sem_revisao(self.campo, origem)
+        # certidão, empresa, negociação, ...) always reads `False` here
+        # (`corroborado` defaults `False` too for those callers), so every
+        # OTHER `CampoValidavel` behaves exactly as before this directive.
+        return not divergencia_resolucao.valido_para_contrato_sem_revisao(
+            self.campo, origem, corroborado=corroborado
+        )
 
 
 def _quinteto(
@@ -833,8 +831,62 @@ def _confianca(campo: CampoValidavel, alvo: Alvo, fonte: Optional[dict]) -> Opti
     return fonte.get("extracao_confianca") if campo.campo == "numero_matricula" else None
 
 
-def _pendentes_brutos(coleta: Coleta) -> list[tuple[Alvo, CampoValidavel]]:
-    return [(alvo, campo) for alvo in coleta.alvos for campo in alvo.campos if campo.pendente(alvo.row)]
+def _corroboracao_cliente(
+    client: Any, org_id: UUID, cliente_ids: list[str], clientes_rows: dict[str, dict],
+) -> dict[tuple[str, str], bool]:
+    """ONE batched query (`cliente_campo_conflitos` IN `cliente_ids`, every
+    status — corroboration counts a SETTLED disagreement too, not only an
+    open one) computing whether the value ALREADY on each cliente's field
+    is corroborated by >=2 independent sources — the follow-up to BUILD
+    item 2 (owner directive, 2026-09-29): a corroborated value should not
+    need a human click even when its own source falls under the tier bar
+    alone. Same evidence shape `campo_conflitos.historico_valores` reads
+    for the LIVE resolver, computed here for the contract gate's own
+    question instead ("is what's on file corroborated?", not "which side
+    of a fresh disagreement wins?"). Bounded: one query for the WHOLE
+    contract read, never one per field."""
+    if not cliente_ids:
+        return {}
+    rows = table_reads.in_batched_rows(
+        client, "cliente_campo_conflitos", org_id, "cliente_id", cliente_ids,
+        select="cliente_id,campo,valor_proposto,origem_proposto",
+    )
+    por_chave: dict[tuple[str, str], list[tuple[Any, Optional[str]]]] = {}
+    for r in rows:
+        chave_local = (str(r.get("cliente_id")), r.get("campo") or "")
+        por_chave.setdefault(chave_local, []).append(
+            (r.get("valor_proposto"), r.get("origem_proposto"))
+        )
+
+    resultado: dict[tuple[str, str], bool] = {}
+    for (cid, campo_nome), propostas in por_chave.items():
+        row = clientes_rows.get(cid)
+        if row is None or not campo_nome:
+            continue
+        valor_atual = row.get(campo_nome)
+        origem_atual = row.get(f"{campo_nome}_origem")
+        origens = {origem_atual} if origem_atual else set()
+        for valor, origem in propostas:
+            if origem and _mesmo_valor(campo_nome, valor, valor_atual):
+                origens.add(origem)
+        resultado[(cid, campo_nome)] = len(origens) >= divergencia_resolucao.CORROBORACAO_MINIMA
+    return resultado
+
+
+def _pendentes_brutos(
+    client: Any, org_id: UUID, coleta: Coleta
+) -> list[tuple[Alvo, CampoValidavel]]:
+    cliente_ids = sorted({a.entidade_id for a in coleta.alvos if a.campos is CAMPOS_CLIENTE})
+    clientes_rows = {a.entidade_id: a.row for a in coleta.alvos if a.campos is CAMPOS_CLIENTE}
+    corroboracao = _corroboracao_cliente(client, org_id, cliente_ids, clientes_rows)
+    return [
+        (alvo, campo)
+        for alvo in coleta.alvos
+        for campo in alvo.campos
+        if campo.pendente(
+            alvo.row, corroborado=corroboracao.get((alvo.entidade_id, campo.campo), False)
+        )
+    ]
 
 
 def _item(alvo: Alvo, campo: CampoValidavel, fontes: dict[str, dict], nomes: dict[str, str]) -> dict:
@@ -1051,7 +1103,7 @@ def listar_pendentes(
     """Every machine-pending contract-feeding value of the contract `dados`
     was loaded for — the GET answer and `gerar`'s precondition."""
     coleta = coletar(client, org_id, dados, usuario_id)
-    brutos = _pendentes_brutos(coleta)
+    brutos = _pendentes_brutos(client, org_id, coleta)
     fontes = documentos_de_origem(client, org_id, brutos)
     return [_item(alvo, campo, fontes, coleta.nomes) for alvo, campo in brutos]
 
@@ -1163,7 +1215,7 @@ def decidir(
         raise ValidationError_(f"Chave repetida na mesma requisição: {', '.join(repetidas)}", field="decisoes")
 
     coleta = coletar(client, org_id, dados, usuario_id)
-    brutos = _pendentes_brutos(coleta)
+    brutos = _pendentes_brutos(client, org_id, coleta)
     por_chave = {chave(c.entidade, a.entidade_id, c.campo): (a, c) for a, c in brutos}
     desconhecidas = [c for c in chaves if c not in por_chave]
     if desconhecidas:

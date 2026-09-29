@@ -1077,6 +1077,51 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
     return True
 
 
+def _titular_do_documento(client: Any, org_id: UUID, documento_id: Optional[Any]) -> Optional[str]:
+    """The RAW holder name a `cliente_documentos` row's own comprovante
+    read carried (`extracao_endereco_titular`, written unconditionally by
+    `extrair_identidade`) — the same signal for the CURRENT on-file address
+    (looked up via `endereco_documento_id`) and a NEW reading (via its own
+    `documento_id`), so the holder-tiebreak below compares two readings the
+    SAME way regardless of which one already made it onto `clientes`."""
+    if not documento_id:
+        return None
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("extracao_endereco_titular")
+        .eq("org_id", str(org_id))
+        .eq("id", str(documento_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0].get("extracao_endereco_titular") if rows else None
+
+
+def _titular_e_parte_ou_conjuge(
+    client: Any, org_id: UUID, cliente_row: dict, titular_nome: Optional[str]
+) -> Optional[bool]:
+    """Does `titular_nome` name THIS cliente, or their linked spouse?
+    `None` when there is nothing to check (no titular read at all) — never
+    conflated with `False` (a titular that was read and named someone
+    else), so a caller can tell "unknown" from "verified not them"."""
+    if not titular_nome:
+        return None
+    if _nomes_bate(cliente_row, titular_nome):
+        return True
+    conjuge_id = cliente_row.get("conjuge_cliente_id")
+    if not conjuge_id:
+        return False
+    conjuge_rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("nome,nome_completo,nome_oficial")
+        .eq("org_id", str(org_id))
+        .eq("id", str(conjuge_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(conjuge_rows) and _nomes_bate(conjuge_rows[0], titular_nome)
+
+
 def aplicar_endereco_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -1112,8 +1157,9 @@ def aplicar_endereco_ao_cliente(
     rows = (
         _t(client, CLIENTES_TABLE)
         .select(",".join([
-            "id", "nome", "nome_completo", "nome_oficial", "endereco_origem",
-            "endereco_documento_id", "endereco_confirmado_em", *ENDERECO_COLUNAS,
+            "id", "nome", "nome_completo", "nome_oficial", "conjuge_cliente_id",
+            "endereco_origem", "endereco_documento_id", "endereco_confirmado_em",
+            *ENDERECO_COLUNAS,
         ]))
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
@@ -1175,18 +1221,99 @@ def aplicar_endereco_ao_cliente(
                 CAMPO_ENDERECO, decidido_por=None,
             )
             return True, None
-        # 🔴 NOC-REMEDIATE[endereco-data-emissao-tiebreak] — owner directive,
-        # 2026-09-29, asks a genuine two-comprovante disagreement (same
-        # verified holder — the `titular_documento` guard above already
-        # passed) to resolve automatically by "most recent issue date
-        # first". `cliente_documentos.extracao_data_emissao` is not
-        # captured for `TIPOS_ENDERECO` documents today (`so_endereco`
-        # withholds it, see `extrair_identidade`'s own comment above
-        # `_COLUNAS_DATA_EMISSAO`) — resolving by upload `created_at`
-        # instead would silently answer a question about the DOCUMENT'S
-        # OWN stated date with the wrong signal, so this stays a human
-        # conflict until that capture lands — 2026-09-29.
-        return False, conflito()
+        # Owner directive, 2026-09-29 follow-up: a genuine two-comprovante
+        # disagreement resolves by HOLDER — the comprovante whose printed
+        # titular is verifiably this party OR their linked spouse wins over
+        # one whose titular is neither. Ambiguous (both, neither, or a
+        # titular this pass cannot read on one/both sides) still needs a
+        # human — never a coin flip. Never fires against a value a human
+        # already typed or confirmed (`origem='manual'`/`endereco_
+        # confirmado_em` set) — same guard `mesmo_documento_pendente`/
+        # `_nome_anterior_confirma_adocao` apply, for the same reason: a
+        # real person's decision outranks any reading, automatic or not.
+        origem_atual_grupo = atual.get("endereco_origem")
+        pode_resolver_automaticamente = (
+            bool(origem_atual_grupo)
+            and origem_atual_grupo != "manual"
+            and not atual.get("endereco_confirmado_em")
+        )
+        titular_atual = (
+            _titular_do_documento(client, org_id, atual.get("endereco_documento_id"))
+            if pode_resolver_automaticamente
+            else None
+        )
+        titular_novo = titular_documento or _titular_do_documento(
+            client, org_id, documento_id
+        )
+        holder_atual = (
+            _titular_e_parte_ou_conjuge(client, org_id, atual, titular_atual)
+            if pode_resolver_automaticamente
+            else None
+        )
+        holder_novo = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_novo)
+        if not pode_resolver_automaticamente:
+            decisao = divergencia_resolucao.Decisao(
+                vencedor=None, regra="requer_humano",
+                motivo=(
+                    "endereco: o valor em registro foi digitado ou "
+                    "confirmado por um humano — apenas um humano decide."
+                ),
+                requer_humano=True,
+            )
+        elif holder_novo is True and holder_atual is not True:
+            decisao = divergencia_resolucao.Decisao(
+                vencedor="proposto", regra="endereco_titular",
+                motivo=(
+                    f"endereco: o comprovante novo tem titular verificado "
+                    f"({titular_novo!r}) contra o em registro (titular "
+                    f"{titular_atual!r} nao e a parte nem o conjuge)."
+                ),
+                requer_humano=False,
+            )
+        elif holder_atual is True and holder_novo is not True:
+            decisao = divergencia_resolucao.Decisao(
+                vencedor="atual", regra="endereco_titular",
+                motivo=(
+                    f"endereco: o comprovante em registro tem titular "
+                    f"verificado ({titular_atual!r}) contra o novo (titular "
+                    f"{titular_novo!r} nao e a parte nem o conjuge)."
+                ),
+                requer_humano=False,
+            )
+        else:
+            decisao = divergencia_resolucao.Decisao(
+                vencedor=None, regra="requer_humano",
+                motivo=(
+                    "endereco: nenhum dos dois comprovantes tem titular "
+                    "verificado como a parte ou o conjuge (ou ambos tem) — "
+                    "decisao humana necessaria."
+                ),
+                requer_humano=True,
+            )
+        campo_conflitos.registrar_decisao_automatica(
+            client, campo_conflitos.CLIENTE, org_id, cliente_id, CAMPO_ENDERECO,
+            valor_anterior=_endereco_json(anterior) if tem_endereco else None,
+            origem_anterior=atual.get("endereco_origem"),
+            valor_proposto=_endereco_json(partes, titular=titular_documento),
+            origem_proposto=origem,
+            confianca_proposta=confianca,
+            fonte_tabela=DOCUMENTOS_TABLE if documento_id else None,
+            fonte_id=documento_id,
+            decisao=decisao,
+        )
+        if decisao.requer_humano:
+            return False, conflito()
+        if decisao.vencedor == "proposto":
+            escrever(_now())
+            campo_conflitos.fechar_conflitos_pendentes(
+                client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                CAMPO_ENDERECO, decidido_por=None,
+            )
+            return True, None
+        # decisao.vencedor == "atual": the record already holds the address
+        # the verified holder printed — nothing to write, the audit row
+        # alone records the resolver ran.
+        return False, None
     if atual.get("endereco_origem") == "manual":
         return False, None
 

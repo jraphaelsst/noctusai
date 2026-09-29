@@ -779,9 +779,47 @@ async def listar_conflitos_route(
     admin-confirmation gate) plus `origem_proposto` — the comparison an
     admin needs to decide without opening anything else. Read-only; not
     admin-gated (same posture `documento-retencao`'s READ half takes —
-    seeing what's pending is not the sensitive half, deciding it is)."""
+    seeing what's pending is not the sensitive half, deciding it is).
+
+    🔴 RESOLVE-ON-READ (owner directive, 2026-09-29 follow-up): before
+    listing, every conflict in scope is re-consulted against `divergencia_
+    resolucao` — a divergence the resolver can now settle (a policy that
+    was thin-sampled/unmeasured when it first opened, a corroborating
+    third document that has since landed) is applied and marked
+    `resolvido_automatico` instead of sitting `pendente` forever waiting
+    for a human who may never need to look at it. Never blocks the read on
+    failure of an individual row — `backfill_resolver_conflitos_pendentes`
+    itself already tolerates a still-ambiguous row by leaving it untouched."""
     _user, org_id = _auth_parts(auth)
+    identidade_svc.backfill_resolver_conflitos_pendentes(client, org_id, cliente_id=cliente_id)
     return identidade_svc.conflitos_pendentes(client, org_id, cliente_id)
+
+
+@router.post("/conflitos/resolver-automaticamente")
+async def backfill_resolver_conflitos_route(
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Re-run the automatic divergence resolver over EVERY `pendente`
+    conflict in the org — owner directive, 2026-09-29 follow-up: "a real
+    trigger for the backfill so prod rows get resolved without ad-hoc
+    scripts." The GET `/conflitos` read above already resolves-on-read
+    per scope; this route is the ONE-SHOT, org-wide sweep the tech lead
+    runs once through the API after a deploy that changed the policy
+    table (`divergencia_resolucao.PRECISAO`) or the resolver's own rules —
+    every conflict already `pendente` gets re-consulted, not only the ones
+    a card happens to be opened for.
+
+    🔴 Owner/admin only — same gate `decidir_conflito_route` uses: applying
+    an automatic decision writes `clientes.<campo>` exactly like a manual
+    accept does, just decided by policy instead of by a human's click."""
+    user, org_id = _auth_parts(auth)
+    if not is_org_admin(get_core_client(), getattr(user, "id", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="Resolver conflitos automaticamente é restrito a administradores.",
+        )
+    return identidade_svc.backfill_resolver_conflitos_pendentes(client, org_id)
 
 
 @router.put("/conflitos/{conflito_id}/decidir")

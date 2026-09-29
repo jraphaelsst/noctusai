@@ -39,7 +39,7 @@ from app.modules.card_hub.contrato_gerador import carregador
 from app.modules.card_hub.contrato_gerador import validacao_extracao as vx
 from app.modules.card_hub.contrato_gerador.service import hoje
 from app.services import clientes_service as clientes_svc
-from tests.modules.card_hub.conftest import ORG_ID
+from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 from tests.modules.card_hub.test_contrato_gerador_endpoints import (
     _T0,
     _auth,
@@ -225,6 +225,80 @@ class TestAutoValidacaoPorPrecisao:
         row[campo.confirmado_por] = None
         row[campo.confirmado_em] = None
         assert campo.pendente(row)
+
+
+class TestCorroboracaoNoPortao:
+    """Follow-up to BUILD item 2 (owner directive, 2026-09-29): a value
+    below the tier bar alone (`certidao_casamento`'s 60/67% cpf/nome_oficial
+    cells) still skips the human click when >=2 independent sources agree
+    with it — `_pendentes_brutos`'s own batched `_corroboracao_cliente`
+    (ONE `cliente_campo_conflitos` query for the WHOLE contract read, never
+    one per field)."""
+
+    def _conflito(self, cid: str, *, origem_proposto: str, valor_proposto: str, status: str) -> dict:
+        return {
+            "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": "cpf",
+            "valor_anterior": None, "origem_anterior": None,
+            "valor_proposto": valor_proposto, "origem_proposto": origem_proposto,
+            "status": status, "confianca_proposta": None, "fonte_tabela": None,
+            "fonte_id": None, "notificado_em": None, "decidido_por": None,
+            "decidido_em": _T0 if status != "pendente" else None, "created_at": _T0,
+        }
+
+    def _row(self, cid: str) -> dict:
+        return cliente_row(
+            cid,
+            cpf="303.102.653-55", cpf_origem="certidao_casamento",
+            cpf_documento_id=str(uuid4()), cpf_em=_T0,
+            cpf_confirmado_por=None, cpf_confirmado_em=None,
+        )
+
+    def test_a_below_bar_source_corroborated_by_two_others_is_not_pending(self, client, scoped):
+        cid = str(uuid4())
+        row = self._row(cid)
+        scoped.set_table_data("clientes", [row])
+        scoped.set_table_data("cliente_campo_conflitos", [
+            self._conflito(
+                cid, origem_proposto="rg", valor_proposto="303.102.653-55",
+                status="resolvido_automatico",
+            ),
+            self._conflito(
+                cid, origem_proposto="serasa_crednet", valor_proposto="303.102.653-55",
+                status="pendente",
+            ),
+        ])
+        coleta = vx.Coleta(alvos=[vx.Alvo(vx.CAMPOS_CLIENTE, cid, row, "Grupo")])
+
+        brutos = vx._pendentes_brutos(scoped, UUID(ORG_ID), coleta)
+
+        assert "cpf" not in {c.campo for _, c in brutos}
+
+    def test_a_below_bar_source_with_no_history_is_still_pending(self, client, scoped):
+        cid = str(uuid4())
+        row = self._row(cid)
+        scoped.set_table_data("clientes", [row])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+        coleta = vx.Coleta(alvos=[vx.Alvo(vx.CAMPOS_CLIENTE, cid, row, "Grupo")])
+
+        brutos = vx._pendentes_brutos(scoped, UUID(ORG_ID), coleta)
+
+        assert "cpf" in {c.campo for _, c in brutos}
+
+    def test_a_history_entry_for_a_different_value_does_not_corroborate(self, client, scoped):
+        cid = str(uuid4())
+        row = self._row(cid)
+        scoped.set_table_data("clientes", [row])
+        scoped.set_table_data("cliente_campo_conflitos", [
+            self._conflito(
+                cid, origem_proposto="rg", valor_proposto="412.954.238-98",
+                status="resolvido_automatico",
+            ),
+        ])
+        coleta = vx.Coleta(alvos=[vx.Alvo(vx.CAMPOS_CLIENTE, cid, row, "Grupo")])
+
+        brutos = vx._pendentes_brutos(scoped, UUID(ORG_ID), coleta)
+
+        assert "cpf" in {c.campo for _, c in brutos}
 
 
 # ─── Over the mock DB, real loader ───────────────────────────────────────────

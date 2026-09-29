@@ -340,6 +340,54 @@ def resolver_e_registrar(
         mesmo_valor=mesmo_valor,
         historico=historico_valores(client, table, org_id, owner, campo),
     )
+    return registrar_decisao_automatica(
+        client, table, org_id, owner, campo,
+        valor_anterior=valor_anterior,
+        origem_anterior=origem_anterior,
+        valor_proposto=valor_proposto,
+        origem_proposto=origem_proposto,
+        confianca_proposta=confianca_proposta,
+        fonte_tabela=fonte_tabela,
+        fonte_id=fonte_id,
+        decisao=decisao,
+        conflito_existente_id=conflito_existente_id,
+    )
+
+
+def registrar_decisao_automatica(
+    client: Any,
+    table: ConflictTable,
+    org_id: Any,
+    owner: Any,
+    campo: str,
+    *,
+    valor_anterior: Any,
+    origem_anterior: Optional[str],
+    valor_proposto: Any,
+    origem_proposto: str,
+    decisao: Decisao,
+    confianca_proposta: Optional[str] = None,
+    fonte_tabela: Optional[str] = None,
+    fonte_id: Optional[Any] = None,
+    conflito_existente_id: Optional[Any] = None,
+) -> Decisao:
+    """THE WRITE half of an automatic resolution — factored out of
+    `resolver_e_registrar` (whose `Decisao` always comes from `divergencia_
+    resolucao.resolver_divergencia`, the GENERIC per-field resolver) so an
+    OWNER-RULE-SPECIFIC resolver that computes its OWN `Decisao` — e.g.
+    `identidade_extracao_service.aplicar_endereco_ao_cliente`'s
+    holder-of-the-comprovante rule, which the generic per-field engine has
+    no business deciding (it needs `clientes`/spouse-link context, not a
+    (campo, valor, origem) tuple) — gets the exact SAME auditable
+    persistence contract without going through validators/corroboration/
+    tier at all.
+
+    Same contract `resolver_e_registrar` documents: `requer_humano=True`
+    writes nothing (the caller falls through to its own conflict path);
+    otherwise a row lands as `status='resolvido_automatico'`,
+    `decidido_por=None`, `motivo_resolucao='[regra] motivo'` — inserted
+    fresh, or updated in place when `conflito_existente_id` names an
+    existing `pendente` row (the backfill shape)."""
     if decisao.requer_humano:
         return decisao
 
@@ -515,5 +563,6 @@ __all__ = [
     "mesmo_documento_pendente",
     "notificar_conflitos",
     "registrar_conflito",
+    "registrar_decisao_automatica",
     "resolver_e_registrar",
 ]

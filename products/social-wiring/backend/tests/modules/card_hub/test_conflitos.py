@@ -104,6 +104,109 @@ class TestListingConflicts:
         body = r.json()
         assert [c["id"] for c in body] == [c1["id"]]
 
+    def test_listing_resolves_a_settleable_conflict_on_read(self, client, scoped):
+        """Owner directive, 2026-09-29 follow-up: a real trigger for the
+        backfill, not only an ad-hoc script — GET `/conflitos` re-consults
+        `divergencia_resolucao` before listing. cnh (100%) outranks
+        certidao_casamento (67%) for cpf — resolved automatically, never
+        shown as `pendente`."""
+        cid = _seed(scoped, cliente={"cpf": "303.102.653-55", "cpf_origem": "certidao_casamento"})
+        conflito = _conflito_row(
+            cid, campo="cpf",
+            valor_anterior="303.102.653-55", origem_anterior="certidao_casamento",
+            valor_proposto="412.954.238-98", origem_proposto="cnh",
+        )
+        scoped.set_table_data("cliente_campo_conflitos", [conflito])
+
+        r = client.get("/api/clientes/conflitos", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        assert r.json() == []
+        assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
+        (c,) = scoped.table("cliente_campo_conflitos").select("*").execute().data
+        assert c["status"] == "resolvido_automatico"
+
+    def test_listing_leaves_a_still_ambiguous_conflict_pending(self, client, scoped):
+        """A same-tier disagreement (nacionalidade: cnh 100% vs matricula
+        100%) is untouched by the resolve-on-read sweep — still listed."""
+        cid = _seed(
+            scoped, cliente={"nacionalidade": "italiano", "nacionalidade_origem": "matricula"}
+        )
+        conflito = _conflito_row(
+            cid, campo="nacionalidade",
+            valor_anterior="italiano", origem_anterior="matricula",
+            valor_proposto="brasileiro", origem_proposto="cnh",
+        )
+        scoped.set_table_data("cliente_campo_conflitos", [conflito])
+
+        r = client.get("/api/clientes/conflitos", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        assert [c["id"] for c in r.json()] == [conflito["id"]]
+        assert _cliente(scoped, cid)["nacionalidade"] == "italiano"
+
+
+class TestBackfillRoute:
+    """`POST /conflitos/resolver-automaticamente` — the owner directive's
+    "authed POST route [...] so the tech lead can run it once after deploy
+    through the API." Org-scoped, admin-gated (writes onto `clientes`
+    exactly like a manual accept, same posture `decidir_conflito_route`
+    takes)."""
+
+    def test_requires_auth(self, anon_client):
+        r = anon_client.post("/api/clientes/conflitos/resolver-automaticamente")
+        assert r.status_code == 401, (
+            f"POST /api/clientes/conflitos/resolver-automaticamente -> "
+            f"{r.status_code} (expected a strict 401)"
+        )
+
+    def test_a_member_cannot_run_it(self, client, scoped):
+        cid = _seed(scoped, cliente={"estado_civil": "divorciado", "estado_civil_origem": "manual"})
+        scoped.set_table_data("cliente_campo_conflitos", [_conflito_row(cid)])
+
+        r = client.post("/api/clientes/conflitos/resolver-automaticamente", headers=_auth())
+
+        assert r.status_code == 403
+        assert _cliente(scoped, cid)["estado_civil"] == "divorciado"
+
+    def test_an_admin_resolves_settleable_conflicts_org_wide(self, client, scoped):
+        _make_admin(client)
+        cid = _seed(scoped, cliente={"cpf": "303.102.653-55", "cpf_origem": "certidao_casamento"})
+        conflito = _conflito_row(
+            cid, campo="cpf",
+            valor_anterior="303.102.653-55", origem_anterior="certidao_casamento",
+            valor_proposto="412.954.238-98", origem_proposto="cnh",
+        )
+        scoped.set_table_data("cliente_campo_conflitos", [conflito])
+
+        r = client.post("/api/clientes/conflitos/resolver-automaticamente", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert len(body["resolvidos"]) == 1
+        assert body["ainda_pendentes"] == []
+        assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
+
+    def test_an_admin_leaves_a_still_ambiguous_conflict_pending(self, client, scoped):
+        _make_admin(client)
+        cid = _seed(
+            scoped, cliente={"nacionalidade": "italiano", "nacionalidade_origem": "matricula"}
+        )
+        conflito = _conflito_row(
+            cid, campo="nacionalidade",
+            valor_anterior="italiano", origem_anterior="matricula",
+            valor_proposto="brasileiro", origem_proposto="cnh",
+        )
+        scoped.set_table_data("cliente_campo_conflitos", [conflito])
+
+        r = client.post("/api/clientes/conflitos/resolver-automaticamente", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["resolvidos"] == []
+        assert len(body["ainda_pendentes"]) == 1
+        assert _cliente(scoped, cid)["nacionalidade"] == "italiano"
+
 
 class TestOnlyAdminsCanDecide:
     """🔴 The provenance directive's "admin confirmation" is meaningless if

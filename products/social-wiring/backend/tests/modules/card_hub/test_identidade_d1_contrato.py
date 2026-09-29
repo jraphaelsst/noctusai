@@ -786,6 +786,152 @@ class TestEnderecoAttribution:
         assert _conflitos(scoped) == []
 
 
+class TestEnderecoResolucaoAutomaticaPorTitular:
+    """Owner directive, 2026-09-29 follow-up: a genuine comprovante-vs-
+    comprovante disagreement resolves by HOLDER when exactly one side's
+    printed titular verifies as the party or their linked spouse — else a
+    human. Exercised directly against `aplicar_endereco_ao_cliente` (the
+    per-document titular EARLY guard the live `extrair_identidade` pipeline
+    also runs would otherwise intercept a genuinely mismatched titular
+    before this logic is ever reached — see that guard's own docstring)."""
+
+    def _doc(self, doc_id: str, titular: Optional[str] = None) -> dict:
+        return {
+            "id": doc_id, "org_id": ORG_ID, "cliente_id": "irrelevant",
+            "tipo_documento": "comprovante_endereco",
+            "extracao_endereco_titular": titular,
+        }
+
+    def _partes_novas(self) -> dict:
+        return {
+            "cep": "01454-011", "logradouro": "R PROF ARTUR RAMOS", "numero": "123",
+            "complemento": None, "bairro": None, "cidade": None, "uf": None,
+        }
+
+    def test_a_verified_new_holder_wins_over_an_unverified_one_on_file(self, client, scoped):
+        cid, doc_velho, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="comprovante_endereco", endereco_documento_id=doc_velho,
+        )])
+        scoped.set_table_data("cliente_documentos", [
+            self._doc(doc_velho, "OUTRA PESSOA"), self._doc(doc_novo, "ANA PAULA SOUZA"),
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+
+        assert aplicado is True
+        assert conflito is None
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == (
+            "01454-011", "R PROF ARTUR RAMOS",
+        )
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+        assert "endereco_titular" in c["motivo_resolucao"]
+
+    def test_a_verified_holder_on_file_beats_an_unverified_new_one(self, client, scoped):
+        cid, doc_velho, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="comprovante_endereco", endereco_documento_id=doc_velho,
+        )])
+        scoped.set_table_data("cliente_documentos", [
+            self._doc(doc_velho, "ANA PAULA SOUZA"), self._doc(doc_novo, "OUTRA PESSOA"),
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+
+        assert aplicado is False
+        assert conflito is None  # resolved, not a pendente conflict
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == ("04000-000", "RUA B")
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+
+    def test_the_spouse_link_counts_as_a_verified_holder(self, client, scoped):
+        esposo = str(uuid4())
+        cid, doc_velho, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza", conjuge_cliente_id=esposo,
+            endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="comprovante_endereco", endereco_documento_id=doc_velho,
+        )])
+        scoped.set_table_data(
+            "clientes",
+            scoped.table("clientes").select("*").execute().data
+            + [cliente_row(esposo, nome="Bruno Souza")],
+        )
+        scoped.set_table_data("cliente_documentos", [
+            self._doc(doc_velho, "OUTRA PESSOA"), self._doc(doc_novo, "BRUNO SOUZA"),
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+
+        assert aplicado is True
+        row = _cliente(scoped, cid)
+        assert row["endereco_logradouro"] == "R PROF ARTUR RAMOS"
+
+    def test_both_sides_unverified_still_needs_a_human(self, client, scoped):
+        cid, doc_velho, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="comprovante_endereco", endereco_documento_id=doc_velho,
+        )])
+        scoped.set_table_data("cliente_documentos", [
+            self._doc(doc_velho, "OUTRA PESSOA"), self._doc(doc_novo, "MAIS OUTRA PESSOA"),
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+
+        assert aplicado is False
+        assert conflito is not None
+        assert conflito["status"] == "pendente"
+        row = _cliente(scoped, cid)
+        assert row["endereco_logradouro"] == "RUA B"  # untouched
+
+    def test_a_manually_typed_address_is_never_auto_overridden_by_the_holder_rule(
+        self, client, scoped,
+    ):
+        cid, doc_novo = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="manual",
+        )])
+        scoped.set_table_data("cliente_documentos", [self._doc(doc_novo, "ANA PAULA SOUZA")])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+
+        assert aplicado is False
+        assert conflito is not None
+        assert conflito["status"] == "pendente"
+        assert _cliente(scoped, cid)["endereco_logradouro"] == "RUA B"
+
+
 # ─── both spouses ──────────────────────────────────────────────────────────
 
 
