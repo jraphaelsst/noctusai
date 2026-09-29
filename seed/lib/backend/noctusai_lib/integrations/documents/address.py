@@ -219,7 +219,9 @@ def _e_nome_de_pessoa(candidato: Optional[str]) -> bool:
 #: A trailing noise token a vision read sometimes appends after the UF — a
 #: stray "99/99" (often a truncated date) with nothing else on the line
 #: after it. Stripped before the city/UF split so it never leaks into `uf`.
-_RUIDO_FINAL_RE = re.compile(r"\s+\d{1,4}\s*/\s*\d{1,4}\s*$")
+# The right side can be a 5+ digit reference ("SP 06/71234" on the real P2/882 bill), not
+# only a month/year — still digits-only, so it can never swallow a city or UF token.
+_RUIDO_FINAL_RE = re.compile(r"\s+\d{1,4}\s*/\s*\d{1,8}\s*$")
 
 
 #: Where a labelled value stops: two+ spaces, a pipe, or another label.

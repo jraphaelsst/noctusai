@@ -442,6 +442,24 @@ class TestAddressPresenceRound3:
         assert r.confianca == "baixa"
         assert r.titular == "PAULO HENRIQUE ARAUJO"
 
+    def test_882_real_trailing_reference_longer_than_month_year(self):
+        """The real 882 vision read ends the street line in a 2/5-digit
+        reference ("SP 99/99999"), followed by a blank line and "Cod. Cliente"."""
+        texto = (
+            "Tipo de fornecimento: RESIDENCIAL\n"
+            "\n"
+            "PAULO HENRIQUE ARAUJO\n"
+            "ALAMEDA CAJA MIRIM, 100 - RES PALM HILLS - COTIA - SP 06/71234\n"
+            "\n"
+            "Cod. Cliente: 1234567890\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.cep is None
+        assert (r.logradouro, r.numero) == ("ALAMEDA CAJA MIRIM", "100")
+        assert (r.cidade, r.uf) == ("COTIA", "SP")
+        assert r.titular == "PAULO HENRIQUE ARAUJO"
+
     def test_893_cep_less_envelope_non_party_still_reads(self):
         """P2/893: no CEP anywhere either; same no-CEP shape as 882. The
         holder is a non-party — reading the name at all (so social-wiring
