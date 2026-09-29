@@ -75,6 +75,35 @@ def _usuarios_dos_membros(admin_db: Any, cfg: Any, org_id: str, entity_id: str) 
     return sorted({str(p["usuario_id"]) for p in profissionais if p.get("usuario_id")})
 
 
+def _usuario_do_responsavel(admin_db: Any, cfg: Any, org_id: str, responsavel_id: Any) -> str | None:
+    """The linked-login user behind a lembrete's `responsavel_id` — the same
+    `cfg.member_source.table` row the "Responsável" field picks from
+    (`card_hub.services._resolve_responsaveis`). `None` when the id is unset
+    or that profissional has no linked login (not an error: `responsavel_id`
+    is optional and a login link is separately optional)."""
+    if not responsavel_id:
+        return None
+    encontrados = in_batched_rows(admin_db, cfg.member_source.table, org_id, "id", [str(responsavel_id)])
+    if not encontrados:
+        return None
+    usuario_id = encontrados[0].get("usuario_id")
+    return str(usuario_id) if usuario_id else None
+
+
+def _destinatarios_lembrete(admin_db: Any, cfg: Any, org_id: str, entity_id: str, responsavel_id: Any) -> list[str]:
+    """The designated `responsavel` (when set and linked to a login) PLUS
+    every card member's linked-login user, deduped — the reminder's own
+    "Responsável" is a recipient, not just informative metadata (plat achado
+    A: it was materialised and never told anyone). Sorted for a stable,
+    testable order; the caller falls back to the org's admins only when this
+    comes back empty (nobody at all to tell)."""
+    destinatarios = set(_usuarios_dos_membros(admin_db, cfg, org_id, entity_id))
+    usuario_responsavel = _usuario_do_responsavel(admin_db, cfg, org_id, responsavel_id)
+    if usuario_responsavel:
+        destinatarios.add(usuario_responsavel)
+    return sorted(destinatarios)
+
+
 def _admins_da_org(core_client: Any, org_id: str) -> list[str]:
     linhas = (
         core_client.table("noctus_users").select("id").eq("org_id", org_id)
@@ -98,13 +127,19 @@ def processar_lembretes_pendentes(admin_db: Any, core_client: Any) -> dict:
     Schedule-agnostic on purpose — `app/scheduler.py` owns the cadence and the
     admin/core clients; this is the plain unit of work it calls.
 
-    Recipients: the card's members' linked-login users (Custos), falling back
-    to the org's admins when nobody is linked (same last-line rule
-    `automacoes._destinatarios` uses for an unowned SLA alert) — never a
-    silent no-recipient drop. A reminder with genuinely nobody to tell (no
-    members, no admins yet) is logged at WARNING and left PENDING, so it
-    still fires once someone exists to receive it, instead of being marked
-    sent and lost.
+    Title: the lembrete's own `titulo` (what the user typed in the
+    "Lembretes" tab), falling back to the card's name/título only when
+    `titulo` is empty — never the generic "Lembrete: <nome do card>" every
+    reminder used to say regardless of what was typed.
+
+    Recipients: the lembrete's designated `responsavel` (when set and linked
+    to a login) PLUS the card's members' linked-login users (Custos), deduped
+    — falling back to the org's admins only when NEITHER resolves to anyone
+    (same last-line rule `automacoes._destinatarios` uses for an unowned SLA
+    alert) — never a silent no-recipient drop. A reminder with genuinely
+    nobody to tell (no responsável, no members, no admins yet) is logged at
+    WARNING and left PENDING, so it still fires once someone exists to
+    receive it, instead of being marked sent and lost.
 
     Returns counts for the job log: `{processados, notificados,
     sem_destinatario, falhas}`. One reminder failing is isolated — the sweep
@@ -133,20 +168,23 @@ def processar_lembretes_pendentes(admin_db: Any, core_client: Any) -> dict:
                     .eq("id", entity_id).eq("org_id", org_id).execute().data or []
                 )
                 nome = (linhas[0].get(campo_titulo) if linhas else None) or entidade
-                destinatarios = _usuarios_dos_membros(admin_db, cfg, org_id, entity_id)
+                titulo_exibido = (lembrete.get("titulo") or "").strip() or nome
+                destinatarios = _destinatarios_lembrete(
+                    admin_db, cfg, org_id, entity_id, lembrete.get("responsavel_id")
+                )
                 if not destinatarios:
                     destinatarios = _admins_da_org(core_client, org_id)
                 if not destinatarios:
                     resumo["sem_destinatario"] += 1
                     logger.warning(
-                        "lembrete %s sem destinatário (sem membro vinculado, sem admin) org=%s "
-                        "%s=%s", lembrete["id"], org_id, entidade, entity_id,
+                        "lembrete %s sem destinatário (sem responsável vinculado, sem membro "
+                        "vinculado, sem admin) org=%s %s=%s", lembrete["id"], org_id, entidade, entity_id,
                     )
                     continue
                 notificar(
                     core_client, org_id=org_id, user_ids=destinatarios,
-                    tipo=f"lembrete_{entidade}", titulo=f"Lembrete: {nome}",
-                    mensagem=f"Lembrete agendado para “{nome}”.",
+                    tipo=f"lembrete_{entidade}", titulo=f"Lembrete: {titulo_exibido}",
+                    mensagem=f"Lembrete agendado para “{titulo_exibido}”.",
                     metadata={"link": f"/{'clientes' if entidade == 'cliente' else 'comercial'}"
                                        f"?{param}={entity_id}"},
                 )

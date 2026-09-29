@@ -140,3 +140,110 @@ class TestProcessarLembretesPendentes:
         assert resumo["processados"] == 2
         assert resumo["falhas"] == 1
         assert resumo["notificados"] == 1
+
+
+class TestTituloDoLembrete:
+    """The delivered notification must say what the user TYPED in the
+    "Lembretes" tab ("titulo"), never the generic card name it used to say
+    regardless of that field (achado A)."""
+
+    def test_uses_the_lembrete_own_titulo_not_the_card_name(self, igig_db, core_db):
+        cliente = _cliente(igig_db, nome="Padaria Sol")
+        prof = _profissional_vinculado(igig_db)
+        igig_db.table(CARD_HUB_CLIENTE.tables.membros).insert(
+            {"org_id": ORG, "cliente_id": cliente["id"], "profissional_id": prof["id"]}
+        ).execute()
+        _lembrete_cliente(igig_db, cliente["id"], titulo="Ligar para confirmar a arte")
+
+        processar_lembretes_pendentes(igig_db, core_db)
+        [notificacao] = core_db.table("notifications")._data
+        assert notificacao["title"] == "Lembrete: Ligar para confirmar a arte"
+        assert notificacao["message"] == "Lembrete agendado para “Ligar para confirmar a arte”."
+        assert "Padaria Sol" not in notificacao["title"]
+
+    def test_falls_back_to_the_card_name_when_titulo_is_empty(self, igig_db, core_db):
+        cliente = _cliente(igig_db, nome="Padaria Sol")
+        prof = _profissional_vinculado(igig_db)
+        igig_db.table(CARD_HUB_CLIENTE.tables.membros).insert(
+            {"org_id": ORG, "cliente_id": cliente["id"], "profissional_id": prof["id"]}
+        ).execute()
+        _lembrete_cliente(igig_db, cliente["id"], titulo="")
+
+        processar_lembretes_pendentes(igig_db, core_db)
+        [notificacao] = core_db.table("notifications")._data
+        assert notificacao["title"] == "Lembrete: Padaria Sol"
+
+    def test_a_whitespace_only_titulo_also_falls_back(self, igig_db, core_db):
+        cliente = _cliente(igig_db, nome="Padaria Sol")
+        prof = _profissional_vinculado(igig_db)
+        igig_db.table(CARD_HUB_CLIENTE.tables.membros).insert(
+            {"org_id": ORG, "cliente_id": cliente["id"], "profissional_id": prof["id"]}
+        ).execute()
+        _lembrete_cliente(igig_db, cliente["id"], titulo="   ")
+
+        processar_lembretes_pendentes(igig_db, core_db)
+        [notificacao] = core_db.table("notifications")._data
+        assert notificacao["title"] == "Lembrete: Padaria Sol"
+
+
+class TestResponsavelNotificado:
+    """The lembrete's own "Responsável" must be told — it used to be purely
+    informative metadata nobody was actually notified through (achado B)."""
+
+    def test_the_designated_responsavel_is_notified_even_without_card_members(self, igig_db, core_db):
+        cliente = _cliente(igig_db)
+        responsavel = _profissional_vinculado(igig_db, usuario_id="user-bia")
+        _lembrete_cliente(igig_db, cliente["id"], responsavel_id=responsavel["id"])
+
+        resumo = processar_lembretes_pendentes(igig_db, core_db)
+        assert resumo["notificados"] == 1
+        [notificacao] = core_db.table("notifications")._data
+        assert notificacao["user_id"] == "user-bia"
+
+    def test_responsavel_and_a_card_member_are_both_notified(self, igig_db, core_db):
+        cliente = _cliente(igig_db)
+        membro = _profissional_vinculado(igig_db, usuario_id="user-ana")
+        responsavel = igig_db.table("profissional").insert(
+            {"org_id": ORG, "nome": "Bia", "usuario_id": "user-bia", "ativo": True}
+        ).execute().data[0]
+        igig_db.table(CARD_HUB_CLIENTE.tables.membros).insert(
+            {"org_id": ORG, "cliente_id": cliente["id"], "profissional_id": membro["id"]}
+        ).execute()
+        _lembrete_cliente(igig_db, cliente["id"], responsavel_id=responsavel["id"])
+
+        resumo = processar_lembretes_pendentes(igig_db, core_db)
+        assert resumo["notificados"] == 1
+        notificados = {n["user_id"] for n in core_db.table("notifications")._data}
+        assert notificados == {"user-ana", "user-bia"}
+
+    def test_responsavel_same_as_the_only_member_is_notified_once(self, igig_db, core_db):
+        """Deduped, not doubled — `_destinatarios_lembrete` merges both sets
+        into one before `notificar` inserts one row per distinct recipient."""
+        cliente = _cliente(igig_db)
+        prof = _profissional_vinculado(igig_db, usuario_id="user-ana")
+        igig_db.table(CARD_HUB_CLIENTE.tables.membros).insert(
+            {"org_id": ORG, "cliente_id": cliente["id"], "profissional_id": prof["id"]}
+        ).execute()
+        _lembrete_cliente(igig_db, cliente["id"], responsavel_id=prof["id"])
+
+        resumo = processar_lembretes_pendentes(igig_db, core_db)
+        assert resumo["notificados"] == 1
+        assert len(core_db.table("notifications")._data) == 1
+
+    def test_an_unlinked_responsavel_does_not_block_the_admin_fallback(self, igig_db, core_db):
+        """A `responsavel_id` pointing at a profissional with no linked
+        login resolves to nobody — the admin fallback still fires exactly as
+        if no responsável had been chosen at all."""
+        cliente = _cliente(igig_db)
+        core_db.table("noctus_users").insert(
+            {"id": "admin-1", "org_id": ORG, "org_role": "owner"}
+        ).execute()
+        sem_login = igig_db.table("profissional").insert(
+            {"org_id": ORG, "nome": "Carla", "usuario_id": None, "ativo": True}
+        ).execute().data[0]
+        _lembrete_cliente(igig_db, cliente["id"], responsavel_id=sem_login["id"])
+
+        resumo = processar_lembretes_pendentes(igig_db, core_db)
+        assert resumo["notificados"] == 1
+        [notificacao] = core_db.table("notifications")._data
+        assert notificacao["user_id"] == "admin-1"
