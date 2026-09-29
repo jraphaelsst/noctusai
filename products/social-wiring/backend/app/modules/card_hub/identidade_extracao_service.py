@@ -2133,15 +2133,82 @@ def resolver_conflito(
     return {**conflito, **patch}
 
 
+def _conjuge_esperado_do_card(
+    client: Any, org_id: UUID, cliente_id: UUID
+) -> tuple[Optional[str], Optional[str]]:
+    """The couple's OTHER person for this card, as `(nome, cpf)` — the
+    SAME selector contract `_titular_do_card` already documents for its own
+    hint: only ever used to CONFIRM a name the certidão itself prints
+    (`documents.conjuges`'s anchored fallback, P2 corpus, 2026-09-29), never
+    a source. A hint that matches nothing on the document changes nothing.
+
+    Linked spouse first (`conjuge_cliente_id`); else the ONE other party on
+    this cliente's SAME side (`lado`) of the SAME atendimento
+    (`_pessoas_do_mesmo_lado`) — the identical fallback
+    `_conjuge_por_lado_unico` already uses AFTER extraction to resolve who
+    to LINK the second spouse's facts to; this runs BEFORE extraction so
+    the extractor gets both names up front. A placeholder role label
+    ("Comprador 2") or an empty name is never a usable hint. Best-effort: a
+    lookup failure returns `(None, None)`, never raises — same posture
+    `_titular_do_card` already takes.
+    """
+    try:
+        proprio = (
+            _t(client, CLIENTES_TABLE)
+            .select("conjuge_cliente_id")
+            .eq("org_id", str(org_id))
+            .eq("id", str(cliente_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        candidato_id = proprio[0].get("conjuge_cliente_id") if proprio else None
+        if not candidato_id:
+            candidatos = _pessoas_do_mesmo_lado(client, org_id, cliente_id)
+            candidato_id = candidatos[0] if len(candidatos) == 1 else None
+        if not candidato_id:
+            return (None, None)
+        rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("nome, nome_oficial, cpf")
+            .eq("org_id", str(org_id))
+            .eq("id", str(candidato_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if not rows:
+            return (None, None)
+        row = rows[0]
+        nome = row.get("nome_oficial") or row.get("nome")
+        if _nome_vazio_ou_placeholder(nome):
+            nome = None
+        return (nome, row.get("cpf"))
+    except Exception as exc:  # noqa: BLE001 - detached job; degrade, log
+        logger.warning(
+            "extracao: conjuge esperado lookup failed for %s: %s", cliente_id, exc
+        )
+        return (None, None)
+
+
 def _titular_do_card(
     client: Any, org_id: UUID, cliente_id: UUID
 ) -> Optional[TitularEsperado]:
-    """The card's own person, as the extractor's titular hint.
+    """The card's own person, as the extractor's titular hint — plus, when
+    known, the couple's OTHER half (`conjuge_nome`/`conjuge_cpf`).
 
     `nome_oficial` (a document-read spelling) before `nome` (whatever the
     operator typed), plus the CPF when one is on file. A lookup failure
     returns None — the extraction then runs exactly as it did before the
     hint existed — but it is logged, never swallowed.
+
+    `conjuge_nome`/`conjuge_cpf` (P2 corpus, 2026-09-29) feed `documents.
+    conjuges.find_conjuges`'s anchored fallback — confirming a name the
+    PLATFORM already knows directly against the certidão's text when a
+    vision transcription's own run-to-run variance breaks every label the
+    other readers depend on (measured: the SAME certidão flips between
+    resolving both spouses and resolving none, run to run). Attached even
+    when this card's own `nome`/`cpf` are both empty — a fresh cliente
+    record with a document-less card can still anchor on its ALREADY-known
+    spouse.
     """
     try:
         rows = (
@@ -2160,9 +2227,12 @@ def _titular_do_card(
     row = rows[0]
     nome = row.get("nome_oficial") or row.get("nome")
     cpf = row.get("cpf")
-    if not nome and not cpf:
+    conjuge_nome, conjuge_cpf = _conjuge_esperado_do_card(client, org_id, cliente_id)
+    if not nome and not cpf and not conjuge_nome and not conjuge_cpf:
         return None
-    return TitularEsperado(nome=nome, cpf=cpf)
+    return TitularEsperado(
+        nome=nome, cpf=cpf, conjuge_nome=conjuge_nome, conjuge_cpf=conjuge_cpf
+    )
 
 
 def _nacionalidade_atual_confirmada(client: Any, org_id: UUID, cliente_id: UUID) -> bool:

@@ -1451,6 +1451,50 @@ class TestACertidaoOfTwoSpousesStillFeedsTheCard:
         assert fake.titulares[0].nome == "REGINA TESTE"
 
     @pytest.mark.asyncio
+    async def test_the_linked_spouse_becomes_the_conjuge_hint(self, client, scoped):
+        """P2 corpus, 2026-09-29: the extractor's anchored fallback
+        (`documents.conjuges.find_conjuges`'s `_ler_ancorada`) needs the
+        couple's OTHER name up front, not just the titular's own — this is
+        the seam that supplies it, from the linked `conjuge_cliente_id`."""
+        outro_id = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={
+                "nome": "REGINA TESTE", "cpf": "041.333.248-97",
+                "conjuge_cliente_id": outro_id,
+            },
+        )
+        rows = scoped.table("clientes").select("*").execute().data
+        rows.append(cliente_row(outro_id, nome="CARLOS TESTE", cpf="987.654.321-00"))
+        scoped.set_table_data("clientes", rows)
+
+        fake = FakeIdentityExtractor(_alta())
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did), extractor=fake,
+        )
+        assert len(fake.titulares) == 1
+        assert fake.titulares[0].nome == "REGINA TESTE"
+        assert fake.titulares[0].conjuge_nome == "CARLOS TESTE"
+        assert fake.titulares[0].conjuge_cpf == "987.654.321-00"
+
+    @pytest.mark.asyncio
+    async def test_no_linked_spouse_leaves_the_conjuge_hint_empty(self, client, scoped):
+        """No `conjuge_cliente_id`, and no other party on this cliente's
+        side of any atendimento (`_setup` seeds neither table) — the hint
+        must stay empty, never a guess."""
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento",
+            cliente={"nome": "REGINA TESTE", "cpf": "041.333.248-97"},
+        )
+        fake = FakeIdentityExtractor(_alta())
+        await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did), extractor=fake,
+        )
+        assert len(fake.titulares) == 1
+        assert fake.titulares[0].conjuge_nome is None
+        assert fake.titulares[0].conjuge_cpf is None
+
+    @pytest.mark.asyncio
     async def test_an_aviso_does_not_discard_the_estado_civil(self, client, scoped):
         cid, did, storage = await _setup(scoped, tipo="certidao_casamento")
         resultado = IdentityFields(

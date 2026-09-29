@@ -494,7 +494,22 @@ class LadderIdentityExtractor:
         # and ITS per-person facts replace the whole-document readings, which
         # would otherwise mix the two spouses (two birthdates -> `nenhuma`,
         # or worse, the wrong one alone).
-        conjuges = find_conjuges(text)
+        #
+        # `esperados` (P2 corpus, 2026-09-29) — the couple the CALLER already
+        # knows (`titular.nome`/`titular.conjuge_nome`), passed through so
+        # `conjuges.find_conjuges`'s anchored fallback can confirm a name
+        # directly against the text when the label-driven readers above it
+        # all decline (a vision transcription's own run-to-run variance
+        # breaking the specific label/connector/block-opener they each
+        # depend on). A caller with no hint gets `()` here, same as before.
+        esperados = tuple(
+            n for n in (
+                titular.nome if titular else None,
+                titular.conjuge_nome if titular else None,
+            )
+            if n
+        )
+        conjuges = find_conjuges(text, esperados=esperados)
         if conjuges:
             escolhido_idx = _conjuge_do_titular(conjuges, nome, cpf)
             if escolhido_idx is not None:

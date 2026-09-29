@@ -53,6 +53,7 @@ from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
 from noctusai_lib.integrations.documents.name import (
     find_name_conflitos,
     looks_like_a_name,
+    nomes_compativeis,
     nomes_em_par,
 )
 from noctusai_lib.integrations.documents.profession import find_profissao
@@ -568,19 +569,12 @@ def _ler_narrativa_matrimonio(text: str) -> tuple[ConjugeLido, ...]:
     return tuple(out)
 
 
-def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
-    """Both spouses of a certidão de casamento, in document order.
-
-    `()` unless the document names exactly two equally-prominent holders.
-    """
-    bloco = _ler_bloco_estruturado(text or "")
-    if bloco:
-        return bloco
-
-    narrativa = _ler_narrativa_matrimonio(text or "")
-    if narrativa:
-        return narrativa
-
+def _ler_rotulada(text: str) -> tuple[ConjugeLido, ...]:
+    """Both spouses via `find_name_conflitos`'s label-driven candidate pool
+    (a `NOMES` block, or two equally-labelled `NOME` readings) — the
+    fallback tried when neither the structured-block nor the old-narrative
+    reader above recognised the document. `()` unless exactly two candidates
+    are named AND both occur in the text."""
     candidatos = find_name_conflitos(text or "")
     if not candidatos or len(candidatos) != 2:
         return ()
@@ -689,6 +683,309 @@ def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
             )
         )
     return tuple(out)
+
+
+# ─── The ANCHORED fallback (P2 corpus, 2026-09-29) ─────────────────────────
+#
+# The three readers above all depend on the SAME transcription run surfacing
+# one specific layout signal — a "Primeiro/Segundo Cônjuge" block opener, a
+# "casamento de FULANO com CICRANA" recital, or a `NOMES` label two labelled
+# `NOME` readings collapse to. Measured (P2 corpus, 2026-09-29): a vision
+# model's run-to-run variance breaks whichever of those signals a given
+# document depends on roughly HALF the time, even though both spouses'
+# actual NAMES usually still come through legibly somewhere in the text —
+# the certidão's *fields* survive the re-roll; its *labels* do not.
+#
+# When the caller already knows the couple — a `TitularEsperado` hint's
+# `nome`/`conjuge_nome`, the platform's own registered spelling, not a fresh
+# guess — that gives a THIRD, independent way in: instead of depending on a
+# label this run happened to garble, CONFIRM each hinted name directly
+# against the printed text, and read that spouse's own facts from the
+# window around wherever it anchors. Never a source: a hinted name absent
+# from the document contributes nothing — see `_ancora_nome`.
+
+#: Portuguese name particles — never counted toward a hint's SIGNIFICANT
+#: word count (a two-particle-only hint is too short to anchor safely), and
+#: never trusted alone as evidence. Kept local: this module already keeps
+#: its own label/name constants independent of `name.py` (see the module
+#: docstring on `_ROTULOS_TABULARES` et al.).
+_PARTICULAS_NOME = frozenset({"DA", "DE", "DO", "DAS", "DOS", "E", "D", "DI", "DU", "VON", "VAN"})
+
+#: Words that can never be the ONE extra trailing word `_ancora_nome`
+#: tolerates right after a hinted name — each one opens the NEXT clause (a
+#: qualification, a couple-level fact, or the narrative connector to the
+#: OTHER spouse), never a continuation of a name.
+_ANCORA_PARADA = frozenset({
+    "NASCIDO", "NASCIDA", "FILHO", "FILHA", "PORTADOR", "PORTADORA",
+    "INSCRITO", "INSCRITA", "DOMICILIADO", "DOMICILIADA",
+    "PROFISSAO", "OCUPACAO", "NACIONALIDADE", "CPF", "NUMERO", "MATRICULA",
+    "ESTADO", "REGIME", "CASADO", "CASADA", "SOLTEIRO", "SOLTEIRA",
+    "DATA", "AVERBACAO", "ANOTACAO", "OBSERVACAO", "COM",
+})
+
+
+#: A "passou a assinar/usar/utilizar" (or "continua a ...") name-adoption
+#: clause, WIDER than `_ADOCAO_VERBO` above: this fallback does not know in
+#: advance whether the surviving fragment of the document's own layout is
+#: the old-narrative family (whose own clause verb is "assinar"/"usar" —
+#: see `_ADOCAO_VERBO`) or the CNJ structured-block family (whose own
+#: clause reads "passou A UTILIZAR" — see `_NOME_ATUAL_CONJUGE_RE`), so it
+#: matches either verb rather than picking one.
+_ADOCAO_GENERICA_RE = re.compile(
+    r"(?:PASSOU|PASSAR[AÁ])\s+A\s+(?:USAR|ASSINAR|UTILIZAR)(?:-SE)?(?:\s+O\s+NOME\s+DE)?|"
+    r"CONTINU(?:A|OU)\s+A\s+(?:USAR|ASSINAR|UTILIZAR)(?:\s+O\s+(?:MESMO\s+NOME|NOME\s+DE))?"
+)
+
+
+#: How many words `_ancora_nome`'s tier-2 scan may consume before giving up
+#: on a single candidate run — `name.MAX_WORDS`'s own ceiling (a Brazilian
+#: full name never runs longer), kept local per this module's own
+#: convention of not importing `name.py`'s private bounds.
+_MAX_PALAVRAS_ANCORA = 8
+
+
+def _corrida_de_nome(norm: str, inicio: int) -> int:
+    """End position of the longest run of NAME-SHAPED words starting at
+    `inicio` — stops at the first token that is not uppercase-letter-shaped,
+    is one of `_ANCORA_PARADA`'s clause-openers, or once `_MAX_PALAVRAS_
+    ANCORA` words have been consumed. Never validates the run is actually a
+    NAME on its own — `looks_like_a_name` does that at the call site, same
+    division of labour `nomes_em_par` already keeps."""
+    pos = inicio
+    for _ in range(_MAX_PALAVRAS_ANCORA):
+        m = re.match(r"\s*([A-Z']+)\b", norm[pos:])
+        if m is None or m.group(1) in _ANCORA_PARADA:
+            break
+        pos += m.end()
+    return pos
+
+
+def _ancora_nome(norm: str, nome_esperado: str) -> Optional[tuple[int, int, str]]:
+    """Where `nome_esperado` — a name the platform already knows, never a
+    guess — is printed in `norm`. `None` when the hint anchors nowhere: this
+    CONFIRMS a name the document itself prints, it never guesses a
+    name-shaped span for a hint that simply is not there.
+
+    Two tiers, tried in order:
+
+    1. **Exact word sequence** — every one of the hint's own words, in
+       order, separated by any whitespace (a line break lands between two
+       words as often as a space does — the same idiom `_padrao_nome`
+       already uses), optionally swallowing ONE extra trailing surname the
+       hint's own spelling does not carry ("REGINA MARIA PELOSI" hint
+       against a certidão's printed "REGINA MARIA PELOSI RANGEL").
+    2. **`name.nomes_compativeis`'s own word-SUBSET compatibility**, tried
+       only when tier 1 finds nothing — over every name-shaped run
+       anchored on the hint's own FIRST significant word. Catches a word
+       INSERTED further inside the printed form (a middle name the hint
+       omits, or vice-versa) that tier 1's own contiguous sequence cannot,
+       while `looks_like_a_name` still refuses anything that is not
+       structurally a name at all.
+
+    Returns `(start, end, valor_impresso)` in `norm` — the document's OWN
+    spelling of whatever was found, never the hint's, exactly like
+    `_selecionar_nome`'s own contract in `real.py`.
+    """
+    palavras = [p for p in strip_accents_upper(nome_esperado or "").split() if p]
+    significativas = [p for p in palavras if p not in _PARTICULAS_NOME]
+    if len(significativas) < 2:
+        return None
+
+    padrao = re.compile(r"\b" + r"\s+".join(re.escape(p) for p in palavras) + r"\b")
+    m = padrao.search(norm)
+    if m is not None:
+        inicio, fim = m.start(), m.end()
+        extra = re.match(r"\s+([A-Z']{2,})\b", norm[fim:])
+        if extra is not None and extra.group(1) not in _ANCORA_PARADA:
+            fim += extra.end()
+        valor = " ".join(norm[inicio:fim].split())
+        return (inicio, fim, valor)
+
+    primeira = significativas[0]
+    for m0 in re.finditer(r"\b" + re.escape(primeira) + r"\b", norm):
+        fim = _corrida_de_nome(norm, m0.start())
+        candidato = " ".join(norm[m0.start() : fim].split())
+        if looks_like_a_name(candidato) and nomes_compativeis(candidato, nome_esperado):
+            return (m0.start(), fim, candidato)
+    return None
+
+
+def _ler_ancorada(text: str, esperados: tuple[str, ...]) -> tuple[ConjugeLido, ...]:
+    """Confirm-only fallback: locate each name the CALLER already knows
+    (`esperados` — a `TitularEsperado` hint's `nome`/`conjuge_nome`)
+    directly in the printed text, and read that spouse's own facts from the
+    window around wherever it anchors.
+
+    Tried LAST, only after `_ler_bloco_estruturado`, `_ler_narrativa_
+    matrimonio`, and `_ler_rotulada` all declined — see the section header
+    above for why a hinted name anchors when none of those three labels
+    survived this run's own transcription.
+
+    NEVER invents a spouse: a hinted name absent from `text` contributes
+    nothing (see `_ancora_nome`), so this returns fewer than two entries
+    whenever fewer than two of `esperados` anchor — `()` only when NONE do.
+    Every per-person fact attributed here is capped at `media` confidence
+    (`_no_maximo_media`) — positional attribution around a name the caller
+    supplied is an inference, never a label-anchored read, the same posture
+    `_dados_tabulares` already takes for its own positional reads.
+    """
+    norm, origem = normalized_with_offsets(text or "")
+    if not norm.strip():
+        return ()
+
+    achados: list[tuple[int, int, str]] = []
+    vistos: set[tuple[int, int]] = set()
+    for hint in esperados:
+        if not hint:
+            continue
+        pos = _ancora_nome(norm, hint)
+        if pos is None:
+            continue
+        span = (pos[0], pos[1])
+        if span in vistos:
+            continue
+        vistos.add(span)
+        achados.append(pos)
+    if not achados:
+        return ()
+    achados.sort(key=lambda a: a[0])
+
+    cpfs = [
+        (m.start(), format_cpf(m.group(1)))
+        for m in _CPF_RE.finditer(norm)
+        if is_valid(m.group(1)) and not _e_valor_de_matricula(norm, m.start())
+    ]
+    usados_cpf: set[int] = set()
+
+    out: list[ConjugeLido] = []
+    for i, (a_ini, a_fim, valor) in enumerate(achados):
+        outro_ini = achados[1 - i][0] if len(achados) == 2 else None
+        # The OTHER anchor only bounds THIS segment when it sits AHEAD of
+        # it — for the second-positioned spouse the other's occurrence is
+        # already behind, exactly like `_ler_rotulada`'s own forward-only
+        # `if m.start() > a:` guard above.
+        adiante = outro_ini is not None and outro_ini > a_fim
+
+        # CPF window: tight (`_CPF_JANELA`) when nothing bounds it forward,
+        # same asymmetry `_ler_rotulada`'s own `i == 0`/`i == 1` branch uses.
+        limite_cpf = outro_ini if adiante else min(len(norm), a_fim + _CPF_JANELA)
+
+        teto = min(len(norm), a_fim + _SEGMENTO_MAX)
+        limite_ampla = min(teto, outro_ini) if adiante else teto
+        fim_casal = next(
+            (m.start() for m in _FIM_BLOCO_ESTRUTURADO_RE.finditer(norm, a_fim)),
+            None,
+        )
+        if fim_casal is not None and a_fim < fim_casal < limite_ampla:
+            limite_ampla = fim_casal
+
+        # 🔴 No forward anchor to bound against — the last spouse in
+        # document order (or the ONLY one that anchored at all, when the
+        # caller supplied a single hint). Without a second name's position
+        # to stop at, `_SEGMENTO_MAX`/`fim_casal` alone can run straight
+        # through an UNANCHORED other spouse's own qualification clause,
+        # and `find_birthdate` (labelled dates DISAGREEING = absence, see
+        # its own docstring) then reports NEITHER date rather than this
+        # spouse's own. A Brazilian qualification clause always ends in a
+        # full stop before the next clause starts ("... filho de X e de
+        # Y."), so the first sentence-ending period after the anchor is a
+        # safe, tighter bound for the BIRTHDATE/NATIONALITY/PROFESSION read
+        # specifically. The married-name ADOPTION clause below deliberately
+        # keeps the wider `limite_ampla` instead — it is its own sentence,
+        # routinely AFTER the qualification clause's own period but still
+        # inside this spouse's own block ("... filho de X. Passou a
+        # assinar ...") — the same period that correctly bounds the
+        # qualification read would wrongly cut the adoption clause off.
+        limite_campos = limite_ampla
+        if not adiante:
+            fim_sentenca = norm.find(".", a_fim)
+            if 0 <= fim_sentenca < limite_campos:
+                limite_campos = fim_sentenca + 1
+
+        cpf = None
+        for pos, val in cpfs:
+            if a_fim <= pos < limite_cpf and pos not in usados_cpf and val:
+                cpf = val
+                usados_cpf.add(pos)
+                break
+
+        seg_orig = (
+            text[origem[a_fim] : origem[limite_campos - 1] + 1] if limite_campos > a_fim else ""
+        )
+        seg_norm = norm[a_fim:limite_campos] if limite_campos > a_fim else ""
+        d, d_conf, _ = find_birthdate(seg_orig) if seg_orig else (None, "nenhuma", None)
+        nac, nac_conf, _ = find_nacionalidade(seg_orig) if seg_orig else (None, "nenhuma", None)
+        prof, prof_conf, _ = find_profissao(seg_orig) if seg_orig else (None, "nenhuma", None)
+        gen, gen_conf = _genero(seg_norm)
+
+        # The married/maiden form: a "passou a assinar/utilizar/usar" (or
+        # "continua a ...") clause landing INSIDE this spouse's own segment
+        # names THIS spouse — the segment boundary is what disambiguates,
+        # not the clause's own ordinal/gender wording (`_ler_bloco_
+        # estruturado` and `_ler_narrativa_matrimonio` both need that
+        # wording only because they have no such segment yet at the point
+        # they read the clause).
+        nome_atual = None
+        m_adocao = _ADOCAO_GENERICA_RE.search(norm, a_fim, limite_ampla)
+        if m_adocao is not None:
+            nome_atual = _valor_de_adocao(norm, m_adocao.end())
+        divergiu = bool(nome_atual) and nome_atual != valor
+        nome_final = nome_atual if divergiu else valor
+        nome_anterior = valor if divergiu else None
+
+        out.append(
+            ConjugeLido(
+                nome=nome_final,
+                nome_anterior=nome_anterior,
+                cpf=cpf,
+                cpf_confianca=_no_maximo_media("alta") if cpf else "nenhuma",
+                data_nascimento=d,
+                data_nascimento_confianca=_no_maximo_media(d_conf) if d else "nenhuma",
+                nacionalidade=nac,
+                nacionalidade_confianca=_no_maximo_media(nac_conf) if nac else "nenhuma",
+                profissao=prof,
+                profissao_confianca=_no_maximo_media(prof_conf) if prof else "nenhuma",
+                genero=gen,
+                genero_confianca=_no_maximo_media(gen_conf),
+            )
+        )
+    return tuple(out)
+
+
+def find_conjuges(
+    text: str, *, esperados: tuple[str, ...] = ()
+) -> tuple[ConjugeLido, ...]:
+    """Both spouses of a certidão de casamento, in document order.
+
+    Tries, in order, each independent of the others: the "Primeiro/Segundo
+    Cônjuge" structured block, the old-narrative opening recital, then the
+    label-driven `NOMES`/`NOME` read. `()` unless one of those three names
+    exactly two equally-prominent holders.
+
+    `esperados` — the couple the caller already knows (a `TitularEsperado`
+    hint's `nome` and `conjuge_nome`, 0/1/2 names) — is consulted ONLY when
+    all three decline: `_ler_ancorada` confirms each hinted name directly
+    against the text instead of depending on a label this run's own
+    transcription may have garbled. See that section's own header for why.
+    A caller with no hint (the historical, still-supported call shape) gets
+    exactly the historical behaviour — `()` on the same inputs that used to
+    return `()`.
+    """
+    bloco = _ler_bloco_estruturado(text or "")
+    if bloco:
+        return bloco
+
+    narrativa = _ler_narrativa_matrimonio(text or "")
+    if narrativa:
+        return narrativa
+
+    rotulada = _ler_rotulada(text or "")
+    if rotulada:
+        return rotulada
+
+    if esperados:
+        return _ler_ancorada(text or "", esperados)
+    return ()
 
 
 __all__ = ["ConjugeLido", "find_conjuges"]

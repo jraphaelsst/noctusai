@@ -547,7 +547,8 @@ class IdentityFields:
 
 @dataclass(frozen=True)
 class TitularEsperado:
-    """Who the caller already knows this document belongs to.
+    """Who the caller already knows this document belongs to — and, when
+    the caller knows it, who the OTHER half of the couple is.
 
     A certidão de casamento names two people; the extractor cannot tell
     which one is "the" holder, but the caller can — it uploaded the document
@@ -557,10 +558,23 @@ class TitularEsperado:
     It is a SELECTOR, never a source: a hinted value is only ever returned
     when the document itself printed it. A hint that matches nothing on the
     document changes nothing.
+
+    `conjuge_nome`/`conjuge_cpf` extend the SAME contract to the card's
+    linked spouse (or the other party on the same side of the card) —
+    measured need (P2 corpus, 2026-09-29): the vision transcription's own
+    run-to-run variance breaks `conjuges.find_conjuges`'s label/connector/
+    block-opener readers on roughly half the runs of the SAME certidão, even
+    though both spouses' names usually still come through somewhere in the
+    text. `conjuges._ler_ancorada` uses this pair as a fallback anchor —
+    confirming a name the platform ALREADY knows directly against the
+    printed text — never as a source: a hinted spouse absent from the
+    document contributes nothing, exactly like `nome`/`cpf` above.
     """
 
     nome: Optional[str] = None
     cpf: Optional[str] = None
+    conjuge_nome: Optional[str] = None
+    conjuge_cpf: Optional[str] = None
 
 
 @runtime_checkable
