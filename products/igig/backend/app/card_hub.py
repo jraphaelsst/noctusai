@@ -59,6 +59,7 @@ _ATORES = actor_resolver(lambda: database._db.get_core_client())
 
 CARD_HUB_CLIENTE = CardHubConfig(
     entity_kind="cliente",
+    entity_label="Cliente",
     entity_table="cliente",
     entity_fk="cliente_id",
     id_param="cliente_id",
@@ -73,6 +74,7 @@ CARD_HUB_CLIENTE = CardHubConfig(
 
 CARD_HUB_NEGOCIO = CardHubConfig(
     entity_kind="negocio",
+    entity_label="Negócio",
     entity_table="negocio",
     entity_fk="negocio_id",
     id_param="negocio_id",

@@ -192,6 +192,10 @@ class CardHubConfig:
             stage-required checklist instantiated onto the card), or `None`
             for no FK.
         documentos: See `DocumentoPolicy`.
+        entity_label: Optional pt-BR display word for the entity in
+            user-facing messages (e.g. a 404) when `entity_kind` is a machine
+            key that isn't the word a person reads (`"negocio"` → `"Negócio"`).
+            Unset ⇒ `entity_kind` capitalized.
         checklist_extra_tipo_documento: The `tipo_documento` an operator-
             authored line's upload is filed under — the catalogue's own "not
             anticipated" type, so the upload rides the same allow-list and
@@ -211,6 +215,7 @@ class CardHubConfig:
     timeline_gatherers: Mapping[str, Gatherer] = field(
         default_factory=lambda: dict(SEED_GATHERERS)
     )
+    entity_label: Optional[str] = None
     badge_extensions: Sequence[BadgeExtension] = ()
     resumo_extensions: Sequence[ResumoExtension] = ()
     entity_datas: bool = True

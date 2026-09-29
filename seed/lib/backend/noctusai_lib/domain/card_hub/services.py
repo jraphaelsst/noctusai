@@ -40,12 +40,16 @@ def now_iso() -> str:
 
 
 def _entity_label(cfg: CardHubConfig) -> str:
-    """The entity's pt-BR display label for a 404 — `cfg.entity_kind`
+    """The entity's pt-BR display label for a 404 — `cfg.entity_label` when
+    set (a machine `entity_kind` like "negocio" isn't the word a person
+    reads: "Negócio"), else `cfg.entity_kind`
     capitalized ("cliente" -> "Cliente", "negocio" -> "Negocio", "lead" ->
     "Lead"), or the generic "Registro" when a product leaves `entity_kind`
     blank. Never the raw `entity_table` — a product whose table name isn't
     also its user-facing word (social-wiring: `entity_table="clientes"`,
     plural) must not leak that spelling into a message the user reads."""
+    if cfg.entity_label and cfg.entity_label.strip():
+        return cfg.entity_label.strip()
     kind = (cfg.entity_kind or "").strip()
     return kind[:1].upper() + kind[1:] if kind else "Registro"
 
