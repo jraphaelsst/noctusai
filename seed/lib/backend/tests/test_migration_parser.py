@@ -743,3 +743,40 @@ def test_dynamic_rls_enable_is_not_a_blind_spot():
     blind: list[dict] = []
     parse_sql(sql, blind_spots=blind)
     assert blind == []
+
+
+# ── DROP TABLE — a later drop removes the table from the declared map ──
+
+
+def test_drop_table_in_a_later_migration_removes_the_table():
+    """igig 003 creates the scaffold `examples` table; 030 drops it. The
+    declared schema must be the chain's END state, or schema_drift reports a
+    `missing_table` against a DB that is correct (2026-09-28)."""
+    from noctusai_lib.testing.migration_parser import parse_sql
+
+    m: dict[str, set[str]] = {}
+    parse_sql("CREATE TABLE igig.examples (id uuid, title text);", into=m)
+    parse_sql("CREATE TABLE igig.keep (id uuid);", into=m)
+    assert "igig.examples" in m
+    parse_sql("DROP TABLE IF EXISTS igig.examples;", into=m)
+    assert "igig.examples" not in m
+    assert m["igig.keep"] == {"id"}
+
+
+def test_drop_table_name_list_and_cascade():
+    from noctusai_lib.testing.migration_parser import parse_sql
+
+    m: dict[str, set[str]] = {}
+    parse_sql("CREATE TABLE s.a (id uuid); CREATE TABLE s.b (id uuid); CREATE TABLE s.c (id uuid);", into=m)
+    parse_sql("DROP TABLE s.a, s.b CASCADE;", into=m)
+    assert set(m) == {"s.c"}
+
+
+def test_drop_policy_or_function_does_not_drop_a_table():
+    """`DROP POLICY … ON t` / `DROP FUNCTION` must never be read as a table drop."""
+    from noctusai_lib.testing.migration_parser import parse_sql
+
+    m: dict[str, set[str]] = {}
+    parse_sql("CREATE TABLE s.t (id uuid);", into=m)
+    parse_sql('DROP POLICY IF EXISTS "p" ON s.t; DROP FUNCTION IF EXISTS s.f();', into=m)
+    assert "s.t" in m

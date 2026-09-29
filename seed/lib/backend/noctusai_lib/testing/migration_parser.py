@@ -4,7 +4,7 @@ Regex-based parser for migration DDL files.
 Phase 0 discovery (`projects/mock-supabase-schema-validation` §5.1) showed
 the migration corpus is uniform enough for a hand-rolled parser: 269
 column-defining DDL statements across 48 files, all fitting one of three
-shapes (CREATE TABLE, ALTER TABLE ADD COLUMN, ALTER TABLE DROP COLUMN).
+shapes (CREATE TABLE, DROP TABLE, ALTER TABLE ADD COLUMN, ALTER TABLE DROP COLUMN).
 No quoted identifiers, no weird dialect. 120 CREATE
 FUNCTION bodies and 11 DO blocks must be handled — function bodies are
 skipped wholesale, DO blocks are walked (they can wrap conditional
@@ -46,6 +46,15 @@ _CREATE_TABLE_HEAD_RE = re.compile(
     rf"(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})\s*\(",
     re.IGNORECASE,
 )
+
+# `DROP TABLE [IF EXISTS] [schema.]t [, [schema.]t ...] [CASCADE|RESTRICT]`.
+# The name list is captured whole and split on commas below.
+_DROP_TABLE_RE = re.compile(
+    rf"\bDROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+"
+    rf"(?P<names>(?:{_IDENT}\.)?{_IDENT}(?:\s*,\s*(?:{_IDENT}\.)?{_IDENT})*)",
+    re.IGNORECASE,
+)
+_QUALIFIED_NAME_RE = re.compile(rf"^(?:(?P<schema>{_IDENT})\.)?(?P<table>{_IDENT})$")
 
 # One `ALTER TABLE [IF EXISTS] [ONLY] [schema.]table` head. The clauses
 # that follow are matched SEPARATELY (below) rather than folded into this
@@ -542,6 +551,18 @@ def parse_sql(
                     m.group("schema") or "public",
                     m.group("table"),
                 )
+
+        # DROP TABLE — the table no longer exists from this point in the
+        # chain. Without this, a later migration's drop (igig 030 dropping
+        # the scaffold `examples` table) left the table in the declared map
+        # forever, so schema_drift reported `missing_table` against a DB
+        # that was correct, and the mock kept accepting writes to it.
+        if "DROP TABLE" in upper:
+            for m in _DROP_TABLE_RE.finditer(stmt):
+                for name in m.group("names").split(","):
+                    qm = _QUALIFIED_NAME_RE.match(name.strip())
+                    if qm:
+                        schema_map.pop(_qualify(qm.group("schema"), qm.group("table")), None)
 
         # ALTER TABLE ADD COLUMN — may appear standalone OR inside DO block
         # body. Our statement walker treats DO as atomic, so scan for
