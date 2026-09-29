@@ -209,3 +209,45 @@ class TestLogradouroTypeAbbreviationExpansion:
         abbreviation of anything — deliberately absent from the expansion
         table (see its own comment)."""
         assert normalizar_tipo_logradouro("SQN 408 BLOCO A") == "SQN 408 BLOCO A"
+
+
+class TestTitularBankSlipLabels:
+    """P2 (2026-09-28), measured against 9 real comprovantes: none carried
+    `Titular`/`Cliente`/`Nome`/`Destinatário` — the bills that were bank/boleto
+    slips instead print `Sacado`/`Pagador`, and every one of the 9 came back
+    with `titular=None`. `SACADO`/`PAGADOR` joining `_TITULAR_ROTULO_RE` is
+    the label-anchored fix; both read at `alta` exactly like `Titular`/
+    `Cliente` do, and neither is confused with the issuer's own
+    `Cedente`/`Beneficiário` line (deliberately absent from the whitelist)."""
+
+    def test_sacado_label_is_read_as_titular(self):
+        texto = (
+            "Sacado: JOAO DA SILVA SAUER\n"
+            "Endereco: R PROF ARTUR RAMOS, 123\n"
+            "Bairro: JARDIM PAULISTANO   CEP: 01454-011\n"
+            "Cidade: SAO PAULO - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.titular == "JOAO DA SILVA SAUER"
+        assert r.confianca == "alta"
+
+    def test_pagador_label_is_read_as_titular(self):
+        texto = (
+            "Cedente: BANCO XYZ S.A.\n"
+            "Pagador: MARIA APARECIDA DE SOUZA\n"
+            "Endereco: RUA DAS FLORES, 123 - AP 45\n"
+            "Bairro: JARDIM PAULISTA   CEP: 01234-567\n"
+            "Cidade: SAO PAULO - SP\n"
+        )
+        r = find_endereco(texto)
+        # The issuer's own "Cedente" line is never mistaken for the holder.
+        assert r.titular == "MARIA APARECIDA DE SOUZA"
+        assert r.confianca == "alta"
+
+    def test_sacado_label_also_works_in_the_positional_envelope_block(self):
+        texto = (
+            "Sacado: ANA BEATRIZ LIMA\n"
+            "Alameda Santos, 1000, Conj 52 - Cerqueira Cesar - Sao Paulo - SP - CEP 01418-100\n"
+        )
+        r = find_endereco(texto)
+        assert r.titular == "ANA BEATRIZ LIMA"

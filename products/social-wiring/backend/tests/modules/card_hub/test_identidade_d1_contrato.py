@@ -507,6 +507,106 @@ class TestEndereco:
         assert [c["campo"] for c in _conflitos(scoped)] == ["endereco"]
 
 
+class TestEnderecoAttribution:
+    """P2 (2026-09-28), measured against 9 real comprovantes vs 10 signed
+    contracts: 7/9 bills named a deal party as the holder, and in every such
+    case the contract used that bill's address for that party AND their
+    spouse. `EnderecoLido.titular` (once `address.py` can actually read
+    Sacado/Pagador labels — see that module's own P2 comment) is what makes
+    the attribution below possible; these tests pin the identidade_extracao_
+    service half: given a titular, decide WHOSE card gets the address."""
+
+    @pytest.mark.asyncio
+    async def test_own_name_fills_self_and_the_linked_spouse(self, client, scoped):
+        esposa = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco",
+            cliente={"nome": "Ana Paula Souza", "conjuge_cliente_id": esposa},
+            outros=[cliente_row(esposa, nome="Bruno Souza")],
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante())
+        eu, ele = _cliente(scoped, cid), _cliente(scoped, esposa)
+        for p in (eu, ele):
+            assert (p["endereco_cep"], p["endereco_logradouro"]) == (
+                "01454-011", "R PROF ARTUR RAMOS",
+            )
+            assert p["endereco_origem"] == "comprovante_endereco"
+            assert p["endereco_documento_id"] == did
+        assert _conflitos(scoped) == []
+
+    @pytest.mark.asyncio
+    async def test_a_card_party_matching_the_titular_by_name_gets_the_address(
+        self, client, scoped
+    ):
+        """Uploaded onto Carlos's card, but the bill names Ana — who is
+        ANOTHER party on the same atendimento, not Carlos's linked spouse.
+        The address goes to Ana (+ her own spouse, if any), never a conflict
+        on Carlos, and the write carries this document's own provenance."""
+        outra, atd = str(uuid4()), str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Carlos Eduardo Lima"},
+            outros=[cliente_row(outra, nome="Ana Paula Souza")],
+        )
+        scoped.set_table_data("atendimentos", [
+            {"id": atd, "org_id": ORG_ID, "cliente_id": cid},
+        ])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": outra, "papel": "comprador", "ordem": 0},
+        ])
+        out = await _extrair(scoped, storage, cid, did, _comprovante())
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+        row = _cliente(scoped, outra)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == (
+            "01454-011", "R PROF ARTUR RAMOS",
+        )
+        assert row["endereco_documento_id"] == did
+        assert _conflitos(scoped) == []
+        # `aplicado_ao_cliente` still reads off `cliente_id`'s own dict key —
+        # the caller passed `cid`, and the redirect is an internal detail.
+        assert out["aplicado_ao_cliente"]["endereco"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_titular_matching_nobody_on_the_card_is_still_a_review_conflict(
+        self, client, scoped
+    ):
+        """No card link at all between Carlos and Ana — unchanged from the
+        pre-P2 behaviour: never applied, opened as a conflict an admin
+        reviews (the JSON payload carries the bill's own titular)."""
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Carlos Eduardo Lima"}
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante())
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+        (c,) = _conflitos(scoped)
+        assert json.loads(c["valor_proposto"])["titular"] == "ANA PAULA SOUZA"
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_titular_still_fills_the_uploaded_to_card(
+        self, client, scoped, caplog
+    ):
+        """No holder name could be read at all (P2: 9/9 real bills) — the
+        pre-existing behaviour (fill whoever the file was uploaded onto,
+        unattended) is preserved, but the read is logged so an operator
+        auditing the extraction knows attribution was never verified."""
+        sem_titular = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123",
+            complemento=None, bairro=None, cidade=None, uf=None,
+            titular=None, confianca="baixa", rotulo="CEP",
+        )
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Qualquer Nome"}
+        )
+        with caplog.at_level("INFO"):
+            await _extrair(scoped, storage, cid, did, _comprovante(sem_titular))
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == (
+            "01454-011", "R PROF ARTUR RAMOS",
+        )
+        assert "sem titular legivel" in caplog.text
+        assert _conflitos(scoped) == []
+
+
 # ─── both spouses ──────────────────────────────────────────────────────────
 
 

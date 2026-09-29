@@ -1096,6 +1096,91 @@ def aplicar_endereco_ao_cliente(
     return True, None
 
 
+# ─── Comprovante address attribution (P2, 2026-09-28) ───────────────────────
+#
+# Measured against the P2 corpus (9 real comprovantes vs 10 signed contracts):
+# 7/9 bills named a party OF THE DEAL as the account holder, and in every such
+# case the contract used that bill's address for that party AND their spouse.
+# 1 bill was in a non-party's name and the contract did NOT use it; 1 was the
+# buyer's own name but the contract used a DIFFERENT address (never applied
+# unattended either way — see `aplicar_endereco_ao_cliente`'s own docstring).
+#
+# `aplicar_endereco_ao_cliente`'s `titular_documento` guard already refuses to
+# fill THIS `cliente_id` when the bill names someone else — but a document is
+# routinely uploaded onto one party's card while naming their SPOUSE or a
+# CO-PARTY on the same deal, and that case must attribute the address to the
+# right person instead of just conflicting the wrong one. `_pessoa_do_card_
+# por_nome` resolves who on this card the bill's holder actually is (self,
+# linked spouse, or a co-party on a shared atendimento) — `nobody` still falls
+# through to the existing conflict path unchanged, which is the review queue.
+
+
+def _nomes_bate(row: dict, nome: str) -> bool:
+    candidatos = [row.get("nome_oficial"), row.get("nome_completo"), row.get("nome")]
+    return any(nomes_compativeis(nome, n) for n in candidatos if n)
+
+
+def _pessoa_do_card_por_nome(
+    client: Any, org_id: UUID, cliente_id: UUID, nome: str
+) -> Optional[str]:
+    """The cliente on this card whose own name matches `nome`, or None.
+
+    `cliente_id` itself first (the common case — the bill's holder IS the
+    person the document was uploaded onto), then the linked spouse (`conjuge_
+    cliente_id` — authoritative, same order `_cliente_do_outro_conjuge` checks
+    it in), then every OTHER person on a shared atendimento. More than one
+    match among those others is ambiguous and resolves to None — silence over
+    a guess, the same posture an ambiguous spouse candidate already takes.
+    Never invents a cliente.
+    """
+    colunas = "id,nome,nome_completo,nome_oficial,conjuge_cliente_id"
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(colunas)
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    proprio = rows[0]
+    if _nomes_bate(proprio, nome):
+        return str(cliente_id)
+
+    candidatos_ids: set[str] = set()
+    vinculo = proprio.get("conjuge_cliente_id")
+    if vinculo:
+        candidatos_ids.add(str(vinculo))
+    candidatos_ids.update(_pessoas_dos_cards(client, org_id, cliente_id))
+    if not candidatos_ids:
+        return None
+    outras = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,nome,nome_completo,nome_oficial")
+        .eq("org_id", str(org_id))
+        .in_("id", list(candidatos_ids))
+        .execute()
+    ).data or []
+    achados = [r for r in outras if _nomes_bate(r, nome)]
+    return str(achados[0]["id"]) if len(achados) == 1 else None
+
+
+def _conjuge_vinculado(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[str]:
+    """The cliente already linked as this one's spouse (`conjuge_cliente_id`),
+    or None — used to propagate a comprovante's address onto both halves of an
+    already-modelled couple once it has been applied to one of them."""
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("conjuge_cliente_id")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0].get("conjuge_cliente_id") if rows else None
+
+
 # ─── The spouse link (migration 153) ─────────────────────────────────────────
 
 
@@ -1633,15 +1718,60 @@ async def extrair_identidade(
             if fields.leitura_comprometida:
                 aplicados[CAMPO_ENDERECO] = False
             else:
+                titular = endereco.titular
+                alvo_id: UUID = cliente_id
+                if titular:
+                    achado = _pessoa_do_card_por_nome(client, org_id, cliente_id, titular)
+                    if achado is not None:
+                        alvo_id = UUID(achado)
+                    # Titular present but matches nobody on this card: alvo_id
+                    # stays `cliente_id`, and `aplicar_endereco_ao_cliente`'s
+                    # own titular_documento guard below opens the review
+                    # conflict (comprovante em nome de terceiro) — never a
+                    # silent fill.
+                else:
+                    # P2, measured: 9/9 real comprovantes read with NO titular
+                    # at all (see `address.py`'s own P2 comment) — applying
+                    # unattended to whoever the file was uploaded onto is the
+                    # pre-existing behaviour, kept unchanged here, but flagged
+                    # so a human auditing the log knows attribution was never
+                    # verified against a name.
+                    logger.info(
+                        "extracao %s: comprovante sem titular legivel — "
+                        "endereco aplicado a %s sem verificacao de titularidade",
+                        documento_id, cliente_id,
+                    )
+                # The guard only needs re-checking when we could NOT resolve
+                # who the bill names to someone already ON this card —
+                # `alvo_id == cliente_id` and a matched titular are mutually
+                # exclusive with the "nobody matched" branch above.
+                titular_guard = titular if alvo_id == cliente_id else None
                 aplicado_end, conflito_end = aplicar_endereco_ao_cliente(
-                    client, org_id, cliente_id, tipo, partes_endereco,
-                    titular_documento=endereco.titular,
+                    client, org_id, alvo_id, tipo, partes_endereco,
+                    titular_documento=titular_guard,
                     confianca=endereco.confianca,
                     documento_id=documento_id,
                 )
                 aplicados[CAMPO_ENDERECO] = aplicado_end
                 if conflito_end is not None:
                     conflitos.append(conflito_end)
+
+                # Measured (P2): every bill naming a deal party had its
+                # address applied to that party's SPOUSE too. Best-effort,
+                # same group contract as the primary write — a disagreement
+                # opens its OWN conflict on the spouse's record rather than
+                # silently skipping or silently overwriting.
+                if aplicado_end:
+                    conjuge_id = _conjuge_vinculado(client, org_id, alvo_id)
+                    if conjuge_id is not None:
+                        _, conflito_conjuge_end = aplicar_endereco_ao_cliente(
+                            client, org_id, UUID(conjuge_id), tipo, partes_endereco,
+                            titular_documento=None,
+                            confianca=endereco.confianca,
+                            documento_id=documento_id,
+                        )
+                        if conflito_conjuge_end is not None:
+                            conflitos.append(conflito_conjuge_end)
 
         # 🔴 BOTH SPOUSES (migration 153). The spouse the card belongs to was
         # applied above (the extractor's `titular` hint selected them and carried

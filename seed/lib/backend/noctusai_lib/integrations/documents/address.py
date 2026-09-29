@@ -159,8 +159,15 @@ _ROTULOS = {
     "cidade": r"(?:CIDADE|MUNICIPIO|LOCALIDADE)",
     "uf": r"(?:UF|ESTADO)",
 }
+#: P2 (2026-09-28), measured against 9 real comprovantes: none carried
+#: `Titular`/`Cliente`/`Nome`/`Destinatário` and none was read — every one
+#: was either a bank/boleto slip (`Sacado`/`Pagador` — the payer, printed
+#: next to their own address block) or an envelope block with no label at
+#: all (handled separately, positionally, by `_ler_bloco` below). Adding
+#: `SACADO`/`PAGADOR` here is the label-anchored half of the fix.
 _TITULAR_ROTULO_RE = re.compile(
-    r"^\s*(?:NOME(?:\s+DO\s+(?:CLIENTE|TITULAR))?|CLIENTE|TITULAR|DESTINATARIO|CONSUMIDOR)\s*[:\-]\s*(.+?)\s*$"
+    r"^\s*(?:NOME(?:\s+DO\s+(?:CLIENTE|TITULAR))?|CLIENTE|TITULAR|DESTINATARIO|"
+    r"CONSUMIDOR|SACADO|PAGADOR)\s*[:\-]\s*(.+?)\s*$"
 )
 
 #: Where a labelled value stops: two+ spaces, a pipe, or another label.
