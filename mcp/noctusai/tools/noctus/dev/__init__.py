@@ -109,6 +109,7 @@ def register_all(server) -> None:
     from . import ship_consent
     from . import ledger_store
     from . import scaffold_keeper
+    from . import notify
     from . import scaffold_mcp_tool
     from . import scaffold_memory
     from . import scaffold_migration
@@ -243,6 +244,7 @@ def register_all(server) -> None:
     ship_consent.register(server)
     ledger_store.register(server)
     scaffold_keeper.register(server)
+    notify.register(server)
     scaffold_mcp_tool.register(server)
     scaffold_memory.register(server)
     scaffold_migration.register(server)
