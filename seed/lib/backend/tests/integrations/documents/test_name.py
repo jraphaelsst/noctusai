@@ -15,6 +15,7 @@ from noctusai_lib.integrations.documents.name import (
     find_name,
     find_name_conflitos,
     looks_like_a_name,
+    nomes_em_par,
 )
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
 
@@ -530,6 +531,86 @@ class TestMultiHolderCollectorSkipsAnyCpfLabelRow:
         # nubente is collected under this header, same as before this fix.
         assert find_name_conflitos(texto) is None
         assert find_name(texto) == ("FULANO DE TAL SANTOS", "alta", "NOMES")
+
+
+class TestMultiHolderBothNamesJoinedByConnector:
+    """🔴 TWO MORE `NOMES` SHAPES THE ROW-PER-NUBENTE COLLECTOR MISSED —
+    real, measured (P2 corpus, 2026-09-28): the SAME cartório family that
+    puts one name per row under `NOMES` has (at least) two variants that
+    join the couple with a bare "E" instead — both names on the label's OWN
+    line, or each name on its own row with the "E" as a THIRD, standalone
+    row between them. Either way `_coleta_titulares_multiplos`'s original
+    row-walk either never looked at the label's own line at all, or broke
+    outright on the lone "E" row (too short to be a name, not a CPF row
+    either) — collecting only the first name and reporting "found one, not
+    two" instead of the real ambiguity.
+    """
+
+    def test_both_names_on_the_labels_own_line_joined_by_e(self):
+        texto = (
+            "NOMES: FULANO DE TAL SANTOS E CICLANA DE TAL PEREIRA\n"
+            "MATRICULA: 119222 01 55 2017 2 00093 208 0027875-91\n"
+        )
+        assert find_name_conflitos(texto) == [
+            "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
+        ]
+
+    def test_a_lone_e_on_its_own_row_does_not_end_the_multi_holder_walk(self):
+        texto = (
+            "NOMES\n"
+            "FULANO DE TAL SANTOS\n"
+            "E\n"
+            "CICLANA DE TAL PEREIRA\n"
+            "MATRICULA\n"
+            "119222 01 55 2017 2 00093 208 0027875-91\n"
+        )
+        assert find_name_conflitos(texto) == [
+            "CICLANA DE TAL PEREIRA", "FULANO DE TAL SANTOS",
+        ]
+
+    def test_single_name_on_the_labels_line_is_unaffected(self):
+        """A `NOMES` label whose own line already carries no more than a
+        single name (the ordinary row-per-nubente shape) must not be routed
+        through the connector split at all."""
+        texto = "NOMES\nJOAO PEREIRA DA SILVA\nMATRICULA\n123456\n"
+        conflitos = find_name_conflitos(texto)
+        assert conflitos is None
+        label_valor, confianca, label = find_name(texto)
+        assert (label_valor, confianca, label) == ("JOAO PEREIRA DA SILVA", "alta", "NOMES")
+
+
+class TestNomesEmPar:
+    """`nomes_em_par` — the shared same-line two-name split both the
+    `NOMES:` same-line shape above and `conjuges._ler_narrativa_matrimonio`
+    use, see that function's own docstring for the embedded-"E" tradeoff."""
+
+    def test_default_connector_is_e(self):
+        assert nomes_em_par("FULANO DE TAL SANTOS E CICLANA DE TAL PEREIRA") == (
+            "FULANO DE TAL SANTOS", "CICLANA DE TAL PEREIRA",
+        )
+
+    def test_no_connector_present_is_none(self):
+        assert nomes_em_par("FULANO DE TAL SANTOS") is None
+
+    def test_a_malformed_half_is_rejected_not_guessed(self):
+        # The tail after "E" is not a well-formed name (too many words) —
+        # the whole split is rejected rather than half-accepted.
+        assert (
+            nomes_em_par(
+                "FULANO DE TAL SANTOS E O REFERIDO E VERDADE E DOU FE NESTE ATO"
+            )
+            is None
+        )
+
+    def test_ordered_connectors_try_com_before_e(self):
+        # "COM" is tried FIRST when supplied first: the real separator here
+        # is " COM ", and the first name embeds its own "E" as a compound
+        # surname connector — trying "E" first would wrongly split inside
+        # the first name instead.
+        assert nomes_em_par(
+            "FULANO DE TAL E SANTOS COM CICLANA DE TAL PEREIRA",
+            conectores=("COM", "E"),
+        ) == ("FULANO DE TAL E SANTOS", "CICLANA DE TAL PEREIRA")
 
 
 class TestTabularLabelRowIsNotANubente:

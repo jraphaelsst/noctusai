@@ -103,7 +103,17 @@ from noctusai_lib.integrations.documents.labels import Achado, label_before
 
 #: Same window every sibling parser uses — these are the same document
 #: layouts.
-_LABEL_WINDOW = 48
+#:
+#: 🔴 WIDENED FROM 48 — real, measured (P2 corpus, 2026-09-28): a tabular
+#: certidão prints "DATA DE REGISTRO DO CASAMENTO (POR EXTENSO)" with its own
+#: "DIA   MÊS   ANO" column-header trailer on the SAME row, then the value on
+#: the NEXT row — 43 + 13 = 56 characters between the label's own start and
+#: the value, already past the old 48-char window built for a single
+#: same-line field. 72 gives that layout headroom without meaningfully
+#: widening what a genuinely nearer decoy (a birthdate or emission-date
+#: label) can suppress — `label_before`'s own nearest-wins tie-break still
+#: prefers whichever label ends latest.
+_LABEL_WINDOW = 72
 
 # ─── Closed vocabulary ───────────────────────────────────────────────────
 #: `social_wiring.clientes.estado_civil` is unconstrained TEXT (migration
@@ -670,6 +680,18 @@ _EXTENSO_DATE = re.compile(
     r"\s+DE\s+(" + "|".join(_MESES) + r")\s+DE\s+"
     r"([A-Z]+(?:\s+[A-Z]+){0,6})"
 )
+#: 🔴 A FOURTH DATE SHAPE — real, measured (P2 corpus, 2026-09-28): a CNJ
+#: e-cartório table renders its own "Dia / Mês / Ano" column header WITH the
+#: cell values inline, on one row, no slashes or genuine field separators
+#: between label and number ("Data da celebração do casamento: Dia 05 / Mês
+#: 03 / Ano 2020", or, on another certidão, "DIA: 05 MÊS: 03 ANO: 2020") —
+#: neither the numeric nor either extenso form above matches this (the
+#: literal words "DIA"/"MES"/"ANO" sit between the label and every digit).
+#: Bounded to the SAME three labelled cells in the SAME order, so it cannot
+#: match anything else.
+_DIA_MES_ANO_ROTULADO = re.compile(
+    r"\bDIA\s*:?\s*(\d{1,2})\s*/?\s*MES\s*:?\s*(\d{1,2})\s*/?\s*ANO\s*:?\s*(\d{4})\b"
+)
 
 #: No client's marriage or certidão plausibly predates this — the same role
 #: `birthdate.MIN_AGE` plays, guarding against an OCR digit confusion
@@ -679,11 +701,12 @@ _ANO_MINIMO = 1900
 
 def _iter_datas(norm: str):
     """Every parseable date in `norm` (already `normalize()`d) as
-    `(offset, date)`, across the three forms a certidão uses: numeric
-    (`12/03/2010`), semi-extenso (`12 DE MARCO DE 2010`) and fully extenso
-    (`DOZE DE MARCO DE DOIS MIL E DEZ`). Malformed values (day 32, a year
-    word sequence that fails to parse at all) are skipped, not raised — the
-    same posture `birthdate._iter_dates` takes."""
+    `(offset, date)`, across the four forms a certidão uses: numeric
+    (`12/03/2010`), semi-extenso (`12 DE MARCO DE 2010`), fully extenso
+    (`DOZE DE MARCO DE DOIS MIL E DEZ`), and the labelled "Dia/Mês/Ano"
+    table cell (`DIA 12 / MES 03 / ANO 2010`). Malformed values (day 32, a
+    year word sequence that fails to parse at all) are skipped, not raised —
+    the same posture `birthdate._iter_dates` takes."""
     for m in _NUMERIC_DATE.finditer(norm):
         dia, mes, ano = (int(g) for g in m.groups())
         try:
@@ -702,6 +725,12 @@ def _iter_datas(norm: str):
         ano, _consumidos = _extenso_prefixo(m.group(3).split())
         if ano is None:
             continue
+        try:
+            yield (m.start(), date(ano, mes, dia))
+        except ValueError:
+            continue
+    for m in _DIA_MES_ANO_ROTULADO.finditer(norm):
+        dia, mes, ano = (int(g) for g in m.groups())
         try:
             yield (m.start(), date(ano, mes, dia))
         except ValueError:
@@ -728,15 +757,40 @@ def _rotulo_data(
 #: is not required here (unlike `birthdate._BIRTH_LABELS`) since
 #: `label_before` itself already prefers the label that ends latest, then the
 #: longest, on a tie.
+#:
+#: 🔴 SIX MORE PHRASINGS FOR THE SAME FIELD — real, measured (P2 corpus,
+#: 2026-09-28), each off a DIFFERENT real certidão: "CASAMENTO REALIZADO
+#: (hoje)" (an old-form Observações note); "CELEBRADO NO DIA" / "CELEBRADO
+#: EM" (a religious ceremony's own civil-effect date, distinct from the
+#: separately-labelled REGISTRO date the same certidão also states);
+#: "CONTRAIDO NO DIA" (the narrative "matrimônio de A com B, contraído no
+#: dia ..." recital `conjuges._ler_narrativa_matrimonio` also reads); and
+#: "DATA DA/DE CELEBRACAO DO CASAMENTO" (the CNJ tabular layout's own column
+#: label — the exact phrase `conjuges._FIM_BLOCO_ESTRUTURADO_RE` already
+#: recognises as ending a nubente's block, here recognised as the label it
+#: actually is). All six are genuinely the marriage's CELEBRATION, so they
+#: belong in the PRIMARY set, not the registro-only fallback below.
 _CASAMENTO_LABELS = (
     "CASARAM-SE EM", "CASARAM SE EM", "DATA DO CASAMENTO", "DATA DE CASAMENTO",
     "CASADOS EM", "CONTRAIRAM CASAMENTO EM", "CONTRAIU CASAMENTO EM",
+    "CASAMENTO REALIZADO", "CELEBRADO NO DIA", "CELEBRADO EM",
+    "CONTRAIDO NO DIA", "DATA DA CELEBRACAO DO CASAMENTO",
+    "DATA DE CELEBRACAO DO CASAMENTO",
 )
 #: Used ONLY when no celebration-date label exists anywhere in the document —
 #: see `find_data_casamento`'s "never guess" note. Still requires an explicit
 #: label of its own; an unlabelled date is never accepted as the registro.
+#:
+#: "LAVRADO NO DIA" added alongside — real, measured (P2 corpus,
+#: 2026-09-28): the SAME narrative recital that states "contraído no dia
+#: [celebration]" also states, earlier in the same sentence, "foi lavrado no
+#: dia [registro]" — a genuinely different, later-in-time date for the same
+#: marriage. Listing it here (rather than leaving it unlabelled) is what lets
+#: it act as a DECOY for the primary search too, so the nearby "contraído"
+#: date is never misattributed to it or vice versa.
 _CASAMENTO_LABELS_FALLBACK = (
     "DATA DE REGISTRO", "DATA DO REGISTRO", "REGISTRADO EM", "REGISTRO EM",
+    "LAVRADO NO DIA",
 )
 _CASAMENTO_DECOYS = (
     "DATA DE NASCIMENTO", "DATA NASCIMENTO",
@@ -744,10 +798,13 @@ _CASAMENTO_DECOYS = (
 )
 
 _EMISSAO_LABELS = ("EMITIDA EM", "EMITIDO EM", "DATA DE EMISSAO", "DATA EMISSAO")
-_EMISSAO_DECOYS = (
-    "DATA DE NASCIMENTO", "DATA NASCIMENTO",
-    "DATA DO CASAMENTO", "DATA DE CASAMENTO", "CASARAM-SE EM", "CASARAM SE EM",
-)
+#: Every celebration-date label is a decoy here too — a nearer
+#: `_CASAMENTO_LABELS` hit is a different KIND of date, not ours. Derived
+#: from that tuple (plus the two nascimento decoys) rather than a hand-kept
+#: partial copy, so a new celebration-date phrasing added there is a decoy
+#: here by construction (P2 corpus, 2026-09-28 added six; a hand-kept subset
+#: would have silently stayed stale).
+_EMISSAO_DECOYS = ("DATA DE NASCIMENTO", "DATA NASCIMENTO") + _CASAMENTO_LABELS
 
 
 def find_data_casamento(

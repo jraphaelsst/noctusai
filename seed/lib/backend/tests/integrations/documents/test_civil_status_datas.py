@@ -68,6 +68,113 @@ class TestDataCasamentoCelebrationLabel:
         assert (valor, conf) == (date(1999, 6, 5), "alta")
 
 
+class TestDataCasamentoSixMorePhrasingsFromTheP2Corpus:
+    """🔴 THE GAP THIS CLASS CLOSES — real, measured (P2 corpus, 2026-09-28):
+    across the 10-deal P2 corpus, `data_casamento` came back empty for the
+    majority of certidões, not because the date was missing from the
+    document but because it was labelled with a phrasing this parser did
+    not recognise at all. Six real phrasings, one class each below."""
+
+    def test_casamento_realizado_hoje_narrative_note(self):
+        """"Observações: Casamento realizado hoje (aos 12 de março de
+        2010)..." — the old-narrative recital's own celebration note."""
+        valor, conf, rotulo = find_data_casamento(
+            'OBSERVACOES: CASAMENTO REALIZADO HOJE (AOS 12 DE MARCO DE 2010) '
+            'SOB O REGIME DE "COMUNHAO PARCIAL DE BENS"'
+        )
+        assert (valor, conf) == (date(2010, 3, 12), "alta")
+        assert rotulo == "CASAMENTO REALIZADO"
+
+    def test_celebrado_no_dia_numeric(self):
+        texto = (
+            "FOI REGISTRADO O CASAMENTO RELIGIOSO DE FULANO DE TAL E "
+            "CICLANA DE TAL, CELEBRADO NO DIA 12/03/2010, AS 16 HORAS"
+        )
+        valor, conf, rotulo = find_data_casamento(texto)
+        assert (valor, conf) == (date(2010, 3, 12), "alta")
+        assert rotulo == "CELEBRADO NO DIA"
+
+    def test_celebrado_em_extenso_in_an_averbacao_note(self):
+        """An averbação can restate the celebration in words — distinct
+        from a separately-labelled registro date elsewhere in the SAME
+        document, and further away than the old 48-char window reached."""
+        texto = (
+            "DATA DE REGISTRO DO CASAMENTO (POR EXTENSO): NOVE DE AGOSTO DE "
+            "DOIS MIL E DEZ\n"
+            "ANOTACOES/AVERBACOES: CASAMENTO RELIGIOSO COM EFEITO CIVIL "
+            "CELEBRADO EM TRINTA E UM DE JULHO DE DOIS MIL E DEZ, CONTRAIDO "
+            "PERANTE O OFICIAL"
+        )
+        valor, conf, rotulo = find_data_casamento(texto)
+        assert (valor, conf) == (date(2010, 7, 31), "alta")
+        assert rotulo == "CELEBRADO EM"
+
+    def test_contraido_no_dia_extenso_wins_over_a_lavrado_registro_date(self):
+        """The narrative "matrimônio de A com B" recital states the
+        marriage was CONTRAÍDO on one date and the registro document was
+        LAVRADO on another, nearby, EARLIER date — the celebration
+        ("contraído") must win, never the paperwork date."""
+        texto = (
+            "FOI LAVRADO NO DIA VINTE E TRES DE OUTUBRO DE DOIS MIL E SETE, "
+            "A ASSENTA DO MATRIMONIO DE FULANO DE TAL COM CICLANA DE TAL, "
+            "CONTRAIDO NO DIA VINTE E NOVE DE SETEMBRO DE DOIS MIL E SETE, "
+            "NA IGREJA SAO FRANCISCO"
+        )
+        valor, conf, rotulo = find_data_casamento(texto)
+        assert (valor, conf) == (date(2007, 9, 29), "alta")
+        assert rotulo == "CONTRAIDO NO DIA"
+
+    def test_data_da_celebracao_do_casamento_labelled_triplet(self):
+        """The CNJ e-cartório table's own column label, with the value
+        rendered as a labelled "Dia/Mês/Ano" triplet rather than a plain
+        date — see `TestDiaMesAnoLabelledTriplet` below for the shape
+        itself."""
+        valor, conf, rotulo = find_data_casamento(
+            "DATA DA CELEBRACAO DO CASAMENTO: DIA 15 / MES 08 / ANO 2020"
+        )
+        assert (valor, conf) == (date(2020, 8, 15), "alta")
+        assert rotulo == "DATA DA CELEBRACAO DO CASAMENTO"
+
+    def test_lavrado_no_dia_fallback_when_no_celebration_label_exists(self):
+        valor, conf, rotulo = find_data_casamento(
+            "REGISTRO DE CASAMENTO, FOI LAVRADO NO DIA 23/10/2007"
+        )
+        assert (valor, conf) == (date(2007, 10, 23), "alta")
+        assert rotulo == "LAVRADO NO DIA"
+
+
+class TestDiaMesAnoLabelledTriplet:
+    """The fourth date SHAPE `_iter_datas` recognises — a table cell
+    rendered as "Dia N / Mês N / Ano N" (or "DIA: N MES: N ANO: N") rather
+    than a plain numeric or extenso date. Real, measured (P2 corpus,
+    2026-09-28): a CNJ e-cartório certidão states BOTH its celebration and
+    registro dates ONLY this way, no extenso fallback present anywhere."""
+
+    def test_slash_separated_labelled_cells(self):
+        valor, conf, _ = find_data_casamento(
+            "DATA DA CELEBRACAO DO CASAMENTO: DIA 05 / MES 03 / ANO 2020"
+        )
+        assert (valor, conf) == (date(2020, 3, 5), "alta")
+
+    def test_colon_separated_labelled_cells_on_their_own_lines(self):
+        texto = (
+            "DATA DE REGISTRO DE CASAMENTO (POR EXTENSO)\n"
+            "vinte e nove de abril de dois mil e dezessete\n"
+            "DIA: 29\n"
+            "MES: 04\n"
+            "ANO: 2017\n"
+        )
+        valor, conf, _ = find_data_casamento(texto)
+        assert (valor, conf) == (date(2017, 4, 29), "alta")
+
+    def test_an_implausible_triplet_is_rejected_like_any_other_date(self):
+        valor, conf, _ = find_data_casamento(
+            "DATA DO CASAMENTO: DIA 31 / MES 02 / ANO 2020"
+        )
+        assert valor is None
+        assert conf == "nenhuma"
+
+
 class TestDataCasamentoRegistroFallback:
     def test_registro_used_only_when_no_celebration_label_exists(self):
         valor, conf, rotulo = find_data_casamento("DATA DE REGISTRO: 01/02/1975")

@@ -50,7 +50,11 @@ from noctusai_lib.integrations.documents.cpf import _CPF_RE, format_cpf, is_vali
 from noctusai_lib.integrations.documents.gender import FEMININO, MASCULINO
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
-from noctusai_lib.integrations.documents.name import find_name_conflitos, looks_like_a_name
+from noctusai_lib.integrations.documents.name import (
+    find_name_conflitos,
+    looks_like_a_name,
+    nomes_em_par,
+)
 from noctusai_lib.integrations.documents.profession import find_profissao
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 
@@ -387,6 +391,183 @@ def _ler_bloco_estruturado(text: str) -> tuple[ConjugeLido, ...]:
     return tuple(out)
 
 
+# ─── The OLD-NARRATIVE opening-clause layout (P2 corpus, 2026-09-28)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# A pre-CNJ certidão frequently names BOTH nubentes only ONCE, in the
+# document's own opening recital — "foi feito assento do matrimônio de
+# FULANO e CICRANA" / "foi registrado o casamento (religioso) de FULANO com
+# CICRANA" — and never repeats either name again: the per-nubente paragraphs
+# that follow ("O contratante nascido em ...", "ELE, nascido em ...") qualify
+# whoever was just named WITHOUT restating a name at all. Neither
+# `_ler_bloco_estruturado` (no "Primeiro/Segundo Cônjuge" block) nor
+# `find_name_conflitos` (no `NOME`/`NOMES` label anywhere) sees this
+# document at all — every candidate pool used elsewhere in this module is
+# built on a LABEL, and this clause is bare narrative prose. This is an
+# INDEPENDENT reader for that one specific recital, tried before falling
+# back to the labelled paths below.
+#: The `,?` covers "Foi feito o casamento, de FULANO ... com CICRANA ..." —
+#: an old form template that punctuates the verb clause and the couple's
+#: names as two separate clauses rather than running "CASAMENTO DE" together
+#: (P2 corpus, 2026-09-28).
+_CONJUGES_NARRATIVA_RE = re.compile(r"\b(?:MATRIMONIO|CASAMENTO(?:\s+RELIGIOSO)?),?\s+DE\s+")
+#: The clause ends at the first of these — a real full name never contains
+#: any of them.
+_NARRATIVA_TERMINADORES = ("\n", ",", ".")
+#: A pre-printed form's dotted blank-line filler ("de FULANO..........."),
+#: three or more periods in a row — never real prose punctuation.
+_FILLER_PONTILHADO_RE = re.compile(r"\.{3,}")
+
+#: 🔴 THE MARRIED-NAME ADOPTION NOTE ON THIS SAME LAYOUT — real, measured
+#: (P2 corpus, 2026-09-28): this narrative family also carries its own
+#: "A/O contra(ente|tante|tente) passou a assinar ..." sentence, stating
+#: whichever nubente changed their name on marriage (or, printed the same
+#: way, that they did NOT — "... passou a assinar O MESMO NOME."). Read the
+#: same way `_ler_bloco_estruturado` reads its own "Nome que o [...] cônjuge
+#: passou a utilizar" line — into `nome`/`nome_anterior` — rather than a
+#: second, disconnected concept: see `ConjugeLido.nome_anterior`'s own
+#: comment for why the CURRENT name is primary. This layout carries no
+#: per-nubente gender marker of its own (unlike the CNJ block's own
+#: "NASCIDO"/"NASCIDA" qualification clause), so the adoption sentence's own
+#: article ("A" feminine / "O" masculine) is routed to a name by POSITION —
+#: every certidão in the P2 corpus lists the groom in the recital's clause
+#: FIRST and the bride second, the universal Brazilian civil-registry
+#: convention (also true of the CNJ narrative "O contratante" / "A
+#: contratante" paragraph ORDER, and of `_ler_bloco_estruturado`'s own
+#: PRIMEIRO/SEGUNDO ordinal convention).
+_ADOCAO_VERBO = (
+    r"(?:PASSOU|PASSAR[AÁ])\s+A\s+(?:USAR|ASSINAR)(?:-SE)?(?:\s+O\s+NOME\s+DE)?|"
+    r"CONTINU(?:A|OU)\s+A\s+(?:USAR|ASSINAR)(?:\s+O\s+(?:MESMO\s+NOME|NOME\s+DE))?"
+)
+_ADOCAO_MASC_RE = re.compile(r"\bO\s+CONTRA(?:TANTE|TENTE|ENTE)\b\s*" + _ADOCAO_VERBO + r"\s*")
+_ADOCAO_FEM_RE = re.compile(r"\bA\s+CONTRA(?:TANTE|TENTE|ENTE)\b\s*" + _ADOCAO_VERBO + r"\s*")
+#: 🔴 THE SAME NOTE, WRITTEN BY ANAPHORA — real, measured (P2 corpus,
+#: 2026-09-28): another certidão in this same narrative family states the
+#: adoption INSIDE the nubente's own qualification paragraph, referring back
+#: to them as "a qual" ("... filha de IRACI ..., a qual passou assinar-se
+#: NOVO NOME") rather than repeating "A contratante". `_ADOCAO_FEM_RE` /
+#: `_ADOCAO_MASC_RE` above require the article DIRECTLY before the verb, so
+#: they do not see this; here the gender is instead read off the NEAREST
+#: preceding "O/A contra(ente|tante|tente)" marker — whichever qualification
+#: paragraph "a qual" is still inside.
+_CONTRA_MARCADOR_RE = re.compile(r"\b([OA])\s+CONTRA(?:TANTE|TENTE|ENTE)\b")
+_ADOCAO_QUAL_RE = re.compile(r"\bA\s+QUAL\s+(?:PASSOU|PASSAR[AÁ])\s+(?:A\s+)?ASSINAR(?:-SE)?\b\s*")
+_MESMO_NOME_RE = re.compile(r"^(?:O\s+)?MESMO\s+NOME\b")
+_SEPARADORES_LOCAIS = " :\t-–—.|*\"'"
+
+
+def _valor_de_adocao(norm: str, fim: int) -> Optional[str]:
+    """The adopted name right after an adoption-clause verb, or `None` when
+    the clause states no change ("O MESMO NOME") or the tail is not itself
+    name-shaped."""
+    limites = [
+        p
+        for p in (norm.find("\n", fim), norm.find(",", fim), norm.find(".", fim))
+        if p >= 0
+    ]
+    fim_frase = min(limites) if limites else min(len(norm), fim + _SEGMENTO_MAX)
+    # Collapsed, not merely edge-trimmed — see `name.nomes_em_par`'s own note
+    # on why a value spanning a PDF line-wrap must never keep a raw "\n".
+    bruto = " ".join(norm[fim:fim_frase].strip(_SEPARADORES_LOCAIS).split())
+    if not bruto or _MESMO_NOME_RE.match(bruto):
+        return None
+    return bruto if looks_like_a_name(bruto) else None
+
+
+def _limites_candidatos(norm: str, inicio: int, teto: int) -> list[int]:
+    """EVERY terminator occurrence between `inicio` and `teto`, ascending,
+    `teto` itself last — the set of "clause ends here" hypotheses tried in
+    order by `_ler_narrativa_matrimonio` below.
+
+    Every occurrence, not just the first of each kind — real, measured (P2
+    corpus, 2026-09-28): a title abbreviation ("Sr.", "MM.") between the two
+    names carries its OWN period, which is a real terminator hit but the
+    WRONG one (it lands mid-clause, well short of the second name). Only the
+    first-of-each-kind position would get stuck there forever; every
+    position lets the caller's loop move past a too-short false hit to the
+    next one out.
+    """
+    posicoes = {
+        m.start()
+        for terminador in _NARRATIVA_TERMINADORES
+        for m in re.finditer(re.escape(terminador), norm[inicio:teto])
+    }
+    posicoes = {inicio + p for p in posicoes}
+    posicoes.add(teto)
+    return sorted(posicoes)
+
+
+def _ler_narrativa_matrimonio(text: str) -> tuple[ConjugeLido, ...]:
+    """Both spouses named ONLY in the old-narrative opening recital — see
+    the section header above. `()` unless the recital names exactly two
+    name-shaped nubentes.
+
+    🔴 THE TERMINATOR IS TRIED AT INCREASING DISTANCE, NOT TAKEN AT THE
+    FIRST HIT — real, measured (P2 corpus, 2026-09-28): `normalized_with_offsets`
+    (unlike this module's sibling functions' own `normalize()`) preserves the
+    source text's OWN line breaks verbatim, and a PDF's line-wrap routinely
+    falls mid-name, not at a clause boundary — "...do matrimônio de FULANO
+    DE\\nTAL PAIEIS com CICRANA DA SILVA, contraído..." wraps between "DE"
+    and "TAL". Stopping at that first "\\n" cuts the first name in half and
+    the split below fails; stopping only at the comma/period risks running
+    past a genuine one-line clause into the NEXT sentence for a document
+    that happens not to wrap. Neither distance is right for every layout, so
+    every terminator candidate (nearest first) is tried until one yields two
+    genuinely well-formed names — `nomes_em_par`'s own strict word/character
+    checks are what make a too-far guess self-rejecting, not a heuristic
+    here about which candidate is "more likely" correct.
+    """
+    norm, _origem = normalized_with_offsets(text)
+    # A pre-printed form's own dotted blank-lines ("de FULANO............
+    # com CICRANA............") are page-layout filler, never prose — real,
+    # measured (P2 corpus, 2026-09-28): unstripped, a run of them sits
+    # between the two names and fails `looks_like_a_name`'s character check
+    # on whichever candidate span still includes it, no matter how the
+    # terminator search below is tuned. Collapsed to a single space,
+    # LOCALLY, before this reader does anything else with the text.
+    norm = _FILLER_PONTILHADO_RE.sub(" ", norm)
+    m = _CONJUGES_NARRATIVA_RE.search(norm)
+    if m is None:
+        return ()
+
+    teto = min(len(norm), m.end() + _SEGMENTO_MAX)
+    par = None
+    for fim in _limites_candidatos(norm, m.end(), teto):
+        # "COM" first: found further right than an embedded "E" inside the
+        # first name itself would be, so a genuine "NOME1 E MEIO com NOME2"
+        # splits on the real separator instead of the name's own connector.
+        par = nomes_em_par(norm[m.end() : fim], conectores=("COM", "E"))
+        if par is not None:
+            break
+    if par is None:
+        return ()
+
+    adocoes: dict[int, Optional[str]] = {0: None, 1: None}
+    m_masc = _ADOCAO_MASC_RE.search(norm)
+    if m_masc is not None:
+        adocoes[0] = _valor_de_adocao(norm, m_masc.end())
+    m_fem = _ADOCAO_FEM_RE.search(norm)
+    if m_fem is not None:
+        adocoes[1] = _valor_de_adocao(norm, m_fem.end())
+    for m_qual in _ADOCAO_QUAL_RE.finditer(norm):
+        genero_letra = None
+        for gm in _CONTRA_MARCADOR_RE.finditer(norm, 0, m_qual.start()):
+            genero_letra = gm.group(1)
+        if genero_letra is None:
+            continue
+        idx = 0 if genero_letra == "O" else 1
+        if adocoes[idx] is None:
+            adocoes[idx] = _valor_de_adocao(norm, m_qual.end())
+
+    out: list[ConjugeLido] = []
+    for idx, nome_recital in enumerate(par):
+        nome_atual = adocoes[idx]
+        nome_final = nome_atual if nome_atual else nome_recital
+        nome_anterior = nome_recital if nome_atual and nome_atual != nome_recital else None
+        out.append(ConjugeLido(nome=nome_final, nome_anterior=nome_anterior))
+    return tuple(out)
+
+
 def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
     """Both spouses of a certidão de casamento, in document order.
 
@@ -395,6 +576,10 @@ def find_conjuges(text: str) -> tuple[ConjugeLido, ...]:
     bloco = _ler_bloco_estruturado(text or "")
     if bloco:
         return bloco
+
+    narrativa = _ler_narrativa_matrimonio(text or "")
+    if narrativa:
+        return narrativa
 
     candidatos = find_name_conflitos(text or "")
     if not candidatos or len(candidatos) != 2:

@@ -396,6 +396,44 @@ def _ate_a_primeira_virgula(value: str) -> str:
     return value[:virgula] if virgula > 0 else value
 
 
+def nomes_em_par(trecho: str, conectores: tuple[str, ...] = ("E",)) -> Optional[tuple[str, str]]:
+    """Split TWO co-equal names joined by a standalone connector word on the
+    SAME line/clause ("NOME1 E NOME2", or "NOME1 COM NOME2" on the
+    old-narrative "matrimônio de A com B" shape a certidão de casamento's
+    conjuges reader also has to handle — see `conjuges._ler_narrativa_matrimonio`).
+
+    `conectores` are tried IN ORDER, each as its own split of the WHOLE
+    `trecho` (not a single combined alternation) — a real full name can
+    itself embed a bare "E" as a surname connector ("SILVA E SOUZA"), so a
+    caller who KNOWS the true separator is "COM" for a given layout passes
+    `("COM", "E")`: trying "COM" first (found further right, past the
+    embedded "E") succeeds outright; only a caller that never supplies
+    "COM" falls to "E" at all. `None` when no connector in the list yields
+    two well-formed names either side — real, measured (P2 corpus,
+    2026-09-28), the residual ambiguity when the SAME document embeds a
+    genuine "E" inside one name AND separates the couple with a bare "E"
+    too is still unresolved (no case in the corpus does both).
+    """
+    for conector in conectores:
+        padrao = re.compile(r"\s+" + re.escape(conector) + r"\s+")
+        partes = padrao.split(trecho, maxsplit=1)
+        if len(partes) != 2:
+            continue
+        nomes: list[str] = []
+        for bruto in partes:
+            # Collapsed with `.split()`/`" ".join`, not merely `.strip()`'d —
+            # the SOURCE text can wrap a name across two physical PDF lines
+            # (see `conjuges._ler_narrativa_matrimonio`'s own note on this),
+            # and a returned name must never carry a raw embedded newline.
+            limpo = " ".join(bruto.strip(_SEPARATORS + "\"'").split())
+            if not limpo or not looks_like_a_name(limpo):
+                break
+            nomes.append(limpo)
+        if len(nomes) == 2:
+            return (nomes[0], nomes[1])
+    return None
+
+
 def _melhor_leitura_de_nome(value: str) -> Optional[str]:
     """The first well-formed name among `value` as printed, with a trailing
     registry-citation clause cut, and cut at its own first comma — tried in
@@ -445,6 +483,19 @@ def _coleta_titulares_multiplos(
         # label rather than accidentally read as a holder.
         if _label_at(linha, 0)[0] is not None:
             break
+        # 🔴 A bare connector on its OWN line — real, measured (P2 corpus,
+        # 2026-09-28): one cartório template prints the two names of a
+        # `NOMES` block each on their own line, but with the "E" that joins
+        # them ALSO on its own line ("NOME1" / "E" / "NOME2") rather than
+        # inline on either name's row. A lone "E" fails every check below
+        # (too short for `looks_like_a_name`, not a CPF row) and used to
+        # BREAK the walk — collecting only the first name and reporting a
+        # false "found one, not two". Skipped, not read as a candidate and
+        # not treated as a section boundary, so the walk continues past it
+        # to the second name.
+        if strip_accents_upper(linha).strip() in ("E", "COM"):
+            j += 1
+            continue
         # See `_melhor_leitura_de_nome`: a wide `NOMES` table routinely
         # lands the NEXT column's `CPF` header on the same visual row as
         # this holder's name, and an "inteiro teor" holder list prints each
@@ -512,7 +563,20 @@ def _candidatos(text: str) -> list[tuple[str, str]]:
             continue
 
         if label in _MULTI_HOLDER_LABELS:
-            candidates.extend(_coleta_titulares_multiplos(lines, idx + 1, label))
+            # 🔴 BOTH names on the SAME line as the label — real, measured
+            # (P2 corpus, 2026-09-28): `NOMES: FULANO DE TAL E CICRANA DA
+            # SILVA` joins the couple with a bare "E" on the label's own
+            # line, rather than one name per line below it. Tried FIRST,
+            # because the multi-line walk below starts at `idx + 1` and
+            # would otherwise read the NEXT section's line as if it were a
+            # holder name.
+            tail = line[end:].strip(_SEPARATORS).strip()
+            par = nomes_em_par(tail) if tail else None
+            if par is not None:
+                candidates.append((par[0], label))
+                candidates.append((par[1], label))
+            else:
+                candidates.extend(_coleta_titulares_multiplos(lines, idx + 1, label))
             idx += 1
             continue
 
@@ -852,4 +916,5 @@ __all__ = [
     "find_name",
     "find_name_conflitos",
     "looks_like_a_name",
+    "nomes_em_par",
 ]

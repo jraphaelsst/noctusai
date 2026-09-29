@@ -30,13 +30,7 @@ estruturado.py` already covers:
    nubente's own qualification paragraph opens with "O contratante" / "A
    contratante" instead of repeating either name — and states THEIR
    pre-marriage `ESTADO CIVIL` ("solteiro"), never the document's own
-   verdict. `find_conjuges` has no reliable way to split "X e Y" back into
-   two names without risking a wrong split — Portuguese surnames may
-   legitimately contain a bare "E" (`FULANO E SILVA`, `name._PARTICLES`) —
-   so this layout is a KNOWN, deliberately unresolved gap for
-   `find_conjuges` (see `TestNubentesSemNomeNaoSaoAdivinhados` below); what
-   IS fixed here is `find_estado_civil` no longer crediting a nubente's own
-   pre-marriage status to the document.
+   verdict.
 
 Shapes (1) and (2) are fixed in `name.py` (`_melhor_leitura_de_nome`, a
 third fallback reading alongside `_strip_trailing_citation`'s two, plus one
@@ -46,7 +40,25 @@ since both layouts still repeat each spouse's name where the existing
 name-conflict segmentation already looks for it. Shape (3)'s `estado_civil`
 fix is in `civil_status.py` (`_dentro_de_qualificacao_de_nubente_narrativa`,
 the same "nearest opener, no closer since" algorithm the CNJ block guard
-already uses, against a different opener). Invented names/dates throughout.
+already uses, against a different opener).
+
+🔴 SHAPE (3)'S OWN NAME GAP, CLOSED SEPARATELY (P2 corpus, 2026-09-29) —
+`TestNubentesSemNomeNaoSaoAdivinhados` below used to assert `find_conjuges`
+DECLINES on this layout, reasoning that "X e Y" cannot safely be split (a
+Brazilian surname may legitimately contain a bare "E",
+`name._PARTICLES`). That reasoning still holds for a BARE "E" alone — what
+changed is `conjuges._ler_narrativa_matrimonio`, a new independent reader for
+this ONE recital, which now exists precisely because the real P2 corpus
+proved the risk was worth taking with `name.nomes_em_par`'s strict
+either-side `looks_like_a_name` validation as the backstop: a split that
+lands mid-name (a genuine embedded "E") produces a malformed candidate on at
+least one side and is rejected, not guessed. See
+`test_certidao_casamento_narrativa_de_recital.py` for the full layout family
+(quoted names, "casamento religioso de A com B, celebrado/contraído no dia
+...", the "A/O contra(ente|tante|tente) passou a assinar" married-name note)
+this reader now covers; `TestNubentesSemNomeNaoSaoAdivinhados` here is
+updated to assert the NEW behaviour on this file's own fixture. Invented
+names/dates throughout.
 """
 from __future__ import annotations
 
@@ -128,23 +140,31 @@ class TestEstadoCivilNaoLeAPreMariageDoNubente:
 
 
 class TestNubentesSemNomeNaoSaoAdivinhados:
-    """🔴 A DELIBERATE, KNOWN GAP — not a regression.
+    """🔴 THE GAP THIS USED TO DOCUMENT IS NOW CLOSED (P2 corpus, 2026-09-29).
 
     This layout never repeats either spouse's name inside their own
     paragraph, so the ONLY place both names appear is the single sentence
-    "... de EDUARDO SANTOS PEREIRA e MARCIA OLIVEIRA COSTA". Splitting that
-    on the bare word "e" is not safe in general: a Brazilian surname may
-    legitimately contain a bare "E" as a compound-name particle
-    (`name._PARTICLES`; see also the P2 corpus's own "<N> <N> <N> E <N>"
-    sample, a SINGLE person's own name). Guessing which "e" is the
-    couple-separator and which is a name-internal particle would risk a
-    silently WRONG name on a document this parser family exists to get
-    right — so `find_conjuges` correctly declines here, same as it declines
-    for any document naming no reliably-split holder pair.
+    "... de EDUARDO SANTOS PEREIRA e MARCIA OLIVEIRA COSTA".
+    `conjuges._ler_narrativa_matrimonio` now reads this recital directly and
+    splits it via `name.nomes_em_par` — the class name survives (the risk
+    this docstring used to describe is real and still guarded, just no
+    longer by DECLINING outright): a Brazilian surname may legitimately
+    contain a bare "E" as a compound-name particle (`name._PARTICLES`), so
+    every candidate either side of the split is still independently
+    validated by `looks_like_a_name` — a malformed half is what makes a
+    wrong split self-rejecting, not a rule about which "e" is the
+    separator. See `test_certidao_casamento_narrativa_de_recital.py` for the
+    layout family (quoted names, an embedded "E" alongside a real "COM"
+    separator, married-name adoption) this same reader also covers.
     """
 
-    def test_find_conjuges_declines_rather_than_guessing_a_split(self) -> None:
-        assert find_conjuges(CERTIDAO_NARRATIVA_ANTIGA) == ()
+    def test_exactly_two_holders_are_now_read(self) -> None:
+        assert len(find_conjuges(CERTIDAO_NARRATIVA_ANTIGA)) == 2
+
+    def test_each_spouse_is_named_correctly_and_in_document_order(self) -> None:
+        eduardo, marcia = find_conjuges(CERTIDAO_NARRATIVA_ANTIGA)
+        assert eduardo.nome == "EDUARDO SANTOS PEREIRA"
+        assert marcia.nome == "MARCIA OLIVEIRA COSTA"
 
 
 def test_ocr_slip_contratente_still_guards_pre_marriage_status() -> None:
