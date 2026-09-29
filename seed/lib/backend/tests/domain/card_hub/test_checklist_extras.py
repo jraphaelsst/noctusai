@@ -140,7 +140,7 @@ class TestCrud:
         eid = _seed(hub)
         resp = hub.client.delete(f"{_base(hub, eid)}/{uuid4()}", headers=AUTH)
         assert resp.status_code == 404, resp.text
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.tables.checklist_extras
+        assert resp.json()["error"]["details"]["resource"] == "Linha do checklist"
 
 
 class TestConcluidoIsDerived:

@@ -152,7 +152,10 @@ def _obter(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, extra_id:
         .execute()
     ).data or []
     if not rows or rows[0].get("deleted_at"):
-        raise NotFoundError(cfg.tables.checklist_extras, str(extra_id))
+        # feminino=True — the heuristic reads the trailing "checklist" as
+        # masculine, but "a linha" (the resource this actually is) is
+        # feminine: "Linha do checklist não encontrada".
+        raise NotFoundError("Linha do checklist", str(extra_id), feminino=True)
     return rows[0]
 
 

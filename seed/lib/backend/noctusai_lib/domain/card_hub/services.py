@@ -3,10 +3,12 @@
 Lifted from social-wiring's `app/modules/card_hub/services.py` (lines
 271-641 at the time of the move) as a MOVE, not a rewrite: every function body
 is the original, with the literal table / FK names replaced by the
-`CardHubConfig` fields they were always instances of. Response shapes, status
-codes, error types and error MESSAGES are unchanged — a `NotFoundError` still
-names the table it missed (`cfg.tables.notas` is `cliente_notas` for
-social-wiring, exactly the string the original raised with).
+`CardHubConfig` fields they were always instances of. Response shapes and
+status codes are unchanged; error MESSAGES are NOT — a `NotFoundError` names
+a pt-BR resource label ("Nota", "Etiqueta", "Membro", "Checklist", "Item do
+checklist", or `cfg.entity_kind` capitalized — never a raw table like
+`cliente_notas`, which the user never typed or chose and which social-wiring
+and igig both originally raised with verbatim).
 
 `db` is always the product's schema-scoped PostgREST client, passed in —
 never resolved here — so one request (and one test) sees one consistent view
@@ -37,6 +39,17 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _entity_label(cfg: CardHubConfig) -> str:
+    """The entity's pt-BR display label for a 404 — `cfg.entity_kind`
+    capitalized ("cliente" -> "Cliente", "negocio" -> "Negocio", "lead" ->
+    "Lead"), or the generic "Registro" when a product leaves `entity_kind`
+    blank. Never the raw `entity_table` — a product whose table name isn't
+    also its user-facing word (social-wiring: `entity_table="clientes"`,
+    plural) must not leak that spelling into a message the user reads."""
+    kind = (cfg.entity_kind or "").strip()
+    return kind[:1].upper() + kind[1:] if kind else "Registro"
+
+
 # ─── the entity ──────────────────────────────────────────────────────────
 
 
@@ -52,14 +65,16 @@ def _default_get_entity(cfg: CardHubConfig, db: Any, org_id: Any, entity_id: Any
 
 
 def ensure_entity(cfg: CardHubConfig, db: Any, org_id: Any, entity_id: Any) -> dict:
-    """The entity row, or `NotFoundError(<entity_table>, id)` — the 404 every
-    per-entity route answers for an id that is not this org's."""
+    """The entity row, or `NotFoundError(<entity label>, id)` — the 404 every
+    per-entity route answers for an id that is not this org's. The label is
+    `cfg.entity_kind` (a pt-BR word), never `entity_table` (a DB identifier a
+    user never typed or chose — see `_entity_label`)."""
     if cfg.ensure_entity is not None:
         entity = cfg.ensure_entity(db, org_id, entity_id)
     else:
         entity = _default_get_entity(cfg, db, org_id, entity_id)
     if entity is None:
-        raise NotFoundError(cfg.entity_table, str(entity_id))
+        raise NotFoundError(_entity_label(cfg), str(entity_id))
     return entity
 
 
@@ -133,7 +148,7 @@ def update_nota(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, nota
         .execute()
     ).data or []
     if not existing or existing[0].get("deleted_at"):
-        raise NotFoundError(cfg.tables.notas, str(nota_id))
+        raise NotFoundError("Nota", str(nota_id))
     updates = {"corpo": corpo, "editado_em": now_iso()}
     table(db, cfg.tables.notas).update(updates).eq("id", str(nota_id)).execute()
     merged = {**existing[0], **updates}
@@ -172,7 +187,7 @@ def delete_nota(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, nota
         .execute()
     ).data or []
     if not existing or existing[0].get("deleted_at"):
-        raise NotFoundError(cfg.tables.notas, str(nota_id))
+        raise NotFoundError("Nota", str(nota_id))
     table(db, cfg.tables.notas).update({"deleted_at": now_iso()}).eq("id", str(nota_id)).execute()
 
 
@@ -209,7 +224,7 @@ def update_tag(cfg: CardHubConfig, db: Any, org_id: UUID, tag_id: UUID, *, nome:
         table(db, cfg.tables.tags).select("*").eq("org_id", str(org_id)).eq("id", str(tag_id)).execute()
     ).data or []
     if not existing:
-        raise NotFoundError(cfg.tables.tags, str(tag_id))
+        raise NotFoundError("Etiqueta", str(tag_id))
     updates: dict = {}
     if nome is not None:
         dupes = (
@@ -236,7 +251,7 @@ def delete_tag(cfg: CardHubConfig, db: Any, org_id: UUID, tag_id: UUID) -> None:
         table(db, cfg.tables.tags).select("id").eq("org_id", str(org_id)).eq("id", str(tag_id)).execute()
     ).data or []
     if not existing:
-        raise NotFoundError(cfg.tables.tags, str(tag_id))
+        raise NotFoundError("Etiqueta", str(tag_id))
     table(db, cfg.tables.tag_links).delete().eq("org_id", str(org_id)).eq("tag_id", str(tag_id)).execute()
     table(db, cfg.tables.tags).delete().eq("id", str(tag_id)).execute()
 
@@ -250,7 +265,7 @@ def set_entity_tags(
     valid_ids = {row["id"] for row in valid_tags}
     unknown = {str(t) for t in tag_ids} - valid_ids
     if unknown:
-        raise NotFoundError(cfg.tables.tags, ",".join(sorted(unknown)))
+        raise NotFoundError("Etiqueta", ",".join(sorted(unknown)))
 
     table(db, cfg.tables.tag_links).delete().eq("org_id", str(org_id)).eq(cfg.entity_fk, str(entity_id)).execute()
     for tag_id in valid_ids:
@@ -313,15 +328,15 @@ def get_membros(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID) -> d
 
 
 def set_membros(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, *, member_ids: list[UUID]) -> dict:
-    """Full replace. An unknown member id is a 404 naming the MEMBER table —
-    never a silently-dropped assignment."""
+    """Full replace. An unknown member id is a 404 naming "Membro" — never a
+    silently-dropped assignment, and never the raw member table."""
     ensure_entity(cfg, db, org_id, entity_id)
     src = cfg.member_source
     valid_members = in_batched_rows(db, src.table, org_id, "id", [str(c) for c in member_ids])
     valid_ids = {row["id"] for row in valid_members}
     unknown = {str(c) for c in member_ids} - valid_ids
     if unknown:
-        raise NotFoundError(src.table, ",".join(sorted(unknown)))
+        raise NotFoundError("Membro", ",".join(sorted(unknown)))
 
     table(db, cfg.tables.membros).delete().eq("org_id", str(org_id)).eq(cfg.entity_fk, str(entity_id)).execute()
     for member_id in valid_ids:
@@ -403,7 +418,7 @@ def _require_responsavel(cfg: CardHubConfig, db: Any, org_id: UUID, responsavel_
     src = cfg.member_source
     found = in_batched_rows(db, src.table, org_id, "id", [str(responsavel_id)])
     if not found:
-        raise NotFoundError(src.table, str(responsavel_id))
+        raise NotFoundError("Membro", str(responsavel_id))
 
 
 def list_lembretes(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID) -> dict:
@@ -576,7 +591,7 @@ def _require_checklist(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUI
         .execute()
     ).data or []
     if not rows:
-        raise NotFoundError(cfg.tables.checklists, str(checklist_id))
+        raise NotFoundError("Checklist", str(checklist_id))
     return rows[0]
 
 
@@ -669,7 +684,7 @@ def update_checklist_item(
         .execute()
     ).data or []
     if not existing:
-        raise NotFoundError(cfg.tables.checklist_itens, str(item_id))
+        raise NotFoundError("Item do checklist", str(item_id))
 
     updates: dict = {}
     if texto is not None:
@@ -699,7 +714,7 @@ def delete_checklist_item(
         .execute()
     ).data or []
     if not existing:
-        raise NotFoundError(cfg.tables.checklist_itens, str(item_id))
+        raise NotFoundError("Item do checklist", str(item_id))
     table(db, cfg.tables.checklist_itens).delete().eq("id", str(item_id)).execute()
 
 

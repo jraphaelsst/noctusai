@@ -82,7 +82,7 @@ class TestChecklists:
         eid = hub.new_entity()
         resp = hub.client.patch(hub.url(eid, f"/checklists/{uuid4()}"), json={"titulo": "x"}, headers=AUTH)
         assert resp.status_code == 404
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.tables.checklists
+        assert resp.json()["error"]["details"]["resource"] == "Checklist"
 
     def test_another_entitys_checklist_is_a_404(self, hub):
         eid, other = hub.new_entity(), hub.new_entity()
@@ -95,4 +95,4 @@ class TestChecklists:
         cl = hub.client.post(hub.url(eid, "/checklists"), json={"titulo": "X"}, headers=AUTH).json()
         resp = hub.client.delete(hub.url(eid, f"/checklists/{cl['id']}/itens/{uuid4()}"), headers=AUTH)
         assert resp.status_code == 404
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.tables.checklist_itens
+        assert resp.json()["error"]["details"]["resource"] == "Item do checklist"

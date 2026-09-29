@@ -208,7 +208,7 @@ def require_documento(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID
         .execute()
     ).data or []
     if not rows or rows[0].get("deleted_at"):
-        raise NotFoundError(cfg.tables.documentos, str(documento_id))
+        raise NotFoundError("Documento", str(documento_id))
     return rows[0]
 
 
@@ -385,7 +385,7 @@ def list_acessos(cfg: CardHubConfig, db: Any, org_id: UUID, entity_id: UUID, doc
         .execute()
     ).data or []
     if not exists:
-        raise NotFoundError(cfg.tables.documentos, str(documento_id))
+        raise NotFoundError("Documento", str(documento_id))
 
     rows = paged_rows(
         db, cfg.tables.documento_acessos, org_id, eq_filters={"documento_id": str(documento_id)}

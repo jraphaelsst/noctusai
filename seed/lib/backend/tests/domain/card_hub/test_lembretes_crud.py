@@ -59,7 +59,7 @@ class TestListAndCreate:
         assert resp.status_code == 201, resp.text
         assert resp.json()["responsavel"] == {"id": member_id, "nome": "Bia", "cor": "#00ff00"}
 
-    def test_an_unknown_responsavel_is_a_404_naming_the_member_table(self, lead_lembretes_hub):
+    def test_an_unknown_responsavel_is_a_404_naming_the_member_label(self, lead_lembretes_hub):
         hub = lead_lembretes_hub
         eid = hub.new_entity()
         resp = hub.client.post(
@@ -68,7 +68,8 @@ class TestListAndCreate:
             headers=AUTH,
         )
         assert resp.status_code == 404
-        assert hub.cfg.member_source.table in resp.text
+        # "Membro" — never the raw `membros_equipe` / `lead_corretores` table.
+        assert resp.json()["error"]["details"]["resource"] == "Membro"
 
     def test_list_is_ordered_by_dispara_em_and_excludes_cancelled(self, lead_lembretes_hub):
         hub = lead_lembretes_hub

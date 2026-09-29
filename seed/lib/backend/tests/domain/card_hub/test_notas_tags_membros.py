@@ -33,14 +33,16 @@ class TestNotas:
         # A tombstoned note 404s on a second edit — and the row survives.
         resp = hub.client.patch(hub.url(eid, f"/notas/{nota_id}"), json={"corpo": "x"}, headers=AUTH)
         assert resp.status_code == 404
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.tables.notas
+        assert resp.json()["error"]["details"]["resource"] == "Nota"
         stored = hub.rows(hub.cfg.tables.notas)
         assert len(stored) == 1 and stored[0]["deleted_at"] is not None
 
-    def test_create_nota_unknown_entity_404s_naming_the_entity_table(self, hub):
+    def test_create_nota_unknown_entity_404s_naming_the_entity_label(self, hub):
+        """A pt-BR label (`cfg.entity_kind` capitalized) — never the raw
+        `entity_table` the user never typed or chose."""
         resp = hub.client.post(hub.url(str(uuid4()), "/notas"), json={"corpo": "x"}, headers=AUTH)
         assert resp.status_code == 404
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.entity_table
+        assert resp.json()["error"]["details"]["resource"] == hub.cfg.entity_kind.capitalize()
 
     def test_strict_body_rejects_unknown_field(self, hub):
         eid = hub.new_entity()
@@ -157,7 +159,7 @@ class TestTags:
         eid = hub.new_entity()
         resp = hub.client.put(hub.url(eid, "/tags"), json={"tag_ids": [str(uuid4())]}, headers=AUTH)
         assert resp.status_code == 404
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.tables.tags
+        assert resp.json()["error"]["details"]["resource"] == "Etiqueta"
 
 
 class TestMembros:
@@ -187,9 +189,9 @@ class TestMembros:
         resp = hub.client.put(hub.url(eid, "/membros"), json={wrong: []}, headers=AUTH)
         assert resp.status_code == 422
 
-    def test_set_membros_unknown_member_404s_naming_the_member_table(self, hub):
+    def test_set_membros_unknown_member_404s_naming_the_member_label(self, hub):
         eid = hub.new_entity()
         key = hub.cfg.member_source.body_key
         resp = hub.client.put(hub.url(eid, "/membros"), json={key: [str(uuid4())]}, headers=AUTH)
         assert resp.status_code == 404
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.member_source.table
+        assert resp.json()["error"]["details"]["resource"] == "Membro"

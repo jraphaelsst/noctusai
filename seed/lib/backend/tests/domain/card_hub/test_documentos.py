@@ -251,7 +251,7 @@ class TestListAndUrlAndDelete:
         eid = hub.new_entity()
         resp = hub.client.get(hub.url(eid, f"/documentos/{uuid4()}/url"), headers=AUTH)
         assert resp.status_code == 404
-        assert resp.json()["error"]["details"]["resource"] == hub.cfg.tables.documentos
+        assert resp.json()["error"]["details"]["resource"] == "Documento"
 
 
 class TestAccessLogIsAppendOnly:
