@@ -3,6 +3,7 @@ Fake (file-backed), the factory, and the dual-read merge."""
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -317,3 +318,47 @@ class TestPrePushLedgersGuard:
         one, two = self._two_commits(a)
         r = self._run(a, f"{one} {one} refs/heads/ledgers {two}")
         assert r.returncode == 1 and "NON-FAST-FORWARD push to 'ledgers'" in r.stderr
+
+
+class TestPrePushReleaseManagedRefs:
+    """scripts/hooks/pre-push: the branch-tree mirror keeper guards everyday
+    work branches, not the refs `noctus.dev.release` moves. A ship-consent
+    cut (`stage=bless mode=cut`) pushes `release/<stamp>` = main + approved
+    commits — forked from main, with no work pointer — and the keeper used to
+    hard-block it, so the cut could never reach CI (2026-09-29)."""
+
+    HOOK = TestPrePushLedgersGuard.HOOK
+
+    def _repo_with_blocking_keeper(self, repo: Path) -> str:
+        # A fake toolkit interpreter at the path the hook resolves: it BLOCKS
+        # only the branch-tree mirror keeper, so a push that reaches that
+        # keeper fails and one that is exempt passes.
+        py = repo / "mcp" / "noctusai" / ".venv" / "bin" / "python"
+        py.parent.mkdir(parents=True)
+        py.write_text('#!/usr/bin/env bash\n'
+                      'for a in "$@"; do [[ "$a" == --check-branch-tree-mirror ]] && '
+                      '{ echo "keeper: no pointer"; exit 1; }; done\nexit 0\n')
+        py.chmod(0o755)
+        (repo / "mcp" / "noctusai" / "cli.py").write_text("")
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "c")
+        return _git(repo, "rev-parse", "HEAD").strip()
+
+    def _push(self, repo: Path, sha: str, ref: str) -> subprocess.CompletedProcess:
+        env = {**os.environ, "NOCTUS_SKIP_EMBED_REFRESH": "1"}
+        return subprocess.run(["bash", str(self.HOOK), "origin", "url"], cwd=str(repo),
+                              input=f"{ref} {sha} {ref} {'0' * 40}\n",
+                              capture_output=True, text=True, timeout=120, env=env)
+
+    def test_work_branch_still_reaches_the_keeper(self, repos):
+        _, a, _ = repos
+        sha = self._repo_with_blocking_keeper(a)
+        r = self._push(a, sha, "refs/heads/feat/x")
+        assert r.returncode == 1 and "branch-tree mirror keeper BLOCKED" in r.stderr
+
+    def test_release_cut_branch_is_exempt(self, repos):
+        _, a, _ = repos
+        sha = self._repo_with_blocking_keeper(a)
+        r = self._push(a, sha, "refs/heads/release/20260929-1503")
+        assert "branch-tree mirror check for 'release/" not in r.stdout + r.stderr
+        assert "branch-tree mirror keeper BLOCKED" not in r.stderr
+

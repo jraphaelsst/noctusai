@@ -298,10 +298,20 @@ if [[ -z "${NOCTUS_SKIP_BRANCH_TREE_CHECK:-}" && -x "$PY_PP" && -f "$CLI_PP" ]];
         # blocked by the mirror keeper. KB § branch-tree-tracking §5.
         [[ "$_bt_branch" == "dev" ]] && continue
         [[ "${r_ref:-}" == "refs/heads/prod-backup" || "$_bt_branch" == "prod-backup" ]] && continue
+        # release/<stamp> is the other release-managed ref: `release stage=bless
+        # mode=cut` builds it as main + ship-consented commits (forked from main,
+        # no work pointer by design) and pushes it so CI can green that exact sha
+        # before main fast-forwards to it. Every commit on it already passed this
+        # keeper on its way to dev. Without this skip the cut can never be pushed.
+        [[ "${r_ref:-}" == refs/heads/release/* || "$_bt_branch" == release/* ]] && continue
         # Run the keeper for this branch — any high finding = block.
         echo "[pre-push] branch-tree mirror check for '$_bt_branch'..."
-        _bt_out="$("$PY_PP" "$CLI_PP" --check-branch-tree-mirror "$_bt_branch" 2>&1)"
-        _bt_rc=$?
+        # `|| _bt_rc=$?` keeps the assignment a TESTED command under `set -e`:
+        # a bare `_bt_out="$(...)"` exits the hook on the keeper's non-zero
+        # status BEFORE the BLOCKED message below prints — the push then fails
+        # with no explanation at all (2026-09-29).
+        _bt_rc=0
+        _bt_out="$("$PY_PP" "$CLI_PP" --check-branch-tree-mirror "$_bt_branch" 2>&1)" || _bt_rc=$?
         if [[ $_bt_rc -ne 0 ]]; then
             echo "" >&2
             echo "🔴 pre-push: branch-tree mirror keeper BLOCKED push of '$_bt_branch'." >&2
