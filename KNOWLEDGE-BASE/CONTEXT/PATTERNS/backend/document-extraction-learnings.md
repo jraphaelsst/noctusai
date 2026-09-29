@@ -124,6 +124,34 @@ Extraction is its own process, measured separately from contract generation (own
   hash): expect the same person on several cards; attribute by extracted name/CPF, never by
   folder position or "the lead" default.
 
+## 4a · Resolving divergences between documents without a human (2026-09-29)
+
+Resolver: `products/social-wiring/backend/app/services/divergencia_resolucao.py` (pure policy) +
+`identidade_extracao_service.backfill_resolver_conflitos_pendentes` (run on every read of the
+conflict queue). Order: validators → **live evidence** → corroboration → measured source tier →
+human. Every automatic decision lands as `resolvido_automatico` with its rule in `motivo_resolucao`.
+
+- **A conflict row is a snapshot; the documents are the truth.** Most "hard" conflicts in the prod
+  queue were stale: the document behind one side had been deleted or re-read to something else. Ask
+  what the value's OWN document says now before comparing sources at all (rule `retratado`).
+- **Positive evidence only.** "No live document of that type" is NOT retraction — values are also
+  typed, derived (nacionalidade from an RG issuer), legacy, or point into another table. Retract only
+  when the specific document is soft-deleted, now reads a different value, or is a two-person
+  document with nothing attributed to this person. Human-typed/confirmed values are never retracted.
+- **Two-person documents assert per-person facts only through attribution.** A certidão de casamento's
+  flat RG/DN/gênero/name/CPF columns name nobody in particular; only the `extracao_conjuges` entry
+  whose `cliente_id` (or CPF) is this person counts. Couple-level facts (estado civil, regime, data do
+  casamento) read the flat columns. Measured: every certidão conflict in the queue came from reads
+  that predated attribution.
+- **Corroboration must count documents, not conflict history.** A value applied without a conflict
+  was never "proposed", so a history-only count misses the agreeing document.
+- **Check "same value" before any gate that opens a conflict.** A bill in someone else's name that
+  states the address already on file asks nothing.
+- **Answer keys don't cover every field.** Signed contracts carry no birth date, so its source
+  precision can't be measured from them; fields outside the contract should not block on a human.
+- Result on prod: 22 pending → 12 resolved (pass 1) → 9 of the remaining 10 (pass 2, dry-run); the
+  two decisions checkable against a signed contract both picked the contract's value.
+
 ## 5 · Sources for data no identity document carries (automation ideas)
 
 - **"Info PP"** (per-deal Google Doc, "pesquisa prévia"): sellers' nome/CPF/**RG with DV**/DN +
