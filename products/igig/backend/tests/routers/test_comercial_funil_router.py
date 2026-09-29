@@ -6,7 +6,7 @@ orçamento, supersedes its open siblings, marks the negócio ganho and creates
 the Cliente from the lead — once, however many times it is retried or however
 many of the lead's negócios close.
 """
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 from noctusai_lib.testing.clients import TEST_USER_ID
@@ -14,6 +14,7 @@ from noctusai_lib.testing.clients import TEST_USER_ID
 from app.dependencies import coerce_org_uuid
 from app.pipelines import COMERCIAL_PADRAO
 from app.services import comercial_funil
+from app.services.orcamentos import hoje_local
 
 ORG = str(coerce_org_uuid("test-org-123"))
 
@@ -357,7 +358,9 @@ class TestMoverEtapa:
         assert resp.json()["code"] == "orcamento_invalido"
 
     def test_a_past_validity_is_409(self, api, negocio, etapas, igig_db):
-        ontem = (date.today() - timedelta(days=1)).isoformat()
+        # The service's clock is America/Sao_Paulo (`orcamentos.hoje_local`); a
+        # UTC `date.today()` is a day ahead from 21:00 BRT and made this flaky.
+        ontem = (hoje_local() - timedelta(days=1)).isoformat()
         orc = _orcamento(igig_db, negocio, validade=ontem)
         resp = _mover(api, negocio["id"], etapas["fechado"]["id"], orcamento_id=orc["id"])
         assert resp.status_code == 409
