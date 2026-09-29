@@ -42,6 +42,10 @@ ingress:
     service: http://seed:8004
   - hostname: academia.noctusai.com
     service: http://academia-de-reciclagem:8015
+  - hostname: academiadareciclagem.eco
+    service: http://academia-de-reciclagem:8015
+  - hostname: www.academiadareciclagem.eco
+    service: http://academia-de-reciclagem:8015
   - hostname: agents.noctusai.com
     service: http://agents:8016
   - hostname: orbity.noctusai.com

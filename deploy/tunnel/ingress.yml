@@ -61,6 +61,16 @@ routes:
   - hostname: academia.noctusai.com
     service:  http://academia-de-reciclagem:8015
     note:     Julia's real-life project knowledge base — API + SPA on one port
+  # The project's own public domain (owner, 2026-09-29) — same container. Lives
+  # in its OWN Cloudflare zone, so its DNS CNAME is added in that zone's
+  # dashboard (the tunnel cert only covers noctusai.com). Login/SSO stays on
+  # academia.noctusai.com; the public site (/, /coleta, /o-projeto) is served here.
+  - hostname: academiadareciclagem.eco
+    service:  http://academia-de-reciclagem:8015
+    note:     academia public domain (.eco) — same service as academia.noctusai.com
+  - hostname: www.academiadareciclagem.eco
+    service:  http://academia-de-reciclagem:8015
+    note:     www alias of the .eco domain
   - hostname: agents.noctusai.com
     service:  http://agents:8016
     note:     Julia chat, approvals, persona; lists One Chat's toggle
