@@ -163,8 +163,11 @@ app = create_product_app(
     #     aviso em recusa de boot, ou seja, em uma queda. Antes de declarar
     #     uma segunda chave aqui, confirme em produção do mesmo jeito.
     required_prod_config=["IGIG_COFRE_KEY"],
-    # Uncomment when this product registers AI features in
-    # `app/services/ai_consent_features.py` (each product owns its
-    # consent catalog — see KB § PATTERNS/lgpd.md § 9):
-    # consent_features="app.services.ai_consent_features",
+    # IgIg's own AI-consent catalog (`app/services/ai_consent_features.py`):
+    # registers `igig.assistente_negocio` (opt-in, gates the negócio card's
+    # Assistente IA — lead/negócio personal data reaches Anthropic) and
+    # `igig.assistente_ajuda` (locked-on, transparency-only — the help
+    # chat never sees customer data). Each product owns its own consent
+    # catalog — see KB § PATTERNS/lgpd.md § 9.
+    consent_features="app.services.ai_consent_features",
 )

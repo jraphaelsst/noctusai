@@ -10,6 +10,16 @@ themselves. LLM failures answer the contract's machine-error shape so the
 card can say WHY (not configured / budget / provider down) instead of a
 generic 500.
 
+LGPD-GATED (`igig.assistente_negocio`, `app/services/ai_consent_features.py`):
+the prompt carries the lead's name/empresa + the negócio's context — personal
+data reaching Anthropic — so the route is gated by the platform's AI-consent
+guard (`noctusai_lib.domain.ai.consent_required`). A caller without consent
+gets HTTP 412 `{"error": {"code": "AI_CONSENT_REQUIRED", "message": ...}}`
+(the seed's `AppException` envelope — `ApiError.code`/`.status` on the
+frontend); the negócio card shows a pt-BR explanation + a link to
+`/settings/ai` instead of a raw error
+(`frontend/src/components/comercial/NegocioCardDialog.tsx`).
+
 RATE-LIMITED PER CALLER (plat achado #22): `noctusai_lib.api.app_factory`
 never installs `SlowAPIMiddleware`, so the Limiter's own `default_limits`
 ("100/minute") is inert — only a route explicitly wearing `@limiter.limit`
@@ -25,6 +35,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from noctusai_lib.domain.ai import consent_required
 from noctusai_lib.integrations.llm import LLMAPIError, LLMBudgetExceeded, LLMNotConfigured
 from noctusai_lib.primitives.responses import success_response
 from slowapi.util import get_remote_address
@@ -70,6 +81,7 @@ async def assistente_negocio(
     negocio_id: str,
     payload: AssistenteIn,
     auth: tuple = Depends(get_current_user_org),
+    _consent: None = Depends(consent_required("igig.assistente_negocio")),
     db: Any = Depends(get_db),
     admin_db: Any = Depends(get_admin_db),
     gerador: assistente.GeradorTexto = Depends(get_gerador_texto),

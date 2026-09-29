@@ -4,6 +4,12 @@ The model call is the seed `FakeProvider` behind the route's `get_gerador_texto`
 seam, so the assertions are about what igig SENDS (provider, model, the
 context, no response cache for personal data) and how it answers failures —
 not about any model's prose.
+
+LGPD-gated (`igig.assistente_negocio`, `app/services/ai_consent_features.py`,
+`default_granted=False`): the `_grant_assistente_negocio_consent` autouse
+fixture below pre-seeds a granted `ai_consent` row so the happy-path tests
+in this file exercise the ROUTE, not the consent guard — `TestConsentGuards`
+at the end covers the refused-without-consent path.
 """
 import pytest
 from noctusai_lib.integrations.llm import LLMNotConfigured
@@ -19,6 +25,21 @@ ORG = str(coerce_org_uuid("test-org-123"))
 @pytest.fixture
 def api(crm_api):
     return crm_api
+
+
+@pytest.fixture(autouse=True)
+def _grant_assistente_negocio_consent(api):
+    """`igig.assistente_negocio` is opt-in (`default_granted=False`) — without
+    this, every happy-path test below would get HTTP 412 instead of exercising
+    the route. `api._mock_supabase` is the SAME mock bound to the consent
+    module by `bind_consent_module_to_mock(...)` in the `client` fixture
+    (`crm_api` only overrides `get_db`/`get_admin_db` for the pipeline routes,
+    not the consent guard's own admin client)."""
+    api._mock_supabase.set_table_data("ai_consent", [{
+        "feature_key": "igig.assistente_negocio",
+        "granted": True, "user_id": "test-user-123",
+        "granted_at": "2026-09-28T00:00:00Z", "revoked_at": None,
+    }])
 
 
 @pytest.fixture
@@ -153,6 +174,46 @@ class TestAssistente:
             app.dependency_overrides.pop(get_gerador_texto, None)
         assert resp.status_code == 200, resp.text
         assert fake.kwargs[0]["model"] == "claude-opus-5"
+
+
+class TestConsentGuards:
+    """`igig.assistente_negocio` is opt-in (`default_granted=False`) — a
+    caller without a granted `ai_consent` row must be refused with HTTP 412
+    `AI_CONSENT_REQUIRED`, never reaching the LLM call."""
+
+    def test_returns_401_before_412_when_unauthenticated(self, api):
+        """Auth is checked first — an unauthenticated caller gets 401, never
+        412, regardless of consent state (strict `== 401`, not `in (401, 412)`
+        — see `KB § PATTERNS/compliance/auth-boundary-false-green.md`)."""
+        resp = api.raw().post("/api/comercial/negocios/x/assistente", json={"acao": "resumo"})
+        assert resp.status_code == 401
+
+    def test_returns_412_when_no_decision_and_default_false(self, api, negocio, chat):
+        # Override the autouse fixture's grant — no stored decision at all.
+        api._mock_supabase.set_table_data("ai_consent", [])
+        resp = api.post(f"/api/comercial/negocios/{negocio['id']}/assistente", json={"acao": "resumo"})
+        assert resp.status_code == 412
+        assert resp.json()["error"]["code"] == "AI_CONSENT_REQUIRED"
+        assert not chat.kwargs, "the LLM must never be called without consent"
+
+    def test_returns_412_when_explicitly_revoked(self, api, negocio, chat):
+        api._mock_supabase.set_table_data("ai_consent", [{
+            "feature_key": "igig.assistente_negocio",
+            "granted": False, "user_id": "test-user-123",
+            "granted_at": None, "revoked_at": "2026-09-28T00:00:00Z",
+        }])
+        resp = api.post(f"/api/comercial/negocios/{negocio['id']}/assistente", json={"acao": "resumo"})
+        assert resp.status_code == 412
+        assert resp.json()["error"]["code"] == "AI_CONSENT_REQUIRED"
+        assert not chat.kwargs
+
+    def test_succeeds_when_consent_granted(self, api, negocio, chat):
+        """The autouse fixture already grants consent — this pins the
+        happy path explicitly against the guard (belt-and-suspenders with
+        `TestAssistente.test_resumo_uses_claude_with_the_deal_context`)."""
+        resp = api.post(f"/api/comercial/negocios/{negocio['id']}/assistente", json={"acao": "resumo"})
+        assert resp.status_code == 200, resp.text
+        assert chat.kwargs
 
 
 class TestModeloPadrao:
