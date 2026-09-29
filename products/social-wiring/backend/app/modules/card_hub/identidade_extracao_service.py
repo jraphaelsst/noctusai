@@ -88,6 +88,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
@@ -98,6 +99,7 @@ from noctusai_lib.integrations.documents import (
     IdentityFields,
     TitularEsperado,
     canonical_gender,
+    chave_nome,
     classificar_tipo_provavel,
     is_same_as_cpf,
     make_identity_extractor,
@@ -1915,6 +1917,66 @@ def _pessoas_dos_cards(client: Any, org_id: UUID, cliente_id: UUID) -> list[str]
     return sorted(pessoas)
 
 
+def _pessoas_do_mesmo_lado(client: Any, org_id: UUID, cliente_id: UUID) -> list[str]:
+    """Every OTHER person on the SAME side (`lado`, migration 098) of the SAME
+    atendimento as this cliente — narrower than `_pessoas_dos_cards`, which
+    pools every atendimento's parties regardless of side.
+
+    Used only by `_conjuge_por_lado_unico`'s fallback below: a comprador is
+    never a vendedor's spouse, and a party on a DIFFERENT deal this cliente
+    also happens to sit on is not a candidate either. `cliente_id` itself may
+    be the atendimento's own titular (buyer side, implicit `lado='comprador'`
+    — migration 073's header) or an `atendimento_partes` row (both sides,
+    migration 098) — either way, every atendimento/lado pair it sits in is
+    resolved first, then every OTHER person on that exact pair.
+    """
+    pares: set[tuple[str, str]] = set()
+    for row in (
+        _t(client, "atendimentos")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []:
+        pares.add((str(row["id"]), "comprador"))
+    for row in (
+        _t(client, "atendimento_partes")
+        .select("atendimento_id,lado")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .execute()
+    ).data or []:
+        pares.add((str(row["atendimento_id"]), row.get("lado") or "comprador"))
+    if not pares:
+        return []
+    atendimento_ids = sorted({p[0] for p in pares})
+
+    pessoas: set[str] = set()
+    compradores = {aid for aid, lado in pares if lado == "comprador"}
+    if compradores:
+        for row in (
+            _t(client, "atendimentos")
+            .select("id,cliente_id")
+            .eq("org_id", str(org_id))
+            .in_("id", list(compradores))
+            .execute()
+        ).data or []:
+            if row.get("cliente_id"):
+                pessoas.add(str(row["cliente_id"]))
+    for row in (
+        _t(client, "atendimento_partes")
+        .select("atendimento_id,lado,cliente_id")
+        .eq("org_id", str(org_id))
+        .in_("atendimento_id", atendimento_ids)
+        .execute()
+    ).data or []:
+        chave = (str(row["atendimento_id"]), row.get("lado") or "comprador")
+        if chave in pares:
+            pessoas.add(str(row["cliente_id"]))
+    pessoas.discard(str(cliente_id))
+    return sorted(pessoas)
+
+
 def _e_a_pessoa(row: dict, conjuge: Any) -> bool:
     """Is this cliente row the spouse the certidão names? CPF when both
     sides have one (decisive either way), else the name."""
@@ -1922,6 +1984,80 @@ def _e_a_pessoa(row: dict, conjuge: Any) -> bool:
         return only_digits(str(row["cpf"])) == only_digits(conjuge.cpf)
     nomes = [row.get("nome_oficial"), row.get("nome_completo"), row.get("nome")]
     return any(nomes_compativeis(conjuge.nome, n) for n in nomes if n)
+
+
+# A generic role label typed as a stand-in before a document named the real
+# person — "Comprador 2", "Vendedor 2", "Cônjuge" — never a real person's
+# name, so it can never itself be evidence the certidão's spouse is someone
+# else. Anchored (not a substring search): a REAL name that happens to
+# contain one of these words ("Compradora Silva") must still count as a
+# disagreeing name, not a placeholder.
+_PLACEHOLDER_LADO_PAPEL = re.compile(
+    r"^(COMPRADOR(A)?|VENDEDOR(A)?|CONJUGE|PARTE|CLIENTE)\s*\d*$"
+)
+
+
+def _nome_vazio_ou_placeholder(nome: Optional[str]) -> bool:
+    """No usable name to disagree with — empty, or a generic role label."""
+    chave = chave_nome(nome)
+    return not chave or bool(_PLACEHOLDER_LADO_PAPEL.match(chave))
+
+
+def _conjuge_por_lado_unico(
+    client: Any, org_id: UUID, cliente_id: UUID, conjuge: Any
+) -> Optional[str]:
+    """Fallback spouse resolution (owner directive, 2026-09-29) for when the
+    certidão names two spouses and the OTHER one matches nobody by name/CPF —
+    because the party row has no usable name yet (a placeholder like
+    "Comprador 2") or no identity document of their own has ever been read.
+
+    Only fires when `_cliente_do_outro_conjuge` found zero named matches —
+    a real name/CPF disagreement, or more than one match, is never
+    second-guessed by this. Resolves to the only OTHER party on the SAME
+    side (`lado`) of the SAME atendimento as `cliente_id`, and only when
+    nothing about that candidate actively disagrees with the certidão:
+
+    - CPF: the candidate has none on file, or it already equals the
+      certidão's (a CPF that DISAGREES is a real conflict — no auto-pair).
+    - Name: empty, a placeholder label, or already compatible with the
+      certidão's name (`nomes_compativeis` — kept for symmetry, though a
+      real match there would already have resolved above).
+
+    Two or more same-side candidates, or a lone one that disagrees, is left
+    for a human — the same posture `_pessoa_do_card_por_nome` already takes
+    on ambiguity. Never creates or links a cliente on its own; the caller
+    still runs `vincular_conjuges`, which records the pairing durably
+    (`conjuge_cliente_id`, both ways) so later documents (a comprovante)
+    propagate to this spouse too.
+    """
+    candidatos = _pessoas_do_mesmo_lado(client, org_id, cliente_id)
+    if len(candidatos) != 1:
+        return None
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,nome,nome_completo,nome_oficial,cpf")
+        .eq("org_id", str(org_id))
+        .eq("id", candidatos[0])
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return None
+    row = rows[0]
+    if conjuge.cpf and row.get("cpf"):
+        if only_digits(str(row["cpf"])) != only_digits(conjuge.cpf):
+            return None  # a real CPF disagreement — human review, no guess
+    nome_atual = next(
+        (n for n in (row.get("nome_oficial"), row.get("nome_completo"), row.get("nome")) if n),
+        None,
+    )
+    if (
+        nome_atual is not None
+        and not _nome_vazio_ou_placeholder(nome_atual)
+        and not nomes_compativeis(conjuge.nome, nome_atual)
+    ):
+        return None  # a real, different name on file — not our guess to make
+    return str(row["id"])
 
 
 def _cliente_do_outro_conjuge(
@@ -1932,7 +2068,11 @@ def _cliente_do_outro_conjuge(
     1. The cliente already linked as this one's `conjuge_cliente_id` — only
        if it IS the person the certidão names (an old certidão from a
        previous marriage must not fill the current spouse's record).
-    2. Else exactly one person on this cliente's cards who matches.
+    2. Else exactly one person on this cliente's cards who matches by
+       name/CPF.
+    3. Else `_conjuge_por_lado_unico`'s same-side fallback — see its own
+       docstring for why a name/CPF match is not the only signal a
+       placeholder party or a document-less spouse can offer.
     Never creates a cliente.
     """
     colunas = "id,nome,nome_completo,nome_oficial,cpf"
@@ -1958,17 +2098,21 @@ def _cliente_do_outro_conjuge(
             return str(rows[0]["id"])
 
     candidatos = _pessoas_dos_cards(client, org_id, cliente_id)
-    if not candidatos:
-        return None
-    rows = (
-        _t(client, CLIENTES_TABLE)
-        .select(colunas)
-        .eq("org_id", str(org_id))
-        .in_("id", candidatos)
-        .execute()
-    ).data or []
-    achados = [r for r in rows if _e_a_pessoa(r, conjuge)]
-    return str(achados[0]["id"]) if len(achados) == 1 else None
+    achados: list[dict] = []
+    if candidatos:
+        rows = (
+            _t(client, CLIENTES_TABLE)
+            .select(colunas)
+            .eq("org_id", str(org_id))
+            .in_("id", candidatos)
+            .execute()
+        ).data or []
+        achados = [r for r in rows if _e_a_pessoa(r, conjuge)]
+    if len(achados) == 1:
+        return str(achados[0]["id"])
+    if achados:
+        return None  # more than one named match — genuinely ambiguous
+    return _conjuge_por_lado_unico(client, org_id, cliente_id, conjuge)
 
 
 # ─── The sweep: what happens when the process dies mid-read (migration 072) ──

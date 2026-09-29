@@ -755,6 +755,126 @@ class TestDoisConjuges:
         assert all(r["cliente_id"] is None for r in _documento(scoped, did)["extracao_conjuges"])
 
 
+# ─── same-side fallback (owner directive, 2026-09-29): a name/CPF match on
+# the certidão's OTHER spouse fails because the party row has no usable name
+# yet (a placeholder like "Comprador 2") or no identity document of their own
+# — the only other party on the SAME side of the SAME atendimento IS that
+# spouse, provided nothing about them disagrees. ───────────────────────────
+
+
+class TestConjugePorLadoUnico:
+    @pytest.mark.asyncio
+    async def test_lead_and_placeholder_comprador_2_are_paired_and_filled(
+        self, client, scoped,
+    ):
+        comprador2 = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento", cliente={"nome": "Almir"},
+            outros=[cliente_row(comprador2, nome="Comprador 2")],
+        )
+        atd = str(uuid4())
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": comprador2, "lado": "comprador", "papel": "comprador", "ordem": 0},
+        ])
+        out = await _extrair(scoped, storage, cid, did, _certidao(0))
+        eu, ela = _cliente(scoped, cid), _cliente(scoped, comprador2)
+        assert ela["nome_oficial"] == "MARIANA PELLEGRINI RANGEL"
+        assert ela["cpf"] == "478.982.096-30"
+        assert ela["profissao"] == "professora"
+        assert ela["genero"] == "Feminino"
+        assert ela["data_nascimento"] == "1964-04-20"
+        assert ela["cpf_origem"] == "certidao_casamento"
+        for p in (eu, ela):
+            assert (p["estado_civil"], p["regime_bens"], p["data_casamento"]) == (
+                "casado", "comunhao_parcial", "2011-07-30",
+            )
+        # Recorded durably both ways, so a later comprovante propagates too.
+        assert (eu["conjuge_cliente_id"], ela["conjuge_cliente_id"]) == (comprador2, cid)
+        assert ela["conjuge_origem"] == "certidao_casamento"
+        registro = _documento(scoped, did)["extracao_conjuges"]
+        assert [(r["titular"], r["cliente_id"]) for r in registro] == [
+            (True, cid), (False, comprador2),
+        ]
+        assert out["conflitos_abertos"] == []
+
+    @pytest.mark.asyncio
+    async def test_seller_side_pairs_when_the_certidao_is_on_vendedor_um(
+        self, client, scoped,
+    ):
+        vendedor2 = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento", cliente={"nome": "Vendedor 1"},
+            outros=[cliente_row(vendedor2, nome="Vendedor 2")],
+        )
+        atd, comprador_lead = str(uuid4()), str(uuid4())
+        scoped.set_table_data(
+            "atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": comprador_lead}],
+        )
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": cid, "lado": "vendedor", "papel": "proprietario", "ordem": 0},
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": vendedor2, "lado": "vendedor", "papel": "conjuge", "ordem": 1},
+        ])
+        await _extrair(scoped, storage, cid, did, _certidao(0))
+        eu, ela = _cliente(scoped, cid), _cliente(scoped, vendedor2)
+        assert ela["nome_oficial"] == "MARIANA PELLEGRINI RANGEL"
+        assert ela["cpf"] == "478.982.096-30"
+        assert (eu["conjuge_cliente_id"], ela["conjuge_cliente_id"]) == (vendedor2, cid)
+
+    @pytest.mark.asyncio
+    async def test_a_disagreeing_cpf_on_the_only_candidate_is_left_for_review(
+        self, client, scoped,
+    ):
+        comprador2 = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento", cliente={"nome": "Almir"},
+            outros=[cliente_row(comprador2, nome="Comprador 2", cpf="111.111.111-11")],
+        )
+        atd = str(uuid4())
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": comprador2, "lado": "comprador", "papel": "comprador", "ordem": 0},
+        ])
+        await _extrair(scoped, storage, cid, did, _certidao(0))
+        ela = _cliente(scoped, comprador2)
+        assert ela["cpf"] == "111.111.111-11"  # untouched — no silent overwrite
+        assert ela.get("conjuge_cliente_id") is None
+        assert _cliente(scoped, cid).get("conjuge_cliente_id") is None
+        registro = _documento(scoped, did)["extracao_conjuges"]
+        assert next(r for r in registro if not r["titular"])["cliente_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_three_parties_on_a_side_is_never_auto_paired(self, client, scoped):
+        comprador2, comprador3 = str(uuid4()), str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento", cliente={"nome": "Almir"},
+            outros=[
+                cliente_row(comprador2, nome="Comprador 2"),
+                cliente_row(comprador3, nome="Comprador 3"),
+            ],
+        )
+        atd = str(uuid4())
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": comprador2, "lado": "comprador", "papel": "comprador", "ordem": 0},
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": comprador3, "lado": "comprador", "papel": "comprador", "ordem": 1},
+        ])
+        await _extrair(scoped, storage, cid, did, _certidao(0))
+        for outro in (comprador2, comprador3):
+            row = _cliente(scoped, outro)
+            assert row.get("cpf") is None
+            assert row.get("conjuge_cliente_id") is None
+        assert _cliente(scoped, cid).get("conjuge_cliente_id") is None
+        registro = _documento(scoped, did)["extracao_conjuges"]
+        assert next(r for r in registro if not r["titular"])["cliente_id"] is None
+
+
 # ─── nome_anterior confirms a marriage name adoption (owner decision,
 # 2026-09-28) ────────────────────────────────────────────────────────────
 
