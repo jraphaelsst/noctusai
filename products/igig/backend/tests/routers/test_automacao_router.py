@@ -14,6 +14,7 @@ ports (a dependency override), never patched.
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
+from app.services.quadro_comum import hoje_local
 
 import pytest
 from cryptography.fernet import Fernet
@@ -311,7 +312,9 @@ class TestEntradaComercial:
         assert len(tarefas) == 1, "both rules share ONE 'Tarefas' checklist"
         itens = sorted(i["texto"] for i in igig_db.table("negocio_checklist_itens")._data
                        if i["checklist_id"] == tarefas[0]["id"])
-        prazo = (datetime.now().date() + timedelta(days=2)).strftime("%d/%m/%Y")
+        # The service computes the due date on the São Paulo clock; a naive
+        # UTC `datetime.now()` is a day ahead from 21:00 BRT (CI 2026-09-28).
+        prazo = (hoje_local() + timedelta(days=2)).strftime("%d/%m/%Y")
         assert itens == ["Agendar call", f"Enviar proposta (até {prazo})"]
 
     def test_definir_responsavel_sets_the_owner(self, admin, comercial, igig_db, profissional):

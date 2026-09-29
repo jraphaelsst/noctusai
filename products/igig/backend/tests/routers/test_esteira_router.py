@@ -15,6 +15,7 @@ pipeline code reads through PostgREST, the timer/portal repositories through
 the real `SupabaseRecordStore` adapter over the same mock.
 """
 from datetime import datetime, timedelta, timezone
+from app.services.quadro_comum import hoje_local
 
 import pytest
 from noctusai_lib.integrations.persistence import SupabaseRecordStore
@@ -815,7 +816,7 @@ class TestPortalBloqueioFinanceiro:
 
     @staticmethod
     def _fatura_vencida(igig_db, cliente_id: str, *, dias_atraso: int) -> dict:
-        vencimento = (datetime.now(timezone.utc) - timedelta(days=dias_atraso)).date().isoformat()
+        vencimento = (hoje_local() - timedelta(days=dias_atraso)).isoformat()
         return igig_db.table("fatura").insert({
             "org_id": ORG, "cliente_id": cliente_id, "competencia": "2026-01",
             "valor_total": 500, "status": "aberta", "vencimento": vencimento,
