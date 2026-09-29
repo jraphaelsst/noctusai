@@ -64,8 +64,9 @@ Extraction is its own process, measured separately from contract generation (own
   human review, never pick** — it turned a hallucinated CNH name into a blank instead of a wrong
   value. A group field travels with its anchor *only when the reads disagree on it too*: an
   issuer both reads agree on survives a divergent RG number.
-- **Escalation can't fix attribution.** Comprovante address scores didn't move: the bills are read
-  correctly but belong to non-parties — that gap is an owner rule + an Info PP source, not a model.
+- **Escalation can't fix attribution.** Comprovante address scores didn't move because the reader
+  never extracts the bill HOLDER, so the address can't be attached to the right party — a parser
+  gap, not a model gap (see §4).
 - **Calibrate every gate on the real corpus before shipping.** The legibility gate's first version
   flagged 17/28 genuine ID cards (compound CNH labels, "DOC IDENTIDADE / ÓRG EMISSOR / UF"); the
   second flagged 8/9 comprovantes (a bill legitimately carries CNPJ/ICMS) and 7/13 certidões
@@ -113,8 +114,15 @@ Extraction is its own process, measured separately from contract generation (own
 - **Certidões**: the contract can cite a different emission (número/date) than the file in the
   folder (P1/883 RF). Score against the document; flag the divergence.
 
-- **Proof of address in someone else's name**: most comprovantes in the corpus are bills in a
-  relative's/other person's name → read correctly but not attributable (owner rule open).
+- **Proof of address — whose bill it is decides.** Corrected measurement (holder name searched in
+  the transcription, 9 bills vs contracts): 7/9 are in a party's own name and the contract used that
+  address for the party AND the spouse; 1/9 is a non-party's bill and its contract did NOT use it;
+  1/9 own bill, contract used another address. An earlier "mostly relatives' bills" claim came from
+  a failed attribution in the test harness, not from the documents. Rule: holder is a party →
+  apply to holder + spouse; anyone else → human review.
+- **Chained deals share people.** One deal's sellers are another's buyers (identical files by
+  hash): expect the same person on several cards; attribute by extracted name/CPF, never by
+  folder position or "the lead" default.
 
 ## 5 · Sources for data no identity document carries (automation ideas)
 
