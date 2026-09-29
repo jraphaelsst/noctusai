@@ -294,7 +294,7 @@ Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/ap
 | POST `/api/comercial/negocios/{id}/mover-etapa` | Move; Fechado exige `orcamento_id` | Auth |
 | POST `/api/comercial/negocios/{id}/perder` | Marca perdido (motivo) | Auth |
 | POST `/api/comercial/negocios/{id}/reabrir` | Reabre perdido | Auth |
-| POST `/api/comercial/negocios/{id}/assistente` | Assistente IA | Auth, 20/min por pessoa |
+| POST `/api/comercial/negocios/{id}/assistente` | Assistente IA | Auth, **consentimento de IA** (`igig.assistente_negocio`), 20/min por pessoa |
 | POST `/api/comercial/leads/publico` | Formulário de pré-qualificação | **Público**, limitado |
 | GET `/api/comercial/leads?status_filtro=` | Lista leads | Auth |
 | GET/PATCH `/api/comercial/leads/{id}` | Um lead / editar | Auth |
@@ -666,6 +666,7 @@ Erros — quatro formatos:
 | `orcamento_ia_excedido` (429) | "O limite de uso de IA da organização foi atingido." | Aguarde o próximo período ou aumente o limite |
 | `ia_indisponivel` (502) | "O provedor de IA não respondeu. Tente novamente em instantes." | Tente de novo |
 | `ia_resposta_vazia` (502) | "A IA não retornou texto. Tente novamente." | Tente de novo |
+| `AI_CONSENT_REQUIRED` (412) | "Consentimento necessário para usar este recurso de IA (<nome do recurso>). Acesse Configurações > IA para gerenciar suas preferências." (formato genérico #2, `error.code`/`error.message`) | Na aba Assistente do card do negócio a tela troca a mensagem por "Para usar o Assistente, autorize o uso de IA com dados de clientes" com um link "Ir para Configurações de IA" (`/settings/ai`) |
 | `RATE_LIMITED` (429) | "Muitas requisições. Tente novamente em breve." | Aguarde um minuto |
 
 ---
@@ -679,15 +680,16 @@ Erros — quatro formatos:
 - Instruções: responder sempre em português do Brasil, só com fatos do contexto, sem inventar dados; se faltar informação, dizer o que falta.
 - **Nada é gravado nem enviado**; sem cache de respostas (dados pessoais).
 - Limites: gasto de IA da organização (selo no cabeçalho) e **20 pedidos por minuto por pessoa**.
-- Erros: `ia_nao_configurada` (503), `orcamento_ia_excedido` (429), `RATE_LIMITED` (429), `ia_indisponivel` (502), `ia_resposta_vazia` (502); genérico na tela "O assistente não respondeu.".
+- **Consentimento de IA (LGPD) — obrigatório.** Recurso `igig.assistente_negocio` no catálogo de consentimentos da plataforma (`app/services/ai_consent_features.py`), **desligado por padrão** (`default_granted=False`) e **alterável** (`toggleable=True`) em Configurações > IA (`/settings/ai`, rota da própria plataforma, montada automaticamente para todo produto). Sem consentimento concedido, a chamada é recusada com HTTP 412 `AI_CONSENT_REQUIRED` **antes** de qualquer dado do lead sair do servidor — a tela mostra "Para usar o Assistente, autorize o uso de IA com dados de clientes" com um link para Configurações de IA, nunca o erro genérico. A ordem de verificação no servidor é sempre: autenticação (401) → consentimento (412) → validação dos campos (422).
+- Erros: `AI_CONSENT_REQUIRED` (412, sem consentimento — ver acima), `ia_nao_configurada` (503), `orcamento_ia_excedido` (429), `RATE_LIMITED` (429), `ia_indisponivel` (502), `ia_resposta_vazia` (502); genérico na tela "O assistente não respondeu.".
 - Endpoint: POST `/api/comercial/negocios/{id}/assistente` `{acao, canal?}` → `{data:{texto}}`.
-- Observação LGPD: o assistente envia dados pessoais do lead à Anthropic sem um consentimento de IA específico do produto (o catálogo de consentimentos de IA do IgIg não está ativado — `consent_features` comentado no `main.py`). Ativar esse consentimento é uma **decisão pendente do dono do produto** (ver Capítulo 5).
 
 ### 13.2 Assistente IgIg (chat de ajuda) — disponível em todas as telas
 - **O que é**: um balão de chat flutuante, no canto inferior direito da tela, presente em **todas as páginas logadas** do IgIg. Título do painel: "Assistente IgIg". A pessoa pergunta como usar a plataforma e um especialista de IA responde a partir **deste manual** (`app/knowledge/guia-igig.md`), que é todo o seu conhecimento do IgIg. Construído sobre o organ do seed `noctusai_lib.domain.help_chat` (frontend `HelpChatBubble`, ligado pelo layout do seed com a opção `helpChat` em `App.tsx`; backend `app/routers/ajuda_router.py`).
 - **Modelo**: `claude-haiku-4-5` (Anthropic), temperatura 0.4, até 1200 tokens por resposta, **resposta em streaming** (o texto aparece aos poucos).
 - **Comportamento** (definido no prompt do organ): entende a dúvida antes de responder e faz perguntas curtas de esclarecimento quando falta contexto; nunca adivinha; guia passo a passo com os nomes EXATOS de menus, botões e campos; explica o porquê das regras; sugere o próximo passo; se este manual não cobre algo, diz isso e sugere contatar o suporte — nunca inventa funcionalidades, números ou prazos; menciona limitações com honestidade; nunca pede, guarda ou revela senhas, tokens ou chaves; usa a página em que a pessoa está como contexto (o endereço atual vai junto com a pergunta); responde em português do Brasil (ou no idioma em que a pessoa escrever); parágrafos curtos e listas (uso em celular).
 - **Dados**: **só** este manual + a conversa. O assistente **não acessa** dados da organização (clientes, negócios, faturas, documentos) — ele explica como fazer, não consulta nem altera registros. O servidor não grava a conversa nem registra o texto das mensagens (só tamanhos/tempos). O histórico fica apenas no navegador, naquela aba (`sessionStorage`, limitado), e some ao fechar a aba ou tocar em "Nova conversa".
+- **Consentimento de IA (LGPD)**: aparece no catálogo de Configurações > IA (`/settings/ai`) como `igig.assistente_ajuda`, **sempre ligado** (`toggleable=False`) — só por transparência do uso de tokens de IA, já que ele nunca recebe dado de cliente/lead/negócio. Diferente do Assistente do negócio (§13.1), este não pode ser desativado e nunca é recusado por falta de consentimento.
 - **Limites**: até 20 mensagens por pedido, até 4000 caracteres por mensagem, **20 pedidos por minuto por pessoa**; sujeito ao orçamento de IA da organização.
 - **Endpoint**: POST `/api/ajuda/chat` (login obrigatório) `{messages:[…], pagina_atual?}` → `text/event-stream` (`data: {"delta": …}` … `data: {"done": true}`; erro no meio: `data: {"error": {"code", "message"}}`).
 - **Erros e mensagens na tela**: `ia_nao_configurada` (503) "O assistente de IA ainda não foi configurado para este produto." (e o campo passa a "Assistente indisponível no momento"); `orcamento_ia_excedido` (429) "O limite de uso de IA da organização foi atingido. Tente novamente mais tarde."; `limite_de_mensagens` (429) "Você enviou mensagens rápido demais. Aguarde um instante e tente novamente."; `ia_indisponivel` (502) "O assistente não respondeu. Tente novamente em instantes."; falha de rede "Falha de conexão com o assistente. Verifique sua internet e tente novamente.". Junto de qualquer erro aparece o link "Tentar de novo", que reenvia a última pergunta.
@@ -1044,6 +1046,7 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 ### 2. Acesso
 - Abre ao tocar num card do Comercial, por "Reabrir" em Perdidos, ou por `/comercial?negocio=<id>`.
 - Qualquer membro logado pode usar todas as abas. Ícones "Gerar orçamento" e "Marcar como perdido" só aparecem em negócios **abertos**.
+- A aba **"Assistente"** abre para qualquer membro, mas os botões só funcionam depois que a pessoa autorizar o uso de IA com dados de clientes em Configurações > IA (`/settings/ai`) — ver §6 (estado "Sem consentimento de IA") e §7 (regra 2).
 
 ### 3. Layout
 - Computador: janela grande (90% da tela) em três colunas: barra de abas com ícones à esquerda, conteúdo da aba no centro e, à direita, a coluna **"Comentários e atividade"** (~360px).
@@ -1070,7 +1073,7 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 | "Canal do rascunho" | lista | — | "WhatsApp"/"E-mail" | "WhatsApp" | Só para "Rascunho de mensagem" |
 | "Título" (Lembretes) | texto | Sim | ao menos 1 caractere (espaços nas pontas são removidos) | vazio | Placeholder "Ex.: Ligar para confirmar a arte". Sem ele o botão "Adicionar"/"Salvar" fica desabilitado |
 | "Data e hora (América/São Paulo)" (Lembretes) | data e hora (seletor nativo) | Sim | — (aceita horário no passado: o lembrete já nasce "Atrasado" e é entregue na próxima rodada da rotina) | vazio | Sempre interpretada no horário de Brasília, qualquer que seja o fuso do aparelho; gravada em UTC |
-| "Responsável" (Lembretes) | lista | Não | profissional ativo da organização | "Nenhum" | Só aparece se a organização tem pelo menos um profissional ativo em Custos; lista **qualquer** profissional ativo, não só os membros do card. Também recebe a notificação, se tiver login vinculado (ver regra 7) |
+| "Responsável" (Lembretes) | lista | Não | profissional ativo da organização | "Nenhum" | Só aparece se a organização tem pelo menos um profissional ativo em Custos; lista **qualquer** profissional ativo, não só os membros do card. Também recebe a notificação, se tiver login vinculado (ver regra 8) |
 
 ### 5. Ações
 | Ação | Pré-condições | O que acontece | Mensagem de sucesso | Erros possíveis |
@@ -1087,7 +1090,7 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 | Remover anexo (lixeira) | — | Remove **sem confirmação**; exclusão lógica com motivo "Removido pelo usuário"; registrado | — | "Não foi possível remover o anexo." |
 | "Comentar" | Texto | Adiciona comentário à linha do tempo | — | "Não foi possível enviar o comentário." |
 | "Carregar mais" | Há mais itens | Carrega itens antigos da linha do tempo | — | "Não foi possível carregar a atividade." |
-| "Resumo" / "Próxima ação" / "Rascunho de mensagem" | — | Envia ao servidor, que monta o contexto e chama a IA; o texto aparece num quadro. Nada é salvo nem enviado | Botão "Copiar" → "Copiado." | 503 `ia_nao_configurada` "A IA não está configurada (chave da Anthropic ausente)."; 429 `orcamento_ia_excedido` "O limite de uso de IA da organização foi atingido."; 429 "Muitas requisições. Tente novamente em breve." (mais de 20 pedidos por minuto da mesma pessoa); 502 `ia_indisponivel` "O provedor de IA não respondeu. Tente novamente em instantes."; 502 `ia_resposta_vazia` "A IA não retornou texto. Tente novamente."; genérico "O assistente não respondeu."; copiar: "Não foi possível copiar." |
+| "Resumo" / "Próxima ação" / "Rascunho de mensagem" | Consentimento de IA concedido (`igig.assistente_negocio` em Configurações > IA) | Envia ao servidor, que monta o contexto e chama a IA; o texto aparece num quadro. Nada é salvo nem enviado | Botão "Copiar" → "Copiado." | 412 `AI_CONSENT_REQUIRED` — sem pré-condição acima: quadro "Para usar o Assistente, autorize o uso de IA com dados de clientes" + link "Ir para Configurações de IA"; 503 `ia_nao_configurada` "A IA não está configurada (chave da Anthropic ausente)."; 429 `orcamento_ia_excedido` "O limite de uso de IA da organização foi atingido."; 429 "Muitas requisições. Tente novamente em breve." (mais de 20 pedidos por minuto da mesma pessoa); 502 `ia_indisponivel` "O provedor de IA não respondeu. Tente novamente em instantes."; 502 `ia_resposta_vazia` "A IA não retornou texto. Tente novamente."; genérico "O assistente não respondeu."; copiar: "Não foi possível copiar." |
 | Tocar num orçamento (aba Orçamentos) | — | Abre o modal do orçamento | — | "Não foi possível carregar os orçamentos." |
 | "Novo lembrete" → "Adicionar" (Lembretes) | "Título" e "Data e hora" preenchidos | Cria um lembrete pendente no card; a lista recarrega. Quando o horário chegar, a rotina de 5 em 5 minutos entrega a notificação no sino (Capítulo 0, §9) e o lembrete passa para "concluídos" | — (o lembrete aparece na lista) | Aviso "Não foi possível criar o lembrete." ou a mensagem do servidor: 404 "profissional não encontrado" (responsável removido nesse meio-tempo — escolha outro); 404 do card ("negocio não encontrado"/"cliente não encontrado") se o card foi excluído; 422 de validação |
 | Lápis → editar → "Salvar" (Lembretes) | — | Reabre o mesmo formulário preenchido; grava título, data/hora e responsável ("Nenhum" remove o responsável). Mudar o horário de um lembrete **pendente** muda quando ele será entregue | — | "Não foi possível atualizar o lembrete." ou mensagem do servidor (404 "profissional não encontrado"; 404 "Lembrete não encontrado" se foi excluído em outra aba) |
@@ -1098,18 +1101,20 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 - Carregando: esqueleto no card inteiro; na aba Assistente, três linhas-esqueleto ("Gerando").
 - Vazio: "Sem descrição ainda."; "Nenhum orçamento ainda."; Lembretes: "Nenhum lembrete neste cartão ainda.".
 - Erro: "Não foi possível carregar este cartão."; "Não foi possível carregar a atividade."; Lembretes: mensagem do servidor ou "Não foi possível carregar os lembretes." (em vermelho, acima da lista).
+- **Sem consentimento de IA** (aba Assistente, após tocar num dos três botões): quadro amarelo com "Para usar o Assistente, autorize o uso de IA com dados de clientes em Configurações de IA." e o link "Ir para Configurações de IA" (`/settings/ai`) — substitui o quadro de erro genérico só para este caso (`AI_CONSENT_REQUIRED`).
 - Atualizando: lista de anexos em segundo plano sem esconder o conteúdo; Lembretes: esqueleto só no primeiro carregamento e "Atualizando…" embaixo da lista ao recarregar.
 
 ### 7. Regras de negócio e por quê
 1. **Assistente — minimização de dados (LGPD)**: a IA recebe só: do lead (nome, empresa, e-mail, telefone, Instagram, origem, como conheceu, especificações, observações, status e — desde esta versão — **nicho, canais atuais, dores e orçamento disponível**); do negócio (título, valor, status, entrada na etapa, motivo de perda, criação, etapa atual, responsável); histórico de etapas; orçamentos (versão, título, status, total mensal, validade, envio, resposta, motivo de recusa); até 30 itens da linha do tempo (sem conteúdo de documentos).
-2. A IA responde em português do Brasil, só com fatos do contexto; resumo em até 6 tópicos; próxima ação com porquê e prazo; rascunho de WhatsApp curto (até 3 parágrafos) ou e-mail com linha "Assunto:".
-3. **Nada é gravado nem enviado** pelo Assistente; gerar de novo substitui o texto.
-4. Limite por pessoa: 20 pedidos por minuto (configurável), além do limite de gasto de IA da organização.
-5. Anexos são privados; ver/baixar só por link temporário de 5 minutos, com registro de acesso.
-6. **Lembretes — horário sempre de Brasília.** A data/hora digitada é lida como horário de São Paulo (UTC−3, sem horário de verão) e gravada em UTC; a lista mostra de volta no horário de Brasília. *Por quê:* quem cria e quem recebe o lembrete podem estar em aparelhos com fusos diferentes; o horário combinado é o da agência.
-7. **Lembretes — entrega só no sino.** Único canal: notificação no app (não há e-mail nem WhatsApp, por isso o formulário não tem "canal"). A notificação diz "Lembrete: <título do lembrete>" / "Lembrete agendado para “<título do lembrete>”." (ou o título do negócio, se o "Título" do lembrete ficou vazio) e abre `/comercial?negocio=<id>`. Vai para o "Responsável" escolhido (se tiver login vinculado) **e** os membros do card com login vinculado em Custos, sem repetir ninguém; sem nenhum dos dois, para os administradores.
-8. **Lembretes — concluído = não entregar mais.** Entregue pela rotina ou marcado à mão, o lembrete vai para "concluídos" e nunca é reenviado; só volta a valer se for reaberto. *Por quê:* a mesma marca (`enviado_em`) serve para "já avisou" e "já resolvido".
-9. **Lembretes — duas confirmações para excluir**, em vez de uma janela: a aba roda dentro da área de rolagem do card, e uma terceira janela por cima no celular atrapalharia mais do que ajudaria. A exclusão é definitiva.
+2. **Assistente — consentimento de IA obrigatório (LGPD)**: além da minimização acima, a pessoa que usa o Assistente precisa ter autorizado, uma vez, o recurso `igig.assistente_negocio` em Configurações > IA — desligado por padrão. O servidor verifica na ordem autenticação → consentimento → validação dos campos; sem consentimento, nenhum dado do lead sai do servidor (412 `AI_CONSENT_REQUIRED`, antes de montar o contexto ou chamar a IA). *Por quê:* o Assistente é o único recurso do IgIg que envia dado pessoal identificável de terceiro (o lead) a um provedor de IA externo (Anthropic) — os demais recursos de IA da plataforma (ex.: Assistente IgIg, §13.2) não veem dado de cliente.
+3. A IA responde em português do Brasil, só com fatos do contexto; resumo em até 6 tópicos; próxima ação com porquê e prazo; rascunho de WhatsApp curto (até 3 parágrafos) ou e-mail com linha "Assunto:".
+4. **Nada é gravado nem enviado** pelo Assistente; gerar de novo substitui o texto.
+5. Limite por pessoa: 20 pedidos por minuto (configurável), além do limite de gasto de IA da organização.
+6. Anexos são privados; ver/baixar só por link temporário de 5 minutos, com registro de acesso.
+7. **Lembretes — horário sempre de Brasília.** A data/hora digitada é lida como horário de São Paulo (UTC−3, sem horário de verão) e gravada em UTC; a lista mostra de volta no horário de Brasília. *Por quê:* quem cria e quem recebe o lembrete podem estar em aparelhos com fusos diferentes; o horário combinado é o da agência.
+8. **Lembretes — entrega só no sino.** Único canal: notificação no app (não há e-mail nem WhatsApp, por isso o formulário não tem "canal"). A notificação diz "Lembrete: <título do lembrete>" / "Lembrete agendado para “<título do lembrete>”." (ou o título do negócio, se o "Título" do lembrete ficou vazio) e abre `/comercial?negocio=<id>`. Vai para o "Responsável" escolhido (se tiver login vinculado) **e** os membros do card com login vinculado em Custos, sem repetir ninguém; sem nenhum dos dois, para os administradores.
+9. **Lembretes — concluído = não entregar mais.** Entregue pela rotina ou marcado à mão, o lembrete vai para "concluídos" e nunca é reenviado; só volta a valer se for reaberto. *Por quê:* a mesma marca (`enviado_em`) serve para "já avisou" e "já resolvido".
+10. **Lembretes — duas confirmações para excluir**, em vez de uma janela: a aba roda dentro da área de rolagem do card, e uma terceira janela por cima no celular atrapalharia mais do que ajudaria. A exclusão é definitiva.
 
 ### 8. Fluxo de dados
 - Card hub (seed) sob o prefixo `/api/comercial/negocios`: GET `/{id}/card`, GET `/{id}/timeline`, POST/PATCH/DELETE `/{id}/notas…`, GET/POST/PATCH/DELETE `/tags…`, PUT `/{id}/tags`, GET/PUT `/{id}/membros` (`profissional_ids`), `/{id}/checklists…`, GET/POST `/{id}/documentos`, GET `/{id}/documentos/{doc}/url`, DELETE `/{id}/documentos/{doc}?motivo=` → tabelas `negocio_notas`, `negocio_tags`, `negocio_tag_links`, `negocio_membros`, `negocio_checklists`, `negocio_checklist_itens`, `negocio_documentos`, `negocio_documento_acessos` (gravação pelo cliente service-role filtrando `org_id`).
@@ -1127,10 +1132,11 @@ Janela de detalhe de um negócio (mesmo "card" usado no cliente): dados do negó
 - Linhas livres de checklist (texto/arquivo) existem no servidor, mas não têm tela no IgIg.
 - Lembretes: usa o "Título" digitado (ou o título do negócio, se ficou vazio) e avisa o "Responsável" escolhido (quando tem login vinculado), além dos membros do card ou, sem nenhum dos dois, dos administradores. Não há e-mail/WhatsApp nem repetição (recorrência) de lembrete, e a entrega pode atrasar até ~5 minutos. Lembretes não aparecem em "Comentários e atividade".
 - Lembretes só funcionam no ambiente implantado (a rotina de entrega não roda localmente).
-- O Assistente envia dados pessoais do lead à Anthropic sem um consentimento de IA específico do produto (decisão pendente do dono do produto — Capítulo 5).
 - Este Assistente (do negócio) é diferente do **Assistente IgIg** (balão de ajuda em todas as telas), que só explica o uso da plataforma e não vê os dados do negócio.
 
 ### 11. Perguntas frequentes
+- **P: Toquei em "Resumo"/"Próxima ação"/"Rascunho de mensagem" e apareceu "Para usar o Assistente, autorize o uso de IA com dados de clientes"?** R: Ninguém na sua conta autorizou ainda o uso de IA com dados de clientes (consentimento por pessoa, não por organização). Toque em "Ir para Configurações de IA", ative o recurso "Assistente IA do negócio" e volte ao card — a autorização vale a partir do próximo uso, não muda nada que já foi gerado antes.
+- **P: Uma vez que eu autorizar, todo mundo na agência pode usar o Assistente?** R: Não. O consentimento é por pessoa: cada colega que quiser usar o Assistente do negócio precisa autorizar a própria conta em Configurações > IA.
 - **P: O Assistente envia a mensagem ao cliente?** R: Não. Ele só sugere; copie, revise e envie você.
 - **P: O Assistente lê os dados do formulário de pré-qualificação?** R: Sim: nicho, canais atuais, dores e orçamento disponível.
 - **P: O Assistente lê meus anexos?** R: Não, só os metadados (nome/tipo) que aparecem na linha do tempo.
@@ -3274,7 +3280,6 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 
 | Item | Situação | Efeito hoje |
 |---|---|---|
-| **Consentimento LGPD para o Assistente do negócio** | O catálogo de consentimentos de IA do IgIg **não está ativado** (`consent_features` comentado em `app/main.py`); ativar é decisão pendente do dono do produto | O Assistente do negócio envia dados pessoais do lead (nome, e-mail, telefone, dores etc.) à Anthropic sem um consentimento de IA específico do produto. Nada é gravado nem cacheado. O Assistente IgIg (chat de ajuda) não envia dados da agência |
 | **Bloqueio do portal por inadimplência** | Implementado, mas **desligado por padrão** (`IGIG_PORTAL_BLOQUEIO_DIAS` = 0); um único N para o servidor | Ninguém é bloqueado até o responsável técnico definir N > 0 |
 | **Motor de PDF** | Os PDFs usam reportlab, não o motor xhtml2pdf pedido para todos os PDFs | Visual simples (A4, tabelas); sem impacto funcional |
 | **Visualizador somente leitura** | O papel "Visualizador" **não** tem trava no código: age como membro comum | Não conte com ele para restringir acesso |
