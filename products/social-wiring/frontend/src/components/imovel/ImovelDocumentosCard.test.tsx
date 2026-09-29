@@ -39,6 +39,7 @@ async function render(props: Partial<Parameters<typeof ImovelDocumentosCard>[0]>
   const onUpload = vi.fn();
   const onRemove = vi.fn();
   const onOpen = vi.fn();
+  const onReextrair = vi.fn();
   const view = rtl.render(
     <ImovelDocumentosCard
       documentos={[]}
@@ -47,10 +48,11 @@ async function render(props: Partial<Parameters<typeof ImovelDocumentosCard>[0]>
       onUpload={onUpload}
       onRemove={onRemove}
       onOpen={onOpen}
+      onReextrair={onReextrair}
       {...props}
     />,
   );
-  return { ...rtl, ...view, onUpload, onRemove, onOpen };
+  return { ...rtl, ...view, onUpload, onRemove, onOpen, onReextrair };
 }
 
 describe("ImovelDocumentosCard", () => {
@@ -130,22 +132,35 @@ describe("ImovelDocumentosCard", () => {
     expect(inputs.length).toBe(1);
   });
 
-  it("does not delete when the reason prompt is cancelled", async () => {
+  it("🔴 asks via the in-app dialog, never a native window.confirm/prompt — does not delete on Cancelar", async () => {
     const { screen, fireEvent, onRemove } = await render({
       documentos: [doc()],
     });
-    vi.spyOn(window, "prompt").mockReturnValue(null);
     fireEvent.click(screen.getByLabelText(/remover matricula\.pdf/i));
+    expect(screen.getByText("Remover documento?")).toBeTruthy();
+    fireEvent.click(screen.getByText("Cancelar"));
     expect(onRemove).not.toHaveBeenCalled();
   });
 
-  it("deletes with the reason the user gave", async () => {
+  it("removes with the fixed LGPD-log motivo once confirmed in the dialog", async () => {
     const { screen, fireEvent, onRemove } = await render({
       documentos: [doc()],
     });
-    vi.spyOn(window, "prompt").mockReturnValue("arquivo errado");
     fireEvent.click(screen.getByLabelText(/remover matricula\.pdf/i));
-    expect(onRemove).toHaveBeenCalledWith("d1", "arquivo errado");
+    fireEvent.click(screen.getByTestId("imovel-documento-remover-confirm"));
+    expect(onRemove).toHaveBeenCalledWith("d1", "Removido pelo usuário");
+  });
+
+  it("disables the confirm dialog's actions while a removal is in flight", async () => {
+    const { screen, fireEvent } = await render({
+      documentos: [doc()],
+      removing: true,
+    });
+    fireEvent.click(screen.getByLabelText(/remover matricula\.pdf/i));
+    expect(
+      (screen.getByTestId("imovel-documento-remover-confirm") as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByText("Cancelar") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("🔴 keeps the document list mounted during a background refetch (Cat A regression)", async () => {
@@ -168,6 +183,76 @@ describe("ImovelDocumentosCard", () => {
   it("shows the skeleton while genuinely empty and loading (first load)", async () => {
     const { screen } = await render({ documentos: [], loading: true });
     expect(screen.getByText("Carregando…")).toBeTruthy();
+  });
+});
+
+// ─── Re-read (P1/883 — the matrícula parser fix left prod docs stale) ────────
+
+describe("ImovelDocumentosCard — re-read a finished (or failed) document", () => {
+  it.each(["ok", "sem_dados", "erro"] as const)(
+    "offers a re-read for a %s número-de-matrícula read",
+    async (status) => {
+      const { screen } = await render({
+        documentos: [doc({ extracao_status: status })],
+      });
+      expect(screen.getByTestId("imovel-documento-reextrair-d1")).toBeTruthy();
+    },
+  );
+
+  it.each(["pendente", "processando"] as const)(
+    "never offers a re-read while %s — it would only race the same job",
+    async (status) => {
+      const { screen } = await render({
+        documentos: [doc({ extracao_status: status })],
+      });
+      expect(screen.queryByTestId("imovel-documento-reextrair-d1")).toBeNull();
+    },
+  );
+
+  it("🔴 offers a re-read for a structured-only tipo with no visible status at all", async () => {
+    // `guia_iptu`/`cnd_iptu`/`cnd_condominio` carry ONLY the migration-118
+    // structured read, which this API never exposes a status for — there
+    // is no "still reading" signal to gate the button on for these.
+    const { screen } = await render({
+      documentos: [doc({
+        tipo_documento: "cnd_iptu",
+        nome_original: "cnd.pdf",
+        extracao_status: null,
+      })],
+    });
+    expect(screen.getByTestId("imovel-documento-reextrair-d1")).toBeTruthy();
+  });
+
+  it("never renders a re-read affordance when the caller has not wired the mutation", async () => {
+    const { screen } = await render({
+      documentos: [doc({ extracao_status: "ok" })],
+      onReextrair: undefined,
+    });
+    expect(screen.queryByTestId("imovel-documento-reextrair-d1")).toBeNull();
+  });
+
+  it("calls onReextrair with the document id when clicked", async () => {
+    const { screen, fireEvent, onReextrair } = await render({
+      documentos: [doc({ extracao_status: "erro", extracao_erro: "boom" })],
+    });
+    fireEvent.click(screen.getByTestId("imovel-documento-reextrair-d1"));
+    expect(onReextrair).toHaveBeenCalledWith("d1");
+  });
+
+  it("disables + spins ONLY the row whose re-read is in flight", async () => {
+    const { container, screen } = await render({
+      documentos: [
+        doc({ id: "d1", extracao_status: "ok" }),
+        doc({ id: "d2", nome_original: "cnd.pdf", extracao_status: "erro" }),
+      ],
+      reextraindoId: "d1",
+    });
+    const btn1 = screen.getByTestId("imovel-documento-reextrair-d1") as HTMLButtonElement;
+    const btn2 = screen.getByTestId("imovel-documento-reextrair-d2") as HTMLButtonElement;
+    expect(btn1.disabled).toBe(true);
+    expect(btn2.disabled).toBe(false);
+    expect(btn1.querySelector("svg")?.getAttribute("class")).toContain("animate-spin");
+    expect(container.textContent).toBeTruthy();
   });
 });
 

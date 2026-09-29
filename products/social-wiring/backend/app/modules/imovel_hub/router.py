@@ -357,6 +357,62 @@ async def upload_documento_route(
     return documento
 
 
+@router.post("/{codigo}/documentos/{documento_id}/extrair")
+async def reextrair_documento_route(
+    codigo: str,
+    documento_id: UUID,
+    background: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+    storage=Depends(get_storage_backend),
+    extractor_factory=Depends(get_matricula_extractor_factory),
+    notificador=Depends(get_imovel_notification_service),
+    estrutura_seams=Depends(get_estrutura_seams),
+) -> dict:
+    """Re-queue the read(s) for a document whose result already finished
+    (`ok`/`sem_dados`) or ended in `erro` — never delete + re-upload, which
+    would destroy the `imovel_documento_acessos` LGPD access log (migration
+    109/111).
+
+    See `documentos_service.reextrair_documento` for the full contract
+    (refusals, and why the manually-confirmed structured read is left
+    alone). The background task(s) scheduled below are the SAME calls
+    `upload_documento_route` schedules for a brand-new upload of this
+    tipo — a re-run of that job, not a second implementation of it.
+    """
+    _user, org_id = _auth_parts(auth)
+    codigo = codigo.upper()
+    documento = docs_svc.reextrair_documento(client, org_id, codigo, documento_id)
+    tipo = documento["tipo_documento"]
+    if docs_svc.deve_extrair(tipo):
+        background.add_task(
+            matricula_svc.extrair,
+            client,
+            storage,
+            org_id,
+            codigo,
+            documento_id,
+            extractor=extractor_factory(str(org_id)),
+            notificador=notificador,
+        )
+    # Unconditional on tipo, same as `upload_documento_route` — a
+    # manually-confirmed document is never actually touched: `extrair_
+    # estrutura` runs its OWN guard when this executes (see its docstring).
+    if docs_svc.deve_extrair_estrutura(tipo):
+        background.add_task(
+            docs_svc.extrair_estrutura,
+            client,
+            storage,
+            org_id,
+            codigo,
+            documento_id,
+            notificador=notificador,
+            extract_text=estrutura_seams.extract_text,
+            analyze_estrutura=estrutura_seams.analyze_estrutura,
+        )
+    return documento
+
+
 @router.get("/{codigo}/documentos/{documento_id}/url")
 async def get_documento_url_route(
     codigo: str,

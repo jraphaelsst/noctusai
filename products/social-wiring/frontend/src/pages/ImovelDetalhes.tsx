@@ -448,9 +448,16 @@ export default function ImovelDetalhes() {
             documentos={documentosQuery.data ?? []}
             loading={documentosQuery.isPending && !documentosQuery.data}
             uploading={documentoMutations.upload.isPending}
+            removing={documentoMutations.remove.isPending}
+            reextraindoId={
+              documentoMutations.reextrair.isPending
+                ? (documentoMutations.reextrair.variables ?? null)
+                : null
+            }
             error={
               documentoMutations.upload.error?.message ??
               documentoMutations.remove.error?.message ??
+              documentoMutations.reextrair.error?.message ??
               null
             }
             onUpload={(file, tipoDocumento) =>
@@ -458,6 +465,9 @@ export default function ImovelDetalhes() {
             }
             onRemove={(documentoId, motivo) =>
               documentoMutations.remove.mutate({ documentoId, motivo })
+            }
+            onReextrair={(documentoId) =>
+              documentoMutations.reextrair.mutate(documentoId)
             }
             onOpen={async (documentoId) => {
               const res = await documentoMutations.getUrl.mutateAsync(documentoId);
@@ -577,9 +587,16 @@ function ImovelManualLayout({
             documentos={documentosQuery.data ?? []}
             loading={documentosQuery.isPending && !documentosQuery.data}
             uploading={documentoMutations.upload.isPending}
+            removing={documentoMutations.remove.isPending}
+            reextraindoId={
+              documentoMutations.reextrair.isPending
+                ? (documentoMutations.reextrair.variables ?? null)
+                : null
+            }
             error={
               documentoMutations.upload.error?.message ??
               documentoMutations.remove.error?.message ??
+              documentoMutations.reextrair.error?.message ??
               null
             }
             onUpload={(file, tipoDocumento) =>
@@ -587,6 +604,9 @@ function ImovelManualLayout({
             }
             onRemove={(documentoId, motivo) =>
               documentoMutations.remove.mutate({ documentoId, motivo })
+            }
+            onReextrair={(documentoId) =>
+              documentoMutations.reextrair.mutate(documentoId)
             }
             onOpen={async (documentoId) => {
               const res = await documentoMutations.getUrl.mutateAsync(documentoId);

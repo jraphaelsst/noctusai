@@ -19,6 +19,16 @@
  * Not a shared `getElementById` — that is exactly the bug that would have
  * filed every buyer's upload onto the titular in the card dialog. One input
  * per card instance, reachable only from this instance.
+ *
+ * 🔴 "REMOVER" USES THE IN-APP CONFIRM DIALOG, NEVER `window.confirm`/
+ * `window.prompt` (2026-09-28)
+ * -----------------------------------------------------------------------
+ * A native dialog freezes browser automation (Playwright has no hook for
+ * it) and looks nothing like the rest of the product. The motivo itself is
+ * a fixed string — "Removido pelo usuário" — the SAME one the seed's own
+ * Anexos organ (`card-hub/AnexosSection.tsx`) already sends unprompted; the
+ * backend requires a non-empty motivo for the LGPD access log, and a fixed
+ * string is a real one.
  */
 import { useRef, useState } from "react";
 
@@ -31,10 +41,21 @@ import {
   CheckCircle2,
   FileText,
   Loader2,
+  RotateCw,
   Trash2,
   Upload,
 } from "lucide-react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,31 +73,70 @@ import { CAMPOS_POR_TIPO, RESULTADO_LABEL } from "@/hooks/useImovelContrato";
 import { isValidadeVencida } from "@/types/certidoesEstruturadas";
 import { formatDate } from "@/lib/utils";
 
+/** The fixed motivo the confirm dialog sends — same string the seed Anexos
+ *  organ already uses for the same action (`AnexosSection.tsx`). */
+const MOTIVO_REMOCAO = "Removido pelo usuário";
+
 interface Props {
   documentos: ImovelDocumento[];
   loading: boolean;
   uploading: boolean;
+  /** A single row's re-read mutation is in flight — disables + spins ONLY
+   *  that row's button, never the whole list. */
+  reextraindoId?: string | null;
+  removing?: boolean;
   error?: string | null;
   onUpload: (file: File, tipoDocumento: string) => void;
   onRemove: (documentoId: string, motivo: string) => void;
   onOpen: (documentoId: string) => void;
+  /** Re-queues a finished (`ok`/`sem_dados`) or failed (`erro`) read IN
+   *  PLACE — never delete + re-upload, which would destroy this document's
+   *  LGPD access history. Optional: a caller that has not wired the
+   *  mutation yet simply gets no retry affordance, never a crash. */
+  onReextrair?: (documentoId: string) => void;
 }
 
 const TIPO_LABEL: Record<string, string> = Object.fromEntries(
   TIPOS_DOCUMENTO.map((t) => [t.value, t.label]),
 );
 
+/** A read worth offering to re-run: it settled (`ok`/`sem_dados`/`erro`),
+ *  never while it is still `pendente`/`processando` — a click mid-read
+ *  would only race the same document row.
+ *
+ *  `guia_iptu`/`cnd_iptu`/`cnd_condominio` carry ONLY the migration-118
+ *  structured read, which has no status column in this API response at all
+ *  (see `EstruturaLinha`'s own docblock below) — so there is no
+ *  "still reading" signal to gate on here. The server still refuses a
+ *  request that races an in-flight job (`ValidationError_` on
+ *  `estrutura_status`), so offering the button unconditionally for these
+ *  tipos is honest: asking is always safe, it may just occasionally answer
+ *  "already running, try again in a moment".
+ */
+function podeReexecutarLeitura(d: ImovelDocumento): boolean {
+  if (d.extracao_status == null) return true;
+  return (
+    d.extracao_status === "ok" ||
+    d.extracao_status === "sem_dados" ||
+    d.extracao_status === "erro"
+  );
+}
+
 export default function ImovelDocumentosCard({
   documentos,
   loading,
   uploading,
+  reextraindoId,
+  removing,
   error,
   onUpload,
   onRemove,
   onOpen,
+  onReextrair,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [tipo, setTipo] = useState<string>(TIPOS_DOCUMENTO[0].value);
+  const [removerAlvo, setRemoverAlvo] = useState<ImovelDocumento | null>(null);
 
   function pick() {
     inputRef.current?.click();
@@ -87,6 +147,12 @@ export default function ImovelDocumentosCard({
     if (file) onUpload(file, tipo);
     // Reset so choosing the SAME file twice still fires a change event.
     e.target.value = "";
+  }
+
+  function confirmarRemocao() {
+    if (!removerAlvo) return;
+    onRemove(removerAlvo.id, MOTIVO_REMOCAO);
+    setRemoverAlvo(null);
   }
 
   return (
@@ -150,7 +216,9 @@ export default function ImovelDocumentosCard({
           </p>
         ) : (
           <ul className="space-y-2">
-            {documentos.map((d) => (
+            {documentos.map((d) => {
+              const reextraindo = reextraindoId === d.id;
+              return (
               <li
                 key={d.id}
                 className="flex items-start justify-between gap-3 rounded-md border p-3"
@@ -170,27 +238,70 @@ export default function ImovelDocumentosCard({
                   <ExtracaoLinha documento={d} />
                   <EstruturaLinha documento={d} />
                 </div>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Remover ${d.nome_original}`}
-                  title="Remover"
-                  onClick={() => {
-                    const motivo = window.prompt(
-                      "Por que este documento está sendo removido?",
-                    );
-                    // An empty/cancelled prompt is a CANCEL, not a delete with
-                    // a blank reason — the backend requires a real motivo.
-                    if (motivo && motivo.trim()) onRemove(d.id, motivo.trim());
-                  }}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {/* A read worth re-running: it settled, or it never had a
+                      visible status to settle at all (the structured-only
+                      tipos) — see `podeReexecutarLeitura`'s own docblock. */}
+                  {onReextrair && podeReexecutarLeitura(d) && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Ler ${d.nome_original} novamente`}
+                      title="Ler o documento novamente"
+                      data-testid={`imovel-documento-reextrair-${d.id}`}
+                      disabled={reextraindo}
+                      onClick={() => onReextrair(d.id)}
+                    >
+                      <RotateCw
+                        className={`h-4 w-4 ${reextraindo ? "animate-spin" : ""}`}
+                      />
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remover ${d.nome_original}`}
+                    title="Remover"
+                    onClick={() => setRemoverAlvo(d)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </CardContent>
+
+      <AlertDialog
+        open={!!removerAlvo}
+        onOpenChange={(open) => !open && setRemoverAlvo(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover documento?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{removerAlvo?.nome_original}</strong> será removido do
+              imóvel. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removing}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                confirmarRemocao();
+              }}
+              disabled={removing}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="imovel-documento-remover-confirm"
+            >
+              {removing ? "Removendo…" : "Remover"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

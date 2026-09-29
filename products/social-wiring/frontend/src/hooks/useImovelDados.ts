@@ -427,7 +427,57 @@ export function useImovelDocumentoMutations(codigo: string) {
       }
       return (await response.json()) as ImovelDocumento;
     },
-    onSuccess: invalidate,
+    /**
+     * 🔴 The list used to rely on `invalidate()` alone — which only fires
+     * AFTER the POST resolves. In practice the new row often did not show
+     * until a reload, or the row from a PREVIOUS upload was still the one
+     * visible: a plain `invalidateQueries` races its own refetch against
+     * whatever else touches this query key, and there is nothing in
+     * react-query that guarantees that race resolves in the new row's
+     * favour. An optimistic row makes the list deterministic instead: it
+     * is present the instant `mutate` is called (before any network round
+     * trip), and `onSuccess` below replaces it with the real row directly
+     * via `setQueryData` — never a second GET racing the same write.
+     */
+    onMutate: async ({ file, tipoDocumento }) => {
+      await qc.cancelQueries({ queryKey: DOCUMENTOS_KEY(codigo) });
+      const previous = qc.getQueryData<ImovelDocumento[]>(DOCUMENTOS_KEY(codigo));
+      const optimisticId = `optimistic:${crypto.randomUUID()}`;
+      const optimistic: ImovelDocumento = {
+        id: optimisticId,
+        codigo,
+        nome_original: file.name,
+        mime_type: file.type || "application/octet-stream",
+        tamanho_bytes: file.size,
+        tipo_documento: tipoDocumento,
+        enviado_por: null,
+        created_at: new Date().toISOString(),
+        extracao_status: null,
+        extracao_matricula: null,
+        extracao_confianca: null,
+        extracao_rotulo: null,
+        extracao_erro: null,
+      };
+      qc.setQueryData<ImovelDocumento[]>(DOCUMENTOS_KEY(codigo), (docs) => [
+        optimistic,
+        ...(docs ?? []),
+      ]);
+      return { previous, optimisticId };
+    },
+    onError: (_err, _vars, context) => {
+      if (context) qc.setQueryData(DOCUMENTOS_KEY(codigo), context.previous);
+    },
+    onSuccess: (documento, _vars, context) => {
+      qc.setQueryData<ImovelDocumento[]>(DOCUMENTOS_KEY(codigo), (docs) =>
+        (docs ?? []).map((d) =>
+          d.id === context?.optimisticId ? documento : d,
+        ),
+      );
+      // Still invalidated: a matrícula upload can fill `numero_matricula` /
+      // the certidões group moments later, and those live in OTHER query
+      // keys this mutation does not touch directly.
+      invalidate();
+    },
   });
 
   // `motivo` travels as a REQUIRED query param, not a JSON body — the seed
@@ -453,7 +503,19 @@ export function useImovelDocumentoMutations(codigo: string) {
       ),
   });
 
-  return { upload, remove, getUrl };
+  // Re-queues a finished (`ok`/`sem_dados`) or failed (`erro`) read IN
+  // PLACE — never delete + re-upload, which would destroy this document's
+  // `imovel_documento_acessos` LGPD access history (migration 109/111).
+  // Mirrors `useDocumentoMutations().reextrair` (the card_hub Anexos organ).
+  const reextrair = useMutation({
+    mutationFn: (documentoId: string) =>
+      api.post<ImovelDocumento>(
+        `${base(codigo)}/documentos/${encodeURIComponent(documentoId)}/extrair`,
+      ),
+    onSuccess: invalidate,
+  });
+
+  return { upload, remove, getUrl, reextrair };
 }
 
 // ─── Display helpers ────────────────────────────────────────────────────────

@@ -298,6 +298,90 @@ async def upload(
     return _documento_out(row, resolved)
 
 
+#: Both jobs share this "already running" definition — mirrors
+#: `card_hub.documentos_service._EXTRACAO_EM_ANDAMENTO` /
+#: `matriculas.estrutura_service._ESTADOS_EM_ANDAMENTO`.
+_ESTADOS_EM_ANDAMENTO = ("pendente", "processando")
+
+
+def reextrair_documento(
+    client: Any, org_id: UUID, codigo: str, documento_id: UUID
+) -> dict:
+    """Re-queue whichever read(s) this document's tipo carries — the
+    número-de-matrícula job (`TIPOS_EXTRAIVEIS`) and/or the migration-118
+    structured read (`TIPOS_ESTRUTURA_EXTRAIVEL`) — for a document whose
+    read already finished (`ok`/`sem_dados`) or ended in `erro`.
+
+    A matrícula-number parser fix (2026-09-28, check-digit handling) left
+    prod documents holding stale reads under the OLD parser. Delete +
+    re-upload would destroy this document's `imovel_documento_acessos` LGPD
+    access history (migration 109/111), so this resets the row in place and
+    the router schedules the SAME background job(s) `upload_documento_route`
+    schedules for a brand-new upload — a re-run, not a second
+    implementation. Mirrors `card_hub.documentos_service.reextrair_
+    documento`'s contract.
+
+    Refuses (`ValidationError_`, field="tipo_documento") when the tipo
+    carries neither pipeline — there is nothing to re-run.
+
+    Refuses (`ValidationError_`, field="extracao_status"/"estrutura_status")
+    when a pipeline this tipo carries is already `pendente`/`processando` —
+    a second trigger while one is in flight would race the same row and pay
+    for a second read for nothing.
+
+    🔴 A MANUALLY-CONFIRMED STRUCTURED READ IS SAFE TO RE-QUEUE HERE — it is
+    never actually overwritten. `estrutura_status` is reset to `pendente`
+    like any other eligible tipo (deliberately NOT re-checking `origem`/
+    `confirmado_por`, which `_documento_out` does not even expose — a
+    caller here has no way to know either), but `extrair_estrutura` itself
+    still runs its own guard when the background job executes: for a
+    document with `origem == "manual"` or a set `confirmado_por` it records
+    `estrutura_status="ignorado"` and returns without touching a single
+    field, same as it already does for the unattended sweep. Nothing this
+    function does can bypass that.
+
+    🔴 `extracao_tentativas`/`estrutura_tentativas` ARE NOT RESET — same
+    reasoning as the card_hub sibling: they count total attempts, and a
+    deliberate human retry is not the unattended sweep's budget to hide.
+    """
+    doc = STORE.exigir(client, org_id, codigo, documento_id)
+    tipo = doc["tipo_documento"]
+    extrai_numero = deve_extrair(tipo)
+    extrai_estrutura = deve_extrair_estrutura(tipo)
+    if not extrai_numero and not extrai_estrutura:
+        raise ValidationError_(
+            f"tipo_documento {tipo!r} não tem nenhuma leitura para refazer.",
+            field="tipo_documento",
+        )
+    if extrai_numero and doc.get("extracao_status") in _ESTADOS_EM_ANDAMENTO:
+        raise ValidationError_(
+            f"a leitura do número já está {doc['extracao_status']!r} — "
+            "aguarde a conclusão antes de pedir novamente.",
+            field="extracao_status",
+        )
+    if extrai_estrutura and doc.get("estrutura_status") in _ESTADOS_EM_ANDAMENTO:
+        raise ValidationError_(
+            f"a leitura estruturada já está {doc['estrutura_status']!r} — "
+            "aguarde a conclusão antes de pedir novamente.",
+            field="estrutura_status",
+        )
+
+    patch: dict[str, Any] = {}
+    if extrai_numero:
+        patch["extracao_status"] = "pendente"
+        patch["extracao_erro"] = None
+    if extrai_estrutura:
+        patch["estrutura_status"] = "pendente"
+        patch["estrutura_erro"] = None
+    _t(client, TABLE).update(patch).eq("id", str(documento_id)).execute()
+    doc.update(patch)
+
+    resolved = table_reads.resolve_actors(
+        {doc["enviado_por"]} if doc.get("enviado_por") else set()
+    )
+    return _documento_out(doc, resolved)
+
+
 async def url_do_documento(
     client: Any,
     storage: StorageBackend,
@@ -1079,6 +1163,7 @@ __all__ = [
     "validar_upload",
     "listar",
     "listar_acessos",
+    "reextrair_documento",
     "remover",
     "upload",
     "url_do_documento",

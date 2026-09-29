@@ -176,8 +176,9 @@ beforeEach(() => {
   mockUseImovelDadosMutation.mockReturnValue({ mutate: vi.fn(), isPending: false, error: null });
   mockUseImovelDocumentoMutations.mockReturnValue({
     upload: { mutate: vi.fn(), isPending: false, error: null },
-    remove: { mutate: vi.fn(), error: null },
+    remove: { mutate: vi.fn(), isPending: false, error: null },
     getUrl: { mutateAsync: vi.fn() },
+    reextrair: { mutate: vi.fn(), isPending: false, error: null, variables: undefined },
   });
   mockUseImovelDocumentos.mockReturnValue({ data: undefined, isPending: false });
   mockUseTeamMembers.mockReturnValue({ data: [] });
