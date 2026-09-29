@@ -170,6 +170,46 @@ _TITULAR_ROTULO_RE = re.compile(
     r"CONSUMIDOR|SACADO|PAGADOR)\s*[:\-]\s*(.+?)\s*$"
 )
 
+#: P2 round 2 (2026-09-28), measured against 4 of the 9 real comprovantes
+#: `SACADO`/`PAGADOR` still missed — the SAME label whitelist, but the value
+#: sits somewhere OTHER than "on this line": the label alone on its own line
+#: (`_TITULAR_ROTULO_SOZINHO_RE`, value on the line right after — sometimes
+#: behind a customer-code prefix, `_CODIGO_CLIENTE_PREFIXO_RE`), a bare name
+#: line immediately BEFORE a "COD.CLIENTE" line (`_COD_CLIENTE_RE`, a
+#: column-layout bill that stacks every label first and every value after),
+#: or — the weakest signal, no label anywhere — a bare name line immediately
+#: BEFORE a recognised street-type line. All three are wired as a
+#: document-wide FALLBACK (`_titular_por_heuristicas_fracas`), consulted only
+#: when neither a same-line label nor `_ler_bloco`'s own local scan already
+#: found one — a labelled, same-line read always wins first.
+_TITULAR_ROTULO_SOZINHO_RE = re.compile(
+    r"^\s*(?:NOME(?:\s+DO\s+(?:CLIENTE|TITULAR))?|CLIENTE|TITULAR|DESTINATARIO|"
+    r"CONSUMIDOR|SACADO|PAGADOR)\s*[:\-]?\s*$"
+)
+_CODIGO_CLIENTE_PREFIXO_RE = re.compile(r"^\s*\d+\s*-\s*(.+)$")
+#: Narrow ON PURPOSE — "COD.CLIENTE" only, never a bare "COD." prefix that
+#: would also swallow an unrelated "COD. BARRAS" or similar field.
+_COD_CLIENTE_RE = re.compile(r"^\s*COD\.?\s*CLIENTE\b")
+#: Legal-entity suffixes that pass `looks_like_a_name`'s own structural check
+#: (letters-only, 2..8 words) because a company's own name is shaped exactly
+#: like a person's — real, measured (P2): ENEL's and a telecom issuer's own
+#: header would otherwise be read as the holder by the positional heuristics
+#: above. `_emissor_proximo` (a CNPJ/IE marker within 2 lines) is the PRIMARY
+#: guard already; this is defense in depth for when that marker sits
+#: further away than its window.
+_EMISSOR_TOKEN_RE = re.compile(
+    r"\b(?:LTDA|EIRELI|CIA|COMPANHIA|S/?A|TELECOM|TELEFONICA|DISTRIBUICAO|"
+    r"SANEAMENTO|ENERGIA|BANCO)\b"
+)
+
+
+def _e_nome_de_pessoa(candidato: Optional[str]) -> bool:
+    """`looks_like_a_name`, plus never an issuer/company string."""
+    return bool(candidato) and looks_like_a_name(candidato) and not _EMISSOR_TOKEN_RE.search(
+        candidato
+    )
+
+
 #: Where a labelled value stops: two+ spaces, a pipe, or another label.
 _PARADA = r"(?=\s{2,}|\s*\||\s+(?:CEP|BAIRRO|CIDADE|MUNICIPIO|UF|ESTADO|COMPLEMENTO|NUMERO)\b\s*[:\-]|$)"
 
@@ -361,7 +401,7 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
     for idx, (base, linha) in enumerate(t.linhas):
         if titular is None:
             mt = _TITULAR_ROTULO_RE.match(linha)
-            if mt and looks_like_a_name(mt.group(1)):
+            if mt and _e_nome_de_pessoa(mt.group(1)):
                 titular = t.literal(base + mt.start(1), base + mt.end(1))
         mc = _CEP_ROTULO_RE.search(linha)
         if mc and not _emissor_proximo(t, idx):
@@ -517,7 +557,7 @@ def _ler_bloco(t: _Texto, idx: int, cep: str) -> Optional[EnderecoLido]:
             recuo_j = mt.start(1)
         else:
             recuo_j = len(lj) - len(lj.lstrip())
-        if looks_like_a_name(txt) and not re.search(r"\d", txt):
+        if _e_nome_de_pessoa(txt) and not re.search(r"\d", txt):
             titular = t.literal(bj + recuo_j, bj + recuo_j + len(txt))
         break
 
@@ -535,11 +575,66 @@ def _ler_bloco(t: _Texto, idx: int, cep: str) -> Optional[EnderecoLido]:
     )
 
 
+def _titular_por_heuristicas_fracas(t: _Texto) -> Optional[str]:
+    """Titular via the three WEAK, document-wide heuristics `_rotulado`'s
+    same-line label match and `_ler_bloco`'s own local scan both miss —
+    measured against the P2 corpus, round 2 (2026-09-28). Tried in document
+    order, first match wins:
+
+    1. a titular label alone on its own line, the value on the line right
+       AFTER it (`_TITULAR_ROTULO_SOZINHO_RE`), sometimes behind a customer
+       code (`_CODIGO_CLIENTE_PREFIXO_RE` — "54321 - JOAO DA SILVA");
+    2. a bare name line immediately BEFORE a "COD.CLIENTE" line
+       (`_COD_CLIENTE_RE`) — a column-layout bill that stacks its labels
+       first, then its values, in two separate blocks;
+    3. a bare name line immediately BEFORE a recognised street-type line
+       (`_TIPO_RE`), no label anywhere — the weakest signal, so it is tried
+       last and is guarded exactly like `_envelope`'s own CEP candidates:
+       never the issuer's own address block (`_emissor_proximo`), never a
+       legal-entity name (`_e_nome_de_pessoa`).
+
+    Only ever consulted by `find_endereco` as a FALLBACK, when the address
+    itself is already `presente` but no titular was found any other way —
+    a same-line labelled read always wins first; this never overrides one.
+    """
+    for idx, (_base, linha) in enumerate(t.linhas):
+        if _TITULAR_ROTULO_SOZINHO_RE.match(linha) and idx + 1 < len(t.linhas):
+            prox_base, prox_linha = t.linhas[idx + 1]
+            mc = _CODIGO_CLIENTE_PREFIXO_RE.match(prox_linha)
+            ini, fim = (mc.start(1), mc.end(1)) if mc else (0, len(prox_linha.rstrip()))
+            if _e_nome_de_pessoa(prox_linha[ini:fim]):
+                candidato = t.literal(prox_base + ini, prox_base + fim)
+                if candidato:
+                    return candidato
+
+        if _COD_CLIENTE_RE.match(linha) and idx > 0:
+            ant_base, ant_linha = t.linhas[idx - 1]
+            txt = ant_linha.strip()
+            if _e_nome_de_pessoa(txt):
+                recuo = len(ant_linha) - len(ant_linha.lstrip())
+                candidato = t.literal(ant_base + recuo, ant_base + recuo + len(txt))
+                if candidato:
+                    return candidato
+
+        if _TIPO_RE.match(linha.strip()) and idx > 0 and not _emissor_proximo(t, idx):
+            ant_base, ant_linha = t.linhas[idx - 1]
+            txt = ant_linha.strip()
+            if _e_nome_de_pessoa(txt):
+                recuo = len(ant_linha) - len(ant_linha.lstrip())
+                candidato = t.literal(ant_base + recuo, ant_base + recuo + len(txt))
+                if candidato:
+                    return candidato
+    return None
+
+
 def find_endereco(text: str) -> EnderecoLido:
     """The holder's address off a comprovante, or an empty `EnderecoLido`.
 
     Labelled layout first (exact labels, `alta` when a CEP is present);
-    otherwise the CEP-anchored envelope block (`baixa` — positional).
+    otherwise the CEP-anchored envelope block (`baixa` — positional). When
+    the address is `presente` but no titular was found by either primary
+    path, `_titular_por_heuristicas_fracas` tries three weaker, document-wide
+    heuristics before giving up — see that function's own docstring.
     `logradouro`'s leading street-type token is expanded to its full DNE
     form (G18 — `normalizar_tipo_logradouro`); every other part stays a
     literal slice of the caller's text, per the module docstring. Never
@@ -553,6 +648,10 @@ def find_endereco(text: str) -> EnderecoLido:
         lido = _envelope(t)
     if not lido.presente:
         return _NADA
+    if not lido.titular:
+        titular_fraco = _titular_por_heuristicas_fracas(t)
+        if titular_fraco:
+            lido = replace(lido, titular=titular_fraco)
     return replace(lido, logradouro=normalizar_tipo_logradouro(lido.logradouro))
 
 

@@ -251,3 +251,124 @@ class TestTitularBankSlipLabels:
         )
         r = find_endereco(texto)
         assert r.titular == "ANA BEATRIZ LIMA"
+
+
+class TestTitularWeakPositionalHeuristics:
+    """P2, round 2 (2026-09-28): re-measured against the same 9 real
+    comprovantes after `SACADO`/`PAGADOR` shipped — titular now reads on
+    4/9. The 3 remaining misses (party's name genuinely in the text, digits
+    masked to `9`/names replaced below) each carry the name in a shape
+    neither a same-line label match nor `_ler_bloco`'s own local scan
+    covers. Every fixture also carries the issuer's own company name near
+    (or, for `test_a_...` below, far from) the street line it would
+    otherwise be mistaken for the holder of."""
+
+    def test_889_label_alone_on_its_line_value_on_the_next_with_a_customer_code(self):
+        """Text-layer telecom bill: `DESTINATARIO:` carries nothing on its
+        own line; the value sits on the line right after, prefixed by a
+        customer code (`54321 - `). The issuer's own name/CNPJ two lines up
+        must never be mistaken for it."""
+        texto = (
+            "OPTELECOM TELECOMUNICACOES LTDA\n"
+            "CNPJ 12.345.678/0001-90\n"
+            "DESTINATARIO:\n"
+            "54321 - MARCOS ANTONIO FERREIRA\n"
+            "CPF: 123.456.789-00\n"
+            "RUA DAS ACACIAS, 45, CASA 2 - CEP: 04571-010 - SAO PAULO - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.titular == "MARCOS ANTONIO FERREIRA"
+        assert r.presente
+
+    def test_888_bare_name_line_immediately_before_cod_cliente(self):
+        """Text-layer water bill, column layout: every label is stacked
+        first (`CLIENTE:`, `PDE/RGI:`, ...), every value stacked after — the
+        holder's name is the bare line directly before `COD.CLIENTE:`."""
+        texto = (
+            "COMPANHIA DE SANEAMENTO XYZ\n"
+            "CNPJ 98.765.432/0001-11\n"
+            "CLIENTE:\n"
+            "PDE/RGI:\n"
+            "HIDROMETRO:\n"
+            "LACRE:\n"
+            "11223344556677\n"
+            "SOR998877665544\n"
+            "MARIA HELENA COSTA\n"
+            "COD.CLIENTE: 5566778899\n"
+            "RUA DOS IPES, 88 - CEP: 12345-678 - CAMPINAS - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.titular == "MARIA HELENA COSTA"
+
+    def test_882_bare_name_line_immediately_before_a_street_line_no_label_anywhere(self):
+        """Vision-read energy bill: the document's LABELLED block (further
+        down, with its own `Endereço:`/`CEP:` labels) is what makes the
+        address `alta` — but it carries no titular label at all. The
+        holder's name only ever appears, unlabelled, directly above a
+        SEPARATE positional mailing-window line earlier in the same text —
+        the weakest of the three heuristics, so it must not fire on the
+        issuer's own name (`ENEL DISTRIBUICAO SAO PAULO`, several lines
+        above, structurally shaped exactly like a person's name)."""
+        texto = (
+            "ENEL DISTRIBUICAO SAO PAULO\n"
+            "TIPO DE FORNECIMENTO: RESIDENCIAL\n"
+            "\n"
+            "PAULO HENRIQUE ARAUJO\n"
+            "ALAMEDA CAJA MIRIM, 100 - RES PALM HILLS - COTIA - SP\n"
+            "Endereco: ALAMEDA CAJA MIRIM, 100\n"
+            "Bairro: RES PALM HILLS   CEP: 06709-050\n"
+            "Cidade: COTIA - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.titular == "PAULO HENRIQUE ARAUJO"
+        assert r.confianca == "alta"  # the labelled block still drives the address's own confidence
+
+    def test_893_enel_envelope_block_non_party_is_still_read_correctly(self):
+        """P2/893: the holder is a non-party — reading the name at all (so
+        social-wiring can flag "comprovante em nome de terceiro") is the
+        goal, not filtering it out. Same envelope shape the existing ENEL
+        fixture already covers (bare name directly above the street line,
+        no blank between them) — re-measured here with fresh masked data."""
+        texto = (
+            "ENEL DISTRIBUICAO SAO PAULO\n"
+            "Rua Atica, 673 - Jardim Brasil - Sao Paulo - SP - CEP 04634-042\n"
+            "CNPJ 61.695.227/0001-93 Inscricao Estadual 108.042.323.117\n"
+            "CONTA DE ENERGIA ELETRICA\n"
+            "REGINA APARECIDA DOS SANTOS\n"
+            "RUA DOS CRAVOS 99 CASA 9\n"
+            "JARDIM DAS FLORES\n"
+            "09999-999 SAO PAULO SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.titular == "REGINA APARECIDA DOS SANTOS"
+
+    def test_a_company_name_far_from_its_own_cnpj_is_never_read_as_titular(self):
+        """The weakest heuristic (name directly above a street line, no
+        label) is the one most exposed to an issuer's own name passing
+        `looks_like_a_name`'s structural check — `_emissor_proximo`'s 2-line
+        CNPJ window is the primary guard, but a CNPJ can sit further away
+        than that. `_EMISSOR_TOKEN_RE` (LTDA/EIRELI/S.A./...) is the
+        defense-in-depth that must still catch it."""
+        texto = (
+            "OPTELECOM TELECOMUNICACOES LTDA\n"
+            "AVENIDA PAULISTA, 1000 - CEP: 01310-100 - SAO PAULO - SP\n"
+            "Fatura referente ao mes de servicos prestados\n"
+            "Detalhamento de consumo e tarifas aplicadas\n"
+            "CNPJ 11.222.333/0001-44\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.titular is None
+
+    def test_beneficiario_and_cedente_labels_are_never_read_as_titular(self):
+        """`BENEFICIARIO:`/`CEDENTE:` (the issuer, on a boleto) are
+        deliberately absent from every titular label — the SAME-line
+        `SACADO:` label a few lines down is what the reader actually uses."""
+        texto = (
+            "CEDENTE: BANCO XYZ LTDA\n"
+            "BENEFICIARIO: BANCO XYZ LTDA\n"
+            "SACADO: FERNANDA LIMA COSTA\n"
+            "RUA DAS PALMEIRAS, 10 - CEP: 01000-000 - SAO PAULO - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.titular == "FERNANDA LIMA COSTA"
