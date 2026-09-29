@@ -42,6 +42,19 @@ vi.mock("@noctusai/seed/infra", () => ({
   useAuthStore: () => ({ user: user.current }),
 }));
 
+// `<ApiKeysPanel/>` (Chaves de API section, owner decision 2026-09-28) has
+// its own colocated tests in the seed (`ApiKeysPanel.test.tsx`) — same
+// reasoning as the e-mail/lead-source cards above: stub it here so this
+// file's SHARED `@tanstack/react-query` mock (below) never has to answer
+// for two unrelated hook shapes (`useIntegracoes`'s `IntegracaoStatus[]`
+// vs `createApiKeysHooks`'s `ApiKeysStatus`) through the same
+// `mockUseQuery.mockReturnValue(...)` call. This file only asserts the
+// admin gate + surrounding copy.
+vi.mock("@noctusai/lib/components", () => ({
+  ApiKeysPanel: ({ title }: { title?: string }) => <div data-testid="api-keys-panel-stub">{title}</div>,
+  createApiKeysHooks: () => ({}),
+}));
+
 let queryState: Record<string, unknown> = {};
 let connectMutationState: Record<string, unknown> = { isPending: false, isError: false, error: null };
 
@@ -188,5 +201,42 @@ describe("Integracoes — permissões (finding #20)", () => {
     } finally {
       user.current = original;
     }
+  });
+
+  it("hides the Chaves de API section from a non-admin member", () => {
+    const original = user.current;
+    user.current = { id: "u2", user_metadata: {} };
+    try {
+      mockUseQuery.mockReturnValue({
+        data: CANAL_CONFIGURADO,
+        isPending: false,
+        isFetching: false,
+        isError: false,
+        error: null,
+      } as never);
+
+      render(<MemoryRouter><Integracoes /></MemoryRouter>);
+
+      expect(screen.queryByTestId("integracoes-chaves-api")).not.toBeInTheDocument();
+    } finally {
+      user.current = original;
+    }
+  });
+});
+
+describe("Integracoes — Chaves de API (owner decision 2026-09-28)", () => {
+  it("shows the Anthropic key panel to an org admin", () => {
+    mockUseQuery.mockReturnValue({
+      data: CANAL_CONFIGURADO,
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+    } as never);
+
+    render(<MemoryRouter><Integracoes /></MemoryRouter>);
+
+    expect(screen.getByTestId("integracoes-chaves-api")).toBeInTheDocument();
+    expect(screen.getByTestId("api-keys-panel-stub")).toHaveTextContent("Assistente de IA (Anthropic)");
   });
 });

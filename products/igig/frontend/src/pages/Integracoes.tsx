@@ -25,8 +25,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
+import { ApiKeysPanel, createApiKeysHooks } from "@noctusai/lib/components";
 import { AlertTriangle, Link2Off, Plug, ShieldAlert } from "lucide-react";
 
+import { api } from "@/lib/api";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { GmailCard } from "@/components/integracoes/GmailCard";
 import { MetaLeadsCard, WhatsappLeadsCard } from "@/components/integracoes/LeadSourceCards";
@@ -41,6 +43,13 @@ import {
 } from "@/hooks/useIntegracoes";
 import { describeError } from "@/lib/errors";
 import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
+
+// Owner decision 2026-09-28: IgIg's own per-org Anthropic key (same
+// mechanism `social-wiring`/`community` consume — `noctusai_seed.
+// api_keys_router` mounted at `GET/PUT/DELETE /api/settings/api-keys*`).
+// Module-scope like every other product's own `createApiKeysHooks(api)`
+// call site — the hooks object is stable across renders.
+const apiKeysHooks = createApiKeysHooks(api);
 
 const CANAL_LABEL: Record<Canal, string> = {
   instagram: "Instagram",
@@ -282,6 +291,28 @@ export default function Integracoes() {
           explícita — nada é marcado como publicado sem confirmação da plataforma.
         </p>
       </section>
+
+      {/* Admin-only, same posture as every write action above (LinhaCanal's
+          connect/disconnect) — `ApiKeysPanel` itself deliberately does not
+          gate on role (its own doc comment), so the call site does. Read
+          is server-side open to any member; the panel is only reachable
+          here, so hiding it from non-admins also hides the write forms
+          they would get a 403 from anyway. */}
+      {isAdmin && (
+        <section className="space-y-3" data-testid="integracoes-chaves-api">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Chaves de API
+          </h2>
+          <div className="rounded-lg border border-border bg-card p-4">
+            <ApiKeysPanel hooks={apiKeysHooks} title="Assistente de IA (Anthropic)" />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Chave usada pelo Assistente IgIg e pelo assistente do negócio (resumo,
+            próxima ação, rascunho de mensagem). Sem uma chave própria aqui, a
+            IgIg usa a chave da plataforma, se houver.
+          </p>
+        </section>
+      )}
     </div>
   );
 }
