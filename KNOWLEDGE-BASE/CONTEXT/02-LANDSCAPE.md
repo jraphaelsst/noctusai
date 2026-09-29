@@ -49,12 +49,12 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Social Wiring | 25 | 45 | 155 | 111 | 312 | 4,817 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
-| Igig | 22 | 23 | 31 | 27 | 36 | 878 |
+| Igig | 22 | 23 | 31 | 27 | 36 | 885 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 24 | 9 | 21 | 172 |
 | Agents | 11 | 1 | 37 | 26 | 64 | 833 |
 | Community | 25 | 29 | 47 | 31 | 55 | 606 |
-| **Total** | **284** | **302** | **606** | **385** | **947** | **13,281** |
+| **Total** | **284** | **302** | **606** | **385** | **947** | **13,288** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
