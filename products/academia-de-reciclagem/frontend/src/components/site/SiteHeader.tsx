@@ -10,10 +10,21 @@
  * resolved by `SectionLink` to either an in-page anchor (on the landing) or
  * `/#<hash>` (everywhere else) — including "Como funciona", which scrolls to
  * the landing's own section rather than opening a page of its own.
+ *
+ * NO "Entrar" LINK, by the owner's decision (2026-09-29). The public site is
+ * about to be served at its own brand hostname `academiadareciclagem.eco`,
+ * where a sign-in affordance addresses nobody in the audience; the team signs
+ * in by typing `academia.noctusai.com/login`. Both hostnames serve this same
+ * header, so the link is gone from both — that is intended, not an oversight.
+ *
+ * ⚠️  This is PRESENTATION ONLY — it hides an entrance, it does not guard one.
+ * `/login` still resolves, and every authenticated route stays protected by
+ * the seed's auth guard plus the backend's own checks. Never treat the missing
+ * link as access control: the day a route needs protecting, protect the route.
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, LogIn, Menu, X } from 'lucide-react';
+import { ArrowRight, Menu, X } from 'lucide-react';
 
 import { Brand } from './Brand';
 import { SectionLink } from './SectionLink';
@@ -48,9 +59,6 @@ export function SiteHeader() {
           <SectionLink hash="participar" className="nav-cta" onClick={closeMenu} data-testid="link-participar">
             Quero participar <ArrowRight size={14} />
           </SectionLink>
-          <Link className="nav-login" to="/login" onClick={closeMenu} data-testid="link-entrar">
-            Entrar <LogIn size={14} />
-          </Link>
         </nav>
         <button
           className="menu-toggle"

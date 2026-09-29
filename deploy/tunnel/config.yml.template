@@ -27,7 +27,7 @@ credentials-file: <PATH>      # e.g. /etc/cloudflared/<TUNNEL_ID>.json
 protocol: http2
 no-autoupdate: true
 
-# ── ingress (generated from ingress.yml, snapshot 2026-09-16) ──────────
+# ── ingress (generated from ingress.yml, snapshot 2026-09-29) ──────────
 # Order matters: cloudflared matches top-to-bottom; the final catch-all
 # MUST be last. The service target is the in-network name on noctus-net
 # (== compose service == noctus-<slug> container), reached by name because
@@ -41,6 +41,8 @@ ingress:
   - hostname: seed.noctusai.com
     service: http://seed:8004
   - hostname: academia.noctusai.com
+    service: http://academia-de-reciclagem:8015
+  - hostname: academiadareciclagem.eco
     service: http://academia-de-reciclagem:8015
   - hostname: agents.noctusai.com
     service: http://agents:8016

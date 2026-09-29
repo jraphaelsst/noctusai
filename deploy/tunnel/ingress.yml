@@ -61,6 +61,39 @@ routes:
   - hostname: academia.noctusai.com
     service:  http://academia-de-reciclagem:8015
     note:     Julia's real-life project knowledge base — API + SPA on one port
+
+  # ── academiadareciclagem.eco — the project's PUBLIC brand hostname ────
+  # 2026-09-29, owner's decision: the `.eco` domain is the public face of
+  # the Academia da Reciclagem (landing + /o-projeto + /a-carta + /coleta).
+  # It targets the SAME container as `academia.noctusai.com` — one product,
+  # one image, two hostnames, and that is deliberate here rather than the
+  # two-surface slip the `retired:` block above records:
+  #
+  #   `academia.noctusai.com` KEEPS its route — it is the SSO entry point.
+  #   The owner's instruction is that the public site carries no link to
+  #   `/login`; signing in means typing `academia.noctusai.com/login`.
+  #
+  # So the two hostnames are not aliases competing to be canonical: `.eco`
+  # is the public read surface, `academia.noctusai.com` is where the team
+  # signs in. `url_base` in core migration 045 stays on the noctusai host
+  # ON PURPOSE — the `agents` product resolves the academia API through it
+  # (`resolve_product_url('academia-de-reciclagem')`), so repointing it at
+  # the `.eco` host would move Julia's API calls to a second hostname for
+  # no gain.
+  #
+  # ⚠️  NOT LIVE UNTIL THREE THINGS OUTSIDE THIS FILE ARE TRUE:
+  #   1. the domain is registered AND out of `.eco` serverHold (the registry
+  #      holds every new `.eco` inactive until the registrant completes the
+  #      pledge + public Eco Profile — a DNS-independent block);
+  #   2. the zone is on Cloudflare (nameservers delegated) and Active;
+  #   3. the proxied CNAME → <TUNNEL_ID>.cfargotunnel.com exists in THAT
+  #      zone. `route-dns.sh` cannot create it: the `cert.pem` from
+  #      `cloudflared tunnel login` is scoped to the `noctusai.com` zone, so
+  #      this record goes through the Cloudflare API (or the dashboard).
+  # Creating public DNS stays a human action — see the pattern doc.
+  - hostname: academiadareciclagem.eco
+    service:  http://academia-de-reciclagem:8015
+    note:     public brand hostname for the same container as academia.noctusai.com
   - hostname: agents.noctusai.com
     service:  http://agents:8016
     note:     Julia chat, approvals, persona; lists One Chat's toggle
