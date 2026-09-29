@@ -56,6 +56,27 @@ from app.routers.integracoes_leads_router import router as integracoes_leads_rou
 from app.routers.lead_webhooks_router import router as lead_webhooks_router
 from app.routers.assistente_router import router as assistente_router
 from app.routers.ajuda_router import router as ajuda_router
+from app.routers.api_keys_router import router as api_keys_router
+
+# ─── Tier 0: the operator-entered, encrypted API-key store ───────────
+#
+# Owner decision 2026-09-28: IgIg gets its OWN per-org Anthropic key
+# (same mechanism `social-wiring`/`community` consume) — `Integrações →
+# Chaves de API` writes it into `igig.credentials`, Fernet-encrypted with
+# `IGIG_COFRE_KEY`. Reading it back is NOT automatic — the seed chain
+# (`org_settings` → `platform_settings` → env) knows nothing about a
+# product-local store. Registered BEFORE `create_product_app` so no
+# request can race it. See
+# `noctusai_lib.security.api_keys.make_local_credential_override`'s
+# docstring for the "why not just call resolve_credential from inside
+# it" answer (it would recurse).
+from noctusai_lib.config.credentials import register_credential_override
+from noctusai_lib.security.api_keys import make_local_credential_override
+from app.services.api_keys_store import API_KEY_SPECS, build_igig_api_key_store
+
+register_credential_override(
+    make_local_credential_override(API_KEY_SPECS, build_igig_api_key_store)
+)
 
 # Per-route body-size cap. The app-wide default (`settings.max_body_bytes`,
 # 1 MB — see `noctusai_seed.ProductSettings`) exists to DoS-guard inbound
@@ -140,6 +161,8 @@ app = create_product_app(
         automacao_router, integracoes_leads_router, lead_webhooks_router, assistente_router,
         # Help-chat bubble (seed organ noctusai_lib.domain.help_chat) — POST /api/ajuda/chat.
         ajuda_router,
+        # Chaves de API (Integrações) — GET/PUT/DELETE /api/settings/api-keys*.
+        api_keys_router,
     ],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
     lifespan_startup=start_scheduler,
