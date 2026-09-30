@@ -87,6 +87,17 @@ _BIRTH_LABELS = (
 #: Labels that mark the following date as something that is definitely NOT
 #: a birthdate. Present so the common layouts actively exclude their
 #: decoys rather than relying on the birth label winning a proximity race.
+#: `CELEBRACAO`/`CONTRAIDO`/`DATA DO REGISTRO`/`REGISTRO EM`/`LAVRADO`
+#: joined for the CNJ certidão de casamento's own marriage/registration
+#: dates (P2 corpus, 2026-09-30) — see `_ROTULO_DIA_MES_ANO`, below: they
+#: print on the EXACT same one-token-per-line "Dia/Mês/Ano" scaffold as a
+#: spouse's birthdate, so without an explicit decoy here a marriage or
+#: registration date reachable from that scaffold would win the "nearest
+#: label" race by default (no birth label nearby) rather than being
+#: excluded outright. Mirrors `civil_status._CASAMENTO_LABELS` /
+#: `_CASAMENTO_LABELS_FALLBACK`'s own vocabulary for the identical dates,
+#: kept independent since this module stays import-free of the rest of the
+#: package.
 _DECOY_LABELS = (
     "DATA DA PRIMEIRA HABILITACAO",
     "PRIMEIRA HABILITACAO",
@@ -96,17 +107,25 @@ _DECOY_LABELS = (
     "DATA EMISSAO",
     "DATA DE VALIDADE",
     "DATA DE REGISTRO",
+    "DATA DO REGISTRO",
     "EXPEDIDO EM",
     "EXPEDIDA EM",
     "EMITIDO EM",
     "EMITIDA EM",
     "REGISTRADO EM",
+    "REGISTRO EM",
+    "LAVRADO NO DIA",
     "VALIDA ATE",
     "VALIDO ATE",
     "EXPEDICAO",
     "EMISSAO",
     "VALIDADE",
     "HABILITACAO",
+    "CELEBRACAO",
+    "CONTRAIDO NO DIA",
+    "CASARAM-SE EM",
+    "CASARAM SE EM",
+    "CASADOS EM",
 )
 
 _NUMERIC_DATE = re.compile(r"\b(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4})\b")
@@ -136,6 +155,29 @@ _TEXTUAL_DATE = re.compile(
 #: `re` allows.
 _COLUMNAR_DATE = re.compile(
     r"(?<!\d)(?<!\d\s)(\d{1,2})\s+(\d{1,2})\s+(\d{4})(?!\s*\d)"
+)
+
+#: A date printed as three LABELLED lines — "Dia" / "99" / "Mês" / "99" /
+#: "Ano" / "9999", each sub-label AND its value on its OWN line. `normalize()`
+#: collapses every newline to a single space by the time this runs, so the
+#: scaffold becomes the contiguous "DIA 99 MES 99 ANO 9999" this pattern
+#: matches. One fragmentation step further than `_COLUMNAR_DATE`'s bare
+#: "99 99 9999" (no sub-labels at all, so nothing to anchor to) — real,
+#: measured (P2 corpus, 2026-09-30): a CNJ text-layer certidão de casamento
+#: prints every date this way, and `_COLUMNAR_DATE`'s no-separator
+#: requirement still could not see it because the day/month/year groups are
+#: not directly adjacent — each has its own sub-label between it and the
+#: next number.
+#:
+#: This shape is INHERENTLY labelled (its own DIA/MES/ANO tokens ARE the
+#: match), so — unlike `_COLUMNAR_DATE` — it needs no separate lookaround
+#: guard against a longer digit-group chain: the surrounding `_label_before`
+#: proximity race (birth label vs. `_DECOY_LABELS`' own `CELEBRACAO`/
+#: `CONTRAIDO`/`REGISTRO` entries) is what tells a spouse's birthdate apart
+#: from the SAME certidão's marriage/registration date, which prints on the
+#: identical scaffold.
+_ROTULO_DIA_MES_ANO = re.compile(
+    r"\bDIA\s+(\d{1,2})\s+MES\s+(\d{1,2})\s+ANO\s+(\d{4})\b"
 )
 
 
@@ -199,6 +241,12 @@ def _iter_dates(text: str):
         except ValueError:
             continue
     for m in _COLUMNAR_DATE.finditer(text):
+        day, month, year = (int(g) for g in m.groups())
+        try:
+            yield (m.start(), date(year, month, day))
+        except ValueError:
+            continue
+    for m in _ROTULO_DIA_MES_ANO.finditer(text):
         day, month, year = (int(g) for g in m.groups())
         try:
             yield (m.start(), date(year, month, day))

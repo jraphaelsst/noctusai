@@ -479,9 +479,13 @@ class TestAddressPresenceRound3:
 
     def test_a_street_line_with_no_city_uf_trailer_still_yields_nothing(self):
         """The multi-line CEP-less shape (street, bairro, city/UF each on
-        their OWN line, no CEP anywhere) is deliberately NOT read — the
-        city/UF trailer must be on the SAME line as the street. Pins the
-        pre-existing `test_no_cep_no_address` contract unchanged."""
+        their OWN line, no CEP anywhere) is deliberately NOT read by THIS
+        function — the city/UF trailer must be on the SAME line as the
+        street. Pins the pre-existing `test_no_cep_no_address` contract
+        unchanged. NOT the same shape `_disperso` (below, `TestDisperso
+        OneComponentPerLine`) now reads: here the NÚMERO is already inline
+        with the street ("RUA DAS FLORES 123"), which `_disperso` explicitly
+        defers to `_sem_cep`/`_ler_bloco` rather than reading itself."""
         texto = "RUA DAS FLORES 123\nJARDIM PAULISTA\nSAO PAULO SP\n"
         assert not find_endereco(texto).presente
 
@@ -497,3 +501,74 @@ class TestAddressPresenceRound3:
         r = find_endereco(texto)
         assert not r.presente
         assert r.titular is None
+
+
+class TestDispersoOneComponentPerLine:
+    """P2 investigation (2026-09-30): two live comprovantes both came back
+    `sem_dados` on every one of the family's existing reads. Structural-only
+    diagnosis (raw transcription content is off-limits — see `_disperso`'s
+    own docstring for why) found a street-type line, in both, carrying no
+    digit and no city/UF trailer at all — one fragmentation step past
+    `_sem_cep`'s same-line requirement. `_disperso` generalises the
+    positional-read family to a street name isolated on its own line, its
+    número, bairro and city/UF each following on THEIR own lines too.
+
+    These fixtures are synthetic (invented names/addresses/layout) — they
+    exercise the SHAPE this investigation observed, not the two live
+    documents themselves; see `_disperso`'s docstring for why this function
+    could not be confirmed to fix those two files specifically."""
+
+    def test_street_number_bairro_city_uf_each_on_their_own_line(self):
+        texto = (
+            "RUA DAS ACACIAS\n"
+            "123\n"
+            "JARDIM BOTANICO\n"
+            "CAMPINAS - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.cep is None
+        assert r.logradouro == "RUA DAS ACACIAS"
+        assert r.numero == "123"
+        assert r.bairro == "JARDIM BOTANICO"
+        assert (r.cidade, r.uf) == ("CAMPINAS", "SP")
+        assert r.confianca == "baixa"
+
+    def test_a_blank_line_between_street_and_number_still_reads(self):
+        texto = (
+            "TRAVESSA DAS PALMEIRAS\n"
+            "\n"
+            "77\n"
+            "\n"
+            "VILA NOVA\n"
+            "SOROCABA - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.presente
+        assert r.numero == "77"
+        assert (r.cidade, r.uf) == ("SOROCABA", "SP")
+
+    def test_no_number_anywhere_nearby_still_yields_nothing(self):
+        """The street line stands alone with nothing that looks like a
+        número within the short window — never guessed."""
+        texto = "RUA SEM NUMERO NENHUM\nBAIRRO CENTRAL\nSAO PAULO - SP\n"
+        assert not find_endereco(texto).presente
+
+    def test_the_issuers_own_isolated_street_line_is_never_read(self):
+        texto = (
+            "OPTELECOM TELECOMUNICACOES LTDA\n"
+            "AVENIDA PAULISTA\n"
+            "1000\n"
+            "CNPJ 11.222.333/0001-44\n"
+            "SAO PAULO - SP\n"
+        )
+        r = find_endereco(texto)
+        assert not r.presente
+
+    def test_a_street_line_with_an_inline_number_is_left_to_sem_cep(self):
+        """`_disperso` explicitly defers a street line that already carries
+        a digit — that is `_sem_cep`'s (same-line) or `_ler_bloco`'s shape,
+        never this function's. Regression pin for the `re.search(r"\\d", ...)`
+        guard at the top of `_disperso`'s loop."""
+        texto = "RUA DAS FLORES 123\nJARDIM PAULISTA\nSAO PAULO SP\n"
+        assert not find_endereco(texto).presente

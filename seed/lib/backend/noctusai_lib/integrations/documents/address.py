@@ -701,14 +701,130 @@ def _sem_cep(t: _Texto) -> EnderecoLido:
     return _NADA
 
 
+#: A number-only line: just digits, optionally trailed by a complement token
+#: on the SAME line ("123", "123 AP 45", "S/N") — mirrors `_parse_logradouro`'s
+#: own número/complemento shapes, anchored to a WHOLE line because in
+#: `_disperso`'s layout the number never shares a line with the street name.
+_NUMERO_LINHA_RE = re.compile(r"^\s*(\d+[A-Z]?|S\s*/\s*N[O°º]?|SN)\b\s*(.*)$")
+
+
+def _disperso(t: _Texto) -> EnderecoLido:
+    """A one-COMPONENT-per-line layout: the street name, its número, the
+    bairro and the city/UF each printed on their OWN line, none of them
+    sharing a line with anything else — one fragmentation step further than
+    `_sem_cep`'s "street + número + city/UF must share the SAME line".
+
+    Prompted by a live P2 investigation (2026-09-30) into two comprovantes
+    that both came back `sem_dados`: BOTH their text-layer AND a fresh,
+    forced vision re-read (`pular_camada_texto=True`) produced a lone
+    street-type line — `_TIPO_RE` matches it — with no digit and no city/UF
+    trailer anywhere on that same line, which is the exact shape `_sem_cep`
+    cannot see. This function generalises the family's existing "read
+    outward from a positional anchor" approach (`_ler_bloco` already looks
+    up to 5 lines BACK from a CEP; `_sem_cep` requires same-line adjacency)
+    one step further: outward from the street line across SEVERAL lines,
+    never just the one immediately after it.
+
+    🔴 NOT CONFIRMED AGAINST THE TRIGGERING DOCUMENTS. Structural-signal-only
+    diagnosis (this codebase's PII rules forbid printing transcribed content,
+    even masked, for a document class where the holder's own name — like an
+    issuer acronym is for `rg.py` — is printed in the same all-caps register
+    as everything else, so no masking heuristic is safe here) found neither
+    triggering file's remaining address parts (número, bairro, cidade/UF,
+    CEP) anywhere in the several lines around either street-shaped line —
+    the address may simply not be present in what was transcribed at all
+    (a cropped page, or a region vision could not read), which this
+    function cannot fix and does not attempt to. It ships anyway because
+    the shape it DOES handle — a street name genuinely isolated from every
+    other address part — is a real, structurally-observed layout this
+    parser family had no answer for; a synthetic test exercises it
+    end-to-end. See `KB`-bound findings from this investigation for the
+    open follow-up (human visual review of the two triggering files).
+
+    Deliberately the narrowest, most positional read in the family — only
+    consulted by `find_endereco` after `_rotulado`, `_envelope` and
+    `_sem_cep` have all found nothing `presente`. A CEP is picked up when one
+    happens to sit inside the same short window (never guessed otherwise);
+    `confianca` is always `baixa`, matching every other positional read here.
+    """
+    for idx, (base, linha) in enumerate(t.linhas):
+        corpo = linha.strip()
+        if not _TIPO_RE.match(corpo) or re.search(r"\d", corpo):
+            # A número already on the street line is `_sem_cep`'s /
+            # `_ler_bloco`'s shape, not this one — leave it to them.
+            continue
+        if _emissor_proximo(t, idx):
+            continue
+        recuo = len(linha) - len(linha.lstrip())
+        logradouro = t.literal(base + recuo, base + recuo + len(corpo))
+        if not logradouro:
+            continue
+
+        numero: Optional[str] = None
+        num_idx: Optional[int] = None
+        for j in range(idx + 1, min(len(t.linhas), idx + 3)):
+            _bj, lj = t.linhas[j]
+            txt = lj.strip()
+            if not txt:
+                continue
+            mnum = _NUMERO_LINHA_RE.match(txt)
+            if not mnum:
+                break  # a non-number, non-blank line breaks the adjacency
+            bruto = mnum.group(1)
+            numero = "S/N" if bruto.replace(" ", "").upper().startswith("S") else bruto
+            num_idx = j
+            break
+        if numero is None or num_idx is None:
+            continue
+
+        cidade: Optional[str] = None
+        uf: Optional[str] = None
+        bairro: Optional[str] = None
+        cep: Optional[str] = None
+        for j in range(idx, min(len(t.linhas), num_idx + 4)):
+            bj, lj = t.linhas[j]
+            txt = lj.strip()
+            if not txt:
+                continue
+            if cep is None:
+                mc = _CEP_ROTULO_RE.search(txt) or _CEP_HIFEN_RE.search(txt)
+                if mc:
+                    cep = _cep(*mc.groups())
+            if j <= num_idx:
+                continue
+            cid, uf_cand = _cidade_uf(t, bj, txt)
+            if uf_cand:
+                uf, cidade = uf_cand, cid
+                break
+            if bairro is None and not _nao_e_bairro(txt):
+                bairro = t.literal(bj, bj + len(txt))
+        if not (cidade and uf):
+            continue
+        return EnderecoLido(
+            cep=cep,
+            logradouro=logradouro,
+            numero=numero,
+            complemento=None,
+            bairro=bairro,
+            cidade=cidade,
+            uf=uf,
+            titular=None,
+            confianca="baixa",
+            rotulo="DISPERSO",
+        )
+    return _NADA
+
+
 def find_endereco(text: str) -> EnderecoLido:
     """The holder's address off a comprovante, or an empty `EnderecoLido`.
 
     Labelled layout first (exact labels, `alta` when a CEP is present);
     otherwise the CEP-anchored envelope block (`baixa` — positional); when
-    neither found anything, `_sem_cep`'s CEP-less street+number+city/UF
-    read (`baixa`, `cep=None`). When the address is `presente` but no
-    titular was found by any of the three, `_titular_por_heuristicas_fracas`
+    neither found anything, `_sem_cep`'s CEP-less street+number+city/UF read
+    (`baixa`, `cep=None`); when THAT finds nothing either, `_disperso`'s
+    one-component-per-line read (`baixa`) — the narrowest positional
+    evidence of the four, tried last. When the address is `presente` but no
+    titular was found by any of them, `_titular_por_heuristicas_fracas`
     tries three weaker, document-wide heuristics before giving up — see that
     function's own docstring. `logradouro`'s leading street-type token is
     expanded to its full DNE form (G18 — `normalizar_tipo_logradouro`);
@@ -723,6 +839,8 @@ def find_endereco(text: str) -> EnderecoLido:
         lido = _envelope(t)
     if not lido.presente:
         lido = _sem_cep(t)
+    if not lido.presente:
+        lido = _disperso(t)
     if not lido.presente:
         return _NADA
     if not lido.titular:

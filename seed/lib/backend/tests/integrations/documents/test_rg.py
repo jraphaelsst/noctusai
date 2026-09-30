@@ -409,3 +409,80 @@ class TestLeiNumberOnTheVersoIsNotAnRg:
         assert valor == "12.345.678-9"
         assert confianca == "alta"
         assert rotulo == "REGISTRO GERAL"
+
+
+class TestOrgaoVocabularyWithholdsAnUnknownAcronym:
+    """Live P2 test (2026-09-30): two RG cards both produced
+    `rg_orgao="SERRA/SP"` where the printed issuer was `SSP/SP` — `SERRA` is
+    a real word (a city in ES), issuer-SHAPED, but not a real issuing body.
+    Every route (`_orgao_valido` / `_orgao_adjacente` / `_orgao_rotulado`)
+    now resolves its acronym against `_ORGAOS_CONHECIDOS`; a candidate
+    outside it is withheld — `(None, "nenhuma")` — rather than emitted."""
+
+    def test_the_exact_reproduction_shape_is_withheld(self):
+        assert find_rg_orgao("SERRA/SP") == (None, "nenhuma")
+
+    def test_withheld_even_when_adjacent_to_the_rg_number(self):
+        assert find_rg_orgao("13032360 SERRA/SP", "13032360") == (None, "nenhuma")
+
+    def test_withheld_even_under_an_explicit_label(self):
+        texto = "ÓRG. EMISSOR: SERRA\nUF: SP"
+        assert find_rg_orgao(texto) == (None, "nenhuma")
+
+    def test_a_real_but_less_common_issuer_still_reads(self):
+        assert find_rg_orgao("IFP/RJ") == ("IFP/RJ", "alta")
+        assert find_rg_orgao("IIRGD/SP") == ("IIRGD/SP", "alta")
+
+    def test_the_cin_iigdr_convention_still_reads(self):
+        """`IIGDR/SP` — the newer CIN's own ordering, real and measured
+        (`find_rg`'s own module docstring, 2026-09-23) — is NOT the
+        `SERRA/SP` hallucination and must keep reading."""
+        assert find_rg_orgao("IIGDR/SP") == ("IIGDR/SP", "alta")
+
+    def test_disagreement_between_two_unknown_acronyms_is_still_nothing(self):
+        assert find_rg_orgao("SERRA/SP ... NATURA/RJ") == (None, "nenhuma")
+
+
+class TestOrgaoSpelledOutByFullName:
+    """The issuer's full institutional name, not an acronym — the last,
+    narrowest route `find_rg_orgao` tries (`_orgao_extenso`)."""
+
+    def test_secretaria_de_seguranca_publica_resolves_to_ssp(self):
+        texto = "SECRETARIA DE SEGURANÇA PÚBLICA SP"
+        assert find_rg_orgao(texto) == ("SSP/SP", "alta")
+
+    def test_secretaria_da_seguranca_publica_the_da_variant(self):
+        texto = "SECRETARIA DA SEGURANÇA PÚBLICA/SP"
+        assert find_rg_orgao(texto) == ("SSP/SP", "alta")
+
+    def test_never_pre_empted_by_a_real_acronym_elsewhere(self):
+        """The shape-scan route always wins when it finds something — the
+        full name is tried LAST, only once every acronym-shaped route has
+        already found nothing."""
+        texto = "SECRETARIA DE SEGURANCA PUBLICA SP ... DETRAN/RJ"
+        assert find_rg_orgao(texto) == ("DETRAN/RJ", "alta")
+
+    def test_no_uf_nearby_resolves_to_nothing(self):
+        assert find_rg_orgao("SECRETARIA DE SEGURANCA PUBLICA") == (
+            None,
+            "nenhuma",
+        )
+
+    def test_the_old_rg_institute_long_form_resolves_to_iirgd(self):
+        texto = (
+            "ESTADO DE SAO PAULO\n"
+            "SECRETARIA DA SEGURANCA PUBLICA\n"
+            "INSTITUTO DE IDENTIFICACAO RICARDO GUMBLETON DAUNT\n"
+            "REGISTRO GERAL 52.179.965-X\n"
+        )
+        # The SP old-model RG's own header carries BOTH long forms — the
+        # SSP one comes first in the document, and `_orgao_extenso` returns
+        # on its FIRST match (longest-phrase-first, not document-order), so
+        # whichever of the two actually has a UF within its own window wins.
+        # Neither has one here (no UF is adjacent to either phrase), so both
+        # fail their own UF search — nothing is resolved, honestly.
+        assert find_rg_orgao(texto) == (None, "nenhuma")
+
+    def test_the_old_rg_institute_long_form_with_an_adjacent_uf(self):
+        texto = "INSTITUTO DE IDENTIFICACAO RICARDO GUMBLETON DAUNT SP"
+        assert find_rg_orgao(texto) == ("IIRGD/SP", "alta")

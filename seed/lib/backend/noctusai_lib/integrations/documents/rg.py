@@ -171,6 +171,73 @@ _ORGAO_NAO = frozenset({
     "BAIRRO", "RUA", "AV", "AVENIDA", "CEP", "UF", "EM", "DE", "DO", "DA",
 })
 
+#: Every acronym a Brazilian identity document is actually issued under.
+#: An `_ORGAO_RE`/`_orgao_rotulado` MATCH is only the SHAPE (2-8 letters
+#: touching a UF); it says nothing about whether that string names a real
+#: issuing body. Without this vocabulary check, a transcription artifact
+#: that happens to be issuer-shaped is emitted as if it were one — live,
+#: measured 2026-09-30 (P2 corpus): two RG cards both produced
+#: `rg_orgao="SERRA/SP"` where the printed issuer was `SSP/SP`. `SERRA` is
+#: a real word (a city in ES) that is NOT a known issuer, so it should never
+#: have reached storage. A candidate outside this set is WITHHELD
+#: (`_orgao_valido`/`_orgao_rotulado` return `None`) rather than emitted —
+#: "no issuer read" is honest; a wrong one is not.
+#:
+#: Civil-police / public-security secretariats (the common case, one per
+#: state, several historical naming conventions): SSP, SESP, SDS, SEJUSP,
+#: SSPDS, SECC. Civil/scientific police + identification institutes: PC,
+#: PCII, IFP (RJ), IIRGD / IIGDR (SP — both orderings are printed across
+#: the state's own document generations, `IIGDR` on the newer CIN, per
+#: `find_rg`'s own module docstring, measured 2026-09-23), DGPC, IGP
+#: (RS/SC/DF), IITB (BA). Federal / traffic / armed forces: DETRAN, DPF,
+#: PF, MMA (Marinha), MAER (Aeronáutica), MEX (Exército). Professional
+#: councils whose própria carteira doubles as an identity document: OAB,
+#: CRM, CREA, CRC, CRO, CRF, CRESS, CRP, CREF, CRN, CRBIO, CRQ, COREN.
+_ORGAOS_CONHECIDOS = frozenset({
+    "SSP", "SESP", "SDS", "SEJUSP", "SSPDS", "SECC",
+    "PC", "PCII", "IFP", "IIRGD", "IIGDR", "DGPC", "IGP", "IITB",
+    "DETRAN", "DPF", "PF", "MMA", "MAER", "MEX",
+    "OAB", "CRM", "CREA", "CRC", "CRO", "CRF", "CRESS", "CRP", "CREF",
+    "CRN", "CRBIO", "CRQ", "COREN",
+})
+
+#: Long-form issuer names, normalised (accent-stripped/upper-cased) the same
+#: way `normalize()` treats the rest of the document, mapped to the acronym
+#: they spell out — see `_orgao_extenso`. Tried only after both shape-based
+#: routes fail: a full institution name is narrower, rarer evidence than the
+#: acronym/UF shape every layout already covers, so it never overrides one.
+#: Deliberately not exhaustive (no attempt to enumerate every wording every
+#: state has ever printed) — only the forms common enough to be worth the
+#: risk of a wrong resolution; anything else stays unresolved, which is the
+#: honest answer for a name this module cannot confidently map.
+_ORGAO_EXTENSO = {
+    "SECRETARIA DE ESTADO DE SEGURANCA PUBLICA": "SSP",
+    "SECRETARIA DE ESTADO DA SEGURANCA PUBLICA": "SSP",
+    "SECRETARIA DE SEGURANCA PUBLICA": "SSP",
+    "SECRETARIA DA SEGURANCA PUBLICA": "SSP",
+    "SECRETARIA DE SEGURANCA PUBLICA E DEFESA SOCIAL": "SSPDS",
+    "SECRETARIA DE JUSTICA E SEGURANCA PUBLICA": "SEJUSP",
+    "SECRETARIA DE DEFESA SOCIAL": "SDS",
+    "INSTITUTO DE IDENTIFICACAO RICARDO GUMBLETON DAUNT": "IIRGD",
+    "INSTITUTO DE IDENTIFICACAO FELIX PACHECO": "IFP",
+    "INSTITUTO DE IDENTIFICACAO TAVARES BURIL": "IITB",
+    "INSTITUTO GERAL DE PERICIAS": "IGP",
+    "DEPARTAMENTO ESTADUAL DE TRANSITO": "DETRAN",
+    "DEPARTAMENTO DE POLICIA FEDERAL": "DPF",
+    "POLICIA FEDERAL": "PF",
+    "POLICIA CIVIL": "PC",
+}
+#: Longest phrase first — "SECRETARIA DE SEGURANCA PUBLICA" is a strict
+#: prefix-free substring of several longer entries above; matching the
+#: longest available phrase first stops a shorter one from firing inside it
+#: and reporting the wrong (though related) acronym.
+_ORGAO_EXTENSO_ORDENADO = sorted(_ORGAO_EXTENSO, key=len, reverse=True)
+
+#: The UF right after a long-form issuer name — same shape `_orgao_rotulado`
+#: accepts for its own acronym ("SSP/SP", "SSP SP"), just anchored to the
+#: end of the spelled-out name instead of a 2-8 letter acronym.
+_ORGAO_EXTENSO_UF_WINDOW = 24
+
 #: A short window immediately BEFORE an issuer-shaped match. When it carries
 #: one of these, the match is a JURISDICTION or BIRTHPLACE reference — the
 #: notary office/comarca administering a document, or the city a CNH's own
@@ -377,7 +444,7 @@ def _orgao_rotulado(norm: str) -> Optional[str]:
     if not mv:
         return None
     orgao = mv.group(1)
-    if orgao in _ORGAO_NAO:
+    if orgao in _ORGAO_NAO or orgao not in _ORGAOS_CONHECIDOS:
         return None
     # The UF printed right after the acronym on the SAME line — the
     # ordinary adjacent shape, just reached through the label this time
@@ -394,11 +461,36 @@ def _orgao_rotulado(norm: str) -> Optional[str]:
     return None
 
 
+def _orgao_extenso(norm: str) -> Optional[str]:
+    """The issuer spelled out by NAME — `SECRETARIA DE SEGURANÇA PÚBLICA/SP`
+    — mapped to its acronym, or `None`.
+
+    Tried last of all three routes (see `find_rg_orgao`): a full institution
+    name is rarer, narrower evidence than either shape-based route, so it
+    never pre-empts one. Only the long forms in `_ORGAO_EXTENSO` are
+    recognised; anything else spelled out is left unresolved rather than
+    guessed at.
+    """
+    for frase in _ORGAO_EXTENSO_ORDENADO:
+        idx = norm.find(frase)
+        if idx == -1:
+            continue
+        acronimo = _ORGAO_EXTENSO[frase]
+        janela = norm[idx + len(frase) : idx + len(frase) + _ORGAO_EXTENSO_UF_WINDOW]
+        m = re.match(r"\s*(?:[/\-]\s*|\s+)?(" + _UFS_ALTERNATIVA + r")\b", janela)
+        if m:
+            return f"{acronimo}/{m.group(1)}"
+        m = _UF_ROTULO_RE.search(janela)
+        if m:
+            return f"{acronimo}/{m.group(1)}"
+    return None
+
+
 def _orgao_valido(norm: str, m: "re.Match[str]") -> Optional[str]:
     """`ORGAO/UF` for an issuer-shaped match, or None when it is a
     place name / jurisdiction rather than an issuing body."""
     orgao, uf = m.group(1), m.group(2)
-    if orgao in _ORGAO_NAO or orgao == uf:
+    if orgao in _ORGAO_NAO or orgao == uf or orgao not in _ORGAOS_CONHECIDOS:
         return None
     janela = norm[max(0, m.start() - _JURISDICAO_WINDOW) : m.start()]
     if any(p in janela for p in _ORGAO_CONTEXTO_JURISDICAO):
@@ -442,12 +534,21 @@ def find_rg_orgao(text: str, rg: Optional[str] = None) -> tuple[Optional[str], s
     issuer printed right after that number wins at `alta` — see
     `_orgao_adjacente`. Only when there is no adjacent issuer does the
     shape-scan below run; only when THAT finds nothing either does the
-    explicit `ÓRG. EMISSOR` label (`_orgao_rotulado`) get a turn.
+    explicit `ÓRG. EMISSOR` label (`_orgao_rotulado`) get a turn; only when
+    THAT finds nothing either does the full institution name
+    (`_orgao_extenso`) get the last one.
+
+    Every route above resolves an acronym against `_ORGAOS_CONHECIDOS`
+    before returning it — an issuer-shaped or labelled string that does not
+    name a REAL issuing body (a transcription artifact, e.g. `SERRA/SP` for
+    a misread `SSP/SP`, live/measured 2026-09-30) is WITHHELD rather than
+    stored: `(None, "nenhuma")`, same as no match at all.
 
     Returns `(value, confidence)`. A shape-scan match carries no matched
     label to report (the issuer is identified by its own SHAPE, not by a
-    label preceding it); a `_orgao_rotulado` match DOES have one but is
-    reported the same shape as every sibling here for a uniform contract.
+    label preceding it); a `_orgao_rotulado`/`_orgao_extenso` match DOES have
+    one but is reported the same shape as every sibling here for a uniform
+    contract.
 
     - **alta** — exactly one issuer-shaped token in the text, OR an explicit
       `ÓRG. EMISSOR` label with its own value.
@@ -491,6 +592,14 @@ def find_rg_orgao(text: str, rg: Optional[str] = None) -> tuple[Optional[str], s
     rotulado = _orgao_rotulado(norm)
     if rotulado is not None:
         return (rotulado, "alta")
+
+    # Last resort: the issuer spelled out by its full name rather than an
+    # acronym ("SECRETARIA DE SEGURANÇA PÚBLICA/SP"). Narrower evidence than
+    # either shape-based route above, so it only gets a turn once both have
+    # already found nothing.
+    extenso = _orgao_extenso(norm)
+    if extenso is not None:
+        return (extenso, "alta")
 
     return (None, "nenhuma")
 

@@ -219,3 +219,58 @@ class TestColumnarDateFormat:
         promoted by the new form alone."""
         v, c, label = find_birthdate("Documento emitido\n04 10 1961", today=TODAY)
         assert (v, c, label) == (date(1961, 10, 4), "baixa", None)
+
+
+class TestScatteredDiaMesAnoFormat:
+    """🔴 THE BUG THIS CLASS CLOSES — real, measured (P2 corpus, 2026-09-30)
+
+    A CNJ text-layer certidão de casamento prints EACH sub-label and its
+    value on its own line — "Dia" / "99" / "Mês" / "99" / "Ano" / "9999" —
+    one fragmentation step further than `TestColumnarDateFormat`'s "DIA MES
+    ANO" header over three bare numbers. `_COLUMNAR_DATE` requires the three
+    numbers directly adjacent (only whitespace between them); interspersing
+    the sub-labels between each number made the birthdate invisible on
+    every spouse's own block."""
+
+    def test_dia_mes_ano_each_on_their_own_line_under_nascimento(self):
+        texto = (
+            "Data de nascimento\n"
+            "Dia\n04\nMês\n10\nAno\n1961\n"
+        )
+        v, c, label = find_birthdate(texto, today=TODAY)
+        assert (v, c) == (date(1961, 10, 4), "alta")
+        assert label == "DATA DE NASCIMENTO"
+
+    def test_the_marriage_celebration_date_on_the_same_scaffold_is_rejected(self):
+        texto = "Data da celebração do casamento\nDia\n04\nMês\n10\nAno\n2020\n"
+        assert find_birthdate(texto, today=TODAY) == (None, "nenhuma", None)
+
+    def test_the_registration_date_on_the_same_scaffold_is_rejected(self):
+        texto = "Data de registro\nDia\n04\nMês\n10\nAno\n2020\n"
+        assert find_birthdate(texto, today=TODAY) == (None, "nenhuma", None)
+
+    def test_a_spouses_birthdate_survives_alongside_the_marriage_date_in_the_same_text(self):
+        """The exact real shape: one certidão states BOTH — the marriage's
+        own celebration date and a nubente's birthdate — each on the
+        identical Dia/Mês/Ano scaffold. Only the labelled-birthdate one is
+        read; the celebration date is excluded by its own decoy label, never
+        by disagreeing with the birthdate."""
+        texto = (
+            "Data da celebração do casamento\nDia\n15\nMês\n06\nAno\n2020\n"
+            "Nome do conjuge Joana Exemplo\n"
+            "Data de nascimento\nDia\n04\nMês\n10\nAno\n1961\n"
+        )
+        v, c, label = find_birthdate(texto, today=TODAY)
+        assert (v, c) == (date(1961, 10, 4), "alta")
+        assert label == "DATA DE NASCIMENTO"
+
+    def test_an_unlabelled_scattered_triple_is_never_promoted_alone(self):
+        """No birth label anywhere near it: same posture as every other
+        unlabelled form — reported absent outright, since the bare
+        `DIA`/`MES`/`ANO` tokens are not themselves a decoy OR a birth
+        label, so this shape without a nearby real label sits with the
+        columnar family's own convention of never guessing from shape
+        alone once a real label vocabulary exists for it."""
+        texto = "Documento\nDia\n04\nMês\n10\nAno\n1961\n"
+        v, c, label = find_birthdate(texto, today=TODAY)
+        assert (v, c, label) == (date(1961, 10, 4), "baixa", None)

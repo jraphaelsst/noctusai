@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Sequence
 
+from noctusai_lib.integrations.documents.mime_sniff import sniff_real_mimetype
 from noctusai_lib.integrations.documents.types import TextSource
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,28 @@ class DocumentTextLadder:
         where it is simply a no-op. Ignored for non-PDF media (an image has
         no page concept to restrict).
         """
+        # The content wins over the declared mimetype/filename. A mislabelled
+        # upload (a PDF saved as `*.jpg`, `image/jpeg` declared) would
+        # otherwise skip the free text-layer rung AND be forwarded downstream
+        # tagged as an image — the vision call then rejects the PDF bytes
+        # outright (`resolve_failed`, "Could not process image"), and the
+        # document dies in `erro` instead of being read. See
+        # `mime_sniff.sniff_real_mimetype`'s own docstring for the live
+        # reproduction. `sniffed` is `None` (no opinion) for the overwhelming
+        # majority of calls — the cost of checking is a handful of byte
+        # comparisons against the first 16 bytes already in memory.
+        sniffed = sniff_real_mimetype(content)
+        if sniffed and sniffed != (mimetype or "").lower().strip():
+            logger.warning(
+                "document text ladder: declared mimetype=%r (filename=%r) "
+                "disagrees with the content's own signature — reading it as "
+                "%r instead",
+                mimetype,
+                filename,
+                sniffed,
+            )
+            mimetype = sniffed
+
         if looks_like_pdf(mimetype, filename) and not pular_camada_texto:
             # `classify_pdf_text_layer`, NOT `extract_pdf_text`: a cartório
             # scan carries a digital-signature stamp as real, selectable
