@@ -31,16 +31,18 @@ from typing import Any
 def register() -> Any:
     """Return this module's :class:`~app.main.ModuleRegistration`.
 
-    Also configures the Cartão CNPJ extraction recovery sweep as a side
-    effect at import time — before `start_scheduler()` fires in
-    `app/lifespan.py`, which is the only moment it can be registered.
-    Mirrors `imovel_hub.register()`'s identical shape.
+    Also configures the Cartão CNPJ extraction recovery sweep, AND the
+    public-CNPJ-registry catch-up sweep (`consulta_publica_scheduler`,
+    2026-09-30), as side effects at import time — before `start_scheduler()`
+    fires in `app/lifespan.py`, which is the only moment either can be
+    registered. Mirrors `imovel_hub.register()`'s identical shape.
     """
     from app.main import ModuleRegistration
-    from app.modules.empresas import extracao_scheduler
+    from app.modules.empresas import consulta_publica_scheduler, extracao_scheduler
     from app.modules.empresas.router import router
 
     extracao_scheduler.configure()
+    consulta_publica_scheduler.configure()
 
     return ModuleRegistration(routers=[router], standard_routers=())
 

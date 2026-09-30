@@ -24,6 +24,16 @@ read and access log it already did — this module never re-fetches either.
         participação, fill-empty. An invalid-CNPJ participação is never
         linked — it rides in `extracao_crednet.participacoes_rejeitadas`
         instead, so nothing is silently dropped;
+    (c2) when the (new-or-existing) empresa's `situacao_cadastral` is still
+        NULL, resolve it AUTOMATICALLY off the public CNPJ registry
+        (`noctusai_lib.integrations.cnpj_registry`, owner decision
+        2026-09-30 — "the system resolves itself; humans only when it
+        truly can't", and this data is public). Best-effort: a lookup
+        failure logs and leaves the field NULL — the office's own Cartão
+        CNPJ upload (`empresas.dados_service.aplicar_cartao`) stays the
+        fallback, and `empresas.consulta_publica_scheduler`'s catch-up
+        sweep retries every empresa this misses (a fresh empresa row,
+        transient upstream failure, or a row created before this shipped);
     (d) `certidoes.service.registrar_serasa_de_crednet` — the SAME stored
         PDF also fills the cliente's certidão 9 (Serasa) resultado, deferred
         when no matching consulta exists yet (§C5/§E7).
@@ -295,6 +305,41 @@ def _upsert_participacao(
     return {**existente, **patch}
 
 
+async def _resolver_situacao_publica(
+    client: Any, org_id: UUID, empresa_id: str, cnpj: str, lookup: Any,
+) -> None:
+    """(c2) of `aplicar_leitura`'s own sequence — the automatic-resolution
+    move the owner's rule demands (module docstring): a company's `situação
+    cadastral` is PUBLIC data, so this looks it up rather than leaving the
+    empresa blocked on a human's Cartão CNPJ upload that may never come.
+
+    Best-effort, NEVER raises into the caller: `_processar`'s own
+    try/except boundary (lesson G6) is reserved for a failure that should
+    end this DOCUMENT's extraction in `erro` — a public-registry lookup
+    failing is not that; it is the same "leave it NULL, someone/something
+    else resolves it later" outcome `empresas.dados_service.aplicar_cartao`
+    was always the answer for, now with `empresas.consulta_publica_
+    scheduler`'s sweep as the automatic later-retry (see the module
+    docstring's (c2) note) alongside the still-available human upload.
+    """
+    from noctusai_lib.integrations.cnpj_registry.errors import CnpjRegistryError
+
+    from app.modules.empresas import dados_service
+
+    try:
+        leitura = await lookup.lookup(cnpj)
+    except CnpjRegistryError as exc:
+        # Recoverable, not a failure (`KB § PATTERNS/backend/logging.md`):
+        # the office's own Cartão CNPJ upload, or `empresas.consulta_
+        # publica_scheduler`'s own hourly retry, still resolves this.
+        logger.warning(
+            "crednet_service: public cnpj registry lookup failed for empresa %s (%s): %s",
+            empresa_id, cnpj, exc,
+        )
+        return
+    dados_service.aplicar_consulta_publica(client, org_id, empresa_id, leitura)
+
+
 async def aplicar_leitura(
     client: Any,
     org_id: UUID,
@@ -304,6 +349,7 @@ async def aplicar_leitura(
     blob_data: bytes,
     *,
     extractor: Any,
+    cnpj_registry_lookup: Any,
     notification_service: Optional[Any] = None,
 ) -> dict:
     """The whole §C4 sequence, built on the shared `app.services.
@@ -332,9 +378,17 @@ async def aplicar_leitura(
     re-run route once status is `erro`) is safe: (b) is D1
     (fill-empty/conflict/equal), (c) upserts `empresas` by `(org_id,
     cnpj)` and `cliente_empresa_participacoes` by `(cliente_id,
-    empresa_id)`, and (d) only ever supersedes an older Crednet-derived
+    empresa_id)`, (c2) is a best-effort fill-empty that never raises (a
+    lookup failure is caught and logged, not propagated — see `_resolver_
+    situacao_publica`), and (d) only ever supersedes an older Crednet-derived
     resultado — every step is naturally idempotent, so nothing here needed
     its own "already ran" guard.
+
+    `cnpj_registry_lookup` is a `noctusai_lib.integrations.cnpj_registry.
+    CnpjRegistryLookup`-shaped object (DI, same posture `extractor` takes —
+    `identidade_extracao_service.extrair_identidade`'s own call site
+    resolves it via `empresas.deps.get_cnpj_registry_lookup()`; a test
+    passes a `FakeCnpjRegistryLookup()` explicitly, never a monkeypatch).
     """
 
     async def _ler(blob_bytes: bytes, doc_row: dict) -> Any:
@@ -390,7 +444,7 @@ async def aplicar_leitura(
                 client, org_id, conflitos, notification_service
             )
 
-        # (c) — participações -> empresas.
+        # (c) — participações -> empresas. (c2) — public-registry fill.
         empresas_vinculadas: list[str] = []
         rejeitadas: list[dict] = []
         for participacao in fields.participacoes:
@@ -402,6 +456,10 @@ async def aplicar_leitura(
                 client, org_id, cliente_id, empresa["id"], participacao, documento_id
             )
             empresas_vinculadas.append(empresa["id"])
+            if empresa.get("situacao_cadastral") is None:
+                await _resolver_situacao_publica(
+                    client, org_id, empresa["id"], empresa["cnpj"], cnpj_registry_lookup,
+                )
         if rejeitadas:
             _marcar(
                 client, documento_id,

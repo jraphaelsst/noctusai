@@ -148,6 +148,10 @@ from noctusai_lib.integrations.documents.caixa_rotulada import (
 )
 from noctusai_lib.integrations.documents.cnpj import format_cnpj, is_valid as _cnpj_is_valid
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
+from noctusai_lib.integrations.documents.situacao_cadastral import (
+    VOCABULARIO as _SITUACAO_VOCAB,
+    VOCABULARIO_RE as _SITUACAO_VOCAB_RE,
+)
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
@@ -199,22 +203,11 @@ _MASCARADO = "********"
 #: any of those shapes.
 _TITULO_DOCUMENTO = "COMPROVANTE DE INSCRICAO E DE SITUACAO CADASTRAL"
 
-#: Migration 167 §A.1's closed vocabulary. Keys are how the Receita prints
-#: it (already accent-stripped/upper via `normalize_lines`); values are the
-#: normalised snake_case the CHECK constraint accepts.
-_SITUACAO_VOCAB: dict[str, str] = {
-    "ATIVA": "ativa",
-    "BAIXADA": "baixada",
-    "INAPTA": "inapta",
-    "SUSPENSA": "suspensa",
-    "NULA": "nula",
-}
-
-#: Whole-word match of any `_SITUACAO_VOCAB` key, wherever it sits inside a
-#: candidate value — shared by `parse_cartao_cnpj`'s own normalisation and
-#: `_campo_situacao_cadastral`'s per-occurrence validation, so both use the
-#: SAME vocabulary test.
-_SITUACAO_VOCAB_RE = re.compile(r"\b(?:" + "|".join(_SITUACAO_VOCAB) + r")\b")
+#: Migration 167 §A.1's closed vocabulary — now shared with `cnpj_registry`
+#: (a second, independent source for this same field) via `situacao_
+#: cadastral.py`; see that module's header for why this moved out of here.
+#: `_SITUACAO_VOCAB`/`_SITUACAO_VOCAB_RE` are imported aliases, kept under
+#: their original names so every use site below is unchanged.
 
 #: The 27 Brazilian UF codes — the closed set `uf` is validated against.
 #: Never a guess: a token that isn't in this set is not a UF, however

@@ -2752,6 +2752,7 @@ async def extrair_identidade(
     # THIS function.
     if tipo == "serasa_crednet":
         from app.modules.card_hub import crednet_service
+        from app.modules.empresas.deps import get_cnpj_registry_lookup
 
         crednet_extractor = extractor
         if crednet_extractor is None:
@@ -2761,6 +2762,7 @@ async def extrair_identidade(
         return await crednet_service.aplicar_leitura(
             client, org_id, cliente_id, documento_id, doc, blob.data,
             extractor=crednet_extractor,
+            cnpj_registry_lookup=get_cnpj_registry_lookup(),
             notification_service=notification_service,
         )
 

@@ -299,6 +299,136 @@ class TestCrednetPrefixUpgrade:
         assert conflitos[0]["decidido_em"] is not None
 
 
+@dataclass(frozen=True)
+class _ConsultaPublicaLeitura:
+    """Duck-types `noctusai_lib.integrations.cnpj_registry.
+    CnpjRegistryFields` — `aplicar_consulta_publica` never imports that
+    dataclass, same posture `_CartaoLeitura` above already takes for
+    `CartaoCnpjFields`."""
+
+    razao_social: Optional[str] = None
+    situacao_cadastral: Optional[str] = None
+    data_situacao_cadastral: Optional[date] = None
+
+
+class TestAplicarConsultaPublica:
+    """The public CNPJ registry lookup's own D1 apply — FILL-EMPTY ONLY,
+    unlike `aplicar_cartao`'s conflict-on-disagree shape (owner decision,
+    2026-09-30: a public API answer never outranks anything already
+    stored, from ANY origin)."""
+
+    def test_null_situacao_fills_from_the_public_lookup(self, client):
+        empresa = _empresa(client)
+
+        resultado = dados_service.aplicar_consulta_publica(
+            client, ORG_ID, empresa["id"],
+            _ConsultaPublicaLeitura(
+                razao_social="EMPRESA PUBLICA LTDA",
+                situacao_cadastral="ativa",
+                data_situacao_cadastral=date(2010, 3, 15),
+            ),
+        )
+
+        assert resultado["status"] == dados_service.CONSULTA_PUBLICA_APLICADO
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["razao_social"] == "EMPRESA PUBLICA LTDA"
+        assert row["situacao_cadastral"] == "ativa"
+        assert row["data_situacao_cadastral"] == "2010-03-15"
+        assert row["dados_origem"] == dados_service.ORIGEM_CONSULTA_PUBLICA
+        assert row["dados_documento_id"] is None  # no document backs this
+        assert row["dados_confirmado_em"] is None  # machine-pending
+
+    def test_never_overwrites_an_existing_value_from_any_origin(self, client):
+        """The office's own Cartão CNPJ (or a manual edit, or an earlier
+        public lookup) always wins — never contested, never silently
+        replaced."""
+        empresa = _empresa(
+            client, situacao_cadastral="baixada", dados_origem="cartao_cnpj",
+        )
+
+        resultado = dados_service.aplicar_consulta_publica(
+            client, ORG_ID, empresa["id"],
+            _ConsultaPublicaLeitura(situacao_cadastral="ativa"),
+        )
+
+        assert resultado["status"] == dados_service.CONSULTA_PUBLICA_SEM_MUDANCA
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["situacao_cadastral"] == "baixada"  # untouched
+        assert row["dados_origem"] == "cartao_cnpj"  # untouched
+        assert client.table("empresa_campo_conflitos").select("*").execute().data == []
+
+    def test_partial_fill_only_touches_the_empty_field(self, client):
+        """`razao_social` already carries a Crednet-sourced value;
+        `situacao_cadastral` is NULL — only the empty one fills, and the
+        group provenance still flips (contract §H12: ONE quintet for the
+        whole group, same as `aplicar_cartao`'s own behaviour)."""
+        empresa = _empresa(
+            client, razao_social="EMPRESA CREDNET LTDA", dados_origem="serasa_crednet",
+        )
+
+        resultado = dados_service.aplicar_consulta_publica(
+            client, ORG_ID, empresa["id"],
+            _ConsultaPublicaLeitura(
+                razao_social="NOME DIFERENTE DA CONSULTA LTDA",
+                situacao_cadastral="ativa",
+            ),
+        )
+
+        assert resultado["status"] == dados_service.CONSULTA_PUBLICA_APLICADO
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["razao_social"] == "EMPRESA CREDNET LTDA"  # untouched, already filled
+        assert row["situacao_cadastral"] == "ativa"  # filled
+        assert row["dados_origem"] == dados_service.ORIGEM_CONSULTA_PUBLICA
+
+    def test_nothing_to_fill_is_a_noop(self, client):
+        empresa = _empresa(client, razao_social="JA PREENCHIDA LTDA")
+
+        resultado = dados_service.aplicar_consulta_publica(
+            client, ORG_ID, empresa["id"],
+            _ConsultaPublicaLeitura(razao_social="OUTRO NOME LTDA"),
+        )
+
+        assert resultado["status"] == dados_service.CONSULTA_PUBLICA_SEM_MUDANCA
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["razao_social"] == "JA PREENCHIDA LTDA"
+
+    def test_empresa_missing_is_a_404(self, client):
+        from noctusai_lib.primitives.exceptions import NotFoundError
+
+        with pytest.raises(NotFoundError):
+            dados_service.aplicar_consulta_publica(
+                client, ORG_ID, str(uuid4()), _ConsultaPublicaLeitura(),
+            )
+
+
+class TestCartaoSupersedesConsultaPublica:
+    """The REVERSE direction of `TestAplicarConsultaPublica.
+    test_never_overwrites_an_existing_value_from_any_origin`: a LATER
+    Cartão CNPJ apply always supersedes a public-lookup-sourced value —
+    silently, never a conflict the office would have to adjudicate over
+    data this module itself fetched from a public API."""
+
+    def test_cartao_silently_replaces_a_consulta_publica_value(self, client):
+        empresa = _empresa(
+            client, situacao_cadastral="ativa",
+            dados_origem=dados_service.ORIGEM_CONSULTA_PUBLICA,
+        )
+        doc_id = str(uuid4())
+
+        resultado = dados_service.aplicar_cartao(
+            client, ORG_ID, empresa["id"],
+            _CartaoLeitura(situacao_cadastral="baixada"),
+            documento_id=doc_id,
+        )
+
+        assert resultado["status"] == dados_service.APLICADO
+        assert resultado["conflitos"] == []
+        row = client.table("empresas").select("*").eq("id", empresa["id"]).execute().data[0]
+        assert row["situacao_cadastral"] == "baixada"
+        assert row["dados_origem"] == "cartao_cnpj"
+        assert client.table("empresa_campo_conflitos").select("*").execute().data == []
+
+
 class TestSameDocumentReReadReplaces:
     """🔴 Regression (live deal, 2026-09-25): re-extracting a document
     whose earlier reading is STILL machine-pending must REFRESH the

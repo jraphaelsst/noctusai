@@ -8,16 +8,26 @@ WHAT THESE PIN
 - `cpf` is gated on `cpf_valido` — an invalid check digit is recorded on the
   document but never applied to `clientes.cpf`;
 - (c) a valid-CNPJ participação upserts `empresas` (insert-only razao_social,
-  `dados_origem='serasa_crednet'`, NEVER `situacao_cadastral`) and a
-  `cliente_empresa_participacoes` row (`origem='serasa_crednet'`); an
-  invalid-CNPJ participação is never linked, only recorded in
-  `extracao_crednet.participacoes_rejeitadas`;
+  `dados_origem='serasa_crednet'`, NEVER `situacao_cadastral` off CREDNET'S
+  OWN reading) and a `cliente_empresa_participacoes` row (`origem=
+  'serasa_crednet'`); an invalid-CNPJ participação is never linked, only
+  recorded in `extracao_crednet.participacoes_rejeitadas`;
+- (c2) a fresh empresa's NULL `situacao_cadastral` is resolved automatically
+  off the public CNPJ registry lookup (`TestConsultaPublicaAutoFill` below)
+  — a lookup failure leaves it NULL, never propagated into this document's
+  own `extracao_status`;
 - a SECOND read for the same CNPJ never touches an existing empresa;
 - (d) `certidoes.service.registrar_serasa_de_crednet` runs off the same doc.
 
 Imports the seed's real `serasa_crednet` dataclasses (S1, merged) — the
 extractor is injected via `FakeCrednetExtractor(result=...)`
-(`tests/support/document_fakes.py`), per DI, never a monkeypatch.
+(`tests/support/document_fakes.py`), per DI, never a monkeypatch. The public
+CNPJ registry lookup is injected the same way, via `FakeCnpjRegistryLookup`
+(`noctusai_lib.integrations.cnpj_registry`) — `_aplicar`'s default
+(unscripted) Fake resolves any CNPJ to a synthetic `ativa` company, so most
+tests below that don't care about (c2) pass `cnpj_registry_lookup=
+FakeCnpjRegistryLookup(erro=...)` to isolate what they DO care about
+(Crednet's own fields, never the public lookup's).
 """
 from __future__ import annotations
 
@@ -25,6 +35,11 @@ from datetime import date, datetime
 from uuid import uuid4
 
 import pytest
+from noctusai_lib.integrations.cnpj_registry import (
+    CnpjNotFoundError,
+    CnpjRegistryFields,
+    FakeCnpjRegistryLookup,
+)
 from noctusai_lib.testing.mocks import MockSupabaseClient
 
 from app.dependencies import coerce_org_uuid
@@ -105,11 +120,12 @@ def _fields(**overrides) -> CrednetFields:
     return CrednetFields(**base)
 
 
-async def _aplicar(client, cid, did, fields) -> dict:
+async def _aplicar(client, cid, did, fields, *, cnpj_registry_lookup=None) -> dict:
     doc = client.table("cliente_documentos").select("*").eq("id", did).execute().data[0]
     return await crednet_service.aplicar_leitura(
         client, ORG_ID, cid, did, doc, b"%PDF-1.4 fake bytes",
         extractor=FakeCrednetExtractor(result=fields),
+        cnpj_registry_lookup=cnpj_registry_lookup or FakeCnpjRegistryLookup(),
         notification_service=None,
     )
 
@@ -191,15 +207,23 @@ class TestEmpresasUpsert:
             razao_social="EMPRESA TESTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
             participacao_pct=50, confianca=ALTA,
         )
+        # (c2) isolated OFF for this test — a failing public lookup pins
+        # (c)'s OWN behaviour (Crednet's reading never writes situação)
+        # independently of the auto-fill `TestConsultaPublicaAutoFill`
+        # covers separately.
+        lookup = FakeCnpjRegistryLookup(erro=CnpjNotFoundError(CNPJ_VALIDO, source="brasilapi"))
 
-        result = await _aplicar(client, cid, did, _fields(participacoes=(participacao,)))
+        result = await _aplicar(
+            client, cid, did, _fields(participacoes=(participacao,)),
+            cnpj_registry_lookup=lookup,
+        )
 
         empresas = client.table("empresas").select("*").execute().data
         assert len(empresas) == 1
         assert empresas[0]["cnpj"] == CNPJ_VALIDO
         assert empresas[0]["razao_social"] == "EMPRESA TESTE LTDA"
         assert empresas[0]["dados_origem"] == "serasa_crednet"
-        assert empresas[0].get("situacao_cadastral") is None  # NEVER written (contract §H4)
+        assert empresas[0].get("situacao_cadastral") is None  # NEVER written off Crednet's OWN reading (contract §H4)
         # P1/883 live bug (2026-09-24): `empresas.dados_documento_id`'s FK
         # targets `empresa_documentos` (a Cartão CNPJ), never
         # `cliente_documentos` (this Crednet PDF) — writing `did` here 500s
@@ -326,6 +350,104 @@ class TestEmpresasUpsert:
 
         empresas = client.table("empresas").select("*").execute().data
         assert {e["cnpj"] for e in empresas} == {CNPJ_VALIDO, CNPJ_VALIDO_OUTRO}
+
+
+class TestConsultaPublicaAutoFill:
+    """(c2) — the automatic public-registry fill this dispatch adds (owner
+    decision, 2026-09-30). Live prod test, 5 deals / 8 empresas / only 3
+    Cartões CNPJ on file: this is what resolves the other 5 WITHOUT a
+    human uploading anything, per `crednet_service.aplicar_leitura`'s own
+    module docstring."""
+
+    @pytest.mark.asyncio
+    async def test_a_fresh_empresa_gets_situacao_from_the_public_lookup(self, client):
+        cid, did = str(uuid4()), str(uuid4())
+        client.table("clientes").insert(_cliente(cid)).execute()
+        client.table("cliente_documentos").insert(_documento(did, cid)).execute()
+        participacao = ParticipacaoCrednet(
+            razao_social="EMPRESA TESTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
+        )
+        lookup = FakeCnpjRegistryLookup()
+        lookup.registrar(
+            CNPJ_VALIDO,
+            CnpjRegistryFields(
+                cnpj=CNPJ_VALIDO, razao_social="EMPRESA TESTE LTDA",
+                situacao_cadastral="ativa", situacao_cadastral_bruta="ATIVA",
+                data_situacao_cadastral=date(2010, 3, 15), source="brasilapi", raw={},
+            ),
+        )
+
+        await _aplicar(
+            client, cid, did, _fields(participacoes=(participacao,)),
+            cnpj_registry_lookup=lookup,
+        )
+
+        empresa = client.table("empresas").select("*").execute().data[0]
+        assert empresa["situacao_cadastral"] == "ativa"
+        assert empresa["data_situacao_cadastral"] == "2010-03-15"
+        assert empresa["dados_origem"] == "consulta_publica_cnpj"
+        assert empresa["dados_documento_id"] is None  # no document backs this
+        assert lookup.chamadas == [CNPJ_VALIDO]
+
+    @pytest.mark.asyncio
+    async def test_a_lookup_failure_leaves_situacao_null(self, client):
+        cid, did = str(uuid4()), str(uuid4())
+        client.table("clientes").insert(_cliente(cid)).execute()
+        client.table("cliente_documentos").insert(_documento(did, cid)).execute()
+        participacao = ParticipacaoCrednet(
+            razao_social="EMPRESA TESTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
+        )
+        lookup = FakeCnpjRegistryLookup(
+            erro=CnpjNotFoundError(CNPJ_VALIDO, source="brasilapi")
+        )
+
+        result = await _aplicar(
+            client, cid, did, _fields(participacoes=(participacao,)),
+            cnpj_registry_lookup=lookup,
+        )
+
+        # The lookup failure never propagates into this DOCUMENT's own
+        # status — a public-registry miss is not an extraction failure.
+        assert result["status"] == "ok"
+        empresa = client.table("empresas").select("*").execute().data[0]
+        assert empresa.get("situacao_cadastral") is None
+        assert empresa["dados_origem"] == "serasa_crednet"  # untouched
+
+    @pytest.mark.asyncio
+    async def test_an_already_filled_empresa_never_calls_the_lookup_again(self, client):
+        """A second Crednet read for an empresa whose `situacao_cadastral`
+        a PRIOR public lookup (or a Cartão CNPJ) already filled must not
+        call out again — `_upsert_empresa`'s own `existentes` row already
+        carries the value, so the `is None` gate short-circuits."""
+        cid1, cid2 = str(uuid4()), str(uuid4())
+        did1, did2 = str(uuid4()), str(uuid4())
+        client.table("clientes").insert(_cliente(cid1)).execute()
+        client.table("clientes").insert(_cliente(cid2)).execute()
+        client.table("cliente_documentos").insert(_documento(did1, cid1)).execute()
+        client.table("cliente_documentos").insert(_documento(did2, cid2)).execute()
+        participacao = ParticipacaoCrednet(
+            razao_social="EMPRESA TESTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
+        )
+        lookup = FakeCnpjRegistryLookup()
+
+        await _aplicar(
+            client, cid1, did1, _fields(participacoes=(participacao,)),
+            cnpj_registry_lookup=lookup,
+        )
+        await _aplicar(
+            client, cid2, did2,
+            _fields(
+                cpf="52998224725",
+                participacoes=(
+                    ParticipacaoCrednet(
+                        razao_social="NOME DIFERENTE LTDA", cnpj=CNPJ_VALIDO, cnpj_valido=True,
+                    ),
+                ),
+            ),
+            cnpj_registry_lookup=lookup,
+        )
+
+        assert lookup.chamadas == [CNPJ_VALIDO]  # only once
 
 
 class TestErrorPath:

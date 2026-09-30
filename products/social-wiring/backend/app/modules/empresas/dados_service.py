@@ -237,6 +237,17 @@ CNPJ_DIVERGENTE = "cnpj_divergente"
 APLICADO = "aplicado"
 SEM_MUDANCA = "sem_mudanca"
 
+#: `empresas.dados_origem`'s value for a public CNPJ registry lookup
+#: (`noctusai_lib.integrations.cnpj_registry`) — see `aplicar_consulta_
+#: publica`'s own docstring for the full story (owner decision, 2026-09-30:
+#: the system resolves `situação cadastral` by itself off PUBLIC data
+#: before ever asking a human for a Cartão CNPJ upload). Migration 178
+#: extends this table's own `dados_origem` COMMENT to document it — the
+#: column carries no DB CHECK constraint (migration 167 leaves it a bare
+#: `TEXT`), so this string is the one place the vocabulary is enforced in
+#: code.
+ORIGEM_CONSULTA_PUBLICA = "consulta_publica_cnpj"
+
 
 def aplicar_cartao(
     client: Any,
@@ -274,6 +285,23 @@ def aplicar_cartao(
             patch[campo] = proposto
             continue
         if _mesmo_valor(atual, proposto):
+            continue
+        if empresa.get("dados_origem") == ORIGEM_CONSULTA_PUBLICA:
+            # Not a disagreement — the public CNPJ registry lookup
+            # (`aplicar_consulta_publica` below) is a best-effort, non-
+            # document-backed STOPGAP the office never asked for; the
+            # Cartão CNPJ being applied HERE is the office's own signed
+            # document and always outranks it (task owner decision,
+            # 2026-09-30: "an uploaded Cartão CNPJ keeps precedence over
+            # the public lookup"). Silently replaces the whole group,
+            # same as the two bypasses below — never a conflict the office
+            # would have to adjudicate over data THIS module fetched from
+            # a public API a moment ago.
+            patch[campo] = proposto
+            campo_conflitos.fechar_conflitos_pendentes(
+                client, campo_conflitos.EMPRESA, org_id, empresa_id, campo,
+                decidido_por=None,
+            )
             continue
         if campo == "razao_social" and _e_upgrade_de_crednet_truncado(atual, proposto):
             # Not a disagreement — a strict normalised PREFIX match can
@@ -339,6 +367,89 @@ def aplicar_cartao(
         "aviso": None,
         "conflitos": conflitos,
     }
+
+
+#: `aplicar_consulta_publica`'s own fields — narrower than `CAMPOS_
+#: CADASTRAIS`: `noctusai_lib.integrations.cnpj_registry.CnpjRegistryFields`
+#: carries no `nome_fantasia`/`natureza_juridica`/`data_abertura`/`motivo_
+#: situacao` (neither BrasilAPI nor ReceitaWS's response shape has them).
+CAMPOS_CONSULTA_PUBLICA: tuple[str, ...] = (
+    "razao_social", "situacao_cadastral", "data_situacao_cadastral",
+)
+
+#: `aplicar_consulta_publica`'s outcomes — mirrors `APLICADO`/`SEM_MUDANCA`
+#: above; no `CNPJ_DIVERGENTE` leg (this function looks UP the empresa's
+#: OWN already-stored `cnpj`, never reads one off a document that could
+#: disagree with it).
+CONSULTA_PUBLICA_APLICADO = APLICADO
+CONSULTA_PUBLICA_SEM_MUDANCA = SEM_MUDANCA
+
+
+def aplicar_consulta_publica(client: Any, org_id: UUID, empresa_id: UUID, leitura: Any) -> dict:
+    """A public CNPJ registry lookup's own D1 apply (contract: this
+    dispatch, 2026-09-30 owner decision) — FILL-EMPTY ONLY, never a
+    conflict, unlike `aplicar_cartao` above.
+
+    🔴 WHY THIS EXISTS: the owner's rule is "the system resolves itself;
+    humans only when it truly can't" — and a company's `situação
+    cadastral` is PUBLIC data. `_empresas_de_certificandos`'s Crednet-
+    sourced empresas sat with `situacao_cadastral IS NULL` for months
+    (live prod test, 5 deals / 8 companies / only 3 Cartões on file) purely
+    because nobody had uploaded a document YET, not because the fact was
+    unknowable. This function is the automatic first move; the office's
+    own Cartão CNPJ upload (`aplicar_cartao`) stays the fallback for
+    whatever a public API cannot answer.
+
+    🔴 WHY FILL-EMPTY, NOT CONFLICT-ON-DISAGREE: a public API answer is a
+    best-effort, non-document-backed STOPGAP, categorically lower trust
+    than the office's own signed Cartão CNPJ — there is no scenario where
+    the office should be asked to adjudicate "the public registry says X,
+    a document nobody uploaded yet would maybe say Y". So this NEVER
+    overwrites an existing value, from ANY origin (a Cartão CNPJ read, a
+    prior public lookup, or a manual edit) — the two call sites (the
+    Crednet-creation path and the sweep catch-up) both only invoke this
+    when `situacao_cadastral IS NULL` in the first place, and this
+    function's own per-field `_vazio(empresa.get(campo))` guard is a
+    second, independent layer against ever clobbering a real answer. The
+    REVERSE direction — a LATER Cartão CNPJ silently superseding a value
+    this function wrote — is handled at `aplicar_cartao`'s own call site
+    (the `dados_origem == ORIGEM_CONSULTA_PUBLICA` bypass there), not here.
+
+    No `empresa_documentos` row exists for a public lookup (there is no
+    document) — `dados_documento_id` stays `None`, same P1/883 lesson
+    `crednet_service._upsert_empresa`'s own docstring documents: never
+    point that FK at a table this write did not actually insert into.
+
+    `leitura` is a `CnpjRegistryFields`-shaped object (duck-typed — same
+    posture `aplicar_cartao`'s own `leitura` param and `crednet_service`
+    both already take for their respective seed dataclasses).
+
+    Returns `{"status": CONSULTA_PUBLICA_APLICADO | CONSULTA_PUBLICA_SEM_MUDANCA}`.
+    """
+    empresa = ensure_empresa(client, org_id, empresa_id)
+
+    patch: dict[str, Any] = {}
+    for campo in CAMPOS_CONSULTA_PUBLICA:
+        proposto = _serializar(getattr(leitura, campo, None))
+        if _vazio(proposto):
+            continue
+        if not _vazio(empresa.get(campo)):
+            continue
+        patch[campo] = proposto
+
+    if not patch:
+        return {"status": CONSULTA_PUBLICA_SEM_MUDANCA}
+
+    now = _now()
+    patch["dados_origem"] = ORIGEM_CONSULTA_PUBLICA
+    patch["dados_documento_id"] = None
+    patch["dados_em"] = now
+    patch["dados_confirmado_por"] = None
+    patch["dados_confirmado_em"] = None
+    patch["updated_at"] = now
+    _t(client, TABLE).update(patch).eq("id", str(empresa_id)).execute()
+
+    return {"status": CONSULTA_PUBLICA_APLICADO}
 
 
 def confirmar_dados(
@@ -679,12 +790,17 @@ def remover_participacao(
 __all__ = [
     "APLICADO",
     "CAMPOS_CADASTRAIS",
+    "CAMPOS_CONSULTA_PUBLICA",
     "CAMPOS_PATCH_EDITAVEIS",
     "CNPJ_DIVERGENTE",
+    "CONSULTA_PUBLICA_APLICADO",
+    "CONSULTA_PUBLICA_SEM_MUDANCA",
+    "ORIGEM_CONSULTA_PUBLICA",
     "PROVENIENCIA_COLUNAS",
     "SEM_MUDANCA",
     "TABLE",
     "aplicar_cartao",
+    "aplicar_consulta_publica",
     "atualizar_manual",
     "confirmar_dados",
     "criar_ou_vincular_manual",

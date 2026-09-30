@@ -73,6 +73,30 @@ def get_cartao_extractor_factory():
     return get_identity_extractor_factory()
 
 
+def get_cnpj_registry_lookup() -> Any:
+    """The public CNPJ registry lookup (`noctusai_lib.integrations.
+    cnpj_registry`) — BrasilAPI primary, ReceitaWS fallback, both keyless.
+    Real by default (unlike `get_cartao_extractor_factory`, there is no
+    org credential to resolve — the two sources are public and unauthenticated).
+
+    Called directly (not `Depends()`-injected) from `card_hub.crednet_service
+    .aplicar_leitura`'s one production call site
+    (`identidade_extracao_service.extrair_identidade`) and from `empresas
+    .consulta_publica_scheduler`'s catch-up sweep — both run OUTSIDE a
+    request, same posture `get_cartao_extractor_factory()` already has at
+    its own non-router call sites (`extracao_scheduler.py`, `extracao_
+    service.py`).
+
+    Tests MUST override this (`FakeCnpjRegistryLookup(...)` — passed
+    explicitly as the `cnpj_registry_lookup=` kwarg every call site takes,
+    never a monkeypatch) — the real one reaches BrasilAPI/ReceitaWS over
+    the network.
+    """
+    from noctusai_lib.integrations.cnpj_registry import make_cnpj_registry_lookup
+
+    return make_cnpj_registry_lookup(real=True)
+
+
 def get_empresa_notification_service() -> Any:
     """FastAPI dependency — the admin notifier for `empresa_campo_
     conflitos` rows (contract §H6). Built exactly like `imovel_hub.deps.
@@ -88,6 +112,7 @@ __all__ = [
     "BUCKET",
     "PREFIXO",
     "get_cartao_extractor_factory",
+    "get_cnpj_registry_lookup",
     "get_empresa_notification_service",
     "get_empresas_client",
     "get_storage_backend",
