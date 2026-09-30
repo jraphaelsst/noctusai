@@ -191,33 +191,20 @@ class TestUpload:
         assert "25.0MB" in message  # the real ceiling, named precisely
         assert "limite de 0MB" not in message  # the exact broken phrase the bug produced
 
-    def test_oversized_rejection_names_a_real_kb_number_below_1mb(
-        self, client, scoped, fake_storage, monkeypatch
-    ):
+    def test_oversized_rejection_names_a_real_kb_number_below_1mb(self):
         """Reproduces the exact bug: a sub-megabyte cap must NOT format
         as "0MB". `MAX_UPLOAD_BYTES // (1024 * 1024)` for an 800 KB cap
         evaluates to 0 — this is the historical value that produced
-        "excede o limite de 0MB" before `_format_bytes_human` existed."""
-        import app.modules.card_hub.documentos_service as documentos_service
+        "excede o limite de 0MB" before `_format_bytes_human` existed.
 
-        sub_megabyte_cap = 800 * 1024  # 800 KB — the exact legacy value
-        monkeypatch.setattr(documentos_service, "MAX_UPLOAD_BYTES", sub_megabyte_cap)
+        Pinned on the formatter the rejection message uses, NOT by
+        monkeypatching `MAX_UPLOAD_BYTES`: patching our own guard means the
+        test no longer exercises it (CLAUDE.md §1, no self-monkeypatch)."""
+        from app.modules.card_hub.documentos_service import _format_bytes_human
 
-        cid = str(uuid4())
-        scoped.set_table_data("clientes", [cliente_row(cid)])
-        scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
-
-        oversized = b"0" * (sub_megabyte_cap + 1)
-        resp = client.post(
-            f"/api/clientes/{cid}/documentos",
-            files={"file": ("grande.pdf", oversized, "application/pdf")},
-            data={"tipo_documento": "contrato"},
-            headers=_auth(),
-        )
-        assert resp.status_code == 400, resp.text
-        message = resp.json()["error"]["message"]
-        assert "0MB" not in message
-        assert "800KB" in message  # the real ceiling, named in KB below 1 MB
+        rotulo = _format_bytes_human(800 * 1024)  # 800 KB — the exact legacy value
+        assert "0MB" not in rotulo
+        assert rotulo == "800KB"  # the real ceiling, named in KB below 1 MB
 
 
 class TestUploadSchedulesIdentityExtraction:
