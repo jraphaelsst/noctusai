@@ -914,6 +914,14 @@ If steps 1 + 2 both fail in the same way → **genuine logic/test bug** (file as
 
 4. **`@functools.lru_cache` on test-touching helpers.** Cache key collisions across test runs leak prior-test results.
 
+5. **Path setup borrowed from a sibling test file (2026-09-21, `abf7711f`).** One file does `sys.path.insert(...)` at import time, and a later file imports a module that only resolves because the earlier file ran first. Sharding or reordering the suite breaks it. **Rule:** shared path setup lives in `conftest.py`, never in a test module.
+
+6. **Import-time side effects triggered inside a test (2026-09-21, `abf7711f`).** `import server` inside a test body ran `configure_logging`, which replaced the root handlers and stripped `caplog`'s. Every later `caplog` assertion then failed. **Rule:** import modules that have import-time side effects (logging configuration, registries, env reads) at COLLECTION time, at module top or in conftest, never inside a test function.
+
+Both shapes show up as soon as a suite is sharded or split across CI jobs, so treat the first "passes alone, fails in the full run" report as a polluter hunt, not a flake.
+
+**Rule out chance before bisecting (2026-09-30).** "Fails in the full suite, passes alone" can also be a probabilistic assertion that just lost a coin toss. `test_access_token_also_encrypted_at_rest` asserted that the 3-char plaintext `"rt2"` was absent from Fernet ciphertext. Random base64url contains it about 0.07% of the time (measured: 2 of 3000). Re-run the single test in a loop before hunting a polluter. An "absent from ciphertext" check needs a long, distinctive needle, never a short one.
+
 **Detection recipe — bisecting the polluter:**
 
 ```bash

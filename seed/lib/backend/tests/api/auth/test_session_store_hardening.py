@@ -129,16 +129,18 @@ def test_access_token_also_encrypted_at_rest():
         )
         await store.write_tokens(
             sid,
-            refresh_token="rt2",
+            refresh_token="rotated-refresh-secret-2",
             access_token="access-secret-123",
             access_expires_at=9999999999,
         )
         raw = await client.get(store._key(sid))
+        # Plaintexts must be long: Fernet ciphertext is random base64url, so a
+        # 3-char needle like "rt2" occurs in it by chance (~0.07% of runs).
         assert "access-secret-123" not in raw
-        assert "rt2" not in raw
+        assert "rotated-refresh-secret-2" not in raw
         tokens = await store.read_tokens(sid)
         assert tokens.access_token == "access-secret-123"
-        assert tokens.refresh_token == "rt2"
+        assert tokens.refresh_token == "rotated-refresh-secret-2"
 
     _run(_t())
 

@@ -19,6 +19,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/notifications.md
   - CONTEXT/PATTERNS/backend/logging.md
   - CONTEXT/PATTERNS/backend/logging-at-except.md
+  - CONTEXT/PATTERNS/backend/audit-trail.md
   - CONTEXT/PATTERNS/backend/digest-seed.md
   - CONTEXT/PATTERNS/backend/scheduling-seed.md
   - CONTEXT/PATTERNS/backend/startup-hook-must-not-be-fatal.md
@@ -97,7 +98,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Lifespan hooks** — a `lifespan_startup` hook is a SIDE EFFECT, never a precondition for serving; the seed wraps it and reports `startup_hook_error` on `/api/health` instead of letting uvicorn exit. → `KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`
 **Data & migrations** → `KB § PATTERNS/backend/database-rls.md` · `KB § backend/04-DATABASE.md` · `KB § PATTERNS/backend/migrate-product-mcp-tool.md`.
 **Domain (per-product backend)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/05-AI-FEATURES.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
-**Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md`.
+**Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md` · `KB § PATTERNS/backend/audit-trail.md` (request-history middleware; optional `Request` injection is `request: Request = None`, never `Optional[Request]`).
 **LLM & AI** → `KB § PATTERNS/backend/llm-tool-audit.md` · `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-provider-selection.md` (the fleet-wide chat/vision/embedding/audio vendor map + the `resolve_llm_provider` manual switch) · `KB § PATTERNS/backend/photo-editing-seed.md` (AI photo-editing engine: `PhotoEditingPorts` + job handlers).
 **Chatbot & scheduling** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md`.
 **Tests** → `KB § PATTERNS/backend/boundary-contract-tests.md`.

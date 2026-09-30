@@ -28,6 +28,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── absorption-tracking.md
 │   │   │   ├── accept-with-rationale.md
 │   │   │   ├── admin-client-schema-pinning.md
+│   │   │   ├── audit-trail.md
 │   │   │   ├── agent-context-architecture.md
 │   │   │   ├── agent-reading-discipline.md
 │   │   ├── architect/
@@ -329,6 +330,7 @@ KNOWLEDGE-BASE/
 | MCP tool conventions (3-segment dotted naming `noctus.dev.* / noctus.business.* / google.* / openai.*`, Pydantic In/Out per tool, hierarchical registration, lazy `NoctusContext` for business-logic tools, settings shim, MCP-first principle) | `CONTEXT/PATTERNS/architect/mcp-tool-conventions.md` |
 | MCP-first scripts — `scripts/` specialization of MCP-first: new automation defaults to a `noctus.dev.*` MCP tool (+ `cli.py` flag + colocated `Test*`), NOT a `scripts/*.sh\|*.py` one-off; three named structural carve-outs (`[carve:hook]` git-hook entry → thin dispatcher · `[carve:bootstrap]` pre-venv · `[carve:docker]` thin docker-orch), each requiring an accept-with-rationale entry; classification manifest §3 = durable single source of truth, parsed by `check_new_script_lacks_mcp_analog` (asserts every top-level `scripts/*.{sh,py}` has a bucket row — undecided new script = warning) | `CONTEXT/PATTERNS/architect/mcp-first-scripts.md` |
 | Seed workspace (sibling-of-noc consume-only workspace; symlinks all 8 noc surfaces; pre-commit hook + chmod + KB rule = three-layer "templates can't modify noc" defense; promotion manifest for additions; bootstrap script + workspace.py resolver + `noctus.dev.promote_from_seed_workspace` MCP tool) | `CONTEXT/PATTERNS/architect/seed-workspace.md` |
+| Audit trail — request history for every mutating call (`noctusai_lib.api.audit`: `AuditMiddleware` + `AuditSink` Fake/Real/factory, opt-in `audit_trail_enabled`, core `public.audit_logs` + migration 053, `card_hub` `historico` gatherer); non-obvious decisions (middleware inside CorrelationId, actor via `request.state.audit_actor`, `action_log` NOT redirected, lazy core-client lambda); 🔴 FastAPI footgun — an optional request injection must be `request: Request = None`, never `Optional[Request]` (breaks every route fleet-wide) | `CONTEXT/PATTERNS/backend/audit-trail.md` |
 | LLM tool-call audit (`tool_call_audits` per-product table; `noctusai_lib.domain.ai.tool_audit::AuditRecord` + `make_audit_writer`; best-effort write; LGPD redaction at consumer; common BI queries) | `CONTEXT/PATTERNS/backend/llm-tool-audit.md` |
 | LLM bot security (defense trio: output sanitization + Pydantic-arg validation + rate-limit; confirm-then-execute for destructive tools; prompt-injection mitigation via instruction sandboxing + allowlists; baseline checklist) | `CONTEXT/PATTERNS/security/llm-bot-security.md` |
 | Digest service primitive (`noctusai_lib.domain.digest`: `BaseDigestService` template-method base + `DigestWindow`/`DigestResult` types; 4-adopter cluster — core/audit, daily-life/weekly-review, mailing/campaign-debrief, PF/monthly-narrative; non-fits: ERP/metas-digest + daily-life/daily-brief documented) | `CONTEXT/PATTERNS/backend/digest-seed.md` |
