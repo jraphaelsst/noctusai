@@ -90,6 +90,13 @@ const EXTRAS_QUALIFICACAO: Record<
   // used to ride on the `rg`/`cpf` items themselves; with those collapsed
   // into `identidade`, the server sends them here, keyed by column.
   rg: { label: "RG (Documento de identidade)", formatar: (v) => v },
+  // The issuer joined the identity item's required data on 2026-09-30; its
+  // reading was already offered by the server (`CAMPOS`) but had no entry
+  // here, so it was silently invisible — same shape as `data_casamento`.
+  rg_orgao_expedidor: {
+    label: "Órgão expedidor do RG (Documento de identidade)",
+    formatar: (v) => v,
+  },
   cpf: { label: "CPF (Documento de identidade)", formatar: (v) => v },
   estado_civil: { label: "Estado civil", formatar: rotuloEstadoCivil },
   regime_bens: { label: "Regime de bens", formatar: rotuloRegimeBens },

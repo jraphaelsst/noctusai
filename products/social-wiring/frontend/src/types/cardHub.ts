@@ -663,17 +663,25 @@ export interface DocumentoChecklistItem {
    */
   documento?: ChecklistDocumentoRef | null;
   /**
-   * The identity item only (`identidade`, 2026-09-23) — its upload slots:
-   * CIN and CNH (`upload: true`, always present), plus any legacy file
-   * already filed as `rg`/`cpf` (`upload: false`, read-only). Absent on
-   * every other item.
+   * The identity item only (`identidade`) — its upload slots, in order:
+   * RG/CPF (`rg`), CNH, CIN (`upload: true`, always present; 2026-09-30),
+   * plus any legacy file already filed as `cpf` (`upload: false`,
+   * read-only). Absent on every other item.
    */
   documentos?: IdentidadeSlot[];
-  /** The identity item only — which of its numbers (`rg`, `cpf`) are still
-   *  missing, and their labels. Empty when satisfied. */
+  /** The identity item only — which of its fields (`nome_oficial`, `rg`,
+   *  `rg_orgao_expedidor`, `cpf`) are still missing, and their labels
+   *  (index-aligned). Empty when satisfied. */
   faltando?: string[];
   faltando_rotulos?: string[];
-  /** The identity item only — "only one of CIN/CNH is needed" hint. */
+  /** The identity item only — `field -> rule` for a FILLED field that still
+   *  does not count (today `rg -> "rg_so_da_cnh"`: an RG read only off a CNH,
+   *  unconfirmed). Its entry in `faltando_rotulos` explains what to do. */
+  ressalvas?: Record<string, string>;
+  /** The identity item only — the missing fields that already have a
+   *  document reading waiting for confirmation (`sugestoes_extras`). */
+  faltando_com_sugestao?: string[];
+  /** The identity item only — "one document is enough" hint. */
   dica?: string | null;
 }
 

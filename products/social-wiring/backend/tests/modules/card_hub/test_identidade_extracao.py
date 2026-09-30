@@ -412,12 +412,13 @@ class TestDerivedTickFollowsForFree:
         assert by_key["data_nascimento"]["concluido"] is True
         # Since the `rg`/`cpf` collapse (2026-09-23) the upload alone no longer
         # satisfies the identity item: `_alta()` reads no RG/CPF, so the item
-        # stays open and names both numbers — while still listing the file.
+        # stays open and names both numbers — while still listing the file,
+        # now in its RG/CPF upload slot (2026-09-30).
         identidade = by_key["identidade"]
         assert identidade["concluido"] is False
-        assert identidade["faltando"] == ["rg", "cpf"]
-        legado = {s["tipo_documento"]: s for s in identidade["documentos"]}
-        assert legado["rg"]["documento"]["id"] == did
+        assert {"rg", "cpf"} <= set(identidade["faltando"])
+        slots = {s["tipo_documento"]: s for s in identidade["documentos"]}
+        assert slots["rg"]["documento"]["id"] == did
 
 
 class TestGeneroIsTheThirdExtractedField:

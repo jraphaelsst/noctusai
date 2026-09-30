@@ -1,25 +1,27 @@
 /**
- * IdentidadeChecklistRow — the ONE "Documento de identidade (RG e CPF)" item.
+ * IdentidadeChecklistRow — the ONE "Documento de identidade" item.
  *
- * [Owner directive, 2026-09-23] "make rg/cpf 1 single checklist item. then i
- * need the CIN field and the CNH field. only one of those fields need to be
- * filled, if they are able to extract rg and cpf from it, otherwise the
- * mechanism shall block generation missing one of those fields (rg/cpf)."
+ * [Owner directive, 2026-09-23] one checklist item for RG + CPF, with upload
+ * fields per document, only one of which needs to be filled when the data
+ * can be read off it.
  *
- * So this row carries TWO upload slots (CIN, CNH) under one tick, plus a hint
- * that only one is needed. The tick is still DERIVED server-side
- * (`documento_checklist_service`): it follows the RG and CPF numbers on the
- * record — read off the document and confirmed, or typed — never the file
- * alone. While either number is missing the row names which, because that is
- * exactly what the contract gate will refuse over.
+ * [Owner directive, 2026-09-30] "Also separate the rg cpf cin cnh upload. I
+ * want “rg/cpf” in one item, then cnh, then cin. Data comes from whichever is
+ * uploaded and not all need to be uploaded, as long as data is complete".
  *
- * A CIN is never extracted (no real one exists yet): after uploading it, the
- * operator types its RG and CPF in "Dados pessoais". A CIN's RG equals its CPF
- * by design — nothing here compares the two.
+ * So this row carries THREE upload slots (RG/CPF, CNH, CIN — in that order,
+ * sent by the server) under one tick, plus a hint that one is enough. The
+ * tick is DERIVED server-side (`documento_checklist_service`): it follows the
+ * identity DATA the contract needs (nome oficial, RG, órgão expedidor, CPF)
+ * — read off whichever document was uploaded, or typed — never the files.
+ * While data is missing the row lists WHICH fields, so the operator knows
+ * whether another document is needed; a field whose reading is already
+ * waiting for confirmation says so (confirm it below instead). An RG read
+ * only off a CNH (which omits the check digit) arrives as a missing field
+ * with its own explanatory label.
  *
- * Legacy files already filed as `rg`/`cpf` (a CNH filed as `rg` before the
- * `cnh` type existed) are listed read-only — view, download, discard — and
- * are never offered as an upload target.
+ * Legacy files already filed as `cpf` are listed read-only — view, download,
+ * discard — and are never offered as an upload target.
  *
  * Same override semantics as `ChecklistItemRow`: the checkbox is a human
  * override, the `manual` badge + ↩ say so and withdraw it.
@@ -58,7 +60,12 @@ export function IdentidadeChecklistRow({
 }: IdentidadeChecklistRowProps) {
   const tid = `${testIdPrefix}-${item.key}`;
   const slots = item.documentos ?? [];
-  const faltando = item.faltando_rotulos ?? [];
+  const faltando = item.faltando ?? [];
+  const rotulos = item.faltando_rotulos ?? [];
+  const comSugestao = new Set(item.faltando_com_sugestao ?? []);
+  // Fields no pending reading will fill — only these need another document
+  // (or a typed value).
+  const semLeitura = faltando.filter((campo) => !comSugestao.has(campo));
 
   return (
     <li
@@ -112,11 +119,35 @@ export function IdentidadeChecklistRow({
           {item.dica}
         </p>
       )}
-      {faltando.length > 0 && (
-        <p className="ml-6 text-xs text-amber-700" data-testid={`${tid}-faltando`}>
-          Falta: {faltando.join(" e ")}
-          {" — "}envie a CIN ou a CNH, ou informe em &ldquo;Dados pessoais&rdquo;.
-        </p>
+      {faltando.length > 0 ? (
+        <div className="ml-6 text-xs text-amber-700" data-testid={`${tid}-faltando`}>
+          <p>Falta:</p>
+          <ul className="ml-3 list-disc">
+            {faltando.map((campo, i) => (
+              <li key={campo} data-testid={`${tid}-faltando-${campo}`}>
+                {rotulos[i] ?? campo}
+                {comSugestao.has(campo) && (
+                  <span data-testid={`${tid}-faltando-${campo}-sugestao`}>
+                    {" "}— há uma leitura aguardando confirmação abaixo
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {semLeitura.length > 0 && (
+            <p data-testid={`${tid}-faltando-acao`}>
+              Envie outro documento (RG/CPF, CNH ou CIN) que traga{" "}
+              {semLeitura.length === 1 ? "esse dado" : "esses dados"}, ou informe em
+              &ldquo;Dados pessoais&rdquo;.
+            </p>
+          )}
+        </div>
+      ) : (
+        item.derivado && (
+          <p className="ml-6 text-xs text-muted-foreground" data-testid={`${tid}-completo`}>
+            Dados de identidade completos.
+          </p>
+        )
       )}
 
       <ul className="ml-6 mt-1 space-y-1">

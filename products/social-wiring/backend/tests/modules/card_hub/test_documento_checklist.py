@@ -34,6 +34,15 @@ _ITENS_SEM_ATENDIMENTO = tuple(
 )
 
 
+#: Every field the identity item asks for — synthetic values.
+_IDENTIDADE = {
+    "nome_oficial": "Pessoa Exemplo de Teste",
+    "rg": "52.179.965-X",
+    "rg_orgao_expedidor": "SSP-SP",
+    "cpf": "412.954.238-98",
+}
+
+
 def _seed(scoped) -> str:
     cid = str(uuid4())
     scoped.set_table_data("clientes", [cliente_row(cid)])
@@ -58,8 +67,9 @@ class TestCanonicalList:
             "Data de Nascimento",
             "Profissão",
             "Gênero",
-            # ONE item for both numbers (owner directive, 2026-09-23).
-            "Documento de identidade (RG e CPF)",
+            # ONE item for the identity data (owner directives 2026-09-23 and
+            # 2026-09-30) — three upload slots under it.
+            "Documento de identidade (RG/CPF, CNH ou CIN)",
         ]
 
     def test_a_client_with_no_rows_still_gets_every_item_unticked(self, client, scoped):
@@ -205,16 +215,21 @@ class TestIdentidadeItem:
             ).json()["items"]
         }
 
-    def test_offers_a_cin_and_a_cnh_slot_with_the_one_of_two_hint(self, client, scoped):
+    def test_offers_rg_cpf_then_cnh_then_cin_slots_with_the_one_is_enough_hint(
+        self, client, scoped
+    ):
+        """[Owner directive, 2026-09-30] "rg/cpf" in one slot, then CNH, then
+        CIN — in that order."""
         cid = _seed(scoped)
         scoped.set_table_data("cliente_documentos", [])
         item = self._itens(client, cid)["identidade"]
         assert [(s["tipo_documento"], s["rotulo"], s["upload"]) for s in item["documentos"]] == [
-            ("cin", "CIN", True),
+            ("rg", "RG/CPF", True),
             ("cnh", "CNH", True),
+            ("cin", "CIN", True),
         ]
         assert all(s["documento"] is None for s in item["documentos"])
-        assert "Basta um dos dois" in item["dica"]
+        assert "Basta um documento" in item["dica"]
         # The item-level single-file key stays null — the slots name the files.
         assert item["documento"] is None
 
@@ -235,42 +250,74 @@ class TestIdentidadeItem:
         }
         assert slots["cin"]["documento"] is None
 
-    def test_a_file_alone_does_not_satisfy_it_and_both_numbers_are_named(self, client, scoped):
-        """An unread CIN (never extracted) or a CNH whose numbers were not
-        confirmed yet satisfies nothing — the item says which are missing."""
+    def test_a_file_alone_does_not_satisfy_it_and_every_field_is_named(self, client, scoped):
+        """An upload whose data was never read satisfies nothing — the item
+        says which fields are missing."""
         cid = _seed(scoped)
         scoped.set_table_data(
             "cliente_documentos", [documento_row(str(uuid4()), cid, tipo_documento="cin")]
         )
         item = self._itens(client, cid)["identidade"]
         assert item["concluido"] is False
-        assert item["faltando"] == ["rg", "cpf"]
-        assert item["faltando_rotulos"] == ["RG", "CPF"]
+        assert item["faltando"] == ["nome_oficial", "rg", "rg_orgao_expedidor", "cpf"]
+        assert item["faltando_rotulos"] == [
+            "Nome oficial", "RG", "Órgão expedidor do RG", "CPF",
+        ]
+        assert item["ressalvas"] == {}
+        assert item["faltando_com_sugestao"] == []
 
-    def test_only_the_missing_number_is_named(self, client, scoped):
+    def test_only_the_missing_fields_are_named(self, client, scoped):
         cid = _seed(scoped)
-        scoped.set_table_data("clientes", [cliente_row(cid, cpf="412.954.238-98")])
+        scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, **{k: v for k, v in _IDENTIDADE.items() if k != "rg_orgao_expedidor"})],
+        )
         scoped.set_table_data("cliente_documentos", [])
         item = self._itens(client, cid)["identidade"]
         assert item["concluido"] is False
-        assert item["faltando"] == ["rg"]
+        assert item["faltando"] == ["rg_orgao_expedidor"]
 
-    def test_both_numbers_satisfy_it(self, client, scoped):
+    def test_the_complete_identity_data_satisfies_it(self, client, scoped):
         cid = _seed(scoped)
-        scoped.set_table_data(
-            "clientes", [cliente_row(cid, cpf="412.954.238-98", rg="52.179.965-X")]
-        )
+        scoped.set_table_data("clientes", [cliente_row(cid, **_IDENTIDADE)])
         scoped.set_table_data("cliente_documentos", [])
         item = self._itens(client, cid)["identidade"]
         assert item["concluido"] is True
         assert item["faltando"] == []
+
+    def test_a_missing_field_with_a_pending_reading_is_flagged(self, client, scoped):
+        """The órgão was read off the uploaded RG card but awaits a decision
+        — the line says so, so the operator confirms instead of hunting for
+        another document."""
+        cid = _seed(scoped)
+        scoped.set_table_data(
+            "clientes",
+            [cliente_row(cid, **{k: v for k, v in _IDENTIDADE.items() if k != "rg_orgao_expedidor"})],
+        )
+        scoped.set_table_data(
+            "cliente_documentos",
+            [
+                documento_row(
+                    str(uuid4()), cid, tipo_documento="rg",
+                    extracao_rg="52.179.965-X", extracao_rg_orgao="SSP-SP",
+                    extracao_em="2026-09-30T00:00:00+00:00",
+                )
+            ],
+        )
+        item = self._itens(client, cid)["identidade"]
+        assert item["faltando"] == ["rg_orgao_expedidor"]
+        assert item["faltando_com_sugestao"] == ["rg_orgao_expedidor"]
 
     def test_a_cin_whose_rg_equals_its_cpf_is_satisfied(self, client, scoped):
         """A CIN prints the CPF as the identity number — valid, never flagged."""
         cid = _seed(scoped)
         scoped.set_table_data(
             "clientes",
-            [cliente_row(cid, cpf="448.864.938-66", rg="448.864.938-66")],
+            [cliente_row(
+                cid, nome_oficial="Pessoa Exemplo de Teste", cpf="448.864.938-66",
+                rg="448.864.938-66", rg_orgao_expedidor="IIGDR-SP",
+                rg_origem="cin",
+            )],
         )
         scoped.set_table_data(
             "cliente_documentos", [documento_row(str(uuid4()), cid, tipo_documento="cin")]
@@ -279,23 +326,36 @@ class TestIdentidadeItem:
         assert item["concluido"] is True
         assert item["faltando"] == []
 
-    def test_a_legacy_rg_typed_file_is_listed_read_only(self, client, scoped):
-        """A CNH filed as `rg` before `cnh` existed (migration 142) stays
-        visible — never retyped, never offered as an upload target."""
+    def test_an_rg_typed_file_shows_in_the_rg_cpf_slot(self, client, scoped):
+        """Since 2026-09-30 `rg` IS the RG/CPF upload slot — a file filed as
+        `rg` (including a CNH filed that way before `cnh` existed, migration
+        142) shows there, never retyped."""
         cid = _seed(scoped)
         did = str(uuid4())
-        scoped.set_table_data(
-            "clientes", [cliente_row(cid, cpf="412.954.238-98", rg="52.179.965-X")]
-        )
+        scoped.set_table_data("clientes", [cliente_row(cid, **_IDENTIDADE)])
         scoped.set_table_data(
             "cliente_documentos", [documento_row(did, cid, tipo_documento="rg")]
         )
         item = self._itens(client, cid)["identidade"]
-        legado = [s for s in item["documentos"] if not s["upload"]]
-        assert [(s["tipo_documento"], s["rotulo"]) for s in legado] == [("rg", "Arquivado como RG")]
-        assert legado[0]["documento"]["id"] == did
+        slots = {s["tipo_documento"]: s for s in item["documentos"]}
+        assert slots["rg"]["upload"] is True
+        assert slots["rg"]["documento"]["id"] == did
+        assert [s for s in item["documentos"] if not s["upload"]] == []
         assert item["concluido"] is True
         assert scoped.table("cliente_documentos").select("*").execute().data[0]["tipo_documento"] == "rg"
+
+    def test_a_legacy_cpf_typed_file_is_listed_read_only(self, client, scoped):
+        """`cpf` is catalogued but no longer a slot (the RG card carries the
+        CPF) — a file already filed as `cpf` stays visible, read-only."""
+        cid = _seed(scoped)
+        did = str(uuid4())
+        scoped.set_table_data(
+            "cliente_documentos", [documento_row(did, cid, tipo_documento="cpf")]
+        )
+        item = self._itens(client, cid)["identidade"]
+        legado = [s for s in item["documentos"] if not s["upload"]]
+        assert [(s["tipo_documento"], s["rotulo"]) for s in legado] == [("cpf", "Arquivado como CPF")]
+        assert legado[0]["documento"]["id"] == did
 
     def test_a_soft_deleted_file_is_not_named(self, client, scoped):
         cid = _seed(scoped)
@@ -340,7 +400,9 @@ class TestIdentidadeItem:
         assert resp.status_code == 200, resp.text
         slots = {s["tipo_documento"]: s for s in resp.json()["documentos"]}
         assert slots["cin"]["documento"]["id"] == did
-        assert resp.json()["faltando"] == ["rg", "cpf"]
+        assert resp.json()["faltando"] == ["nome_oficial", "rg", "rg_orgao_expedidor", "cpf"]
+        assert resp.json()["faltando_com_sugestao"] == []
+        assert resp.json()["ressalvas"] == {}
 
     def test_typed_items_never_carry_a_documento(self, client, scoped):
         """A typed item is satisfied by a COLUMN — there is no file to name.

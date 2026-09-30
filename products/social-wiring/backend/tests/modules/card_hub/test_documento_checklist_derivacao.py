@@ -24,6 +24,16 @@ from app.modules.card_hub import documento_checklist_service as svc
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 
+#: Every field the identity item asks for, synthetic values (the same test
+#: numbers this file already uses).
+IDENTIDADE_COMPLETA = {
+    "nome_oficial": "Pessoa Exemplo de Teste",
+    "rg": "52.179.965-X",
+    "rg_orgao_expedidor": "SSP-SP",
+    "cpf": "412.954.238-98",
+}
+
+
 def _auth() -> dict:
     return {"Authorization": "Bearer test-token"}
 
@@ -93,27 +103,136 @@ class TestDerivarIsPure:
             de_cliente = ("campos" in item) or ("fontes" in item) or ("campos_todos" in item)
             assert de_cliente or ("documento" in item), item["key"]
 
-    def test_identidade_needs_both_the_rg_and_the_cpf(self):
-        """[Owner directive, 2026-09-23] ONE item — satisfied only when BOTH
-        numbers are on the record, and it names the one still missing."""
+    def test_identidade_needs_every_identity_field(self):
+        """[Owner directives, 2026-09-23 + 2026-09-30] ONE item — satisfied
+        only when the identity data the contract needs is on the record, and
+        it names the fields still missing."""
         so_cpf = {"cpf": "412.954.238-98"}
         assert svc.derivar(so_cpf, frozenset({"cnh"}))["identidade"] is False
-        assert svc.campos_faltando(so_cpf, "identidade") == ["rg"]
+        assert svc.campos_faltando(so_cpf, "identidade") == [
+            "nome_oficial", "rg", "rg_orgao_expedidor",
+        ]
 
-        so_rg = {"rg": "52.179.965-X"}
-        assert svc.derivar(so_rg, frozenset())["identidade"] is False
-        assert svc.campos_faltando(so_rg, "identidade") == ["cpf"]
+        sem_cpf = {k: v for k, v in IDENTIDADE_COMPLETA.items() if k != "cpf"}
+        assert svc.derivar(sem_cpf, frozenset())["identidade"] is False
+        assert svc.campos_faltando(sem_cpf, "identidade") == ["cpf"]
 
-        ambos = {"rg": "52.179.965-X", "cpf": "412.954.238-98"}
-        assert svc.derivar(ambos, frozenset())["identidade"] is True
-        assert svc.campos_faltando(ambos, "identidade") == []
+        assert svc.derivar(IDENTIDADE_COMPLETA, frozenset())["identidade"] is True
+        assert svc.campos_faltando(IDENTIDADE_COMPLETA, "identidade") == []
 
-        assert svc.campos_faltando({"rg": "  ", "cpf": None}, "identidade") == ["rg", "cpf"]
+        assert svc.campos_faltando({"rg": "  ", "cpf": None}, "identidade") == [
+            "nome_oficial", "rg", "rg_orgao_expedidor", "cpf",
+        ]
 
     def test_a_cin_rg_equal_to_its_cpf_satisfies_identidade(self):
-        """A CIN prints the CPF as the identity number — never flagged."""
-        cin = {"rg": "448.864.938-66", "cpf": "448.864.938-66"}
+        """A CIN prints the CPF as the identity number (órgão IIGDR) — valid,
+        never flagged, so a CIN alone completes the item (owner directive
+        2026-09-23)."""
+        cin = {
+            "nome_oficial": "Pessoa Exemplo de Teste",
+            "rg": "448.864.938-66", "rg_orgao_expedidor": "IIGDR-SP",
+            "cpf": "448.864.938-66", "rg_origem": "cin", "cpf_origem": "cin",
+        }
         assert svc.derivar(cin, frozenset({"cin"}))["identidade"] is True
+
+    def test_the_identity_fields_are_the_contract_qualificacao_slice(self):
+        """The tick and the contract gate agree on what 'complete' means: the
+        item's fields are a subsequence of the contract's qualificação, and
+        the contract generator's identity-document keys are the same set."""
+        from app.modules.card_hub.contrato_gerador import derivacao
+
+        contrato = svc._CAMPOS_QUALIFICACAO_CONTRATO
+        assert [c for c in contrato if c in svc.CAMPOS_DOCUMENTO_IDENTIDADE] == list(
+            svc.CAMPOS_DOCUMENTO_IDENTIDADE
+        )
+        assert derivacao._CHAVES_DO_DOCUMENTO_DE_IDENTIDADE == frozenset(
+            svc.CAMPOS_DOCUMENTO_IDENTIDADE
+        )
+        identidade = next(i for i in svc.ITENS if i["key"] == "identidade")
+        assert identidade["campos_todos"] == svc.CAMPOS_DOCUMENTO_IDENTIDADE
+
+
+class TestIdentidadeCompletaPorQualquerDocumento:
+    """[Owner directive, 2026-09-30] "Data comes from whichever is uploaded
+    and not all need to be uploaded, as long as data is complete"."""
+
+    def test_rg_card_alone_completes_it(self):
+        rg = {**IDENTIDADE_COMPLETA, **{f"{c}_origem": "rg" for c in IDENTIDADE_COMPLETA}}
+        assert svc.derivar(rg, frozenset({"rg"}))["identidade"] is True
+
+    def test_cnh_alone_with_its_rg_unconfirmed_is_incomplete_and_says_why(self):
+        """A CNH prints the RG without its check digit — an RG resting only on
+        an unconfirmed CNH reading does not count, and the line says so."""
+        cnh = {**IDENTIDADE_COMPLETA, "rg": "52.179.965", "rg_origem": "cnh"}
+        docs = {"cnh": {"tipo_documento": "cnh", "extracao_rg": "52.179.965"}}
+        assert svc.derivar(cnh, frozenset(docs), docs)["identidade"] is False
+        assert svc.campos_faltando(cnh, "identidade", docs) == ["rg"]
+        extras = svc._extras_do_item(
+            next(i for i in svc.ITENS if i["key"] == "identidade"), cnh, docs
+        )
+        assert extras["ressalvas"] == {"rg": "rg_so_da_cnh"}
+        assert extras["faltando_rotulos"][0].startswith("RG com dígito verificador")
+
+    def test_cnh_rg_confirmed_by_a_human_completes_it(self):
+        cnh = {
+            **IDENTIDADE_COMPLETA, "rg_origem": "cnh",
+            "rg_confirmado_em": "2026-09-30T12:00:00+00:00",
+        }
+        assert svc.campos_faltando(cnh, "identidade", {}) == []
+
+    def test_cnh_rg_corroborated_by_the_rg_card_completes_it(self):
+        cnh = {**IDENTIDADE_COMPLETA, "rg_origem": "cnh"}
+        docs = {
+            "cnh": {"tipo_documento": "cnh"},
+            "rg": {"tipo_documento": "rg", "extracao_rg": "52179965X"},
+        }
+        assert svc.derivar(cnh, frozenset(docs), docs)["identidade"] is True
+
+    def test_cnh_rg_contradicted_by_the_rg_card_stays_incomplete(self):
+        cnh = {**IDENTIDADE_COMPLETA, "rg": "52.179.965", "rg_origem": "cnh"}
+        docs = {"rg": {"tipo_documento": "rg", "extracao_rg": "52.179.965-X"}}
+        assert svc.campos_faltando(cnh, "identidade", docs) == ["rg"]
+
+    def test_a_typed_rg_is_trusted_whatever_document_is_on_file(self):
+        manual = {**IDENTIDADE_COMPLETA, "rg_origem": "manual"}
+        assert svc.derivar(manual, frozenset({"cnh"}), {})["identidade"] is True
+
+    def test_cin_plus_rg_card_completes_it(self):
+        dados = {
+            **IDENTIDADE_COMPLETA, "rg_origem": "rg", "cpf_origem": "cin",
+        }
+        docs = {"cin": {"tipo_documento": "cin"}, "rg": {"tipo_documento": "rg"}}
+        assert svc.derivar(dados, frozenset(docs), docs)["identidade"] is True
+
+    def test_nothing_is_incomplete_and_names_everything(self):
+        assert svc.derivar({}, frozenset(), {})["identidade"] is False
+        assert svc.campos_faltando({}, "identidade", {}) == list(
+            svc.CAMPOS_DOCUMENTO_IDENTIDADE
+        )
+
+    def test_an_empty_rg_is_missing_not_a_ressalva(self):
+        """A ressalva disqualifies a FILLED value; an empty one is plainly
+        missing and carries the plain label."""
+        dados = {**IDENTIDADE_COMPLETA, "rg": None, "rg_origem": "cnh"}
+        extras = svc._extras_do_item(
+            next(i for i in svc.ITENS if i["key"] == "identidade"), dados, {}
+        )
+        assert extras["faltando"] == ["rg"]
+        assert extras["ressalvas"] == {}
+        assert extras["faltando_rotulos"] == ["RG"]
+
+    def test_missing_fields_with_a_pending_reading_are_named(self):
+        dados = {k: v for k, v in IDENTIDADE_COMPLETA.items() if k != "rg_orgao_expedidor"}
+        extras = svc._extras_do_item(
+            next(i for i in svc.ITENS if i["key"] == "identidade"),
+            dados, {}, {"rg_orgao_expedidor": {"valor": "SSP-SP"}},
+        )
+        assert extras["faltando"] == ["rg_orgao_expedidor"]
+        assert extras["faltando_com_sugestao"] == ["rg_orgao_expedidor"]
+        assert extras["faltando_rotulos"] == ["Órgão expedidor do RG"]
+
+
+class TestIdentidadeValoresEditaveis:
 
     def test_rg_and_cpf_stay_editable_by_column(self):
         """The form reads `valores.rg` / `valores.cpf` — the collapse must not
@@ -403,17 +522,27 @@ class TestFieldsTickThemselves:
 
 
 class TestIdentidadeFollowsTheNumbers:
-    def test_the_numbers_tick_it_without_any_upload(self, client, scoped):
-        cid = _seed(scoped, rg="52.179.965-X", cpf="412.954.238-98")
+    def test_the_data_ticks_it_without_any_upload(self, client, scoped):
+        cid = _seed(scoped, **IDENTIDADE_COMPLETA)
         scoped.set_table_data("cliente_documentos", [])
         assert _items(client, cid)["identidade"]["concluido"] is True
 
-    def test_an_uploaded_cnh_with_no_numbers_read_does_not_tick_it(self, client, scoped):
+    def test_an_uploaded_cnh_with_no_data_read_does_not_tick_it(self, client, scoped):
         cid = _seed(scoped)
         scoped.set_table_data("cliente_documentos", [_doc(cid, "cnh")])
         item = _items(client, cid)["identidade"]
         assert item["concluido"] is False
-        assert item["faltando"] == ["rg", "cpf"]
+        assert item["faltando"] == ["nome_oficial", "rg", "rg_orgao_expedidor", "cpf"]
+
+    def test_a_cnh_only_rg_is_reported_through_the_route(self, client, scoped):
+        """The ressalva reaches the card: the route reads `rg_origem` /
+        `rg_confirmado_em` (derived into the select list) and the live docs."""
+        cid = _seed(scoped, **{**IDENTIDADE_COMPLETA, "rg_origem": "cnh"})
+        scoped.set_table_data("cliente_documentos", [_doc(cid, "cnh")])
+        item = _items(client, cid)["identidade"]
+        assert item["concluido"] is False
+        assert item["faltando"] == ["rg"]
+        assert item["ressalvas"] == {"rg": "rg_so_da_cnh"}
 
     def test_another_clients_document_is_not_listed_on_this_one(self, client, scoped):
         cid = _seed(scoped)
@@ -484,10 +613,12 @@ class TestManualOverride:
     def test_concluidos_counts_the_effective_state(self, client, scoped):
         cid = _seed(
             scoped, email="ana@example.com", genero="feminino",
-            rg="52.179.965-X", cpf="412.954.238-98",
+            **IDENTIDADE_COMPLETA,
         )
         scoped.set_table_data("cliente_documentos", [])
         body = client.get(
             f"/api/clientes/{cid}/documento-checklist", headers=_auth()
         ).json()
-        assert body["concluidos"] == 3
+        # email, genero, identidade — and nome_completo, which the identity
+        # item's `nome_oficial` also satisfies (2026-08-24 ruling).
+        assert body["concluidos"] == 4

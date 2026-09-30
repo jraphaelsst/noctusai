@@ -470,7 +470,7 @@ class TestGate:
         v = replace(d.vendedores[0], faltando_qualificacao=["rg"])
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
         item = next(f for f in av.faltando if f["campo"] == "qualificacao.rg")
-        assert item["rotulo"].startswith("RG (Documento de identidade: CIN ou CNH) — ")
+        assert item["rotulo"].startswith("RG (Documento de identidade: RG/CPF, CNH ou CIN) — ")
         assert not any(f["campo"] == "qualificacao.cpf" for f in av.faltando)
         assert not av.pronto
 

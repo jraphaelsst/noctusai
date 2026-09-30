@@ -94,12 +94,16 @@ ROTULO_QUALIFICACAO = {
     "data_casamento": "Data do casamento",
 }
 
-#: The qualificação keys read off the ONE "Documento de identidade (RG e CPF)"
-#: checklist item (2026-09-23). Their `falta` names that item, so the operator
-#: knows the fix is to send the CIN or the CNH (or type the number) — not to
-#: look for a separate "RG" upload that no longer exists.
-_CHAVES_DO_DOCUMENTO_DE_IDENTIDADE = frozenset({"rg", "cpf"})
-SUFIXO_DOCUMENTO_DE_IDENTIDADE = " (Documento de identidade: CIN ou CNH)"
+#: The qualificação keys read off the ONE "Documento de identidade (RG/CPF,
+#: CNH ou CIN)" checklist item (2026-09-23; three slots since 2026-09-30).
+#: Their `falta` names that item, so the operator knows the fix is to send one
+#: of its documents (or type the value). Kept equal to
+#: `documento_checklist_service.CAMPOS_DOCUMENTO_IDENTIDADE` by a test — not
+#: imported, so this pure module stays free of the service layer.
+_CHAVES_DO_DOCUMENTO_DE_IDENTIDADE = frozenset(
+    {"nome_oficial", "rg", "rg_orgao_expedidor", "cpf"}
+)
+SUFIXO_DOCUMENTO_DE_IDENTIDADE = " (Documento de identidade: RG/CPF, CNH ou CIN)"
 
 #: [E1] `classificar_situacao_pj`/`classificar_empresa` outcomes.
 PJ_EXIGIDO = "exigido"

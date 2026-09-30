@@ -80,17 +80,20 @@ function item(key: string, label: string, over: Record<string, unknown> = {}) {
   };
 }
 
-/** The ONE identity item (2026-09-23) — CIN + CNH slots under one tick. */
+/** The ONE identity item — RG/CPF + CNH + CIN slots under one tick (2026-09-30). */
 function identidade(over: Record<string, unknown> = {}) {
-  return item("identidade", "Documento de identidade (RG e CPF)", {
+  return item("identidade", "Documento de identidade (RG/CPF, CNH ou CIN)", {
     documento: null,
     documentos: [
-      { tipo_documento: "cin", rotulo: "CIN", upload: true, documento: null },
+      { tipo_documento: "rg", rotulo: "RG/CPF", upload: true, documento: null },
       { tipo_documento: "cnh", rotulo: "CNH", upload: true, documento: null },
+      { tipo_documento: "cin", rotulo: "CIN", upload: true, documento: null },
     ],
-    faltando: ["rg", "cpf"],
-    faltando_rotulos: ["RG", "CPF"],
-    dica: "Basta um dos dois (CIN ou CNH), desde que dele se leiam o RG e o CPF.",
+    faltando: ["nome_oficial", "rg", "rg_orgao_expedidor", "cpf"],
+    faltando_rotulos: ["Nome oficial", "RG", "Órgão expedidor do RG", "CPF"],
+    ressalvas: {},
+    faltando_com_sugestao: [],
+    dica: "Basta um documento (RG/CPF, CNH ou CIN), desde que dele se leiam nome, CPF, RG e órgão expedidor; se faltar algum, envie outro.",
     ...over,
   });
 }
@@ -250,14 +253,14 @@ describe("ClienteCardDialog — Anexos empty state", () => {
     // Queried off `document` rather than the render container: the card is a
     // Radix Dialog and renders through a portal, so the container is empty.
     const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
-    // anexos + the identity item's CIN + CNH slots, and NOT email — a typed
-    // item is never satisfied by a file, so it must not own one.
-    expect(inputs).toHaveLength(3);
+    // anexos + the identity item's RG/CPF + CNH + CIN slots, and NOT email —
+    // a typed item is never satisfied by a file, so it must not own one.
+    expect(inputs).toHaveLength(4);
     expect(screen.getByTestId("anexos-section").querySelectorAll('input[type="file"]'))
       .toHaveLength(1);
     expect(
       screen.getByTestId("documento-checklist-identidade-row").querySelectorAll('input[type="file"]'),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(
       screen.getByTestId("documento-checklist-email-row").querySelectorAll('input[type="file"]'),
     ).toHaveLength(0);
@@ -1417,10 +1420,11 @@ describe("a linha unificada de um dado obrigatório", () => {
     expect(screen.queryByTestId("documento-checklist-email-descartar-arquivo")).toBeNull();
   });
 
-  it("the identity item offers a CIN and a CNH upload and no inline editor", async () => {
+  it("the identity item offers an RG/CPF, a CNH and a CIN upload and no inline editor", async () => {
     const { screen } = await linha();
-    expect(screen.getByTestId("documento-checklist-identidade-cin-upload")).toBeTruthy();
+    expect(screen.getByTestId("documento-checklist-identidade-rg-upload")).toBeTruthy();
     expect(screen.getByTestId("documento-checklist-identidade-cnh-upload")).toBeTruthy();
+    expect(screen.getByTestId("documento-checklist-identidade-cin-upload")).toBeTruthy();
     // Its numbers are typed in "Dados pessoais", not on this row.
     expect(screen.queryByTestId("documento-checklist-identidade-editar")).toBeNull();
   });

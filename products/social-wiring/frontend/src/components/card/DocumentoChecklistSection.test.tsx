@@ -126,26 +126,56 @@ describe("DocumentoChecklistSection — progress + rows", () => {
   });
 });
 
-describe("o item único de identidade (RG e CPF, 2026-09-23)", () => {
-  const IDENTIDADE = item("identidade", "Documento de identidade (RG e CPF)", {
+describe("o item único de identidade (RG/CPF, CNH, CIN — 2026-09-30)", () => {
+  const IDENTIDADE = item("identidade", "Documento de identidade (RG/CPF, CNH ou CIN)", {
     documento: null,
     documentos: [
-      { tipo_documento: "cin", rotulo: "CIN", upload: true, documento: null },
+      { tipo_documento: "rg", rotulo: "RG/CPF", upload: true, documento: null },
       { tipo_documento: "cnh", rotulo: "CNH", upload: true, documento: null },
+      { tipo_documento: "cin", rotulo: "CIN", upload: true, documento: null },
     ],
     faltando: ["cpf"],
     faltando_rotulos: ["CPF"],
-    dica: "Basta um dos dois (CIN ou CNH), desde que dele se leiam o RG e o CPF.",
+    ressalvas: {},
+    faltando_com_sugestao: [],
+    dica: "Basta um documento (RG/CPF, CNH ou CIN), desde que dele se leiam nome, CPF, RG e órgão expedidor; se faltar algum, envie outro.",
   });
 
-  it("🔴 renders as ONE row with a CIN and a CNH slot, naming the missing number", async () => {
+  it("🔴 renders as ONE row with RG/CPF, CNH and CIN slots, naming the missing field", async () => {
     const { getByTestId, getAllByTestId } = await renderSection(
       baseProps({ items: [IDENTIDADE], onUploadDocumento: vi.fn() }),
     );
     expect(getAllByTestId(/-row$/)).toHaveLength(1);
-    expect(getByTestId("documento-checklist-identidade-cin-upload")).toBeTruthy();
+    expect(getByTestId("documento-checklist-identidade-rg-upload")).toBeTruthy();
     expect(getByTestId("documento-checklist-identidade-cnh-upload")).toBeTruthy();
+    expect(getByTestId("documento-checklist-identidade-cin-upload")).toBeTruthy();
     expect(getByTestId("documento-checklist-identidade-faltando").textContent).toContain("CPF");
+  });
+
+  it("🔴 the órgão expedidor reading is offered beside the checklist too", async () => {
+    const onResolverSugestao = vi.fn();
+    const rtl = await import("@testing-library/react");
+    const { getByTestId } = await renderSection(
+      baseProps({
+        items: [IDENTIDADE],
+        sugestoesExtras: {
+          rg_orgao_expedidor: {
+            valor: "SSP-SP",
+            documento_id: "doc-2",
+            documento_nome: "rg.pdf",
+            tipo_documento: "rg",
+            confianca: "alta",
+            fonte: "ocr",
+            rotulo: "ÓRGÃO EXPEDIDOR",
+            valor_atual: null,
+            aviso: null,
+          },
+        },
+        onResolverSugestao,
+      }),
+    );
+    rtl.fireEvent.click(getByTestId("documento-checklist-rg_orgao_expedidor-sugestao-confirmar"));
+    expect(onResolverSugestao).toHaveBeenCalledWith("doc-2", "confirmar", "rg_orgao_expedidor");
   });
 
   it("🔴 the RG / CPF readings are offered beside the checklist (sugestoes_extras)", async () => {
