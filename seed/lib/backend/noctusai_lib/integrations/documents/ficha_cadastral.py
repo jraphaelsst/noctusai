@@ -82,9 +82,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
 
-from noctusai_lib.integrations.documents.address import EnderecoLido, find_endereco
+from noctusai_lib.integrations.documents.address import EnderecoLido, find_endereco, normalizar_uf
 from noctusai_lib.integrations.documents.birthdate import MAX_AGE, MIN_AGE
-from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as cpf_is_valid
+from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as cpf_is_valid, only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
@@ -479,6 +479,21 @@ def _pessoa_de_campos(campos: dict[str, str], *, papel: Optional[str]) -> Option
     profissao_conf = ALTA if profissao else NENHUMA
 
     rg = _limpar_texto(campos.get("rg_numero", ""))
+    # 🔴 F1 (live prod test, 2026-09-30): on some forms the widget classified
+    # `rg_numero` ("Número de documento 1/2") actually holds this SAME
+    # person's own CPF, digit for digit — a buyer whose identity document is
+    # a CIN (which prints the CPF as its own number) filled it there, or the
+    # template's own field mapping duplicated the CPF into this box. Unlike a
+    # genuine CIN scan (`identidade_extracao_service._e_cin`'s own órgão
+    # `IIGDR` corroboration), this bank form pairs it with an unrelated
+    # órgão beside it — no corroborating signal this is a real RG at all.
+    # 3 of 19 people measured got a wrong `rg == cpf` this way and it
+    # outranked nothing better once written unattended. Withhold BOTH `rg`
+    # and `rg_orgao` (NENHUMA) rather than vouch for a pair this form cannot
+    # actually prove — a genuine CIN still reaches `clientes.rg` through an
+    # actual identity-document read, never through this ambiguous field.
+    if rg and only_digits(rg) == only_digits(cpf_norm):
+        rg = None
     rg_conf = ALTA if rg else NENHUMA
     rg_orgao = _limpar_texto(campos.get("rg_orgao", "")) if rg else None
     rg_orgao_conf = ALTA if rg_orgao else NENHUMA
@@ -551,7 +566,11 @@ def _endereco_de_campos(campos: dict[str, str]) -> Optional[EnderecoLido]:
             complemento=_limpar_texto(campos.get("endereco_complemento", "")),
             bairro=bairro,
             cidade=_limpar_texto(campos.get("endereco_cidade", "")),
-            uf=_limpar_texto(campos.get("endereco_uf", "")),
+            # F2 (live prod test, 2026-09-30): this ComboBox/Text field
+            # carried a full state name ("São Paulo") rather than its sigla
+            # on one measured form — `normalizar_uf` resolves either shape
+            # and withholds anything that resolves to neither.
+            uf=normalizar_uf(campos.get("endereco_uf", "")),
             confianca="alta" if cep_fmt else "baixa",
             rotulo="FICHA CADASTRAL",
         )

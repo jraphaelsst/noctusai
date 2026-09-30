@@ -74,6 +74,7 @@ from app.modules.card_hub import services as svc
 from app.modules.card_hub.config import CARD_HUB
 from app.modules.card_hub.deps import (
     get_card_hub_client,
+    get_cep_lookup_adapter,
     get_conflict_notification_service,
     get_identity_extractor_factory,
     get_storage_backend,
@@ -618,6 +619,7 @@ async def upload_documento_route(
     storage=Depends(get_storage_backend),
     extractor_factory=Depends(get_identity_extractor_factory),
     notification_service=Depends(get_conflict_notification_service),
+    cep_lookup=Depends(get_cep_lookup_adapter),
 ) -> dict:
     user, org_id = _auth_parts(auth)
     data = await file.read()
@@ -648,6 +650,7 @@ async def upload_documento_route(
             UUID(documento["id"]),
             extractor=extractor_factory(str(org_id), tipo_documento),
             notification_service=notification_service,
+            cep_lookup=cep_lookup,
         )
     return documento
 
@@ -662,6 +665,7 @@ async def reextrair_documento_route(
     storage=Depends(get_storage_backend),
     extractor_factory=Depends(get_identity_extractor_factory),
     notification_service=Depends(get_conflict_notification_service),
+    cep_lookup=Depends(get_cep_lookup_adapter),
 ) -> dict:
     """Re-queue extraction for a document that was never read, or whose
     reading ended in `erro`.
@@ -683,6 +687,7 @@ async def reextrair_documento_route(
         documento_id,
         extractor=extractor_factory(str(org_id), documento["tipo_documento"]),
         notification_service=notification_service,
+        cep_lookup=cep_lookup,
     )
     return documento
 

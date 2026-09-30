@@ -106,6 +106,7 @@ from noctusai_lib.integrations.documents import (
     nomes_compativeis,
     strip_accents_upper,
 )
+from noctusai_lib.integrations.cep import CepLookupAdapter
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
 from noctusai_lib.integrations.documents.nacionalidade_civil import (
@@ -1266,6 +1267,77 @@ def _titular_e_parte_ou_conjuge(
     return False
 
 
+#: F3: a cidade candidate this long, or carrying a digit, is not a real
+#: city name — a whole-address string or a CEP fragment landed in the field
+#: instead. Measured (live prod test, 2026-09-30): a `comprovante_endereco`
+#: read a 57-char whole-address string into `cidade` for 2/19 people.
+_CIDADE_MAX_CHARS = 40
+
+
+def _cidade_suspeita(cidade: str) -> bool:
+    return len(cidade) > _CIDADE_MAX_CHARS or bool(re.search(r"\d", cidade))
+
+
+def _enriquecer_endereco_via_cep(
+    partes: dict[str, Any],
+    cep_lookup: Optional[CepLookupAdapter],
+    *,
+    documento_id: Optional[UUID],
+) -> dict[str, Any]:
+    """F3 (live prod test, 2026-09-30): CEP is the AUTHORITY for cidade/uf
+    once it resolves — the CEP printed on a document was correct for 15/19
+    people measured while the document's own cidade/uf TEXT was wrong for
+    4/19 (a neighbourhood-shaped value once, a whole-address string landed
+    in `cidade` twice). `logradouro` stays the document's own read either
+    way — a CEP range's logradouro is advisory, usually less specific than
+    a document's own; a genuine disagreement is only LOGGED, never applied.
+
+    No-op when `cep_lookup` is `None` (no adapter configured for this call
+    site — every pre-existing caller keeps behaving exactly as before) or
+    the group has no CEP to resolve. Never raises: a lookup failure is
+    `cep_lookup`'s OWN job to log and return `None` for (see
+    `noctusai_lib.integrations.cep`'s own docstring) — this function treats
+    that `None` exactly like "nothing to enrich with".
+
+    🔴 NEVER LOGS ADDRESS TEXT (LGPD) — lengths/booleans/IDs only, the same
+    discipline every OTHER log line in this module already follows.
+    """
+    cidade = partes.get("cidade")
+    if cidade and _cidade_suspeita(str(cidade)):
+        logger.warning(
+            "identidade_extracao: cidade descartada por formato suspeito "
+            "(%d chars, contem_digito=%s), documento=%s",
+            len(str(cidade)), bool(re.search(r"\d", str(cidade))), documento_id,
+        )
+        partes = {**partes, "cidade": None}
+
+    if cep_lookup is None or _vazio(partes.get("cep")):
+        return partes
+
+    resultado = cep_lookup.lookup(str(partes["cep"]))
+    if resultado is None:
+        return partes
+
+    partes = dict(partes)
+    if partes.get("cidade") != resultado.cidade:
+        partes["cidade"] = resultado.cidade
+    if partes.get("uf") != resultado.uf:
+        partes["uf"] = resultado.uf
+
+    logradouro_doc = partes.get("logradouro")
+    if resultado.logradouro and logradouro_doc and (
+        divergencia_resolucao.normalizar_logradouro(str(logradouro_doc))
+        != divergencia_resolucao.normalizar_logradouro(resultado.logradouro)
+    ):
+        logger.info(
+            "identidade_extracao: logradouro do CEP diverge do documento — "
+            "mantendo o do documento, documento=%s",
+            documento_id,
+        )
+
+    return partes
+
+
 def aplicar_endereco_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -1276,6 +1348,7 @@ def aplicar_endereco_ao_cliente(
     titular_documento: Optional[str] = None,
     confianca: Optional[str] = None,
     documento_id: Optional[UUID] = None,
+    cep_lookup: Optional[CepLookupAdapter] = None,
 ) -> tuple[bool, Optional[dict]]:
     """Apply one comprovante's address to the cliente as ONE group (D1).
 
@@ -1293,11 +1366,17 @@ def aplicar_endereco_ao_cliente(
       replaced this way.
     - Human-cleared group (`endereco_origem='manual'`, all parts empty) ->
       respected, like any other field.
+    - **F3 (2026-09-30)** — before anything else runs, `cidade`/`uf` are
+      enriched (or a garbage `cidade` withheld) via `_enriquecer_endereco_
+      via_cep` when a `cep_lookup` adapter is given; every comparison,
+      conflict and write below sees the ENRICHED `partes`, never the raw
+      document read.
 
     Returns `(aplicado, conflito_novo_ou_None)`.
     """
     if _vazio(partes.get("cep")) or _vazio(partes.get("logradouro")):
         return False, None
+    partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
     rows = (
         _t(client, CLIENTES_TABLE)
         .select(",".join([
@@ -2622,12 +2701,18 @@ async def extrair_identidade(
     *,
     extractor: Optional[Any] = None,
     notification_service: Optional[Any] = None,
+    cep_lookup: Optional[CepLookupAdapter] = None,
 ) -> dict:
     """Read one identity document and record the outcome. Never raises.
 
     `notification_service` announces every conflict this read opens
     (`notificar_conflitos`); the routes and the sweep pass
     `deps.get_conflict_notification_service()`.
+
+    `cep_lookup` (F3, 2026-09-30) is forwarded, unchanged, to every
+    `aplicar_endereco_ao_cliente` call this function makes — `None` (the
+    default) reproduces the exact pre-F3 behaviour; the routes and the
+    sweep pass `deps.get_cep_lookup_adapter()`.
 
     Runs detached from the request that triggered it, so an exception here
     would surface nowhere and the document would sit in `processando` forever.
@@ -2696,6 +2781,7 @@ async def extrair_identidade(
             client, org_id, cliente_id, documento_id, doc, blob.data,
             extractor=ficha_extractor,
             notification_service=notification_service,
+            cep_lookup=cep_lookup,
         )
 
     # 🔴 The page cap is chosen from the document's TYPE, not from a global
@@ -3018,6 +3104,7 @@ async def extrair_identidade(
                     titular_documento=titular_guard,
                     confianca=endereco.confianca,
                     documento_id=documento_id,
+                    cep_lookup=cep_lookup,
                 )
                 aplicados[CAMPO_ENDERECO] = aplicado_end
                 if conflito_end is not None:
@@ -3036,6 +3123,7 @@ async def extrair_identidade(
                             titular_documento=None,
                             confianca=endereco.confianca,
                             documento_id=documento_id,
+                            cep_lookup=cep_lookup,
                         )
                         if conflito_conjuge_end is not None:
                             conflitos.append(conflito_conjuge_end)
@@ -3495,6 +3583,7 @@ async def varrer_extracoes_pendentes(
     *,
     extractor_factory: Optional[Any] = None,
     notification_service: Optional[Any] = None,
+    cep_lookup: Optional[CepLookupAdapter] = None,
     limite: int = 50,
 ) -> dict:
     """Re-run extractions that were started and never finished — and, since
@@ -3555,6 +3644,7 @@ async def varrer_extracoes_pendentes(
                 client, storage, org_id, cliente_id, documento_id,
                 extractor=extractor,
                 notification_service=notification_service,
+                cep_lookup=cep_lookup,
             )
             retomados += 1
         except Exception as exc:  # noqa: BLE001 - one bad row must not stop the sweep

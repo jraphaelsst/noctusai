@@ -14,6 +14,7 @@ from __future__ import annotations
 import weakref
 from typing import Any, Callable, Optional
 
+from noctusai_lib.integrations.cep import CepLookupAdapter
 from noctusai_lib.integrations.documents import (
     IdentityExtractor,
     make_identity_extractor,
@@ -279,6 +280,30 @@ def get_conflict_notification_service() -> Any:
     return build_notification_service(get_admin_client())
 
 
+def get_cep_lookup_adapter() -> CepLookupAdapter:
+    """FastAPI dependency — the CEP-resolution adapter `identidade_
+    extracao_service.aplicar_endereco_ao_cliente` enriches cidade/UF
+    through (F3, live prod test, 2026-09-30 — see that function's own
+    docstring for the measured numbers).
+
+    Real (`get_seed_cep_lookup_adapter(live=True)`) unconditionally, same
+    explicit-pair shape `app.services.billing_context`'s own
+    `get_fx_rate_adapter(live=True)` wiring uses — ViaCEP/BrasilAPI are
+    public and keyless, so there is no credential/URL signal to branch on
+    here either.
+
+    Tests MUST override this seam (`app.dependency_overrides[get_cep_
+    lookup_adapter] = lambda: FakeCepLookupAdapter(...)`,
+    `KB § PATTERNS/backend/di-test-seam.md` Class-B) or inject a
+    `FakeCepLookupAdapter` directly via `aplicar_endereco_ao_cliente`'s own
+    `cep_lookup=` parameter — an un-overridden test would hit the real
+    network, which is never the behaviour under test.
+    """
+    from noctusai_lib.integrations.cep import get_cep_lookup_adapter as get_seed_cep_lookup_adapter
+
+    return get_seed_cep_lookup_adapter(live=True)
+
+
 SignatureAdapterFactory = Callable[[Optional[str]], SignatureAdapter]
 
 
@@ -328,6 +353,7 @@ __all__ = [
     "ExtractorFactory",
     "SignatureAdapterFactory",
     "get_card_hub_client",
+    "get_cep_lookup_adapter",
     "get_conflict_notification_service",
     "get_identity_extractor_factory",
     "get_signature_adapter_factory",

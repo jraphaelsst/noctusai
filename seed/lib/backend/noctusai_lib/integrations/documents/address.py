@@ -47,10 +47,68 @@ from typing import Optional
 
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
 from noctusai_lib.integrations.documents.name import looks_like_a_name
+from noctusai_lib.integrations.documents.text import strip_accents_upper
 
 UFS = frozenset(
     "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split()
 )
+
+#: Full state name (accent/case-insensitive, via `strip_accents_upper`) ->
+#: sigla. F2 (live prod test, 2026-09-30): a ficha cadastral's `Estado`
+#: ComboBox carried "São Paulo" (9 chars) rather than the sigla on one of
+#: the measured forms, and it was persisted verbatim — `normalizar_uf`
+#: below is the single place every UF read collapses a full name to its
+#: sigla, so no reader has to know this table exists.
+_NOME_ESTADO_PARA_UF: dict[str, str] = {
+    "ACRE": "AC",
+    "ALAGOAS": "AL",
+    "AMAPA": "AP",
+    "AMAZONAS": "AM",
+    "BAHIA": "BA",
+    "CEARA": "CE",
+    "DISTRITO FEDERAL": "DF",
+    "ESPIRITO SANTO": "ES",
+    "GOIAS": "GO",
+    "MARANHAO": "MA",
+    "MATO GROSSO": "MT",
+    "MATO GROSSO DO SUL": "MS",
+    "MINAS GERAIS": "MG",
+    "PARA": "PA",
+    "PARAIBA": "PB",
+    "PARANA": "PR",
+    "PERNAMBUCO": "PE",
+    "PIAUI": "PI",
+    "RIO DE JANEIRO": "RJ",
+    "RIO GRANDE DO NORTE": "RN",
+    "RIO GRANDE DO SUL": "RS",
+    "RONDONIA": "RO",
+    "RORAIMA": "RR",
+    "SANTA CATARINA": "SC",
+    "SAO PAULO": "SP",
+    "SERGIPE": "SE",
+    "TOCANTINS": "TO",
+}
+
+
+def normalizar_uf(valor: Optional[str]) -> Optional[str]:
+    """A sigla (`SP`), a full state name in any case/accent (`São Paulo` /
+    `sao paulo`), or `None` when neither resolves to one of the 27 valid
+    siglas.
+
+    The single choke point every UF read goes through — a value that fails
+    to resolve is WITHHELD (`None`), never passed through as-is: a bare
+    `[:2]` slice of a full name silently produces a wrong-shaped 2-letter
+    string that happens to look valid (`"São Paulo"[:2]` -> `"Sã"`, already
+    rejected by shape, but a differently-shaped mistake could slip a real
+    UFS member through by coincidence) — resolving against this table first
+    and rejecting anything left over is the only way that never happens.
+    """
+    if not valor:
+        return None
+    norm = strip_accents_upper(valor).strip()
+    if norm in UFS:
+        return norm
+    return _NOME_ESTADO_PARA_UF.get(norm)
 
 #: Street-type prefixes, normalised. `R`/`AV`/`AL`... are the abbreviations
 #: utilities print; the long forms are what fichas print.
@@ -299,6 +357,38 @@ class _Texto:
         return valor or None
 
 
+#: The leading número token — digits (+ an optional trailing letter, "123A")
+#: or "S/N" — off an ALREADY-ISOLATED string. Same shape `_parse_logradouro`'s
+#: own `num` group and `_disperso`'s `_NUMERO_LINHA_RE` anchor on, factored
+#: out here so `_split_numero_complemento` (F4, below) is the one place a
+#: bare "número" string is split, not a fourth private copy of this pattern.
+_NUMERO_LIDER_RE = re.compile(r"^(\d+[A-Z]?\b|S\s*/\s*N[O°º]?\b|SN\b)\s*(.*)$")
+
+
+def _split_numero_complemento(valor: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """F4 (live prod test, 2026-09-30): a `Número:`-LABELLED field can carry
+    the whole house-number-plus-complement run ("123 apto 45 bloco B") when
+    the form never opens a separate `Complemento:` field to give `_rotulado`'s
+    own `_PARADA` stop boundary anything to stop AT. Split the LEADING
+    number token off; whatever is left over is the complemento, never part
+    of the número itself.
+
+    Returns `(numero, complemento_ou_none)` — `numero` is the input,
+    unsplit, when it does not even start with a recognisable número token
+    (so a value this parser has never seen the shape of is passed through
+    exactly as `_rotulado` always has, rather than silently dropped).
+    """
+    if not valor:
+        return None, None
+    m = _NUMERO_LIDER_RE.match(valor.strip())
+    if not m:
+        return valor, None
+    bruto = m.group(1)
+    numero = "S/N" if bruto.replace(" ", "").upper().startswith("S") else bruto
+    resto = m.group(2).strip(" -,")
+    return numero, (resto or None)
+
+
 def _parse_logradouro(t: _Texto, base: int, linha: str) -> dict[str, Optional[str]]:
     """Split one street line into logradouro / número / complemento / bairro.
 
@@ -462,9 +552,22 @@ def _rotulado(t: _Texto) -> Optional[EnderecoLido]:
                 else:
                     achados["cidade"] = t.literal(base + m.start("v"), base + m.end("v"))
             elif campo == "uf":
-                uf = m.group("v").strip()[:2]
-                if uf in UFS:
+                # F2: a labelled `Estado:`/`UF:` value is not always the
+                # sigla — `normalizar_uf` resolves a full state name too,
+                # and withholds anything that resolves to neither.
+                uf = normalizar_uf(m.group("v").strip())
+                if uf:
                     achados["uf"] = uf
+            elif campo == "numero":
+                # F4: `_PARADA` only stops at a KNOWN next label — a form
+                # with no separate `Complemento:` field lets the whole
+                # "123 apto 45 bloco B" run into this match. Split it.
+                valor_v = t.literal(base + m.start("v"), base + m.end("v"))
+                numero, resto = _split_numero_complemento(valor_v)
+                if numero:
+                    achados["numero"] = numero
+                if resto and not achados.get("complemento"):
+                    achados["complemento"] = resto
             else:
                 achados[campo] = t.literal(base + m.start("v"), base + m.end("v"))
     if not achados.get("logradouro"):
@@ -850,5 +953,5 @@ def find_endereco(text: str) -> EnderecoLido:
     return replace(lido, logradouro=normalizar_tipo_logradouro(lido.logradouro))
 
 
-__all__ = ["EnderecoLido", "UFS", "find_endereco", "normalizar_tipo_logradouro"]
+__all__ = ["EnderecoLido", "UFS", "find_endereco", "normalizar_tipo_logradouro", "normalizar_uf"]
 

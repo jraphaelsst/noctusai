@@ -33,7 +33,86 @@ cidade/uf from a CEP line's own tail (labelled or not), and
 from __future__ import annotations
 
 from noctusai_lib.integrations.documents import find_endereco
-from noctusai_lib.integrations.documents.address import normalizar_tipo_logradouro
+from noctusai_lib.integrations.documents.address import normalizar_tipo_logradouro, normalizar_uf
+
+
+class TestNormalizarUf:
+    """F2 (live prod test, 2026-09-30): a labelled `Estado:`/`UF:` field
+    can carry a full state name rather than the sigla."""
+
+    def test_ja_e_sigla(self):
+        assert normalizar_uf("SP") == "SP"
+        assert normalizar_uf("sp") == "SP"
+
+    def test_nome_por_extenso_acento_e_caixa_indiferentes(self):
+        assert normalizar_uf("São Paulo") == "SP"
+        assert normalizar_uf("sao paulo") == "SP"
+        assert normalizar_uf("RIO DE JANEIRO") == "RJ"
+        assert normalizar_uf("espirito santo") == "ES"
+
+    def test_nao_resolve_e_retorna_none(self):
+        assert normalizar_uf("Nao E Um Estado") is None
+        assert normalizar_uf("") is None
+        assert normalizar_uf(None) is None
+
+
+class TestRotuladoNumeroCarregandoComplemento:
+    """F4 (live prod test, 2026-09-30): a proof-of-address's labelled
+    `Numero:` field carried the whole "número + complemento" run when the
+    form never opened a separate `Complemento:` field."""
+
+    def test_numero_e_complemento_sao_separados(self):
+        texto = (
+            "Endereço: RUA DAS FLORES\n"
+            "Numero: 123 apto 45 bloco B\n"
+            "Bairro: CENTRO\n"
+            "CEP: 01234-567\n"
+            "Cidade: SAO PAULO\n"
+            "Estado: São Paulo\n"
+        )
+        r = find_endereco(texto)
+        assert r.numero == "123"
+        assert r.complemento == "apto 45 bloco B"
+        assert r.uf == "SP"
+
+    def test_numero_sem_complemento_permanece_curto(self):
+        texto = (
+            "Endereço: RUA DAS FLORES\n"
+            "Numero: 123\n"
+            "CEP: 01234-567\n"
+            "Cidade: SAO PAULO\n"
+            "Estado: SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.numero == "123"
+        assert r.complemento is None
+
+    def test_complemento_ja_rotulado_nao_e_sobrescrito_pelo_numero(self):
+        texto = (
+            "Endereço: RUA DAS FLORES\n"
+            "Numero: 123 apto 45 bloco B\n"
+            "Complemento: FUNDOS\n"
+            "CEP: 01234-567\n"
+            "Cidade: SAO PAULO\n"
+            "Estado: SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.numero == "123"
+        assert r.complemento == "apto 45 bloco B"
+
+
+class TestRotuladoEstadoPorExtenso:
+    def test_estado_nao_reconhecivel_e_retido(self):
+        texto = (
+            "Endereço: RUA DAS FLORES\n"
+            "Numero: 123\n"
+            "CEP: 01234-567\n"
+            "Cidade: SAO PAULO\n"
+            "Estado: Nao E Um Estado\n"
+        )
+        r = find_endereco(texto)
+        assert r.uf is None
+        assert r.presente  # cep + logradouro already clear the bar
 
 
 class TestCepInlineCidadeUfNoSeparateLabel:

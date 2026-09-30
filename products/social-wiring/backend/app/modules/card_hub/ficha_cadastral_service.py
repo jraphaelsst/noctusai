@@ -187,7 +187,8 @@ def _resolver_destino(
 
 
 def _aplicar_endereco_ficha(
-    client: Any, org_id: UUID, cliente_id: str, endereco: Any, *, documento_id: UUID,
+    client: Any, org_id: UUID, cliente_id: str, endereco: Any, *,
+    documento_id: UUID, cep_lookup: Optional[Any] = None,
 ) -> tuple[bool, Optional[dict]]:
     """`aplicar_endereco_ao_cliente`'s own D1 group-apply, with ONE
     addition: a household-propagated address (R3, `ORIGEM_CONJUGE_
@@ -229,6 +230,7 @@ def _aplicar_endereco_ficha(
     return identidade_svc.aplicar_endereco_ao_cliente(
         client, org_id, cliente_id, "ficha_cadastral", endereco.partes(),
         confianca=endereco.confianca, documento_id=documento_id,
+        cep_lookup=cep_lookup,
     )
 
 
@@ -275,6 +277,7 @@ async def aplicar_leitura(
     *,
     extractor: Any,
     notification_service: Optional[Any] = None,
+    cep_lookup: Optional[Any] = None,
 ) -> dict:
     """The whole sequence, built on the shared `app.services.extracao_job`
     runner (`NOC-REMEDIATE[extracao-job-runner-adopt]`-shaped — see
@@ -283,7 +286,9 @@ async def aplicar_leitura(
     own try, the TERMINAL `extracao_status` is written LAST). `doc` is the
     already-fetched `cliente_documentos` row, `blob_data` the already-
     fetched bytes — `identidade_extracao_service.extrair_identidade` does
-    both before branching here. Never raises.
+    both before branching here. `cep_lookup` (F3) is forwarded, unchanged,
+    to `_aplicar_endereco_ficha`'s own `aplicar_endereco_ao_cliente` call.
+    Never raises.
     """
 
     async def _ler(blob_bytes: bytes, doc_row: dict) -> FichaCadastralLida:
@@ -323,6 +328,7 @@ async def aplicar_leitura(
             if pessoa.endereco is not None and pessoa.endereco.presente:
                 endereco_aplicado, conflito_endereco = _aplicar_endereco_ficha(
                     client, org_id, destino, pessoa.endereco, documento_id=documento_id,
+                    cep_lookup=cep_lookup,
                 )
                 if conflito_endereco is not None:
                     conflitos.append(conflito_endereco)

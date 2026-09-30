@@ -51,6 +51,7 @@ CRON = "17 * * * *"
 async def _sweep(admin, storage) -> dict:
     from app.modules.card_hub import identidade_extracao_service as identidade_svc
     from app.modules.card_hub.deps import (
+        get_cep_lookup_adapter,
         get_conflict_notification_service,
         get_identity_extractor_factory,
     )
@@ -68,6 +69,7 @@ async def _sweep(admin, storage) -> dict:
         storage,
         extractor_factory=get_identity_extractor_factory(),
         notification_service=notificador,
+        cep_lookup=get_cep_lookup_adapter(),
     )
 
 

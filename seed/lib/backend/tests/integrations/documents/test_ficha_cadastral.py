@@ -244,6 +244,77 @@ class TestMontarPessoas:
         (pessoa,) = montar_pessoas({0: campos})
         assert pessoa.cpf_confianca is BAIXA
 
+    def test_rg_igual_ao_cpf_e_retido_junto_com_o_orgao(self):
+        """F1 (live prod test, 2026-09-30): the widget classified `rg_numero`
+        held this SAME person's own CPF digits on 3 of 19 people measured —
+        neither `rg` nor `rg_orgao` is trustworthy when that happens."""
+        campos = [
+            _campo("nome", "FULANO DE TAL"),
+            _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "ALGO"),
+            _campo("rg_numero", CPF_VALIDO),  # same digits, formatted the same
+            _campo("rg_orgao", "SSP/SP"),
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert pessoa.rg is None
+        assert pessoa.rg_confianca is NENHUMA
+        assert pessoa.rg_orgao is None
+        assert pessoa.rg_orgao_confianca is NENHUMA
+
+    def test_rg_igual_ao_cpf_mesmo_com_pontuacao_diferente(self):
+        """Digit-for-digit comparison, not string equality — a bare-digit
+        RG field must still collide with a formatted CPF."""
+        campos = [
+            _campo("nome", "FULANO DE TAL"),
+            _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "ALGO"),
+            _campo("rg_numero", "12345678909"),  # CPF_VALIDO's own digits, unpunctuated
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert pessoa.rg is None
+
+    def test_rg_diferente_do_cpf_ainda_e_lido_normalmente(self):
+        campos = [
+            _campo("nome", "FULANO DE TAL"),
+            _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "ALGO"),
+            _campo("rg_numero", "12.345.678-9"),
+            _campo("rg_orgao", "SSP/SP"),
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert pessoa.rg == "12.345.678-9"
+        assert pessoa.rg_confianca is ALTA
+        assert pessoa.rg_orgao == "SSP/SP"
+
+    def test_endereco_uf_por_extenso_e_normalizada_para_sigla(self):
+        """F2 (live prod test, 2026-09-30): one form's `Estado` field
+        carried the full state name rather than the sigla."""
+        campos = [
+            _campo("nome", "FULANO"),
+            _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "ALGO"),
+            _campo("endereco_cep", "01234-567"),
+            _campo("endereco_logradouro", "RUA DAS FLORES"),
+            _campo("endereco_cidade", "SAO PAULO"),
+            _campo("endereco_uf", "São Paulo"),
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert pessoa.endereco is not None
+        assert pessoa.endereco.uf == "SP"
+
+    def test_endereco_uf_irreconhecivel_e_retida_nao_persistida(self):
+        campos = [
+            _campo("nome", "FULANO"),
+            _campo("cpf", CPF_VALIDO),
+            _campo("profissao", "ALGO"),
+            _campo("endereco_cep", "01234-567"),
+            _campo("endereco_logradouro", "RUA DAS FLORES"),
+            _campo("endereco_uf", "Nao E Um Estado"),
+        ]
+        (pessoa,) = montar_pessoas({0: campos})
+        assert pessoa.endereco is not None
+        assert pessoa.endereco.uf is None
+
     def test_endereco_raw_fgts_via_find_endereco(self):
         campos = [
             _campo("nome", "TRABALHADOR FGTS"),

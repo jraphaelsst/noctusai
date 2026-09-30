@@ -20,11 +20,13 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 from uuid import UUID, uuid4
 
 import pytest
 
 from app.modules.card_hub import identidade_extracao_service as svc
+from noctusai_lib.integrations.cep import CepEndereco, FakeCepLookupAdapter
 from noctusai_lib.integrations.documents import (
     ConjugeLido,
     EnderecoLido,
@@ -86,11 +88,12 @@ def _conflitos(scoped) -> list[dict]:
     return scoped.table("cliente_campo_conflitos").select("*").execute().data
 
 
-async def _extrair(scoped, storage, cid, did, fields, notifier=None):
+async def _extrair(scoped, storage, cid, did, fields, notifier=None, cep_lookup=None):
     return await svc.extrair_identidade(
         scoped, storage, ORG_UUID, UUID(cid), UUID(did),
         extractor=FakeIdentityExtractor(fields),
         notification_service=notifier,
+        cep_lookup=cep_lookup,
     )
 
 
@@ -928,6 +931,91 @@ class TestEndereco:
         row = _cliente(scoped, cid)
         assert row["endereco_cep"] == "04000-000"  # untouched
         assert [c["campo"] for c in _conflitos(scoped)] == ["endereco"]
+
+
+class TestEnderecoCepAuthority:
+    """F3 (live prod test, 2026-09-30): CEP is the authority for cidade/uf
+    once it resolves; a suspicious `cidade` (too long, or carrying a digit)
+    is withheld even with no `cep_lookup` at all."""
+
+    @pytest.mark.asyncio
+    async def test_cep_replaces_a_wrong_cidade_uf_from_the_document(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        errado = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123",
+            complemento="APTO 12", bairro="JARDIM PAULISTANO",
+            cidade="BAIRRO ERRADO", uf="RJ",
+            titular="ANA PAULA SOUZA", confianca="alta", rotulo="ENDERECO",
+        )
+        cep_lookup = FakeCepLookupAdapter({
+            "01454-011": CepEndereco(
+                cep="01454-011", cidade="SÃO PAULO", uf="SP",
+                logradouro="Rua Professor Artur Ramos",
+            ),
+        })
+        await _extrair(scoped, storage, cid, did, _comprovante(errado), cep_lookup=cep_lookup)
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cidade"], row["endereco_uf"]) == ("SÃO PAULO", "SP")
+        # logradouro stays the document's own read even though the CEP's
+        # own logradouro differs — only cidade/uf are CEP-authoritative.
+        assert row["endereco_logradouro"] == "R PROF ARTUR RAMOS"
+
+    @pytest.mark.asyncio
+    async def test_no_cep_lookup_configured_keeps_pre_existing_behaviour(self, client, scoped):
+        """`cep_lookup=None` (every pre-existing caller) must reproduce the
+        exact pre-F3 result — no enrichment attempted."""
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante(), cep_lookup=None)
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cidade"], row["endereco_uf"]) == ("SÃO PAULO", "SP")
+
+    @pytest.mark.asyncio
+    async def test_cep_that_does_not_resolve_leaves_document_values_untouched(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        cep_lookup = FakeCepLookupAdapter()  # empty — nothing resolves
+        await _extrair(scoped, storage, cid, did, _comprovante(), cep_lookup=cep_lookup)
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cidade"], row["endereco_uf"]) == ("SÃO PAULO", "SP")
+
+    @pytest.mark.asyncio
+    async def test_a_suspiciously_long_cidade_is_withheld_even_without_cep_lookup(
+        self, client, scoped
+    ):
+        """Regression: a `comprovante_endereco` read once dumped a 57-char
+        whole-address string into `cidade` — this must never persist,
+        `cep_lookup` configured or not."""
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        suspeito = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123",
+            complemento="APTO 12", bairro="JARDIM PAULISTANO",
+            cidade="R PROF ARTUR RAMOS 123 APTO 12 JARDIM PAULISTANO SAO PAULO SP",
+            uf="SP", titular="ANA PAULA SOUZA", confianca="alta", rotulo="ENDERECO",
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante(suspeito))
+        row = _cliente(scoped, cid)
+        assert row["endereco_cidade"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_cidade_carrying_digits_is_withheld(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        suspeito = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123",
+            complemento=None, bairro=None, cidade="CEP 01454-011", uf="SP",
+            titular="ANA PAULA SOUZA", confianca="alta", rotulo="ENDERECO",
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante(suspeito))
+        row = _cliente(scoped, cid)
+        assert row["endereco_cidade"] is None
 
 
 class TestEnderecoAttribution:
