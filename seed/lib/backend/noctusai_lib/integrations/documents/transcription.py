@@ -211,60 +211,6 @@ def identity_document_render_dpi_policy() -> RenderDpiPolicy:
     )
 
 
-def cenprot_render_dpi_policy() -> RenderDpiPolicy:
-    """The CENPROT-manual-upload fix (P1/social-wiring, 2026-09-30 owner
-    finding).
-
-    The office's CENPROT evidence is not an official certidão — it is a
-    browser screenshot of the CENPROT-SP result page (the whole desktop,
-    OS taskbar included), pasted into a single-page PDF by a converter tool.
-    Measured against 8 real prod rows: the transcribed "Protocolo da
-    Consulta" (the contract's CENPROT número) carried 1-8 wrong/missing
-    digits in every one, and the certidão's own date is nowhere printed on
-    the page as such — it is the OS taskbar clock's date, sharing the same
-    single embedded raster as everything else.
-
-    This policy exists to opt a CENPROT transcription INTO the two
-    mechanisms `render_dpi_policy` already unlocks, unchanged, for exactly
-    this shape of document:
-
-    1. `_dominant_embedded_image` (fired via the caller's OWN
-       `force_vision=True`, `transcription.py`'s dominant-image branch) —
-       the screenshot is this page's one embedded image with no competing
-       barcode/logo raster, so the WHOLE crop (browser chrome, page body,
-       taskbar clock, all of it) is re-rendered through the page at
-       `_CARD_REGION_DPI` (600) instead of downsampled inside a whole-page
-       raster with wide blank margins above and below it — confirmed
-       2026-09-30 against 6 real screenshots' embedded-image geometry.
-    2. `dpi_for_page_count` below is the FALLBACK only — the whole-page
-       raster a page falls back to when the dominant-image crop does not
-       fire (a multi-image page, or an image PyMuPDF cannot isolate).
-       CENPROT manual uploads measured 2026-09-30 are single-page, so this
-       mirrors `identity_document_render_dpi_policy`'s own single-page
-       number (400) rather than inventing a third canonical value for a
-       document family this narrow.
-
-    `max_encoded_bytes`/`step_down_dpis` are shared with the identity
-    policy for the same reason that one states: Anthropic's own documented
-    per-image ceiling, imported lazily so this module never drags the
-    `anthropic` SDK into a caller that only ever reads a text layer.
-    """
-    from noctusai_lib.integrations.llm.providers.anthropic_provider import (
-        MAX_IMAGE_BYTES,
-    )
-
-    def _dpi_for_page_count(num_pages: int) -> int:
-        if num_pages <= 1:
-            return 400
-        return RENDER_DPI
-
-    return RenderDpiPolicy(
-        dpi_for_page_count=_dpi_for_page_count,
-        max_encoded_bytes=MAX_IMAGE_BYTES,
-        step_down_dpis=(300, 200, 150, 100),
-    )
-
-
 def _classify_failure(exc: Exception) -> str:
     """Name the failure when we can, so the consumer can say something useful.
 
@@ -531,11 +477,10 @@ class LadderDocumentTranscriber:
         self._render_dpi = render_dpi
         # `None` (the default) keeps EVERY existing consumer's behaviour
         # byte-for-byte: a flat `self._render_dpi` int, no per-page budget
-        # check — see `_pdf_to_images` below. Set by
-        # `identity_document_render_dpi_policy()` (via `LadderIdentityExtractor`)
-        # and `cenprot_render_dpi_policy()` (via social-wiring's manual
-        # CENPROT-upload structuring) today; a caller that supplies one opts
-        # INTO the page-count + byte-budget-aware rasterization in
+        # check — see `_pdf_to_images` below. Set only by
+        # `identity_document_render_dpi_policy()` today (via
+        # `LadderIdentityExtractor`); a caller that supplies one opts INTO
+        # the page-count + byte-budget-aware rasterization in
         # `_pdf_to_images_within_budget`, which then takes over from
         # `render_dpi` entirely for the vision rung.
         self._render_dpi_policy = render_dpi_policy
@@ -1741,7 +1686,6 @@ __all__ = [
     "RenderDpiPolicy",
     "TranscribedPage",
     "Transcription",
-    "cenprot_render_dpi_policy",
     "identity_document_render_dpi_policy",
     "make_document_transcriber",
     "has_raw_markup",

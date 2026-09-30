@@ -1098,7 +1098,6 @@ async def upload_certidao_manual(
         nome_display=resultado["nome_display"],
         org_id=str(org_id),
         db=db,
-        tipo=resultado["tipo"],
         resultado_origem_atual=resultado.get("resultado_origem"),
         confirmado_por_atual=resultado.get("confirmado_por"),
     )
