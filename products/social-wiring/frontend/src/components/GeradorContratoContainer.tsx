@@ -15,6 +15,16 @@
  * existing generate call runs. A 409 `EXTRACAO_PENDENTE_VALIDACAO` from
  * `gerar` (the backend gate — a value extracted between the check and the
  * click) reopens the dialog rather than surfacing as a bare error.
+ *
+ * 🔴 OWNER DECISION 2026-09-30 — ONE FINAL LEGAL REVIEW (the default,
+ * `geracao.revisao_final_unica === true`). The per-field gate above is the
+ * ROLLBACK mode now. In review mode "Gerar versão" generates straight away:
+ * machine-extracted values no longer need a click each — the new version
+ * lists them and waits for "Aprovar revisão jurídica" on the contracts panel
+ * (`RevisaoJuridicaSection`). An open extraction CONFLICT still refuses
+ * (409 with an empty `pendentes`); the dialog then opens showing only the
+ * conflicts. `ValidacaoExtracaoDialog`'s per-field rows stay in the code for
+ * the flag=false path and are never shown in review mode.
  */
 import { useState } from "react";
 import { toast } from "sonner";
@@ -23,6 +33,7 @@ import GeradorContratoSection, { type GeracaoDestino } from "@/components/card/G
 import ValidacaoExtracaoDialog from "@/components/card/ValidacaoExtracaoDialog";
 import {
   ContratoGeracaoError,
+  aguardandoRevisaoJuridica,
   useContratoGeracao,
   useContratoMutations,
 } from "@/hooks/useContratos";
@@ -90,6 +101,8 @@ export function GeradorContratoContainer({
   const isRefreshing = query.isFetching && !!query.data;
   const validacaoSkeleton = validacao.isPending && !validacao.data;
   const validacaoRefreshing = validacao.isFetching && !!validacao.data;
+  /** Which human step this backend asks for — see the header note. */
+  const revisaoFinalUnica = query.data?.revisao_final_unica === true;
 
   function abrirValidacao() {
     setRejeitados([]);
@@ -103,7 +116,11 @@ export function GeradorContratoContainer({
         onSuccess: (result) => {
           setValidacaoAberta(false);
           setAvisosGerados(result.avisos.map((a) => a.mensagem));
-          toast.success("Nova versão gerada.");
+          toast.success(
+            aguardandoRevisaoJuridica(result.versao)
+              ? "Nova versão gerada — aguardando revisão jurídica."
+              : "Nova versão gerada.",
+          );
         },
         onError: (err) => {
           if (err instanceof ContratoGeracaoError && err.code === CODIGO_PENDENTE_VALIDACAO) {
@@ -132,6 +149,12 @@ export function GeradorContratoContainer({
   function handleGerar() {
     setErroGeracao(null);
     setAvisosGerados(null);
+    if (revisaoFinalUnica) {
+      // Nothing to click through first — the review comes after, once, on
+      // the finished version. A conflict still comes back as a 409.
+      executarGerar();
+      return;
+    }
     verificar.mutate(undefined, {
       onSuccess: ({ pendentes, conflitos }) => {
         if (pendentes.length > 0 || conflitos.length > 0) {
@@ -211,7 +234,9 @@ export function GeradorContratoContainer({
       <ValidacaoExtracaoDialog
         open={validacaoAberta}
         onOpenChange={setValidacaoAberta}
-        pendentes={validacao.data?.pendentes}
+        // Review mode: only the conflicts refuse — the pending values are the
+        // legal review's, so the per-field rows are not offered.
+        pendentes={revisaoFinalUnica ? (validacao.data ? [] : undefined) : validacao.data?.pendentes}
         conflitos={validacao.data?.conflitos ?? []}
         showSkeleton={validacaoSkeleton}
         isRefreshing={validacaoRefreshing}

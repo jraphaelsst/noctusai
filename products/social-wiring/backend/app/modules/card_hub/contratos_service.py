@@ -157,6 +157,105 @@ class ContratoJaAssinado(AppException):
         )
 
 
+# ─── migration 177 — one final legal review per generated version ────────
+
+#: `revisao_juridica_status` vocabulary. 'nao_exigida' = nothing machine-
+#: derived was left unvalidated when the version was rendered (every upload,
+#: every signed copy, every pre-177 or per-field-mode rendering);
+#: 'aguardando' = it relied on such values and nobody approved it yet;
+#: 'aprovada' = `revisado_por/_em` stamped.
+REVISAO_NAO_EXIGIDA = "nao_exigida"
+REVISAO_AGUARDANDO = "aguardando"
+REVISAO_APROVADA = "aprovada"
+
+
+class ContratoAguardandoRevisaoJuridica(AppException):
+    """Sending for signature, "Baixar para impressão" or marking a física
+    contract signed, on a version generated from machine-extracted values
+    the legal review has not approved yet (owner decision 2026-09-30)."""
+
+    def __init__(self, campos: list[dict]) -> None:
+        super().__init__(
+            code="CONTRATO_AGUARDANDO_REVISAO_JURIDICA",
+            message=(
+                "Esta versão foi gerada com dados extraídos automaticamente e "
+                "aguarda a revisão jurídica. Aprove a revisão antes de enviar "
+                "para assinatura ou imprimir."
+            ),
+            status_code=409,
+            details={"campos": [c.get("rotulo") for c in campos]},
+        )
+
+
+def revisao_juridica_campos(row: dict) -> list[dict]:
+    """The machine-derived values a version relied on — `[]` for a row read
+    before migration 177 is applied (no column at all)."""
+    return list(row.get("revisao_juridica_campos") or [])
+
+
+def revisao_juridica_status(row: dict) -> str:
+    if row.get("revisado_em"):
+        return REVISAO_APROVADA
+    if revisao_juridica_campos(row):
+        return REVISAO_AGUARDANDO
+    return REVISAO_NAO_EXIGIDA
+
+
+def exigir_revisao_juridica(row: dict) -> None:
+    """The ONE gate every "final" use of a version goes through."""
+    if revisao_juridica_status(row) == REVISAO_AGUARDANDO:
+        raise ContratoAguardandoRevisaoJuridica(revisao_juridica_campos(row))
+
+
+#: The keys of a `revisao_juridica_campos` entry — what the reviewer is
+#: shown and what the approval checks. Deliberately NOT the value itself
+#: (`valor`): the PDF carries it, and a JSON copy of a CPF on every version
+#: row is a second place LGPD has to find it. `valor_sha256` is enough to
+#: refuse an approval after the value changed.
+CAMPOS_REVISAO_CHAVES: tuple[str, ...] = (
+    "chave",
+    "entidade",
+    "entidade_id",
+    "campo",
+    "rotulo",
+    "grupo",
+    "origem",
+    "fonte_documento_id",
+    "fonte_nome",
+    "confianca",
+    "valor_sha256",
+)
+
+
+def exigir_revisao_da_versao_atual(client: Any, org_id: UUID, contrato_id: UUID) -> None:
+    """The gate for the acts that close a contract WITHOUT naming a version
+    (marking a física contract signed, a manual status PATCH to
+    `enviado_assinatura`/`assinado`): the contract's CURRENT version — the
+    highest live `numero`, the one the card offers for printing — must not be
+    awaiting the legal review."""
+    linhas = VERSOES_STORE.listar_linhas(client, org_id, UUID(str(contrato_id)))
+    if linhas:
+        exigir_revisao_juridica(max(linhas, key=lambda r: r["numero"]))
+
+
+#: Status a manual PATCH may not reach while the current version awaits the
+#: legal review — the same acts the envelope/print paths gate.
+STATUSES_FINAIS: tuple[str, ...] = ("enviado_assinatura", "assinado")
+
+
+def _revisao_out(row: dict, resolved: dict) -> dict:
+    campos = revisao_juridica_campos(row)
+    return {
+        "status": revisao_juridica_status(row),
+        # The fingerprint is the approval's business, not the reader's.
+        "campos": [
+            {k: c.get(k) for k in CAMPOS_REVISAO_CHAVES if k != "valor_sha256"} for c in campos
+        ],
+        "revisado_por": table_reads.actor(resolved, row.get("revisado_por")),
+        "revisado_em": row.get("revisado_em"),
+    }
+
+
 def modalidade(row: dict) -> str:
     """The row's modalidade — a pre-157 row read before the migration is
     applied carries no column at all, which IS 'digital' (the column's own
@@ -279,6 +378,8 @@ def _versao_out(row: dict, resolved: dict) -> dict:
         # rendered with; null for upload/assinado and pre-157 gerado rows.
         # "Baixar para impressão" is only offered for 'fisica'.
         "modalidade_assinatura": row.get("modalidade_assinatura"),
+        # Migration 177 — the one final legal review (owner 2026-09-30).
+        "revisao_juridica": _revisao_out(row, resolved),
     }
 
 
@@ -288,6 +389,7 @@ def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
     linhas.sort(key=lambda r: r["numero"], reverse=True)
 
     ids = {r["enviado_por"] for r in linhas if r.get("enviado_por")}
+    ids |= {r["revisado_por"] for r in linhas if r.get("revisado_por")}
     if row.get("status_por"):
         ids.add(row["status_por"])
     if row.get("processo_legado_por"):
@@ -685,6 +787,7 @@ async def nova_versao_gerada(
     contexto_sha256: str,
     usuario_id: Optional[UUID],
     modalidade_assinatura: str = MODALIDADE_PADRAO,
+    revisao_campos: Optional[list[dict]] = None,
 ) -> dict:
     """A version produced by the F5 generator (`card_hub/contrato_gerador`):
     origem='gerado' plus the SHA-256 of the data it was rendered from
@@ -725,6 +828,15 @@ async def nova_versao_gerada(
             "contexto_sha256": contexto_sha256,
             # Migration 157 — the modalidade this rendering carries.
             "modalidade_assinatura": modalidade_assinatura,
+            # Migration 177 — only written when there is something to
+            # review, so a per-field-mode rendering's insert is unchanged.
+            **(
+                {"revisao_juridica_campos": [
+                    {k: c.get(k) for k in CAMPOS_REVISAO_CHAVES} for c in revisao_campos
+                ]}
+                if revisao_campos
+                else {}
+            ),
         },
         docx=docx,
     )
@@ -827,6 +939,14 @@ def atualizar(
             and envelope_vivo(client, org_id, contrato_id) is not None
         ):
             raise ContratoComAssinaturaDigitalEmAndamento()
+
+    # Migration 177. A manual jump to a "final" status is the same act the
+    # envelope / print paths gate — never a way around the legal review.
+    if (
+        valores.get("status") in STATUSES_FINAIS
+        and valores.get("status") != atual.get("status")
+    ):
+        exigir_revisao_da_versao_atual(client, org_id, contrato_id)
 
     patch = {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
 
@@ -933,8 +1053,15 @@ async def url_versao(
     usuario_id: Optional[UUID],
     intent: str = "view",
     formato: str = "pdf",
+    impressao: bool = False,
 ) -> dict:
     """Mint a short-TTL signed URL for a version's content.
+
+    `impressao=True` (migration 177) is "Baixar para impressão" — the FINAL
+    copy that gets printed and signed. It is refused (409
+    `CONTRATO_AGUARDANDO_REVISAO_JURIDICA`) while the version awaits the
+    legal review; a plain view/download stays allowed (the UI labels it
+    "rascunho") so the reviewer can read the very PDF they approve.
 
     `formato='pdf'` (default) delegates to `VERSOES_STORE.url` unchanged —
     every version, upload or gerado, has one. `formato='docx'` (migration
@@ -953,6 +1080,10 @@ async def url_versao(
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     exigir_contrato(client, org_id, atendimento_id, contrato_id)
     owner = UUID(str(contrato_id))
+
+    if impressao:
+        # 404 first for a foreign/missing id, then the review gate.
+        exigir_revisao_juridica(VERSOES_STORE.exigir(client, org_id, owner, versao_id))
 
     if formato == "pdf":
         return await VERSOES_STORE.url(

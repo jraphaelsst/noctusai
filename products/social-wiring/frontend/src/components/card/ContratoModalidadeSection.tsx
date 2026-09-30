@@ -11,7 +11,10 @@
  * - `fisica` NEVER renders the send-for-signature path. It shows
  *   "Baixar para impressão" — only for a version GENERATED as física (the
  *   one with signature lines; `versaoParaImpressao`) — and
- *   "Marcar como assinado", with an optional scanned PDF.
+ *   "Marcar como assinado", with an optional scanned PDF. Both wait for the
+ *   legal review (migration 177, owner decision 2026-09-30) when the print
+ *   copy was generated from machine-extracted values nobody approved yet —
+ *   disabled here with the reason; the server refuses both (409) anyway.
  *
  * Mobile-first: the toggle is full-width at 390px, every touch target is
  * ≥ 40px (`min-h-10`), actions stack and only go side-by-side from `sm`.
@@ -32,6 +35,7 @@ import type { ContratoOut, ModalidadeAssinatura } from "@/hooks/useContratos";
 import {
   CONTRATO_ASSINADO_ACCEPT_ATTR,
   MODALIDADE_ASSINATURA_LABEL,
+  aguardandoRevisaoJuridica,
   validateContratoAssinadoFile,
   versaoParaImpressao,
 } from "@/hooks/useContratos";
@@ -70,6 +74,9 @@ export function ContratoModalidadeSection({
   const encerrado = contrato.status === "cancelado";
   const impressao = versaoParaImpressao(contrato);
   const assinado = contrato.status === "assinado";
+  // Migration 177 — the CURRENT version awaits the legal review: no final
+  // copy to print, and nothing to declare signed yet.
+  const aguardaRevisao = aguardandoRevisaoJuridica(contrato.versao_atual);
 
   return (
     <div className="space-y-2" data-testid={`contrato-modalidade-${id}`}>
@@ -131,8 +138,8 @@ export function ContratoModalidadeSection({
               type="button"
               variant="outline"
               className="min-h-10 w-full sm:w-auto"
-              disabled={!impressao}
-              onClick={() => impressao && onBaixarImpressao(impressao.id)}
+              disabled={!impressao || aguardaRevisao}
+              onClick={() => impressao && !aguardaRevisao && onBaixarImpressao(impressao.id)}
               data-testid={`contrato-baixar-impressao-${id}`}
             >
               <Printer className="mr-1.5 h-4 w-4" />
@@ -142,7 +149,7 @@ export function ContratoModalidadeSection({
               <Button
                 type="button"
                 className="min-h-10 w-full sm:w-auto"
-                disabled={marcandoAssinado}
+                disabled={marcandoAssinado || (aguardaRevisao && !assinado)}
                 onClick={() => setDialogAberto(true)}
                 data-testid={`contrato-marcar-assinado-${id}`}
               >
@@ -157,6 +164,14 @@ export function ContratoModalidadeSection({
               </Button>
             )}
           </div>
+          {aguardaRevisao && !assinado && (
+            <p
+              className="text-[11px] text-amber-800"
+              data-testid={`contrato-impressao-aguarda-revisao-${id}`}
+            >
+              Impressão e assinatura liberadas depois da aprovação da revisão jurídica.
+            </p>
+          )}
           {!impressao && (
             <p className="text-[11px] text-muted-foreground" data-testid={`contrato-impressao-hint-${id}`}>
               Gere uma nova versão do contrato com a assinatura física para imprimir com as

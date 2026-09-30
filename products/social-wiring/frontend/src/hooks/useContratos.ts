@@ -87,6 +87,55 @@ export interface VersaoOut {
    *  that one is offered as "Baixar para impressão". `null` for upload /
    *  assinado versions and for gerado ones that predate the migration. */
   modalidade_assinatura: ModalidadeAssinatura | null;
+  /** Migration 177 — the one final legal review (owner decision
+   *  2026-09-30). Optional only for rows a pre-177 backend serialised; the
+   *  current backend always sends it. See `revisaoJuridicaStatus`. */
+  revisao_juridica?: RevisaoJuridica | null;
+}
+
+/** `nao_exigida` = nothing machine-derived was left unvalidated when the
+ *  version was rendered; `aguardando` = it was, and nobody approved it yet
+ *  (signature / print are refused); `aprovada` = the legal review approved. */
+export type RevisaoJuridicaStatus = "nao_exigida" | "aguardando" | "aprovada";
+
+/** One machine-derived value the version relied on — labels and provenance
+ *  only; the value itself is read in the PDF ("revisar no documento"). */
+export interface CampoRevisaoJuridica {
+  chave: string;
+  entidade: string;
+  entidade_id: string;
+  campo: string;
+  rotulo: string;
+  grupo: string | null;
+  origem: string | null;
+  fonte_documento_id: string | null;
+  fonte_nome: string | null;
+  confianca: string | null;
+}
+
+export interface RevisaoJuridica {
+  status: RevisaoJuridicaStatus;
+  campos: CampoRevisaoJuridica[];
+  revisado_por: ContratoActor | null;
+  revisado_em: string | null;
+}
+
+/** Extra download options — `impressao` (migration 177) marks the "Baixar
+ *  para impressão" FINAL copy the server refuses while the review waits. */
+export interface DownloadOpcoes {
+  impressao?: boolean;
+}
+
+/** The version's review state — a row without the field (a pre-177
+ *  backend) needs no review, same as the server reads a missing column. */
+export function revisaoJuridicaStatus(versao: VersaoOut | null | undefined): RevisaoJuridicaStatus {
+  return versao?.revisao_juridica?.status ?? "nao_exigida";
+}
+
+/** `true` while signature / "Baixar para impressão" are refused server-side
+ *  (409 `CONTRATO_AGUARDANDO_REVISAO_JURIDICA`). */
+export function aguardandoRevisaoJuridica(versao: VersaoOut | null | undefined): boolean {
+  return revisaoJuridicaStatus(versao) === "aguardando";
 }
 
 export interface ContratoOut {
@@ -206,6 +255,11 @@ export interface ContratoGeracaoStatus {
   processo_legado: boolean;
   /** Migration 157 — which instrument `gerar` will render. */
   modalidade_assinatura: ModalidadeAssinatura;
+  /** Owner decision 2026-09-30. `true` (the default) = generate now and ONE
+   *  legal review of the finished version later; `false` = the per-field
+   *  validation modal before generating (the rollback mode). Absent (a
+   *  pre-177 backend) reads as `false` — the mode that backend enforces. */
+  revisao_final_unica?: boolean;
   switches: Record<string, boolean>;
   faltando: GeracaoFaltando[];
   bloqueios: GeracaoBloqueio[];
@@ -758,14 +812,18 @@ export function useContratoMutations(clienteId: string) {
       versaoId,
       intent = "view",
       formato,
+      impressao = false,
     }: {
       contratoId: string;
       versaoId: string;
       intent?: "view" | "download";
       formato?: "pdf" | "docx";
+      /** Migration 177 — "Baixar para impressão", the FINAL copy: refused
+       *  (409) while the version awaits the legal review. */
+      impressao?: boolean;
     }) =>
       api.get<{ url: string; expires_at: string }>(
-        `${base(clienteId)}/${encodeURIComponent(contratoId)}/versoes/${encodeURIComponent(versaoId)}/url?intent=${intent}${formato === "docx" ? "&formato=docx" : ""}`,
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/versoes/${encodeURIComponent(versaoId)}/url?intent=${intent}${formato === "docx" ? "&formato=docx" : ""}${impressao ? "&impressao=true" : ""}`,
       ),
   });
 
@@ -899,7 +957,24 @@ export function useContratoMutations(clienteId: string) {
     onSuccess: invalidate,
   });
 
+  /**
+   * `aprovarRevisaoJuridica` — POST .../versoes/{id}/revisao-juridica
+   * (migration 177, owner decision 2026-09-30): the ONE contract-level legal
+   * review. Admin/owner only server-side (403 otherwise). Invalidates the
+   * whole contratos prefix — the version's review state, and the
+   * validação/proveniência reads whose values it just confirmed.
+   */
+  const aprovarRevisaoJuridica = useMutation({
+    mutationFn: ({ contratoId, versaoId }: { contratoId: string; versaoId: string }) =>
+      api.post<{ contrato: ContratoOut; confirmados: number }>(
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/versoes/${encodeURIComponent(versaoId)}/revisao-juridica`,
+        {},
+      ),
+    onSuccess: invalidate,
+  });
+
   return {
+    aprovarRevisaoJuridica,
     create,
     addVersao,
     patch,

@@ -836,7 +836,8 @@ describe("modalidade de assinatura — Digital/Física (migration 157)", () => {
     });
     expect(screen.queryByTestId("contrato-enviar-assinatura-c1")).toBeNull();
     fireEvent.click(screen.getByTestId("contrato-baixar-impressao-c1"));
-    expect(onDownload).toHaveBeenCalledWith("c1", "v2", "pdf");
+    // Migration 177 — the print copy is asked for as the FINAL one.
+    expect(onDownload).toHaveBeenCalledWith("c1", "v2", "pdf", { impressao: true });
     expect(screen.getByTestId("contrato-marcar-assinado-c1").textContent).toContain(
       "Marcar como assinado",
     );
@@ -874,5 +875,120 @@ describe("modalidade de assinatura — Digital/Física (migration 157)", () => {
     });
     expect((screen.getByTestId("contrato-modalidade-fisica-c1") as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("contrato-modalidade-bloqueio-c1").textContent).toContain("cancele o envio");
+  });
+});
+
+describe("revisão jurídica — one final review per contract (migration 177)", () => {
+  function entry(over: Partial<AssinaturaEntry> = {}): AssinaturaEntry {
+    return { data: null, isPending: false, isFetching: false, isError: false, ...over };
+  }
+  const CAMPO = {
+    chave: "cliente:p1:cpf",
+    entidade: "cliente",
+    entidade_id: "p1",
+    campo: "cpf",
+    rotulo: "CPF",
+    grupo: "Fulano (proprietario)",
+    origem: "rg",
+    fonte_documento_id: null,
+    fonte_nome: "rg.pdf",
+    confianca: "alta",
+  };
+  const aguardando = {
+    status: "aguardando" as const,
+    campos: [CAMPO],
+    revisado_por: null,
+    revisado_em: null,
+  };
+
+  it("🔴 a version awaiting the review is a labelled rascunho, lists its fields and cannot be sent", async () => {
+    const onAbrirEnvioAssinatura = vi.fn();
+    const onAprovarRevisaoJuridica = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [
+        contrato({ versao_atual: versao({ id: "v4", origem: "gerado", revisao_juridica: aguardando }) }),
+      ],
+      assinaturas: { c1: entry() },
+      onAbrirEnvioAssinatura,
+      onAprovarRevisaoJuridica,
+      isAdmin: true,
+    });
+    expect(screen.getByTestId("contrato-rascunho-c1").textContent).toContain("Rascunho");
+    expect(screen.getByTestId("contrato-revisao-campo-cliente:p1:cpf")).toBeTruthy();
+    const enviar = screen.getByTestId("contrato-enviar-assinatura-c1") as HTMLButtonElement;
+    expect(enviar.disabled).toBe(true);
+    expect(screen.getByTestId("contrato-enviar-aguarda-revisao-c1")).toBeTruthy();
+    fireEvent.click(enviar);
+    expect(onAbrirEnvioAssinatura).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("contrato-revisao-aprovar-c1"));
+    fireEvent.click(screen.getByTestId("contrato-revisao-aprovar-confirmar-c1"));
+    expect(onAprovarRevisaoJuridica).toHaveBeenCalledWith("c1", "v4");
+  });
+
+  it("🔴 once approved, the send is offered again and no rascunho label remains", async () => {
+    const onAbrirEnvioAssinatura = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [
+        contrato({
+          versao_atual: versao({
+            id: "v4",
+            origem: "gerado",
+            revisao_juridica: {
+              ...aguardando,
+              status: "aprovada",
+              revisado_por: { id: "u1", nome: "Ana" },
+              revisado_em: "2026-09-30T10:00:00+00:00",
+            },
+          }),
+        }),
+      ],
+      assinaturas: { c1: entry() },
+      onAbrirEnvioAssinatura,
+    });
+    expect(screen.queryByTestId("contrato-rascunho-c1")).toBeNull();
+    expect(screen.getByTestId("contrato-revisao-aprovada-c1")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("contrato-enviar-assinatura-c1"));
+    expect(onAbrirEnvioAssinatura).toHaveBeenCalledWith("c1", "v4");
+  });
+
+  it("🔴 física: 'Baixar para impressão' and 'Marcar como assinado' wait for the review, and say why", async () => {
+    const onDownload = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [
+        contrato({
+          modalidade_assinatura: "fisica",
+          versao_atual: versao({
+            id: "v5",
+            origem: "gerado",
+            modalidade_assinatura: "fisica",
+            revisao_juridica: aguardando,
+          }),
+        }),
+      ],
+      assinaturas: { c1: entry() },
+      onMarcarAssinadoFisico: vi.fn(),
+      onDownload,
+    });
+    const imprimir = screen.getByTestId("contrato-baixar-impressao-c1") as HTMLButtonElement;
+    expect(imprimir.disabled).toBe(true);
+    fireEvent.click(imprimir);
+    expect(onDownload).not.toHaveBeenCalled();
+    expect((screen.getByTestId("contrato-marcar-assinado-c1") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("contrato-impressao-aguarda-revisao-c1")).toBeTruthy();
+    // The rascunho itself stays downloadable — the reviewer reads this PDF.
+    fireEvent.click(screen.getByTestId("contrato-baixar-c1"));
+    expect(onDownload).toHaveBeenCalledWith("c1", "v5", undefined);
+  });
+
+  it("a version that needed no review shows no review block at all", async () => {
+    const { screen } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v6", origem: "gerado" }) })],
+      assinaturas: { c1: entry() },
+      onAbrirEnvioAssinatura: vi.fn(),
+    });
+    expect(screen.queryByTestId("contrato-revisao-aguardando-c1")).toBeNull();
+    expect(screen.queryByTestId("contrato-revisao-aprovada-c1")).toBeNull();
+    expect((screen.getByTestId("contrato-enviar-assinatura-c1") as HTMLButtonElement).disabled).toBe(false);
   });
 });

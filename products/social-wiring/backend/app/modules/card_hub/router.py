@@ -1511,14 +1511,19 @@ async def get_contrato_versao_url_route(
     versao_id: UUID,
     intent: str = Query("view"),
     formato: str = Query("pdf"),
+    impressao: bool = Query(False),
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
     storage=Depends(get_storage_backend),
 ) -> dict:
+    """`impressao=true` = "Baixar para impressão" — refused with 409
+    `CONTRATO_AGUARDANDO_REVISAO_JURIDICA` while the version awaits the
+    legal review (migration 177); a plain view/download never is."""
     user, org_id = _auth_parts(auth)
     return await contratos_svc.url_versao(
         client, storage, org_id, cliente_id, contrato_id, versao_id,
         usuario_id=getattr(user, "id", None), intent=intent, formato=formato,
+        impressao=impressao,
     )
 
 

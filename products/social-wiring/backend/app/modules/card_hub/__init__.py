@@ -74,6 +74,7 @@ Routes
     GET                     /api/clientes/{id}/contratos/{cid}/validacao-extracao
     POST                    /api/clientes/{id}/contratos/{cid}/validacao-extracao/decisoes
     GET                     /api/clientes/{id}/contratos/{cid}/proveniencia
+    POST                    /api/clientes/{id}/contratos/{cid}/versoes/{vid}/revisao-juridica
     GET                     /api/clientes/{id}/negociacao/estruturada
     POST/PATCH/DELETE       /api/clientes/{id}/negociacao/parcelas[/{pid}]
     POST                    /api/clientes/{id}/negociacao/parcelas/dividir-saldo

@@ -148,6 +148,31 @@ class Politica:
     # errors — no code default. The gate keeps blocking any Σ parcelas ≠
     # valor_negociado (bloqueio SOMA_PARCELAS_DIFERENTE_DO_PRECO).
 
+    # [D2 → one final review, owner decision 2026-09-30, verbatim: asked
+    # "replace the per-field confirmations with one final review of the
+    # finished contract by the legal team?" → "yes"; standing directive:
+    # "Human reviews are meant to be the exception, not the rule."]
+    #
+    # True (the answer): `service.gerar` no longer waits for a per-field
+    # accept/reject of every machine-extracted value (migration 156's gate).
+    # It generates, and the version RECORDS which contract-feeding values
+    # were machine-derived and not yet human-validated
+    # (`atendimento_contrato_versoes.revisao_juridica_campos`, migration
+    # 177). Such a version is "aguardando revisão jurídica" until ONE
+    # contract-level "Aprovar revisão jurídica" (`revisao_juridica.aprovar`)
+    # — which also confirms every recorded value on its own row, so the
+    # provenance stays truthful. Sending it for signature, and "Baixar para
+    # impressão", require that approval. Open extraction CONFLICTS still
+    # block `gerar`: two readings disagree and the system cannot tell which
+    # one the contract should print — that is the exception a human exists
+    # for, not a confirmation.
+    #
+    # False: the pre-2026-09-30 per-field gate (`validacao_extracao.
+    # exigir_sem_pendentes`), kept verbatim for rollback. This is the ONE
+    # source of truth — `matriculas.autopiloto_service.
+    # REVISAO_FINAL_UNICA_POR_CONTRATO` reads it, never a second copy.
+    revisao_final_unica: bool = True
+
 
 POLITICA_PADRAO = Politica()
 

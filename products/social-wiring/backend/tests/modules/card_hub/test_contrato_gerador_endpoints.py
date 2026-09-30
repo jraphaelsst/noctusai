@@ -541,7 +541,10 @@ class TestGeracao:
         body = r.json()
         assert set(body) == {"contrato_id", "pronto", "modelo_derivado", "modelo_confere",
                              "modelo_automatico", "processo_legado", "modalidade_assinatura",
-                             "switches", "faltando", "bloqueios", "avisos"}
+                             "revisao_final_unica", "switches", "faltando", "bloqueios",
+                             "avisos"}
+        # Owner decision 2026-09-30 — one final legal review is the default.
+        assert body["revisao_final_unica"] is True
         # Migration 157 — a contract row with no stored modalidade is digital.
         assert body["modalidade_assinatura"] == "digital"
         assert body["contrato_id"] == ids["contrato"] and body["pronto"] is False

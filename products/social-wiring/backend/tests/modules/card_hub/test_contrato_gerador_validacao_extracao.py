@@ -52,6 +52,31 @@ from tests.modules.card_hub.test_contrato_gerador_endpoints import (
 _MIGRATIONS = Path(__file__).resolve().parents[3] / "migrations"
 
 
+@pytest.fixture(autouse=True)
+def _modo_por_campo(request):
+    """THIS file pins the PER-FIELD mode (`Politica.revisao_final_unica=
+    False`) — the pre-2026-09-30 gate, kept for rollback. The default mode
+    (one final legal review per contract) is pinned in
+    `test_contrato_gerador_revisao_juridica.py`. Through the policy DI seam
+    production uses, never a patch; only installed for HTTP tests (the pure
+    unit tests never build an app)."""
+    if "client" not in request.fixturenames:
+        yield
+        return
+    from dataclasses import replace
+
+    from app.main import app
+    from app.modules.card_hub.contrato_gerador.deps import get_politica_contrato
+    from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
+
+    request.getfixturevalue("client")
+    app.dependency_overrides[get_politica_contrato] = lambda: replace(
+        POLITICA_PADRAO, revisao_final_unica=False
+    )
+    yield
+    app.dependency_overrides.pop(get_politica_contrato, None)
+
+
 def _schema() -> dict[str, set[str]]:
     return parse_files(sorted(_MIGRATIONS.glob("[0-9]*.sql")))
 

@@ -23,5 +23,8 @@ Layout (pure core, IO at the edges):
 - `lint`         — post-render lint; any hit blocks saving
 - `carregador`   — reads `DadosContrato` through the existing services
 - `service`      — `obter_geracao` / `gerar`
+- `revisao_juridica` — "Aprovar revisão jurídica": the one final legal review
+                   of a generated version (owner decision 2026-09-30,
+                   migration 177; `politica.revisao_final_unica`)
 - `router`       — GET .../geracao, POST .../gerar
 """

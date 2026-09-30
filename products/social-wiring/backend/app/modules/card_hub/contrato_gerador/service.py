@@ -30,7 +30,10 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
 from app.modules.card_hub.contrato_gerador.documento import MIME_PDF, gerar_pdf, renderizar
 from app.modules.card_hub.contrato_gerador.lint import lint
 from app.modules.card_hub.contrato_gerador.politica import Politica
-from app.modules.card_hub.contrato_gerador.validacao_extracao import exigir_sem_pendentes
+from app.modules.card_hub.contrato_gerador.validacao_extracao import (
+    exigir_sem_pendentes,
+    pendentes_para_revisao,
+)
 
 FUSO = ZoneInfo("America/Sao_Paulo")
 
@@ -125,6 +128,10 @@ def obter_geracao(
         "processo_legado": dados.processo_legado,
         # Migration 157 — which instrument `gerar` will render.
         "modalidade_assinatura": dados.modalidade_assinatura,
+        # Owner decision 2026-09-30 — which human step the UI offers: True =
+        # generate now, ONE legal review of the finished version later;
+        # False = the per-field validation modal before generating.
+        "revisao_final_unica": politica.revisao_final_unica,
         "switches": switches,
         "faltando": avaliacao.faltando,
         "bloqueios": avaliacao.bloqueios,
@@ -206,12 +213,22 @@ async def gerar(
     politica: Politica,
 ) -> dict:
     dados, atendimento_id = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
-    # Owner decision D2 (migration 156): nothing a machine extracted may reach
-    # the instrument before a human validated it. Checked FIRST — a rejected
-    # value turns into a `faltando` below, so the validation is what the
-    # operator must clear before the completeness report is even meaningful.
-    # 409 `EXTRACAO_PENDENTE_VALIDACAO`; the modal is UI, this is the gate.
-    exigir_sem_pendentes(client, org_id, dados, usuario_id=usuario_id)
+    if politica.revisao_final_unica:
+        # Owner decision 2026-09-30: ONE final legal review of the finished
+        # contract replaces the per-field confirmations. Machine-derived,
+        # not-yet-validated values no longer refuse — they are RECORDED on
+        # the version rendered below (migration 177), which then awaits
+        # "Aprovar revisão jurídica" before signature/print. An open
+        # extraction CONFLICT still refuses (409 EXTRACAO_PENDENTE_VALIDACAO,
+        # empty `pendentes`) — the system cannot pick between two readings.
+        revisao_campos = pendentes_para_revisao(client, org_id, dados, usuario_id=usuario_id)
+    else:
+        # Owner decision D2 (migration 156), kept for rollback: nothing a
+        # machine extracted may reach the instrument before a human validated
+        # it, field by field. Checked FIRST — a rejected value turns into a
+        # `faltando` below. 409 `EXTRACAO_PENDENTE_VALIDACAO`.
+        exigir_sem_pendentes(client, org_id, dados, usuario_id=usuario_id)
+        revisao_campos = []
     data = data_assinatura(dados, assinatura)
     # [E1/H2] ONE `hoje()` snapshot for switches, the gate, AND the render —
     # a generation run reads a single "today" throughout, never one call
@@ -260,6 +277,7 @@ async def gerar(
         # Migration 157 — so "Baixar para impressão" only ever offers a
         # rendering that actually carries the signature lines.
         modalidade_assinatura=dados.modalidade_assinatura,
+        revisao_campos=revisao_campos,
     )
     return {"versao": versao, "avisos": avaliacao.avisos}
 

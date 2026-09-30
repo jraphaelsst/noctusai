@@ -1,6 +1,16 @@
 """The human validation gate over machine-extracted contract data (owner
 decision D2, roadmap `sw-extraction-contract-gate-2026-09`, migration 156).
 
+🔴 TWO MODES, ONE SWITCH (`politica.Politica.revisao_final_unica`). Owner
+decision 2026-09-30: "one final review of the finished contract by the legal
+team" replaces the per-field confirmations — the DEFAULT. Then `gerar` calls
+`pendentes_para_revisao` (only open conflicts refuse; the pending list is
+recorded on the version) and the contract-level review confirms it via
+`confirmar_por_revisao` (see `revisao_juridica`). With the flag False,
+`exigir_sem_pendentes` + the per-field `decidir` below are the gate, exactly
+as D2 shipped — kept for rollback. Everything else here (WHAT/WHICH, the
+registry, conflicts) is shared by both modes.
+
 WHAT IS "PENDING"
 -----------------
 A contract-feeding value is **machine-pending** iff, on its own provenance
@@ -64,6 +74,7 @@ date unknown, which the gate already handles.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -1238,24 +1249,152 @@ def decidir(
             _rejeitar_conjuge_reverso(
                 client, org_id, alvo.entidade_id, alvo.row.get("conjuge_cliente_id"), agora
             )
-        table_reads.table(client, LEDGER).insert(
-            {
-                "org_id": str(org_id),
-                "contrato_id": str(contrato_id),
-                "entidade": campo.entidade,
-                "entidade_id": alvo.entidade_id,
-                "campo": campo.campo,
-                "valor_extraido": valor_extraido,
-                "origem": item["origem"],
-                "fonte_documento_id": item["fonte_documento_id"],
-                "confianca": item["confianca"],
-                "decisao": decisao,
-                "decidido_por": str(usuario_id) if usuario_id else None,
-                "decidido_em": agora,
-            }
-        ).execute()
+        _registrar(
+            client, org_id, contrato_id, campo, alvo, item, valor_extraido, decisao,
+            usuario_id=usuario_id, agora=agora,
+        )
 
     return {"aplicadas": len(decisoes), **situacao(client, org_id, dados, usuario_id=usuario_id)}
+
+
+def _registrar(
+    client: Any,
+    org_id: UUID,
+    contrato_id: UUID,
+    campo: CampoValidavel,
+    alvo: Alvo,
+    item: dict,
+    valor_extraido: Optional[str],
+    decisao: Decisao,
+    *,
+    usuario_id: Optional[Any],
+    agora: str,
+    revisao_versao_id: Optional[str] = None,
+) -> None:
+    """One append-only ledger row (migration 156). `revisao_versao_id`
+    (migration 177) is written ONLY by the legal review — a per-field
+    decision's insert stays byte-identical to the pre-177 one."""
+    linha = {
+        "org_id": str(org_id),
+        "contrato_id": str(contrato_id),
+        "entidade": campo.entidade,
+        "entidade_id": alvo.entidade_id,
+        "campo": campo.campo,
+        "valor_extraido": valor_extraido,
+        "origem": item["origem"],
+        "fonte_documento_id": item["fonte_documento_id"],
+        "confianca": item["confianca"],
+        "decisao": decisao,
+        "decidido_por": str(usuario_id) if usuario_id else None,
+        "decidido_em": agora,
+    }
+    if revisao_versao_id is not None:
+        linha["revisao_versao_id"] = revisao_versao_id
+    table_reads.table(client, LEDGER).insert(linha).execute()
+
+
+# ─── One final legal review per contract (owner decision 2026-09-30) ────────
+
+
+def valor_sha256(campo: CampoValidavel, row: dict) -> str:
+    """Fingerprint of the value a rendering printed — what the legal review
+    compares against, so it never confirms a value the reviewer did not see.
+    The value itself is never stored on the version (the PDF carries it)."""
+    return hashlib.sha256((_valor_ledger(campo, row) or "").encode("utf-8")).hexdigest()
+
+
+def pendentes_para_revisao(
+    client: Any, org_id: UUID, dados: DadosContrato, *, usuario_id: Optional[Any]
+) -> list[dict]:
+    """`Politica.revisao_final_unica`'s replacement for `exigir_sem_pendentes`.
+
+    OPEN CONFLICTS STILL REFUSE (409 `EXTRACAO_PENDENTE_VALIDACAO`, with an
+    empty `pendentes`): two readings disagree and the system cannot tell
+    which one to print — the exception a human exists for. Machine-pending
+    values do NOT refuse: they are returned (each item plus its
+    `valor_sha256`) for `gerar` to record on the version it renders, where
+    the one contract-level review confirms them (`confirmar_por_revisao`)."""
+    conflitos = listar_conflitos(client, org_id, dados)
+    if conflitos:
+        raise ExtracaoPendenteValidacao([], conflitos)
+    coleta = coletar(client, org_id, dados, usuario_id)
+    brutos = _pendentes_brutos(client, org_id, coleta)
+    fontes = documentos_de_origem(client, org_id, brutos)
+    return [
+        {**_item(alvo, campo, fontes, coleta.nomes), "valor_sha256": valor_sha256(campo, alvo.row)}
+        for alvo, campo in brutos
+    ]
+
+
+class RevisaoJuridicaDesatualizada(AppException):
+    """A value the version recorded changed (or stopped feeding the
+    contract) after it was rendered — the PDF the reviewer read no longer
+    matches the data. Nothing was written; generate a new version."""
+
+    def __init__(self, chaves: list[str]) -> None:
+        super().__init__(
+            code="REVISAO_JURIDICA_VERSAO_DESATUALIZADA",
+            message=(
+                "Os dados do contrato mudaram depois que esta versão foi gerada. "
+                "Gere uma nova versão e revise-a."
+            ),
+            status_code=409,
+            details={"chaves": chaves},
+        )
+
+
+def confirmar_por_revisao(
+    client: Any,
+    org_id: UUID,
+    dados: DadosContrato,
+    contrato_id: UUID,
+    versao_id: str,
+    registrados: list[dict],
+    *,
+    usuario_id: Optional[Any],
+) -> int:
+    """Confirm, on its own row, every value `registrados` (the version's
+    `revisao_juridica_campos`) names that is STILL machine-pending — the
+    same `_patch_aceite` a per-field accept writes, plus one ledger row
+    tagged with the version. Returns how many were confirmed.
+
+    Refuses FIRST, writing nothing, when any recorded value no longer holds
+    the value the version printed (`valor_sha256`) or no longer feeds this
+    contract (`RevisaoJuridicaDesatualizada`). A recorded value that is no
+    longer pending but unchanged (confirmed meanwhile, or auto-validated) is
+    simply skipped — nothing left to vouch for."""
+    coleta = coletar(client, org_id, dados, usuario_id)
+    todos = {
+        chave(c.entidade, a.entidade_id, c.campo): (a, c)
+        for a in coleta.alvos
+        for c in a.campos
+    }
+    desatualizadas = [
+        r["chave"]
+        for r in registrados
+        if r.get("chave") not in todos
+        or valor_sha256(todos[r["chave"]][1], todos[r["chave"]][0].row) != r.get("valor_sha256")
+    ]
+    if desatualizadas:
+        raise RevisaoJuridicaDesatualizada(desatualizadas)
+
+    pendentes = {
+        chave(c.entidade, a.entidade_id, c.campo)
+        for a, c in _pendentes_brutos(client, org_id, coleta)
+    }
+    alvos = [todos[r["chave"]] for r in registrados if r["chave"] in pendentes]
+    fontes = documentos_de_origem(client, org_id, alvos)
+    agora = _now()
+    for alvo, campo in alvos:
+        item = _item(alvo, campo, fontes, coleta.nomes)
+        valor = _valor_ledger(campo, alvo.row)
+        _gravar(client, org_id, campo.entidade, alvo.entidade_id, alvo.row,
+                _patch_aceite(campo, alvo.row, usuario_id, agora), agora)
+        _registrar(
+            client, org_id, contrato_id, campo, alvo, item, valor, "aceito",
+            usuario_id=usuario_id, agora=agora, revisao_versao_id=str(versao_id),
+        )
+    return len(alvos)
 
 
 __all__ = [
@@ -1272,15 +1411,19 @@ __all__ = [
     "ExtracaoPendenteValidacao",
     "LEDGER",
     "REGISTRO",
+    "RevisaoJuridicaDesatualizada",
     "ValidacaoDesatualizada",
     "chave",
     "coletar",
+    "confirmar_por_revisao",
     "decidir",
     "documentos_de_origem",
     "exigir_sem_pendentes",
     "listar_conflitos",
     "listar_pendentes",
+    "pendentes_para_revisao",
     "preenchido",
     "situacao",
     "valor_exibicao",
+    "valor_sha256",
 ]

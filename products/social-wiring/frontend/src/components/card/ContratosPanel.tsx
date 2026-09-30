@@ -40,6 +40,13 @@
  *   - the status `<Select/>` is disabled the moment ANY envelope exists at
  *     all, live or not — the manual `enviado_assinatura`/`assinado` picks are
  *     retired for good once a contract enters this flow.
+ * 🔴 REVISÃO JURÍDICA (owner decision 2026-09-30, migration 177) — a version
+ * generated from machine-extracted values nobody validated shows
+ * `RevisaoJuridicaSection` ("Aguardando revisão jurídica" + the ONE
+ * "Aprovar revisão jurídica"), is labelled "Rascunho", and has "Enviar para
+ * assinatura" / "Baixar para impressão" disabled with the reason — the
+ * server refuses both (409) until approved; the UI only mirrors that.
+ *
  * The "Enviar para assinatura" DIALOG itself (`EnviarAssinaturaDialog`) is
  * mounted by `ContratosContainer`, not here — it needs compradores/vendedores/
  * testemunhas data this presentational file must not fetch; this panel only
@@ -100,8 +107,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 import { ContratoModalidadeSection } from "@/components/card/ContratoModalidadeSection";
+import { RevisaoJuridicaSection } from "@/components/card/RevisaoJuridicaSection";
 import type {
   AssinaturaEntry,
+  DownloadOpcoes,
   AssinaturaOut,
   ContratoOut,
   ContratoStatus,
@@ -114,6 +123,7 @@ import {
   MODELO_LABEL,
   STATUS_ASSINATURA_LABEL,
   STATUS_LABEL,
+  aguardandoRevisaoJuridica,
   envelopeVivo,
   formatBytes,
   validateContratoFile,
@@ -155,7 +165,16 @@ interface Props {
   onDeleteVersao: (contratoId: string, versaoId: string, motivo: string) => void;
   onDeleteContrato: (contratoId: string, motivo: string) => void;
   onOpen: (contratoId: string, versaoId: string, formato?: "pdf" | "docx") => void;
-  onDownload: (contratoId: string, versaoId: string, formato?: "pdf" | "docx") => void;
+  onDownload: (
+    contratoId: string,
+    versaoId: string,
+    formato?: "pdf" | "docx",
+    opcoes?: DownloadOpcoes,
+  ) => void;
+  /** Migration 177 — "Aprovar revisão jurídica" for one version. Omitted ⇒
+   *  the review state still renders, without the button. */
+  onAprovarRevisaoJuridica?: (contratoId: string, versaoId: string) => void;
+  aprovandoRevisaoContratoId?: string | null;
   /** Renders the "Descrição do imóvel (matrícula)" section for one contract.
    *  Optional — omitted entirely (not even the collapsible header) while the
    *  caller has not wired it, so this panel never breaks when nobody has. */
@@ -231,6 +250,8 @@ export default function ContratosPanel({
   onDeleteContrato,
   onOpen,
   onDownload,
+  onAprovarRevisaoJuridica,
+  aprovandoRevisaoContratoId,
   renderMatriculaAtos,
   renderGeradorContrato,
   renderProveniencia,
@@ -331,7 +352,17 @@ export default function ContratosPanel({
               onDeleteVersao={(versaoId, motivo) => onDeleteVersao(contrato.id, versaoId, motivo)}
               onDeleteContrato={(motivo) => onDeleteContrato(contrato.id, motivo)}
               onOpen={(versaoId, formato) => onOpen(contrato.id, versaoId, formato)}
-              onDownload={(versaoId, formato) => onDownload(contrato.id, versaoId, formato)}
+              onDownload={(versaoId, formato, opcoes) =>
+                opcoes
+                  ? onDownload(contrato.id, versaoId, formato, opcoes)
+                  : onDownload(contrato.id, versaoId, formato)
+              }
+              onAprovarRevisaoJuridica={
+                onAprovarRevisaoJuridica
+                  ? (versaoId) => onAprovarRevisaoJuridica(contrato.id, versaoId)
+                  : undefined
+              }
+              aprovandoRevisao={aprovandoRevisaoContratoId === contrato.id}
               renderMatriculaAtos={renderMatriculaAtos}
               renderGeradorContrato={renderGeradorContrato}
               renderProveniencia={renderProveniencia}
@@ -387,6 +418,8 @@ function ContratoCard({
   onDeleteContrato,
   onOpen,
   onDownload,
+  onAprovarRevisaoJuridica,
+  aprovandoRevisao = false,
   renderMatriculaAtos,
   renderGeradorContrato,
   renderProveniencia,
@@ -418,7 +451,9 @@ function ContratoCard({
   onDeleteVersao: (versaoId: string, motivo: string) => void;
   onDeleteContrato: (motivo: string) => void;
   onOpen: (versaoId: string, formato?: "pdf" | "docx") => void;
-  onDownload: (versaoId: string, formato?: "pdf" | "docx") => void;
+  onDownload: (versaoId: string, formato?: "pdf" | "docx", opcoes?: DownloadOpcoes) => void;
+  onAprovarRevisaoJuridica?: (versaoId: string) => void;
+  aprovandoRevisao?: boolean;
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
   renderProveniencia?: (contratoId: string, aberto: boolean) => ReactNode;
@@ -585,6 +620,17 @@ function ContratoCard({
           <p className="text-xs text-muted-foreground">Sem versão enviada.</p>
         )}
 
+        {/* Migration 177 — the one final legal review of THIS version. */}
+        {atual && (
+          <RevisaoJuridicaSection
+            contratoId={contrato.id}
+            versao={atual}
+            isAdmin={isAdmin}
+            onAprovar={onAprovarRevisaoJuridica}
+            aprovando={aprovandoRevisao}
+          />
+        )}
+
         {/* Migration 157 — the Digital/Física gate. Digital keeps the
             existing send-for-signature section verbatim; Física replaces it
             with print + "Marcar como assinado" and never offers a send. */}
@@ -593,7 +639,7 @@ function ContratoCard({
           envelopeVivo={envelopeVivo(assinaturaEntry?.data)}
           patching={patching}
           onPatchModalidade={onPatchModalidade}
-          onBaixarImpressao={(versaoId) => onDownload(versaoId, "pdf")}
+          onBaixarImpressao={(versaoId) => onDownload(versaoId, "pdf", { impressao: true })}
           onMarcarAssinado={onMarcarAssinadoFisico}
           marcandoAssinado={marcandoAssinado}
           digitalContent={
@@ -892,6 +938,15 @@ function _VersaoAtualRow({
         {versao.origem === "gerado" && (
           <p className="text-[10px] text-muted-foreground">Gerado automaticamente</p>
         )}
+        {aguardandoRevisaoJuridica(versao) && (
+          <Badge
+            variant="outline"
+            className="border-amber-300 bg-amber-50 text-[10px] text-amber-800"
+            data-testid={`contrato-rascunho-${contratoId}`}
+          >
+            Rascunho — aguardando revisão jurídica
+          </Badge>
+        )}
         {versao.origem === "assinado" && (
           <Badge
             variant="secondary"
@@ -962,6 +1017,14 @@ function VersaoRow({
           {versao.rotulo ? ` · ${versao.rotulo}` : ""}
           {versao.origem === "gerado" && (
             <span className="ml-1.5 text-muted-foreground">(gerado automaticamente)</span>
+          )}
+          {aguardandoRevisaoJuridica(versao) && (
+            <span
+              className="ml-1.5 text-amber-700"
+              data-testid={`contrato-versao-rascunho-${versao.id}`}
+            >
+              (rascunho)
+            </span>
           )}
           {versao.origem === "assinado" && (
             <span
@@ -1071,6 +1134,30 @@ function _AssinaturaSection({
 
   if (!vivo) {
     if (versao.origem !== "gerado" || !onAbrirEnvio) return null;
+    // Migration 177 — the server refuses the send (409) until the legal
+    // review is approved; say why instead of offering a click that fails.
+    if (aguardandoRevisaoJuridica(versao)) {
+      return (
+        <div className="space-y-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled
+            data-testid={`contrato-enviar-assinatura-${contratoId}`}
+          >
+            <Send className="mr-1.5 h-3.5 w-3.5" />
+            Enviar para assinatura
+          </Button>
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid={`contrato-enviar-aguarda-revisao-${contratoId}`}
+          >
+            Disponível depois da aprovação da revisão jurídica.
+          </p>
+        </div>
+      );
+    }
     return (
       <Button
         type="button"

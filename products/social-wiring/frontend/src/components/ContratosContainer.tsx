@@ -219,19 +219,44 @@ export function ContratosContainer({
             toastServerError(err, "Não foi possível abrir o contrato.");
           }
         }}
-        onDownload={async (contratoId, versaoId, formato) => {
+        onDownload={async (contratoId, versaoId, formato, opcoes) => {
           try {
             const res = await mutations.getUrl.mutateAsync({
               contratoId,
               versaoId,
               intent: "download",
               formato,
+              // Migration 177 — "Baixar para impressão" asks for the FINAL
+              // copy; the server refuses it while the legal review waits.
+              impressao: opcoes?.impressao,
             });
             if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
           } catch (err) {
             toastServerError(err, "Não foi possível baixar o contrato.");
           }
         }}
+        // Migration 177 (owner decision 2026-09-30) — the ONE final legal
+        // review of a version generated from machine-extracted values.
+        onAprovarRevisaoJuridica={(contratoId, versaoId) =>
+          mutations.aprovarRevisaoJuridica.mutate(
+            { contratoId, versaoId },
+            {
+              onSuccess: (res) =>
+                toast.success(
+                  res.confirmados > 0
+                    ? `Revisão jurídica aprovada — ${res.confirmados} dado(s) confirmado(s).`
+                    : "Revisão jurídica aprovada.",
+                ),
+              onError: (err) =>
+                toastServerError(err, "Não foi possível aprovar a revisão jurídica."),
+            },
+          )
+        }
+        aprovandoRevisaoContratoId={
+          mutations.aprovarRevisaoJuridica.isPending
+            ? (mutations.aprovarRevisaoJuridica.variables?.contratoId ?? null)
+            : null
+        }
         renderMatriculaAtos={(contratoId) => (
           // `clienteId` is what lets the picker offer one section per PERMUTA
           // ativo of this deal (migration 115): the ativos come from the deal's

@@ -20,14 +20,16 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 
-from app.dependencies import get_current_user_org
+from noctusai_lib.api.auth.session import is_org_admin
+
+from app.dependencies import get_core_client, get_current_user_org
 from app.modules.card_hub.auth import auth_parts
-from app.modules.card_hub.contrato_gerador import service, validacao_extracao
+from app.modules.card_hub.contrato_gerador import revisao_juridica, service, validacao_extracao
 from app.modules.card_hub.contrato_gerador.carregador import carregar
 from app.modules.card_hub.contrato_gerador.deps import (
     get_contrato_docx_adapter,
@@ -160,6 +162,40 @@ async def post_validacao_extracao_decisoes_route(
         contrato_id,
         [(d.chave, d.decisao) for d in body.decisoes],
         usuario_id=usuario_id,
+    )
+
+
+@router.post("/{cliente_id}/contratos/{contrato_id}/versoes/{versao_id}/revisao-juridica")
+async def post_revisao_juridica_route(
+    cliente_id: UUID,
+    contrato_id: UUID,
+    versao_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """"Aprovar revisão jurídica" (owner decision 2026-09-30, migration 177):
+    the ONE contract-level review that replaces the per-field extraction
+    confirmations. Stamps `revisado_por/_em` on the version and confirms,
+    on its own row, every machine value the version relied on. Returns
+    `{contrato, confirmados}`.
+
+    ADMIN/OWNER ONLY — the TRUSTED `noctus_users.org_role` row
+    (`is_org_admin`), never the spoofable JWT `user_metadata`: the same
+    predicate that decides the extraction CONFLICTS (migration 138), the
+    other human act over machine readings. One click here vouches for every
+    listed value at once, so it is held to the stricter of the two existing
+    bars (the per-field accept was open to any member). 409
+    `REVISAO_JURIDICA_JA_APROVADA` / `REVISAO_JURIDICA_NAO_EXIGIDA` /
+    `REVISAO_JURIDICA_VERSAO_DESATUALIZADA` (nothing written)."""
+    user, org_id = auth_parts(auth)
+    usuario_id = getattr(user, "id", None)
+    if not is_org_admin(get_core_client(), usuario_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Aprovar a revisão jurídica do contrato é restrito a administradores.",
+        )
+    return revisao_juridica.aprovar(
+        client, org_id, cliente_id, contrato_id, versao_id, usuario_id=usuario_id
     )
 
 

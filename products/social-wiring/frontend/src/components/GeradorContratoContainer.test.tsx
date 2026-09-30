@@ -314,3 +314,72 @@ describe("GeradorContratoContainer — D2 validation gate", () => {
     expect(screen.queryByTestId("gerador-contrato-erro-incompleto")).toBeNull();
   });
 });
+
+describe("GeradorContratoContainer — one final legal review (owner decision 2026-09-30)", () => {
+  function modoRevisao() {
+    mockUseContratoGeracao.mockReturnValue({
+      data: statusFixture({ revisao_final_unica: true }),
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      refetch: mockRefetch,
+    });
+  }
+
+  it("🔴 pending machine values do NOT open the per-field dialog — generate runs straight away", async () => {
+    modoRevisao();
+    pendentesAtuais = [pendente()];
+    const { screen, fireEvent } = await render();
+    fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
+    expect(mockVerificarMutate).not.toHaveBeenCalled();
+    expect(mockGerarMutate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("validacao-dialog")).toBeNull();
+  });
+
+  it("🔴 a 409 for an open CONFLICT opens the dialog with the conflicts only — never the per-field rows", async () => {
+    modoRevisao();
+    pendentesAtuais = [pendente()];
+    conflitosAtuais = [
+      {
+        id: "k1",
+        entidade: "cliente",
+        entidade_id: "v1",
+        campo: "cpf",
+        grupo: "Fulano de Tal (proprietario)",
+        rotulo: "CPF",
+        valor_atual: "111",
+        valor_proposto: "222",
+        origem_proposto: "rg",
+        link: { rota: "/conflitos", rotulo: "Conflitos" },
+      },
+    ];
+    const { screen, fireEvent, act } = await render();
+    fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
+    const [, opts] = mockGerarMutate.mock.calls[0];
+    act(() => {
+      opts.onError(
+        new ContratoGeracaoError("EXTRACAO_PENDENTE_VALIDACAO", "Conflito aberto.", {}),
+      );
+    });
+    expect(screen.getByTestId("validacao-dialog")).toBeTruthy();
+    expect(screen.getByTestId("validacao-conflito-k1")).toBeTruthy();
+    expect(screen.queryByTestId("validacao-item-cliente:v1:cpf")).toBeNull();
+    expect(screen.queryByTestId("validacao-aceitar-tudo")).toBeNull();
+  });
+
+  it("the per-field mode (flag false) keeps the pre-check exactly as before", async () => {
+    mockUseContratoGeracao.mockReturnValue({
+      data: statusFixture({ revisao_final_unica: false }),
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      refetch: mockRefetch,
+    });
+    pendentesAtuais = [pendente()];
+    const { screen, fireEvent } = await render();
+    fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
+    expect(mockVerificarMutate).toHaveBeenCalledTimes(1);
+    expect(mockGerarMutate).not.toHaveBeenCalled();
+    expect(screen.getByTestId("validacao-item-cliente:v1:cpf")).toBeTruthy();
+  });
+});

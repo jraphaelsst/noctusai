@@ -107,8 +107,8 @@ the active ônus acts, in matrícula order — the acts the promessa's OBJETO/
 ônus clauses actually quote. A contract that already has a selection
 (anyone's — a human's, or an earlier autopilot run) is never touched.
 
-D2 FUTURE-POLICY SWITCH
-------------------------
+D2 POLICY SWITCH (one final review per contract)
+-------------------------------------------------
 See `REVISAO_FINAL_UNICA_POR_CONTRATO` below.
 """
 from __future__ import annotations
@@ -117,6 +117,7 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
+from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import dados_service
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
@@ -135,16 +136,14 @@ logger = logging.getLogger(__name__)
 #: this reading without a human click".
 ORIGEM_AUTOPILOTO = "ia"
 
-#: [D2 future-policy switch, owner directive 2026-09-30] Today D2 (migration
-#: 156, `contrato_gerador.validacao_extracao.exigir_sem_pendentes`) still
-#: asks for a PER-FIELD accept/reject click on whatever this autopilot could
-#: not confirm for itself. The owner named a possible LATER relaxation —
-#: "one final review per contract" (a single confirm-all gesture over every
-#: field still pending on a contract, instead of one click per field) — as a
-#: decision for another day, not something to build now. Flip this constant
-#: and wire it into `exigir_sem_pendentes` when that decision is made;
-#: nothing today reads it.
-REVISAO_FINAL_UNICA_POR_CONTRATO = False
+#: [D2 policy switch — DECIDED, owner 2026-09-30: "one final review of the
+#: finished contract by the legal team" replaces the per-field clicks.] An
+#: ALIAS of `contrato_gerador.politica.Politica.revisao_final_unica`'s
+#: production value, never a second copy: whatever this autopilot could not
+#: confirm for itself is no longer a per-field click before generation; it
+#: is listed on the generated version and confirmed by the ONE contract-level
+#: "Aprovar revisão jurídica" (`contrato_gerador.revisao_juridica`).
+REVISAO_FINAL_UNICA_POR_CONTRATO = POLITICA_PADRAO.revisao_final_unica
 
 #: `aplicar_autopiloto`'s per-field outcomes.
 CONFIRMADO_AUTOMATICO = "confirmado_automatico"

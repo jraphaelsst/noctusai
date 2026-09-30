@@ -44,29 +44,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 
-import type { ConflitoExtracao, Decisao, PendenteValidacao } from "@/hooks/useValidacaoExtracao";
-
-/** pt-BR for `origem` — the machine source of the value. */
-const ORIGEM_ROTULO: Record<string, string> = {
-  api: "Consulta automática",
-  ia: "Leitura por IA",
-  sugestao: "Sugestão da matrícula",
-  sugerido: "Sugestão da matrícula",
-  matricula: "Matrícula",
-  rg: "RG",
-  cnh: "CNH",
-  cpf: "CPF",
-  cin: "CIN",
-  certidao_casamento: "Certidão de casamento",
-  certidao_nascimento: "Certidão de nascimento",
-  comprovante_endereco: "Comprovante de endereço",
-};
-
-const CONFIANCA_ROTULO: Record<string, string> = {
-  alta: "Confiança alta",
-  baixa: "Confiança baixa",
-  nenhuma: "Sem confiança",
-};
+import {
+  CONFIANCA_ROTULO,
+  ORIGEM_ROTULO,
+  type ConflitoExtracao,
+  type Decisao,
+  type PendenteValidacao,
+} from "@/hooks/useValidacaoExtracao";
 
 function agruparPorGrupo(itens: PendenteValidacao[]): [string, PendenteValidacao[]][] {
   const mapa = new Map<string, PendenteValidacao[]>();

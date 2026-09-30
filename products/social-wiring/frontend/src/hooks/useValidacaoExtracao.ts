@@ -93,6 +93,30 @@ export interface DecidirResult extends SituacaoValidacao {
   aplicadas: number;
 }
 
+/** pt-BR for `origem` — the machine source of the value. Shared by the
+ *  per-field `ValidacaoExtracaoDialog` and the contract-level
+ *  `RevisaoJuridicaSection` (owner decision 2026-09-30). */
+export const ORIGEM_ROTULO: Record<string, string> = {
+  api: "Consulta automática",
+  ia: "Leitura por IA",
+  sugestao: "Sugestão da matrícula",
+  sugerido: "Sugestão da matrícula",
+  matricula: "Matrícula",
+  rg: "RG",
+  cnh: "CNH",
+  cpf: "CPF",
+  cin: "CIN",
+  certidao_casamento: "Certidão de casamento",
+  certidao_nascimento: "Certidão de nascimento",
+  comprovante_endereco: "Comprovante de endereço",
+};
+
+export const CONFIANCA_ROTULO: Record<string, string> = {
+  alta: "Confiança alta",
+  baixa: "Confiança baixa",
+  nenhuma: "Sem confiança",
+};
+
 /** The 409 `EXTRACAO_PENDENTE_VALIDACAO` code `POST .../gerar` answers while
  *  anything is pending — the container opens the modal on it. */
 export const CODIGO_PENDENTE_VALIDACAO = "EXTRACAO_PENDENTE_VALIDACAO";

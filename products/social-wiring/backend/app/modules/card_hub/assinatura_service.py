@@ -386,6 +386,12 @@ async def enviar(
     if versao.get("origem") != "gerado":
         raise AssinaturaVersaoNaoGerada()
 
+    # Migration 177 (owner decision 2026-09-30) — a version rendered from
+    # machine-extracted values nobody validated is sent only after the ONE
+    # contract-level legal review approved it. Before any storage/provider
+    # work: nothing leaves the office unreviewed.
+    contratos_svc.exigir_revisao_juridica(versao)
+
     blob = await storage.get(bucket=contratos_svc.VERSOES_STORE.bucket, key=versao["storage_path"])
     if blob is None:
         # The DB row exists but its bytes are gone — a storage-layer defect,
@@ -502,6 +508,10 @@ async def marcar_assinado_fisico(
     ja_assinado = contrato["status"] == "assinado"
     if ja_assinado and arquivo is None:
         raise contratos_svc.ContratoJaAssinado()
+    # Migration 177 — the printed copy is the current version; it may only
+    # be declared signed once the legal review approved it.
+    if not ja_assinado:
+        contratos_svc.exigir_revisao_da_versao_atual(client, org_id, contrato_id)
 
     if arquivo is not None:
         data, filename, content_type = arquivo
