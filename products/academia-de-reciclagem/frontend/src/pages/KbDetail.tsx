@@ -3,9 +3,8 @@
  *
  * Owns the entry's edit + rename (`novo_slug`) + archive actions — the
  * page-scoped-CRUD half that `Kb.tsx` (list + create) doesn't. Markdown is
- * rendered via the plain-text `MarkdownBlock` convention (no HTML
- * injection, no markdown lib dependency — see
- * `products/knowledge-extractor/frontend/src/pages/LessonViewer.tsx`).
+ * rendered via the canonical `MarkdownRenderer` organ
+ * (`@noctusai/lib/components`; raw HTML is never executed).
  * Revisions panel shows `author_kind`, `motivo`, date and `approval_id`
  * per contract §A.10.
  */
@@ -30,7 +29,7 @@ import {
   Select,
   Textarea,
 } from "@noctusai/lib/design-system";
-import { MarkdownBlock } from "@/components/MarkdownBlock";
+import { MarkdownRenderer } from "@noctusai/lib/components";
 import { errorMessage } from "@/lib/errors";
 import {
   KB_CATEGORIAS,
@@ -103,7 +102,7 @@ export default function KbDetail() {
             ))}
           </div>
         ) : null}
-        <MarkdownBlock value={entry.corpo_md} />
+        <MarkdownRenderer content={entry.corpo_md} />
       </Card>
 
       <Card>
