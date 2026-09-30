@@ -117,6 +117,10 @@ Once every slice is merged onto `dev`, every collision (incl. semantic) resolved
 
 ---
 
+## Isolation: `task_branch` XOR harness `isolation='worktree'` (never both)
+
+An engineer dispatched with `Agent(isolation='worktree')` AND told to run `task_branch start` has its git sandbox pinned to its own `agent-*` worktree: it can WRITE into the `task_branch` worktree (absolute paths) but can never COMMIT there (2026-09-30). Pick ONE isolation primitive per engineer. `task_branch` briefs run WITHOUT harness isolation; harness-isolated engineers do not self-branch. If a sandboxed caller must still finish a commit, `noctus.dev.salvage_worktree(..., stage_all=True | paths=[...])` stages + commits from the server's context.
+
 ## Safety rules (non-negotiable)
 
 1. 🔒 `main` is **production** — untouched without explicit per-action consent, and only to deploy. The pre-push hook hard-blocks pushes to `main` unless `NOCTUS_ALLOW_MAIN_PUSH=1`. Everyday work lands on `dev` ([[branching-and-merging]] §0).

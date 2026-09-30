@@ -29,6 +29,8 @@ def salvage_worktree(
     onto_worktree: str | None = None,
     author_name: str = "jraphaelsst",
     author_email: str = "joaoraphaelsst@gmail.com",
+    stage_all: bool = False,
+    paths: list[str] | None = None,
 ) -> dict:
     """Verify + commit an engineer worktree's staged work, optionally
     cherry-pick it onto the integration branch.
@@ -38,10 +40,24 @@ def salvage_worktree(
     loop-redispatch; re-author in the worktree via Bash). `onto_worktree`:
     path of the worktree where the integration branch is checked out; if
     given, the commit is cherry-picked there + verified present.
+
+    `stage_all` (`git add -A`) / `paths` (`git add -- <paths>`): stage inside
+    the tool so a sandboxed caller that can write into the worktree but not
+    run git there can finish commit end to end. `paths` wins over `stage_all`.
+    Default (neither) keeps the original "staged already" contract.
     """
     wt = Path(agent_worktree)
     if not (wt / ".git").exists():
         return {"ok": False, "error": f"not a git worktree: {wt}"}
+
+    if paths:
+        add = _git(str(wt), "add", "--", *paths)
+        if add.returncode != 0:
+            return {"ok": False, "error": f"git add failed: {add.stderr.strip()}"}
+    elif stage_all:
+        add = _git(str(wt), "add", "-A")
+        if add.returncode != 0:
+            return {"ok": False, "error": f"git add -A failed: {add.stderr.strip()}"}
 
     staged = [
         l for l in _git(str(wt), "diff", "--cached", "--name-only").stdout.splitlines()
@@ -119,7 +135,9 @@ def register(server) -> None:
             "scoped authorship commit, optional cherry-pick onto the "
             "integration worktree + landed-verify. Pass expect_markers "
             "[[relpath, substring], ...] to assert the change physically "
-            "landed. Replaces the ~10x/session manual git ritual."
+            "landed. Replaces the ~10x/session manual git ritual. stage_all=True "
+            "(git add -A) or paths=[...] (git add -- paths) stages inside "
+            "the tool so a sandboxed caller can finish a commit end to end."
         ),
     )
     def _salvage(
@@ -127,10 +145,13 @@ def register(server) -> None:
         message: str,
         expect_markers: list[list[str]] | None = None,
         onto_worktree: str | None = None,
+        stage_all: bool = False,
+        paths: list[str] | None = None,
     ) -> dict:
         return salvage_worktree(
             agent_worktree, message,
             expect_markers=expect_markers, onto_worktree=onto_worktree,
+            stage_all=stage_all, paths=paths,
         )
 
 

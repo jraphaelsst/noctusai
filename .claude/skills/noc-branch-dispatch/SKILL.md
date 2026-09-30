@@ -25,6 +25,7 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 ## Guardrails
 - Below `<100 LoC ∧ <3 files ∧ single-phase` → the architect does it **inline** (don't pay the ~45–60k engineer contextualization tax). 2+ small file-disjoint tasks ride ONE compound brief.
 - Wave N+1 dispatches only after every Wave N slice **FF-merges** (not just reports).
+- **One isolation primitive per engineer:** `task_branch` briefs run WITHOUT `Agent(isolation='worktree')` — both pins the git sandbox to the agent worktree (can write, never commit). → `KB § PATTERNS/architect/branching-dispatch.md` § Isolation.
 - Engineers commit ONLY their own branch; tech-lead owns all merging/pushing/blessing.
 
 ## Depth

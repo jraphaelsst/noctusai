@@ -2028,6 +2028,96 @@ def decide_hook_integrity(
     }
 
 
+#: npm subcommands that mutate node_modules.
+_NPM_MUTATING = frozenset({
+    "install", "i", "add", "ci", "update", "up", "upgrade", "uninstall", "un",
+    "remove", "rm", "r", "dedupe", "prune", "rebuild", "link", "ln",
+})
+
+
+def _wired_node_modules(pkg_dir: str) -> bool:
+    """True when `pkg_dir/node_modules` is a `wire_env` product: itself a
+    symlink, or a real dir holding a top-level entry that symlinks OUTSIDE the
+    worktree (the per-entry overlay into the primary's vendor packages)."""
+    nm = os.path.join(pkg_dir, "node_modules")
+    if os.path.islink(nm):
+        return True
+    if not os.path.isdir(nm):
+        return False
+    root = os.path.realpath(pkg_dir)
+    try:
+        with os.scandir(nm) as it:
+            for n, entry in enumerate(it):
+                if n > 400:
+                    break
+                if entry.is_symlink() and not os.path.realpath(entry.path).startswith(root + os.sep):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def decide_wired_worktree_npm(
+    tool_name: str,
+    tool_input: dict[str, Any] | None = None,
+    cwd: str | None = None,
+) -> dict[str, Any] | None:
+    """Refuse a node_modules-mutating `npm` call in a `wire_env`'d worktree.
+
+    `wire_env` (task_branch start) symlinks per-package vendor entries (incl.
+    whole scoped folders like `@vitest/`) into the PRIMARY's node_modules, so a
+    plain `npm install` writes THROUGH those links and corrupts the primary
+    (2026-09-30: broke products/core/frontend vitest, `@vitest/utils`). The safe
+    recipe for a dependency change is `npm install --package-lock-only`.
+    Chosen over an `.npmrc` (npm has no refuse-install switch) or a README
+    (advisory only): a hook refuses mechanically, at the write, cheaply.
+    """
+    if tool_name != "Bash":
+        return None
+    command = (tool_input or {}).get("command") or ""
+    if not command or "npm" not in command:
+        return None
+    base = _effective_cwd(command, cwd or os.getcwd())
+    for segment in _segments(_normalize(command)):
+        tokens = _strip_redirections(_tokens(segment))
+        while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+            tokens = tokens[1:]  # leading VAR=val
+        if len(tokens) < 2 or os.path.basename(tokens[0]) != "npm":
+            continue
+        args = tokens[1:]
+        prefix = None
+        for i, a in enumerate(args):
+            if a == "--prefix" and i + 1 < len(args):
+                prefix = args[i + 1]
+            elif a.startswith("--prefix="):
+                prefix = a.split("=", 1)[1]
+        sub = next((a for a in args if not a.startswith("-") and a != prefix), None)
+        if sub not in _NPM_MUTATING or "--package-lock-only" in args:
+            continue
+        d = _resolve(prefix, base) if prefix else base
+        while d and "/.claude/worktrees/" in d + os.sep:
+            if os.path.isfile(os.path.join(d, "package.json")):
+                if _wired_node_modules(d):
+                    return {
+                        "tool": tool_name,
+                        "reason": (
+                            f"REFUSED: `npm {sub}` in a wire_env'd worktree ({d}). Its "
+                            f"node_modules entries are symlinks into the PRIMARY checkout; npm "
+                            f"writes through them and corrupts the primary's install "
+                            f"(seen: `Cannot find package '@vitest/utils'`). For a dependency "
+                            f"change use `npm install --package-lock-only` (updates "
+                            f"package.json + lockfile only). "
+                            f"KB § PATTERNS/common/self-branching-mode.md §5a."
+                        ),
+                    }
+                break
+            nd = os.path.dirname(d)
+            if nd == d:
+                break
+            d = nd
+    return None
+
+
 def findings(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
     """`decide` in the keeper finding shape, for MCP/compliance consumers."""
     verdict = decide(*args, **kwargs)

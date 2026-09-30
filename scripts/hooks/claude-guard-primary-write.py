@@ -77,6 +77,8 @@ def main() -> int:
         verdict = guard.decide_git_bypass(tool_name, tool_input)
         if verdict is None:
             verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
+        if verdict is None:
+            verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)
         ctx = None
         if verdict is None:
             ctx = guard.discover_context(cwd)
