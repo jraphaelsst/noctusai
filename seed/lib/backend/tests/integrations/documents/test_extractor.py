@@ -129,6 +129,46 @@ class TestLadder:
         assert resolver.calls == 1
         assert out.source is TextSource.OCR
 
+    @pytest.mark.asyncio
+    async def test_a_text_layer_that_found_nome_but_not_the_declared_types_core_fields_falls_through(
+        self,
+    ):
+        """🔴 Live prod, 2026-09-30 (comp2-rg-51). `_achou_algo` alone missed
+        this: the text layer found `nome` (so "found something" was already
+        True) but never the CPF/RG a DECLARED `tipo_documento="rg"` read
+        structurally requires — the card's own data lived in an embedded
+        image this text layer never touched. Without the caller's own
+        `tipo_documento` hint this is indistinguishable from a genuinely
+        CPF/RG-less document (a certidão, say) and must NOT fall through —
+        see `test_pdf_with_a_text_layer_never_reaches_vision`, which passes
+        no `tipo_documento` and stays at zero vision calls on this SAME
+        text.
+
+        DI via `ladder=`, not a patch on `classify_pdf_text_layer`
+        (`KB § PATTERNS/backend/di-test-seam.md`) — mirrors the `_Ladder`
+        stand-in `test_extractor_releitura_wiring.py` already uses to drive
+        both rungs of the SAME ladder deterministically."""
+
+        class _StubLadder:
+            def __init__(self):
+                self.chamadas: list[bool] = []
+
+            async def to_text(
+                self, content, mimetype=None, filename=None, *, pular_camada_texto=False
+            ):
+                self.chamadas.append(pular_camada_texto)
+                if pular_camada_texto:
+                    return (RG_TEXT_COM_NOME, TextSource.OCR, None)
+                return (RG_TEXT_COM_NOME, TextSource.TEXT_LAYER, None)
+
+        ladder = _StubLadder()
+        out = await LadderIdentityExtractor(ladder=ladder).extract(
+            b"%PDF-1.4", mimetype="application/pdf", filename="rg.pdf",
+            tipo_documento="rg",
+        )
+        assert ladder.chamadas == [False, True]
+        assert out.source is TextSource.OCR
+
 
 class TestFailuresAreReturnedNotRaised:
     @pytest.mark.asyncio

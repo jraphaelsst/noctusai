@@ -60,6 +60,26 @@ logger = logging.getLogger(__name__)
 #: list and `legibilidade.AVISO_LEITURA_COMPROMETIDA`, the same convention).
 AVISO_RELEITURA = "releitura_modelo_superior"
 
+#: 🔴 THE SILENT-PARTIAL THIS CLOSES (live prod, 2026-09-30). Three
+#: `tipo_documento="rg"` uploads persisted with `extracao_fonte="ocr"`,
+#: `data_nascimento_confianca="alta"` — but CPF, RG number, órgão, gênero,
+#: nacionalidade and filiação all came back NULL. Nothing was WRONG: the
+#: escalation this module already runs (`deve_escalar`) fired, tried the
+#: stronger model, and STILL found nothing for those fields on either read.
+#: `mesclar`'s own `if not updates and not estava_comprometida: return
+#: original` path is exactly right for that case — there is genuinely
+#: nothing new to report — but "nothing changed" and "the document's core
+#: fields are still missing" are different facts, and only the first one
+#: got an aviso. A birthdate at `alta` sitting beside four blank required
+#: columns, with no code on the row saying so, reads as a clean success to
+#: any consumer that does not independently re-derive `_TABELA_NUCLEO` for
+#: itself. This aviso is that missing signal, raised once — by the CALLER,
+#: after whatever reads it is going to get have already happened (the
+#: first read, the text-layer→vision fallthrough, and the escalation, if
+#: any) — never by this module directly (see `campos_nucleo_faltando`,
+#: which stays a pure query with no opinion on when to call it).
+AVISO_CAMPOS_NUCLEO_AUSENTES = "campos_nucleo_ausentes"
+
 
 @dataclass(frozen=True)
 class _RegraNucleo:
@@ -107,6 +127,39 @@ _TABELA_NUCLEO: dict[str, _RegraNucleo] = {
 }
 
 
+def campos_nucleo_faltando(
+    fields: IdentityFields, tipo_documento: Optional[str]
+) -> tuple[str, ...]:
+    """Which of the declared type's CORE fields (`_TABELA_NUCLEO`) this
+    reading still lacks — empty when the type has no completeness rule, or
+    when the rule is fully satisfied.
+
+    THE SAME declarative table `deve_escalar` already reads, factored out
+    so a SECOND caller (`real.py`'s post-read completeness check, added for
+    the silent-partial fix — see `AVISO_CAMPOS_NUCLEO_AUSENTES`) can ask
+    "is this reading complete for its type" without re-deriving the table
+    or re-implementing `deve_escalar`'s own OCR/comprometida gating (which
+    that caller does not want: a TEXT-LAYER read missing a core field is
+    just as incomplete as an OCR one, even though it would never trigger a
+    RE-READ — see `deve_escalar`'s own docstring for why THAT gate exists
+    only for the escalation decision, not for completeness itself).
+
+    A type absent from `_TABELA_NUCLEO` never reports anything missing —
+    the same restrictive default `deve_escalar`/`legibilidade.
+    ClasseDocumento.OUTRO` use: an unlisted type carries no known
+    completeness contract, so silence is the honest answer, not a guess.
+    """
+    regra = _TABELA_NUCLEO.get(strip_accents_upper(tipo_documento or ""))
+    if regra is None:
+        return ()
+    faltando = [campo for campo in regra.campos if not fields.presente(campo)]
+    if regra.exige_endereco and fields.endereco is None:
+        faltando.append("endereco")
+    if regra.exige_dois_conjuges and len(fields.conjuges) != 2:
+        faltando.append("conjuges")
+    return tuple(faltando)
+
+
 def deve_escalar(fields: IdentityFields, tipo_documento: Optional[str]) -> bool:
     """Should the caller read the SAME pages again with a stronger model?
 
@@ -120,16 +173,7 @@ def deve_escalar(fields: IdentityFields, tipo_documento: Optional[str]) -> bool:
         return False
     if fields.leitura_comprometida:
         return True
-    regra = _TABELA_NUCLEO.get(strip_accents_upper(tipo_documento or ""))
-    if regra is None:
-        return False
-    if any(not fields.presente(campo) for campo in regra.campos):
-        return True
-    if regra.exige_endereco and fields.endereco is None:
-        return True
-    if regra.exige_dois_conjuges and len(fields.conjuges) != 2:
-        return True
-    return False
+    return bool(campos_nucleo_faltando(fields, tipo_documento))
 
 
 #: A two-model AGREEMENT promotes a field's confidence by ONE step, never
@@ -347,4 +391,58 @@ def mesclar(
     )
 
 
-__all__ = ["AVISO_RELEITURA", "deve_escalar", "mesclar"]
+#: Human-readable field names for `marcar_campos_ausentes`'s message —
+#: `CAMPOS`/`_TABELA_NUCLEO` entries are attribute names, not prose.
+_NOME_CAMPO = {
+    "nome": "nome",
+    "cpf": "CPF",
+    "rg": "RG",
+    "estado_civil": "estado civil",
+    "endereco": "endereço",
+    "conjuges": "os dois cônjuges",
+}
+
+
+def marcar_campos_ausentes(
+    fields: IdentityFields, faltando: tuple[str, ...], *, tipo_documento: Optional[str] = None
+) -> IdentityFields:
+    """Append `AVISO_CAMPOS_NUCLEO_AUSENTES` naming which of the document's
+    OWN core fields never came through — call once, after every rung this
+    read is going to try (the text-layer→vision fallthrough, the
+    escalation) has already run, with whatever `faltando` still reports.
+
+    Additive, like every other `aviso` this package accumulates
+    (`_somar_codigo`/`_somar_mensagem`): a document already flagged
+    `leitura_comprometida` or `titulares_multiplos` keeps BOTH codes,
+    because each names an independent reason a human should look at this
+    read rather than trust it unattended.
+
+    A no-op (`fields` returned unchanged) when `faltando` is empty — the
+    caller is expected to check `campos_nucleo_faltando(...)` itself before
+    calling this, but a defensive empty call must not fabricate an aviso
+    over nothing.
+    """
+    if not faltando:
+        return fields
+    nomes = ", ".join(_NOME_CAMPO.get(c, c) for c in faltando)
+    return replace(
+        fields,
+        aviso=_somar_codigo(fields.aviso, AVISO_CAMPOS_NUCLEO_AUSENTES),
+        aviso_mensagem=_somar_mensagem(
+            fields.aviso_mensagem,
+            f"documento tipo {tipo_documento or fields.tipo_provavel or 'declarado'} "
+            f"sem {nomes} — campo(s) que o próprio tipo de documento deveria "
+            "carregar não foram lidos em nenhuma tentativa; solicite uma "
+            "cópia melhor ou confira manualmente",
+        ),
+    )
+
+
+__all__ = [
+    "AVISO_CAMPOS_NUCLEO_AUSENTES",
+    "AVISO_RELEITURA",
+    "campos_nucleo_faltando",
+    "deve_escalar",
+    "marcar_campos_ausentes",
+    "mesclar",
+]

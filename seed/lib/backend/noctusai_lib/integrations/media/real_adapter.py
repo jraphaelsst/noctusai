@@ -22,6 +22,10 @@ Reconciliation decisions vs. the workspace original:
   the audio track → Whisper, run concurrently.
 - Refusal-retry: applied to every vision call via the seed
   `analyze_image_with_refusal_retry` (opt-in, on by default here).
+- Image uploads: EXIF `Orientation` baked into the pixels
+  (`_correct_exif_orientation`) before every vision call — added
+  2026-09-30, see that function's own docstring for the measured
+  identity-document read failure this closes.
 
 Heavy deps (PyMuPDF / pdfminer) and the `ffmpeg` binary are imported /
 shelled lazily so the Fake path stays importable in slim environments.
@@ -46,6 +50,7 @@ convention, same vendor-neutral `Real<Domain>Adapter` shape).
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import shutil
 import subprocess
@@ -125,6 +130,69 @@ _KEYFRAME_FRACTIONS = (0.10, 0.30, 0.60, 0.90)
 #: NOT a document-extraction consumer, and is deliberately unaffected by
 #: this change.
 _RASTERIZE_MAX_PAGES = None
+
+#: PIL's `Orientation` EXIF tag id — Pillow's own `ExifTags.TAGS` name for
+#: tag `0x0112`. `1` is "normal" (no correction needed); every other value
+#: means the stored pixel grid needs rotating/mirroring before a viewer (or
+#: a vision model, which never consults EXIF) sees it upright.
+_EXIF_ORIENTATION_TAG = 0x0112
+
+#: Re-encode quality for a corrected image — matches the seed-wide vision-
+#: input convention (`documents.transcription._VISION_JPEG_QUALITY`, not
+#: imported here to avoid a `media` → `documents` dependency in the wrong
+#: direction: `documents.real` already depends on `media`, not the reverse).
+_ORIENTATION_JPEG_QUALITY = 92
+
+
+def _correct_exif_orientation(content: bytes) -> bytes:
+    """Bake a photo's EXIF `Orientation` tag into its pixels before vision
+    ever sees them.
+
+    🔴 WHY THIS MATTERS FOR READING, SPECIFICALLY. A phone camera stores
+    sensor-native pixels and an EXIF tag saying how a VIEWER should rotate
+    them for display — the overwhelmingly common shape for a real-world
+    identity-document photo, since most uploads are phone photos, not
+    scans. Anthropic's vision endpoint (`AnthropicProvider.analyze_image`)
+    base64-encodes whatever bytes it is given; it does not read EXIF. A
+    portrait ID card shot with the phone held sideways therefore reaches
+    the model rotated 90°, and reading small printed fields (CPF, RG) off
+    a sideways image measurably degrades legibility. `imaging.
+    real_adapter.RealImagingAdapter.normalize_for_edit` already applies
+    `ImageOps.exif_transpose` for the OUTBOUND photo-editing path; this is
+    the same operation for the READING path, kept as its own small
+    function rather than routed through that adapter — `normalize_for_edit`
+    also converts HEIC, strips ICC/GPS and re-encodes unconditionally,
+    which is the right contract for an edit round-trip and unnecessary
+    (and, for the "already upright" majority of uploads, a needless lossy
+    re-encode) for a plain read.
+
+    Returns the ORIGINAL bytes unchanged whenever there is nothing to
+    correct — no EXIF, an orientation of `1`, or Pillow cannot decode the
+    image at all (an unsupported format, or genuinely corrupt bytes; the
+    vision call downstream already tolerates and reports that case on its
+    own terms). Never raises: a best-effort improvement must not become a
+    new failure mode for every image this resolver already handled fine.
+    """
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        return content
+    try:
+        with Image.open(io.BytesIO(content)) as im:
+            orientacao = im.getexif().get(_EXIF_ORIENTATION_TAG, 1)
+            if orientacao == 1:
+                return content
+            corrigida = ImageOps.exif_transpose(im)
+            if corrigida is None:
+                return content
+            if corrigida.mode not in ("RGB", "L"):
+                corrigida = corrigida.convert("RGB")
+            saida = io.BytesIO()
+            corrigida.save(saida, format="JPEG", quality=_ORIENTATION_JPEG_QUALITY)
+            return saida.getvalue()
+    except Exception:
+        logger.debug("media: EXIF-orientation correction failed", exc_info=True)
+        return content
 
 
 class RealMediaResolver:
@@ -327,8 +395,9 @@ class RealMediaResolver:
         prompt = self._doc_prompt
         if media.filename:
             prompt = f"{prompt}\n(nome do arquivo: {media.filename})"
+        conteudo = _correct_exif_orientation(media.content)
         described = await self._analyze(
-            media.content,
+            conteudo,
             prompt,
             provider=self._provider,
             model=self._model_for_provider(),

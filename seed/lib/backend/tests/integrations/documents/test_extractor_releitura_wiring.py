@@ -12,7 +12,10 @@ from __future__ import annotations
 import pytest
 
 from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
-from noctusai_lib.integrations.documents.releitura import AVISO_RELEITURA
+from noctusai_lib.integrations.documents.releitura import (
+    AVISO_CAMPOS_NUCLEO_AUSENTES,
+    AVISO_RELEITURA,
+)
 from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
 
 _CPF_VALIDO = "412.954.238-98"
@@ -189,3 +192,70 @@ class TestAgreementAndDisagreement:
         assert AVISO_RELEITURA in out.aviso.split("+")
         assert "divergiu" in out.aviso_mensagem
         assert "preencheu" in out.aviso_mensagem
+
+
+#: The measured live-prod shape (2026-09-30): only nome + data_nascimento
+#: ever come through, on EITHER read — no CPF/RG line at all, on a document
+#: declared `tipo_documento="rg"`.
+_RG_SO_NOME_E_DATA = (
+    "NOME JOAO CARLOS PEREIRA\n"
+    "DATA DE NASCIMENTO 12/05/1980\n"
+)
+
+
+class TestSilentPartialGuard:
+    """🔴 Live prod, 2026-09-30: three `tipo_documento="rg"` uploads
+    persisted `extracao_fonte="ocr"`, `data_nascimento_confianca="alta"` —
+    CPF/RG/órgão/gênero/nacionalidade/filiação all NULL, `aviso` carrying
+    `releitura_modelo_superior` (the escalation fired) but nothing saying
+    the escalation did not actually help. `AVISO_CAMPOS_NUCLEO_AUSENTES` is
+    the fix — see `real.py`'s own comment at the call site."""
+
+    @pytest.mark.asyncio
+    async def test_still_missing_core_fields_after_escalation_gets_its_own_aviso(self):
+        primeira = _Ladder(_RG_SO_NOME_E_DATA)
+        escalada = _Ladder(_RG_SO_NOME_E_DATA)  # stronger model, SAME gaps
+        out = await LadderIdentityExtractor(
+            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+        ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
+
+        assert len(escalada.chamadas) == 1  # escalation WAS tried
+        assert out.cpf is None
+        assert out.rg is None
+        # What WAS found is never discarded by this guard.
+        assert out.data_nascimento is not None
+        assert out.data_nascimento_confianca == ExtractionConfidence.ALTA
+        codigos = out.aviso.split("+")
+        assert AVISO_CAMPOS_NUCLEO_AUSENTES in codigos
+        assert "CPF" in out.aviso_mensagem
+        assert "RG" in out.aviso_mensagem
+
+    @pytest.mark.asyncio
+    async def test_guard_applies_even_when_escalar_releitura_is_off(self):
+        """Not gated on escalation running at all — a caller that never
+        opts in (the class default) or a TEXT_LAYER read (which `deve_
+        escalar` never re-reads) still needs to know its core fields never
+        came through."""
+        primeira = _Ladder(_RG_SO_NOME_E_DATA)
+        out = await LadderIdentityExtractor(ladder=primeira).extract(
+            b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg"
+        )
+        assert AVISO_CAMPOS_NUCLEO_AUSENTES in out.aviso.split("+")
+
+    @pytest.mark.asyncio
+    async def test_a_complete_read_never_gets_the_guard(self):
+        primeira = _Ladder(_RG_COMPLETO)
+        out = await LadderIdentityExtractor(ladder=primeira).extract(
+            b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg"
+        )
+        assert (out.aviso or "") == "" or AVISO_CAMPOS_NUCLEO_AUSENTES not in out.aviso.split("+")
+
+    @pytest.mark.asyncio
+    async def test_no_tipo_documento_never_triggers_the_guard(self):
+        """An undeclared type carries no known completeness contract — see
+        `releitura.campos_nucleo_faltando`'s own docstring."""
+        primeira = _Ladder(_RG_SO_NOME_E_DATA)
+        out = await LadderIdentityExtractor(ladder=primeira).extract(
+            b"fake-bytes", mimetype="image/jpeg"
+        )
+        assert (out.aviso or "") == "" or AVISO_CAMPOS_NUCLEO_AUSENTES not in out.aviso.split("+")

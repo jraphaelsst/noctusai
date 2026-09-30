@@ -260,7 +260,10 @@ class LadderIdentityExtractor:
             return IdentityFields(kind=kind, source=source)
 
         fields = self._ler(text, source, kind, titular, tipo_documento)
-        if source is TextSource.TEXT_LAYER and not _achou_algo(fields):
+        if source is TextSource.TEXT_LAYER and (
+            not _achou_algo(fields)
+            or releitura.campos_nucleo_faltando(fields, tipo_documento)
+        ):
             # 🔴 A TEXT LAYER THAT YIELDS NOTHING FALLS THROUGH TO VISION.
             # `classify_pdf_text_layer` judges whether a text layer is
             # SUBSTANTIVE, not whether it holds the fields THIS extractor
@@ -274,6 +277,21 @@ class LadderIdentityExtractor:
             # omitted, so this extractor — the one layer that knows what
             # "nothing found" means here — asks the ladder again, skipping
             # rung 1.
+            #
+            # 🔴 "FOUND SOMETHING" IS NOT "FOUND ENOUGH" (live prod,
+            # 2026-09-30, comp2-rg-51). `_achou_algo` alone missed the
+            # narrower case: a phone-screenshot-shaped PDF whose text layer
+            # was genuinely substantive — real, selectable characters, well
+            # past `classify_pdf_text_layer`'s char floor — and carried the
+            # holder's NOME in the surrounding app chrome, so `_achou_algo`
+            # (any of nome/cpf/rg/endereco/conjuges/estado_civil) returned
+            # True and stopped right there. The document's own identity
+            # data (CPF, RG, órgão) sat in an embedded IMAGE the text layer
+            # never touches. When the caller has DECLARED a `tipo_documento`
+            # with a known core-field contract (`releitura._TABELA_NUCLEO` —
+            # the same table `deve_escalar` already reads), a text layer
+            # missing any of THOSE fields gets the same second chance a
+            # truly-empty one already got, whether or not it found nome.
             texto_ocr, fonte_ocr, err_ocr = await self._ladder.to_text(
                 content, mimetype, filename, pular_camada_texto=True
             )
@@ -297,6 +315,29 @@ class LadderIdentityExtractor:
         if self._escalar_releitura and releitura.deve_escalar(fields, tipo_documento):
             fields = await self._escalar(
                 fields, content, mimetype, filename, titular, tipo_documento
+            )
+
+        # 🔴 THE SILENT-PARTIAL GUARD (live prod, 2026-09-30) — checked LAST,
+        # after every rung and every re-read this call is ever going to try.
+        # `releitura.deve_escalar` already fires on exactly this condition
+        # for an OCR-sourced read and tries a stronger model; what neither
+        # `deve_escalar` nor `mesclar` ever did is say anything when that
+        # escalation (or a TEXT_LAYER read the type-aware check above just
+        # widened) STILL leaves a core field blank — `mesclar`'s own
+        # "nothing changed" branch is the right merge decision (there is
+        # truly nothing new to report) but is not the right SILENCE: three
+        # real `tipo_documento="rg"` uploads persisted `extracao_fonte=ocr`,
+        # `data_nascimento_confianca=alta`, and CPF/RG/órgão/gênero/
+        # nacionalidade/filiação all NULL, with no code on the row saying
+        # the document's own type expected more than that. This never
+        # blocks persistence of what WAS found (unlike `leitura_
+        # comprometida`) — a real birthdate stays a real birthdate — it
+        # only names, in `aviso`, what the checklist should ask a human to
+        # get a better copy of.
+        faltando = releitura.campos_nucleo_faltando(fields, tipo_documento)
+        if faltando:
+            fields = releitura.marcar_campos_ausentes(
+                fields, faltando, tipo_documento=tipo_documento
             )
         return fields
 

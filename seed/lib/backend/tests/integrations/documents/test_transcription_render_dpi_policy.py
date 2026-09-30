@@ -256,10 +256,85 @@ class TestDominantEmbeddedImage:
         doc.close()
         return pdf_bytes, card_png
 
-    def test_single_embedded_image_extracted_at_native_resolution(self) -> None:
-        pdf_bytes, card_png = self._pdf_com_um_cartao_e_disclaimer()
+    @staticmethod
+    def _rgb_esperado(color=(0.1, 0.3, 0.7)) -> tuple[int, int, int]:
+        """The 0-255 RGB `_card_png`'s fill colour renders to — the region
+        is a single flat colour, so any interior pixel at any render
+        resolution must land here (within JPEG quantization noise)."""
+        return tuple(round(c * 255) for c in color)  # type: ignore[return-value]
+
+    def test_single_embedded_image_region_reproduces_the_card_pixels(self) -> None:
+        """Re-rendered through the page (`_render_regiao`), not raw
+        `extract_image` bytes — see that function's own docstring for why
+        (2026-09-30: raw bytes ignore any rotation the page's own content
+        stream applies when DRAWING the image). The output is therefore
+        JPEG at `_CARD_REGION_DPI`, NOT the source PNG's native resolution
+        — dimensions differ on purpose; the PIXEL COLOUR must not."""
+        import fitz  # type: ignore
+
+        pdf_bytes, _card_png = self._pdf_com_um_cartao_e_disclaimer()
         extraido = _dominant_embedded_image(pdf_bytes, 1)
-        assert extraido == card_png
+        assert extraido is not None
+        assert extraido[:2] == b"\xff\xd8"  # JPEG magic, not PNG's
+        obtido = fitz.Pixmap(extraido)
+        # The card rect is 40x25pt — wider than tall — and the render must
+        # preserve that shape regardless of the DPI it is rendered at.
+        assert obtido.width > obtido.height
+        er, eg, eb = self._rgb_esperado()
+        for x, y in ((5, 5), (obtido.width - 5, obtido.height - 5)):
+            orr, og, ob = obtido.pixel(x, y)[:3]
+            assert abs(er - orr) <= 8 and abs(eg - og) <= 8 and abs(eb - ob) <= 8
+
+    def test_single_image_placed_rotated_on_the_page_reads_upright(self) -> None:
+        """The rotation defect this closes, reproduced with real PyMuPDF
+        (2026-09-30). A card image is placed on the page ROTATED 90°
+        (`insert_image(..., rotate=90)`) — a document-generation tool
+        fitting a portrait photo onto a differently-oriented page, the same
+        shape as the live `comp2-rg-35` sample (a 3024x4032 portrait phone
+        photo on an A4 LANDSCAPE page). `doc.extract_image` would return
+        the card's own unrotated pixels (verified against this exact
+        fixture during development); `_dominant_embedded_image` must
+        instead reproduce the ROTATED placement — the orientation a human
+        viewer (or the whole-page raster rung) actually sees."""
+        import fitz  # type: ignore
+
+        # Left half red / right half blue in the image's OWN (unrotated)
+        # pixel space — after a 90° CW placement rotation, red ends up on
+        # top and blue on the bottom of the ON-PAGE appearance.
+        img = fitz.open()
+        page_img = img.new_page(width=100, height=60)
+        page_img.draw_rect(fitz.Rect(0, 0, 50, 60), color=(0.8, 0.05, 0.05), fill=(0.8, 0.05, 0.05))
+        page_img.draw_rect(fitz.Rect(50, 0, 100, 60), color=(0.05, 0.05, 0.8), fill=(0.05, 0.05, 0.8))
+        card_png = page_img.get_pixmap(matrix=fitz.Matrix(2, 2)).tobytes("png")
+        img.close()
+
+        doc = fitz.open()
+        page = doc.new_page(width=200, height=280)
+        page.insert_image(fitz.Rect(20, 20, 120, 220), stream=card_png, rotate=90)
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        extraido = _dominant_embedded_image(pdf_bytes, 1)
+        assert extraido is not None
+        obtido = fitz.Pixmap(extraido)
+        # Rotated 90°: the placed region is now TALLER than wide, and the
+        # colour split runs top/bottom, not left/right.
+        assert obtido.height > obtido.width
+        topo = obtido.pixel(obtido.width // 2, 5)[:3]
+        base = obtido.pixel(obtido.width // 2, obtido.height - 5)[:3]
+        # The rotated PLACEMENT moves the colour split from left/right to
+        # top/bottom — which end is red vs blue is `insert_image`'s own
+        # rotation-direction convention, not something this test should
+        # assume. What must hold is that the two ends land on OPPOSITE
+        # sides of the split (one clearly red-dominant, the other clearly
+        # blue-dominant): a RAW `extract_image` read (the defect being
+        # fixed) never produces that along this axis — it still carries the
+        # source's own left/right split, so sampling top-vs-bottom on the
+        # raw bytes would show the SAME roughly-even red/blue mix at both
+        # points instead.
+        assert abs(topo[0] - topo[2]) > 60
+        assert abs(base[0] - base[2]) > 60
+        assert (topo[0] > topo[2]) != (base[0] > base[2])
 
     def test_page_classification_is_the_real_provenance_stamp_verdict(self) -> None:
         """Not faked in this test class: the SAME `classify_pdf_text_layer`
@@ -329,7 +404,13 @@ class TestDominantEmbeddedImage:
         pdf_bytes = doc.tobytes()
         doc.close()
 
-        assert _dominant_embedded_image(pdf_bytes, 1) == card_png
+        extraido = _dominant_embedded_image(pdf_bytes, 1)
+        assert extraido is not None
+        obtido = fitz.Pixmap(extraido)
+        assert obtido.width > obtido.height  # the card's own 40x25pt shape
+        er, eg, eb = self._rgb_esperado()
+        orr, og, ob = obtido.pixel(5, 5)[:3]
+        assert abs(er - orr) <= 8 and abs(eg - og) <= 8 and abs(eb - ob) <= 8
 
     def test_dominant_embedded_image_bug4_shape_with_qr_and_two_card_halves(
         self,

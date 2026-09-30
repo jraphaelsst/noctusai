@@ -7,8 +7,11 @@ from __future__ import annotations
 from dataclasses import replace
 
 from noctusai_lib.integrations.documents.releitura import (
+    AVISO_CAMPOS_NUCLEO_AUSENTES,
     AVISO_RELEITURA,
+    campos_nucleo_faltando,
     deve_escalar,
+    marcar_campos_ausentes,
     mesclar,
 )
 from noctusai_lib.integrations.documents.types import (
@@ -113,6 +116,77 @@ class TestDeveEscalar:
         fields = IdentityFields(source=TextSource.OCR)
         assert deve_escalar(fields, "guia_itbi") is False
         assert deve_escalar(fields, None) is False
+
+
+class TestCamposNucleoFaltando:
+    """The completeness query `deve_escalar` now delegates to — usable on
+    ANY `IdentityFields`, regardless of `source` (see `real.py`'s own
+    text-layer-fallthrough and post-read-completeness callers, neither of
+    which wants `deve_escalar`'s OCR-only gating)."""
+
+    def test_complete_rg_reports_nothing_missing(self):
+        fields = IdentityFields(
+            nome="JOAO CARLOS PEREIRA", cpf=_CPF_A, rg="1.234.567-8",
+            source=TextSource.TEXT_LAYER,
+        )
+        assert campos_nucleo_faltando(fields, "rg") == ()
+
+    def test_rg_missing_cpf_and_rg_reports_both(self):
+        fields = IdentityFields(nome="JOAO CARLOS PEREIRA", source=TextSource.TEXT_LAYER)
+        faltando = campos_nucleo_faltando(fields, "rg")
+        assert set(faltando) == {"cpf", "rg"}
+
+    def test_runs_regardless_of_source_unlike_deve_escalar(self):
+        """`deve_escalar` refuses to fire on a TEXT_LAYER read (a stronger
+        model reads identical bytes no better) — but the read is still
+        genuinely INCOMPLETE, and a caller asking about completeness alone
+        (not "should I re-read") must see that."""
+        fields = IdentityFields(nome="JOAO CARLOS PEREIRA", source=TextSource.TEXT_LAYER)
+        assert deve_escalar(fields, "rg") is False
+        assert campos_nucleo_faltando(fields, "rg") != ()
+
+    def test_unlisted_tipo_reports_nothing_missing(self):
+        fields = IdentityFields(source=TextSource.OCR)
+        assert campos_nucleo_faltando(fields, "guia_itbi") == ()
+        assert campos_nucleo_faltando(fields, None) == ()
+
+    def test_comprovante_missing_endereco_reports_it(self):
+        fields = IdentityFields(source=TextSource.OCR, endereco=None)
+        assert campos_nucleo_faltando(fields, "comprovante_endereco") == ("endereco",)
+
+
+class TestMarcarCamposAusentes:
+    def test_no_op_when_nothing_is_missing(self):
+        fields = IdentityFields(nome="JOAO", cpf=_CPF_A, source=TextSource.OCR)
+        assert marcar_campos_ausentes(fields, ()) is fields
+
+    def test_appends_the_aviso_naming_the_missing_fields(self):
+        fields = IdentityFields(
+            nome="JOAO", data_nascimento_confianca=ExtractionConfidence.ALTA,
+            source=TextSource.OCR,
+        )
+        marcado = marcar_campos_ausentes(fields, ("cpf", "rg"), tipo_documento="rg")
+
+        assert AVISO_CAMPOS_NUCLEO_AUSENTES in marcado.aviso.split("+")
+        assert "CPF" in marcado.aviso_mensagem
+        assert "RG" in marcado.aviso_mensagem
+        # Never blocks what WAS found — unlike `leitura_comprometida`, this
+        # is informational, not a persistence gate.
+        assert marcado.nome == "JOAO"
+
+    def test_stacks_with_an_existing_aviso_rather_than_replacing_it(self):
+        fields = replace(
+            IdentityFields(source=TextSource.OCR),
+            aviso=AVISO_RELEITURA,
+            aviso_mensagem="releitura com claude-opus preencheu: nome",
+        )
+        marcado = marcar_campos_ausentes(fields, ("cpf",), tipo_documento="cin")
+
+        codigos = marcado.aviso.split("+")
+        assert AVISO_RELEITURA in codigos
+        assert AVISO_CAMPOS_NUCLEO_AUSENTES in codigos
+        assert "releitura com claude-opus" in marcado.aviso_mensagem
+        assert "CPF" in marcado.aviso_mensagem
 
 
 class TestMesclar:

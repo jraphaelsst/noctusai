@@ -943,30 +943,65 @@ def _barcode_like(info: dict) -> bool:
     return False
 
 
+def _render_regiao(page: "fitz.Page", rect: "fitz.Rect") -> Optional[bytes]:
+    """Render just the given rect of `page` at `_CARD_REGION_DPI`, JPEG.
+
+    🔴 WHY THIS IS RENDERED THROUGH THE PAGE, NEVER `doc.extract_image`.
+    `extract_image(xref)` returns the embedded image's raw, DECODED bytes —
+    its own native pixel grid, in the orientation it was ENCODED at. That
+    is not necessarily the orientation it is DRAWN at: a page's content
+    stream places an image through its own transform matrix, and a PDF
+    author routinely rotates that placement to fit a photo — shot in one
+    orientation by a phone — onto a page laid out in another, without ever
+    re-encoding the image itself. Measured, reproduced locally 2026-09-30
+    (a synthetic page placing a portrait test image at `rotate=90` into a
+    landscape rect): `extract_image` returned the SOURCE image untouched,
+    while `page.get_pixmap(clip=rect)` reproduced the ROTATED placement —
+    the same pixels a human opening the PDF, or the existing whole-page
+    raster rung, would see. Sending the unrotated raw bytes to vision is
+    exactly the failure this module's own header describes for a
+    photographed document: legible fields become illegible not because the
+    scan is bad, but because the page turned it sideways before this
+    function looked at it.
+    """
+    import fitz  # type: ignore  # PyMuPDF
+
+    zoom = _CARD_REGION_DPI / 72
+    try:
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=rect)
+        # JPEG, not PNG — see `_VISION_JPEG_QUALITY`'s comment; this crop
+        # is also vision INPUT, same reasoning as `_pdf_to_images`.
+        return pix.tobytes("jpg", jpg_quality=_VISION_JPEG_QUALITY)
+    except Exception:
+        logger.debug("dominant-image: region render failed", exc_info=True)
+        return None
+
+
 def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
-    """The identity card's own pixels on this page — one embedded image at
-    its native resolution, or a crop spanning several comparable ones,
-    whichever this page actually carries.
+    """The identity card's own pixels on this page — one embedded image's
+    region re-rendered through the page, or a crop spanning several
+    comparable ones, whichever this page actually carries.
 
     The `identity-vision-render-dpi` shape measured 2026-09-23: a card's
     every field lives in a small embedded image; the page's SELECTABLE
-    text is a disclaimer that swamps it. Sending the issuer's own pixels,
-    uncropped and unscaled, beats rasterizing the WHOLE page at any DPI —
-    sharper on the part that matters and smaller in bytes (a thumbnail-
-    sized card graphic vs. a full A4 raster), so the DPI/budget trade-off
-    in `_pdf_to_images_within_budget` does not even arise for this page.
+    text is a disclaimer that swamps it. Sending just the issuer's own
+    region beats rasterizing the WHOLE page at any DPI — sharper on the
+    part that matters and smaller in bytes (a thumbnail-sized card graphic
+    vs. a full A4 raster), so the DPI/budget trade-off in
+    `_pdf_to_images_within_budget` does not even arise for this page.
 
     Three shapes, in order:
 
     1. Exactly one non-barcode image (after `_barcode_like` excludes any
-       QR/verification code) — return its raw bytes, unscaled. The
-       original, single-image fast path, unchanged.
+       QR/verification code) — re-render its own rect through the page
+       (`_render_regiao`), never its raw decoded bytes (see that
+       function's own docstring for the rotation defect this fixes,
+       2026-09-30).
     2. Two or more non-barcode images within `_DOMINANT_IMAGE_AREA_RATIO`
        of the largest — no single one IS the document (a front/back pair,
        or a duplicated overlay layer; measured on a real template that
        stacks the card as 2-3 same-area images) — crop-render the UNION of
-       their rects at `_CARD_REGION_DPI` instead of guessing which one to
-       send.
+       their rects instead of guessing which one to send.
     3. Anything else (no images once barcodes are excluded; the page
        cannot be opened; a lone tiny image dwarfed by others that were
        filtered) — `None`, and the ordinary page-raster rung answers
@@ -1017,14 +1052,7 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
         irmas = [c for c in candidatos if c[0] * _DOMINANT_IMAGE_AREA_RATIO >= maior_area]
 
         if len(irmas) == 1:
-            xref = irmas[0][1]
-            try:
-                extraido = doc.extract_image(xref)
-            except Exception:
-                logger.debug("dominant-image: extract_image failed on page %d", numero, exc_info=True)
-                return None
-            dados = (extraido or {}).get("image")
-            return dados or None
+            return _render_regiao(page, irmas[0][2])
 
         # 2+ comparable, non-barcode images — no single one IS the
         # document, but their UNION region is. Crop-render just that
@@ -1035,15 +1063,7 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
         right = max(r.x1 for _, _, r in irmas)
         bottom = max(r.y1 for _, _, r in irmas)
         uniao = fitz.Rect(left, top, right, bottom)
-        zoom = _CARD_REGION_DPI / 72
-        try:
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=uniao)
-            # JPEG, not PNG — see `_VISION_JPEG_QUALITY`'s comment; this
-            # crop is also vision INPUT, same reasoning as `_pdf_to_images`.
-            return pix.tobytes("jpg", jpg_quality=_VISION_JPEG_QUALITY)
-        except Exception:
-            logger.debug("dominant-image: crop render failed on page %d", numero, exc_info=True)
-            return None
+        return _render_regiao(page, uniao)
     finally:
         doc.close()
 
