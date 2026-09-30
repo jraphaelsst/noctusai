@@ -1481,6 +1481,35 @@ describe("a linha unificada de um dado obrigatório", () => {
     expect(screen.getByTestId("documento-checklist-identidade-row")).toBeTruthy();
   });
 
+  it("🔴 the titular's filed slot re-reads through the card's Anexos re-read callback", async () => {
+    const onReextrairDocumento = vi.fn();
+    const comArquivo = identidade({
+      documentos: [
+        {
+          tipo_documento: "cnh",
+          rotulo: "CNH",
+          upload: true,
+          documento: {
+            id: "doc-cnh",
+            nome_original: "cnh.pdf",
+            mime_type: "application/pdf",
+            tamanho_bytes: 2048,
+            created_at: "2026-08-24T00:00:00Z",
+          },
+        },
+      ],
+    });
+    const { fireEvent, screen } = await linha({
+      documentoChecklist: [comArquivo],
+      onReextrairDocumento,
+      reextraindoDocumentoId: null,
+    });
+    const botao = screen.getByTestId("documento-checklist-identidade-cnh-reextrair");
+    expect(botao.getAttribute("aria-label")).toBe("Ler o documento novamente");
+    fireEvent.click(botao);
+    expect(onReextrairDocumento).toHaveBeenCalledWith("doc-cnh");
+  });
+
   it("🔴 renders without a trash when the backend has not shipped `documento` yet", async () => {
     // The field is optional on purpose: this branch and the backend slice that
     // populates it were built in parallel, and neither may assume the other.

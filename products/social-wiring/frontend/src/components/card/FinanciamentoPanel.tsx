@@ -541,11 +541,22 @@ function FinanciamentoDocSlot({
           className="flex items-center justify-between gap-2 text-xs text-destructive"
           data-testid={`${testId}-erro`}
         >
-          <span>{rotuloErro(documento.extracao_erro)}</span>
+          {/* A raw extraction error (an OpenAI 400 body) can run hundreds of
+              characters: clamped to two lines (`min-w-0` so the flex child can
+              actually shrink), full text on hover, so the action beside it
+              never leaves the screen (owner e2e 2026-09-21). */}
+          <span
+            className="min-w-0 flex-1 break-words line-clamp-2"
+            title={rotuloErro(documento.extracao_erro)}
+            data-testid={`${testId}-erro-texto`}
+          >
+            {rotuloErro(documento.extracao_erro)}
+          </span>
           {onExtrair && (
             <Button
               size="sm"
               variant="outline"
+              className="shrink-0"
               onClick={() => onExtrair(documento.id)}
               disabled={loading || extraindo}
               data-testid={`${testId}-reler`}

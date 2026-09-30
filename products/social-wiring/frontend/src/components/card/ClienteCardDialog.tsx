@@ -690,6 +690,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   uploading={props.uploadingDocumento}
                   onVisualizarDocumento={props.onVisualizarDocumentoChecklist}
                   onBaixarDocumento={props.onBaixarDocumentoChecklist}
+                  onReextrairDocumento={props.onReextrairDocumento}
+                  reextraindoDocumentoId={props.reextraindoDocumentoId}
                 />
 
                 {props.onCriarChecklistExtra && (

@@ -593,10 +593,21 @@ function EmpresaCartaoSlot({ empresaId, clienteId }: { empresaId: string; client
           className="flex items-center justify-between gap-2 text-xs text-destructive"
           data-testid={`empresa-cartao-${empresaId}-erro`}
         >
-          <span>{cartao!.extracao_erro || "Não foi possível ler o documento."}</span>
+          {/* A raw extraction error (an OpenAI 400 body) can run hundreds of
+              characters: clamped to two lines (`min-w-0` so the flex child can
+              actually shrink), full text on hover, so the action beside it
+              never leaves the screen (owner e2e 2026-09-21). */}
+          <span
+            className="min-w-0 flex-1 break-words line-clamp-2"
+            title={cartao!.extracao_erro || "Não foi possível ler o documento."}
+            data-testid={`empresa-cartao-${empresaId}-erro-texto`}
+          >
+            {cartao!.extracao_erro || "Não foi possível ler o documento."}
+          </span>
           <Button
             size="sm"
             variant="outline"
+            className="shrink-0"
             onClick={() => extracao.reextrair.mutate(cartao!.id)}
             disabled={extracao.reextrair.isPending}
           >

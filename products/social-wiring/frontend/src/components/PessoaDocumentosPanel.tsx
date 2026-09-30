@@ -85,6 +85,18 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
   // the rest of this panel is showing.
   const casado = estadoCivilExigeConjuge(checklist.data?.valores?.estado_civil);
 
+  // ONE re-read handler for both surfaces that offer it — the checklist's
+  // upload slots and the Anexos rows — so the two can never disagree on the
+  // mutation, the pending document or the error toast.
+  const reextrair = (documentoId: string) =>
+    docs.reextrair.mutate(documentoId, {
+      onError: (e) =>
+        toast.error(erro(e, "Não foi possível reenviar o documento para leitura.")),
+    });
+  const reextraindoDocumentoId = docs.reextrair.isPending
+    ? (docs.reextrair.variables ?? null)
+    : null;
+
   return (
     <>
       {/* Visible only while married — see `CasadoToggle`'s docblock for why
@@ -210,6 +222,8 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
             },
           )
         }
+        onReextrairDocumento={reextrair}
+        reextraindoDocumentoId={reextraindoDocumentoId}
       />
       {/* Visible only while married, same gate as the toggle above — see the
           file docblock on `CertidaoCasamentoSlot` for why this exists at
@@ -302,13 +316,8 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
         }
         // Gap 3/4 — re-queues a document stuck in `erro` (or never queued
         // at all) without deleting and re-uploading it.
-        onReextrairDocumento={(documentoId) =>
-          docs.reextrair.mutate(documentoId, {
-            onError: (e) =>
-              toast.error(erro(e, "Não foi possível reenviar o documento para leitura.")),
-          })
-        }
-        reextraindoDocumentoId={docs.reextrair.isPending ? (docs.reextrair.variables ?? null) : null}
+        onReextrairDocumento={reextrair}
+        reextraindoDocumentoId={reextraindoDocumentoId}
       />
     </>
   );

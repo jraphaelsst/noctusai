@@ -138,6 +138,12 @@ export interface DocumentoChecklistSectionProps {
   onVisualizarDocumento?: (documentoId: string) => void;
   /** Downloads a checklist document under its original filename. */
   onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
+  /** Re-reads a checklist slot's file — the SAME mutation (and route,
+   *  `reextrair_documento_route`) the Anexos rows' "Ler o documento
+   *  novamente" uses; the caller owns the error toast. */
+  onReextrairDocumento?: (documentoId: string) => void;
+  /** The document whose re-read is in flight — spins that slot's action. */
+  reextraindoDocumentoId?: string | null;
   /** Suppresses this section's own title row — for a caller that already
    *  renders the heading. On the card the wrapping collapsible carries both
    *  the words "Dados obrigatórios" AND the progress readout, because a fold
@@ -181,6 +187,8 @@ export function DocumentoChecklistSection({
   uploading,
   onVisualizarDocumento,
   onBaixarDocumento,
+  onReextrairDocumento,
+  reextraindoDocumentoId,
   hideHeader = false,
   testIdPrefix = "documento-checklist",
 }: DocumentoChecklistSectionProps) {
@@ -235,7 +243,8 @@ export function DocumentoChecklistSection({
         <ul className="space-y-1">
           {items.map((item) =>
             item.documentos ? (
-              // The identity item — two upload slots under one tick.
+              // An item with upload slots — the identity item (RG/CPF, CNH,
+              // CIN under one tick) or Serasa Crednet's single slot.
               <IdentidadeChecklistRow
                 key={item.key}
                 item={item}
@@ -245,6 +254,9 @@ export function DocumentoChecklistSection({
                 uploading={uploading}
                 onVisualizarDocumento={onVisualizarDocumento}
                 onBaixarDocumento={onBaixarDocumento}
+                onReextrairDocumento={onReextrairDocumento}
+                reextraindoDocumentoId={reextraindoDocumentoId}
+                valores={valores}
                 testIdPrefix={testIdPrefix}
               />
             ) : (

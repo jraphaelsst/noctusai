@@ -156,7 +156,9 @@ CLIENTES_TABLE = "clientes"
 #: seed grew a real CIN reader in the meantime (`real.py`'s `_achou_algo`,
 #: hardened against the gov.br CIN PDF's shape on the P2 corpus,
 #: 2026-09-28); `fontes.FONTES["cin"]` now closes this gap the same way
-#: migration 142 closed `cnh`'s, mirror-imaged.
+#: migration 142 closed `cnh`'s, mirror-imaged. The CINs already stranded
+#: at `NULL` are read by the sweep's class-4 pass (`_candidatos_varredura`)
+#: — and so is the backlog of any type that gains a reader later.
 TIPOS_EXTRAIVEIS = frozenset(
     f.tipo_documento for f in fontes.FONTES.values() if f.dominio == "cliente"
 )
@@ -3385,7 +3387,7 @@ _COLUNAS_VARREDURA = (
 
 
 def _candidatos_varredura(client: Any, limite: int) -> list[dict]:
-    """The three kinds of row the sweep owns, oldest-first, de-duplicated.
+    """The four kinds of row the sweep owns, oldest-first, de-duplicated.
 
     1. `pendente`/`processando` whose `extracao_em` is older than
        `STALE_APOS` — a job that started and died.
@@ -3400,8 +3402,21 @@ def _candidatos_varredura(client: Any, limite: int) -> list[dict]:
        MAX_TENTATIVAS` — the first attempt plus at most
        `MAX_RETENTATIVAS_ERRO` automatic retries — aged on `extracao_em` so a
        failure is not retried the minute it happens.
+    4. 🔴 NEVER READ: `extracao_status IS NULL` for a type that IS in
+       `TIPOS_EXTRAIVEIS` today, aged on `created_at` like (2). A document
+       uploaded while its type had NO reader (every `cin` before
+       `fontes.FONTES["cin"]` existed — prod live test 2026-09-30) was never
+       stamped `pendente`, so classes 1–3 could never see it: it stayed
+       unread forever, and the person owning the card had no signal that it
+       would never tick. Once the reader ships, this class picks the backlog
+       up by itself — no human re-read per document. Filtered on
+       `TIPOS_EXTRAIVEIS` IN THE QUERY: a NULL status is also the CORRECT
+       resting state of an intentionally-unread type (`outro`, `contrato`…),
+       and those must never be selected — not even to be refused by
+       `extracao_job.preparar`'s `deve_extrair` guard, which would stamp them
+       `erro` and turn "not read by design" into a false failure.
 
-    Three explicit queries rather than one `.or_()` expression: each bound is
+    Four explicit queries rather than one `.or_()` expression: each bound is
     then a real, individually-tested filter.
     """
     cutoff = _stale_cutoff()
@@ -3431,9 +3446,18 @@ def _candidatos_varredura(client: Any, limite: int) -> list[dict]:
         .limit(limite)
         .execute()
     ).data or []
+    nunca_lidos = (
+        base()
+        .is_("extracao_status", "null")
+        .in_("tipo_documento", sorted(TIPOS_EXTRAIVEIS))
+        .lte("created_at", cutoff)
+        .order("created_at")
+        .limit(limite)
+        .execute()
+    ).data or []
     vistos: set[str] = set()
     linhas: list[dict] = []
-    for row in [*parados, *nunca_iniciados, *com_erro]:
+    for row in [*parados, *nunca_iniciados, *com_erro, *nunca_lidos]:
         chave = str(row["id"])
         if chave in vistos:
             continue

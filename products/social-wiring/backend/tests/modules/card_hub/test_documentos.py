@@ -211,7 +211,9 @@ class TestUploadSchedulesIdentityExtraction:
     """`config._extracao_ao_enviar` stamps `extracao_status='pendente'` at
     INSERT time for every `identidade_extracao_service.deve_extrair`-eligible
     `tipo_documento` — the ONE hook the whole read pipeline depends on
-    (`varrer_extracoes_pendentes` only ever revisits a non-NULL status; the
+    (`varrer_extracoes_pendentes` reaches a NULL status only through its
+    class-4 backlog pass, up to an hour late — `pendente` is what makes the
+    read immediate; the
     router's own background task, scheduled right after, only ever moves
     that status FORWARD — see `router.upload_documento_route`'s own
     docstring). These call `documentos_service.upload_documento` directly,

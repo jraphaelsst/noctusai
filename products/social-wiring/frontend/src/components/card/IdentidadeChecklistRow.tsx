@@ -21,7 +21,18 @@
  * with its own explanatory label.
  *
  * Legacy files already filed as `cpf` are listed read-only — view, download,
- * discard — and are never offered as an upload target.
+ * discard, re-read — and are never offered as an upload target.
+ *
+ * 🔴 THE VALUES ARE SHOWN, NOT ONLY THE FILES (owner e2e 2026-09-21). The
+ * old `cpf` row rendered only its FILE, so a CPF typed (or read off another
+ * document) showed "—" beside a ticked box — the tick said "we have it", the
+ * row said "we don't". The identity item keeps that lesson: the CPF, RG and
+ * órgão expedidor on record (`valores`, keyed by column) are listed on the
+ * row; the slots below list the files.
+ *
+ * Every filed slot carries "Ler o documento novamente" — the same re-read
+ * the Anexos rows offer (`reextrair_documento_route`), so a checklist file is
+ * never a dead end when its reading failed or the readers improved.
  *
  * Same override semantics as `ChecklistItemRow`: the checkbox is a human
  * override, the `manual` badge + ↩ say so and withdraw it.
@@ -29,10 +40,12 @@
  * Presentational only (`card/**`): props in, callbacks out.
  */
 import { useRef } from "react";
-import { Download, ExternalLink, FileText, Trash2, Undo2, Upload } from "lucide-react";
+import { Download, ExternalLink, FileText, RotateCw, Trash2, Undo2, Upload } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { DocumentoChecklistItem, IdentidadeSlot } from "@/types/cardHub";
+
+import type { DadosPessoais } from "./DadosPessoaisForm";
 
 import { TokenCheckbox, TooltipIconButton, formatBytes } from "@noctusai/lib/components";
 
@@ -45,8 +58,22 @@ export interface IdentidadeChecklistRowProps {
   uploading?: boolean;
   onVisualizarDocumento?: (documentoId: string) => void;
   onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
+  /** Re-queues a slot file's reading — the Anexos rows' same mutation. */
+  onReextrairDocumento?: (documentoId: string) => void;
+  /** The document whose re-read request is in flight, if any. */
+  reextraindoDocumentoId?: string | null;
+  /** The record's values, keyed by COLUMN — the identity data on file. */
+  valores?: DadosPessoais;
   testIdPrefix?: string;
 }
+
+/** The identity data shown on the row, in the contract's order. `nome_oficial`
+ *  is left out: it has its own "Nome no documento" block below the list. */
+const DADOS_IDENTIDADE: ReadonlyArray<{ campo: keyof DadosPessoais; rotulo: string }> = [
+  { campo: "cpf", rotulo: "CPF" },
+  { campo: "rg", rotulo: "RG" },
+  { campo: "rg_orgao_expedidor", rotulo: "Órgão expedidor" },
+];
 
 export function IdentidadeChecklistRow({
   item,
@@ -56,6 +83,9 @@ export function IdentidadeChecklistRow({
   uploading,
   onVisualizarDocumento,
   onBaixarDocumento,
+  onReextrairDocumento,
+  reextraindoDocumentoId,
+  valores,
   testIdPrefix = "documento-checklist",
 }: IdentidadeChecklistRowProps) {
   const tid = `${testIdPrefix}-${item.key}`;
@@ -66,6 +96,19 @@ export function IdentidadeChecklistRow({
   // Fields no pending reading will fill — only these need another document
   // (or a typed value).
   const semLeitura = faltando.filter((campo) => !comSugestao.has(campo));
+  // Only an ALL-of item (the identity one — it is the item that sends
+  // `faltando`) owns identity data; a plain document item (Serasa Crednet)
+  // rides this row for its upload slot alone.
+  const dadosNaFicha =
+    item.faltando !== undefined
+      ? DADOS_IDENTIDADE.map(({ campo, rotulo }) => ({
+          campo,
+          rotulo,
+          valor: valores?.[campo],
+        })).filter((d): d is { campo: keyof DadosPessoais; rotulo: string; valor: string } =>
+          typeof d.valor === "string" && d.valor.trim() !== "",
+        )
+      : [];
 
   return (
     <li
@@ -114,6 +157,18 @@ export function IdentidadeChecklistRow({
         )}
       </div>
 
+      {dadosNaFicha.length > 0 && (
+        <p
+          className="ml-6 flex flex-wrap gap-x-3 text-xs text-muted-foreground/90"
+          data-testid={`${tid}-dados`}
+        >
+          {dadosNaFicha.map(({ campo, rotulo, valor }) => (
+            <span key={campo} data-testid={`${tid}-dados-${campo}`}>
+              {rotulo}: <span className="font-medium text-foreground/90">{valor}</span>
+            </span>
+          ))}
+        </p>
+      )}
       {item.dica && (
         <p className="ml-6 text-xs text-muted-foreground" data-testid={`${tid}-dica`}>
           {item.dica}
@@ -161,6 +216,8 @@ export function IdentidadeChecklistRow({
             uploading={uploading}
             onVisualizarDocumento={onVisualizarDocumento}
             onBaixarDocumento={onBaixarDocumento}
+            onReextrairDocumento={onReextrairDocumento}
+            reextraindo={!!slot.documento && reextraindoDocumentoId === slot.documento.id}
             tid={`${tid}-${slot.tipo_documento}`}
           />
         ))}
@@ -177,6 +234,8 @@ function IdentidadeSlotLinha({
   uploading,
   onVisualizarDocumento,
   onBaixarDocumento,
+  onReextrairDocumento,
+  reextraindo,
   tid,
 }: {
   item: DocumentoChecklistItem;
@@ -186,6 +245,8 @@ function IdentidadeSlotLinha({
   uploading?: boolean;
   onVisualizarDocumento?: (documentoId: string) => void;
   onBaixarDocumento?: (documentoId: string, nomeArquivo: string) => void;
+  onReextrairDocumento?: (documentoId: string) => void;
+  reextraindo?: boolean;
   tid: string;
 }) {
   // 🔴 Its OWN input, held by a ref — several parties' rows are on screen at
@@ -241,6 +302,20 @@ function IdentidadeSlotLinha({
             />
           )}
         </>
+      )}
+      {/* Every slot type is read automatically (`fontes.FONTES`), so a filed
+          slot is always re-readable — same action, label and pending state as
+          the Anexos rows; the error toast lives with the caller's mutation. */}
+      {doc && onReextrairDocumento && (
+        <TooltipIconButton
+          label="Ler o documento novamente"
+          icon={RotateCw}
+          testId={`${tid}-reextrair`}
+          className="h-7 w-7"
+          disabled={reextraindo}
+          iconClassName={reextraindo ? "animate-spin" : undefined}
+          onClick={() => onReextrairDocumento(doc.id)}
+        />
       )}
       {doc && onVisualizarDocumento && (
         <TooltipIconButton

@@ -1670,6 +1670,82 @@ class TestSweepD3:
         assert (doc["extracao_status"], doc["extracao_tentativas"]) == ("erro", 2)
 
 
+class TestSweepNeverRead:
+    """Class 4 of `_candidatos_varredura`: `extracao_status IS NULL` for a
+    type that has a reader TODAY — a document uploaded before its reader
+    shipped (every `cin` before `fontes.FONTES["cin"]`, prod 2026-09-30)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tipo", ["cin", "rg"])
+    async def test_a_never_read_extractable_document_is_read_by_the_sweep(
+        self, client, scoped, tipo
+    ):
+        assert tipo in svc.TIPOS_EXTRAIVEIS
+        _cid, did, storage = await _setup(scoped, tipo=tipo, doc_extra={
+            "extracao_status": None, "extracao_em": None, "created_at": _old(600),
+        })
+        out = await svc.varrer_extracoes_pendentes(scoped, storage, extractor_factory=_fabrica)
+        assert (out["encontrados"], out["retomados"]) == (1, 1)
+        doc = _documento(scoped, did)
+        assert doc["extracao_status"] == "ok"
+        assert doc["extracao_tentativas"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tipo", ["outro", "contrato"])
+    async def test_an_intentionally_unread_type_is_never_picked(self, client, scoped, tipo):
+        assert tipo not in svc.TIPOS_EXTRAIVEIS
+        _cid, did, storage = await _setup(scoped, tipo=tipo, doc_extra={
+            "extracao_status": None, "extracao_em": None, "created_at": _old(600),
+        })
+        out = await svc.varrer_extracoes_pendentes(scoped, storage, extractor_factory=_fabrica)
+        assert out["encontrados"] == 0
+        assert _documento(scoped, did)["extracao_status"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_just_uploaded_never_read_document_is_not_raced(self, client, scoped):
+        _cid, _did, storage = await _setup(scoped, tipo="cin", doc_extra={
+            "extracao_status": None, "extracao_em": None, "created_at": _old(1),
+        })
+        out = await svc.varrer_extracoes_pendentes(scoped, storage, extractor_factory=_fabrica)
+        assert out["encontrados"] == 0
+
+    @pytest.mark.asyncio
+    async def test_a_deleted_never_read_document_is_not_picked(self, client, scoped):
+        _cid, _did, storage = await _setup(scoped, tipo="cin", doc_extra={
+            "extracao_status": None, "extracao_em": None, "created_at": _old(600),
+            "deleted_at": _old(30),
+        })
+        out = await svc.varrer_extracoes_pendentes(scoped, storage, extractor_factory=_fabrica)
+        assert out["encontrados"] == 0
+
+    @pytest.mark.asyncio
+    async def test_the_backlog_is_bounded_by_limite_oldest_first(self, client, scoped):
+        cid, did, storage = await _setup(scoped, tipo="cin", doc_extra={
+            "extracao_status": None, "extracao_em": None, "created_at": _old(600),
+        })
+        base = _documento(scoped, did)
+        linhas, por_idade = [], {}
+        for idade in (900, 300, 700):
+            outro_id = str(uuid4())
+            path = f"{ORG_ID}/clientes/{cid}/{outro_id}"
+            await storage.put(
+                bucket=BUCKET, key=path, data=b"%PDF-1.4", content_type="application/pdf",
+            )
+            por_idade[idade] = outro_id
+            linhas.append({**base, "id": outro_id, "storage_path": path, "created_at": _old(idade)})
+        scoped.set_table_data("cliente_documentos", [base, *linhas])
+        candidatos = svc._candidatos_varredura(scoped, 2)
+        # The bound holds and the merged list is oldest-first. (The seed
+        # `MockSupabaseClient` accepts `.order()` without applying it, so
+        # WHICH two of the four the SQL `ORDER BY created_at` keeps is a
+        # PostgREST behaviour this mock cannot pin; the ids below are only
+        # constrained to be real never-read candidates.)
+        assert len(candidatos) == 2
+        assert {c["id"] for c in candidatos} <= {did, *por_idade.values()}
+        datas = [c["created_at"] for c in candidatos]
+        assert datas == sorted(datas)
+
+
 # ─── the upload route wires the notifier ─────────────────────────────────────
 
 

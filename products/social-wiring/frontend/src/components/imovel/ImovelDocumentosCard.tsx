@@ -322,9 +322,17 @@ function ExtracaoLinha({ documento }: { documento: ImovelDocumento }) {
 
   if (s === "erro") {
     return (
-      <p className="flex items-center gap-1.5 text-xs text-destructive">
-        <AlertCircle className="h-3 w-3" />
-        Não foi possível ler: {documento.extracao_erro ?? "erro desconhecido"}
+      // Clamped + full text on hover — a raw error body must not widen the
+      // row past the re-read action beside it (owner e2e 2026-09-21).
+      <p
+        className="flex min-w-0 items-center gap-1.5 text-xs text-destructive"
+        title={documento.extracao_erro ?? undefined}
+        data-testid={`imovel-documento-erro-${documento.id}`}
+      >
+        <AlertCircle className="h-3 w-3 shrink-0" />
+        <span className="min-w-0 break-words line-clamp-2">
+          Não foi possível ler: {documento.extracao_erro ?? "erro desconhecido"}
+        </span>
       </p>
     );
   }

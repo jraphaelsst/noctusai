@@ -31,14 +31,21 @@ vi.mock("@/components/ConflitosPendentesPanel", () => ({
 // below pin that "upload from party X posts to X's cliente_id" by keeping a
 // SEPARATE spy per id — cross-contamination would show up as the wrong
 // spy (or both spies) firing.
-const { mockChecklist, mockDadosMutate, mockUploadMutate, checklistById, uploadMutateById } =
-  vi.hoisted(() => ({
-    mockChecklist: vi.fn(),
-    mockDadosMutate: vi.fn(),
-    mockUploadMutate: vi.fn(),
-    checklistById: new Map<string, unknown>(),
-    uploadMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
-  }));
+const {
+  mockChecklist,
+  mockDadosMutate,
+  mockUploadMutate,
+  checklistById,
+  uploadMutateById,
+  reextrairMutateById,
+} = vi.hoisted(() => ({
+  mockChecklist: vi.fn(),
+  mockDadosMutate: vi.fn(),
+  mockUploadMutate: vi.fn(),
+  checklistById: new Map<string, unknown>(),
+  uploadMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
+  reextrairMutateById: new Map<string, ReturnType<typeof vi.fn>>(),
+}));
 
 // The single-party tests below all use clienteId="cli-1" — route that id's
 // mutation through the ORIGINAL shared spy so they keep working unchanged.
@@ -50,11 +57,12 @@ vi.mock("@/hooks/useCardHub", () => ({
   useDocumentoChecklistMutation: () => ({ mutate: vi.fn(), isPending: false }),
   useDocumentoMutations: (id: string) => {
     if (!uploadMutateById.has(id)) uploadMutateById.set(id, vi.fn());
+    if (!reextrairMutateById.has(id)) reextrairMutateById.set(id, vi.fn());
     return {
       upload: { mutate: uploadMutateById.get(id), isPending: false },
       remove: { mutate: vi.fn(), isPending: false },
       getUrl: { mutate: vi.fn(), isPending: false },
-      reextrair: { mutate: vi.fn(), isPending: false, variables: undefined },
+      reextrair: { mutate: reextrairMutateById.get(id), isPending: false, variables: undefined },
     };
   },
   useDadosPessoaisMutation: () => ({ mutate: mockDadosMutate, isPending: false }),
@@ -242,5 +250,61 @@ describe("PessoaDocumentosPanel — a party's upload posts to THAT party's clien
     );
     expect(uploadC).toHaveBeenCalledTimes(1);
     expect(uploadD).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PessoaDocumentosPanel — a party's checklist slot re-reads through THAT party's mutation", () => {
+  it("🔴 'Ler o documento novamente' on a filed identity slot re-queues it and toasts a failure", async () => {
+    const { toast } = await import("sonner");
+    checklistById.set("cli-rx", {
+      data: {
+        items: [
+          {
+            key: "identidade",
+            label: "Documento de identidade (RG/CPF, CNH ou CIN)",
+            concluido: false,
+            origem: "derivado",
+            derivado: false,
+            sugestao: null,
+            concluido_em: null,
+            concluido_por: null,
+            documentos: [
+              { tipo_documento: "rg", rotulo: "RG/CPF", upload: true, documento: null },
+              {
+                tipo_documento: "cnh",
+                rotulo: "CNH",
+                upload: true,
+                documento: {
+                  id: "doc-cnh",
+                  nome_original: "cnh.pdf",
+                  mime_type: "application/pdf",
+                  tamanho_bytes: 10,
+                  created_at: "2026-09-30T10:00:00Z",
+                },
+              },
+            ],
+            faltando: [],
+            faltando_rotulos: [],
+          },
+        ],
+        total: 1,
+        concluidos: 0,
+        valores: { estado_civil: null },
+      },
+      isPending: false,
+      isFetching: false,
+    });
+    const { PessoaDocumentosPanel } = await import("./PessoaDocumentosPanel");
+    render(<PessoaDocumentosPanel clienteId="cli-rx" />);
+
+    const botao = screen.getByTestId("documento-checklist-cli-rx-identidade-cnh-reextrair");
+    expect(botao.getAttribute("aria-label")).toBe("Ler o documento novamente");
+    fireEvent.click(botao);
+
+    const reextrair = reextrairMutateById.get("cli-rx")!;
+    expect(reextrair).toHaveBeenCalledWith("doc-cnh", expect.any(Object));
+    const opcoes = reextrair.mock.calls[0][1] as { onError: (e: unknown) => void };
+    opcoes.onError(new Error("falhou"));
+    expect(toast.error).toHaveBeenCalledWith("falhou");
   });
 });

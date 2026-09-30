@@ -244,3 +244,100 @@ describe("arquivos legados (cpf)", () => {
     expect(getByTestId(`${P}-cpf-visualizar`)).toBeTruthy();
   });
 });
+
+describe("ler o documento novamente (mesma ação dos Anexos)", () => {
+  it("🔴 a filed slot offers the re-read with the Anexos label; an empty slot does not", async () => {
+    const onReextrairDocumento = vi.fn();
+    const rtl = await import("@testing-library/react");
+    const { getByTestId, queryByTestId } = await renderRow({
+      item: item({
+        documentos: [slot("rg", "RG/CPF"), slot("cnh", "CNH", { documento: DOC }), slot("cin", "CIN")],
+      }),
+      onReextrairDocumento,
+    });
+    const botao = getByTestId(`${P}-cnh-reextrair`);
+    expect(botao.getAttribute("aria-label")).toBe("Ler o documento novamente");
+    expect(queryByTestId(`${P}-rg-reextrair`)).toBeNull();
+    expect(queryByTestId(`${P}-cin-reextrair`)).toBeNull();
+    rtl.fireEvent.click(botao);
+    expect(onReextrairDocumento).toHaveBeenCalledWith("doc-1");
+  });
+
+  it("🔴 disables only the slot whose re-read is in flight", async () => {
+    const { getByTestId } = await renderRow({
+      item: item({
+        documentos: [
+          slot("rg", "RG/CPF", { documento: { ...DOC, id: "doc-rg" } }),
+          slot("cnh", "CNH", { documento: DOC }),
+          slot("cin", "CIN"),
+        ],
+      }),
+      onReextrairDocumento: vi.fn(),
+      reextraindoDocumentoId: "doc-1",
+    });
+    expect((getByTestId(`${P}-cnh-reextrair`) as HTMLButtonElement).disabled).toBe(true);
+    expect((getByTestId(`${P}-rg-reextrair`) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("🔴 the Serasa Crednet slot (a plain document item) gets the same action", async () => {
+    const { getByTestId } = await renderRow({
+      item: item({
+        key: "serasa_crednet",
+        label: "Serasa Crednet",
+        documentos: [slot("serasa_crednet", "Serasa Crednet", { documento: { ...DOC, id: "doc-sc" } })],
+        faltando: undefined,
+        faltando_rotulos: undefined,
+        dica: undefined,
+      }),
+      onReextrairDocumento: vi.fn(),
+    });
+    expect(
+      getByTestId("documento-checklist-serasa_crednet-serasa_crednet-reextrair").getAttribute("aria-label"),
+    ).toBe("Ler o documento novamente");
+  });
+});
+
+describe("os dados de identidade aparecem na linha, não só os arquivos", () => {
+  it("🔴 a CPF on record shows its value even with no file in any slot (owner e2e 2026-09-21)", async () => {
+    const { getByTestId } = await renderRow({
+      item: item({ concluido: true, derivado: true, faltando: [], faltando_rotulos: [] }),
+      valores: {
+        cpf: "123.456.789-09",
+        rg: "12.345.678-9",
+        rg_orgao_expedidor: "SSP/SP",
+        nome_oficial: "ANA SILVA",
+      },
+    });
+    expect(getByTestId(`${P}-dados-cpf`).textContent).toBe("CPF: 123.456.789-09");
+    expect(getByTestId(`${P}-dados-rg`).textContent).toBe("RG: 12.345.678-9");
+    expect(getByTestId(`${P}-dados-rg_orgao_expedidor`).textContent).toBe("Órgão expedidor: SSP/SP");
+    // The file column still (truthfully) says no file was uploaded.
+    expect(getByTestId(`${P}-rg-valor`).textContent).toBe("—");
+  });
+
+  it("lists only the fields that are filled; a missing one stays under 'Falta'", async () => {
+    const { getByTestId, queryByTestId } = await renderRow({
+      item: item({ faltando: ["rg"], faltando_rotulos: ["RG"] }),
+      valores: { cpf: "123.456.789-09", rg: null, rg_orgao_expedidor: "  " },
+    });
+    expect(getByTestId(`${P}-dados-cpf`)).toBeTruthy();
+    expect(queryByTestId(`${P}-dados-rg`)).toBeNull();
+    expect(queryByTestId(`${P}-dados-rg_orgao_expedidor`)).toBeNull();
+    expect(getByTestId(`${P}-faltando-rg`)).toBeTruthy();
+  });
+
+  it("a plain document item (Serasa Crednet) never shows identity data", async () => {
+    const { queryByTestId } = await renderRow({
+      item: item({
+        key: "serasa_crednet",
+        label: "Serasa Crednet",
+        documentos: [slot("serasa_crednet", "Serasa Crednet")],
+        faltando: undefined,
+        faltando_rotulos: undefined,
+        dica: undefined,
+      }),
+      valores: { cpf: "123.456.789-09" },
+    });
+    expect(queryByTestId("documento-checklist-serasa_crednet-dados")).toBeNull();
+  });
+});

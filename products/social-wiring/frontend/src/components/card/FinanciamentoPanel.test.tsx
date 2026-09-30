@@ -288,6 +288,18 @@ describe("FinanciamentoPanel", () => {
       expect(onExtrair).toHaveBeenCalledWith("d-guia_itbi");
     });
 
+    it("🔴 a long raw error is clamped (full text on hover) and the action stays shrink-0", async () => {
+      const longo = `insufficient_quota: ${"x".repeat(600)}`;
+      const { screen } = await render({
+        documentos: [doc("guia_itbi", { extracao_status: "erro", extracao_erro: longo })],
+      });
+      const texto = screen.getByTestId("financiamento-slot-guia_itbi-erro-texto");
+      expect(texto.getAttribute("title")).toBe(longo);
+      expect(texto.className).toContain("min-w-0");
+      expect(texto.className).toContain("line-clamp-2");
+      expect(screen.getByTestId("financiamento-slot-guia_itbi-reler").className).toContain("shrink-0");
+    });
+
     it("labels a known error code in pt-BR instead of the raw key", async () => {
       const { screen } = await render({
         documentos: [
