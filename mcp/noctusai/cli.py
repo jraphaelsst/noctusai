@@ -700,7 +700,7 @@ def main():
             # (correctly worktree-scoped via `repo_root`) compared it against
             # the WORKTREE's — a structurally unsatisfiable "STALE" verdict,
             # no matter how many times the suggested remedy re-ran. Thread it.
-            r = ai.refresh(force=args.force, worktree_path=args.worktree_path)
+            r = ai.refresh(force=args.force, worktree_path=ai.invoking_tree(args.worktree_path))
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ auto-improvement cache in-sync (source_sha={r['source_sha'][:12]}; --force to rebuild).{RESET}")
         else:

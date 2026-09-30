@@ -181,6 +181,35 @@ class TestWorktreePathScoping:
             ai.refresh(worktree_path=str(bogus))
 
 
+class TestInvokingTree:
+    """`invoking_tree` — the refresher resolves the ledger from the tree the
+    gate hashes (settings.REPO_ROOT), not the primary-pinned LEDGER_PATH."""
+
+    def test_explicit_worktree_path_wins(self):
+        assert ai.invoking_tree("/some/wt") == "/some/wt"
+
+    def test_repo_root_equal_to_ledger_root_is_primary_default(self, tmp_path, monkeypatch):
+        import settings
+        monkeypatch.setattr(settings, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(ai, "LEDGER_ROOT", tmp_path)
+        assert ai.invoking_tree(None) is None
+
+    def test_refresh_hashes_same_sha_as_gate_when_primary_lags(self, tmp_repo, monkeypatch):
+        import settings
+        wt = TestWorktreePathScoping._make_fake_worktree(tmp_repo, "wt2")
+        (wt / "project-history" / "auto-improvement.ndjson").write_text(
+            json.dumps({"ts": "2026-09-30T00:00:00Z", "scope": "scoped", "kind": "drift",
+                        "target": "y", "description": "worktree ahead of lagging primary",
+                        "status": "s1-emergent"}) + "\n", encoding="utf-8")
+        monkeypatch.setattr(settings, "REPO_ROOT", wt)
+        monkeypatch.setattr(ai, "LEDGER_ROOT", tmp_repo)  # primary, no ledger
+        tree = ai.invoking_tree(None)
+        assert tree == str(wt)
+        r = ai.refresh(force=True, worktree_path=tree)
+        assert r["source_sha"] == ai.source_sha_for_root(wt)
+        assert check_auto_improvement_cache_freshness(wt) == []
+
+
 class TestFreshnessKeeper:
     def test_fresh_repo_no_issues(self, tmp_repo):
         # No ndjson present → keeper silently passes.

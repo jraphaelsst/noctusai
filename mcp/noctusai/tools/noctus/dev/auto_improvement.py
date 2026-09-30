@@ -146,6 +146,27 @@ def _ledger_path_for(worktree_path: str | None) -> Path:
     return LEDGER_PATH
 
 
+def invoking_tree(worktree_path: str | None = None) -> str | None:
+    """The tree a CLI/hook refresh must read the ledger from — the SAME tree
+    ``check_auto_improvement_cache_freshness`` hashes (``settings.REPO_ROOT``,
+    which follows cwd/``--worktree-path``/``NOCTUSAI_HOME``).
+
+    ``LEDGER_PATH`` is pinned to the PRIMARY (``LEDGER_ROOT`` unwraps the
+    worktree boundary on purpose, for write durability), so a refresh that
+    passes no ``worktree_path`` hashes the primary's ledger while the gate
+    hashes the invoking tree's: a structurally unsatisfiable STALE whenever
+    the primary lags origin/dev. An explicit ``worktree_path`` wins; else
+    the invoking tree when it differs from the ledger root; else ``None``
+    (primary — the module default, untouched)."""
+    if worktree_path:
+        return worktree_path
+    import settings as _settings
+    root = Path(_settings.REPO_ROOT)
+    if root.resolve() != Path(LEDGER_ROOT).resolve():
+        return str(root)
+    return None
+
+
 def _cache_file(worktree_path: str | None) -> Path:
     """The cache slot mirroring `worktree_path`'s ledger (default: this process's tree).
 
