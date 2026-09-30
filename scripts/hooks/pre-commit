@@ -87,6 +87,50 @@ if have_py; then
     fi
 fi
 
+# ─── 0a. Ledger-only fast path (append-only ledgers, cache-exempt) ───
+# A commit whose ENTIRE staged set is top-level `project-history/*.ndjson`
+# append-only ledger rows (branch-tree pointers, mirror, auto-improvement,
+# dispatch-budget, ...) touches no KB / code / methodology surface, so the
+# expensive keepers (kb_sync, eight-way-sync, cache freshness, ...) have
+# nothing to verify. Incident 2026-09-23: a pointer commit ran
+# `--check-eight-way-sync` >6.5 min holding .git/index.lock and blocked every
+# other session. `ledger.ndjson` is EXCLUDED: its staging triggers the
+# PROJECT-HISTORY.md render (step 3b), which the normal path owns.
+# Cheap check kept: conflict markers on the staged ledger files.
+# KB § PATTERNS/common/eight-way-sync.md § Ledger-only fast path.
+STAGED_ALL_FAST=$(git diff --cached --name-only 2>/dev/null || true)
+if [[ -n "$STAGED_ALL_FAST" ]] \
+   && ! echo "$STAGED_ALL_FAST" | grep -vE '^project-history/[^/]+\.ndjson$' | grep -q . \
+   && ! echo "$STAGED_ALL_FAST" | grep -qx 'project-history/ledger.ndjson'; then
+    echo "[pre-commit] FAST PATH: ledger-only commit (project-history/*.ndjson) — skipping kb_sync / 8-way-sync / cache keepers; running conflict-marker check only."
+    if have_py; then
+        FAST_CSV=$(echo "$STAGED_ALL_FAST" | paste -sd, -)
+        if ! "$PY" "$CLI" --check-conflict-markers --paths "$FAST_CSV" --worktree-path "$REPO_ROOT"; then
+            echo "[pre-commit] conflict markers in ledger file(s). Commit aborted." >&2
+            exit 1
+        fi
+    fi
+    echo "[pre-commit] OK (ledger fast path)"
+    exit 0
+fi
+
+# bounded_run <seconds> <cmd...> — portable timeout (no coreutils assumption).
+# Exit 124 on timeout (whole process group killed), else the command's own code.
+bounded_run() {
+    local secs="$1"; shift
+    "$PY" - "$secs" "$@" <<'PYEOF'
+import os, signal, subprocess, sys
+secs = float(sys.argv[1])
+p = subprocess.Popen(sys.argv[2:], start_new_session=True)
+try:
+    sys.exit(p.wait(timeout=secs))
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+    sys.exit(124)
+PYEOF
+}
+
 # ─── 0. Version stamp echo (informational) ──────────────────────
 # Surfaces the current VERSION file content at every commit so the
 # committer (human or agent) sees which methodology version they're
@@ -1030,7 +1074,17 @@ fi
 STAGED_EIGHT_WAY=$(git diff --cached --name-only 2>/dev/null | grep -E '^(CLAUDE\.md$|\.claude/agents/|\.claude/skills/|\.claude/commands/|KNOWLEDGE-BASE/|CONTEXTUALIZE\.md$)' || true)
 if [[ -n "$STAGED_EIGHT_WAY" ]] && have_py; then
     echo "[pre-commit] Methodology surface staged — verifying 8-way sync..."
-    if ! "$PY" "$CLI" --check-eight-way-sync --worktree-path "$REPO_ROOT"; then
+    EIGHT_WAY_TIMEOUT="${NOCTUS_EIGHT_WAY_TIMEOUT:-300}"
+    set +e
+    bounded_run "$EIGHT_WAY_TIMEOUT" "$PY" "$CLI" --check-eight-way-sync --worktree-path "$REPO_ROOT"
+    EIGHT_WAY_RC=$?
+    set -e
+    if [[ "$EIGHT_WAY_RC" -eq 124 ]]; then
+        echo "[pre-commit] 8-way sync TIMED OUT after ${EIGHT_WAY_TIMEOUT}s (process killed; index.lock is held until this hook exits). Commit aborted." >&2
+        echo "[pre-commit] Not a pass. Investigate a runaway keeper (run: python mcp/noctusai/cli.py --check-eight-way-sync --worktree-path .) or raise NOCTUS_EIGHT_WAY_TIMEOUT for this commit." >&2
+        exit 1
+    fi
+    if [[ "$EIGHT_WAY_RC" -ne 0 ]]; then
         echo "[pre-commit] 8-way sync FAILED. Commit aborted." >&2
         echo "[pre-commit] See KB § PATTERNS/common/eight-way-sync.md for what must move together." >&2
         exit 1

@@ -116,3 +116,10 @@ This pattern formalizes what was previously called "three-way sync" (CLAUDE.md /
 - 2026-05-28 (evening): **eight-way** (added `.claude/cache/` after `cache-as-agent-tool` was codified — caches are the live read path; structural mirror guaranteed via 4 git hooks; logic correctness stays a separate test-surface concern per [extractor-correctness-vs-mirror](extractor-correctness-vs-mirror.md))
 
 Each promotion has been a methodology evolution, captured here so future surface additions follow the same path: add the surface + add it to this list + bump the keeper.
+
+## Ledger-only fast path + timeout (2026-09-30)
+
+- **Fast path.** `scripts/hooks/pre-commit` §0a: when EVERY staged path matches `^project-history/[^/]+\.ndjson$` (branch-tree pointers + mirror, auto-improvement, dispatch-budget, ...) and `ledger.ndjson` is not among them (it triggers the PROJECT-HISTORY.md render, owned by the normal path), the hook prints `FAST PATH: ledger-only commit ...`, runs only the conflict-marker check on those files, and exits 0. kb_sync / 8-way-sync / cache keepers are skipped by design, never silently: the line is always logged. Mixed commits (any other path staged) take the normal path.
+- **Why.** 2026-09-23: a pointer-only commit in the primary checkout ran `--check-eight-way-sync` at 100% CPU for >6.5 min holding `.git/index.lock`, blocking every other session's pointer pushes.
+- **Timeout.** The 8-way step in the normal path runs under `bounded_run` (portable, kills the process group). Default 300s, override `NOCTUS_EIGHT_WAY_TIMEOUT`. Timeout = exit 1 with an actionable message, never a pass.
+- **Tests.** `mcp/noctusai/tests/test_pre_commit_ledger_fastpath.py`.
