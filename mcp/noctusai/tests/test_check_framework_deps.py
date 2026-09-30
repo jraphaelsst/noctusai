@@ -605,3 +605,59 @@ class TestEnsureFrameworkDepsForProduct:
         assert result["fixed"] == []
         assert result["unresolved_deps"] == ["zustand"]
         assert pkg_path.read_text() == before
+
+
+class TestFixPreservesFormatAndResolvesDependencies:
+    """Drift 2026-09-23: --fix re-indented whole files (4-space) and missed
+    seed ranges declared under plain `dependencies`."""
+
+    def _partial(self, tmp_path, *, indent, trailing_newline):
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "some-product", partial)
+        p = tmp_path / "products" / "some-product" / "frontend" / "package.json"
+        pkg = json.loads(p.read_text())
+        p.write_text(json.dumps(pkg, indent=indent) + ("\n" if trailing_newline else ""))
+        return p
+
+    def test_two_space_indent_and_trailing_newline_preserved(self, tmp_path):
+        _write_seed_pkg(tmp_path, "seed/lib/frontend/package.json", peer={"zustand": "^5.0.0"})
+        p = self._partial(tmp_path, indent=2, trailing_newline=True)
+        ensure_framework_deps_for_product(tmp_path, "some-product")
+        text = p.read_text()
+        assert text.endswith("\n") and not text.endswith("\n\n")
+        assert '\n  "name"' in text and '\n    "zustand": "^5.0.0"' in text
+
+    def test_no_trailing_newline_preserved(self, tmp_path):
+        _write_seed_pkg(tmp_path, "seed/lib/frontend/package.json", peer={"zustand": "^5.0.0"})
+        p = self._partial(tmp_path, indent=2, trailing_newline=False)
+        ensure_framework_deps_for_product(tmp_path, "some-product")
+        assert not p.read_text().endswith("\n")
+
+    def test_tab_indent_preserved(self, tmp_path):
+        _write_seed_pkg(tmp_path, "seed/lib/frontend/package.json", peer={"zustand": "^5.0.0"})
+        p = self._partial(tmp_path, indent="\t", trailing_newline=True)
+        ensure_framework_deps_for_product(tmp_path, "some-product")
+        assert '\n\t"name"' in p.read_text()
+
+    def test_seed_range_under_plain_dependencies_is_found(self, tmp_path):
+        p = tmp_path / "seed" / "lib" / "frontend" / "package.json"
+        p.parent.mkdir(parents=True)
+        p.write_text(json.dumps({"dependencies": {"react-markdown": "^10.1.0"}}))
+        assert _seed_dep_ranges(tmp_path)["react-markdown"] == "^10.1.0"
+
+    def test_unresolved_refuses_and_never_writes_star(self, tmp_path):
+        partial = {d: "1.0.0" for d in FRAMEWORK_DEPS if d != "zustand"}
+        _write_pkg(tmp_path, "some-product", partial)
+        p = tmp_path / "products" / "some-product" / "frontend" / "package.json"
+        before = p.read_text()
+        from tools.noctus.dev.check_framework_deps import check_framework_deps
+        r = check_framework_deps(tmp_path, fix=True)
+        assert r["status"] == "fix_unresolved" and r["exit_code"] == 1
+        assert p.read_text() == before and '"*"' not in json.loads(before)["dependencies"].get("zustand", "")
+
+
+class TestCliFixWiring:
+    def test_check_framework_deps_branch_passes_fix(self):
+        import pathlib
+        src = (pathlib.Path(__file__).parents[1] / "cli.py").read_text()
+        assert "check_framework_deps(fix=args.fix)" in src

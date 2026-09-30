@@ -297,10 +297,32 @@ def _seed_dep_ranges(root: Path) -> dict[str, str]:
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("check_framework_deps: cannot read %s (%s), skipping", pkg_path, exc)
             continue
-        for section in ("peerDependencies", "devDependencies"):
+        for section in ("peerDependencies", "dependencies", "devDependencies"):
             for dep_name, version in pkg.get(section, {}).items():
                 ranges.setdefault(dep_name, version)
     return ranges
+
+
+def _detect_indent(text: str) -> str | int:
+    """Indent of a JSON document's first indented line: a tab, or N spaces.
+
+    Falls back to 2 (npm's own default) for a single-line/unindented file.
+    """
+    for line in text.splitlines()[1:]:
+        stripped = line.lstrip(" \t")
+        if stripped and stripped != line:
+            lead = line[: len(line) - len(stripped)]
+            return "\t" if lead.startswith("\t") else len(lead)
+    return 2
+
+
+def _write_package_json(pkg_path: Path, original_text: str, pkg: dict) -> None:
+    """Re-serialise ``pkg`` preserving the file's indent and trailing newline
+    (so a one-dep fix is a one-line diff, not a whole-file reformat)."""
+    out = json.dumps(pkg, indent=_detect_indent(original_text), ensure_ascii=False)
+    if original_text.endswith("\n"):
+        out += "\n"
+    pkg_path.write_text(out)
 
 
 def _fix(root: Path, drift: dict[str, list[str]]) -> dict:
@@ -359,13 +381,14 @@ def _fix(root: Path, drift: dict[str, list[str]]) -> dict:
     fixed = 0
     for slug, per_slug in resolved.items():
         pkg_path = root / "products" / slug / "frontend" / "package.json"
-        pkg = json.loads(pkg_path.read_text())
+        original_text = pkg_path.read_text()
+        pkg = json.loads(original_text)
         deps = pkg.setdefault("dependencies", {})
         for dep_name, version in per_slug.items():
             deps[dep_name] = version
             fixed += 1
         pkg["dependencies"] = dict(sorted(deps.items()))
-        pkg_path.write_text(json.dumps(pkg, indent=4) + "\n")
+        _write_package_json(pkg_path, original_text, pkg)
     return {"fixed": fixed, "unresolved": []}
 
 
