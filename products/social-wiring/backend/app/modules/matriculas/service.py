@@ -39,7 +39,7 @@ from noctusai_lib.integrations.documents import detectar_ruido, has_raw_markup
 from noctusai_lib.integrations.documents.formatting import ranges_to_json
 
 from app.modules.imovel_hub.deps import BUCKET as IMOVEL_BUCKET
-from app.modules.matriculas import estrutura_service, preenchimento_service
+from app.modules.matriculas import autopiloto_service, estrutura_service, preenchimento_service
 from app.services import documento_retencao, extracao_retentativa
 
 logger = logging.getLogger(__name__)
@@ -332,6 +332,19 @@ async def processar_extracao(
     )
     logger.info("Matrícula %s: imovel_dados fill %s", extracao_id, resumo)
 
+    # [Owner directive 2026-09-30] The autopilot: confirm whatever the fill
+    # above was unambiguous about, so a matrícula that reads cleanly never
+    # needs a human just to click "accept" on it. Isolated from the fill
+    # itself — a failure here must not undo (or be blamed on) the
+    # transcription that already landed.
+    try:
+        autopiloto = autopiloto_service.aplicar_autopiloto(db, org_id, extracao_id)
+        logger.info("Matrícula %s: autopiloto %s", extracao_id, autopiloto)
+    except Exception as exc:  # noqa: BLE001 - the fill already landed; log, never raise
+        logger.error(
+            "Matrícula %s: autopiloto failed: %s", extracao_id, exc, exc_info=True
+        )
+
 
 def registrar_transcricao_manual(db, extracao_id: str, org_id: str, texto: str) -> None:
     """Land a manually-typed/pasted matrícula text (migration 149) through
@@ -377,13 +390,17 @@ def registrar_transcricao_manual(db, extracao_id: str, org_id: str, texto: str) 
             extracao_id, falha_atos, exc_info=True,
         )
 
-    # NOC-REMEDIATE[matricula-manual-transcricao-sem-preenchimento]: unlike
-    # `processar_extracao`, this never calls `preenchimento_service.
-    # preencher_imovel` — a manually-typed/pasted matrícula transcription
-    # lands its text/acts but never promotes numero_matricula/titulo/onus/
-    # etc. onto `imovel_dados` at all. Found auditing the P1/883 fix for
-    # the automatic pipeline's own promotion gap. Named destination:
-    # roadmap sw-drive-extraction P1 round 2 — 2026-09-24
+    # [Drift-fix-on-contact, 2026-09-30] The NOC-REMEDIATE this comment used
+    # to carry (`matricula-manual-transcricao-sem-preenchimento`) is STALE:
+    # the router's `POST /extracoes/manual` handler
+    # (`router.criar_extracao_manual_route`) already calls `preenchimento_
+    # service.preencher_imovel` right after this function returns, and
+    # (2026-09-30) `autopiloto_service.aplicar_autopiloto` right after that
+    # — so a manually-typed/pasted transcription gets the SAME D1 fill and
+    # D2-bypass autopilot an AI transcription does. This function itself
+    # stays synchronous on purpose (see its own docstring): the fill/
+    # autopilot are async and I/O-bearing, so they belong to the request
+    # handler that already awaits them, not to this plain-Python step.
 
 
 def _registrar_erro(

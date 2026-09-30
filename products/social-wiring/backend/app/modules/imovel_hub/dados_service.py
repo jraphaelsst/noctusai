@@ -129,8 +129,13 @@ CAMPOS_PROVENIENCIA: tuple[str, ...] = tuple(
 
 #: Migration 109 — where the título aquisitivo came from: an act of a
 #: transcribed matrícula, as offsets. Written ONLY by
-#: `matriculas.estrutura_service.definir_fontes` (a human's choice), never by
-#: the PATCH route and never by the heuristic suggester.
+#: `matriculas.estrutura_service.definir_fontes` — a human's own PUT, OR
+#: (2026-09-30) `matriculas.autopiloto_service`'s automatic confirmation of
+#: that SAME writer when the derivation is unambiguous (still `definir_
+#: fontes`, still `origem` restricted to `sugerido`/`manual` by the 109
+#: CHECK — the autopilot's confirmation is a `confirmado_por IS NULL`
+#: `sugerido` row). Never by the PATCH route and never by the heuristic
+#: suggester writing directly.
 CAMPOS_TITULO_AQUISITIVO: tuple[str, ...] = (
     "titulo_aquisitivo_extracao_id",
     "titulo_aquisitivo_ato_id",
@@ -153,9 +158,14 @@ CAMPOS_ONUS_FONTE: tuple[str, ...] = (
 )
 
 #: Migration 115 — the CONFIRMED contract wording: the título aquisitivo
-#: phrase and the ônus creditor. Written ONLY by `matriculas.titulo_service`
-#: (an operator's PUT), never by the PATCH route and never by a suggester —
-#: the suggestion is recomputed from the acts on every read, not stored.
+#: phrase and the ônus creditor. Written by `matriculas.titulo_service`'s
+#: `confirmar_titulo`/`confirmar_onus_credor` (an operator's PUT, stamped
+#: `origem='manual'`), by `imovel_hub.campos_extraidos_service.aplicar`'s
+#: machine-pending fill (`origem='matricula'`, D1), or (2026-09-30) by
+#: `matriculas.autopiloto_service` re-stamping that SAME machine-pending row
+#: `origem='ia'` + confirmed, once the reading is unambiguous — never by the
+#: PATCH route, and the SUGGESTION itself is still recomputed from the acts
+#: on every read, not stored.
 #: Migration 139 — the CONFIRMED short address ("situado à ...") the posse
 #: clauses print. Same shape/trust model as the pair above: an operator
 #: reads the matrícula and types it; never a recomputed suggestion, never the

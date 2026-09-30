@@ -39,6 +39,11 @@ WHAT `normalizar_extracao` DOES
    quotes this extraction yet, the acts themselves.
 4. Heal the abertura blocks (`estrutura_service.blocos_abertura_da_extracao`).
 5. Feed `imovel_dados` (`preenchimento_service`, D1).
+6. [2026-09-30] Run the autopilot (`autopiloto_service`) — confirms whatever
+   D1's fill was unambiguous about, so re-running this SAME route against a
+   pre-autopilot imóvel (`POST /api/matriculas/manutencao/normalizar`) is
+   also how an existing deal gets the fields the contract generator needs
+   without a human, on demand.
 
 🔴 WHAT IT REFUSES TO DO
 ------------------------
@@ -67,6 +72,7 @@ from noctusai_lib.integrations.documents.matricula_marcacao import (
 
 from app.modules.imovel_hub import dados_service
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
+from app.modules.matriculas import autopiloto_service
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.modules.matriculas import preenchimento_service
 from app.modules.matriculas import qualificacao_service as qualificacao_svc
@@ -361,6 +367,11 @@ async def backfill(
         item["imovel_dados"] = await preenchimento_service.preencher_imovel(
             client, org_id, eid, notificador=notificador
         )
+        try:
+            item["autopiloto"] = autopiloto_service.aplicar_autopiloto(client, org_id, eid)
+        except Exception as exc:  # noqa: BLE001 - reported per row, never fatal
+            logger.error("matricula backfill %s: autopiloto failed: %s", eid, exc, exc_info=True)
+            item["autopiloto"] = {"status": "erro", "erro": str(exc)}
         itens.append(item)
     return {
         "total": len(itens),

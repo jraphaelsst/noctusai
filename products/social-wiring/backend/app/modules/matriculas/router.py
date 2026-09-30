@@ -109,6 +109,7 @@ from app.modules.imovel_hub.deps import (
     get_storage_backend,
 )
 from app.modules.matriculas import arquivos_service as arquivos_svc
+from app.modules.matriculas import autopiloto_service as autopiloto_svc
 from app.modules.matriculas import backfill_service as backfill_svc
 from app.modules.matriculas import preenchimento_service as preenchimento_svc
 from app.modules.matriculas import estrutura_service as estrutura_svc
@@ -208,6 +209,20 @@ def _content_disposition(filename: str) -> str:
         f'attachment; filename="{ascii_name}"; '
         f"filename*=UTF-8''{quote(filename, safe='')}"
     )
+
+
+def _rodar_autopiloto(client, org_id: str, extracao_id: str) -> None:
+    """[Owner directive 2026-09-30] Run right after the D1 fill on every
+    request path that lands one — confirms whatever it read unambiguously,
+    isolated so a failure here never turns an otherwise-successful request
+    into an error (the fill already landed)."""
+    try:
+        resultado = autopiloto_svc.aplicar_autopiloto(client, org_id, extracao_id)
+        logger.info("Matrícula %s: autopiloto %s", extracao_id, resultado)
+    except Exception as exc:  # noqa: BLE001 - the fill already landed; log, never raise
+        logger.error(
+            "Matrícula %s: autopiloto failed: %s", extracao_id, exc, exc_info=True
+        )
 
 
 def _exigir_credenciais(org_id: str) -> None:
@@ -437,6 +452,9 @@ async def criar_extracao_manual_route(
     await preenchimento_svc.preencher_imovel(
         client, org_id, extracao["id"], notificador=notificador
     )
+    # [Owner directive 2026-09-30] The autopilot — same D2-bypass fill an AI
+    # transcription gets.
+    _rodar_autopiloto(client, org_id, extracao["id"])
     return success_response(
         estrutura_svc.exigir_extracao(client, UUID(org_id), UUID(extracao["id"]))
     )
@@ -710,6 +728,8 @@ async def vincular_imovel_route(
     await preenchimento_svc.preencher_imovel(
         client, org_id, str(extracao_id), notificador=notificador
     )
+    # [Owner directive 2026-09-30] Linked LATER autopilots all the same.
+    _rodar_autopiloto(client, org_id, str(extracao_id))
     return success_response(vinculada)
 
 
