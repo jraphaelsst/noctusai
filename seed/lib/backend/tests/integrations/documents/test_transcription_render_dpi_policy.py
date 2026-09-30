@@ -31,6 +31,7 @@ from noctusai_lib.integrations.documents.transcription import (
     RenderDpiPolicy,
     _dominant_embedded_image,
     _encoded_size,
+    cenprot_render_dpi_policy,
     identity_document_render_dpi_policy,
 )
 from noctusai_lib.integrations.media import PdfPage, PdfTextLayer
@@ -108,6 +109,33 @@ class TestIdentityPolicyPageCountMapping:
         # consumer already accepts as legible.
         policy = identity_document_render_dpi_policy()
         assert min(policy.step_down_dpis) <= RENDER_DPI
+
+
+class TestCenprotPolicyPageCountMapping:
+    """Pure — the CENPROT screenshot-in-a-PDF fallback render (the
+    dominant-image crop is the primary path; this is what a page falls back
+    to when that crop does not fire)."""
+
+    def test_single_page_screenshot_gets_the_sharp_fallback(self) -> None:
+        assert cenprot_render_dpi_policy().dpi_for_page_count(1) == 400
+
+    @pytest.mark.parametrize("num_pages", [2, 5, 40])
+    def test_anything_longer_keeps_the_canonical_default(self, num_pages: int) -> None:
+        assert cenprot_render_dpi_policy().dpi_for_page_count(num_pages) == RENDER_DPI
+
+    def test_budget_is_anthropics_documented_ceiling(self) -> None:
+        from noctusai_lib.integrations.llm.providers.anthropic_provider import (
+            MAX_IMAGE_BYTES,
+        )
+
+        policy = cenprot_render_dpi_policy()
+        assert policy.max_encoded_bytes == MAX_IMAGE_BYTES
+        assert min(policy.step_down_dpis) <= RENDER_DPI
+
+    def test_exported_from_the_documents_package(self) -> None:
+        from noctusai_lib.integrations import documents
+
+        assert documents.cenprot_render_dpi_policy is cenprot_render_dpi_policy
 
 
 class TestEncodedSize:

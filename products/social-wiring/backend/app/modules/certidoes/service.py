@@ -75,6 +75,7 @@ from xhtml2pdf import pisa
 from xhtml2pdf.config.resources import ResourceAccessPolicy
 
 from app.modules.certidoes import cost_ledger
+from app.modules.certidoes.cenprot import estruturar_cenprot
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
     provider_api_key,
@@ -1429,6 +1430,7 @@ async def _extract_pdf_text(
     org_id: Optional[str] = None,
     *,
     max_vision_pages: int = CERTIDAO_MAX_VISION_PAGES,
+    tipo: Optional[str] = None,
 ) -> ExtractedPdfText:
     """Extract text (and its formatting) from a certidão PDF.
 
@@ -1442,6 +1444,18 @@ async def _extract_pdf_text(
     (`_process_single_certidao`), which never passes this argument.
     `process_manual_extraction` passes `CERTIDAO_MANUAL_MAX_VISION_PAGES`
     instead — see that constant's own docstring for why the two paths differ.
+
+    `tipo='cenprot'` (owner finding, 2026-09-30 — see `cenprot.py`'s own
+    module docstring): the office's CENPROT evidence is a browser screenshot
+    pasted into the PDF, not a real certidão scan, so this leg renders
+    through `documents.cenprot_render_dpi_policy()` with `force_vision=True`
+    instead of the flat `render_dpi` every other tipo uses — the screenshot
+    is this page's one embedded image, and the dominant-image crop this
+    unlocks (`_dominant_embedded_image`, seed-side) re-renders just that
+    region at 600 DPI rather than a whole-page raster diluted by the blank
+    margins a screenshot→PDF converter leaves around it. Every other `tipo`
+    is BYTE-FOR-BYTE unaffected — this branch only fires on the literal
+    string `"cenprot"`.
 
     Never raises: a failed or empty transcription is
     `ExtractedPdfText(para_ia=None, erro=...)` (contract §4 — "never fails the
@@ -1469,14 +1483,22 @@ async def _extract_pdf_text(
         provider = (
             resolve_vision_provider(org_id) if max_vision_pages > 0 else None
         )
+        render_dpi_policy = None
+        force_vision = False
+        if tipo == "cenprot":
+            from noctusai_lib.integrations.documents import cenprot_render_dpi_policy
+
+            render_dpi_policy = cenprot_render_dpi_policy()
+            force_vision = True
         transcriber = make_document_transcriber(
             real=True,
             org_id=org_id,
             max_vision_pages=max_vision_pages,
             provider=provider,
+            render_dpi_policy=render_dpi_policy,
         )
         resultado = await transcriber.transcribe(
-            pdf_bytes, mimetype="application/pdf"
+            pdf_bytes, mimetype="application/pdf", force_vision=force_vision
         )
         erro: Optional[str] = None
         if resultado.error == "vision_disabled":
@@ -2089,6 +2111,7 @@ def _agendar_retomada_extracao_manual(
                 resultado_id=item["id"],
                 consulta_id=item["consulta_id"],
                 org_id=item.get("org_id"),
+                tipo=item.get("tipo"),
                 nome_display=item.get("nome_display") or item.get("tipo") or "certidão",
                 arquivo_url=item["arquivo_url"],
                 tentativa=tentativa,
@@ -2281,12 +2304,14 @@ async def process_manual_extraction(
     org_id: Optional[str],
     db,
     *,
+    tipo: Optional[str] = None,
     resultado_origem_atual: Optional[str] = None,
     confirmado_por_atual: Optional[str] = None,
     tentativa: int = 1,
     extract_text: Optional[Callable[..., Any]] = None,
     analyze: Optional[Callable[..., Any]] = None,
     analyze_estrutura: Optional[Callable[..., Any]] = None,
+    estruturar_cenprot_fn: Optional[Callable[..., Any]] = None,
 ) -> dict:
     """The AI/vision leg of a manual certidão upload — the post-storage steps
     of the pipeline `process_manual_upload` starts.
@@ -2331,6 +2356,8 @@ async def process_manual_extraction(
 
     `extract_text` / `analyze` / `analyze_estrutura` are the same DI seams
     the pre-split function exposed. → KB § PATTERNS/backend/di-test-seam.md
+    `estruturar_cenprot_fn` is the same shape for `cenprot.estruturar_cenprot`
+    (`tipo='cenprot'` only — see that module's own docstring).
     """
     extract_text = extract_text or _extract_pdf_text
     analyze = analyze or _analyze_with_ai
@@ -2341,6 +2368,7 @@ async def process_manual_extraction(
         extracted = await extract_text(
             pdf_bytes, nome_display, org_id,
             max_vision_pages=CERTIDAO_MANUAL_MAX_VISION_PAGES,
+            tipo=tipo,
         )
     except Exception as exc:  # noqa: BLE001 - background job must not die
         logger.error(
@@ -2430,6 +2458,58 @@ async def process_manual_extraction(
             update_data.update(via_ia)
             update_data["resultado_origem"] = "ia"
 
+    if not travado and tipo == "cenprot":
+        # `numero`/`emitida_em` above came from the GENERIC structured
+        # prompt, which for a CENPROT screenshot is exactly the failure
+        # mode `cenprot.py`'s own docstring measures (8/8 wrong protocols,
+        # 8/8 wrong dates, prod 2026-09-30) — its label-anchored,
+        # two-read-validated answer REPLACES both fields here, including
+        # replacing them with `None` when it cannot validate one: a wrong
+        # protest-certificate number in a signed contract is worse than a
+        # gap (owner directive, 2026-09-30).
+        estruturar = estruturar_cenprot_fn or estruturar_cenprot
+        try:
+            consulta_rows = (
+                db.table(CONSULTAS)
+                .select("documento, tipo_documento")
+                .eq("id", consulta_id)
+                .execute()
+            ).data or []
+        except Exception as exc:  # noqa: BLE001 - background job must not die
+            logger.error(
+                "Certidão %s (resultado %s): não foi possível ler a consulta "
+                "para validar o CENPROT: %s",
+                nome_display, resultado_id, exc, exc_info=True,
+            )
+            consulta_rows = []
+        consulta_row = consulta_rows[0] if consulta_rows else {}
+        try:
+            cenprot_estrutura = await estruturar(
+                texto_leitura1=extracted.texto_extraido,
+                pdf_bytes=pdf_bytes,
+                nome_display=nome_display,
+                org_id=org_id,
+                tipo_documento_esperado=consulta_row.get("tipo_documento"),
+                documento_esperado=consulta_row.get("documento"),
+            )
+        except Exception as exc:  # noqa: BLE001 - background job must not die
+            logger.error(
+                "Certidão %s (resultado %s): leitura estruturada do CENPROT "
+                "falhou inesperadamente: %s",
+                nome_display, resultado_id, exc, exc_info=True,
+            )
+            cenprot_estrutura = None
+        if cenprot_estrutura is not None:
+            update_data["numero"] = cenprot_estrutura.numero
+            update_data["emitida_em"] = cenprot_estrutura.emitida_em
+            if cenprot_estrutura.numero or cenprot_estrutura.emitida_em:
+                update_data["resultado_origem"] = "ia"
+            for aviso in cenprot_estrutura.avisos:
+                logger.warning(
+                    "Certidão %s (resultado %s): %s",
+                    nome_display, resultado_id, aviso,
+                )
+
     # 🔴 `persist_data` is a SUPERSET of `update_data`, built for the DB write
     # ONLY — see this docstring's leak note. `update_data` itself never gains
     # these two keys.
@@ -2463,6 +2543,7 @@ async def _retomar_extracao_manual(
     nome_display: str,
     arquivo_url: str,
     tentativa: int,
+    tipo: Optional[str] = None,
 ) -> None:
     """`recover_stale_processando`'s retry half: re-read a manually uploaded
     certidão's already-stored bytes and re-run `process_manual_extraction`.
@@ -2513,6 +2594,7 @@ async def _retomar_extracao_manual(
         nome_display=nome_display,
         org_id=org_id,
         db=db,
+        tipo=tipo,
         resultado_origem_atual=(atual[0].get("resultado_origem") if atual else None),
         confirmado_por_atual=(atual[0].get("confirmado_por") if atual else None),
         tentativa=tentativa,

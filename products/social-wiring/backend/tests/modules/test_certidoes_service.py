@@ -4328,6 +4328,7 @@ class TestCertidaoManualMaxVisionPages:
         extract_text.assert_awaited_once_with(
             b"%PDF-1.4", "Serasa", ORG,
             max_vision_pages=service.CERTIDAO_MANUAL_MAX_VISION_PAGES,
+            tipo=None,
         )
 
 
@@ -4438,3 +4439,108 @@ class TestProcessManualExtractionPaginaAPagina:
             analyze_estrutura=fake_estrutura,
         )
         assert chamadas == ["p1", "p2", "p3"]
+
+
+# ---------------------------------------------------------------------------
+# process_manual_extraction — tipo='cenprot' routes through cenprot.py
+# ---------------------------------------------------------------------------
+
+
+class TestProcessManualExtractionCenprot:
+    """The generic structured read's `numero`/`emitida_em` are measured-wrong
+    for CENPROT screenshots (8/8, prod 2026-09-30) — `estruturar_cenprot`'s
+    validated answer REPLACES them, `None` included."""
+
+    @staticmethod
+    async def _rodar(db, *, tipo="cenprot", estruturar=None, extract=None, **kw):
+        extract = extract or AsyncMock(
+            return_value=service.ExtractedPdfText(
+                para_ia="texto", texto_extraido="texto"
+            )
+        )
+        return await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="CENPROT",
+            org_id=ORG,
+            db=db,
+            tipo=tipo,
+            extract_text=extract,
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value={
+                "resultado": "negativa",
+                "numero": "9999999999",
+                "emitida_em": "2020-01-01",
+            }),
+            estruturar_cenprot_fn=estruturar,
+            **kw,
+        )
+
+    @staticmethod
+    def _db_cenprot(**resultado_overrides):
+        return _db(
+            certidao_consultas=[_consulta_row(documento="12345678909")],
+            certidao_resultados=[_resultado(
+                tipo="cenprot", nome_display="CENPROT", **resultado_overrides
+            )],
+        )
+
+    @pytest.mark.asyncio
+    async def test_resposta_validada_substitui_a_leitura_generica(self):
+        from app.modules.certidoes.cenprot import CenprotEstrutura
+
+        estruturar = AsyncMock(return_value=CenprotEstrutura(
+            numero="0123456789", emitida_em="2026-06-17",
+        ))
+        extract = AsyncMock(return_value=service.ExtractedPdfText(
+            para_ia="texto", texto_extraido="transcrição"
+        ))
+        update_data = await self._rodar(
+            self._db_cenprot(), estruturar=estruturar, extract=extract
+        )
+        assert update_data["numero"] == "0123456789"
+        assert update_data["emitida_em"] == "2026-06-17"
+        assert update_data["resultado_origem"] == "ia"
+        assert extract.await_args.kwargs["tipo"] == "cenprot"
+        kwargs = estruturar.await_args.kwargs
+        assert kwargs["texto_leitura1"] == "transcrição"
+        assert kwargs["documento_esperado"] == "12345678909"
+        assert kwargs["tipo_documento_esperado"] == "cpf"
+
+    @pytest.mark.asyncio
+    async def test_nao_validado_apaga_o_palpite_generico(self):
+        # A wrong protest-certificate number in a signed contract is worse
+        # than a gap (owner directive 2026-09-30).
+        from app.modules.certidoes.cenprot import CenprotEstrutura
+
+        estruturar = AsyncMock(return_value=CenprotEstrutura(avisos=("x",)))
+        update_data = await self._rodar(self._db_cenprot(), estruturar=estruturar)
+        assert update_data["numero"] is None
+        assert update_data["emitida_em"] is None
+        assert update_data["resultado"] == "negativa"
+
+    @pytest.mark.asyncio
+    async def test_falha_inesperada_nao_derruba_o_job(self):
+        estruturar = AsyncMock(side_effect=RuntimeError("boom"))
+        update_data = await self._rodar(self._db_cenprot(), estruturar=estruturar)
+        assert update_data["status"] == "sucesso"
+
+    @pytest.mark.asyncio
+    async def test_travado_nao_chama_cenprot(self):
+        estruturar = AsyncMock()
+        await self._rodar(
+            self._db_cenprot(resultado_origem="manual"),
+            estruturar=estruturar,
+            resultado_origem_atual="manual",
+        )
+        estruturar.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_outros_tipos_nao_passam_por_cenprot(self):
+        estruturar = AsyncMock()
+        update_data = await self._rodar(
+            self._db_cenprot(), tipo="serasa", estruturar=estruturar
+        )
+        estruturar.assert_not_awaited()
+        assert update_data["numero"] == "9999999999"
