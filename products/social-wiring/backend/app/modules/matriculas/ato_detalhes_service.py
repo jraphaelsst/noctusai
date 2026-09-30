@@ -37,7 +37,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
@@ -112,13 +112,37 @@ def _linha_vazia(org_id: str, extracao_id: str, ato_id: str) -> dict:
     }
 
 
+def _ruido_local(ruido: Sequence[dict], inicio: int, fim: int) -> tuple[tuple[int, int], ...]:
+    """`matricula_extracoes.ruido` (offsets into the WHOLE `texto_extraido`)
+    clipped to this act's `[inicio, fim)` and re-based to `[0, fim-inicio)`
+    — the coordinate space `extrair_detalhes_ato`'s own `ruido` argument
+    expects (offsets local to the act's OWN literal slice, never the whole
+    extraction). `()` (nothing detected, or a pre-136 extraction) is a
+    no-op, same contract `subtrair_ruido` already has for the deed quote."""
+    saida: list[tuple[int, int]] = []
+    for r in ruido or ():
+        a, b = int(r["start"]), int(r["end"])
+        if b <= inicio or a >= fim:
+            continue
+        saida.append((max(0, a - inicio), min(fim, b) - inicio))
+    return tuple(saida)
+
+
 def linha_de_detalhes(
-    org_id: str, extracao_id: str, ato_row: dict, texto: str
+    org_id: str, extracao_id: str, ato_row: dict, texto: str, *, ruido: Sequence[dict] = ()
 ) -> Optional[dict]:
     """The `sugestao` row for one act row, or None for the abertura.
 
     Reads the act's literal slice and refuses offsets that do not fit the
     text — a clamped slice would silently read a shorter act.
+
+    `ruido` (migration 136's page-furniture spans, offsets into the WHOLE
+    `texto`): NEVER used to shorten the slice handed to the extractor — the
+    act's own text stays byte-identical, exactly what every other reader of
+    `matricula_atos`/`char_inicio`/`char_fim` sees. It only tells
+    `extrair_detalhes_ato` which part of that slice is page furniture, so a
+    page break landing between the header and the real title does not push
+    the title past `_JANELA_TITULO` — see that function's own docstring.
     """
     if ato_row["kind"] == "abertura":
         return None
@@ -129,23 +153,30 @@ def linha_de_detalhes(
             f"(len={len(texto)}) — atos e texto_extraido divergiram"
         )
     linha = _linha_vazia(org_id, extracao_id, str(ato_row["id"]))
-    linha.update(extrair_detalhes_ato(texto[inicio:fim]).to_json())
+    linha.update(
+        extrair_detalhes_ato(
+            texto[inicio:fim], ruido=_ruido_local(ruido, inicio, fim)
+        ).to_json()
+    )
     return linha
 
 
 def persistir_sugestoes(
-    db: Any, org_id: Any, extracao_id: Any, texto: str, ato_rows: list[dict]
+    db: Any, org_id: Any, extracao_id: Any, texto: str, ato_rows: list[dict],
+    *, ruido: Sequence[dict] = (),
 ) -> int:
     """Insert one `sugestao` row per R/AV act in `ato_rows`. Returns the count.
 
     The caller guarantees none of these acts has a row yet (fresh acts at
     segmentation; the missing ones in `detalhes_por_ato`). The UNIQUE
-    `(ato_id)` index is the backstop for a concurrent double-heal.
+    `(ato_id)` index is the backstop for a concurrent double-heal. `ruido`
+    — see `linha_de_detalhes`; `()` (the default) is a no-op.
     """
     linhas = [
         linha
         for linha in (
-            linha_de_detalhes(str(org_id), str(extracao_id), row, texto) for row in ato_rows
+            linha_de_detalhes(str(org_id), str(extracao_id), row, texto, ruido=ruido)
+            for row in ato_rows
         )
         if linha is not None
     ]
@@ -172,7 +203,10 @@ def detalhes_por_ato(
         r for r in ato_rows if r["kind"] != "abertura" and str(r["id"]) not in existentes
     ]
     if faltando and texto:
-        escritos = persistir_sugestoes(client, org_id, extracao["id"], texto, faltando)
+        escritos = persistir_sugestoes(
+            client, org_id, extracao["id"], texto, faltando,
+            ruido=extracao.get("ruido") or (),
+        )
         logger.info(
             "matricula %s: backfilled %d ato detail suggestions on read",
             extracao["id"],

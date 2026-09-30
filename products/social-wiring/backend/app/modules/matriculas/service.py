@@ -307,7 +307,7 @@ async def processar_extracao(
         # a concluded extraction that has no acts on its first read.
         try:
             escritos = estrutura_service.persistir_atos(
-                db, extracao_id, org_id, resultado.text
+                db, extracao_id, org_id, resultado.text, ruido=ruido
             )
             logger.info("Matrícula %s: %d acts persisted", extracao_id, escritos)
         except Exception as falha_atos:  # noqa: BLE001 - text landed; acts heal on read

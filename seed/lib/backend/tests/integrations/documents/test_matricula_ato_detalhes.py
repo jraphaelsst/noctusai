@@ -159,6 +159,65 @@ DACAO = "R-6/4.040 - Em 09/09/2009. DAÇÃO EM PAGAMENTO a credor fictício.\n"
 
 SEM_NATUREZA = "AV-5/4.040 - Em 10/10/2010. Averba-se a alteração do nome da rua.\n"
 
+#: 5 freshly re-transcribed historical matrículas (live prod, 2026-09-30)
+#: carried acts whose own title-wording none of the pre-existing `_NATUREZAS`
+#: patterns covered, all with the same downstream effect: `natureza=None`
+#: blocks `preenchimento_service.derivar_situacao_onus` from ever asserting
+#: `livre` ([situacao-onus-unclassified-act] — that guard is correct; the gap
+#: was upstream, here). A municipal tax-registration averbação titled ONLY
+#: `CADASTRO` (no `MUNICIPAL` suffix).
+CADASTRO_BARE = (
+    "AV-7/45.678 - Em 10/10/2015. CADASTRO - Pelo instrumento particular "
+    "adiante mencionado, e espelho do IPTU/2015, procede-se ao cadastramento "
+    "do imóvel junto a esta serventia.\n"
+)
+
+#: A condomínio unit's first-ownership averbação — the construtora
+#: attributing the unit to its condômino, a título-origin act, not an ônus.
+#: Deliberately NOT added to `estrutura_service._TRANSFERENCIAS` (that
+#: module's own comment explains why); classified `outro` here so it does
+#: not block `situacao_onus` derivation.
+ATRIBUICAO_UNIDADE = (
+    "R.1/9.999 - Em 15/01/2018. ATRIBUIÇÃO - Pelo instrumento particular, "
+    "com força de escritura pública, atribui-se a unidade autônoma nº 12 ao "
+    "condômino adiante qualificado.\n"
+)
+
+#: A matrícula/contribuinte number digit correction — the act's own title is
+#: just `DÍGITO`; `RETIFICACAO` (already in the vocabulary) never fires
+#: because the act never spells that word out.
+DIGITO_CORRECAO = (
+    "AV-9/9.999 - Em 20/02/2019. AV - DÍGITO. - Nos termos da autorização "
+    "contida na escritura adiante registrada, procede-se a presente correção "
+    "do número da matrícula.\n"
+)
+
+#: A loteamento's urbanistic (convencionais) restrictions, ex-officio —
+#: not a financial ônus, and there is no closer slot than `outro` in this
+#: vocabulary without a migration (115's CHECK mirrors it).
+RESTRICOES_LOTEAMENTO = (
+    "AV-10/9.999 - Em 25/03/2019. AV - RESTRIÇÕES. - Procede-se a presente "
+    "\"ex-officio\", para constar que o imóvel desta matrícula está sujeito "
+    "às restrições convencionais de loteamento constantes do registro.\n"
+)
+
+#: A page-continuation artefact the transcription join left INSIDE the act's
+#: own text (a page break mid-act) — the real title (`PENHORA`) sits well
+#: past `_JANELA_TITULO` because of it. See the `ruido` tests below: this
+#: fixture alone (no `ruido` argument) still reads `natureza=penhora`, just
+#: at `baixa` confidence — `extrair_detalhes_ato`'s `ruido` argument is what
+#: recovers `alta`.
+CONTINUACAO_PAGINA = (
+    "AV.8/9.876 - Em 10/10/2021. "
+    "Continua na ficha 2 do livro auxiliar desta serventia, conforme "
+    "registro anterior mencionado alhures nos termos do provimento "
+    "normativo vigente desta corregedoria regional. "
+    "PENHORA. Mandado de Penhora expedido em 01/10/2021 pelo Juízo da 3ª "
+    "Vara Cível.\n"
+)
+_RUIDO_INICIO = CONTINUACAO_PAGINA.index("Continua na ficha")
+_RUIDO_FIM = CONTINUACAO_PAGINA.index("PENHORA")
+
 CRUZEIROS = (
     "R-1/100 - Em 10 de março de 1985. COMPRA E VENDA. Valor Cr$ 1.500.000,00.\n"
 )
@@ -199,6 +258,8 @@ TODAS = [
     SEM_NATUREZA, CRUZEIROS, SO_VALOR_VENAL, DOIS_VALORES, DATAS_EM_CONFLITO,
     DATA_NO_FECHO, CPF_INVALIDO, CITACOES, MINUSCULAS_OCR,
     NARRATIVA_PERMUTA_JA_QUALIFICADOS, NARRATIVA_CASAL_ADQUIRENTE,
+    CADASTRO_BARE, ATRIBUICAO_UNIDADE, DIGITO_CORRECAO, RESTRICOES_LOTEAMENTO,
+    CONTINUACAO_PAGINA,
 ]
 
 
@@ -293,6 +354,56 @@ def test_a_competing_nature_in_the_same_sentence_lowers_confidence():
 def test_an_act_with_no_known_nature_is_none_not_outro():
     d = extrair_detalhes_ato(SEM_NATUREZA)
     assert (d.natureza, d.natureza_confianca) == (None, "nenhuma")
+
+
+# ─── natureza: the 2026-09-30 corpus gaps ──────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [CADASTRO_BARE, ATRIBUICAO_UNIDADE, DIGITO_CORRECAO, RESTRICOES_LOTEAMENTO],
+)
+def test_the_five_corpus_gap_wordings_no_longer_read_as_unclassified(texto):
+    """Each of these used to read `natureza=None`, which blocks
+    `preenchimento_service.derivar_situacao_onus` from ever asserting
+    `livre` — see the module docstring's [situacao-onus-unclassified-act]
+    reference and each fixture's own comment for why `outro` is correct."""
+    d = extrair_detalhes_ato(texto)
+    assert (d.natureza, d.natureza_confianca) == ("outro", "alta")
+
+
+def test_a_page_continuation_artefact_still_reads_but_at_low_confidence():
+    """Without `ruido`, the real title (`PENHORA`) sits past `_JANELA_TITULO`
+    because of the noise ahead of it — still found, just not at `alta`."""
+    d = extrair_detalhes_ato(CONTINUACAO_PAGINA)
+    assert (d.natureza, d.natureza_confianca) == ("penhora", "baixa")
+
+
+def test_skipping_the_ruido_span_recovers_high_confidence():
+    """`ruido` — offsets local to the act, as `matricula_ruido.detectar_ruido`
+    would report them once translated by the caller — lets `_natureza`
+    discount the noise's own length from the title window."""
+    d = extrair_detalhes_ato(
+        CONTINUACAO_PAGINA, ruido=((_RUIDO_INICIO, _RUIDO_FIM),)
+    )
+    assert (d.natureza, d.natureza_confianca) == ("penhora", "alta")
+
+
+def test_a_ruido_span_elsewhere_in_the_act_does_not_help():
+    """`ruido` only discounts noise that actually sits BETWEEN the header
+    and the match — a span after the match (or overlapping it) must not
+    manufacture a window the text does not have."""
+    fim_penhora = CONTINUACAO_PAGINA.index("PENHORA") + len("PENHORA")
+    d = extrair_detalhes_ato(
+        CONTINUACAO_PAGINA, ruido=((fim_penhora, fim_penhora + 5),)
+    )
+    assert (d.natureza, d.natureza_confianca) == ("penhora", "baixa")
+
+
+def test_no_ruido_argument_is_still_backward_compatible():
+    """Every pre-existing caller/fixture calls `extrair_detalhes_ato` with a
+    single positional argument."""
+    assert extrair_detalhes_ato(CV_SIMPLES).natureza == "compra_e_venda"
 
 
 # ─── data_registro ────────────────────────────────────────────────────────

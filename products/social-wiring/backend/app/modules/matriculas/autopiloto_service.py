@@ -421,7 +421,7 @@ def aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     texto = extracao.get("texto_extraido") or ""
     atos = estrutura_svc.atos_da_extracao(client, org_id, extracao)
     detalhes = detalhes_svc.detalhes_por_ato(client, org_id, extracao, atos)
-    sugestoes = estrutura_svc.sugerir(texto, atos)
+    sugestoes = estrutura_svc.sugerir(texto, atos, detalhes)
     linha = dados_service.linha(client, org_id, codigo) or {}
 
     campos: dict[str, str] = {}

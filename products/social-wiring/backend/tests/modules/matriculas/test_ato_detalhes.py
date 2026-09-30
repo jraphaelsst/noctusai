@@ -141,6 +141,57 @@ class TestTheListingCarriesDetails:
         assert de_novo["origem"] == "confirmado"
 
 
+# ─── page-continuation noise (migration 136 ruido -> natureza window) ─────
+
+#: A page break the transcription join left INSIDE the AV.8 act's own span —
+#: `matricula_ruido.detectar_ruido`'s shape, hand-picked here (same rationale
+#: as `test_estrutura_service_selecao_ruido.py`: this suite proves the
+#: PLUMBING to `extrair_detalhes_ato`, not detection itself).
+TEXTO_RUIDO_ATO = (
+    "MATRÍCULA Nº 8.888\nTerreno ficticio.\n"
+    "AV.8/8.888 - Em 10/10/2021. "
+    "Continua na ficha 2 do livro auxiliar desta serventia, conforme "
+    "registro anterior mencionado alhures nos termos do provimento "
+    "normativo vigente desta corregedoria regional. "
+    "PENHORA. Mandado de Penhora expedido em 01/10/2021 pelo Juízo da 3ª "
+    "Vara Cível.\n"
+)
+_RUIDO_INICIO = TEXTO_RUIDO_ATO.index("Continua na ficha")
+_RUIDO_FIM = TEXTO_RUIDO_ATO.index("PENHORA")
+
+
+class TestPageContinuationNoiseNeverBlocksTheNaturezaWindow:
+    """[Drift-fix-on-contact, 2026-09-30] A page break the transcription
+    join left INSIDE an act's own span used to push its real title past
+    `matricula_ato_detalhes._JANELA_TITULO`, degrading `natureza_confianca`
+    to `baixa` for no textual reason — `matricula_extracoes.ruido` (already
+    computed at transcription time, migration 136) now reaches the
+    extractor for exactly this: `ato_detalhes_service._ruido_local` clips
+    and re-bases it to the act's own offsets, `extrair_detalhes_ato`'s
+    `ruido` argument discounts it from the title window."""
+
+    def test_without_ruido_the_reading_is_still_found_but_low_confidence(self, client, scoped):
+        ext = extracao_row(texto=TEXTO_RUIDO_ATO)
+        seed(scoped, extracoes=[ext])
+
+        av8 = _por_chave(_atos(client, ext["id"]))[("AV", 8)]["detalhes"]
+
+        assert av8["natureza"] == "penhora"
+        assert av8["natureza_confianca"] == "baixa"
+
+    def test_with_ruido_the_same_act_reads_at_high_confidence(self, client, scoped):
+        ext = extracao_row(
+            texto=TEXTO_RUIDO_ATO,
+            ruido=[{"start": _RUIDO_INICIO, "end": _RUIDO_FIM, "kind": "rodape_pagina"}],
+        )
+        seed(scoped, extracoes=[ext])
+
+        av8 = _por_chave(_atos(client, ext["id"]))[("AV", 8)]["detalhes"]
+
+        assert av8["natureza"] == "penhora"
+        assert av8["natureza_confianca"] == "alta"
+
+
 # ─── PUT /atos/{id}/detalhes ──────────────────────────────────────────────
 
 

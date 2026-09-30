@@ -44,11 +44,12 @@ All fixture names, numbers and banks in this module's tests are invented.
 """
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Sequence
 
 from noctusai_lib.integrations.documents.cpf import format_cpf
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_valido
@@ -323,6 +324,20 @@ _NATUREZAS: tuple[tuple[str, re.Pattern[str]], ...] = (
             r"|CADASTRO\s+MUNICIPAL|INSCRICAO\s+MUNICIPAL|ALTERACAO\s+D[AE]\s+DENOMINACAO"
             r"|TOMBAMENTO|SERVIDAO|LOCACAO|ARRESTO|SEQUESTRO|CAUCAO|ANTICRESE"
             r"|BEM\s+DE\s+FAMILIA"
+            # 5 freshly re-transcribed historical matrículas (live prod,
+            # 2026-09-30) carried acts whose own title IS one of these bare
+            # words: a municipal tax-registration averbação titled only
+            # `CADASTRO` (no `MUNICIPAL` suffix — `CADASTRO MUNICIPAL` above
+            # never fires for it); a condomínio unit's first-ownership
+            # averbação titled `ATRIBUIÇÃO` (a título-origin act, not an ônus
+            # — deliberately NOT added to `estrutura_service._TRANSFERENCIAS`,
+            # see that module for why); a matrícula-number digit correction
+            # titled only `DÍGITO` (`RETIFICACAO` above never fires for it —
+            # the act never spells that word out); and a loteamento's
+            # urbanistic-restrictions averbação titled `RESTRIÇÕES` (no
+            # closer slot in this vocabulary — see migration 115's CHECK
+            # before adding one).
+            r"|CADASTRO|ATRIBUICAO|DIGITO|RESTRICOES"
         ),
     ),
 )
@@ -334,7 +349,28 @@ _JANELA_TITULO = 120
 _FIM_FRASE = re.compile(r"\.(?=\s|$)|;")
 
 
-def _natureza(t: _Texto, corpo: int) -> tuple[Optional[str], str]:
+def _norm_span_de(t: _Texto, a: int, b: int) -> tuple[int, int]:
+    """The `[a, b)` window of NORM indices whose `t.origem` value falls in
+    the ORIGINAL-offset range `[a, b)` — the inverse of `t.span`, needed to
+    place a `ruido` span (offsets into `t.original`, the same coordinate
+    space `matricula_ruido.RuidoSpan` uses) into the coordinate space
+    `_natureza`'s title window is measured in."""
+    return bisect.bisect_left(t.origem, a), bisect.bisect_left(t.origem, b)
+
+
+def _natureza(
+    t: _Texto, corpo: int, ruido: Sequence[tuple[int, int]] = ()
+) -> tuple[Optional[str], str]:
+    """`ruido` — page furniture (running header/footer, a "continua na
+    ficha N" page break) interleaved INTO this act's own text by the
+    transcription join, as `(start, end)` offsets into `t.original`
+    (`matricula_ruido.detectar_ruido`'s output, translated to this act's own
+    local offsets by the caller). A page break landing between the header
+    and the real title pushes the title past `_JANELA_TITULO` for no
+    reason — the noise itself is never the title. Measured live, 2026-09-30:
+    an `AV.8` act whose body opened with 2+ lines of page-boundary noise
+    before its actual wording read `natureza=None` for exactly this reason.
+    """
     achados: list[tuple[int, int, str]] = []
     for natureza, rx in _NATUREZAS:
         for m in rx.finditer(t.norm, corpo):
@@ -359,8 +395,20 @@ def _natureza(t: _Texto, corpo: int) -> tuple[Optional[str], str]:
         # What follows a cancellation in its own sentence is its OBJECT
         # (`CANCELAMENTO da hipoteca`), not a competing reading.
         conflitos = set()
-    if inicio - corpo <= _JANELA_TITULO and not conflitos:
+    distancia = inicio - corpo
+    if distancia <= _JANELA_TITULO and not conflitos:
         return natureza, ALTA
+    if ruido and not conflitos:
+        # Fallback only — the ordinary (no-noise) reading above is left
+        # completely unchanged: this never makes an already-ALTA match
+        # worse, and never fires when `ruido` is empty (every existing
+        # caller/fixture).
+        descontado = sum(
+            max(0, min(f, inicio) - max(i, corpo))
+            for i, f in (_norm_span_de(t, a, b) for a, b in ruido)
+        )
+        if distancia - descontado <= _JANELA_TITULO:
+            return natureza, ALTA
     return natureza, BAIXA
 
 
@@ -938,8 +986,19 @@ def _atos_referidos(
 # ─── public API ───────────────────────────────────────────────────────────
 
 
-def extrair_detalhes_ato(texto_ato: str) -> AtoDetalhes:
-    """Read one act's details. Pure and deterministic; see module docstring."""
+def extrair_detalhes_ato(
+    texto_ato: str, *, ruido: Sequence[tuple[int, int]] = ()
+) -> AtoDetalhes:
+    """Read one act's details. Pure and deterministic; see module docstring.
+
+    `ruido` — page furniture the transcription join left INSIDE this act's
+    text (a page break mid-act), as `(start, end)` offsets into `texto_ato`
+    itself (i.e. already local to this act — the caller subtracts the act's
+    own `char_inicio` from whatever `matricula_ruido.detectar_ruido` found
+    against the full transcription). `()` (the default, and every caller
+    before this parameter existed) is a no-op. See `_natureza`'s docstring
+    for why this only affects the title window, never the reading itself.
+    """
     if not texto_ato or not texto_ato.strip():
         return AtoDetalhes()
     t = _Texto(texto_ato)
@@ -948,7 +1007,7 @@ def extrair_detalhes_ato(texto_ato: str) -> AtoDetalhes:
     proprio = (cabecalho.group("kind"), int(cabecalho.group("num"))) if cabecalho else None
     sufixo_proprio = _digitos(cabecalho.group("suf")) if cabecalho else ""
 
-    natureza, natureza_conf = _natureza(t, corpo)
+    natureza, natureza_conf = _natureza(t, corpo, ruido)
     data_registro, data_conf = _data_registro(t, corpo)
     valor, valor_conf = _valor(t, corpo)
     blocos = _blocos_rotulados(t, corpo)

@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
@@ -201,12 +201,22 @@ def linhas_de_abertura_blocos(
     ]
 
 
-def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
+def persistir_atos(
+    db: Any, extracao_id: str, org_id: Any, texto: str, *, ruido: Sequence[dict] = ()
+) -> int:
     """Segment `texto` and insert its acts. Returns how many were written.
 
     🔴 Never re-segments: if the extraction already has acts, nothing is
     written (returns 0). Re-segmenting would mint new act ids and orphan every
     contract selection / imovel_dados pointer that quotes the old ones.
+
+    `ruido` (migration 136's `matricula_extracoes.ruido`, the raw JSON items
+    — NOT `RuidoSpan`, `ato_detalhes_service` deliberately does not import
+    `estrutura_service`): forwarded to the detail suggestions ONLY, so a page
+    break landing inside an act's own span does not push its title past the
+    extractor's title window (`matricula_ato_detalhes._natureza`). Never
+    used to alter `texto` or the acts' own offsets — those stay exactly what
+    `segment_matricula_atos` returns.
     """
     org = _exigir_org(org_id)
     existentes = (
@@ -227,7 +237,9 @@ def persistir_atos(db: Any, extracao_id: str, org_id: Any, texto: str) -> int:
         # detail insert is logged at ERROR and self-heals on the next read
         # (`ato_detalhes_service.detalhes_por_ato` mints missing suggestions).
         try:
-            detalhes_svc.persistir_sugestoes(db, org, str(extracao_id), texto or "", linhas)
+            detalhes_svc.persistir_sugestoes(
+                db, org, str(extracao_id), texto or "", linhas, ruido=ruido
+            )
         except Exception as falha:  # noqa: BLE001 - acts landed; details heal on read
             logger.error(
                 "matricula %s: acts persisted but their detail suggestions were not "
@@ -482,7 +494,8 @@ def _linhas_de_atos(client: Any, org_id: UUID, extracao: dict) -> list[dict]:
     rows = _ler()
     if not rows:
         escritos = persistir_atos(
-            client, str(extracao["id"]), org_id, extracao["texto_extraido"]
+            client, str(extracao["id"]), org_id, extracao["texto_extraido"],
+            ruido=extracao.get("ruido") or (),
         )
         logger.info(
             "matricula %s: healed %d acts on first read", extracao["id"], escritos
@@ -935,6 +948,30 @@ _TRANSFERENCIAS: tuple[tuple[str, str, frozenset[str]], ...] = (
     ("CONSOLIDACAO DA PROPRIEDADE", "consolidação da propriedade", frozenset({"R", "AV"})),
 )
 
+#: [Drift-fix-on-contact, 2026-09-30] `_TRANSFERENCIAS` above is this
+#: heuristic's OWN, narrower vocabulary — it requires the full phrasing
+#: (`DACAO EM PAGAMENTO`, `COMPRA E VENDA`/`VENDA E COMPRA`) and misses an
+#: act the SEED classifier (`matricula_ato_detalhes._NATUREZAS`) correctly
+#: types as `dacao`/`compra_e_venda` off a bare `DAÇÃO` or a verb form
+#: (`VENDEU`/`VENDERAM`/`VENDIDO`) with no "E COMPRA"/"E VENDA" at all.
+#: Measured live (2026-09-30): 3 of 5 freshly re-transcribed historical
+#: matrículas had exactly this — a typed `compra_e_venda`/`dacao` act whose
+#: own wording never satisfied `_TRANSFERENCIAS`, so `titulo_aquisitivo`
+#: stayed `None` and the field was never even suggested, let alone
+#: confirmed. This is the FALLBACK `sugerir` checks only when its own
+#: phrase-based scan above found nothing for the act — the typed `natureza`
+#: never overrides a `_TRANSFERENCIAS` hit, it only fills the gap.
+#: 🔴 NOT extended to every `NATUREZAS_TRANSFERENCIA` value: the seed groups
+#: adjudicação/usucapião/consolidação-da-propriedade/integralização all
+#: under `outro` (it does not distinguish them), so relying on `natureza`
+#: for those would LOSE the finer label `_TRANSFERENCIAS` already gives
+#: them, not gain coverage. Scoped to the two natures the seed DOES
+#: distinguish precisely.
+_ROTULO_POR_NATUREZA_TIPADA: dict[str, str] = {
+    "compra_e_venda": "compra e venda",
+    "dacao": "dação em pagamento",
+}
+
 #: (normalised term, `situacao_onus` vocabulary value from 099).
 _ONUS: tuple[tuple[str, str], ...] = (
     ("HIPOTECA", "hipoteca"),
@@ -975,7 +1012,9 @@ def _ref(row: dict, texto: str, termo: str) -> dict:
     }
 
 
-def sugerir(texto: str, atos: list[dict]) -> dict:
+def sugerir(
+    texto: str, atos: list[dict], detalhes: Optional[dict[str, dict]] = None
+) -> dict:
     """Heuristic suggestions over an extraction's acts. Pure; never writes.
 
     - `titulo_aquisitivo`: the LATEST act carrying a transfer term, excluding
@@ -984,6 +1023,11 @@ def sugerir(texto: str, atos: list[dict]) -> dict:
       `cancelamento_citado_por` listing later cancellation acts that cite it
       by number, and `sugerido` = not cancelled. Cancelled candidates are
       still returned so the operator sees why they were left out.
+
+    `detalhes` (`{ato_id: matricula_ato_detalhes row}`, from
+    `ato_detalhes_service.detalhes_por_ato` — both callers already compute
+    it right before calling this) — see `_ROTULO_POR_NATUREZA_TIPADA`'s own
+    comment for why this is a narrow fallback, never an override.
     """
     ordenados = sorted(atos, key=lambda r: r["ordem"])
     normalizados = {
@@ -1000,10 +1044,17 @@ def sugerir(texto: str, atos: list[dict]) -> dict:
         if row["kind"] == "abertura" or row["id"] in cancelamentos:
             continue
         norm = normalizados[row["id"]]
+        achou_transferencia = False
         for termo, rotulo, kinds in _TRANSFERENCIAS:
             if row["kind"] in kinds and _contem(norm, termo):
                 titulo = _ref(row, texto, rotulo)  # later acts overwrite: latest wins
+                achou_transferencia = True
                 break
+        if not achou_transferencia and row["kind"] == "R":
+            natureza_tipada = ((detalhes or {}).get(str(row["id"])) or {}).get("natureza")
+            rotulo_tipado = _ROTULO_POR_NATUREZA_TIPADA.get(natureza_tipada)
+            if rotulo_tipado:
+                titulo = _ref(row, texto, rotulo_tipado)
         for termo, tipo in _ONUS:
             if not _contem(norm, termo):
                 continue
@@ -1102,10 +1153,11 @@ def obter_fontes(client: Any, org_id: UUID, extracao_id: UUID) -> dict:
     codigo = extracao.get("codigo")
     linha = dados_service.linha(client, org_id, codigo) if codigo else None
     titulo, onus = _fontes_saida(client, org_id, extracao, linha)
+    detalhes = detalhes_svc.detalhes_por_ato(client, org_id, extracao, atos) if atos else {}
     return {
         "extracao_id": extracao["id"],
         "codigo": codigo,
-        "sugestoes": sugerir(texto, atos),
+        "sugestoes": sugerir(texto, atos, detalhes),
         "titulo_aquisitivo": titulo,
         "onus": onus,
     }
@@ -1147,7 +1199,8 @@ def definir_fontes(
     texto = extracao.get("texto_extraido") or ""
     atos = _linhas_de_atos(client, org_id, extracao)
     por_id = {str(r["id"]): r for r in atos}
-    sugestoes = sugerir(texto, atos)
+    detalhes = detalhes_svc.detalhes_por_ato(client, org_id, extracao, atos) if atos else {}
+    sugestoes = sugerir(texto, atos, detalhes)
     confirmado_por = str(usuario_id) if usuario_id else None
     agora = now_iso()
 

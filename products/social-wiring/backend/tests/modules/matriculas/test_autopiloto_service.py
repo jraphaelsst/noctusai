@@ -212,6 +212,38 @@ class TestAmbiguousDerivationsStaySuggestions:
         assert row["onus_fonte_confirmado_em"] is None
 
 
+#: [Drift-fix-on-contact, 2026-09-30] Live prod, 5 freshly re-transcribed
+#: historical matrículas: a bare `CADASTRO` averbação — no pre-existing
+#: `_NATUREZAS` pattern covered it — read `natureza=None`, the SAME blind
+#: spot `ATO_R6_INDETERMINADO` above pins, and for the same reason blocked
+#: `situacao_onus` from ever confirming `livre`. `matricula_ato_detalhes.
+#: _NATUREZAS["outro"]` now recognises it.
+ATO_AV7_CADASTRO = (
+    "AV-7/45.678 - Em 10/10/2015. CADASTRO - Pelo instrumento particular "
+    "adiante mencionado, e espelho do IPTU/2015, procede-se ao "
+    "cadastramento do imóvel junto a esta serventia.\n"
+)
+
+
+class TestThePreviouslyUnclassifiedCorpusWordingNoLongerBlocksOnus:
+    def test_a_bare_cadastro_averbacao_no_longer_blocks_situacao_onus(self, scoped):
+        eid, resultado = _rodar(
+            scoped,
+            _texto(
+                ATO_R1_COM_INSTRUMENTO, ATO_R2_ALIENACAO, ATO_AV3_CANCELAMENTO,
+                ATO_AV7_CADASTRO,
+            ),
+        )
+
+        campos = resultado["campos"]
+        assert campos["situacao_onus"] == autopiloto.CONFIRMADO_AUTOMATICO
+
+        row = _dados(scoped)
+        assert row["situacao_onus"] == "livre"
+        assert row["situacao_onus_origem"] == "ia"
+        assert row["situacao_onus_confirmado_em"]
+
+
 class TestNeverOverridesAHuman:
     def test_a_manually_confirmed_cartorio_is_never_touched(self, scoped):
         eid = str(uuid4())

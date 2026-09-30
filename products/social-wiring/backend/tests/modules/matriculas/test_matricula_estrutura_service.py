@@ -196,6 +196,92 @@ class TestTheSuggester:
         assert penhora["sugerido"] is True
 
 
+class TestTheSuggesterFallsBackToTypedNatureza:
+    """[Drift-fix-on-contact, 2026-09-30] `_TRANSFERENCIAS` requires the full
+    phrase (`DACAO EM PAGAMENTO`, `COMPRA E VENDA`/`VENDA E COMPRA`); the
+    seed's own classifier accepts a bare `DAÇÃO` or a verb form
+    (`VENDEU`/`VENDERAM`) for the same natures. `detalhes` closes that gap —
+    see `_ROTULO_POR_NATUREZA_TIPADA`'s own comment for the exact scope."""
+
+    def test_a_bare_dacao_with_no_em_pagamento_is_missed_by_the_phrase_scan(self):
+        texto = (
+            "MATRÍCULA 3.333\nLote ficticio.\n"
+            "R-1/3.333 - Em 01/01/2020. DAÇÃO a credor fictício, quitando dívida "
+            "hipotecária.\n"
+        )
+        assert svc.sugerir(texto, _linhas(texto))["titulo_aquisitivo"] is None
+
+    def test_the_typed_natureza_finds_it(self):
+        texto = (
+            "MATRÍCULA 3.333\nLote ficticio.\n"
+            "R-1/3.333 - Em 01/01/2020. DAÇÃO a credor fictício, quitando dívida "
+            "hipotecária.\n"
+        )
+        linhas = _linhas(texto)
+        r1 = next(l for l in linhas if (l["kind"], l["numero"]) == ("R", 1))
+        detalhes = {r1["id"]: {"natureza": "dacao"}}
+
+        titulo = svc.sugerir(texto, linhas, detalhes)["titulo_aquisitivo"]
+
+        assert (titulo["kind"], titulo["numero"]) == ("R", 1)
+        assert titulo["termo"] == "dação em pagamento"
+
+    def test_a_verb_form_sale_with_no_e_compra_is_missed_by_the_phrase_scan(self):
+        texto = (
+            "MATRÍCULA 4.444\nLote ficticio.\n"
+            "R-1/4.444 - Em 02/02/2020. Pelo presente instrumento, o outorgante "
+            "vendeu o imóvel ao outorgado.\n"
+        )
+        assert svc.sugerir(texto, _linhas(texto))["titulo_aquisitivo"] is None
+
+    def test_the_typed_natureza_finds_the_verb_form_sale(self):
+        texto = (
+            "MATRÍCULA 4.444\nLote ficticio.\n"
+            "R-1/4.444 - Em 02/02/2020. Pelo presente instrumento, o outorgante "
+            "vendeu o imóvel ao outorgado.\n"
+        )
+        linhas = _linhas(texto)
+        r1 = next(l for l in linhas if (l["kind"], l["numero"]) == ("R", 1))
+        detalhes = {r1["id"]: {"natureza": "compra_e_venda"}}
+
+        titulo = svc.sugerir(texto, linhas, detalhes)["titulo_aquisitivo"]
+
+        assert (titulo["kind"], titulo["numero"]) == ("R", 1)
+        assert titulo["termo"] == "compra e venda"
+
+    def test_the_typed_fallback_never_overrides_a_phrase_match(self):
+        """R-4 already reads `VENDA E COMPRA` — a typed (possibly stale)
+        `dacao` on the same act must not replace the phrase-based label."""
+        linhas = _linhas(TEXTO)
+        r4 = next(l for l in linhas if (l["kind"], l["numero"]) == ("R", 4))
+        detalhes = {r4["id"]: {"natureza": "dacao"}}
+
+        titulo = svc.sugerir(TEXTO, linhas, detalhes)["titulo_aquisitivo"]
+
+        assert titulo["termo"] == "compra e venda"
+
+    def test_an_act_typed_outro_is_not_treated_as_a_transfer(self):
+        """Adjudicação/usucapião/consolidação/integralização all read
+        `natureza='outro'` from the seed classifier (it does not split them
+        out) — the fallback must not surface `outro` as a transfer, or it
+        would silently coarsen those acts' own `_TRANSFERENCIAS` label."""
+        texto = (
+            "MATRÍCULA 5.555\nLote ficticio.\n"
+            "R-1/5.555 - Em 03/03/2020. Fica averbada a alteração do nome da "
+            "rua.\n"
+        )
+        linhas = _linhas(texto)
+        r1 = next(l for l in linhas if (l["kind"], l["numero"]) == ("R", 1))
+        detalhes = {r1["id"]: {"natureza": "outro"}}
+
+        assert svc.sugerir(texto, linhas, detalhes)["titulo_aquisitivo"] is None
+
+    def test_no_detalhes_argument_is_still_backward_compatible(self):
+        """Every pre-existing caller/fixture calls `sugerir(texto, atos)`
+        with no third argument at all."""
+        assert svc.sugerir(TEXTO, _linhas(TEXTO))["titulo_aquisitivo"] is not None
+
+
 # ─── título / ônus pointers ───────────────────────────────────────────────
 
 

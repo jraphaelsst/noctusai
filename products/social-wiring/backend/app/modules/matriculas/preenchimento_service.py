@@ -288,7 +288,7 @@ def preencher_sincrono(
 
     atos = estrutura_svc.atos_da_extracao(client, org_id, extracao)
     detalhes = detalhes_svc.detalhes_por_ato(client, org_id, extracao, atos)
-    sugestoes = estrutura_svc.sugerir(texto, atos)
+    sugestoes = estrutura_svc.sugerir(texto, atos, detalhes)
     por_id = {str(a["id"]): a for a in atos}
 
     titulo = sugestoes["titulo_aquisitivo"]
