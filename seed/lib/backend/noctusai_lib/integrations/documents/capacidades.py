@@ -186,4 +186,17 @@ CAPACIDADES: dict[str, frozenset[str]] = {
             "conta_credito_vendedor",
         }
     ),
+    # `ficha_cadastral_extractor.make_ficha_cadastral_extractor` — a bank's
+    # own registration form ("FORMULÁRIO COMPRADOR/VENDEDOR/FGTS ITAÚ").
+    # Canonical names mirror `PessoaFichaCadastral`'s own attributes (per
+    # PERSON — the form may name several; the seed reader returns every one
+    # it found, attribution by CPF is the consumer's job, see that module's
+    # own docstring). `rg_orgao` travels with `rg`, same non-independently-
+    # persistable reasoning `_IDENTIDADE_COMPLETA` gives for it.
+    "ficha_cadastral": frozenset(
+        {
+            "nome", "cpf", "rg", "rg_orgao", "data_nascimento", "estado_civil",
+            "regime_bens", "nacionalidade", "profissao", "endereco",
+        }
+    ),
 }

@@ -188,6 +188,22 @@ from noctusai_lib.integrations.documents.matricula_qualificacao import (
     extrair_qualificacoes,
     mesclar_qualificacoes,
 )
+from noctusai_lib.integrations.documents.ficha_cadastral import (
+    CampoWidget,
+    FichaCadastralLida,
+    PessoaFichaCadastral,
+    classificar_campo,
+    estado_civil_de_texto,
+    montar_pessoas,
+)
+from noctusai_lib.integrations.documents.ficha_cadastral_extractor import (
+    FakeFichaCadastralExtractor,
+    FichaCadastralExtractor,
+    make_ficha_cadastral_extractor,
+)
+from noctusai_lib.integrations.documents.ficha_cadastral_texto import (
+    parse_texto as parse_ficha_cadastral_texto,
+)
 from noctusai_lib.integrations.documents.matricula_ruido import (
     RuidoKind,
     RuidoSpan,
@@ -247,6 +263,9 @@ _LAZY: dict[str, str] = {
     "LadderIdentityExtractor": "noctusai_lib.integrations.documents.real",
     "LadderMatriculaExtractor": (
         "noctusai_lib.integrations.documents.matricula_extractor"
+    ),
+    "LadderFichaCadastralExtractor": (
+        "noctusai_lib.integrations.documents.ficha_cadastral_extractor"
     ),
     "LadderDocumentTranscriber": (
         "noctusai_lib.integrations.documents.transcription"
@@ -320,16 +339,20 @@ __all__ = [
     "DocumentTextLadder",
     "DocumentTranscriber",
     "ESTADO_CIVIL_VALORES",
+    "CampoWidget",
     "EnderecoMatricula",
     "ExtractionConfidence",
     "FakeCartaoCnpjExtractor",
     "FakeContratoFinanciamentoExtractor",
     "FakeCrednetExtractor",
     "FakeDocumentTranscriber",
+    "FakeFichaCadastralExtractor",
     "FakeGuiaItbiExtractor",
     "FakeIdentityExtractor",
     "FakeMatriculaExtractor",
     "FakePropostaFinanciamentoExtractor",
+    "FichaCadastralExtractor",
+    "FichaCadastralLida",
     "FinanciamentoImobiliarioExtractor",
     "FinanciamentoImobiliarioFields",
     "FormatRange",
@@ -343,6 +366,7 @@ __all__ = [
     "LadderContratoFinanciamentoExtractor",
     "LadderCrednetExtractor",
     "LadderDocumentTranscriber",
+    "LadderFichaCadastralExtractor",
     "LadderGuiaItbiExtractor",
     "LadderIdentityExtractor",
     "LadderMatriculaExtractor",
@@ -355,6 +379,7 @@ __all__ = [
     "Paragraph",
     "ParagraphKind",
     "ParticipacaoCrednet",
+    "PessoaFichaCadastral",
     "PessoaFinanciamento",
     "PessoaItbi",
     "Qualificacao",
@@ -371,9 +396,11 @@ __all__ = [
     "UnsupportedGlyphError",
     "ValorLido",
     "ato_hint_span",
+    "classificar_campo",
     "classify_kind",
     "derivar_endereco",
     "detectar_ruido",
+    "estado_civil_de_texto",
     "extrair_qualificacoes",
     "find_birthdate",
     "has_raw_markup",
@@ -398,17 +425,20 @@ __all__ = [
     "make_contrato_financiamento_extractor",
     "make_crednet_extractor",
     "make_document_transcriber",
+    "make_ficha_cadastral_extractor",
     "make_guia_itbi_extractor",
     "make_identity_extractor",
     "make_matricula_extractor",
     "make_proposta_financiamento_extractor",
     "mesclar_qualificacoes",
+    "montar_pessoas",
     "normalize",
     "normalize_lines",
     "paragraphs_from_docx",
     "paragraphs_from_text",
     "parse_cartao_cnpj",
     "parse_crednet",
+    "parse_ficha_cadastral_texto",
     "parse_financiamento_imobiliario",
     "parse_guia_itbi",
     "ranges_from_json",

@@ -63,6 +63,11 @@ class TestFactoryShapedRouting:
                 "cartao_cnpj",
                 "noctusai_lib.integrations.documents.cartao_cnpj.LadderCartaoCnpjExtractor",
             ),
+            (
+                "ficha_cadastral",
+                "noctusai_lib.integrations.documents.ficha_cadastral_extractor"
+                ".LadderFichaCadastralExtractor",
+            ),
         ],
     )
     def test_routes_to_its_own_fonte_extrator(self, tipo, klass_path):
@@ -78,7 +83,7 @@ class TestFactoryShapedRouting:
         assert type(extractor).__name__ == klass_nome
 
     def test_fonte_extrator_is_registered_as_factory_shaped(self):
-        for tipo in ("serasa_crednet", "cartao_cnpj"):
+        for tipo in ("serasa_crednet", "cartao_cnpj", "ficha_cadastral"):
             assert fontes.FONTES[tipo].extrator in deps._FACTORY_SHAPED_EXTRATORES
 
     def test_comprovante_endereco_extrator_is_not_registered_as_factory_shaped(self):

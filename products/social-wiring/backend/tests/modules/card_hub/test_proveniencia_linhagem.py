@@ -65,6 +65,10 @@ class TestLinhagemDoRegistro:
             "rg", "cpf", "cnh", "cin", "certidao_casamento", "certidao_nascimento",
             # P0c contract §C1: Serasa Crednet also claims `nome` (`nome_oficial`).
             "serasa_crednet",
+            # The bank's own registration form also claims `nome` — never
+            # beats an identity document (unmeasured `PRECISAO`, corroboration
+            # only), but the seed CAN read it, which is this listing's bar.
+            "ficha_cadastral",
         }
 
     def test_profissao_lists_matricula_alongside_the_identity_documents(self):
@@ -176,8 +180,11 @@ class TestLinhagemDoCard:
         tipos = {f["tipo_documento"] for f in item["fontes_possiveis"]}
         assert tipos == {
             "rg", "cpf", "cnh", "cin", "certidao_casamento", "certidao_nascimento",
-            # P0c contract §C1: Serasa Crednet also claims `nome` (`nome_oficial`).
+            # P0c contract §C1: Serasa Crednet also claims `cpf`.
             "serasa_crednet",
+            # The bank's own registration form also claims `cpf` — see
+            # `test_nome_oficial_lists_every_identity_document`'s own note.
+            "ficha_cadastral",
         }
         assert all(f["destino"] == f"/clientes/{ids['cliente']}" for f in item["fontes_possiveis"])
 

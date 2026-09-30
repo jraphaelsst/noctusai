@@ -118,6 +118,15 @@ _FACTORY_SHAPED_EXTRATORES: frozenset[str] = frozenset(
             "noctusai_lib.integrations.documents.financiamento_imobiliario"
             ".make_contrato_financiamento_extractor"
         ),
+        # `ficha_cadastral` — same `(*, real, org_id, provider)` calling
+        # convention; `identidade_extracao_service.extrair_identidade`
+        # dispatches it to `ficha_cadastral_service.aplicar_leitura`, not
+        # `aplicar_campos_ao_cliente` — same "differently-shaped reader"
+        # precedent as `serasa_crednet`/`cartao_cnpj` above.
+        (
+            "noctusai_lib.integrations.documents.ficha_cadastral_extractor"
+            ".make_ficha_cadastral_extractor"
+        ),
     }
 )
 

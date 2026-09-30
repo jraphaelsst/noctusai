@@ -231,6 +231,41 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         # whoever it was mailed to, not necessarily this titular.
         campos=frozenset({"endereco"}),
     ),
+    # 🔴 `ficha_cadastral` — a bank's OWN registration form (FORMULÁRIO
+    # COMPRADOR/VENDEDOR/FGTS ITAÚ). Live prod test, 2026-09-30: the
+    # contract's party ADDRESS came from these forms for every party that
+    # had one (16/16 CPFs matched, ~12/16 streets); today's product has no
+    # reader for them, so address stays empty for most parties. `dominio=
+    # "cliente"` (`identidade_svc.TIPOS_EXTRAIVEIS`/`deve_extrair` derive
+    # from this automatically) — but `ficha_cadastral_service.aplicar_
+    # leitura` owns the WHOLE apply, not `identidade_extracao_service.
+    # aplicar_campos_ao_cliente`'s single-titular path: `extrator` here is
+    # the seed's OWN factory (a `make_*_extractor(*, real, org_id,
+    # provider)` shape, `deps._FACTORY_SHAPED_EXTRATORES` routes it),
+    # matching `serasa_crednet`'s "differently-shaped reader" precedent —
+    # see `identidade_extracao_service.extrair_identidade`'s own
+    # `tipo == "ficha_cadastral"` branch, right beside that one.
+    Fonte(
+        tipo_documento="ficha_cadastral",
+        dominio="cliente",
+        entradas=_ENTRADAS_CLIENTE_UPLOAD,
+        extrator=(
+            "noctusai_lib.integrations.documents.ficha_cadastral_extractor"
+            ".make_ficha_cadastral_extractor"
+        ),
+        origens=frozenset({"ficha_cadastral"}),
+        # Mirrors `capacidades.CAPACIDADES["ficha_cadastral"]` — every field
+        # `PessoaFichaCadastral` carries. Identity fields (`nome`/`cpf`/
+        # `rg`/`rg_orgao`/`data_nascimento`) are claimed here because the
+        # seed CAN read them; `ficha_cadastral_service` is the one that
+        # enforces "corroboration only, never beats an identity document"
+        # (unmeasured `PRECISAO` tier — see that module's own docstring),
+        # not this catalogue entry.
+        campos=frozenset(
+            {"nome", "cpf", "rg", "rg_orgao", "data_nascimento", "estado_civil",
+             "regime_bens", "nacionalidade", "profissao", "endereco"}
+        ),
+    ),
     # ─── imovel_documentos (imovel_hub/documentos_service) ─────────────────
     Fonte(
         tipo_documento="matricula",
@@ -408,6 +443,7 @@ ROTULOS_TIPO_DOCUMENTO: dict[str, str] = {
     "certidao_casamento": "Certidão de casamento",
     "certidao_nascimento": "Certidão de nascimento",
     "comprovante_endereco": "Comprovante de endereço",
+    "ficha_cadastral": "Ficha cadastral / formulário do banco",
     "matricula": "Matrícula do imóvel",
     "guia_iptu": "Guia do IPTU",
     "cnd_iptu": "CND de IPTU",

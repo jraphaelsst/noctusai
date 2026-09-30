@@ -29,6 +29,15 @@ from noctusai_lib.integrations.documents.serasa_crednet import (
     make_crednet_extractor,
     parse_crednet,
 )
+from noctusai_lib.integrations.documents.ficha_cadastral import (
+    FichaCadastralLida,
+    PessoaFichaCadastral,
+)
+from noctusai_lib.integrations.documents.ficha_cadastral_extractor import (
+    FakeFichaCadastralExtractor,
+    FichaCadastralExtractor,
+    make_ficha_cadastral_extractor,
+)
 from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
 
 ALTA = ExtractionConfidence.ALTA
@@ -69,11 +78,16 @@ __all__ = [
     "CrednetFields",
     "FakeCartaoCnpjExtractor",
     "FakeCrednetExtractor",
+    "FakeFichaCadastralExtractor",
+    "FichaCadastralExtractor",
+    "FichaCadastralLida",
     "OcorrenciaCrednet",
     "ParticipacaoCrednet",
+    "PessoaFichaCadastral",
     "TextSource",
     "make_cartao_cnpj_extractor",
     "make_crednet_extractor",
+    "make_ficha_cadastral_extractor",
     "parse_cartao_cnpj",
     "parse_crednet",
 ]

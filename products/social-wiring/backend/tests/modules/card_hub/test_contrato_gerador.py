@@ -373,6 +373,9 @@ class TestGate:
         assert tipos == {
             "rg", "cpf", "cnh", "cin", "certidao_casamento", "certidao_nascimento",
             "serasa_crednet",
+            # The bank's own registration form also carries `nome_oficial` —
+            # see `test_proveniencia_linhagem.py`'s own note on why.
+            "ficha_cadastral",
         }
         # 🔴 Contract pin (2026-09-25 prod crash): `Avaliacao.falta` injects
         # the SAME `destino` object into every `sugestoes[]` entry as the

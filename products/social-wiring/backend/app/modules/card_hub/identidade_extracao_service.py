@@ -2679,6 +2679,25 @@ async def extrair_identidade(
             notification_service=notification_service,
         )
 
+    # A ficha cadastral bancária names SEVERAL people, each applied to
+    # their OWN card by CPF — not an `IdentityFields` single-titular read
+    # either. Same dispatch shape as `serasa_crednet` above; see
+    # `ficha_cadastral_service.aplicar_leitura`'s own module docstring for
+    # the full sequence.
+    if tipo == "ficha_cadastral":
+        from app.modules.card_hub import ficha_cadastral_service
+
+        ficha_extractor = extractor
+        if ficha_extractor is None:
+            from app.modules.card_hub.deps import _build_identity_extractor
+
+            ficha_extractor = _build_identity_extractor(str(org_id), "ficha_cadastral")
+        return await ficha_cadastral_service.aplicar_leitura(
+            client, org_id, cliente_id, documento_id, doc, blob.data,
+            extractor=ficha_extractor,
+            notification_service=notification_service,
+        )
+
     # 🔴 The page cap is chosen from the document's TYPE, not from a global
     # default — see `TIPOS_LEITURA_INTEGRAL`. A certidão de casamento must be
     # read whole or its averbação (the divorce) never reaches the model, and

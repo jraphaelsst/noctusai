@@ -42,6 +42,7 @@ export const TIPO_LABEL_CLIENTE: Record<string, string> = {
   proposta: "Proposta comercial",
   comprovante_pagamento: "Comprovante de pagamento",
   comprovante_endereco: "Comprovante de endereço",
+  ficha_cadastral: "Ficha cadastral / formulário do banco",
   planta_imovel: "Planta do imóvel",
   foto_imovel: "Foto do imóvel",
   outro: "Outro documento",

@@ -88,6 +88,7 @@ loads; a test keeps the two in lockstep).
 | Certidão de casamento (`certidao_casamento`) | cliente | `conjuge`, `cpf`, `data_casamento`, `data_emissao`, `data_nascimento`, `estado_civil`, `genero`, `nacionalidade`, `nome`, `profissao`, `regime_bens`, `rg`, `rg_orgao` | `noctusai_lib.integrations.documents.factory.make_identity_extractor` | `certidao_casamento` | `cliente_card_upload`, `parte_painel_upload` |
 | Certidão de nascimento (`certidao_nascimento`) | cliente | `cpf`, `data_casamento`, `data_emissao`, `data_nascimento`, `estado_civil`, `genero`, `nacionalidade`, `nome`, `profissao`, `regime_bens`, `rg`, `rg_orgao` | `noctusai_lib.integrations.documents.factory.make_identity_extractor` | `certidao_nascimento` | `cliente_card_upload`, `parte_painel_upload` |
 | Comprovante de endereço (`comprovante_endereco`) | cliente | `endereco` | `noctusai_lib.integrations.documents.address.find_endereco` | `comprovante_endereco` | `cliente_card_upload`, `parte_painel_upload` |
+| Ficha cadastral / formulário do banco (`ficha_cadastral`) | cliente | `cpf`, `data_nascimento`, `endereco`, `estado_civil`, `nacionalidade`, `nome`, `profissao`, `regime_bens`, `rg`, `rg_orgao` | `noctusai_lib.integrations.documents.ficha_cadastral_extractor.make_ficha_cadastral_extractor` | `ficha_cadastral` | `cliente_card_upload`, `parte_painel_upload` |
 | Matrícula do imóvel (`matricula`) | imovel | `endereco`, `estado_civil`, `genero`, `nacionalidade`, `numero_matricula`, `profissao`, `rg`, `rg_orgao` | `noctusai_lib.integrations.documents.matricula.find_matricula` | `ia`, `manual`, `matricula` | `imovel_page_upload`, `matriculas` |
 | Guia do IPTU (`guia_iptu`) | imovel | — | `app.modules.imovel_hub.documentos_service.extrair_estrutura` | `ia`, `manual` | `imovel_page_upload` |
 | CND de IPTU (`cnd_iptu`) | imovel | — | `app.modules.imovel_hub.documentos_service.extrair_estrutura` | `ia`, `manual` | `imovel_page_upload` |
@@ -100,6 +101,7 @@ loads; a test keeps the two in lockstep).
 
 **Manual-only — no document carries it (by design, not a gap):** `assinatura_data`, `confissao`, `contrato_modelo`, `intermediarios_comissao`, `intermediarios_qualificacao`, `matricula_atos_selecionados`, `negociacao_favorecidos`, `negociacao_parcelas`, `negociacao_termos`, `org_dados_cadastrais`, `parte_email`, `parte_papel_no_card`, `permuta_ativo_endereco`, `permuta_termos`, `politica_constantes`, `posse`, `testemunhas`.
 <!-- AUTOGEN:fontes-secao-0a:end -->
+
 
 **Proof harness.** `products/social-wiring/backend/tests/e2e_extracao/` — a fictional
 document set (text-layer and scan variants) with an answer key (`esperado.json`) and
