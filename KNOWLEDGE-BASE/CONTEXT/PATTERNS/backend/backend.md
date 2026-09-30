@@ -502,8 +502,9 @@ mailchimp module (`041a8d12`) + a fourth SHA1 in social-wiring whatsapp.
 A new or bumped dependency in `products/<slug>/backend/requirements.txt` MUST
 match the version the rest of the fleet uses (the value in the other products'
 requirements + the root `requirements.txt`). A lone divergence trips
-`test_no_python_mismatches` (MCP suite). E.g. `PyJWT==2.12.0` is fleet-wide — a
-stray `PyJWT==2.13.0` was the 2026-06-30 red. Before bumping one product, bump
+`test_no_python_mismatches` (MCP suite). E.g. a stray `PyJWT==2.13.0` against a
+fleet-wide `2.12.0` was the 2026-06-30 red; the 2026-09-30 CVE bump to `2.14.0`
+landed in all 16 requirements files in one commit. Before bumping one product, bump
 the fleet (or don't diverge): grep the pin across `products/*/backend/requirements.txt`
 + root `requirements.txt`, land the same value everywhere in one commit.
 

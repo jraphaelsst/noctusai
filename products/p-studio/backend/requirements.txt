@@ -16,7 +16,7 @@ python-multipart>=0.0.9
 # reprodutibilidade nenhuma e só criava divergência de frota (pego por
 # `TestDependencyAudit::test_no_python_mismatches`).
 httpx>=0.27.0
-PyJWT==2.13.0
+PyJWT==2.14.0
 slowapi>=0.1.9
 
 # Observabilidade (opcional)
