@@ -417,6 +417,16 @@ CAMPO_ENDERECO = "endereco"
 CAMPO_CONJUGE = "conjuge_cliente_id"
 PREFIXO_CONJUGE = "conjuge"
 
+#: R3 (owner directive, 2026-09-30) — `endereco_origem` for a household
+#: address INHERITED from a linked spouse's own document, never from a
+#: document of this cliente's own. A tier BELOW any real document (`_
+#: endereco_e_proprio` refuses to treat this origin as a propagation SOURCE
+#: for the other half, and `_decisao_endereco_por_titular`'s "already has an
+#: address from their own document" auto-reject guard excludes it too) —
+#: `propagar_endereco_domicilio` is the only writer, and it un-writes this
+#: exact value the moment the source no longer qualifies.
+ORIGEM_CONJUGE_DOMICILIO = "conjuge_domicilio"
+
 #: 🔴 `data_emissao` (contract F6) is deliberately NOT a member of `CAMPOS` —
 #: see `types.IdentityFields.data_emissao`'s own comment. It is the
 #: certidão's OWN issuance date, not a fact about the holder, so there is no
@@ -776,6 +786,64 @@ def _registrar_conflito(
     )
 
 
+def _papeis_das_pessoas(client: Any, org_id: UUID, cliente_ids: list[str]) -> dict[str, str]:
+    """Best-effort role label per cliente_id, for R4's rejection message —
+    `atendimento_partes.papel` when this person is a party; the label
+    "comprador" when they are instead an atendimento's own `cliente_id` (the
+    implicit titular/comprador — same default `_pessoas_do_mesmo_lado`
+    already uses). Never drives a decision, only the wording of a motivo a
+    human might read — an id with no role found anywhere still gets a
+    generic label rather than being dropped."""
+    if not cliente_ids:
+        return {}
+    papeis: dict[str, str] = {}
+    for row in (
+        _t(client, "atendimento_partes")
+        .select("cliente_id,papel")
+        .eq("org_id", str(org_id))
+        .in_("cliente_id", cliente_ids)
+        .execute()
+    ).data or []:
+        cid = str(row.get("cliente_id"))
+        if cid not in papeis and row.get("papel"):
+            papeis[cid] = row["papel"]
+    faltando = [c for c in cliente_ids if c not in papeis]
+    if faltando:
+        for row in (
+            _t(client, "atendimentos")
+            .select("cliente_id")
+            .eq("org_id", str(org_id))
+            .in_("cliente_id", faltando)
+            .execute()
+        ).data or []:
+            papeis.setdefault(str(row.get("cliente_id")), "comprador")
+    return papeis
+
+
+def _valores_outras_pessoas(
+    client: Any, org_id: UUID, cliente_id: UUID, campo_item_key: str
+) -> list[tuple[Any, str]]:
+    """R4 — every OTHER party's own `campo_item_key` value, across every
+    `atendimento` `cliente_id` sits on (`_pessoas_dos_cards`), paired with a
+    role label for the rejection message. `[]` when this cliente sits on no
+    atendimento at all — the ordinary case for most identity reads."""
+    outras = _pessoas_dos_cards(client, org_id, cliente_id)
+    if not outras:
+        return []
+    papeis = _papeis_das_pessoas(client, org_id, outras)
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(f"id,{campo_item_key}")
+        .eq("org_id", str(org_id))
+        .in_("id", outras)
+        .execute()
+    ).data or []
+    return [
+        (r.get(campo_item_key), papeis.get(str(r.get("id")), "outra parte desta negociação"))
+        for r in rows
+    ]
+
+
 def aplicar_campos_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -789,6 +857,7 @@ def aplicar_campos_ao_cliente(
     fonte_id: Optional[UUID] = None,
     confirmado_por: Optional[Any] = None,
     nomes_anteriores: Optional[dict[str, Optional[str]]] = None,
+    avisos_outra_pessoa: Optional[list[str]] = None,
 ) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record — owner decision D1.
 
@@ -857,6 +926,16 @@ def aplicar_campos_ao_cliente(
       (`origem='manual'`, value empty) is still respected: that was a human
       decision about the field, and the reading stays on the document as a
       suggestion (`sugestoes_pendentes`).
+    - **R4 (owner directive, 2026-09-30) — a proposed `nome_oficial`/`cpf`/
+      `rg` that equals ANOTHER party's (or their attributed spouse's) own
+      value in the same `atendimento` is auto-REJECTED**
+      (`divergencia_resolucao.decisao_outra_pessoa`) before the fill-empty
+      or conflict branches ever see it — a misfiled document is not
+      evidence about THIS person, whether the field was empty or already
+      set. Recorded the same auditable way as any other automatic
+      resolution (`'resolvido_automatico'`, `motivo_resolucao`); the
+      `item_key` is appended to `avisos_outra_pessoa` when given, so the
+      caller (`extrair_identidade`) can flag the SOURCE document.
 
     `documento_id=None` means this source has no `cliente_documentos` row to
     point at — the column is written as an explicit NULL.
@@ -903,6 +982,38 @@ def aplicar_campos_ao_cliente(
             final_dep = updates.get(campo.depende_de, atual.get(campo.depende_de))
             if not _mesmo_valor(campo.depende_de, final_dep, lido_dep):
                 continue
+
+        # 🔴 R4 (owner directive, 2026-09-30) — this value belongs to
+        # ANOTHER party of the same negotiation, not this cliente: reject
+        # unattended, whatever is or isn't already on file, rather than
+        # fill an empty field or open a human conflict over a misfiled
+        # document. Scoped to `CAMPOS_IDENTIDADE_EXCLUSIVA` — the DB lookup
+        # this needs (every OTHER atendimento party's own value) is only
+        # worth paying for the fields that rule actually covers.
+        decisao_outra = None
+        if campo.item_key in divergencia_resolucao.CAMPOS_IDENTIDADE_EXCLUSIVA:
+            decisao_outra = divergencia_resolucao.decisao_outra_pessoa(
+                campo.item_key, valor,
+                mesmo_valor=_mesmo_valor,
+                valores_outras_pessoas=_valores_outras_pessoas(
+                    client, org_id, cliente_id, campo.item_key
+                ),
+            )
+        if decisao_outra is not None:
+            campo_conflitos.registrar_decisao_automatica(
+                client, campo_conflitos.CLIENTE, org_id, cliente_id, campo.item_key,
+                valor_anterior=atual.get(campo.item_key),
+                origem_anterior=atual.get(campo.origem),
+                valor_proposto=valor,
+                origem_proposto=origem,
+                confianca_proposta=confianca,
+                fonte_tabela=fonte_tabela,
+                fonte_id=fonte_id,
+                decisao=decisao_outra,
+            )
+            if avisos_outra_pessoa is not None:
+                avisos_outra_pessoa.append(campo.item_key)
+            continue
 
         # 🔴 An RG equal to the CPF is APPLIED, not declined — the new
         # Carteira de Identidade Nacional (CIN) uses the CPF number as the
@@ -1115,26 +1226,42 @@ def _titular_do_documento(client: Any, org_id: UUID, documento_id: Optional[Any]
 def _titular_e_parte_ou_conjuge(
     client: Any, org_id: UUID, cliente_row: dict, titular_nome: Optional[str]
 ) -> Optional[bool]:
-    """Does `titular_nome` name THIS cliente, or their linked spouse?
-    `None` when there is nothing to check (no titular read at all) — never
-    conflated with `False` (a titular that was read and named someone
-    else), so a caller can tell "unknown" from "verified not them"."""
+    """Does `titular_nome` name THIS cliente, their linked spouse, or
+    another PARTY of the same `atendimento` (R2, owner directive,
+    2026-09-30 — a co-seller's/co-buyer's own bill is household evidence
+    too, exactly like a spouse's)? `None` when there is nothing to check
+    (no titular read at all) — never conflated with `False` (a titular that
+    was read and named someone genuinely else), so a caller can tell
+    "unknown" from "verified not them"."""
     if not titular_nome:
         return None
     if _nomes_bate(cliente_row, titular_nome):
         return True
     conjuge_id = cliente_row.get("conjuge_cliente_id")
-    if not conjuge_id:
-        return False
-    conjuge_rows = (
-        _t(client, CLIENTES_TABLE)
-        .select("nome,nome_completo,nome_oficial")
-        .eq("org_id", str(org_id))
-        .eq("id", str(conjuge_id))
-        .limit(1)
-        .execute()
-    ).data or []
-    return bool(conjuge_rows) and _nomes_bate(conjuge_rows[0], titular_nome)
+    if conjuge_id:
+        conjuge_rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("nome,nome_completo,nome_oficial")
+            .eq("org_id", str(org_id))
+            .eq("id", str(conjuge_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if conjuge_rows and _nomes_bate(conjuge_rows[0], titular_nome):
+            return True
+    cliente_id = cliente_row.get("id")
+    outras_ids = _pessoas_dos_cards(client, org_id, UUID(str(cliente_id))) if cliente_id else []
+    if outras_ids:
+        outras_rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("nome,nome_completo,nome_oficial")
+            .eq("org_id", str(org_id))
+            .in_("id", outras_ids)
+            .execute()
+        ).data or []
+        if any(_nomes_bate(r, titular_nome) for r in outras_rows):
+            return True
+    return False
 
 
 def aplicar_endereco_ao_cliente(
@@ -1388,6 +1515,132 @@ def _conjuge_vinculado(client: Any, org_id: UUID, cliente_id: UUID) -> Optional[
         .execute()
     ).data or []
     return rows[0].get("conjuge_cliente_id") if rows else None
+
+
+# ─── R3: household address propagation (owner directive, 2026-09-30) ───────
+#
+# Measured live (5 historical deals re-run on prod): a married second spouse
+# with no comprovante of their own ends with NO address on file in 5/5
+# couples, even though the signed contract gives both spouses the household
+# address. `aplicar_endereco_ao_cliente`'s own spouse-propagation (P2, above)
+# only fires from the SAME comprovante at the moment it is applied; it never
+# revisits a spouse whose empty address predates that fix, or one linked
+# AFTER the first spouse's address already landed (a certidão read later).
+# `propagar_endereco_domicilio` closes both gaps — called from `revalidar_
+# negociacao` after every extraction, so it converges regardless of arrival
+# order.
+
+
+def _endereco_e_proprio(row: dict) -> bool:
+    """Does this cliente row carry an address from a REAL document — never
+    itself an `ORIGEM_CONJUGE_DOMICILIO` derivative? The only valid
+    propagation SOURCE, and the bar `_decisao_endereco_por_titular`'s R2
+    auto-reject guard also uses (`endereco_origem` truthy and not the
+    derived tag)."""
+    origem = row.get("endereco_origem")
+    if not origem or origem == ORIGEM_CONJUGE_DOMICILIO:
+        return False
+    return any(not _vazio(row.get(f"endereco_{p}")) for p in ENDERECO_PARTES)
+
+
+def _limpar_endereco_domicilio(client: Any, org_id: UUID, cliente_id: Any) -> None:
+    """Un-fill a `conjuge_domicilio`-derived address — the source it was
+    copied from no longer qualifies (retracted, cleared, or the spouse link
+    itself is gone). Never touches a REAL document's address; the caller
+    (`propagar_endereco_domicilio`) only calls this on a row it already
+    confirmed carries the derived tag."""
+    now = _now()
+    updates: dict[str, Any] = {f"endereco_{p}": None for p in ENDERECO_PARTES}
+    updates.update({
+        "endereco_origem": None, "endereco_documento_id": None, "endereco_em": None,
+        "endereco_confirmado_por": None, "endereco_confirmado_em": None,
+        "updated_at": now,
+    })
+    _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
+
+
+def _escrever_endereco_domicilio(client: Any, org_id: UUID, cliente_id: Any, fonte: dict) -> None:
+    """Copy `fonte`'s own address onto `cliente_id`, tagged `ORIGEM_CONJUGE_
+    DOMICILIO` — machine-pending, like every other D1 write, never
+    `manual`."""
+    now = _now()
+    updates: dict[str, Any] = {
+        f"endereco_{p}": fonte.get(f"endereco_{p}") for p in ENDERECO_PARTES
+    }
+    updates.update({
+        "endereco_origem": ORIGEM_CONJUGE_DOMICILIO,
+        "endereco_documento_id": fonte.get("endereco_documento_id"),
+        "endereco_em": now, "endereco_confirmado_por": None, "endereco_confirmado_em": None,
+        "updated_at": now,
+    })
+    _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
+
+
+_COLUNAS_DOMICILIO = (
+    "id,conjuge_cliente_id,endereco_origem,endereco_documento_id," + ",".join(ENDERECO_COLUNAS)
+)
+
+
+def propagar_endereco_domicilio(client: Any, org_id: UUID, cliente_id: UUID) -> None:
+    """R3 — a cliente with an EMPTY address whose linked spouse has one from
+    their OWN document inherits it (`ORIGEM_CONJUGE_DOMICILIO`, a tier below
+    any real document — `_endereco_e_proprio` never treats a derived copy as
+    a further propagation source, so it goes exactly one hop). Convergent
+    and idempotent: safe to call after every extraction, on either half of a
+    couple — it resolves both directions from whichever `cliente_id` it is
+    given.
+
+    Never touches a cliente whose address is their OWN (a real
+    `endereco_origem`) or human-typed/confirmed (`'manual'`, or any
+    `endereco_confirmado_em`) — same "never overwrite" D1 posture every
+    other field group holds. Retraction: when a cliente's OWN CURRENT
+    `endereco_origem` is already `ORIGEM_CONJUGE_DOMICILIO` but the spouse
+    no longer offers a qualifying source (their document was retracted,
+    their address changed, or the link itself is gone), the derived copy is
+    cleared rather than left stale — a derived fact must never outlive the
+    fact it was derived from.
+    """
+    rows = (
+        _t(client, CLIENTES_TABLE)
+        .select(_COLUNAS_DOMICILIO)
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        return
+    eu = rows[0]
+    conjuge_id = eu.get("conjuge_cliente_id")
+    outro: Optional[dict] = None
+    if conjuge_id:
+        outro_rows = (
+            _t(client, CLIENTES_TABLE)
+            .select(_COLUNAS_DOMICILIO)
+            .eq("org_id", str(org_id))
+            .eq("id", str(conjuge_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        outro = outro_rows[0] if outro_rows else None
+
+    def sincronizar(alvo: dict, fonte: Optional[dict]) -> None:
+        origem_alvo = alvo.get("endereco_origem")
+        if origem_alvo not in (None, ORIGEM_CONJUGE_DOMICILIO):
+            return  # a real address of their own — never touched
+        fonte_valida = fonte is not None and _endereco_e_proprio(fonte)
+        if not fonte_valida:
+            if origem_alvo == ORIGEM_CONJUGE_DOMICILIO:
+                _limpar_endereco_domicilio(client, org_id, alvo["id"])
+            return
+        fonte_partes = {p: fonte.get(f"endereco_{p}") for p in ENDERECO_PARTES}
+        if origem_alvo == ORIGEM_CONJUGE_DOMICILIO and _mesmo_endereco(alvo, fonte_partes):
+            return  # already in sync — no write needed
+        _escrever_endereco_domicilio(client, org_id, alvo["id"], fonte)
+
+    sincronizar(eu, outro)
+    if outro is not None:
+        sincronizar(outro, eu)
 
 
 # ─── The spouse link (migration 153) ─────────────────────────────────────────
@@ -1756,10 +2009,16 @@ def _decisao_endereco_por_titular(
     titular_novo: Optional[str],
 ) -> divergencia_resolucao.Decisao:
     """The holder rule for two disagreeing comprovantes (owner directive,
-    2026-09-29 follow-up): the bill whose printed titular is verifiably this
-    party OR their linked spouse wins over one whose titular is neither.
-    Ambiguous (both, neither, or unreadable) needs a human. The caller owns
-    the manual/confirmed guard — this only compares holders."""
+    2026-09-29 follow-up, extended R2 2026-09-30): the bill whose printed
+    titular is verifiably this party, their linked spouse, OR another party
+    of the same `atendimento` (`_titular_e_parte_ou_conjuge`) wins over one
+    whose titular is neither. Ambiguous (both, neither, or unreadable) needs
+    a human — UNLESS the on-file address already came from a document of
+    this cliente's own (a real `endereco_origem`, not the R3 household-
+    propagation derivative): a definitely-unrelated new holder is then
+    auto-REJECTED rather than left pending (R2) — the cliente's own document
+    outranks a stranger's, no human needed to say so. The caller owns the
+    manual/confirmed guard — this only compares holders."""
     holder_atual = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_atual)
     holder_novo = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_novo)
     if holder_novo is True and holder_atual is not True:
@@ -1782,12 +2041,29 @@ def _decisao_endereco_por_titular(
             ),
             requer_humano=False,
         )
+    origem_propria = atual.get("endereco_origem")
+    if (
+        holder_novo is False
+        and holder_atual is not True
+        and origem_propria
+        and origem_propria != ORIGEM_CONJUGE_DOMICILIO
+    ):
+        return divergencia_resolucao.Decisao(
+            vencedor="atual", regra="outra_pessoa",
+            motivo=(
+                f"endereco: o titular do comprovante novo ({titular_novo!r}) "
+                f"nao e a parte, o conjuge, nem outra parte desta "
+                f"negociacao — mantido o endereco ja registrado por "
+                f"documento proprio ({origem_propria!r})."
+            ),
+            requer_humano=False,
+        )
     return divergencia_resolucao.Decisao(
         vencedor=None, regra="requer_humano",
         motivo=(
             "endereco: nenhum dos dois comprovantes tem titular "
-            "verificado como a parte ou o conjuge (ou ambos tem) — "
-            "decisao humana necessaria."
+            "verificado como a parte, o conjuge, ou outra parte da "
+            "negociacao (ou ambos tem) — decisao humana necessaria."
         ),
         requer_humano=True,
     )
@@ -1823,17 +2099,29 @@ def _decidir_endereco_pendente(
     nothing on file to compare against (the conflict is not a divergence
     this resolver can judge — reported as composite by the caller).
 
+    🔴 R2 FIX (owner directive, 2026-09-30, live-test evidence): `valor_
+    anterior` is legitimately `null` — `aplicar_endereco_ao_cliente`'s own
+    `conflito()` writes it that way whenever the conflict opened against an
+    EMPTY on-file address (a bill whose holder couldn't be matched at read
+    time, with nothing else there yet). This used to be read as "not a
+    JSON object" and bailed to `(None, None)` — `ignorado_composto`,
+    forever, even once the missing evidence (a name, a co-party's own
+    document) later landed; that row was never even reported as still
+    needing a human, just silently skipped every backfill pass. `anterior`
+    itself is never otherwise used below (the CURRENT `clientes` row,
+    fetched fresh as `atual`, is what every branch compares against) — only
+    `proposto` needs the shape check.
+
     Order: a human-typed/confirmed address is never overridden -> the same
     address under today's comparison (the conflict predates a normalisation
     fix, or re-read the very document already on file) -> a side whose
     document was deleted is retracted -> the holder rule."""
     try:
         proposto = json.loads(row.get("valor_proposto") or "null")
-        anterior = json.loads(row.get("valor_anterior") or "null")
     except ValueError:
         logger.warning("endereco conflict %s holds non-JSON values", row.get("id"))
         return None, None
-    if not isinstance(proposto, dict) or not isinstance(anterior, dict):
+    if not isinstance(proposto, dict):
         return None, None
     atuais = (
         _t(client, CLIENTES_TABLE)
@@ -2053,6 +2341,50 @@ def backfill_resolver_conflitos_pendentes(
         "ainda_pendentes": ainda_pendentes,
         "ignorado_composto": ignorado_composto,
     }
+
+
+def revalidar_negociacao(client: Any, org_id: UUID, cliente_id: UUID) -> None:
+    """R1 — re-resolution on new evidence (owner directive, 2026-09-30):
+    "the system must work by itself and humans are to intervene only when
+    the system actually can't resolve." Called at the end of `extrair_
+    identidade`'s own `_processar`, once per document read — a name/CPF/
+    address that just landed on ONE party's card may be exactly the
+    evidence a PENDING conflict sitting on ANOTHER party (a bill-holder
+    check with nothing to compare against yet, at the time it opened) was
+    waiting on; nobody visits every card after every upload to notice.
+
+    Reuses the SAME two mechanisms every other automatic resolution already
+    goes through — no second resolver:
+    - `propagar_endereco_domicilio` (R3) for `cliente_id` + their linked
+      spouse, so a spouse's now-qualifying own address fills (or a
+      no-longer-qualifying one retracts) the household half.
+    - `backfill_resolver_conflitos_pendentes` (already the resolve-on-read
+      backfill, 2026-09-29) for `cliente_id` and every OTHER party sharing
+      an `atendimento` with them — not only `cliente_id`'s own queue.
+
+    Best-effort per person: one person's DB error does not stop the sweep
+    for the rest — logged, never silent, and never raised past this
+    function (this runs inside `extrair_identidade`'s own try, so a failure
+    here must not turn a successful extraction into a recorded `erro`)."""
+    pessoas: set[str] = {str(cliente_id)}
+    pessoas.update(_pessoas_dos_cards(client, org_id, cliente_id))
+    conjuge_id = _conjuge_vinculado(client, org_id, cliente_id)
+    if conjuge_id:
+        pessoas.add(str(conjuge_id))
+    for pid in sorted(pessoas):
+        try:
+            propagar_endereco_domicilio(client, org_id, UUID(pid))
+        except Exception:  # noqa: BLE001 — one person's propagation must not block the sweep
+            logger.exception(
+                "revalidar_negociacao: propagar_endereco_domicilio falhou para %s", pid,
+            )
+    for pid in sorted(pessoas):
+        try:
+            backfill_resolver_conflitos_pendentes(client, org_id, cliente_id=UUID(pid))
+        except Exception:  # noqa: BLE001 — one person's backlog must not block the sweep
+            logger.exception(
+                "revalidar_negociacao: backfill_resolver_conflitos_pendentes falhou para %s", pid,
+            )
 
 
 def resolver_conflito(
@@ -2416,31 +2748,41 @@ async def extrair_identidade(
         nome_anterior_titular = (
             conjuges[titular_idx].nome_anterior if titular_idx is not None else None
         )
-        # 🔴 AN UNATTRIBUTED FLAT CPF ON A TWO-PERSON DOCUMENT MUST NEVER
-        # REACH THE TITULAR — real, measured (live prod test, 2026-09-30): a
-        # certidão de casamento names two co-equal holders, and
-        # `fields.cpf`/`fields.cpf_confianca` (from `_valores_lidos` above)
-        # is a WHOLE-DOCUMENT reading with no notion of which of the two it
-        # belongs to — the extractor's own titular-hint attribution
-        # (`documents.real._conjuge_do_titular`, keyed on this card's
-        # already-known name/CPF) is what marks the correct entry
-        # `.titular=True` and, when it succeeds, ALREADY promotes that
-        # spouse's own CPF into `fields.cpf` at `alta` confidence — see that
-        # module's own comment. `titular_idx is None` means that attribution
-        # did NOT resolve (this card has no name/CPF on file yet that
-        # matches either spouse, or matches ambiguously): the flat `cpf`
-        # here is exactly the kind of positional/leftover reading that
-        # wrote the OTHER spouse's CPF onto a card in production. Withheld
-        # the same way an unresolved `titulares_multiplos` name already is
-        # — never guessed. The per-spouse entry attributed to a person by
+        # 🔴 R5 (owner directive, 2026-09-30) — AN UNATTRIBUTED FLAT
+        # PER-PERSON FIELD ON A TWO-PERSON DOCUMENT MUST NEVER REACH THE
+        # TITULAR, FOR ANY OF THEM — real, measured (live prod test,
+        # 2026-09-30): a certidão de casamento names two co-equal holders,
+        # and every `CAMPOS_POR_PESSOA` reading off `_valores_lidos` above
+        # (`nome_oficial`, `cpf`, `rg`, `rg_orgao_expedidor`,
+        # `data_nascimento`, `genero`, `profissao`) is a WHOLE-DOCUMENT
+        # reading with no notion of which of the two it belongs to — the
+        # extractor's own titular-hint attribution (`documents.real.
+        # _conjuge_do_titular`, keyed on this card's already-known
+        # name/CPF) is what marks the correct entry `.titular=True` and,
+        # when it succeeds, ALREADY promotes that spouse's own fields into
+        # `fields.*` at `alta` confidence — see that module's own comment.
+        # `titular_idx is None` means that attribution did NOT resolve
+        # (this card has no name/CPF on file yet that matches either
+        # spouse, or matches ambiguously): every flat field here is exactly
+        # the kind of positional/leftover reading that wrote an ex-spouse's
+        # RG onto the wrong card in production (a divorce certidão, live
+        # test, 2026-09-30) — this used to withhold `cpf` alone
+        # (950c2c255); the SAME leftover risk applies to every other
+        # per-person field this document type can carry, so all of
+        # `CAMPOS_POR_PESSOA` are withheld together. Withheld the same way
+        # an unresolved `titulares_multiplos` name already is — never
+        # guessed. The per-spouse entry attributed to a person by
         # `_entrada_conjuge_da_pessoa` (cliente_id/CPF match) remains the
-        # only way a certidão CPF reaches a cliente going forward.
+        # only way a certidão's per-person fact reaches a cliente going
+        # forward.
         if (
             conjuges
             and tipo in divergencia_resolucao.DOCUMENTOS_DUAS_PESSOAS
             and titular_idx is None
         ):
-            lidos["cpf"] = (None, "nenhuma", None, False)
+            for campo_pessoa in divergencia_resolucao.CAMPOS_POR_PESSOA:
+                if campo_pessoa in lidos:
+                    lidos[campo_pessoa] = (None, "nenhuma", None, False)
         achou_algo = (
             data_emissao is not None
             or endereco is not None
@@ -2571,6 +2913,7 @@ async def extrair_identidade(
         )
 
         conflitos: list[dict] = []
+        avisos_outra_pessoa: list[str] = []
         aplicados, abertos = aplicar_campos_ao_cliente(
             client,
             org_id,
@@ -2581,8 +2924,23 @@ async def extrair_identidade(
             fonte_tabela=DOCUMENTOS_TABLE,
             fonte_id=documento_id,
             nomes_anteriores={"nome_oficial": nome_anterior_titular},
+            avisos_outra_pessoa=avisos_outra_pessoa,
         )
         conflitos += abertos
+        # R4 — this document read at least one field that belongs to
+        # ANOTHER party of the negotiation (rejected above, never applied).
+        # Flagged on the document row through the existing `extracao_aviso`
+        # mechanism so the UI can suggest moving it — never clobbering a
+        # transcription-quality warning already recorded (`fields.aviso`
+        # takes precedence; both are visible in the logs either way).
+        if avisos_outra_pessoa and not fields.aviso:
+            _marcar(client, documento_id, extracao_aviso="documento_de_outra_parte")
+            logger.info(
+                "extracao %s: campo(s) %s pertencem a outra parte da "
+                "negociação — rejeitados automaticamente, documento "
+                "sinalizado",
+                documento_id, avisos_outra_pessoa,
+            )
 
         # A CPF read now may be the key a matrícula qualificação was waiting
         # for (it was segmented before this person's documents existed) —
@@ -2722,6 +3080,18 @@ async def extrair_identidade(
                     }
                 )
             _marcar(client, documento_id, extracao_conjuges=registro_conjuges)
+
+        # 🔴 R1 — RE-RESOLUTION ON NEW EVIDENCE (owner directive, 2026-09-30:
+        # "the system must work by itself and humans are to intervene only
+        # when the system actually can't resolve"). Whatever just landed on
+        # THIS cliente may be exactly the evidence a PENDING conflict on
+        # this cliente OR another party of the same negociação was waiting
+        # on — see `revalidar_negociacao`'s own docstring. Run before
+        # notifying so a conflict this very call is about to resolve is
+        # never announced first; a conflict belonging to another cliente_id
+        # was never going to be in THIS extraction's own `conflitos` list
+        # regardless of when it resolves.
+        revalidar_negociacao(client, org_id, cliente_id)
 
         if conflitos:
             logger.info(
@@ -3636,11 +4006,14 @@ __all__ = [
     "CAMPO_ENDERECO",
     "ENDERECO_PARTES",
     "MAX_RETENTATIVAS_ERRO",
+    "ORIGEM_CONJUGE_DOMICILIO",
     "TIPOS_ENDERECO",
     "aplicar_campos_ao_cliente",
     "aplicar_endereco_ao_cliente",
     "notificar_conflitos",
+    "propagar_endereco_domicilio",
     "resolver_conflito",
+    "revalidar_negociacao",
     "vincular_conjuges",
     "CAMPO_POR_CHAVE",
     "CAMPO_POR_ITEM",

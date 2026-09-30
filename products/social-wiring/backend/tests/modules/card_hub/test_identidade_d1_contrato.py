@@ -359,14 +359,47 @@ class TestBackfillResolverConflitosPendentes:
         assert c["status"] == "pendente"
 
     @pytest.mark.asyncio
-    async def test_a_composite_endereco_conflict_is_reported_not_mis_applied(
+    async def test_an_empty_on_file_address_is_re_judged_not_ignored_forever(
         self, client, scoped,
     ):
+        """🔴 R2 FIX (owner directive, 2026-09-30, live-test evidence): an
+        `endereco` conflict opened against an EMPTY on-file address stores
+        `valor_anterior=None` (`aplicar_endereco_ao_cliente`'s own
+        `conflito()`) — `_decidir_endereco_pendente` used to read that as
+        "not a JSON object, cannot judge" and parked it in
+        `ignorado_composto` FOREVER, even once the missing holder evidence
+        later landed. It must now be RE-JUDGED like any other pending
+        conflict; here there is still no titular info on either side, so it
+        correctly lands in `ainda_pendentes` (a human is still needed) —
+        never silently dropped."""
         cid, did, storage = await _setup(scoped, tipo="comprovante_endereco")
         scoped.table("cliente_campo_conflitos").insert({
             "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": "endereco",
             "valor_anterior": None, "origem_anterior": None,
             "valor_proposto": json.dumps({"cep": "01000-000"}), "origem_proposto": "cnh",
+            "confianca_proposta": "alta", "fonte_tabela": "cliente_documentos",
+            "fonte_id": did, "status": "pendente", "notificado_em": None,
+            "decidido_por": None, "decidido_em": None, "created_at": _old(3),
+        }).execute()
+
+        resultado = svc.backfill_resolver_conflitos_pendentes(scoped, ORG_UUID)
+
+        assert resultado["resolvidos"] == []
+        assert resultado["ignorado_composto"] == []
+        assert len(resultado["ainda_pendentes"]) == 1
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "pendente"  # untouched — still needs a human
+
+    @pytest.mark.asyncio
+    async def test_a_non_dict_proposal_is_still_reported_composite(self, client, scoped):
+        """The remaining `ignorado_composto` case: `valor_proposto` itself
+        is not a JSON object at all — genuinely not a shape this resolver
+        can judge, regardless of `valor_anterior`."""
+        cid, did, storage = await _setup(scoped, tipo="comprovante_endereco")
+        scoped.table("cliente_campo_conflitos").insert({
+            "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": "endereco",
+            "valor_anterior": None, "origem_anterior": None,
+            "valor_proposto": "01000-000", "origem_proposto": "cnh",
             "confianca_proposta": "alta", "fonte_tabela": "cliente_documentos",
             "fonte_id": did, "status": "pendente", "notificado_em": None,
             "decidido_por": None, "decidido_em": None, "created_at": _old(3),
@@ -1097,7 +1130,15 @@ class TestEnderecoResolucaoAutomaticaPorTitular:
         row = _cliente(scoped, cid)
         assert row["endereco_logradouro"] == "R PROF ARTUR RAMOS"
 
-    def test_both_sides_unverified_still_needs_a_human(self, client, scoped):
+    def test_both_sides_unverified_but_own_address_on_file_auto_rejects(
+        self, client, scoped,
+    ):
+        """🔴 R2 (owner directive, 2026-09-30): neither holder verifies as
+        the party, the spouse, or another atendimento party — but the
+        on-file address already came from this cliente's OWN document
+        (`endereco_origem="comprovante_endereco"`, not the R3 household
+        derivative). A definitely-unrelated new holder no longer needs a
+        human to reject: the cliente's own document outranks a stranger's."""
         cid, doc_velho, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
         scoped.set_table_data("clientes", [cliente_row(
             cid, nome="Ana Paula Souza",
@@ -1115,10 +1156,12 @@ class TestEnderecoResolucaoAutomaticaPorTitular:
         )
 
         assert aplicado is False
-        assert conflito is not None
-        assert conflito["status"] == "pendente"
+        assert conflito is None  # resolved automatically, never pendente
         row = _cliente(scoped, cid)
         assert row["endereco_logradouro"] == "RUA B"  # untouched
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+        assert "outra_pessoa" in c["motivo_resolucao"]
 
     def test_a_manually_typed_address_is_never_auto_overridden_by_the_holder_rule(
         self, client, scoped,
@@ -1673,3 +1716,336 @@ class TestUploadRouteNotifies:
             app.dependency_overrides.pop(get_identity_extractor_factory, None)
         assert resp.status_code == 201, resp.text
         assert [n["conflito"]["campo"] for n in notifier.conflitos] == ["profissao"]
+
+
+# ─── R1: re-resolution on new evidence (owner directive, 2026-09-30) ────────
+
+
+class TestR1RevalidacaoAposNovaEvidencia:
+    """Live-test evidence, 5 historical deals re-run on prod, 2026-09-30: a
+    pending conflict opened with nothing to compare a holder against must
+    settle the moment that evidence lands — on THIS cliente or on ANOTHER
+    party of the same atendimento — without anyone re-opening the card."""
+
+    @pytest.mark.asyncio
+    async def test_a_name_arriving_later_settles_this_persons_own_pending_address(
+        self, client, scoped,
+    ):
+        cid, did_bill, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Comprador 1"},
+        )
+        sem_nome_ainda = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123",
+            complemento=None, bairro=None, cidade=None, uf=None,
+            titular="CARLOS PEREIRA", confianca="baixa", rotulo="ENDERECO",
+        )
+        await _extrair(scoped, storage, cid, did_bill, _comprovante(sem_nome_ainda))
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+        (pendente,) = _conflitos(scoped)
+        assert pendente["status"] == "pendente"
+
+        # The SAME person's CNH arrives later, naming them "CARLOS PEREIRA"
+        # — the bill's holder all along, unreadable as a match until now.
+        did_cnh = str(uuid4())
+        path_cnh = f"{ORG_ID}/clientes/{cid}/{did_cnh}"
+        scoped.table("cliente_documentos").insert({
+            "id": did_cnh, "org_id": ORG_ID, "cliente_id": cid,
+            "storage_path": path_cnh, "nome_original": "cnh.pdf",
+            "mime_type": "application/pdf", "tipo_documento": "cnh",
+            "deleted_at": None, "extracao_status": "pendente",
+            "extracao_tentativas": 0, "created_at": _old(1),
+        }).execute()
+        await storage.put(bucket=BUCKET, key=path_cnh, data=b"%PDF-1.4", content_type="application/pdf")
+        await _extrair(scoped, storage, cid, did_cnh, IdentityFields(
+            nome="CARLOS PEREIRA", nome_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+
+        row = _cliente(scoped, cid)
+        assert row["nome_oficial"] == "CARLOS PEREIRA"
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == (
+            "01454-011", "R PROF ARTUR RAMOS",
+        )
+        estados = {c["campo"]: c["status"] for c in _conflitos(scoped)}
+        assert estados["endereco"] == "resolvido_automatico"
+
+    @pytest.mark.asyncio
+    async def test_a_co_partys_name_arriving_later_settles_a_bills_holder_check(
+        self, client, scoped,
+    ):
+        """Case (b): the bill's holder is ANOTHER party of the same deal —
+        not this cliente, not their spouse — whose own name had not been
+        read yet at the time the bill was uploaded."""
+        outra, atd = str(uuid4()), str(uuid4())
+        cid, did_bill, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Comprador 1"},
+            outros=[cliente_row(outra, nome="Comprador 2")],
+        )
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": outra, "lado": "comprador", "papel": "comprador", "ordem": 0},
+        ])
+        titular_co_parte = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123",
+            complemento=None, bairro=None, cidade=None, uf=None,
+            titular="DANIELA FERREIRA LIMA", confianca="baixa", rotulo="ENDERECO",
+        )
+        await _extrair(scoped, storage, cid, did_bill, _comprovante(titular_co_parte))
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+        assert _cliente(scoped, outra).get("endereco_cep") is None
+        (pendente,) = _conflitos(scoped)
+        assert pendente["status"] == "pendente"
+
+        # The co-party's own CNH arrives later.
+        did_cnh = str(uuid4())
+        path_cnh = f"{ORG_ID}/clientes/{outra}/{did_cnh}"
+        scoped.table("cliente_documentos").insert({
+            "id": did_cnh, "org_id": ORG_ID, "cliente_id": outra,
+            "storage_path": path_cnh, "nome_original": "cnh.pdf",
+            "mime_type": "application/pdf", "tipo_documento": "cnh",
+            "deleted_at": None, "extracao_status": "pendente",
+            "extracao_tentativas": 0, "created_at": _old(1),
+        }).execute()
+        await storage.put(bucket=BUCKET, key=path_cnh, data=b"%PDF-1.4", content_type="application/pdf")
+        await _extrair(scoped, storage, outra, did_cnh, IdentityFields(
+            nome="DANIELA FERREIRA LIMA", nome_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+
+        # The address was opened as a conflict on `cid` (the card it was
+        # uploaded onto) — the co-party's arriving name settles THAT row.
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == (
+            "01454-011", "R PROF ARTUR RAMOS",
+        )
+        estados = {c["campo"]: c["status"] for c in _conflitos(scoped) if c["cliente_id"] == cid}
+        assert estados["endereco"] == "resolvido_automatico"
+
+
+# ─── R3: household address propagation (owner directive, 2026-09-30) ───────
+
+
+class TestR3PropagacaoEnderecoDomicilio:
+    def _linkado(self, cid, esposo, **extra) -> dict:
+        return cliente_row(cid, conjuge_cliente_id=esposo, **extra)
+
+    def test_a_spouse_with_no_address_inherits_the_others_own_document_address(
+        self, client, scoped,
+    ):
+        cid, esposo = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [
+            self._linkado(cid, esposo, nome="Ana"),
+            cliente_row(
+                esposo, nome="Bruno", conjuge_cliente_id=cid,
+                endereco_cep="01454-011", endereco_logradouro="R PROF ARTUR RAMOS",
+                endereco_origem="comprovante_endereco", endereco_documento_id=str(uuid4()),
+            ),
+        ])
+        svc.propagar_endereco_domicilio(scoped, ORG_UUID, UUID(cid))
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == (
+            "01454-011", "R PROF ARTUR RAMOS",
+        )
+        assert row["endereco_origem"] == svc.ORIGEM_CONJUGE_DOMICILIO
+        assert row["endereco_confirmado_em"] is None  # machine-pending, like any D1 write
+
+    def test_never_overwrites_a_spouses_own_address(self, client, scoped):
+        cid, esposo = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [
+            self._linkado(
+                cid, esposo, nome="Ana",
+                endereco_cep="04000-000", endereco_logradouro="RUA B",
+                endereco_origem="cnh",
+            ),
+            cliente_row(
+                esposo, nome="Bruno", conjuge_cliente_id=cid,
+                endereco_cep="01454-011", endereco_logradouro="R PROF ARTUR RAMOS",
+                endereco_origem="comprovante_endereco",
+            ),
+        ])
+        svc.propagar_endereco_domicilio(scoped, ORG_UUID, UUID(cid))
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == ("04000-000", "RUA B")
+        assert row["endereco_origem"] == "cnh"  # untouched — a real document of their own
+
+    def test_a_derived_address_never_re_propagates_as_a_source(self, client, scoped):
+        """Tier: `conjuge_domicilio` is BELOW any own document — a cliente
+        whose OWN address is itself a derived copy never becomes another
+        spouse's source (a third link, or the same pair re-evaluated)."""
+        cid, esposo = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [
+            self._linkado(cid, esposo, nome="Ana"),
+            cliente_row(
+                esposo, nome="Bruno", conjuge_cliente_id=cid,
+                endereco_cep="01454-011", endereco_logradouro="R PROF ARTUR RAMOS",
+                endereco_origem=svc.ORIGEM_CONJUGE_DOMICILIO,
+            ),
+        ])
+        svc.propagar_endereco_domicilio(scoped, ORG_UUID, UUID(cid))
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+
+    def test_retracts_when_the_source_no_longer_qualifies(self, client, scoped):
+        cid, esposo = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [
+            self._linkado(
+                cid, esposo, nome="Ana",
+                endereco_cep="01454-011", endereco_logradouro="R PROF ARTUR RAMOS",
+                endereco_origem=svc.ORIGEM_CONJUGE_DOMICILIO,
+            ),
+            # The spouse's OWN address was since cleared (retracted).
+            cliente_row(esposo, nome="Bruno", conjuge_cliente_id=cid),
+        ])
+        svc.propagar_endereco_domicilio(scoped, ORG_UUID, UUID(cid))
+        row = _cliente(scoped, cid)
+        assert row.get("endereco_cep") is None
+        assert row.get("endereco_origem") is None
+
+    def test_no_spouse_link_is_a_no_op(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Ana")])
+        svc.propagar_endereco_domicilio(scoped, ORG_UUID, UUID(cid))
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_via_extraction_the_unrelated_read_still_triggers_propagation(
+        self, client, scoped,
+    ):
+        """R1+R3 together: extracting a document that has NOTHING to do with
+        addresses still runs `revalidar_negociacao`, which propagates the
+        already-linked spouse's own address onto this empty half."""
+        esposo = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh", cliente={"nome": "Ana", "conjuge_cliente_id": esposo},
+            outros=[cliente_row(
+                esposo, nome="Bruno", conjuge_cliente_id="__PLACEHOLDER__",
+                endereco_cep="01454-011", endereco_logradouro="R PROF ARTUR RAMOS",
+                endereco_origem="comprovante_endereco",
+            )],
+        )
+        # `_setup` mints `cid` itself (unknown before the call) — patch the
+        # spouse's back-link to it now that it's known.
+        scoped.table("clientes").update({"conjuge_cliente_id": cid}).eq("id", esposo).execute()
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            profissao="engenheira", profissao_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == (
+            "01454-011", "R PROF ARTUR RAMOS",
+        )
+        assert row["endereco_origem"] == svc.ORIGEM_CONJUGE_DOMICILIO
+
+
+# ─── R4: cross-party identity rule (owner directive, 2026-09-30) ───────────
+
+
+class TestR4OutraPessoa:
+    @pytest.mark.asyncio
+    async def test_a_name_matching_another_party_is_rejected_not_left_pending(
+        self, client, scoped,
+    ):
+        outra, atd = str(uuid4()), str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_nascimento", cliente={"nome": "Comprador 1"},
+            outros=[cliente_row(outra, nome="Bruno Alves", nome_oficial="BRUNO ALVES")],
+        )
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": outra, "lado": "comprador", "papel": "comprador", "ordem": 0},
+        ])
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            nome="BRUNO ALVES", nome_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row.get("nome_oficial") is None  # rejected, never filled
+        assert _documento(scoped, did)["extracao_aviso"] == "documento_de_outra_parte"
+        estados = {(c["campo"], c["status"]): c["motivo_resolucao"] for c in _conflitos(scoped)}
+        motivo = estados[("nome_oficial", "resolvido_automatico")]
+        assert "outra_pessoa" in motivo and "comprador" in motivo
+
+    @pytest.mark.asyncio
+    async def test_a_cpf_matching_another_partys_cpf_is_rejected(self, client, scoped):
+        outra, atd = str(uuid4()), str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="rg", cliente={"nome": "Comprador 1"},
+            outros=[cliente_row(outra, nome="Bruno Alves", cpf="412.954.238-98")],
+        )
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": outra, "lado": "comprador", "papel": "vendedor", "ordem": 0},
+        ])
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            nome="Comprador 1", cpf="412.954.238-98", cpf_confianca=A,
+            source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row.get("cpf") is None
+        assert _documento(scoped, did)["extracao_aviso"] == "documento_de_outra_parte"
+
+    @pytest.mark.asyncio
+    async def test_no_clash_with_any_other_party_fills_normally(self, client, scoped):
+        """Regression: a name that matches NOBODY else in the negotiation
+        is unaffected by R4 — the ordinary fill-empty path still runs."""
+        outra, atd = str(uuid4()), str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="rg", cliente={"nome": "Comprador 1"},
+            outros=[cliente_row(outra, nome="Bruno Alves", nome_oficial="BRUNO ALVES")],
+        )
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": outra, "lado": "comprador", "papel": "comprador", "ordem": 0},
+        ])
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            nome="COMPRADOR UM DA SILVA", nome_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row["nome_oficial"] == "COMPRADOR UM DA SILVA"
+        assert _documento(scoped, did).get("extracao_aviso") is None
+
+
+# ─── R5: two-person documents withhold every per-person field ──────────────
+
+
+class TestR5DoisConjugesTodosOsCampos:
+    @pytest.mark.asyncio
+    async def test_titular_unresolved_withholds_every_per_person_field(self, client, scoped):
+        """🔴 Regression (live prod test, 2026-09-30): a divorce certidão's
+        flat reading carried the EX-SPOUSE's RG onto the wrong card. The
+        just-merged fix (950c2c255) withheld only `cpf` when the titular
+        attribution can't resolve; R5 extends it to every `CAMPOS_POR_
+        PESSOA` field (rg included) — none of a two-person document's
+        per-person facts may reach a cliente without attribution."""
+        almir = ConjugeLido(
+            nome="ALMIR TEIXEIRA DA COSTA", cpf="303.102.653-55", titular=False,
+        )
+        mariana = ConjugeLido(
+            nome="MARIANA PELLEGRINI RANGEL", cpf="478.982.096-30", titular=False,
+        )
+        cid, did, storage = await _setup(
+            scoped, tipo="certidao_casamento", cliente={"nome": "Card sem nome ainda"},
+        )
+        fields = IdentityFields(
+            nome=None, cpf=None,
+            rg="9876543210", rg_confianca=A, rg_rotulo="RG",
+            genero="Feminino", genero_confianca=A,
+            data_nascimento=date(1964, 4, 20), data_nascimento_confianca=A,
+            profissao="professora", profissao_confianca=A,
+            estado_civil="divorciado", estado_civil_confianca=A,
+            regime_bens="comunhao_parcial", regime_bens_confianca=A,
+            conjuges=(almir, mariana),
+            source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, fields)
+        row = _cliente(scoped, cid)
+        assert row.get("nome_oficial") is None
+        assert row.get("cpf") is None
+        assert row.get("rg") is None
+        assert row.get("genero") is None
+        assert row.get("data_nascimento") is None
+        assert row.get("profissao") is None
+        # Couple-level facts (not per-person) still land — the flat reading
+        # IS authoritative for those, per `CAMPOS_POR_PESSOA`'s own scope.
+        assert row.get("estado_civil") == "divorciado"
+        assert row.get("regime_bens") == "comunhao_parcial"
+        assert _conflitos(scoped) == []

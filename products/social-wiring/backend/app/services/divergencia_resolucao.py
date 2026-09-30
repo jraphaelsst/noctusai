@@ -82,11 +82,40 @@ THE RESOLUTION ORDER (owner directive)
 Owner rules beyond this generic order (the married-name adoption rule,
 `identidade_extracao_service._nome_anterior_confirma_adocao`; the proof-of-
 address holder+recency rule, `identidade_extracao_service.
-aplicar_endereco_ao_cliente`) stay with their own callers — they need field-
-specific context (`estado_civil`, `nomes_anteriores`, a document's holder)
-this generic resolver has no business carrying. They run BEFORE this
-resolver is ever consulted, exactly as they do today; this module only
-covers what falls through to the generic `else:` conflict branch.
+aplicar_endereco_ao_cliente`; the cross-party identity check,
+`decisao_outra_pessoa`, R4 below) stay with their own callers — they need
+field-specific context (`estado_civil`, `nomes_anteriores`, a document's
+holder, every OTHER party's own identity fields) this generic resolver has
+no business carrying. They run BEFORE this resolver is ever consulted,
+exactly as they do today; this module only covers what falls through to the
+generic `else:` conflict branch.
+
+R1-R5 (owner directive, 2026-09-30, live-test evidence — 5 historical deals
+re-run on prod): a rule can settle every pending conflict a live re-run
+surfaced, none of it needing a human.
+R1 — re-resolution on new evidence: `identidade_extracao_service.
+revalidar_negociacao` re-runs `backfill_resolver_conflitos_pendentes` over
+this cliente AND every other party of the same `atendimento`(s) after every
+extraction, so a name that lands on ONE person's card can settle a PENDING
+conflict sitting on ANOTHER's (a bill-holder check with nothing to compare
+against yet).
+R2 — address fill on empty address: `_decidir_endereco_pendente` no longer
+treats an empty on-file address as unresolvable-forever
+(`ignorado_composto`); the holder-tier resolver (`_decisao_endereco_por_
+titular`) now also recognises another ATENDIMENTO PARTY as a verified
+holder (`_titular_e_parte_ou_conjuge`, extended), and auto-rejects a
+genuinely unrelated holder when the cliente already holds an address from
+their own document.
+R3 — household propagation: `identidade_extracao_service.
+propagar_endereco_domicilio` fills a spouse's empty address from the
+other's own-document address, tagged `origem="conjuge_domicilio"` — a tier
+BELOW any own document (never overwrites one), and un-fills itself the
+moment the source no longer qualifies (retracted document, address cleared).
+R5 — two-person documents: the unattributed-flat-field withholding
+(`identidade_extracao_service._processar`) now covers every
+`CAMPOS_POR_PESSOA` field, not only `cpf` — an unresolved certidão
+attribution withholds ALL of a two-person document's per-person facts, not
+just the one that was measured first.
 
 WHAT NEVER REACHES THIS MODULE AT ALL
 --------------------------------------
@@ -373,6 +402,57 @@ _HUMANO = Decisao(
 )
 
 
+#: R4 (owner directive, 2026-09-30, live-test evidence): the three fields a
+#: document can print that belong to exactly ONE person and to nobody else
+#: in the same negotiation. `endereco` is deliberately excluded — a shared
+#: household address legitimately belongs to more than one party (see
+#: `identidade_extracao_service.propagar_endereco_domicilio`), so "another
+#: party has this too" is not evidence of misfiling there the way it is for
+#: an identity number or a name.
+CAMPOS_IDENTIDADE_EXCLUSIVA = frozenset({"nome_oficial", "cpf", "rg"})
+
+
+def decisao_outra_pessoa(
+    campo: str,
+    valor_proposto: Any,
+    *,
+    mesmo_valor: Callable[[str, Any, Any], bool],
+    valores_outras_pessoas: Sequence[tuple[Any, str]],
+) -> Optional[Decisao]:
+    """R4 — a proposed identity value that equals, after normalisation,
+    another PARTY's (or their attributed spouse's) value in the same
+    `atendimento` is not this person's fact at all: the document was
+    misfiled onto the wrong card, or is genuinely someone else's. Returns an
+    auto-REJECT `Decisao` (`vencedor='atual'` — never apply the proposal,
+    whatever is or isn't already on file) naming whose value it is, or
+    `None` when nothing in `valores_outras_pessoas` matches (the ordinary
+    case — proceed to the generic resolver/fill-empty path as before).
+
+    `campo` outside `CAMPOS_IDENTIDADE_EXCLUSIVA`, or an empty
+    `valor_proposto`, is always `None` — this rule has nothing to say about
+    an address or a couple-level fact, and an empty proposal was never
+    going anywhere regardless.
+
+    `valores_outras_pessoas` is `[(valor, papel), ...]` — the caller's own
+    job (`identidade_extracao_service._valores_outras_pessoas`) to gather:
+    which OTHER clientes count as "another party" (co-parties of the same
+    `atendimento`, an attributed certidão spouse) and what label to show
+    for each (`papel` — "comprador", "vendedor", "cônjuge", ...).
+    """
+    if campo not in CAMPOS_IDENTIDADE_EXCLUSIVA or _vazio(valor_proposto):
+        return None
+    for valor, papel in valores_outras_pessoas:
+        if _vazio(valor):
+            continue
+        if mesmo_valor(campo, valor, valor_proposto):
+            return _decisao(
+                "atual", "outra_pessoa",
+                f"{campo}: o valor pertence a {papel} desta negociação — "
+                f"documento provavelmente arquivado na pessoa errada.",
+            )
+    return None
+
+
 def resolver_divergencia(
     campo: str,
     *,
@@ -504,6 +584,7 @@ def resolver_divergencia(
 
 
 __all__ = [
+    "CAMPOS_IDENTIDADE_EXCLUSIVA",
     "CAMPOS_POR_PESSOA",
     "CORROBORACAO_MINIMA",
     "DOCUMENTOS_DUAS_PESSOAS",
@@ -513,6 +594,7 @@ __all__ = [
     "PRECISAO_VALIDACAO_AUTOMATICA",
     "Decisao",
     "Precisao",
+    "decisao_outra_pessoa",
     "normalizar_logradouro",
     "only_digits",
     "precisao_de",

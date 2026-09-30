@@ -370,3 +370,72 @@ class TestEvidenciaViva:
             evidencia=dr.EvidenciaViva(afirmacoes=(("ANA PAULA SOUZA", "rg"),)),
         )
         assert (decisao.vencedor, decisao.regra) == ("atual", "corroboracao")
+
+
+class TestDecisaoOutraPessoa:
+    """R4 (owner directive, 2026-09-30, live-test evidence): a proposed
+    identity value that equals another PARTY's own value in the same
+    negotiation is not this person's fact — auto-rejected, never left
+    pending for a human. Pure — the caller
+    (`identidade_extracao_service._valores_outras_pessoas`) gathers the
+    other parties' own values; this function only compares."""
+
+    def test_a_name_matching_another_party_is_rejected(self):
+        decisao = dr.decisao_outra_pessoa(
+            "nome_oficial", "JOAO PEREIRA SILVA",
+            mesmo_valor=_mesmo_valor_simples,
+            valores_outras_pessoas=[("JOAO PEREIRA SILVA", "comprador")],
+        )
+        assert decisao is not None
+        assert (decisao.vencedor, decisao.regra, decisao.requer_humano) == (
+            "atual", "outra_pessoa", False,
+        )
+        assert "comprador" in decisao.motivo
+
+    def test_a_cpf_matching_another_partys_cpf_is_rejected(self):
+        decisao = dr.decisao_outra_pessoa(
+            "cpf", "412.954.238-98",
+            mesmo_valor=_mesmo_valor_simples,
+            valores_outras_pessoas=[("41295423898", "vendedor")],
+        )
+        assert decisao is not None
+        assert decisao.regra == "outra_pessoa"
+
+    def test_no_match_among_other_parties_is_none(self):
+        decisao = dr.decisao_outra_pessoa(
+            "nome_oficial", "MARIA SOUZA",
+            mesmo_valor=_mesmo_valor_simples,
+            valores_outras_pessoas=[("JOAO PEREIRA SILVA", "comprador")],
+        )
+        assert decisao is None
+
+    def test_no_other_parties_at_all_is_none(self):
+        decisao = dr.decisao_outra_pessoa(
+            "nome_oficial", "MARIA SOUZA",
+            mesmo_valor=_mesmo_valor_simples, valores_outras_pessoas=[],
+        )
+        assert decisao is None
+
+    def test_an_empty_proposal_is_never_rejected(self):
+        decisao = dr.decisao_outra_pessoa(
+            "cpf", None, mesmo_valor=_mesmo_valor_simples,
+            valores_outras_pessoas=[("41295423898", "vendedor")],
+        )
+        assert decisao is None
+
+    def test_endereco_is_out_of_scope_a_shared_household_address_is_not_misfiling(self):
+        # A couple legitimately shares the SAME address — never a rejection.
+        decisao = dr.decisao_outra_pessoa(
+            "endereco", "RUA A, 100",
+            mesmo_valor=_mesmo_valor_simples,
+            valores_outras_pessoas=[("RUA A, 100", "conjuge")],
+        )
+        assert decisao is None
+
+    def test_an_empty_other_partys_value_never_matches(self):
+        decisao = dr.decisao_outra_pessoa(
+            "rg", "12.345.678-9",
+            mesmo_valor=_mesmo_valor_simples,
+            valores_outras_pessoas=[(None, "comprador"), ("", "vendedor")],
+        )
+        assert decisao is None

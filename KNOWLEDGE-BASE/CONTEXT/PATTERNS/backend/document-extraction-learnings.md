@@ -152,6 +152,38 @@ human. Every automatic decision lands as `resolvido_automatico` with its rule in
 - Result on prod: 22 pending → 12 resolved (pass 1) → 9 of the remaining 10 (pass 2, dry-run); the
   two decisions checkable against a signed contract both picked the contract's value.
 
+### 4a-i · R1-R5: every remaining live-queue case has a rule (2026-09-30)
+
+5 historical deals re-run on prod surfaced 5 more shapes, all resolvable without a human — owner
+directive: "Human reviews are meant to be the exception, not the rule."
+
+- **R1 — re-resolution on new evidence.** A conflict is a SNAPSHOT of what was known at open time; a
+  name/CPF/address that lands on ANY party AFTER can be exactly the missing evidence. `identidade_
+  extracao_service.revalidar_negociacao` runs `backfill_resolver_conflitos_pendentes` over the
+  extracted cliente AND every other party of the same `atendimento`(s) at the end of every extraction
+  — not only on `GET /conflitos` resolve-on-read, which only fires when a human happens to open the
+  queue.
+- **R2 — an empty on-file address is not "can't judge."** `_decidir_endereco_pendente` used to read
+  `valor_anterior=None` (the shape `aplicar_endereco_ao_cliente` writes when the conflict opened
+  against an EMPTY address) as "not a JSON object" and parked the row in `ignorado_composto` forever
+  — even once the missing holder evidence later landed. Fixed: only `valor_proposto`'s shape gates
+  the judgement. The holder-tier check (`_titular_e_parte_ou_conjuge`) now also recognises another
+  ATENDIMENTO PARTY as a verified holder, not only self/spouse; a definitely-unrelated holder
+  auto-rejects (never pending) when the cliente already holds an address from their own document.
+- **R3 — household address propagation.** A spouse with no comprovante of their own inherits the
+  other's OWN-document address (`identidade_extracao_service.propagar_endereco_domicilio`), tagged
+  `endereco_origem="conjuge_domicilio"` — a tier below any real document (never a propagation SOURCE
+  itself), never overwrites, and un-fills the moment the source no longer qualifies.
+- **R4 — cross-party identity values are misfiling, not a fact.** A proposed `nome_oficial`/`cpf`/`rg`
+  that equals another PARTY's (or their attributed spouse's) own value is auto-rejected
+  (`divergencia_resolucao.decisao_outra_pessoa`, rule `outra_pessoa`) — never filled, never left
+  pending. The source document gets `extracao_aviso="documento_de_outra_parte"` so the UI can suggest
+  moving it. `endereco` is deliberately out of scope — a shared household address is not misfiling.
+- **R5 — two-person documents withhold EVERY per-person field, not just one.** The CPF-only
+  withholding (950c2c255) generalises to all of `CAMPOS_POR_PESSOA` (rg, rg_orgao_expedidor, genero,
+  data_nascimento, nome_oficial, profissao) — a divorce certidão's flat reading had carried an
+  ex-spouse's RG onto the wrong card the same way an earlier pass carried a CPF.
+
 ## 5 · Sources for data no identity document carries (automation ideas)
 
 - **"Info PP"** (per-deal Google Doc, "pesquisa prévia"): sellers' nome/CPF/**RG with DV**/DN +
