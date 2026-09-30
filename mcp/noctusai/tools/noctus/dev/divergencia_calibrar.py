@@ -80,27 +80,35 @@ from settings import REPO_ROOT  # noqa: E402
 _POLICY_MODULE_DIR = REPO_ROOT / "products" / "social-wiring" / "backend"
 
 
-def _load_current_policy() -> dict[str, dict[str, tuple[float, int]]]:
-    """Import `divergencia_resolucao.PRECISAO` fresh, without adding a
-    permanent product-code dependency to the MCP toolkit's own import graph
-    — `sys.path` is patched only for the duration of this one import, then
-    restored, so no other MCP tool accidentally starts resolving `app.*`."""
-    added = str(_POLICY_MODULE_DIR) not in sys.path
-    if added:
-        sys.path.insert(0, str(_POLICY_MODULE_DIR))
-    try:
-        import importlib
+_POLICY_MODULE_FILE = _POLICY_MODULE_DIR / "app" / "services" / "divergencia_resolucao.py"
+_POLICY_MODULE_NAME = "_noctus_calibrar_divergencia_resolucao"
 
-        mod = importlib.import_module("app.services.divergencia_resolucao")
-        return {
-            campo: {origem: (p.precisao, p.n) for origem, p in origens.items()}
-            for campo, origens in mod.PRECISAO.items()
-        }
+
+def _load_current_policy() -> dict[str, dict[str, tuple[float, int]]]:
+    """Import `divergencia_resolucao.PRECISAO` fresh, BY FILE PATH under a
+    private module name — never as `app.services...`. A package-name import
+    collides with whichever product's `app` package another caller already
+    put in `sys.modules` (every product's backend is a top-level `app`),
+    and popping `app` afterwards broke THAT caller in turn: the calibration
+    tests passed alone and failed in the full MCP suite. The resolver module
+    imports only `noctusai_lib`, so a standalone load is complete."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(_POLICY_MODULE_NAME, _POLICY_MODULE_FILE)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load the policy module from {_POLICY_MODULE_FILE}")
+    mod = importlib.util.module_from_spec(spec)
+    # Registered for the duration of exec only — `@dataclass` resolves its
+    # annotations through `sys.modules[cls.__module__]`.
+    sys.modules[_POLICY_MODULE_NAME] = mod
+    try:
+        spec.loader.exec_module(mod)
     finally:
-        if added:
-            sys.path.remove(str(_POLICY_MODULE_DIR))
-            sys.modules.pop("app.services.divergencia_resolucao", None)
-            sys.modules.pop("app", None)
+        sys.modules.pop(_POLICY_MODULE_NAME, None)
+    return {
+        campo: {origem: (p.precisao, p.n) for origem, p in origens.items()}
+        for campo, origens in mod.PRECISAO.items()
+    }
 
 
 def _normalizar(campo: str, valor: Any) -> str:

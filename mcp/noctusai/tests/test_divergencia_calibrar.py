@@ -190,3 +190,21 @@ class TestDiffVsPolicy:
         }]
         out = dc.divergencia_calibrar(**setup, prod_extractions_raw=registros)
         assert out["diff_vs_policy"] == []
+
+
+def test_policy_loads_when_another_products_app_package_is_already_imported(monkeypatch):
+    """Regression (2026-09-29): the calibration tests passed alone and failed
+    in the full MCP suite — another test had already put a DIFFERENT
+    product's top-level `app` package in `sys.modules`, so a package-name
+    import of `app.services.divergencia_resolucao` resolved against it, and
+    the old cleanup popped that caller's `app` in turn."""
+    import types
+
+    intruso = types.ModuleType("app")
+    intruso.__path__ = []  # a package with nothing in it
+    monkeypatch.setitem(sys.modules, "app", intruso)
+
+    politica = dc._load_current_policy()
+
+    assert "nome_oficial" in politica
+    assert sys.modules["app"] is intruso  # the other caller's package is untouched
