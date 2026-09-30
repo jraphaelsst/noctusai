@@ -195,10 +195,13 @@ ITEM_KEYS = tuple(item["key"] for item in ITENS)
 #:   were never read satisfies nothing. That keeps this item and the contract
 #:   gate (`_CAMPOS_QUALIFICACAO_CONTRATO` — `rg` and `cpf` stay separate
 #:   there, so the refusal names WHICH one is missing) on one fact.
-#: - ``documentos`` — the upload slots, in order: CIN, CNH. A CIN is never
-#:   extracted (no real one exists yet; migration 164) — its numbers are
-#:   validated by hand. A CIN's RG legitimately equals its CPF (órgão IIGDR);
-#:   nothing here compares the two.
+#: - ``documentos`` — the upload slots, in order: CIN, CNH. Both are read
+#:   automatically now (`proveniencia.fontes.FONTES["cin"]`, added
+#:   2026-09-30 — migration 164's original "no real CIN exists yet, numbers
+#:   validated by hand" ruling is superseded, see that migration's own
+#:   header); an unread upload still satisfies nothing until its numbers
+#:   land, whether typed or extracted. A CIN's RG legitimately equals its
+#:   CPF (órgão IIGDR); nothing here compares the two.
 #: - ``documentos_legado`` — `rg`/`cpf`-typed files already on record. Shown
 #:   read-only (no new uploads under those types from this item) so a CNH
 #:   that was filed as `rg` before `cnh` existed (migration 142) stays

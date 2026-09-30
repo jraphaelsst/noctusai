@@ -143,6 +143,20 @@ CLIENTES_TABLE = "clientes"
 #: `cnh` catalogue row (`ativo = true`) so uploads and this extraction gate
 #: both reach it now. No further change was needed here — this module was
 #: already written against the day it would ship.
+#:
+#: 🔴 `cin` ran the OPPOSITE gap (found on prod 2026-09-30, live test): its
+#: `cliente_documento_tipos` row shipped FIRST (migration 164, 2026-09-23,
+#: `ativo = true`) — uploads were reachable from day one — but `proveniencia.
+#: fontes.FONTES` deliberately left `cin` out, per 164's own "no real CIN
+#: exists yet" ruling. A CIN uploaded either checklist slot or via Anexos
+#: therefore landed in `cliente_documentos` and was NEVER read:
+#: `extracao_status` stayed `NULL`, `extracao_tentativas` stayed `0`, forever
+#: — `deve_extrair` returning `False` for an `ativo` catalogue type is a
+#: silent gap, not a `None`-vs-value honesty like `_extracao_servida`'s. The
+#: seed grew a real CIN reader in the meantime (`real.py`'s `_achou_algo`,
+#: hardened against the gov.br CIN PDF's shape on the P2 corpus,
+#: 2026-09-28); `fontes.FONTES["cin"]` now closes this gap the same way
+#: migration 142 closed `cnh`'s, mirror-imaged.
 TIPOS_EXTRAIVEIS = frozenset(
     f.tipo_documento for f in fontes.FONTES.values() if f.dominio == "cliente"
 )

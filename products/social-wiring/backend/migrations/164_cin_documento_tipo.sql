@@ -2,6 +2,20 @@
 -- Migration 164 · social_wiring: `cin` (Carteira de Identidade Nacional) as
 -- an UPLOADABLE document type — upload only, never extracted.
 --
+-- 🔴 SUPERSEDED, 2026-09-30 — SEE `proveniencia/fontes.py`'s `cin` ENTRY.
+-- This header's "no real CIN has been seen yet" / "NO EXTRACTION, BY
+-- DESIGN" section below was true when this migration was authored and is
+-- NOT true anymore: a real gov.br CIN PDF corpus arrived (P2, 2026-09-28),
+-- the seed's identity extractor was hardened against its shape (`real.py`'s
+-- `_achou_algo`), and `cin` was found on prod (2026-09-30, live test) to
+-- have been silently unread ever since — this row made it UPLOADABLE, but
+-- `proveniencia.fontes.FONTES` never grew a matching entry, so
+-- `extracao_status` stayed `NULL` on every one. `fontes.py` now carries a
+-- `cin` `Fonte`, mirroring `cnh`'s. The DDL below (the catalogue + retention
+-- rows) is UNCHANGED and still correct — this note documents the CODE-side
+-- reversal only, kept here rather than silently left to contradict the
+-- prose beneath it.
+--
 -- WHAT THIS IS
 -- ------------
 -- [Owner directive, 2026-09-23] "make rg/cpf 1 single checklist item. then i

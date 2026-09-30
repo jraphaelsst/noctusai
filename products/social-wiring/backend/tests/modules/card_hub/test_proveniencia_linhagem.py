@@ -62,7 +62,7 @@ class TestLinhagemDoRegistro:
             e for e in body["fontes"] if e["entidade"] == "cliente" and e["campo"] == "nome_oficial"
         )
         assert {f["tipo_documento"] for f in entrada["fontes"]} == {
-            "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
+            "rg", "cpf", "cnh", "cin", "certidao_casamento", "certidao_nascimento",
             # P0c contract §C1: Serasa Crednet also claims `nome` (`nome_oficial`).
             "serasa_crednet",
         }
@@ -175,7 +175,7 @@ class TestLinhagemDoCard:
         }
         tipos = {f["tipo_documento"] for f in item["fontes_possiveis"]}
         assert tipos == {
-            "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
+            "rg", "cpf", "cnh", "cin", "certidao_casamento", "certidao_nascimento",
             # P0c contract §C1: Serasa Crednet also claims `nome` (`nome_oficial`).
             "serasa_crednet",
         }

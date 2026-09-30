@@ -70,6 +70,7 @@ class TestDepsFactoryThreadsTipoDocumentoIntoMaxPages:
             ("rg", -1),
             ("cpf", -1),
             ("cnh", -1),
+            ("cin", -1),
             (None, -1),
         ],
     )

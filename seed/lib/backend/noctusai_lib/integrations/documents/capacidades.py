@@ -91,6 +91,14 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # CNH photo/PDF (text-layer -> vision fallback, `ladder.py`).
     "rg": _IDENTIDADE_COMPLETA,
     "cnh": _IDENTIDADE_COMPLETA,
+    # The new-model Carteira de Identidade Nacional — same reader, same
+    # capability set, as `rg`/`cnh` above (`real.py`'s `_achou_algo` is what
+    # falls a gov.br CIN PDF through to vision when its text layer carries
+    # only the app's legal boilerplate — measured on the P2 corpus,
+    # 2026-09-28). A CIN prints the CPF number AS the identity number
+    # (`rg.py`'s own note); that is a content fact a caller reconciles
+    # (social-wiring's `_e_cin`), not a narrower capability here.
+    "cin": _IDENTIDADE_COMPLETA,
     # A CPF card carries only the number (and, rarely, a printed name) — no
     # birthdate/estado-civil/etc. worth claiming.
     "cpf": frozenset({"nome", "cpf"}),

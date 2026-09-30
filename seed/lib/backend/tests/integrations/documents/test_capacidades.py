@@ -15,23 +15,23 @@ class TestShape:
 
     def test_known_document_types_are_present(self):
         for tipo in (
-            "rg", "cnh", "cpf", "certidao_casamento", "certidao_nascimento",
+            "rg", "cnh", "cin", "cpf", "certidao_casamento", "certidao_nascimento",
             "comprovante_endereco", "matricula", "serasa_crednet", "cartao_cnpj",
         ):
             assert tipo in CAPACIDADES
 
 
 class TestIdentityDocuments:
-    """RG/CNH/certidões — the full `IdentityFields` vocabulary."""
+    """RG/CNH/CIN/certidões — the full `IdentityFields` vocabulary."""
 
     def test_full_identity_docs_claim_every_seed_campo(self):
-        for tipo in ("rg", "cnh", "certidao_casamento", "certidao_nascimento"):
+        for tipo in ("rg", "cnh", "cin", "certidao_casamento", "certidao_nascimento"):
             assert set(IDENTITY_CAMPOS) <= CAPACIDADES[tipo]
 
     def test_full_identity_docs_also_claim_dependent_fields(self):
         # `rg_orgao` / `data_emissao` are real, readable fields — just not
         # independently-persistable `IdentityFields.CAMPOS` members.
-        for tipo in ("rg", "cnh", "certidao_casamento", "certidao_nascimento"):
+        for tipo in ("rg", "cnh", "cin", "certidao_casamento", "certidao_nascimento"):
             assert "rg_orgao" in CAPACIDADES[tipo]
             assert "data_emissao" in CAPACIDADES[tipo]
 

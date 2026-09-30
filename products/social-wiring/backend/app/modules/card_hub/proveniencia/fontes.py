@@ -157,6 +157,38 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
         campos=frozenset({"nome", "cpf"}),
     ),
     Fonte(
+        tipo_documento="cin",
+        dominio="cliente",
+        entradas=_ENTRADAS_CLIENTE_UPLOAD,
+        extrator="noctusai_lib.integrations.documents.factory.make_identity_extractor",
+        origens=frozenset({"cin"}),
+        # Mirrors `cnh` exactly — same reader, same capability
+        # (`capacidades.CAPACIDADES["cin"]`). 🔴 THIS ENTRY WAS MISSING
+        # (found on prod 2026-09-30 via a live test): migration 164 seeded
+        # the `cliente_documento_tipos` catalogue row (`ativo=true`) so a
+        # CIN could be UPLOADED, but deliberately left `cin` out of this
+        # registry — "no real CIN has been seen yet" was true when 164
+        # shipped (2026-09-23). It no longer is: `real.py`'s `_achou_algo`
+        # was hardened against the gov.br CIN PDF's own shape (its text
+        # layer carries only the app's legal boilerplate; the identity data
+        # sits in an embedded image, so the read must fall through to
+        # vision) against the P2 corpus, 2026-09-28. With the extractor
+        # provably able to read one, the absence here was no longer a
+        # deliberate scope cut — it was the reason `extracao_status` stayed
+        # NULL on every CIN upload. See `documento_checklist_service.py`'s
+        # `_IDENTIDADE_ROTULOS` note and migration 164's own header for the
+        # now-superseded "no extraction" ruling.
+        #
+        # A CIN prints the CPF number AS the identity number (órgão IIGDR)
+        # — RG == CPF is its VALID state, not a mismatch: read normally into
+        # `rg`, reconciled (never flagged) by `identidade_extracao_service
+        # ._e_cin`, which already special-cases `tipo_documento == "cin"`.
+        # Not `leitura_integral`: a CIN is a single-page card/PDF, same as
+        # `rg`/`cnh` — nothing here carries an averbação further into the
+        # document the way a certidão does.
+        campos=_CAMPOS_IDENTIDADE_BASE,
+    ),
+    Fonte(
         tipo_documento="cnh",
         dominio="cliente",
         entradas=_ENTRADAS_CLIENTE_UPLOAD,
@@ -371,6 +403,7 @@ FONTES: dict[str, Fonte] = {f.tipo_documento: f for f in FONTES_REGISTRO}
 ROTULOS_TIPO_DOCUMENTO: dict[str, str] = {
     "rg": "RG",
     "cpf": "CPF",
+    "cin": "CIN",
     "cnh": "CNH",
     "certidao_casamento": "Certidão de casamento",
     "certidao_nascimento": "Certidão de nascimento",

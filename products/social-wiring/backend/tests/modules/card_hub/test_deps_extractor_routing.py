@@ -27,7 +27,7 @@ class TestUnaffectedTipos:
     before — this is the regression guard for §C2's widening."""
 
     @pytest.mark.parametrize(
-        "tipo", ["rg", "cpf", "cnh", "certidao_casamento", "comprovante_endereco", None]
+        "tipo", ["rg", "cpf", "cnh", "cin", "certidao_casamento", "comprovante_endereco", None]
     )
     def test_builds_the_identity_extractor(self, tipo):
         from noctusai_lib.integrations.documents.real import LadderIdentityExtractor

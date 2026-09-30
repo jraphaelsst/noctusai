@@ -7,7 +7,9 @@ Storage is ALWAYS the `fake_storage` fixture — never
 from __future__ import annotations
 
 from datetime import date, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+import pytest
 
 from tests.modules.card_hub.conftest import (
     ORG_ID,
@@ -216,6 +218,81 @@ class TestUpload:
         message = resp.json()["error"]["message"]
         assert "0MB" not in message
         assert "800KB" in message  # the real ceiling, named in KB below 1 MB
+
+
+class TestUploadSchedulesIdentityExtraction:
+    """`config._extracao_ao_enviar` stamps `extracao_status='pendente'` at
+    INSERT time for every `identidade_extracao_service.deve_extrair`-eligible
+    `tipo_documento` — the ONE hook the whole read pipeline depends on
+    (`varrer_extracoes_pendentes` only ever revisits a non-NULL status; the
+    router's own background task, scheduled right after, only ever moves
+    that status FORWARD — see `router.upload_documento_route`'s own
+    docstring). These call `documentos_service.upload_documento` directly,
+    never through the HTTP route: `TestClient` runs a route's
+    `BackgroundTasks` synchronously before the request returns, which would
+    let the extraction job itself (a REAL `LadderIdentityExtractor`, no
+    credentials configured in this env) race this assertion and land the
+    row in `erro` instead — a different bug than the one this pins.
+
+    Regression coverage for the `cin` gap found on prod 2026-09-30 (live
+    test): the type was UPLOADABLE (migration 164's catalogue row) but
+    `proveniencia.fontes.FONTES` never carried a matching `Fonte`, so
+    `deve_extrair('cin')` was `False` and every CIN upload landed with
+    `extracao_status IS NULL` — silently never read. `cnh` is pinned
+    alongside it as the known-good baseline this must keep matching.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tipo", ["cnh", "cin"])
+    async def test_an_identity_upload_is_stamped_pendente(self, client, scoped, fake_storage, tipo):
+        from app.modules.card_hub import documentos_service
+
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data(
+            "cliente_documento_tipos",
+            [documento_tipo_row(tipo, categoria="identidade", identidade=True)],
+        )
+        scoped.set_table_data(
+            "documento_retencao_politicas", [retencao_politica_row(tipo)]
+        )
+
+        documento = await documentos_service.upload_documento(
+            scoped, fake_storage, UUID(ORG_ID), UUID(cid),
+            filename=f"{tipo}.pdf",
+            content_type="application/pdf",
+            data=b"%PDF-1.4 fake bytes",
+            tipo_documento=tipo,
+            enviado_por=None,
+        )
+
+        assert documento["extracao_status"] == "pendente", (
+            f"{tipo} upload never scheduled extraction — deve_extrair "
+            f"({tipo!r}) must be True for an ativo identity catalogue type"
+        )
+        stored = scoped.table("cliente_documentos").select("*").execute().data
+        assert stored[0]["extracao_status"] == "pendente"
+
+    @pytest.mark.asyncio
+    async def test_a_non_identity_upload_is_never_stamped(self, client, scoped, fake_storage):
+        """The negative case: a type outside `TIPOS_EXTRAIVEIS` (e.g. a
+        generic contract) stays `extracao_status IS NULL` — never queued,
+        which is the honest value for "not meant to be read", not a gap."""
+        from app.modules.card_hub import documentos_service
+
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid)])
+        scoped.set_table_data("cliente_documento_tipos", [documento_tipo_row("contrato")])
+
+        documento = await documentos_service.upload_documento(
+            scoped, fake_storage, UUID(ORG_ID), UUID(cid),
+            filename="contrato.pdf",
+            content_type="application/pdf",
+            data=b"%PDF-1.4 fake bytes",
+            tipo_documento="contrato",
+            enviado_por=None,
+        )
+        assert documento["extracao_status"] is None
 
 
 class TestListAndUrlAndDelete:

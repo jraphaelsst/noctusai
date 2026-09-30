@@ -3,9 +3,14 @@
 Parse-based, like `test_migration_142_cnh_documento_tipo.py` (whose shape
 this mirrors) — the migration is a FILE, not an applied change. These pin:
 the `cin` catalogue row's policy shape (mirrors `cnh`'s from 142), the
-matching platform-tier retention row, the forward-only/idempotent shape, and
-the owner's "no CIN extraction" ruling — `deve_extrair('cin')` must stay
-false, since no real CIN exists yet to build an extractor against.
+matching platform-tier retention row, and the forward-only/idempotent shape.
+
+🔴 The migration's ORIGINAL "no CIN extraction" ruling — `deve_extrair('cin')`
+must stay false, since no real CIN exists yet to build an extractor against —
+is SUPERSEDED (found on prod 2026-09-30, live test; see the migration file's
+own header and `proveniencia.fontes.FONTES["cin"]`). `cin` is extractable now,
+mirroring `cnh`; the tests below pin the reversal instead of the original
+ruling.
 """
 from __future__ import annotations
 
@@ -83,14 +88,16 @@ def test_retention_insert_is_idempotent_against_the_partial_index(flat: str):
     )
 
 
-# ─── the owner's ruling: a CIN is uploaded, never extracted ────────────────
+# ─── the reversal: a CIN is now extracted, like its sibling CNH slot ───────
 
 
-def test_cin_is_not_extractable():
-    """No real CIN exists yet — its fields are validated by the operator.
-    `cin` must therefore stay out of `proveniencia.fontes.FONTES`, which is
-    what keeps the extraction gate closed for it."""
-    assert identidade_svc.deve_extrair("cin") is False
+def test_identity_extraction_now_lists_cin_as_extractable():
+    """A real CIN corpus arrived (P2, 2026-09-28) and `proveniencia.fontes.
+    FONTES` grew a matching `cin` entry — `deve_extrair` is derived from
+    that registry, so this needed no extra wiring here, same as `cnh`'s own
+    `test_migration_142_cnh_documento_tipo.py::
+    test_identity_extraction_already_lists_cnh_as_extractable`."""
+    assert identidade_svc.deve_extrair("cin") is True
 
 
 def test_cnh_stays_extractable():

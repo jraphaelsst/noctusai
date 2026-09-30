@@ -96,7 +96,8 @@ def _documento(scoped, did) -> dict:
 
 class TestWhichTypesAreRead:
     @pytest.mark.parametrize("tipo,expected", [
-        ("rg", True), ("cpf", True), ("cnh", True), ("certidao_casamento", True),
+        ("rg", True), ("cpf", True), ("cnh", True), ("cin", True),
+        ("certidao_casamento", True),
         # Migration 110 — a marriage/divórcio/óbito is averbado on a birth
         # certificate's margin too, not only on a certidão de casamento.
         ("certidao_nascimento", True),
@@ -536,7 +537,7 @@ class TestUmaCertidaoEhLidaPorInteiro:
         just as far into the document as it is on a certidão de casamento."""
         assert svc.paginas_maximas("certidao_nascimento") is None
 
-    @pytest.mark.parametrize("tipo", ["rg", "cpf", "cnh", "contrato"])
+    @pytest.mark.parametrize("tipo", ["rg", "cpf", "cnh", "cin", "contrato"])
     def test_everything_else_leaves_the_default_to_the_adapter(self, tipo):
         # The sentinel, NOT the literal 3: the cost trade-off is owned by the
         # seed adapter, and copying its default here would diverge silently

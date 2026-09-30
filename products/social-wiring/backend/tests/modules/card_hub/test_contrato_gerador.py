@@ -371,7 +371,7 @@ class TestGate:
         # §B/§C — `Fonte('serasa_crednet').campos` includes it) — so it now
         # joins the identity documents this suggestion list names.
         assert tipos == {
-            "rg", "cpf", "cnh", "certidao_casamento", "certidao_nascimento",
+            "rg", "cpf", "cnh", "cin", "certidao_casamento", "certidao_nascimento",
             "serasa_crednet",
         }
         # 🔴 Contract pin (2026-09-25 prod crash): `Avaliacao.falta` injects
