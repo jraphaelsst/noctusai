@@ -2067,7 +2067,7 @@ def decide_wired_worktree_npm(
     `wire_env` (task_branch start) symlinks per-package vendor entries (incl.
     whole scoped folders like `@vitest/`) into the PRIMARY's node_modules, so a
     plain `npm install` writes THROUGH those links and corrupts the primary
-    (2026-09-30: broke products/core/frontend vitest, `@vitest/utils`). The safe
+    (2026-09-23: broke products/core/frontend vitest, `@vitest/utils`). The safe
     recipe for a dependency change is `npm install --package-lock-only`.
     Chosen over an `.npmrc` (npm has no refuse-install switch) or a README
     (advisory only): a hook refuses mechanically, at the write, cheaply.

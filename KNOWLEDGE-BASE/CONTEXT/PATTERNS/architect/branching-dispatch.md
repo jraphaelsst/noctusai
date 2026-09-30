@@ -119,7 +119,7 @@ Once every slice is merged onto `dev`, every collision (incl. semantic) resolved
 
 ## Isolation: `task_branch` XOR harness `isolation='worktree'` (never both)
 
-An engineer dispatched with `Agent(isolation='worktree')` AND told to run `task_branch start` has its git sandbox pinned to its own `agent-*` worktree: it can WRITE into the `task_branch` worktree (absolute paths) but can never COMMIT there (2026-09-30). Pick ONE isolation primitive per engineer. `task_branch` briefs run WITHOUT harness isolation; harness-isolated engineers do not self-branch. If a sandboxed caller must still finish a commit, `noctus.dev.salvage_worktree(..., stage_all=True | paths=[...])` stages + commits from the server's context.
+An engineer dispatched with `Agent(isolation='worktree')` AND told to run `task_branch start` has its git sandbox pinned to its own `agent-*` worktree: it can WRITE into the `task_branch` worktree (absolute paths) but can never COMMIT there (2026-09-21, academia-interessados-be dispatch). Pick ONE isolation primitive per engineer. `task_branch` briefs run WITHOUT harness isolation; harness-isolated engineers do not self-branch. If a sandboxed caller must still finish a commit, `noctus.dev.salvage_worktree(..., stage_all=True | paths=[...])` stages + commits from the server's context.
 
 ## Safety rules (non-negotiable)
 
