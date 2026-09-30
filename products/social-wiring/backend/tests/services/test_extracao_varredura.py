@@ -116,3 +116,19 @@ class TestRetentavelFiltersTheErrorLeg:
         result = await extracao_varredura.varrer(client, None, _config(extrair_fn=_extrair_fn))
         assert result == {"encontrados": 1, "retomados": 1, "esgotados": 0, "falhas": 0}
         assert called == [1]
+
+
+class TestSweepConfigRefusesMissingErrorColumn:
+    """`SweepConfig.__post_init__` refuses a `colunas` without `extracao_erro`
+    (NOC-REMEDIATE[extracao-varredura-colunas-erro]) — the next caller cannot
+    silently re-open the retry-a-permanent-refusal-forever hole."""
+
+    def test_colunas_without_extracao_erro_is_refused(self):
+        sem_erro = ", ".join(c.strip() for c in COLUNAS.split(",") if c.strip() != "extracao_erro")
+        with pytest.raises(ValueError, match="extracao_erro"):
+            extracao_varredura.SweepConfig(
+                table=TABLE, owner_col="owner_id", colunas=sem_erro, extrair_fn=_noop_extrair_fn,
+            )
+
+    def test_colunas_with_extracao_erro_is_accepted(self):
+        assert _config().colunas == COLUNAS

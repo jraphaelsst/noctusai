@@ -115,6 +115,19 @@ class SweepConfig:
     #: own fallback).
     extractor_factory: Optional[ExtractorFactory] = None
 
+    def __post_init__(self) -> None:
+        # Refuse, don't just document (NOC-REMEDIATE[extracao-varredura-colunas-erro],
+        # 2026-09-28): without `extracao_erro` in `colunas`, `candidatos`'
+        # retentável filter reads every erro row as an unknown — therefore
+        # retryable — code and retries a permanent refusal forever.
+        colunas_set = {c.strip() for c in self.colunas.split(",")}
+        if "extracao_erro" not in colunas_set:
+            raise ValueError(
+                f"SweepConfig.colunas for table {self.table!r} omits "
+                "'extracao_erro' — add it so permanent extraction errors are "
+                "never re-swept (NOC-REMEDIATE[extracao-varredura-colunas-erro])."
+            )
+
 
 def _t(client: Any, name: str):
     return table_reads.table(client, name)
