@@ -257,6 +257,24 @@ _REGIME_BENS_PADROES: tuple[tuple["re.Pattern[str]", str], ...] = (
         re.compile(r"SEPARACAO\s+(?:TOTAL|CONVENCIONAL|ABSOLUTA)(?:\s+DE\s+BENS)?"),
         "separacao_total",
     ),
+    #: 🔴 THE SAME REGIME, MODIFIER-FIRST — real, measured (live prod test,
+    #: 2026-09-30): a CNJ e-cartório text-layer certidão states this
+    #: identical CONVENCIONAL regime with "ABSOLUTA"/"COMPLETA" BEFORE the
+    #: noun — "ABSOLUTA E COMPLETA SEPARAÇÃO DE BENS" — rather than the
+    #: `SEPARACAO ABSOLUTA` word order the pattern above expects. Neither
+    #: order implies the other in Brazilian legal prose, so this is a
+    #: second, independent pattern rather than a tweak to the first one;
+    #: both canonicalise to the same `separacao_total` for the identical
+    #: CC art. 1.687 reason given above (this document's own text also
+    #: states "CONFORME ESCRITURA PÚBLICA DE PACTO ANTENUPCIAL", the same
+    #: convencional-regime evidence).
+    (
+        re.compile(
+            r"(?:ABSOLUTA|COMPLETA)(?:\s+E\s+(?:ABSOLUTA|COMPLETA))?"
+            r"\s+SEPARACAO(?:\s+DE\s+BENS)?"
+        ),
+        "separacao_total",
+    ),
     #: The art. 1.641 CC regime, imposed BY LAW on certain marriages (a
     #: spouse over 70, a marriage requiring judicial authorisation, ...) —
     #: never chosen by a pacto antenupcial. Getting `ABSOLUTA` sorted into

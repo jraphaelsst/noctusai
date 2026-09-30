@@ -209,6 +209,34 @@ _FIM_BLOCO_ESTRUTURADO_RE = re.compile(
 )
 _PRIMEIRO_MARCAS = frozenset({"PRIMEIRO", "1", "1O"})
 
+#: 🔴 THE BLOCK OPENER'S VALUE IS TWO SUB-LABELS AWAY, NOT ON THE NEXT LINE —
+#: real, measured (live prod test, 2026-09-30): a CNJ e-cartório TEXT-LAYER
+#: certidão (a PDF with a genuine text layer, not a scan run through vision)
+#: prints "1º Cônjuge:" / "2º Cônjuge:" as a bare section header with NOTHING
+#: on its own line or the next — the block's own "Data de nascimento" and
+#: "Nome no momento da habilitação" sub-labels come first, each alone on its
+#: own row, and only THEN the nubente's pre-marriage name. `_extrai_valor_
+#: apos` (same-line-or-next-line) was built for the vision-model layout
+#: where the name sits immediately after the opener ("Primeiro Cônjuge:
+#: JOAO..."); it returns `None` here, and unguarded that used to fail the
+#: whole document out of `_ler_bloco_estruturado` (`valor is None: return ()`)
+#: — losing BOTH spouses, not just this one field. `_NOME_HABILITACAO_RE`
+#: is the fallback: find that specific sub-label anywhere in THIS spouse's
+#: own block span, then read the value the same same-line-or-next-line way.
+_NOME_HABILITACAO_RE = re.compile(r"\bNOME\s+NO\s+MOMENTO\s+DA\s+HABILITACAO\b\s*[:\-]?\s*")
+
+#: 🔴 THE SAME LAYOUT'S OWN ADOPTION LINE HAS NO ORDINAL EITHER — same
+#: incident. `_NOME_ATUAL_CONJUGE_RE` above requires the vision-model
+#: phrasing "NOME QUE O PRIMEIRO/SEGUNDO CÔNJUGE PASSOU A UTILIZAR"; this
+#: layout's own row is the bare "Nome que passou a utilizar", with no
+#: ordinal at all — which spouse it names is which BLOCK it sits inside,
+#: not its own wording. Tried only within a single spouse's own
+#: `[inicio_bloco, fim_bloco)` span (see `_ler_bloco_estruturado`), so
+#: position — not phrasing — is what disambiguates.
+_NOME_PASSOU_UTILIZAR_SIMPLES_RE = re.compile(
+    r"\bNOME\s+QUE\s+PASSOU\s+A\s+UTILIZAR\b\s*[:\-]?\s*"
+)
+
 #: 🔴 THE BUG THIS CLOSES — real, measured (P1/883, 2026-09-28): the
 #: "Nome atual dos cônjuges" header interleaves each current name with a
 #: "Número do CPF" row — but a cartório's own matrícula-number row
@@ -253,6 +281,20 @@ def _extrai_valor_apos(norm: str, fim: int) -> Optional[str]:
     fim_prox = prox_quebra if prox_quebra >= 0 else len(norm)
     proximo = norm[quebra + 1 : fim_prox].strip(" :\t-–—.|*")
     return proximo if proximo and looks_like_a_name(proximo) else None
+
+
+def _extrai_valor_de_rotulo_no_intervalo(
+    norm: str, inicio: int, fim: int, rotulo: "re.Pattern[str]"
+) -> Optional[str]:
+    """`_extrai_valor_apos`, anchored on the FIRST match of `rotulo` inside
+    `norm[inicio:fim)` rather than on a block opener directly — see
+    `_NOME_HABILITACAO_RE`'s own comment for the layout this exists for.
+    `None` when the sub-label itself is absent from this span, same as when
+    its value is not name-shaped."""
+    m = rotulo.search(norm, inicio, fim)
+    if m is None:
+        return None
+    return _extrai_valor_apos(norm, m.end())
 
 
 def _cpfs_por_adjacencia(
@@ -314,13 +356,10 @@ def _ler_bloco_estruturado(text: str) -> tuple[ConjugeLido, ...]:
     if len(blocos) != 2:
         return ()
 
-    nomes: dict[int, str] = {}
-    for idx, m in blocos.items():
-        valor = _extrai_valor_apos(norm, m.end())
-        if valor is None:
-            return ()
-        nomes[idx] = valor
-
+    # Block spans computed BEFORE the name reads below — the fallback for a
+    # layout whose opener carries no same-line/next-line value of its own
+    # (`_NOME_HABILITACAO_RE`, `_NOME_PASSOU_UTILIZAR_SIMPLES_RE`) needs its
+    # own spouse's span to search inside, not the whole document.
     inicio_bloco = {0: blocos[0].end(), 1: blocos[1].end()}
     fim_bloco = {
         0: blocos[1].start(),
@@ -333,10 +372,35 @@ def _ler_bloco_estruturado(text: str) -> tuple[ConjugeLido, ...]:
         ),
     }
 
+    nomes: dict[int, str] = {}
+    for idx, m in blocos.items():
+        valor = _extrai_valor_apos(norm, m.end())
+        if valor is None:
+            # The opener itself carries no value — try the sub-label a
+            # text-layer e-cartório prints instead. See
+            # `_NOME_HABILITACAO_RE`'s own comment.
+            valor = _extrai_valor_de_rotulo_no_intervalo(
+                norm, inicio_bloco[idx], fim_bloco[idx], _NOME_HABILITACAO_RE
+            )
+        if valor is None:
+            return ()
+        nomes[idx] = valor
+
     nomes_atuais: dict[int, str] = {}
     for m in _NOME_ATUAL_CONJUGE_RE.finditer(norm):
         idx = _ordinal(m.group(1))
         valor = _extrai_valor_apos(norm, m.end())
+        if valor is not None:
+            nomes_atuais[idx] = valor
+    for idx in (0, 1):
+        if idx in nomes_atuais:
+            continue
+        # The bare, ordinal-less "Nome que passou a utilizar" row — same
+        # layout as `_NOME_HABILITACAO_RE`. Position (this spouse's own
+        # span), not phrasing, is what attributes it.
+        valor = _extrai_valor_de_rotulo_no_intervalo(
+            norm, inicio_bloco[idx], fim_bloco[idx], _NOME_PASSOU_UTILIZAR_SIMPLES_RE
+        )
         if valor is not None:
             nomes_atuais[idx] = valor
 
@@ -345,7 +409,18 @@ def _ler_bloco_estruturado(text: str) -> tuple[ConjugeLido, ...]:
         for m in _CPF_RE.finditer(norm)
         if is_valid(m.group(1)) and not _e_valor_de_matricula(norm, m.start())
     ]
-    cpf0, cpf1 = _cpfs_por_adjacencia(norm, (nomes[0], nomes[1]), cpfs)
+    # The CURRENT name — when the certidão states one — is what a header
+    # table pairing a name with its own CPF prints (a "Nome atual dos
+    # cônjuges" index lists post-marriage names, never the habilitação
+    # form); searching for THAT string is what lets the CPF adjacency below
+    # anchor at the header instead of missing it whenever a spouse's
+    # habilitação name and current name differ. Falls back to the block's
+    # own printed name when no adoption line was read at all.
+    nomes_para_cpf = (
+        nomes_atuais.get(0, nomes[0]),
+        nomes_atuais.get(1, nomes[1]),
+    )
+    cpf0, cpf1 = _cpfs_por_adjacencia(norm, nomes_para_cpf, cpfs)
     cpfs_por_indice = {0: cpf0, 1: cpf1}
 
     out: list[ConjugeLido] = []

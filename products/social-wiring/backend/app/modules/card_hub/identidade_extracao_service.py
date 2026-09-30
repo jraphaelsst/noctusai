@@ -2416,6 +2416,31 @@ async def extrair_identidade(
         nome_anterior_titular = (
             conjuges[titular_idx].nome_anterior if titular_idx is not None else None
         )
+        # 🔴 AN UNATTRIBUTED FLAT CPF ON A TWO-PERSON DOCUMENT MUST NEVER
+        # REACH THE TITULAR — real, measured (live prod test, 2026-09-30): a
+        # certidão de casamento names two co-equal holders, and
+        # `fields.cpf`/`fields.cpf_confianca` (from `_valores_lidos` above)
+        # is a WHOLE-DOCUMENT reading with no notion of which of the two it
+        # belongs to — the extractor's own titular-hint attribution
+        # (`documents.real._conjuge_do_titular`, keyed on this card's
+        # already-known name/CPF) is what marks the correct entry
+        # `.titular=True` and, when it succeeds, ALREADY promotes that
+        # spouse's own CPF into `fields.cpf` at `alta` confidence — see that
+        # module's own comment. `titular_idx is None` means that attribution
+        # did NOT resolve (this card has no name/CPF on file yet that
+        # matches either spouse, or matches ambiguously): the flat `cpf`
+        # here is exactly the kind of positional/leftover reading that
+        # wrote the OTHER spouse's CPF onto a card in production. Withheld
+        # the same way an unresolved `titulares_multiplos` name already is
+        # — never guessed. The per-spouse entry attributed to a person by
+        # `_entrada_conjuge_da_pessoa` (cliente_id/CPF match) remains the
+        # only way a certidão CPF reaches a cliente going forward.
+        if (
+            conjuges
+            and tipo in divergencia_resolucao.DOCUMENTOS_DUAS_PESSOAS
+            and titular_idx is None
+        ):
+            lidos["cpf"] = (None, "nenhuma", None, False)
         achou_algo = (
             data_emissao is not None
             or endereco is not None
