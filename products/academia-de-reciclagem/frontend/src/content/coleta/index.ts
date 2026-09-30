@@ -1,5 +1,5 @@
 /**
- * `/coleta` data — one entry per município in and around the project's territory.
+ * `/coleta` data — one entry per município around the Granja Viana.
  *
  * Everything here comes from public sources researched on 2026-09-29; each
  * município lists them in `fontes`, with the DOCUMENT's own date. The
