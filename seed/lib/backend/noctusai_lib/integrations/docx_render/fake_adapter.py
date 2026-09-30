@@ -38,6 +38,7 @@ from typing import Any, Mapping, Sequence
 from docx import Document
 
 from noctusai_lib.integrations.documents.formatting import Run
+from noctusai_lib.integrations.docx_render._zip import without_wall_clock
 
 _VAR_RE = re.compile(r"\{\{-?\s*([A-Za-z_][A-Za-z0-9_]*)")
 _FOR_RE = re.compile(
@@ -63,27 +64,6 @@ class FakeRichText:
     def __str__(self) -> str:
         return "".join(r.text for r in self.runs)
 
-
-_ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
-
-
-def _without_wall_clock(docx_bytes: bytes) -> bytes:
-    """Re-pack a saved `.docx` with every entry stamped at the zip epoch.
-
-    python-docx's `save()` stamps each zip entry with the current time, so
-    two identical renders differ whenever they straddle a second boundary —
-    which is what made `test_fake_is_deterministic` flake in CI. Entry
-    order, names, compression and content are preserved; only the
-    timestamp is pinned.
-    """
-    out = io.BytesIO()
-    with zipfile.ZipFile(io.BytesIO(docx_bytes)) as src, zipfile.ZipFile(out, "w") as dst:
-        for info in src.infolist():
-            pinned = zipfile.ZipInfo(info.filename, date_time=_ZIP_EPOCH)
-            pinned.compress_type = info.compress_type
-            pinned.external_attr = info.external_attr
-            dst.writestr(pinned, src.read(info.filename))
-    return out.getvalue()
 
 
 class FakeDocxRenderAdapter:
@@ -116,7 +96,7 @@ class FakeDocxRenderAdapter:
         )
         buf = io.BytesIO()
         doc.save(buf)
-        return _without_wall_clock(buf.getvalue())
+        return without_wall_clock(buf.getvalue())
 
     def list_placeholders(self, template_bytes: bytes) -> set[str]:
         found: set[str] = set()

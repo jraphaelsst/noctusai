@@ -42,26 +42,31 @@ from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 LINHA = "______________________________"
 
-#: [Migration 168, owner decision] Re-pinned: the witness block now prints
-#: CPF instead of RG (RG left the template entirely) — a real, intended
-#: content change, not drift. Regenerated via a throwaway script that calls
-#: the same `_render` this file uses, for all 6 variants, straight after
-#: `modelo_texto.py`/`contexto.py`/`frases.py`'s RG→CPF edit landed.
+#: [Contract typography, 2026-09-30] Re-pinned: the generator now emphasises
+#: data and key terms (bold/underline runs from the matrícula extractor's
+#: `**`/`<u>` markup model — `contrato_gerador/estilo.py`), the docx carries
+#: the office's page face (Arial 11 black, justified, centred bold title),
+#: and favorecido / company names print upper-case. An intended change, not
+#: drift: the plain paragraph text of all 6 variants x digital/física was
+#: diffed against the previous render — the ONLY differences were upper-cased
+#: favorecido/PJ names (no wording change). The PDF text hash moves because
+#: bold runs re-wrap lines. Regenerated with the same `_render` this file uses.
+#: (Previous pin: migration 168's witness block printing CPF instead of RG.)
 #: Variants 1..6 of `contrato_gerador_fixtures`: sha256(word/document.xml),
 #: sha256(PDF text via PyMuPDF).
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
-    1: ("701b7a8c68d79b70fea8a1232f1c7005cc4a20ea50c6d4adc0a7757da9844066",
-        "94f264c5669957fe29c62ee775ea3227f7bb95a73ccdaebc5655adfc3b0ebbd4"),
-    2: ("9d284938327aad30bfb1bd2d05e435454e8fa47e9b0ba3e7917224a3c16bd944",
-        "46cb10dcfee32eb1963f899f983516dd98f73e3a2d13d8ef7241042d48d870ab"),
-    3: ("02081792ca9d2fb5ada536adb51318e9acbace78edf3010d33b1c40d46dac425",
-        "c53a0f52000c7415f5ddcbfa5161b7c7b47176b6ef35e2150912dcc15aa1cfd0"),
-    4: ("c5870348ab28c2663d028f0641e78b5e8ee8c6f41568764df250c4e827b1a7cf",
-        "dd8d0dfefa0fc4cb3dec14df4ab93add0ef0721d2973bc682d4217853ca5f8c0"),
-    5: ("5b31513ba1b56315df0432a9c421a29fab08f438e06effd39339261ef9b3e193",
-        "efd3eafaaf1770f4221602ae7af7681d29813c43fc3dacf3cac5c3fdda3e1303"),
-    6: ("f089e8aab7dc10b0a836aa1a34f38cb59106932a0b8736454c0362fbff26381f",
-        "a7f91c05880b37b46d69a5d39d2c8ea6b5b1ebb0d662bfc9dac7d8eb82878719"),
+    1: ("15bbcc5893cbd9f20de8a6f13e3013527f828bd17fffd4ee3fb5c87402cc8fa3",
+        "8d6313b9b0e4f2b3b70f26fdd46c7e19b5599df9a6d8f0556e02c6867db4018e"),
+    2: ("4791e773e0cece4f3634c84cc3c8bef0f3f561381d4dfa47238991e691936efc",
+        "d30953ee604ecb959d77ecc90b592044b3e258b34ef6d8fd95402dbde2242ea2"),
+    3: ("57fd5ba0a1f1ff0db32cc31bca689f038aceae6b67ad3754013ad143e09c6bc3",
+        "de54534fa2ac58111d8efdb5c30bea22910b9042cb179cc9b6daf7068af973cd"),
+    4: ("80c2c19cbb5d33a5a8991bdd969ad14e3e1821399c36c30c3b45114bfcaff98b",
+        "964fbf7c6b05182a066ec1d6b1453ebc4cbfee7733ee6a4bdf842d33ef2b2ea7"),
+    5: ("2bf4f586408a2a2f368b1743d7c3284fce462a9503d515c8effe23e39e1c51de",
+        "5a00dd577b8238167b168ae077597f83aec5702cdfb92cdb805946d6c2271cb3"),
+    6: ("c437a7f5a0cbdb2748bd53acb69bfd34a085712ba14f74d4dedc48b5614813bf",
+        "566e1f6c1ad73f06b175e23d1451bec7ff7e9f5b8a9cd2a2cc67339d36638a17"),
 }
 
 

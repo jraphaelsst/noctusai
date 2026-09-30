@@ -53,6 +53,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     resolver_endereco_posse,
     tipos_exigidos,
 )
+from app.modules.card_hub.contrato_gerador.estilo import negrito, nome_parte
 from app.modules.card_hub.contrato_gerador.numeracao import (
     ContadorParagrafos,
     juntar,
@@ -112,21 +113,27 @@ def _descricao_matricula_permuta(i: PermutaImovel, d: DadosContrato) -> str:
     return i.descricao_matricula or ""
 
 
+def _brl_negrito(valor: Decimal) -> str:
+    """"R$ x,xx (por extenso)" in bold — the template's `brl()` and the
+    permuta parcela alike (`estilo.py`: money+extenso 81% bold, 20/20 docs)."""
+    return negrito(brl_por_extenso(valor))
+
+
 def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
     """The permuta parcela (spec §2.3 `p.tipo == 'permuta'`) — its value is the
     parcela's own, and each imóvel is one `permuta_ativos` link (114) carrying
     its own matrícula quote (115)."""
     imoveis = d.permuta_imoveis
-    nomes = juntar([(p.nome or "").upper() for p in signatarios(d.compradores)])
+    nomes = juntar([nome_parte(p.nome or "") for p in signatarios(d.compradores)])
     descricoes = " E ".join(
         f"{_descricao_matricula_permuta(i, d)} Imóvel devidamente cadastrado pela Prefeitura Municipal de "
-        f"{i.endereco.cidade} sob nº {i.inscricao_municipal} e caracterizado na Matrícula Nº "
-        f"{frases.matricula_numero(i.matricula_numero)} do {i.cartorio}."
+        f"{i.endereco.cidade} sob nº {negrito(i.inscricao_municipal or '')} e caracterizado na Matrícula Nº "
+        f"{negrito(frases.matricula_numero(i.matricula_numero))} do {i.cartorio}."
         for i in imoveis
     )
     plural = len(imoveis) > 1
     return (
-        f" {brl_por_extenso(valor)}, por permuta {'dos imóveis' if plural else 'do imóvel'} de "
+        f" {_brl_negrito(valor)}, por permuta {'dos imóveis' if plural else 'do imóvel'} de "
         f"propriedade {C.dos} {C.NOME.title()}, {nomes}, já {C.g('qualificado', 'qualificada', 'qualificados')} "
         f"anteriormente, {'caracterizados' if plural else 'caracterizado'} como: {descricoes}"
     )
@@ -363,9 +370,9 @@ def montar_contexto(
     pendencias += pendentes_cert
 
     if sw["tem_permuta"]:
-        apresentantes_lista, plural_apres = [f"{V.ART} {V.NOME}", f"{C.art} {C.NOME}"], True
+        apresentantes_lista, plural_apres = [f"{V.ART} {negrito(V.NOME)}", f"{C.art} {negrito(C.NOME)}"], True
     else:
-        apresentantes_lista, plural_apres = [f"{V.ART} {V.NOME}"], V.plural
+        apresentantes_lista, plural_apres = [f"{V.ART} {negrito(V.NOME)}"], V.plural
     antigos = antigos_proprietarios(d)
     if antigos and exige_antigo_proprietario(d, assinatura, politica):
         # [Q9] the previous owner(s) present certidões too.
@@ -495,7 +502,7 @@ def montar_contexto(
         **sw,
         "cl": cl,
         "par": par,
-        "brl": brl_por_extenso,
+        "brl": _brl_negrito,
         "dias": dias_por_extenso,
         "pct_extenso": percentual_por_extenso,
         "V": V,

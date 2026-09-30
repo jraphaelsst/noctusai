@@ -38,7 +38,7 @@ from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
-from app.modules.card_hub.contrato_gerador import carregador, derivacao, documento, frases, lint
+from app.modules.card_hub.contrato_gerador import carregador, derivacao, documento, estilo, frases, lint
 from app.modules.card_hub.contrato_gerador.concordancia import lado
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
@@ -1311,6 +1311,20 @@ def _spans(page):
     return out
 
 
+def _linhas(page):
+    """`(line text, spans)` per PDF line. Body paragraphs now carry bold
+    runs (`estilo.py`), so a body line breaks into SHORT spans ("O ", ", ")
+    that are substrings of almost anything — a test about one paragraph's
+    look must pick that paragraph's own LINES, never "any span whose text
+    appears in it"."""
+    out = []
+    info = page.get_text("dict", flags=fitz.TEXTFLAGS_DICT)
+    for block in info["blocks"]:
+        for line in block.get("lines", []):
+            out.append(("".join(s["text"] for s in line["spans"]), line["spans"]))
+    return out
+
+
 class TestAbntPdf:
     def test_the_stored_version_is_a_real_pdf_never_docx(self):
         r = _render(1)
@@ -1332,11 +1346,20 @@ class TestAbntPdf:
         # header's band (inside the top margin, y0 < 3cm) keeps this test
         # about the centered BODY-frame title paragraph only, not a
         # same-text-different-place false positive from the header.
-        spans = [
-            s
-            for s in _spans(page)
-            if s["text"].strip() and s["text"] in titulo and s["bbox"][1] >= 3 * cm
-        ]
+        # The title's own lines: the lines below the header frame (which
+        # `render_abnt_pdf` places at top 1cm, height 1cm — so everything it
+        # prints sits above 2cm; the title's first line starts just under
+        # 3cm), in order, while their accumulated text is still a prefix of
+        # the title paragraph.
+        spans, lido = [], ""
+        for texto, linha_spans in _linhas(page):
+            if not linha_spans or linha_spans[0]["bbox"][1] < 2 * cm:
+                continue
+            candidato = f"{lido} {texto.strip()}".strip()
+            if not titulo.startswith(candidato):
+                break
+            lido = candidato
+            spans.extend(s for s in linha_spans if s["text"].strip())
         assert spans, "esperava encontrar o texto do título na primeira página"
         assert all("Bold" in s["font"] for s in spans)
         frame_center = page.rect.width / 2
@@ -1350,10 +1373,10 @@ class TestAbntPdf:
         heading = next(p for p in r.paragrafos if p.startswith("CLÁUSULA "))
         found = False
         for page in _abrir(pdf):
-            for s in _spans(page):
-                if s["text"].strip() and s["text"] in heading:
+            for texto, linha_spans in _linhas(page):
+                if texto.strip() and heading.startswith(texto.strip()):
                     found = True
-                    assert "Bold" in s["font"]
+                    assert all("Bold" in s["font"] for s in linha_spans if s["text"].strip())
         assert found, "esperava encontrar o texto de uma cláusula em alguma página"
 
     def test_matricula_range_is_bold_and_underlined_in_the_pdf(self):
@@ -1466,7 +1489,10 @@ class TestTextoPessoaSemProfissao:
 
     def test_no_profissao_omits_it_with_no_dangling_comma(self):
         p = self._pessoa(profissao=None)
-        texto = frases.texto_pessoa(p, em_nucleo=False)
+        marcado = frases.texto_pessoa(p, em_nucleo=False)
+        # The name is the qualification's one bold stretch (`estilo.py`).
+        assert marcado.startswith("**REGINA MARIA PELOSI**, brasileira")
+        texto = estilo.texto_plano(marcado)
         assert ", ," not in texto
         assert ",  " not in texto
         assert texto.startswith(
@@ -1666,8 +1692,9 @@ class TestParceiroSemCreci:
     def test_parceiro_split_is_summed_into_the_split_payment_but_not_qualified(self):
         d = self._com_parceiro_sem_creci()
         texto = "\n".join(_render(1, d).paragrafos)
-        # Summed into the split-payment paragraph (`frases.split_corretagem`).
-        assert "por meio de depósito bancário em favor de Parceiro Sem Creci Exemplo LTDA" in texto
+        # Summed into the split-payment paragraph (`frases.split_corretagem`);
+        # a favorecido's name prints upper-case (`estilo.py`).
+        assert "por meio de depósito bancário em favor de PARCEIRO SEM CRECI EXEMPLO LTDA" in texto
         # NEVER added to "as empresas a seguir qualificadas" — no PJ
-        # qualification sentence is printed for it anywhere.
-        assert "Parceiro Sem Creci Exemplo LTDA, pessoa jurídica inscrita" not in texto
+        # qualification sentence is printed for it anywhere (in either case).
+        assert "parceiro sem creci exemplo ltda, pessoa jurídica inscrita" not in texto.lower()

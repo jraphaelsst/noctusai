@@ -15,6 +15,7 @@ from noctusai_lib.domain.texto_ptbr import (
     parse_brl,
     reais_por_extenso,
 )
+from noctusai_lib.integrations.documents import has_raw_markup
 
 from app.modules.card_hub.contrato_gerador.numeracao import TITULO_CLAUSULA, letra
 
@@ -75,6 +76,11 @@ def lint(
         for proibido in ("{{", "{%", "…………"):
             if proibido in texto:
                 _hit(hits, "MARCADOR_NAO_RENDERIZADO", f"Parágrafo {i + 1} contém '{proibido}'.")
+        # The emphasis markers (`estilo.py`) are converted to runs by
+        # `documento.renderizar`; one still in the text is an unbalanced or
+        # run-straddling pair — `**`/`<u>` would reach a signed instrument.
+        if has_raw_markup(texto):
+            _hit(hits, "MARCACAO_NAO_CONVERTIDA", f"Parágrafo {i + 1} contém marcação de formatação (**, <u>) não convertida.")
         if _RE_ANO5.search(texto):
             _hit(hits, "ANO_INVALIDO", f"Parágrafo {i + 1} tem uma data com ano de 5 dígitos.")
         for m in _RE_BRL.finditer(texto):

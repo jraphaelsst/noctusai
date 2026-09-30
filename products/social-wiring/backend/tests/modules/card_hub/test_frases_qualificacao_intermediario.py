@@ -15,6 +15,7 @@ defect, not a reference-contract stylistic deviation.
 from __future__ import annotations
 
 from app.modules.card_hub.contrato_gerador import frases
+from app.modules.card_hub.contrato_gerador.estilo import texto_plano
 from app.modules.card_hub.contrato_gerador.dados import Endereco, Intermediario
 
 
@@ -61,6 +62,10 @@ def test_pj_intermediario_qualificacao_unaffected():
         documento="40479637000127",
         creci=None,
     )
-    texto = frases.qualificacao_intermediario(it)
+    marcado = frases.qualificacao_intermediario(it)
+    # The company name is the one bold stretch (`estilo.py`: PJ names 16/16
+    # bold + upper-case); the reader sees the plain text.
+    assert marcado.startswith("**ONE CONSULTORIA IMOBILIÁRIA LTDA**, pessoa jurídica")
+    texto = texto_plano(marcado)
     assert texto.startswith("ONE CONSULTORIA IMOBILIÁRIA LTDA, pessoa jurídica inscrita no CNPJ")
     assert "corretor" not in texto

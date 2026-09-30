@@ -18,6 +18,9 @@ Layout (pure core, IO at the edges):
 - `modelo_texto` — the clause wording (reviewable text) + phrase builders
 - `derivacao`    — switches, modelo derivado, completeness gate, consistency
 - `contexto`     — `DadosContrato` -> template context
+- `estilo`       — typography measured from the office's signed contracts
+                   (bold/underline/caps per category), written with the
+                   matrícula extractor's own `**`/`<u>` markup model
 - `documento`    — builds the template .docx (python-docx), renders it via
                    the seed `docx_render` adapter, reads the text back
 - `lint`         — post-render lint; any hit blocks saving

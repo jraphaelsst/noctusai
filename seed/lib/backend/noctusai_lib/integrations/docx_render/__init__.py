@@ -18,6 +18,12 @@ blocks (`{% if %}`), and repeating table rows (`{% for %}` over
   (dev/test default).
 - `DocxtplRenderAdapter` — real rendering via `docxtpl` (lazy-imported).
 - `get_docx_render_adapter()` factory.
+- `apply_inline_markup()` / `paragraphs_with_raw_markup()` (`inline_markup.py`)
+  — pure post-render pass: the matrícula transcriber's own inline markup
+  (`**bold**`, `<u>underline</u>`, read by `documents.transcription.
+  parse_markup`) written into a template's wording becomes real formatted
+  runs in the rendered `.docx`. Not IO, so no Fake/Real split — it runs
+  on either adapter's output.
 
 **Consume recipe:**
 
@@ -52,6 +58,10 @@ from noctusai_lib.integrations.docx_render.fake_adapter import (
     FakeDocxRenderAdapter,
     FakeRichText,
 )
+from noctusai_lib.integrations.docx_render.inline_markup import (
+    apply_inline_markup,
+    paragraphs_with_raw_markup,
+)
 from noctusai_lib.integrations.docx_render.types import (
     DocxRenderAdapter,
     DocxRenderError,
@@ -80,5 +90,7 @@ __all__ = [
     "FakeDocxRenderAdapter",
     "FakeRichText",
     "MissingPlaceholderError",
+    "apply_inline_markup",
     "get_docx_render_adapter",
+    "paragraphs_with_raw_markup",
 ]

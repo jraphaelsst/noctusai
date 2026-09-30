@@ -41,6 +41,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Parcela,
     Pessoa,
 )
+from app.modules.card_hub.contrato_gerador.estilo import negrito, nome_parte
 from app.modules.card_hub.contrato_gerador.numeracao import juntar
 
 # ─── documentos / endereços ────────────────────────────────────────────────
@@ -154,7 +155,10 @@ def rg_texto(p: Pessoa) -> str:
 
 
 def texto_pessoa(p: Pessoa, *, em_nucleo: bool) -> str:
-    partes = [(p.nome or "").upper(), nacionalidade_flex(p)]
+    # The name is the one bold, upper-case stretch of a qualification — the
+    # CPF/RG/address after it stay plain (`estilo.py`: names 68% bold+upper,
+    # CPF 0%, the rest of a qualification 3%).
+    partes = [nome_parte(p.nome or ""), nacionalidade_flex(p)]
     if not em_nucleo:
         par_ec = _ESTADO_CIVIL_FLEX.get(p.estado_civil or "")
         if par_ec:
@@ -236,7 +240,7 @@ def nome_email_linha(nome: Optional[str], email: Optional[str]) -> str:
     (`PRISCILA ANTONIA HIJAZI              priscilahijazi@hotmail.com`).
     Falls back to the bare name when there is no e-mail to show — never a
     blank/placeholder value in a legal instrument."""
-    n = (nome or "").upper()
+    n = nome_parte(nome or "")
     if email:
         return f"{n}    {email.strip().lower()}"
     return n
@@ -315,7 +319,7 @@ def texto_parcela(
     juros_am: Optional[Decimal],
 ) -> str:
     """Everything after "Parcela NN:" for one parcela."""
-    valor = brl_por_extenso(p.valor)  # type: ignore[arg-type] — gate guarantees it
+    valor = negrito(brl_por_extenso(p.valor))  # type: ignore[arg-type] — gate guarantees it
     if p.tipo == "financiamento":
         # [Q6] FGTS + financiamento are ONE parcela (contract 03's wording).
         if fgts:
@@ -345,13 +349,13 @@ def texto_parcela(
         else:
             if vendedor_favorecido is not None:
                 gv = concordancia_lado([normalizar_genero(vendedor_favorecido.genero) or "m"], "vendedor")
-                em_favor = f"em favor {gv.dos} {gv.NOME}: "
+                em_favor = f"em favor {gv.dos} {negrito(gv.NOME)}: "
             else:
                 em_favor = "em favor de "
             rotulo, numero = documento(favorecido.cpf_cnpj)
             frases.append(
                 f"por meio de {_forma(p.forma_pagamento)} a ser realizada {em_favor}"
-                f"{favorecido.nome}, {rotulo}: {numero}{banco_texto(favorecido)}"
+                f"{nome_parte(favorecido.nome)}, {rotulo}: {numero}{banco_texto(favorecido)}"
             )
     if juros_am is not None:
         frases.append(f"acrescidos de {pct_simples(juros_am)} de juros a.m., calculados pro rata die")
@@ -360,7 +364,7 @@ def texto_parcela(
             f"operando-se automaticamente a quitação em favor {C.dos} {C.NOME.title()} com o "
             f"efetivo crédito na conta corrente ora indicada {V.pelos} {V.NOME.title()}"
         )
-    cabeca = " Sinal e princípio de pagamento:" if p.tipo == "sinal" else ""
+    cabeca = " " + negrito("Sinal e princípio de pagamento:") if p.tipo == "sinal" else ""
     return f"{cabeca} " + ", ".join(frases) + "."
 
 
@@ -534,7 +538,7 @@ def onus_fonte_texto(atos: Sequence[AtoCitado]) -> str:
 
 def onus_quitacao_texto(quitacao: str, *, C: Concordancia, ref_saldo: str, ref_clausula_preco: str) -> str:
     if quitacao == "compradores_prazo":
-        return f"que deverá ser quitado {C.pelos} {C.NOME}"
+        return f"que deverá ser quitado {C.pelos} {negrito(C.NOME)}"
     if quitacao == "interveniente_quitante":
         return "que deverá ser quitado pelo sistema interveniente quitante"
     return f"o qual deverá ser quitado conforme determinado na Parcela {ref_saldo} da {ref_clausula_preco}"
@@ -573,7 +577,7 @@ def cura_rescisao_frase(dias: Optional[int]) -> str:
 
 
 def qualificacao_imobiliaria(org: Imobiliaria) -> str:
-    texto = org.razao_social or ""
+    texto = nome_parte(org.razao_social or "")
     if org.nome_fantasia:
         texto += f", com nome fantasia de {org.nome_fantasia}"
     texto += f", pessoa jurídica inscrita no CNPJ sob o nº {documento(org.cnpj)[1]}"
@@ -610,9 +614,9 @@ def qualificacao_intermediario(it: Intermediario) -> str:
     """
     rotulo, numero = documento(it.documento)
     if it.pessoa_tipo == "pj":
-        texto = f"{it.nome}, pessoa jurídica inscrita no {rotulo} sob o nº {numero}"
+        texto = f"{nome_parte(it.nome)}, pessoa jurídica inscrita no {rotulo} sob o nº {numero}"
     else:
-        texto = f"{it.nome}, corretor(a) de imóveis inscrito(a) no {rotulo} sob o nº {numero}"
+        texto = f"{nome_parte(it.nome)}, corretor(a) de imóveis inscrito(a) no {rotulo} sob o nº {numero}"
     if it.creci:
         texto += f", com inscrição no CRECI sob o nº {it.creci}"
     if it.representante_nome:
@@ -634,10 +638,10 @@ def corretagem_contratantes(quem: str, *, V: Concordancia, C: Concordancia) -> t
     rather than a second spelling of the sellers'.
     """
     if quem == "vendedores":
-        return f"{V.art} {V.NOME}", f"{V.ART} {V.NOME}", V.pl("contrata", "contratam")
+        return f"{V.art} {negrito(V.NOME)}", f"{V.ART} {negrito(V.NOME)}", V.pl("contrata", "contratam")
     if quem == "compradores":
-        return f"{C.art} {C.NOME}", f"{C.ART} {C.NOME}", C.pl("contrata", "contratam")
-    return "as PARTES", "As PARTES", "contratam"
+        return f"{C.art} {negrito(C.NOME)}", f"{C.ART} {negrito(C.NOME)}", C.pl("contrata", "contratam")
+    return f"as {negrito('PARTES')}", f"As {negrito('PARTES')}", "contratam"
 
 
 def parcelamento_texto(n: Optional[int]) -> str:
@@ -655,6 +659,6 @@ def marcos_texto(nums: Sequence[str]) -> str:
 def split_corretagem(valor: Decimal, fav: Favorecido) -> str:
     rotulo, numero = documento(fav.cpf_cnpj)
     return (
-        f"{brl_por_extenso(valor)}, por meio de depósito bancário em favor de {fav.nome}, "
+        f"{negrito(brl_por_extenso(valor))}, por meio de depósito bancário em favor de {nome_parte(fav.nome)}, "
         f"{rotulo} nº {numero}{banco_texto(fav)}"
     )
